@@ -1667,7 +1667,62 @@ useLiveQuery(timings, () => rolling.value());
     returning one composite accumulator. More declarative, less
     compositional. Lean `tap` (it composes — can be built on top of
     an existing rolling without redeclaring), but want a second
-    user's gut reaction before locking the API.
+    user's gut reaction before locking the API. A more opinionated
+    variant — `live.stats(col, { baseline: { window, using }, current:
+{ window, using } })` — was sketched in a 2026-05-04 blind review
+    by Codex; it's the same compositional point with the recipe
+    pre-named. Keep tap as the lower-level primitive; if `stats`
+    earns its keep, build it on top.
+  - **`excludeCurrentFromBaseline` semantic.** When the child window
+    is a strict subset of the parent's by time, the parent's
+    snapshot includes events that the child is _also_ using. For
+    z-score-style use cases (current vs. baseline-mean ± k·σ), this
+    biases baseline toward current. Multi-window-stats consumers
+    will want a knob: "compute baseline over parent minus child's
+    overlap." Cheap to implement on shared storage (parent's deque
+    minus the child's index range); doesn't make sense without
+    shared storage. Flag as a stats-recipe option, not a tap-core
+    feature.
+
+  **Complementary axis: tile-mode summary primitive.** Codex's
+  blind 2026-05-04 review surfaced an alternative direction worth
+  capturing as a sibling to `tap`, not a substitute. `tap` shares
+  _exact-storage_ — every event the parent retains is reusable by
+  children, samples / median / exact eviction all work. **Tile
+  mode** keeps a ring of fixed-duration tiles (e.g. 1s) with
+  per-column composable moments (`{ n, sum, sumSq }`, optionally
+  `{ min, max }`) and computes window stats by combining tile
+  summaries. For a 5m baseline at 1s resolution that's 300 tile
+  summaries vs. ~150M raw events at 500k/s — three orders of
+  magnitude less storage and per-tile O(1) update.
+
+  Tradeoff axes:
+
+  | Axis             | tap (exact)             | tile (summary)              |
+  | ---------------- | ----------------------- | --------------------------- |
+  | Storage          | O(parent window × N)    | O(window / resolution)      |
+  | Reducers covered | All built-ins           | Composable only (avg/stdev/ |
+  |                  |                         | sum/count/min/max)          |
+  | Eviction grain   | Per-event               | Per-tile boundary           |
+  | Late data        | Same as today's rolling | Bounded to tile boundary    |
+  | Result freshness | Exact at any moment     | Lags by < `resolution`      |
+
+  Tile mode is the right shape for "high-rate normality monitoring"
+  patterns: 5m baseline avg/stdev + 5s current avg/sum + z-score
+  deviation, all at 500k/s. Exact mode is the right shape when the
+  reducer set includes `samples` / `median` / `top` — which the
+  gRPC anomaly-density experiment did, ironically, so tap is the
+  right primitive for _that_ use case even though tile would crush
+  the storage cost on a stats-only variant.
+
+  **Decision posture.** Both are deferred behind the same
+  second-user signal. The tile-mode primitive shouldn't ship before
+  tap does because tap's semantics (shared deque, child-as-cursor)
+  are the simpler conceptual ground; tile is an optimization on top
+  ("here's a way to compress the shared storage to summaries when
+  the reducer set permits"). When the third signal lands, evaluate
+  which shape the user actually wants — tile if the reducer set is
+  composable-only, tap if exact reducers are in the mix.
 
   **Why deferred:** the savings only matter at extreme scale (≥10k
   partitions or kHz/partition). The naive "two rollings" pattern is
@@ -1721,6 +1776,63 @@ useLiveQuery(timings, () => rolling.value());
   high-rate, custom aggregators win because they can amortise
   reducer state across batches that pond's primitives can't see
   is shareable"). Until then, parked.
+
+  **Related opportunity (logged 2026-05-04):** when a user requests
+  both `avg` and `stdev` on the same column, both reducers maintain
+  `sum` and `count` independently — duplicated arithmetic on every
+  event. Codex flagged this in the blind multi-window review.
+  Smaller-scope than full reducer-batching; the fix is to detect
+  the compatible-reducer pair at construction and share the
+  lower-order moments. Worth measuring before designing — micro-
+  bench a paired `avg + stdev` rolling against a single `stdev`
+  (which already maintains both internally) to confirm the
+  duplication cost is non-trivial. If yes, ~30-line opt-in fast
+  path; if no, leave as-is. Independent of the bigger reducer-
+  batching question.
+
+- **Live rolling tactical fixes (logged 2026-05-04, not yet
+  scheduled).** Two operational items surfaced in Codex's blind
+  multi-window review against the live-rolling source. Independent
+  of any larger redesign — both are local fixes inside
+  `LiveRollingAggregation`.
+  - **`Array.shift()` eviction at `LiveRollingAggregation.ts:447`.**
+    `#removeFirst()` evicts via `this.#entries.shift()`. V8 amortizes
+    `shift` to O(1) on long arrays through a hidden offset, but the
+    constant matters at 500k events/s — and the optimization isn't
+    guaranteed across engines. A plain head-index pointer (`#head`)
+    with periodic compaction, or a true ring buffer when window
+    capacity is known a priori (count-window case), is the right
+    shape. Bench against the V4-bench harness to confirm a win
+    before shipping; small enough that it doesn't earn a design
+    pass, just a measurement and a PR.
+
+  - **`history: false | RetentionPolicy` on live rolling outputs.**
+    `LiveRollingAggregation.ts:403` does `this.#outputEvents.push`
+    unboundedly — every emitted event is retained forever, growing
+    one entry per source event (or per trigger fire) for the life
+    of the accumulator. Many high-rate users only consume `value()`
+    or `on('event', ...)` and never read the historical output
+    series; for them, the retention is pure waste. Add an option:
+
+    ```ts
+    live.rolling('1m', m, { history: false }); // no retention
+    live.rolling('1m', m, { history: { maxEvents: 1000 } });
+    live.rolling('1m', m, { history: { maxAge: '5m' } });
+    ```
+
+    `history: true` (the implicit default today) preserves current
+    behaviour. `false` skips the push entirely; the accumulator
+    still exposes `value()` and event-callbacks but `length`/`at`
+    return zero/undefined. The retention-policy case mirrors
+    `LiveSeries`'s existing retention shape. ~30-50 lines, well-
+    bounded; the design question is whether `history: false` should
+    also disable `outputEvents` allocation entirely or keep a
+    1-entry rolling slot. Lean toward "skip allocation entirely"
+    — if the user opts out, opt them out fully.
+
+  Both are opportunistic — neither blocks any working app. Schedule
+  alongside the next live-rolling perf pass or when the gRPC writeup
+  earns a "what we'd fix next" footnote.
 
 - **`'samples'` reducer + lifted custom-function restriction on
   live — queued for v0.14.1.** Surfaced by the gRPC experiment's
