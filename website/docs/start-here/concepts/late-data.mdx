@@ -43,13 +43,13 @@ in the consumer (compare `lastEvent.begin()` to `Date.now()`).
 
 | Concept                            | Beam / Flink                                    | pond-ts                                       |
 | ---------------------------------- | ----------------------------------------------- | --------------------------------------------- |
-| Time progression                   | Watermark, derived from sources or wall-clock   | `latestEvent.begin()` (data-only)             |
-| Late event handling                | Configurable: drop, accumulate, retract         | Bounded grace window; no retraction           |
-| Trigger types                      | Watermark, processing time, count, custom       | Event, clock (sequence), count                |
-| Exactly-once delivery              | Yes (via checkpointing)                         | No                                            |
-| Output retraction on late arrivals | Yes (when configured)                           | No — emitted snapshots are final              |
-| Cross-host event time              | Synchronised via watermarks                     | Per-source; no global clock                   |
-| Best at                            | Distributed, exactly-once, large-scale pipelines | In-process buffer with bounded reorder, simple cost model |
+| Time progression                   | Watermarks advance event time; processing-time timers can also fire | `latestEvent.begin()` (data-only)             |
+| Late event handling                | Configurable allowed lateness, accumulation modes, late firings / drops | `strict`, `drop`, or `reorder`; optional bounded grace; no retraction |
+| Trigger types                      | Watermark / event time, processing time, count, custom | Event, fixed-cadence clock / sequence, count |
+| Exactly-once delivery              | Supported with checkpointing plus compatible sources and sinks | No                                            |
+| Output retraction on late arrivals | Late panes, updates, or retractions depending on runner / sink configuration | No — emitted snapshots are final              |
+| Cross-host event time              | Coordinated through watermarks across parallel inputs | Per-source; no global watermark or cross-source clock |
+| Best at                            | Distributed, fault-tolerant, large-scale pipelines | In-process live time-series buffers and transforms with a simple cost model |
 
 Pond is **not** trying to compete with Beam or Flink at scale.
 It's trying to give a TypeScript-native time-series buffer with
