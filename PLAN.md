@@ -1726,13 +1726,11 @@ useLiveQuery(timings, () => rolling.value());
   and there's no killer use case for either.
 
 - **Fused multi-window rolling + buffer-as-window unification
-  (consolidated 2026-05-05).** Two independent signals merged into
-  one design. The earlier `rolling(...).tap()` framing —
-  hierarchical parent/child with shared deque — is preserved as
-  compositional sugar over this primitive, but the primitive itself
-  is peer-windows-with-shared-ingest. Tap-by-itself was overfitting
-  to the gRPC use case; the fused form covers both gRPC and the
-  buffer-as-window persona without hierarchy bookkeeping.
+  (consolidated 2026-05-05; refined by gRPC RFC #20 same day).**
+  Two independent signals merged into one design. Tap-by-itself
+  was overfitting to the gRPC use case; the fused form covers
+  both gRPC and the buffer-as-window persona without hierarchy
+  bookkeeping.
 
   **The two signals:**
   1. **gRPC profile-diff (PR #19, 2026-05-05).** Profile-grade
@@ -1755,6 +1753,26 @@ useLiveQuery(timings, () => rolling.value());
      case, but the broader pattern is "buffer + zero-or-more
      sub-windows." Same primitive answers both.
 
+  **gRPC RFC #20 carry-forwards (2026-05-05).** Library-side RFC
+  posted from the experiment side, in response to the design
+  consolidation in PLAN. Pushes back on several details and
+  refines others; outcomes carried into this entry below:
+  - Drop the array-form escape hatch entirely; record form is the
+    only fused-rolling API. Per-window options via elaborated
+    value form (`{ mapping, minSamples }`) instead of dropping to
+    array form.
+  - Output shape is **ONE merged `LiveSource<Out>` stream**, not
+    N accumulators or N streams. The collapse-to-one-event-handler
+    win is half the value of the proposal.
+  - Compile-time duplicate-column detection across windows via
+    branded error type — strict improvement over status quo.
+  - `DurationString` template-literal type for record keys —
+    catches typos like `'1min'` at compile time.
+  - Time-based windows only (count-based stays on the single-
+    window overload).
+  - Partition-column auto-injection unified across all windows.
+  - Acceptance criteria pinned at hard perf targets.
+
   **The unified user-facing shape.** A `LiveSeries` with retention
   IS a buffer; the buffer IS the implicit longest window of any
   rolling computation attached to it. Declared sub-windows are
@@ -1768,7 +1786,7 @@ useLiveQuery(timings, () => rolling.value());
   // Single sub-window (today's shape; no change):
   const r = live.rolling('200ms', { samples: 'samples' });
 
-  // Multi-window (the fused form — new), record-form API:
+  // Multi-window — keyed-record form (the fused primitive):
   const fused = live.rolling(
     {
       '1m': { cpu_avg: 'avg', cpu_sd: 'stdev', cpu_n: 'count' },
@@ -1783,40 +1801,144 @@ useLiveQuery(timings, () => rolling.value());
   All three APIs share the same trigger / output / event-subscriber
   surface — they're sugar over the same primitive.
 
-  **Record vs array form (settled 2026-05-05 design pass).** The
-  record form `{ '1m': mapping, '200ms': mapping }` is the primary
-  API; it's the cleanest read for the common case (window known up
-  front, single trigger applies to all). The array form is the
-  escape hatch for per-window options:
+  **Record form is the only fused-rolling API.** No array form.
+  The earlier proposal to keep an array form as escape hatch for
+  per-window options was rejected in the gRPC RFC for three
+  reasons:
+  - Strictly worse readability — three layers of nesting
+    (`window:` / `output:` / individual columns) where two suffice.
+  - Compile-time duplicate-column detection works naturally for
+    the record form (objects can't have duplicate keys); is hard
+    for the array form.
+  - Per-window cadence (the main motivation for the array form)
+    is rare; users who need it fall back to two `rolling()` calls
+    and pay the V7 cost. Fused rolling explicitly trades that
+    rare case for the simpler API in the common case.
+
+  **Per-window options via elaborated value form.** When per-window
+  options are needed (like `minSamples`), the record value
+  switches from a bare mapping to a wrapper:
 
   ```ts
-  // Per-window triggers (dashboard pattern: baseline at 30s,
-  // current at 200ms) — array form when options differ:
-  const [baseline, current] = live.rolling([
-    { window: '1m',    output: { ... }, trigger: Trigger.every('30s') },
-    { window: '200ms', output: { ... }, trigger: Trigger.every('200ms') },
-  ]);
+  byHost.rolling(
+    {
+      '1m': { cpu_avg: 'avg', cpu_sd: 'stdev' },
+      '200ms': {
+        mapping: { cpu_samples: 'samples' },
+        minSamples: 5,
+      },
+    },
+    { trigger },
+  );
   ```
 
-  Internal canonical form is the array. The record form is parsed
-  into the array form at construction:
-  - Keys → `window` (string `'1m'` or numeric `100` for count form)
-  - Values → `output` mapping (the `AggregateOutputMap`)
-  - Top-level `{ trigger }` opts apply uniformly to all windows
-  - `'buffer'` key resolves to the LiveSeries retention sentinel
+  Common path stays clean (value = mapping); elaborated form is
+  used only when needed. Top-level options
+  (`{ trigger, minSamples }`) apply as defaults across all
+  windows; per-window elaborated `minSamples` overrides for that
+  window.
 
-  Return shape mirrors input shape:
-  - **Record form input:** returns a record keyed by the same
-    window strings — `fused.get('1m')` / `fused.get('200ms')`,
-    or destructure as needed.
-  - **Array form input:** returns an array of accumulators in
-    declared order — `const [a, b] = live.rolling([...])`.
+  **Output shape — one merged stream.** Fused rolling emits ONE
+  `LiveSource<Out>` with all windows' columns merged into one
+  event per partition per trigger boundary. Not N accumulators;
+  not N event streams. The whole point is that user code
+  collapses to one event handler — V7's `pendingByTs` /
+  `partsFor` / `tryEmit` machinery dissolves into:
 
-  This keeps the record form pure sugar — same internal machinery,
-  same correctness guarantees, just nicer reading for the common
-  case. Bench / typing / single-window-equivalence all happen at
-  the canonical-array layer; record form is parsed before any of
-  that runs.
+  ```ts
+  fused.on('event', (e) => {
+    // All windows' columns on one event — no buffering, no drain.
+    const tick = assembleTick(
+      e.key().begin(),
+      e.get('host'),
+      {
+        cpu_avg: e.get('cpu_avg'),
+        cpu_sd: e.get('cpu_sd'),
+        cpu_n: e.get('cpu_n'),
+      },
+      e.get('cpu_samples') ?? [],
+    );
+    scheduleFrame(tick);
+  });
+  ```
+
+  See gRPC RFC #20's "Worked example" for the full V7 → V8 diff —
+  ~30 lines of join/drain machinery (`pendingByTs`, `partsFor`,
+  `tryEmit`, microtask scheduling) collapse to the handler above.
+  Readability win is independent of the perf win and may be the
+  larger of the two for typical users.
+
+  **TypeScript surface.** Three things the type system needs to
+  do:
+  1. **Flat-merge per-window columns into one schema.** For each
+     entry in the fused mapping, compute the per-window columns
+     the way `RollingSchema` / `RollingOutputMapSchema` do today,
+     then union all of them. Auto-inject the partition column
+     once at the front (not per window).
+
+  2. **Compile-time duplicate-column detection.** If two windows
+     define the same output column name
+     (`'1m': { cpu_avg: 'avg' }` plus `'5m': { cpu_avg: 'avg' }`),
+     emit a `never` plus a branded error type at the call site:
+
+     ```ts
+     type CheckUniqueOutputs<FM> = /* duplicate detected */
+       ? { __error: `Duplicate output column '${string}' across windows` }
+       : FM;
+     ```
+
+     Strict improvement over the status quo, where two separate
+     `rolling()` calls can silently shadow each other's column
+     names.
+
+  3. **`DurationString` template-literal type for keys.**
+     Constrain object keys to `${number}${'ms'|'s'|'m'|'h'|'d'}`
+     to catch typos like `'1min'` at compile time. The `'buffer'`
+     sentinel is allowed alongside as a literal:
+
+     ```ts
+     type DurationString =
+       | `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`
+       | 'buffer';
+
+     type FusedMapping<S extends SeriesSchema> = Readonly<
+       Record<DurationString, FusedMappingValue<S>>
+     >;
+     ```
+
+  Substantive type-level work — non-trivial generics across the
+  three responsibilities. Worth budgeting separately from the
+  runtime implementation.
+
+  **Time-based windows only.** Object keys are duration strings
+  (or the `'buffer'` sentinel). Count-based windows
+  (`live.rolling(100, ...)`) stay on the existing single-window
+  overload and are not mixable with time-windows in the fused
+  form. The window-clip-to-retention rule and the boundary-
+  detection logic both depend on time semantics; mixing kinds
+  isn't worth the complexity for a primitive whose target use
+  cases (multi-window stats over a streaming buffer) are
+  inherently time-shaped.
+
+  **Partition-column auto-injection.** The existing partitioned-
+  rolling overload auto-injects the partition column (e.g.
+  `host`) into the output schema, even if the mapping doesn't
+  name it. Fused does the same — partition column appears once
+  at the front of the merged output, never per-window.
+
+  If a window's mapping explicitly tries to name the partition
+  column (`'1m': { host: 'first' }`), the existing collision check
+  in `LivePartitionedSyncRolling` fires; fused preserves this
+  guarantee across all windows. The merged output schema is
+  `[time, partition_col, ...union_of_window_columns]`.
+
+  **Snapshot-side parity.** `TimeSeries.rolling` should accept the
+  same record-form keyed mapping. Less perf-critical (offline)
+  but API parity matters for code that moves between live and
+  snapshot mode (the gRPC experiment's V6 → V7 → fused migration
+  is exactly this pattern). Implementation is simpler on the
+  snapshot side (no trigger, no streaming dispatch); the
+  TypeScript surface is shared.
 
   **Storage model.** One shared deque of `{ absIdx, ts, values }`,
   sized by the longest declared window. Each window holds:
@@ -1895,15 +2017,12 @@ mapping }], opts)` (fused with one entry). Tested explicitly.
   silent behavior shift when adding a second window.
 
   **`live.reduce()` as fused-with-one-entry.** Design `live.reduce(
-mapping, opts)` from the start as sugar for the fused form over
-  the buffer:
+mapping, opts)` from the start as sugar for the fused form (record
+  API) with the `'buffer'` sentinel:
 
   ```ts
   live.reduce(mapping, opts) ===
-    live.rolling([{ window: 'buffer', output: mapping }], {
-      history: false,
-      ...opts,
-    });
+    live.rolling({ buffer: mapping }, { history: false, ...opts });
   ```
 
   Same trigger options, same `value()` shape, same event-subscriber
@@ -1911,27 +2030,20 @@ mapping, opts)` from the start as sugar for the fused form over
   construction. No API divergence; either Path A or Path B
   implements correctly.
 
-  **Tap reframed as compositional sugar.** The earlier tap RFC's
-  hierarchical parent/child design becomes a one-method addition
-  on top of fused:
+  **Tap is a separate primitive — not subsumed by fused.** The
+  earlier "tap as compositional sugar over fused-rolling" framing
+  (where `parent.tap(w, m)` would add a sub-window to an existing
+  rolling) is dropped. Once we accept the record form as the
+  primary API, there's no compositional add-after-the-fact use
+  case worth supporting — declare your windows up front in one
+  call.
 
-  ```ts
-  // Tap sugar (still useful for compositional add-after-the-fact):
-  const baseline = live.rolling('5m', { p95: 'p95' });
-  const current = baseline.tap('200ms', { samples: 'samples' });
-  // ≡ live.rolling([
-  //     { window: '5m',    output: { p95: 'p95' } },
-  //     { window: '200ms', output: { samples: 'samples' } },
-  //   ])
-  ```
-
-  Tap-of-tap, parent disposal, and the rest fall out as sugar
-  expansions. The earlier "Open questions to settle pre-ship"
-  list (childWindow ≤ parentWindow, disposal semantics, break-even
-  point, vs. multi-window declarative) collapse to: tap is sugar,
-  fused answers all of them. Ship fused first; tap is bolt-on
-  later if compositional add-after-the-fact lands as a real
-  pattern.
+  However, the gRPC RFC #20 introduces `tap()` as a different
+  primitive: a **per-partition observer callback** for slim
+  observation use cases. See every event in a partition cheaply,
+  no aggregation. Distinct problem, distinct solution; not a
+  replacement for fused rolling. Captured as a separate companion
+  entry below.
 
   **Tile-mode storage axis (preserved as alternative).** Fused-
   rolling stores raw events in the shared deque. For composable-
@@ -1950,40 +2062,57 @@ mapping, opts)` from the start as sugar for the fused form over
   user-facing API.
 
   **Implementation rough estimate.**
-  - New class `LiveFusedRolling<S, Out[]>` (or extend
-    `LiveRollingAggregation` to accept array form): ~300-400 LoC
-  - Public surface: overload on `LiveSeries.rolling` /
-    `LivePartitionedSeries.rolling` / `LiveView.rolling` to accept
-    array form
-  - `live.reduce(mapping)`: ~20 LoC of sugar over the array form
-  - Tap sugar: ~10 LoC `LiveFusedRolling.tap(w, m)` adds an entry
+  - New class `LiveFusedRolling<S, Out>` (single merged output
+    schema): ~400-500 LoC for the runtime — shared deque, per-
+    window cursors + reducer-state, fused `#evictPartition`,
+    boundary-detection collapsing N triggers into one fan-out.
+  - Type-level work — substantive generics across three
+    responsibilities (flat-merge schemas, duplicate-column
+    detection, `DurationString` constraint): ~150-200 lines of
+    type aliases + helpers + tests in `test-d/`.
+  - Public surface: keyed-form overload on `LiveSeries.rolling` /
+    `LivePartitionedSeries.rolling` / `LiveView.rolling` /
+    `TimeSeries.rolling` (snapshot-side parity).
+  - `live.reduce(mapping)`: ~20 LoC of sugar over the keyed form.
   - Single-window equivalence test: today's-shape produces
-    identical output to fused-with-one-entry
-  - Multi-window correctness tests: ~200 LoC
-  - Partitioned variant tests: ~100 LoC
+    identical output to fused with one entry.
+  - Multi-window correctness tests: ~200 LoC.
+  - Partitioned variant tests: ~100 LoC.
   - Bench `perf-fused-rolling.mjs`: V6-vs-V7-style cost diff plus
-    buffer-as-window storage footprint
+    buffer-as-window storage footprint.
 
-  Total ~800-1000 LoC + tests + bench. Medium PR; not multi-week.
+  Total ~1000-1200 LoC + tests + bench. Medium PR; not multi-week.
+
+  **Acceptance criteria (from gRPC RFC #20).** When this lands,
+  the experiment migrates `aggregate.ts` from V7 (two rollings +
+  per-`(ts, host)` join) to V8 (fused rolling, single event
+  handler). The bench bar:
+  - Ceiling throughput within 5% of V6's 258k/s (V7 was 209k/s,
+    −19%).
+  - 87k/s heap close to V6's 1617 MB (V7 was 1886 MB, +17%).
+  - 9k/s heap stays at or below V7's 147 MB.
+  - `LivePartitionedSyncRolling.js` self-time drops back to
+    ~8-10% range (V7 was 20.7%).
+  - `#routeEvent` / `_pushTrustedEvents` / `ingest` inclusive
+    times drop back to V6's range.
+  - `#evictPartition` self-time drops to ~4-5% (V7 was 8.8%, NEW
+    in V7's top-25).
+
+  Not "exact V6 parity" — the perf budget is "fused rolling pays
+  for the readability + correctness wins (compile-time uniqueness,
+  one event handler) without measurable regression vs the manual-
+  deque V6 baseline." Bench numbers are the load-bearing record;
+  don't ship without the full diff in the PR body.
 
   **Open design questions to settle pre-ship.**
-  - **Per-window triggers — settled (record/array dual API).** The
-    record form `{ '1m': m1, '200ms': m2 }` shares one top-level
-    trigger; the array form `[{ window, output, trigger? }, ...]`
-    allows per-window triggers. Common case (single trigger) reads
-    cleanly as record; dashboard case (different cadences) drops
-    to array. Single internal canonical representation; record is
-    sugar.
-
-  - **Output shape — settled.** Mirrors input shape:
-    `live.rolling({ '1m': m1, '200ms': m2 })` returns a record
-    keyed by window strings; `live.rolling([{w1, m1}, {w2, m2}])`
-    returns an array in declared order. Single-window equivalence
-    holds either way (length-1 record / array → same accumulator
-    shape as today's `live.rolling(window, mapping)`).
+  - **Top-level vs per-window `minSamples`.** Top-level applies as
+    a default; per-window elaborated form overrides for that
+    window. Settled this way — matches the existing `minSamples`
+    surface and avoids forcing every entry into the elaborated
+    form when one window needs the override.
 
   - **Partitioned variant.** `live.partitionBy('host').rolling(
-[...], opts)` — one shared deque per partition, all windows
+{...}, opts)` — one shared deque per partition, all windows
     over that partition's deque. At 1k partitions × 2 windows,
     fused saves the 1k duplicated deques V7 builds today.
     Per-partition partitioned variant uses the existing
@@ -1999,9 +2128,9 @@ mapping, opts)` from the start as sugar for the fused form over
 
   - **Custom-function reducers.** Same per-window O(W) snapshot
     cost as today's rolling; doc-note unchanged. Fused doesn't
-    make this cheaper — the per-event work is shared, but the
-    snapshot cost is per-window-per-emit and that's already what
-    custom functions cost today.
+    make this cheaper — per-event work is shared, but snapshot
+    cost is per-window-per-emit and that's already what custom
+    functions cost today.
 
   - **`window: 'buffer'` sentinel resolution.** When does it
     resolve — construct time (capture retention then; reject if
@@ -2010,6 +2139,12 @@ mapping, opts)` from the start as sugar for the fused form over
     change for predictability. If a user genuinely needs dynamic
     retention coupling, they declare `window: live.retention()`
     explicitly and we expose a method for it.
+
+  - **Single trigger vs per-window trigger — closed.** Single
+    trigger across all windows is by design; that's the point of
+    fusion. Users who need per-window cadence fall back to two
+    `rolling()` calls and pay the V7 cost. Rejected the array-
+    form alternative.
 
   **Why ship.** Two distinct user signals (gRPC profile-diff +
   buffer-as-window metric-agent call site), one clean primitive
@@ -2024,6 +2159,43 @@ mapping, opts)` from the start as sugar for the fused form over
   calls off the same source, both with the same trigger.
   Documented in the eventual fused-rolling RFC as the "before-
   v0.X" pattern.
+
+- **Companion: per-partition observer `tap()` (gRPC RFC #20,
+  pending evaluation).** A separate primitive raised alongside
+  the fused-rolling RFC. **Distinct problem from the earlier
+  hierarchical-tap design** that was folded into fused-rolling
+  above — this one is a per-partition observer callback for
+  slim-observation use cases.
+
+  Use case shape: "see every event in a partition cheaply, no
+  aggregation." E.g., per-host event-rate gauges, per-host
+  arrival-time histograms, debug instrumentation that doesn't
+  need a windowed reducer. Today the only way to get per-
+  partition events is `live.partitionBy('host').apply(sub =>
+sub.rolling(...))` or `partitionBy.collect()` — both do more
+  work than the use case needs.
+
+  Sketch from the RFC:
+
+  ```ts
+  byHost.tap((host, event) => {
+    // Observer fires once per (host, event) pair.
+    // No aggregation, no buffer, no reducer state.
+  });
+  ```
+
+  Pairs well with fused rolling (shared dispatch infrastructure
+  on the per-event hot path) but doesn't subsume or get subsumed
+  by it — different problems. RFC explicitly says fused-rolling
+  is the higher-value of the two for the experiment's M3.5 step
+  5+ roadmap; if only one ships first, fused goes first.
+
+  **Status: pending evaluation.** Hold until fused-rolling lands
+  (its design is settled; tap's design is one paragraph and a
+  use case). Re-triage once fused ships and we have the dispatch
+  infrastructure to share. May turn out to be a small bolt-on; may
+  surface enough open questions to earn its own RFC. Don't pre-
+  decide.
 
 - **Reducer batching — deferred per the V4 bench.** The gRPC
   experiment's V4 profile (after v0.14.0 shipped) confirms
