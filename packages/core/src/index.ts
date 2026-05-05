@@ -12,6 +12,8 @@ export { LiveSeries } from './LiveSeries.js';
 export { LiveView } from './LiveView.js';
 export type { LiveFillMapping, LiveFillStrategy } from './LiveView.js';
 export { LiveRollingAggregation } from './LiveRollingAggregation.js';
+export { LiveFusedRolling } from './LiveFusedRolling.js';
+export { LivePartitionedFusedRolling } from './LivePartitionedFusedRolling.js';
 export { Trigger } from './triggers.js';
 export type { ClockTrigger, CountTrigger, EventTrigger } from './triggers.js';
 export { PartitionedTimeSeries } from './PartitionedTimeSeries.js';
@@ -121,3 +123,11 @@ export type {
   LiveRollingOptions,
   RollingWindow,
 } from './LiveRollingAggregation.js';
+export type {
+  DurationString,
+  FusedMapping,
+  FusedMappingElaborated,
+  FusedMappingValue,
+  FusedRollingSchema,
+  FusedPartitionedRollingSchema,
+} from './types-fused-rolling.js';

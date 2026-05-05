@@ -7,9 +7,176 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 file covers both packages. Pre-1.0: minor bumps may include new features and
 type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.14.3...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.15.0...HEAD
 
 ## [Unreleased]
+
+## [0.15.0] — 2026-05-05
+
+The "fused multi-window rolling" release. Shipping the primitive
+that closes the gRPC experiment's V6→V7 architectural cliff: a
+keyed-form overload on `live.rolling()` that maintains N windows
+in one ingest pass over a single shared deque, emits one merged
+event per trigger boundary, and (on the partitioned variant) eats
+the doubled `#routeEvent` / `#evictPartition` / `_pushTrustedEvents`
+hops V7 surfaced.
+
+Two independent signals motivated this: the gRPC profile-diff
+(PR #19 in `pond-grpc-experiment`) and the buffer-as-window
+persona's metric-agent call site
+(`series.rolling(RETENTION, mapping, ...)` as workaround). Both
+point at one primitive; both shipped together. RFC #20 in
+`pond-grpc-experiment` is the design record.
+
+### Added
+
+- **Keyed-form fused rolling on `LiveSeries.rolling`,
+  `LiveView.rolling`, and `LivePartitionedSeries.rolling`.** Pass
+  a record of `{ duration: mapping }` instead of `(window, mapping)`
+  to declare multiple windows; the rolling maintains them all in
+  one ingest pass:
+
+  ```ts
+  const fused = byHost.rolling(
+    {
+      '1m': {
+        cpu_avg: { from: 'cpu', using: 'avg' },
+        cpu_sd: { from: 'cpu', using: 'stdev' },
+      },
+      '200ms': { cpu_samples: { from: 'cpu', using: 'samples' } },
+    },
+    { trigger: Trigger.every('200ms') },
+  );
+  // fused emits one merged event per boundary with all four
+  // columns; one ingest pass per source event.
+  ```
+
+  - **Output: one merged stream.** All declared windows' columns
+    concatenated into one record per trigger fire — not N
+    accumulators or N streams. User code collapses to one event
+    handler (the V7 → V8 migration in the gRPC experiment drops
+    ~30 lines of `pendingByTs` / `partsFor` / `tryEmit` join
+    machinery).
+  - **Constraints.** Time-based windows only (object keys are
+    duration strings); single trigger across all windows by
+    design (per-window cadence falls back to two `rolling()`
+    calls, paying the V7 cost). On partitioned series, clock
+    trigger is required.
+  - **Per-window options.** Use the elaborated value form
+    (`{ mapping, minSamples }`) when one window needs different
+    options from the rest; bare-mapping value stays clean for
+    the common case.
+  - **Duplicate output column names** across windows are rejected
+    at construction with a clear error. Partition column auto-
+    injection is unified across all windows.
+  - **Single-window equivalence pin.**
+    `live.rolling('1m', mapping, opts)` and
+    `live.rolling({ '1m': mapping }, opts)` produce identical
+    output (locked down by tests).
+
+- **`LiveFusedRolling<S, Out>`** — non-partitioned class, exposed
+  on the public surface via `live.rolling({...}, opts)`.
+- **`LivePartitionedFusedRolling<S, K, Out>`** — synchronised-cross-
+  partition class, exposed via `byHost.rolling({...}, { trigger })`.
+- **Type-level surface:** `FusedMapping<S>`, `FusedMappingValue<S>`,
+  `FusedMappingElaborated<S>`, `FusedRollingSchema<S, FM>`,
+  `FusedPartitionedRollingSchema<S, ByCol, FM>`, and
+  `DurationString` — all exported from `pond-ts`. Output column
+  kinds narrow correctly through `event.get('cpu_avg')` to
+  `number | undefined`.
+
+### Performance
+
+`packages/core/scripts/perf-fused-rolling.mjs` — bench against
+gRPC RFC #20 acceptance criteria. Headline numbers (median of 3
+runs, `node --expose-gc`):
+
+```
+Partitioned, 100k events × 100 hosts (the gRPC use case):
+                                     wall (ms)    heap (MB)
+  single rolling baseline                95.20       74.33
+  two separate rollings (V7 shape)      141.12      101.71
+  fused two-window (V8 shape)           112.36       68.46
+
+Fused vs V7 shape:    -20.4% wall,  -32.7% heap
+Fused vs baseline:    +18.0% wall,   -7.9% heap
+
+Partitioned, 100k events × 1000 hosts (saturation):
+                                     wall (ms)    heap (MB)
+  two separate rollings (V7 shape)      700.35      556.56
+  fused two-window (V8 shape)           446.21      309.25
+
+Fused vs V7 shape:    -36.3% wall,  -44.4% heap
+```
+
+**Scaling beyond two windows — the architectural argument
+verified.** Every per-event pond hop runs ONCE in fused vs N times
+in N separate rollings. The bench scales N from 2 to 5 windows
+over the same 100k-events × 100-hosts source:
+
+```
+                Separate (ms)   Fused (ms)   Wall delta
+  N = 2            152.91         102.91       -32.7%
+  N = 3            186.63          79.89       -57.2%
+  N = 4            245.42         107.51       -56.2%
+  N = 5            279.79         118.90       -57.5%
+
+                Separate (MB)   Fused (MB)   Heap delta
+  N = 2            108.13          72.20       -33.2%
+  N = 3             93.30          43.08       -53.8%
+  N = 4            113.69          47.19       -58.5%
+  N = 5            137.17          47.12       -65.6%
+```
+
+Fused stays roughly constant (~100ms) across N=2..5; separate
+scales linearly. At N=5: **2.4× faster wall, 34% of the heap.**
+
+The architectural cliff is closed and the win compounds with N.
+Fused rolling's per-event cost is O(1) in the number of windows
+for pipeline overhead — only O(N) for the unavoidable per-window
+reducer-state updates (which separate also pays). Heap is
+dominated by the saved per-rolling deque + per-partition state.
+
+### Notes on what this does NOT include
+
+- **`live.reduce(mapping)` sugar.** Designed in PLAN as
+  `live.rolling({ buffer: mapping }, { history: false })`; the
+  `'buffer'` sentinel is reserved at the type level but throws at
+  runtime for now. Lands with the buffer-as-window Tier 1 PR.
+- **`TimeSeries.rolling` snapshot-side parity.** The keyed-form
+  overload is live-side only in v0.15.0; batch-side comes in a
+  follow-up.
+- **Path A (share `LiveSeries` buffer).** Currently Path B (own
+  deque) — fused rolling subscribes via `'event'` and maintains
+  its own per-partition deque. Path A is a transparent perf
+  follow-up; same API.
+- **Compile-time uniqueness check on output columns.** Runtime
+  check is in place; the type-level `CheckUniqueOutputs` helper
+  is parked as a follow-up. Same with tightening `DurationString`
+  to reject `'1min'`-style typos at the type level (today's
+  template-literal type is permissive; runtime `parseDuration`
+  catches malformed durations).
+
+### Migration
+
+Existing `live.rolling(window, mapping, opts)` calls are
+unchanged. The keyed form is opt-in and additive. Two-rolling
+patterns can migrate by collapsing to one fused call:
+
+```ts
+// Before:
+const baseline = byHost.rolling('1m', m1, { trigger });
+const slice = byHost.rolling('200ms', m2, { trigger });
+// Then a per-(ts, host) join over both event streams …
+
+// After:
+const fused = byHost.rolling({ '1m': m1, '200ms': m2 }, { trigger });
+fused.on('event', (e) => {
+  // All columns from both windows on one event.
+});
+```
+
+[0.15.0]: https://github.com/pjm17971/pond-ts/compare/v0.14.3...v0.15.0
 
 ## [0.14.3] — 2026-05-04
 

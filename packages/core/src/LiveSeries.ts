@@ -53,6 +53,11 @@ import type {
   AggregateOutputMapResultSchema,
   RollingOutputMapSchema,
 } from './types-aggregate.js';
+import { LiveFusedRolling } from './LiveFusedRolling.js';
+import type {
+  FusedMapping,
+  FusedRollingSchema,
+} from './types-fused-rolling.js';
 
 import type { DurationInput } from './utils/duration.js';
 import { parseDuration } from './utils/duration.js';
@@ -584,12 +589,53 @@ export class LiveSeries<S extends SeriesSchema> {
     mapping: M,
     options?: LiveRollingOptions,
   ): LiveRollingAggregation<S, RollingOutputMapSchema<S, M>>;
-  rolling(
-    window: RollingWindow,
-    mapping: AggregateMap<S> | AggregateOutputMap<S>,
+  /**
+   * Keyed-form fused multi-window rolling. Maintains N windows in
+   * one ingest pass over a single shared deque; emits one merged
+   * event per trigger boundary with all windows' columns
+   * concatenated.
+   *
+   * **Use this form when** declaring multiple time-windows over the
+   * same source — `{ '1m': statsMapping, '200ms': samplesMapping }`.
+   * Single-window cases keep using the `(window, mapping, opts)`
+   * shape — both are equivalent for one window, but the legacy
+   * shape is clearer.
+   *
+   * **Constraints:** time-based windows only (object keys are
+   * duration strings); per-window cadence is not supported (single
+   * trigger applies to all windows; users wanting per-window
+   * cadence fall back to two separate `rolling()` calls). See
+   * PLAN.md "Fused multi-window rolling" for the full rationale.
+   */
+  rolling<const FM extends FusedMapping<S>>(
+    fusedMapping: FM,
     options?: LiveRollingOptions,
-  ): LiveRollingAggregation<S> {
-    return new LiveRollingAggregation(this, window, mapping, options);
+  ): LiveFusedRolling<S, FusedRollingSchema<S, FM>>;
+  rolling(
+    arg1: RollingWindow | FusedMapping<S>,
+    mappingOrOptions?:
+      | AggregateMap<S>
+      | AggregateOutputMap<S>
+      | LiveRollingOptions,
+    options?: LiveRollingOptions,
+  ): any {
+    // Dispatch on first-arg shape: a RollingWindow is a string
+    // (duration) or number (count); a FusedMapping is a plain object
+    // (record). The single-window legacy path goes to
+    // LiveRollingAggregation; the keyed form to LiveFusedRolling.
+    if (typeof arg1 === 'object' && arg1 !== null && !Array.isArray(arg1)) {
+      return new LiveFusedRolling(
+        this,
+        arg1 as FusedMapping<S>,
+        mappingOrOptions as LiveRollingOptions | undefined,
+      );
+    }
+    return new LiveRollingAggregation(
+      this,
+      arg1 as RollingWindow,
+      mappingOrOptions as AggregateMap<S> | AggregateOutputMap<S>,
+      options,
+    );
   }
 
   diff<const Target extends NumericColumnNameForSchema<S>>(

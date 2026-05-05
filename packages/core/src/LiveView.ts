@@ -5,6 +5,7 @@ import {
   type LiveRollingOptions,
   type RollingWindow,
 } from './LiveRollingAggregation.js';
+import { LiveFusedRolling } from './LiveFusedRolling.js';
 import { TimeSeries } from './TimeSeries.js';
 import type { Sequence } from './Sequence.js';
 import {
@@ -28,6 +29,10 @@ import type {
   AggregateOutputMapResultSchema,
   RollingOutputMapSchema,
 } from './types-aggregate.js';
+import type {
+  FusedMapping,
+  FusedRollingSchema,
+} from './types-fused-rolling.js';
 
 export type LiveFillStrategy = 'hold' | 'zero';
 
@@ -273,12 +278,37 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     mapping: M,
     options?: LiveRollingOptions,
   ): LiveRollingAggregation<S, RollingOutputMapSchema<S, M>>;
-  rolling(
-    window: RollingWindow,
-    mapping: AggregateMap<S> | AggregateOutputMap<S>,
+  /**
+   * Keyed-form fused multi-window rolling on a `LiveView`. See
+   * {@link LiveSeries.rolling} for the full surface — chained-from-
+   * a-view behavior is identical to the same call on a top-level
+   * `LiveSeries`.
+   */
+  rolling<const FM extends FusedMapping<S>>(
+    fusedMapping: FM,
     options?: LiveRollingOptions,
-  ): LiveRollingAggregation<S> {
-    return new LiveRollingAggregation(this, window, mapping, options);
+  ): LiveFusedRolling<S, FusedRollingSchema<S, FM>>;
+  rolling(
+    arg1: RollingWindow | FusedMapping<S>,
+    mappingOrOptions?:
+      | AggregateMap<S>
+      | AggregateOutputMap<S>
+      | LiveRollingOptions,
+    options?: LiveRollingOptions,
+  ): any {
+    if (typeof arg1 === 'object' && arg1 !== null && !Array.isArray(arg1)) {
+      return new LiveFusedRolling(
+        this,
+        arg1 as FusedMapping<S>,
+        mappingOrOptions as LiveRollingOptions | undefined,
+      );
+    }
+    return new LiveRollingAggregation(
+      this,
+      arg1 as RollingWindow,
+      mappingOrOptions as AggregateMap<S> | AggregateOutputMap<S>,
+      options,
+    );
   }
 
   diff<const Target extends NumericColumnNameForSchema<S>>(

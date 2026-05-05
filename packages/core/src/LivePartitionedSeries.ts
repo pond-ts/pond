@@ -1,6 +1,7 @@
 import { LiveSeries, type LiveSeriesOptions } from './LiveSeries.js';
 import { LiveRollingAggregation } from './LiveRollingAggregation.js';
 import { LivePartitionedSyncRolling } from './LivePartitionedSyncRolling.js';
+import { LivePartitionedFusedRolling } from './LivePartitionedFusedRolling.js';
 import {
   makeCumulativeView,
   makeDiffView,
@@ -22,11 +23,27 @@ import {
   type SeriesSchema,
 } from './types.js';
 import type { RollingOutputMapSchema } from './types-aggregate.js';
+import type {
+  FusedMapping,
+  FusedPartitionedRollingSchema,
+} from './types-fused-rolling.js';
 import type { DurationInput } from './utils/duration.js';
 import type {
   LiveRollingOptions,
   RollingWindow,
 } from './LiveRollingAggregation.js';
+
+/**
+ * Structural target for `#wireSyncRolling` — both
+ * {@link LivePartitionedSyncRolling} and
+ * {@link LivePartitionedFusedRolling} implement this shape, so the
+ * wiring code (cross-partition replay + per-partition subscription
+ * + spawn handling) is shared between them.
+ */
+type SyncRollingIngestTarget<R extends SeriesSchema, K extends string> = {
+  ingest(key: K, event: EventForSchema<R>): void;
+  _registerUnsubscribe(unsub: () => void): void;
+};
 
 type SpawnListener<S extends SeriesSchema, K extends string> = (
   key: K,
@@ -550,11 +567,87 @@ export class LivePartitionedSeries<
   ):
     | LivePartitionedView<S, RollingOutputMapSchema<S, M>, K>
     | LiveSource<SeriesSchema>;
+  /**
+   * Keyed-form fused multi-window partitioned rolling. Maintains N
+   * windows per partition in a single ingest pass over a single
+   * shared deque per partition; emits one merged event per partition
+   * per trigger boundary.
+   *
+   * **Clock trigger required.** The fused form on partitioned series
+   * is synced-cross-partition by design — single trigger, single
+   * boundary detection, single fan-out per boundary. Event/count
+   * triggers don't make sense for cross-partition synced emission
+   * and are not accepted.
+   *
+   * Output schema is `[time, <byColumn>, ...mergedColumns]` —
+   * partition column auto-injected once at the front, never per-
+   * window. Duplicate output column names across windows are
+   * rejected at construction.
+   *
+   * See PLAN.md "Fused multi-window rolling" for the full design.
+   */
+  rolling<const FM extends FusedMapping<S>>(
+    fusedMapping: FM,
+    options: LiveRollingOptions & { trigger: { kind: 'clock' } & Trigger },
+  ): LiveSource<FusedPartitionedRollingSchema<S, K & string, FM>>;
   rolling(
-    window: RollingWindow,
-    mapping: AggregateMap<S> | AggregateOutputMap<S>,
+    arg1: RollingWindow | FusedMapping<S>,
+    mappingOrOptions?:
+      | AggregateMap<S>
+      | AggregateOutputMap<S>
+      | LiveRollingOptions,
     options?: LiveRollingOptions,
   ): any {
+    // Detect the keyed-form fused-rolling shape: arg1 is a record
+    // (not a string/number duration), mappingOrOptions is the
+    // options. Single-trigger by design; clock trigger required.
+    const isFused =
+      typeof arg1 === 'object' && arg1 !== null && !Array.isArray(arg1);
+    if (isFused) {
+      const fusedMapping = arg1 as FusedMapping<S>;
+      const fusedOptions = (mappingOrOptions ?? {}) as LiveRollingOptions;
+      if (fusedOptions.trigger?.kind !== 'clock') {
+        throw new TypeError(
+          `LivePartitionedSeries.rolling: keyed-form fused rolling requires a ` +
+            `clock trigger (e.g. \`{ trigger: Trigger.every('30s') }\`). ` +
+            `Event/count triggers don't make sense for cross-partition synced ` +
+            `emission.`,
+        );
+      }
+      const syncOptions: {
+        minSamples?: number;
+        declaredGroups?: ReadonlyArray<K>;
+      } = {};
+      if (fusedOptions.minSamples !== undefined)
+        syncOptions.minSamples = fusedOptions.minSamples;
+      if (this.groups !== undefined) syncOptions.declaredGroups = this.groups;
+      const byCol = this.schema.find((c) => c.name === this.by);
+      if (!byCol) {
+        throw new TypeError(
+          `LivePartitionedSeries.rolling: column '${this.by}' not in source schema`,
+        );
+      }
+      const fused = new LivePartitionedFusedRolling<S, K, SeriesSchema>(
+        this.name,
+        this.by,
+        byCol.kind,
+        this.schema,
+        fusedMapping as FusedMapping<SeriesSchema>,
+        fusedOptions.trigger,
+        syncOptions,
+      );
+      this.#wireSyncRolling(
+        fused,
+        (partition) => partition,
+        /* ownsFactoryOutput */ false,
+      );
+      return fused;
+    }
+
+    // Single-window legacy form: (window, mapping, options).
+    const window = arg1 as RollingWindow;
+    const mapping = mappingOrOptions as AggregateMap<S> | AggregateOutputMap<S>;
+
     // Clock trigger → synchronised partitioned emission. Returns a
     // LiveSource<RowSchema> directly (no LivePartitionedView wrap)
     // because the output is already a flat per-partition-row stream;
@@ -686,7 +779,7 @@ export class LivePartitionedSeries<
    * series, not by the sync rolling.
    */
   #wireSyncRolling<R extends SeriesSchema>(
-    sync: LivePartitionedSyncRolling<R, K, SeriesSchema>,
+    sync: SyncRollingIngestTarget<R, K>,
     factory: (partition: LiveSeries<S>) => LiveSource<R>,
     ownsFactoryOutput: boolean,
   ): void {
@@ -761,7 +854,7 @@ export class LivePartitionedSeries<
    * its own upstream subscription that must be torn down on dispose.
    */
   _wireSyncRollingFromView<R extends SeriesSchema>(
-    sync: LivePartitionedSyncRolling<R, K, SeriesSchema>,
+    sync: SyncRollingIngestTarget<R, K>,
     factory: (partition: LiveSeries<S>) => LiveSource<R>,
   ): void {
     this.#wireSyncRolling(sync, factory, /* ownsFactoryOutput */ true);
@@ -1055,11 +1148,76 @@ export class LivePartitionedView<
   ):
     | LivePartitionedView<SBase, RollingOutputMapSchema<R, M>, K>
     | LiveSource<SeriesSchema>;
+  /**
+   * Keyed-form fused multi-window rolling on a chained
+   * `LivePartitionedView`. Same shape as the root variant — each
+   * partition's chain output flows into one fused rolling that
+   * maintains N windows in one ingest pass and emits one merged
+   * event per partition per boundary.
+   *
+   * Clock trigger required (same constraint as the root partitioned
+   * fused — synced cross-partition emission).
+   */
+  rolling<const FM extends FusedMapping<R>>(
+    fusedMapping: FM,
+    options: LiveRollingOptions & { trigger: { kind: 'clock' } & Trigger },
+  ): LiveSource<FusedPartitionedRollingSchema<R, K & string, FM>>;
   rolling(
-    window: RollingWindow,
-    mapping: AggregateMap<R> | AggregateOutputMap<R>,
+    arg1: RollingWindow | FusedMapping<R>,
+    mappingOrOptions?:
+      | AggregateMap<R>
+      | AggregateOutputMap<R>
+      | LiveRollingOptions,
     options?: LiveRollingOptions,
   ): any {
+    // Detect the keyed-form fused-rolling shape: arg1 is a record,
+    // mappingOrOptions is the options. Same dispatch as the root.
+    const isFused =
+      typeof arg1 === 'object' && arg1 !== null && !Array.isArray(arg1);
+    if (isFused) {
+      const root = this.#root;
+      const fusedMapping = arg1 as FusedMapping<R>;
+      const fusedOptions = (mappingOrOptions ?? {}) as LiveRollingOptions;
+      if (fusedOptions.trigger?.kind !== 'clock') {
+        throw new TypeError(
+          `LivePartitionedView.rolling: keyed-form fused rolling requires a ` +
+            `clock trigger (e.g. \`{ trigger: Trigger.every('30s') }\`). ` +
+            `Event/count triggers don't make sense for cross-partition synced ` +
+            `emission.`,
+        );
+      }
+      const byCol = root.schema.find((c) => c.name === root.by);
+      if (!byCol) {
+        throw new TypeError(
+          `LivePartitionedView.rolling: column '${root.by}' not in source schema`,
+        );
+      }
+      const syncOptions: {
+        minSamples?: number;
+        declaredGroups?: ReadonlyArray<K>;
+      } = {};
+      if (fusedOptions.minSamples !== undefined)
+        syncOptions.minSamples = fusedOptions.minSamples;
+      if (root.groups !== undefined) syncOptions.declaredGroups = root.groups;
+
+      const fused = new LivePartitionedFusedRolling<R, K, SeriesSchema>(
+        root.name,
+        root.by,
+        byCol.kind,
+        this.schema,
+        fusedMapping as FusedMapping<SeriesSchema>,
+        fusedOptions.trigger,
+        syncOptions,
+      );
+      const chainFactory = this.#factory;
+      root._wireSyncRollingFromView(fused, chainFactory);
+      return fused;
+    }
+
+    // Single-window legacy form: (window, mapping, options).
+    const window = arg1 as RollingWindow;
+    const mapping = mappingOrOptions as AggregateMap<R> | AggregateOutputMap<R>;
+
     // Clock trigger → synchronised partitioned emission on the chain
     // output. The chain factory runs once per partition; the sync
     // rolling subscribes to each chain output's events (so reducers

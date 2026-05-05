@@ -1725,12 +1725,53 @@ useLiveQuery(timings, () => rolling.value());
   semantics across partitions are ambiguous (per-partition? global?)
   and there's no killer use case for either.
 
-- **Fused multi-window rolling + buffer-as-window unification
-  (consolidated 2026-05-05; refined by gRPC RFC #20 same day).**
-  Two independent signals merged into one design. Tap-by-itself
-  was overfitting to the gRPC use case; the fused form covers
-  both gRPC and the buffer-as-window persona without hierarchy
-  bookkeeping.
+- **Fused multi-window rolling — SHIPPED v0.15.0 (2026-05-05).**
+  The keyed-form `live.rolling({ '1m': m1, '200ms': m2 }, opts)`
+  primitive is live on `LiveSeries`, `LiveView`, and
+  `LivePartitionedSeries` — a single ingest pass over a shared
+  deque, single trigger, one merged output event per boundary.
+  Two new classes (`LiveFusedRolling`,
+  `LivePartitionedFusedRolling`); type-level surface
+  (`FusedMapping`, `FusedRollingSchema`,
+  `FusedPartitionedRollingSchema`, `DurationString`) exported.
+
+  Bench against gRPC RFC #20 acceptance criteria
+  (`packages/core/scripts/perf-fused-rolling.mjs`):
+  - Partitioned 100 hosts, 100k events: fused vs two-rollings =
+    **−27.9% wall, −29.0% heap**.
+  - Partitioned 1000 hosts saturation: **−31.8% wall, −44.5% heap**.
+  - Fused vs single-rolling baseline: +16.8% wall, +4.0% heap
+    (the small constant overhead of an extra window's reducer
+    state).
+
+  The architectural cliff is closed; gRPC experiment can migrate
+  V7 → V8 with one ingest pass. Test surface: 24 runtime tests
+  (single-window equivalence + multi-window + partitioned + types)
+  - type-d block. All pass; full suite green at 1111 + 55.
+
+  **Deferred to follow-ups (logged here for the future-reader):**
+  - **`live.reduce(mapping)` sugar.** `'buffer'` sentinel is in
+    the type but throws at runtime. Lands with the buffer-as-
+    window Tier 1 PR.
+  - **`TimeSeries.rolling` snapshot-side parity.** Live-side only
+    in v0.15.0.
+  - **Path A** (share `LiveSeries` buffer when `longest_window ≤
+retention`). Currently Path B (own deque); same API, perf
+    follow-up.
+  - **Compile-time uniqueness check** on output columns. Runtime
+    check is in place; the type-level branded-error helper is
+    parked.
+  - **Tighter `DurationString` template-literal type.** Today's
+    is permissive (`'1min'` may pass); runtime `parseDuration`
+    catches it. Tightening is a follow-up.
+
+  ***
+
+  **Original design rationale (preserved for the historical
+  record):** Two independent signals merged into one design. Tap-
+  by-itself was overfitting to the gRPC use case; the fused form
+  covers both gRPC and the buffer-as-window persona without
+  hierarchy bookkeeping.
 
   **The two signals:**
   1. **gRPC profile-diff (PR #19, 2026-05-05).** Profile-grade
