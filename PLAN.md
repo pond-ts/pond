@@ -1749,10 +1749,29 @@ useLiveQuery(timings, () => rolling.value());
   (single-window equivalence + multi-window + partitioned + types)
   - type-d block. All pass; full suite green at 1111 + 55.
 
+  **Validated by gRPC experiment V8 (pond-grpc-experiment#22,
+  2026-05-05).** Same-day migration; V8 is a **strict improvement
+  over V6 across every measured load point** — not just a V7
+  recovery:
+
+  | Config           | V6 heap | V7 heap | V8 heap | V8 vs V6 |
+  | ---------------- | ------- | ------- | ------- | -------- |
+  | 9k/s             | 161 MB  | 147 MB  | 132 MB  | **−18%** |
+  | 87k/s            | 1617 MB | 1886 MB | 1217 MB | **−25%** |
+  | 92k/s × 1k hosts | 1379 MB | 1426 MB | 1263 MB | **−8%**  |
+  | Ceiling tput     | 258k/s  | 209k/s  | 284k/s  | **+10%** |
+
+  All three RFC #20 acceptance criteria met and surpassed.
+  End-to-end p99 latency at 87k/s: **0.71ms (V7) → 0.16ms (V8)**
+  — 4.4× improvement, the shared per-event ingest doing
+  measurable work. This closes the architectural cliff the V6→V7
+  profile-diff exposed.
+
   **Deferred to follow-ups (logged here for the future-reader):**
   - **`live.reduce(mapping)` sugar.** `'buffer'` sentinel is in
     the type but throws at runtime. Lands with the buffer-as-
-    window Tier 1 PR.
+    window Tier 1 PR. (gRPC V8 noticed the sentinel-in-types
+    surprise — confirmed as known gap.)
   - **`TimeSeries.rolling` snapshot-side parity.** Live-side only
     in v0.15.0.
   - **Path A** (share `LiveSeries` buffer when `longest_window ≤
@@ -1764,6 +1783,32 @@ retention`). Currently Path B (own deque); same API, perf
   - **Tighter `DurationString` template-literal type.** Today's
     is permissive (`'1min'` may pass); runtime `parseDuration`
     catches it. Tightening is a follow-up.
+  - **`partitionBy` partition-column literal narrowing** (newly
+    exposed, logged 2026-05-05). gRPC V8 found that
+    `live.partitionBy('host').rolling({...})` widens the
+    partition-column type, breaking the `SeriesSchema` constraint
+    on `FusedPartitionedRollingSchema<S, ByCol, FM>`. Workaround:
+    `live.partitionBy<'host'>('host')` — abuses the value-type
+    parameter K to fill the column-name slot. Pre-existing
+    pond limitation, exposed by the fused-rolling typing chain.
+
+    Fix: add a column-name type parameter to `partitionBy` /
+    `LivePartitionedSeries` / `LivePartitionedView` that's
+    inferred from the `by` argument:
+
+    ```ts
+    partitionBy<
+      ByCol extends keyof EventDataForSchema<S> & string,
+      K extends string = string,
+    >(by: ByCol, opts?: ...): LivePartitionedSeries<S, K, ByCol>
+    ```
+
+    Then `FusedPartitionedRollingSchema<S, ByCol, FM>` resolves
+    correctly without the workaround. ~50-80 lines of type-only
+    changes across `LivePartitionedSeries.ts` (class generic +
+    method signatures + `LivePartitionedView`). Mechanical but
+    touches many sites. **Not blocking V8.** Schedule alongside
+    the next type-narrowing pass.
 
   ***
 
