@@ -1767,6 +1767,20 @@ useLiveQuery(timings, () => rolling.value());
   measurable work. This closes the architectural cliff the V6→V7
   profile-diff exposed.
 
+  **Second validation axis — reducer cardinality
+  (pond-grpc-experiment#25, M3.5 step 5).** The first axis
+  (N windows) was pinned by pond's bench at N=2..5 (constant
+  ~100ms wall, win compounding). Step 5 added three more
+  reducers (`requests_avg`/`sum`/`count`) to the same 1m window
+  in the gRPC aggregator — same window, +75% reducer count.
+  Cost: **+5-11% heap, −3% throughput** (4 → 7 reducers); still
+  beats V6 baseline at most load points despite doing 2× the
+  reducer work. Confirms that adding reducers within an existing
+  window doesn't add per-event pipeline overhead — only the
+  unavoidable per-reducer state work, which separate rollings
+  pay too. Both axes (window count + reducer cardinality) of the
+  primitive's compose-for-free claim are now empirically grounded.
+
   **Deferred to follow-ups (logged here for the future-reader):**
   - **`live.reduce(mapping)` sugar.** `'buffer'` sentinel is in
     the type but throws at runtime. Lands with the buffer-as-
