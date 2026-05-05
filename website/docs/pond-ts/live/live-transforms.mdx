@@ -467,6 +467,124 @@ For the full reference (parameters, emission semantics, trigger ×
 partition matrix, sync-rolling restrictions, migration from
 pre-v0.12 `.sample()`), see [Triggering](./triggering).
 
+## Multi-window rolling: many windows, one ingest \{#multi-window\}
+
+When the use case wants **several trailing windows over the same
+source** (e.g. a 1-minute baseline of `avg`/`stdev` plus a 200-ms
+current-tick window of raw samples for anomaly detection), pass a
+keyed record of mappings to `live.rolling`:
+
+```ts
+import { LiveSeries, Trigger } from 'pond-ts';
+
+const live = new LiveSeries({ name: 'cpu', schema });
+
+const fused = live.rolling(
+  {
+    '1m': {
+      cpu_avg: { from: 'cpu', using: 'avg' },
+      cpu_sd: { from: 'cpu', using: 'stdev' },
+    },
+    '200ms': { cpu_samples: { from: 'cpu', using: 'samples' } },
+  },
+  { trigger: Trigger.every('200ms') },
+);
+
+fused.on('event', (event) => {
+  // All four columns from both windows on a single event.
+  const samples = event.get('cpu_samples') as ReadonlyArray<number>;
+  const z = samples.map(
+    (s) => (s - event.get('cpu_avg')) / event.get('cpu_sd'),
+  );
+  // anomaly density, threshold counting, etc.
+});
+```
+
+Conceptually equivalent to declaring two `live.rolling(...)` calls
+over the same source plus a per-`(ts, key)` join — but **one ingest
+pass** updates all windows' reducer state, **one merged event** is
+emitted per trigger fire, and the consumer code is one event handler.
+
+### Properties
+
+- **Single trigger across all windows by design.** Per-window
+  cadence is rare; users who need it fall back to two separate
+  `rolling()` calls (paying the per-event pipeline cost twice).
+- **Time-based windows only.** Object keys are duration strings
+  (`'1m'`, `'200ms'`, `'5s'`); count-based windows
+  (`live.rolling(100, ...)`) stay on the single-window form.
+- **Duplicate output column names** across windows are rejected at
+  construction. Each column name appears once in the merged
+  schema.
+- **Single-window equivalence.** `live.rolling('1m', m, opts)` and
+  `live.rolling({ '1m': m }, opts)` produce identical output.
+
+### Per-window options
+
+When one window needs different options from the rest (`minSamples`,
+e.g.), the value form switches from a bare mapping to an
+elaborated `{ mapping, minSamples }` wrapper:
+
+```ts
+live.rolling(
+  {
+    '1m': { cpu_avg: { from: 'cpu', using: 'avg' } },
+    '200ms': {
+      mapping: { cpu_samples: { from: 'cpu', using: 'samples' } },
+      minSamples: 5, // per-window override
+    },
+  },
+  { trigger, minSamples: 2 }, // top-level default
+);
+```
+
+Top-level options apply as defaults across all windows; per-window
+elaborated `minSamples` overrides for that window.
+
+### Partitioned variant
+
+The same form composes with `partitionBy(...)` — and through
+chained pipelines like `partitionBy(...).fill(...).rolling({...})`:
+
+```ts
+const fused = live
+  .partitionBy('host')
+  .fill({ cpu: 'hold' })
+  .rolling(
+    {
+      '1m': { cpu_avg: { from: 'cpu', using: 'avg' } },
+      '200ms': { cpu_samples: { from: 'cpu', using: 'samples' } },
+    },
+    { trigger: Trigger.every('200ms') },
+  );
+// One merged event per partition per boundary; partition column
+// auto-injected at the front of the schema.
+```
+
+On the partitioned form, **clock trigger is required** — synced
+cross-partition emission needs a single shared boundary detector.
+
+### As a LiveSource
+
+Like `LiveRollingAggregation`, multi-window rolling implements the
+`LiveSource<Out>` contract — `length`, `at(i)`, `on('event', fn)`,
+`dispose()`. Output buffer grows unbounded; compose with
+`.window(duration)` for a bounded read-side view.
+
+### Performance characteristics
+
+The architectural win is that per-event pipeline overhead
+(`#routeEvent`, `_pushTrustedEvents`, `ingest`) runs once
+regardless of N windows; only per-window reducer-state updates
+remain O(N) — and separate rollings pay that same cost. At N=5
+windows over 100k events × 100 hosts, multi-window is **2.4×
+faster** and uses **34% of the heap** of N separate rollings. See
+[Rolling → Performance](../transforms/rolling#multi-window) for
+the full bench table.
+
+For the conceptual framing alongside the other windowing modes,
+see [Windowing](../../start-here/concepts/windowing#multi-window-rolling-live).
+
 ## Per-event transforms: diff, rate, pctChange
 
 These methods compute per-event deltas by comparing consecutive events. Each

@@ -26,16 +26,16 @@ narrows column shapes correctly without `as` casts.
 
 ## Core primitives
 
-| Primitive          | What it is                                              | Page                                    |
-| ------------------ | ------------------------------------------------------- | --------------------------------------- |
-| **Temporal keys**  | `Time` / `TimeRange` / `Interval` — points and spans on the timeline | [Temporal keys](./temporal-keys)        |
-| **Sequences**      | Grid definitions (fixed-step / calendar / bounded)      | [Sequences](./sequences)                |
-| **Series**         | `TimeSeries` (batch) and `LiveSeries` (streaming) — peers | [Series](./series)                      |
+| Primitive              | What it is                                                             | Page                                       |
+| ---------------------- | ---------------------------------------------------------------------- | ------------------------------------------ |
+| **Temporal keys**      | `Time` / `TimeRange` / `Interval` — points and spans on the timeline   | [Temporal keys](./temporal-keys)           |
+| **Sequences**          | Grid definitions (fixed-step / calendar / bounded)                     | [Sequences](./sequences)                   |
+| **Series**             | `TimeSeries` (batch) and `LiveSeries` (streaming) — peers              | [Series](./series)                         |
 | **Temporal relations** | `within` / `overlapping` / `trim`; `tail`, `first`, `last` as concepts | [Temporal relations](./temporal-relations) |
-| **Windowing**      | Full / fixed / rolling / streaming-rolling — four modes | [Windowing](./windowing)                |
-| **Triggers**       | When live aggregations emit (`event` / `every` / `count`) | [Triggers](./triggers)                  |
-| **Partitioning**   | Per-entity scope: split, operate, fan in                | [Partitioning](./partitioning)          |
-| **Late data**      | "Data is the clock"; ordering modes; grace windows      | [Late data](./late-data)                |
+| **Windowing**          | Full / fixed / rolling / streaming-rolling / multi-window — five modes | [Windowing](./windowing)                   |
+| **Triggers**           | When live aggregations emit (`event` / `every` / `count`)              | [Triggers](./triggers)                     |
+| **Partitioning**       | Per-entity scope: split, operate, fan in                               | [Partitioning](./partitioning)             |
+| **Late data**          | "Data is the clock"; ordering modes; grace windows                     | [Late data](./late-data)                   |
 
 Read the pages reference-style — definitional, no walkthroughs. The
 operator pages assume the vocabulary these introduce.
@@ -56,17 +56,17 @@ dive on bucketing.
 
 ## Coming from pondjs?
 
-| pondjs                   | pond-ts                                              |
-| ------------------------ | ---------------------------------------------------- |
-| `TimeSeries` (sorted)    | `TimeSeries` (1:1 conceptually; methods differ)      |
+| pondjs                   | pond-ts                                                |
+| ------------------------ | ------------------------------------------------------ |
+| `TimeSeries` (sorted)    | `TimeSeries` (1:1 conceptually; methods differ)        |
 | `Collection` (unordered) | `TimeSeries` — pond-ts only exposes the sorted variant |
-| `IndexedEvent`           | `Event<Interval>`                                    |
-| `TimeRangeEvent`         | `Event<TimeRange>`                                   |
-| `Pipeline` + processors  | method chain on `TimeSeries`                         |
-| `Pond` / `Aggregator`    | batch `aggregate()` or `LiveAggregation`             |
+| `IndexedEvent`           | `Event<Interval>`                                      |
+| `TimeRangeEvent`         | `Event<TimeRange>`                                     |
+| `Pipeline` + processors  | method chain on `TimeSeries`                           |
+| `Pond` / `Aggregator`    | batch `aggregate()` or `LiveAggregation`               |
 
 Pond-ts deliberately drops the `Collection` / `TimeSeries`
-distinction. A bucket *is* a smaller `TimeSeries`, so anything that
+distinction. A bucket _is_ a smaller `TimeSeries`, so anything that
 works on a series works on a bucket — same API, no second primitive
 to learn.
 

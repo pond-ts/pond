@@ -236,3 +236,140 @@ sync partitioned rolling, migration from `.sample()`), see
 [Triggering](../live/triggering). The
 [Telemetry reporting recipe](../../recipes/telemetry-reporting) is
 the end-to-end worked example.
+
+## Multi-window rolling \{#multi-window\}
+
+When a use case needs **several trailing windows over the same
+source** — a 1-minute baseline of `avg`/`stdev` plus a 200-ms
+current-tick window of raw samples for anomaly detection, say —
+pass a record-of-mappings instead of a single `(window, mapping)`
+pair:
+
+```ts
+const fused = live.rolling(
+  {
+    '1m': {
+      cpu_avg: { from: 'cpu', using: 'avg' },
+      cpu_sd: { from: 'cpu', using: 'stdev' },
+    },
+    '200ms': { cpu_samples: { from: 'cpu', using: 'samples' } },
+  },
+  { trigger: Trigger.every('200ms') },
+);
+
+fused.on('event', (e) => {
+  // All four columns from both windows on a single event.
+  const samples = e.get('cpu_samples') as ReadonlyArray<number>;
+  const z = samples.map((s) => (s - e.get('cpu_avg')) / e.get('cpu_sd'));
+  // …
+});
+```
+
+This is one rolling primitive that maintains all declared windows
+in one ingest pass over a single shared deque, then emits one
+**merged event** per trigger fire with all windows' columns
+concatenated into one record.
+
+The naive way before this primitive existed — two separate
+`rolling()` calls plus a per-`(ts, key)` join — works but pays
+every per-event pipeline cost twice (and N times for N windows).
+The keyed form does the per-event work once.
+
+### Properties
+
+- **One merged output stream.** All columns from all windows
+  arrive on a single event. Consumer code is one event handler,
+  not a multi-stream join.
+- **Single trigger across all windows.** Per-window cadence is
+  not supported — that's what the fusion saves. Users who need
+  different cadences per window fall back to two separate
+  `rolling()` calls.
+- **Time-based windows only.** Object keys are duration strings
+  (`'1m'`, `'200ms'`, `'5s'`); count-based windows
+  (`live.rolling(100, ...)`) stay on the single-window form and
+  aren't mixable here.
+- **Duplicate output column names** across windows are rejected
+  at construction.
+- **Single-window equivalence.** `live.rolling('1m', m, opts)` and
+  `live.rolling({ '1m': m }, opts)` are semantically identical —
+  pinned by tests so the unification is incomplete the moment it
+  diverges.
+
+### Per-window options
+
+When one window needs different options from the rest (`minSamples`,
+e.g.), the value form switches from a bare mapping to an
+elaborated wrapper:
+
+```ts
+live.rolling(
+  {
+    '1m': { cpu_avg: { from: 'cpu', using: 'avg' } },
+    '200ms': {
+      mapping: { cpu_samples: { from: 'cpu', using: 'samples' } },
+      minSamples: 5, // per-window override
+    },
+  },
+  { trigger, minSamples: 2 }, // top-level default
+);
+```
+
+Top-level options apply as the default across all windows;
+per-window elaborated `minSamples` overrides for that window.
+
+### Partitioned variant
+
+The same form composes with `partitionBy(...)` and works through
+chained pipelines:
+
+```ts
+const fused = live
+  .partitionBy('host')
+  .fill({ cpu: 'hold' })
+  .rolling(
+    {
+      '1m': { cpu_avg: { from: 'cpu', using: 'avg' } },
+      '200ms': { cpu_samples: { from: 'cpu', using: 'samples' } },
+    },
+    { trigger: Trigger.every('200ms') },
+  );
+// One merged event per partition per boundary; partition column
+// auto-injected at the front of the schema.
+```
+
+On the partitioned form, **clock trigger is required** — synced
+cross-partition emission needs a single shared boundary detector.
+
+### Performance
+
+The architectural argument: per-event hops run once vs N times in
+N separate rollings. Bench numbers from
+`packages/core/scripts/perf-fused-rolling.mjs`:
+
+| Windows | Separate (ms) | Multi-window (ms) | Wall delta | Heap delta |
+| ------- | ------------- | ----------------- | ---------- | ---------- |
+| 2       | 152.91        | 102.91            | −33%       | −33%       |
+| 3       | 186.63        | 79.89             | −57%       | −54%       |
+| 4       | 245.42        | 107.51            | −56%       | −58%       |
+| 5       | 279.79        | 118.90            | −58%       | −66%       |
+
+100k events × 100 hosts at each N. Multi-window stays roughly
+constant; separate scales linearly. At N=5, multi-window is 2.4×
+faster and uses 34% of the heap. The win compounds — fused
+pipeline overhead is O(1) in the number of windows; per-window
+reducer state remains O(N) (which separate also pays).
+
+### When to use multi-window vs separate rollings
+
+- **Multi-window** when several windows naturally emit together —
+  baseline + current tick, day + hour summaries, etc. The shared
+  ingest pass is the win, and the merged output is the
+  ergonomic win.
+- **Separate rollings** when the windows have _different cadences_
+  (one fires every 30s, the other every 200ms), or when you only
+  need one of the windows in a given consumer (you're not paying
+  for the unused one's reducer state).
+
+See [Windowing → Multi-window rolling
+(live)](../../start-here/concepts/windowing#multi-window-rolling-live)
+for the conceptual framing.

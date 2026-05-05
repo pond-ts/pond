@@ -16,19 +16,19 @@ also slot into
 Quick guide — skip ahead to the detailed sections when you know what
 you want:
 
-| You want…                                              | Reducer                                               |
-| ------------------------------------------------------ | ----------------------------------------------------- |
-| Running total or counter                               | [`sum`](#sum), [`count`](#count)                      |
-| Central tendency                                       | [`avg`](#avg), [`median`](#median)                    |
-| Spread / volatility                                    | [`stdev`](#stdev), [`difference`](#difference)        |
-| Extremes                                               | [`min`](#min), [`max`](#max)                          |
-| Tail behavior                                          | [`p95`, `p99`, `p99.9`](#percentiles-p0-through-p100) |
-| First or last seen                                     | [`first`](#first), [`last`](#last)                    |
-| Constant metadata column (e.g. `host` after bucketing) | [`keep`](#keep)                                       |
-| Distinct values in a bucket                            | [`unique`](#unique)                                   |
-| Most-frequent values                                   | [`top(n)`](#topn--topnumber)                          |
-| All values (with duplicates, for downstream computation) | [`samples`](#samples)                               |
-| None of the above                                      | [Custom reducer function](#custom-reducers)           |
+| You want…                                                | Reducer                                               |
+| -------------------------------------------------------- | ----------------------------------------------------- |
+| Running total or counter                                 | [`sum`](#sum), [`count`](#count)                      |
+| Central tendency                                         | [`avg`](#avg), [`median`](#median)                    |
+| Spread / volatility                                      | [`stdev`](#stdev), [`difference`](#difference)        |
+| Extremes                                                 | [`min`](#min), [`max`](#max)                          |
+| Tail behavior                                            | [`p95`, `p99`, `p99.9`](#percentiles-p0-through-p100) |
+| First or last seen                                       | [`first`](#first), [`last`](#last)                    |
+| Constant metadata column (e.g. `host` after bucketing)   | [`keep`](#keep)                                       |
+| Distinct values in a bucket                              | [`unique`](#unique)                                   |
+| Most-frequent values                                     | [`top(n)`](#topn--topnumber)                          |
+| All values (with duplicates, for downstream computation) | [`samples`](#samples)                                 |
+| None of the above                                        | [Custom reducer function](#custom-reducers)           |
 
 Pandas analogues in order: `.sum()`, `.count()`, `.mean()`,
 `.median()`, `.std()`, `.max() − .min()`, `.min()`, `.max()`,
@@ -503,3 +503,31 @@ is fast enough. For very large windows with median/percentile, consider a custom
 — but note that custom functions on live also pay O(N) per snapshot (the function re-runs
 over the current window each emit). See [Custom reducers](#custom-reducers) for the
 trade-off.
+
+## Multi-window rolling: merged output schema
+
+Multi-window rolling
+([`live.rolling({ '1m': m1, '200ms': m2 }, opts)`](./rolling#multi-window))
+emits one merged event per trigger fire with all windows' columns
+concatenated into one record. Two rules govern the merged output
+schema:
+
+- **Output column names must be unique across all windows.**
+  `{ '1m': { cpu_avg: 'avg' }, '5m': { cpu_avg: 'avg' } }` is
+  rejected at construction. Reuse implies ambiguity at the
+  merged-record level — rename one of the columns
+  (`{ '5m': { cpu_avg_5m: { from: 'cpu', using: 'avg' } } }`) or
+  drop the duplicating window.
+- **Per-window kind narrowing follows the same dispatch as
+  single-window rolling.** Each entry's `from` / `using` (or the
+  AggregateMap shorthand `cpu: 'avg'`) resolves to a column kind
+  using the same `OutputSpecKind` rules as `aggregate` and
+  `rolling`. The merged schema is the union of all windows'
+  per-column ColumnDefs.
+
+Per-event reducer cost is unchanged from the single-window case —
+each window's reducers update incrementally per source event. The
+shared work is the per-event ingest pipeline (one routing pass
+instead of N), which compounds at higher window counts. See
+[Rolling → Multi-window rolling → Performance](./rolling#multi-window)
+for the bench table.

@@ -10,15 +10,16 @@ bucket," "what's the running median over the trailing 100 events" —
 all windowing questions, all answered by reducing a window of events
 to one or more values.
 
-Pond has four windowing modes. The choice depends on two axes:
+Pond has five windowing modes. The choice depends on two axes:
 **how the window is defined** and **when the answer fires**.
 
-| Mode               | Window definition           | Output cadence            | Operator                                                |
-| ------------------ | --------------------------- | ------------------------- | ------------------------------------------------------- |
-| Full window        | The whole series            | Once                      | `series.reduce(mapping)`                                |
-| Fixed buckets      | Each `Sequence` bucket      | Once per bucket           | `series.aggregate(seq, mapping)`                        |
-| Rolling (batch)    | Trailing window per event   | Once per source event     | `series.rolling(window, mapping)`                       |
-| Rolling (live)     | Trailing window per event   | Per source event OR per trigger | `live.rolling(window, mapping, { trigger? })`     |
+| Mode                | Window definition                        | Output cadence                  | Operator                                               |
+| ------------------- | ---------------------------------------- | ------------------------------- | ------------------------------------------------------ |
+| Full window         | The whole series                         | Once                            | `series.reduce(mapping)`                               |
+| Fixed buckets       | Each `Sequence` bucket                   | Once per bucket                 | `series.aggregate(seq, mapping)`                       |
+| Rolling (batch)     | Trailing window per event                | Once per source event           | `series.rolling(window, mapping)`                      |
+| Rolling (live)      | Trailing window per event                | Per source event OR per trigger | `live.rolling(window, mapping, { trigger? })`          |
+| Multi-window (live) | Several trailing windows over one source | Per trigger, one merged event   | `live.rolling({ '1m': m1, '200ms': m2 }, { trigger })` |
 
 ## Full window
 
@@ -131,44 +132,132 @@ live.rolling('1m', { cpu: 'avg' }, { trigger: Trigger.count(1000) });
 
 The window is maintained incrementally — events `add` as they
 arrive, `remove` as they age out. Per-event cost is O(1) for
-built-in reducers. The trigger controls *when* a snapshot fires;
+built-in reducers. The trigger controls _when_ a snapshot fires;
 the window is always current. See [Triggers](./triggers).
 
 Output stream-shapes match the trigger:
 
-| Trigger          | Output                                               |
-| ---------------- | ---------------------------------------------------- |
-| `event` (default) | One event per source event                           |
-| `clock` / `every` | One event per epoch-aligned boundary crossing       |
-| `count(n)`       | One event per `n` source events                      |
+| Trigger           | Output                                        |
+| ----------------- | --------------------------------------------- |
+| `event` (default) | One event per source event                    |
+| `clock` / `every` | One event per epoch-aligned boundary crossing |
+| `count(n)`        | One event per `n` source events               |
 
 `rolling.value()` always reads the current snapshot regardless of
 trigger — handy for live-display patterns where backend reporting
 fires at the trigger cadence but the in-app view reads continuously.
 
+## Multi-window rolling (live)
+
+When you want **several trailing windows over the same source** —
+e.g. a 1-minute baseline of `avg`/`stdev` plus a 200-ms current-tick
+window of raw samples for anomaly detection — pass a record-of-
+mappings instead of a single `(window, mapping)` pair:
+
+```ts
+const fused = live.rolling(
+  {
+    '1m': {
+      cpu_avg: { from: 'cpu', using: 'avg' },
+      cpu_sd: { from: 'cpu', using: 'stdev' },
+    },
+    '200ms': { cpu_samples: { from: 'cpu', using: 'samples' } },
+  },
+  { trigger: Trigger.every('200ms') },
+);
+
+fused.on('event', (e) => {
+  // All four columns from both windows on a single event.
+  const z = (s: number) => (s - e.get('cpu_avg')) / e.get('cpu_sd');
+  // …
+});
+```
+
+Properties:
+
+- **One ingest pass.** Every source event updates every window's
+  reducer state in one pass over a single shared deque. Two-rolling
+  shapes (which is what users wrote before this primitive existed)
+  pay each per-event pipeline cost twice.
+- **One merged output stream.** All windows' columns concatenated
+  into one record per trigger fire. Consumer code is one event
+  handler, not a per-`(ts, key)` join.
+- **Single trigger across all windows by design.** Per-window
+  cadence is rare; users who need it fall back to two `rolling()`
+  calls. The simpler API wins for the common case.
+- **Time-based windows only.** Object keys are duration strings
+  (`'1m'`, `'200ms'`, `'5s'`). Count-based windows
+  (`live.rolling(100, ...)`) stay on the single-window form and
+  aren't mixable with time-windows here.
+- **Duplicate output column names** across windows are rejected at
+  construction. Each output column name is unique across the
+  merged schema.
+
+The same form composes with `partitionBy(...)` and works through
+chained pipelines:
+
+```ts
+const fused = live
+  .partitionBy('host')
+  .fill({ cpu: 'hold' })
+  .rolling(
+    {
+      '1m': { cpu_avg: { from: 'cpu', using: 'avg' } },
+      '200ms': { cpu_samples: { from: 'cpu', using: 'samples' } },
+    },
+    { trigger: Trigger.every('200ms') },
+  );
+// One merged event per partition per boundary; partition column
+// auto-injected at the front of the schema.
+```
+
+On `partitionBy(...).rolling({...}, opts)`, **clock trigger is
+required** — synced cross-partition emission needs a single shared
+boundary detector.
+
+For per-window options, the value form switches from a bare
+mapping to an elaborated wrapper:
+
+```ts
+live.rolling(
+  {
+    '1m': { cpu_avg: { from: 'cpu', using: 'avg' } },
+    '200ms': {
+      mapping: { cpu_samples: { from: 'cpu', using: 'samples' } },
+      minSamples: 5, // per-window override
+    },
+  },
+  { trigger, minSamples: 2 }, // top-level default
+);
+```
+
+See [Rolling](../../pond-ts/transforms/rolling#multi-window) for
+the full reference.
+
 ## Choosing the mode
 
-| Question                                              | Reach for          |
-| ----------------------------------------------------- | ------------------ |
-| "Summarise everything"                                | `reduce`           |
-| "Per-bucket aggregate"                                | `aggregate(seq)`   |
-| "Smoothed value at each event"                        | `rolling(window)`  |
-| "Smoothed value at fixed grid points"                 | `rolling(seq, win)` |
-| "Streaming smoothed value, per event"                 | `live.rolling(window)` |
-| "Streaming snapshot at fixed reporting cadence"       | `live.rolling(window, m, { trigger: Trigger.every(...) })` |
-| "Streaming snapshot every N events"                   | `live.rolling(window, m, { trigger: Trigger.count(n) })` |
+| Question                                           | Reach for                                                  |
+| -------------------------------------------------- | ---------------------------------------------------------- |
+| "Summarise everything"                             | `reduce`                                                   |
+| "Per-bucket aggregate"                             | `aggregate(seq)`                                           |
+| "Smoothed value at each event"                     | `rolling(window)`                                          |
+| "Smoothed value at fixed grid points"              | `rolling(seq, win)`                                        |
+| "Streaming smoothed value, per event"              | `live.rolling(window)`                                     |
+| "Streaming snapshot at fixed reporting cadence"    | `live.rolling(window, m, { trigger: Trigger.every(...) })` |
+| "Streaming snapshot every N events"                | `live.rolling(window, m, { trigger: Trigger.count(n) })`   |
+| "Several windows over one source, one merged emit" | `live.rolling({ '1m': m1, '200ms': m2 }, { trigger })`     |
 
 ## Multiple stats per window
 
-All four modes accept the `AggregateOutputMap` shape — multiple
+All five modes accept the `AggregateOutputMap` shape — multiple
 named outputs, each reducing the same or different source columns:
 
 ```ts
 series.aggregate(Sequence.every('1m'), {
   mean: { from: 'cpu', using: 'avg' },
-  sd:   { from: 'cpu', using: 'stdev' },
-  n:    { from: 'cpu', using: 'count' },
-  hi:   { from: 'cpu', using: 'max' },
+  sd: { from: 'cpu', using: 'stdev' },
+  n: { from: 'cpu', using: 'count' },
+  hi: { from: 'cpu', using: 'max' },
 });
 ```
 
@@ -176,6 +265,12 @@ One walk, four reducers, one output schema with four columns.
 Pond's runtime executes the four reducers side-by-side over the
 same window — the per-event cost is `O(reducers × 1)` for built-in
 reducers, not `O(reducers × N)` from running multiple aggregations.
+
+**Multiple-stats-per-window vs multi-window.** The example above
+runs four reducers over **one** window (1-minute buckets). Multi-
+window rolling runs reducers over **several** windows (1m + 200ms,
+say) in one ingest pass. The two compose: each window in a
+multi-window rolling can carry its own `AggregateOutputMap` mapping.
 
 ## Bounded windows on streaming sources
 
@@ -186,8 +281,8 @@ event-grid view on top of the buffer for read-side patterns:
 
 ```ts
 const recent = live.window('1m');
-recent.length;        // number of events in the last 1m
-recent.eventRate();   // events-per-second over the window
+recent.length; // number of events in the last 1m
+recent.eventRate(); // events-per-second over the window
 ```
 
 `window` is observation-only — it doesn't drive aggregation. Use
@@ -204,7 +299,7 @@ reduction range.
   deque and reducer state. (A `tap` sub-window primitive that shares
   the parent's deque is parked in PLAN.md.)
 - **Per-key (partitioned) windowing.** A windowed operator on
-  `LiveSeries` or `TimeSeries` runs over the *whole* series. To
+  `LiveSeries` or `TimeSeries` runs over the _whole_ series. To
   window per partition, see [Partitioning](./partitioning).
 
 ## Where this shows up

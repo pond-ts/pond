@@ -59,9 +59,9 @@ materialise back:
 ```ts
 series
   .partitionBy('host')
-  .fill({ cpu: 'linear' })       // per-host fill — no cross-host neighbours
+  .fill({ cpu: 'linear' }) // per-host fill — no cross-host neighbours
   .rolling('5m', { cpu: 'avg' }) // per-host rolling — no cross-host averaging
-  .collect();                    // → regular TimeSeries, per-host outputs interleaved by time
+  .collect(); // → regular TimeSeries, per-host outputs interleaved by time
 ```
 
 Each step in the chain returns a `PartitionedTimeSeries` view —
@@ -110,9 +110,9 @@ source's settings but can be overridden:
 
 ```ts
 live.partitionBy('host', {
-  retention:   { maxEvents: 1_000 }, // per-partition cap
+  retention: { maxEvents: 1_000 }, // per-partition cap
   graceWindow: '5s',
-  ordering:    'reorder',
+  ordering: 'reorder',
 });
 ```
 
@@ -123,18 +123,14 @@ arrive — `api-1` updates at `api-1`'s pace, `api-2` at `api-2`'s.
 That's correct for "I want host-1's smoothed value as soon as
 host-1 has new data."
 
-Sometimes you want all partitions to emit *together* at fixed
+Sometimes you want all partitions to emit _together_ at fixed
 boundaries — every host reports its current rolling-window value
 on the same 200ms tick. Pass a clock trigger:
 
 ```ts
 const ticks = live
   .partitionBy('host')
-  .rolling(
-    '1m',
-    { cpu: 'avg' },
-    { trigger: Trigger.every('200ms') },
-  );
+  .rolling('1m', { cpu: 'avg' }, { trigger: Trigger.every('200ms') });
 
 // ticks: LiveSource<{ time, host, cpu }>
 // Each tick → one event per known partition, all sharing the same ts
@@ -151,16 +147,36 @@ snapshot at a regular cadence so the renderer can group by `ts`
 and lay out a row per host. See
 [Triggers × partitioning](./triggers#trigger--partitioning).
 
+When the dashboard wants **multiple windows per partition** (e.g.
+1m baseline + 200ms current), pass the keyed-record form instead
+of a single `(window, mapping)` pair — see
+[Windowing → Multi-window rolling (live)](./windowing#multi-window-rolling-live).
+One ingest pass updates all windows; one merged event per
+partition per tick. The shared shape:
+
+```ts
+const fused = live.partitionBy('host').rolling(
+  {
+    '1m': {
+      cpu_avg: { from: 'cpu', using: 'avg' },
+      cpu_sd: { from: 'cpu', using: 'stdev' },
+    },
+    '200ms': { cpu_samples: { from: 'cpu', using: 'samples' } },
+  },
+  { trigger: Trigger.every('200ms') },
+);
+```
+
 ## Fan-in patterns
 
 Three ways to consume per-partition output:
 
-| Pattern               | Returns                                     | Use when                                |
-| --------------------- | ------------------------------------------- | --------------------------------------- |
-| `.collect()` (batch)  | `TimeSeries<S>` with all partitions merged  | Batch chains — final materialise step   |
-| `.collect()` (live)   | `LiveSeries<S>` (append-only fan-in)        | Live: unified rolling buffer per host's events |
-| `.toMap()` (live)     | `Map<key, LiveSource<S>>`                   | Direct per-partition subscription       |
-| `.apply(factory)`     | `LivePartitionedView<R>` of per-partition outputs | Chain a factory across all partitions |
+| Pattern              | Returns                                           | Use when                                       |
+| -------------------- | ------------------------------------------------- | ---------------------------------------------- |
+| `.collect()` (batch) | `TimeSeries<S>` with all partitions merged        | Batch chains — final materialise step          |
+| `.collect()` (live)  | `LiveSeries<S>` (append-only fan-in)              | Live: unified rolling buffer per host's events |
+| `.toMap()` (live)    | `Map<key, LiveSource<S>>`                         | Direct per-partition subscription              |
+| `.apply(factory)`    | `LivePartitionedView<R>` of per-partition outputs | Chain a factory across all partitions          |
 
 The synchronised-rolling output above bypasses fan-in — it returns
 a flat `LiveSource` directly because the boundary-tick contract
