@@ -512,7 +512,118 @@ describe('LiveFusedRolling — lifecycle', () => {
   });
 });
 
-// ── 5. Sequence-anchored trigger sanity ────────────────────────
+// ── 5. Codex-flagged regressions ────────────────────────────────
+
+describe('LiveFusedRolling — alias-name collision', () => {
+  it('handles an AggregateOutputMap entry literally named "mapping"', () => {
+    // Codex Layer 2 review flagged this: the elaborated wrapper
+    // detection used `'mapping' in value` + `typeof value.mapping
+    // === 'object'`. A user with an AggregateOutputMap that happens
+    // to alias an output as `mapping` would be misinterpreted as
+    // the elaborated wrapper. The disambiguation looks for
+    // AggregateOutputSpec shape (`from` + `using`) on the
+    // candidate `.mapping` field.
+    const live = makeLive();
+    const fused = live.rolling({
+      '1m': {
+        mapping: { from: 'cpu', using: 'avg' },
+      },
+    });
+
+    live.push([0, 10, 'a']);
+    live.push([1000, 20, 'a']);
+
+    expect(fused.at(1)!.get('mapping')).toBe(15);
+    fused.dispose();
+  });
+
+  it('still recognises the elaborated wrapper on an inner-record mapping', () => {
+    // The disambiguation only fires when `.mapping` is itself an
+    // AggregateOutputSpec. The elaborated wrapper's `.mapping`
+    // points at a record (containing column specs), so it's NOT a
+    // spec and IS still detected as elaborated.
+    const live = makeLive();
+    const fused = live.rolling({
+      '5s': {
+        mapping: { cpu_avg: { from: 'cpu', using: 'avg' } },
+        minSamples: 3,
+      },
+    });
+
+    live.push([0, 10, 'a']);
+    live.push([1000, 20, 'a']);
+    expect(fused.at(1)!.get('cpu_avg')).toBeUndefined(); // 2 < 3
+    live.push([2000, 30, 'a']);
+    expect(fused.at(2)!.get('cpu_avg')).toBe(20); // gate opens
+
+    fused.dispose();
+  });
+});
+
+describe('LivePartitionedView — chained fused rolling', () => {
+  function makePartitionedLive() {
+    return new LiveSeries({
+      name: 'metrics-chained',
+      schema: numericSchema,
+    });
+  }
+
+  it('partitionBy(host).fill(...).rolling({...}, {trigger}) works (fused on chain)', () => {
+    // Codex Layer 2 review flagged that LivePartitionedView.rolling
+    // didn't accept the keyed-form. Without this fix, chained
+    // partitioned pipelines couldn't use fused rolling at all.
+    const schemaWithGaps = [
+      { name: 'time', kind: 'time' },
+      { name: 'cpu', kind: 'number', required: false },
+      { name: 'host', kind: 'string' },
+    ] as const;
+    const live = new LiveSeries({
+      name: 'metrics-chained-gaps',
+      schema: schemaWithGaps,
+    });
+
+    const fused = live
+      .partitionBy('host')
+      .fill({ cpu: 'hold' })
+      .rolling(
+        {
+          '5s': { cpu_avg: { from: 'cpu', using: 'avg' } },
+          '1s': { cpu_max: { from: 'cpu', using: 'max' } },
+        },
+        { trigger: Trigger.every('1s') },
+      );
+
+    live.push([0, 10, 'api-1']);
+    live.push([500, undefined, 'api-1']); // gap, fill'hold' carries 10
+    live.push([1500, 20, 'api-1']); // crosses 1s boundary
+
+    expect(fused.length).toBeGreaterThan(0);
+    // At the boundary-crossing event, api-1's reducer state has
+    // [10, 10, 20] from the fill chain. Snapshot at the boundary
+    // should reflect that filled history.
+    const e = fused.at(0)!;
+    expect(e.get('host')).toBe('api-1');
+    expect(typeof e.get('cpu_avg')).toBe('number');
+    expect(typeof e.get('cpu_max')).toBe('number');
+
+    fused.dispose();
+  });
+
+  it('chained fused requires clock trigger (event/count rejected)', () => {
+    const live = makePartitionedLive();
+    expect(() =>
+      live
+        .partitionBy('host')
+        .fill({ cpu: 'hold' })
+        .rolling(
+          { '1m': { cpu: 'avg' } },
+          { trigger: { kind: 'event' } as never },
+        ),
+    ).toThrow(/clock trigger/i);
+  });
+});
+
+// ── 6. Sequence-anchored trigger sanity ────────────────────────
 
 describe('LiveFusedRolling — trigger forms', () => {
   it('Trigger.clock(seq) is equivalent to Trigger.every(duration)', () => {

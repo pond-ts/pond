@@ -458,6 +458,27 @@ function resolveWindowKey(key: string): number {
  * Peel off the elaborated wrapper if present, returning the inner
  * mapping and the per-window minSamples (if specified).
  */
+/**
+ * True when `v` looks like an `AggregateOutputSpec` — i.e., a bare
+ * `{ from: string, using: ... }` shape. Used to disambiguate the
+ * elaborated-wrapper detection: a user with an `AggregateOutputMap`
+ * entry literally named `'mapping'` (e.g. `{ '1m': { mapping: { from:
+ * 'cpu', using: 'avg' } } }`) must NOT be unwrapped as the wrapper.
+ *
+ * The wrapper's `mapping` field carries a whole record of column
+ * specs; the colliding-name AggregateOutputMap entry's `mapping` key
+ * carries one spec. This check distinguishes the two by looking for
+ * the `from` + `using` discriminators that only exist on a spec.
+ */
+function isAggregateOutputSpec(v: unknown): boolean {
+  return (
+    v !== null &&
+    typeof v === 'object' &&
+    typeof (v as { from?: unknown }).from === 'string' &&
+    'using' in (v as object)
+  );
+}
+
 function unwrapFusedMappingValue<S extends SeriesSchema>(
   value: FusedMappingValue<S>,
 ): {
@@ -468,7 +489,12 @@ function unwrapFusedMappingValue<S extends SeriesSchema>(
     value !== null &&
     typeof value === 'object' &&
     'mapping' in value &&
-    typeof (value as { mapping?: unknown }).mapping === 'object'
+    typeof (value as { mapping?: unknown }).mapping === 'object' &&
+    // Disambiguation: if `.mapping` is itself an AggregateOutputSpec,
+    // the user named an alias `mapping` in an AggregateOutputMap —
+    // this is NOT the elaborated wrapper. Fall through to the bare
+    // mapping branch.
+    !isAggregateOutputSpec((value as { mapping?: unknown }).mapping)
   ) {
     const elaborated = value as {
       mapping: AggregateMap<S> | AggregateOutputMap<S>;

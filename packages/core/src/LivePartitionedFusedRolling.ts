@@ -470,6 +470,21 @@ function resolveWindowKey(key: string): number {
   }
 }
 
+/**
+ * Mirror of {@link LiveFusedRolling}'s helper. Disambiguates the
+ * elaborated wrapper from a bare AggregateOutputMap entry named
+ * `mapping`. See the non-partitioned class's docstring for the
+ * full explanation.
+ */
+function isAggregateOutputSpec(v: unknown): boolean {
+  return (
+    v !== null &&
+    typeof v === 'object' &&
+    typeof (v as { from?: unknown }).from === 'string' &&
+    'using' in (v as object)
+  );
+}
+
 function unwrapFusedMappingValue<S extends SeriesSchema>(
   value: FusedMappingValue<S>,
 ): {
@@ -480,7 +495,8 @@ function unwrapFusedMappingValue<S extends SeriesSchema>(
     value !== null &&
     typeof value === 'object' &&
     'mapping' in value &&
-    typeof (value as { mapping?: unknown }).mapping === 'object'
+    typeof (value as { mapping?: unknown }).mapping === 'object' &&
+    !isAggregateOutputSpec((value as { mapping?: unknown }).mapping)
   ) {
     const elaborated = value as {
       mapping: AggregateMap<S> | AggregateOutputMap<S>;

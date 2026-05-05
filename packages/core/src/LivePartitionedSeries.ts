@@ -1148,11 +1148,76 @@ export class LivePartitionedView<
   ):
     | LivePartitionedView<SBase, RollingOutputMapSchema<R, M>, K>
     | LiveSource<SeriesSchema>;
+  /**
+   * Keyed-form fused multi-window rolling on a chained
+   * `LivePartitionedView`. Same shape as the root variant — each
+   * partition's chain output flows into one fused rolling that
+   * maintains N windows in one ingest pass and emits one merged
+   * event per partition per boundary.
+   *
+   * Clock trigger required (same constraint as the root partitioned
+   * fused — synced cross-partition emission).
+   */
+  rolling<const FM extends FusedMapping<R>>(
+    fusedMapping: FM,
+    options: LiveRollingOptions & { trigger: { kind: 'clock' } & Trigger },
+  ): LiveSource<FusedPartitionedRollingSchema<R, K & string, FM>>;
   rolling(
-    window: RollingWindow,
-    mapping: AggregateMap<R> | AggregateOutputMap<R>,
+    arg1: RollingWindow | FusedMapping<R>,
+    mappingOrOptions?:
+      | AggregateMap<R>
+      | AggregateOutputMap<R>
+      | LiveRollingOptions,
     options?: LiveRollingOptions,
   ): any {
+    // Detect the keyed-form fused-rolling shape: arg1 is a record,
+    // mappingOrOptions is the options. Same dispatch as the root.
+    const isFused =
+      typeof arg1 === 'object' && arg1 !== null && !Array.isArray(arg1);
+    if (isFused) {
+      const root = this.#root;
+      const fusedMapping = arg1 as FusedMapping<R>;
+      const fusedOptions = (mappingOrOptions ?? {}) as LiveRollingOptions;
+      if (fusedOptions.trigger?.kind !== 'clock') {
+        throw new TypeError(
+          `LivePartitionedView.rolling: keyed-form fused rolling requires a ` +
+            `clock trigger (e.g. \`{ trigger: Trigger.every('30s') }\`). ` +
+            `Event/count triggers don't make sense for cross-partition synced ` +
+            `emission.`,
+        );
+      }
+      const byCol = root.schema.find((c) => c.name === root.by);
+      if (!byCol) {
+        throw new TypeError(
+          `LivePartitionedView.rolling: column '${root.by}' not in source schema`,
+        );
+      }
+      const syncOptions: {
+        minSamples?: number;
+        declaredGroups?: ReadonlyArray<K>;
+      } = {};
+      if (fusedOptions.minSamples !== undefined)
+        syncOptions.minSamples = fusedOptions.minSamples;
+      if (root.groups !== undefined) syncOptions.declaredGroups = root.groups;
+
+      const fused = new LivePartitionedFusedRolling<R, K, SeriesSchema>(
+        root.name,
+        root.by,
+        byCol.kind,
+        this.schema,
+        fusedMapping as FusedMapping<SeriesSchema>,
+        fusedOptions.trigger,
+        syncOptions,
+      );
+      const chainFactory = this.#factory;
+      root._wireSyncRollingFromView(fused, chainFactory);
+      return fused;
+    }
+
+    // Single-window legacy form: (window, mapping, options).
+    const window = arg1 as RollingWindow;
+    const mapping = mappingOrOptions as AggregateMap<R> | AggregateOutputMap<R>;
+
     // Clock trigger → synchronised partitioned emission on the chain
     // output. The chain factory runs once per partition; the sync
     // rolling subscribes to each chain output's events (so reducers
