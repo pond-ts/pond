@@ -10,7 +10,12 @@ import {
   boundaryTimestampFor,
   type ClockTrigger,
 } from './triggers.js';
-import { parseDuration } from './utils/duration.js';
+import { parseDuration, type DurationLiteral } from './utils/duration.js';
+import {
+  applyHistoryRetention,
+  resolveHistoryConfig,
+  type HistoryOption,
+} from './live-history.js';
 import type {
   AggregateMap,
   AggregateOutputMap,
@@ -145,6 +150,15 @@ export class LivePartitionedFusedRolling<
   #statsEmissions = 0;
 
   /**
+   * Output retention configuration forwarded from the
+   * `LiveRollingOptions.history` option on
+   * `LivePartitionedSeries.rolling`.
+   */
+  readonly #historyEnabled: boolean;
+  readonly #historyMaxEvents: number;
+  readonly #historyMaxAgeMs: number;
+
+  /**
    * @internal — constructed by `LivePartitionedSeries.rolling`'s
    * keyed-form clock-trigger overload.
    */
@@ -155,11 +169,19 @@ export class LivePartitionedFusedRolling<
     reducerInputSchema: SeriesSchema,
     fusedMapping: FusedMapping<SeriesSchema>,
     trigger: ClockTrigger,
-    options: { minSamples?: number; declaredGroups?: ReadonlyArray<K> } = {},
+    options: {
+      minSamples?: number;
+      declaredGroups?: ReadonlyArray<K>;
+      history?: HistoryOption | undefined;
+    } = {},
   ) {
     this.name = upstreamName;
     this.#byColumn = byColumn;
     this.#trigger = trigger;
+    const histCfg = resolveHistoryConfig(options.history);
+    this.#historyEnabled = histCfg.enabled;
+    this.#historyMaxEvents = histCfg.maxEvents;
+    this.#historyMaxAgeMs = histCfg.maxAgeMs;
 
     const topMinSamples = options.minSamples ?? 0;
     if (!Number.isInteger(topMinSamples) || topMinSamples < 0) {
@@ -459,6 +481,7 @@ export class LivePartitionedFusedRolling<
     const out = this.#outputEvents;
     const listeners = this.#onEvent;
     const orderLen = order.length;
+    const historyEnabled = this.#historyEnabled;
 
     for (let p = 0; p < orderLen; p++) {
       const key = order[p]!;
@@ -478,11 +501,18 @@ export class LivePartitionedFusedRolling<
         }
       }
       const evt = new Event(time, record) as unknown as EventForSchema<Out>;
-      out.push(evt);
       this.#statsEmissions++;
+      if (historyEnabled) {
+        out.push(evt);
+      }
       if (listeners.size > 0) {
         for (const fn of listeners) fn(evt);
       }
+    }
+    // One retention pass per tick — same trim shape as
+    // {@link LivePartitionedSyncRolling.#emitTick}.
+    if (historyEnabled) {
+      applyHistoryRetention(out, this.#historyMaxEvents, this.#historyMaxAgeMs);
     }
   }
 
@@ -553,7 +583,7 @@ function resolveWindowKey(key: string): number {
     );
   }
   try {
-    return parseDuration(key as `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`);
+    return parseDuration(key as DurationLiteral);
   } catch {
     throw new TypeError(
       `fused rolling: invalid window key '${key}'. Keys must be duration ` +

@@ -638,10 +638,16 @@ export class LivePartitionedSeries<
       const syncOptions: {
         minSamples?: number;
         declaredGroups?: ReadonlyArray<K>;
+        history?: LiveRollingOptions['history'] | undefined;
       } = {};
       if (fusedOptions.minSamples !== undefined)
         syncOptions.minSamples = fusedOptions.minSamples;
       if (this.groups !== undefined) syncOptions.declaredGroups = this.groups;
+      // Forward `history` to the partitioned fused rolling — without
+      // this, the option silently no-ops on partitioned sources
+      // (Codex caught it on PR #124's adversarial review).
+      if (fusedOptions.history !== undefined)
+        syncOptions.history = fusedOptions.history;
       const byCol = this.schema.find((c) => c.name === this.by);
       if (!byCol) {
         throw new TypeError(
@@ -678,10 +684,12 @@ export class LivePartitionedSeries<
       const syncOptions: {
         minSamples?: number;
         declaredGroups?: ReadonlyArray<K>;
+        history?: LiveRollingOptions['history'] | undefined;
       } = {};
       if (options.minSamples !== undefined)
         syncOptions.minSamples = options.minSamples;
       if (this.groups !== undefined) syncOptions.declaredGroups = this.groups;
+      if (options.history !== undefined) syncOptions.history = options.history;
       // Look up the partition column's kind from the source schema —
       // it stays the same across both root and chained cases and is
       // used only for the output schema's byColumn entry.
@@ -1255,10 +1263,13 @@ export class LivePartitionedView<
       const syncOptions: {
         minSamples?: number;
         declaredGroups?: ReadonlyArray<K>;
+        history?: LiveRollingOptions['history'] | undefined;
       } = {};
       if (fusedOptions.minSamples !== undefined)
         syncOptions.minSamples = fusedOptions.minSamples;
       if (root.groups !== undefined) syncOptions.declaredGroups = root.groups;
+      if (fusedOptions.history !== undefined)
+        syncOptions.history = fusedOptions.history;
 
       const fused = new LivePartitionedFusedRolling<R, K, SeriesSchema>(
         root.name,
@@ -1297,10 +1308,12 @@ export class LivePartitionedView<
       const syncOptions: {
         minSamples?: number;
         declaredGroups?: ReadonlyArray<K>;
+        history?: LiveRollingOptions['history'] | undefined;
       } = {};
       if (options.minSamples !== undefined)
         syncOptions.minSamples = options.minSamples;
       if (root.groups !== undefined) syncOptions.declaredGroups = root.groups;
+      if (options.history !== undefined) syncOptions.history = options.history;
 
       // The reducer-input schema is the chain output schema `R`,
       // captured upfront on this view (via the factory-stub run in

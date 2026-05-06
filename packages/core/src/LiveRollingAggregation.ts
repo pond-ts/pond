@@ -39,6 +39,7 @@ import type { AggregateOutputMapResultSchema } from './types-aggregate.js';
 import type { DurationInput } from './utils/duration.js';
 import { parseDuration } from './utils/duration.js';
 import type { RetentionPolicy } from './LiveSeries.js';
+import { applyHistoryRetention, resolveHistoryConfig } from './live-history.js';
 
 type WindowEntry = {
   index: number;
@@ -112,9 +113,13 @@ export type LiveRollingOptions = {
    *   per-emit allocation cost goes away.
    * - `RetentionPolicy` (`{ maxEvents?, maxAge? }`): cap the output
    *   buffer at `maxEvents` entries (newest kept) or `maxAge` ms
-   *   relative to the latest emit. Same shape as
-   *   {@link LiveSeriesOptions.retention}. Combine both for a
-   *   "last N _and_ no older than M" cap.
+   *   relative to the latest emit. Field shape mirrors
+   *   {@link LiveSeriesOptions.retention}; combine both for a
+   *   "last N _and_ no older than M" cap. **Stricter than
+   *   LiveSeries:** `history.maxEvents` rejects 0, negative, or
+   *   non-integer values at construction (LiveSeries currently
+   *   accepts them silently and produces surprising eviction
+   *   patterns). Pass `Infinity` or omit the field for no cap.
    *
    * Note: `history: false` is the strictest opt-out — once chosen,
    * the accumulator never retains emits and they cannot be
@@ -216,37 +221,13 @@ export class LiveRollingAggregation<
     this.#lastClockBucketIdx = undefined;
     this.#countSinceLastEmit = 0;
 
-    // Resolve the `history` option. Default is `true` (current behavior,
-    // strictly back-compat). `false` opts out of output retention
-    // entirely; a `RetentionPolicy` mirrors `LiveSeries`'s shape.
-    const history = options.history ?? true;
-    if (history === false) {
-      this.#historyEnabled = false;
-      this.#historyMaxEvents = 0;
-      this.#historyMaxAgeMs = 0;
-    } else if (history === true) {
-      this.#historyEnabled = true;
-      this.#historyMaxEvents = Infinity;
-      this.#historyMaxAgeMs = Infinity;
-    } else {
-      this.#historyEnabled = true;
-      const max = history.maxEvents;
-      if (max !== undefined) {
-        if (!Number.isInteger(max) || max < 1) {
-          throw new TypeError(
-            'history.maxEvents must be a positive integer (got ' +
-              String(max) +
-              ')',
-          );
-        }
-        this.#historyMaxEvents = max;
-      } else {
-        this.#historyMaxEvents = Infinity;
-      }
-      this.#historyMaxAgeMs = history.maxAge
-        ? parseDuration(history.maxAge)
-        : Infinity;
-    }
+    // Shared resolution + retention logic — same shape across all
+    // four live rolling primitives (single-window, fused, partitioned
+    // sync, partitioned fused).
+    const histCfg = resolveHistoryConfig(options.history);
+    this.#historyEnabled = histCfg.enabled;
+    this.#historyMaxEvents = histCfg.maxEvents;
+    this.#historyMaxAgeMs = histCfg.maxAgeMs;
 
     if (typeof window === 'number' && Number.isInteger(window) && window > 0) {
       this.#windowMs = undefined;
@@ -533,44 +514,13 @@ export class LiveRollingAggregation<
     this.#statsEmissions++;
     if (this.#historyEnabled) {
       this.#outputEvents.push(outputEvent);
-      this.#applyHistoryRetention();
+      applyHistoryRetention(
+        this.#outputEvents,
+        this.#historyMaxEvents,
+        this.#historyMaxAgeMs,
+      );
     }
     for (const fn of this.#onEvent) fn(outputEvent);
-  }
-
-  /**
-   * Trim `#outputEvents` against the configured history limits. Mirrors
-   * {@link LiveSeries.#applyRetention}'s shape: count cap first, then
-   * age cap (relative to the latest emit), single splice at the end.
-   * Cheap when both caps are `Infinity` (the default) — early-exit on
-   * the combined check.
-   */
-  #applyHistoryRetention(): void {
-    if (
-      this.#historyMaxEvents === Infinity &&
-      this.#historyMaxAgeMs === Infinity
-    ) {
-      return;
-    }
-    let evictCount = 0;
-    if (this.#outputEvents.length > this.#historyMaxEvents) {
-      evictCount = this.#outputEvents.length - this.#historyMaxEvents;
-    }
-    if (this.#historyMaxAgeMs !== Infinity && this.#outputEvents.length > 0) {
-      const latest = this.#outputEvents[this.#outputEvents.length - 1]!;
-      const cutoff = latest.begin() - this.#historyMaxAgeMs;
-      let i = evictCount;
-      while (
-        i < this.#outputEvents.length &&
-        this.#outputEvents[i]!.begin() < cutoff
-      ) {
-        i++;
-      }
-      evictCount = Math.max(evictCount, i);
-    }
-    if (evictCount > 0) {
-      this.#outputEvents.splice(0, evictCount);
-    }
   }
 
   /**

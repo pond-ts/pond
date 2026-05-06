@@ -128,6 +128,26 @@ describe('LiveRollingAggregation { history }', () => {
     ).toThrow(/positive integer/);
   });
 
+  it('history: { maxEvents: Infinity } is treated as no cap', () => {
+    const live = makeLive();
+    const rolling = live.rolling(
+      3,
+      { value: 'avg' },
+      { history: { maxEvents: Infinity } },
+    );
+    for (let i = 1; i <= 5; i++) {
+      live.push([i * 1000, i]);
+    }
+    expect(rolling.length).toBe(5); // no cap, every emit retained
+  });
+
+  it('history: { maxEvents: NaN } throws', () => {
+    const live = makeLive();
+    expect(() =>
+      live.rolling(3, { value: 'avg' }, { history: { maxEvents: NaN } }),
+    ).toThrow(/positive integer/);
+  });
+
   it('history: false works under Trigger.count too — emissions fire, no retention', () => {
     const live = makeLive();
     const rolling = live.rolling(
@@ -217,6 +237,153 @@ describe('LiveFusedRolling { history }', () => {
     expect(() =>
       live.rolling({ '5s': { value: 'avg' } }, { history: { maxEvents: 0 } }),
     ).toThrow(/positive integer/);
+  });
+
+  it('history: { maxAge: 0 } throws — invalid duration value (no longer silently disables retention)', () => {
+    const live = makeLive();
+    expect(() =>
+      live.rolling({ '5s': { value: 'avg' } }, { history: { maxAge: 0 } }),
+    ).toThrow();
+  });
+
+  it('history: { maxAge: -1 } throws', () => {
+    const live = makeLive();
+    expect(() =>
+      live.rolling({ '5s': { value: 'avg' } }, { history: { maxAge: -1 } }),
+    ).toThrow();
+  });
+
+  it('Trigger.count × history: { maxEvents } caps emissions', () => {
+    const live = makeLive();
+    const fused = live.rolling(
+      { '5s': { value: 'avg' } },
+      { history: { maxEvents: 2 }, trigger: Trigger.count(3) },
+    );
+    for (let i = 1; i <= 12; i++) {
+      live.push([i * 1000, i]);
+    }
+    // floor(12/3) = 4 emits would fire; maxEvents caps retained at 2.
+    expect(fused.length).toBe(2);
+  });
+});
+
+// ── Partitioned variants (history threads through end-to-end) ──
+
+describe('partitioned rolling { history } threading', () => {
+  // History was previously silently ignored on partitioned rolling
+  // (Codex caught this on PR #124 review). These tests pin that the
+  // option now actually controls retention on the sync + fused
+  // partitioned paths.
+
+  // Schema with a partition column distinct from the value column,
+  // so partitionBy('host').rolling({ value: 'avg' }) doesn't collide.
+  const partSchema = [
+    { name: 'time', kind: 'time' },
+    { name: 'value', kind: 'number' },
+    { name: 'host', kind: 'string' },
+  ] as const;
+  const makePartLive = () =>
+    new LiveSeries({ name: 'test', schema: partSchema });
+
+  it('partitioned single-window clock rolling honors history: false', () => {
+    const live = makePartLive();
+    const sync = live
+      .partitionBy('host')
+      .rolling(
+        '5s',
+        { value: 'avg' },
+        { trigger: Trigger.every('1s'), history: false },
+      );
+    const seen: any[] = [];
+    sync.on('event', (e) => seen.push(e));
+    for (let i = 1; i <= 5; i++) {
+      live.push([i * 1000, i, 'a']);
+    }
+    expect(sync.length).toBe(0);
+    expect(seen.length).toBeGreaterThan(0);
+  });
+
+  it('partitioned single-window clock rolling honors history: { maxEvents }', () => {
+    const live = makePartLive();
+    const sync = live
+      .partitionBy('host')
+      .rolling(
+        '5s',
+        { value: 'avg' },
+        { trigger: Trigger.every('1s'), history: { maxEvents: 3 } },
+      );
+    for (let i = 1; i <= 10; i++) {
+      live.push([i * 1000, i, 'a']);
+    }
+    expect(sync.length).toBe(3);
+  });
+
+  it('partitioned fused rolling honors history: false', () => {
+    const live = makePartLive();
+    const fused = live.partitionBy('host').rolling(
+      {
+        '5s': { value_avg: { from: 'value', using: 'avg' } },
+      },
+      { trigger: Trigger.every('1s'), history: false },
+    );
+    const seen: any[] = [];
+    fused.on('event', (e) => seen.push(e));
+    for (let i = 1; i <= 5; i++) {
+      live.push([i * 1000, i, 'a']);
+    }
+    expect(fused.length).toBe(0);
+    expect(seen.length).toBeGreaterThan(0);
+  });
+
+  it('partitioned fused rolling honors history: { maxEvents }', () => {
+    const live = makePartLive();
+    const fused = live.partitionBy('host').rolling(
+      {
+        '5s': { value_avg: { from: 'value', using: 'avg' } },
+      },
+      {
+        trigger: Trigger.every('1s'),
+        history: { maxEvents: 4 },
+      },
+    );
+    for (let i = 1; i <= 10; i++) {
+      live.push([i * 1000, i, 'a']);
+    }
+    expect(fused.length).toBe(4);
+  });
+
+  it('partitioned rolling validation: history: { maxEvents: 0 } still throws', () => {
+    const live = makePartLive();
+    expect(() =>
+      live
+        .partitionBy('host')
+        .rolling(
+          '5s',
+          { value: 'avg' },
+          { trigger: Trigger.every('1s'), history: { maxEvents: 0 } },
+        ),
+    ).toThrow(/positive integer/);
+  });
+
+  it('partitioned rolling history caps total emits across multiple partitions', () => {
+    const live = makePartLive();
+    const sync = live
+      .partitionBy('host')
+      .rolling(
+        '5s',
+        { value: 'avg' },
+        { trigger: Trigger.every('1s'), history: { maxEvents: 4 } },
+      );
+    // Two partitions arriving alternately. Each tick fires N (= 2)
+    // emits per boundary crossing once both partitions exist; the
+    // history cap should still hold across the merged stream.
+    live.push([1000, 1, 'a']);
+    live.push([2000, 2, 'b']);
+    live.push([3000, 3, 'a']);
+    live.push([4000, 4, 'b']);
+    live.push([5000, 5, 'a']);
+    live.push([6000, 6, 'b']);
+    expect(sync.length).toBe(4);
   });
 });
 
