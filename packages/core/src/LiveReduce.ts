@@ -22,6 +22,18 @@ import {
 } from './types.js';
 import type { LiveRollingOptions } from './LiveRollingAggregation.js';
 
+// `queueMicrotask` is a host-provided global available in browsers
+// (DOM lib) and Node ≥ 11 (Node types). pond-ts targets both
+// environments and intentionally does not pull either lib into
+// core's tsconfig (avoids stray DOM/Node globals leaking into the
+// rest of the codebase). The website's TypeDoc pass runs against
+// the same tsconfig but from a different cwd (`website/`) which can
+// fail to discover the root's `@types/node` walk; the ambient
+// declaration here keeps the symbol resolvable in every build path.
+// Pinned by docs.yml — broke the v0.15.2 docs deploy and stayed
+// broken through v0.16.0 until this fix landed.
+declare function queueMicrotask(callback: () => void): void;
+
 type EventListener = (event: any) => void;
 
 /**
