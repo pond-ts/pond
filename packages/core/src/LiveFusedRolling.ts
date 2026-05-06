@@ -64,16 +64,19 @@ type FusedEntry = {
 type EventListener = (event: any) => void;
 
 /**
- * Threshold of stale-prefix entries above which the deque triggers
- * a batched `splice` compaction. Picked at 1024 — large enough that
- * the splice is amortized to O(1) per ingest at firehose rates,
- * small enough that an inactive rolling doesn't sit on megabytes of
- * dead-prefix memory after a burst. The other compaction guard
- * (`frontIdx > entries.length / 2`) handles the case where a
- * shorter rolling never accumulates 1024 stale entries but still
- * spends most of the array on dead prefix.
+ * Compaction policy: splice off the dead prefix only when it grows
+ * to at least half the array (the proportional guard). This keeps
+ * per-event cost O(1) amortized at every live-window size — each
+ * surviving entry is copied at most once between two compactions,
+ * and compactions fire at most every (live-size) events.
+ *
+ * An earlier draft also compacted on a fixed 1024-entry threshold,
+ * but Codex's adversarial review on PR #119 flagged the obvious
+ * problem: at live windows of 100k+ entries, the 1024-evictions
+ * trigger fires repeatedly and copies the entire live slice each
+ * time, reintroducing O(live_size / 1024) per-eviction cost. The
+ * proportional guard alone has the right amortization invariant.
  */
-const COMPACT_BATCH_THRESHOLD = 1024;
 
 /**
  * Multi-window rolling that maintains N windows in one ingest pass
@@ -431,10 +434,7 @@ export class LiveFusedRolling<
     // either an absolute threshold or half the array, splice it off
     // and reset the pointer. The threshold lets the array reuse
     // its capacity instead of growing indefinitely.
-    if (
-      this.#frontIdx >= COMPACT_BATCH_THRESHOLD ||
-      this.#frontIdx > this.#entries.length / 2
-    ) {
+    if (this.#frontIdx > this.#entries.length / 2) {
       this.#entries.splice(0, this.#frontIdx);
       this.#frontIdx = 0;
     }

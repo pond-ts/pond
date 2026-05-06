@@ -383,11 +383,10 @@ function buildFused(live, n, trig) {
     ),
   );
 
-  // Worst-case shift pattern: large steady-state deque AND
-  // continuous eviction. Window narrower than total span; first
-  // half fills, second half evicts one-per-event.
-  // Configured so deque holds ~50k entries through the eviction
-  // phase (window=50s, span=100s, 1k events/s).
+  // Worst-case shift pattern (medium window): large steady-state
+  // deque AND continuous eviction. Window narrower than total span;
+  // first half fills, second half evicts one-per-event. Configured
+  // so deque holds ~50k entries through the eviction phase.
   const FILL = 50_000;
   const EVICT = 50_000;
   results.push(
@@ -410,6 +409,36 @@ function buildFused(live, n, trig) {
         // evicts the entry one window-ago. Deque stays ~FILL.
         for (let i = 0; i < EVICT; i++) {
           live.push([FILL + i, i % 100, 'host']);
+        }
+      },
+      3,
+    ),
+  );
+
+  // Codex-flagged regression (PR #119 review): large live window
+  // with continuous eviction. Verifies the proportional-only
+  // compaction policy gives true O(1) amortized per ingest at
+  // very large live-window sizes — a fixed-entry threshold here
+  // would copy the entire live slice (200k entries) every
+  // threshold-many evictions, reintroducing the cliff.
+  const LARGE_FILL = 200_000;
+  const LARGE_EVICT = 100_000;
+  results.push(
+    benchmark(
+      `non-partitioned, very large live window (200k entries) + continuous eviction`,
+      () => {
+        const live = new LiveSeries({ name: 'cpu', schema });
+        const r = live.rolling(
+          '200s',
+          { count: { from: 'cpu', using: 'count' } },
+          { trigger: trig },
+        );
+        void r;
+        for (let i = 0; i < LARGE_FILL; i++) {
+          live.push([i, i % 100, 'host']);
+        }
+        for (let i = 0; i < LARGE_EVICT; i++) {
+          live.push([LARGE_FILL + i, i % 100, 'host']);
         }
       },
       3,

@@ -37,10 +37,19 @@ made it urgent.
     single-window synced
 
   The pattern: track a `frontIdx` field; "evicting" advances the
-  pointer instead of shifting. When the dead prefix exceeds 1024
-  entries (or half the array, whichever comes first), batch-splice
-  it off and reset. Per-event cost stays O(1) amortized at all
-  array sizes.
+  pointer instead of shifting. When the dead prefix grows past
+  half the array length, batch-splice it off and reset the
+  pointer. Per-event cost stays O(1) amortized at every live-
+  window size — each surviving entry is copied at most once
+  between two compactions, and compactions fire at most every
+  (live-size) events.
+
+  An earlier draft also compacted on a fixed 1024-entry threshold;
+  Codex's adversarial review on PR #119 caught that this would
+  reintroduce O(live_size / 1024) per-eviction cost on large
+  windows (100k+ live entries) — the threshold would fire
+  repeatedly and copy the entire live slice each time. The
+  proportional guard alone has the right amortization invariant.
 
 ### Performance
 

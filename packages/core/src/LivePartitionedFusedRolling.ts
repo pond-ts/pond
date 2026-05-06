@@ -72,11 +72,8 @@ type FusedEntry = {
 
 type EventListener = (event: any) => void;
 
-/**
- * See {@link LiveFusedRolling}'s analogous constant — same
- * threshold, same rationale.
- */
-const COMPACT_BATCH_THRESHOLD = 1024;
+// Compaction policy: see {@link LiveFusedRolling}'s analogous
+// comment. Proportional guard only — `frontIdx > entries.length / 2`.
 
 /**
  * Per-partition column-spec template. Captured once at construction
@@ -429,10 +426,7 @@ export class LivePartitionedFusedRolling<
     ) {
       state.frontIdx++;
     }
-    if (
-      state.frontIdx >= COMPACT_BATCH_THRESHOLD ||
-      state.frontIdx > state.entries.length / 2
-    ) {
+    if (state.frontIdx > state.entries.length / 2) {
       state.entries.splice(0, state.frontIdx);
       state.frontIdx = 0;
     }

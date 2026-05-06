@@ -48,16 +48,11 @@ type WindowEntry = {
 type UpdateListener = (value: Record<string, ColumnValue | undefined>) => void;
 type EventListener = (event: any) => void;
 
-/**
- * Compact-batch threshold for the head-index ring buffer eviction.
- * Once `#frontIdx` advances past this many stale-prefix entries (or
- * past half the array length, whichever comes first), the deque
- * splices off the dead prefix and resets the pointer. Picked at
- * 1024 — large enough to amortize `splice` to O(1) per ingest at
- * firehose rates, small enough that an inactive rolling doesn't
- * sit on megabytes of dead-prefix memory after a burst.
- */
-const COMPACT_BATCH_THRESHOLD = 1024;
+// Compaction policy: see {@link LiveFusedRolling}'s analogous
+// comment for the full rationale. Proportional guard only —
+// `frontIdx > entries.length / 2`. A fixed-entry threshold reads
+// like a safety bound but actually breaks O(1) amortization at
+// large live-window sizes (Codex flagged this on PR #119).
 
 export type RollingWindow = DurationInput | number;
 
@@ -495,10 +490,7 @@ export class LiveRollingAggregation<
 
     // Periodic batched compaction — see {@link LiveFusedRolling}'s
     // analogous comment for the rationale.
-    if (
-      this.#frontIdx >= COMPACT_BATCH_THRESHOLD ||
-      this.#frontIdx > this.#entries.length / 2
-    ) {
+    if (this.#frontIdx > this.#entries.length / 2) {
       this.#entries.splice(0, this.#frontIdx);
       this.#frontIdx = 0;
     }

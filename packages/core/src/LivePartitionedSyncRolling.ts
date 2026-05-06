@@ -42,11 +42,8 @@ type PartitionState = {
 
 type EventListener = (event: any) => void;
 
-/**
- * See {@link LiveRollingAggregation}'s analogous constant — same
- * threshold, same rationale.
- */
-const COMPACT_BATCH_THRESHOLD = 1024;
+// Compaction policy: see {@link LiveFusedRolling}'s analogous
+// comment. Proportional guard only — `frontIdx > entries.length / 2`.
 
 /**
  * A `LiveSource<Out>` produced by `LivePartitionedSeries.rolling(window, mapping, { trigger: Trigger.clock(...) })`.
@@ -362,10 +359,7 @@ export class LivePartitionedSyncRolling<
       }
     }
     // Periodic batched compaction.
-    if (
-      state.frontIdx >= COMPACT_BATCH_THRESHOLD ||
-      state.frontIdx > state.entries.length / 2
-    ) {
+    if (state.frontIdx > state.entries.length / 2) {
       state.entries.splice(0, state.frontIdx);
       state.frontIdx = 0;
     }
