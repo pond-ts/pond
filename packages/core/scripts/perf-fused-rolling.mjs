@@ -359,8 +359,9 @@ function buildFused(live, n, trig) {
 
 {
   // Steady-state deque ≈ N (tight 1ms timestamps, window covers
-  // entire run). Eviction never kicks in; just push + shift in
-  // periodic compaction.
+  // entire run). Eviction never kicks in; just append-only growth.
+  // Post-v0.15.2 the head-index pointer leaves this case unchanged
+  // — the cliff was specific to large-deque + per-ingest-eviction.
   const N = 200_000;
   const trig = Trigger.every('100ms');
   results.push(

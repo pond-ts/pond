@@ -512,7 +512,131 @@ describe('LiveFusedRolling — lifecycle', () => {
   });
 });
 
-// ── 5. Codex-flagged regressions ────────────────────────────────
+// ── 5. Periodic batched compaction (v0.15.2 head-index path) ──
+
+describe('LiveFusedRolling — head-index batched compaction', () => {
+  // Layer 2 review flagged that the existing test suite caps at ~1k
+  // events and never exercises the COMPACT_BATCH_THRESHOLD=1024
+  // splice path inside `#compactFront`. These tests force it by
+  // pushing >2000 events with per-event eviction, then verify
+  // reducer outputs stay consistent across the compaction boundary.
+
+  it('non-partitioned: reducer state survives periodic compaction', () => {
+    const live = makeLive();
+    // Tight 1ms timestamps, 50ms window → every push past the
+    // first ~50 events evicts the front. Pushing 3000 events
+    // crosses COMPACT_BATCH_THRESHOLD multiple times.
+    const fused = live.rolling({
+      '50ms': { cpu_avg: { from: 'cpu', using: 'avg' } },
+    });
+
+    const N = 3000;
+    for (let i = 0; i < N; i++) {
+      live.push([i, i, 'a']);
+    }
+
+    // Window is `ts >= latest - 50`; last event at ts=2999 keeps
+    // ts in [2949, 2999] = 51 events. Avg = (2949+2999)/2 = 2974.
+    const last = fused.at(N - 1)!;
+    expect(last.get('cpu_avg')).toBeCloseTo(2974, 5);
+
+    // Length matches input; output history wasn't corrupted by
+    // compaction.
+    expect(fused.length).toBe(N);
+    fused.dispose();
+  });
+
+  it('non-partitioned: window snapshot during compaction is correct', () => {
+    // Sample several intermediate snapshots across the run and
+    // verify each matches the expected trailing-window average.
+    const live = makeLive();
+    const fused = live.rolling({
+      '100ms': { cpu_avg: { from: 'cpu', using: 'avg' } },
+    });
+
+    const N = 5000;
+    for (let i = 0; i < N; i++) {
+      live.push([i, i, 'a']);
+    }
+
+    // Spot-check at indices that span the compaction boundary.
+    for (const idx of [1500, 2500, 3500, 4500, 4999]) {
+      const e = fused.at(idx)!;
+      // 100ms window at event idx keeps `ts >= idx-100`, i.e.,
+      // ts in [idx-100, idx] = 101 entries. Avg = (idx-100 + idx)/2
+      // = idx - 50.
+      expect(e.get('cpu_avg')).toBeCloseTo(idx - 50, 5);
+    }
+
+    fused.dispose();
+  });
+
+  it('partitioned: per-partition compaction stays consistent', () => {
+    const live = new LiveSeries({
+      name: 'metrics-compaction',
+      schema: numericSchema,
+    });
+    const fused = live
+      .partitionBy('host')
+      .rolling(
+        { '50ms': { cpu_avg: { from: 'cpu', using: 'avg' } } },
+        { trigger: Trigger.every('100ms') },
+      );
+
+    // Two partitions, each receives 2000 events with per-event
+    // eviction → both partitions exercise compaction independently.
+    const N_PER = 2000;
+    for (let i = 0; i < N_PER; i++) {
+      // Interleave api-1 and api-2 at ms i and i+0.5 — both
+      // share the same window cutoff dynamics.
+      live.push([i, i, 'api-1']);
+      live.push([i, i * 2, 'api-2']);
+    }
+
+    // Final boundary fires at trigger crossing. The last emit has
+    // both partitions' state — verify the snapshots match the
+    // trailing 50ms window on each partition.
+    expect(fused.length).toBeGreaterThan(0);
+    const last = fused.at(fused.length - 2)!;
+    const second = fused.at(fused.length - 1)!;
+    const byHost = new Map<string, number>();
+    byHost.set(last.get('host') as string, last.get('cpu_avg') as number);
+    byHost.set(second.get('host') as string, second.get('cpu_avg') as number);
+    const a1 = byHost.get('api-1')!;
+    const a2 = byHost.get('api-2')!;
+    expect(a1).toBeGreaterThan(0);
+    expect(a2).toBeGreaterThan(0);
+    // api-2 receives 2× api-1's values at the same timestamps;
+    // the running averages should match within rounding (the
+    // partitioned variant evicts each partition independently
+    // against the trigger boundary, so both share a window cutoff).
+    // Tolerance of 1 absorbs any tiny boundary timing differences.
+    expect(Math.abs(a2 - a1 * 2)).toBeLessThanOrEqual(1);
+
+    fused.dispose();
+  });
+
+  it('LiveRollingAggregation: reducer state survives compaction', () => {
+    // Same shape as the non-partitioned fused test, but for the
+    // single-window class. Pre-v0.15.2 used the same shift pattern.
+    const live = makeLive();
+    const r = live.rolling('50ms', { cpu: 'avg' });
+
+    const N = 3000;
+    for (let i = 0; i < N; i++) {
+      live.push([i, i, 'a']);
+    }
+
+    const last = r.at(N - 1)!;
+    // Same window arithmetic as the fused-rolling test above:
+    // ts in [2949, 2999], avg = 2974.
+    expect(last.get('cpu')).toBeCloseTo(2974, 5);
+    expect(r.length).toBe(N);
+    r.dispose();
+  });
+});
+
+// ── 6. Codex-flagged regressions ────────────────────────────────
 
 describe('LiveFusedRolling — alias-name collision', () => {
   it('handles an AggregateOutputMap entry literally named "mapping"', () => {
