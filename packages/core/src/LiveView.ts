@@ -32,6 +32,7 @@ import type {
 } from './types-aggregate.js';
 import type {
   FusedMapping,
+  FusedMappingValid,
   FusedRollingSchema,
 } from './types-fused-rolling.js';
 
@@ -286,7 +287,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
    * `LiveSeries`.
    */
   rolling<const FM extends FusedMapping<S>>(
-    fusedMapping: FM,
+    fusedMapping: FM & FusedMappingValid<FM>,
     options?: LiveRollingOptions,
   ): LiveFusedRolling<S, FusedRollingSchema<S, FM>>;
   rolling(

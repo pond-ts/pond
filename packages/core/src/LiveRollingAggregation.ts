@@ -38,6 +38,8 @@ import type { AggregateOutputMapResultSchema } from './types-aggregate.js';
 
 import type { DurationInput } from './utils/duration.js';
 import { parseDuration } from './utils/duration.js';
+import type { RetentionPolicy } from './LiveSeries.js';
+import { applyHistoryRetention, resolveHistoryConfig } from './live-history.js';
 
 type WindowEntry = {
   index: number;
@@ -94,6 +96,37 @@ export type LiveRollingOptions = {
    *   triggers). See the trigger taxonomy RFC sketch in PLAN.md.
    */
   trigger?: Trigger;
+
+  /**
+   * Output retention — controls how much of the rolling's emitted
+   * history the accumulator keeps in its own buffer (the one read by
+   * `length` / `at(i)` / iteration).
+   *
+   * - `true` (default): keep every emitted event for the lifetime of
+   *   the accumulator. `length` grows by one per trigger fire. This
+   *   is the historical behaviour preserved for backward compat.
+   * - `false`: don't push to the output buffer at all. `'event'`
+   *   listeners still fire and `value()` still snapshots reducer
+   *   state, but `length` stays at `0` and `at(i)` always returns
+   *   `undefined`. Use this for high-rate live-display pipelines
+   *   that consume the rolling via subscription only — the
+   *   per-emit allocation cost goes away.
+   * - `RetentionPolicy` (`{ maxEvents?, maxAge? }`): cap the output
+   *   buffer at `maxEvents` entries (newest kept) or `maxAge` ms
+   *   relative to the latest emit. Field shape mirrors
+   *   {@link LiveSeriesOptions.retention}; combine both for a
+   *   "last N _and_ no older than M" cap. **Stricter than
+   *   LiveSeries:** `history.maxEvents` rejects 0, negative, or
+   *   non-integer values at construction (LiveSeries currently
+   *   accepts them silently and produces surprising eviction
+   *   patterns). Pass `Infinity` or omit the field for no cap.
+   *
+   * Note: `history: false` is the strictest opt-out — once chosen,
+   * the accumulator never retains emits and they cannot be
+   * recovered. To consume them, attach an `'event'` listener
+   * before the first push.
+   */
+  history?: boolean | RetentionPolicy;
 };
 
 export class LiveRollingAggregation<
@@ -160,6 +193,16 @@ export class LiveRollingAggregation<
   #statsEvictions = 0;
   #statsEmissions = 0;
 
+  /**
+   * Output retention configuration. See {@link LiveRollingOptions.history}.
+   * `#historyEnabled` short-circuits the `#outputEvents.push` in
+   * `#emitEvent` when the user opts out entirely; the limits are
+   * applied via {@link #applyHistoryRetention} after each push.
+   */
+  readonly #historyEnabled: boolean;
+  readonly #historyMaxEvents: number;
+  readonly #historyMaxAgeMs: number;
+
   constructor(
     source: LiveSource<S>,
     window: RollingWindow,
@@ -177,6 +220,14 @@ export class LiveRollingAggregation<
     this.#trigger = options.trigger ?? { kind: 'event' };
     this.#lastClockBucketIdx = undefined;
     this.#countSinceLastEmit = 0;
+
+    // Shared resolution + retention logic — same shape across all
+    // four live rolling primitives (single-window, fused, partitioned
+    // sync, partitioned fused).
+    const histCfg = resolveHistoryConfig(options.history);
+    this.#historyEnabled = histCfg.enabled;
+    this.#historyMaxEvents = histCfg.maxEvents;
+    this.#historyMaxAgeMs = histCfg.maxAgeMs;
 
     if (typeof window === 'number' && Number.isInteger(window) && window > 0) {
       this.#windowMs = undefined;
@@ -460,8 +511,15 @@ export class LiveRollingAggregation<
         : this.#states[i]!.snapshot();
     }
     const outputEvent = new Event(key, record);
-    this.#outputEvents.push(outputEvent);
     this.#statsEmissions++;
+    if (this.#historyEnabled) {
+      this.#outputEvents.push(outputEvent);
+      applyHistoryRetention(
+        this.#outputEvents,
+        this.#historyMaxEvents,
+        this.#historyMaxAgeMs,
+      );
+    }
     for (const fn of this.#onEvent) fn(outputEvent);
   }
 

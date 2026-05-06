@@ -11,7 +11,8 @@ import {
   type Trigger,
   type ClockTrigger,
 } from './triggers.js';
-import { parseDuration } from './utils/duration.js';
+import { parseDuration, type DurationLiteral } from './utils/duration.js';
+import { applyHistoryRetention, resolveHistoryConfig } from './live-history.js';
 import type {
   AggregateMap,
   AggregateOutputMap,
@@ -169,6 +170,14 @@ export class LiveFusedRolling<
   #statsEvictions = 0;
   #statsEmissions = 0;
 
+  /**
+   * Output retention configuration. See
+   * {@link LiveRollingOptions.history}.
+   */
+  readonly #historyEnabled: boolean;
+  readonly #historyMaxEvents: number;
+  readonly #historyMaxAgeMs: number;
+
   constructor(
     source: LiveSource<S>,
     fusedMapping: FusedMapping<S>,
@@ -189,6 +198,13 @@ export class LiveFusedRolling<
     this.#frontIdx = 0;
     this.#outputEvents = [];
     this.#onEvent = new Set();
+
+    // Shared resolution + retention logic — see {@link
+    // LiveRollingAggregation} for the matching usage.
+    const histCfg = resolveHistoryConfig(options.history);
+    this.#historyEnabled = histCfg.enabled;
+    this.#historyMaxEvents = histCfg.maxEvents;
+    this.#historyMaxAgeMs = histCfg.maxAgeMs;
 
     // Resolve each window: parse the duration key, normalize the
     // mapping (handles bare AggregateMap, AggregateOutputMap, and the
@@ -516,8 +532,15 @@ export class LiveFusedRolling<
       key,
       record,
     ) as unknown as EventForSchema<Out>;
-    this.#outputEvents.push(outputEvent);
     this.#statsEmissions++;
+    if (this.#historyEnabled) {
+      this.#outputEvents.push(outputEvent);
+      applyHistoryRetention(
+        this.#outputEvents,
+        this.#historyMaxEvents,
+        this.#historyMaxAgeMs,
+      );
+    }
     for (const fn of this.#onEvent) fn(outputEvent);
   }
 
@@ -556,7 +579,7 @@ function resolveWindowKey(key: string): number {
   // surface a clear error if the key isn't a valid duration string. Wrap
   // the throw to point at the fused-rolling context.
   try {
-    return parseDuration(key as `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`);
+    return parseDuration(key as DurationLiteral);
   } catch {
     throw new TypeError(
       `fused rolling: invalid window key '${key}'. Keys must be duration ` +

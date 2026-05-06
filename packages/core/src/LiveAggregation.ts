@@ -53,7 +53,7 @@ type CloseListener = (event: ClosedEvent) => void;
 type UpdateListener = () => void;
 
 export type LiveAggregationOptions = {
-  grace?: DurationInput | `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`;
+  grace?: DurationInput;
 };
 
 export class LiveAggregation<

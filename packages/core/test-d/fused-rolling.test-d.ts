@@ -10,8 +10,9 @@
  *     strings (`'1m'`, `'200ms'`, `'5s'`) and rejects malformed
  *     keys (`'1min'`, `'thirty'`) at the type level.
  *
- * **Compile-time uniqueness check is NOT yet implemented** — see
- * PLAN.md. Tests for that land in a follow-up.
+ * **Compile-time uniqueness check** rejects fused mappings that
+ * declare the same output column name across two windows. Pinned in
+ * the section near the bottom of this file.
  */
 import {
   LiveSeries,
@@ -156,6 +157,65 @@ const fC = partitioned.rolling(
 );
 declare const _eC: ReturnType<typeof fC.at>;
 void _eC;
+
+// ── Compile-time uniqueness check ───────────────────────────────
+
+// Two windows declaring the SAME bare-AggregateMap output column.
+// Surfaces as a TS error at the call site — the branded
+// `__FUSED_ROLLING_ERROR` type makes the assignment fail.
+// @ts-expect-error — duplicate output column 'cpu' across '1m' and '200ms'
+const _badBare = live.rolling({
+  '1m': { cpu: 'avg' },
+  '200ms': { cpu: 'max' },
+});
+void _badBare;
+
+// Two windows declaring the same AggregateOutputMap alias.
+// @ts-expect-error — duplicate alias 'cpu_combined' across windows
+const _badAlias = live.rolling({
+  '1m': { cpu_combined: { from: 'cpu', using: 'avg' } },
+  '200ms': { cpu_combined: { from: 'cpu', using: 'max' } },
+});
+void _badAlias;
+
+// AggregateMap collision with AggregateOutputMap alias in another
+// window — same name surface, must still be caught.
+// @ts-expect-error — duplicate output column 'cpu' across windows
+const _badMixed = live.rolling({
+  '1m': { cpu: 'avg' },
+  '200ms': { cpu: { from: 'cpu', using: 'max' } },
+});
+void _badMixed;
+
+// Three windows: collision between any two should still error.
+// @ts-expect-error — duplicate 'x' across two of three windows
+const _badThree = live.rolling({
+  '1m': { x: { from: 'cpu', using: 'avg' } },
+  '5s': { y: { from: 'cpu', using: 'sum' } },
+  '200ms': { x: { from: 'cpu', using: 'max' } },
+});
+void _badThree;
+
+// Unique mappings still typecheck (sanity baseline).
+const _okUnique = live.rolling({
+  '1m': { cpu_avg: { from: 'cpu', using: 'avg' } },
+  '200ms': { cpu_max: { from: 'cpu', using: 'max' } },
+});
+void _okUnique;
+
+// Partitioned variant rejects duplicates the same way. We bind the
+// mapping to a const first so the TS diagnostic lands on the call
+// site (a multi-line inline literal would push the error report
+// past the directive).
+const _badPartitionedMapping = {
+  '1m': { cpu: { from: 'cpu', using: 'avg' } },
+  '200ms': { cpu: { from: 'cpu', using: 'max' } },
+} as const;
+// @ts-expect-error — duplicate alias 'cpu' across windows
+const _badPartitioned = partitioned.rolling(_badPartitionedMapping, {
+  trigger: Trigger.every('30s'),
+});
+void _badPartitioned;
 
 // ── partitionBy narrows the partition column literal ─────────
 //

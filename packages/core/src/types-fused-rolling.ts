@@ -5,6 +5,7 @@ import type {
   ScalarKind,
   SeriesSchema,
 } from './types.js';
+import type { DurationLiteral } from './utils/duration.js';
 
 /**
  * Types for the fused multi-window rolling primitive
@@ -21,17 +22,14 @@ import type {
 
 /**
  * Duration-string keys for {@link FusedMapping}. Constrains record
- * keys to `${number}${'ms'|'s'|'m'|'h'|'d'}` plus the `'buffer'`
- * sentinel (which resolves to the source's retention at construct
- * time). Catches typos like `'1min'` at compile time.
- *
- * Also accepts plain `number` for the rare case where a key is
- * computed at runtime; runtime parsing handles ms-as-string and
- * number alike via the existing `RollingWindow` shape.
+ * keys to integer-prefixed `${digits}${'ms'|'s'|'m'|'h'|'d'}` plus
+ * the `'buffer'` sentinel (which resolves to the source's retention
+ * at construct time). Catches typos like `'1min'`, `'1.5m'`, and
+ * `'-1m'` at compile time — same constraint as
+ * {@link DurationLiteral}, kept in lock-step with the runtime regex
+ * in {@link parseDuration}.
  */
-export type DurationString =
-  | `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`
-  | 'buffer';
+export type DurationString = DurationLiteral | 'buffer';
 
 /**
  * Elaborated per-window value form. Carries options that apply to
@@ -151,6 +149,59 @@ type WindowColumns<S extends SeriesSchema, M> = {
     readonly required: false;
   };
 }[keyof M & string];
+
+/**
+ * Output column names contributed by a single window in a
+ * {@link FusedMapping}. Used by {@link FusedMappingValid} to detect
+ * cross-window collisions at compile time.
+ */
+type WindowOutputNames<V> = keyof InnerMapping<V> & string;
+
+/**
+ * For a given window `W`, find the names it shares with any OTHER
+ * window in `FM`. Resolves to `never` when this window's outputs are
+ * unique across the whole mapping.
+ */
+type DuplicatedNamesFor<FM, W extends keyof FM> = Extract<
+  WindowOutputNames<FM[W]>,
+  {
+    [Other in Exclude<keyof FM, W>]: WindowOutputNames<FM[Other]>;
+  }[Exclude<keyof FM, W>]
+>;
+
+/**
+ * Union of every output column name that appears in ≥2 windows in
+ * `FM`. Resolves to `never` when every output column name is unique.
+ */
+type AllDuplicatedNames<FM> = {
+  [W in keyof FM]: DuplicatedNamesFor<FM, W>;
+}[keyof FM];
+
+/**
+ * Compile-time uniqueness check for {@link FusedMapping}. Returns
+ * `unknown` when every output column name is unique across all
+ * windows; returns a branded error type otherwise. Composed with the
+ * mapping via intersection at the call site:
+ *
+ * ```ts
+ * rolling<const FM extends FusedMapping<S>>(
+ *   fusedMapping: FM & FusedMappingValid<FM>,
+ *   ...
+ * )
+ * ```
+ *
+ * When duplicates exist, the intersection becomes
+ * `FM & { __FUSED_ROLLING_ERROR: '...' }`. The user's literal mapping
+ * doesn't have that field, so the assignment fails with the branded
+ * error message naming the conflicting column. Runtime construction
+ * still re-validates and throws a clear error for callers that pass
+ * `FM` typed via a variable (where the literal type is widened).
+ */
+export type FusedMappingValid<FM> = [AllDuplicatedNames<FM>] extends [never]
+  ? unknown
+  : {
+      readonly __FUSED_ROLLING_ERROR: `Duplicate output column '${AllDuplicatedNames<FM> & string}' across windows. Each output name must be unique across the merged schema.`;
+    };
 
 /**
  * Compute the union of all output columns across all windows in a

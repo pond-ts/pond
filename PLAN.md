@@ -1939,12 +1939,24 @@ useLiveQuery(timings, () => rolling.value());
   - **Path A** (share `LiveSeries` buffer when `longest_window ≤
 retention`). Currently Path B (own deque); same API, perf
     follow-up.
-  - **Compile-time uniqueness check** on output columns. Runtime
-    check is in place; the type-level branded-error helper is
-    parked.
-  - **Tighter `DurationString` template-literal type.** Today's
-    is permissive (`'1min'` may pass); runtime `parseDuration`
-    catches it. Tightening is a follow-up.
+  - **SHIPPED v0.16.0: compile-time uniqueness check** on fused
+    output columns. `FusedMappingValid<FM>` resolves to a branded
+    `__FUSED_ROLLING_ERROR` type when two windows declare the same
+    output column name; the call site fails with a message naming
+    the conflicting column. Wired into `LiveSeries.rolling`,
+    `LiveView.rolling`, and both `LivePartitionedSeries.rolling`
+    overloads. Pinned in `test-d/fused-rolling.test-d.ts`.
+  - **Tighter `DurationString` template-literal type — DEFERRED.**
+    Investigated in v0.16.0 development: a fully-recursive integer-
+    only template hits TS's "circularly references itself" error,
+    and a bounded union (10^N digit strings up to N=12) hits "union
+    type is too complex to represent" past ~5 digits. The current
+    `${number}${unit}` already rejects non-numeric prefixes
+    (`'1min'`, `'abch'` fail); fractional / negative / exponential
+    shapes (`'1.5m'`, `'-1m'`, `'1e3m'`) pass at the type level but
+    fail runtime parsing. Documented in `utils/duration.ts` JSDoc
+    so future readers don't re-attempt the bounded-union dead end.
+    Revisit only if a user lands on this with concrete friction.
   - **`partitionBy` partition-column literal narrowing —
     SHIPPED v0.15.1 (2026-05-05).** gRPC V8 found that
     `live.partitionBy('host').rolling({...})` widened the
@@ -2549,29 +2561,24 @@ sub.rolling(...))` or `partitionBy.collect()` — both do more
     closes the cliff; the remaining 15% is the abstraction
     paying for itself.
 
-  - **`history: false | RetentionPolicy` on live rolling outputs.**
-    `LiveRollingAggregation.ts:403` does `this.#outputEvents.push`
-    unboundedly — every emitted event is retained forever, growing
-    one entry per source event (or per trigger fire) for the life
-    of the accumulator. Many high-rate users only consume `value()`
-    or `on('event', ...)` and never read the historical output
-    series; for them, the retention is pure waste. Add an option:
+  - **SHIPPED v0.16.0: `history: false | RetentionPolicy` on live
+    rolling outputs.** Both `LiveRollingAggregation` and
+    `LiveFusedRolling` accept the option. Default `true` preserves
+    current behaviour; `false` skips the `outputEvents.push`
+    entirely (so `length` stays 0 and `at(i)` returns `undefined`,
+    while `'event'` listeners and `value()` still work);
+    `{ maxEvents?, maxAge? }` mirrors `LiveSeries`'s existing
+    retention shape. The accumulator's "skip allocation entirely
+    when opted out" question resolved toward strict opt-out. 16
+    dedicated tests in `packages/core/test/live-rolling-history.test.ts`.
+
+    Original sketch (preserved for the historical record):
 
     ```ts
     live.rolling('1m', m, { history: false }); // no retention
     live.rolling('1m', m, { history: { maxEvents: 1000 } });
     live.rolling('1m', m, { history: { maxAge: '5m' } });
     ```
-
-    `history: true` (the implicit default today) preserves current
-    behaviour. `false` skips the push entirely; the accumulator
-    still exposes `value()` and event-callbacks but `length`/`at`
-    return zero/undefined. The retention-policy case mirrors
-    `LiveSeries`'s existing retention shape. ~30-50 lines, well-
-    bounded; the design question is whether `history: false` should
-    also disable `outputEvents` allocation entirely or keep a
-    1-entry rolling slot. Lean toward "skip allocation entirely"
-    — if the user opts out, opt them out fully.
 
   Both are opportunistic — neither blocks any working app. Schedule
   alongside the next live-rolling perf pass or when the gRPC writeup

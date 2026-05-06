@@ -57,6 +57,7 @@ import { LiveFusedRolling } from './LiveFusedRolling.js';
 import { LiveReduce } from './LiveReduce.js';
 import type {
   FusedMapping,
+  FusedMappingValid,
   FusedRollingSchema,
 } from './types-fused-rolling.js';
 
@@ -641,7 +642,7 @@ export class LiveSeries<S extends SeriesSchema> {
    * PLAN.md "Fused multi-window rolling" for the full rationale.
    */
   rolling<const FM extends FusedMapping<S>>(
-    fusedMapping: FM,
+    fusedMapping: FM & FusedMappingValid<FM>,
     options?: LiveRollingOptions,
   ): LiveFusedRolling<S, FusedRollingSchema<S, FM>>;
   rolling(

@@ -1,4 +1,24 @@
-export type DurationInput = number | `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`;
+/**
+ * Unit suffix recognised by {@link parseDuration}. Kept in lock-step
+ * with the runtime regex `^(\d+)(ms|s|m|h|d)$`.
+ */
+export type DurationUnit = 'ms' | 's' | 'm' | 'h' | 'd';
+
+/**
+ * Template-literal duration string. The `${number}` prefix is
+ * intentionally permissive — TS rejects non-numeric prefixes
+ * (`'min'`, `'abch'`, `'1min'`) but accepts fractional / negative /
+ * exponential shapes (`'1.5m'`, `'-1m'`, `'1e3s'`) that the runtime
+ * regex `^(\d+)(ms|s|m|h|d)$` rejects. Fully tightening to integer-
+ * only requires either a 50+ deep recursive template (TS errors with
+ * "circularly references itself") or a bounded union of 10^N digit
+ * strings (TS errors with "union type is too complex" past ~5
+ * digits). The runtime parse is the strict gate; the type is the
+ * documentation hint.
+ */
+export type DurationLiteral = `${number}${DurationUnit}`;
+
+export type DurationInput = number | DurationLiteral;
 
 export function parseDuration(value: DurationInput): number {
   if (typeof value === 'number') {

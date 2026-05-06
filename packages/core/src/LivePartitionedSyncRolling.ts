@@ -12,6 +12,11 @@ import {
 } from './triggers.js';
 import type { RollingWindow } from './LiveRollingAggregation.js';
 import { parseDuration } from './utils/duration.js';
+import {
+  applyHistoryRetention,
+  resolveHistoryConfig,
+  type HistoryOption,
+} from './live-history.js';
 import type {
   AggregateMap,
   AggregateOutputMap,
@@ -101,6 +106,16 @@ export class LivePartitionedSyncRolling<
   #statsEmissions = 0;
 
   /**
+   * Output retention configuration forwarded from the
+   * `LiveRollingOptions.history` option on
+   * `LivePartitionedSeries.rolling`. Same shape as
+   * {@link LiveRollingAggregation}'s history handling.
+   */
+  readonly #historyEnabled: boolean;
+  readonly #historyMaxEvents: number;
+  readonly #historyMaxAgeMs: number;
+
+  /**
    * Internal — constructed by `LivePartitionedSeries.rolling` (root case)
    * or `LivePartitionedView.rolling` (chained case) when a clock trigger
    * is supplied.
@@ -128,12 +143,20 @@ export class LivePartitionedSyncRolling<
     window: RollingWindow,
     mapping: AggregateMap<SeriesSchema> | AggregateOutputMap<SeriesSchema>,
     trigger: ClockTrigger,
-    options: { minSamples?: number; declaredGroups?: ReadonlyArray<K> } = {},
+    options: {
+      minSamples?: number;
+      declaredGroups?: ReadonlyArray<K>;
+      history?: HistoryOption | undefined;
+    } = {},
   ) {
     this.name = upstreamName;
     this.#byColumn = byColumn;
     this.#trigger = trigger;
     this.#minSamples = options.minSamples ?? 0;
+    const histCfg = resolveHistoryConfig(options.history);
+    this.#historyEnabled = histCfg.enabled;
+    this.#historyMaxEvents = histCfg.maxEvents;
+    this.#historyMaxAgeMs = histCfg.maxAgeMs;
     if (!Number.isInteger(this.#minSamples) || this.#minSamples < 0) {
       throw new TypeError(
         'rolling minSamples must be a non-negative integer (default 0)',
@@ -406,6 +429,7 @@ export class LivePartitionedSyncRolling<
     const out = this.#outputEvents;
     const listeners = this.#onEvent;
     const orderLen = order.length;
+    const historyEnabled = this.#historyEnabled;
 
     for (let p = 0; p < orderLen; p++) {
       const key = order[p]!;
@@ -422,11 +446,20 @@ export class LivePartitionedSyncRolling<
           : state.states[i]!.snapshot();
       }
       const evt = new Event(time, record) as unknown as EventForSchema<Out>;
-      out.push(evt);
       this.#statsEmissions++;
+      if (historyEnabled) {
+        out.push(evt);
+      }
       if (listeners.size > 0) {
         for (const fn of listeners) fn(evt);
       }
+    }
+    // Apply retention once per tick (not per emit) — the per-tick
+    // burst pushes N partition events sharing the same boundary
+    // timestamp, so a single trim at the end is correct and avoids
+    // re-traversing the buffer for each partition.
+    if (historyEnabled) {
+      applyHistoryRetention(out, this.#historyMaxEvents, this.#historyMaxAgeMs);
     }
   }
 
