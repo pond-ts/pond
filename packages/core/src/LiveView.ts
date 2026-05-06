@@ -1,4 +1,5 @@
 import { Event } from './Event.js';
+import { ValidationError } from './errors.js';
 import { LiveAggregation } from './LiveAggregation.js';
 import {
   LiveRollingAggregation,
@@ -7,7 +8,7 @@ import {
 } from './LiveRollingAggregation.js';
 import { LiveFusedRolling } from './LiveFusedRolling.js';
 import { LiveReduce } from './LiveReduce.js';
-import { TimeSeries } from './TimeSeries.js';
+import { TimeSeries, toKey, type KeyLike } from './TimeSeries.js';
 import type { Sequence } from './Sequence.js';
 import {
   EMITS_EVICT,
@@ -97,14 +98,14 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
 
     for (let i = 0; i < source.length; i++) {
       const result = this.#process(source.at(i)!);
-      if (result !== undefined) this.#events.push(result);
+      if (result !== undefined) this.#appendChecked(result);
     }
     this.#applyEviction();
 
     const eventUnsub = source.on('event', (event) => {
       const result = this.#process(event);
       if (result !== undefined) {
-        this.#events.push(result);
+        this.#appendChecked(result);
         this.#applyEviction();
         for (const fn of this.#onEvent) fn(result);
       }
@@ -157,6 +158,85 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     return this.#events[this.#events.length - 1];
   }
 
+  // ── Query primitives ─────────────────────────────────────────
+  //
+  // Mirror `TimeSeries` / `LiveSeries` query parity. Live views
+  // are sorted by key (events flow through in source-order; views
+  // never re-sort). Same binary-search shape as `TimeSeries.bisect`.
+  //
+  // Sort-order assumption: the four binary-search methods below
+  // assume the underlying buffer is sorted by key. This holds for
+  // every built-in view operation (`filter` / `select` / `window` /
+  // `diff` / `rate` / `pctChange` / `cumulative` / `fill`) because
+  // they preserve the source's keys. The exception is
+  // {@link LiveView.map} when the user-supplied function rewrites
+  // the key — see that method's JSDoc.
+
+  /** Example: `view.find(e => e.get('value') > 0)`. */
+  find(
+    predicate: (event: EventForSchema<S>, index: number) => boolean,
+  ): EventForSchema<S> | undefined {
+    return this.#events.find((event, index) => predicate(event, index));
+  }
+
+  /** Example: `view.some(e => e.get('healthy'))`. */
+  some(
+    predicate: (event: EventForSchema<S>, index: number) => boolean,
+  ): boolean {
+    return this.#events.some((event, index) => predicate(event, index));
+  }
+
+  /** Example: `view.every(e => e.get('healthy'))`. */
+  every(
+    predicate: (event: EventForSchema<S>, index: number) => boolean,
+  ): boolean {
+    return this.#events.every((event, index) => predicate(event, index));
+  }
+
+  /** Example: `view.includesKey(new Time(t))`. */
+  includesKey(key: KeyLike): boolean {
+    const normalizedKey = toKey(key);
+    const index = this.bisect(normalizedKey);
+    return (
+      index < this.#events.length &&
+      this.#events[index]!.key().equals(normalizedKey)
+    );
+  }
+
+  /** Example: `view.bisect(new Time(t))`. Insertion index for `key` in the sorted view buffer (binary search). */
+  bisect(key: KeyLike): number {
+    const normalizedKey = toKey(key);
+    let low = 0;
+    let high = this.#events.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (this.#events[mid]!.key().compare(normalizedKey) < 0) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+    return low;
+  }
+
+  /** Example: `view.atOrBefore(new Time(t))`. */
+  atOrBefore(key: KeyLike): EventForSchema<S> | undefined {
+    const normalizedKey = toKey(key);
+    const index = this.bisect(normalizedKey);
+    if (
+      index < this.#events.length &&
+      this.#events[index]!.key().equals(normalizedKey)
+    ) {
+      return this.#events[index];
+    }
+    return index === 0 ? undefined : this.#events[index - 1];
+  }
+
+  /** Example: `view.atOrAfter(new Time(t))`. */
+  atOrAfter(key: KeyLike): EventForSchema<S> | undefined {
+    return this.#events[this.bisect(key)];
+  }
+
   filter(predicate: (event: EventForSchema<S>) => boolean): LiveView<S> {
     return new LiveView(
       this,
@@ -165,6 +245,22 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     );
   }
 
+  /**
+   * Per-event transform. Each source event is run through `fn` and
+   * the result is appended to the view's buffer. The view does NOT
+   * re-sort by key — events flow through in source order, which
+   * preserves the upstream's sort invariant only if `fn` returns
+   * events with the same key.
+   *
+   * **If `fn` rewrites the event's key** (e.g. shifting timestamps,
+   * changing the interval), the view's buffer is no longer
+   * key-sorted. The Tier 2 query primitives ({@link LiveView.bisect},
+   * {@link LiveView.includesKey}, {@link LiveView.atOrBefore},
+   * {@link LiveView.atOrAfter}) all assume sorted-by-key and will
+   * return wrong answers on a re-keying map. Use `map` only for
+   * data transforms; use a separate live primitive for time-axis
+   * transforms.
+   */
   map(fn: (event: EventForSchema<S>) => EventForSchema<S>): LiveView<S> {
     return new LiveView(
       this,
@@ -407,6 +503,38 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     if (!this.#evict) return;
     const count = this.#evict(this.#events);
     if (count > 0) this.#events.splice(0, count);
+  }
+
+  /**
+   * Append a processed event to the view's buffer, asserting that
+   * the buffer remains key-sorted. Re-keying maps that produce
+   * non-monotonic outputs would silently break the four binary-
+   * search query primitives ({@link LiveView.bisect},
+   * {@link LiveView.includesKey}, {@link LiveView.atOrBefore},
+   * {@link LiveView.atOrAfter}) — Codex caught this on PR #125
+   * review. Throwing at append time turns silent wrong answers
+   * into a clear, debuggable error.
+   *
+   * Sane transforms (`map(e => e.set('x', f(x)))`,
+   * `filter(...)`, `select(...)`, etc.) preserve keys and never
+   * trip the check. Time-axis transforms (e.g. shifting all
+   * timestamps by N ms) are also fine — they preserve relative
+   * order. The only failure mode is a re-keying map that produces
+   * out-of-order events.
+   */
+  #appendChecked(event: EventForSchema<S>): void {
+    const last = this.#events[this.#events.length - 1];
+    if (last && event.key().compare(last.key()) < 0) {
+      throw new ValidationError(
+        `LiveView: processed event has key ${String(event.key())} ` +
+          `older than the previous tail ${String(last.key())}. ` +
+          `Re-keying maps that produce non-monotonic output break the ` +
+          `view's sorted-buffer invariant. Use a transform that ` +
+          `preserves keys, or perform time-axis rewrites on a snapshot ` +
+          `(\`live.toTimeSeries()\`) instead.`,
+      );
+    }
+    this.#events.push(event);
   }
 }
 

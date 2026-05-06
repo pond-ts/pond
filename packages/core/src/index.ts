@@ -21,7 +21,7 @@ export { PartitionedTimeSeries } from './PartitionedTimeSeries.js';
 export { Time } from './Time.js';
 export { TimeRange, toTimeRange } from './TimeRange.js';
 export { Sequence } from './Sequence.js';
-export { TimeSeries } from './TimeSeries.js';
+export { TimeSeries, type KeyLike } from './TimeSeries.js';
 export { top } from './reducers/index.js';
 export { ValidationError } from './errors.js';
 export type {

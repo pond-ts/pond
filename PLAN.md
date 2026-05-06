@@ -1509,19 +1509,33 @@ to batch `TimeSeries` for this persona:**
   toward dropping `LiveView.count()` — `length` is the JS-idiomatic
   shape. Minor; settle alongside the other Tier 1 work.
 
-**Tier 2 — query primitives on the sorted live buffer.**
+**Tier 2 — query primitives on the sorted live buffer (SHIPPED v0.16.0).**
 
-`TimeSeries` has these; `LiveSeries` and `LiveView` do not:
+Pure parity additions on `LiveSeries` and `LiveView`. Both classes
+now expose:
 
 - **Predicate query:** `find(pred)`, `some(pred)`, `every(pred)`.
-  Linear scan; trivial.
+  Linear scan; thin wrappers over the underlying event array's
+  same-named methods.
 - **Key-position query:** `includesKey(key)`, `bisect(key)`,
   `atOrBefore(key)`, `atOrAfter(key)`. Binary search on the sorted
-  buffer; cheap.
+  buffer; O(log N).
 
-Use cases: "is there already an event with key K?" / "what was the
-most recent event before time T?" Both come up in dashboard /
-monitoring patterns where the buffer **is** the working set.
+`KeyLike` and `toKey` are now exported from `TimeSeries.ts` (and
+re-exported from the package root) so callers can type their own
+helpers consistently across batch and live.
+
+37 dedicated tests in `packages/core/test/live-query-tier2.test.ts`
+cover empty-buffer behavior, bisect edge cases (before / exact /
+between / after), live mutation reflection (retention evicts
+update bisect), and LiveView parity (windowed bisect respects
+view boundary; filtered view's `includesKey` returns false for
+filtered-out events).
+
+Use cases that motivated this: "is there already an event with
+key K?" / "what was the most recent event before time T?" — both
+come up in dashboard / monitoring patterns where the buffer **is**
+the working set.
 
 **Tier 3 — range slicing and the `window` vs `tail` naming.**
 

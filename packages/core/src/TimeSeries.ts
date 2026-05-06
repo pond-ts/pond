@@ -100,7 +100,16 @@ import {
 
 type RangeLike = EventKey | TimeRangeInput | IntervalInput;
 type BoundaryLike = EventKey | TimestampInput;
-type KeyLike = EventKey | TimestampInput | TimeRangeInput | IntervalInput;
+/**
+ * Accepted shape for key-position queries (`bisect`, `includesKey`,
+ * `atOrBefore`, `atOrAfter` on `TimeSeries` / `LiveSeries` /
+ * `LiveView`). Normalised through {@link toKey}.
+ */
+export type KeyLike =
+  | EventKey
+  | TimestampInput
+  | TimeRangeInput
+  | IntervalInput;
 type SeriesRangeLike = TemporalLike | { timeRange(): TimeRange | undefined };
 type AlignMethod = 'hold' | 'linear';
 type AlignSample = 'begin' | 'center' | 'end';
@@ -197,7 +206,7 @@ function toBoundaryTimestamp(value: BoundaryLike): number {
   return value instanceof Date ? value.getTime() : value;
 }
 
-function toKey(value: KeyLike): EventKey {
+export function toKey(value: KeyLike): EventKey {
   if (isEventKey(value)) {
     return value;
   }
