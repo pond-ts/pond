@@ -162,6 +162,14 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   // Mirror `TimeSeries` / `LiveSeries` query parity. Live views
   // are sorted by key (events flow through in source-order; views
   // never re-sort). Same binary-search shape as `TimeSeries.bisect`.
+  //
+  // Sort-order assumption: the four binary-search methods below
+  // assume the underlying buffer is sorted by key. This holds for
+  // every built-in view operation (`filter` / `select` / `window` /
+  // `diff` / `rate` / `pctChange` / `cumulative` / `fill`) because
+  // they preserve the source's keys. The exception is
+  // {@link LiveView.map} when the user-supplied function rewrites
+  // the key — see that method's JSDoc.
 
   /** Example: `view.find(e => e.get('value') > 0)`. */
   find(
@@ -236,6 +244,22 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     );
   }
 
+  /**
+   * Per-event transform. Each source event is run through `fn` and
+   * the result is appended to the view's buffer. The view does NOT
+   * re-sort by key — events flow through in source order, which
+   * preserves the upstream's sort invariant only if `fn` returns
+   * events with the same key.
+   *
+   * **If `fn` rewrites the event's key** (e.g. shifting timestamps,
+   * changing the interval), the view's buffer is no longer
+   * key-sorted. The Tier 2 query primitives ({@link LiveView.bisect},
+   * {@link LiveView.includesKey}, {@link LiveView.atOrBefore},
+   * {@link LiveView.atOrAfter}) all assume sorted-by-key and will
+   * return wrong answers on a re-keying map. Use `map` only for
+   * data transforms; use a separate live primitive for time-axis
+   * transforms.
+   */
   map(fn: (event: EventForSchema<S>) => EventForSchema<S>): LiveView<S> {
     return new LiveView(
       this,

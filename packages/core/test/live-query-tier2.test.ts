@@ -12,7 +12,7 @@
  *   - LiveView (filtered / windowed) sees the post-process buffer
  */
 import { describe, expect, it } from 'vitest';
-import { LiveSeries, Time } from '../src/index.js';
+import { Interval, LiveSeries, Time } from '../src/index.js';
 
 const schema = [
   { name: 'time', kind: 'time' },
@@ -388,5 +388,88 @@ describe('LiveSeries query parity with TimeSeries', () => {
     expect(live.atOrAfter(new Time(2500))?.begin()).toBe(
       snap.atOrAfter(new Time(2500))?.begin(),
     );
+  });
+});
+
+// ── Interval-keyed series (Layer 2 gap pin) ─────────────────────
+
+const intervalSchema = [
+  { name: 'time', kind: 'interval' },
+  { name: 'value', kind: 'number' },
+] as const;
+
+describe('LiveSeries query primitives on interval-keyed series', () => {
+  it('bisect / includesKey / atOrBefore / atOrAfter work on Interval keys', () => {
+    const live = new LiveSeries({ name: 'test', schema: intervalSchema });
+    live.pushMany([
+      [{ value: 1000, start: 1000, end: 2000 }, 1],
+      [{ value: 2000, start: 2000, end: 3000 }, 2],
+      [{ value: 3000, start: 3000, end: 4000 }, 3],
+    ]);
+    const k2 = new Interval({ value: 2000, start: 2000, end: 3000 });
+    expect(live.bisect(k2)).toBe(1);
+    expect(live.includesKey(k2)).toBe(true);
+    expect(live.atOrBefore(k2)?.begin()).toBe(2000);
+    expect(live.atOrAfter(k2)?.begin()).toBe(2000);
+
+    // Between events
+    const k25 = new Interval({ value: 2500, start: 2500, end: 3500 });
+    expect(live.bisect(k25)).toBe(2);
+    expect(live.includesKey(k25)).toBe(false);
+    expect(live.atOrBefore(k25)?.begin()).toBe(2000);
+    expect(live.atOrAfter(k25)?.begin()).toBe(3000);
+  });
+});
+
+// ── Same-timestamp duplicates (lower-bound semantics) ───────────
+
+describe('LiveSeries.bisect lower-bound pinning on same-timestamp duplicates', () => {
+  it('returns the index of the FIRST event matching the key when duplicates exist', () => {
+    // LiveSeries default ordering is 'strict' — out-of-order rejects.
+    // Duplicates at the same timestamp ARE accepted (`compareKeys`
+    // returns 0, the new event appends after the existing one).
+    const live = makeLive();
+    live.pushMany([
+      [1000, 1],
+      [2000, 2],
+      [2000, 99], // dup at 2000
+      [3000, 3],
+    ]);
+    expect(live.length).toBe(4);
+    // bisect returns the LOWEST index where the key would be inserted
+    // — so for an existing key, that's the index of the FIRST matching
+    // event. Mirrors `TimeSeries.bisect`'s lower-bound semantics.
+    expect(live.bisect(new Time(2000))).toBe(1);
+    // includesKey works regardless of duplicates.
+    expect(live.includesKey(new Time(2000))).toBe(true);
+    // atOrBefore returns the first match (same as bisect's index).
+    expect(live.atOrBefore(new Time(2000))?.get('value')).toBe(2);
+    // atOrAfter also returns the first match.
+    expect(live.atOrAfter(new Time(2000))?.get('value')).toBe(2);
+  });
+});
+
+// ── Reorder-mode insertion ──────────────────────────────────────
+
+describe('LiveSeries query primitives under ordering: reorder', () => {
+  it('bisect reflects the post-insertion sorted buffer when late events arrive', () => {
+    const live = new LiveSeries({
+      name: 'test',
+      schema,
+      ordering: 'reorder',
+      graceWindow: '10s',
+    });
+    live.push([1000, 1]);
+    live.push([5000, 5]);
+    // A late event arrives — under reorder it gets inserted at its
+    // sorted position (between 1000 and 5000), not appended.
+    live.push([3000, 3]);
+    expect(live.length).toBe(3);
+    expect(live.at(1)?.begin()).toBe(3000); // sorted position
+    // bisect / atOrBefore / atOrAfter all see the post-insertion sort.
+    expect(live.bisect(new Time(3000))).toBe(1);
+    expect(live.includesKey(new Time(3000))).toBe(true);
+    expect(live.atOrBefore(new Time(3500))?.begin()).toBe(3000);
+    expect(live.atOrAfter(new Time(2500))?.begin()).toBe(3000);
   });
 });
