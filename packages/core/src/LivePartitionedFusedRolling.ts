@@ -139,6 +139,11 @@ export class LivePartitionedFusedRolling<
   readonly #unsubscribes: Set<() => void>;
   #disposed: boolean;
 
+  // Pipeline counters for {@link LivePartitionedFusedRolling.stats}.
+  // Cumulative since construction; never reset.
+  #statsEventsObserved = 0;
+  #statsEmissions = 0;
+
   /**
    * @internal — constructed by `LivePartitionedSeries.rolling`'s
    * keyed-form clock-trigger overload.
@@ -301,6 +306,7 @@ export class LivePartitionedFusedRolling<
    */
   ingest(partitionKey: K, event: EventForSchema<S>): void {
     if (this.#disposed) return;
+    this.#statsEventsObserved++;
     const state = this.#ensurePartition(partitionKey);
     const data = event.data() as Record<string, ColumnValue | undefined>;
     const absIdx = state.nextIndex++;
@@ -473,10 +479,54 @@ export class LivePartitionedFusedRolling<
       }
       const evt = new Event(time, record) as unknown as EventForSchema<Out>;
       out.push(evt);
+      this.#statsEmissions++;
       if (listeners.size > 0) {
         for (const fn of listeners) fn(evt);
       }
     }
+  }
+
+  /**
+   * Pipeline stats snapshot — cumulative counters since
+   * construction plus current per-partition state. O(partitions)
+   * because `windowSize` walks every partition's live deque to
+   * report the max.
+   *
+   * - `partitions`: current partition count.
+   * - `eventsObserved`: total source events ingested across all
+   *   partitions. Never decreases.
+   * - `emissions`: total merged output events fired. Each
+   *   clock-trigger tick fans out one event per partition. Never
+   *   decreases.
+   * - `windowSize`: max live deque size across all partitions
+   *   right now. Useful for spotting partition skew. Returns 0
+   *   when no partitions exist. **Note:** "across partitions"
+   *   here, not "across windows" (per-partition deques are
+   *   already shared across all declared windows). See the
+   *   {@link LivePartitionedSyncRolling.stats} cross-reference
+   *   for the same axis-vs-name caveat.
+   * - `windowsCount`: number of declared windows. Static after
+   *   construction.
+   */
+  stats(): {
+    partitions: number;
+    eventsObserved: number;
+    emissions: number;
+    windowSize: number;
+    windowsCount: number;
+  } {
+    let maxLive = 0;
+    for (const state of this.#partitions.values()) {
+      const live = state.entries.length - state.frontIdx;
+      if (live > maxLive) maxLive = live;
+    }
+    return {
+      partitions: this.#partitions.size,
+      eventsObserved: this.#statsEventsObserved,
+      emissions: this.#statsEmissions,
+      windowSize: maxLive,
+      windowsCount: this.#windowSpecs.length,
+    };
   }
 
   /**

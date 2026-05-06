@@ -163,6 +163,12 @@ export class LiveFusedRolling<
   readonly #onEvent: Set<EventListener>;
   readonly #unsubscribe: () => void;
 
+  // Pipeline counters for {@link LiveFusedRolling.stats}.
+  // Cumulative since construction; never reset.
+  #statsEventsObserved = 0;
+  #statsEvictions = 0;
+  #statsEmissions = 0;
+
   constructor(
     source: LiveSource<S>,
     fusedMapping: FusedMapping<S>,
@@ -312,6 +318,47 @@ export class LiveFusedRolling<
     };
   }
 
+  /**
+   * Pipeline stats snapshot — cumulative counters since
+   * construction plus current shared-deque state. Cheap O(1).
+   *
+   * - `eventsObserved`: total source events ingested. Includes
+   *   events replayed at construction from a non-empty source.
+   *   Never decreases.
+   * - `evictions`: total events that have aged out of every
+   *   declared window (= shared-deque front advances). Each value
+   *   counts a single source event, regardless of how many
+   *   per-window `remove` calls it triggered. Never decreases.
+   * - `emissions`: total merged output events fired. Never
+   *   decreases. For `Trigger.event` it equals `eventsObserved`;
+   *   for `Trigger.count(n)` and `Trigger.clock` it can be
+   *   smaller.
+   * - `windowSize`: current live size of the shared deque
+   *   (= max across all windows' live counts). Use
+   *   {@link LiveFusedRolling.value} for per-window snapshots.
+   *   **Note:** the partitioned variant
+   *   {@link LivePartitionedSyncRolling.stats} also has a
+   *   `windowSize` field, but it means "max across partitions"
+   *   rather than "max across windows." Different axis, same name.
+   * - `windowsCount`: number of declared windows. Static after
+   *   construction.
+   */
+  stats(): {
+    eventsObserved: number;
+    evictions: number;
+    emissions: number;
+    windowSize: number;
+    windowsCount: number;
+  } {
+    return {
+      eventsObserved: this.#statsEventsObserved,
+      evictions: this.#statsEvictions,
+      emissions: this.#statsEmissions,
+      windowSize: this.#entries.length - this.#frontIdx,
+      windowsCount: this.#windows.length,
+    };
+  }
+
   dispose(): void {
     this.#unsubscribe();
   }
@@ -336,6 +383,7 @@ export class LiveFusedRolling<
   }
 
   #ingest(event: EventForSchema<S>): void {
+    this.#statsEventsObserved++;
     const data = event.data() as Record<string, ColumnValue | undefined>;
     const absIdx = this.#nextIndex++;
     const ts = event.begin();
@@ -423,12 +471,14 @@ export class LiveFusedRolling<
     }
     // Advance the front pointer past evicted entries. O(1) amortized
     // per ingest because total advances across the rolling's life is
-    // bounded by total events ingested.
+    // bounded by total events ingested. Each advance corresponds to
+    // one source event that has fully aged out of every window.
     while (
       this.#frontIdx < this.#entries.length &&
       this.#entries[this.#frontIdx]!.absIdx < minHead
     ) {
       this.#frontIdx++;
+      this.#statsEvictions++;
     }
     // Periodic batched compaction: when the dead prefix exceeds
     // either an absolute threshold or half the array, splice it off
@@ -467,6 +517,7 @@ export class LiveFusedRolling<
       record,
     ) as unknown as EventForSchema<Out>;
     this.#outputEvents.push(outputEvent);
+    this.#statsEmissions++;
     for (const fn of this.#onEvent) fn(outputEvent);
   }
 

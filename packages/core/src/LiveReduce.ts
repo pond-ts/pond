@@ -144,6 +144,12 @@ export class LiveReduce<
   readonly #unsubscribeEvict: (() => void) | undefined;
   #disposed: boolean;
 
+  // Pipeline counters for {@link LiveReduce.stats}.
+  // Cumulative since construction; never reset.
+  #statsEventsObserved = 0;
+  #statsEvictions = 0;
+  #statsEmissions = 0;
+
   constructor(
     source: LiveSource<S>,
     mapping: AggregateMap<S> | AggregateOutputMap<S>,
@@ -249,6 +255,49 @@ export class LiveReduce<
     };
   }
 
+  /**
+   * Pipeline stats snapshot — cumulative counters since
+   * construction plus current reducer-state size. Cheap O(1).
+   *
+   * - `eventsObserved`: total source events ingested into reducer
+   *   state. Includes events replayed at construction from a
+   *   non-empty source — phrased uniformly with sibling classes'
+   *   stats() docs. Never decreases.
+   * - `evictions`: total events removed from reducer state via
+   *   the source's `'evict'` channel. Events that predated this
+   *   `LiveReduce` (so weren't in `#eventToAbsIdx`) don't count.
+   *   Never decreases.
+   * - `emissions`: total output events fired. Never decreases.
+   *   For `Trigger.event`, a single `pushMany(K)` fires ONE
+   *   deferred emission (see class JSDoc) — `emissions` may be
+   *   strictly less than `eventsObserved`.
+   * - `bufferSize`: current count of events in reducer state
+   *   (= `eventsObserved - evictions`). Tracks the source's
+   *   current retained buffer that this reduce sees.
+   *
+   * **`bufferSize` is only meaningful when the source emits
+   * `'evict'`.** This class subscribes to `'evict'` only when
+   * the source is marked with `EMITS_EVICT` (see class JSDoc).
+   * If a future `LiveSource` impl evicts internally without
+   * emitting `'evict'`, `evictions` stays at 0 and `bufferSize`
+   * grows monotonically — silently wrong. Today every pond
+   * source that evicts also marks `EMITS_EVICT`, so this is
+   * theoretical, but the contract is load-bearing.
+   */
+  stats(): {
+    eventsObserved: number;
+    evictions: number;
+    emissions: number;
+    bufferSize: number;
+  } {
+    return {
+      eventsObserved: this.#statsEventsObserved,
+      evictions: this.#statsEvictions,
+      emissions: this.#statsEmissions,
+      bufferSize: this.#statsEventsObserved - this.#statsEvictions,
+    };
+  }
+
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
@@ -260,6 +309,7 @@ export class LiveReduce<
 
   #ingest(event: EventForSchema<S>): void {
     if (this.#disposed) return;
+    this.#statsEventsObserved++;
     const absIdx = this.#nextAbsIdx++;
     this.#eventToAbsIdx.set(event, absIdx);
     const data = event.data() as Record<string, ColumnValue | undefined>;
@@ -326,6 +376,7 @@ export class LiveReduce<
     const absIdx = this.#eventToAbsIdx.get(event);
     if (absIdx === undefined) return; // event predated this LiveReduce
     this.#eventToAbsIdx.delete(event);
+    this.#statsEvictions++;
     const data = event.data() as Record<string, ColumnValue | undefined>;
     for (let i = 0; i < this.#columns.length; i++) {
       this.#states[i]!.remove(absIdx, data[this.#columns[i]!.source]);
@@ -345,6 +396,7 @@ export class LiveReduce<
       record,
     ) as unknown as EventForSchema<Out>;
     this.#outputEvents.push(outputEvent);
+    this.#statsEmissions++;
     for (const fn of this.#onEvent) fn(outputEvent);
   }
 

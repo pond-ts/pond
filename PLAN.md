@@ -1573,7 +1573,42 @@ second user signal first — the gaps are visible from the existing
 batch-vs-live contrast. Schedule alongside the next live-API pass
 or when a buffer-as-window user reports specific friction.
 
-### Queued: pipeline `stats()` accessor (logged 2026-05-06)
+### Shipped: pipeline `stats()` accessor across 8 live classes (v0.16.0)
+
+Per-class `stats()` accessor shipped in PR 2 of the v0.16.0 wave —
+covers `LiveSeries`, `LiveRollingAggregation`, `LiveFusedRolling`,
+`LiveAggregation`, `LiveReduce`, `LivePartitionedSeries`,
+`LivePartitionedSyncRolling`, and `LivePartitionedFusedRolling`.
+Each class has private integer counters incremented in existing
+handlers (`#ingest` / `#removeFirst` / `#emitEvent` / `#routeEvent`)
+plus an O(1) `stats()` accessor returning a plain record.
+
+Per-class shapes match the design sketch below, with two
+deviations:
+
+1. `LiveAggregation.stats()` returns
+   `{ eventsObserved, bucketsClosed, openBuckets, openBucketStart? }`
+   instead of `{ eventsObserved, bucketsClosed, emissions,
+   openBucketStart? }`. `emissions` would have been redundant with
+   `bucketsClosed` (every closed bucket emits exactly one output
+   event); `openBuckets` (current pending bucket count) carries
+   bucket-lifecycle info users actually reach for.
+2. `LiveReduce.stats()` was added beyond the original 7-class
+   sketch since the gRPC team uses it as their primary primitive;
+   shape is `{ eventsObserved, evictions, emissions, bufferSize }`
+   where `bufferSize = eventsObserved - evictions` (current count
+   of events in reducer state, tracking the source's retained
+   buffer).
+
+Tests: 33 dedicated stats tests in
+`packages/core/test/live-stats.test.ts` covering shape pinning,
+counter advancement on every relevant event, retention/eviction
+counting, late-event silent-drop accounting, partition counting,
+trigger-fire-count for non-event triggers, and a 10k-event
+allocation smoke test. All 1177 core tests + 55 react tests
+passing.
+
+Original design sketch (logged 2026-05-06):
 
 Surfaced by the gRPC experiment's manual-counter pattern in
 `aggregator/src/aggregate.ts` (step 6, pond-grpc-experiment#26):

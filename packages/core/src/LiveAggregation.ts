@@ -77,6 +77,11 @@ export class LiveAggregation<
   readonly #onUpdate: Set<UpdateListener>;
   readonly #unsubscribe: () => void;
 
+  // Pipeline counters for {@link LiveAggregation.stats}.
+  // Cumulative since construction; never reset.
+  #statsEventsObserved = 0;
+  #statsBucketsClosed = 0;
+
   constructor(
     source: LiveSource<S>,
     sequence: Sequence,
@@ -272,6 +277,59 @@ export class LiveAggregation<
     );
   }
 
+  /**
+   * Pipeline stats snapshot — cumulative counters since
+   * construction plus current bucket-state. Cheap O(1).
+   *
+   * - `eventsObserved`: total source events that contributed to a
+   *   bucket. Includes events replayed at construction from a
+   *   non-empty source. Late events (those whose bucket was
+   *   already closed under the watermark + grace window) are
+   *   silently dropped and do NOT increment this counter — match
+   *   the silent-drop shape in {@link LiveSeries.stats} for
+   *   late-event handling. Never decreases.
+   * - `bucketsClosed`: total buckets finalized (= length of the
+   *   closed-event stream, also exposed via `length`). Never
+   *   decreases.
+   * - `openBuckets`: current count of pending (unclosed) buckets.
+   *   Equal to `#pending.size`. Drops back as the watermark
+   *   advances and buckets close.
+   * - `openBucketStart`: earliest open bucket's start ms, or
+   *   undefined if no buckets are pending.
+   *
+   * Note on field omission vs `LiveRollingAggregation.stats`: this
+   * shape doesn't carry an `emissions` field because every closed
+   * bucket pushes exactly one event to the output stream — the
+   * count would be identical to `bucketsClosed`. `openBuckets` and
+   * `openBucketStart` give the bucket-lifecycle observability
+   * users actually reach for.
+   */
+  stats(): {
+    eventsObserved: number;
+    bucketsClosed: number;
+    openBuckets: number;
+    openBucketStart?: number;
+  } {
+    const result: {
+      eventsObserved: number;
+      bucketsClosed: number;
+      openBuckets: number;
+      openBucketStart?: number;
+    } = {
+      eventsObserved: this.#statsEventsObserved,
+      bucketsClosed: this.#statsBucketsClosed,
+      openBuckets: this.#pending.size,
+    };
+    if (this.#pending.size > 0) {
+      let minStart = Infinity;
+      for (const start of this.#pending.keys()) {
+        if (start < minStart) minStart = start;
+      }
+      result.openBucketStart = minStart;
+    }
+    return result;
+  }
+
   dispose(): void {
     this.#unsubscribe();
   }
@@ -294,6 +352,8 @@ export class LiveAggregation<
     const closeCutoff = this.#watermark - this.#graceMs;
 
     if (bucket.end <= closeCutoff) return;
+
+    this.#statsEventsObserved++;
 
     let pending = this.#pending.get(bucket.start);
     if (!pending) {
@@ -356,6 +416,7 @@ export class LiveAggregation<
     }
     const evt = new Event(interval, record);
     this.#closedEvents.push(evt);
+    this.#statsBucketsClosed++;
     for (const fn of this.#onClose) fn(evt);
   }
 

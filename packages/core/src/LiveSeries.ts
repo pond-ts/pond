@@ -209,6 +209,13 @@ export class LiveSeries<S extends SeriesSchema> {
   readonly #onBatch: Set<BatchListener<S>>;
   readonly #onEvict: Set<EvictListener<S>>;
 
+  // Pipeline counters for {@link LiveSeries.stats}. Incremented in
+  // the `pushMany` / `_pushTrustedEvents` paths and `#applyRetention`.
+  // Cumulative since construction; never reset.
+  #statsIngested = 0;
+  #statsEvicted = 0;
+  #statsRejected = 0;
+
   constructor(options: LiveSeriesOptions<S>) {
     this.name = options.name;
     this.schema = Object.freeze([...options.schema]) as unknown as S;
@@ -304,14 +311,27 @@ export class LiveSeries<S extends SeriesSchema> {
     for (const row of rows) {
       const event = this.#validateRow(row);
       if (this.#insert(event)) {
+        // Increment the counter immediately after a successful
+        // insert and BEFORE listener fan-out. If a listener throws
+        // partway through the loop, the event is committed in
+        // `#events` and reflected in `length` — `ingested` must
+        // reflect that too, so callers can recover from listener
+        // exceptions without observability counters lying.
+        this.#statsIngested++;
         added.push(event);
         for (const fn of this.#onEvent) fn(event);
+      } else {
+        // Drop-mode silent rejection: out-of-order event under
+        // `ordering: 'drop'`. Strict / reorder modes throw; those
+        // never reach this counter.
+        this.#statsRejected++;
       }
     }
 
     if (added.length === 0) return;
 
     const evicted = this.#applyRetention();
+    if (evicted.length > 0) this.#statsEvicted += evicted.length;
 
     for (const fn of this.#onBatch) fn(added);
     if (evicted.length > 0) {
@@ -354,14 +374,21 @@ export class LiveSeries<S extends SeriesSchema> {
 
     for (const event of events) {
       if (this.#insert(event)) {
+        // See pushMany — counter advances before listener fan-out
+        // so partial-failure on any listener still leaves
+        // `ingested` consistent with `length`.
+        this.#statsIngested++;
         added.push(event);
         for (const fn of this.#onEvent) fn(event);
+      } else {
+        this.#statsRejected++;
       }
     }
 
     if (added.length === 0) return;
 
     const evicted = this.#applyRetention();
+    if (evicted.length > 0) this.#statsEvicted += evicted.length;
 
     for (const fn of this.#onBatch) fn(added);
     if (evicted.length > 0) {
@@ -409,6 +436,11 @@ export class LiveSeries<S extends SeriesSchema> {
     const evicted = this.#events;
     this.#events = [];
     if (evicted.length > 0) {
+      // `clear()` is observable via the same `'evict'` channel as
+      // retention-driven removal, so it increments the same
+      // `evicted` counter on `stats()` for consistency. JSDoc on
+      // `stats().evicted` documents both paths.
+      this.#statsEvicted += evicted.length;
       for (const fn of this.#onEvict) fn(evicted);
     }
   }
@@ -698,6 +730,57 @@ export class LiveSeries<S extends SeriesSchema> {
     const span = this.timeRange();
     if (span === 0) return 0;
     return (this.#events.length / span) * 1000;
+  }
+
+  /**
+   * Pipeline stats snapshot — cumulative counters since
+   * construction plus current buffer state. Cheap O(1).
+   *
+   * - `ingested`: total events accepted (after validation +
+   *   `#insert`). Never decreases.
+   * - `evicted`: total events removed from the buffer — by
+   *   retention OR by an explicit {@link LiveSeries.clear} call.
+   *   Both paths fire the `'evict'` listener; this counter
+   *   matches that same fan-out. Never decreases.
+   * - `rejected`: total events silently rejected (drop-mode
+   *   out-of-order arrivals). Strict / reorder modes throw on
+   *   rejection — those don't count here.
+   * - `length`: current buffer size (= `this.length`).
+   * - `earliestTs` / `latestTs`: timestamps of buffer ends, or
+   *   undefined if the buffer is empty.
+   *
+   * Use case: long-running pipelines that want headline counters
+   * without wiring `live.on('batch'/'evict')` listeners by hand.
+   * The gRPC experiment's manual-counter pattern is exactly this
+   * shape.
+   */
+  stats(): {
+    ingested: number;
+    evicted: number;
+    rejected: number;
+    length: number;
+    earliestTs?: number;
+    latestTs?: number;
+  } {
+    const length = this.#events.length;
+    const result: {
+      ingested: number;
+      evicted: number;
+      rejected: number;
+      length: number;
+      earliestTs?: number;
+      latestTs?: number;
+    } = {
+      ingested: this.#statsIngested,
+      evicted: this.#statsEvicted,
+      rejected: this.#statsRejected,
+      length,
+    };
+    if (length > 0) {
+      result.earliestTs = this.#events[0]!.begin();
+      result.latestTs = this.#events[length - 1]!.begin();
+    }
+    return result;
   }
 
   diff<const Target extends NumericColumnNameForSchema<S>>(

@@ -95,6 +95,11 @@ export class LivePartitionedSyncRolling<
   readonly #unsubscribes: Set<() => void>;
   #disposed: boolean;
 
+  // Pipeline counters for {@link LivePartitionedSyncRolling.stats}.
+  // Cumulative since construction; never reset.
+  #statsEventsObserved = 0;
+  #statsEmissions = 0;
+
   /**
    * Internal — constructed by `LivePartitionedSeries.rolling` (root case)
    * or `LivePartitionedView.rolling` (chained case) when a clock trigger
@@ -276,6 +281,7 @@ export class LivePartitionedSyncRolling<
    */
   ingest(partitionKey: K, event: EventForSchema<S>): void {
     if (this.#disposed) return;
+    this.#statsEventsObserved++;
     const state = this.#ensurePartition(partitionKey);
     const data = event.data() as Record<string, ColumnValue | undefined>;
     const values = this.#columns.map((c) => data[c.source]);
@@ -417,9 +423,51 @@ export class LivePartitionedSyncRolling<
       }
       const evt = new Event(time, record) as unknown as EventForSchema<Out>;
       out.push(evt);
+      this.#statsEmissions++;
       if (listeners.size > 0) {
         for (const fn of listeners) fn(evt);
       }
     }
+  }
+
+  /**
+   * Pipeline stats snapshot — cumulative counters since
+   * construction plus current per-partition state. O(partitions)
+   * because `windowSize` walks every partition's live count to
+   * report the max.
+   *
+   * - `partitions`: current partition count (= count of distinct
+   *   keys ingested, plus any pre-declared groups).
+   * - `eventsObserved`: total source events ingested across all
+   *   partitions. Never decreases.
+   * - `emissions`: total output events fired. Each clock-trigger
+   *   tick fans out one event per partition, so `emissions` ≈
+   *   `ticks × partitions` over time. Never decreases.
+   * - `windowSize`: max across all partitions' live window counts
+   *   right now. Useful for spotting partition skew (one
+   *   partition's deque blowing up while others stay small).
+   *   Returns 0 when no partitions exist. **Note:** the
+   *   non-partitioned {@link LiveFusedRolling.stats} also has a
+   *   `windowSize` field, but it means "max across windows"
+   *   rather than "max across partitions." Different axis, same
+   *   name.
+   */
+  stats(): {
+    partitions: number;
+    eventsObserved: number;
+    emissions: number;
+    windowSize: number;
+  } {
+    let maxLive = 0;
+    for (const state of this.#partitionStates.values()) {
+      const live = state.entries.length - state.frontIdx;
+      if (live > maxLive) maxLive = live;
+    }
+    return {
+      partitions: this.#partitionStates.size,
+      eventsObserved: this.#statsEventsObserved,
+      emissions: this.#statsEmissions,
+      windowSize: maxLive,
+    };
   }
 }
