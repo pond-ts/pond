@@ -12,7 +12,7 @@
  *   - LiveView (filtered / windowed) sees the post-process buffer
  */
 import { describe, expect, it } from 'vitest';
-import { Interval, LiveSeries, Time } from '../src/index.js';
+import { Event, Interval, LiveSeries, Time } from '../src/index.js';
 
 const schema = [
   { name: 'time', kind: 'time' },
@@ -419,6 +419,36 @@ describe('LiveSeries query primitives on interval-keyed series', () => {
     expect(live.atOrBefore(k25)?.begin()).toBe(2000);
     expect(live.atOrAfter(k25)?.begin()).toBe(3000);
   });
+
+  it('Codex regression pin: same-span intervals with different values are queryable', () => {
+    // Bug Codex caught on PR #125 review: `compareKeys` in
+    // LiveSeries used to compare only begin/end, but
+    // `Interval.compare` adds a value tie-break. So pushing
+    // intervals at the same span but different values left the
+    // buffer in arrival order while `bisect` expected value-
+    // ascending order — `includesKey` returned false on
+    // events that were definitely there.
+    //
+    // Fix: comparator delegates to `EventKey.compare`, matching
+    // the bisect lookup. Pin: pushing [b, a] (same span,
+    // descending value) and querying for either still returns
+    // both correctly.
+    const live = new LiveSeries({ name: 'test', schema: intervalSchema });
+    live.pushMany([
+      [{ value: 1000, start: 1000, end: 2000 }, 1],
+      [{ value: 1500, start: 1000, end: 2000 }, 2], // same span, different value
+    ]);
+    expect(live.length).toBe(2);
+    const ka = new Interval({ value: 1000, start: 1000, end: 2000 });
+    const kb = new Interval({ value: 1500, start: 1000, end: 2000 });
+    // Both keys must be findable.
+    expect(live.includesKey(ka)).toBe(true);
+    expect(live.includesKey(kb)).toBe(true);
+    // bisect returns the lower-bound — interval with value=1000
+    // sorts before value=1500.
+    expect(live.bisect(ka)).toBe(0);
+    expect(live.bisect(kb)).toBe(1);
+  });
 });
 
 // ── Same-timestamp duplicates (lower-bound semantics) ───────────
@@ -446,6 +476,74 @@ describe('LiveSeries.bisect lower-bound pinning on same-timestamp duplicates', (
     expect(live.atOrBefore(new Time(2000))?.get('value')).toBe(2);
     // atOrAfter also returns the first match.
     expect(live.atOrAfter(new Time(2000))?.get('value')).toBe(2);
+  });
+});
+
+// ── LiveView non-monotonic map (Codex regression pin) ──────────
+
+describe('LiveView re-keying map runtime check', () => {
+  it('throws ValidationError on a map that produces non-monotonic keys', () => {
+    // Bug Codex caught on PR #125 review: `LiveView.map` accepts
+    // any user fn; if the fn rewrites keys non-monotonically, the
+    // view appended in source order without re-sort. The four
+    // binary-search query primitives then returned wrong answers
+    // silently.
+    //
+    // Fix: append-time check in `#appendChecked` throws a clear
+    // `ValidationError` on non-monotonic mapped events. Sane
+    // transforms (data-only maps, time-axis shifts that preserve
+    // order) still work; only genuine reorderings throw.
+    const live = makeLive();
+    live.pushMany([
+      [1000, 1],
+      [2000, 2],
+      [3000, 3],
+    ]);
+    // Re-keying map that flips relative order: this must throw.
+    expect(() =>
+      live.map((event) => {
+        const t = event.begin();
+        // Rewrite t=2000 → t=500 to push the second event before
+        // the first in keyspace.
+        if (t === 2000) {
+          return new Event(new Time(500), event.data() as any) as any;
+        }
+        return event;
+      }),
+    ).toThrow(/non-monotonic|older than the previous tail/);
+  });
+
+  it('does NOT throw on a key-preserving map (data-only transform)', () => {
+    const live = makeLive();
+    live.pushMany([
+      [1000, 1],
+      [2000, 2],
+    ]);
+    expect(() =>
+      live.map((event) => {
+        return new Event(event.key(), {
+          ...(event.data() as Record<string, unknown>),
+          value: ((event.data() as Record<string, number>).value ?? 0) * 2,
+        } as any) as any;
+      }),
+    ).not.toThrow();
+  });
+
+  it('does NOT throw on a monotonic time-shifting map', () => {
+    const live = makeLive();
+    live.pushMany([
+      [1000, 1],
+      [2000, 2],
+    ]);
+    expect(() =>
+      live.map((event) => {
+        // Shift every timestamp by +5000 — preserves order.
+        return new Event(
+          new Time(event.begin() + 5000),
+          event.data() as any,
+        ) as any;
+      }),
+    ).not.toThrow();
   });
 });
 

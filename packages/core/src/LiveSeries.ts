@@ -148,8 +148,22 @@ function assertCellKind(kind: string, value: unknown, name: string): void {
   }
 }
 
+/**
+ * Comparator used by `#insert` to order the live buffer. Delegates
+ * to `EventKey.compare`, which:
+ *   - For Time / TimeRange: begin / end / type
+ *   - For Interval: begin / end / value (so two intervals with the
+ *     same span but different values are ordered by value)
+ *
+ * Must match the comparator that Tier 2 query primitives
+ * (`bisect`, `includesKey`, `atOrBefore`, `atOrAfter`) use to
+ * search the buffer — otherwise interval-keyed series can hold
+ * same-span intervals in arrival order while bisect expects
+ * value-ascending order, producing false-negative `includesKey`
+ * results. Codex caught this on PR #125 review.
+ */
 function compareKeys(a: EventKey, b: EventKey): number {
-  return a.begin() !== b.begin() ? a.begin() - b.begin() : a.end() - b.end();
+  return a.compare(b);
 }
 
 // ── Types ───────────────────────────────────────────────────────

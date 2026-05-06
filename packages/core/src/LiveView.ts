@@ -1,4 +1,5 @@
 import { Event } from './Event.js';
+import { ValidationError } from './errors.js';
 import { LiveAggregation } from './LiveAggregation.js';
 import {
   LiveRollingAggregation,
@@ -97,14 +98,14 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
 
     for (let i = 0; i < source.length; i++) {
       const result = this.#process(source.at(i)!);
-      if (result !== undefined) this.#events.push(result);
+      if (result !== undefined) this.#appendChecked(result);
     }
     this.#applyEviction();
 
     const eventUnsub = source.on('event', (event) => {
       const result = this.#process(event);
       if (result !== undefined) {
-        this.#events.push(result);
+        this.#appendChecked(result);
         this.#applyEviction();
         for (const fn of this.#onEvent) fn(result);
       }
@@ -502,6 +503,38 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     if (!this.#evict) return;
     const count = this.#evict(this.#events);
     if (count > 0) this.#events.splice(0, count);
+  }
+
+  /**
+   * Append a processed event to the view's buffer, asserting that
+   * the buffer remains key-sorted. Re-keying maps that produce
+   * non-monotonic outputs would silently break the four binary-
+   * search query primitives ({@link LiveView.bisect},
+   * {@link LiveView.includesKey}, {@link LiveView.atOrBefore},
+   * {@link LiveView.atOrAfter}) — Codex caught this on PR #125
+   * review. Throwing at append time turns silent wrong answers
+   * into a clear, debuggable error.
+   *
+   * Sane transforms (`map(e => e.set('x', f(x)))`,
+   * `filter(...)`, `select(...)`, etc.) preserve keys and never
+   * trip the check. Time-axis transforms (e.g. shifting all
+   * timestamps by N ms) are also fine — they preserve relative
+   * order. The only failure mode is a re-keying map that produces
+   * out-of-order events.
+   */
+  #appendChecked(event: EventForSchema<S>): void {
+    const last = this.#events[this.#events.length - 1];
+    if (last && event.key().compare(last.key()) < 0) {
+      throw new ValidationError(
+        `LiveView: processed event has key ${String(event.key())} ` +
+          `older than the previous tail ${String(last.key())}. ` +
+          `Re-keying maps that produce non-monotonic output break the ` +
+          `view's sorted-buffer invariant. Use a transform that ` +
+          `preserves keys, or perform time-axis rewrites on a snapshot ` +
+          `(\`live.toTimeSeries()\`) instead.`,
+      );
+    }
+    this.#events.push(event);
   }
 }
 
