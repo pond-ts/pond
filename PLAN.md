@@ -1573,6 +1573,119 @@ second user signal first — the gaps are visible from the existing
 batch-vs-live contrast. Schedule alongside the next live-API pass
 or when a buffer-as-window user reports specific friction.
 
+### Queued: pipeline `stats()` accessor (logged 2026-05-06)
+
+Surfaced by the gRPC experiment's manual-counter pattern in
+`aggregator/src/aggregate.ts` (step 6, pond-grpc-experiment#26):
+
+```ts
+let eventsIngested = 0;
+let eventsEvicted = 0;
+const offBatch = live.on('batch', (events) => {
+  eventsIngested += events.length;
+});
+const offEvict = live.on('evict', (events) => {
+  eventsEvicted += events.length;
+});
+// later, on every tick:
+emit({ events_ingested_total: eventsIngested, ... });
+```
+
+Every long-running pond pipeline reaches for cumulative counters
+of _something_ — events seen, events evicted, emissions fired,
+partitions spawned. The library has the data internally
+(`'batch'` / `'evict'` listeners, the `#partitions` map, the
+output buffer length); users wire it themselves because pond
+doesn't expose it in a single accessor. Each new user
+reinvents the same handler+counter boilerplate.
+
+**The shape — `stats()` accessor on each accumulator/series.**
+Read-only point-in-time snapshot, returned as a plain record.
+Per-class field set:
+
+```ts
+live.stats();
+// { ingested, evicted, rejected, length, earliestTs?, latestTs? }
+
+rolling.stats(); // LiveRollingAggregation
+// { eventsObserved, evictions, emissions, windowSize }
+
+fused.stats(); // LiveFusedRolling
+// { eventsObserved, evictions, emissions, windowSize, windowsCount }
+
+agg.stats(); // LiveAggregation
+// { eventsObserved, bucketsClosed, emissions, openBucketStart? }
+
+byHost.stats(); // LivePartitionedSeries
+// { partitions, eventsRouted }
+
+syncRolling.stats(); // LivePartitionedSyncRolling / LivePartitionedFusedRolling
+// { partitions, eventsObserved, emissions, windowSize: max-across-partitions }
+```
+
+**Cost budget — strict.** Each new field is a private integer
+counter, incremented in handlers that already exist. `stats()`
+itself constructs one record on call. Per-event cost: ~3
+integer increments. No allocation per event, no listener fan-
+out, no per-event indirection. This is an observability
+ergonomic, not a perf concern — sits in the same bucket as
+`length` / `windowSize` / other zero-cost accessors.
+
+**Read pattern — polling, not subscription.** Users call
+`stats()` when they want a snapshot:
+
+- Once per tick when assembling a wire frame (gRPC pattern)
+- On every render frame at 60fps (dashboard pattern)
+- From `setInterval(..., 10_000)` for periodic backend export
+- From inside a `Trigger.every('10s')` handler for data-clock
+  cadence
+
+A push-based `on('stats', cb, { trigger })` shape was
+considered and rejected for v1 — wall-clock timers inside pond
+break the data-is-the-clock invariant the rest of the library
+preserves; data-clock cadence via `Trigger.every` is already
+composable in 5 lines of user code (subscribe to `'event'`,
+check ts crosses boundary, call `stats()`). Revisit only if
+users repeatedly write that exact composition.
+
+**What's NOT in scope:**
+
+- **Distributions / latency histograms.** That's metrics-
+  framework territory; users wanting Prometheus-style
+  observability layer a real metrics library at the
+  application boundary on top of `stats()`.
+- **Per-partition stats maps.** Aggregate "partition count"
+  is enough for v1; per-partition counts add memory
+  proportional to partition count. Add only if a user lands
+  on the wall.
+- **Late-event / reorder accounting.** Useful for
+  `ordering: 'reorder'` debugging, but the reorder path is
+  already complex; targeted additions when `OrderingMode`
+  semantics get more attention.
+- **Beam-style metrics registry.** Counter / Gauge /
+  Distribution / runner aggregation. Massive scope creep —
+  pond is an in-process series library, not a distributed
+  pipeline orchestrator. Permanently out of bounds.
+
+**Framing.** Same as the v0.15.2 abstraction-cost framing:
+making observation cheap is library work; building a metrics
+system isn't. Polling `stats()` is sufficient for the long-
+tail of "I want to know how my pipeline is doing"; anything
+richer is application code that composes on top.
+
+**Implementation rough estimate.** ~150 LoC across the seven
+accumulator/series classes (~20-25 LoC each, mostly counter
+fields + `stats()` method). Tests pin "counter advances on
+every relevant event" + "snapshot record shape matches
+class." Bench: trivial — confirm the stats() construction is
+sub-µs and per-event counter updates are unmeasurable. Could
+ship as v0.16.0 (small additive surface, type-safe) alongside
+the queued buffer-as-window Tier 1 work.
+
+Cross-reference: gRPC experiment manual counter
+(pond-grpc-experiment#26 step 6); the v0.15.2 SHIPPED entry's
+"manual counter vs rolling" follow-up doc note.
+
 ### Shipped: `rolling.sample(sequence)` — sequence-triggered rolling snapshot (v0.11.8, superseded by v0.12 triggers)
 
 > **Status note (2026-05-01):** `.sample()` and
