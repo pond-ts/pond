@@ -3190,7 +3190,43 @@ Scope:
 Later, only after the previous phases are stable:
 
 - `@pond-ts/charts` — first-party chart components built directly on the
-  `pond-ts` data model, successor to `react-timeseries-charts`
+  `pond-ts` data model, successor to `react-timeseries-charts`.
+
+  **Design constraints from real workload (gRPC experiment M3.5,
+  pond-grpc-experiment#29 friction note "Recharts as the dashboard's
+  render bottleneck"):** the experiment hit Recharts' SVG cliff at
+  10 hosts × 5min × 5 fps × 3 series = ~75-80k SVG nodes per
+  render — wire-and-pipeline side already lean (cpu memo at 7-37 ms
+  steady), browser rendering at ~1 fps, two tabs OOM Chrome.
+  Decimating per-series to ~500 points (3× downsample, tuned to
+  ~420px chart width) restored fluid rendering at moderate rates
+  but didn't save the firehose case at 10 hosts × 70k events/s —
+  that's the canvas-vs-SVG cliff, not a data-volume problem.
+
+  Constraints worth carrying into the package's design when the
+  extraction happens:
+
+  - **Streaming-first input.** Accept `LiveSeries` / `useWindow` /
+    `aggregate` outputs, not just static arrays. The chart decides
+    its own decimation grid (or accepts a `Sequence` from the
+    caller).
+  - **Spike-preserving decimation by default for envelope / min /
+    max signals.** Pond's `'min'` / `'max'` reducers already encode
+    the right per-signal semantic — the chart just plumbs the
+    picker through. A bucket containing a single-tick spike still
+    reports the spike in min/max envelopes.
+  - **Anomaly / sparse markers stay full-resolution** alongside
+    decimated continuous signals. They're a separate channel, not
+    a downsample target — bucket-aligned dots would smear single-
+    tick anomalies and risk dropping them inside an all-zero
+    bucket.
+  - **Render at the throttle cadence with 30+ visible series.**
+    The experiment's CPU section is the canonical stress test.
+    Canvas-based, no per-frame React reconciliation across the
+    chart subtree.
+
+  These constraints bake in correctly when written from real
+  friction and badly when guessed from first principles.
 - **gRPC stream processor experiment** — in progress at
   [pjm17971/pond-grpc-experiment](https://github.com/pjm17971/pond-grpc-experiment).
   Three-tier setup: producer (Node, gRPC) → aggregator (Node,
