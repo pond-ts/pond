@@ -558,12 +558,12 @@ export class LivePartitionedSeries<
     window: RollingWindow,
     mapping: M,
     options: LiveRollingOptions & { trigger: { kind: 'clock' } & Trigger },
-  ): LiveSource<SeriesSchema>;
+  ): LivePartitionedSyncRolling<S, K, SeriesSchema>;
   rolling<const M extends AggregateOutputMap<S>>(
     window: RollingWindow,
     mapping: M,
     options: LiveRollingOptions & { trigger: { kind: 'clock' } & Trigger },
-  ): LiveSource<SeriesSchema>;
+  ): LivePartitionedSyncRolling<S, K, SeriesSchema>;
   // Catch-all overloads for callers that pass `options` as a variable
   // typed `LiveRollingOptions` (rather than an inline literal whose
   // `trigger` field TS can narrow). Without these the four narrowed
@@ -575,14 +575,14 @@ export class LivePartitionedSeries<
     options: LiveRollingOptions,
   ):
     | LivePartitionedView<S, RollingSchema<S, M>, K, ByCol>
-    | LiveSource<SeriesSchema>;
+    | LivePartitionedSyncRolling<S, K, SeriesSchema>;
   rolling<const M extends AggregateOutputMap<S>>(
     window: RollingWindow,
     mapping: M,
     options: LiveRollingOptions,
   ):
     | LivePartitionedView<S, RollingOutputMapSchema<S, M>, K, ByCol>
-    | LiveSource<SeriesSchema>;
+    | LivePartitionedSyncRolling<S, K, SeriesSchema>;
   /**
    * Keyed-form fused multi-window partitioned rolling. Maintains N
    * windows per partition in a single ingest pass over a single
@@ -605,7 +605,11 @@ export class LivePartitionedSeries<
   rolling<const FM extends FusedMapping<S>>(
     fusedMapping: FM,
     options: LiveRollingOptions & { trigger: { kind: 'clock' } & Trigger },
-  ): LiveSource<FusedPartitionedRollingSchema<S, ByCol, FM>>;
+  ): LivePartitionedFusedRolling<
+    S,
+    K,
+    FusedPartitionedRollingSchema<S, ByCol, FM>
+  >;
   rolling(
     arg1: RollingWindow | FusedMapping<S>,
     mappingOrOptions?:
@@ -1176,12 +1180,12 @@ export class LivePartitionedView<
     window: RollingWindow,
     mapping: M,
     options: LiveRollingOptions & { trigger: { kind: 'clock' } & Trigger },
-  ): LiveSource<SeriesSchema>;
+  ): LivePartitionedSyncRolling<R, K, SeriesSchema>;
   rolling<const M extends AggregateOutputMap<R>>(
     window: RollingWindow,
     mapping: M,
     options: LiveRollingOptions & { trigger: { kind: 'clock' } & Trigger },
-  ): LiveSource<SeriesSchema>;
+  ): LivePartitionedSyncRolling<R, K, SeriesSchema>;
   // Catch-all overloads for callers that pass `options` as a variable
   // typed `LiveRollingOptions`. See the matching block on
   // `LivePartitionedSeries.rolling` for the full rationale.
@@ -1191,14 +1195,14 @@ export class LivePartitionedView<
     options: LiveRollingOptions,
   ):
     | LivePartitionedView<SBase, RollingSchema<R, M>, K, ByCol>
-    | LiveSource<SeriesSchema>;
+    | LivePartitionedSyncRolling<R, K, SeriesSchema>;
   rolling<const M extends AggregateOutputMap<R>>(
     window: RollingWindow,
     mapping: M,
     options: LiveRollingOptions,
   ):
     | LivePartitionedView<SBase, RollingOutputMapSchema<R, M>, K, ByCol>
-    | LiveSource<SeriesSchema>;
+    | LivePartitionedSyncRolling<R, K, SeriesSchema>;
   /**
    * Keyed-form fused multi-window rolling on a chained
    * `LivePartitionedView`. Same shape as the root variant — each
@@ -1212,7 +1216,11 @@ export class LivePartitionedView<
   rolling<const FM extends FusedMapping<R>>(
     fusedMapping: FM,
     options: LiveRollingOptions & { trigger: { kind: 'clock' } & Trigger },
-  ): LiveSource<FusedPartitionedRollingSchema<R, ByCol, FM>>;
+  ): LivePartitionedFusedRolling<
+    R,
+    K,
+    FusedPartitionedRollingSchema<R, ByCol, FM>
+  >;
   rolling(
     arg1: RollingWindow | FusedMapping<R>,
     mappingOrOptions?:

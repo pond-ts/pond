@@ -123,6 +123,34 @@ describe('LiveSeries.stats', () => {
     live.clear();
     expect(live.stats().evicted).toBe(0);
   });
+
+  it('ingested counter stays consistent when an event listener throws partway through pushMany', () => {
+    // Codex regression pin: previously `#statsIngested += added.length`
+    // ran AFTER the per-event listener fan-out. If a listener threw
+    // mid-loop, the events were committed in `#events` but the counter
+    // never advanced, so stats().ingested < stats().length on partial
+    // failures. Now the counter advances inside the loop, before each
+    // event's listener fan-out.
+    const live = makeLive();
+    let calls = 0;
+    live.on('event', () => {
+      calls++;
+      if (calls === 2) throw new Error('listener boom');
+    });
+    expect(() =>
+      live.pushMany([
+        [1000, 1, 'a'],
+        [2000, 2, 'a'],
+        [3000, 3, 'a'],
+      ]),
+    ).toThrow(/boom/);
+    const s = live.stats();
+    // The throw lands on event 2; events 1 and 2 are committed in
+    // the buffer (insert succeeded for both, the listener threw for
+    // the second). Counter must reflect those.
+    expect(s.length).toBeGreaterThanOrEqual(s.ingested);
+    expect(s.ingested).toBe(s.length);
+  });
 });
 
 // ── LiveRollingAggregation ─────────────────────────────────────

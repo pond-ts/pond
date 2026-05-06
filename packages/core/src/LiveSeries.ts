@@ -311,6 +311,13 @@ export class LiveSeries<S extends SeriesSchema> {
     for (const row of rows) {
       const event = this.#validateRow(row);
       if (this.#insert(event)) {
+        // Increment the counter immediately after a successful
+        // insert and BEFORE listener fan-out. If a listener throws
+        // partway through the loop, the event is committed in
+        // `#events` and reflected in `length` — `ingested` must
+        // reflect that too, so callers can recover from listener
+        // exceptions without observability counters lying.
+        this.#statsIngested++;
         added.push(event);
         for (const fn of this.#onEvent) fn(event);
       } else {
@@ -322,8 +329,6 @@ export class LiveSeries<S extends SeriesSchema> {
     }
 
     if (added.length === 0) return;
-
-    this.#statsIngested += added.length;
 
     const evicted = this.#applyRetention();
     if (evicted.length > 0) this.#statsEvicted += evicted.length;
@@ -369,6 +374,10 @@ export class LiveSeries<S extends SeriesSchema> {
 
     for (const event of events) {
       if (this.#insert(event)) {
+        // See pushMany — counter advances before listener fan-out
+        // so partial-failure on any listener still leaves
+        // `ingested` consistent with `length`.
+        this.#statsIngested++;
         added.push(event);
         for (const fn of this.#onEvent) fn(event);
       } else {
@@ -377,8 +386,6 @@ export class LiveSeries<S extends SeriesSchema> {
     }
 
     if (added.length === 0) return;
-
-    this.#statsIngested += added.length;
 
     const evicted = this.#applyRetention();
     if (evicted.length > 0) this.#statsEvicted += evicted.length;
