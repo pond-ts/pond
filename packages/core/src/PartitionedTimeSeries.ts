@@ -167,6 +167,45 @@ export class PartitionedTimeSeries<
     }
   }
 
+  /**
+   * Augment a per-partition aggregate / rolling mapping with `'first'`
+   * reducers for any partition column not already present as a key.
+   * Required because the rewrap step at the end of partitioned
+   * `aggregate(...)` / `rolling(...)` re-validates that every column
+   * in `this.by` exists in the per-partition output schema. Without
+   * the partition column carried through, rewrap throws
+   * `column "<col>" not in schema` at runtime — surfaced by gRPC
+   * experiment M3.5 friction note "Per-partition aggregate must
+   * re-declare the partition column".
+   *
+   * `'first'` is by-construction-correct: every row in a single
+   * partition has the same value for the partition column (that's
+   * the partitioning invariant), so any reducer that picks one of
+   * those values is right. `'first'` is the cheapest choice.
+   *
+   * No-op when every partition column is already a key in the user's
+   * mapping — they've explicitly opted in to mapping the column,
+   * possibly under an alias, and we leave their choice intact.
+   * (Aliasing the column away — `{ host_id: { from: 'host', using:
+   * 'first' } }` — still triggers auto-inject for `host` since the
+   * alias key is `host_id`, not `host`. The output then carries both
+   * `host` and `host_id`.)
+   */
+  private augmentMappingWithPartitionCols<M>(mapping: M): M {
+    const userKeys = new Set(Object.keys(mapping as object));
+    const missing = this.by.filter((col) => !userKeys.has(col));
+    if (missing.length === 0) return mapping;
+    const augmented = { ...(mapping as object) } as Record<string, unknown>;
+    for (const col of missing) {
+      // `{ from, using }` (AggregateOutputMap form) is accepted in
+      // any mapping shape — `normalizeAggregateColumns` handles
+      // entries per-key, so mixing AggregateMap and AggregateOutputMap
+      // entries within one mapping object works at runtime.
+      augmented[col] = { from: col, using: 'first' };
+    }
+    return augmented as M;
+  }
+
   // Class-private factory used by `rewrap` to construct a
   // partitioned view from a per-partition transform output. Skips
   // groups validation because the events came from this view's
@@ -598,10 +637,31 @@ export class PartitionedTimeSeries<
   ): PartitionedTimeSeries<AggregateOutputMapResultSchema<S, Mapping>, K>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   rolling(...args: any[]): any {
+    // `rolling` arg shapes: `(window, mapping, opts?)` or
+    // `(sequence, window, mapping, opts?)`. The mapping is the
+    // last user-supplied mapping object — find it by checking
+    // each arg in reverse order for an object that's NOT a
+    // valid `opts` shape (opts has only known keys: `alignment`,
+    // `output`, `minSamples`). Simpler: for argv length 2, mapping
+    // is at index 1; length 3, mapping is at index 1 (window,
+    // mapping, opts) or index 2 (sequence, window, mapping); etc.
+    // Cleanest: detect by checking whether the slot at index N
+    // is a plain object whose values aren't the AggregateMap shape.
+    //
+    // For the shapes documented on `TimeSeries.rolling`:
+    //   rolling(window, mapping, opts?)
+    //   rolling(sequence, window, mapping, opts?)
+    // mapping is always the third-to-last or second-to-last arg
+    // depending on whether opts is supplied. We can disambiguate
+    // by checking whether the third arg looks like a mapping
+    // (record of reducers) vs an opts object.
+    const augmentedArgs = augmentRollingArgsWithPartitionCols(args, (mapping) =>
+      this.augmentMappingWithPartitionCols(mapping),
+    );
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (g.rolling as any)(...args),
+        (g.rolling as any)(...augmentedArgs),
       ),
     );
   }
@@ -754,11 +814,49 @@ export class PartitionedTimeSeries<
   ): PartitionedTimeSeries<AggregateOutputMapResultSchema<S, Mapping>, K>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   aggregate(...args: any[]): any {
+    // `aggregate(sequence, mapping, opts?)` — mapping is at index 1.
+    const augmentedArgs = [...args];
+    if (augmentedArgs.length >= 2) {
+      augmentedArgs[1] = this.augmentMappingWithPartitionCols(augmentedArgs[1]);
+    }
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (g.aggregate as any)(...args),
+        (g.aggregate as any)(...augmentedArgs),
       ),
     );
   }
+}
+
+/**
+ * Locate the mapping argument in `TimeSeries.rolling` argv and run
+ * `augment` over it. `rolling` has two shapes:
+ *
+ *   - `rolling(window, mapping, opts?)` — mapping at index 1
+ *   - `rolling(sequence, window, mapping, opts?)` — mapping at index 2
+ *
+ * Disambiguation: the first arg is always either a `RollingWindow`
+ * (number/string/DurationInput) or a `SequenceLike` (object with
+ * `stepMs`). When it's a SequenceLike, the second arg is the window
+ * and the third is the mapping. Otherwise the second is the mapping.
+ */
+function augmentRollingArgsWithPartitionCols(
+  args: unknown[],
+  augment: <M>(mapping: M) => M,
+): unknown[] {
+  if (args.length < 2) return args;
+  // SequenceLike is an object with a `stepMs` method; RollingWindow
+  // is a number, string, or DurationInput (object with stepMs is
+  // never a window). This check is the same one used inside
+  // `TimeSeries.rolling` to dispatch on arg shape.
+  const first = args[0];
+  const isSequenceFirst =
+    first !== null &&
+    typeof first === 'object' &&
+    'stepMs' in (first as object);
+  const mappingIdx = isSequenceFirst ? 2 : 1;
+  if (mappingIdx >= args.length) return args;
+  const out = [...args];
+  out[mappingIdx] = augment(out[mappingIdx]);
+  return out;
 }
