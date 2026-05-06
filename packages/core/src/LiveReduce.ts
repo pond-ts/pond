@@ -52,21 +52,43 @@ type EventListener = (event: any) => void;
  * eviction is independent — it drives reducer-state removes but
  * does not itself fire the trigger.
  *
- * **Retention lag.** A push that triggers retention fires
- * `'event'` for the new event THEN `'evict'` for the dropped
- * events. If the trigger fires per-event, the snapshot may
- * briefly include events about to be evicted (between `'event'`
- * and `'evict'` callbacks). Acceptable for typical use; for
- * post-retention precision use a clock trigger with cadence
- * longer than the retention overflow rate.
+ * **Post-retention emission via deferred microtask.** A push
+ * that triggers retention fires `'event'` per row, then runs
+ * `applyRetention()`, then fires `'batch'` and `'evict'`. To
+ * emit a snapshot reflecting the post-retention buffer state,
+ * `LiveReduce` defers the trigger fire to a `queueMicrotask`
+ * scheduled in the `'event'` handler. By the time the microtask
+ * runs, all synchronous `'event'` / `'evict'` callbacks for the
+ * push have completed and reducer state is consistent with the
+ * source's current buffer.
+ *
+ * One implication: `Trigger.event()` semantics differ from
+ * `LiveRollingAggregation`'s. A `pushMany(rows)` of K rows fires
+ * ONE deferred emission, not K. (Each individual `push()` is one
+ * row → one emission, identical.) For most users this is the
+ * more useful semantic — the snapshot represents
+ * "state-after-this-push," not "state-after-each-row-mid-push."
+ * Users wanting per-row emissions should reach for
+ * `LiveRollingAggregation` over a buffer-sized window instead.
  *
  * **Construction-time replay.** Sources with existing buffer
- * content at construction (e.g. a `LiveSeries` constructed from
- * a snapshot) replay each existing event through `#ingest`. With
- * `Trigger.event()` (the default) this emits N immediate output
- * events — same as `LiveRollingAggregation`'s replay shape. Use
- * a clock or count trigger if you want to suppress the
- * construction-time burst.
+ * content at construction replay through `#ingest`. With
+ * `Trigger.event()` this fires ONE deferred emission after
+ * replay completes (not N events under the new microtask
+ * defer). Test pin: `it('replay emits one deferred event ...')`.
+ *
+ * **Caveat — `ordering: 'reorder'` source mode.** `LiveReduce`
+ * processes events in arrival order, not sorted-by-timestamp
+ * order. For a source with `ordering: 'reorder'`, late events
+ * are inserted into the source buffer at their sorted position
+ * but reach `LiveReduce` as new arrivals. Order-sensitive
+ * reducers (`first`, `last`, `samples`, `top${N}`, custom
+ * functions) compute over arrival order, not buffer order.
+ * Order-independent reducers (`avg`, `count`, `sum`, `min`,
+ * `max`, `stdev`, `median`, `percentile`, `unique`) are
+ * unaffected. If you need order-sensitive reductions on a
+ * reorder-mode source, snapshot to a `TimeSeries` first via
+ * `live.toTimeSeries().reduce(...)`.
  *
  * **Source contract — `EMITS_EVICT` is load-bearing.** This
  * class's reducer state stays in sync with the source's current
@@ -105,6 +127,16 @@ export class LiveReduce<
   readonly #trigger: Trigger;
   #lastClockBucketIdx: number | undefined;
   #countSinceLastEmit: number;
+  /**
+   * Deferred emission state. Trigger fires are deferred to a
+   * microtask so retention has finished running and `'evict'`
+   * callbacks have processed. `#pendingEmitKey` is set on each
+   * `#ingest` and cleared by the microtask flush; the most-recent
+   * key wins (we emit one snapshot per pushMany).
+   */
+  #pendingEmitKey: any | undefined;
+  #pendingEmitTs: number;
+  #microtaskScheduled: boolean;
 
   readonly #outputEvents: EventForSchema<Out>[];
   readonly #onEvent: Set<EventListener>;
@@ -125,6 +157,9 @@ export class LiveReduce<
     this.#eventToAbsIdx = new WeakMap();
     this.#outputEvents = [];
     this.#onEvent = new Set();
+    this.#pendingEmitKey = undefined;
+    this.#pendingEmitTs = 0;
+    this.#microtaskScheduled = false;
     this.#disposed = false;
 
     // Reuse the same column-normalization helper as the rest of
@@ -232,19 +267,57 @@ export class LiveReduce<
       this.#states[i]!.add(absIdx, data[this.#columns[i]!.source]);
     }
 
-    // Trigger emission. Source eviction happens AFTER this
-    // callback returns; the emitted snapshot may briefly include
-    // events about to be evicted. See class JSDoc.
+    // For Trigger.count, increment per-event so we don't lose
+    // count progress across deferred microtasks (a pushMany of K
+    // rows must increment K times, not 1). Other triggers settle
+    // their state in the deferred flush.
+    if (this.#trigger.kind === 'count') {
+      this.#countSinceLastEmit++;
+    }
+
+    // Schedule a deferred emission via microtask. By the time it
+    // runs, retention has applied AND `'evict'` callbacks have
+    // processed → reducer state is consistent with source's
+    // current buffer. Per-pushMany this fires once regardless of
+    // K rows; the most-recent key wins. See class JSDoc.
+    this.#pendingEmitKey = event.key();
+    this.#pendingEmitTs = event.begin();
+    if (!this.#microtaskScheduled) {
+      this.#microtaskScheduled = true;
+      queueMicrotask(() => this.#flushPendingEmit());
+    }
+  }
+
+  /**
+   * Microtask flush: runs after the current synchronous push
+   * completes, including any retention-driven `'evict'` callbacks.
+   * Reducer state is post-retention by this point.
+   */
+  #flushPendingEmit(): void {
+    this.#microtaskScheduled = false;
+    const key = this.#pendingEmitKey;
+    const ts = this.#pendingEmitTs;
+    this.#pendingEmitKey = undefined;
+    if (this.#disposed || key === undefined) return;
+
     switch (this.#trigger.kind) {
       case 'event':
-        this.#emitEvent(event.key());
+        this.#emitEvent(key);
         return;
       case 'clock':
-        this.#emitClock(event.begin(), this.#trigger);
+        this.#emitClock(ts, this.#trigger);
         return;
-      case 'count':
-        this.#emitCount(event.key(), this.#trigger.n);
+      case 'count': {
+        // Drain count emissions: a single pushMany of K rows can
+        // exceed multiple thresholds. Emit floor(count / n) times,
+        // each with the same merged key (the latest seen).
+        const n = this.#trigger.n;
+        while (this.#countSinceLastEmit >= n) {
+          this.#countSinceLastEmit -= n;
+          this.#emitEvent(key);
+        }
         return;
+      }
     }
   }
 
@@ -260,13 +333,6 @@ export class LiveReduce<
     // Eviction does NOT fire the trigger — only ingest does. This
     // matches `LiveRollingAggregation`'s pattern, where evictions
     // are silent state updates.
-  }
-
-  #emitCount(key: any, n: number): void {
-    this.#countSinceLastEmit++;
-    if (this.#countSinceLastEmit < n) return;
-    this.#countSinceLastEmit = 0;
-    this.#emitEvent(key);
   }
 
   #emitEvent(key: any): void {

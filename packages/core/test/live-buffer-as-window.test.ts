@@ -21,10 +21,21 @@ function makeLive() {
   return new LiveSeries({ name: 'metrics', schema });
 }
 
+/**
+ * `LiveReduce` defers trigger fires to a `queueMicrotask` so the
+ * snapshot reflects the post-retention buffer state. Tests that
+ * inspect emitted output (`r.length`, `r.at(i)`, listener payloads)
+ * must yield to microtasks first.
+ *
+ * `r.value()` reads reducer state synchronously and doesn't need
+ * the flush.
+ */
+const flush = () => new Promise<void>((resolve) => queueMicrotask(resolve));
+
 // ── LiveSeries.reduce — full-window streaming reduce ────────────
 
 describe('LiveSeries.reduce — basic semantics', () => {
-  it('emits one event per source event under the default trigger', () => {
+  it('emits one event per single-row push under the default trigger', async () => {
     const live = makeLive();
     const r = live.reduce({
       cpu: 'avg',
@@ -32,8 +43,11 @@ describe('LiveSeries.reduce — basic semantics', () => {
     });
 
     live.push([0, 10, 'a']);
+    await flush();
     live.push([1000, 20, 'a']);
+    await flush();
     live.push([2000, 30, 'a']);
+    await flush();
 
     expect(r.length).toBe(3);
     expect(r.at(0)!.get('cpu')).toBe(10);
@@ -43,6 +57,47 @@ describe('LiveSeries.reduce — basic semantics', () => {
     expect(r.at(2)!.get('cpu')).toBe(20); // (10+20+30)/3
     expect(r.at(2)!.get('count')).toBe(3);
 
+    r.dispose();
+  });
+
+  it('pushMany of K rows fires ONE deferred emission, not K', async () => {
+    const live = makeLive();
+    const r = live.reduce({ count: { from: 'cpu', using: 'count' } });
+
+    live.pushMany([
+      [0, 10, 'a'],
+      [1000, 20, 'a'],
+      [2000, 30, 'a'],
+    ]);
+    await flush();
+
+    expect(r.length).toBe(1);
+    expect(r.at(0)!.get('count')).toBe(3);
+
+    r.dispose();
+  });
+
+  it('emission is post-retention (Codex regression pin)', async () => {
+    // Pre-fix: emit fired during 'event', BEFORE retention applied.
+    // With maxEvents:2, the third push emitted count=3 even though
+    // the buffer has 2 events post-retention. Microtask defer
+    // fixes this.
+    const live = new LiveSeries({
+      name: 'r',
+      schema,
+      retention: { maxEvents: 2 },
+    });
+    const r = live.reduce({ count: { from: 'cpu', using: 'count' } });
+
+    live.push([0, 10, 'a']);
+    live.push([1000, 20, 'a']);
+    live.push([2000, 30, 'a']); // triggers eviction of event 0
+    await flush();
+
+    // Post-retention emit reflects the 2-event buffer, not 3.
+    const last = r.at(r.length - 1)!;
+    expect(last.get('count')).toBe(2);
+    expect(r.value().count).toBe(2);
     r.dispose();
   });
 
@@ -73,18 +128,20 @@ describe('LiveSeries.reduce — basic semantics', () => {
     r.dispose();
   });
 
-  it('replay emits N events under the default Trigger.event', () => {
-    // Pinned by Layer 2 review: LiveRollingAggregation's behavior
-    // is to emit one output per replayed event under Trigger.event;
-    // LiveReduce matches. Users who want to suppress the
-    // construction-time burst should pass a clock or count trigger.
+  it('replay emits ONE deferred event after construction', async () => {
+    // With deferred microtask emit (Codex regression fix), the
+    // construction-time replay of N existing events fires the
+    // trigger once, not N times. Reducer state reflects all
+    // replayed events; only the emit-event fires are deduplicated.
     const live = makeLive();
     live.push([0, 10, 'a']);
     live.push([1000, 20, 'a']);
     live.push([2000, 30, 'a']);
 
     const r = live.reduce({ cpu: 'avg' });
-    expect(r.length).toBe(3); // one emit per replayed event
+    await flush();
+    expect(r.length).toBe(1);
+    expect(r.at(0)!.get('cpu')).toBe(20); // (10+20+30)/3
 
     r.dispose();
   });
@@ -166,7 +223,7 @@ describe('LiveSeries.reduce — basic semantics', () => {
 });
 
 describe('LiveSeries.reduce — triggers', () => {
-  it('Trigger.every emits at clock boundaries', () => {
+  it('Trigger.every emits at clock boundaries', async () => {
     const live = makeLive();
     const r = live.reduce(
       { cpu_avg: { from: 'cpu', using: 'avg' } },
@@ -175,10 +232,12 @@ describe('LiveSeries.reduce — triggers', () => {
 
     // First event establishes starting bucket; no emission.
     live.push([0, 10, 'a']);
+    await flush();
     expect(r.length).toBe(0);
 
     // Crosses 1s boundary; emit one event at boundary 1000.
     live.push([1500, 20, 'a']);
+    await flush();
     expect(r.length).toBe(1);
     expect(r.at(0)!.begin()).toBe(1000);
     expect(r.at(0)!.get('cpu_avg')).toBe(15);
@@ -186,7 +245,7 @@ describe('LiveSeries.reduce — triggers', () => {
     r.dispose();
   });
 
-  it('Trigger.count(n) emits every n source events', () => {
+  it('Trigger.count(n) emits every n source events', async () => {
     const live = makeLive();
     const r = live.reduce(
       { cpu_avg: { from: 'cpu', using: 'avg' } },
@@ -195,19 +254,47 @@ describe('LiveSeries.reduce — triggers', () => {
 
     live.push([0, 10, 'a']);
     live.push([1000, 20, 'a']);
+    await flush();
     expect(r.length).toBe(0); // 2 < 3
 
     live.push([2000, 30, 'a']);
+    await flush();
     expect(r.length).toBe(1);
     expect(r.at(0)!.get('cpu_avg')).toBe(20);
 
     live.push([3000, 40, 'a']);
     live.push([4000, 50, 'a']);
+    await flush();
     expect(r.length).toBe(1);
 
     live.push([5000, 60, 'a']);
+    await flush();
     expect(r.length).toBe(2);
     expect(r.at(1)!.get('cpu_avg')).toBe(35); // (10+20+30+40+50+60)/6
+
+    r.dispose();
+  });
+
+  it('Trigger.count(n) drains multiple emits per pushMany', async () => {
+    // pushMany of K rows where K > n: should emit floor(K/n)
+    // times in the deferred microtask flush.
+    const live = makeLive();
+    const r = live.reduce(
+      { cpu_avg: { from: 'cpu', using: 'avg' } },
+      { trigger: Trigger.count(2) },
+    );
+
+    live.pushMany([
+      [0, 10, 'a'],
+      [1000, 20, 'a'],
+      [2000, 30, 'a'],
+      [3000, 40, 'a'],
+      [4000, 50, 'a'],
+    ]);
+    await flush();
+
+    // 5 events / count(2) = 2 emits (4 events accounted for, 1 left in counter).
+    expect(r.length).toBe(2);
 
     r.dispose();
   });
@@ -228,7 +315,7 @@ describe('LiveSeries.reduce — composition', () => {
     r.dispose();
   });
 
-  it('subscribers fire on every emit', () => {
+  it('subscribers fire on every emit', async () => {
     const live = makeLive();
     const r = live.reduce({ cpu_avg: { from: 'cpu', using: 'avg' } });
 
@@ -238,23 +325,28 @@ describe('LiveSeries.reduce — composition', () => {
     });
 
     live.push([0, 10, 'a']);
+    await flush();
     live.push([1000, 20, 'a']);
+    await flush();
     live.push([2000, 30, 'a']);
+    await flush();
 
     expect(seen).toEqual([10, 15, 20]);
     unsub();
     r.dispose();
   });
 
-  it('dispose detaches from source', () => {
+  it('dispose detaches from source', async () => {
     const live = makeLive();
     const r = live.reduce({ cpu_avg: { from: 'cpu', using: 'avg' } });
 
     live.push([0, 10, 'a']);
+    await flush();
     expect(r.length).toBe(1);
 
     r.dispose();
     live.push([1000, 20, 'a']);
+    await flush();
     expect(r.length).toBe(1); // no growth after dispose
   });
 });
