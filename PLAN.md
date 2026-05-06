@@ -2366,6 +2366,41 @@ sub.rolling(...))` or `partitionBy.collect()` — both do more
     now drop; non-partitioned `live.rolling` is viable at the
     rates the experiment cares about.
 
+    **Validated end-to-end by gRPC step 6 follow-up
+    (pond-grpc-experiment#26, same-day).** The agent re-enabled
+    the natural API and benched it against their preserved
+    manual-counter implementation:
+
+    | Config       | Manual counter | Natural API (0.15.2) | Δ        |
+    | ------------ | -------------- | -------------------- | -------- |
+    | 87k/s heap   | 1278 MB        | 1460 MB              | +14%     |
+    | Ceiling tput | 303k/s         | 257k/s               | **−15%** |
+    | At 87k/s p99 | —              | 0.40 ms              | —        |
+
+    The cliff is gone (21k/s → 89.9k/s sustained at 87k/s bench
+    point — fully closed). The remaining ~15% throughput gap at
+    ceiling vs the manual counter is the inherent abstraction
+    cost: a rolling pipeline does push-to-deque + reducer-add +
+    periodic snapshot per event, where a manual counter is just
+    `count++`. That's not a cliff to chase — it's the expected
+    constant-factor difference between "just track a number" and
+    "maintain a windowed reducer." The agent shipped the natural
+    API anyway: API symmetry with the partitioned variant; the
+    gap falls in a regime (>100k/s single-stream) the dashboard
+    doesn't reach.
+
+    **Doc-worthy follow-up:** add a "manual counter vs rolling"
+    note to the rolling reference. The rolling primitive is the
+    right answer for sliding windowed reductions; for "I just
+    need a cumulative counter or a tick-window delta," a manual
+    counter off `live.on('batch')` remains strictly cheaper.
+    Small docs entry; not blocking.
+
+    **The framing this validates:** abstractions have a cost.
+    We just don't want the cost to fall off a cliff. v0.15.2
+    closes the cliff; the remaining 15% is the abstraction
+    paying for itself.
+
   - **`history: false | RetentionPolicy` on live rolling outputs.**
     `LiveRollingAggregation.ts:403` does `this.#outputEvents.push`
     unboundedly — every emitted event is retained forever, growing
