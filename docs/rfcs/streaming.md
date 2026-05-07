@@ -2,6 +2,18 @@
 
 **Status:** planning note.
 
+**Authorship:** developed across multiple contributors. Each section below
+carries inline attribution; this list is the index for cold readers.
+
+| Section | Contributor |
+| ------- | ----------- |
+| Original RFC (sections 1 through "The line to hold") | pjm17971 + Codex |
+| Review notes | pond-ts library agent (Claude) |
+| V2 amendment | Codex |
+| Use-case agent feedback (gRPC experiment) | gRPC experiment agent (Claude) |
+| Library agent response to use-case feedback | pond-ts library agent (Claude) |
+| V3 amendment | Codex |
+
 **Audience:** future pond-ts contributors deciding how far the live layer
 should go toward Beam / Flink-style streaming aggregation without becoming a
 distributed streaming engine.
