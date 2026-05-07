@@ -25,6 +25,39 @@ we deliberately didn't build.
 Update it when you change a layer boundary, add a new class to one of
 the layers, or introduce a new recurring pattern.
 
+## Strategic RFCs
+
+`docs/rfcs/` holds strategic planning notes — multi-section design
+documents exploring where pond is going at a horizon longer than any
+single PR. **RFCs are NOT commitments.** They are forward-looking
+context, and they are also a way to red-team a strategic direction
+through the multi-agent review process before any implementation work
+commits to it.
+
+The layering between RFCs and PLAN.md:
+
+- **PLAN.md** is the binding source of truth for what is actually
+  being built. Items adopted into PLAN are commitments.
+- **RFCs** sit above PLAN. They explore a direction (e.g. "where the
+  streaming layer should go"), surface the tradeoffs, and let the
+  design get red-teamed before code commits to it.
+- When work derived from an RFC lands in PLAN.md, the PLAN entry is
+  the binding version. The RFC stays as context for why.
+
+This means: do not treat an RFC as a roadmap to march through.
+Phases / sections adopted into PLAN are the contract; the rest of
+the RFC may evolve or be deferred indefinitely as friction signals
+arrive (or fail to arrive). The friction-driven cadence described
+under "Multi-agent experiments" below is the tactical loop; RFCs
+are the strategic loop above it.
+
+When writing or contributing to an RFC, follow the multi-agent
+review pattern worked through by `docs/rfcs/streaming.md`: original
+draft, review notes from the relevant library / use-case agents,
+amendments by the original author, each section carrying inline
+attribution. Don't merge competing rewrites — layer responses as
+new sections so the contributor chain stays visible.
+
 ## Multi-agent experiments and the feedback model
 
 Pond is being designed and battle-tested through parallel multi-agent

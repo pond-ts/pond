@@ -2,6 +2,12 @@
 
 **Status:** planning note.
 
+**Relationship to PLAN.md:** This RFC is strategic context, not a commitment.
+[PLAN.md](../../PLAN.md) is the binding source of truth for what is actually
+being built; phases adopted into PLAN are commitments, and the rest of this
+document is forward-looking. See [CLAUDE.md → Strategic RFCs](../../CLAUDE.md)
+for the layering.
+
 **Authorship:** developed across multiple contributors. Each section below
 carries inline attribution; this list is the index for cold readers.
 
