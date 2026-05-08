@@ -10,6 +10,7 @@ import {
   makeDiffView,
   makeFillView,
   makeCumulativeView,
+  makeStrideSampleView,
   type LiveFillMapping,
   type LiveFillStrategy,
 } from './LiveView.js';
@@ -55,6 +56,7 @@ import type {
 } from './types-aggregate.js';
 import { LiveFusedRolling } from './LiveFusedRolling.js';
 import { LiveReduce } from './LiveReduce.js';
+import type { SampleStrategy } from './sample.js';
 import type {
   FusedMapping,
   FusedMappingValid,
@@ -650,6 +652,50 @@ export class LiveSeries<S extends SeriesSchema> {
 
   map(fn: (event: EventForSchema<S>) => EventForSchema<S>): LiveView<S> {
     return new LiveView(this, fn);
+  }
+
+  /**
+   * Bounded-memory stream sampling. Thins the event stream going to
+   * downstream consumers without affecting this `LiveSeries`'s own
+   * `length`, `at(i)`, listeners, or `stats()` counters.
+   *
+   * v0.17.0 ships **stride only** on the live side — `{ stride: N }`,
+   * deterministic 1-in-N, uniform-over-time. Reservoir sampling is
+   * snapshot-side only on this release (`TimeSeries.sample`); see
+   * {@link SampleStrategy} for the rationale (live reservoir's
+   * Algorithm R replacement produces non-prefix evictions; the
+   * existing live-eviction protocol is cutoff-based, so bridging
+   * needs an exact-removal eviction channel arriving with the
+   * streaming RFC's `LiveChange` model).
+   *
+   * Returns a `LiveView<S>` so the chainable surface
+   * (`filter`, `rolling`, `reduce`, `select`, …) is immediately
+   * available downstream of the sample.
+   *
+   * **Multi-entity bias trap.** Pre-partition `live.sample({stride: N})`
+   * applied to a structured input stream (e.g., events arriving in
+   * round-robin host order) silently keeps the same subset of
+   * partitions and drops the rest. The safe shape is to chain after
+   * `partitionBy(...)`, which thins each partition's stream
+   * independently:
+   *
+   * ```ts
+   * // Safe by construction — per-partition counter is implicit
+   * live.partitionBy('host').sample({ stride: 10 }).rolling('5m', m);
+   * ```
+   *
+   * Same multi-entity consideration applies to `rolling` / `aggregate` /
+   * `fill` / `diff` / `rate` / `cumulative` / `pctChange` / `reduce`:
+   * every stateful live operator silently mixes data across entities
+   * on a multi-entity stream unless scoped per-partition first.
+   *
+   * Reducer outputs downstream of `sample` reflect the sampled
+   * stream; multiply by stride to estimate true counts.
+   * `live.stats().ingested` continues to count true throughput
+   * upstream of any sample.
+   */
+  sample(strategy: SampleStrategy): LiveView<S> {
+    return makeStrideSampleView<S>(this, strategy.stride);
   }
 
   select<const Keys extends readonly (keyof EventDataForSchema<S>)[]>(

@@ -2,10 +2,12 @@ import { LiveSeries, type LiveSeriesOptions } from './LiveSeries.js';
 import { LiveRollingAggregation } from './LiveRollingAggregation.js';
 import { LivePartitionedSyncRolling } from './LivePartitionedSyncRolling.js';
 import { LivePartitionedFusedRolling } from './LivePartitionedFusedRolling.js';
+import type { SampleStrategy } from './sample.js';
 import {
   makeCumulativeView,
   makeDiffView,
   makeFillView,
+  makeStrideSampleView,
   type LiveFillMapping,
   type LiveFillStrategy,
 } from './LiveView.js';
@@ -439,6 +441,30 @@ export class LivePartitionedSeries<
   ): LivePartitionedView<S, S, K, ByCol> {
     return new LivePartitionedView<S, S, K, ByCol>(this, (sub) =>
       makeFillView(sub, strategy, options),
+    );
+  }
+
+  /**
+   * Per-partition stream sampling. Each partition gets its own
+   * stride counter (closure-captured inside its `LiveView`). Safe
+   * by construction: chaining after `partitionBy` thins each
+   * partition's stream independently — no multi-entity bias.
+   *
+   * v0.17.0 ships **stride only** on the live side; see
+   * {@link SampleStrategy} for why reservoir is deferred. The
+   * buffer-as-window persona's typical shape:
+   *
+   * ```ts
+   * live.partitionBy('host').sample({ stride: 10 }).rolling('5m', m);
+   * ```
+   *
+   * Each host's stream is thinned 1-in-10 before flowing into a
+   * per-host 5m rolling window — decoupling baseline length from
+   * event rate.
+   */
+  sample(strategy: SampleStrategy): LivePartitionedView<S, S, K, ByCol> {
+    return new LivePartitionedView<S, S, K, ByCol>(this, (sub) =>
+      makeStrideSampleView<S>(sub, strategy.stride),
     );
   }
 
@@ -1097,6 +1123,19 @@ export class LivePartitionedView<
     const prev = this.#factory;
     return new LivePartitionedView<SBase, R, K, ByCol>(this.#root, (sub) =>
       makeFillView(prev(sub), strategy, options),
+    );
+  }
+
+  /**
+   * Per-partition stream sampling on a chained view. Same semantics
+   * as {@link LivePartitionedSeries.sample} — stride only, safe by
+   * construction (no multi-entity bias); each partition's chain
+   * output is thinned independently with its own counter.
+   */
+  sample(strategy: SampleStrategy): LivePartitionedView<SBase, R, K, ByCol> {
+    const prev = this.#factory;
+    return new LivePartitionedView<SBase, R, K, ByCol>(this.#root, (sub) =>
+      makeStrideSampleView<R>(prev(sub), strategy.stride),
     );
   }
 

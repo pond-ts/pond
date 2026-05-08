@@ -15,6 +15,7 @@ export { LiveRollingAggregation } from './LiveRollingAggregation.js';
 export { LiveFusedRolling } from './LiveFusedRolling.js';
 export { LivePartitionedFusedRolling } from './LivePartitionedFusedRolling.js';
 export { LiveReduce } from './LiveReduce.js';
+export type { SampleStrategy, BatchSampleStrategy } from './sample.js';
 export { Trigger } from './triggers.js';
 export type { ClockTrigger, CountTrigger, EventTrigger } from './triggers.js';
 export { PartitionedTimeSeries } from './PartitionedTimeSeries.js';

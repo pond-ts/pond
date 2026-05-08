@@ -8,6 +8,7 @@ import {
 } from './LiveRollingAggregation.js';
 import { LiveFusedRolling } from './LiveFusedRolling.js';
 import { LiveReduce } from './LiveReduce.js';
+import type { SampleStrategy } from './sample.js';
 import { TimeSeries, toKey, type KeyLike } from './TimeSeries.js';
 import type { Sequence } from './Sequence.js';
 import {
@@ -267,6 +268,19 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
       fn,
       this.#windowMs !== undefined ? { windowMs: this.#windowMs } : undefined,
     );
+  }
+
+  /**
+   * Bounded-memory stream sampling on a `LiveView`. Same semantics as
+   * `LiveSeries.sample` — stride only on the live side in v0.17.0.
+   *
+   * **Multi-entity bias trap** applies here too: a `LiveView` derived
+   * from a multi-entity source carries the same bias risk. Chain after
+   * `partitionBy(...)` for the safe-by-construction shape; see
+   * `LiveSeries.sample` for the full discussion.
+   */
+  sample(strategy: SampleStrategy): LiveView<S> {
+    return makeStrideSampleView<S>(this, strategy.stride);
   }
 
   select<const Keys extends readonly (keyof EventDataForSchema<S>)[]>(
@@ -539,6 +553,37 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
 }
 
 // ── Factory functions for stateful live views ────────────────────
+
+/**
+ * Stride-mode sampling view factory. Builds a `LiveView` whose
+ * `process` closure captures a per-instance counter and emits every
+ * Nth event. Used by `LiveSeries.sample`, `LiveView.sample`,
+ * `LivePartitionedSeries.sample`, and `LivePartitionedView.sample`
+ * (each call site owns one counter, so partitioned sites get
+ * per-partition state for free via the factory pattern).
+ *
+ * Stride-only by design — see `sample.ts` JSDoc for why live-side
+ * reservoir is deferred (non-prefix eviction violates the live
+ * eviction protocol).
+ *
+ * Validates `stride` at the call site so the error surfaces inline
+ * with the user's `.sample({...})` call, not later at first push.
+ */
+export function makeStrideSampleView<S extends SeriesSchema>(
+  source: LiveSource<S>,
+  stride: number,
+): LiveView<S> {
+  if (!Number.isInteger(stride) || stride < 1) {
+    throw new TypeError(
+      `sample({ stride }): stride must be a positive integer (got ${String(stride)})`,
+    );
+  }
+  let counter = 0;
+  return new LiveView<S>(source, (event: EventForSchema<S>) => {
+    counter++;
+    return counter % stride === 0 ? event : undefined;
+  });
+}
 
 export function makeDiffView<
   S extends SeriesSchema,
