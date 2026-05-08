@@ -54,11 +54,11 @@ const aligned = cpu.align(Sequence.every('1m'), {
 
 ## Parameters
 
-| Option       | Type                                | Default      | Effect                                                                 |
-| ------------ | ----------------------------------- | ------------ | ---------------------------------------------------------------------- |
-| `method`     | `'hold' \| 'linear'`                | `'hold'`     | How to derive the value at the sample point                            |
-| `sample`     | `'begin' \| 'center' \| 'end'`      | `'begin'`    | Where inside each grid step to read                                    |
-| `range`      | `TimeRange`                         | source extent | Pin the output range explicitly                                        |
+| Option   | Type                           | Default       | Effect                                      |
+| -------- | ------------------------------ | ------------- | ------------------------------------------- |
+| `method` | `'hold' \| 'linear'`           | `'hold'`      | How to derive the value at the sample point |
+| `sample` | `'begin' \| 'center' \| 'end'` | `'begin'`     | Where inside each grid step to read         |
+| `range`  | `TimeRange`                    | source extent | Pin the output range explicitly             |
 
 ### `method`
 
@@ -105,12 +105,12 @@ names and types as the source. Each row is one grid point.
 
 ```ts
 aligned.schema[0].kind; // 'interval'
-aligned.at(0)?.key();   // Interval — start = grid begin, end = grid end
+aligned.at(0)?.key(); // Interval — start = grid begin, end = grid end
 aligned.at(0)?.get('cpu'); // number | undefined
 ```
 
 The grid is half-open `[begin, end)` — events at exactly the
-boundary belong to the *later* grid step.
+boundary belong to the _later_ grid step.
 
 ## Time-keyed output for chart libraries
 
@@ -133,10 +133,10 @@ on each interval the resulting `Time` lands.
 Same parameter shape (sequence + range), same output key shape
 (`Interval`-keyed grid), different reduction.
 
-| Question                                                  | Operator                                  |
-| --------------------------------------------------------- | ----------------------------------------- |
-| "What was the value at this grid point?"                  | `align(seq, { method, sample })`          |
-| "What's the rollup of every event in this bucket?"        | `aggregate(seq, mapping)`                 |
+| Question                                           | Operator                         |
+| -------------------------------------------------- | -------------------------------- |
+| "What was the value at this grid point?"           | `align(seq, { method, sample })` |
+| "What's the rollup of every event in this bucket?" | `aggregate(seq, mapping)`        |
 
 ```ts
 // align — one row per minute, value sampled from the source.
@@ -151,19 +151,6 @@ have a value, `align` is right. For "average CPU per minute,"
 `aggregate` is right. The two are complementary.
 
 See [Aggregation](./aggregation) for the bucketing operator.
-
-:::note[`sample` option name vs the older `.sample()` method]
-
-`align`'s `sample: 'begin' | 'center' | 'end'` option overlaps
-verbally with the older `rolling.sample()` method that v0.12
-replaced with the trigger-based approach — they were always
-different concepts. `align`'s `sample` picks **where inside a
-grid step** to read the source value; the trigger-based approach
-emits a **snapshot of the rolling state** when source data crosses
-a sequence boundary. For the streaming counterpart see
-[Triggering](../live/triggering).
-
-:::
 
 ## See also
 

@@ -14,12 +14,12 @@ window itself is always current; the trigger is purely about
 output cadence. Three flavours, all data-driven (no wall-clock,
 no `setInterval` inside the library):
 
-| Trigger              | Fires                                          |
-| -------------------- | ---------------------------------------------- |
-| `Trigger.event()`    | Once per source event (the default)            |
-| `Trigger.every(d)`   | Once per epoch-aligned boundary crossing       |
-| `Trigger.clock(seq)` | Same as `every`, with a custom `Sequence`      |
-| `Trigger.count(n)`   | Once per `n` source events                     |
+| Trigger              | Fires                                     |
+| -------------------- | ----------------------------------------- |
+| `Trigger.event()`    | Once per source event (the default)       |
+| `Trigger.every(d)`   | Once per epoch-aligned boundary crossing  |
+| `Trigger.clock(seq)` | Same as `every`, with a custom `Sequence` |
+| `Trigger.count(n)`   | Once per `n` source events                |
 
 ## `Trigger.event()` — per source event
 
@@ -32,7 +32,7 @@ import { Trigger } from 'pond-ts';
 const rolling = live.rolling('1m', { cpu: 'avg' });
 // Equivalent to: { trigger: Trigger.event() }
 
-rolling.on('event', e => {
+rolling.on('event', (e) => {
   // Fires once per live.push call
 });
 ```
@@ -53,7 +53,7 @@ const rolling = live.rolling(
   { trigger: Trigger.every('30s') },
 );
 
-rolling.on('event', e => {
+rolling.on('event', (e) => {
   // e.begin() === <boundary timestamp> (0, 30000, 60000, ...)
 });
 
@@ -80,7 +80,7 @@ const tickSeq = Sequence.every('30s', { anchor: 5_000 });
 const trigger = Trigger.clock(tickSeq);
 
 // Same sequence drives both batch + live for guaranteed alignment
-const live  = liveSource.rolling('1m', mapping, { trigger });
+const live = liveSource.rolling('1m', mapping, { trigger });
 const batch = batchSource.aggregate(tickSeq, mapping);
 ```
 
@@ -100,7 +100,7 @@ const rolling = live.rolling(
   { trigger: Trigger.count(1000) },
 );
 
-rolling.on('event', e => {
+rolling.on('event', (e) => {
   // e.begin() === <triggering event's timestamp>
 });
 ```
@@ -180,17 +180,13 @@ rolling snapshot fires at the same instant.
 ```ts
 const ticks = live
   .partitionBy('host')
-  .rolling(
-    '1m',
-    { cpu: 'avg' },
-    { trigger: Trigger.every('200ms') },
-  );
+  .rolling('1m', { cpu: 'avg' }, { trigger: Trigger.every('200ms') });
 
-ticks.on('event', e => {
+ticks.on('event', (e) => {
   console.log(
-    e.begin(),       // boundary timestamp, same for every host this tick
-    e.get('host'),   // partition tag, auto-injected from routing key
-    e.get('cpu'),    // rolling value at this boundary
+    e.begin(), // boundary timestamp, same for every host this tick
+    e.get('host'), // partition tag, auto-injected from routing key
+    e.get('cpu'), // rolling value at this boundary
   );
 });
 ```
@@ -213,11 +209,7 @@ each chain output:
 const ticks = live
   .partitionBy('host')
   .fill({ cpu: 'hold' })
-  .rolling(
-    '1m',
-    { cpu: 'avg' },
-    { trigger: Trigger.every('200ms') },
-  );
+  .rolling('1m', { cpu: 'avg' }, { trigger: Trigger.every('200ms') });
 ```
 
 Output schema stays `[time, <partitionColumn>, ...mappingColumns]`
@@ -246,41 +238,14 @@ it) still emit correctly.
 
 ## Trigger × partition matrix
 
-| Setup                                                              | Behaviour                                                              |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------- |
-| `live.rolling(...)` (no partition, no trigger)                     | Per source event                                                       |
-| `live.rolling(..., { trigger: Trigger.every(d) })`                 | One snapshot per epoch-aligned boundary                                |
-| `live.rolling(..., { trigger: Trigger.count(n) })`                 | One snapshot every `n` events                                          |
-| `partitionBy(c).rolling(...)` (no trigger)                         | Per-partition rolling, each fires per source event independently       |
-| `partitionBy(c).rolling(..., { trigger: Trigger.every(d) })`       | **Synchronised** — every known partition emits one row per boundary    |
-| `partitionBy(c).rolling(..., { trigger: Trigger.count(n) })`       | Per-partition count — each partition fires after its own Nth event     |
-
-## Migration from `rolling.sample(seq)`
-
-Pre-v0.12 pond exposed `LiveRollingAggregation.sample(sequence)` as
-a separate method that emitted snapshots at sequence boundaries.
-v0.12 deleted that method and folded the use case into the trigger
-model:
-
-```ts
-// Pre-v0.12 (removed)
-const reported = live
-  .rolling('1m', { cpu: 'p95' })
-  .sample(Sequence.every('30s'));
-
-// v0.12+
-const reported = live.rolling(
-  '1m',
-  { cpu: 'p95' },
-  { trigger: Trigger.every('30s') },
-);
-```
-
-The new shape is one rolling with explicit cadence; the deprecated
-shape was a rolling with a sub-sample. Functionally equivalent, but
-the trigger version is more compositional (the cadence concept is
-the same shape across event/clock/count) and cheaper (no separate
-sub-aggregation deque).
+| Setup                                                        | Behaviour                                                           |
+| ------------------------------------------------------------ | ------------------------------------------------------------------- |
+| `live.rolling(...)` (no partition, no trigger)               | Per source event                                                    |
+| `live.rolling(..., { trigger: Trigger.every(d) })`           | One snapshot per epoch-aligned boundary                             |
+| `live.rolling(..., { trigger: Trigger.count(n) })`           | One snapshot every `n` events                                       |
+| `partitionBy(c).rolling(...)` (no trigger)                   | Per-partition rolling, each fires per source event independently    |
+| `partitionBy(c).rolling(..., { trigger: Trigger.every(d) })` | **Synchronised** — every known partition emits one row per boundary |
+| `partitionBy(c).rolling(..., { trigger: Trigger.count(n) })` | Per-partition count — each partition fires after its own Nth event  |
 
 ## See also
 

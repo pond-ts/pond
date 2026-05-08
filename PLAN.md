@@ -4210,12 +4210,6 @@ lastTs + 0.001)` monotonicity hack was belt-and-suspenders against
   application-side). Documenting the pattern is the right
   deliverable.
 
-- **`LiveSequenceRollingAggregation` schema reference** — the
-  rolling.sample() class is in the API reference but its place in
-  the live layered model could use a small diagram (we have the
-  ARCHITECTURE.md ASCII version; the docs site doesn't yet show
-  it).
-
 Likely venue: a new how-to page, "Observing pond-ts in production",
 covering eviction listeners, GC observation, end-to-end latency,
 push-vs-pushMany guidance, and pointers to the relevant operator
