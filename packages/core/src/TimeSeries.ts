@@ -88,6 +88,7 @@ import type {
 import { compareEventKeys } from './temporal.js';
 import { Event } from './Event.js';
 import { PartitionedTimeSeries } from './PartitionedTimeSeries.js';
+import type { SampleStrategy } from './LiveSample.js';
 import { Sequence } from './Sequence.js';
 import { validateAndNormalize } from './validate.js';
 import type { DurationInput } from './utils/duration.js';
@@ -3362,6 +3363,60 @@ export class TimeSeries<S extends SeriesSchema> {
       this.schema,
       this.events.filter((event, index) => predicate(event, index)),
     );
+  }
+
+  /**
+   * Example: `series.sample({ stride: 10 })` — keep every 10th event,
+   * uniformly over time. `series.sample({ reservoir: { size: 500 } })`
+   * — random K-of-N (single-pass Algorithm R), the canonical
+   * visualization shape (`series.sample({reservoir:{size:500}}).toRows()`
+   * gives uncorrelated points without `aggregate`'s grid collapse).
+   *
+   * Snapshot-side reservoir is materially simpler than the live
+   * variant — N is known upfront, no eviction concern, no Set
+   * bookkeeping. Returns a new `TimeSeries<S>` of K events (or
+   * `events.length` for stride if `events.length < stride`).
+   *
+   * For the live counterpart and full strategy semantics, see
+   * {@link LiveSample}.
+   */
+  sample(strategy: SampleStrategy): TimeSeries<S> {
+    if ('stride' in strategy) {
+      const stride = strategy.stride;
+      if (!Number.isInteger(stride) || stride < 1) {
+        throw new TypeError(
+          `sample({ stride }): stride must be a positive integer (got ${String(stride)})`,
+        );
+      }
+      const sampled: EventForSchema<S>[] = [];
+      for (let i = stride - 1; i < this.events.length; i += stride) {
+        sampled.push(this.events[i]!);
+      }
+      return TimeSeries.#fromTrustedEvents(this.name, this.schema, sampled);
+    }
+    const k = strategy.reservoir.size;
+    if (!Number.isInteger(k) || k < 1) {
+      throw new TypeError(
+        `sample({ reservoir }): size must be a positive integer (got ${String(k)})`,
+      );
+    }
+    const n = this.events.length;
+    if (n <= k) {
+      // K >= N — return all events, in original order.
+      return TimeSeries.#fromTrustedEvents(this.name, this.schema, [
+        ...this.events,
+      ]);
+    }
+    // Algorithm R, single pass.
+    const reservoir: EventForSchema<S>[] = this.events.slice(0, k);
+    for (let i = k; i < n; i++) {
+      const j = Math.floor(Math.random() * (i + 1));
+      if (j < k) reservoir[j] = this.events[i]!;
+    }
+    // Reservoir is unordered (random replacement). Sort by key to
+    // restore the chronological invariant TimeSeries promises.
+    reservoir.sort((a, b) => a.key().compare(b.key()));
+    return TimeSeries.#fromTrustedEvents(this.name, this.schema, reservoir);
   }
 
   /** Example: `series.find(event => event.get("value") > 0)`. Returns the first event that matches the predicate, if any. */

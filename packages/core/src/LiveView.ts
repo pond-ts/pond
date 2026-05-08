@@ -8,6 +8,7 @@ import {
 } from './LiveRollingAggregation.js';
 import { LiveFusedRolling } from './LiveFusedRolling.js';
 import { LiveReduce } from './LiveReduce.js';
+import { LiveSample, type GlobalSampleStrategy } from './LiveSample.js';
 import { TimeSeries, toKey, type KeyLike } from './TimeSeries.js';
 import type { Sequence } from './Sequence.js';
 import {
@@ -267,6 +268,17 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
       fn,
       this.#windowMs !== undefined ? { windowMs: this.#windowMs } : undefined,
     );
+  }
+
+  /**
+   * Bounded-memory stream sampling on a `LiveView`. Same semantics as
+   * {@link LiveSeries.sample} — `unsafeGlobal: true` required because
+   * a `LiveView` derived from a structured source carries the same
+   * bias-trap risk as a raw `LiveSeries`. Chain after `partitionBy`
+   * for the safe-by-construction shape.
+   */
+  sample(strategy: GlobalSampleStrategy): LiveSample<S> {
+    return new LiveSample<S>(this, strategy);
   }
 
   select<const Keys extends readonly (keyof EventDataForSchema<S>)[]>(

@@ -2,6 +2,7 @@ import { LiveSeries, type LiveSeriesOptions } from './LiveSeries.js';
 import { LiveRollingAggregation } from './LiveRollingAggregation.js';
 import { LivePartitionedSyncRolling } from './LivePartitionedSyncRolling.js';
 import { LivePartitionedFusedRolling } from './LivePartitionedFusedRolling.js';
+import { LiveSample, type SampleStrategy } from './LiveSample.js';
 import {
   makeCumulativeView,
   makeDiffView,
@@ -439,6 +440,31 @@ export class LivePartitionedSeries<
   ): LivePartitionedView<S, S, K, ByCol> {
     return new LivePartitionedView<S, S, K, ByCol>(this, (sub) =>
       makeFillView(sub, strategy, options),
+    );
+  }
+
+  /**
+   * Per-partition stream sampling. Each partition gets its own sample
+   * state — a separate stride counter or its own K-event reservoir.
+   * Safe by construction: chaining after `partitionBy` thins each
+   * partition's stream independently, no `unsafeGlobal: true` token
+   * required.
+   *
+   * See {@link LiveSample} for strategy semantics. The buffer-as-
+   * window persona's typical shape:
+   *
+   * ```ts
+   * live.partitionBy('host').sample({ stride: 10 }).rolling('5m', m);
+   * ```
+   *
+   * Each host's stream is thinned 1-in-10 before flowing into a
+   * per-host 5m rolling window — decoupling baseline length from
+   * event rate.
+   */
+  sample(strategy: SampleStrategy): LivePartitionedView<S, S, K, ByCol> {
+    return new LivePartitionedView<S, S, K, ByCol>(
+      this,
+      (sub) => new LiveSample<S>(sub, strategy),
     );
   }
 
@@ -1097,6 +1123,19 @@ export class LivePartitionedView<
     const prev = this.#factory;
     return new LivePartitionedView<SBase, R, K, ByCol>(this.#root, (sub) =>
       makeFillView(prev(sub), strategy, options),
+    );
+  }
+
+  /**
+   * Per-partition stream sampling on a chained view. Same semantics
+   * as {@link LivePartitionedSeries.sample} — safe by construction;
+   * each partition's chain output is thinned independently.
+   */
+  sample(strategy: SampleStrategy): LivePartitionedView<SBase, R, K, ByCol> {
+    const prev = this.#factory;
+    return new LivePartitionedView<SBase, R, K, ByCol>(
+      this.#root,
+      (sub) => new LiveSample<R>(prev(sub), strategy),
     );
   }
 

@@ -55,6 +55,7 @@ import type {
 } from './types-aggregate.js';
 import { LiveFusedRolling } from './LiveFusedRolling.js';
 import { LiveReduce } from './LiveReduce.js';
+import { LiveSample, type GlobalSampleStrategy } from './LiveSample.js';
 import type {
   FusedMapping,
   FusedMappingValid,
@@ -650,6 +651,41 @@ export class LiveSeries<S extends SeriesSchema> {
 
   map(fn: (event: EventForSchema<S>) => EventForSchema<S>): LiveView<S> {
     return new LiveView(this, fn);
+  }
+
+  /**
+   * Bounded-memory stream sampling. Thins the event stream going to
+   * downstream consumers without affecting this `LiveSeries`'s own
+   * `length`, `at(i)`, listeners, or `stats()` counters.
+   *
+   * Two strategies — see {@link LiveSample} for full semantics:
+   *
+   * - `{ stride: N }` — deterministic 1-in-N (uniform-over-time)
+   * - `{ reservoir: { size: K } }` — K-of-N random with drift on eviction
+   *
+   * **Pre-partition call requires `unsafeGlobal: true`.** A single
+   * global counter applied to a structured input stream (e.g., events
+   * arriving in round-robin host order) silently keeps the same
+   * subset of partitions and drops the rest. The token forces the
+   * call site to acknowledge the risk. The safer path is to chain
+   * after `partitionBy(...)`, which thins each partition's stream
+   * independently with no `unsafeGlobal` token required:
+   *
+   * ```ts
+   * // Safe by construction — per-partition counter is implicit
+   * live.partitionBy('host').sample({ stride: 10 }).rolling('5m', m);
+   *
+   * // Pre-partition global sample — must opt in
+   * live.sample({ stride: 10, unsafeGlobal: true });
+   * ```
+   *
+   * Reducer outputs downstream of `sample` reflect the sampled
+   * stream; multiply by stride to estimate true counts.
+   * `live.stats().ingested` continues to count true throughput
+   * upstream of any sample.
+   */
+  sample(strategy: GlobalSampleStrategy): LiveSample<S> {
+    return new LiveSample<S>(this, strategy);
   }
 
   select<const Keys extends readonly (keyof EventDataForSchema<S>)[]>(

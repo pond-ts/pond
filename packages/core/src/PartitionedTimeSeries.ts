@@ -3,6 +3,7 @@ import { BoundedSequence } from './BoundedSequence.js';
 import { Sequence } from './Sequence.js';
 import type { DurationInput } from './utils/duration.js';
 import type { TemporalLike } from './temporal.js';
+import type { SampleStrategy } from './LiveSample.js';
 import type {
   AggregateMap,
   AggregateOutputMap,
@@ -490,6 +491,20 @@ export class PartitionedTimeSeries<
   // instead of `TimeSeries<NewSchema>`, so the chain stays in partition
   // view. Call `.collect()` to materialize back. Each impl runs the
   // underlying op per-partition via `applyToSource` and re-wraps.
+
+  /**
+   * Per-partition `sample`. Each partition gets its own independent
+   * sample state — separate stride counter or its own K-event
+   * reservoir. Safe by construction; no `unsafeGlobal: true` token.
+   * See {@link TimeSeries.sample}.
+   */
+  sample(strategy: SampleStrategy): PartitionedTimeSeries<S, K> {
+    return this.rewrap(
+      PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>
+        g.sample(strategy),
+      ),
+    );
+  }
 
   /** Per-partition `fill`. See {@link TimeSeries.fill}. */
   fill(
