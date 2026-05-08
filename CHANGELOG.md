@@ -7,9 +7,97 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 file covers both packages. Pre-1.0: minor bumps may include new features and
 type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.16.1...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.17.0...HEAD
 
 ## [Unreleased]
+
+## [0.17.0] — 2026-05-08
+
+`sample({...})` operator wave: bounded-memory stream thinning, surfaced
+by the gRPC experiment's M3.5 finish-line work
+([friction note](https://github.com/pjm17971/pond-grpc-experiment/blob/main/friction-notes/rfcs/bounded-memory-sampling.md)
+with measured firehose numbers). Decouples downstream baseline window
+length from event rate — at firehose rates × stride 10, `sd / sqrt(N)`
+standard error stays well below per-event noise while a 5-minute
+baseline that wouldn't fit in a Node heap un-sampled does at
+stride 10. PR [#129](https://github.com/pjm17971/pond-ts/pull/129).
+
+### Added
+
+- **`series.sample({ stride | reservoir })`** on `TimeSeries` and
+  `PartitionedTimeSeries` — single-pass thinning that keeps the
+  `TimeSeries<S>` schema. Stride is deterministic 1-in-N
+  (`{ stride: N }`); reservoir is random K-of-N via single-pass
+  [Vitter's Algorithm R](https://en.wikipedia.org/wiki/Reservoir_sampling#Simple:_Algorithm_R)
+  (`{ reservoir: { size: K } }`), sorted by key on output to preserve
+  the chronological invariant. The canonical visualization shape:
+
+  ```ts
+  series.sample({ reservoir: { size: 500 } }).toRows();
+  ```
+
+  500 uncorrelated points drawn uniformly from the source — no
+  `aggregate(seq, ...)` grid collapse, no regular-spacing artifact,
+  fixed point count regardless of source size. Per-partition state on
+  `PartitionedTimeSeries.sample(...)` — each partition gets its own
+  K-event reservoir or stride counter.
+
+- **`live.sample({ stride })`** on `LiveSeries`, `LiveView`,
+  `LivePartitionedSeries`, `LivePartitionedView` — closure-captured
+  counter inside a `LiveView<S>`, so the chainable surface (`filter`,
+  `rolling`, `reduce`, `select`, `map`, `diff`, `rate`, `cumulative`,
+  `fill`) is immediately available downstream of the sample. The
+  bounded-memory firehose pattern:
+
+  ```ts
+  live.partitionBy('host').sample({ stride: 10 }).rolling('5m', mapping);
+  ```
+
+  Each host's stream is thinned 1-in-10 before flowing into a per-host
+  5m rolling window. `live.stats().ingested` and `live.on('batch', cb)`
+  are upstream of any `.sample(...)` op — they continue counting true
+  throughput; only consumers downstream see the thinned stream.
+
+- **Sampling docs page** at
+  [`pond-ts/transforms/sampling`](https://pjm17971.github.io/pond-ts/docs/pond-ts/transforms/sampling/)
+  covering when-to-use-which decision table, both strategies, the
+  visualization shape, multi-entity considerations, and a forward-link
+  to the live counterpart. New `## Sampling: bounded-memory thinning`
+  section in
+  [Live transforms](https://pjm17971.github.io/pond-ts/docs/pond-ts/live/live-transforms#sampling).
+
+### Deferred
+
+- **Live-side reservoir sampling** is queued for v0.18.0+. Algorithm R's
+  random-slot replacement produces non-prefix evictions, but the existing
+  live-eviction protocol (`'evict'` event + cutoff-based mirroring in
+  `LiveView`) assumes prefix evictions only. Bridging needs an exact-
+  removal eviction channel — arriving with the streaming RFC's
+  `LiveChange` model (Phase 4.5 milestone A). For visualization-shaped
+  reservoir today, materialize via `live.toTimeSeries().sample({ reservoir })`.
+
+### Notes
+
+- **Multi-entity bias trap** is documented in JSDoc on the pre-partition
+  sites (`LiveSeries.sample`, `LiveView.sample`) with the
+  `partitionBy(...).sample(...)` recommendation, matching the existing
+  convention for `rolling` / `aggregate` / `fill` / `diff` / `rate` /
+  `cumulative` / `pctChange` / `reduce`. An earlier iteration of #129
+  shipped a type-level `unsafeGlobal: true` token; pulled during review
+  for consistency with how every other stateful live operator handles
+  the same multi-entity consideration. Token-of-the-week novelty was
+  the wrong shape; the doc warning is the same answer the other
+  operators already give.
+
+- **Legacy `rolling.sample(seq)` doc references removed.** Pre-v0.12
+  pond exposed `LiveRollingAggregation.sample(sequence)` as a separate
+  method (deleted in v0.12.0, replaced by `Trigger.every`). Active doc
+  references in `pond-ts/live/triggering.mdx`,
+  `pond-ts/transforms/alignment.mdx`, `pond-ts/transforms/rolling.mdx`,
+  and `pond-ts/live/live-transforms.mdx` removed to eliminate the
+  naming-collision confusion now that `series.sample({ stride | reservoir })`
+  is a real but completely unrelated operator. Historical record
+  preserved in PLAN.md, the v0.11.8 CHANGELOG entry, and the triggers RFC.
 
 ## [0.16.1] — 2026-05-06
 
@@ -47,7 +135,7 @@ plus the v0.16.0 docs deploy that broke since v0.15.2.
 - **Docs deploy workflow unblocked**
   ([#126](https://github.com/pjm17971/pond-ts/pull/126)). Has
   been failing since v0.15.2 with `Cannot find name
-  'queueMicrotask'` — TypeDoc runs the same tsconfig as the
+'queueMicrotask'` — TypeDoc runs the same tsconfig as the
   npm-publish path but from a different cwd, where `@types/node`
   doesn't resolve. Fixed via a one-line ambient declaration in
   `LiveReduce.ts`. No runtime change; `queueMicrotask` is still
@@ -101,17 +189,17 @@ narrowings.
   `eventRate()`.
 - **`stats()` accessor on every live accumulator/series.** Per-class
   shapes, all returning a plain record (cumulative integer counters
-  + current-state fields):
+  - current-state fields):
 
-  | Class | Shape |
-  |---|---|
-  | LiveSeries | `{ ingested, evicted, rejected, length, earliestTs?, latestTs? }` |
-  | LiveRollingAggregation | `{ eventsObserved, evictions, emissions, windowSize }` |
-  | LiveFusedRolling | `{ eventsObserved, evictions, emissions, windowSize, windowsCount }` |
-  | LiveAggregation | `{ eventsObserved, bucketsClosed, openBuckets, openBucketStart? }` |
-  | LiveReduce | `{ eventsObserved, evictions, emissions, bufferSize }` |
-  | LivePartitionedSeries | `{ partitions, eventsRouted }` |
-  | LivePartitionedSyncRolling | `{ partitions, eventsObserved, emissions, windowSize }` |
+  | Class                       | Shape                                                                 |
+  | --------------------------- | --------------------------------------------------------------------- |
+  | LiveSeries                  | `{ ingested, evicted, rejected, length, earliestTs?, latestTs? }`     |
+  | LiveRollingAggregation      | `{ eventsObserved, evictions, emissions, windowSize }`                |
+  | LiveFusedRolling            | `{ eventsObserved, evictions, emissions, windowSize, windowsCount }`  |
+  | LiveAggregation             | `{ eventsObserved, bucketsClosed, openBuckets, openBucketStart? }`    |
+  | LiveReduce                  | `{ eventsObserved, evictions, emissions, bufferSize }`                |
+  | LivePartitionedSeries       | `{ partitions, eventsRouted }`                                        |
+  | LivePartitionedSyncRolling  | `{ partitions, eventsObserved, emissions, windowSize }`               |
   | LivePartitionedFusedRolling | `{ partitions, eventsObserved, emissions, windowSize, windowsCount }` |
 
   Per-event cost: ~1-3 integer increments in already-existing
@@ -152,7 +240,7 @@ narrowings.
 
 - **`KeyLike` type** exported from the package root (re-exported
   from `TimeSeries`). Accepts `EventKey | TimestampInput |
-  TimeRangeInput | IntervalInput`; normalised by the new query
+TimeRangeInput | IntervalInput`; normalised by the new query
   primitives.
 
 - **`DurationLiteral` and `DurationUnit` types** extracted from
@@ -186,8 +274,8 @@ narrowings.
   on). Sane transforms (data-only maps, monotonic time-shifts)
   unaffected.
 - **`LiveAggregationOptions.grace`** type tightened from
-  `DurationInput | \`${number}${unit}\`` (redundant union) to
-  just `DurationInput`. No behavioral change.
+  `DurationInput | \`${number}${unit}\``(redundant union) to
+just`DurationInput`. No behavioral change.
 
 ### Notes
 
@@ -297,6 +385,7 @@ compaction); any downstream code reading `#entries` directly would
 break, but those fields are private. Public APIs and types are
 unchanged.
 
+[0.17.0]: https://github.com/pjm17971/pond-ts/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/pjm17971/pond-ts/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/pjm17971/pond-ts/compare/v0.15.2...v0.16.0
 [0.15.2]: https://github.com/pjm17971/pond-ts/compare/v0.15.1...v0.15.2
