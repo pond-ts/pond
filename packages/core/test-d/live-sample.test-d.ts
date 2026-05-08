@@ -5,6 +5,11 @@
  * sites (`LivePartitionedSeries.sample`, `LivePartitionedView.sample`)
  * accept `SampleStrategy` directly with no token.
  *
+ * v0.17.0 ships **stride only** on the live side. `SampleStrategy` /
+ * `GlobalSampleStrategy` therefore expose `{ stride: number }` only;
+ * reservoir lives on `BatchSampleStrategy` (snapshot-side, used by
+ * `TimeSeries.sample` / `PartitionedTimeSeries.sample`).
+ *
  * The bias trap was first surfaced by the gRPC experiment's M3.5
  * prototype: a global stride counter against round-robin host order
  * silently dropped 90% of hosts. This file pins that pre-partition
@@ -12,7 +17,10 @@
  */
 import {
   LiveSeries,
-  type LiveSample,
+  LiveView,
+  TimeSeries,
+  type BatchSampleStrategy,
+  type GlobalSampleStrategy,
   type SampleStrategy,
 } from '../src/index.js';
 
@@ -30,18 +38,13 @@ const live = new LiveSeries({ name: 'metrics', schema });
 const _bare = live.sample({ stride: 10 });
 void _bare;
 
-// @ts-expect-error — bare { reservoir } on LiveSeries must require unsafeGlobal
-const _bareRes = live.sample({ reservoir: { size: 100 } });
-void _bareRes;
+// @ts-expect-error — { reservoir } is not a live-side strategy in v0.17.0
+const _resLive = live.sample({ reservoir: { size: 100 }, unsafeGlobal: true });
+void _resLive;
 
-// With unsafeGlobal: true, both strategies compile.
+// With unsafeGlobal: true and stride, compiles.
 const _stride = live.sample({ stride: 10, unsafeGlobal: true });
-const _reservoir = live.sample({
-  reservoir: { size: 100 },
-  unsafeGlobal: true,
-});
 void _stride;
-void _reservoir;
 
 // ── LiveView.sample requires unsafeGlobal: true ─────────────────
 
@@ -59,10 +62,12 @@ void _viewStride;
 
 const partitioned = live.partitionBy('host');
 
-// Bare strategy compiles cleanly — partitioned is safe by construction.
+// Bare stride compiles cleanly — partitioned is safe by construction.
 const _safe = partitioned.sample({ stride: 10 });
-const _safeRes = partitioned.sample({ reservoir: { size: 100 } });
 void _safe;
+
+// @ts-expect-error — reservoir is snapshot-only in v0.17.0
+const _safeRes = partitioned.sample({ reservoir: { size: 100 } });
 void _safeRes;
 
 // ── LivePartitionedView.sample is safe ─────────────────────────
@@ -73,15 +78,36 @@ void _chainedSafe;
 
 // ── Return types ────────────────────────────────────────────────
 
-// LiveSeries.sample → LiveSample<S>
-declare const _liveSampleType: LiveSample<typeof schema>;
+// LiveSeries.sample → LiveView<S> (so the chainable surface is available).
+declare const _liveViewType: LiveView<typeof schema>;
 const fromLive = live.sample({ stride: 10, unsafeGlobal: true });
-// Assignment compiles — return type is LiveSample<S>.
-const _checkLive: typeof _liveSampleType = fromLive;
+const _checkLive: typeof _liveViewType = fromLive;
 void _checkLive;
 
-// SampleStrategy union type covers both forms.
+// Chainable post-sample (was a v0.16.x gap caught in PR #129 review).
+const _chained = live
+  .sample({ stride: 10, unsafeGlobal: true })
+  .filter((e) => (e.get('value') as number) > 0);
+void _chained;
+
+// SampleStrategy is stride-only on the live surface in v0.17.0.
 const _stridStrat: SampleStrategy = { stride: 10 };
-const _resStrat: SampleStrategy = { reservoir: { size: 100 } };
 void _stridStrat;
-void _resStrat;
+
+// GlobalSampleStrategy is stride-only with the token.
+const _globalStrat: GlobalSampleStrategy = { stride: 10, unsafeGlobal: true };
+void _globalStrat;
+
+// BatchSampleStrategy (snapshot-side) covers both stride and reservoir.
+const _batchStride: BatchSampleStrategy = { stride: 10 };
+const _batchRes: BatchSampleStrategy = { reservoir: { size: 100 } };
+void _batchStride;
+void _batchRes;
+
+// ── Snapshot-side: TimeSeries.sample accepts both forms ─────────
+
+const series = new TimeSeries({ name: 'metrics', schema, rows: [] });
+const _strideSnap = series.sample({ stride: 10 });
+const _resSnap = series.sample({ reservoir: { size: 100 } });
+void _strideSnap;
+void _resSnap;

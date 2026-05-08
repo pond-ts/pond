@@ -1603,7 +1603,7 @@ deviations:
 1. `LiveAggregation.stats()` returns
    `{ eventsObserved, bucketsClosed, openBuckets, openBucketStart? }`
    instead of `{ eventsObserved, bucketsClosed, emissions,
-   openBucketStart? }`. `emissions` would have been redundant with
+openBucketStart? }`. `emissions` would have been redundant with
    `bucketsClosed` (every closed bucket emits exactly one output
    event); `openBuckets` (current pending bucket count) carries
    bucket-lifecycle info users actually reach for.
@@ -1735,11 +1735,88 @@ Cross-reference: gRPC experiment manual counter
 (pond-grpc-experiment#26 step 6); the v0.15.2 SHIPPED entry's
 "manual counter vs rolling" follow-up doc note.
 
-### Queued: `live.sample({...})` — bounded-memory stream sampling (target v0.17.0)
+### Shipped: `live.sample({...})` — bounded-memory stream sampling (v0.17.0)
 
 Surfaced by the gRPC experiment's M3.5 finish-line work. Cross-reference:
 [`pond-grpc-experiment/friction-notes/rfcs/bounded-memory-sampling.md`](https://github.com/pjm17971/pond-grpc-experiment/blob/main/friction-notes/rfcs/bounded-memory-sampling.md)
-(originating RFC, with measured firehose numbers).
+(originating RFC, with measured firehose numbers). Shipped via PR #129.
+
+#### Shipped scope (v0.17.0)
+
+- **Live-side: stride only.** `LiveSeries.sample`, `LiveView.sample`,
+  `LivePartitionedSeries.sample`, `LivePartitionedView.sample` all accept
+  `{ stride: number }` (with `unsafeGlobal: true` on pre-partition sites).
+- **Snapshot-side: stride + reservoir.** `TimeSeries.sample` and
+  `PartitionedTimeSeries.sample` accept `BatchSampleStrategy` (both forms);
+  reservoir uses single-pass Algorithm R, sorted by key on output to preserve
+  the chronological invariant.
+- **Type-level bias-trap guard.** Pre-partition call sites require
+  `unsafeGlobal: true` in the strategy literal, with `@ts-expect-error` pins
+  in `test-d/live-sample.test-d.ts`. Partitioned sites accept the strategy
+  bare — safe by construction.
+
+#### Implementation: closure-counter inside `LiveView`
+
+The live-side implementation collapsed dramatically from the original
+~300-LoC `LiveSample` class to a `~30-LoC` `makeStrideSampleView` helper in
+`LiveView.ts` — the same factory pattern that backs `makeFillView` /
+`makeDiffView` / `makeCumulativeView`. Each `.sample({...})` call site
+captures its own counter in a closure and returns a `LiveView<S>`:
+
+```ts
+export function makeStrideSampleView<S>(
+  source: LiveSource<S>,
+  stride: number,
+): LiveView<S> {
+  let counter = 0;
+  return new LiveView<S>(source, (event) => {
+    counter++;
+    return counter % stride === 0 ? event : undefined;
+  });
+}
+```
+
+Returning a `LiveView` (not a bespoke operator) means the chainable
+surface — `filter`, `rolling`, `reduce`, `select`, `map`, … — is
+immediately available downstream of the sample. This was a Layer 2
+adversarial-review finding on PR #129's first attempt; the simplification
+fixed it for free. Per-partition state falls out of the existing factory
+pattern (`new LivePartitionedView(this, sub => makeStrideSampleView(sub, N))`):
+each partition's sub-series gets its own closure, so the counter is
+per-partition by construction.
+
+#### Deferred from this wave: live-side reservoir
+
+Live-side reservoir is **deferred to v0.18.0+** and gated on milestone A
+of the streaming RFC (`LiveChange` model). The blocker: Algorithm R's
+random-slot replacement produces **non-prefix** evictions of the live
+buffer (e.g., replacing `event_50000` in `[event_1000, event_50000,
+event_100000]`), but the current live-eviction protocol is **prefix-only**
+— `LiveView` mirrors source eviction by computing `cutoff =
+evicted[last].begin()` and dropping every view event with `begin() <=
+cutoff`. A reservoir-style replacement event_50000 would corrupt
+downstream `LiveView`s by also dropping event_1000.
+
+Codex's adversarial review on PR #129 caught this protocol violation on
+the original implementation (which emitted reservoir replacements as
+single-element `'evict'` events and relied on `LiveView` accepting them as
+prefix evictions — silent corruption of any `view.sample(...).filter(...)`
+chain). The fix needs an **exact-removal eviction channel** — `LiveChange`
+with `kind: 'remove' | 'replace'` carrying event identity — which arrives
+with Phase 4.5 milestone A.
+
+Snapshot-side reservoir is unaffected (single-pass Algorithm R over a
+known-N events array, no eviction concern) and ships in v0.17.0 as the
+canonical visualization shape:
+
+```ts
+series.sample({ reservoir: { size: 500 } }).toRows();
+```
+
+The user's framing ("ship reservoir, especially for visualization, that
+seems a more natural interface") drives the snapshot-side default;
+visualization is exactly the use case where reservoir's uncorrelated
+points beat stride's regular-spacing artifact.
 
 **The window-length wall.** Streaming aggregator memory is `O(window_seconds ×
 event_rate × per_partition_count)`. At 70k events/s × 80 partitions, a 1m
@@ -1770,35 +1847,42 @@ live
   .rolling('5m', { cpu_avg: 'avg', cpu_sd: 'stdev' }, { trigger });
 ```
 
-Two strategies:
+Three strategy types — split by call-site:
 
 ```ts
-type SampleStrategy =
-  | { stride: number }                 // deterministic 1-in-N
-  | { reservoir: { size: number } };   // K-of-N random with drift on eviction
+// Live-side, partitioned (safe by construction)
+type SampleStrategy = { stride: number };
+
+// Live-side, pre-partition (requires bias-trap acknowledgment)
+type GlobalSampleStrategy = { stride: number; unsafeGlobal: true };
+
+// Snapshot-side (both forms; no live-eviction concern)
+type BatchSampleStrategy = { stride: number } | { reservoir: { size: number } };
 ```
 
 `partitionBy(...).sample(...)` thins each partition's stream independently —
 the canonical safe shape. Pre-partition global sample requires explicit
-acknowledgment (see "bias trap" below).
+acknowledgment (see "bias trap" below). Snapshot-side `TimeSeries.sample`
+and `PartitionedTimeSeries.sample` accept the broader `BatchSampleStrategy`
+since single-pass Algorithm R is unaffected by the live-eviction protocol.
 
-#### Strategy: stride
+#### Strategy: stride (live + snapshot)
 
 - Deterministic — keep events whose per-stream counter is a multiple of N
 - O(1) per event, no RNG, no allocation
 - Uniform-over-time: every moment's window is a uniform sample of events
 - **Default for sliding-window stats** (rolling, aggregate, reduce-over-window)
+- Plays cleanly with the existing prefix-eviction protocol (closure-counter
+  inside `LiveView`)
 
-#### Strategy: reservoir (Option A — drift-on-eviction)
+#### Strategy: reservoir (snapshot-side only in v0.17.0)
 
-Algorithm R for ingest: each new event has probability `K / seen` of replacing
-a random reservoir slot. On source eviction, if the evicted event is in the
-reservoir, remove that slot; the next arriving event refills deterministically.
+Snapshot-side: single-pass Algorithm R over the known events array, sorted
+by key on output. O(N) time, O(K) space, no eviction concern. Ships in
+v0.17.0 as `TimeSeries.sample({reservoir: {size: K}})`.
 
-- O(1) per event ingest, O(1) eviction-side check (Set-based reservoir membership)
-- Approximately uniform K-subset of the source's currently-retained buffer
-- Drifts slightly toward newer events under steady-state eviction (refilled
-  slots get filled by recent arrivals); bias is bounded and documented
+- Approximately uniform K-subset of the snapshot's events
+- Output is sorted by key (chronological invariant preserved)
 - **Default for population-summary and visualization** —
   `series.sample({reservoir: {size: 500}}).toRows()` for a scatter plot is
   the canonical case: uncorrelated points (no regular-spacing artifact),
@@ -1806,17 +1890,26 @@ reservoir, remove that slot; the next arriving event refills deterministically.
 - `Math.random()` for v1; an optional `rng?: () => number` parameter for
   reproducible benchmarks / tests can land later if friction surfaces
 
-Strict sliding-window uniform sampling (chain sampling, Babcock-Datar-Motwani)
-is deferred — Option A's drift is acceptable for streaming statistics; the
-strict variant would need its own paper-citation review and chain bookkeeping.
-Documented in the `sample()` JSDoc:
+**Live-side reservoir deferred to v0.18.0+** — the original Option A
+"drift-on-eviction" design (Algorithm R + slot-refill on source evict) was
+implemented and reviewed; Codex caught that Algorithm R's random-slot
+replacement produces non-prefix evictions, which silently corrupt
+downstream `LiveView`s mirroring eviction via cutoff. See "Deferred from
+this wave" above for the dependency chain. The original Option A design
+description is preserved here for the next implementation pass:
 
-> Reservoir sampling holds K events drawn approximately uniformly from the
-> source's currently-retained buffer. Under steady-state ingest with
-> eviction, the reservoir drifts slightly toward newer events as evicted
-> slots are refilled by recent arrivals. For strict uniform sampling over a
-> sliding window, use stride sampling instead — bias-free under any
-> eviction pattern.
+> Algorithm R for ingest: each new event has probability `K / seen` of
+> replacing a random reservoir slot. On source eviction, if the evicted
+> event is in the reservoir, remove that slot; the next arriving event
+> refills deterministically. Approximately uniform K-subset of the
+> source's currently-retained buffer; drifts slightly toward newer events
+> under steady-state eviction.
+
+Strict sliding-window uniform sampling (chain sampling, Babcock-Datar-Motwani)
+is deferred indefinitely — Option A's drift is acceptable for streaming
+statistics; the strict variant would need its own paper-citation review
+and chain bookkeeping. Live-side will get Option A first, on top of the
+`LiveChange` exact-removal channel.
 
 #### The bias trap, and the type-level guard
 
@@ -1836,9 +1929,7 @@ class LivePartitionedSeries<S, K, ByCol> {
 }
 
 // Pre-partition global sample — strategy type forces acknowledgment
-type GlobalSampleStrategy =
-  | { stride: number; unsafeGlobal: true }
-  | { reservoir: { size: number }; unsafeGlobal: true };
+type GlobalSampleStrategy = { stride: number; unsafeGlobal: true };
 
 class LiveSeries<S> {
   sample(strategy: GlobalSampleStrategy): LiveView<S>;
@@ -1880,63 +1971,96 @@ canonical visualization path.
 
 #### Per-partition state
 
-`partitionBy(...).sample({reservoir: {size: K}})` holds a K-event reservoir
-per partition, not K shared across partitions. Same factory-per-partition
-pattern that `partitionBy(...).rolling(...)` already uses. For the gRPC
-experiment's 80 partitions × K=100 reservoir, that's 8000 events of
-reservoir state — bounded, predictable.
+`partitionBy(...).sample({stride: N})` holds an independent stride counter
+per partition, not a single shared counter (which would re-introduce the
+bias trap on a multi-host stream). Same factory-per-partition pattern that
+`partitionBy(...).rolling(...)` already uses — each partition's `LiveView`
+owns its closure.
+
+Once live-side reservoir lands (v0.18.0+ on top of `LiveChange`),
+`partitionBy(...).sample({reservoir: {size: K}})` will hold a K-event
+reservoir per partition. For the gRPC experiment's 80 partitions × K=100,
+that's 8000 events of reservoir state — bounded, predictable.
 
 #### Use-case mapping
 
-| Use case | Stride | Reservoir |
-|---|---|---|
-| Sliding-window stats (rolling avg / percentiles) | ✅ default | ⚠️ drift |
-| Population summary over the retained buffer | ⚠️ rolling-only | ✅ |
-| Visualization (scatter plot, sparkline samples) | ⚠️ regular-spacing artifact | ✅ default |
-| Top-K / unique reducers | ❌ misses singletons | ⚠️ also misses, with extra randomness |
-| `live.reduce()` over buffer-as-window | ✅ uniform-over-time | ⚠️ drift |
+| Use case                                         | Stride                      | Reservoir                                   |
+| ------------------------------------------------ | --------------------------- | ------------------------------------------- |
+| Sliding-window stats (rolling avg / percentiles) | ✅ default                  | n/a (live) — ⚠️ drift (live, post-v0.18.0+) |
+| Population summary over the retained buffer      | ⚠️ rolling-only             | ✅ snapshot                                 |
+| Visualization (scatter plot, sparkline samples)  | ⚠️ regular-spacing artifact | ✅ snapshot default                         |
+| Top-K / unique reducers                          | ❌ misses singletons        | ⚠️ also misses, with extra randomness       |
+| `live.reduce()` over buffer-as-window            | ✅ uniform-over-time        | n/a (live)                                  |
 
 Picking the wrong strategy is the highest-leverage bug the docs can prevent;
-this table belongs in the operator's JSDoc verbatim.
+this table belongs in the operator's JSDoc verbatim. v0.17.0 lands the
+live "stride" column and the snapshot "reservoir" column; the live
+"reservoir" column rolls in with v0.18.0+ milestone A.
 
 #### Composability
 
-Composes cleanly with the rest of the live operator surface:
+Composes cleanly with the rest of the live operator surface — the
+`LiveView` return type means filter/rolling/reduce/select/map/diff/rate/
+fill/cumulative all chain naturally downstream of `.sample(...)`:
 
 ```ts
 // rolling — primary case from the gRPC experiment
 live.partitionBy('host').sample({ stride: 10 }).rolling('5m', mapping);
 
+// pre-partition stride feeding rolling (v0.17.0 PR #129 chainability fix)
+live.sample({ stride: 10, unsafeGlobal: true }).rolling(5, mapping);
+
+// pre-partition stride feeding filter — chainable surface available
+live.sample({ stride: 10, unsafeGlobal: true }).filter(predicate);
+
 // buffer-as-window — also valid
-live.partitionBy('host').apply(sub =>
-  sub.sample({ stride: 10 }).reduce(mapping)
-);
+live
+  .partitionBy('host')
+  .apply((sub) => sub.sample({ stride: 10 }).reduce(mapping));
 
 // snapshot-side visualization
 series.sample({ reservoir: { size: 500 } }).toRows();
 ```
 
-#### Implementation scope
+#### Implementation scope (as shipped)
 
-~150 LoC of operator + counter/reservoir state, ~30 LoC for snapshot-side
-parity, ~50 tests covering: stride determinism, reservoir drift bounds under
-steady-state eviction, per-partition isolation, the bias-trap type-level
-gate (`@ts-expect-error` for `LiveSeries.sample({stride: 10})` without
-`unsafeGlobal`), composability with rolling/aggregate/reduce, snapshot
-parity. Two-pass review (Layer 2 + Codex) per the existing protocol.
+- **Live-side stride:** ~30-LoC `makeStrideSampleView` helper in
+  `LiveView.ts` + four call-site methods (`LiveSeries.sample`,
+  `LiveView.sample`, `LivePartitionedSeries.sample`,
+  `LivePartitionedView.sample`) each ~3 lines.
+- **Snapshot-side stride + reservoir:** ~30 LoC inline in
+  `TimeSeries.sample`, plus per-partition delegation in
+  `PartitionedTimeSeries.sample`.
+- **Strategy types:** `src/sample.ts` (~80 LoC of types + JSDoc explaining
+  why live reservoir is deferred).
+- **Tests:** 23 runtime tests in `test/LiveSample.test.ts` covering stride
+  determinism, eviction tracking, per-partition isolation, the bias-trap
+  regression pin, composability with rolling, snapshot reservoir
+  approximate-uniformity (statistical pin: 4σ × ≥18-of-20 trials), and
+  type-level `@ts-expect-error` pins in `test-d/live-sample.test-d.ts`.
+- **Two-pass review:** Layer 2 (Claude) + Codex adversarial. Codex
+  caught the live-reservoir non-prefix-eviction protocol violation that
+  drove the simplification described above. Both reviews are durable on
+  PR #129.
 
 #### Forward dependencies
 
-None. `live.sample(...)` doesn't depend on Phase 4.5 milestone A
-(`LiveChange`) — it's a current-shape transform built on the existing
-`LiveView` infrastructure plus the `EMITS_EVICT` symbol. Lands as v0.17.0
-standalone, before milestone A starts. Mirrors the placement of
-`live.reduce()` from v0.16.0 — both are friction-driven primitives that
-slot into Phase 4 without disturbing the Phase 4.5 streaming-semantics
-work.
+The shipped v0.17.0 scope (live stride + snapshot stride/reservoir)
+doesn't depend on Phase 4.5 — it's a current-shape transform built on the
+existing `LiveView` infrastructure (closure-counter + the standard
+`EMITS_EVICT` cutoff-based prefix-eviction protocol). Lands standalone,
+before milestone A starts.
 
-The `sample()` operator is also independent of v0.18.0+ milestone B/C/D —
-it's a stream-content transform, not a state or finality transform. Sampled
+**Live-side reservoir DOES depend on Phase 4.5 milestone A.** The
+non-prefix eviction problem only resolves once the streaming RFC's
+`LiveChange` model gives us an exact-removal channel
+(`{ kind: 'replace' | 'remove', target: EventId }`). Until then, the
+existing `'evict'` channel can only carry prefix evictions consistently.
+This pins the v0.18.0+ wave order: milestone A first, then live-side
+reservoir as a follow-up PR landing on top.
+
+The stride form is independent of v0.18.0+ milestone B/C/D — it's a
+stream-content transform, not a state or finality transform. Sampled
 streams flow through the future `LiveChange` model unchanged: dropped
 events simply don't appear as `kind: 'append'` in the downstream change
 stream.
@@ -3740,7 +3864,6 @@ Later, only after the previous phases are stable:
 
   Constraints worth carrying into the package's design when the
   extraction happens:
-
   - **Streaming-first input.** Accept `LiveSeries` / `useWindow` /
     `aggregate` outputs, not just static arrays. The chart decides
     its own decimation grid (or accepts a `Sequence` from the
@@ -3762,6 +3885,7 @@ Later, only after the previous phases are stable:
 
   These constraints bake in correctly when written from real
   friction and badly when guessed from first principles.
+
 - **gRPC stream processor experiment** — in progress at
   [pjm17971/pond-grpc-experiment](https://github.com/pjm17971/pond-grpc-experiment).
   Three-tier setup: producer (Node, gRPC) → aggregator (Node,

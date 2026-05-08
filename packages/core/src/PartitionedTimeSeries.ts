@@ -3,7 +3,7 @@ import { BoundedSequence } from './BoundedSequence.js';
 import { Sequence } from './Sequence.js';
 import type { DurationInput } from './utils/duration.js';
 import type { TemporalLike } from './temporal.js';
-import type { SampleStrategy } from './LiveSample.js';
+import type { BatchSampleStrategy } from './sample.js';
 import type {
   AggregateMap,
   AggregateOutputMap,
@@ -498,7 +498,7 @@ export class PartitionedTimeSeries<
    * reservoir. Safe by construction; no `unsafeGlobal: true` token.
    * See {@link TimeSeries.sample}.
    */
-  sample(strategy: SampleStrategy): PartitionedTimeSeries<S, K> {
+  sample(strategy: BatchSampleStrategy): PartitionedTimeSeries<S, K> {
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>
         g.sample(strategy),

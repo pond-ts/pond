@@ -10,6 +10,7 @@ import {
   makeDiffView,
   makeFillView,
   makeCumulativeView,
+  makeStrideSampleView,
   type LiveFillMapping,
   type LiveFillStrategy,
 } from './LiveView.js';
@@ -55,7 +56,7 @@ import type {
 } from './types-aggregate.js';
 import { LiveFusedRolling } from './LiveFusedRolling.js';
 import { LiveReduce } from './LiveReduce.js';
-import { LiveSample, type GlobalSampleStrategy } from './LiveSample.js';
+import type { GlobalSampleStrategy } from './sample.js';
 import type {
   FusedMapping,
   FusedMappingValid,
@@ -658,10 +659,18 @@ export class LiveSeries<S extends SeriesSchema> {
    * downstream consumers without affecting this `LiveSeries`'s own
    * `length`, `at(i)`, listeners, or `stats()` counters.
    *
-   * Two strategies — see {@link LiveSample} for full semantics:
+   * v0.17.0 ships **stride only** on the live side — `{ stride: N }`,
+   * deterministic 1-in-N, uniform-over-time. Reservoir sampling is
+   * snapshot-side only on this release (`TimeSeries.sample`); see
+   * {@link SampleStrategy} for the rationale (live reservoir's
+   * Algorithm R replacement produces non-prefix evictions; the
+   * existing live-eviction protocol is cutoff-based, so bridging
+   * needs an exact-removal eviction channel arriving with the
+   * streaming RFC's `LiveChange` model).
    *
-   * - `{ stride: N }` — deterministic 1-in-N (uniform-over-time)
-   * - `{ reservoir: { size: K } }` — K-of-N random with drift on eviction
+   * Returns a `LiveView<S>` so the chainable surface
+   * (`filter`, `rolling`, `reduce`, `select`, …) is immediately
+   * available downstream of the sample.
    *
    * **Pre-partition call requires `unsafeGlobal: true`.** A single
    * global counter applied to a structured input stream (e.g., events
@@ -684,8 +693,8 @@ export class LiveSeries<S extends SeriesSchema> {
    * `live.stats().ingested` continues to count true throughput
    * upstream of any sample.
    */
-  sample(strategy: GlobalSampleStrategy): LiveSample<S> {
-    return new LiveSample<S>(this, strategy);
+  sample(strategy: GlobalSampleStrategy): LiveView<S> {
+    return makeStrideSampleView<S>(this, strategy.stride);
   }
 
   select<const Keys extends readonly (keyof EventDataForSchema<S>)[]>(

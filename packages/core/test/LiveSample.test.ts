@@ -1,14 +1,21 @@
 /**
  * Tests for `live.sample({...})` and the snapshot-side parity on
- * `TimeSeries.sample` / `PartitionedTimeSeries.sample`. Covers stride
- * determinism, reservoir drift bounds under steady-state eviction,
- * per-partition isolation, source-eviction tracking, composability
- * with rolling/aggregate/reduce, and the `unsafeGlobal: true`
- * type-level gate (runtime-only test here; full type-d coverage in
- * `test-d/live-sample.test-d.ts`).
+ * `TimeSeries.sample` / `PartitionedTimeSeries.sample`.
+ *
+ * v0.17.0 ships **stride only** on the live side. Reservoir mode lives
+ * on the snapshot side only — the live-eviction protocol expects
+ * prefix evictions, and reservoir's Algorithm R replacement produces
+ * non-prefix evictions. Bridging that needs an exact-removal eviction
+ * channel arriving with the streaming RFC's `LiveChange` model. The
+ * snapshot-side reservoir is single-pass over a known-N events array
+ * (no eviction concern) and is the canonical visualization shape.
+ *
+ * Live-side stride is implemented as a closure-captured counter
+ * inside a `LiveView`, so the standard cutoff-based prefix eviction
+ * applies and `live.sample(...).rolling(...)` chains naturally.
  */
 import { describe, expect, it } from 'vitest';
-import { LiveSeries, Sequence, TimeSeries } from '../src/index.js';
+import { LiveSeries, LiveView, TimeSeries } from '../src/index.js';
 
 const schema = [
   { name: 'time', kind: 'time' },
@@ -32,6 +39,12 @@ function makePartLive(opts?: { retention?: { maxAge?: string } }) {
 // ── Live sample: stride strategy ─────────────────────────────────
 
 describe('LiveSeries.sample({ stride })', () => {
+  it('returns a LiveView so the chainable surface is available', () => {
+    const live = makeLive();
+    const sampled = live.sample({ stride: 2, unsafeGlobal: true });
+    expect(sampled).toBeInstanceOf(LiveView);
+  });
+
   it('keeps every Nth event (stride=1 keeps all)', () => {
     const live = makeLive();
     const sampled = live.sample({ stride: 1, unsafeGlobal: true });
@@ -101,7 +114,7 @@ describe('LiveSeries.sample({ stride })', () => {
 // ── Live sample: stride + source eviction ────────────────────────
 
 describe('LiveSeries.sample({ stride }) eviction tracking', () => {
-  it('drops sampled events when source evicts (cutoff-based)', () => {
+  it('drops sampled events when source evicts (cutoff-based prefix)', () => {
     const live = new LiveSeries({
       name: 'test',
       schema,
@@ -133,115 +146,19 @@ describe('LiveSeries.sample({ stride }) eviction tracking', () => {
     for (let i = 1; i <= 5; i++) live.push([i * 1000, i]);
     expect(evicted).toEqual([1, 2]); // first 2 evicted by retention
   });
-});
 
-// ── Live sample: reservoir strategy ──────────────────────────────
-
-describe('LiveSeries.sample({ reservoir })', () => {
-  it('initial fill (N <= K): keeps all events', () => {
+  it('cutoff is inclusive (`<= evicted[last].begin()`) — same-key boundary', () => {
+    // LiveView mirrors source eviction with `events[i].begin() <= cutoff`.
+    // Pin the boundary: a sampled event with the same `begin()` as the
+    // last evicted source event is itself evicted, not retained.
     const live = makeLive();
-    const sampled = live.sample({
-      reservoir: { size: 10 },
-      unsafeGlobal: true,
-    });
-    for (let i = 1; i <= 5; i++) live.push([i * 1000, i]);
-    expect(sampled.length).toBe(5);
-  });
-
-  it('full fill: reservoir size hits K then stays at K', () => {
-    const live = makeLive();
-    const sampled = live.sample({
-      reservoir: { size: 10 },
-      unsafeGlobal: true,
-    });
-    for (let i = 1; i <= 100; i++) live.push([i * 1000, i]);
-    expect(sampled.length).toBe(10);
-  });
-
-  it('reservoir contents stay in chronological order after random replacements', () => {
-    // Algorithm R picks random slots; replaced events leave the buffer
-    // in mid-positions and new events append. The `#events` buffer
-    // must remain key-sorted.
-    const live = makeLive();
-    const sampled = live.sample({
-      reservoir: { size: 5 },
-      unsafeGlobal: true,
-    });
-    for (let i = 1; i <= 200; i++) live.push([i * 1000, i]);
-    // Read out and verify chronological order.
-    const begins: number[] = [];
-    for (let i = 0; i < sampled.length; i++) {
-      begins.push(sampled.at(i)!.begin());
-    }
-    for (let i = 1; i < begins.length; i++) {
-      expect(begins[i]).toBeGreaterThanOrEqual(begins[i - 1]!);
-    }
-  });
-
-  it('throws on non-positive-integer reservoir size', () => {
-    const live = makeLive();
-    expect(() =>
-      live.sample({ reservoir: { size: 0 }, unsafeGlobal: true }),
-    ).toThrow(/positive integer/);
-    expect(() =>
-      live.sample({ reservoir: { size: -1 }, unsafeGlobal: true }),
-    ).toThrow(/positive integer/);
-    expect(() =>
-      live.sample({ reservoir: { size: 1.5 }, unsafeGlobal: true }),
-    ).toThrow(/positive integer/);
-  });
-});
-
-// ── Live sample: reservoir + source eviction (Option A drift) ────
-
-describe('LiveSeries.sample({ reservoir }) eviction tracking', () => {
-  it('clears reservoir slot when source evicts a reservoir event', () => {
-    const live = new LiveSeries({
-      name: 'test',
-      schema,
-      retention: { maxEvents: 2 },
-    });
-    const sampled = live.sample({
-      reservoir: { size: 5 },
-      unsafeGlobal: true,
-    });
-    for (let i = 1; i <= 10; i++) live.push([i * 1000, i]);
-    // Source retains [9000, 10000]. The reservoir held some subset of
-    // events 1-10; events outside [9000, 10000] should have been
-    // evicted from the reservoir AND the sampled buffer.
-    for (let i = 0; i < sampled.length; i++) {
-      const begin = sampled.at(i)!.begin();
-      expect(begin).toBeGreaterThanOrEqual(9000);
-    }
-    // With K=5 but only 2 retained, the reservoir is at most 2.
-    expect(sampled.length).toBeLessThanOrEqual(2);
-  });
-
-  it('refills empty slots with the next ingested event after eviction', () => {
-    const live = new LiveSeries({
-      name: 'test',
-      schema,
-      retention: { maxEvents: 5 },
-    });
-    const sampled = live.sample({
-      reservoir: { size: 3 },
-      unsafeGlobal: true,
-    });
-    // Fill phase
-    for (let i = 1; i <= 3; i++) live.push([i * 1000, i]);
+    // Stride=1 keeps every event so we can target a specific begin().
+    const sampled = live.sample({ stride: 1, unsafeGlobal: true });
+    live.push([1000, 1], [2000, 2], [3000, 3]);
     expect(sampled.length).toBe(3);
-    // Push 2 more (still in retention); reservoir is full so Algorithm
-    // R may replace, but size stays at 3.
-    for (let i = 4; i <= 5; i++) live.push([i * 1000, i]);
-    expect(sampled.length).toBe(3);
-    // Now push 5 more — source retention will start evicting (max 5
-    // events). Reservoir slots get freed and refilled.
-    for (let i = 6; i <= 10; i++) live.push([i * 1000, i]);
-    expect(sampled.length).toBe(3);
-    // All retained reservoir events should be in [6000, 10000].
-    for (let i = 0; i < sampled.length; i++) {
-      expect(sampled.at(i)!.begin()).toBeGreaterThanOrEqual(6000);
-    }
+    // Evict via clear — fires 'evict' with all three events.
+    live.clear();
+    expect(sampled.length).toBe(0);
   });
 });
 
@@ -284,17 +201,17 @@ describe('LivePartitionedSeries.sample (no unsafeGlobal needed)', () => {
     expect(seenHosts.size).toBe(5);
   });
 
-  it('per-partition reservoir: each partition gets its own K-event reservoir', () => {
-    // The reservoir state lives on the per-partition LiveSample
-    // instances, NOT on the collected unified buffer (which is fan-in
-    // and accumulates every 'event' fire including replacements).
-    // toMap() exposes the per-partition LiveSamples directly so the
-    // K-cap can be observed.
+  it('per-partition stride state is independent across partitions', () => {
+    // The closure-captured counter lives on each partition's LiveView,
+    // so two partitions interleaved through a single source counter
+    // would drop most-of-one-host but here each gets its own counter.
     const live = makePartLive();
-    const sampled = live.partitionBy('host').sample({ reservoir: { size: 3 } });
-    // 10 events for each of 2 hosts.
-    for (let i = 1; i <= 10; i++) live.push([i * 100, 'a', i]);
-    for (let i = 11; i <= 20; i++) live.push([i * 100, 'b', i]);
+    const sampled = live.partitionBy('host').sample({ stride: 3 });
+    // 9 events for 'a', 9 events for 'b', interleaved. With a single
+    // global counter at stride 3 you'd get a structurally biased mix;
+    // per-partition counters yield 3 from each.
+    for (let i = 1; i <= 9; i++) live.push([i * 100, 'a', i]);
+    for (let i = 10; i <= 18; i++) live.push([i * 100, 'b', i]);
     const map = sampled.toMap();
     expect(map.get('a')!.length).toBe(3);
     expect(map.get('b')!.length).toBe(3);
@@ -315,6 +232,34 @@ describe('sample composes with downstream rolling and reduce', () => {
     for (let i = 1; i <= 10; i++) live.push([i * 1000, 'a', i]);
     const results = rolling.collect({ name: 'rolling' });
     expect(results.length).toBeGreaterThan(0);
+  });
+
+  it('LiveSeries.sample().filter() — chainable surface is available', () => {
+    // Pre-simplification, sample() returned a `LiveSample` operator
+    // that did not expose the chainable surface (filter / rolling /
+    // map / select). After simplification it returns a `LiveView`,
+    // so all view-level operators chain naturally.
+    const live = makeLive();
+    const filtered = live
+      .sample({ stride: 2, unsafeGlobal: true })
+      .filter((e) => (e.get('value') as number) > 5);
+    for (let i = 1; i <= 10; i++) live.push([i * 1000, i]);
+    // Stride=2 keeps [2, 4, 6, 8, 10]; filter > 5 → [6, 8, 10].
+    expect(filtered.length).toBe(3);
+    const values = Array.from({ length: filtered.length }, (_, i) =>
+      filtered.at(i)?.get('value'),
+    );
+    expect(values).toEqual([6, 8, 10]);
+  });
+
+  it('LiveSeries.sample().rolling() — pre-partition stride feeds rolling', () => {
+    const live = makeLive();
+    const rolling = live
+      .sample({ stride: 2, unsafeGlobal: true })
+      .rolling(5, { value: 'avg' });
+    for (let i = 1; i <= 10; i++) live.push([i * 1000, i]);
+    // Stride=2 → 5 events. Count-based window=5 fires once full.
+    expect(rolling.length).toBeGreaterThan(0);
   });
 });
 
@@ -421,6 +366,3 @@ describe('PartitionedTimeSeries.sample', () => {
     expect(sampled.length).toBe(20);
   });
 });
-
-// ── Sequence import is needed for one composability test ──────────
-void Sequence; // keep import live so the file remains stable across reorders

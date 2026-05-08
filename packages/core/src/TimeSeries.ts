@@ -88,7 +88,7 @@ import type {
 import { compareEventKeys } from './temporal.js';
 import { Event } from './Event.js';
 import { PartitionedTimeSeries } from './PartitionedTimeSeries.js';
-import type { SampleStrategy } from './LiveSample.js';
+import type { BatchSampleStrategy } from './sample.js';
 import { Sequence } from './Sequence.js';
 import { validateAndNormalize } from './validate.js';
 import type { DurationInput } from './utils/duration.js';
@@ -3372,15 +3372,17 @@ export class TimeSeries<S extends SeriesSchema> {
    * visualization shape (`series.sample({reservoir:{size:500}}).toRows()`
    * gives uncorrelated points without `aggregate`'s grid collapse).
    *
-   * Snapshot-side reservoir is materially simpler than the live
-   * variant — N is known upfront, no eviction concern, no Set
-   * bookkeeping. Returns a new `TimeSeries<S>` of K events (or
-   * `events.length` for stride if `events.length < stride`).
+   * Snapshot-side reservoir is single-pass over a known-N events
+   * array — no eviction-protocol concerns, no `Set` bookkeeping —
+   * and ships in v0.17.0. Returns a new `TimeSeries<S>` of K events
+   * (or `events.length` for stride if `events.length < stride`).
    *
-   * For the live counterpart and full strategy semantics, see
-   * {@link LiveSample}.
+   * For the live counterpart, see `LiveSeries.sample` /
+   * `LivePartitionedSeries.sample`. Live ships **stride only** in
+   * v0.17.0; reservoir is deferred — see {@link BatchSampleStrategy}
+   * JSDoc for the rationale.
    */
-  sample(strategy: SampleStrategy): TimeSeries<S> {
+  sample(strategy: BatchSampleStrategy): TimeSeries<S> {
     if ('stride' in strategy) {
       const stride = strategy.stride;
       if (!Number.isInteger(stride) || stride < 1) {
