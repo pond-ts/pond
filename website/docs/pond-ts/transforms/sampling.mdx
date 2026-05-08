@@ -1,0 +1,187 @@
+---
+sidebar_position: 16
+---
+
+# Sampling
+
+`sample({ stride })` and `sample({ reservoir })` thin a `TimeSeries` to a
+smaller subset of events, without changing the schema. Two strategies for
+two questions:
+
+- **Stride** (`{ stride: N }`) — keep every Nth event, uniform-over-time.
+  Cheap, deterministic, the right pick for sliding-window stats over a
+  thinned stream.
+- **Reservoir** (`{ reservoir: { size: K } }`) — random K-of-N events,
+  uniformly drawn. The right pick for visualization (uncorrelated
+  scatter points without aggregation's grid collapse) and population
+  summaries.
+
+What's covered:
+
+- [**When to use which**](#when-to-use) — the decision table.
+- [**Stride**](#stride) — deterministic 1-in-N thinning.
+- [**Reservoir**](#reservoir) — random K-of-N via Algorithm R.
+- [**Visualization**](#visualization) — `series.sample({ reservoir }).toRows()`
+  as the canonical scatter shape.
+- [**Multi-entity series — see `partitionBy`**](#multi-entity) — per-partition
+  sample state.
+- [**Live counterpart**](#live) — when to reach for the streaming
+  variant instead.
+
+## When to use which \{#when-to-use\}
+
+Picking the wrong strategy is the highest-leverage bug this page can
+prevent. The use case maps cleanly onto one of the two:
+
+| Use case                                         | Stride                      | Reservoir                             |
+| ------------------------------------------------ | --------------------------- | ------------------------------------- |
+| Sliding-window stats (rolling avg / percentiles) | ✅ default                  | ⚠️ random correlation across windows  |
+| Population summary over the snapshot             | ⚠️ regular-spacing artifact | ✅ default                            |
+| Visualization (scatter plot, sparkline samples)  | ⚠️ regular-spacing artifact | ✅ default                            |
+| Top-K / unique reducers                          | ❌ misses singletons        | ⚠️ also misses, with extra randomness |
+
+**Rule of thumb:** if downstream is `aggregate` / `rolling`, reach for
+stride. If downstream is `toRows()` for a chart or a population-level
+reducer, reach for reservoir.
+
+## Stride: deterministic 1-in-N \{#stride\}
+
+```ts
+const sampled = series.sample({ stride: 10 });
+// length === Math.floor(series.length / 10)
+// keeps the 10th, 20th, 30th, ... events (1-indexed)
+```
+
+Cheap (`O(N)` time, single pass, no RNG). Uniform-over-time, so any
+windowed statistic computed downstream is also uniform-over-time —
+which is why stride is the right default for sliding-window stats.
+
+The trade-off is the **regular-spacing artifact**: a periodic source
+signal whose period is a multiple of the stride disappears entirely
+into the gaps. In practice this rarely matters for monitoring data
+(noise is usually broad-spectrum), but for any periodic source —
+heartbeat events, scheduled probes — pick a stride that's coprime
+with the period or use reservoir.
+
+`stride` must be a positive integer; non-integer or `<= 0` strides
+throw at construction.
+
+## Reservoir: random K-of-N \{#reservoir\}
+
+```ts
+const sampled = series.sample({ reservoir: { size: 500 } });
+// length === Math.min(500, series.length)
+// each event has probability ~K/N of being included, drawn uniformly
+```
+
+Single-pass [Vitter's Algorithm R](https://en.wikipedia.org/wiki/Reservoir_sampling#Simple:_Algorithm_R):
+fill the reservoir with the first K events, then for each subsequent
+event at index `i`, replace a random reservoir slot with probability
+`K / (i + 1)`. Output is sorted by key on the way out so `TimeSeries`'s
+chronological invariant is preserved.
+
+Each event in the source has the same probability of being in the
+output (`K/N` for `N >= K`, `1` otherwise). Reducer outputs over the
+sampled series approximate the population reduction, with standard
+error `~σ / sqrt(K)` for the sample mean.
+
+`size` must be a positive integer; non-integer or `<= 0` sizes throw
+at construction. When `K >= N`, all events are returned in order
+(no sampling).
+
+### Sample-rate caveats
+
+Reducer outputs reflect the **sampled stream**, not the source:
+
+```ts
+const sampled = series.sample({ reservoir: { size: 500 } });
+const counts = sampled.aggregate(Sequence.every('1m'), {
+  events: { from: 'cpu', using: 'count' },
+});
+// counts.value().events approximates true count × (K / N)
+// → multiply by N/K to estimate true counts
+```
+
+Multiply count-shaped outputs by `N / K` (or by `stride` for stride
+sampling) to get population-level estimates.
+
+## Visualization \{#visualization\}
+
+The canonical scatter shape:
+
+```ts
+const points = series.sample({ reservoir: { size: 500 } }).toRows();
+// 500 points, drawn uniformly from the source, in chronological order.
+```
+
+This beats `aggregate(Sequence.every('1m'), { ... })` for visualization
+because:
+
+1. **No grid collapse.** Every point is a real source observation, not
+   a bucket reduction. The chart preserves the variability of the
+   underlying data.
+2. **No regular-spacing artifact.** Reservoir's draw is uncorrelated
+   with any periodic structure in the source.
+3. **Fixed point count.** A 500-event scatter renders the same way
+   regardless of whether the source has 10k or 10M events. Memory and
+   render time stay constant.
+
+For sparkline / line shapes where ordering matters, the chronological
+sort that `sample({ reservoir })` already does means the output is
+chart-ready without further work.
+
+## Multi-entity series — see `partitionBy` \{#multi-entity\}
+
+A bare `sample({ stride: 10 })` on a multi-entity series mixes events
+across entities — and on a structured input (events arriving in
+round-robin host order), it silently keeps the same subset of entities
+and drops the rest. The fix is the same as with every other multi-entity
+operator: **partition first, then sample**.
+
+```ts
+import { Sequence, TimeSeries } from 'pond-ts';
+
+const sampled = metrics.partitionBy('host').sample({ stride: 10 }).collect();
+// Each host's events are thinned independently.
+```
+
+Each partition gets its own stride counter (or its own K-event reservoir
+for `{ reservoir: { size: K } }`) — bounded, predictable per-partition
+state. For 80 hosts × `K=100` reservoir, that's 8000 events of state.
+
+This is the same multi-entity consideration that applies to `rolling`,
+`aggregate`, `fill`, `diff`, `rate`, `cumulative`, and `pctChange` —
+see [Cleaning data → Multi-entity series](./cleaning#multi-entity-series--see-partitionby)
+for the broader pattern.
+
+## Live counterpart \{#live\}
+
+`LiveSeries.sample`, `LiveView.sample`, `LivePartitionedSeries.sample`,
+and `LivePartitionedView.sample` accept `{ stride: N }` and return a
+`LiveView<S>` with a per-instance closure-captured counter. v0.17.0
+ships **stride only** on the live side; reservoir is queued for a
+later release once the streaming RFC's exact-removal eviction channel
+lands.
+
+```ts
+// Live: per-host stride feeding per-host rolling
+live.partitionBy('host').sample({ stride: 10 }).rolling('5m', mapping);
+
+// Snapshot: reservoir for visualization
+series.sample({ reservoir: { size: 500 } }).toRows();
+```
+
+For the live story (firehose framing, the multi-entity bias trap, the
+`LiveView` chainable surface), see
+[Live transforms → Sampling](../live/live-transforms#sampling).
+
+## See also
+
+- [Cleaning](./cleaning) — `dedupe` / `fill` / `materialize` and the
+  broader multi-entity story
+- [Aggregation](./aggregation) — bucketed reduction (the alternative to
+  sample-then-render for charts where bucket-level rollups are wanted)
+- [Rolling](./rolling) — the primary downstream consumer of stride-sampled
+  streams
+- [Live transforms → Sampling](../live/live-transforms#sampling) — the
+  streaming variant

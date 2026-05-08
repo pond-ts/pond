@@ -13,11 +13,11 @@ by data — no background timers, no implicit scheduling.
 The same vocabulary as batch
 [`TimeSeries`](../../start-here/concepts/series): `filter`, `map`,
 `select`, `window`, `aggregate`, `rolling`, `diff`, `rate`,
-`pctChange`, `fill`, `cumulative`. Each method exists in two flavors
-— batch over an immutable snapshot, live over an incoming stream —
-with the same shape of output. If you learned the vocabulary in
-[Transforms](../transforms/aggregation), most of this
-page will read as "the same thing, but incremental."
+`pctChange`, `fill`, `cumulative`, `sample`. Each method exists in
+two flavors — batch over an immutable snapshot, live over an incoming
+stream — with the same shape of output. If you learned the vocabulary
+in [Transforms](../transforms/aggregation), most of this page will
+read as "the same thing, but incremental."
 
 ## LiveView: filter, map, select, window
 
@@ -655,6 +655,87 @@ const custom = live.cumulative({
 
 Non-accumulated columns pass through unchanged. When a target column's value is
 not a number, the accumulator holds its previous value.
+
+## Sampling: bounded-memory thinning \{#sampling\}
+
+`sample({ stride: N })` thins the event stream going to downstream consumers
+without affecting this `LiveSeries`'s own `length`, `at(i)`, listeners, or
+`stats()` counters. The headline use case: **decouple downstream baseline
+window length from event rate**.
+
+Streaming aggregator memory scales as
+`O(window_seconds × event_rate × per_partition_count)`. At firehose rates
+(70k events/s × 80 partitions), a 1-minute rolling baseline holds ≈4M events;
+a 5-minute baseline at the same rate is the kind of number where you'd
+hit Node's heap ceiling. Stride-thinning the input stream means a longer
+baseline for the same memory budget — and `sd / sqrt(N)` standard error
+typically still drops far below per-event noise even at stride 10.
+
+Returns a `LiveView<S>`, so the chainable surface (`filter`, `rolling`,
+`reduce`, `select`, `map`, `diff`, `rate`, `cumulative`, `fill`, …) is
+immediately available downstream of the sample.
+
+```ts
+// Canonical shape: per-host stride before per-host rolling.
+const baselines = live
+  .partitionBy('host')
+  .sample({ stride: 10 })
+  .rolling('5m', { cpu_avg: 'avg', cpu_sd: 'stdev' });
+
+baselines.on('event', (e) => {
+  // 1-in-10 of each host's stream feeds a 5-minute rolling window.
+});
+```
+
+### Multi-entity series — see `partitionBy` \{#sampling-multi-entity\}
+
+A pre-partition `live.sample({ stride: N })` applied to a structured
+input stream (events arriving in round-robin host order) silently keeps
+the same subset of partitions and drops the rest. A stride-10 filter on
+a 80-host round-robin stream keeps 8 of 80 hosts; the other 72 vanish
+from downstream rollings without warning.
+
+The fix is the canonical shape above: **chain `sample` after
+`partitionBy`**. Each partition gets its own stride counter, so every
+host's stream is thinned independently.
+
+This is the same multi-entity consideration that applies to every
+stateful live operator (`rolling`, `aggregate`, `fill`, `diff`, `rate`,
+`cumulative`, `pctChange`, `reduce`) — see
+[Cleaning data → Multi-entity series](../transforms/cleaning#multi-entity-series--see-partitionby)
+for the broader pattern. Sample follows the same convention.
+
+### Reducer counts after sampling
+
+Reducers downstream of `sample` (`'count'`, `'sum'`, `topN`) reflect the
+**sampled stream**, not the source. Multiply count-shaped outputs by the
+stride to estimate true counts:
+
+```ts
+const sampled = live.partitionBy('host').sample({ stride: 10 });
+const counts = sampled.rolling('1m', {
+  events: { from: 'cpu', using: 'count' },
+});
+// counts.value().events × 10 ≈ true count over the 1m window
+```
+
+`live.stats().ingested` and `live.on('batch', cb)` are **upstream** of any
+`.sample(...)` op — they continue counting true throughput. Only consumers
+downstream of `sample` see the thinned stream.
+
+### Reservoir sampling on the live side
+
+Not in v0.17.0. Random K-of-N (Algorithm R) replacement on a live source
+emits non-prefix evictions, which the current eviction-mirroring protocol
+(`'evict'` event + cutoff-based prune) doesn't handle. It's queued for a
+later release once the streaming RFC's `LiveChange` exact-removal channel
+lands.
+
+Reservoir sampling on the **snapshot side** is unconstrained and ships
+in v0.17.0 — see
+[Sampling → Reservoir (random K-of-N)](../transforms/sampling#reservoir).
+For the firehose visualization shape (`series.sample({ reservoir }).toRows()`),
+materialize the live buffer first via `live.toTimeSeries()`.
 
 ## Composition patterns
 
