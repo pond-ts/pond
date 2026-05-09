@@ -1,6 +1,8 @@
-# pond-ts — typed time-series for TypeScript
+# pond-ts
 
-Schema-driven events, composable batch transforms, push-based live
+**Highly optimised, fully typed Timeseries library for TypeScript**
+ 
+Schema-driven events, composable batch transforms, push-based streaming
 ingest, multi-entity partitioning, and an optional React integration —
 all strict TypeScript end to end, all immutable.
 
@@ -17,19 +19,19 @@ npm install @pond-ts/react          # React hooks (optional)
 - **Typed schemas** — declare once, every transform downstream narrows
   off it. `event.get('cpu')` returns `number | undefined` straight from
   the schema; no `as` casts.
-- **Batch + live with the same vocabulary** — `filter`, `map`,
+- **Batch + streaming with the same vocabulary** — `filter`, `map`,
   `aggregate`, `rolling`, `diff`, `rate`, `fill`, `cumulative`,
   `sample`, `reduce` all exist on both `TimeSeries` and `LiveSeries`.
 - **Multi-entity by construction** — `partitionBy('host')` routes per
   entity; `rolling` / `aggregate` / `fill` / `sample` over a partitioned
   view all become per-entity automatically.
 - **Bounded-memory streaming** — retention policies, eviction-aware
-  views, and `sample({ stride: N })` decouple downstream window length
-  from event rate at firehose loads.
-- **Triggers** — control rolling emission cadence with
-  `Trigger.event() / .every(d) / .clock(seq) / .count(n)`. Synchronised
-  partitioned rolling fires every host on every boundary.
-- **No legacy baggage** — pure ESM, native arrays, no ImmutableJS.
+  views, and sampling decouple downstream window length
+  from event rate at firehose loads (up to 500k events/sec on a
+  single node.js instance.)
+- **Triggers** — for control of rolling emission cadences. Synchronised
+  partitioned rolling fires across partitions on every boundary.
+- **No legacy baggage**
 
 ## Quick start: batch
 
@@ -73,7 +75,7 @@ The full batch surface (`align`, `rolling`, `smooth`, `groupBy`, `join`,
 `partitionBy`, `pivotByGroup`, …) follows the same shape: TimeSeries
 in, TimeSeries out, schema preserved.
 
-## Quick start: live
+## Quick start: live (streaming)
 
 ```ts
 import { LiveSeries, Sequence } from 'pond-ts';
@@ -103,7 +105,7 @@ memory.
 
 ## Quick start: multi-entity
 
-`partitionBy` routes events into per-entity buffers. Every stateful
+`partitionBy` routes events into per-key buffers. Every stateful
 operator downstream of `partitionBy` runs per-partition automatically:
 
 ```ts
@@ -118,7 +120,7 @@ const flat = perHost.collect();
 
 Same shape on the live side — `live.partitionBy('host')` returns a
 `LivePartitionedSeries` whose `rolling` / `fill` / `diff` / `sample`
-methods all maintain per-host state.
+methods all maintain per-partition state.
 
 ## Quick start: bounded-memory sampling
 
