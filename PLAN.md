@@ -3859,40 +3859,181 @@ Later, only after the previous phases are stable:
   on Phase 4.5 milestone C (`AggregateEmission`'s wire-safe shape) so chart
   inputs are streaming frames rather than experiment-specific protocols.
 
-  **Design constraints from real workload (gRPC experiment M3.5,
-  pond-grpc-experiment#29 friction note "Recharts as the dashboard's
-  render bottleneck"):** the experiment hit Recharts' SVG cliff at
-  10 hosts × 5min × 5 fps × 3 series = ~75-80k SVG nodes per
-  render — wire-and-pipeline side already lean (cpu memo at 7-37 ms
-  steady), browser rendering at ~1 fps, two tabs OOM Chrome.
-  Decimating per-series to ~500 points (3× downsample, tuned to
-  ~420px chart width) restored fluid rendering at moderate rates
-  but didn't save the firehose case at 10 hosts × 70k events/s —
-  that's the canvas-vs-SVG cliff, not a data-volume problem.
+  **Strategic frame.** The package's value proposition is **"the
+  visualization end of pond"** — data → pond → charts with zero
+  friction, where pond's data-pipeline and analytics primitives are
+  the moat. Other charting libraries don't bring that combination;
+  the headline pitch is the seamless integration, not "another canvas
+  chart library." Implication for the API center of gravity: charts
+  accept pond types (`LiveSource`, `TimeSeries`, `PartitionedTimeSeries`)
+  directly and subscribe internally — consumers don't wire reactivity
+  by hand. `<LineChart series={live.partitionBy('host').rolling('5m', m).collect()} />`
+  Just Works. `ChartSeries`-shaped adapters exist but are an escape
+  hatch, not the headline path.
 
-  Constraints worth carrying into the package's design when the
-  extraction happens:
-  - **Streaming-first input.** Accept `LiveSeries` / `useWindow` /
-    `aggregate` outputs, not just static arrays. The chart decides
-    its own decimation grid (or accepts a `Sequence` from the
-    caller).
+  **Scope discipline: timeseries only.** The strong-type aggregation
+  model produces shapes that fit several visualization styles — line,
+  band/envelope, bar, scatter, box — and the package covers all of
+  them. It does **not** cover pie, treemap, sankey, or generic
+  visualization. _If it's not timeseries and it's not the viz end of
+  pond, we're not in that game._
+
+  **Beat uPlot on streaming.** The gRPC experiment's per-host stride
+  numbers shouldn't anchor scale expectations — timeseries data is
+  often dense (100k+ points × tens of series), and the experiment
+  decimated upstream and Recharts still collapsed. The library has to
+  handle the un-decimated case natively and excel at the streaming-
+  append shape uPlot deliberately doesn't optimize (uPlot rebuilds-
+  on-replace because it's a general-purpose library). Append-only
+  Path2D + ring buffer is **v1**, not a v2 deferral — it's the
+  architectural lever a streaming-specific library takes that a
+  general one can't. Other techniques that "don't pay back at our
+  scale" in the experiment's framing — typed arrays, pixel-bucket
+  min/max decimation, Path2D caching across redraws, `getOuterIdxs` —
+  all in v1 because the library's scale is the un-decimated dense
+  case, not the experiment's.
+
+  **Layout primitives — react-timeseries-charts model.** The library
+  is not "a chart"; it's a charting _system_. Layout primitives are
+  foundational:
+
+  ```tsx
+  <ChartContainer timeRange={range} onTimeRangeChange={setRange}>
+    <ChartRow height={150}>
+      <YAxis id="cpu" min={0} max={1} format=".0%" />
+      <Charts>
+        <BandChart axis="cpu" upper={...} lower={...} />
+        <LineChart axis="cpu" series={...} />
+      </Charts>
+    </ChartRow>
+    <ChartRow height={100}>
+      <YAxis id="requests" />
+      <Charts>
+        <BarChart axis="requests" series={...} />
+      </Charts>
+    </ChartRow>
+  </ChartContainer>
+  ```
+
+  `ChartContainer` owns the time axis, pan/zoom state, and shared
+  cursor. `ChartRow` participates in vertical layout with its own
+  Y-axis. `<Charts>` is the within-row composition slot for overlay.
+  Multi-row charts share the time axis but have independent Y. We
+  copy the working reference — react-timeseries-charts has the proven
+  shape — and bring our canvas implementation underneath.
+
+  **v1 surface (commitments):**
+  - **Layout primitives:** `ChartContainer`, `ChartRow`, `Charts`,
+    `YAxis`.
+  - **Components:** `LineChart`, `BandChart`, `BarChart`, `ScatterChart`,
+    `BoxChart`. The `BoxChart` is for percentile rolling output
+    (`p25/p50/p75/p95` per bucket — pond's reducers already produce
+    the right shape).
+  - **Pan / zoom** on the time axis (controlled and uncontrolled),
+    brush selection, cursor sync across rows.
+  - **Live-source subscription internal** — components accept pond
+    sources and re-render at a throttle without consumer-side
+    `useSnapshot` boilerplate.
+  - **SSR-safe** — `'use client'` directive; minimal hydration
+    footprint. Empty container before the first canvas paint.
+  - **Append-only Path2D + ring buffer** for streaming append.
+    Streaming-append is `O(1)` per frame instead of `O(N)`.
+  - **Pixel-bucket min/max decimation** owned by the chart (consumer
+    can hand it raw 100k-point series; chart's own bucket grid
+    handles the decimation).
+  - **Typed-array internal data layout** (`Float64Array` X column +
+    parallel Y columns) to keep iteration cache-friendly at 100k+
+    points × tens of series.
+  - **Storybook** with visual-regression tests via canvas-pixel-hash
+    on fixed data fixtures. Doubles as the docs-by-example surface.
+  - **Selective d3 imports allowed** — `d3-scale`, `d3-time-format`
+    (the rollover-at-boundary tick-formatting case), `d3-array`
+    (`bisectLeft`), maybe `d3-shape` (curve interpolation). Tree-
+    shakeable; bundle target <30 KB gzipped for the canvas component
+    family. Pure d3 is too big; selective imports are the pragmatic
+    middle.
+
+  **v1 implementation traps to honour verbatim** (catalogued in
+  the gRPC experiment's
+  [`canvas-chart-primitive.md` RFC](https://github.com/pjm17971/pond-grpc-experiment/blob/main/friction-notes/rfcs/canvas-chart-primitive.md)
+  — each is a real bug the experiment paid iteration time to find):
+  1. Gap detection lives in the data layer (the adapter), not the
+     renderer. The chart honours explicit `value: undefined` markers;
+     adapters with bucket-cadence context inject them.
+  2. `Number.isFinite(value)`, not `value != null`. NaN slips through
+     `!= null` and breaks canvas line drawing.
+  3. Y-domain overrides should _widen_ (auto-extend if data exceeds),
+     not cap. Canvas clips to bounds where SVG silently overflowed.
+  4. X-axis ticks anchor to wall-clock boundaries, not window
+     fractions. `Math.ceil(tStart / step) * step`.
+  5. No synchronous `setState` in `useLayoutEffect`. ResizeObserver
+     fires once after first layout — use that signal, not a
+     synchronous read. (Caught by `react-hooks/set-state-in-effect`.)
+  6. `React.memo` is required for streaming-data charts. Pair with
+     stable refs in the data layer.
+  7. DPR scaling at draw time via `ctx.setTransform(dpr, ...)`, not
+     by doubling the line-drawing math.
+  8. Pixel-density-based dot suppression (uPlot's
+     `idxs[1] - idxs[0] <= dim / (pointSpace * pxRatio)`), not a
+     constant threshold.
+  9. Single `useLayoutEffect` drawing grid → bands → lines → dots →
+     anomalies → axis labels in one synchronous pass. Easier z-order,
+     consistent canvas state.
+
+  **v1 implicit constraints carried from the original entry:**
+  - **Streaming-first input.** Same as before — pond data structures
+    flow in, the chart decides its own decimation grid.
   - **Spike-preserving decimation by default for envelope / min /
-    max signals.** Pond's `'min'` / `'max'` reducers already encode
-    the right per-signal semantic — the chart just plumbs the
-    picker through. A bucket containing a single-tick spike still
-    reports the spike in min/max envelopes.
+    max signals.** Pond's `'min'` / `'max'` reducers encode the right
+    semantic; the chart's pixel-bucket decimator picks the
+    appropriate aggregator per channel.
   - **Anomaly / sparse markers stay full-resolution** alongside
-    decimated continuous signals. They're a separate channel, not
-    a downsample target — bucket-aligned dots would smear single-
-    tick anomalies and risk dropping them inside an all-zero
-    bucket.
-  - **Render at the throttle cadence with 30+ visible series.**
-    The experiment's CPU section is the canonical stress test.
-    Canvas-based, no per-frame React reconciliation across the
-    chart subtree.
+    decimated continuous signals. Separate channel; bucket-aligned
+    dots smear single-tick anomalies.
+  - **Render at the throttle cadence with 30+ visible series** at
+    100k+ points each. The library's stress test, not the experiment's.
+
+  **What's deferred to v1.x or later:**
+  - **Tooltip on hover.** Useful but its own design surface
+    (HTML overlay layer, hit-testing). Land in v1.1 once the
+    streaming primitive is stable and a real consumer wants it.
+  - **Cross-chart linked tooltip / zoom-shared.** Orthogonal
+    complexity that grows with the consumer count; defer.
+  - **Accessibility table fallback.** v1 ships `aria-label` and
+    `<title>` on the canvas; offscreen `<table>` data fallback for
+    keyboard / screen-reader users in v1.1.
+  - **Animation on data updates.** Streaming charts updating at 2-5
+    fps don't benefit from interpolated transitions — they make the
+    chart feel laggy. Same convention `isAnimationActive: false` had
+    on the SVG side.
+
+  **Wire-shape coupling posture:** the package ships **before** Phase
+  4.5 milestone C with loose typing (accepts the experiment's proven
+  `Map<key, RowArray>` shape via internal adapter). When milestone C
+  lands, a tighter `fromAggregateEmission` overload is added; the
+  loose path stays for non-streaming use.
+
+  **Cross-references:**
+  - Gold-standard reference for the layout-primitive shape:
+    [react-timeseries-charts](https://github.com/esnet/react-timeseries-charts)
+    (`<ChartContainer>` / `<ChartRow>` / `<YAxis>` / `<Charts>` and
+    the `<LineChart>` / `<BarChart>` / etc. component family).
+    Mirror the API; bring our canvas implementation underneath.
+  - Working canvas implementation:
+    [pond-grpc-experiment#37](https://github.com/pjm17971/pond-grpc-experiment/pull/37)
+    (merged) — survived 5× heap reduction and indefinite-runtime
+    stability test (50 MB plateau vs OOM at 1-5 min on Recharts).
+  - Implementation-trap RFC:
+    [`canvas-chart-primitive.md`](https://github.com/pjm17971/pond-grpc-experiment/blob/main/friction-notes/rfcs/canvas-chart-primitive.md).
+  - uPlot technique inventory (high-ROI ports, v2 bookmarks, explicit
+    skips) lives in the same RFC's "Performance techniques learned
+    from uPlot" section.
 
   These constraints bake in correctly when written from real
-  friction and badly when guessed from first principles.
+  friction and badly when guessed from first principles. The
+  experiment's working code, the RFC's catalogued traps, and the
+  react-timeseries-charts reference shape together give the
+  extraction PR an answer key, not a design-from-scratch task.
 
 - **gRPC stream processor experiment** — in progress at
   [pjm17971/pond-grpc-experiment](https://github.com/pjm17971/pond-grpc-experiment).
