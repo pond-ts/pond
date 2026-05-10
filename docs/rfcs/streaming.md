@@ -21,6 +21,7 @@ carries inline attribution; this list is the index for cold readers.
 | V3 amendment                                                          | Codex                                               |
 | "Why no watermarks" non-goals appendix (2026-05-10)                   | pond-ts library agent (Claude) + pjm17971           |
 | "What 'waiting' actually trades" + bounded-latency timer (2026-05-10) | pjm17971 (framing) + pond-ts library agent (Claude) |
+| Thesis sharpening — "right tool for a different problem" (2026-05-10) | pjm17971                                            |
 
 **Audience:** future pond-ts contributors deciding how far the live layer
 should go toward Beam / Flink-style streaming aggregation without becoming a
@@ -31,6 +32,18 @@ single-process, deterministic, TypeScript-native streaming aggregation engine:
 fast enough for high-rate in-process telemetry, simple enough to reason about,
 and explicit about the places where full distributed systems usually hide
 complexity.
+
+**Pond is not a simpler Beam.** Beam, Flink, and Spark Streaming are
+correctly engineered for the problem they solve — millions of events per
+second across distributed workers persisted to durable sinks under
+failure-tolerant semantics. Pond targets a **different point in the design
+space**: single-process, bounded volume, in-memory or single-DB-write paths,
+where most "streaming" use cases actually live. Many workloads are
+over-served by distributed-streaming infrastructure they didn't need.
+Pond's design choices — data-clock close, single-process state, no
+watermark protocol — make sense for that target and would be wrong for
+Beam's. The positioning is **"right tool for a different problem,"** not
+"lighter version of the same one."
 
 Pond has already shown it can lightly process hundreds of thousands of events
 per second while still answering many data-processing questions at lower rates.
