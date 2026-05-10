@@ -11,15 +11,16 @@ for the layering.
 **Authorship:** developed across multiple contributors. Each section below
 carries inline attribution; this list is the index for cold readers.
 
-| Section                                              | Contributor                               |
-| ---------------------------------------------------- | ----------------------------------------- |
-| Original RFC (sections 1 through "The line to hold") | pjm17971 + Codex                          |
-| Review notes                                         | pond-ts library agent (Claude)            |
-| V2 amendment                                         | Codex                                     |
-| Use-case agent feedback (gRPC experiment)            | gRPC experiment agent (Claude)            |
-| Library agent response to use-case feedback          | pond-ts library agent (Claude)            |
-| V3 amendment                                         | Codex                                     |
-| "Why no watermarks" non-goals appendix (2026-05-10)  | pond-ts library agent (Claude) + pjm17971 |
+| Section                                                               | Contributor                                         |
+| --------------------------------------------------------------------- | --------------------------------------------------- |
+| Original RFC (sections 1 through "The line to hold")                  | pjm17971 + Codex                                    |
+| Review notes                                                          | pond-ts library agent (Claude)                      |
+| V2 amendment                                                          | Codex                                               |
+| Use-case agent feedback (gRPC experiment)                             | gRPC experiment agent (Claude)                      |
+| Library agent response to use-case feedback                           | pond-ts library agent (Claude)                      |
+| V3 amendment                                                          | Codex                                               |
+| "Why no watermarks" non-goals appendix (2026-05-10)                   | pond-ts library agent (Claude) + pjm17971           |
+| "What 'waiting' actually trades" + bounded-latency timer (2026-05-10) | pjm17971 (framing) + pond-ts library agent (Claude) |
 
 **Audience:** future pond-ts contributors deciding how far the live layer
 should go toward Beam / Flink-style streaming aggregation without becoming a
@@ -177,6 +178,124 @@ If a use case ever forces wall-clock closure, the RFC has phase 4
 specifically because the cost being avoided is what makes pond
 shippable as a TypeScript library that fits in a single Node
 process.
+
+### What "waiting" actually trades
+
+> _Section by pjm17971, captured 2026-05-10. Frames the unified
+> question that data-clock close, watermark, and any future timer-based
+> close are all answering._
+
+Every windowing approach — data-clock close, watermark, timer-based
+close — is answering the same question: **how long do we wait before
+we believe we have the window's events?**
+
+It's a trade between:
+
+- **Knowledge about the stream** — wait longer, gain more confidence
+  the window is complete.
+- **Lagged results** — but emission happens later.
+
+For somewhat regular data, the mechanics are simple:
+
+- Anchor the window's start at the first event in the window (or, more
+  refined, at a hypothetical event whose `time` lands _on_ the
+  boundary, interpolated from the first event's arrival).
+- Wait `window_size + grace`.
+- That's a perfectly serviceable estimate.
+
+This framing is where pond's data-clock anchoring earns its keep.
+Anchoring at the first event's arrival means the window's expected
+close time absorbs the **systematic event-vs-processing lag** — if
+events systematically arrive 50 ms after their timestamp, every
+window's anchor is already adjusted by that 50 ms. Grace doesn't need
+to model that lag.
+
+That's why pond's grace is a small fixed value (5 s, 30 s, etc.) and
+Beam's allowed-lateness is a whole subsystem: **Beam closes on
+wall-clock regardless, so the lag has to be modeled separately. Pond
+already absorbed the lag at the anchor — grace is just statistical
+variance, a noise allowance for events arriving slightly later than
+expected.**
+
+You could argue grace should auto-refine — online estimation of
+arrival variance to tune itself adaptively. We don't, because the
+fixed model is already a good estimate and the auto-refinement adds
+machinery for marginal gain. If a workload reports that fixed grace
+is the wrong shape for it, that's the friction signal that earns
+revisiting.
+
+### Bounded-latency closure for quiet sources (optional extension)
+
+> _Section by pond-ts library agent (Claude) and pjm17971,
+> 2026-05-10. Status: queued, not committed. Captures the mechanism
+> we'd reach for if the quiet-source case ever earns library-side
+> handling._
+
+Given the framing above, an optional extension that closes a bucket on
+wall-clock time when the data clock has gone quiet doesn't need
+watermark machinery. It just needs a timer.
+
+```text
+on bucket open:
+  expected_close_wall = first_event_wall_time + window_size + grace
+  schedule timer → closeBucket() at expected_close_wall
+
+on event crossing the current bucket's boundary:
+  cancel timer
+  closeBucket()  // same as today's data-clock path
+
+on timer fires (source went quiet):
+  closeBucket()  // emit whatever's accumulated, possibly empty
+  open next bucket; schedule its timer
+```
+
+One timer per partition, one timestamp (next-expected-close). No
+per-source watermark generators, no cross-source watermark joins, no
+operator state for tracking watermark progress. The data-clock path
+stays unchanged; the timer is purely a fallback for the silent case.
+
+**It's not a watermark.** A watermark predicts when data has settled;
+this is just a deadline on bucket emission. Late events past the
+timer-driven close fall under the same `LateAfterFinalPolicy`
+(`'drop'` / `'error'` / `'correction'`) they would under a data-driven
+close. Same vocabulary, no new conceptual layer.
+
+Plausible API:
+
+```ts
+live.aggregate(seq, mapping, {
+  grace: '5s',
+  closeOn: 'data' | 'data-or-timer', // default 'data'
+});
+```
+
+`'data'` is today's behavior. `'data-or-timer'` opts into the timer
+fallback; the data-clock path still closes the bucket if an event
+crosses the boundary first. Anchoring uses the first event's wall
+arrival; if the entire window passes with no events, the timer fires
+and `emitEmpty: true` (already in milestone C) controls whether an
+empty close emits.
+
+**Why this isn't in current scope.** The active consumer dataset
+(gRPC experiment, dashboard, webapp telemetry) doesn't have a
+quiet-source case forcing it. Sources are either dense in-process
+telemetry (no quiet periods at the relevant timescales) or have
+natural emission triggers driven by user activity. The application-
+side workaround (heartbeat events from outside, or
+`live.eventRate()` / `live.timeRange()` for silence detection) covers
+the few cases that surface today.
+
+If a workload mixes always-on hosts with intermittent ones — typical
+of multi-tenant monitoring, IoT fleets with sleeping devices, or
+financial feeds with sparse instruments — the mechanism above
+becomes the cheap library-side fix. Until then, queued.
+
+The reason for capturing this even though it's not committed: the
+"all approaches just trade waiting for lag" framing above is durable.
+Without this section, every six months someone reads about Beam,
+notices pond's lack of wall-clock closure, and either re-proposes
+watermarks (which we'd reject) or proposes the simpler timer
+mechanism from scratch. The writeup short-circuits that loop.
 
 ## Current strengths
 
