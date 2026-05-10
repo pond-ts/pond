@@ -4111,6 +4111,102 @@ Live `arrayAggregate` and `arrayExplode` need more thought (how
 - [ ] Live equivalents of array column operators (deferred until there's a
       concrete live dashboard need).
 
+### Internal storage shape: row-oriented stays; columnar lives at the chart boundary
+
+**Status: deferred. Logged 2026-05-10.**
+
+**Decision.** Keep row-oriented (`Event[]`) internal storage in `TimeSeries` /
+`LiveSeries`. Columnar storage lives at the **chart-package boundary** as an
+explicit fast path (`ChartDataSource` + typed-array buffers per
+[`docs/rfcs/charts.md`](docs/rfcs/charts.md)), not as a core refactor.
+
+**Reasoning.** A modern analytical engine would store columns: one
+`Float64Array` per numeric column, validity bitmaps, string interning,
+sequential cache-friendly iteration, SIMD-friendly inner loops in reducers.
+Apache Arrow / DuckDB / Polars all do this. The win is real — at firehose
+× 100k events × tens of columns we're paying ~6×–10× the memory and
+iteration cost a columnar store would.
+
+But the cost-benefit analysis at pond's target operating point doesn't
+support the rewrite:
+
+- 100k+/sec on a non-distributed JavaScript runtime is plenty for the
+  workloads we target. Workloads needing millions/sec are on Beam / Spark —
+  a different operational and cost regime that pond explicitly doesn't
+  compete with (per the streaming RFC's "non-goals").
+- The `Event` API ergonomics (`event.get('cpu')` schema-narrowed, `set` /
+  `merge` / `select` / `collapse` / `data()` / `key()`) are a real
+  product moat. They're across 1,300+ tests, every reducer, every operator,
+  every React hook. We don't disassemble that for "a bit more speed."
+- The row-oriented tax is real and visible — v0.14 / v0.15 perf wave was
+  a string of row-shape paper cuts (`estimateEventBytes` removal in
+  v0.14.0, trusted-pipeline partition router in v0.14.0,
+  `samples.rollingState()` scalar-add allocation fix in v0.14.3, O(1)
+  head-index eviction in v0.15.2). Each fix addresses an instance of the
+  class; columnar would address the class. We accept the per-fix cost in
+  exchange for keeping the API intact.
+
+**Where columnar pays back NOW: the browser.** Beam / Spark don't run
+there. The perf ceiling for visualization at firehose × tens of series
+is a place pond can credibly win — `@pond-ts/charts` adopts columnar
+internals via the layered architecture in
+[`docs/rfcs/charts.md`](docs/rfcs/charts.md), specifically the typed-array
+store + chunked Path2D cache + viewport/decimator pipeline. The core
+public API stays row-oriented; columnar lives behind the chart adapter
+boundary.
+
+**Three positions considered:**
+
+1. **Row-oriented core + chart-side columnar adapter (adopted).** The
+   chart package commits to columnar from v1 via `ChartDataSource`; the
+   core API stays `Event`-shaped. User-facing perf cliff (browser
+   rendering) closed without forcing a core refactor.
+2. **Hybrid: columnar internals + Event views + row API outside (right
+   north star, deferred).** TimeSeries internals migrate to typed-array
+   columns; `at(i)` / iterators return Event _views_ that read lazily from
+   buffers. Reducers' hot loops can drop to column reads. The
+   duckdb / Arrow / Polars precedent — _columnar internals, row API for
+   ergonomics._ Significant refactor; LiveSeries mutability complicates
+   Event lifetimes (held Event view after eviction). Earns its slot only
+   after the streaming-RFC milestones land — refactors should follow
+   major architectural commitments, not lead them.
+3. **Columnar everywhere, Event becomes a transient projection
+   (rejected).** Best perf, simplest internals, major API break.
+   v2.0 territory; the API moat goes with it.
+
+**When to revisit (Hybrid B):**
+
+- After Phase 4.5 milestones A–D land (the change-stream model and
+  capability registry inform what columnar internals would consume —
+  e.g. `LiveChange` could carry columnar-batch updates instead of
+  per-event `Event`s).
+- When chart-side columnar machinery is proven in production (validates
+  the inner-loop primitives a core migration would reuse).
+- v1.0 is a natural forcing function.
+
+If revisited, **Hybrid B is the target.** A serious RFC at that point —
+not before. Premature refactor risk plus the streaming-RFC work earns
+more leverage right now.
+
+**Cross-references:**
+
+- The chat thread that surfaced this decision: 2026-05-10, during the
+  `@pond-ts/charts` Codex review on
+  [`docs/rfcs/charts.md`](docs/rfcs/charts.md). The chart RFC's
+  "Internal data shape: columnar typed arrays from day one (Codex 2)"
+  section is where columnar got committed at the chart boundary; the
+  conversation pivoted on whether the same commitment should extend to
+  the core. This entry says no.
+- Row-shape paper cuts (evidence of the tax): CHANGELOG entries for
+  v0.14.0 (`estimateEventBytes`, trusted-pipeline router), v0.14.3
+  (`samples.rollingState()` allocation), v0.15.2 (O(1) eviction).
+- Streaming RFC's non-goals (
+  [`docs/rfcs/streaming.md`](docs/rfcs/streaming.md) §"Non-goals"):
+  "pond should not become 'mini Beam'." Columnar-everywhere is part of
+  what would push us in that direction; staying row-oriented in the
+  core keeps us on the deterministic-single-process side of the line
+  the RFC draws.
+
 ---
 
 ## Design principles
