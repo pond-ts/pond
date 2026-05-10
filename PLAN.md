@@ -4298,6 +4298,9 @@ more leverage right now.
   section is where columnar got committed at the chart boundary; the
   conversation pivoted on whether the same commitment should extend to
   the core. This entry says no.
+- [`docs/briefs/core-columnar-store-spike.md`](docs/briefs/core-columnar-store-spike.md)
+  sketches the bounded evidence-gathering spike for challenging this decision
+  later. It is explicitly not a commitment to start a core rewrite now.
 - Row-shape paper cuts (evidence of the tax): CHANGELOG entries for
   v0.14.0 (`estimateEventBytes`, trusted-pipeline router), v0.14.3
   (`samples.rollingState()` allocation), v0.15.2 (O(1) eviction).

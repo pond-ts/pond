@@ -87,6 +87,7 @@ import type {
 } from './temporal.js';
 import { compareEventKeys } from './temporal.js';
 import { Event } from './Event.js';
+import { ColumnarStore } from './internal/columnar-store.js';
 import { PartitionedTimeSeries } from './PartitionedTimeSeries.js';
 import type { BatchSampleStrategy } from './sample.js';
 import { Sequence } from './Sequence.js';
@@ -133,6 +134,22 @@ type SeriesTuple = readonly [
   TimeSeries<SeriesSchema>,
   ...TimeSeries<SeriesSchema>[],
 ];
+const TIME_SERIES_STORES = new WeakMap<
+  TimeSeries<SeriesSchema>,
+  ColumnarStore<SeriesSchema>
+>();
+
+function getColumnarStore<S extends SeriesSchema>(
+  series: TimeSeries<S>,
+): ColumnarStore<S> {
+  const store = TIME_SERIES_STORES.get(
+    series as unknown as TimeSeries<SeriesSchema>,
+  );
+  if (!store) {
+    throw new Error('missing internal columnar store');
+  }
+  return store as unknown as ColumnarStore<S>;
+}
 
 type SchemasForSeriesTuple<T extends SeriesTuple> = {
   [I in keyof T]: T[I] extends TimeSeries<infer Schema> ? Schema : never;
@@ -859,6 +876,10 @@ export class TimeSeries<S extends SeriesSchema> {
     this.name = input.name;
     this.schema = Object.freeze(input.schema.slice()) as S;
     this.events = validateAndNormalize(input);
+    TIME_SERIES_STORES.set(
+      this,
+      ColumnarStore.fromEvents(this.schema, this.events),
+    );
     Object.freeze(this);
   }
 
@@ -951,17 +972,27 @@ export class TimeSeries<S extends SeriesSchema> {
     schema: NextSchema,
     events: ReadonlyArray<EventForSchema<NextSchema>>,
   ): TimeSeries<NextSchema> {
-    const series = Object.create(TimeSeries.prototype) as {
-      name: string;
-      schema: NextSchema;
-      events: ReadonlyArray<EventForSchema<NextSchema>>;
-    };
+    const series = Object.create(
+      TimeSeries.prototype,
+    ) as TimeSeries<NextSchema>;
 
-    series.name = name;
-    series.schema = Object.freeze(schema.slice()) as NextSchema;
-    series.events = Object.freeze(events.slice()) as ReadonlyArray<
-      EventForSchema<NextSchema>
-    >;
+    Object.defineProperties(series, {
+      name: { value: name, enumerable: true },
+      schema: {
+        value: Object.freeze(schema.slice()) as NextSchema,
+        enumerable: true,
+      },
+      events: {
+        value: Object.freeze(events.slice()) as ReadonlyArray<
+          EventForSchema<NextSchema>
+        >,
+        enumerable: true,
+      },
+    });
+    TIME_SERIES_STORES.set(
+      series,
+      ColumnarStore.fromEvents(series.schema, series.events),
+    );
 
     return Object.freeze(series) as TimeSeries<NextSchema>;
   }
@@ -1553,22 +1584,16 @@ export class TimeSeries<S extends SeriesSchema> {
       | AggregateOutputMap<S>,
     reducer?: AggregateReducer,
   ): ColumnValue | undefined | Record<string, ColumnValue | undefined> {
+    const store = getColumnarStore(this);
+
     if (typeof columnOrMapping === 'string') {
-      const values = this.events.map((event) => {
-        const data = event.data();
-        return data[columnOrMapping as keyof typeof data];
-      }) as ReadonlyArray<ColumnValue | undefined>;
-      return applyAggregateReducer(reducer!, values);
+      return store.reduceColumn(columnOrMapping, reducer!);
     }
 
     const columns = normalizeAggregateColumns(this.schema, columnOrMapping);
     const result: Record<string, ColumnValue | undefined> = {};
     for (const col of columns) {
-      const values = this.events.map((event) => {
-        const data = event.data();
-        return data[col.source as keyof typeof data];
-      }) as ReadonlyArray<ColumnValue | undefined>;
-      result[col.output] = applyAggregateReducer(col.reducer, values);
+      result[col.output] = store.reduceColumn(col.source, col.reducer);
     }
     return result;
   }

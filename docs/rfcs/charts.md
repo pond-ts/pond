@@ -523,6 +523,16 @@ validity bit, one head advance. Eviction is O(1): tail advance.
 `toPoints()` keeps its existing role for batch consumers and stays
 unchanged.
 
+**Spike result (2026-05-10).** The core columnar-store spike on branch
+`codex/core-columnar-store-spike` validated this boundary with an internal
+`ColumnarStore.toChartBuffer(...)` helper. On 1M rows, `toPoints()` took
+~204ms, zero-copy chart-buffer extraction was effectively metadata-only
+(~0.001ms), and copied typed arrays took ~5.9ms. That does not argue for
+rewriting every core operator around columnar storage — the same spike found
+bucketed `aggregate()` needs a planned fused operator shape before it is
+runtime-ready — but it strongly supports keeping `toPoints()` as compatibility
+export while chart adapters consume typed buffers directly.
+
 ### Path2D caching: chunked, scale-versioned (Codex 3)
 
 The original "append-only Path2D is O(1)" claim was wrong. Path2D
