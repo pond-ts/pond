@@ -47,6 +47,118 @@ type WindowEntry = {
   values: (ColumnValue | undefined)[];
 };
 
+const NUMERIC_FAST_REDUCERS = new Set(['sum', 'avg', 'count', 'min', 'max']);
+
+class NumericRollingWindow {
+  #capacity: number;
+  #head = 0;
+  #length = 0;
+  #indices: Int32Array;
+  #timestamps: Float64Array;
+  #valuesByColumn: Float64Array[];
+  #validityByColumn: Uint8Array[];
+
+  constructor(
+    readonly columnCount: number,
+    capacity = 1024,
+  ) {
+    this.#capacity = capacity;
+    this.#indices = new Int32Array(capacity);
+    this.#timestamps = new Float64Array(capacity);
+    this.#valuesByColumn = Array.from(
+      { length: columnCount },
+      () => new Float64Array(capacity),
+    );
+    this.#validityByColumn = Array.from(
+      { length: columnCount },
+      () => new Uint8Array(capacity),
+    );
+  }
+
+  get length(): number {
+    return this.#length;
+  }
+
+  append(index: number, timestamp: number): number {
+    if (this.#length === this.#capacity) {
+      this.#grow();
+    }
+    const slot = this.#slot(this.#length);
+    this.#indices[slot] = index;
+    this.#timestamps[slot] = timestamp;
+    this.#length += 1;
+    return slot;
+  }
+
+  setValue(slot: number, columnIndex: number, value: ColumnValue | undefined) {
+    if (typeof value === 'number') {
+      this.#valuesByColumn[columnIndex]![slot] = value;
+      this.#validityByColumn[columnIndex]![slot] = 1;
+    } else {
+      this.#valuesByColumn[columnIndex]![slot] = 0;
+      this.#validityByColumn[columnIndex]![slot] = 0;
+    }
+  }
+
+  frontIndex(): number {
+    return this.#indices[this.#head]!;
+  }
+
+  frontTimestamp(): number {
+    return this.#timestamps[this.#head]!;
+  }
+
+  frontValue(columnIndex: number): number | undefined {
+    return this.#validityByColumn[columnIndex]![this.#head] === 1
+      ? this.#valuesByColumn[columnIndex]![this.#head]
+      : undefined;
+  }
+
+  removeFirst(): void {
+    if (this.#length === 0) return;
+    this.#head = (this.#head + 1) % this.#capacity;
+    this.#length -= 1;
+    if (this.#length === 0) this.#head = 0;
+  }
+
+  #slot(offset: number): number {
+    return (this.#head + offset) % this.#capacity;
+  }
+
+  #grow(): void {
+    const nextCapacity = this.#capacity * 2;
+    const indices = new Int32Array(nextCapacity);
+    const timestamps = new Float64Array(nextCapacity);
+    const valuesByColumn = Array.from(
+      { length: this.columnCount },
+      () => new Float64Array(nextCapacity),
+    );
+    const validityByColumn = Array.from(
+      { length: this.columnCount },
+      () => new Uint8Array(nextCapacity),
+    );
+
+    for (let offset = 0; offset < this.#length; offset += 1) {
+      const sourceSlot = this.#slot(offset);
+      indices[offset] = this.#indices[sourceSlot]!;
+      timestamps[offset] = this.#timestamps[sourceSlot]!;
+      for (let column = 0; column < this.columnCount; column += 1) {
+        valuesByColumn[column]![offset] =
+          this.#valuesByColumn[column]![sourceSlot]!;
+        validityByColumn[column]![offset] =
+          this.#validityByColumn[column]![sourceSlot]!;
+      }
+    }
+
+    this.#capacity = nextCapacity;
+    this.#head = 0;
+    this.#indices = indices;
+    this.#timestamps = timestamps;
+    this.#valuesByColumn = valuesByColumn;
+    this.#validityByColumn = validityByColumn;
+  }
+}
+
 type UpdateListener = (value: Record<string, ColumnValue | undefined>) => void;
 type EventListener = (event: any) => void;
 
@@ -152,6 +264,7 @@ export class LiveRollingAggregation<
    * `frontIdx` are logically evicted.
    */
   readonly #entries: WindowEntry[];
+  readonly #numericWindow: NumericRollingWindow | undefined;
   #frontIdx: number;
 
   readonly #windowMs: number | undefined;
@@ -272,6 +385,9 @@ export class LiveRollingAggregation<
     // the current window at each `snapshot()` (O(N) per snapshot —
     // see {@link rollingStateFor} for the perf characteristic).
     this.#states = this.#columns.map((c) => rollingStateFor(c.reducer));
+    this.#numericWindow = supportsNumericFastPath(this.#columns, source.schema)
+      ? new NumericRollingWindow(this.#columns.length)
+      : undefined;
     this.#entries = [];
     this.#frontIdx = 0;
     this.#nextIndex = 0;
@@ -456,18 +572,28 @@ export class LiveRollingAggregation<
   #ingest(event: EventForSchema<S>): void {
     this.#statsEventsObserved++;
     const data = event.data() as Record<string, ColumnValue | undefined>;
-    const values = this.#columns.map((c) => data[c.source]);
     const index = this.#nextIndex++;
-    const entry: WindowEntry = {
-      index,
-      timestamp: event.begin(),
-      values,
-    };
 
-    for (let i = 0; i < this.#columns.length; i++) {
-      this.#states[i]!.add(index, values[i]);
+    if (this.#numericWindow) {
+      const slot = this.#numericWindow.append(index, event.begin());
+      for (let i = 0; i < this.#columns.length; i++) {
+        const value = data[this.#columns[i]!.source];
+        this.#numericWindow.setValue(slot, i, value);
+        this.#states[i]!.add(index, value);
+      }
+    } else {
+      const values = this.#columns.map((c) => data[c.source]);
+      const entry: WindowEntry = {
+        index,
+        timestamp: event.begin(),
+        values,
+      };
+
+      for (let i = 0; i < this.#columns.length; i++) {
+        this.#states[i]!.add(index, values[i]);
+      }
+      this.#entries.push(entry);
     }
-    this.#entries.push(entry);
 
     this.#evict(event.begin());
 
@@ -552,6 +678,7 @@ export class LiveRollingAggregation<
    * Used by warmup checks and the public `windowSize` getter.
    */
   #liveLength(): number {
+    if (this.#numericWindow) return this.#numericWindow.length;
     return this.#entries.length - this.#frontIdx;
   }
 
@@ -572,10 +699,7 @@ export class LiveRollingAggregation<
   #evict(latestTimestamp: number): void {
     if (this.#windowMs !== undefined) {
       const cutoff = latestTimestamp - this.#windowMs;
-      while (
-        this.#frontIdx < this.#entries.length &&
-        this.#entries[this.#frontIdx]!.timestamp < cutoff
-      ) {
+      while (this.#liveLength() > 0 && this.#frontTimestamp() < cutoff) {
         this.#removeFirst();
       }
     }
@@ -588,10 +712,16 @@ export class LiveRollingAggregation<
 
     // Periodic batched compaction — see {@link LiveFusedRolling}'s
     // analogous comment for the rationale.
-    if (this.#frontIdx > this.#entries.length / 2) {
+    if (!this.#numericWindow && this.#frontIdx > this.#entries.length / 2) {
       this.#entries.splice(0, this.#frontIdx);
       this.#frontIdx = 0;
     }
+  }
+
+  #frontTimestamp(): number {
+    return this.#numericWindow
+      ? this.#numericWindow.frontTimestamp()
+      : this.#entries[this.#frontIdx]!.timestamp;
   }
 
   /**
@@ -600,11 +730,37 @@ export class LiveRollingAggregation<
    * splices off the dead prefix. Per-call cost is O(1).
    */
   #removeFirst(): void {
+    this.#statsEvictions++;
+
+    if (this.#numericWindow) {
+      const index = this.#numericWindow.frontIndex();
+      for (let i = 0; i < this.#columns.length; i++) {
+        this.#states[i]!.remove(index, this.#numericWindow.frontValue(i));
+      }
+      this.#numericWindow.removeFirst();
+      return;
+    }
+
     const entry = this.#entries[this.#frontIdx]!;
     this.#frontIdx++;
-    this.#statsEvictions++;
     for (let i = 0; i < this.#columns.length; i++) {
       this.#states[i]!.remove(entry.index, entry.values[i]);
     }
   }
+}
+
+function supportsNumericFastPath(
+  columns: ReadonlyArray<AggregateColumnSpec>,
+  schema: SeriesSchema,
+) {
+  const sourceKinds = new Map(
+    schema.slice(1).map((column) => [column.name, column.kind] as const),
+  );
+  return columns.every(
+    (column) =>
+      sourceKinds.get(column.source) === 'number' &&
+      column.kind === 'number' &&
+      typeof column.reducer === 'string' &&
+      NUMERIC_FAST_REDUCERS.has(column.reducer),
+  );
 }

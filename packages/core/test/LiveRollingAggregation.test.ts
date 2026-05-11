@@ -150,6 +150,30 @@ describe('multiple columns', () => {
     expect(tail.value().b).toBe(300);
     tail.dispose();
   });
+
+  it('supports numeric output-map reducers through eviction', () => {
+    const numSchema = [
+      { name: 'time', kind: 'time' },
+      { name: 'cpu', kind: 'number' },
+      { name: 'mem', kind: 'number' },
+    ] as const;
+    const live = new LiveSeries({ name: 'multi', schema: numSchema });
+    const tail = new LiveRollingAggregation(live, '2s', {
+      cpuAvg: { from: 'cpu', using: 'avg' },
+      cpuMax: { from: 'cpu', using: 'max' },
+      memSum: { from: 'mem', using: 'sum' },
+    });
+
+    live.push([0, 10, 100], [1000, 20, 200], [3000, 40, 400]);
+
+    expect(tail.value()).toEqual({
+      cpuAvg: 30,
+      cpuMax: 40,
+      memSum: 600,
+    });
+    expect(tail.windowSize).toBe(2);
+    tail.dispose();
+  });
 });
 
 // ── Subscriptions ───────────────────────────────────────────────

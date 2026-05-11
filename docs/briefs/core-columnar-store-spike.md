@@ -558,3 +558,36 @@ Interpretation:
 - APIs that explicitly request row arrays (`events`, `toArray`, `rows`,
   `toRows`, `toObjects`, `toPoints`) remain the compatibility boundary where
   row-object cost is paid.
+
+Live rolling numeric fast-path spike:
+
+- added a `LiveRollingAggregation` fast path for numeric source columns with
+  built-in `sum`, `avg`, `count`, `min`, and `max` reducers
+- stores rolling-window metadata in typed ring buffers instead of allocating one
+  `{ index, timestamp, values }` object plus one values array per input event
+- keeps the generic path unchanged for strings, arrays, custom reducers,
+  `samples`, `unique`, percentile/top reducers, and mixed schemas
+- added `packages/core/scripts/perf-live-rolling-numeric-fastpath.mjs` to
+  isolate rolling state from source history via `retention: { maxEvents: 1 }`
+- pinned numeric output-map behavior through eviction in
+  `LiveRollingAggregation.test.ts`
+
+Focused benchmark signal:
+
+| Scenario                        | Median runtime | Median memory delta |
+| ------------------------------- | -------------: | ------------------: |
+| Numeric fast path, append-only  |       84.98 ms |             13.2 MB |
+| Numeric fast path, evicting     |      169.86 ms |             10.1 MB |
+| Generic fallback, string anchor |      251.22 ms |            49.47 MB |
+
+Interpretation:
+
+- The live numeric path now has the same broad storage story as immutable
+  columnar: typed buffers for the hot numeric window, row/event objects only at
+  the public edge.
+- This is not a universal rolling replacement. It is deliberately scoped to the
+  dashboard-style numeric case where high event rates and long windows create
+  memory pressure.
+- Partitioned/fused rolling still need separate treatment; this spike only
+  proves that the single-window live rolling hot path can use columnar ring
+  storage without changing observable output.
