@@ -138,7 +138,7 @@ const TIME_SERIES_STORES = new WeakMap<
   TimeSeries<SeriesSchema>,
   ColumnarStore<SeriesSchema>
 >();
-const TIME_SERIES_EVENTS = new WeakMap<
+const timeSeriesEventCache = new WeakMap<
   TimeSeries<SeriesSchema>,
   ReadonlyArray<EventForSchema<SeriesSchema>>
 >();
@@ -158,7 +158,7 @@ function getColumnarStore<S extends SeriesSchema>(
 function eventsForSeries<S extends SeriesSchema>(
   series: TimeSeries<S>,
 ): ReadonlyArray<EventForSchema<S>> {
-  const cached = TIME_SERIES_EVENTS.get(
+  const cached = timeSeriesEventCache.get(
     series as unknown as TimeSeries<SeriesSchema>,
   );
   if (cached) {
@@ -166,7 +166,7 @@ function eventsForSeries<S extends SeriesSchema>(
   }
 
   const events = getColumnarStore(series).toEvents();
-  TIME_SERIES_EVENTS.set(
+  timeSeriesEventCache.set(
     series as unknown as TimeSeries<SeriesSchema>,
     events as unknown as ReadonlyArray<EventForSchema<SeriesSchema>>,
   );
@@ -1013,7 +1013,7 @@ export class TimeSeries<S extends SeriesSchema> {
       },
     });
     defineEventsAccessor(series);
-    TIME_SERIES_EVENTS.set(
+    timeSeriesEventCache.set(
       series as unknown as TimeSeries<SeriesSchema>,
       Object.freeze(events.slice()) as unknown as ReadonlyArray<
         EventForSchema<SeriesSchema>
