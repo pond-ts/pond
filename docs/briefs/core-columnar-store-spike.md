@@ -10,6 +10,8 @@
   boundary for now.
 - [`docs/rfcs/charts.md`](../rfcs/charts.md) — chart package commits to
   typed-array columnar buffers via `ChartDataSource`.
+- [`docs/rfcs/columnar-core.md`](../rfcs/columnar-core.md) — post-spike
+  strategic RFC draft for Hybrid B. Not a PLAN commitment.
 - [`ARCHITECTURE.md`](../../ARCHITECTURE.md) — current batch/live/core layering
   and trusted-construction patterns.
 

@@ -4214,7 +4214,8 @@ Live `arrayAggregate` and `arrayExplode` need more thought (how
 
 ### Internal storage shape: row-oriented stays; columnar lives at the chart boundary
 
-**Status: deferred. Logged 2026-05-10.**
+**Status: deferred. Logged 2026-05-10. Reopened as RFC-shaped evidence on
+2026-05-11, but not adopted into PLAN.**
 
 **Decision.** Keep row-oriented (`Event[]`) internal storage in `TimeSeries` /
 `LiveSeries`. Columnar storage lives at the **chart-package boundary** as an
@@ -4289,6 +4290,24 @@ If revisited, **Hybrid B is the target.** A serious RFC at that point —
 not before. Premature refactor risk plus the streaming-RFC work earns
 more leverage right now.
 
+**2026-05-11 update.** The bounded columnar-store spike produced enough
+evidence to promote the question into a strategic RFC:
+[`docs/rfcs/columnar-core.md`](docs/rfcs/columnar-core.md). This does **not**
+flip the binding PLAN decision yet. The scorecard is now:
+
+- numeric immutable scans clear the runtime gate;
+- lazy immutable storage clears the memory gate for constructor-built
+  read-heavy series;
+- point access can stay lazy without forcing full `events`;
+- chart extraction strongly supports the chart-side typed-buffer boundary;
+- numeric live rolling has a credible typed ring-buffer fast path;
+- string/dictionary reducers, runtime `aggregate()`, and derived transform
+  chains remain unresolved.
+
+Next gate before any PLAN adoption: Phase 3 derived stores, specifically
+whether real chains like `diff().fill().rolling()` preserve the columnar win
+without row materialization or broad semantic changes.
+
 **Cross-references:**
 
 - The chat thread that surfaced this decision: 2026-05-10, during the
@@ -4301,6 +4320,9 @@ more leverage right now.
 - [`docs/briefs/core-columnar-store-spike.md`](docs/briefs/core-columnar-store-spike.md)
   sketches the bounded evidence-gathering spike for challenging this decision
   later. It is explicitly not a commitment to start a core rewrite now.
+- [`docs/rfcs/columnar-core.md`](docs/rfcs/columnar-core.md) records the
+  post-spike Hybrid B RFC draft. It is strategic context, not a binding PLAN
+  commitment.
 - Row-shape paper cuts (evidence of the tax): CHANGELOG entries for
   v0.14.0 (`estimateEventBytes`, trusted-pipeline router), v0.14.3
   (`samples.rollingState()` allocation), v0.15.2 (O(1) eviction).
