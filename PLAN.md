@@ -1836,6 +1836,43 @@ Cross-reference: gRPC experiment manual counter
 (pond-grpc-experiment#26 step 6); the v0.15.2 SHIPPED entry's
 "manual counter vs rolling" follow-up doc note.
 
+### Shipped: `partitionBy` default-inherit fix (v0.17.1)
+
+Bug fix, strictly additive, no surface change beyond defaults. Surfaced by
+the gRPC experiment's
+[M4 friction note](https://github.com/pjm17971/pond-grpc-experiment/blob/main/friction-notes/M4.md):
+under `source = LiveSeries({ ordering: 'reorder', graceWindow: '30s' })`
+followed by bare `live.partitionBy('host')`, the source accepted late
+events via its reorder path but the partition sub-series was constructed
+with default `'strict'` ordering. `_pushTrustedEvents` routed the late
+event to the partition's `#insert` which threw with a strict-mode error,
+and the throw propagated back up through the source's listener fan-out
+into `live.push()`. **99.5% of late events crashed the partition router**
+in the friction-note's drift harness.
+
+**Fix:** `LiveSeries.partitionBy()` now default-inherits `ordering`,
+`graceWindow`, and `retention` from the source. Explicit options on
+`partitionBy(by, ...)` override per-field. `LivePartitionedSeries.collect()`
+and `apply()` likewise default-inherit `ordering` and `graceWindow` from
+the partitioned series (which inherits from source); retention stays
+caller-explicit on collect/apply per the existing append-only fan-in
+semantics. `graceWindow` inheritance is gated on effective ordering being
+`'reorder'` — LiveSeries' constructor rejects strict + graceWindow.
+
+Existing callers with explicit `partitionBy(by, { ordering, ... })`
+unchanged. Existing callers on strict sources unchanged (source default
+is strict; inherited default is strict). The behavior change is exactly
+the bug fix: `'reorder'`-mode sources now produce reorder-mode partitions
+by default.
+
+Six tests in `LivePartitionedSeries.test.ts` pin: inherited ordering,
+inherited graceWindow within reorder, inherited retention on partitions,
+explicit override of inheritance, strict-source no-change, and the
+edge case where overriding ordering to strict suppresses graceWindow
+inheritance. `collect()` inheritance pinned by a separate test.
+
+Released as v0.17.1.
+
 ### Shipped: `live.sample({...})` — bounded-memory stream sampling (v0.17.0)
 
 Surfaced by the gRPC experiment's M3.5 finish-line work. Cross-reference:
@@ -3619,6 +3656,27 @@ Required behavior:
 later (by milestones C and the deferred RFC phase 5, respectively).
 
 Dependencies: milestone A (`LiveChange` provides the reorder signal).
+
+**Driver status (2026-05-11):** the gRPC experiment exercised pond's
+late-data behaviour under controlled injection (see
+[friction note M4](https://github.com/pjm17971/pond-grpc-experiment/blob/main/friction-notes/M4.md)).
+Round-1 results suggested ~11% drift on the biased host, which a Codex
+adversarial pass falsified — the `Math.random()` calls in the simulator
+leaked through the round-1 methodology. Once every randomness source
+was seeded across replicates, **drift collapsed to within noise on every
+host** at the experiment's measurement style (last-tick `.value()` reads
+over a 60s rolling window). Milestone B's library design is sound, but
+the gRPC experiment's measurement style doesn't surface its payoff —
+by the time the consumer reads `.value()`, all late events are already
+in the buffer.
+
+The cases that _would_ surface B's value (emission-stream consumers,
+idempotent sinks via stable IDs, intermediate-tick reads, short-window
+`cpu_sd`) aren't in the gRPC experiment's shape. Milestone B is
+design-ready but **driver-light by empirical test**; sequencing it
+should wait until a different consumer surfaces friction at one of
+those measurement styles, or until milestone C's stable-ID + upsert
+output mode makes "idempotent backend writer" a real consumer pattern.
 
 Cross-reference: RFC milestone B; V2 "Late-repair cost model"; V3
 "Reducer capabilities become the streaming registry contract."

@@ -200,7 +200,146 @@ describe('LivePartitionedSeries', () => {
     });
   });
 
+  describe('default-inherit from source (ordering, graceWindow, retention)', () => {
+    // Regression pins for the gRPC experiment M4 footgun: pre-fix,
+    // partition sub-series defaulted to `'strict'` regardless of source,
+    // so late events the source accepted under `'reorder'` then threw
+    // in the partition's `#insert` with a confusing strict-mode error.
+    // Now `partitionBy()` default-inherits `ordering`, `graceWindow`,
+    // and `retention` from the source. Explicit options override.
+
+    it('inherits ordering=reorder when source is reorder and partitionBy is bare', () => {
+      const live = new LiveSeries({
+        name: 'metrics',
+        schema,
+        ordering: 'reorder',
+        graceWindow: '5m',
+      });
+      const partitioned = live.partitionBy('host'); // ← no options
+
+      // The headline bug: late event past partition latest (within
+      // grace) should be accepted, not throw.
+      live.push([60_000, 0.5, 'a']);
+      live.push([120_000, 0.6, 'a']);
+      expect(() => live.push([30_000, 0.55, 'a'])).not.toThrow();
+
+      const m = partitioned.toMap();
+      const aEvents = m.get('a')!;
+      expect(aEvents.length).toBe(3);
+      const times = [];
+      for (let i = 0; i < aEvents.length; i++)
+        times.push(aEvents.at(i)!.begin());
+      expect(times).toEqual([30_000, 60_000, 120_000]); // sorted
+    });
+
+    it('inherits graceWindow only when effective ordering is reorder', () => {
+      const live = new LiveSeries({
+        name: 'metrics',
+        schema,
+        ordering: 'reorder',
+        graceWindow: '10m',
+      });
+      const partitioned = live.partitionBy('host');
+
+      // Late event well within 10m grace — should accept.
+      live.push([600_000, 0.5, 'a']);
+      live.push([700_000, 0.6, 'a']);
+      expect(() => live.push([150_000, 0.55, 'a'])).not.toThrow();
+
+      // Event past grace — should reject. With 10m grace and latest
+      // at 700_000, anything before 100_000 is past grace.
+      expect(() => live.push([50_000, 0.5, 'a'])).toThrow(
+        /grace window|out-of-order/i,
+      );
+    });
+
+    it('inherits retention from source by default', () => {
+      const live = new LiveSeries({
+        name: 'metrics',
+        schema,
+        retention: { maxEvents: 3 },
+      });
+      const partitioned = live.partitionBy('host');
+
+      // 5 events for host_a — source caps at 3, and the partition
+      // sub-series should now also cap at 3 (inherited).
+      for (let i = 0; i < 5; i++) live.push([i * 1000, i * 0.1, 'a']);
+
+      const aEvents = partitioned.toMap().get('a')!;
+      expect(aEvents.length).toBe(3); // last 3
+    });
+
+    it('explicit partitionBy options override inheritance', () => {
+      const live = new LiveSeries({
+        name: 'metrics',
+        schema,
+        ordering: 'reorder',
+        graceWindow: '5m',
+      });
+      // Caller explicitly opts back to strict on partitions despite
+      // source being reorder. Inheritance must NOT happen.
+      const partitioned = live.partitionBy('host', { ordering: 'strict' });
+
+      live.push([60_000, 0.5, 'a']);
+      // Out-of-order push that the source would accept under reorder
+      // — partition is strict so it throws inside the listener
+      // fan-out (and the throw propagates to the source's push call).
+      expect(() => live.push([30_000, 0.55, 'a'])).toThrow(/out-of-order/i);
+      void partitioned;
+    });
+
+    it('does not inherit graceWindow when ordering is overridden to strict', () => {
+      // Edge: source reorder + grace, but partitionBy overrides
+      // ordering to strict. Inheriting graceWindow would be invalid
+      // (LiveSeries rejects strict + graceWindow at construction).
+      // The fix gates graceWindow inheritance on effective ordering.
+      const live = new LiveSeries({
+        name: 'metrics',
+        schema,
+        ordering: 'reorder',
+        graceWindow: '5m',
+      });
+      expect(() =>
+        live.partitionBy('host', { ordering: 'strict' }),
+      ).not.toThrow();
+    });
+
+    it('strict source still produces strict partitions (no behavior change)', () => {
+      const live = makeLive(); // strict by default
+      const partitioned = live.partitionBy('host');
+
+      live.push([60_000, 0.5, 'a']);
+      // Out-of-order push — source rejects under strict
+      expect(() => live.push([30_000, 0.55, 'a'])).toThrow(/out-of-order/i);
+      void partitioned;
+    });
+  });
+
   describe('collect()', () => {
+    it('inherits ordering / graceWindow / retention from the partitioned series', () => {
+      // Pre-fix: collect() defaulted to strict regardless of the
+      // source's ordering. Now it inherits the effective options
+      // from the partitioned series (which inherits from source).
+      const live = new LiveSeries({
+        name: 'metrics',
+        schema,
+        ordering: 'reorder',
+        graceWindow: '5m',
+      });
+      const partitioned = live.partitionBy('host');
+      const unified = partitioned.collect();
+
+      // Push events that arrive at the unified buffer out of order
+      // across partitions. Under default-strict collect (pre-fix),
+      // these would throw on the second-partition late arrival.
+      live.push([60_000, 0.5, 'a']);
+      live.push([90_000, 0.6, 'b']);
+      // Late event on 'a' — earlier than the most-recently-collected
+      // event from 'b'. Unified buffer must be in reorder mode.
+      expect(() => live.push([30_000, 0.55, 'a'])).not.toThrow();
+      expect(unified.length).toBe(3);
+    });
+
     it('collects events from all partitions into a unified LiveSeries', () => {
       const live = makeLive();
       const partitioned = live.partitionBy('host');

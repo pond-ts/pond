@@ -7,9 +7,81 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 file covers both packages. Pre-1.0: minor bumps may include new features and
 type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...HEAD
 
 ## [Unreleased]
+
+## [0.17.1] — 2026-05-11
+
+Bug fix: `live.partitionBy()` now default-inherits `ordering`,
+`graceWindow`, and `retention` from the source `LiveSeries`. Surfaced
+by the gRPC experiment's
+[M4 late-data friction note](https://github.com/pjm17971/pond-grpc-experiment/blob/main/friction-notes/M4.md),
+which measured `99.5%` of late events crashing the partition router
+under `source = LiveSeries({ ordering: 'reorder', graceWindow })`
+followed by bare `partitionBy('host')`.
+
+### Fixed
+
+- **`LiveSeries.partitionBy(by)` default-inherits source config**
+  ([#TBD](https://github.com/pjm17971/pond-ts/pull/TBD)). Pre-fix,
+  per-partition sub-series were constructed with default
+  `ordering: 'strict'` regardless of source mode. Under a `'reorder'`
+  source, late events that the source accepted via its reorder path
+  were routed into the partition's `#insert` and threw with a
+  strict-mode error; the throw propagated back through the source's
+  listener fan-out into `live.push()`.
+
+  Post-fix, `partitionBy(by)` defaults each per-partition sub-series'
+  `ordering`, `graceWindow`, and `retention` to the source's values.
+  Explicit options on `partitionBy(by, { ordering, ... })` override
+  per-field. `graceWindow` inheritance is gated on effective ordering
+  being `'reorder'` (LiveSeries rejects strict + graceWindow combos).
+
+  ```ts
+  // Pre-0.17.1: crashed the partition router
+  const live = new LiveSeries({
+    name: 'metrics',
+    schema,
+    ordering: 'reorder',
+    graceWindow: '30s',
+  });
+  live.partitionBy('host'); // ← partition was strict regardless
+
+  // Post-0.17.1: partitions inherit reorder + 30s grace; late events
+  // accept correctly via the reorder path.
+  ```
+
+  Existing callers with explicit `partitionBy(by, { ordering, ... })`:
+  unchanged. Existing callers on `'strict'` sources: unchanged.
+  Existing callers on `'reorder'` sources with bare `partitionBy`:
+  the previously-thrown late events now accept correctly — bug fix,
+  not a behavior change anyone could rely on.
+
+- **`collect()` and `apply()` on `LivePartitionedSeries` default-
+  inherit `ordering` and `graceWindow`** from the partitioned series
+  (which inherits from source). Pre-fix, the unified buffer defaulted
+  to `'strict'`, so partition fan-in on a `'reorder'` source could
+  deliver events out-of-order to a strict unified buffer and throw.
+  Retention stays caller-explicit on these per the existing append-
+  only fan-in semantics.
+
+### Notes
+
+- **Six regression tests pin the new defaults** in
+  `LivePartitionedSeries.test.ts`: inherited ordering, inherited
+  graceWindow within reorder, inherited retention on partitions,
+  explicit override of inheritance, strict-source no-change, and the
+  edge case where overriding ordering to strict suppresses graceWindow
+  inheritance. `collect()` inheritance pinned separately.
+- The gRPC experiment's M4 friction note also surfaced milestone B
+  (capability-based late repair) as **driver-light by empirical test**
+  after Codex's adversarial pass caught simulator RNG leakage across
+  A/B legs. Drift signal collapsed to within noise on every host once
+  all randomness sources were seeded — milestone B's library design
+  stays sound, but the gRPC experiment's measurement style (last-tick
+  `.value()` reads) doesn't surface its payoff. Milestone B sequencing
+  updated in PLAN.md to reflect this finding.
 
 ## [0.17.0] — 2026-05-08
 
@@ -385,6 +457,7 @@ compaction); any downstream code reading `#entries` directly would
 break, but those fields are private. Public APIs and types are
 unchanged.
 
+[0.17.1]: https://github.com/pjm17971/pond-ts/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/pjm17971/pond-ts/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/pjm17971/pond-ts/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/pjm17971/pond-ts/compare/v0.15.2...v0.16.0

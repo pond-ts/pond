@@ -61,11 +61,28 @@ type SpawnListener<S extends SeriesSchema, K extends string> = (
 export type LivePartitionedOptions<K extends string> = {
   /** Declared partition values (mirrors batch `partitionBy({ groups })`). */
   groups?: ReadonlyArray<K>;
-  /** Retention applied to each partition's sub-buffer independently. */
+  /**
+   * Retention applied to each partition's sub-buffer independently.
+   * Defaults to inheriting the source `LiveSeries`'s retention; pass
+   * explicitly to override (e.g. shorter per-partition cap).
+   */
   retention?: NonNullable<LiveSeriesOptions<SeriesSchema>['retention']>;
-  /** Grace window applied per partition for late events. */
+  /**
+   * Grace window applied per partition for late events. Defaults to
+   * inheriting the source's `graceWindow` when the effective
+   * `ordering` is `'reorder'`; pass explicitly to override.
+   */
   graceWindow?: DurationInput;
-  /** Ordering mode for each partition. Defaults to `'strict'`. */
+  /**
+   * Ordering mode for each partition. Defaults to inheriting the
+   * source's `ordering`; pass explicitly to override (e.g. force
+   * strict partitions on a reorder source).
+   *
+   * Pre-0.17.1 this defaulted to `'strict'` regardless of source — a
+   * footgun that crashed the partition router on late events the
+   * source already accepted under reorder. Inheritance closes that
+   * gap; see the v0.17.1 CHANGELOG entry.
+   */
   ordering?: NonNullable<LiveSeriesOptions<SeriesSchema>['ordering']>;
 };
 
@@ -246,24 +263,49 @@ export class LivePartitionedSeries<
    * `collect`. To inspect the current per-partition state, use
    * `toMap()` and snapshot each partition independently.
    *
-   * **Ordering caveat:** the unified `LiveSeries` defaults to
-   * `'strict'` ordering. If the source uses `ordering: 'reorder'`
-   * (i.e., accepts late events out-of-order), reordered events
-   * will arrive at the unified buffer out of order and throw.
-   * Pass `{ ordering: 'reorder', graceWindow: ... }` to `collect`
-   * when the source is in reorder mode.
+   * **Ordering (v0.17.1+).** The unified `LiveSeries` defaults to
+   * inheriting `ordering` and `graceWindow` from this partitioned
+   * series (which itself inherits from the source `LiveSeries` via
+   * `partitionBy`). Pre-fix it defaulted to `'strict'` regardless of
+   * source — under `'reorder'` sources, partition fan-in could
+   * deliver events out of order to a strict unified buffer and
+   * throw. Inheritance closes that gap. Explicit `ordering` and
+   * `graceWindow` on `collect(...)` override inheritance.
+   *
+   * **Retention does NOT inherit** — the append-only fan-in
+   * semantics above are deliberate. Pass `retention` explicitly to
+   * cap the unified buffer.
    */
   collect(options?: Partial<LiveSeriesOptions<S>>): LiveSeries<S> {
     const unifiedOptions: LiveSeriesOptions<S> = {
       name: options?.name ?? this.name,
       schema: this.schema,
     };
-    if (options?.ordering !== undefined)
-      unifiedOptions.ordering = options.ordering;
-    if (options?.graceWindow !== undefined)
-      unifiedOptions.graceWindow = options.graceWindow;
-    if (options?.retention !== undefined)
+    // Default-inherit ordering / graceWindow from this partitioned
+    // series (which itself inherits from its source LiveSeries via
+    // `partitionBy`). Without inheritance the unified buffer would
+    // default to `'strict'` regardless of source mode — same trap as
+    // the partition sub-series footgun, just at the fan-in hop.
+    // Explicit caller options win.
+    //
+    // graceWindow is gated on the effective ordering being 'reorder'
+    // — LiveSeries rejects graceWindow with strict/drop orderings.
+    //
+    // **Retention does NOT inherit** — the "append-only fan-in"
+    // semantics documented in `collect()`'s JSDoc are deliberate:
+    // partition retention bounds partition memory; the unified
+    // buffer's retention is independent. Pass `{ retention: ... }`
+    // explicitly to cap the unified buffer.
+    const inherited = this.#partitionOptions;
+    const ordering = options?.ordering ?? inherited.ordering;
+    if (ordering !== undefined) unifiedOptions.ordering = ordering;
+    const graceWindow = options?.graceWindow ?? inherited.graceWindow;
+    if (graceWindow !== undefined && ordering === 'reorder') {
+      unifiedOptions.graceWindow = graceWindow;
+    }
+    if (options?.retention !== undefined) {
       unifiedOptions.retention = options.retention;
+    }
 
     const unified = new LiveSeries<S>(unifiedOptions);
 
@@ -341,9 +383,11 @@ export class LivePartitionedSeries<
    * leak state across the stub call and the real per-partition
    * calls.
    *
-   * **Ordering caveat:** same as `collect()` — pass `{ ordering:
-   * 'reorder' }` if the source uses reorder mode and reordered
-   * events will reach the unified buffer.
+   * **Ordering (v0.17.1+).** Same shape as `collect()` — the unified
+   * `LiveSeries<R>` inherits `ordering` and `graceWindow` from this
+   * partitioned series by default; explicit `options.ordering` /
+   * `options.graceWindow` override. Retention stays caller-explicit
+   * per the append-only fan-in semantics.
    */
   apply<R extends SeriesSchema>(
     factory: (sub: LiveSeries<S>) => LiveSource<R>,
@@ -364,9 +408,22 @@ export class LivePartitionedSeries<
       name: options?.name ?? this.name,
       schema: outSchema,
     };
-    if (options?.ordering !== undefined) opts.ordering = options.ordering;
-    if (options?.graceWindow !== undefined)
-      opts.graceWindow = options.graceWindow;
+    // Default-inherit ordering / graceWindow from the partitioned
+    // series — same shape as collect() above. Without this the
+    // apply()-unified buffer would default to `'strict'` and throw on
+    // out-of-order arrivals from factory outputs feeding it on a
+    // `'reorder'` source. Retention stays caller-explicit per the
+    // append-only fan-in semantics; see collect()'s rationale above.
+    //
+    // graceWindow gated on effective ordering being 'reorder' — same
+    // reason as collect().
+    const inherited = this.#partitionOptions;
+    const ordering = options?.ordering ?? inherited.ordering;
+    if (ordering !== undefined) opts.ordering = ordering;
+    const graceWindow = options?.graceWindow ?? inherited.graceWindow;
+    if (graceWindow !== undefined && ordering === 'reorder') {
+      opts.graceWindow = graceWindow;
+    }
     if (options?.retention !== undefined) opts.retention = options.retention;
     const unified = new LiveSeries<R>(opts);
 

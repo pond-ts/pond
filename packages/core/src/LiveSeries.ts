@@ -970,6 +970,15 @@ export class LiveSeries<S extends SeriesSchema> {
    * compose live operators per partition; `collect()` to fan
    * partitioned outputs into a unified `LiveSeries`.
    *
+   * **Default-inherit (v0.17.1+).** When no explicit options are
+   * passed, partition sub-series inherit this source's `ordering`,
+   * `graceWindow`, and `retention`. The fix is structural — pre-fix,
+   * partitions defaulted to `'strict'` regardless of source, so late
+   * events the source accepted under `'reorder'` crashed the
+   * partition router on insert. Explicit options on
+   * `partitionBy(by, { ordering, graceWindow, retention })` override
+   * inheritance per-field.
+   *
    * **Multi-entity series:** every stateful live operator
    * (`rolling`, `fill`, `diff`, `rate`, `cumulative`, `pctChange`)
    * silently mixes data across entities on a multi-host stream
@@ -1010,7 +1019,47 @@ export class LiveSeries<S extends SeriesSchema> {
     by: ByCol,
     options?: LivePartitionedOptions<K>,
   ): LivePartitionedSeries<S, K, ByCol> {
-    return new LivePartitionedSeries<S, K, ByCol>(this, by, options);
+    // Default-inherit ordering / graceWindow / retention from this
+    // source. Pre-fix, partition sub-series defaulted to `'strict'`
+    // regardless of source ordering — a footgun first measured by
+    // the gRPC experiment's M4 friction note: under source `'reorder'`
+    // + bare `partitionBy`, late events the source accepts via the
+    // reorder path are routed into a sub-series under `'strict'`,
+    // where `#insert` throws, and the throw propagates back through
+    // the source's listener fan-out into `live.push`. 99.5% of late
+    // events crashed the partition router.
+    //
+    // Inheritance happens at the API layer here (rather than inside
+    // `LivePartitionedSeries`) because `LivePartitionedSeries` accepts
+    // a loose `LiveSource<S>` source, but `partitionBy` is only
+    // exposed on `LiveSeries` — so this method always knows the
+    // source is a `LiveSeries` and can read its config directly.
+    // Explicit options on `partitionBy(...)` win over inheritance.
+    const merged: LivePartitionedOptions<K> = {
+      ...options,
+    };
+    if (merged.ordering === undefined) {
+      merged.ordering = this.#ordering;
+    }
+    // graceWindow only inherits when effective ordering is 'reorder'.
+    // LiveSeries' constructor rejects graceWindow with strict/drop
+    // orderings; if the caller explicitly overrides ordering to
+    // 'strict' on a reorder source, we'd hand the partition's
+    // LiveSeries a forbidden combination. Gate explicitly.
+    if (
+      merged.graceWindow === undefined &&
+      merged.ordering === 'reorder' &&
+      this.#graceWindowMs !== Infinity
+    ) {
+      merged.graceWindow = this.#graceWindowMs;
+    }
+    if (merged.retention === undefined) {
+      const retention: RetentionPolicy = {};
+      if (this.#maxEvents !== Infinity) retention.maxEvents = this.#maxEvents;
+      if (this.#maxAgeMs !== Infinity) retention.maxAge = this.#maxAgeMs;
+      if (Object.keys(retention).length > 0) merged.retention = retention;
+    }
+    return new LivePartitionedSeries<S, K, ByCol>(this, by, merged);
   }
 
   on(type: 'event', fn: EventListener<S>): () => void;

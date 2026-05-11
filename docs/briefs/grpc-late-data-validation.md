@@ -86,10 +86,24 @@ LATE_EVENT_DELAY_MS = 5000; // 5s delay distribution mean
 LATE_EVENT_DELAY_TAIL_MS = 30000; // 99th-percentile tail
 ```
 
-Implementation freedom: a `Math.random() < LATE_EVENT_FRACTION` check
+Implementation freedom: a `seededRng() < LATE_EVENT_FRACTION` check
 at emit time, with the delayed events held in a side-channel queue and
 released after their delay. The injection should be **deterministic**
 under a seeded RNG so analysis runs reproduce.
+
+> **Seed _every_ randomness source, not just the injector.** The first
+> M4 execution (2026-05-10) seeded the late-event injector but left
+> `simulator.ts`'s `Math.random()` calls (CPU walk noise, anomaly
+> bursts, per-event noise, request counts) unseeded. Round-1 drift
+> results suggested a ~3σ signal on one host; Codex's adversarial
+> review caught that the simulator's unseeded randomness was leaking
+> through the A/B legs. With all randomness sources seeded across
+> replicates, drift collapsed to within noise on every host.
+>
+> When comparing legs A vs B, audit every `Math.random()` /
+> `crypto.randomUUID` / `Date.now()` / network-jitter source in both
+> legs and seed them identically. The variable of interest must be
+> the _only_ thing that differs between legs.
 
 ### 1b. Document the injection pattern
 
