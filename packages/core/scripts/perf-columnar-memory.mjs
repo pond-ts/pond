@@ -1,5 +1,4 @@
 import { TimeSeries } from '../dist/index.js';
-import { ColumnarStore } from '../dist/internal/columnar-store.js';
 
 const schema = Object.freeze([
   { name: 'time', kind: 'time' },
@@ -21,9 +20,38 @@ function makeRows(length, distinctHosts, sparseEvery = 0) {
   ]);
 }
 
-function heapMb() {
+function memoryMb() {
   if (global.gc) global.gc();
-  return Number((process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2));
+  const memory = process.memoryUsage();
+  const heap = memory.heapUsed / 1024 / 1024;
+  const arrayBuffers = memory.arrayBuffers / 1024 / 1024;
+  return {
+    heap: Number(heap.toFixed(2)),
+    arrayBuffers: Number(arrayBuffers.toFixed(2)),
+    heapPlusArrayBuffers: Number((heap + arrayBuffers).toFixed(2)),
+  };
+}
+
+function deltaMb(after, before) {
+  return {
+    heap: Number((after.heap - before.heap).toFixed(2)),
+    arrayBuffers: Number((after.arrayBuffers - before.arrayBuffers).toFixed(2)),
+    heapPlusArrayBuffers: Number(
+      (after.heapPlusArrayBuffers - before.heapPlusArrayBuffers).toFixed(2),
+    ),
+  };
+}
+
+function buildSeries(scenario) {
+  const rows = makeRows(
+    scenario.length,
+    scenario.distinctHosts,
+    scenario.sparseEvery,
+  );
+  return {
+    rowsMemoryMb: memoryMb(),
+    series: new TimeSeries({ name: 'metrics', schema, rows }),
+  };
 }
 
 const scenarios = [
@@ -32,30 +60,28 @@ const scenarios = [
   { length: 1_000_000, distinctHosts: 100, sparseEvery: 0 },
 ];
 
-const results = [];
-for (const scenario of scenarios) {
-  const baselineHeapMb = heapMb();
-  const rows = makeRows(
-    scenario.length,
-    scenario.distinctHosts,
-    scenario.sparseEvery,
-  );
-  const rowsHeapMb = heapMb();
-  const series = new TimeSeries({ name: 'metrics', schema, rows });
-  const seriesHeapMb = heapMb();
-  const store = ColumnarStore.fromEvents(series.schema, series.events);
-  const storeHeapMb = heapMb();
+function measureScenario(scenario) {
+  const baselineMemoryMb = memoryMb();
+  const { rowsMemoryMb, series } = buildSeries(scenario);
+  const lazySeriesMemoryMb = memoryMb();
+  const reduceResult = series.reduce('cpu', 'avg');
+  const afterStoreReadMemoryMb = memoryMb();
+  const materializedEvents = series.events;
+  const afterEventsMemoryMb = memoryMb();
 
-  results.push({
+  return {
     scenario,
-    baselineHeapMb,
-    rowsHeapMb,
-    seriesHeapMb,
-    seriesPlusSidecarHeapMb: storeHeapMb,
-    sidecarEstimatedMb: Number(
-      (store.estimatedBytes() / 1024 / 1024).toFixed(2),
-    ),
-  });
+    baselineMemoryMb,
+    rowsMemoryMb,
+    lazySeriesMemoryMb,
+    afterStoreReadMemoryMb,
+    afterEventsMemoryMb,
+    rowsDeltaMb: deltaMb(rowsMemoryMb, baselineMemoryMb),
+    lazySeriesDeltaMb: deltaMb(lazySeriesMemoryMb, baselineMemoryMb),
+    materializedEventsDeltaMb: deltaMb(afterEventsMemoryMb, lazySeriesMemoryMb),
+    retainedEventCount: materializedEvents.length,
+    reduceResult,
+  };
 }
 
-console.log(JSON.stringify(results, null, 2));
+console.log(JSON.stringify(scenarios.map(measureScenario), null, 2));

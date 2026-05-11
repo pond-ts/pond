@@ -138,6 +138,10 @@ const TIME_SERIES_STORES = new WeakMap<
   TimeSeries<SeriesSchema>,
   ColumnarStore<SeriesSchema>
 >();
+const TIME_SERIES_EVENTS = new WeakMap<
+  TimeSeries<SeriesSchema>,
+  ReadonlyArray<EventForSchema<SeriesSchema>>
+>();
 
 function getColumnarStore<S extends SeriesSchema>(
   series: TimeSeries<S>,
@@ -149,6 +153,33 @@ function getColumnarStore<S extends SeriesSchema>(
     throw new Error('missing internal columnar store');
   }
   return store as unknown as ColumnarStore<S>;
+}
+
+function eventsForSeries<S extends SeriesSchema>(
+  series: TimeSeries<S>,
+): ReadonlyArray<EventForSchema<S>> {
+  const cached = TIME_SERIES_EVENTS.get(
+    series as unknown as TimeSeries<SeriesSchema>,
+  );
+  if (cached) {
+    return cached as unknown as ReadonlyArray<EventForSchema<S>>;
+  }
+
+  const events = getColumnarStore(series).toEvents();
+  TIME_SERIES_EVENTS.set(
+    series as unknown as TimeSeries<SeriesSchema>,
+    events as unknown as ReadonlyArray<EventForSchema<SeriesSchema>>,
+  );
+  return events;
+}
+
+function defineEventsAccessor<S extends SeriesSchema>(
+  series: TimeSeries<S>,
+): void {
+  Object.defineProperty(series, 'events', {
+    get: () => eventsForSeries(series),
+    enumerable: true,
+  });
 }
 
 type SchemasForSeriesTuple<T extends SeriesTuple> = {
@@ -690,7 +721,7 @@ function prepareSeriesForJoin<T extends SeriesTuple>(
 export class TimeSeries<S extends SeriesSchema> {
   readonly name: string;
   readonly schema: S;
-  readonly events: ReadonlyArray<EventForSchema<S>>;
+  declare readonly events: ReadonlyArray<EventForSchema<S>>;
 
   /**
    * Example: `TimeSeries.joinMany([cpu.align(seq), memory.align(seq), errors.align(seq)])`.
@@ -875,11 +906,9 @@ export class TimeSeries<S extends SeriesSchema> {
   constructor(input: TimeSeriesInput<S>) {
     this.name = input.name;
     this.schema = Object.freeze(input.schema.slice()) as S;
-    this.events = validateAndNormalize(input);
-    TIME_SERIES_STORES.set(
-      this,
-      ColumnarStore.fromEvents(this.schema, this.events),
-    );
+    const events = validateAndNormalize(input);
+    TIME_SERIES_STORES.set(this, ColumnarStore.fromEvents(this.schema, events));
+    defineEventsAccessor(this);
     Object.freeze(this);
   }
 
@@ -982,13 +1011,14 @@ export class TimeSeries<S extends SeriesSchema> {
         value: Object.freeze(schema.slice()) as NextSchema,
         enumerable: true,
       },
-      events: {
-        value: Object.freeze(events.slice()) as ReadonlyArray<
-          EventForSchema<NextSchema>
-        >,
-        enumerable: true,
-      },
     });
+    defineEventsAccessor(series);
+    TIME_SERIES_EVENTS.set(
+      series as unknown as TimeSeries<SeriesSchema>,
+      Object.freeze(events.slice()) as unknown as ReadonlyArray<
+        EventForSchema<SeriesSchema>
+      >,
+    );
     TIME_SERIES_STORES.set(
       series,
       ColumnarStore.fromEvents(series.schema, series.events),

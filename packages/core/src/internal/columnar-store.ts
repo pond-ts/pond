@@ -1,3 +1,8 @@
+import { Event } from '../Event.js';
+import { Interval } from '../Interval.js';
+import { Time } from '../Time.js';
+import { TimeRange } from '../TimeRange.js';
+import type { EventKey } from '../temporal.js';
 import type { EventForSchema, SeriesSchema, ColumnValue } from '../types.js';
 import type { IntervalValue } from '../temporal.js';
 import type { AggregateReducer } from '../types.js';
@@ -204,6 +209,23 @@ export class ColumnarStore<S extends SeriesSchema> {
     return values;
   }
 
+  eventAt(index: number): EventForSchema<S> | undefined {
+    if (index < 0 || index >= this.length) return undefined;
+    const data: Record<string, ColumnValue | undefined> = {};
+    for (const column of this.schema.slice(1)) {
+      data[column.name] = this.valueAt(column.name, index);
+    }
+    return new Event(this.#keyAt(index), data) as unknown as EventForSchema<S>;
+  }
+
+  toEvents(): ReadonlyArray<EventForSchema<S>> {
+    const events = new Array<EventForSchema<S>>(this.length);
+    for (let index = 0; index < this.length; index += 1) {
+      events[index] = this.eventAt(index)!;
+    }
+    return Object.freeze(events);
+  }
+
   estimatedBytes(): number {
     let bytes = this.beginMs.byteLength + this.endMs.byteLength;
     for (const buffer of this.columns.values()) {
@@ -245,6 +267,24 @@ export class ColumnarStore<S extends SeriesSchema> {
       validityByColumn,
       length: this.length,
     };
+  }
+
+  #keyAt(index: number): EventKey {
+    switch (this.keyKind) {
+      case 'time':
+        return new Time(this.beginMs[index]!);
+      case 'timeRange':
+        return new TimeRange({
+          start: this.beginMs[index]!,
+          end: this.endMs[index]!,
+        });
+      case 'interval':
+        return new Interval({
+          value: this.intervalValues?.[index] ?? '',
+          start: this.beginMs[index]!,
+          end: this.endMs[index]!,
+        });
+    }
   }
 
   #reduceDirect(

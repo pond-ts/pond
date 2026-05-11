@@ -73,6 +73,19 @@ describe('TimeSeries.fromEvents', () => {
     expect(rebuilt.last()?.get('cpu')).toBe(0.7);
   });
 
+  it('materializes constructor events once and keeps stable event references', () => {
+    const source = makeSeries('src', [
+      [0, 0.5, 'a'],
+      [60_000, 0.6, 'a'],
+    ]);
+
+    expect(source.events).toBe(source.events);
+    expect(source.at(0)).toBe(source.at(0));
+    expect(source.first()).toBe(source.events[0]);
+    expect(source.last()).toBe(source.events[1]);
+    expect(Object.keys(source)).toContain('events');
+  });
+
   it('sorts events by key — caller does not need to pre-sort', () => {
     const source = makeSeries('src', [
       [0, 0.5, 'a'],

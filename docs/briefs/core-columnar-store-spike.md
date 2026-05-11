@@ -493,3 +493,40 @@ Interpretation:
 - The result does not by itself justify converting all core operators to
   columnar; it specifically strengthens the "chart-side columnar first"
   decision.
+
+Fourth slice: Phase 2 lazy event materialization:
+
+- changed constructor-built `TimeSeries` instances so `events` is a cached
+  getter backed by the internal store instead of an eagerly retained event array
+- kept trusted-event construction paths cached up front so transforms and
+  `TimeSeries.concat(...)` continue to preserve event references
+- added `ColumnarStore.eventAt(...)` / `toEvents()` for compatibility
+  materialization
+- pinned `series.events === series.events`, repeated `at(i)` identity, and
+  `first()` / `last()` stability in tests
+- updated `packages/core/scripts/perf-columnar-memory.mjs` to report both JS
+  heap and typed-array `arrayBuffers`
+
+Memory benchmark shape: construct from rows, release the input rows, measure
+the lazy series, run a store-backed `reduce()`, then force `series.events`.
+
+| Scenario                    | Rows delta | Lazy series delta | After store read | Event materialization delta |
+| --------------------------- | ---------: | ----------------: | ---------------: | --------------------------: |
+| 100k rows, dense            |    14.5 MB |            3.6 MB |          4.75 MB |                    18.05 MB |
+| 100k rows, sparse/high-card |   15.03 MB |           4.01 MB |          5.16 MB |                    17.85 MB |
+| 1M rows, dense              |  144.96 MB |          35.32 MB |         46.76 MB |                   179.33 MB |
+
+Interpretation:
+
+- Phase 2 clears the memory gate for constructor-built series that stay on
+  columnar/read-heavy paths: the retained shape drops from row-object scale to
+  typed-buffer scale.
+- `heapUsed` alone is misleading because the columnar payload lives mostly in
+  `arrayBuffers`; the combined heap-plus-array-buffer number is the useful
+  comparison.
+- Store-backed `reduce()` keeps events unmaterialized, but prefix caches add
+  typed-array memory on first numeric reads.
+- Compatibility access is intentionally expensive: once `series.events` is
+  forced, the row-object cost returns and is cached for stable references.
+- Full core tests passed (`1295` runtime/type tests), so lazy materialization is
+  behavior-compatible for the current suite.
