@@ -4040,13 +4040,37 @@ See the RFC for the full argument.
      decide: row-shape intake factories (`fromValidatedRows`,
      `fromTrustedEvents`) belong at the `SeriesStore` layer; the
      framework's `ColumnBuilder` operates on column data.
-   - **1e — Intake factories + `ColumnBuilder`.** Next.
-   - **1d — ColumnarStore (read-only), eventAt, store-native exports.**
-   - **1e — ColumnBuilder + factories.**
+   - **1e — `ColumnBuilder` primitives + `fromValidatedRows`
+     row-intake.** 🔄 In review (PR #136). 31 builder tests + 11
+     row-intake tests. Framework adds Float64 / Boolean / String /
+     Array column builders with one-shot `finalize`, defensive
+     copy at append for arrays, and amortized O(1) capacity
+     doubling. Row-API adapter adds `SeriesStore.fromValidatedRows`
+     that delegates to `validateAndNormalize`, walks events into
+     builders, and pre-populates the eventCache so event identity
+     survives intake. Deferred follow-up: `fromTrustedEvents` (skip
+     validation pass) and framework-level `fromBuilders` factory
+     on `ColumnarStore` — both reuse the in-place
+     `buildSeriesStoreFromEvents` helper.
    - **1f — Index views (`withRowSelection`, `materialize`),
-     zero-copy schema ops.**
+     zero-copy schema ops.** Next.
    - **1g — ChunkedColumn, `concatSorted`.**
    - **1h — `ColumnarRingBuffer`, `scatterByPartition`.**
+
+   **Pause point (2026-05-13).** User on vacation ~1 week. State
+   at pause: 1a–1d shipped to main; 1e (PR #136) in review at the
+   pause; 1f–1h not yet started. The framework is at ~26 KB
+   gzipped (slightly over the <25 KB target), 1665+ tests total
+   across core + react.
+
+   When resuming: check PR #136 merge status. If merged, start
+   1f. If still open, check review trail comments before
+   continuing. The pure-substrate + adapter layering established
+   in PR #135 (Path B) is load-bearing for 1f's index views —
+   row-API materialization (`SeriesStore.eventAt`) needs to
+   continue working across slice/view operations even though the
+   underlying `ColumnarStore.withRowSelection` is pure
+   columnar-substrate.
 2. TimeSeries integration (~3 weeks) — private-field columnar store,
    lazy event materialization, API invariants pinned by tests.
 3. Numeric reducer adaptation (~2 weeks) — `sum` / `avg` / `count` /
