@@ -11,13 +11,14 @@ for the layering.
 **Authorship:** developed across multiple contributors. Each section below
 carries inline attribution; this list is the index for cold readers.
 
-| Section                                         | Contributor                    |
-| ----------------------------------------------- | ------------------------------ |
-| Origin friction note + canvas implementation    | gRPC experiment agent (Claude) |
-| Strategic frame + scope discipline              | pjm17971                       |
-| Original draft consolidation                    | pond-ts library agent (Claude) |
-| Codex architectural review                      | Codex                          |
-| Library agent response (architecture amendment) | pond-ts library agent (Claude) |
+| Section                                             | Contributor                               |
+| --------------------------------------------------- | ----------------------------------------- |
+| Origin friction note + canvas implementation        | gRPC experiment agent (Claude)            |
+| Strategic frame + scope discipline                  | pjm17971                                  |
+| Original draft consolidation                        | pond-ts library agent (Claude)            |
+| Codex architectural review                          | Codex                                     |
+| Library agent response (architecture amendment)     | pond-ts library agent (Claude)            |
+| Alignment with core columnar substrate (2026-05-11) | pond-ts library agent (Claude) + pjm17971 |
 
 **Audience:** future pond-ts contributors implementing the chart-package
 extraction; consumer-side dashboard authors deciding whether to wait for
@@ -522,6 +523,37 @@ validity bit, one head advance. Eviction is O(1): tail advance.
 
 `toPoints()` keeps its existing role for batch consumers and stays
 unchanged.
+
+**Alignment with the core columnar substrate (added 2026-05-11).**
+After this chart RFC landed, the core columnar substrate was adopted
+as the v1.0 wave — see
+[`docs/rfcs/columnar-core.md`](columnar-core.md) and PLAN Phase 4.7.
+That changes the framing for `ChartBuffer`: instead of being a
+chart-specific data shape produced by chart-side adapter code, it
+becomes a **public projection of the core's internal columnar
+representation**. The framework's `Column<T>` interfaces provide the
+typed-array primitives, validity bitmaps, and chunked-column shapes
+that the chart adapter then assembles into the chart-facing
+`ChartBuffer`.
+
+Concrete implications when the chart package eventually extracts:
+
+- The adapter walking events into typed arrays still exists but
+  takes a much shorter path — it reads typed-array slices directly
+  from the core columnar store rather than allocating fresh
+  `Float64Array`s and walking event objects to fill them. Closer to
+  zero-copy than the original adapter design assumed.
+- `ChartDataSource` exposes the framework's shared `Column<T>`
+  primitives where their semantics match (validity bitmaps,
+  dictionary-encoded string columns, etc.) and adds chart-specific
+  primitives (chunked Path2D caches, viewport decimation) on top.
+- Per-event O(1) cost stays O(1); the gains are at the boundary
+  (zero-copy slicing) and in the framework being a shared substrate
+  rather than re-implemented per consumer.
+
+This isn't a chart-RFC rewrite — the v1 shape proposed below stays.
+It's a sequencing alignment: the framework lands first as Phase 4.7
+work; `@pond-ts/charts` builds on it when extraction earns its slot.
 
 ### Path2D caching: chunked, scale-versioned (Codex 3)
 

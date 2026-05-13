@@ -3876,6 +3876,148 @@ adversarial agent review + Codex pass) and is validated by at least one
 use-case agent before merge. Release shape is tentative; if friction
 reshapes the milestones, the version map adjusts.
 
+**Sequencing addendum (2026-05-11):** Phase 4.7 (columnar core substrate)
+is adopted as the v1.0 wave. Milestone A is foundational and ships
+independently — `LiveChange` is small, no columnar dependency, and its
+internal API is designed to carry columnar-batch updates once the
+substrate exists. Milestones B, C, and D **wait for the columnar
+substrate** so they ship natively on top, with operator state in
+typed-array buffers rather than retrofitted later. The release shape
+above adjusts accordingly: A continues toward v0.18.0; B/C/D defer to
+post-Phase 4.7.
+
+---
+
+## Phase 4.7: Columnar core substrate (v1.0 wave)
+
+Status: adopted 2026-05-11. Not started.
+
+This is the **v1.0 substrate**. Adoption decision documented in
+[`docs/rfcs/columnar-core.md`](docs/rfcs/columnar-core.md) ("Library-agent
+response and adoption" section); evidence base in
+[`docs/briefs/core-columnar-store-spike.md`](docs/briefs/core-columnar-store-spike.md);
+spike implementation on branch `codex/core-columnar-store-spike`
+(PR #130, not for merge — kept as the Phase 3 implementation baseline).
+
+**Goal: a foundational columnar framework that underpins pond-ts
+internals, preserving the public event-shaped API.** Builds the
+substrate that future streaming, charts, server, and ecosystem work
+ride on top of. Future optimization doors (WASM reducer kernels,
+WebGPU large scans, SIMD via wasm-simd, zero-copy Arrow export) stay
+open for v1.x but are not committed for v1.0 itself.
+
+**Strategic frame.** The columnar substrate is not a series of one-off
+fast paths; it's a properly abstracted, independently-tested layer
+that the rest of pond-ts is rebuilt on. The spike measured the wins
+(numeric reduce 6–12×, memory under lazy event materialization 4×
+reduction, chart extraction 34×); the strategic argument is timing —
+do this before streaming-RFC milestones B/C/D land so they ship
+natively on the substrate, not as retrofits of row-oriented internals.
+See the RFC for the full argument.
+
+**Locked-in commitments (from the RFC's "Library-agent response"):**
+
+1. Columnar storage adopted broadly across internals (`TimeSeries`,
+   derived series, `LiveSeries` ring buffers, the streaming change
+   channel, chart `ChartDataSource`). Public APIs (Event, `at(i)`,
+   `live.on('event')`, etc.) stay row-oriented at the boundary.
+2. Framework as a foundational layer at `packages/core/src/columnar/`
+   (or similar), independently tested, with its own bench suite.
+   Apache Arrow-compatible concepts without Arrow runtime dependency.
+3. Public API invariants preserved (the five from the RFC):
+   `series.events === series.events`, `at(i)` reference stability,
+   `at(i)` ↔ `events` consistency, `concat` event identity (decided
+   in favor of preserving via columnar-store materialization),
+   event-shaped iteration. New `series.eventAt(i)` accessor for
+   explicit stable-reference cases.
+4. Phase 3 (derived transform chains) is part of the implementation,
+   not a prerequisite gate. Implementation adjusts mid-stream if
+   Phase 3 surfaces a deal-breaker; worst case is a narrower
+   columnar scope (numeric scans + chart extraction + live numeric
+   rolling) with row-backed paths for transform chains.
+5. String / dictionary reducer adaptation in v1.0 wave (`unique`,
+   `top`, `samples`, grouped `count` over dictionary-encoded
+   columns).
+6. `LiveSeries` columnar ring buffer in v1.0, scoped narrowly:
+   numeric typed ring buffers for hot rolling windows + built-in
+   reducers. Strings / custom reducers / array columns / mixed
+   schemas stay event-backed inside the framework.
+7. Aggregate planner: minimal fused planner; precompute bucket
+   spans once, answer simple reducers from prefix sums/counts,
+   fall back to event-walked path for non-decomposable operations.
+8. Private fields on `TimeSeries` / `LiveSeries`, NOT WeakMap
+   sidecars (the spike's shape is exploration-only).
+
+**Implementation sequence (rough, ~3–4 months focused work):**
+
+1. Framework layer (~6 weeks) — `Column<T>` interfaces,
+   `Float64Column` / `BooleanColumn` / `DictionaryColumn` /
+   `ArrayColumn` concrete impls, validity bitmaps, chunked columns,
+   range-aware primitives. Independently tested. Bundle-size pin:
+   `<25 KB` gzipped delta to pond-ts core.
+2. TimeSeries integration (~3 weeks) — private-field columnar store,
+   lazy event materialization, API invariants pinned by tests.
+3. Numeric reducer adaptation (~2 weeks) — `sum` / `avg` / `count` /
+   `min` / `max` / `stdev` / `median` / percentile family.
+4. Derived transforms (~3 weeks) — `select` / `rename` / `filter` /
+   `slice` / `head` / `tail` / `diff` / `rate` / `pctChange` /
+   `cumulative` / `shift` columnar paths.
+5. Aggregate planner (~2 weeks).
+6. String / dictionary reducer adaptation (~2 weeks).
+7. `LiveSeries` numeric ring buffer (~2 weeks).
+8. Chart-extraction alignment (~1 week).
+
+Each step lands as its own PR with the standard two-pass review
+(Layer 2 + Codex). The framework layer is the most load-bearing;
+reviewing it well matters more than ticking the whole sequence off
+quickly.
+
+**Validation pattern.** Each step is exercised by a use-case agent
+before merge — the gRPC experiment is the natural primary driver
+(memory pressure was its recurring friction), supplemented by the
+dashboard / webapp telemetry / future experiments as they arise.
+Per CLAUDE.md "Multi-agent experiments and the feedback model,"
+friction reports drive refinement; the substrate is foundational
+enough that getting feedback per step matters more than usual.
+
+**Release shape (tentative).** v1.0 is the target version when the
+substrate + the streaming milestones (B/C/D) that ship on top all
+land cleanly. Tentative version map:
+
+- v0.17.x — current patch wave (partitionBy ordering inheritance,
+  etc.) — bug fixes only
+- v0.18.0 — streaming milestone A (`LiveChange` source-side) — ships
+  independently of columnar
+- v0.18.x — columnar framework layer (step 1) lands behind feature
+  flag or as internal-only initially
+- v0.19.0 — columnar TimeSeries integration (steps 2–4) — first
+  user-visible substrate landing
+- v0.19.x — aggregate planner + string reducer adaptation +
+  LiveSeries ring buffer (steps 5–7)
+- v0.20.0 — streaming milestones B + C ship on substrate
+- v1.0.0 — substrate complete + milestone D + chart alignment;
+  v1.0 framing is the version when public API stability commits
+  long-term
+
+Release shape is tentative; if implementation surfaces a different
+sequencing or a chunk doesn't earn its slot, the version map
+adjusts.
+
+**Cross-references:**
+
+- [`docs/rfcs/columnar-core.md`](docs/rfcs/columnar-core.md) — the
+  binding RFC with full library-agent response.
+- [`docs/briefs/core-columnar-store-spike.md`](docs/briefs/core-columnar-store-spike.md)
+  — evidence base from the Codex spike.
+- [`docs/rfcs/streaming.md`](docs/rfcs/streaming.md) — streaming
+  RFC; sequencing addendum notes how milestone A + columnar
+  interact.
+- [`docs/rfcs/charts.md`](docs/rfcs/charts.md) — chart RFC; v1
+  charts share columnar primitives with core.
+- The previous "row-oriented core stays" deferred-design entry
+  (now superseded; walked back in the Deferred Design Decisions
+  section above).
+
 ---
 
 ## Phase 5: React integration
@@ -4272,9 +4414,23 @@ Live `arrayAggregate` and `arrayExplode` need more thought (how
 
 ### Internal storage shape: row-oriented stays; columnar lives at the chart boundary
 
-**Status: deferred. Logged 2026-05-10.**
+**Status: SUPERSEDED by Phase 5 (Columnar core substrate), 2026-05-11.** A
+Codex evidence-gathering spike measured the gap — see
+[`docs/rfcs/columnar-core.md`](docs/rfcs/columnar-core.md) and
+[`docs/briefs/core-columnar-store-spike.md`](docs/briefs/core-columnar-store-spike.md).
+The evidence (6–12× numeric reduce, 4× memory reduction under lazy event
+materialization, neutral on string reducers) plus the strategic timing
+argument (do this before streaming-RFC milestones B/C/D so they ship on
+the substrate, not on row-oriented internals that need retrofitting)
+flipped the decision. The original deferred-design framing below stays
+for trajectory reasons — future readers can see what was decided when
+and why the position changed. Phase 5 of this PLAN is the binding entry.
 
-**Decision.** Keep row-oriented (`Event[]`) internal storage in `TimeSeries` /
+---
+
+**Status (prior): deferred. Logged 2026-05-10.**
+
+**Decision (superseded).** Keep row-oriented (`Event[]`) internal storage in `TimeSeries` /
 `LiveSeries`. Columnar storage lives at the **chart-package boundary** as an
 explicit fast path (`ChartDataSource` + typed-array buffers per
 [`docs/rfcs/charts.md`](docs/rfcs/charts.md)), not as a core refactor.

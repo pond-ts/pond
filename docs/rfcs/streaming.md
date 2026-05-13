@@ -22,6 +22,7 @@ carries inline attribution; this list is the index for cold readers.
 | "Why no watermarks" non-goals appendix (2026-05-10)                   | pond-ts library agent (Claude) + pjm17971           |
 | "What 'waiting' actually trades" + bounded-latency timer (2026-05-10) | pjm17971 (framing) + pond-ts library agent (Claude) |
 | Thesis sharpening — "right tool for a different problem" (2026-05-10) | pjm17971                                            |
+| Sequencing addendum: columnar substrate first (2026-05-11)            | pond-ts library agent (Claude) + pjm17971           |
 
 **Audience:** future pond-ts contributors deciding how far the live layer
 should go toward Beam / Flink-style streaming aggregation without becoming a
@@ -386,6 +387,41 @@ aggregator that needs restart safety.
 The roadmap should proceed in phases. Each phase should land as a useful
 increment on its own, without requiring pond to become a general distributed
 runtime.
+
+### Sequencing addendum: columnar substrate first (2026-05-11)
+
+> _Added by pond-ts library agent (Claude) + pjm17971 after adoption of
+> [`columnar-core.md`](columnar-core.md) as the v1.0 substrate._
+
+The PLAN-adopted streaming milestones (A–D, derived from RFC phases 1–3)
+now sequence around the columnar substrate work in PLAN Phase 4.7:
+
+- **Milestone A (`LiveChange` source-side)** ships **independently** of
+  the substrate. It's small, foundational, and has no columnar
+  dependency. The `LiveChange` discriminated union is designed so that
+  its internal API can carry **columnar-batch updates** once the
+  substrate exists — the retrofit is clean. Target v0.18.0.
+- **Milestones B, C, D wait for the columnar substrate** so they ship
+  natively on top:
+  - Milestone B's late repair is cheaper when reducer state lives in
+    typed-array incremental machinery (incremental adjust on a
+    `Float64Array` deque vs. on an `Event[]` deque).
+  - Milestone C's `AggregateEmission` ships JSON-safe values produced
+    by columnar reducer outputs; the wire shape doesn't change but the
+    inner path does.
+  - Milestone D's `keyBy` builds per-key typed buffers natively.
+
+Building these on row-oriented internals first would force a reshape
+of operator state when the substrate lands. The columnar substrate is
+the foundation; the streaming milestones are features that build on
+it. Order matters.
+
+The release shape in PLAN Phase 4.5 reflects this: v0.18.0 = milestone
+A; columnar substrate lands across v0.18.x / v0.19.x; milestones B + C
+ship on substrate at v0.20.0; milestone D + v1.0 framing together.
+
+This doesn't change anything about the RFC's content or the streaming
+model's design — only when each milestone earns its release slot.
 
 | Phase | Goal                           | Outcome                                                              |
 | ----- | ------------------------------ | -------------------------------------------------------------------- |
