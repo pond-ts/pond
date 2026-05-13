@@ -311,21 +311,52 @@ export class IntervalKeyColumn implements KeyColumnBase<'interval'> {
         );
       }
     }
-    // Every row must have a defined label — otherwise `keyAt(i)` can't
-    // materialize a labeled interval. Reject eagerly rather than
-    // deferring to materialization.
+    // **Discriminate the label column by `kind` exactly.** TypeScript
+    // accepts the `StringColumn | Float64Column` parameter, but at
+    // runtime a caller can pass anything via a cast — a `BooleanColumn`,
+    // an `ArrayColumn`, or a future custom column. The else-branch
+    // "everything not string is number" classifier would silently
+    // accept those and advertise `labelKind: 'number'`, corrupting
+    // any downstream code that branches on the discriminator.
+    let labelKind: IntervalLabelKind;
+    if (labels.kind === 'string') {
+      labelKind = 'string';
+    } else if (labels.kind === 'number') {
+      labelKind = 'number';
+    } else {
+      throw new TypeError(
+        `IntervalKeyColumn: labels must be a StringColumn ('string') or Float64Column ('number'); got kind '${(labels as { kind: string }).kind}'`,
+      );
+    }
+    // Every row must have a defined label that matches the
+    // discriminator. The label-defined check covers validity (Codex
+    // round 1); the type + finite check covers the round-3 hole.
     for (let i = 0; i < length; i += 1) {
-      if (labels.read(i) === undefined) {
+      const label = labels.read(i);
+      if (label === undefined) {
         throw new RangeError(
           `IntervalKeyColumn: row ${i} has no label (labels column marks it as undefined); every interval row must carry a label`,
         );
+      }
+      if (labelKind === 'string') {
+        if (typeof label !== 'string') {
+          throw new TypeError(
+            `IntervalKeyColumn: row ${i} label is not a string despite labelKind='string' (got ${typeof label}); reject cast-bypass at the boundary`,
+          );
+        }
+      } else {
+        if (typeof label !== 'number' || !Number.isFinite(label)) {
+          throw new RangeError(
+            `IntervalKeyColumn: row ${i} numeric label ${label} is not a finite number; numeric interval labels must be finite for ordering semantics`,
+          );
+        }
       }
     }
     this.length = length;
     this.begin = begin;
     this.end = end;
     this.labels = labels;
-    this.labelKind = labels.kind === 'string' ? 'string' : 'number';
+    this.labelKind = labelKind;
   }
 
   beginAt(i: number): number {

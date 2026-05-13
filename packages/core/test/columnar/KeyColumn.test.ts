@@ -389,3 +389,86 @@ describe('IntervalKeyColumn numeric labels (Codex round 2)', () => {
     );
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* Codex round-3 regression: hardened label-column discrimination              */
+/* -------------------------------------------------------------------------- */
+
+describe('IntervalKeyColumn label discriminator (Codex round 3)', () => {
+  it('rejects a BooleanColumn cast as label storage', async () => {
+    const { BooleanColumn } = await import('../../src/columnar/index.js');
+    const begin = Float64Array.of(0, 1);
+    const end = Float64Array.of(1, 2);
+    const booleanLabels = new BooleanColumn(new Uint8Array([0b11]), 2);
+    expect(
+      () =>
+        new IntervalKeyColumn(
+          begin,
+          end,
+          booleanLabels as unknown as Parameters<typeof IntervalKeyColumn>[2],
+          2,
+        ),
+    ).toThrow(/labels must be a StringColumn.*or Float64Column/);
+  });
+
+  it('rejects an ArrayColumn cast as label storage', async () => {
+    const { arrayColumnFromArray } =
+      await import('../../src/columnar/index.js');
+    const begin = Float64Array.of(0, 1);
+    const end = Float64Array.of(1, 2);
+    const arrayLabels = arrayColumnFromArray([[1], [2]]);
+    expect(
+      () =>
+        new IntervalKeyColumn(
+          begin,
+          end,
+          arrayLabels as unknown as Parameters<typeof IntervalKeyColumn>[2],
+          2,
+        ),
+    ).toThrow(/got kind 'array'/);
+  });
+
+  it('rejects a Float64Column with NaN labels', async () => {
+    const { Float64Column } = await import('../../src/columnar/index.js');
+    const begin = Float64Array.of(0, 1);
+    const end = Float64Array.of(1, 2);
+    const numericLabels = new Float64Column(Float64Array.of(NaN, 5), 2);
+    expect(() => new IntervalKeyColumn(begin, end, numericLabels, 2)).toThrow(
+      /numeric label NaN is not a finite number/,
+    );
+  });
+
+  it('rejects a Float64Column with Infinity labels', async () => {
+    const { Float64Column } = await import('../../src/columnar/index.js');
+    const begin = Float64Array.of(0, 1);
+    const end = Float64Array.of(1, 2);
+    const numericLabels = new Float64Column(Float64Array.of(5, Infinity), 2);
+    expect(() => new IntervalKeyColumn(begin, end, numericLabels, 2)).toThrow(
+      /numeric label Infinity is not a finite number/,
+    );
+  });
+
+  it('accepts only valid finite numeric labels', async () => {
+    const { Float64Column } = await import('../../src/columnar/index.js');
+    const begin = Float64Array.of(0, 1);
+    const end = Float64Array.of(1, 2);
+    const numericLabels = new Float64Column(Float64Array.of(7, 13), 2);
+    const col = new IntervalKeyColumn(begin, end, numericLabels, 2);
+    expect(col.labelKind).toBe('number');
+    expect(col.labelAt(0)).toBe(7);
+    expect(col.labelAt(1)).toBe(13);
+  });
+
+  it('string-labeled column passes the per-row type assertion', () => {
+    // Defense-in-depth check: labelKind discriminator + per-row typeof
+    // assertion. Most callers can't trip this because StringColumn
+    // enforces its own type contract — but the explicit typeof check
+    // guards against a future Column-kind that returns mixed types.
+    const begin = Float64Array.of(0);
+    const end = Float64Array.of(1);
+    const labels = stringColumnFromArray(['hello'], { forceDict: true });
+    const col = new IntervalKeyColumn(begin, end, labels, 1);
+    expect(col.labelKind).toBe('string');
+    expect(typeof col.labelAt(0)).toBe('string');
+  });
+});
