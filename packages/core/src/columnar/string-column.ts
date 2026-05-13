@@ -188,34 +188,45 @@ export class StringColumn {
       const dict = this.dictionary;
       const idxBuf = this.indices!;
       if (!v) {
+        // No validity bitmap ⇒ all rows defined per framework convention;
+        // every index must lie in dictionary range (enforced by constructor).
         for (let i = 0; i < this.length; i += 1) {
-          fn(dict[idxBuf[i]!] ?? '', i);
+          fn(dict[idxBuf[i]!]!, i);
         }
         return;
       }
       for (let i = 0; i < this.length; i += 1) {
-        const valid = v.isDefined(i);
-        if (valid) {
+        if (v.isDefined(i)) {
           fn(dict[idxBuf[i]!]!, i);
         } else if (!skipInvalid) {
-          fn(dict[idxBuf[i]!] ?? '', i);
+          // Invalid row — placeholder index may resolve to a real dict
+          // entry, but the framework contract is that invalid cells have
+          // arbitrary values. Emit the documented `''` sentinel
+          // unconditionally so dict-encoded and fallback modes behave
+          // identically. Callers consult `column.validity` to
+          // disambiguate sentinel from a real ''.
+          fn('', i);
         }
       }
       return;
     }
     const fb = this.fallback!;
     if (!v) {
+      // No validity bitmap ⇒ every fb[i] is a string (constructor enforces
+      // consistency when explicit validity is supplied; otherwise the
+      // factory derives validity from undefined slots so this branch
+      // only runs when all are defined).
       for (let i = 0; i < this.length; i += 1) {
-        fn(fb[i] ?? '', i);
+        fn(fb[i]!, i);
       }
       return;
     }
     for (let i = 0; i < this.length; i += 1) {
-      const valid = v.isDefined(i);
-      if (valid) {
+      if (v.isDefined(i)) {
         fn(fb[i]!, i);
       } else if (!skipInvalid) {
-        fn(fb[i] ?? '', i);
+        // Same sentinel as the dict-encoded branch — no mode divergence.
+        fn('', i);
       }
     }
   }
@@ -507,6 +518,11 @@ export function remapIndicesToDictionary(
   targetDictionary: ReadonlyArray<string>,
   validity?: ValidityBitmap,
 ): Int32Array {
+  if (validity !== undefined && validity.length !== srcIndices.length) {
+    throw new RangeError(
+      `remapIndicesToDictionary: validity length ${validity.length} does not match srcIndices length ${srcIndices.length}`,
+    );
+  }
   const targetIndex = buildDictionaryIndex(targetDictionary);
   const out = new Int32Array(srcIndices.length);
   for (let i = 0; i < srcIndices.length; i += 1) {

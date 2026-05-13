@@ -208,7 +208,7 @@ describe('StringColumn.scan (dict-encoded)', () => {
     ]);
   });
 
-  it('visits every slot when skipInvalid is false', () => {
+  it('visits every slot when skipInvalid is false; invalid rows get "" sentinel', () => {
     const validity = validityFromBits(new Uint8Array([0b101]), 3);
     const col = stringColumnDictEncoded(
       ['x', 'y'],
@@ -219,7 +219,7 @@ describe('StringColumn.scan (dict-encoded)', () => {
     col.scan((v, i) => visited.push([v, i]), { skipInvalid: false });
     expect(visited).toEqual([
       ['x', 0],
-      ['y', 1], // visited despite being invalid
+      ['', 1], // sentinel, not the placeholder dict[1] = 'y'
       ['x', 2],
     ]);
   });
@@ -678,7 +678,12 @@ describe('scan row-aligned every-slot contract (skipInvalid: false)', () => {
     expect(slice.validity!.definedCount).toBe(0);
   });
 
-  it('mixed-validity dict-encoded scan: invalid rows use placeholder (a real dict entry)', () => {
+  it('mixed-validity dict-encoded scan: invalid rows get "" sentinel even when placeholder points to a real dict entry', () => {
+    // The placeholder index `0` points at `dict[0] = 'a'`, but the
+    // framework contract is that invalid cells receive the documented
+    // `''` sentinel. This pins no-mode-divergence: dict-encoded and
+    // fallback behave identically for invalid rows under `skipInvalid:
+    // false`.
     const col = stringColumnDictEncoded(['a', 'b'], Int32Array.of(0, 1));
     const slice = col.sliceByIndices(Int32Array.of(0, 5, 1));
     const visited: Array<[string, number]> = [];
@@ -689,14 +694,40 @@ describe('scan row-aligned every-slot contract (skipInvalid: false)', () => {
       },
       { skipInvalid: false },
     );
-    // Row 0: valid → 'a'. Row 1: invalid, placeholder dict[0] = 'a'.
-    // Row 2: valid → 'b'.
     expect(visited).toEqual([
       ['a', 0],
-      ['a', 1],
+      ['', 1], // sentinel, NOT dict[0] = 'a'
       ['b', 2],
     ]);
     expect(slice.validity!.isDefined(1)).toBe(false);
+  });
+
+  it('no mode divergence: same input shape produces same scan output in dict-encoded vs fallback', () => {
+    // The exact same logical column (['a' valid, missing, 'b' valid])
+    // expressed in both representations should produce identical scan
+    // output under skipInvalid: false.
+    const validity = validityFromBits(new Uint8Array([0b101]), 3);
+    const dictCol = stringColumnDictEncoded(
+      ['a', 'b'],
+      Int32Array.of(0, 0, 1),
+      validity,
+    );
+    const fallbackCol = stringColumnFallback(['a', undefined, 'b'], validity);
+
+    const dictVisited: Array<[string, number]> = [];
+    dictCol.scan((v, i) => dictVisited.push([v, i]), { skipInvalid: false });
+
+    const fbVisited: Array<[string, number]> = [];
+    fallbackCol.scan((v, i) => fbVisited.push([v, i]), {
+      skipInvalid: false,
+    });
+
+    expect(dictVisited).toEqual(fbVisited);
+    expect(dictVisited).toEqual([
+      ['a', 0],
+      ['', 1],
+      ['b', 2],
+    ]);
   });
 
   it('fallback with explicit invalid validity: callback receives "" sentinel for the invalid row', () => {
@@ -922,5 +953,69 @@ describe('remapColumnToDictionary', () => {
     const col = stringColumnDictEncoded(['a', 'b'], Int32Array.of(0, 1, 0));
     const remapped = remapColumnToDictionary(col, ['x', 'a', 'b']);
     expect(Array.from(remapped)).toEqual([1, 2, 1]);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Codex round-3 regressions: scan-with-non-empty-dict + validity-length mismatch */
+/* -------------------------------------------------------------------------- */
+
+describe('scan sentinel regressions (Codex round 3)', () => {
+  it('dict-encoded sliceByIndices out-of-range row with non-empty dictionary emits "" sentinel', () => {
+    // Codex's specific concern: placeholder index `0` against a non-empty
+    // dictionary would otherwise scan as `dict[0]` — a real string. Pin
+    // that the sentinel `''` is emitted instead.
+    const col = stringColumnDictEncoded(
+      ['us-east', 'us-west'],
+      Int32Array.of(0, 1),
+    );
+    const slice = col.sliceByIndices(Int32Array.of(0, 99));
+    const visited: Array<[string, number]> = [];
+    slice.scan((v, i) => visited.push([v, i]), { skipInvalid: false });
+    expect(visited).toEqual([
+      ['us-east', 0],
+      ['', 1], // sentinel, NOT 'us-east' (which would silently match dict[0])
+    ]);
+  });
+
+  it('row-aligned consumer cannot accidentally surface a missing row as a real first-dictionary value', () => {
+    // The exact failure mode Codex named: a downstream consumer that
+    // materializes scan output without separately carrying validity
+    // can no longer produce a fake match against dict[0].
+    const col = stringColumnDictEncoded(
+      ['active', 'inactive'],
+      Int32Array.of(0, 1, 0, 1),
+    );
+    const slice = col.sliceByIndices(Int32Array.of(0, 99, 1, 99));
+    const materialized: string[] = [];
+    slice.scan((v) => materialized.push(v), { skipInvalid: false });
+    // Without the fix, positions 1 and 3 would be 'active' (dict[0]).
+    expect(materialized).toEqual(['active', '', 'inactive', '']);
+  });
+});
+
+describe('remapIndicesToDictionary validity-length validation (Codex round 3)', () => {
+  it('throws on validity bitmap longer than srcIndices', () => {
+    const indices = Int32Array.of(0, 1);
+    const validity = validityFromBits(new Uint8Array([0b1111]), 4);
+    expect(() =>
+      remapIndicesToDictionary(indices, ['a', 'b'], ['a', 'b'], validity),
+    ).toThrow(/validity length/);
+  });
+
+  it('throws on validity bitmap shorter than srcIndices', () => {
+    const indices = Int32Array.of(0, 1, 0);
+    const validity = validityFromBits(new Uint8Array([0b11]), 2);
+    expect(() =>
+      remapIndicesToDictionary(indices, ['a', 'b'], ['a', 'b'], validity),
+    ).toThrow(/validity length/);
+  });
+
+  it('accepts matching validity length', () => {
+    const indices = Int32Array.of(0, 1, 0);
+    const validity = validityFromBits(new Uint8Array([0b101]), 3);
+    expect(() =>
+      remapIndicesToDictionary(indices, ['a', 'b'], ['a', 'b'], validity),
+    ).not.toThrow();
   });
 });
