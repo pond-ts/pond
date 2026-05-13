@@ -45,3 +45,18 @@ export {
   stringColumnFallback,
   stringColumnFromArray,
 } from './string-column.js';
+
+export {
+  ArrayColumn,
+  EMPTY_ARRAY_SENTINEL,
+  arrayColumnFromArray,
+} from './array-column.js';
+
+export {
+  type KeyColumn,
+  IntervalKeyColumn,
+  TimeKeyColumn,
+  TimeRangeKeyColumn,
+  timeKeyColumnFromArray,
+  timeRangeKeyColumnFromPairs,
+} from './key-column.js';
