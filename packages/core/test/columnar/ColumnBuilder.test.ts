@@ -76,6 +76,45 @@ describe('Float64ColumnBuilder', () => {
     expect(() => b.appendAt(1.5, 0)).toThrow(RangeError);
     expect(() => b.appendAt(2 ** 31, 0)).toThrow(RangeError);
   });
+
+  it('overwriting a defined cell with undefined clears the validity bit (L2 round-1 finding)', () => {
+    // Pre-fix: appendAt(0, undefined) after append(7) left validity
+    // marking row 0 as defined; finalize produced a column where
+    // read(0) returned 0, not undefined.
+    const b = new Float64ColumnBuilder();
+    b.append(7);
+    b.appendAt(0, undefined);
+    const col = b.finalize();
+    expect(col.read(0)).toBeUndefined();
+    expect(col.validity).toBeDefined();
+    expect(col.validity!.definedCount).toBe(0);
+  });
+
+  it('overwriting an undefined cell with a defined value sets the validity bit', () => {
+    const b = new Float64ColumnBuilder();
+    b.append(undefined);
+    b.append(20);
+    b.appendAt(0, 99);
+    const col = b.finalize();
+    expect(col.read(0)).toBe(99);
+    expect(col.read(1)).toBe(20);
+    // Both cells now defined — bitmap may still be present, but
+    // definedCount should equal length.
+    if (col.validity) {
+      expect(col.validity.definedCount).toBe(2);
+    }
+  });
+
+  it('append after appendAt tracks length correctly', () => {
+    const b = new Float64ColumnBuilder();
+    b.appendAt(3, 99);
+    b.append(42);
+    const col = b.finalize();
+    expect(col.length).toBe(5);
+    expect(col.read(3)).toBe(99);
+    expect(col.read(4)).toBe(42);
+    expect(col.read(0)).toBeUndefined();
+  });
 });
 
 /* -------------------------------------------------------------------------- */
@@ -123,6 +162,26 @@ describe('BooleanColumnBuilder', () => {
     const col = b.finalize();
     expect(col.read(0)).toBeUndefined();
     expect(col.read(3)).toBe(true);
+  });
+
+  it('overwriting a defined cell with undefined clears the validity bit (L2 round-1 finding)', () => {
+    const b = new BooleanColumnBuilder();
+    b.append(true);
+    b.appendAt(0, undefined);
+    const col = b.finalize();
+    expect(col.read(0)).toBeUndefined();
+    expect(col.validity).toBeDefined();
+    expect(col.validity!.definedCount).toBe(0);
+  });
+
+  it('overwriting an undefined cell with a defined value sets the validity bit', () => {
+    const b = new BooleanColumnBuilder();
+    b.append(undefined);
+    b.append(true);
+    b.appendAt(0, false);
+    const col = b.finalize();
+    expect(col.read(0)).toBe(false);
+    expect(col.read(1)).toBe(true);
   });
 });
 

@@ -185,8 +185,19 @@ export class Float64ColumnBuilder extends ColumnBuilderBase<number> {
     if (value === undefined) {
       // Lazily allocate validity bitmap on first invalid cell.
       this.#ensureValidityCapacity(rowIndex + 1);
-      // Bit stays 0 (invalid); values[rowIndex] is 0 by default.
       this.#values[rowIndex] = 0;
+      // If the cell was previously defined (overwrite path), clear
+      // its validity bit and decrement the count. Without this, a
+      // later `append(undefined)` over a previously-defined slot
+      // would leave `#definedCount` inflated and `validity.isDefined`
+      // returning true for what `read` is supposed to surface as
+      // missing.
+      const byte = rowIndex >> 3;
+      const mask = 1 << (rowIndex & 7);
+      if ((this.#validityBits![byte]! & mask) !== 0) {
+        this.#validityBits![byte]! &= ~mask;
+        this.#definedCount -= 1;
+      }
       this._hasInvalid = true;
     } else {
       this.#values[rowIndex] = value;
@@ -310,6 +321,13 @@ export class BooleanColumnBuilder extends ColumnBuilderBase<boolean> {
       this.#ensureValidityCapacity(rowIndex + 1);
       // Clear the value bit (sentinel for invalid cells).
       this.#values[byte]! &= ~mask;
+      // Same overwrite-path fix as Float64: if the cell was
+      // previously defined, clear its validity bit and decrement
+      // the count.
+      if ((this.#validityBits![byte]! & mask) !== 0) {
+        this.#validityBits![byte]! &= ~mask;
+        this.#definedCount -= 1;
+      }
       this._hasInvalid = true;
     } else {
       if (value) {
