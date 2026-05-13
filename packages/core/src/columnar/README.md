@@ -32,11 +32,19 @@ for the full design.
 
 ## Boundary contract
 
-**Pure substrate.** Nothing under `columnar/` imports `Event`,
-`EventKey`, `Time`, `TimeRange`, `Interval`, or
-`temporal.ts`'s value-class definitions. The framework is generic
-columnar primitives parameterized over a `SeriesSchema` type only;
-no row-API value materialization happens here.
+**Pure substrate.** Nothing under `columnar/` imports from outside
+this directory at runtime, and the only allowed type imports are
+from peer files within `columnar/` itself. The framework owns its
+own type vocabulary in
+[`types.ts`](types.ts) — `ColumnDef`, `ColumnSchema`,
+`ScalarValue`, `ArrayValue`, `KeyKind`, `AnyColumnKind`.
+
+The row-API library's `SeriesSchema` (`packages/core/src/types.ts`)
+is structurally compatible with the framework's `ColumnSchema`,
+so the row-API adapter at `series-store.ts` passes its own `S
+extends SeriesSchema` parameter through to `ColumnarStore<S>`
+without friction. The framework doesn't know that `SeriesSchema`
+exists.
 
 **Forbidden upstream imports.** The independence test in
 `series-store.test.ts` enforces this by scanning every file under
@@ -46,12 +54,9 @@ no row-API value materialization happens here.
   (operators)
 - `Event`, `Time`, `TimeRange`, `Interval` (row-API value classes)
 - `temporal` (the row-API key interface module)
+- `types` (pond-ts's row-API type module — framework has its own
+  at `columnar/types.ts`)
 - `reducers/` (operator implementations)
-
-`SeriesSchema` / `ColumnDef` / `ScalarKind` / `ArrayValue` are
-**type-only** imports from `types.ts` and are allowed — the
-framework needs to type its column-and-schema shapes without
-pulling in any runtime row-API logic.
 
 **No external runtime.** The framework provides Apache
 Arrow-compatible concepts without depending on Arrow JS. Future

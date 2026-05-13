@@ -290,6 +290,33 @@ describe('eventCache validation', () => {
     ).toThrow(/unexpected data field 'leftover'/);
   });
 
+  it('rejects cache entries MISSING a schema-declared field even when the column read is undefined (Codex Path-B-post finding)', () => {
+    // Schema declares `value: string`. Row 1 of the column reads as
+    // undefined (invalid cell). A cached event whose data omits the
+    // `value` field entirely would previously slip through because
+    // `cachedData[name] === undefined` matches `column.read() ===
+    // undefined`. The hasOwnProperty check rejects the missing
+    // field.
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'value', kind: 'string' },
+    ] as const;
+    const keys = timeKeyColumnFromArray([1, 2, 3]);
+    const value = stringColumnFromArray(['a', undefined, 'c']);
+    const store = ColumnarStore.fromTrustedStore(
+      schema,
+      keys,
+      new Map([['value', value]]),
+    );
+    const poisoned = new Map<number, SeriesEvent>();
+    // Row 1: column.read returns undefined. Cached event data is {} —
+    // no `value` key at all.
+    poisoned.set(1, new Event(new Time(2), {}) as SeriesEvent);
+    expect(() =>
+      SeriesStore.fromTrustedStore(store, { eventCache: poisoned }),
+    ).toThrow(/missing required schema data field 'value'/);
+  });
+
   it('rejects cache entries with out-of-range row index', () => {
     const { store } = makeStoreAndKeys();
     const poisoned = new Map<number, SeriesEvent>();
@@ -546,6 +573,7 @@ describe('Framework independence (pure substrate contract)', () => {
       'TimeRange',
       'Interval',
       'temporal',
+      'types', // framework owns its own type vocabulary at columnar/types.ts
       'TimeSeries',
       'LiveSeries',
       'PartitionedTimeSeries',

@@ -17,8 +17,8 @@
  * Framework-internal; not exported from `packages/core/src/index.ts`.
  */
 
-import type { ArrayValue } from '../types.js';
 import type { ScanOptions } from './column.js';
+import type { ArrayValue } from './types.js';
 import {
   type ValidityBitmap,
   validateColumnLength,

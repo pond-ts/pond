@@ -15,7 +15,7 @@
  * - A `KeyColumn` (from `key-column.ts`) — pure typed-buffer key
  *   storage (`begin`, `end`, optional `labels` for intervals).
  * - A `ReadonlyMap<columnName, Column>` of value columns.
- * - A declared `schema: S` (a `SeriesSchema` from `types.ts`).
+ * - A declared `schema: S` (a `ColumnSchema` from `types.ts`).
  *
  * Provides:
  * - Direct typed-buffer access: `beginAt(i)`, `endAt(i)`,
@@ -30,9 +30,9 @@
  * Framework-internal; not exported from `packages/core/src/index.ts`.
  */
 
-import type { SeriesSchema } from '../types.js';
 import type { Column } from './column.js';
 import type { KeyColumn } from './key-column.js';
+import type { ColumnSchema } from './types.js';
 
 /** Options accepted by `ColumnarStore.fromTrustedStore`. */
 // eslint-disable-next-line @typescript-eslint/no-empty-interface
@@ -47,7 +47,7 @@ export interface FromTrustedStoreOptions {
  * named factory below; the constructor is private to keep the
  * column / key / schema shape consistent.
  */
-export class ColumnarStore<S extends SeriesSchema = SeriesSchema> {
+export class ColumnarStore<S extends ColumnSchema = ColumnSchema> {
   readonly schema: S;
   readonly length: number;
   readonly keys: KeyColumn;
@@ -82,7 +82,7 @@ export class ColumnarStore<S extends SeriesSchema = SeriesSchema> {
    * owned `Map` at construction; the caller can't mutate the store
    * by mutating the source map after the fact.
    */
-  static fromTrustedStore<S extends SeriesSchema>(
+  static fromTrustedStore<S extends ColumnSchema>(
     schema: S,
     keys: KeyColumn,
     columns: ReadonlyMap<string, Column>,

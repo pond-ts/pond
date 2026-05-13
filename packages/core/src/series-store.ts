@@ -330,11 +330,24 @@ function validateCachedEvent(
       );
     }
   }
-  // Per-column data consistency, with kind-aware equality so the
-  // ArrayColumn defensive-copy doesn't break cache adoption.
+  // Per-column data consistency. Two checks per schema column:
+  // (a) the field must be an OWN property of `cachedData` — a
+  //     missing field that happens to read as `undefined` looks
+  //     identical to a present `undefined` via plain
+  //     `cachedData[name]`, and would silently slip through
+  //     against a column where `column.read(i)` is `undefined`
+  //     for that row (invalid cell). Use `hasOwnProperty` to
+  //     distinguish.
+  // (b) the value (when present) must match `column.read(rowIndex)`
+  //     under kind-aware equality.
   for (let c = 1; c < store.schema.length; c += 1) {
     const def = store.schema[c]!;
     const name = def.name;
+    if (!Object.prototype.hasOwnProperty.call(cachedData, name)) {
+      throw new RangeError(
+        `SeriesStore: eventCache entry at row ${rowIndex} is missing required schema data field '${name}'`,
+      );
+    }
     const columnValue = store.columns.get(name)!.read(rowIndex);
     const cachedValue = cachedData[name];
     if (!valuesEqual(columnValue, cachedValue, def.kind)) {
