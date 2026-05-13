@@ -40,14 +40,21 @@ import { Interval } from './Interval.js';
 import { Time } from './Time.js';
 import { TimeRange } from './TimeRange.js';
 import {
-  type ColumnarStore,
-  type IntervalKeyColumn,
-  ColumnarStore as ColumnarStoreClass,
+  type Column,
+  type ColumnBuilder,
+  type KeyColumn,
+  ColumnarStore,
+  Float64Column,
+  IntervalKeyColumn,
+  StringColumnBuilder,
+  TimeKeyColumn,
+  TimeRangeKeyColumn,
+  columnBuilderForKind,
+  stringColumnFromArray,
 } from './columnar/index.js';
-import type { Column } from './columnar/index.js';
-import type { KeyColumn } from './columnar/index.js';
 import type { EventKey } from './temporal.js';
-import type { SeriesSchema } from './types.js';
+import type { RowForSchema, SeriesSchema } from './types.js';
+import { validateAndNormalize } from './validate.js';
 
 /**
  * Row-data shape — a record keyed by column name. Tightens to
@@ -109,6 +116,38 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
   /** Row count. */
   get length(): number {
     return this.store.length;
+  }
+
+  /**
+   * Row-intake factory. Accepts a schema + row-shaped data,
+   * validates every row via the existing `validate.ts` rules,
+   * builds the underlying `ColumnarStore`, and wraps it as a
+   * `SeriesStore`. Event identity is preserved: the validated
+   * events are pre-populated into the cache, so subsequent
+   * `eventAt(i)` calls return the validation-time references.
+   *
+   * Sub-step 1e scope; complements `fromTrustedStore` for the
+   * primary row-API intake path.
+   */
+  static fromValidatedRows<S extends SeriesSchema>(
+    schema: S,
+    rows: ReadonlyArray<RowForSchema<S>>,
+  ): SeriesStore<S> {
+    // Reuse the existing row validator. Returns sorted, normalized
+    // events with each row's key + frozen data already built.
+    const events = validateAndNormalize<S>({
+      name: 'columnar-intake',
+      schema,
+      rows,
+    });
+    // EventForSchema<S> is structurally compatible with SeriesEvent
+    // (both are Event<Time|TimeRange|Interval, ...>) but TS narrows
+    // the key generic to S[0]'s specific kind. The cast widens it
+    // back to the union the SeriesStore layer uses.
+    return buildSeriesStoreFromEvents(
+      schema,
+      events as unknown as ReadonlyArray<SeriesEvent>,
+    );
   }
 
   /**
@@ -406,9 +445,117 @@ function stringifyForError(v: unknown): string {
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/* Event-driven intake — builds a SeriesStore from a validated event array.   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Builds a `SeriesStore<S>` from an already-validated event array.
+ * Walks the events once, dispatching key fields into the
+ * appropriate key column shape and value fields into per-column
+ * builders, then composes the resulting `ColumnarStore` and
+ * wraps it with the events as the pre-populated cache.
+ *
+ * Internal helper for `fromValidatedRows`. The `fromTrustedEvents`
+ * public factory (sub-step 1e follow-up) skips the validation step
+ * but reuses this same builder.
+ */
+function buildSeriesStoreFromEvents<S extends SeriesSchema>(
+  schema: S,
+  events: ReadonlyArray<SeriesEvent>,
+): SeriesStore<S> {
+  const length = events.length;
+
+  // 1. Key column.
+  const keyKind = schema[0]!.kind as 'time' | 'timeRange' | 'interval';
+  const begin = new Float64Array(length);
+  const end = new Float64Array(length);
+  // Pre-walk: capture interval labels for later StringColumn /
+  // Float64Column construction.
+  let intervalLabels: Array<string | number> | undefined;
+  let intervalLabelKind: 'string' | 'number' | undefined;
+  if (keyKind === 'interval') {
+    intervalLabels = new Array<string | number>(length);
+  }
+  for (let i = 0; i < length; i += 1) {
+    const key = events[i]!.key();
+    begin[i] = key.begin();
+    end[i] = key.end();
+    if (intervalLabels !== undefined) {
+      const label = (key as Interval).value;
+      intervalLabels[i] = label;
+      if (intervalLabelKind === undefined) {
+        intervalLabelKind = typeof label === 'string' ? 'string' : 'number';
+      } else if (typeof label !== intervalLabelKind) {
+        throw new RangeError(
+          `SeriesStore.fromValidatedRows: row ${i} has interval label of type ${typeof label} but earlier rows had ${intervalLabelKind} labels — interval-keyed series must use one label type throughout`,
+        );
+      }
+    }
+  }
+
+  let keys: KeyColumn;
+  if (keyKind === 'time') {
+    keys = new TimeKeyColumn(begin, length);
+  } else if (keyKind === 'timeRange') {
+    keys = new TimeRangeKeyColumn(begin, end, length);
+  } else {
+    // interval
+    if (intervalLabelKind === 'number') {
+      const labelBuffer = new Float64Array(length);
+      for (let i = 0; i < length; i += 1) {
+        labelBuffer[i] = intervalLabels![i] as number;
+      }
+      const labels = new Float64Column(labelBuffer, length);
+      keys = new IntervalKeyColumn(begin, end, labels, length);
+    } else {
+      // string labels (default; works for empty event arrays too)
+      const labels = stringColumnFromArray(
+        intervalLabels === undefined
+          ? []
+          : (intervalLabels as ReadonlyArray<string>),
+        { forceDict: true },
+      );
+      keys = new IntervalKeyColumn(begin, end, labels, length);
+    }
+  }
+
+  // 2. Value columns.
+  const columns = new Map<string, Column>();
+  const builders: Array<ColumnBuilder<unknown>> = [];
+  const colNames: string[] = [];
+  for (let c = 1; c < schema.length; c += 1) {
+    const def = schema[c]!;
+    builders.push(
+      columnBuilderForKind(
+        def.kind as 'number' | 'boolean' | 'string' | 'array',
+        length,
+      ) as ColumnBuilder<unknown>,
+    );
+    colNames.push(def.name);
+  }
+  for (let i = 0; i < length; i += 1) {
+    const data = events[i]!.data() as Readonly<Record<string, unknown>>;
+    for (let c = 0; c < colNames.length; c += 1) {
+      builders[c]!.append(data[colNames[c]!] as never);
+    }
+  }
+  for (let c = 0; c < colNames.length; c += 1) {
+    columns.set(colNames[c]!, builders[c]!.finalize());
+  }
+
+  // 3. Compose store + wrap with eventCache pre-populated.
+  const store = ColumnarStore.fromTrustedStore(schema, keys, columns);
+  const cache = new Map<number, SeriesEvent>();
+  for (let i = 0; i < length; i += 1) {
+    cache.set(i, events[i]!);
+  }
+  return SeriesStore.fromTrustedStore(store, { eventCache: cache });
+}
+
 // Re-exports so consumers can write `import { ColumnarStore, SeriesStore }
 // from '../series-store.js'` and not need to know about the framework's
 // internal barrel. Framework-internal consumers should still import
 // from `./columnar/index.js`.
-export { ColumnarStoreClass as ColumnarStore };
+export { ColumnarStore };
 export type { Column, KeyColumn };

@@ -548,6 +548,174 @@ describe('SeriesStore.toObjects', () => {
 });
 
 /* -------------------------------------------------------------------------- */
+/* fromValidatedRows — row-intake factory (sub-step 1e)                       */
+/* -------------------------------------------------------------------------- */
+
+describe('SeriesStore.fromValidatedRows', () => {
+  it('builds a SeriesStore from time-keyed row data', () => {
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'value', kind: 'number' },
+      { name: 'load', kind: 'number' },
+    ] as const;
+    const rows = [
+      [1000, 10, 0.5],
+      [2000, 20, 0.75],
+      [3000, 30, 0.9],
+    ] as const;
+    const series = SeriesStore.fromValidatedRows(schema, rows);
+    expect(series.length).toBe(3);
+    expect(series.keyAt(1)).toBeInstanceOf(Time);
+    expect(series.keyAt(1).begin()).toBe(2000);
+    expect(series.eventAt(1).data().value).toBe(20);
+    expect(series.eventAt(1).data().load).toBe(0.75);
+  });
+
+  it('builds a SeriesStore with string columns (dict-encoded by heuristic)', () => {
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'host', kind: 'string' },
+    ] as const;
+    const rows = Array.from(
+      { length: 20 },
+      (_, i): readonly [number, string] => [i * 1000, ['a', 'b'][i % 2]!],
+    );
+    const series = SeriesStore.fromValidatedRows(schema, rows);
+    expect(series.length).toBe(20);
+    // The dict-encoding decision happens inside the builder/factory;
+    // pin the user-visible result instead of the internal shape.
+    expect(series.eventAt(0).data().host).toBe('a');
+    expect(series.eventAt(1).data().host).toBe('b');
+  });
+
+  it('builds a timeRange-keyed SeriesStore', () => {
+    const schema = [
+      { name: 'tr', kind: 'timeRange' },
+      { name: 'v', kind: 'number' },
+    ] as const;
+    const rows = [
+      [[0, 10] as const, 100],
+      [[10, 20] as const, 200],
+    ] as const;
+    const series = SeriesStore.fromValidatedRows(schema, rows);
+    expect(series.length).toBe(2);
+    expect(series.keyAt(0)).toBeInstanceOf(TimeRange);
+    expect(series.keyAt(0).begin()).toBe(0);
+    expect(series.keyAt(0).end()).toBe(10);
+  });
+
+  it('builds an interval-keyed SeriesStore with string labels', () => {
+    const schema = [
+      { name: 'bucket', kind: 'interval' },
+      { name: 'count', kind: 'number' },
+    ] as const;
+    const rows = [
+      [['day-1', 0, 86_400_000] as const, 42],
+      [['day-2', 86_400_000, 172_800_000] as const, 99],
+    ] as const;
+    const series = SeriesStore.fromValidatedRows(schema, rows);
+    expect(series.length).toBe(2);
+    expect(series.keyAt(0)).toBeInstanceOf(Interval);
+    expect((series.keyAt(0) as Interval).value).toBe('day-1');
+    expect(series.eventAt(1).data().count).toBe(99);
+  });
+
+  it('builds an interval-keyed SeriesStore with numeric labels', () => {
+    const schema = [
+      { name: 'tile', kind: 'interval' },
+      { name: 'v', kind: 'number' },
+    ] as const;
+    const rows = [
+      [[1, 0, 100] as const, 10],
+      [[2, 100, 200] as const, 20],
+    ] as const;
+    const series = SeriesStore.fromValidatedRows(schema, rows);
+    expect((series.keyAt(0) as Interval).value).toBe(1);
+    expect(typeof (series.keyAt(0) as Interval).value).toBe('number');
+  });
+
+  it('rejects interval rows that mix string and numeric labels', () => {
+    const schema = [
+      { name: 'tile', kind: 'interval' },
+      { name: 'v', kind: 'number' },
+    ] as const;
+    const rows = [
+      [['day-1', 0, 100] as const, 10],
+      [[2, 100, 200] as const, 20], // numeric label after string — inconsistent
+    ] as const;
+    expect(() => SeriesStore.fromValidatedRows(schema, rows)).toThrow(
+      /interval-keyed series must use one label type/,
+    );
+  });
+
+  it('produces events that are pre-populated into the cache (eventAt === validated event)', () => {
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'value', kind: 'number' },
+    ] as const;
+    const series = SeriesStore.fromValidatedRows(schema, [
+      [1, 10],
+      [2, 20],
+    ]);
+    const ev = series.eventAt(0);
+    expect(ev).toBe(series.eventAt(0)); // identity stable
+    // The events came from validateAndNormalize and are already in
+    // the cache — the same reference comes back through toEvents.
+    expect(series.toEvents()[0]).toBe(ev);
+  });
+
+  it('handles invalid (undefined) value-column cells via validity', () => {
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'value', kind: 'string', required: false },
+    ] as const;
+    const series = SeriesStore.fromValidatedRows(schema, [
+      [1, 'a'],
+      [2, undefined],
+      [3, 'c'],
+    ]);
+    expect(series.eventAt(0).data().value).toBe('a');
+    expect(series.eventAt(1).data().value).toBeUndefined();
+    expect(series.eventAt(2).data().value).toBe('c');
+  });
+
+  it('empty rows produce a zero-length store', () => {
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'value', kind: 'number' },
+    ] as const;
+    const series = SeriesStore.fromValidatedRows(schema, []);
+    expect(series.length).toBe(0);
+    expect(series.toEvents()).toEqual([]);
+  });
+
+  it('rejects out-of-order rows (delegates to validateAndNormalize)', () => {
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'value', kind: 'number' },
+    ] as const;
+    expect(() =>
+      SeriesStore.fromValidatedRows(schema, [
+        [2000, 20],
+        [1000, 10],
+      ]),
+    ).toThrow(/out of order/);
+  });
+
+  it('rejects schema-violating values (delegates to validateAndNormalize)', () => {
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'value', kind: 'number' },
+    ] as const;
+    expect(() =>
+      SeriesStore.fromValidatedRows(schema, [
+        [1, 'not-a-number' as unknown as number],
+      ]),
+    ).toThrow();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
 /* Framework independence — REAL cross-module assertion                        */
 /* -------------------------------------------------------------------------- */
 

@@ -65,6 +65,15 @@ export {
 export { type FromTrustedStoreOptions, ColumnarStore } from './store.js';
 
 export {
+  type ColumnBuilder,
+  ArrayColumnBuilder,
+  BooleanColumnBuilder,
+  Float64ColumnBuilder,
+  StringColumnBuilder,
+  columnBuilderForKind,
+} from './builder.js';
+
+export {
   type AnyColumnKind,
   type ArrayValue,
   type ColumnDef,
