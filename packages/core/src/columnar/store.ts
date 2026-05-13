@@ -171,12 +171,14 @@ export class ColumnarStore<S extends SeriesSchema = SeriesSchema> {
     // pattern established by `ArrayColumn` cells. Cheap: O(schema
     // length) copy at construction.
     const ownedColumns = new Map<string, Column>(columns);
-    // **Validate + defensively own the eventCache.** A poisoned
-    // cache (e.g., events whose key timestamps disagree with the
-    // column's `keys.beginAt`) would silently corrupt the
-    // eventAt-keyAt consistency invariant. Validate every entry
-    // matches the column's key before adopting the cache, and copy
-    // into an owned map so the caller can't poison it later.
+    // **Validate + defensively own the eventCache.** A poisoned or
+    // cross-schema cache (events whose key kind / interval label /
+    // payload values disagree with the column data) would silently
+    // corrupt the eventAt-keyAt consistency invariant. Validate
+    // structural key equality AND every data value matches the
+    // corresponding column read for each row before adopting the
+    // cache, then copy into an owned map so the caller can't poison
+    // it later.
     const ownedEventCache = new Map<number, ColumnarEvent>();
     const supplied = options?.eventCache;
     if (supplied !== undefined) {
@@ -190,17 +192,36 @@ export class ColumnarStore<S extends SeriesSchema = SeriesSchema> {
             `ColumnarStore: eventCache entry has out-of-range row index ${rowIndex} (column length ${expectedLength})`,
           );
         }
-        // Pin the lower-level consistency contract: the cached
-        // event's key must match the column's key at this row.
-        if (cachedEvent.key().begin() !== keys.beginAt(rowIndex)) {
+        // **Structural key equality.** Catches mismatched key kind,
+        // begin/end disagreement, AND (for interval keys) divergent
+        // label — the full identity contract. Uses EventKey.equals
+        // which is the public-API equality semantics.
+        const columnKey = keys.keyAt(rowIndex);
+        const cachedKey = cachedEvent.key();
+        if (!cachedKey.equals(columnKey)) {
           throw new RangeError(
-            `ColumnarStore: eventCache entry at row ${rowIndex} has key.begin() = ${cachedEvent.key().begin()} but column keys.beginAt(${rowIndex}) = ${keys.beginAt(rowIndex)} — refusing to adopt a cache whose entries disagree with the column data`,
+            `ColumnarStore: eventCache entry at row ${rowIndex} has key (kind '${cachedKey.kind}', begin ${cachedKey.begin()}, end ${cachedKey.end()}) that does not structurally equal the column key (kind '${columnKey.kind}', begin ${columnKey.begin()}, end ${columnKey.end()}) — refusing to adopt a cache whose entries disagree with the column data`,
           );
         }
-        if (cachedEvent.key().end() !== keys.endAt(rowIndex)) {
-          throw new RangeError(
-            `ColumnarStore: eventCache entry at row ${rowIndex} has key.end() = ${cachedEvent.key().end()} but column keys.endAt(${rowIndex}) = ${keys.endAt(rowIndex)}`,
-          );
+        // **Data consistency.** Every schema value column's value at
+        // this row must match what `cachedEvent.data()[name]` says.
+        // Catches stale caches where the bounds happen to match but
+        // the payload diverged.
+        const cachedData = cachedEvent.data() as Readonly<
+          Record<string, unknown>
+        >;
+        for (let c = 1; c < schema.length; c += 1) {
+          const name = schema[c]!.name;
+          const columnValue = columns.get(name)!.read(rowIndex);
+          const cachedValue = cachedData[name];
+          // Tolerant equality: identical or both undefined (an
+          // invalid cell appears as `undefined` in both column.read
+          // and the event data).
+          if (cachedValue !== columnValue) {
+            throw new RangeError(
+              `ColumnarStore: eventCache entry at row ${rowIndex} has data['${name}'] = ${String(cachedValue)} but column read returns ${String(columnValue)}`,
+            );
+          }
         }
         ownedEventCache.set(rowIndex, cachedEvent);
       }
@@ -295,12 +316,12 @@ export class ColumnarStore<S extends SeriesSchema = SeriesSchema> {
   }
 
   /**
-   * Returns row-shaped tuples. Tuple shape depends on the key kind:
-   *
-   * - `time` keys: `[begin, ...values]`
-   * - `timeRange` keys: `[begin, end, ...values]`
-   * - `interval` keys: `[begin, end, ...values]` (the interval
-   *   label is recoverable via `keyAt(i)`)
+   * Returns row-shaped tuples `[key, ...values]` where `key` is
+   * the full `EventKey` instance (`Time` / `TimeRange` /
+   * `Interval`) — preserving the complete key identity including
+   * interval labels. Matches the shape contract of
+   * `RowForSchema<S>` from `types.ts` and the existing
+   * `TimeSeries.toRows()` convention.
    *
    * Each call rebuilds the array — `toRows() !== toRows()` — so
    * row-shape consumers that want stable references should cache
@@ -314,15 +335,14 @@ export class ColumnarStore<S extends SeriesSchema = SeriesSchema> {
     for (let i = 1; i < this.schema.length; i += 1) {
       colNames.push(this.schema[i]!.name);
     }
-    const includeEnd =
-      this.keys.kind === 'timeRange' || this.keys.kind === 'interval';
-    const keyArity = includeEnd ? 2 : 1;
     for (let i = 0; i < this.length; i += 1) {
-      const row: unknown[] = new Array(colNames.length + keyArity);
-      row[0] = this.keys.beginAt(i);
-      if (includeEnd) row[1] = this.keys.endAt(i);
+      const row: unknown[] = new Array(colNames.length + 1);
+      // Emit the full EventKey instance — preserves begin / end /
+      // (for interval) label. Consumers can extract via
+      // `key.begin()` / `key.end()` / `(key as Interval).value`.
+      row[0] = this.keys.keyAt(i);
       for (let c = 0; c < colNames.length; c += 1) {
-        row[c + keyArity] = this.columns.get(colNames[c]!)!.read(i);
+        row[c + 1] = this.columns.get(colNames[c]!)!.read(i);
       }
       rows[i] = row;
     }
@@ -330,10 +350,16 @@ export class ColumnarStore<S extends SeriesSchema = SeriesSchema> {
   }
 
   /**
-   * Returns row-shaped objects keyed by column name. The key is
-   * exposed as a `time` / `begin` / `end` field depending on the
-   * key kind. Same identity contract as `toRows()` — each call
-   * rebuilds.
+   * Returns row-shaped objects keyed by column name. The key
+   * column's field holds the full `EventKey` instance — for
+   * `time` keys it's a `Time`, for `timeRange` a `TimeRange`, for
+   * `interval` an `Interval` (preserving the label). This avoids
+   * synthetic-field collisions: a value column named `'end'`
+   * (which the previous shape silently overwrote) now cohabits
+   * with the key without conflict.
+   *
+   * Each call rebuilds — `toObjects() !== toObjects()` — same
+   * trade-off as `toRows()`.
    */
   toObjects(): ReadonlyArray<Readonly<Record<string, unknown>>> {
     const rows = new Array<Readonly<Record<string, unknown>>>(this.length);
@@ -344,10 +370,9 @@ export class ColumnarStore<S extends SeriesSchema = SeriesSchema> {
     const keyField = this.schema[0]!.name;
     for (let i = 0; i < this.length; i += 1) {
       const row: Record<string, unknown> = {};
-      row[keyField] = this.keys.beginAt(i);
-      if (this.keys.kind === 'timeRange' || this.keys.kind === 'interval') {
-        row.end = this.keys.endAt(i);
-      }
+      // Full EventKey instance under the key column's name. No
+      // synthetic `end` field — consumers extract via `key.end()`.
+      row[keyField] = this.keys.keyAt(i);
       for (let c = 0; c < colNames.length; c += 1) {
         const name = colNames[c]!;
         row[name] = this.columns.get(name)!.read(i);

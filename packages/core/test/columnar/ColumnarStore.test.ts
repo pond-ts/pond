@@ -226,13 +226,16 @@ describe('eventAt', () => {
 /* -------------------------------------------------------------------------- */
 
 describe('toRows', () => {
-  it('produces tuple-shaped rows [begin, ...values]', () => {
+  it('produces tuple-shaped rows [key, ...values] with full EventKey', () => {
     const { store } = makeBasicStore();
     const rows = store.toRows();
     expect(rows.length).toBe(3);
-    expect(rows[0]).toEqual([1000, 10, 0.5]);
-    expect(rows[1]).toEqual([2000, 20, 0.75]);
-    expect(rows[2]).toEqual([3000, 30, 0.9]);
+    // First element is now the full Time instance (preserves
+    // identity contract and matches RowForSchema<S>).
+    expect(rows[0]![0]).toBeInstanceOf(Time);
+    expect((rows[0]![0] as Time).begin()).toBe(1000);
+    expect(rows[0]!.slice(1)).toEqual([10, 0.5]);
+    expect(rows[2]!.slice(1)).toEqual([30, 0.9]);
   });
 
   it('handles invalid value-column cells (returns undefined)', () => {
@@ -248,20 +251,25 @@ describe('toRows', () => {
       new Map([['value', value]]),
     );
     const rows = store.toRows();
-    expect(rows[1]).toEqual([2, undefined]);
+    expect((rows[1]![0] as Time).begin()).toBe(2);
+    expect(rows[1]!.slice(1)).toEqual([undefined]);
   });
 });
 
 describe('toObjects', () => {
-  it('produces object-shaped rows keyed by column name', () => {
+  it('produces object-shaped rows keyed by column name with EventKey under the key column', () => {
     const { store } = makeBasicStore();
     const objs = store.toObjects();
     expect(objs.length).toBe(3);
-    expect(objs[0]).toEqual({ time: 1000, value: 10, load: 0.5 });
-    expect(objs[2]).toEqual({ time: 3000, value: 30, load: 0.9 });
+    expect(objs[0]!.time).toBeInstanceOf(Time);
+    expect((objs[0]!.time as Time).begin()).toBe(1000);
+    expect(objs[0]!.value).toBe(10);
+    expect(objs[0]!.load).toBe(0.5);
+    expect(objs[2]!.value).toBe(30);
+    expect(objs[2]!.load).toBe(0.9);
   });
 
-  it('includes end field for timeRange-keyed stores', () => {
+  it('timeRange-keyed stores expose full TimeRange under the key column', () => {
     const schema = [
       { name: 'tr', kind: 'timeRange' },
       { name: 'v', kind: 'number' },
@@ -277,14 +285,37 @@ describe('toObjects', () => {
       new Map([['v', v]]),
     );
     const objs = store.toObjects();
-    expect(objs[0]).toEqual({ tr: 0, end: 10, v: 100 });
-    expect(objs[1]).toEqual({ tr: 10, end: 20, v: 200 });
+    expect(objs[0]!.tr).toBeInstanceOf(TimeRange);
+    expect((objs[0]!.tr as TimeRange).begin()).toBe(0);
+    expect((objs[0]!.tr as TimeRange).end()).toBe(10);
+    expect(objs[0]!.v).toBe(100);
   });
 
   it('row objects are frozen', () => {
     const { store } = makeBasicStore();
     const objs = store.toObjects();
     expect(Object.isFrozen(objs[0])).toBe(true);
+  });
+
+  it('value column named "end" does not collide with the key (Codex round-1 finding)', () => {
+    // Previously toObjects wrote a synthetic 'end' field for
+    // timeRange/interval keys, colliding with any value column
+    // named 'end'. The fix puts the EventKey under the key
+    // column's name, with no synthetic 'end' — collision-free.
+    const schema = [
+      { name: 'tr', kind: 'timeRange' },
+      { name: 'end', kind: 'number' }, // deliberately named 'end'
+    ] as const;
+    const keys = timeRangeKeyColumnFromPairs([[0, 10]]);
+    const endCol = new Float64Column(Float64Array.of(42), 1);
+    const store = ColumnarStore.fromTrustedStore(
+      schema,
+      keys,
+      new Map([['end', endCol]]),
+    );
+    const objs = store.toObjects();
+    expect((objs[0]!.tr as TimeRange).end()).toBe(10);
+    expect(objs[0]!.end).toBe(42); // not overwritten by synthetic 'end'
   });
 });
 
@@ -411,7 +442,9 @@ describe('Framework independence (cross-module assertion)', () => {
 
     expect(store.length).toBe(3);
     expect(store.eventAt(1).data().temperature).toBe(21);
-    expect(store.toRows()[2]).toEqual([2000, 22]);
+    const row2 = store.toRows()[2]!;
+    expect((row2[0] as { begin: () => number }).begin()).toBe(2000);
+    expect(row2.slice(1)).toEqual([22]);
   });
 });
 
@@ -452,7 +485,7 @@ describe('eventCache validation (L2-flagged poisoning hole)', () => {
     return { schema, keys, columns: new Map([['value', value]]) };
   }
 
-  it('rejects cache entries whose key.begin disagrees with column key.begin', () => {
+  it('rejects cache entries whose key disagrees structurally with the column key', () => {
     const { schema, keys, columns } = makeSchemaAndKeys();
     const poisoned = new Map<number, ColumnarEvent>();
     poisoned.set(1, new Event(new Time(99999), { value: 20 }) as ColumnarEvent);
@@ -460,7 +493,67 @@ describe('eventCache validation (L2-flagged poisoning hole)', () => {
       ColumnarStore.fromTrustedStore(schema, keys, columns, {
         eventCache: poisoned,
       }),
-    ).toThrow(/key\.begin\(\).*disagree/);
+    ).toThrow(/does not structurally equal/);
+  });
+
+  it('rejects cache entries whose key kind differs (Codex round-1 finding)', () => {
+    // Time-keyed store; cache entry has a TimeRange key with the
+    // same begin/end. Previous (looser) validation accepted this;
+    // structural equality via EventKey.equals catches it.
+    const { schema, keys, columns } = makeSchemaAndKeys();
+    const poisoned = new Map<number, ColumnarEvent>();
+    poisoned.set(
+      1,
+      new Event(new TimeRange({ start: 2, end: 2 }), {
+        value: 20,
+      }) as ColumnarEvent,
+    );
+    expect(() =>
+      ColumnarStore.fromTrustedStore(schema, keys, columns, {
+        eventCache: poisoned,
+      }),
+    ).toThrow(/does not structurally equal/);
+  });
+
+  it('rejects cache entries whose data values disagree with the column reads (Codex round-1 finding)', () => {
+    // Bounds match, key kind matches — but data has wrong value.
+    // Previous validation didn't check data. Now it does.
+    const { schema, keys, columns } = makeSchemaAndKeys();
+    const poisoned = new Map<number, ColumnarEvent>();
+    poisoned.set(1, new Event(new Time(2), { value: 99999 }) as ColumnarEvent);
+    expect(() =>
+      ColumnarStore.fromTrustedStore(schema, keys, columns, {
+        eventCache: poisoned,
+      }),
+    ).toThrow(/data\['value'\] = 99999.*column read returns 20/);
+  });
+
+  it('rejects cache entries with mismatched interval label', () => {
+    // For interval-keyed stores, the structural equality check
+    // catches label differences too.
+    const schema = [
+      { name: 'bucket', kind: 'interval' },
+      { name: 'v', kind: 'number' },
+    ] as const;
+    const begin = Float64Array.of(0);
+    const end = Float64Array.of(10);
+    const labels = stringColumnFromArray(['real-label'], {
+      forceDict: true,
+    });
+    const ikeys = new IntervalKeyColumn(begin, end, labels, 1);
+    const v = new Float64Column(Float64Array.of(42), 1);
+    const poisoned = new Map<number, ColumnarEvent>();
+    poisoned.set(
+      0,
+      new Event(new Interval({ value: 'wrong-label', start: 0, end: 10 }), {
+        v: 42,
+      }) as ColumnarEvent,
+    );
+    expect(() =>
+      ColumnarStore.fromTrustedStore(schema, ikeys, new Map([['v', v]]), {
+        eventCache: poisoned,
+      }),
+    ).toThrow(/does not structurally equal/);
   });
 
   it('rejects cache entries with out-of-range row index', () => {
@@ -570,7 +663,9 @@ describe('Edge cases (L2 coverage gaps)', () => {
     const ev = store.eventAt(1);
     expect(ev.key().begin()).toBe(2);
     expect(Object.keys(ev.data())).toEqual([]);
-    expect(store.toRows()[1]).toEqual([2]);
+    const row1 = store.toRows()[1]!;
+    expect(row1.length).toBe(1);
+    expect((row1[0] as Time).begin()).toBe(2);
   });
 
   it('toRows() rebuilds on each call (documented contract)', () => {
@@ -578,7 +673,7 @@ describe('Edge cases (L2 coverage gaps)', () => {
     expect(store.toRows()).not.toBe(store.toRows());
   });
 
-  it('toRows for timeRange-keyed store includes the end timestamp', () => {
+  it('toRows for timeRange-keyed store emits full TimeRange + values', () => {
     const schema = [
       { name: 'tr', kind: 'timeRange' },
       { name: 'v', kind: 'number' },
@@ -594,8 +689,37 @@ describe('Edge cases (L2 coverage gaps)', () => {
       new Map([['v', v]]),
     );
     const rows = store.toRows();
-    expect(rows[0]).toEqual([0, 10, 100]);
-    expect(rows[1]).toEqual([10, 25, 200]);
+    expect(rows[0]![0]).toBeInstanceOf(TimeRange);
+    expect((rows[0]![0] as TimeRange).begin()).toBe(0);
+    expect((rows[0]![0] as TimeRange).end()).toBe(10);
+    expect(rows[0]![1]).toBe(100);
+    expect((rows[1]![0] as TimeRange).end()).toBe(25);
+  });
+
+  it('toRows for interval-keyed store preserves the label (Codex round-1 finding)', () => {
+    // The interval label lives in keys.labels, not the value map.
+    // Previous shape dropped it; new shape emits the full Interval.
+    const schema = [
+      { name: 'bucket', kind: 'interval' },
+      { name: 'count', kind: 'number' },
+    ] as const;
+    const begin = Float64Array.of(0, 86_400_000);
+    const end = Float64Array.of(86_400_000, 172_800_000);
+    const labels = stringColumnFromArray(['day-1', 'day-2'], {
+      forceDict: true,
+    });
+    const keys = new IntervalKeyColumn(begin, end, labels, 2);
+    const counts = new Float64Column(Float64Array.of(42, 99), 2);
+    const store = ColumnarStore.fromTrustedStore(
+      schema,
+      keys,
+      new Map([['count', counts]]),
+    );
+    const rows = store.toRows();
+    expect(rows[0]![0]).toBeInstanceOf(Interval);
+    expect((rows[0]![0] as Interval).value).toBe('day-1');
+    expect(rows[0]![1]).toBe(42);
+    expect((rows[1]![0] as Interval).value).toBe('day-2');
   });
 
   it('toObjects() rebuilds on each call (documented contract)', () => {
