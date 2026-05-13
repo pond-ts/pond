@@ -1,56 +1,36 @@
 /**
  * Key columns — the axis along which `ColumnarStore` rows are ordered.
  *
- * Three concrete shapes, one per `FirstColumn` kind in `types.ts`:
+ * Three concrete shapes, matching the three pond-ts key kinds at the
+ * row-API layer but exposing only typed-buffer access here. The
+ * framework treats keys as **pure indexed numeric data**; concrete
+ * `EventKey` materialization (`Time` / `TimeRange` / `Interval`
+ * instances) lives in the row-API adapter layer
+ * (`packages/core/src/series-store.ts`), not in the framework.
  *
  * - **`TimeKeyColumn`** (`kind: 'time'`): single `Float64Array` of
- *   millisecond timestamps. `begin` and `end` semantically coincide.
- * - **`TimeRangeKeyColumn`** (`kind: 'timeRange'`): `begin` /
- *   `end` `Float64Array`s representing half-open `[begin, end)` intervals.
+ *   millisecond timestamps. `begin` and `end` semantically coincide
+ *   (same buffer reference).
+ * - **`TimeRangeKeyColumn`** (`kind: 'timeRange'`): `begin` / `end`
+ *   `Float64Array`s representing half-open `[begin, end)` intervals.
  * - **`IntervalKeyColumn`** (`kind: 'interval'`): `begin` / `end`
- *   plus a label column. Labels follow the public `IntervalValue`
- *   contract (`string | number`); the label column is
- *   discriminated by `labelKind`:
+ *   plus a label column. The label column is discriminated by
+ *   `labelKind`:
  *   - `labelKind: 'string'` → `labels: StringColumn` (typically
  *     dict-encoded for cardinality wins on rolled-up tiles).
- *   - `labelKind: 'number'` → `labels: Float64Column` (the
- *     `Sequence` / numeric-tag pattern).
- *
- *   `keyAt(i)` materializes `Interval` instances with the
- *   original-typed label, so `Interval.equals` /
- *   `compareIntervalValues` semantics round-trip unchanged.
- *
- * Each variant exposes `keyAt(i)` which materializes a concrete
- * `Time` / `TimeRange` / `Interval` instance from the underlying
- * buffers, with a lazy per-row cache so repeated reads (operator
- * hot paths, chart hover handlers, `eventAt`) reuse the same
- * `EventKey` reference.
+ *   - `labelKind: 'number'` → `labels: Float64Column` (the numeric-
+ *     tag pattern used by some producers).
  *
  * **Buffer-immutability contract.** The `begin` / `end` typed arrays
- * and the `values` `StringColumn` are treated as immutable after
- * construction. Mutating them externally (e.g., writing into
- * `column.begin[i]` directly) is a contract violation: the cache
- * keyed by row index will not invalidate, so subsequent `keyAt(i)`
- * calls return the stale `EventKey` instance. The framework's
- * intake paths and copy-on-write slice operations honor this
- * contract; consumers must too.
- *
- * **Cache growth.** The `Map<number, EventKey>` cache is
- * unbounded; access patterns that touch every row materialize one
- * `EventKey` per row. For typical operator workloads this is
- * negligible, but high-row-count cold-start access (1M+ rows
- * traversed once) accumulates the cache for the column's lifetime.
- * TODO (step 2 / TimeSeries integration): consider a wrapping
- * `ColumnarStore` layer that bounds the cache or wires it through
- * a shared budget, if benches show this is a real cost.
+ * and the `labels` column are treated as immutable after
+ * construction. Mutating them externally (`column.begin[i] = ...`)
+ * is a contract violation; the framework intake paths and
+ * copy-on-write slice operations honor this, and consumers must
+ * too.
  *
  * Framework-internal; not exported from `packages/core/src/index.ts`.
  */
 
-import { Interval } from '../Interval.js';
-import { Time } from '../Time.js';
-import { TimeRange } from '../TimeRange.js';
-import type { EventKey, IntervalValue } from '../temporal.js';
 import { Float64Column } from './column.js';
 import { StringColumn } from './string-column.js';
 import { validateColumnLength } from './validity.js';
@@ -60,12 +40,12 @@ export type KeyColumn = TimeKeyColumn | TimeRangeKeyColumn | IntervalKeyColumn;
 
 /**
  * Shared eager validation that every active timestamp slot is a
- * finite number. The `Time` / `TimeRange` / `Interval` concrete
- * classes reject non-finite timestamps via `normalizeTimestamp`;
- * the key-column primitives must reject them at construction time
- * too — otherwise `NaN` bypasses the `begin <= end` check and
- * `Infinity` feeds bogus values into ordering / range logic before
- * the (deferred) `keyAt` materialization throws.
+ * finite number. The row-API layer's `Time` / `TimeRange` /
+ * `Interval` constructors reject non-finite timestamps via
+ * `normalizeTimestamp`; the columnar substrate enforces the same
+ * invariant at the buffer level so `NaN` / `Infinity` can't slip
+ * past the inverted-pair check or feed bogus values to ordering /
+ * range logic.
  */
 function assertFiniteTimestamps(
   buffer: Float64Array,
@@ -83,11 +63,11 @@ function assertFiniteTimestamps(
 }
 
 /**
- * Shared interface implemented by every key-column class. Provides
- * row-indexed access to the typed-array buffers and lazy
- * materialization of the concrete `EventKey` instance.
+ * Shared interface implemented by every key-column class. Pure
+ * indexed buffer access; the framework knows nothing about
+ * `EventKey` / `Time` / `TimeRange` / `Interval`.
  */
-interface KeyColumnBase<K extends EventKey['kind']> {
+interface KeyColumnBase<K extends 'time' | 'timeRange' | 'interval'> {
   readonly kind: K;
   /** Row count. */
   readonly length: number;
@@ -96,21 +76,10 @@ interface KeyColumnBase<K extends EventKey['kind']> {
   /** Half-open interval end. For `time` keys, equal to `begin`. */
   readonly end: Float64Array;
 
-  /** Direct buffer read: `begin[i]`. */
+  /** Direct buffer read: `begin[i]`. Throws on out-of-range. */
   beginAt(i: number): number;
-  /** Direct buffer read: `end[i]`. */
+  /** Direct buffer read: `end[i]`. Throws on out-of-range. */
   endAt(i: number): number;
-
-  /**
-   * Returns the concrete `EventKey` instance for row `i`. Lazily
-   * constructed on first access and cached via an internal
-   * `Map<number, EventKey>` keyed by row index. Subsequent calls
-   * return the same reference — pinning `keyAt(i) === keyAt(i)`
-   * for the operator hot path.
-   *
-   * Out-of-range indices throw `RangeError`.
-   */
-  keyAt(i: number): EventKey;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -127,7 +96,6 @@ export class TimeKeyColumn implements KeyColumnBase<'time'> {
    * the right answer (`0` for a point in time).
    */
   readonly end: Float64Array;
-  readonly #cache = new Map<number, Time>();
 
   constructor(begin: Float64Array, length: number) {
     validateColumnLength(length, 'TimeKeyColumn');
@@ -155,20 +123,6 @@ export class TimeKeyColumn implements KeyColumnBase<'time'> {
   endAt(i: number): number {
     return this.beginAt(i);
   }
-
-  keyAt(i: number): Time {
-    if (i < 0 || i >= this.length) {
-      throw new RangeError(
-        `TimeKeyColumn.keyAt out of range: ${i} not in [0, ${this.length})`,
-      );
-    }
-    let cached = this.#cache.get(i);
-    if (cached === undefined) {
-      cached = new Time(this.begin[i]!);
-      this.#cache.set(i, cached);
-    }
-    return cached;
-  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -180,7 +134,6 @@ export class TimeRangeKeyColumn implements KeyColumnBase<'timeRange'> {
   readonly length: number;
   readonly begin: Float64Array;
   readonly end: Float64Array;
-  readonly #cache = new Map<number, TimeRange>();
 
   constructor(begin: Float64Array, end: Float64Array, length: number) {
     validateColumnLength(length, 'TimeRangeKeyColumn');
@@ -230,20 +183,6 @@ export class TimeRangeKeyColumn implements KeyColumnBase<'timeRange'> {
     }
     return this.end[i]!;
   }
-
-  keyAt(i: number): TimeRange {
-    if (i < 0 || i >= this.length) {
-      throw new RangeError(
-        `TimeRangeKeyColumn.keyAt out of range: ${i} not in [0, ${this.length})`,
-      );
-    }
-    let cached = this.#cache.get(i);
-    if (cached === undefined) {
-      cached = new TimeRange({ start: this.begin[i]!, end: this.end[i]! });
-      this.#cache.set(i, cached);
-    }
-    return cached;
-  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -251,12 +190,12 @@ export class TimeRangeKeyColumn implements KeyColumnBase<'timeRange'> {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Discriminated label column for `IntervalKeyColumn`. `string`
+ * Discriminated label storage for `IntervalKeyColumn`. `'string'`
  * labels go into a `StringColumn` (typically dict-encoded);
- * `number` labels go into a `Float64Column`. The discriminator
- * lets `keyAt` materialize `Interval` instances with the original
- * `IntervalValue` type intact — no implicit `1` → `'1'`
- * stringification, no `compareIntervalValues` semantic drift.
+ * `'number'` labels go into a `Float64Column`. The discriminator
+ * lets row-API consumers materialize labels with the correct type
+ * (preserving `string | number` `IntervalValue` semantics) without
+ * an instanceof check.
  */
 export type IntervalLabelKind = 'string' | 'number';
 
@@ -265,18 +204,8 @@ export class IntervalKeyColumn implements KeyColumnBase<'interval'> {
   readonly length: number;
   readonly begin: Float64Array;
   readonly end: Float64Array;
-  /**
-   * Discriminator for the `labels` column. Lets consumers narrow on
-   * the typed label representation without an instanceof check.
-   */
   readonly labelKind: IntervalLabelKind;
-  /**
-   * Interval labels per row. The column type is discriminated by
-   * `labelKind`. Both representations share the column-infrastructure
-   * benefits (validity, slicing, dictionary for strings).
-   */
   readonly labels: StringColumn | Float64Column;
-  readonly #cache = new Map<number, Interval>();
 
   constructor(
     begin: Float64Array,
@@ -311,13 +240,10 @@ export class IntervalKeyColumn implements KeyColumnBase<'interval'> {
         );
       }
     }
-    // **Discriminate the label column by `kind` exactly.** TypeScript
+    // Discriminate the label column by `kind` exactly. TypeScript
     // accepts the `StringColumn | Float64Column` parameter, but at
-    // runtime a caller can pass anything via a cast — a `BooleanColumn`,
-    // an `ArrayColumn`, or a future custom column. The else-branch
-    // "everything not string is number" classifier would silently
-    // accept those and advertise `labelKind: 'number'`, corrupting
-    // any downstream code that branches on the discriminator.
+    // runtime a caller can pass anything via a cast — a
+    // `BooleanColumn`, an `ArrayColumn`, or a future custom column.
     let labelKind: IntervalLabelKind;
     if (labels.kind === 'string') {
       labelKind = 'string';
@@ -329,8 +255,8 @@ export class IntervalKeyColumn implements KeyColumnBase<'interval'> {
       );
     }
     // Every row must have a defined label that matches the
-    // discriminator. The label-defined check covers validity (Codex
-    // round 1); the type + finite check covers the round-3 hole.
+    // discriminator. The label-defined check covers validity; the
+    // type + finite check covers cast-bypass and `NaN`-label holes.
     for (let i = 0; i < length; i += 1) {
       const label = labels.read(i);
       if (label === undefined) {
@@ -341,7 +267,7 @@ export class IntervalKeyColumn implements KeyColumnBase<'interval'> {
       if (labelKind === 'string') {
         if (typeof label !== 'string') {
           throw new TypeError(
-            `IntervalKeyColumn: row ${i} label is not a string despite labelKind='string' (got ${typeof label}); reject cast-bypass at the boundary`,
+            `IntervalKeyColumn: row ${i} label is not a string despite labelKind='string' (got ${typeof label})`,
           );
         }
       } else {
@@ -378,37 +304,12 @@ export class IntervalKeyColumn implements KeyColumnBase<'interval'> {
   }
 
   /**
-   * Direct label read; returns `string | number` per `IntervalValue`,
-   * preserving the original type. May return `undefined` only if a
-   * caller bypassed the constructor invariant by mutating the label
-   * column post-construction (a documented contract violation).
+   * Direct label read. Returns the underlying `string | number`
+   * value per the label-column kind, or `undefined` only if a
+   * caller violated the buffer-immutability contract.
    */
-  labelAt(i: number): IntervalValue | undefined {
+  labelAt(i: number): string | number | undefined {
     return this.labels.read(i);
-  }
-
-  keyAt(i: number): Interval {
-    if (i < 0 || i >= this.length) {
-      throw new RangeError(
-        `IntervalKeyColumn.keyAt out of range: ${i} not in [0, ${this.length})`,
-      );
-    }
-    let cached = this.#cache.get(i);
-    if (cached === undefined) {
-      const label = this.labels.read(i);
-      if (label === undefined) {
-        throw new Error(
-          `IntervalKeyColumn.keyAt: row ${i} has no interval label (validity bit is 0)`,
-        );
-      }
-      cached = new Interval({
-        value: label,
-        start: this.begin[i]!,
-        end: this.end[i]!,
-      });
-      this.#cache.set(i, cached);
-    }
-    return cached;
   }
 }
 

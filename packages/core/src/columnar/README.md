@@ -1,64 +1,93 @@
 # Columnar framework
 
 This directory holds the columnar storage substrate that underpins
-pond-ts internals starting in Phase 4.7. The framework is the v1.0
-foundation; consumers (`TimeSeries`, `LiveSeries`, reducers, etc.)
-import from it via relative paths.
+pond-ts internals starting in Phase 4.7. The framework is a **pure
+indexed columnar data store** — it knows about typed arrays,
+columns, key buffers, and indexed access, but it does **not** know
+about pond-ts row-API types (`Event`, `EventKey`, `Time`,
+`TimeRange`, `Interval`).
+
+Row-API materialization lives one layer up in
+[`../series-store.ts`](../series-store.ts) (`SeriesStore<S>`), which
+wraps a `ColumnarStore` with a `SeriesSchema` and provides
+`eventAt` / `toEvents` / `Symbol.iterator` / row-shape exports plus
+the lazy `Map<number, Event>` cache and the five public-API
+invariants from the RFC.
 
 ## What's in here
 
-| File               | Sub-step | Contents                                                       |
-| ------------------ | -------- | -------------------------------------------------------------- |
-| `validity.ts`      | 1a       | `ValidityBitmap` — bit-packed validity tracking                |
-| `column.ts`        | 1a       | `Column` discriminated union; `Float64Column`, `BooleanColumn` |
-| `string-column.ts` | 1b       | `StringColumn` (dict-encoded + fallback), dictionary heuristic |
-| `array-column.ts`  | 1c       | `ArrayColumn` (fallback mode) + empty-array sentinel           |
-| `key-column.ts`    | 1c       | `TimeKeyColumn`, `TimeRangeKeyColumn`, `IntervalKeyColumn`     |
-| `store.ts`         | 1d       | `ColumnarStore<S>` — read-only typed store + event cache       |
-| `index.ts`         | (barrel) | Internal-only re-exports                                       |
-| _later sub-steps_  | 1e–1h    | Builders, views, chunked columns, ring buffer                  |
+| File               | Sub-step | Contents                                                               |
+| ------------------ | -------- | ---------------------------------------------------------------------- |
+| `validity.ts`      | 1a       | `ValidityBitmap` — bit-packed validity tracking                        |
+| `column.ts`        | 1a       | `Column` discriminated union; `Float64Column`, `BooleanColumn`         |
+| `string-column.ts` | 1b       | `StringColumn` (dict-encoded + fallback), dictionary heuristic         |
+| `array-column.ts`  | 1c       | `ArrayColumn` (fallback mode) + empty-array sentinel                   |
+| `key-column.ts`    | 1c       | `TimeKeyColumn`, `TimeRangeKeyColumn`, `IntervalKeyColumn` (buffers)   |
+| `store.ts`         | 1d       | `ColumnarStore<S>` — schema-validated typed store; pure indexed access |
+| `index.ts`         | (barrel) | Internal-only re-exports                                               |
+| _later sub-steps_  | 1e–1h    | Builders, views, chunked columns, ring buffer                          |
 
 See [`docs/briefs/columnar-framework-design.md`](../../../../docs/briefs/columnar-framework-design.md)
-for the full design, including module layout and primitive contracts.
+for the full design.
 
 ## Boundary contract
 
-**Internal only.** Nothing in this directory is re-exported from
-`packages/core/src/index.ts`. The framework's API surface is mobile
-during v1.0 development — primitives may move, rename, or restructure
-without a major-version bump. Once public API operators that consume
-the framework stabilize, the public surface they expose stabilizes;
-the framework stays internal.
+**Pure substrate.** Nothing under `columnar/` imports `Event`,
+`EventKey`, `Time`, `TimeRange`, `Interval`, or
+`temporal.ts`'s value-class definitions. The framework is generic
+columnar primitives parameterized over a `SeriesSchema` type only;
+no row-API value materialization happens here.
 
-**No upstream dependencies.** Files under `columnar/` do not import
-from `TimeSeries`, `LiveSeries`, or any operator. The framework
-provides primitives; the rest of pond-ts is built on them, not the
-other way around. An independence test (lands with sub-step 1d) pins
-this rule.
+**Forbidden upstream imports.** The independence test in
+`series-store.test.ts` enforces this by scanning every file under
+`columnar/` for imports from:
 
-**No external runtime.** The framework provides Apache Arrow-compatible
-concepts without depending on Arrow JS. Future doors (Arrow zero-copy
-export, WASM kernels, WebGPU) stay open; nothing is built for them
-in v1.0.
+- `TimeSeries`, `LiveSeries`, `PartitionedTimeSeries`, etc.
+  (operators)
+- `Event`, `Time`, `TimeRange`, `Interval` (row-API value classes)
+- `temporal` (the row-API key interface module)
+- `reducers/` (operator implementations)
+
+`SeriesSchema` / `ColumnDef` / `ScalarKind` / `ArrayValue` are
+**type-only** imports from `types.ts` and are allowed — the
+framework needs to type its column-and-schema shapes without
+pulling in any runtime row-API logic.
+
+**No external runtime.** The framework provides Apache
+Arrow-compatible concepts without depending on Arrow JS. Future
+doors (Arrow zero-copy export, WASM kernels, WebGPU) stay open;
+nothing is built for them in v1.0.
 
 ## Conventions
 
 - **Validity bitmap is optional.** `column.validity` absent means
-  every cell is defined; build code only allocates a bitmap when at
-  least one slot is missing.
+  every cell is defined; build code only allocates a bitmap when
+  at least one slot is missing.
 - **Buffer slots for invalid cells are arbitrary.** Consumers must
   consult `validity` before treating a slot as meaningful.
 - **`sliceByRange` is buffer-zero-copy where the kind allows it.**
   `Float64Column.sliceByRange` returns a `subarray` view;
-  `BooleanColumn.sliceByRange` repacks because bit boundaries don't
-  align to byte boundaries.
+  `BooleanColumn.sliceByRange` repacks because bit boundaries
+  don't align to byte boundaries.
 - **`sliceByIndices` always materializes.** Index-projection
   zero-copy lives at the store level via `withRowSelection`
   (sub-step 1f).
+- **Defensive ownership of caller-supplied references.** Builders /
+  factories that accept caller arrays or maps copy them at
+  construction time (matches the PR #134 round-2 / PR #135 L2
+  pattern). The framework never trusts a `ReadonlyMap` /
+  `ReadonlyArray` to be runtime-immutable.
+- **Sentinel for `scan(skipInvalid: false)`.** Invalid rows
+  receive a documented sentinel matching the column's value type:
+  `0` for numeric, `false` for boolean, `''` for string,
+  `EMPTY_ARRAY_SENTINEL` for array.
 
 ## Test surface
 
 Independent tests live at `packages/core/test/columnar/`. They
 construct and exercise columnar primitives without importing from
-`TimeSeries` / `LiveSeries`. Target: ~200 framework-only tests by
-the end of sub-step 1h.
+`TimeSeries` / `LiveSeries` / `Event` / etc. Target: ~280
+framework-only tests by the end of sub-step 1d. The cross-module
+independence test (with the import-graph scan) lives in
+`test/series-store.test.ts` and runs against this directory's
+files.
