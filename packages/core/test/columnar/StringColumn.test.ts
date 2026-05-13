@@ -7,6 +7,7 @@ import {
   StringColumn,
   buildDictionaryIndex,
   estimateDictionaryBytes,
+  remapIndicesToDictionary,
   stringColumnDictEncoded,
   stringColumnFallback,
   stringColumnFromArray,
@@ -640,5 +641,176 @@ describe('stringColumnFromArray heuristic boundaries', () => {
     // 20 rows, 9 distinct → ratio 0.45, below 0.5.
     const source = Array.from({ length: 20 }, (_, i) => `v${i % 9}`);
     expect(stringColumnFromArray(source).isDictEncoded).toBe(true);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Codex round-2 regression: scan never passes undefined to a `string` callback. */
+/* -------------------------------------------------------------------------- */
+
+describe('scan never passes undefined (string callback safety)', () => {
+  it('dict-encoded scan with skipInvalid:false on all-invalid empty dict does not invoke callback with undefined', () => {
+    // Reproduces the Codex high finding: sliceByIndices on an empty dict
+    // produces a length-K all-invalid column. scan(skipInvalid:false)
+    // previously dereferenced `dict[0]` returning `undefined` for these
+    // rows and invoked `fn(undefined!, i)`. After the fix, scan filters
+    // `val !== undefined` in both branches.
+    const col = stringColumnFromArray([]);
+    const slice = col.sliceByIndices(Int32Array.of(0, 1, 2));
+    const visited: Array<[string, number]> = [];
+    slice.scan(
+      (v, i) => {
+        // Hard runtime check: v must be a string.
+        expect(typeof v).toBe('string');
+        visited.push([v, i]);
+      },
+      { skipInvalid: false },
+    );
+    expect(visited).toEqual([]);
+  });
+
+  it('dict-encoded scan with skipInvalid:false visits invalid rows with the placeholder string when dictionary has it', () => {
+    // When the source dictionary has the placeholder index, scan with
+    // skipInvalid:false visits the invalid row but the value passed is
+    // a string (the placeholder dict[0]), not undefined. Caller can
+    // consult `column.validity` to distinguish missing-but-visited
+    // from genuinely-present.
+    const col = stringColumnDictEncoded(['a', 'b'], Int32Array.of(0, 1));
+    const slice = col.sliceByIndices(Int32Array.of(0, 5, 1));
+    const visited: Array<[string, number]> = [];
+    slice.scan(
+      (v, i) => {
+        expect(typeof v).toBe('string'); // never undefined
+        visited.push([v, i]);
+      },
+      { skipInvalid: false },
+    );
+    // Index 1 was out-of-range in source; placeholder dereferences to
+    // dict[0] = 'a' (the framework allows arbitrary values at invalid
+    // cells per `read`'s short-circuit contract).
+    expect(visited).toEqual([
+      ['a', 0],
+      ['a', 1],
+      ['b', 2],
+    ]);
+    // Validity bitmap still reflects the actual invariant.
+    expect(slice.validity!.isDefined(1)).toBe(false);
+  });
+
+  it('dict-encoded scan with skipInvalid:true on the same column skips the invalid row', () => {
+    const col = stringColumnDictEncoded(['a', 'b'], Int32Array.of(0, 1));
+    const slice = col.sliceByIndices(Int32Array.of(0, 5, 1));
+    const visited: Array<[string, number]> = [];
+    slice.scan((v, i) => visited.push([v, i]));
+    expect(visited).toEqual([
+      ['a', 0],
+      ['b', 2],
+    ]);
+  });
+
+  it('dict-encoded scan with no validity bitmap is safe when dict has the index', () => {
+    const col = stringColumnDictEncoded(['x', 'y'], Int32Array.of(0, 1));
+    const visited: string[] = [];
+    col.scan((v) => visited.push(v));
+    expect(visited).toEqual(['x', 'y']);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Codex round-2 regression: explicit fallback validity must be consistent.    */
+/* -------------------------------------------------------------------------- */
+
+describe('Explicit fallback validity consistency', () => {
+  it('throws when validity marks a row as defined but fallback[i] is undefined', () => {
+    // Reproduces the Codex high finding: silent data drop in scan.
+    // Caller passes all-defined validity but fallback has undefined at i=1.
+    const allDefined = validityFromBits(new Uint8Array([0b111]), 3);
+    expect(() =>
+      stringColumnFallback(['a', undefined, 'b'], allDefined),
+    ).toThrow(/defined but fallback/);
+  });
+
+  it('throws via the direct constructor on the same inconsistency', () => {
+    const validity = validityFromBits(new Uint8Array([0b111]), 3);
+    expect(
+      () =>
+        new StringColumn(3, {
+          fallback: ['a', undefined, 'b'],
+          validity,
+        }),
+    ).toThrow(/defined but fallback/);
+  });
+
+  it('accepts consistent explicit validity for fallback mode', () => {
+    // validity says i=0 and i=2 are defined; fallback has strings there.
+    // i=1 is undefined in both — consistent.
+    const validity = validityFromBits(new Uint8Array([0b101]), 3);
+    const col = stringColumnFallback(['a', undefined, 'b'], validity);
+    expect(col.read(0)).toBe('a');
+    expect(col.read(1)).toBeUndefined();
+    expect(col.read(2)).toBe('b');
+  });
+
+  it('derived-validity factory path remains internally consistent', () => {
+    // When the factory derives validity, it cannot be inconsistent
+    // because it's built directly from typeof checks.
+    const col = stringColumnFallback(['a', undefined, 'b', undefined]);
+    expect(col.validity!.definedCount).toBe(2);
+    const visited: string[] = [];
+    col.scan((v) => visited.push(v));
+    expect(visited).toEqual(['a', 'b']);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Codex round-2: cross-dictionary remap for join paths.                      */
+/* -------------------------------------------------------------------------- */
+
+describe('remapIndicesToDictionary', () => {
+  it('translates source indices to target dictionary positions', () => {
+    const srcDict = ['us-east', 'us-west', 'eu-west'];
+    const targetDict = ['eu-west', 'us-west', 'asia', 'us-east'];
+    // Source row 0 = 'us-east' → target idx 3
+    // Source row 1 = 'us-west' → target idx 1
+    // Source row 2 = 'eu-west' → target idx 0
+    const srcIndices = Int32Array.of(0, 1, 2);
+    const remapped = remapIndicesToDictionary(srcIndices, srcDict, targetDict);
+    expect(Array.from(remapped)).toEqual([3, 1, 0]);
+  });
+
+  it('marks missing target strings with -1', () => {
+    const srcDict = ['a', 'b', 'c'];
+    const targetDict = ['a', 'c']; // 'b' is absent
+    const srcIndices = Int32Array.of(0, 1, 2);
+    const remapped = remapIndicesToDictionary(srcIndices, srcDict, targetDict);
+    expect(Array.from(remapped)).toEqual([0, -1, 1]);
+  });
+
+  it('marks out-of-range source indices with -1', () => {
+    const srcDict = ['a', 'b'];
+    const targetDict = ['a', 'b'];
+    const srcIndices = Int32Array.of(0, 5, -1);
+    const remapped = remapIndicesToDictionary(srcIndices, srcDict, targetDict);
+    expect(Array.from(remapped)).toEqual([0, -1, -1]);
+  });
+
+  it('reversed dictionaries — the cross-column join scenario', () => {
+    // Two columns with the same strings but reversed dictionary orders.
+    // Raw integer comparison would give false matches; remap fixes it.
+    const dictA = ['x', 'y'];
+    const dictB = ['y', 'x'];
+    const indicesA = Int32Array.of(0, 1, 0, 1); // x, y, x, y
+    const remapped = remapIndicesToDictionary(indicesA, dictA, dictB);
+    // After remap, indicesA[i] === dictB-index-of-dictA[indicesA[i]]
+    expect(Array.from(remapped)).toEqual([1, 0, 1, 0]);
+  });
+
+  it('handles empty source dictionary', () => {
+    const remapped = remapIndicesToDictionary(
+      new Int32Array(0),
+      [],
+      ['a', 'b'],
+    );
+    expect(remapped.length).toBe(0);
   });
 });

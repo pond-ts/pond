@@ -126,6 +126,22 @@ export class StringColumn {
           `StringColumn: fallback length ${options.fallback!.length} does not match column length ${length}`,
         );
       }
+      // If validity is supplied, every row it marks as defined must
+      // contain a string in the fallback array. Otherwise reads would
+      // return `undefined` for a "defined" cell — silent data drop in
+      // scan. Without explicit validity, the fallback factory derives
+      // validity from `undefined` slots, so the two are consistent
+      // by construction.
+      if (validity !== undefined) {
+        const fb = options.fallback!;
+        for (let i = 0; i < length; i += 1) {
+          if (validity.isDefined(i) && typeof fb[i] !== 'string') {
+            throw new RangeError(
+              `StringColumn: validity marks index ${i} as defined but fallback[${i}] is not a string`,
+            );
+          }
+        }
+      }
       this.fallback = options.fallback!;
     }
     this.length = length;
@@ -149,6 +165,19 @@ export class StringColumn {
     return this.fallback![i];
   }
 
+  /**
+   * Linear scan with callback. `skipInvalid` defaults to true. When
+   * `skipInvalid: false`, the scan considers every row but **still
+   * only invokes the callback for rows whose effective string value
+   * is defined** — the callback's `value` parameter is typed as
+   * `string`, so we never pass `undefined`. This matches the
+   * fallback-mode behavior and protects against the dict-encoded
+   * empty-placeholder path where an invalid row's index points
+   * outside the dictionary.
+   *
+   * To distinguish "missing" from "skipped" when iterating, consult
+   * `column.validity` directly.
+   */
   scan(fn: (value: string, i: number) => void, options?: ScanOptions): void {
     const skipInvalid = options?.skipInvalid ?? true;
     const v = this.validity;
@@ -157,15 +186,16 @@ export class StringColumn {
       const idxBuf = this.indices!;
       if (!v) {
         for (let i = 0; i < this.length; i += 1) {
-          fn(dict[idxBuf[i]!]!, i);
+          const val = dict[idxBuf[i]!];
+          if (val !== undefined) fn(val, i);
         }
         return;
       }
       for (let i = 0; i < this.length; i += 1) {
-        if (v.isDefined(i)) {
-          fn(dict[idxBuf[i]!]!, i);
-        } else if (!skipInvalid) {
-          fn(dict[idxBuf[i]!]!, i);
+        const valid = v.isDefined(i);
+        if (valid || !skipInvalid) {
+          const val = dict[idxBuf[i]!];
+          if (val !== undefined) fn(val, i);
         }
       }
       return;
@@ -423,9 +453,16 @@ export function stringColumnFromArray(
 
 /**
  * Builds an inverse map `string → dictionary-index` from a
- * dictionary array. Useful when joining or filtering by string
- * value: the caller can look up the target's dictionary index once,
- * then compare against `indices[i]` with integer equality.
+ * dictionary array. Used to filter or compare values **within a
+ * single column** — the caller looks up a target string's index in
+ * the column's dictionary, then compares against `indices[i]` with
+ * integer equality.
+ *
+ * **Same-dictionary only.** The returned indices are meaningful only
+ * against the dictionary they were built from. Comparing indices
+ * across two columns with different dictionaries gives false
+ * positives and false negatives. For cross-column joins, use
+ * `remapIndicesToDictionary` to translate first.
  */
 export function buildDictionaryIndex(
   dictionary: ReadonlyArray<string>,
@@ -435,6 +472,40 @@ export function buildDictionaryIndex(
     map.set(dictionary[i]!, i);
   }
   return map;
+}
+
+/**
+ * Translates a buffer of dictionary indices from one dictionary to
+ * another. The returned `Int32Array` is `srcIndices.length` long,
+ * with entry `i = targetDictionary` index of the string at
+ * `srcIndices[i]`, or `-1` when the source string is absent from
+ * the target dictionary.
+ *
+ * Use this when joining or filtering across two `StringColumn`s
+ * with different dictionaries: remap one side's indices to the
+ * other's vocabulary so integer-equality comparison becomes
+ * meaningful again.
+ *
+ * Complexity: O(srcIndices.length + targetDictionary.length).
+ */
+export function remapIndicesToDictionary(
+  srcIndices: Int32Array,
+  srcDictionary: ReadonlyArray<string>,
+  targetDictionary: ReadonlyArray<string>,
+): Int32Array {
+  const targetIndex = buildDictionaryIndex(targetDictionary);
+  const out = new Int32Array(srcIndices.length);
+  for (let i = 0; i < srcIndices.length; i += 1) {
+    const srcIdx = srcIndices[i]!;
+    if (srcIdx < 0 || srcIdx >= srcDictionary.length) {
+      out[i] = -1;
+      continue;
+    }
+    const value = srcDictionary[srcIdx]!;
+    const mapped = targetIndex.get(value);
+    out[i] = mapped === undefined ? -1 : mapped;
+  }
+  return out;
 }
 
 /**
