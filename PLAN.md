@@ -3926,10 +3926,14 @@ See the RFC for the full argument.
    Apache Arrow-compatible concepts without Arrow runtime dependency.
 3. Public API invariants preserved (the five from the RFC):
    `series.events === series.events`, `at(i)` reference stability,
-   `at(i)` ↔ `events` consistency, `concat` event identity (decided
-   in favor of preserving via columnar-store materialization),
-   event-shaped iteration. New `series.eventAt(i)` accessor for
-   explicit stable-reference cases.
+   `at(i)` ↔ `events` consistency, `concat` event identity (preserved
+   for events the source has materialized; under columnar the
+   per-index cache propagates through concat — under today's
+   eager-events shape every event is materialized so the guarantee
+   is universal in practice; see V4 amendment for the tightened
+   contract), event-shaped iteration. `series.at(i)`'s reference
+   stability is the contractual stable-reference accessor; no new
+   public API.
 4. Phase 3 (derived transform chains) is part of the implementation,
    not a prerequisite gate. Implementation adjusts mid-stream if
    Phase 3 surfaces a deal-breaker; worst case is a narrower
@@ -4414,7 +4418,7 @@ Live `arrayAggregate` and `arrayExplode` need more thought (how
 
 ### Internal storage shape: row-oriented stays; columnar lives at the chart boundary
 
-**Status: SUPERSEDED by Phase 5 (Columnar core substrate), 2026-05-11.** A
+**Status: SUPERSEDED by Phase 4.7 (Columnar core substrate), 2026-05-11.** A
 Codex evidence-gathering spike measured the gap — see
 [`docs/rfcs/columnar-core.md`](docs/rfcs/columnar-core.md) and
 [`docs/briefs/core-columnar-store-spike.md`](docs/briefs/core-columnar-store-spike.md).

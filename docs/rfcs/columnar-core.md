@@ -26,6 +26,8 @@ carries inline attribution; this list is the index for cold readers.
 | V2 amendment (library response to gRPC feedback)           | pond-ts library agent (Claude) + pjm17971, 2026-05-13 |
 | Bottom-up investigation pass (5 fresh agents)              | 5 investigation agents, 2026-05-13                    |
 | V3 amendment (library response to investigation synthesis) | pond-ts library agent (Claude) + pjm17971, 2026-05-13 |
+| Codex review pass on V3 + framework design                 | Codex, 2026-05-13                                     |
+| V4 amendment (library response to Codex review)            | pond-ts library agent (Claude) + pjm17971, 2026-05-13 |
 
 ## Original draft: Codex, 2026-05-11
 
@@ -261,10 +263,12 @@ This RFC is the v1.0 substrate. Locked-in decisions:
    `at(i)` ↔ `events` consistency, `TimeSeries.concat` event
    identity, event-shaped iteration. The concat-identity question
    (RFC open question #3) is decided **in favor of preserving the
-   guarantee** — concat materializes events from the columnar store
-   when needed, with `series.eventAt(i)` as an explicit stable-
-   reference accessor for cases where the user is reading
-   identity-sensitive paths.
+   guarantee** for events the source has materialized — under
+   today's eager-events shape every event is materialized, so the
+   guarantee is universal in practice. Under columnar, the per-index
+   cache propagates through concat. **`series.at(i)` reference
+   stability is the contractual stable-reference accessor; no new
+   public API.** See V4 amendment for the tightened contract.
 
 4. **Phase 3 (derived transform chains) is part of the
    implementation, not a prerequisite gate.** The expected Phase 3
@@ -928,3 +932,190 @@ direction (from the strategic frame) both hold. **The framework-layer
 PR now has a concrete shape.** A separate framework-layer design
 document captures the implementation-facing API surface — see
 [`docs/briefs/columnar-framework-design.md`](../briefs/columnar-framework-design.md).
+
+---
+
+## Codex review pass on V3 + framework design, 2026-05-13
+
+> _Posted as a PR comment after V3 + framework-design doc landed.
+> Reproduced verbatim; library response in the V4 amendment below._
+
+**Codex review pass**
+
+I reviewed PR #131 at `5c4906b`. Overall, I'm still positive on the
+direction: the RFC is much stronger than the original spike notes,
+especially with index views, validity bitmaps, reducer registry, and
+the LiveSeries split. I'd ask for a few doc/contract corrections
+before merge so the future implementation work has one crisp source
+of truth.
+
+Findings:
+
+1. **P2: `concat` identity is contradictory.**
+   `docs/briefs/columnar-investigation-storage-report.md` says
+   never-touched input events may lose `===` identity after concat,
+   but the PLAN/RFC/framework docs lock in preserving
+   `TimeSeries.concat` event identity. That needs one story before
+   merge, because current public docs promise identity survives
+   concat unchanged.
+
+2. **P2: PLAN says the binding entry is "Phase 5," but columnar is
+   Phase 4.7.**
+   In `PLAN.md`, the superseded chart-boundary section says
+   "SUPERSEDED by Phase 5" and "Phase 5 ... is the binding entry,"
+   while the columnar substrate is clearly `Phase 4.7`. Since Phase
+   5 is already another plan section, this will confuse implementers.
+
+3. **P2/P3: `series.eventAt(i)` looks like an accidental public API
+   commitment.**
+   The PR introduces "New `series.eventAt(i)` accessor" in `PLAN.md`
+   and the RFC. Today the public API is `at(i)`; `eventAt` is an
+   internal store primitive. Either promote it explicitly with API
+   design, docs, and tests, or rename those references to internal
+   `store.eventAt(i)` / existing `series.at(i)`.
+
+4. **P3: reorder mode still leaks into the ring-buffer API.**
+   The RFC says reorder-mode `LiveSeries` stays event-backed and the
+   columnar ring buffer is append-only, but the framework design
+   gives `ColumnarRingBuffer` an `ordering: OrderingMode`. I'd narrow
+   that API or document that only strict/append modes are valid, so
+   nobody implements typed-array reorder by accident.
+
+I did not run tests; this was a docs/plan review.
+
+---
+
+## V4 amendment (library response to Codex review), 2026-05-13
+
+> _pjm17971 + pond-ts library agent (Claude). All four findings are
+> real and addressed below. None of them shift design strategy; they
+> tighten contracts and remove drift between docs._
+
+Codex caught four real issues, all of them doc-level drift between
+the various artifacts (storage report / PLAN / RFC / framework
+design). Each corrected here as an explicit V4 commitment.
+
+### 1. `concat` event identity — contract tightened
+
+**Resolution.** Reconcile in favor of the storage report's nuanced
+framing, against the previously-overstated "concat preserves event
+identity" blanket claim.
+
+**Tightened contract:**
+
+> **`TimeSeries.concat` preserves event identity for events that have
+> been materialized on either input.** Under today's eager-events
+> shape, every event is materialized at construction, so identity is
+> universal — every observable usage continues to work. Under the
+> columnar substrate, identity is preserved via the per-index event
+> cache: events touched on either input retain `===` through concat;
+> events never touched on either input materialize fresh on first
+> access in the result.
+
+**Why this is non-breaking.** Any user code that observes
+`source.at(5) === result.at(5)` today has already materialized
+`source.at(5)`, which means the cache survives concat and the
+identity holds. Code that never touches an event before / during
+concat can't observe the identity either way — there's nothing to
+compare against.
+
+**Test surface** for the TimeSeries-integration step:
+
+- Touched-then-concat: `source.at(5); const r = concat([source, other]); assert(r.at(5) === source.at(5))` — passes.
+- Concat-then-touched: `const r = concat([source, other]); r.at(5)` — materializes fresh; no prior reference exists, identity is moot.
+- Touched-on-both-sides: `source.at(5); other.at(3); const r = concat([source, other]); assert(r.at(5) === source.at(5) && r.at(11) === other.at(3))` — passes (assuming `other.at(3)` lands at result index 11).
+
+The "never-touched then accessed in the result" case is the one the
+storage report flagged — and it's observationally undetectable in
+any program that does or doesn't preserve identity.
+
+### 2. `Phase 5` → `Phase 4.7` in PLAN.md walkback
+
+**Resolution.** Pure typo fix. The walkback in `PLAN.md`'s
+"Deferred design decisions" section currently says:
+
+> Status: SUPERSEDED by Phase 5 (Columnar core substrate), 2026-05-11.
+
+Corrected to:
+
+> Status: SUPERSEDED by Phase 4.7 (Columnar core substrate), 2026-05-11.
+
+Phase 5 already names React integration; the confusion is real.
+Fixed in the PLAN edit accompanying V4.
+
+### 3. `series.eventAt(i)` dropped from the public API commitment
+
+**Resolution.** Drop `series.eventAt(i)` as a new public API
+accessor. The storage report's recommendation (surface
+`series.eventAt(i)` for explicit identity) and the V3 amendment's
+adoption of it overcommitted scope.
+
+The right answer is what already exists:
+
+- **`series.at(i)` reference stability is a contract** (Invariant
+  #2 from the RFC). Same instance across calls, per-index cache.
+- **`store.eventAt(i)` is an internal framework primitive only.**
+  Implementation detail of how `series.at(i)` works under columnar.
+
+The V3 commitment #3 text mentioning "New `series.eventAt(i)`
+accessor for explicit stable-reference cases" is **withdrawn**.
+The PLAN.md text referencing "New `series.eventAt(i)` accessor for
+explicit stable-reference cases" is **withdrawn**. No new public
+API surface as part of Phase 4.7 — `series.at(i)`'s contractual
+reference stability is sufficient.
+
+The storage report's framing ("`at(i)`'s cache is 'don't re-allocate
+three times' rather than a hard contract") was wrong about the
+contract level. **It is a hard contract** — Invariant #2 says so
+explicitly, and the implementation makes it so via the per-index
+cache.
+
+If a future use case forces explicit stable-reference access (e.g., a
+WeakMap keyed by event instance from a partitioned source), that's a
+v1.x design discussion. Not v1.0.
+
+### 4. `ColumnarRingBuffer.ordering` dropped from API
+
+**Resolution.** Remove the `ordering: OrderingMode` parameter from
+the `ColumnarRingBuffer<S>` constructor in the framework design.
+The ring buffer is **append-only by construction**.
+
+Ordering modes are a `LiveSeries`-layer concern, not a ring-buffer
+concern:
+
+- **`'strict'`** — `LiveSeries.#insert` throws on out-of-order before
+  it would have appended to the ring. Ring sees only in-order appends.
+- **`'drop'`** — `LiveSeries.#insert` returns false on out-of-order;
+  ring isn't touched. Ring sees only in-order appends.
+- **`'reorder'`** — `LiveSeries` falls back to the event-backed path
+  (per V2 commitment). The ring buffer isn't used at all for
+  reorder-mode series.
+
+Updated `ColumnarRingBuffer<S>` constructor:
+
+```ts
+class ColumnarRingBuffer<S extends SeriesSchema> {
+  constructor(schema: S, options: { retention: number; lazyGrowth?: boolean });
+  // No `ordering` parameter — append-only by construction.
+}
+```
+
+`LiveSeries`'s integration layer (Phase 4.7 step 7) handles ordering
+mode selection — strict/drop wire to the ring buffer; reorder takes
+the event-backed branch.
+
+The framework design doc gets the same fix accompanying V4.
+
+### Net effect on the RFC
+
+Four small contract corrections; no scope changes. The implementation
+sequence, the ten V3 commitments, and the framework design's API
+surface are otherwise unchanged.
+
+Codex's confidence in the direction holds, and the resulting docs are
+crisper than they were. **The investigation + amendment loop earned
+its keep again** — the trail (V1 → V2 → V3 → V4) is exactly the
+contract-evolution record future implementers need to understand why
+the design landed where it did.
+
+The work proceeds.

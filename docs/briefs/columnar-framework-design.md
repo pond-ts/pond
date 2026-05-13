@@ -371,11 +371,17 @@ These are the workhorse primitives for `select`, `rename`, `diff` / `rate` / `pc
 
 ```ts
 class ColumnarRingBuffer<S extends SeriesSchema> {
+  /**
+   * Append-only by construction. Ordering modes (strict / drop /
+   * reorder) are a `LiveSeries`-layer concern, not a ring-buffer
+   * concern — strict / drop wire to the ring after `#insert`
+   * validates; reorder mode takes the event-backed fallback path
+   * and never touches the ring. See RFC V4 amendment.
+   */
   constructor(
     schema: S,
     options: {
       retention: number;
-      ordering: OrderingMode;
       lazyGrowth?: boolean;
     },
   );
