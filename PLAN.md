@@ -3995,8 +3995,52 @@ See the RFC for the full argument.
      hardened runtime discriminator and per-row type/finite
      assertions. Three rounds of Codex adversarial review per
      the PR trail; each round closed real gaps.
-   - **1d — ColumnarStore (read-only), eventAt, store-native
-     exports.** Next.
+   - **1d — ColumnarStore (read-only) + SeriesStore row-API
+     adapter (Path B layering split).** ✅ Shipped (PR #135,
+     merged 2026-05-13). 324 framework + adapter tests.
+
+     **Architectural pivot mid-review.** The initial 1d shape had
+     `ColumnarStore` materialize Events, manage the eventCache,
+     and emit row-shape exports — framework-level code that knew
+     about `Event` / `EventKey` / `Time` / `TimeRange` /
+     `Interval`. Three rounds of review (L2 + 2 Codex) found
+     correctness issues at the same surface (cache validation
+     incomplete, key identity, kind-aware data equality, extra-
+     /missing-fields leaks) because those concerns sit at the
+     wrong layer.
+
+     Pivoted to clean separation:
+
+     **Pure framework** at `packages/core/src/columnar/`. Zero
+     upstream imports (runtime or type). Owns its own type
+     vocabulary at `columnar/types.ts` (`ColumnDef`,
+     `ColumnSchema`, `ScalarValue`, `ArrayValue`, `KeyKind`).
+     `ColumnarStore<S>` is schema-validated composition of
+     `KeyColumn` + value columns + `valueAt`. Independence test
+     scans every framework file for forbidden imports
+     (`Event` / `Time` / `TimeRange` / `Interval` / `temporal` /
+     `types` / operators).
+
+     **Row-API adapter** at `packages/core/src/series-store.ts`.
+     `SeriesStore<S>` wraps a `ColumnarStore` + optional
+     eventCache. Owns `keyAt` / `eventAt` / `toEvents` /
+     `Symbol.iterator` / `toRows` / `toObjects` + the five
+     public-API invariants from the RFC. Structural cache
+     validation: structural key equality via `EventKey.equals`,
+     per-column data agreement, exact-schema field set (no
+     extras OR missing fields), kind-aware value equality
+     (`Object.is` for numbers so NaN matches itself, shallow
+     element-wise for arrays so the `ArrayColumn` defensive freeze
+     doesn't break cache sharing).
+
+     Bundle: 17.2 KB framework + 4.0 KB adapter = 21.2 KB
+     gzipped (under the framework-design <25 KB target).
+
+     The split also surfaced what later sub-steps need to
+     decide: row-shape intake factories (`fromValidatedRows`,
+     `fromTrustedEvents`) belong at the `SeriesStore` layer; the
+     framework's `ColumnBuilder` operates on column data.
+   - **1e — Intake factories + `ColumnBuilder`.** Next.
    - **1d — ColumnarStore (read-only), eventAt, store-native exports.**
    - **1e — ColumnBuilder + factories.**
    - **1f — Index views (`withRowSelection`, `materialize`),
