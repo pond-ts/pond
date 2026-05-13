@@ -3983,7 +3983,20 @@ See the RFC for the full argument.
      trail, each finding real issues; the contract surface ended
      up substantially more rigorous than the original draft.
    - **1c — ArrayColumn + KeyColumn (time / timeRange / interval),
-     EventKey cache.** Next.
+     EventKey cache.** ✅ Shipped (PR #134, merged 2026-05-13).
+     289 framework tests (+79 across ArrayColumn + KeyColumn).
+     `ArrayColumn` (fallback mode) with defensive freeze on cells,
+     `EMPTY_ARRAY_SENTINEL` for `scan(skipInvalid:false)`,
+     element-wise `ArrayValue` contract enforcement. Three
+     `KeyColumn` variants with lazy `Map<number, EventKey>` cache
+     pinning `keyAt(i) === keyAt(i)`. `IntervalKeyColumn` supports
+     discriminated label columns (`StringColumn | Float64Column`)
+     for `IntervalValue = string | number` round-trip, with
+     hardened runtime discriminator and per-row type/finite
+     assertions. Three rounds of Codex adversarial review per
+     the PR trail; each round closed real gaps.
+   - **1d — ColumnarStore (read-only), eventAt, store-native
+     exports.** Next.
    - **1d — ColumnarStore (read-only), eventAt, store-native exports.**
    - **1e — ColumnBuilder + factories.**
    - **1f — Index views (`withRowSelection`, `materialize`),
