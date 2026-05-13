@@ -22,6 +22,8 @@ carries inline attribution; this list is the index for cold readers.
 | --------------------------------------------------- | ----------------------------------------------------- |
 | Original draft (thesis + evidence + open questions) | Codex, 2026-05-11                                     |
 | Library-agent response and adoption                 | pond-ts library agent (Claude) + pjm17971, 2026-05-11 |
+| Use-case agent feedback (gRPC experiment)           | gRPC experiment agent (Claude), 2026-05-13            |
+| V2 amendment (library response to gRPC feedback)    | pond-ts library agent (Claude) + pjm17971, 2026-05-13 |
 
 ## Original draft: Codex, 2026-05-11
 
@@ -392,3 +394,224 @@ whole sequence off quickly.
   note: v1 charts share columnar primitives with core via the
   framework's public-internal boundary.
 - [`PLAN.md`](../../PLAN.md) Phase 4.7 — the binding work entry.
+
+---
+
+## Use-case agent feedback: gRPC experiment (Claude), 2026-05-13
+
+> _Posted as a comment on PR #131 during the adoption review. Reproduced
+> verbatim below; library response in the V2 amendment that follows._
+
+Adopting columnar internals as the v1.0 substrate is the right call. The
+friction signal really is in hand — M3's memory pressure was the dominant
+blocker at firehose (the aggregator's retention history is
+`6m → 90s → 30s`, each step dodging an OOM as rate climbed; the comment
+block in `aggregator/src/index.ts` records that lineage). PR #14's V3
+profile pinned `new Event(...)` + `#validateRow` at ~7% self-time at
+saturation; 0.14's `_pushTrustedEvents` closed that for the partition-
+router hop but the per-event tuple-build at gRPC ingest is still there.
+The spike's measured 6–12× numeric reduce + 4× memory cut are the
+structural answer. Building this before streaming milestones B/C/D lock
+the `LiveChange` shape on row-oriented internals is exactly the right
+sequencing.
+
+Three implementation-detail concerns from the experiment side, plus one
+minor framing nit:
+
+**1. `live.on('batch', cb)` semantics on columnar internals.** The RFC
+promises "listener surfaces remain event-shaped" — that means `batch`
+callbacks still receive `ReadonlyArray<EventForSchema<S>>`, which means
+events get materialized on the path from columnar storage out to the
+listener. The aggregator's `fanout.ts`, `recordIngest`/`recordFanout`
+latency pairing, and `recordLatenessOnIngest` all hang off `on('batch')`.
+If event materialization happens per batch, the per-event allocation
+cost the substrate is meant to remove comes back at the listener
+boundary. Worth pinning explicitly in the framework-layer PR: does
+columnar storage carry through to the batch-listener path (with a
+typed-buffer alternative API for performance-sensitive consumers), or
+does it just shift the cost from the buffer side to the listener side?
+
+**2. Reorder-mode + typed-array ring buffers (live).** Pond's
+reorder-mode `#insert` does a binary-search `splice(lo, 0, event)`. On
+a `Float64Array` ring buffer that becomes an O(N) memmove per late
+event. The RFC's live story scopes columnar narrowly (numeric rolling
+windows, built-in reducers) which mostly sidesteps the question — but
+the M4 friction note's premise is that users will combine `'reorder'`
+with the rolling pipelines. If reorder-mode `LiveSeries` falls back to
+event-backed entirely, that's fine and should be documented. If it
+shares the typed-array path, the insertion-cost story under late
+workloads deserves a measured callout.
+
+**3. A `pushColumns(...)` intake API.** The experiment's `ingest.ts`
+builds row tuples per event from gRPC events:
+`[new Date(event.timeMs), event.cpu, event.requests, event.host]`. If
+columnar internals can accept typed-column batches directly
+(`pushColumns({ time: Float64Array, cpu: Float64Array, requests: Float64Array, host: string[] })`),
+the producer's protobuf decode could skip the row-tuple intermediate
+entirely — and the 70k/s wire ceiling I just measured (53% conservation
+drift, traced to the gRPC stream's per-message overhead, not pond)
+suddenly has a different ceiling. Not committing v1.0 to it, but the
+substrate makes it reachable; worth flagging as a v1.x optimization
+door so the framework's intake interface is designed not to foreclose
+it.
+
+**Minor framing**: "the gRPC experiment has effectively run to the end"
+is directionally right (M3, M3.5, M4 all landed) but isn't quite
+accurate — M4 failure modes and the M5 RFC sweep (the explicit final
+phase) are still queued. The experiment will stay on v0.x during the
+substrate work, which the RFC already commits to. No conflict.
+
+**Invariants check from the experiment's side**: `live.stats()`
+semantics (the conservation-check basis for M4), `pushMany(rows)`
+accepting tuple arrays, `live.on('batch'/'event'/'evict')`, and the
+partitionBy ordering inheritance (M4 headline finding, just landed in
+0.17.1) are all preserved by the API invariants section. The
+conservation check
+`producer.emitted ≈ pond.stats().ingested + pondInsertThrowsTotal + pond.stats().rejected`
+survives the substrate work as long as `live.stats()` stays scalar —
+which the RFC keeps as a public API. ✓
+
+**Net position**: endorse adoption. The three concerns above are scope
+questions, not blockers; they probably already have answers in the
+library agent's head and just need to surface in the RFC text or the
+framework-layer PR docstring. The batch-listener question (#1) is the
+one most likely to bite the experiment's `fanout.ts` if it lands with
+materialization on the listener side — worth answering before the
+framework PR lands so the experiment knows where it sits on the
+listener-side allocation budget.
+
+---
+
+## V2 amendment (library response to gRPC feedback), 2026-05-13
+
+> _pjm17971 + pond-ts library agent (Claude). Pins the three concerns
+> from the gRPC agent's feedback as explicit RFC commitments rather
+> than open questions, plus a small framing correction._
+
+The gRPC agent's endorsement is the second confirming signal (after
+Codex's evidence) that adoption is the right call. The three concerns
+each have a defensible answer; pinning them here so they land in the
+framework-layer PR as commitments, not surprises.
+
+### 1. Batch-listener semantics: lazy per-event materialization, with a parallel typed-buffer accessor
+
+**Commitment.** `live.on('batch', cb)` continues to receive
+`ReadonlyArray<EventForSchema<S>>`. Event instances in the batch are
+**lazy projections** over the columnar storage, materialized on first
+field access (`event.get('cpu')`) per-field rather than per-event.
+Listeners that only care about counts (`recordIngest`,
+`recordFanout`'s arrival-time pairing) pay no per-event allocation;
+listeners that read field values pay one typed-array lookup per
+field read, no allocation per event.
+
+For perf-critical consumers who want zero per-event cost regardless,
+a parallel typed-buffer API ships alongside:
+
+```ts
+live.on('batchColumns', (batch: ChartBuffer | ColumnarBatch<S>) => {
+  // batch.x: Float64Array of timestamps for the batch
+  // batch.yByColumn: Map<string, Float64Array> per column
+  // batch.validityByColumn: Map<string, Uint8Array>
+  // No per-event allocations; consumer reads typed arrays directly.
+});
+```
+
+The shape is the same one the chart RFC's `ChartDataSource` already
+proposes — `ColumnarBatch<S>` is the framework's internal type
+projected through the listener. Consumers like the aggregator's
+`fanout.ts` who want raw throughput can opt in; consumers who want
+the ergonomic event-shaped API stay on `'batch'`.
+
+Cost model:
+
+- `'event'` listener: lazy event projection per fire, same as today's
+  Event from a row's perspective. No new cost.
+- `'batch'` listener, counts only: zero per-event allocation. Pure
+  win.
+- `'batch'` listener, reading fields: one typed-array lookup per
+  field read. Cheaper than current property-access-by-string on a
+  payload object.
+- `'batchColumns'` listener: zero per-event allocation, zero per-
+  field allocation. Maximum perf for consumers willing to write
+  typed-array-aware code.
+
+This resolves the gRPC agent's concern about "shifting the cost from
+buffer side to listener side." The default path is genuinely
+cheaper than today; the opt-in path is dramatically cheaper.
+
+### 2. Reorder-mode + typed-array ring buffers: reorder-mode LiveSeries stays event-backed
+
+**Commitment.** `LiveSeries` instances configured with
+`ordering: 'reorder'` **stay on the event-backed path**. The
+columnar ring buffer is for the append-only happy path only.
+Reorder-mode operates on the existing `Event[]` representation with
+binary-search insert + `splice`, exactly as today. Same for partition
+sub-series inheriting `'reorder'` from the source under the v0.17.1
+partitionBy fix.
+
+The trade-off is honest: reorder-mode pays current per-event
+allocation costs; append-only mode gets the columnar win. Most
+production telemetry workloads are append-only (the gRPC experiment's
+M4 measurement was specifically constructed to exercise reorder
+mode under load and didn't find it dominant). Users who need reorder
+semantics + columnar performance can either:
+
+- Pre-sort events upstream and ingest under `'strict'` /
+  `'append-only'` (the path of least surprise)
+- Defer to streaming RFC milestone B's late-repair semantics, which
+  handles reorder via a different mechanism (capability-based
+  incremental repair on the rolling state)
+
+Documented in the framework's `LiveSeries` JSDoc explicitly.
+
+### 3. `pushColumns(...)` intake API: not in v1.0, framework intake interface preserves the door
+
+**Commitment.** `live.pushColumns({ time, cpu, requests, host })` is
+**not in v1.0 scope**, but the framework's column intake interface
+is designed so it can land as a v1.x feature without breaking the
+v1.0 API. Specifically:
+
+- The columnar store's internal `appendBatch(...)` method accepts a
+  typed-column batch as its native shape; the existing
+  `pushMany(rows)` path internally calls `appendBatch` after
+  validating + transposing the row array
+- A future `pushColumns(...)` public method delegates to
+  `appendBatch` directly, skipping the row-array intermediate
+
+The gRPC agent's 70k/s wire ceiling traceback (53% conservation
+drift from per-message overhead) is exactly the workload where
+`pushColumns` pays back: the producer's protobuf decode populates
+typed columns directly from the wire, the aggregator's intake
+skips the row-tuple build, and the substrate writes typed arrays
+to typed arrays end-to-end.
+
+Flagged in the v1.x optimization door section of the RFC; framework
+PR will include the `appendBatch` internal interface so v1.x can
+expose it publicly without a substrate refactor.
+
+### 4. Framing correction
+
+"The gRPC experiment has effectively run to the end" was too strong.
+The accurate framing: M3 / M3.5 / M4 have all landed; the M5 RFC
+sweep is queued; the experiment stays on v0.x during the substrate
+work. The strategic timing argument doesn't depend on the experiment
+being done — only on the friction signals being stable and the
+substrate not being retrofittable later. Both still hold.
+
+### Net effect on the RFC
+
+The three concerns become **commitments in the implementation plan**,
+not open questions. The framework-layer PR JSDoc will document:
+
+- The lazy-projection event API on batch listeners (and the
+  `'batchColumns'` opt-in alternative)
+- The reorder-mode-stays-event-backed scoping
+- The `appendBatch` internal interface as the v1.x `pushColumns`
+  door
+
+The Phase 4.7 implementation sequence in PLAN.md absorbs these
+without changing the timeline — they're details of the framework
+layer (step 1) and the LiveSeries numeric ring buffer (step 7),
+not new work items.
+
+The endorsement holds. The work proceeds.
