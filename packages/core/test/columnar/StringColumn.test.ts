@@ -1019,3 +1019,70 @@ describe('remapIndicesToDictionary validity-length validation (Codex round 3)', 
     ).not.toThrow();
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* Codex round-4: direct-constructor fallback without validity must reject     */
+/* undefined slots — closes the boundary-drift gap.                            */
+/* -------------------------------------------------------------------------- */
+
+describe('Direct-constructor fallback rejects undefined slots without validity', () => {
+  it('throws when fallback has undefined slot and no validity bitmap', () => {
+    // Reproduces the Codex round-4 finding: direct constructor accepted
+    // ['a', undefined] without validity, leaving the no-validity scan path
+    // to pass `undefined` to a `string` callback.
+    expect(() => new StringColumn(2, { fallback: ['a', undefined] })).toThrow(
+      /no validity bitmap was supplied/,
+    );
+  });
+
+  it('throws when fallback has null slot and no validity bitmap', () => {
+    // null is not a string either — same enforcement.
+    expect(
+      () =>
+        new StringColumn(3, {
+          // Forced cast: the runtime check must catch it even if a
+          // caller bypasses the type-level guard.
+          fallback: ['a', null as unknown as string, 'c'],
+        }),
+    ).toThrow(/no validity bitmap was supplied/);
+  });
+
+  it('accepts fallback with every slot defined and no validity', () => {
+    // The no-validity fast path is safe under the new invariant.
+    const col = new StringColumn(3, { fallback: ['a', 'b', 'c'] });
+    expect(col.validity).toBeUndefined();
+    expect(col.read(0)).toBe('a');
+    expect(col.read(1)).toBe('b');
+    expect(col.read(2)).toBe('c');
+  });
+
+  it('accepts fallback with undefined slots when validity is supplied', () => {
+    const validity = validityFromBits(new Uint8Array([0b101]), 3);
+    const col = new StringColumn(3, {
+      fallback: ['a', undefined, 'b'],
+      validity,
+    });
+    expect(col.read(0)).toBe('a');
+    expect(col.read(1)).toBeUndefined();
+    expect(col.read(2)).toBe('b');
+  });
+
+  it('stringColumnFallback factory still handles undefined automatically', () => {
+    // Backwards-compatibility: the factory derives validity from
+    // undefined slots before reaching the constructor, so this path is
+    // unaffected by the new constructor enforcement.
+    const col = stringColumnFallback(['a', undefined, 'b']);
+    expect(col.validity).toBeDefined();
+    expect(col.read(0)).toBe('a');
+    expect(col.read(1)).toBeUndefined();
+    expect(col.read(2)).toBe('b');
+  });
+
+  it('scan(skipInvalid:false) no longer passes undefined for a direct-constructor-built column (regression for the round-4 bug)', () => {
+    // Before the fix, direct construction with undefined fallback +
+    // no validity would let scan(skipInvalid:false) pass undefined
+    // to the callback. Now the construction itself is rejected.
+    // This test confirms there's no surviving path.
+    expect(() => new StringColumn(2, { fallback: ['a', undefined] })).toThrow();
+  });
+});

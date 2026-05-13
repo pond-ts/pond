@@ -126,14 +126,12 @@ export class StringColumn {
           `StringColumn: fallback length ${options.fallback!.length} does not match column length ${length}`,
         );
       }
-      // If validity is supplied, every row it marks as defined must
-      // contain a string in the fallback array. Otherwise reads would
-      // return `undefined` for a "defined" cell — silent data drop in
-      // scan. Without explicit validity, the fallback factory derives
-      // validity from `undefined` slots, so the two are consistent
-      // by construction.
+      const fb = options.fallback!;
       if (validity !== undefined) {
-        const fb = options.fallback!;
+        // If validity is supplied, every row it marks as defined must
+        // contain a string in the fallback array. Otherwise reads
+        // would return `undefined` for a "defined" cell — silent data
+        // drop in scan.
         for (let i = 0; i < length; i += 1) {
           if (validity.isDefined(i) && typeof fb[i] !== 'string') {
             throw new RangeError(
@@ -141,8 +139,23 @@ export class StringColumn {
             );
           }
         }
+      } else {
+        // **No-validity invariant.** The framework convention is "no
+        // validity bitmap ⇒ every cell is defined." For fallback mode
+        // this means every fallback slot must be a string. Reject
+        // any direct construction that violates this — callers with
+        // `undefined` slots must either pass a validity bitmap or use
+        // `stringColumnFallback`, which derives validity from
+        // `undefined` slots automatically.
+        for (let i = 0; i < length; i += 1) {
+          if (typeof fb[i] !== 'string') {
+            throw new RangeError(
+              `StringColumn: fallback[${i}] is not a string but no validity bitmap was supplied; use stringColumnFallback() to derive validity automatically, or pass an explicit validity bitmap`,
+            );
+          }
+        }
       }
-      this.fallback = options.fallback!;
+      this.fallback = fb;
     }
     this.length = length;
     if (validity !== undefined) this.validity = validity;
