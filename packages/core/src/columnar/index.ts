@@ -1,0 +1,31 @@
+/**
+ * Columnar framework — internal barrel export.
+ *
+ * This module surfaces every primitive that lives under
+ * `packages/core/src/columnar/` for use by other parts of pond-ts
+ * (`TimeSeries`, `LiveSeries`, reducers, etc.). **It is not
+ * re-exported from `packages/core/src/index.ts`** — the framework's
+ * API surface stays mobile during v1.0 development.
+ *
+ * See `docs/briefs/columnar-framework-design.md` for the full design.
+ */
+
+export {
+  type ValidityBitmap,
+  MutableValidityBitmap,
+  createValidityBitmap,
+  validityFromBits,
+  validityFromPredicate,
+  validityGatherByIndices,
+  validitySliceByRange,
+} from './validity.js';
+
+export {
+  type Column,
+  type ColumnKind,
+  type ScanOptions,
+  BooleanColumn,
+  Float64Column,
+  booleanColumnFromArray,
+  float64ColumnFromArray,
+} from './column.js';
