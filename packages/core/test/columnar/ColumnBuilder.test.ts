@@ -115,6 +115,38 @@ describe('Float64ColumnBuilder', () => {
     expect(col.read(4)).toBe(42);
     expect(col.read(0)).toBeUndefined();
   });
+
+  it('defined→defined appendAt overwrite + later undefined append keeps validity (Codex round-1 finding)', () => {
+    // Pre-fix: append(1) sets #definedCount=1, then appendAt(0, 2)
+    // inflates it to 2 (still _length=1), then appendAt(1, undefined)
+    // backfills the bitmap with row 0 defined and #definedCount=2.
+    // #hasInvalidCells returns false (2 === _length=2), so the
+    // validity bitmap is dropped at finalize. Row 1 reads as `0`
+    // instead of undefined.
+    const b = new Float64ColumnBuilder();
+    b.append(1);
+    b.appendAt(0, 2); // overwrite — no length change
+    b.appendAt(1, undefined); // new row at boundary — missing
+    const col = b.finalize();
+    expect(col.length).toBe(2);
+    expect(col.read(0)).toBe(2);
+    expect(col.read(1)).toBeUndefined();
+    expect(col.validity).toBeDefined();
+    expect(col.validity!.definedCount).toBe(1);
+  });
+
+  it('defined→defined appendAt at a beyond-length index is a new row (counts increment)', () => {
+    // Make sure the fix doesn't break the new-row path.
+    const b = new Float64ColumnBuilder();
+    b.append(1);
+    b.appendAt(2, 99); // new row at index 2 (gap at 1)
+    const col = b.finalize();
+    expect(col.length).toBe(3);
+    expect(col.read(0)).toBe(1);
+    expect(col.read(1)).toBeUndefined();
+    expect(col.read(2)).toBe(99);
+    expect(col.validity!.definedCount).toBe(2);
+  });
 });
 
 /* -------------------------------------------------------------------------- */
@@ -182,6 +214,19 @@ describe('BooleanColumnBuilder', () => {
     const col = b.finalize();
     expect(col.read(0)).toBe(false);
     expect(col.read(1)).toBe(true);
+  });
+
+  it('defined→defined appendAt overwrite + later undefined append keeps validity (Codex round-1 finding)', () => {
+    const b = new BooleanColumnBuilder();
+    b.append(true);
+    b.appendAt(0, false); // overwrite
+    b.appendAt(1, undefined); // new missing row
+    const col = b.finalize();
+    expect(col.length).toBe(2);
+    expect(col.read(0)).toBe(false);
+    expect(col.read(1)).toBeUndefined();
+    expect(col.validity).toBeDefined();
+    expect(col.validity!.definedCount).toBe(1);
   });
 });
 

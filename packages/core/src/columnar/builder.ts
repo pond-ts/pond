@@ -210,8 +210,17 @@ export class Float64ColumnBuilder extends ColumnBuilderBase<number> {
           this.#definedCount += 1;
         }
       } else {
-        // Implicitly defined.
-        this.#definedCount += 1;
+        // No bitmap: every row in [0, _length) is implicitly
+        // defined. Only increment for genuinely new rows
+        // (rowIndex >= _length). Defined→defined `appendAt`
+        // overwrites must not inflate the count, or a later
+        // `appendAt(new, undefined)` would see #definedCount ===
+        // length and suppress the validity bitmap at finalize,
+        // silently returning the sentinel for what should be
+        // missing data.
+        if (rowIndex >= this._length) {
+          this.#definedCount += 1;
+        }
       }
     }
   }
@@ -341,7 +350,10 @@ export class BooleanColumnBuilder extends ColumnBuilderBase<boolean> {
           this.#definedCount += 1;
         }
       } else {
-        this.#definedCount += 1;
+        // Same overwrite-aware logic as Float64ColumnBuilder.
+        if (rowIndex >= this._length) {
+          this.#definedCount += 1;
+        }
       }
     }
   }
