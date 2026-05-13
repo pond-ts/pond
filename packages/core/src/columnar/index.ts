@@ -12,8 +12,11 @@
 
 export {
   type ValidityBitmap,
+  MAX_COLUMN_LENGTH,
   MutableValidityBitmap,
+  bitmapByteCount,
   createValidityBitmap,
+  validateColumnLength,
   validityFromBits,
   validityFromPredicate,
   validityGatherByIndices,

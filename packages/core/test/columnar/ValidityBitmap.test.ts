@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  MAX_COLUMN_LENGTH,
   MutableValidityBitmap,
+  bitmapByteCount,
   createValidityBitmap,
+  validateColumnLength,
   validityFromBits,
   validityFromPredicate,
   validityGatherByIndices,
@@ -405,5 +408,172 @@ describe('validityGatherByIndices — multi-byte output', () => {
       if (out.isDefined(i)) counted += 1;
     }
     expect(out.definedCount).toBe(counted);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Length validation — guards against 32-bit-wrap math in bit-packed sizing.  */
+/* -------------------------------------------------------------------------- */
+
+describe('validateColumnLength', () => {
+  it('accepts 0 and small positive integers', () => {
+    expect(() => validateColumnLength(0, 'X')).not.toThrow();
+    expect(() => validateColumnLength(1, 'X')).not.toThrow();
+    expect(() => validateColumnLength(1024, 'X')).not.toThrow();
+  });
+
+  it('rejects negative values', () => {
+    expect(() => validateColumnLength(-1, 'X')).toThrow(RangeError);
+    expect(() => validateColumnLength(-1000, 'X')).toThrow(RangeError);
+  });
+
+  it('rejects non-integers', () => {
+    expect(() => validateColumnLength(1.5, 'X')).toThrow(RangeError);
+    expect(() => validateColumnLength(NaN, 'X')).toThrow(RangeError);
+    expect(() => validateColumnLength(Infinity, 'X')).toThrow(RangeError);
+    expect(() => validateColumnLength(-Infinity, 'X')).toThrow(RangeError);
+  });
+
+  it('rejects values above MAX_COLUMN_LENGTH', () => {
+    expect(() => validateColumnLength(MAX_COLUMN_LENGTH + 1, 'X')).toThrow(
+      RangeError,
+    );
+    expect(() => validateColumnLength(2 ** 31, 'X')).toThrow(RangeError);
+    expect(() => validateColumnLength(Number.MAX_SAFE_INTEGER, 'X')).toThrow(
+      RangeError,
+    );
+  });
+
+  it('accepts the boundary exactly', () => {
+    expect(() => validateColumnLength(MAX_COLUMN_LENGTH, 'X')).not.toThrow();
+  });
+
+  it('error label propagates to the message', () => {
+    expect(() => validateColumnLength(-1, 'CustomLabel')).toThrow(
+      /CustomLabel/,
+    );
+  });
+});
+
+describe('bitmapByteCount', () => {
+  it('rounds up to the next byte', () => {
+    expect(bitmapByteCount(0)).toBe(0);
+    expect(bitmapByteCount(1)).toBe(1);
+    expect(bitmapByteCount(8)).toBe(1);
+    expect(bitmapByteCount(9)).toBe(2);
+    expect(bitmapByteCount(63)).toBe(8);
+    expect(bitmapByteCount(64)).toBe(8);
+    expect(bitmapByteCount(65)).toBe(9);
+  });
+
+  it('uses Math.ceil semantics across the 31-bit boundary', () => {
+    // Both end at the same byte count; the bitwise version would wrap.
+    expect(bitmapByteCount(MAX_COLUMN_LENGTH)).toBe(
+      Math.ceil(MAX_COLUMN_LENGTH / 8),
+    );
+  });
+});
+
+describe('ValidityBitmap large-length boundary', () => {
+  // We can't allocate a 2^31-bit buffer, so we only exercise the
+  // validation paths — the math is correct for any length that passes
+  // the validator. Anything that doesn't pass throws cleanly.
+  it('createValidityBitmap rejects MAX_COLUMN_LENGTH + 1', () => {
+    expect(() => createValidityBitmap(MAX_COLUMN_LENGTH + 1)).toThrow(
+      RangeError,
+    );
+  });
+
+  it('createValidityBitmap rejects 2**31 (the 32-bit-wrap boundary)', () => {
+    expect(() => createValidityBitmap(2 ** 31)).toThrow(RangeError);
+  });
+
+  it('validityFromBits rejects MAX_COLUMN_LENGTH + 1', () => {
+    expect(() =>
+      validityFromBits(new Uint8Array(1), MAX_COLUMN_LENGTH + 1),
+    ).toThrow(RangeError);
+  });
+
+  it('validityFromPredicate rejects 2**31', () => {
+    expect(() => validityFromPredicate(2 ** 31, () => true)).toThrow(
+      RangeError,
+    );
+  });
+
+  it('MutableValidityBitmap constructor rejects 2**31', () => {
+    expect(() => new MutableValidityBitmap(new Uint8Array(1), 2 ** 31)).toThrow(
+      RangeError,
+    );
+  });
+
+  it('MutableValidityBitmap constructor rejects buffer underflow', () => {
+    expect(() => new MutableValidityBitmap(new Uint8Array(0), 1)).toThrow(
+      RangeError,
+    );
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Freeze is one-shot — mutating a finalized bitmap is a foot-gun gone wrong. */
+/* -------------------------------------------------------------------------- */
+
+describe('MutableValidityBitmap freeze is one-shot', () => {
+  it('exposes a consumed getter that flips on freeze', () => {
+    const bm = createValidityBitmap(4);
+    expect(bm.consumed).toBe(false);
+    bm.set(0);
+    bm.freeze();
+    expect(bm.consumed).toBe(true);
+  });
+
+  it('set throws after freeze', () => {
+    const bm = createValidityBitmap(4);
+    bm.set(0);
+    bm.freeze();
+    expect(() => bm.set(1)).toThrow(/already been frozen/);
+  });
+
+  it('clear throws after freeze', () => {
+    const bm = createValidityBitmap(4);
+    bm.set(0);
+    bm.set(1);
+    bm.freeze();
+    expect(() => bm.clear(0)).toThrow(/already been frozen/);
+  });
+
+  it('double-freeze throws', () => {
+    const bm = createValidityBitmap(4);
+    bm.set(0);
+    bm.freeze();
+    expect(() => bm.freeze()).toThrow(/already been frozen/);
+  });
+
+  it('frozen bitmap snapshot stays consistent with the underlying buffer at freeze time', () => {
+    // Pin the contract: a frozen ValidityBitmap reflects the state at the
+    // moment of freeze; subsequent mutation attempts on the source throw.
+    const bm = createValidityBitmap(8);
+    bm.set(0);
+    bm.set(2);
+    bm.set(4);
+    const frozen = bm.freeze();
+    expect(frozen).toBeDefined();
+    expect(frozen!.definedCount).toBe(3);
+    expect(() => bm.set(1)).toThrow();
+    // Frozen value-state is unchanged by the attempted mutation throw.
+    expect(frozen!.isDefined(0)).toBe(true);
+    expect(frozen!.isDefined(1)).toBe(false);
+    expect(frozen!.isDefined(2)).toBe(true);
+    expect(frozen!.isDefined(4)).toBe(true);
+    expect(frozen!.definedCount).toBe(3);
+  });
+
+  it('all-defined freeze returns undefined and still consumes the builder', () => {
+    const bm = createValidityBitmap(3);
+    bm.set(0);
+    bm.set(1);
+    bm.set(2);
+    expect(bm.freeze()).toBeUndefined();
+    expect(bm.consumed).toBe(true);
+    expect(() => bm.set(0)).toThrow(/already been frozen/);
   });
 });

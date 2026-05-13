@@ -11,6 +11,8 @@
 
 import {
   type ValidityBitmap,
+  bitmapByteCount,
+  validateColumnLength,
   validityFromPredicate,
   validityGatherByIndices,
   validitySliceByRange,
@@ -104,11 +106,7 @@ export class Float64Column implements ColumnBase<number, 'number'> {
   readonly validity?: ValidityBitmap;
 
   constructor(values: Float64Array, length: number, validity?: ValidityBitmap) {
-    if (length < 0) {
-      throw new RangeError(
-        `Float64Column length must be non-negative, got ${length}`,
-      );
-    }
+    validateColumnLength(length, 'Float64Column');
     if (length > values.length) {
       throw new RangeError(
         `Float64Column buffer underflow: length ${length} exceeds values.length ${values.length}`,
@@ -199,12 +197,8 @@ export class BooleanColumn implements ColumnBase<boolean, 'boolean'> {
   readonly validity?: ValidityBitmap;
 
   constructor(values: Uint8Array, length: number, validity?: ValidityBitmap) {
-    if (length < 0) {
-      throw new RangeError(
-        `BooleanColumn length must be non-negative, got ${length}`,
-      );
-    }
-    const requiredBytes = (length + 7) >> 3;
+    validateColumnLength(length, 'BooleanColumn');
+    const requiredBytes = bitmapByteCount(length);
     if (values.length < requiredBytes) {
       throw new RangeError(
         `BooleanColumn buffer underflow: need ${requiredBytes} bytes for length ${length}, got ${values.length}`,
@@ -252,7 +246,7 @@ export class BooleanColumn implements ColumnBase<boolean, 'boolean'> {
     if (outLength === 0) {
       return new BooleanColumn(new Uint8Array(0), 0);
     }
-    const bytes = new Uint8Array((outLength + 7) >> 3);
+    const bytes = new Uint8Array(bitmapByteCount(outLength));
     for (let i = 0; i < outLength; i += 1) {
       const srcIdx = lo + i;
       if ((this.values[srcIdx >> 3]! & (1 << (srcIdx & 7))) !== 0) {
@@ -265,7 +259,7 @@ export class BooleanColumn implements ColumnBase<boolean, 'boolean'> {
 
   sliceByIndices(indices: Int32Array): BooleanColumn {
     const outLength = indices.length;
-    const bytes = new Uint8Array((outLength + 7) >> 3);
+    const bytes = new Uint8Array(bitmapByteCount(outLength));
     for (let i = 0; i < outLength; i += 1) {
       const idx = indices[i]!;
       if (
@@ -298,6 +292,7 @@ export function float64ColumnFromArray(
   source: ReadonlyArray<number | null | undefined>,
 ): Float64Column {
   const length = source.length;
+  validateColumnLength(length, 'Float64Column');
   const values = new Float64Array(length);
   for (let i = 0; i < length; i += 1) {
     const v = source[i];
@@ -319,7 +314,8 @@ export function booleanColumnFromArray(
   source: ReadonlyArray<boolean | null | undefined>,
 ): BooleanColumn {
   const length = source.length;
-  const bytes = new Uint8Array((length + 7) >> 3);
+  validateColumnLength(length, 'BooleanColumn');
+  const bytes = new Uint8Array(bitmapByteCount(length));
   for (let i = 0; i < length; i += 1) {
     if (source[i] === true) {
       bytes[i >> 3]! |= 1 << (i & 7);

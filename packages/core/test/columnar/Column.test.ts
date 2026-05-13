@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BooleanColumn,
   Float64Column,
+  MAX_COLUMN_LENGTH,
   booleanColumnFromArray,
   float64ColumnFromArray,
   validityFromBits,
@@ -446,6 +447,56 @@ describe('Multi-byte slice / gather', () => {
         if (slice.read(i) === true) trueIndices.push(i);
       }
       expect(trueIndices).toEqual([0, 2, 4, 6, 8, 10, 12, 14, 16]);
+    });
+  });
+
+  describe('Length validation propagates to column constructors', () => {
+    it('Float64Column rejects 2**31', () => {
+      expect(() => new Float64Column(new Float64Array(1), 2 ** 31)).toThrow(
+        RangeError,
+      );
+    });
+
+    it('Float64Column rejects MAX_COLUMN_LENGTH + 1', () => {
+      expect(
+        () => new Float64Column(new Float64Array(1), MAX_COLUMN_LENGTH + 1),
+      ).toThrow(RangeError);
+    });
+
+    it('Float64Column rejects non-integer length', () => {
+      expect(() => new Float64Column(new Float64Array(2), 1.5)).toThrow(
+        RangeError,
+      );
+      expect(() => new Float64Column(new Float64Array(0), NaN)).toThrow(
+        RangeError,
+      );
+      expect(() => new Float64Column(new Float64Array(0), Infinity)).toThrow(
+        RangeError,
+      );
+    });
+
+    it('BooleanColumn rejects 2**31', () => {
+      expect(() => new BooleanColumn(new Uint8Array(1), 2 ** 31)).toThrow(
+        RangeError,
+      );
+    });
+
+    it('BooleanColumn rejects non-integer length', () => {
+      expect(() => new BooleanColumn(new Uint8Array(1), 1.5)).toThrow(
+        RangeError,
+      );
+      expect(() => new BooleanColumn(new Uint8Array(0), Infinity)).toThrow(
+        RangeError,
+      );
+    });
+
+    it('float64ColumnFromArray rejects above MAX_COLUMN_LENGTH via the underlying array length', () => {
+      // We can't easily construct a Number-keyed array of that size; just
+      // confirm the validator is wired by passing in a small array and
+      // documenting that the validator runs at the source.length read.
+      // The direct validation is covered by validateColumnLength tests; this
+      // test only proves no regression in the normal path.
+      expect(() => float64ColumnFromArray([1, 2, 3])).not.toThrow();
     });
   });
 

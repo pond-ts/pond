@@ -11,6 +11,44 @@
  *
  * Framework-internal; not exported from `packages/core/src/index.ts`.
  */
+
+/**
+ * Upper bound on a single column's `length`. Keeps the byte-sizing and
+ * bit-indexing math in safe 31-bit territory regardless of the integer
+ * involved, and falls well below `Float64Array`'s practical allocation
+ * ceiling on any current engine. Single columns above this size are
+ * a `ChunkedColumn` concern (sub-step 1g).
+ */
+export const MAX_COLUMN_LENGTH = 2 ** 31 - 8;
+
+/**
+ * Validates that `length` is a non-negative safe integer not exceeding
+ * `MAX_COLUMN_LENGTH`. Throws `RangeError` otherwise. Every public
+ * factory and class constructor that derives a packed-bit byte count
+ * from `length` calls this first.
+ */
+export function validateColumnLength(length: number, label: string): void {
+  if (!Number.isInteger(length) || length < 0) {
+    throw new RangeError(
+      `${label} length must be a non-negative integer, got ${length}`,
+    );
+  }
+  if (length > MAX_COLUMN_LENGTH) {
+    throw new RangeError(
+      `${label} length ${length} exceeds MAX_COLUMN_LENGTH (${MAX_COLUMN_LENGTH})`,
+    );
+  }
+}
+
+/**
+ * Bytes required to pack `length` bits. Uses floating-point ceil to
+ * stay correct even if callers skip `validateColumnLength` somehow;
+ * the bitwise `>> 3` indexing used inside hot loops still applies
+ * because validated lengths fit in 31-bit signed range.
+ */
+export function bitmapByteCount(length: number): number {
+  return Math.ceil(length / 8);
+}
 export interface ValidityBitmap {
   /** Packed validity bits — `ceil(length / 8)` bytes. */
   readonly bits: Uint8Array;
@@ -37,12 +75,8 @@ class PackedValidityBitmap implements ValidityBitmap {
   readonly definedCount: number;
 
   constructor(bits: Uint8Array, length: number) {
-    if (length < 0) {
-      throw new RangeError(
-        `ValidityBitmap length must be non-negative, got ${length}`,
-      );
-    }
-    const requiredBytes = (length + 7) >> 3;
+    validateColumnLength(length, 'ValidityBitmap');
+    const requiredBytes = bitmapByteCount(length);
     if (bits.length < requiredBytes) {
       throw new RangeError(
         `ValidityBitmap bits underflow: need ${requiredBytes} bytes for length ${length}, got ${bits.length}`,
@@ -73,12 +107,8 @@ class PackedValidityBitmap implements ValidityBitmap {
  * fill validity incrementally.
  */
 export function createValidityBitmap(length: number): MutableValidityBitmap {
-  if (length < 0) {
-    throw new RangeError(
-      `ValidityBitmap length must be non-negative, got ${length}`,
-    );
-  }
-  const bits = new Uint8Array((length + 7) >> 3);
+  validateColumnLength(length, 'ValidityBitmap');
+  const bits = new Uint8Array(bitmapByteCount(length));
   return new MutableValidityBitmap(bits, length);
 }
 
@@ -103,8 +133,9 @@ export function validityFromPredicate(
   length: number,
   isDefined: (i: number) => boolean,
 ): ValidityBitmap | undefined {
+  validateColumnLength(length, 'ValidityBitmap');
   if (length === 0) return undefined;
-  const bits = new Uint8Array((length + 7) >> 3);
+  const bits = new Uint8Array(bitmapByteCount(length));
   let defined = 0;
   for (let i = 0; i < length; i += 1) {
     if (isDefined(i)) {
@@ -118,15 +149,31 @@ export function validityFromPredicate(
 
 /**
  * Mutable variant — used by builders during column construction.
- * Snapshot via `freeze()` produces a `ValidityBitmap`. After
- * freezing, do not mutate the source bits.
+ * Snapshot via `freeze()` produces a `ValidityBitmap`. The freeze is
+ * **one-shot**: subsequent `set` / `clear` / `freeze` calls throw,
+ * which prevents a builder from corrupting an already-finalized
+ * column. Callers who need to keep mutating after a snapshot must
+ * allocate a fresh `MutableValidityBitmap`.
+ *
+ * Direct mutation of the underlying `bits` array (which is exposed
+ * as `readonly` at the TS layer but `Uint8Array` at runtime) is the
+ * caller's contract to avoid — `readonly` is a type-system marker,
+ * not a runtime barrier.
  */
 export class MutableValidityBitmap {
   readonly bits: Uint8Array;
   readonly length: number;
   #definedCount: number;
+  #consumed = false;
 
   constructor(bits: Uint8Array, length: number) {
+    validateColumnLength(length, 'MutableValidityBitmap');
+    const requiredBytes = bitmapByteCount(length);
+    if (bits.length < requiredBytes) {
+      throw new RangeError(
+        `MutableValidityBitmap bits underflow: need ${requiredBytes} bytes for length ${length}, got ${bits.length}`,
+      );
+    }
     this.bits = bits;
     this.length = length;
     this.#definedCount = popcount(bits, length);
@@ -136,6 +183,11 @@ export class MutableValidityBitmap {
     return this.#definedCount;
   }
 
+  /** True once `freeze()` has been called. After that, mutation throws. */
+  get consumed(): boolean {
+    return this.#consumed;
+  }
+
   isDefined(i: number): boolean {
     if (i < 0 || i >= this.length) return false;
     return (this.bits[i >> 3]! & (1 << (i & 7))) !== 0;
@@ -143,6 +195,11 @@ export class MutableValidityBitmap {
 
   /** Marks `i` as defined. Returns true if the bit changed. */
   set(i: number): boolean {
+    if (this.#consumed) {
+      throw new Error(
+        'MutableValidityBitmap.set: this bitmap has already been frozen',
+      );
+    }
     if (i < 0 || i >= this.length) {
       throw new RangeError(
         `ValidityBitmap.set out of range: ${i} not in [0, ${this.length})`,
@@ -158,6 +215,11 @@ export class MutableValidityBitmap {
 
   /** Marks `i` as invalid. Returns true if the bit changed. */
   clear(i: number): boolean {
+    if (this.#consumed) {
+      throw new Error(
+        'MutableValidityBitmap.clear: this bitmap has already been frozen',
+      );
+    }
     if (i < 0 || i >= this.length) {
       throw new RangeError(
         `ValidityBitmap.clear out of range: ${i} not in [0, ${this.length})`,
@@ -174,9 +236,17 @@ export class MutableValidityBitmap {
   /**
    * Freezes the mutable bitmap into a `ValidityBitmap`, returning
    * `undefined` when every cell is defined (the framework "no bitmap
-   * needed" convention).
+   * needed" convention). **One-shot**: subsequent `set` / `clear` /
+   * `freeze` calls throw. The returned bitmap takes ownership of the
+   * underlying byte buffer.
    */
   freeze(): ValidityBitmap | undefined {
+    if (this.#consumed) {
+      throw new Error(
+        'MutableValidityBitmap.freeze: this bitmap has already been frozen',
+      );
+    }
+    this.#consumed = true;
     if (this.#definedCount === this.length) return undefined;
     return new PackedValidityBitmap(this.bits, this.length);
   }
@@ -205,7 +275,7 @@ export function validitySliceByRange(
   const outLength = Math.max(0, hi - lo);
   if (outLength === 0) return undefined;
   if (!source) return undefined; // all defined
-  const bits = new Uint8Array((outLength + 7) >> 3);
+  const bits = new Uint8Array(bitmapByteCount(outLength));
   let definedCount = 0;
   for (let i = 0; i < outLength; i += 1) {
     const srcIdx = lo + i;
@@ -236,7 +306,7 @@ export function validityGatherByIndices(
       const idx = indices[i]!;
       if (idx < 0 || idx >= sourceLength) {
         // Out-of-range gather → emit a bitmap marking those slots invalid.
-        const bits = new Uint8Array((outLength + 7) >> 3);
+        const bits = new Uint8Array(bitmapByteCount(outLength));
         let defined = 0;
         for (let j = 0; j < outLength; j += 1) {
           const k = indices[j]!;
@@ -251,7 +321,7 @@ export function validityGatherByIndices(
     }
     return undefined;
   }
-  const bits = new Uint8Array((outLength + 7) >> 3);
+  const bits = new Uint8Array(bitmapByteCount(outLength));
   let definedCount = 0;
   for (let i = 0; i < outLength; i += 1) {
     const srcIdx = indices[i]!;
