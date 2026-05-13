@@ -4041,16 +4041,22 @@ See the RFC for the full argument.
      `fromTrustedEvents`) belong at the `SeriesStore` layer; the
      framework's `ColumnBuilder` operates on column data.
    - **1e — `ColumnBuilder` primitives + `fromValidatedRows`
-     row-intake.** 🔄 In review (PR #136). 31 builder tests + 11
-     row-intake tests. Framework adds Float64 / Boolean / String /
-     Array column builders with one-shot `finalize`, defensive
-     copy at append for arrays, and amortized O(1) capacity
-     doubling. Row-API adapter adds `SeriesStore.fromValidatedRows`
-     that delegates to `validateAndNormalize`, walks events into
-     builders, and pre-populates the eventCache so event identity
-     survives intake. Deferred follow-up: `fromTrustedEvents` (skip
-     validation pass) and framework-level `fromBuilders` factory
-     on `ColumnarStore` — both reuse the in-place
+     row-intake.** ✅ Shipped (PR #136, merged 2026-05-13). 34
+     builder tests + 11 row-intake tests. Framework adds Float64
+     / Boolean / String / Array column builders with one-shot
+     `finalize`, defensive copy at append for arrays, and
+     amortized O(1) capacity doubling. Row-API adapter adds
+     `SeriesStore.fromValidatedRows` that delegates to
+     `validateAndNormalize`, walks events into builders, and
+     pre-populates the eventCache so event identity survives
+     intake. Two real bugs caught in review — both in the
+     overwrite path: `#writeAt(rowIndex, undefined)` failing to
+     clear the validity bit (L2), and defined→defined `appendAt`
+     overwrite inflating `#definedCount` without a bitmap (Codex
+     round 1). Both fixed with regression tests.
+     Deferred follow-up (start of 1f or later): `fromTrustedEvents`
+     (skip validation pass) and framework-level `fromBuilders`
+     factory on `ColumnarStore` — both reuse the in-place
      `buildSeriesStoreFromEvents` helper.
    - **1f — Index views (`withRowSelection`, `materialize`),
      zero-copy schema ops.** Next.
@@ -4058,19 +4064,22 @@ See the RFC for the full argument.
    - **1h — `ColumnarRingBuffer`, `scatterByPartition`.**
 
    **Pause point (2026-05-13).** User on vacation ~1 week. State
-   at pause: 1a–1d shipped to main; 1e (PR #136) in review at the
-   pause; 1f–1h not yet started. The framework is at ~26 KB
-   gzipped (slightly over the <25 KB target), 1665+ tests total
-   across core + react.
+   at pause: 1a–1e shipped to main; 1f–1h not yet started. The
+   framework is at ~26 KB gzipped (slightly over the <25 KB
+   target — will revisit at 1h), 1670+ tests total across core +
+   react.
 
-   When resuming: check PR #136 merge status. If merged, start
-   1f. If still open, check review trail comments before
-   continuing. The pure-substrate + adapter layering established
-   in PR #135 (Path B) is load-bearing for 1f's index views —
-   row-API materialization (`SeriesStore.eventAt`) needs to
-   continue working across slice/view operations even though the
-   underlying `ColumnarStore.withRowSelection` is pure
-   columnar-substrate.
+   When resuming: start 1f (index views + zero-copy schema ops).
+   The pure-substrate + adapter layering established in PR #135
+   (Path B) is load-bearing for 1f — row-API materialization
+   (`SeriesStore.eventAt`) needs to continue working across
+   slice/view operations even though the underlying
+   `ColumnarStore.withRowSelection` is pure columnar-substrate.
+   The eventCache mechanism in `SeriesStore` (with structural
+   validation from PR #135 + missing-fields check from
+   round-2 cleanup) is the identity-preservation hook that 1f's
+   slice operations will use to avoid re-materializing events for
+   the unchanged rows.
 2. TimeSeries integration (~3 weeks) — private-field columnar store,
    lazy event materialization, API invariants pinned by tests.
 3. Numeric reducer adaptation (~2 weeks) — `sum` / `avg` / `count` /
