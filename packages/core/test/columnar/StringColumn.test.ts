@@ -551,3 +551,94 @@ describe('Dictionary sharing across operations', () => {
     expect(slice.dictionary!.length).toBe(4);
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* Empty-source slice/gather — pins the "invalid cells skip dict range check"  */
+/* contract added in response to L2 review on PR #133.                        */
+/* -------------------------------------------------------------------------- */
+
+describe('Empty dict-encoded column slice/gather', () => {
+  it('sliceByIndices on an empty dict-encoded column produces all-invalid output', () => {
+    // Previously: constructor's index-range check rejected the `0`
+    // placeholder against an empty dictionary, throwing RangeError.
+    // Now: the check skips invalid cells (since validity says they're
+    // missing), so the output is a length-K all-invalid column.
+    const col = stringColumnFromArray([]);
+    expect(col.length).toBe(0);
+    expect(col.isDictEncoded).toBe(true);
+
+    const slice = col.sliceByIndices(Int32Array.of(0, 1, 2));
+    expect(slice.length).toBe(3);
+    expect(slice.isDictEncoded).toBe(true);
+    expect(slice.dictionary!.length).toBe(0);
+    expect(slice.validity).toBeDefined();
+    expect(slice.validity!.definedCount).toBe(0);
+    expect(slice.read(0)).toBeUndefined();
+    expect(slice.read(1)).toBeUndefined();
+    expect(slice.read(2)).toBeUndefined();
+  });
+
+  it('sliceByIndices with mixed in-range / out-of-range source indices', () => {
+    // Source has dict ['a','b'] and length 2. Gather indices 0 (in),
+    // 5 (out), 1 (in) → output validity marks position 1 invalid; the
+    // other positions resolve to valid dictionary entries.
+    const col = stringColumnDictEncoded(['a', 'b'], Int32Array.of(0, 1));
+    const slice = col.sliceByIndices(Int32Array.of(0, 5, 1));
+    expect(slice.length).toBe(3);
+    expect(slice.read(0)).toBe('a');
+    expect(slice.read(1)).toBeUndefined();
+    expect(slice.read(2)).toBe('b');
+  });
+
+  it('constructor accepts indices = 0 for invalid cells when dictionary is empty', () => {
+    // Direct construction path mirroring sliceByIndices output.
+    const validity = validityFromBits(new Uint8Array([0b000]), 3);
+    const col = new StringColumn(3, {
+      dictionary: [],
+      indices: Int32Array.of(0, 0, 0),
+      validity,
+    });
+    expect(col.dictionary).toEqual([]);
+    expect(col.length).toBe(3);
+    expect(col.read(0)).toBeUndefined();
+    expect(col.read(1)).toBeUndefined();
+    expect(col.read(2)).toBeUndefined();
+  });
+
+  it('constructor still rejects in-range indices that exceed an empty dictionary', () => {
+    // Validity says cell is defined but dictionary is empty → must throw.
+    expect(
+      () => new StringColumn(1, { dictionary: [], indices: Int32Array.of(0) }),
+    ).toThrow(RangeError);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Heuristic boundary tests — pin both sides of length / ratio thresholds.    */
+/* -------------------------------------------------------------------------- */
+
+describe('stringColumnFromArray heuristic boundaries', () => {
+  it('length = 15 (one below DICT_ENCODE_MIN_LENGTH) falls back', () => {
+    // Even with cardinality ratio well below 0.5, length must reach
+    // DICT_ENCODE_MIN_LENGTH for dict mode under defaults.
+    const source = Array.from({ length: 15 }, (_, i) => ['a', 'b'][i % 2]);
+    expect(stringColumnFromArray(source).isDictEncoded).toBe(false);
+  });
+
+  it('length = 16 (exactly DICT_ENCODE_MIN_LENGTH) dict-encodes', () => {
+    const source = Array.from({ length: 16 }, (_, i) => ['a', 'b'][i % 2]);
+    expect(stringColumnFromArray(source).isDictEncoded).toBe(true);
+  });
+
+  it('distinct/length = 0.5 (the threshold) falls to fallback (strict <)', () => {
+    // 20 rows, 10 distinct → ratio 0.5 exactly. Strict `<` means fallback.
+    const source = Array.from({ length: 20 }, (_, i) => `v${i % 10}`);
+    expect(stringColumnFromArray(source).isDictEncoded).toBe(false);
+  });
+
+  it('distinct/length just below threshold dict-encodes', () => {
+    // 20 rows, 9 distinct → ratio 0.45, below 0.5.
+    const source = Array.from({ length: 20 }, (_, i) => `v${i % 9}`);
+    expect(stringColumnFromArray(source).isDictEncoded).toBe(true);
+  });
+});

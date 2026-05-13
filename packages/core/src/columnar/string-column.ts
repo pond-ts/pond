@@ -21,7 +21,7 @@
  * Framework-internal; not exported from `packages/core/src/index.ts`.
  */
 
-import type { Column, ScanOptions } from './column.js';
+import type { ScanOptions } from './column.js';
 import {
   type ValidityBitmap,
   bitmapByteCount,
@@ -90,16 +90,27 @@ export class StringColumn {
         'StringColumn: exactly one of {dictionary+indices, fallback} must be provided',
       );
     }
+    if (options.validity !== undefined && options.validity.length !== length) {
+      throw new RangeError(
+        `StringColumn: validity length ${options.validity.length} does not match column length ${length}`,
+      );
+    }
+    const validity = options.validity;
     if (hasDict) {
       if (options.indices!.length !== length) {
         throw new RangeError(
           `StringColumn: indices length ${options.indices!.length} does not match column length ${length}`,
         );
       }
-      // Validate every index falls within the dictionary range. Out-of-range
-      // indices would produce silent `undefined` reads otherwise.
+      // Validate every index falls within the dictionary range, **only for
+      // cells the validity bitmap marks as defined**. Invalid cells hold an
+      // arbitrary placeholder by framework convention (writes never reach
+      // the dictionary lookup because `read` short-circuits on validity).
+      // This permits empty-dictionary results from `sliceByIndices` where
+      // every output row was an out-of-range gather.
       const dictLen = options.dictionary!.length;
       for (let i = 0; i < length; i += 1) {
+        if (validity && !validity.isDefined(i)) continue;
         const idx = options.indices![i]!;
         if (idx < 0 || idx >= dictLen) {
           throw new RangeError(
@@ -117,13 +128,8 @@ export class StringColumn {
       }
       this.fallback = options.fallback!;
     }
-    if (options.validity !== undefined && options.validity.length !== length) {
-      throw new RangeError(
-        `StringColumn: validity length ${options.validity.length} does not match column length ${length}`,
-      );
-    }
     this.length = length;
-    if (options.validity !== undefined) this.validity = options.validity;
+    if (validity !== undefined) this.validity = validity;
   }
 
   /** True if this column uses dictionary encoding. */
@@ -263,14 +269,6 @@ export class StringColumn {
     });
   }
 }
-
-// Help downstream code that uses the discriminated `Column` union: the
-// type alias in `column.ts` will be widened to include `StringColumn`
-// once this file is part of the build (see `column.ts` Column union).
-// No-op compile-time assertion to surface the inclusion intent.
-type _StringColumnIsAColumn = StringColumn extends Column ? true : false;
-// `_StringColumnIsAColumn` is exported via the type system only — it
-// is a compile-time assertion, not a runtime symbol.
 
 /* -------------------------------------------------------------------------- */
 /* Construction helpers.                                                      */
