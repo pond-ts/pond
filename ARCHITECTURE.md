@@ -392,6 +392,81 @@ Reasoning:
 Documented as the contract; pinned by tests. May be revisited if real
 users hit the divergence.
 
+### Source layout conventions
+
+The conceptual layers above should also be visible in the source tree.
+Historically, `packages/core/src/` grew around large public class files
+(`TimeSeries.ts`, `LiveSeries.ts`, `LiveView.ts`, ...). That was useful
+while the library was small, but it makes later storage work harder:
+public API shape, operator implementation, helper types, and internal
+storage details can drift into the same file.
+
+The long-term source layout standard is:
+
+```
+packages/core/src/
+├── index.ts              # public package barrel only
+├── types.ts              # public schema/type language
+├── core/                 # immutable values + temporal/key primitives
+├── batch/                # TimeSeries + batch-only implementation
+├── live/                 # LiveSeries + live mechanics/operators
+├── sequence/             # Sequence / BoundedSequence / sampling helpers
+├── reducers/             # reducer registry + reducer implementations
+├── columnar/             # internal storage substrate
+├── io/                   # row/object/json/point compatibility exports
+└── utils/                # shared helpers with no layer-specific ownership
+```
+
+Naming rules:
+
+- **PascalCase files** define exported concepts/classes whose name is
+  meaningful to users or architecture readers (`TimeSeries.ts`,
+  `LiveSeries.ts`, `Event.ts`, `Sequence.ts`).
+- **kebab-case files** define internal implementation concerns
+  (`diff-rate.ts`, `trusted-construction.ts`, `partition-key.ts`).
+- `packages/core/src/index.ts` is the only public package barrel. Folder
+  barrels are internal conveniences, not public API commitments.
+- A file should have one primary responsibility. Multiple exports are
+  fine when they form one cohesive concept (`Trigger` plus its trigger
+  types); avoid files that mix a public class, unrelated helpers,
+  storage details, and operator algorithms.
+
+Public classes should trend toward thin API shells. For example,
+`TimeSeries.ts` should describe the constructor, accessors, iteration,
+and public method surface, while delegating substantial analytical work
+to `batch/operators/*.ts`. `LiveSeries.ts` should own live-source
+identity, pushing, snapshotting, and subscription API, while retention,
+ordering, subscription mechanics, and serialization helpers live in
+small `live/*.ts` modules.
+
+Columnar is an internal substrate, not a fourth public layer. It sits
+under batch and selected live hot paths while preserving the row/Event
+API boundary. The framework lives at `packages/core/src/columnar/`, is
+not re-exported from the public package barrel, and should keep storage
+primitives (`store.ts`, `column.ts`, `builder.ts`, `validity.ts`, ...)
+separate from later columnar operator implementations
+(`columnar/operators/*.ts`) if those grow large enough.
+
+Suggested migration order:
+
+1. Document this convention before moving code.
+2. Create layer folders/barrels with minimal behavior change.
+3. Move pure helpers first.
+4. Move public class files into their layer folders without changing
+   behavior.
+5. Extract batch operator bodies out of `TimeSeries.ts`, one operator
+   family per PR.
+6. Extract live mechanics out of `LiveSeries.ts`, one concern per PR.
+7. Land and integrate columnar internally, operator-by-operator, without
+   exposing it as public API prematurely.
+
+The goal state is: `TimeSeries.ts` tells you what the batch API is;
+`batch/operators/*.ts` tells you how batch work is done. `LiveSeries.ts`
+tells you what a live source is; `live/*.ts` tells you how live mechanics
+are implemented. `columnar/*.ts` tells you how storage works. Public
+exports remain stable unless a separate API-change PR explicitly says
+otherwise.
+
 ### Per-method JSDoc warnings for cross-entity hazards
 
 Every batch operator that reads neighboring events carries a
