@@ -2,7 +2,7 @@ import { LiveSeries, type LiveSeriesOptions } from './LiveSeries.js';
 import { LiveRollingAggregation } from './LiveRollingAggregation.js';
 import { LivePartitionedSyncRolling } from './LivePartitionedSyncRolling.js';
 import { LivePartitionedFusedRolling } from './LivePartitionedFusedRolling.js';
-import type { SampleStrategy } from './sample.js';
+import type { SampleStrategy } from './sequence/sample.js';
 import {
   makeCumulativeView,
   makeDiffView,

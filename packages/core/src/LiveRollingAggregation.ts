@@ -14,7 +14,7 @@ import {
   type LiveFillStrategy,
 } from './LiveView.js';
 import { rollingStateFor, type RollingReducerState } from './reducers/index.js';
-import type { Sequence } from './Sequence.js';
+import type { Sequence } from './sequence/sequence.js';
 import {
   bucketIndexFor,
   boundaryTimestampFor,

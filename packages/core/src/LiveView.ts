@@ -8,9 +8,9 @@ import {
 } from './LiveRollingAggregation.js';
 import { LiveFusedRolling } from './LiveFusedRolling.js';
 import { LiveReduce } from './LiveReduce.js';
-import type { SampleStrategy } from './sample.js';
+import type { SampleStrategy } from './sequence/sample.js';
 import { TimeSeries, toKey, type KeyLike } from './TimeSeries.js';
-import type { Sequence } from './Sequence.js';
+import type { Sequence } from './sequence/sequence.js';
 import {
   EMITS_EVICT,
   type AggregateMap,

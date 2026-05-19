@@ -1,4 +1,4 @@
-import { Sequence } from '../Sequence.js';
+import { Sequence } from '../sequence/sequence.js';
 import type { DurationInput } from '../core/duration.js';
 import type { TimestampInput } from '../core/temporal.js';
 

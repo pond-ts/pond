@@ -30,7 +30,7 @@ import type {
   IntervalInput,
   TimeRangeInput,
 } from './core/temporal.js';
-import type { Sequence } from './Sequence.js';
+import type { Sequence } from './sequence/sequence.js';
 import {
   EMITS_EVICT,
   type AggregateMap,
@@ -60,7 +60,7 @@ import type {
 } from './types-aggregate.js';
 import { LiveFusedRolling } from './LiveFusedRolling.js';
 import { LiveReduce } from './LiveReduce.js';
-import type { SampleStrategy } from './sample.js';
+import type { SampleStrategy } from './sequence/sample.js';
 import type {
   FusedMapping,
   FusedMappingValid,

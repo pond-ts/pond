@@ -19,7 +19,7 @@ import {
 } from './LiveRollingAggregation.js';
 import { TimeSeries } from './TimeSeries.js';
 import { bucketStateFor, type AggregateBucketState } from './reducers/index.js';
-import type { Sequence } from './Sequence.js';
+import type { Sequence } from './sequence/sequence.js';
 import type {
   AggregateMap,
   AggregateOutputMap,

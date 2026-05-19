@@ -1,5 +1,5 @@
-import { Interval } from './core/interval.js';
-import { TimeRange } from './core/time-range.js';
+import { Interval } from '../core/interval.js';
+import { TimeRange } from '../core/time-range.js';
 
 function validateIntervals(intervals: ReadonlyArray<Interval>): void {
   for (let index = 0; index < intervals.length; index += 1) {

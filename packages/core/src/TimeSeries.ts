@@ -72,7 +72,7 @@ import {
   isAggregateOutputSpec,
   normalizeAggregateColumns,
 } from './aggregate-columns.js';
-import { BoundedSequence } from './BoundedSequence.js';
+import { BoundedSequence } from './sequence/bounded-sequence.js';
 import { parseTimestampString, type TimeZoneOptions } from './core/calendar.js';
 import { Interval } from './core/interval.js';
 import { Time } from './core/time.js';
@@ -88,8 +88,8 @@ import type {
 import { compareEventKeys } from './core/temporal.js';
 import { Event } from './core/event.js';
 import { PartitionedTimeSeries } from './PartitionedTimeSeries.js';
-import type { BatchSampleStrategy } from './sample.js';
-import { Sequence } from './Sequence.js';
+import type { BatchSampleStrategy } from './sequence/sample.js';
+import { Sequence } from './sequence/sequence.js';
 import { validateAndNormalize } from './validate.js';
 import type { DurationInput } from './core/duration.js';
 import { parseDuration } from './core/duration.js';

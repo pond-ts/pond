@@ -1,4 +1,4 @@
-export { BoundedSequence } from './BoundedSequence.js';
+export { BoundedSequence } from './sequence/bounded-sequence.js';
 export { Event } from './core/event.js';
 export { Interval } from './core/interval.js';
 export { LiveAggregation } from './LiveAggregation.js';
@@ -15,13 +15,13 @@ export { LiveRollingAggregation } from './LiveRollingAggregation.js';
 export { LiveFusedRolling } from './LiveFusedRolling.js';
 export { LivePartitionedFusedRolling } from './LivePartitionedFusedRolling.js';
 export { LiveReduce } from './LiveReduce.js';
-export type { SampleStrategy, BatchSampleStrategy } from './sample.js';
+export type { SampleStrategy, BatchSampleStrategy } from './sequence/sample.js';
 export { Trigger } from './triggers.js';
 export type { ClockTrigger, CountTrigger, EventTrigger } from './triggers.js';
 export { PartitionedTimeSeries } from './PartitionedTimeSeries.js';
 export { Time } from './core/time.js';
 export { TimeRange, toTimeRange } from './core/time-range.js';
-export { Sequence } from './Sequence.js';
+export { Sequence } from './sequence/sequence.js';
 export { TimeSeries, type KeyLike } from './TimeSeries.js';
 export { top } from './reducers/index.js';
 export { ValidationError } from './core/errors.js';
@@ -115,7 +115,7 @@ export type {
   TimestampInput,
 } from './core/temporal.js';
 export type { DurationInput } from './core/duration.js';
-export type { SequenceSample } from './Sequence.js';
+export type { SequenceSample } from './sequence/sequence.js';
 export type {
   LiveSeriesOptions,
   OrderingMode,

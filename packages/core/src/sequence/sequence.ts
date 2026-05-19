@@ -1,4 +1,4 @@
-import { BoundedSequence } from './BoundedSequence.js';
+import { BoundedSequence } from './bounded-sequence.js';
 import {
   type CalendarOptions,
   type CalendarUnit,
@@ -8,13 +8,13 @@ import {
   plainDateToStart,
   resolveTimeZone,
   toPlainDateStart,
-} from './core/calendar.js';
-import { parseDuration } from './core/duration.js';
-import type { DurationInput } from './core/duration.js';
-import { Interval } from './core/interval.js';
-import { toTimeRange } from './core/time-range.js';
-import type { TemporalLike, TimestampInput } from './core/temporal.js';
-import { normalizeTimestamp } from './core/temporal.js';
+} from '../core/calendar.js';
+import { parseDuration } from '../core/duration.js';
+import type { DurationInput } from '../core/duration.js';
+import { Interval } from '../core/interval.js';
+import { toTimeRange } from '../core/time-range.js';
+import type { TemporalLike, TimestampInput } from '../core/temporal.js';
+import { normalizeTimestamp } from '../core/temporal.js';
 
 export type { DurationInput };
 export type SequenceSample = 'begin' | 'center' | 'end';
