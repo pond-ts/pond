@@ -189,6 +189,69 @@ order-preserving derived transforms (`filter`, `select`, `rename`, `collapse`,
 - [x] test and document custom reducers for `rolling()` (type plumbing already
       accepted `CustomAggregateReducer`; added edge-case tests and docs)
 
+### Source-layout migration (shipped — kebab-case layer folders, schema split)
+
+`packages/core/src/` was a flat 26-file root mixing public classes,
+helpers, types, and `Live*` operators. The migration moved every
+non-barrel module into a layer folder under a single naming rule.
+
+**Shipped via PRs #137, #138, #140, #141, #142, #143, #144, #145.**
+
+Final layout:
+
+```
+packages/core/src/
+├── index.ts              # public package barrel (only file at root)
+├── batch/                # TimeSeries, PartitionedTimeSeries, validate, json, aggregate-columns
+├── core/                 # event, interval, time, time-range, temporal, calendar, duration, errors
+├── columnar/             # internal storage substrate (unchanged)
+├── live/                 # LiveSeries + every Live*, series-store, live-history, triggers
+├── reducers/             # reducer registry (unchanged)
+├── schema/               # type vocabulary split by concern (10 files; was types.ts + types-*.ts)
+└── sequence/             # Sequence, BoundedSequence, sample
+```
+
+Naming rule: every file is kebab-case; class names stay PascalCase
+inside the file. No mixed convention, no judgment calls about
+"public concept vs internal helper." Documented in ARCHITECTURE.md
+under "Source layout conventions."
+
+`schema/` decomposes the former 1022-line, 82-export `types.ts` into
+10 focused files (`series.ts`, `events.ts`, `json.ts`,
+`aggregate.ts`, `reduce.ts`, `rolling.ts`, `reshape.ts`, `diff.ts`,
+`join.ts`, `public.ts`) plus an internal `schema/index.ts` barrel.
+The `pond-ts/types` subpath still resolves; `package.json#exports`
+was updated to point at `dist/schema/public.{d.ts,js}`.
+
+**No compatibility shims left at the root.** Each layer-move PR
+rewired every import site rather than leaving 1-line re-exports
+behind. Per-PR diffs were larger, but the end state needs no v1.0
+cleanup pass for shim removal.
+
+**What's still aspirational** (not shipped here):
+
+- Operator extraction from `batch/time-series.ts` (4524 lines).
+  The structural move is done; the "thin API shell + `batch/operators/*.ts`"
+  goal in ARCHITECTURE.md hasn't started. Same for
+  `live/live-series.ts` (1185 lines) and `live/live-partitioned-series.ts`
+  (1448 lines).
+- `io/` layer (row/object/json/point converters) is reserved in
+  ARCHITECTURE.md but not yet created — comes into existence when
+  operator extraction surfaces the relevant code paths.
+
+**Why this was worth doing now.** Phase 4.7 (columnar core
+substrate) and the eventual operator extraction both touch every
+public-class file. Doing them on the old flat layout meant
+arbitrating PascalCase/kebab-case naming and "public concept vs
+internal helper" judgment per PR; doing them on a clean layered
+tree means the storage rewrite and operator splits land as
+mechanical moves into known homes.
+
+**Public API unchanged.** Every `import { ... } from 'pond-ts'`
+and `import type ... from 'pond-ts/types'` resolves to the same
+identifiers it did before #137. 1670/1670 tests pass on every
+migration PR.
+
 ---
 
 ## Phase 1: Batch hardening (in progress)
@@ -4040,6 +4103,7 @@ See the RFC for the full argument.
      decide: row-shape intake factories (`fromValidatedRows`,
      `fromTrustedEvents`) belong at the `SeriesStore` layer; the
      framework's `ColumnBuilder` operates on column data.
+
    - **1e — `ColumnBuilder` primitives + `fromValidatedRows`
      row-intake.** ✅ Shipped (PR #136, merged 2026-05-13). 34
      builder tests + 11 row-intake tests. Framework adds Float64
@@ -4080,6 +4144,7 @@ See the RFC for the full argument.
    round-2 cleanup) is the identity-preservation hook that 1f's
    slice operations will use to avoid re-materializing events for
    the unchanged rows.
+
 2. TimeSeries integration (~3 weeks) — private-field columnar store,
    lazy event materialization, API invariants pinned by tests.
 3. Numeric reducer adaptation (~2 weeks) — `sum` / `avg` / `count` /
