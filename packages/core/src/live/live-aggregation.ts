@@ -1,9 +1,9 @@
 import {
   normalizeAggregateColumns,
   type AggregateColumnSpec,
-} from './aggregate-columns.js';
-import { Event } from './core/event.js';
-import { Interval } from './core/interval.js';
+} from '../aggregate-columns.js';
+import { Event } from '../core/event.js';
+import { Interval } from '../core/interval.js';
 import {
   LiveView,
   makeDiffView,
@@ -11,15 +11,18 @@ import {
   makeCumulativeView,
   type LiveFillMapping,
   type LiveFillStrategy,
-} from './LiveView.js';
+} from './live-view.js';
 import {
   LiveRollingAggregation,
   type LiveRollingOptions,
   type RollingWindow,
-} from './LiveRollingAggregation.js';
-import { TimeSeries } from './TimeSeries.js';
-import { bucketStateFor, type AggregateBucketState } from './reducers/index.js';
-import type { Sequence } from './sequence/sequence.js';
+} from './live-rolling-aggregation.js';
+import { TimeSeries } from '../TimeSeries.js';
+import {
+  bucketStateFor,
+  type AggregateBucketState,
+} from '../reducers/index.js';
+import type { Sequence } from '../sequence/sequence.js';
 import type {
   AggregateMap,
   AggregateOutputMap,
@@ -34,11 +37,11 @@ import type {
   SelectSchema,
   SeriesSchema,
   ValueColumnsForSchema,
-} from './types.js';
-import type { RollingOutputMapSchema } from './types-aggregate.js';
+} from '../types.js';
+import type { RollingOutputMapSchema } from '../types-aggregate.js';
 
-import { parseDuration } from './core/duration.js';
-import type { DurationInput } from './core/duration.js';
+import { parseDuration } from '../core/duration.js';
+import type { DurationInput } from '../core/duration.js';
 
 type PendingBucket = {
   start: number;

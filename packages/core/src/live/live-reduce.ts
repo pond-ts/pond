@@ -1,10 +1,13 @@
 import {
   normalizeAggregateColumns,
   type AggregateColumnSpec,
-} from './aggregate-columns.js';
-import { Event } from './core/event.js';
-import { Time } from './core/time.js';
-import { rollingStateFor, type RollingReducerState } from './reducers/index.js';
+} from '../aggregate-columns.js';
+import { Event } from '../core/event.js';
+import { Time } from '../core/time.js';
+import {
+  rollingStateFor,
+  type RollingReducerState,
+} from '../reducers/index.js';
 import {
   bucketIndexFor,
   boundaryTimestampFor,
@@ -19,8 +22,8 @@ import {
   type EventForSchema,
   type LiveSource,
   type SeriesSchema,
-} from './types.js';
-import type { LiveRollingOptions } from './LiveRollingAggregation.js';
+} from '../types.js';
+import type { LiveRollingOptions } from './live-rolling-aggregation.js';
 
 // `queueMicrotask` is a host-provided global available in browsers
 // (DOM lib) and Node ≥ 11 (Node types). pond-ts targets both

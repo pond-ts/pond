@@ -1,17 +1,20 @@
 import {
   normalizeAggregateColumns,
   type AggregateColumnSpec,
-} from './aggregate-columns.js';
-import { Event } from './core/event.js';
-import { Time } from './core/time.js';
-import { rollingStateFor, type RollingReducerState } from './reducers/index.js';
+} from '../aggregate-columns.js';
+import { Event } from '../core/event.js';
+import { Time } from '../core/time.js';
+import {
+  rollingStateFor,
+  type RollingReducerState,
+} from '../reducers/index.js';
 import {
   bucketIndexFor,
   boundaryTimestampFor,
   type ClockTrigger,
 } from './triggers.js';
-import type { RollingWindow } from './LiveRollingAggregation.js';
-import { parseDuration } from './core/duration.js';
+import type { RollingWindow } from './live-rolling-aggregation.js';
+import { parseDuration } from '../core/duration.js';
 import {
   applyHistoryRetention,
   resolveHistoryConfig,
@@ -24,7 +27,7 @@ import type {
   EventForSchema,
   LiveSource,
   SeriesSchema,
-} from './types.js';
+} from '../types.js';
 
 type WindowEntry = {
   index: number;

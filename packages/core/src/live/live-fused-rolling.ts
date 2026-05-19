@@ -1,17 +1,20 @@
 import {
   normalizeAggregateColumns,
   type AggregateColumnSpec,
-} from './aggregate-columns.js';
-import { Event } from './core/event.js';
-import { Time } from './core/time.js';
-import { rollingStateFor, type RollingReducerState } from './reducers/index.js';
+} from '../aggregate-columns.js';
+import { Event } from '../core/event.js';
+import { Time } from '../core/time.js';
+import {
+  rollingStateFor,
+  type RollingReducerState,
+} from '../reducers/index.js';
 import {
   bucketIndexFor,
   boundaryTimestampFor,
   type Trigger,
   type ClockTrigger,
 } from './triggers.js';
-import { parseDuration, type DurationLiteral } from './core/duration.js';
+import { parseDuration, type DurationLiteral } from '../core/duration.js';
 import { applyHistoryRetention, resolveHistoryConfig } from './live-history.js';
 import type {
   AggregateMap,
@@ -20,9 +23,12 @@ import type {
   EventForSchema,
   LiveSource,
   SeriesSchema,
-} from './types.js';
-import type { FusedMapping, FusedMappingValue } from './types-fused-rolling.js';
-import type { LiveRollingOptions } from './LiveRollingAggregation.js';
+} from '../types.js';
+import type {
+  FusedMapping,
+  FusedMappingValue,
+} from '../types-fused-rolling.js';
+import type { LiveRollingOptions } from './live-rolling-aggregation.js';
 
 /**
  * Per-window state inside a {@link LiveFusedRolling}. Each window

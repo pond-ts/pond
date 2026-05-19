@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { LiveSeries } from '../src/LiveSeries.js';
+import { LiveSeries } from '../src/live/live-series.js';
 
 const schema = [
   { name: 'time', kind: 'time' },

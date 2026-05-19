@@ -1,10 +1,10 @@
 import {
   normalizeAggregateColumns,
   type AggregateColumnSpec,
-} from './aggregate-columns.js';
-import { Event } from './core/event.js';
-import { Time } from './core/time.js';
-import { LiveAggregation } from './LiveAggregation.js';
+} from '../aggregate-columns.js';
+import { Event } from '../core/event.js';
+import { Time } from '../core/time.js';
+import { LiveAggregation } from './live-aggregation.js';
 import {
   LiveView,
   makeDiffView,
@@ -12,9 +12,12 @@ import {
   makeCumulativeView,
   type LiveFillMapping,
   type LiveFillStrategy,
-} from './LiveView.js';
-import { rollingStateFor, type RollingReducerState } from './reducers/index.js';
-import type { Sequence } from './sequence/sequence.js';
+} from './live-view.js';
+import {
+  rollingStateFor,
+  type RollingReducerState,
+} from '../reducers/index.js';
+import type { Sequence } from '../sequence/sequence.js';
 import {
   bucketIndexFor,
   boundaryTimestampFor,
@@ -33,12 +36,12 @@ import type {
   SelectSchema,
   SeriesSchema,
   ColumnValue,
-} from './types.js';
-import type { AggregateOutputMapResultSchema } from './types-aggregate.js';
+} from '../types.js';
+import type { AggregateOutputMapResultSchema } from '../types-aggregate.js';
 
-import type { DurationInput } from './core/duration.js';
-import { parseDuration } from './core/duration.js';
-import type { RetentionPolicy } from './LiveSeries.js';
+import type { DurationInput } from '../core/duration.js';
+import { parseDuration } from '../core/duration.js';
+import type { RetentionPolicy } from './live-series.js';
 import { applyHistoryRetention, resolveHistoryConfig } from './live-history.js';
 
 type WindowEntry = {

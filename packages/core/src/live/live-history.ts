@@ -9,8 +9,8 @@
  * variants used to ignore the option silently — Codex caught it on
  * PR #124's adversarial review).
  */
-import type { RetentionPolicy } from './LiveSeries.js';
-import { parseDuration } from './core/duration.js';
+import type { RetentionPolicy } from './live-series.js';
+import { parseDuration } from '../core/duration.js';
 
 export type HistoryOption = boolean | RetentionPolicy;
 

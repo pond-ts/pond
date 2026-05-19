@@ -1,8 +1,8 @@
-import { LiveSeries, type LiveSeriesOptions } from './LiveSeries.js';
-import { LiveRollingAggregation } from './LiveRollingAggregation.js';
-import { LivePartitionedSyncRolling } from './LivePartitionedSyncRolling.js';
-import { LivePartitionedFusedRolling } from './LivePartitionedFusedRolling.js';
-import type { SampleStrategy } from './sequence/sample.js';
+import { LiveSeries, type LiveSeriesOptions } from './live-series.js';
+import { LiveRollingAggregation } from './live-rolling-aggregation.js';
+import { LivePartitionedSyncRolling } from './live-partitioned-sync-rolling.js';
+import { LivePartitionedFusedRolling } from './live-partitioned-fused-rolling.js';
+import type { SampleStrategy } from '../sequence/sample.js';
 import {
   makeCumulativeView,
   makeDiffView,
@@ -10,7 +10,7 @@ import {
   makeStrideSampleView,
   type LiveFillMapping,
   type LiveFillStrategy,
-} from './LiveView.js';
+} from './live-view.js';
 import type { Trigger } from './triggers.js';
 import {
   type AggregateMap,
@@ -23,18 +23,18 @@ import {
   type RollingSchema,
   type RowForSchema,
   type SeriesSchema,
-} from './types.js';
-import type { RollingOutputMapSchema } from './types-aggregate.js';
+} from '../types.js';
+import type { RollingOutputMapSchema } from '../types-aggregate.js';
 import type {
   FusedMapping,
   FusedMappingValid,
   FusedPartitionedRollingSchema,
-} from './types-fused-rolling.js';
-import type { DurationInput } from './core/duration.js';
+} from '../types-fused-rolling.js';
+import type { DurationInput } from '../core/duration.js';
 import type {
   LiveRollingOptions,
   RollingWindow,
-} from './LiveRollingAggregation.js';
+} from './live-rolling-aggregation.js';
 
 /**
  * Structural target for `#wireSyncRolling` — both

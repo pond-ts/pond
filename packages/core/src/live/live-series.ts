@@ -1,10 +1,10 @@
-import { Event } from './core/event.js';
-import { Interval } from './core/interval.js';
-import { LiveAggregation } from './LiveAggregation.js';
+import { Event } from '../core/event.js';
+import { Interval } from '../core/interval.js';
+import { LiveAggregation } from './live-aggregation.js';
 import {
   LivePartitionedSeries,
   type LivePartitionedOptions,
-} from './LivePartitionedSeries.js';
+} from './live-partitioned-series.js';
 import {
   LiveView,
   makeDiffView,
@@ -13,24 +13,24 @@ import {
   makeStrideSampleView,
   type LiveFillMapping,
   type LiveFillStrategy,
-} from './LiveView.js';
-import { Time } from './core/time.js';
-import { TimeRange } from './core/time-range.js';
+} from './live-view.js';
+import { Time } from '../core/time.js';
+import { TimeRange } from '../core/time-range.js';
 import {
   LiveRollingAggregation,
   type LiveRollingOptions,
   type RollingWindow,
-} from './LiveRollingAggregation.js';
-import { TimeSeries, toKey, type KeyLike } from './TimeSeries.js';
-import { ValidationError } from './core/errors.js';
-import { parseJsonRows } from './json.js';
-import type { TimeZoneOptions } from './core/calendar.js';
+} from './live-rolling-aggregation.js';
+import { TimeSeries, toKey, type KeyLike } from '../TimeSeries.js';
+import { ValidationError } from '../core/errors.js';
+import { parseJsonRows } from '../json.js';
+import type { TimeZoneOptions } from '../core/calendar.js';
 import type {
   EventKey,
   IntervalInput,
   TimeRangeInput,
-} from './core/temporal.js';
-import type { Sequence } from './sequence/sequence.js';
+} from '../core/temporal.js';
+import type { Sequence } from '../sequence/sequence.js';
 import {
   EMITS_EVICT,
   type AggregateMap,
@@ -53,22 +53,22 @@ import {
   type TimeSeriesJsonInput,
   type TimeSeriesJsonOutputArray,
   type TimeSeriesJsonOutputObject,
-} from './types.js';
+} from '../types.js';
 import type {
   AggregateOutputMapResultSchema,
   RollingOutputMapSchema,
-} from './types-aggregate.js';
-import { LiveFusedRolling } from './LiveFusedRolling.js';
-import { LiveReduce } from './LiveReduce.js';
-import type { SampleStrategy } from './sequence/sample.js';
+} from '../types-aggregate.js';
+import { LiveFusedRolling } from './live-fused-rolling.js';
+import { LiveReduce } from './live-reduce.js';
+import type { SampleStrategy } from '../sequence/sample.js';
 import type {
   FusedMapping,
   FusedMappingValid,
   FusedRollingSchema,
-} from './types-fused-rolling.js';
+} from '../types-fused-rolling.js';
 
-import type { DurationInput } from './core/duration.js';
-import { parseDuration } from './core/duration.js';
+import type { DurationInput } from '../core/duration.js';
+import { parseDuration } from '../core/duration.js';
 
 // ── Single-row validation ───────────────────────────────────────
 

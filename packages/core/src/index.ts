@@ -1,23 +1,27 @@
 export { BoundedSequence } from './sequence/bounded-sequence.js';
 export { Event } from './core/event.js';
 export { Interval } from './core/interval.js';
-export { LiveAggregation } from './LiveAggregation.js';
-export type { LiveAggregationOptions } from './LiveAggregation.js';
+export { LiveAggregation } from './live/live-aggregation.js';
+export type { LiveAggregationOptions } from './live/live-aggregation.js';
 export {
   LivePartitionedSeries,
   LivePartitionedView,
   type LivePartitionedOptions,
-} from './LivePartitionedSeries.js';
-export { LiveSeries } from './LiveSeries.js';
-export { LiveView } from './LiveView.js';
-export type { LiveFillMapping, LiveFillStrategy } from './LiveView.js';
-export { LiveRollingAggregation } from './LiveRollingAggregation.js';
-export { LiveFusedRolling } from './LiveFusedRolling.js';
-export { LivePartitionedFusedRolling } from './LivePartitionedFusedRolling.js';
-export { LiveReduce } from './LiveReduce.js';
+} from './live/live-partitioned-series.js';
+export { LiveSeries } from './live/live-series.js';
+export { LiveView } from './live/live-view.js';
+export type { LiveFillMapping, LiveFillStrategy } from './live/live-view.js';
+export { LiveRollingAggregation } from './live/live-rolling-aggregation.js';
+export { LiveFusedRolling } from './live/live-fused-rolling.js';
+export { LivePartitionedFusedRolling } from './live/live-partitioned-fused-rolling.js';
+export { LiveReduce } from './live/live-reduce.js';
 export type { SampleStrategy, BatchSampleStrategy } from './sequence/sample.js';
-export { Trigger } from './triggers.js';
-export type { ClockTrigger, CountTrigger, EventTrigger } from './triggers.js';
+export { Trigger } from './live/triggers.js';
+export type {
+  ClockTrigger,
+  CountTrigger,
+  EventTrigger,
+} from './live/triggers.js';
 export { PartitionedTimeSeries } from './PartitionedTimeSeries.js';
 export { Time } from './core/time.js';
 export { TimeRange, toTimeRange } from './core/time-range.js';
@@ -120,11 +124,11 @@ export type {
   LiveSeriesOptions,
   OrderingMode,
   RetentionPolicy,
-} from './LiveSeries.js';
+} from './live/live-series.js';
 export type {
   LiveRollingOptions,
   RollingWindow,
-} from './LiveRollingAggregation.js';
+} from './live/live-rolling-aggregation.js';
 export type {
   DurationString,
   FusedMapping,

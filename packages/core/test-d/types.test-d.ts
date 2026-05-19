@@ -1223,7 +1223,7 @@ void badBaselineColumn;
 // overloads added in v0.13.0 close this hole; these assertions pin it.
 
 import { LiveSeries, Trigger } from '../src/index.js';
-import type { LiveRollingOptions } from '../src/LiveRollingAggregation.js';
+import type { LiveRollingOptions } from '../src/live/live-rolling-aggregation.js';
 
 const liveCpuSchema = [
   { name: 'time', kind: 'time' },
