@@ -397,74 +397,167 @@ users hit the divergence.
 The conceptual layers above should also be visible in the source tree.
 Historically, `packages/core/src/` grew around large public class files
 (`TimeSeries.ts`, `LiveSeries.ts`, `LiveView.ts`, ...). That was useful
-while the library was small, but it makes later storage work harder:
-public API shape, operator implementation, helper types, and internal
-storage details can drift into the same file.
+while the library was small, but it makes later work harder: public API
+shape, operator implementation, helper types, and internal storage
+details drift into the same file, and a 4500-line `TimeSeries.ts` or
+1000-line `types.ts` is no longer browsable.
 
-The long-term source layout standard is:
+The target source layout is:
 
 ```
 packages/core/src/
-├── index.ts              # public package barrel only
-├── types.ts              # public schema/type language
-├── core/                 # immutable values + temporal/key primitives
-├── batch/                # TimeSeries + batch-only implementation
-├── live/                 # LiveSeries + live mechanics/operators
-├── sequence/             # Sequence / BoundedSequence / sampling helpers
-├── reducers/             # reducer registry + reducer implementations
-├── columnar/             # internal storage substrate
-├── io/                   # row/object/json/point compatibility exports
-└── utils/                # shared helpers with no layer-specific ownership
+├── index.ts                          # public package barrel — only file at the root
+├── core/                             # immutable value primitives
+│   ├── event.ts                      # exports Event
+│   ├── time.ts                       # exports Time
+│   ├── time-range.ts                 # exports TimeRange, toTimeRange
+│   ├── interval.ts                   # exports Interval
+│   ├── temporal.ts                   # EventKey, TemporalLike, *Input types
+│   ├── calendar.ts                   # CalendarOptions, CalendarUnit, TimeZoneOptions
+│   ├── duration.ts                   # parseDuration, DurationInput
+│   └── errors.ts                     # ValidationError
+├── schema/                           # public type vocabulary — replaces types.ts
+│   ├── index.ts                      # internal barrel
+│   ├── series.ts                     # SeriesSchema, ColumnDef, FirstColumn, ValueColumn, ScalarKind, …
+│   ├── rows.ts                       # Row / Object / Normalized / Json row+event types
+│   ├── aggregate.ts                  # AggregateSchema, AggregateReducer, AlignSchema, …
+│   ├── reduce.ts                     # ReduceResult, reducer-shaped types
+│   ├── rolling.ts                    # RollingSchema, RollingAlignment, fused-rolling types
+│   ├── join.ts                       # JoinSchema, JoinManySchema, JoinType, prefix variants
+│   ├── reshape.ts                    # Materialize / Select / Rename / Rekey / Baseline / Collapse / Fill / Dedupe
+│   ├── diff.ts                       # DiffSchema, SmoothSchema, SmoothMethod
+│   └── arrays.ts                     # ArrayValue, ArrayAggregate*, ArrayExplode*
+├── batch/                            # TimeSeries + batch-only implementation
+│   ├── time-series.ts                # the class — thin API shell
+│   ├── partitioned-time-series.ts
+│   ├── validate.ts
+│   ├── json.ts                       # fromJSON / toJSON helpers
+│   ├── aggregate-columns.ts
+│   └── operators/                    # (grown over time) batch operator implementations
+├── live/                             # LiveSeries + live mechanics
+│   ├── live-series.ts
+│   ├── live-view.ts
+│   ├── live-partitioned-series.ts
+│   ├── live-aggregation.ts
+│   ├── live-rolling-aggregation.ts
+│   ├── live-fused-rolling.ts
+│   ├── live-partitioned-fused-rolling.ts
+│   ├── live-partitioned-sync-rolling.ts
+│   ├── live-reduce.ts
+│   ├── live-history.ts               # bounded ring buffer for snapshotting
+│   ├── series-store.ts               # row-based store adapter
+│   └── triggers.ts                   # Trigger + trigger types
+├── sequence/
+│   ├── sequence.ts
+│   ├── bounded-sequence.ts
+│   └── sample.ts                     # SampleStrategy, BatchSampleStrategy
+├── reducers/                         # reducer registry + per-reducer modules
+├── columnar/                         # internal storage substrate (not in public barrel)
+└── io/                               # (future) row/object/json/point converters extracted from TimeSeries
 ```
 
-Naming rules:
+Two design choices worth pinning explicitly:
 
-- **PascalCase files** define exported concepts/classes whose name is
-  meaningful to users or architecture readers (`TimeSeries.ts`,
-  `LiveSeries.ts`, `Event.ts`, `Sequence.ts`).
-- **kebab-case files** define internal implementation concerns
-  (`diff-rate.ts`, `trusted-construction.ts`, `partition-key.ts`).
-- `packages/core/src/index.ts` is the only public package barrel. Folder
-  barrels are internal conveniences, not public API commitments.
+- **No `utils/`.** A single-file `utils/` folder is just noise; pure helpers go to whichever layer owns them (`parseDuration` is a temporal primitive, so it lives under `core/`).
+- **`io/` is reserved, not created yet.** Don't make empty layer folders. It comes into existence when there's real material to move (the `toRows`/`toObjects`/`toPoints`/`fromPoints` family currently inside `TimeSeries.ts`).
+
+#### Naming rules
+
+**One rule: all files are kebab-case.** Class names stay PascalCase
+inside the file — only the filename changes. `time-series.ts` exports
+class `TimeSeries`; `live-view.ts` exports class `LiveView`; `event.ts`
+exports class `Event`.
+
+No mixed convention, no judgment calls about "is this an exported
+concept or an internal helper" — promotion or demotion across the
+public boundary never requires a file rename. This matches the modern
+TypeScript ecosystem (tRPC, Effect, Zod, Drizzle, Next.js internals).
+
+Other naming guidance:
+
 - A file should have one primary responsibility. Multiple exports are
-  fine when they form one cohesive concept (`Trigger` plus its trigger
-  types); avoid files that mix a public class, unrelated helpers,
-  storage details, and operator algorithms.
+  fine when they form one cohesive concept (`triggers.ts` exporting
+  `Trigger` plus its trigger types).
+- `packages/core/src/index.ts` is the only public package barrel.
+  Folder `index.ts` files are internal conveniences, not public API.
+- Public class files trend toward thin API shells. `time-series.ts`
+  describes the constructor, accessors, iteration, and public method
+  surface; substantial analytical work delegates to `batch/operators/*.ts`.
+  `live-series.ts` owns live-source identity, pushing, snapshotting,
+  and subscription API; retention, ordering, and serialization
+  mechanics live in dedicated `live/*.ts` modules.
 
-Public classes should trend toward thin API shells. For example,
-`TimeSeries.ts` should describe the constructor, accessors, iteration,
-and public method surface, while delegating substantial analytical work
-to `batch/operators/*.ts`. `LiveSeries.ts` should own live-source
-identity, pushing, snapshotting, and subscription API, while retention,
-ordering, subscription mechanics, and serialization helpers live in
-small `live/*.ts` modules.
+#### Columnar stays internal
 
 Columnar is an internal substrate, not a fourth public layer. It sits
 under batch and selected live hot paths while preserving the row/Event
 API boundary. The framework lives at `packages/core/src/columnar/`, is
-not re-exported from the public package barrel, and should keep storage
-primitives (`store.ts`, `column.ts`, `builder.ts`, `validity.ts`, ...)
-separate from later columnar operator implementations
-(`columnar/operators/*.ts`) if those grow large enough.
+not re-exported from the public package barrel, and keeps storage
+primitives (`store.ts`, `column.ts`, `builder.ts`, `validity.ts`, …)
+separate from columnar operator implementations
+(`columnar/operators/*.ts`) when those grow large enough.
 
-Suggested migration order:
+#### Compatibility barrels are temporary
 
-1. Document this convention before moving code.
-2. Create layer folders/barrels with minimal behavior change.
-3. Move pure helpers first.
-4. Move public class files into their layer folders without changing
-   behavior.
-5. Extract batch operator bodies out of `TimeSeries.ts`, one operator
-   family per PR.
-6. Extract live mechanics out of `LiveSeries.ts`, one concern per PR.
-7. Land and integrate columnar internally, operator-by-operator, without
-   exposing it as public API prematurely.
+Step-by-step refactors land via thin shim files at the old path that
+re-export from the new location (e.g. the current root-level `sample.ts`
+and `triggers.ts` after PR #138). This keeps each migration PR
+behaviourally inert and reviewable.
 
-The goal state is: `TimeSeries.ts` tells you what the batch API is;
-`batch/operators/*.ts` tells you how batch work is done. `LiveSeries.ts`
-tells you what a live source is; `live/*.ts` tells you how live mechanics
-are implemented. `columnar/*.ts` tells you how storage works. Public
-exports remain stable unless a separate API-change PR explicitly says
+**These shims are temporary.** They have a defined end-of-life: all
+remaining shims are removed in a single labeled breaking release before
+v1.0, after which the only stable import path is the public package
+barrel. We don't keep them indefinitely — every permanent shim is
+another path the internal layout can't actually move.
+
+External consumers should import only from `'pond-ts'`. Deep imports
+into `pond-ts/dist/*` are not part of the supported API surface and may
+break at any release.
+
+#### Migration order
+
+The reorg is sequenced so each PR is small and behaviourally inert. The
+public package barrel keeps exporting the same identifiers throughout.
+
+1. **Land this convention in `ARCHITECTURE.md`.** Done in the PR
+   carrying this section.
+2. **Establish layer folders with internal barrels.** Largely done by
+   PRs #137–#138 (`core/`, `live/`, `sequence/`).
+3. **Rename existing layer-folder files to kebab-case.** Mechanical
+   `git mv`; the internal barrels absorb the change for callers. On
+   macOS use the two-step rename (`X.ts` → `_tmp.ts` → `x.ts`) for
+   case-only renames.
+4. **Move remaining root-level files into their layer folders,
+   kebab-case.** Each move PR adds a root-level shim only if external
+   imports depend on the old path; pure internal moves don't earn a
+   shim.
+5. **Split `types.ts` into `schema/*.ts`.** The biggest single change.
+   Keeps a `schema/index.ts` barrel so existing import sites can be
+   updated in one mechanical pass. Already-extracted type files
+   (`types-aggregate.ts`, `types-fused-rolling.ts`, `types-public.ts`,
+   `types-reduce.ts`) fold into the new `schema/` directory at the
+   same time.
+6. **Extract batch operators from `time-series.ts`.** One operator
+   family per PR. Each extraction preserves the public method signature
+   and runs the perf check from the section above; the class file
+   becomes the API shell.
+7. **Extract live mechanics from `live-series.ts` and the partitioned
+   variants.** One concern per PR (retention, ordering, subscription
+   plumbing, JSON serialization), same discipline.
+8. **Create `io/` and move row/object/json/point converters into it.**
+   Triggered when steps 6–7 surface the relevant code paths; no empty
+   folder created before then.
+9. **Land and integrate columnar internally.** Operator-by-operator,
+   without exposing it as public API.
+10. **Delete remaining compatibility shims** in a labeled release
+    before v1.0.
+
+The goal state: `time-series.ts` tells you what the batch API is;
+`batch/operators/*.ts` tells you how batch work is done.
+`live-series.ts` tells you what a live source is; `live/*.ts` tells
+you how live mechanics are implemented. `schema/*.ts` is the type
+language. `columnar/*.ts` is the storage substrate. Public exports
+remain stable unless a separate API-change PR explicitly says
 otherwise.
 
 ### Per-method JSDoc warnings for cross-entity hazards
