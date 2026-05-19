@@ -1,9 +1,9 @@
-import { TimeSeries } from './TimeSeries.js';
-import { BoundedSequence } from './sequence/bounded-sequence.js';
-import { Sequence } from './sequence/sequence.js';
-import type { DurationInput } from './core/duration.js';
-import type { TemporalLike } from './core/temporal.js';
-import type { BatchSampleStrategy } from './sequence/sample.js';
+import { TimeSeries } from './time-series.js';
+import { BoundedSequence } from '../sequence/bounded-sequence.js';
+import { Sequence } from '../sequence/sequence.js';
+import type { DurationInput } from '../core/duration.js';
+import type { TemporalLike } from '../core/temporal.js';
+import type { BatchSampleStrategy } from '../sequence/sample.js';
 import type {
   AggregateMap,
   AggregateOutputMap,
@@ -24,11 +24,11 @@ import type {
   SmoothAppendSchema,
   SmoothMethod,
   SmoothSchema,
-} from './types.js';
+} from '../types.js';
 import type {
   AggregateOutputMapResultSchema,
   RollingOutputMapSchema,
-} from './types-aggregate.js';
+} from '../types-aggregate.js';
 
 type SequenceLike = Sequence | BoundedSequence;
 type AlignMethod = 'hold' | 'linear';

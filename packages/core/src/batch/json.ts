@@ -6,12 +6,12 @@
  * can import the serialization helpers without depending on
  * `TimeSeries` (which depends on `Event`, creating a cycle).
  */
-import { Interval } from './core/interval.js';
-import { Time } from './core/time.js';
-import { TimeRange } from './core/time-range.js';
-import { parseTimestampString } from './core/calendar.js';
-import type { TimeZoneOptions } from './core/calendar.js';
-import type { EventKey } from './core/temporal.js';
+import { Interval } from '../core/interval.js';
+import { Time } from '../core/time.js';
+import { TimeRange } from '../core/time-range.js';
+import { parseTimestampString } from '../core/calendar.js';
+import type { TimeZoneOptions } from '../core/calendar.js';
+import type { EventKey } from '../core/temporal.js';
 import type {
   FirstColKind,
   JsonObjectRowForSchema,
@@ -21,7 +21,7 @@ import type {
   SeriesSchema,
   TimeSeriesInput,
   TimeSeriesJsonInput,
-} from './types.js';
+} from '../types.js';
 
 /**
  * Detects the object-shape variant of a JSON row.

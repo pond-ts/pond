@@ -1,7 +1,7 @@
 import { Interval } from './interval.js';
 import { Time } from './time.js';
 import { TimeRange } from './time-range.js';
-import { serializeJsonKey, serializeJsonValue } from '../json.js';
+import { serializeJsonKey, serializeJsonValue } from '../batch/json.js';
 import type { EventKey, IntervalValue, TemporalLike } from './temporal.js';
 import type {
   FirstColKind,

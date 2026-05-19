@@ -54,7 +54,7 @@ import {
 } from '../columnar/index.js';
 import type { EventKey } from '../core/temporal.js';
 import type { RowForSchema, SeriesSchema } from '../types.js';
-import { validateAndNormalize } from '../validate.js';
+import { validateAndNormalize } from '../batch/validate.js';
 
 /**
  * Row-data shape — a record keyed by column name. Tightens to

@@ -1,7 +1,7 @@
 import {
   normalizeAggregateColumns,
   type AggregateColumnSpec,
-} from '../aggregate-columns.js';
+} from '../batch/aggregate-columns.js';
 import { Event } from '../core/event.js';
 import { Time } from '../core/time.js';
 import {

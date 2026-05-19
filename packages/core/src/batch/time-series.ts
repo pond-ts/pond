@@ -39,11 +39,11 @@ import type {
   PrefixedJoinSchema,
   ReduceResult,
   RenameMap,
-} from './types.js';
+} from '../types.js';
 import type {
   AggregateOutputMapResultSchema,
   RollingOutputMapSchema,
-} from './types-aggregate.js';
+} from '../types-aggregate.js';
 import type {
   RenameSchema,
   RollingAlignment,
@@ -67,16 +67,19 @@ import type {
   TimeRangeKeyedSchema,
   ValueColumn,
   ValueColumnsForSchema,
-} from './types.js';
+} from '../types.js';
 import {
   isAggregateOutputSpec,
   normalizeAggregateColumns,
 } from './aggregate-columns.js';
-import { BoundedSequence } from './sequence/bounded-sequence.js';
-import { parseTimestampString, type TimeZoneOptions } from './core/calendar.js';
-import { Interval } from './core/interval.js';
-import { Time } from './core/time.js';
-import { TimeRange } from './core/time-range.js';
+import { BoundedSequence } from '../sequence/bounded-sequence.js';
+import {
+  parseTimestampString,
+  type TimeZoneOptions,
+} from '../core/calendar.js';
+import { Interval } from '../core/interval.js';
+import { Time } from '../core/time.js';
+import { TimeRange } from '../core/time-range.js';
 import type {
   EventKey,
   IntervalInput,
@@ -84,20 +87,20 @@ import type {
   TemporalLike,
   TimeRangeInput,
   TimestampInput,
-} from './core/temporal.js';
-import { compareEventKeys } from './core/temporal.js';
-import { Event } from './core/event.js';
-import { PartitionedTimeSeries } from './PartitionedTimeSeries.js';
-import type { BatchSampleStrategy } from './sequence/sample.js';
-import { Sequence } from './sequence/sequence.js';
+} from '../core/temporal.js';
+import { compareEventKeys } from '../core/temporal.js';
+import { Event } from '../core/event.js';
+import { PartitionedTimeSeries } from './partitioned-time-series.js';
+import type { BatchSampleStrategy } from '../sequence/sample.js';
+import { Sequence } from '../sequence/sequence.js';
 import { validateAndNormalize } from './validate.js';
-import type { DurationInput } from './core/duration.js';
-import { parseDuration } from './core/duration.js';
+import type { DurationInput } from '../core/duration.js';
+import { parseDuration } from '../core/duration.js';
 import {
   resolveReducer,
   type AggregateBucketState,
   type RollingReducerState,
-} from './reducers/index.js';
+} from '../reducers/index.js';
 
 type RangeLike = EventKey | TimeRangeInput | IntervalInput;
 type BoundaryLike = EventKey | TimestampInput;

@@ -22,11 +22,11 @@ export type {
   CountTrigger,
   EventTrigger,
 } from './live/triggers.js';
-export { PartitionedTimeSeries } from './PartitionedTimeSeries.js';
+export { PartitionedTimeSeries } from './batch/partitioned-time-series.js';
 export { Time } from './core/time.js';
 export { TimeRange, toTimeRange } from './core/time-range.js';
 export { Sequence } from './sequence/sequence.js';
-export { TimeSeries, type KeyLike } from './TimeSeries.js';
+export { TimeSeries, type KeyLike } from './batch/time-series.js';
 export { top } from './reducers/index.js';
 export { ValidationError } from './core/errors.js';
 export type {

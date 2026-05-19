@@ -1,4 +1,4 @@
-import { resolveReducer } from './reducers/index.js';
+import { resolveReducer } from '../reducers/index.js';
 import type {
   AggregateMap,
   AggregateOutputMap,
@@ -6,7 +6,7 @@ import type {
   AggregateReducer,
   ScalarKind,
   SeriesSchema,
-} from './types.js';
+} from '../types.js';
 
 /**
  * Normalised column spec used by both batch and live aggregation paths.

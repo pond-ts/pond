@@ -21,9 +21,9 @@ import {
   type LiveRollingOptions,
   type RollingWindow,
 } from './live-rolling-aggregation.js';
-import { TimeSeries, toKey, type KeyLike } from '../TimeSeries.js';
+import { TimeSeries, toKey, type KeyLike } from '../batch/time-series.js';
 import { ValidationError } from '../core/errors.js';
-import { parseJsonRows } from '../json.js';
+import { parseJsonRows } from '../batch/json.js';
 import type { TimeZoneOptions } from '../core/calendar.js';
 import type {
   EventKey,

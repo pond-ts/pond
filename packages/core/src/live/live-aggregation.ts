@@ -1,7 +1,7 @@
 import {
   normalizeAggregateColumns,
   type AggregateColumnSpec,
-} from '../aggregate-columns.js';
+} from '../batch/aggregate-columns.js';
 import { Event } from '../core/event.js';
 import { Interval } from '../core/interval.js';
 import {
@@ -17,7 +17,7 @@ import {
   type LiveRollingOptions,
   type RollingWindow,
 } from './live-rolling-aggregation.js';
-import { TimeSeries } from '../TimeSeries.js';
+import { TimeSeries } from '../batch/time-series.js';
 import {
   bucketStateFor,
   type AggregateBucketState,

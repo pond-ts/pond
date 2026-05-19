@@ -9,7 +9,7 @@ import {
 import { LiveFusedRolling } from './live-fused-rolling.js';
 import { LiveReduce } from './live-reduce.js';
 import type { SampleStrategy } from '../sequence/sample.js';
-import { TimeSeries, toKey, type KeyLike } from '../TimeSeries.js';
+import { TimeSeries, toKey, type KeyLike } from '../batch/time-series.js';
 import type { Sequence } from '../sequence/sequence.js';
 import {
   EMITS_EVICT,

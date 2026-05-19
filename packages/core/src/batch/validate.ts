@@ -1,13 +1,13 @@
-import { Interval } from './core/interval.js';
-import { Event } from './core/event.js';
-import { Time } from './core/time.js';
-import { TimeRange } from './core/time-range.js';
+import { Interval } from '../core/interval.js';
+import { Event } from '../core/event.js';
+import { Time } from '../core/time.js';
+import { TimeRange } from '../core/time-range.js';
 import type {
   EventKey,
   IntervalInput,
   TimeRangeInput,
-} from './core/temporal.js';
-import { ValidationError } from './core/errors.js';
+} from '../core/temporal.js';
+import { ValidationError } from '../core/errors.js';
 import type {
   EventForSchema,
   EventKeyForSchema,
@@ -15,7 +15,7 @@ import type {
   SeriesSchema,
   TimeSeriesInput,
   ValueForKind,
-} from './types.js';
+} from '../types.js';
 
 const FIRST_COLUMN_KINDS: ReadonlySet<FirstColKind> = new Set([
   'time',
