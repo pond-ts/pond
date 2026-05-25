@@ -4143,9 +4143,9 @@ See the RFC for the full argument.
      is documented; lazy view-mode columns are a future-doors
      optimization with the existing API as the stable surface.
    - **1g — Chunked value columns + `concatSorted` + `materialize`
-     compaction.** ✅ Shipped (PR pending, branch
-     `feat/columnar-step-1g`). 59 new framework tests (41
-     `ChunkedColumn` + 18 `Concat`); framework total ~430 tests.
+     compaction.** ✅ Shipped (PR #148, merged 2026-05-25). 62
+     framework tests after Codex round-1 fixes (42 `ChunkedColumn`
+     + 20 `Concat`); framework total ~433 tests.
      Four chunked value-column variants
      (`ChunkedFloat64Column`, `ChunkedBooleanColumn`,
      `ChunkedStringColumn`, `ChunkedArrayColumn`) — each holds a
@@ -4174,16 +4174,51 @@ See the RFC for the full argument.
      `materializeChunked*` helpers, and returns the input
      unchanged when every column is already packed (identity
      fast-path).
-   - **1h — `ColumnarRingBuffer`, `scatterByPartition`.**
+   - **1h — `ColumnarRingBuffer` + `scatterByPartition`.** ✅
+     Shipped (PR pending, branch `feat/columnar-step-1h`). 49 new
+     framework tests (35 `ColumnarRingBuffer` + 14 `Scatter`);
+     framework total ~482 tests.
+     `ColumnarRingBuffer<S>` is a mutable, append-only circular
+     buffer backing streaming sources. Circular indexing with
+     `head` + `length` + `capacity`; logical row `i` lives at
+     physical `(head + i) % capacity`. Per-column mutable storage
+     for all four value kinds (Float64Array, bit-packed Uint8Array,
+     `(string|undefined)[]`, `(ArrayValue|undefined)[]`) and all
+     three key kinds (Time, TimeRange, Interval — the latter
+     requires `intervalLabelKind: 'string' | 'number'` in options).
+     `appendBatch(batch: ColumnarStore<S>)` validates schema
+     structural equality and routes per-row writes through circular
+     indexing. Lazy growth (default true) starts at
+     `min(retention, 64)` and doubles to `retention`; eager mode
+     pre-allocates. Eviction advances `head` once `length ===
+     retention`. Batches larger than `retention` keep only the
+     trailing `retention` rows. `evictPrefix(n)` and `snapshot()`
+     decouple the immutable view from ongoing append/evict — the
+     snapshot owns fresh typed buffers and dict-rebuilds the
+     string columns via `stringColumnFromArray` so encoding
+     decisions run once on the snapshot window. The ring is
+     **ordering-agnostic** (per RFC V4); strict/drop/reorder
+     semantics live at the `LiveSeries` layer.
+     `scatterByPartition(source, columnName)` partitions a store
+     by a scalar value column, returning
+     `Map<ScalarValue, ColumnarStore<S>>`. Rejects array-kind
+     partition columns and the key column. Drops rows whose
+     partition cell is undefined or `NaN` (the `NaN !== NaN`
+     gotcha makes it useless as a Map key). Per-bucket sub-stores
+     preserve schema and the input's relative row order;
+     cross-bucket order is unspecified (it's a Map).
 
-   **State after 1g (2026-05-25).** 1a–1g shipped or branch-ready;
-   1h remaining. 1833 tests total across core + react. Framework
-   total: ~430 columnar tests. Bundle target (<25 KB gzipped) was
-   slightly over at 26 KB after 1f; 1g adds chunked variants +
-   concat without optimization passes, so revisiting bundle size
-   moves into 1h. The pure-substrate layering established in PR
-   #135 (Path B) has held cleanly across every subsequent sub-step
-   — no framework file imports `Event` / `Time` / `TimeRange` /
+   **State after 1h (2026-05-25).** All step-1 sub-steps (1a–1h)
+   shipped. The framework layer is complete; the next batch of
+   work is TimeSeries integration (step 2 in this section's
+   roadmap). 1885 tests total across core + react. Framework
+   total: ~482 columnar tests. Bundle target (<25 KB gzipped)
+   slipped past 26 KB at 1g; 1h adds ~12-15 KB more (ring buffer
+   is substantial). Targeted size optimization will be a separate
+   sub-step before merging the framework into the user-visible
+   API. The pure-substrate layering established in PR #135 (Path
+   B) has held cleanly across every subsequent sub-step — no
+   framework file imports `Event` / `Time` / `TimeRange` /
    `Interval` / `temporal` / row-API types, verified by the
    independence test on each PR.
 

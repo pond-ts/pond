@@ -203,6 +203,18 @@ function assertChunkKinds(
 /* ChunkedFloat64Column                                                       */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Numeric chunked column. Same shape contract as `Float64Column`
+ * (kind `'number'`, `read` / `scan` / `sliceByRange` / `sliceByIndices`)
+ * but backed by a list of plain `Float64Column` chunks rather than
+ * a single flat `Float64Array`. See the module header for the
+ * design rationale (aggregate validity, sliceByRange staying
+ * chunked across multi-chunk ranges, sliceByIndices materializing).
+ *
+ * `chunks` is defensively frozen + sliced at construction so
+ * subsequent caller mutation of the source array can't corrupt
+ * the column.
+ */
 export class ChunkedFloat64Column {
   readonly kind = 'number' as const;
   readonly storage = 'chunked' as const;
@@ -225,6 +237,13 @@ export class ChunkedFloat64Column {
     if (validity !== undefined) this.validity = validity;
   }
 
+  /**
+   * Reads cell `i` by binary-searching `chunkOffsets` to find the
+   * containing chunk, then dereferencing its underlying
+   * `Float64Array` directly. Aggregate validity short-circuits to
+   * `undefined` before the chunk lookup — see the module header
+   * for why we maintain that bitmap eagerly.
+   */
   read(i: number): number | undefined {
     if (i < 0 || i >= this.length) return undefined;
     if (this.validity && !this.validity.isDefined(i)) return undefined;
@@ -233,10 +252,13 @@ export class ChunkedFloat64Column {
     return this.chunks[c]!.values[local]!;
   }
 
+  /**
+   * Linear scan. Delegates to each chunk's own `scan` and rebases
+   * the local row index to a global one — every chunk's per-chunk
+   * validity and the shared `skipInvalid` contract are honored
+   * naturally by the inner scan.
+   */
   scan(fn: (value: number, i: number) => void, options?: ScanOptions): void {
-    // Delegate per-chunk; rebase the local index into a global one.
-    // Each chunk's own scan honors its per-chunk validity and the
-    // shared `skipInvalid` contract.
     let globalBase = 0;
     for (let c = 0; c < this.chunks.length; c += 1) {
       const chunk = this.chunks[c]!;
@@ -321,6 +343,12 @@ export class ChunkedFloat64Column {
 /* ChunkedBooleanColumn                                                       */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Boolean chunked column. Structurally identical to
+ * `ChunkedFloat64Column` — see that class (and the module header)
+ * for the read/scan/slice algorithms. Chunks are plain
+ * `BooleanColumn` (bit-packed `Uint8Array`).
+ */
 export class ChunkedBooleanColumn {
   readonly kind = 'boolean' as const;
   readonly storage = 'chunked' as const;
@@ -443,6 +471,15 @@ export class ChunkedBooleanColumn {
  * the dict-vs-fallback decision once across the whole compacted
  * column.
  */
+/**
+ * String chunked column. Same shape contract as the other chunked
+ * variants; chunks are plain `StringColumn` and can have **per-
+ * chunk dictionaries** that differ from one another. `read` and
+ * `scan` route through each chunk's own `read` so the per-chunk
+ * encoding (dict vs fallback) is handled transparently — no
+ * cross-chunk dictionary unification at construction. See the
+ * class-level comment below for why that's deferred.
+ */
 export class ChunkedStringColumn {
   readonly kind = 'string' as const;
   readonly storage = 'chunked' as const;
@@ -540,6 +577,14 @@ export class ChunkedStringColumn {
 /* ChunkedArrayColumn                                                         */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Array chunked column. Structurally identical to
+ * `ChunkedFloat64Column` — see that class (and the module header)
+ * for the read/scan/slice algorithms. Chunks are plain
+ * `ArrayColumn` whose cells are defensively frozen at the inner
+ * column's construction; chunked reads return those frozen cells
+ * directly (no extra freeze).
+ */
 export class ChunkedArrayColumn {
   readonly kind = 'array' as const;
   readonly storage = 'chunked' as const;

@@ -107,6 +107,13 @@ export function concatSorted<S extends ColumnSchema>(
 /* Validation helpers                                                          */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Validates that every input store has a schema structurally
+ * compatible with `stores[0]` — same length, same `(name, kind)`
+ * per position. Reference-equal schemas short-circuit (the
+ * common case when a producer derives every store from the same
+ * literal). Throws `RangeError` on the first mismatch.
+ */
 function validateSchemaCompat<S extends ColumnSchema>(
   stores: ReadonlyArray<ColumnarStore<S>>,
 ): void {
@@ -136,6 +143,22 @@ function validateSchemaCompat<S extends ColumnSchema>(
   }
 }
 
+/**
+ * Validates that every non-empty input store is temporally
+ * disjoint from the previous non-empty store. Empty stores are
+ * skipped (they have no keys to compare). Per key kind:
+ *
+ * - `time` — reject `prev.lastBegin >= next.firstBegin`. Strict
+ *   because Time has zero duration; coincident timestamps across
+ *   stores would silently collapse the row-API's ordering
+ *   invariant.
+ * - `timeRange` / `interval` — reject `prev.maxEnd > next.firstBegin`.
+ *   Half-open intervals tolerate boundary touch
+ *   (`maxEnd === firstBegin` is fine).
+ *
+ * Uses `maxEnd` (running max across all rows) rather than the
+ * last row's end — see `maxEndOfStore` for why.
+ */
 function validateDisjointKeys<S extends ColumnSchema>(
   stores: ReadonlyArray<ColumnarStore<S>>,
 ): void {
@@ -220,6 +243,14 @@ function maxEndOfStore<S extends ColumnSchema>(
   return maxEnd;
 }
 
+/**
+ * Sums the lengths of every input store and validates the
+ * aggregate against `MAX_COLUMN_LENGTH`. Without this check, two
+ * individually valid stores could sum past the cap and trigger an
+ * opaque typed-array allocation failure (worst case: OOM) inside
+ * `concatKeyColumns` instead of a predictable `RangeError`.
+ * Closed Codex round 1's medium finding on PR #148.
+ */
 function computeTotalLength<S extends ColumnSchema>(
   stores: ReadonlyArray<ColumnarStore<S>>,
 ): number {
@@ -227,12 +258,6 @@ function computeTotalLength<S extends ColumnSchema>(
   for (let s = 0; s < stores.length; s += 1) {
     total += stores[s]!.length;
   }
-  // Validate the aggregate before downstream `concatKeyColumns`
-  // allocates a flat `Float64Array(totalLength)`. Two individually
-  // valid stores can sum past `MAX_COLUMN_LENGTH` and trigger an
-  // opaque typed-array allocation failure (worst case: OOM) instead
-  // of a predictable rejection. `validateColumnLength` produces a
-  // `RangeError` with the framework's standard message.
   validateColumnLength(total, 'concatSorted aggregate');
   return total;
 }
@@ -241,6 +266,23 @@ function computeTotalLength<S extends ColumnSchema>(
 /* Key column concatenation — produces a flat (materialized) key column.      */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Materializes the output's key column by concatenating every
+ * input store's key buffers. Always produces a flat (linear) key
+ * — chunked key columns are deferred for v1.0; materializing
+ * keys costs O(N) but keeps the snapshot's `keyAt(i)` accessor
+ * uniform regardless of how many inputs were merged.
+ *
+ * Per key kind:
+ * - `time` — concatenates `begin` only.
+ * - `timeRange` — concatenates `begin` + `end`.
+ * - `interval` — concatenates `begin` + `end` + labels. All
+ *   inputs must share the same `labelKind` (rejected otherwise).
+ *   String labels gather into a flat array and run through
+ *   `stringColumnFromArray` so the dict-vs-fallback heuristic
+ *   sees the unified vocabulary; numeric labels concatenate as
+ *   a flat `Float64Array`.
+ */
 function concatKeyColumns<S extends ColumnSchema>(
   stores: ReadonlyArray<ColumnarStore<S>>,
   totalLength: number,
@@ -325,6 +367,21 @@ function concatKeyColumns<S extends ColumnSchema>(
 /* Value column concatenation — produces chunked columns.                     */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Collects each input store's value column at `name` into a flat
+ * list of plain chunks, then wraps them as a single
+ * `ChunkedFloat64Column`. Empty stores contribute nothing
+ * (length-0 chunks are skipped). Already-chunked inputs are
+ * **flattened** — their inner chunks are pulled out and pushed
+ * directly so the output's chunk structure stays one level
+ * deep. This keeps row→chunk lookup O(log chunks) regardless of
+ * how many `concatSorted` calls compose into the input.
+ *
+ * The sibling helpers (`concatBooleanColumns`, `concatStringColumns`,
+ * `concatArrayColumns`) follow the same pattern — kind-specific
+ * functions exist because the chunk types differ; the logic is
+ * identical.
+ */
 function concatNumberColumns<S extends ColumnSchema>(
   stores: ReadonlyArray<ColumnarStore<S>>,
   name: string,
@@ -346,6 +403,7 @@ function concatNumberColumns<S extends ColumnSchema>(
   return new ChunkedFloat64Column(chunks);
 }
 
+/** Boolean variant of `concatNumberColumns` — see that helper for the pattern. */
 function concatBooleanColumns<S extends ColumnSchema>(
   stores: ReadonlyArray<ColumnarStore<S>>,
   name: string,
@@ -367,6 +425,7 @@ function concatBooleanColumns<S extends ColumnSchema>(
   return new ChunkedBooleanColumn(chunks);
 }
 
+/** String variant of `concatNumberColumns` — see that helper for the pattern. */
 function concatStringColumns<S extends ColumnSchema>(
   stores: ReadonlyArray<ColumnarStore<S>>,
   name: string,
@@ -388,6 +447,7 @@ function concatStringColumns<S extends ColumnSchema>(
   return new ChunkedStringColumn(chunks);
 }
 
+/** Array variant of `concatNumberColumns` — see that helper for the pattern. */
 function concatArrayColumns<S extends ColumnSchema>(
   stores: ReadonlyArray<ColumnarStore<S>>,
   name: string,
