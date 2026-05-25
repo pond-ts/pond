@@ -126,7 +126,7 @@ describe('scatterByPartition (numeric partition column)', () => {
     expect(two.valueAt(1, 'host')).toBe('d');
   });
 
-  it('excludes rows with NaN partition values', () => {
+  it('buckets defined NaN partition values under the NaN key (Map SameValueZero)', () => {
     // Build via trusted construction with a NaN cell.
     const valCol = new Float64Column(Float64Array.of(1, NaN, 1, NaN), 4);
     const source = ColumnarStore.fromTrustedStore(
@@ -139,11 +139,21 @@ describe('scatterByPartition (numeric partition column)', () => {
       ]),
     );
     const buckets = scatterByPartition(source, 'value');
-    expect(buckets.size).toBe(1);
+    expect(buckets.size).toBe(2);
     const one = buckets.get(1)!;
     expect(one.length).toBe(2);
     expect(one.valueAt(0, 'host')).toBe('a');
     expect(one.valueAt(1, 'host')).toBe('c');
+    // NaN bucket — Map.get(NaN) works under SameValueZero.
+    const nanBucket = buckets.get(NaN)!;
+    expect(nanBucket.length).toBe(2);
+    expect(nanBucket.valueAt(0, 'host')).toBe('b');
+    expect(nanBucket.valueAt(1, 'host')).toBe('d');
+    // The Map's NaN key is the actual NaN value.
+    const keys = [...buckets.keys()];
+    expect(keys.some((k) => typeof k === 'number' && Number.isNaN(k))).toBe(
+      true,
+    );
   });
 
   it('excludes rows with undefined numeric partition values', () => {

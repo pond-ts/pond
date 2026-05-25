@@ -22,12 +22,18 @@
  * `undefined` as a key, but its sub-stores' aggregate length
  * can be less than the input's `length`.
  *
- * **NaN partition values.** Numeric columns can contain `NaN`
- * cells via direct `Float64Column` construction (the framework's
- * factories reject `NaN` at intake, but trusted-construction
- * paths permit it). `NaN !== NaN` makes it useless as a Map
- * key — every `NaN` row would land in its own bucket. We treat
- * `NaN` cells the same as invalid: dropped from the result.
+ * **NaN partition values are bucketed under `NaN`.** Numeric
+ * columns can contain `NaN` cells via trusted-construction paths
+ * (the row-API rejects `NaN` at intake; `Float64Column`'s direct
+ * constructor accepts it). JS `Map` uses `SameValueZero`
+ * equality, which treats `NaN === NaN`, so NaN is a stable Map
+ * key. We **bucket** NaN rows under the `NaN` key rather than
+ * dropping them — silently discarding defined cells would be
+ * observability-poor for the `LivePartitionedSeries` routing
+ * use case, where a producer mis-emitting `NaN` partition values
+ * needs to be visible to its consumer. Callers who want stricter
+ * semantics can pre-filter or check `Number.isNaN(key)` on the
+ * result keys.
  *
  * **Order preservation within a partition.** Each output sub-store
  * preserves the relative order of rows from the input — the
@@ -36,9 +42,9 @@
  *
  * **Result type.** `Map<ScalarValue, ColumnarStore<S>>`. JS `Map`
  * uses `SameValueZero` equality, which treats `+0 === -0` and
- * `NaN === NaN`. Since we already drop `NaN`, the only edge is
- * `+0` / `-0` collapsing — acceptable for the partition-routing
- * use case.
+ * `NaN === NaN`. `+0` / `-0` collapse to a single bucket
+ * (acceptable for partition routing); `NaN` is its own stable
+ * bucket per above.
  *
  * Framework-internal; not exported from `packages/core/src/index.ts`.
  */
@@ -89,8 +95,8 @@ export function scatterByPartition<S extends ColumnSchema>(
   for (let i = 0; i < source.length; i += 1) {
     const value = partitionCol.read(i);
     if (value === undefined) continue;
-    // NaN: skip. See module header.
-    if (typeof value === 'number' && Number.isNaN(value)) continue;
+    // NaN is a stable Map key under SameValueZero — bucket rather
+    // than drop. See module header.
     // We've narrowed by kind to scalar (number / boolean / string);
     // the `unknown` from `column.read` is one of those three.
     const key = value as ScalarValue;
