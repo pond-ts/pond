@@ -56,6 +56,7 @@ function isArrayValue(value: unknown): value is ArrayValue {
  */
 export class ArrayColumn {
   readonly kind = 'array' as const;
+  readonly storage = 'packed' as const;
   readonly length: number;
   readonly fallback: ReadonlyArray<ArrayValue | undefined>;
   readonly validity?: ValidityBitmap;

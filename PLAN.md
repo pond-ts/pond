@@ -4142,26 +4142,50 @@ See the RFC for the full argument.
      `hasOwnProperty.call`). The materializing-vs-lazy decision
      is documented; lazy view-mode columns are a future-doors
      optimization with the existing API as the stable surface.
-   - **1g — ChunkedColumn, `concatSorted`.** Next.
+   - **1g — Chunked value columns + `concatSorted` + `materialize`
+     compaction.** ✅ Shipped (PR pending, branch
+     `feat/columnar-step-1g`). 59 new framework tests (41
+     `ChunkedColumn` + 18 `Concat`); framework total ~430 tests.
+     Four chunked value-column variants
+     (`ChunkedFloat64Column`, `ChunkedBooleanColumn`,
+     `ChunkedStringColumn`, `ChunkedArrayColumn`) — each holds a
+     `ReadonlyArray<Plain>` of chunks + `chunkOffsets: Int32Array`
+     (prefix sum), eagerly computes an aggregate validity bitmap
+     (preserving the "no bitmap ⇒ all defined" convention), and
+     implements the shared `Column` interface
+     (`read`/`scan`/`sliceByRange`/`sliceByIndices`). The `Column`
+     union widens to include them; a new `storage: 'packed' |
+     'chunked'` secondary discriminator lets hot-path callers
+     (reducers) narrow on `kind === 'number' && storage ===
+     'packed'` to dereference `Float64Column.values` etc.
+     `sliceByRange` stays chunked across multi-chunk ranges
+     (zero-copy on chunk boundaries) and collapses to plain
+     within a single chunk; `sliceByIndices` always
+     materializes (gather destroys chunk locality).
+     `concatSorted(stores)` N-way concat over temporally-disjoint
+     stores: validates schema structural equality, key disjointness
+     (strict `<` for Time, half-open `<=` for TimeRange/Interval),
+     materializes the key column (`begin`/`end`/labels — labels
+     rebuilt via `stringColumnFromArray` so the dict-vs-fallback
+     heuristic runs on the whole), and flattens nested chunked
+     inputs so chunks always stay one level deep. `materialize`
+     now does real work: walks each value column, compacts any
+     chunked variants to their plain counterparts via dedicated
+     `materializeChunked*` helpers, and returns the input
+     unchanged when every column is already packed (identity
+     fast-path).
    - **1h — `ColumnarRingBuffer`, `scatterByPartition`.**
 
-   **Pause point (2026-05-13).** User on vacation ~1 week. State
-   at pause: 1a–1e shipped to main; 1f–1h not yet started. The
-   framework is at ~26 KB gzipped (slightly over the <25 KB
-   target — will revisit at 1h), 1670+ tests total across core +
-   react.
-
-   When resuming: start 1f (index views + zero-copy schema ops).
-   The pure-substrate + adapter layering established in PR #135
-   (Path B) is load-bearing for 1f — row-API materialization
-   (`SeriesStore.eventAt`) needs to continue working across
-   slice/view operations even though the underlying
-   `ColumnarStore.withRowSelection` is pure columnar-substrate.
-   The eventCache mechanism in `SeriesStore` (with structural
-   validation from PR #135 + missing-fields check from
-   round-2 cleanup) is the identity-preservation hook that 1f's
-   slice operations will use to avoid re-materializing events for
-   the unchanged rows.
+   **State after 1g (2026-05-25).** 1a–1g shipped or branch-ready;
+   1h remaining. 1833 tests total across core + react. Framework
+   total: ~430 columnar tests. Bundle target (<25 KB gzipped) was
+   slightly over at 26 KB after 1f; 1g adds chunked variants +
+   concat without optimization passes, so revisiting bundle size
+   moves into 1h. The pure-substrate layering established in PR
+   #135 (Path B) has held cleanly across every subsequent sub-step
+   — no framework file imports `Event` / `Time` / `TimeRange` /
+   `Interval` / `temporal` / row-API types, verified by the
+   independence test on each PR.
 
 2. TimeSeries integration (~3 weeks) — private-field columnar store,
    lazy event materialization, API invariants pinned by tests.

@@ -10,6 +10,12 @@
  */
 
 import type { ArrayColumn } from './array-column.js';
+import type {
+  ChunkedArrayColumn,
+  ChunkedBooleanColumn,
+  ChunkedFloat64Column,
+  ChunkedStringColumn,
+} from './chunked-column.js';
 import type { StringColumn } from './string-column.js';
 import {
   type ValidityBitmap,
@@ -27,6 +33,27 @@ import {
 export type ColumnKind = 'number' | 'boolean' | 'string' | 'array';
 
 /**
+ * Secondary discriminator: how a column physically stores its data.
+ *
+ * - `'packed'` — a single flat typed-array buffer (or dictionary +
+ *   indices for `StringColumn`, or array of cells for `ArrayColumn`).
+ *   Reducers and other hot-path callers can dereference the kind-
+ *   specific field (e.g. `Float64Column.values`) directly after
+ *   narrowing on `kind` **and** `storage === 'packed'`.
+ * - `'chunked'` — a sequence of packed chunks concatenated logically
+ *   via `chunkOffsets`. Reads/scans route through chunk lookup; the
+ *   per-chunk hot-path fields are not surfaced at the top level.
+ *   Callers that need a flat buffer call `materialize` first.
+ *
+ * The same `kind` covers both: e.g. `Float64Column` and
+ * `ChunkedFloat64Column` both have `kind: 'number'`. Adding the
+ * `storage` discriminator at sub-step 1g lets the `Column` union
+ * widen to include chunked variants without breaking kind-based
+ * narrowing in code that doesn't touch hot-path fields.
+ */
+export type ColumnStorage = 'packed' | 'chunked';
+
+/**
  * Options controlling `Column.scan`. By default invalid cells are
  * skipped; pass `{ skipInvalid: false }` to receive every slot
  * including those whose validity bit is zero (the value at invalid
@@ -42,11 +69,17 @@ export interface ScanOptions {
  */
 interface ColumnBase<T, K extends ColumnKind> {
   readonly kind: K;
+  /** See `ColumnStorage`. Plain variants are `'packed'`; chunked are `'chunked'`. */
+  readonly storage: ColumnStorage;
   /** Logical row count (number of cells), independent of buffer capacity. */
   readonly length: number;
   /**
    * Optional validity bitmap. Absent ⇒ "every cell is defined." Build
    * code only allocates a bitmap when at least one cell is undefined.
+   * Chunked columns surface an **aggregate** bitmap computed eagerly
+   * at construction from per-chunk validity — kept in sync with this
+   * convention so `col.validity === undefined` reliably means "all
+   * cells defined."
    */
   readonly validity?: ValidityBitmap;
 
@@ -79,15 +112,30 @@ interface ColumnBase<T, K extends ColumnKind> {
 
 /**
  * The framework's value-column discriminated union. Narrow on
- * `column.kind` to recover the concrete shape:
+ * `column.kind` first, then on `column.storage` to recover the
+ * concrete shape:
  *
- *     if (col.kind === 'number') { col.values; // Float64Array
+ *     if (col.kind === 'number') {
+ *       if (col.storage === 'packed') {
+ *         col.values; // Float64Array (Float64Column)
+ *       } else {
+ *         col.chunks; // ReadonlyArray<Float64Column> (ChunkedFloat64Column)
+ *       }
  *     }
  *
  * All four kinds (`'number'`, `'boolean'`, `'string'`, `'array'`)
- * are now concrete classes after sub-step 1c lands.
+ * are concrete classes after sub-step 1c. Sub-step 1g adds chunked
+ * counterparts for each.
  */
-export type Column = Float64Column | BooleanColumn | StringColumn | ArrayColumn;
+export type Column =
+  | Float64Column
+  | BooleanColumn
+  | StringColumn
+  | ArrayColumn
+  | ChunkedFloat64Column
+  | ChunkedBooleanColumn
+  | ChunkedStringColumn
+  | ChunkedArrayColumn;
 
 /* -------------------------------------------------------------------------- */
 /* Float64Column — packed numeric column.                                     */
@@ -102,6 +150,7 @@ export type Column = Float64Column | BooleanColumn | StringColumn | ArrayColumn;
  */
 export class Float64Column implements ColumnBase<number, 'number'> {
   readonly kind = 'number' as const;
+  readonly storage = 'packed' as const;
   readonly length: number;
   readonly values: Float64Array;
   readonly validity?: ValidityBitmap;
@@ -193,6 +242,7 @@ export class Float64Column implements ColumnBase<number, 'number'> {
  */
 export class BooleanColumn implements ColumnBase<boolean, 'boolean'> {
   readonly kind = 'boolean' as const;
+  readonly storage = 'packed' as const;
   readonly length: number;
   readonly values: Uint8Array;
   readonly validity?: ValidityBitmap;

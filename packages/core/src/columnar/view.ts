@@ -7,16 +7,14 @@
  * directly-constructed store, only the typed-buffer payloads
  * change.
  *
- * **Materializing semantics for 1f.** This sub-step ships the
- * materializing implementation: `withRowSelection` walks the
+ * **Materializing semantics.** `withRowSelection` walks the
  * `indices` once per column, building owned typed-array buffers
- * via each column's `sliceByIndices`. `materialize` is therefore
- * identity at this sub-step — there is no view-mode wrapper to
- * compact yet. A future sub-step may add lazy view-mode columns
- * (the framework brief calls this out as the path to "Read-only
- * chains skip materialization entirely") if benches show the
- * per-derivation copy cost is material. The current contract is
- * correct and useful; lazy is an optimization door.
+ * via each column's `sliceByIndices`. `materialize` walks each
+ * value column; chunked columns (added at sub-step 1g) compact
+ * into their plain counterparts; plain columns pass through
+ * unchanged. The shape is "lazy compact at request"; reducers and
+ * other hot-path callers explicitly opt in by calling
+ * `materialize(view)` before narrowing on `storage === 'packed'`.
  *
  * Schema ops (`withColumnsRenamed`, `withColumnReplaced`,
  * `withColumnAppended`, `withColumnsSelected`) are genuinely
@@ -26,6 +24,16 @@
  * Framework-internal; not exported from `packages/core/src/index.ts`.
  */
 
+import {
+  type ChunkedArrayColumn,
+  type ChunkedBooleanColumn,
+  type ChunkedFloat64Column,
+  type ChunkedStringColumn,
+  materializeChunkedArray,
+  materializeChunkedBoolean,
+  materializeChunkedFloat64,
+  materializeChunkedString,
+} from './chunked-column.js';
 import type { Column } from './column.js';
 import {
   IntervalKeyColumn,
@@ -83,20 +91,78 @@ export function withRowSelection<S extends ColumnSchema>(
 }
 
 /**
- * Compacts a view-store into owned typed-array buffers. At
- * sub-step 1f this is **identity** — `withRowSelection` already
- * produces owned buffers, so `materialize` returns the input as
- * is. The function exists as a stable surface for callers
- * (downstream operators in step 2+) that want to defensively
- * materialize without knowing whether a store is a view; a
- * future sub-step adding lazy view-mode columns can change the
- * implementation without breaking that contract.
+ * Compacts a store into plain (packed) value columns. Walks each
+ * value column; any column with `storage === 'chunked'` is
+ * compacted into its plain counterpart. Stores with only plain
+ * columns are returned as-is (the same instance) — no allocation,
+ * no `fromTrustedStore` rebuild.
+ *
+ * **Key column.** The key column is unaffected — keys are always
+ * materialized (chunked key columns are deferred; `concatSorted`
+ * builds a flat key buffer regardless of value-column chunking).
+ *
+ * **Use case.** Reducers (step 2+) and hot-path callers that want
+ * to dereference `Float64Column.values` / `StringColumn.indices`
+ * directly first call `materialize` so the narrow on
+ * `storage === 'packed'` is unconditional. Read/scan callers can
+ * skip this — chunked columns route through chunk lookup
+ * transparently.
  */
 export function materialize<S extends ColumnSchema>(
   view: ColumnarStore<S>,
 ): ColumnarStore<S> {
-  // No-op for 1f. Documented in the module header.
-  return view;
+  let hasChunked = false;
+  for (const col of view.columns.values()) {
+    if (col.storage === 'chunked') {
+      hasChunked = true;
+      break;
+    }
+  }
+  if (!hasChunked) return view;
+  const newColumns = new Map<string, Column>();
+  for (let c = 1; c < view.schema.length; c += 1) {
+    const def = view.schema[c]!;
+    const col = view.columns.get(def.name)!;
+    if (col.storage === 'packed') {
+      newColumns.set(def.name, col);
+      continue;
+    }
+    // Discriminate on `kind` to call the right materialize helper.
+    switch (col.kind) {
+      case 'number':
+        newColumns.set(
+          def.name,
+          materializeChunkedFloat64(col as ChunkedFloat64Column),
+        );
+        break;
+      case 'boolean':
+        newColumns.set(
+          def.name,
+          materializeChunkedBoolean(col as ChunkedBooleanColumn),
+        );
+        break;
+      case 'string':
+        newColumns.set(
+          def.name,
+          materializeChunkedString(col as ChunkedStringColumn),
+        );
+        break;
+      case 'array':
+        newColumns.set(
+          def.name,
+          materializeChunkedArray(col as ChunkedArrayColumn),
+        );
+        break;
+      default: {
+        // Exhaustiveness — should be unreachable.
+        const exhaust: never = col;
+        throw new TypeError(
+          `materialize: unrecognized column kind '${(exhaust as { kind: string }).kind}'`,
+        );
+      }
+    }
+  }
+  return ColumnarStore.fromTrustedStore(view.schema, view.keys, newColumns);
 }
 
 /* -------------------------------------------------------------------------- */

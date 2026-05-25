@@ -26,12 +26,26 @@ export {
 export {
   type Column,
   type ColumnKind,
+  type ColumnStorage,
   type ScanOptions,
   BooleanColumn,
   Float64Column,
   booleanColumnFromArray,
   float64ColumnFromArray,
 } from './column.js';
+
+export {
+  ChunkedArrayColumn,
+  ChunkedBooleanColumn,
+  ChunkedFloat64Column,
+  ChunkedStringColumn,
+  materializeChunkedArray,
+  materializeChunkedBoolean,
+  materializeChunkedFloat64,
+  materializeChunkedString,
+} from './chunked-column.js';
+
+export { concatSorted } from './concat.js';
 
 export {
   DICT_ENCODE_MIN_LENGTH,

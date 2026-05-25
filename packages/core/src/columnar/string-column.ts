@@ -60,6 +60,7 @@ export const DICT_ENCODE_MIN_LENGTH = 16;
  */
 export class StringColumn {
   readonly kind = 'string' as const;
+  readonly storage = 'packed' as const;
   readonly length: number;
   readonly dictionary?: ReadonlyArray<string>;
   readonly indices?: Int32Array;
