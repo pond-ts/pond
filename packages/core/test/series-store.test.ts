@@ -290,13 +290,16 @@ describe('eventCache validation', () => {
     ).toThrow(/unexpected data field 'leftover'/);
   });
 
-  it('rejects cache entries MISSING a schema-declared field even when the column read is undefined (Codex Path-B-post finding)', () => {
+  it('accepts cache entries MISSING a schema-declared field WHEN the column read is undefined (outer-join shape)', () => {
     // Schema declares `value: string`. Row 1 of the column reads as
     // undefined (invalid cell). A cached event whose data omits the
-    // `value` field entirely would previously slip through because
-    // `cachedData[name] === undefined` matches `column.read() ===
-    // undefined`. The hasOwnProperty check rejects the missing
-    // field.
+    // `value` field entirely is the legitimate outer-join shape:
+    // `series.join(other, { type: 'outer' })` produces events for
+    // rows that had no match on the other side, with the other
+    // side's columns omitted. The relaxed check accepts this when
+    // the column reads as undefined at that row — the misalignment
+    // it catches (event missing field while column has a defined
+    // value) is covered by the next test.
     const schema = [
       { name: 'time', kind: 'time' },
       { name: 'value', kind: 'string' },
@@ -308,13 +311,36 @@ describe('eventCache validation', () => {
       keys,
       new Map([['value', value]]),
     );
-    const poisoned = new Map<number, SeriesEvent>();
+    const cache = new Map<number, SeriesEvent>();
     // Row 1: column.read returns undefined. Cached event data is {} —
-    // no `value` key at all.
-    poisoned.set(1, new Event(new Time(2), {}) as SeriesEvent);
+    // no `value` key at all. Accepted.
+    cache.set(1, new Event(new Time(2), {}) as SeriesEvent);
+    expect(() =>
+      SeriesStore.fromTrustedStore(store, { eventCache: cache }),
+    ).not.toThrow();
+  });
+
+  it('rejects cache entries MISSING a schema-declared field when the column has a defined value at that row', () => {
+    // Inverse of the outer-join shape: row 0 has a defined column
+    // value but the cached event's data omits the field. That's
+    // misalignment — the user's `event.get('value')` would return
+    // undefined while the column says otherwise.
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'value', kind: 'string' },
+    ] as const;
+    const keys = timeKeyColumnFromArray([1, 2, 3]);
+    const value = stringColumnFromArray(['a', 'b', 'c']);
+    const store = ColumnarStore.fromTrustedStore(
+      schema,
+      keys,
+      new Map([['value', value]]),
+    );
+    const poisoned = new Map<number, SeriesEvent>();
+    poisoned.set(0, new Event(new Time(1), {}) as SeriesEvent);
     expect(() =>
       SeriesStore.fromTrustedStore(store, { eventCache: poisoned }),
-    ).toThrow(/missing required schema data field 'value'/);
+    ).toThrow(/is missing data field 'value' but the column reads as/);
   });
 
   it('rejects cache entries with out-of-range row index', () => {

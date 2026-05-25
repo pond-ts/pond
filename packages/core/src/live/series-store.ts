@@ -151,6 +151,28 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
   }
 
   /**
+   * Trusted-events factory. Accepts a pre-sorted, pre-validated
+   * event array and builds the underlying `ColumnarStore` + lazy
+   * caches. **Skips row-level validation** — callers must ensure
+   * the events are sorted by key, that every event's key kind
+   * matches `schema[0].kind`, and that every event's data
+   * conforms to the value columns' kinds. The events themselves
+   * are pre-populated into the cache so subsequent `eventAt(i)`
+   * calls return the supplied references (preserving identity).
+   *
+   * Use this when events are already produced by a transform that
+   * preserves the sort + validation invariants — e.g.
+   * `TimeSeries.fromEvents` / per-group transforms that emit
+   * events from an upstream validated series.
+   */
+  static fromTrustedEvents<S extends SeriesSchema>(
+    schema: S,
+    events: ReadonlyArray<SeriesEvent>,
+  ): SeriesStore<S> {
+    return buildSeriesStoreFromEvents(schema, events);
+  }
+
+  /**
    * Trusted-construction factory. Accepts a pre-built
    * `ColumnarStore` and an optional `eventCache`. Every cache
    * entry is structurally validated before adoption (see
@@ -370,24 +392,34 @@ function validateCachedEvent(
     }
   }
   // Per-column data consistency. Two checks per schema column:
-  // (a) the field must be an OWN property of `cachedData` — a
-  //     missing field that happens to read as `undefined` looks
-  //     identical to a present `undefined` via plain
-  //     `cachedData[name]`, and would silently slip through
-  //     against a column where `column.read(i)` is `undefined`
-  //     for that row (invalid cell). Use `hasOwnProperty` to
-  //     distinguish.
-  // (b) the value (when present) must match `column.read(rowIndex)`
-  //     under kind-aware equality.
+  // (a) when the field is an own property of `cachedData`, its
+  //     value must agree with `column.read(rowIndex)` under
+  //     kind-aware equality.
+  // (b) when the field is **absent** from `cachedData`, the
+  //     column at that row must read as `undefined` — i.e. the
+  //     event genuinely doesn't carry that column. This is the
+  //     outer-join shape: `series.join(other, { type: 'outer' })`
+  //     produces events whose data omits the other side's columns
+  //     for rows that had no match. Pre-2a TimeSeries treated this
+  //     as a row-API concern (the strict missing-field check
+  //     pre-dated outer-join via the columnar substrate); the
+  //     relaxation here keeps the original misalignment-detection
+  //     property — a cached event whose data is missing a field
+  //     for which the column DOES read a defined value still
+  //     throws.
   for (let c = 1; c < store.schema.length; c += 1) {
     const def = store.schema[c]!;
     const name = def.name;
-    if (!Object.prototype.hasOwnProperty.call(cachedData, name)) {
-      throw new RangeError(
-        `SeriesStore: eventCache entry at row ${rowIndex} is missing required schema data field '${name}'`,
-      );
-    }
+    const hasField = Object.prototype.hasOwnProperty.call(cachedData, name);
     const columnValue = store.columns.get(name)!.read(rowIndex);
+    if (!hasField) {
+      if (columnValue !== undefined) {
+        throw new RangeError(
+          `SeriesStore: eventCache entry at row ${rowIndex} is missing data field '${name}' but the column reads as ${stringifyForError(columnValue)}; missing fields are only valid when the column is also undefined at that row`,
+        );
+      }
+      continue;
+    }
     const cachedValue = cachedData[name];
     if (!valuesEqual(columnValue, cachedValue, def.kind)) {
       throw new RangeError(

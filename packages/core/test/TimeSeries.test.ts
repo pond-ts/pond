@@ -37,6 +37,12 @@ describe('TimeSeries', () => {
   });
 
   it('supports interval based series', () => {
+    // Note: every row's interval label must be the same kind — all
+    // strings or all numbers within a single series. Pre-2a
+    // TimeSeries silently tolerated mixed-kind labels because events
+    // were stored as a raw array; sub-step 2a's columnar substrate
+    // surfaces this as a loud `RangeError` at intake (see the
+    // `IntervalKeyColumn` one-kind-per-column contract).
     const schema = [
       { name: 'interval', kind: 'interval' },
       { name: 'temperature', kind: 'number' },
@@ -47,7 +53,7 @@ describe('TimeSeries', () => {
       schema,
       rows: [
         [{ value: 'row-1', start: 1000, end: 2000 }, 23.4],
-        [{ value: 2, start: 2000, end: 3000 }, 24.0],
+        [{ value: 'row-2', start: 2000, end: 3000 }, 24.0],
       ],
     });
 

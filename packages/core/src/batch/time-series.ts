@@ -93,6 +93,7 @@ import { Event } from '../core/event.js';
 import { PartitionedTimeSeries } from './partitioned-time-series.js';
 import type { BatchSampleStrategy } from '../sequence/sample.js';
 import { Sequence } from '../sequence/sequence.js';
+import { SeriesStore } from '../live/series-store.js';
 import { validateAndNormalize } from './validate.js';
 import type { DurationInput } from '../core/duration.js';
 import { parseDuration } from '../core/duration.js';
@@ -673,10 +674,42 @@ function prepareSeriesForJoin<T extends SeriesTuple>(
  * series.align(Sequence.every("1m")); // uses the series range over an epoch-anchored minute grid
  * ```
  */
+/**
+ * Module-private sentinel used to route already-built `SeriesStore`
+ * instances through the public constructor without re-validating.
+ * The Symbol is unforgeable — external callers can't construct a
+ * `TimeSeries` with a `_trustedStore` because they can't reach the
+ * Symbol's identity. This replaces the `Object.create(prototype)`
+ * pattern that used to bypass the constructor (incompatible with ES
+ * private fields, which are installed only when a constructor
+ * actually runs).
+ */
+const TRUSTED_STORE_SENTINEL: unique symbol = Symbol(
+  'TimeSeries.trustedStoreSentinel',
+);
+
+/**
+ * Internal extension of `TimeSeriesInput` carrying a pre-built
+ * `SeriesStore`. Recognized by the constructor via the sentinel
+ * Symbol; recognized only inside this module.
+ */
+type TrustedStoreInput<S extends SeriesSchema> = {
+  readonly name: string;
+  readonly schema: S;
+  readonly [TRUSTED_STORE_SENTINEL]: SeriesStore<S>;
+};
+
 export class TimeSeries<S extends SeriesSchema> {
   readonly name: string;
   readonly schema: S;
-  readonly events: ReadonlyArray<EventForSchema<S>>;
+  /**
+   * The columnar-backed row-API store. Holds the validated key
+   * column, value columns, and the lazy `Map<rowIndex, Event>` cache
+   * that keeps `event` identity stable across `at(i)` / `events[i]`
+   * / iteration. Replaces the previous `readonly events: Event[]`
+   * field (sub-step 2a of the columnar TimeSeries integration).
+   */
+  readonly #store: SeriesStore<S>;
 
   /**
    * Example: `TimeSeries.joinMany([cpu.align(seq), memory.align(seq), errors.align(seq)])`.
@@ -860,8 +893,27 @@ export class TimeSeries<S extends SeriesSchema> {
   /** Example: `new TimeSeries({ name, schema, rows })`. Creates an immutable time series from a schema and row-oriented input data. */
   constructor(input: TimeSeriesInput<S>) {
     this.name = input.name;
-    this.schema = Object.freeze(input.schema.slice()) as S;
-    this.events = validateAndNormalize(input);
+    // Trusted-store fast path. Only this module's
+    // `#fromTrustedEvents` static can produce inputs carrying the
+    // sentinel Symbol; external callers always land in the
+    // validating branch below.
+    const trustedInput = input as unknown as Partial<TrustedStoreInput<S>>;
+    const trustedStore = trustedInput[TRUSTED_STORE_SENTINEL];
+    if (trustedStore !== undefined) {
+      this.schema = input.schema;
+      this.#store = trustedStore;
+    } else {
+      this.schema = Object.freeze(input.schema.slice()) as S;
+      // `validateAndNormalize` produces the sorted, normalized event
+      // array; `SeriesStore.fromValidatedRows` re-runs the same path
+      // inside, building the columnar substrate + pre-populating
+      // the event cache so identity is preserved. We delegate to it
+      // rather than calling `validateAndNormalize` directly.
+      this.#store = SeriesStore.fromValidatedRows(
+        this.schema,
+        input.rows,
+      ) as SeriesStore<S>;
+    }
     Object.freeze(this);
   }
 
@@ -944,29 +996,57 @@ export class TimeSeries<S extends SeriesSchema> {
   }
 
   /**
-   * Builds a series from event data that has already been validated and ordered by the caller.
+   * Builds a series from event data that has already been validated
+   * and ordered by the caller. Routes through the regular constructor
+   * via the `TRUSTED_STORE_SENTINEL` sentinel — necessary because ES
+   * private fields (the `#store` slot) can only be installed by a
+   * running constructor; the previous `Object.create(prototype)` shape
+   * is no longer viable.
    *
-   * This is intentionally private and only used by transforms that preserve the existing event
-   * order and normalized key invariants.
+   * Intentionally private. Callers are transforms that preserve the
+   * existing event order and normalized key invariants.
    */
   static #fromTrustedEvents<NextSchema extends SeriesSchema>(
     name: string,
     schema: NextSchema,
     events: ReadonlyArray<EventForSchema<NextSchema>>,
   ): TimeSeries<NextSchema> {
-    const series = Object.create(TimeSeries.prototype) as {
-      name: string;
-      schema: NextSchema;
-      events: ReadonlyArray<EventForSchema<NextSchema>>;
+    const frozenSchema = Object.freeze(schema.slice()) as NextSchema;
+    const store = SeriesStore.fromTrustedEvents(
+      frozenSchema,
+      events as unknown as ReadonlyArray<
+        Parameters<typeof SeriesStore.fromTrustedEvents>[1][number]
+      >,
+    ) as SeriesStore<NextSchema>;
+    const trustedInput: TrustedStoreInput<NextSchema> = {
+      name,
+      schema: frozenSchema,
+      [TRUSTED_STORE_SENTINEL]: store,
     };
+    return new TimeSeries<NextSchema>(
+      trustedInput as unknown as TimeSeriesInput<NextSchema>,
+    );
+  }
 
-    series.name = name;
-    series.schema = Object.freeze(schema.slice()) as NextSchema;
-    series.events = Object.freeze(events.slice()) as ReadonlyArray<
-      EventForSchema<NextSchema>
+  /**
+   * Example: `series.events`. Returns the full event array.
+   *
+   * Lazy under the hood: the array is built once by walking the
+   * columnar store's per-row event cache and is memoized inside the
+   * store so `series.events === series.events` holds (preserving
+   * the identity invariant prior code relied on). Same per-row
+   * identity as `series.at(i)` — `series.at(i) === series.events[i]`
+   * for every valid `i`.
+   *
+   * Replaces the previous `readonly events` field (sub-step 2a). The
+   * cast widens `SeriesEvent` (the store's event type) to
+   * `EventForSchema<S>` (TimeSeries's narrower per-schema type);
+   * structurally identical — both are `Event<EventKey, Schema>`.
+   */
+  get events(): ReadonlyArray<EventForSchema<S>> {
+    return this.#store.toEvents() as unknown as ReadonlyArray<
+      EventForSchema<S>
     >;
-
-    return Object.freeze(series) as TimeSeries<NextSchema>;
   }
 
   /** Example: `series.firstColumnKind`. Returns the first-column kind from the series schema. */
@@ -2322,6 +2402,16 @@ export class TimeSeries<S extends SeriesSchema> {
     }
 
     const colNames = this.schema.slice(1).map((c) => c.name);
+    // Per-column kind lookup, used by the kind-sensitive fill cases
+    // (e.g. `'zero'` only applies to numeric columns — filling a
+    // string column with the number `0` would emit a kind-mismatched
+    // cell that the columnar substrate rejects at `SeriesStore`
+    // construction). Pre-columnar behavior silently produced
+    // type-broken events; the columnar layer surfaces that.
+    const colKinds = new Map<string, string>();
+    for (let i = 1; i < this.schema.length; i += 1) {
+      colKinds.set(this.schema[i]!.name, this.schema[i]!.kind);
+    }
     const specs: Map<string, ResolvedFillSpec> = new Map();
 
     if (typeof strategy === 'string') {
@@ -2440,7 +2530,12 @@ export class TimeSeries<S extends SeriesSchema> {
             break;
           }
           case 'zero': {
-            for (let j = start; j < end; j++) col[j] = 0;
+            // `'zero'` only fills numeric columns. Non-numeric
+            // columns at the same row index stay undefined — the
+            // gap is genuinely unfilled there.
+            if (colKinds.get(name) === 'number') {
+              for (let j = start; j < end; j++) col[j] = 0;
+            }
             break;
           }
           case 'literal': {
@@ -3999,9 +4094,13 @@ export class TimeSeries<S extends SeriesSchema> {
     });
   }
 
-  /** Example: `series.length`. Returns the number of events in the series. */
+  /**
+   * Example: `series.length`. Returns the number of events in the
+   * series. Delegates to the columnar store (avoids materializing
+   * the lazy `events` array just to read its length).
+   */
   get length(): number {
-    return this.events.length;
+    return this.#store.length;
   }
 
   /** Example: `for (const event of series) { ... }`. Iterates events in order. */
