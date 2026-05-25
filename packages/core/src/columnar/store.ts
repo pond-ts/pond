@@ -98,10 +98,15 @@ export class ColumnarStore<S extends ColumnSchema = ColumnSchema> {
       );
     }
     // Reject duplicate column names in the schema — the columns map
-    // lookup would silently last-write-wins otherwise.
+    // lookup would silently last-write-wins otherwise. Also reject
+    // unsafe names that the row-API adapter's plain-object data
+    // construction (`data[name] = value`) can't surface as own
+    // properties — they'd set the prototype slot instead and slip
+    // past the eventCache's exact-schema-field-set check.
     const seenNames = new Set<string>();
     for (let i = 0; i < schema.length; i += 1) {
       const name = schema[i]!.name;
+      assertSafeColumnName(name);
       if (seenNames.has(name)) {
         throw new RangeError(
           `ColumnarStore: duplicate schema column name '${name}'`,
@@ -175,5 +180,33 @@ export class ColumnarStore<S extends ColumnSchema = ColumnSchema> {
       );
     }
     return col.read(rowIndex);
+  }
+}
+
+/**
+ * Column names reserved at the framework level. The row-API
+ * adapter's `data[name] = value` (in `buildRowData` for
+ * `SeriesStore.eventAt`) sets the prototype slot rather than
+ * creating an own property when `name` matches one of these.
+ * That breaks the eventCache's exact-schema-field-set
+ * validation: the round-trip event would be missing the
+ * "declared" field and look like a different row to the cache.
+ *
+ * Rejecting these at construction is cheaper than auditing every
+ * row-data construction site to use `Object.create(null)` — the
+ * row-API surface is large enough that the bug would resurface
+ * elsewhere.
+ */
+const UNSAFE_COLUMN_NAMES: ReadonlySet<string> = new Set([
+  '__proto__',
+  'prototype',
+  'constructor',
+]);
+
+function assertSafeColumnName(name: string): void {
+  if (UNSAFE_COLUMN_NAMES.has(name)) {
+    throw new RangeError(
+      `ColumnarStore: column name '${name}' is reserved (would shadow Object prototype semantics in row-API materialization); pick a different name`,
+    );
   }
 }

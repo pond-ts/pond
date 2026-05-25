@@ -81,3 +81,12 @@ export {
   type KeyKind,
   type ScalarValue,
 } from './types.js';
+
+export {
+  materialize,
+  withColumnAppended,
+  withColumnReplaced,
+  withColumnsRenamed,
+  withColumnsSelected,
+  withRowSelection,
+} from './view.js';

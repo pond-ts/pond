@@ -123,6 +123,23 @@ export class TimeKeyColumn implements KeyColumnBase<'time'> {
   endAt(i: number): number {
     return this.beginAt(i);
   }
+
+  /**
+   * Gathers rows by index into a new `TimeKeyColumn`. Out-of-range
+   * source indices produce a `0` slot in the output buffer — the
+   * caller is responsible for ensuring `indices` are valid (typically
+   * from a prior filter / range-query that returned source-row
+   * indices).
+   */
+  sliceByIndices(indices: Int32Array): TimeKeyColumn {
+    const outLength = indices.length;
+    const out = new Float64Array(outLength);
+    for (let i = 0; i < outLength; i += 1) {
+      const idx = indices[i]!;
+      out[i] = idx >= 0 && idx < this.length ? this.begin[idx]! : 0;
+    }
+    return new TimeKeyColumn(out, outLength);
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -182,6 +199,24 @@ export class TimeRangeKeyColumn implements KeyColumnBase<'timeRange'> {
       );
     }
     return this.end[i]!;
+  }
+
+  /**
+   * Gathers rows by index into a new `TimeRangeKeyColumn`. See
+   * `TimeKeyColumn.sliceByIndices` for the out-of-range semantics.
+   */
+  sliceByIndices(indices: Int32Array): TimeRangeKeyColumn {
+    const outLength = indices.length;
+    const outBegin = new Float64Array(outLength);
+    const outEnd = new Float64Array(outLength);
+    for (let i = 0; i < outLength; i += 1) {
+      const idx = indices[i]!;
+      if (idx >= 0 && idx < this.length) {
+        outBegin[i] = this.begin[idx]!;
+        outEnd[i] = this.end[idx]!;
+      }
+    }
+    return new TimeRangeKeyColumn(outBegin, outEnd, outLength);
   }
 }
 
@@ -310,6 +345,32 @@ export class IntervalKeyColumn implements KeyColumnBase<'interval'> {
    */
   labelAt(i: number): string | number | undefined {
     return this.labels.read(i);
+  }
+
+  /**
+   * Gathers rows by index into a new `IntervalKeyColumn`. The label
+   * column is `sliceByIndices`'d as well — for string labels the
+   * dictionary is shared by reference (cheap), for numeric labels
+   * the buffer is materialized via `Float64Column.sliceByIndices`.
+   *
+   * Out-of-range source indices would produce undefined labels in
+   * the output column; the constructor's label-defined check then
+   * rejects them. Callers must therefore ensure `indices` covers
+   * only valid source rows.
+   */
+  sliceByIndices(indices: Int32Array): IntervalKeyColumn {
+    const outLength = indices.length;
+    const outBegin = new Float64Array(outLength);
+    const outEnd = new Float64Array(outLength);
+    for (let i = 0; i < outLength; i += 1) {
+      const idx = indices[i]!;
+      if (idx >= 0 && idx < this.length) {
+        outBegin[i] = this.begin[idx]!;
+        outEnd[i] = this.end[idx]!;
+      }
+    }
+    const outLabels = this.labels.sliceByIndices(indices);
+    return new IntervalKeyColumn(outBegin, outEnd, outLabels, outLength);
   }
 }
 
