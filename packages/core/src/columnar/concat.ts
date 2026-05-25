@@ -55,6 +55,7 @@ import {
 import { StringColumn, stringColumnFromArray } from './string-column.js';
 import { ColumnarStore } from './store.js';
 import type { ColumnSchema } from './types.js';
+import { validateColumnLength } from './validity.js';
 
 /**
  * Concatenates an ordered list of temporally-disjoint stores into a
@@ -141,7 +142,7 @@ function validateDisjointKeys<S extends ColumnSchema>(
   const keyKind = stores[0]!.schema[0]!.kind;
   // Skip empty stores in the comparison — they have no keys to compare.
   let prevNonEmpty:
-    | { storeIndex: number; lastBegin: number; lastEnd: number }
+    | { storeIndex: number; lastBegin: number; maxEnd: number }
     | undefined;
   for (let s = 0; s < stores.length; s += 1) {
     const store = stores[s]!;
@@ -160,10 +161,22 @@ function validateDisjointKeys<S extends ColumnSchema>(
         }
       } else {
         // TimeRange / Interval: half-open intervals, boundary-touch
-        // is OK. Reject strict overlap.
-        if (prevNonEmpty.lastEnd > firstBegin) {
+        // (`maxEnd === firstBegin`) is OK. Reject strict overlap.
+        //
+        // **Why `maxEnd`, not `lastEnd`.** The framework's
+        // `TimeRangeKeyColumn` / `IntervalKeyColumn` validate only
+        // intra-row `begin <= end` and don't enforce cross-row
+        // non-overlap (that's a row-API concern). A valid
+        // begin-sorted store like `[[0,100], [10,20]]` has its
+        // maximum end at row 0, not the last row — so checking
+        // `endAt(length - 1)` would let `[30, ...]` start a next
+        // store that overlaps row 0's `[0,100]` interval. We track
+        // the running max of `endAt(i)` instead. O(N) per store at
+        // concat time, which is dominated by the value-column
+        // chunk collection anyway.
+        if (prevNonEmpty.maxEnd > firstBegin) {
           violated = true;
-          detail = `store ${prevNonEmpty.storeIndex} ends at ${prevNonEmpty.lastEnd}, store ${s} starts at ${firstBegin}`;
+          detail = `store ${prevNonEmpty.storeIndex} max end ${prevNonEmpty.maxEnd}, store ${s} starts at ${firstBegin}`;
         }
       }
       if (violated) {
@@ -175,9 +188,36 @@ function validateDisjointKeys<S extends ColumnSchema>(
     prevNonEmpty = {
       storeIndex: s,
       lastBegin: store.keys.beginAt(store.length - 1),
-      lastEnd: store.keys.endAt(store.length - 1),
+      maxEnd: maxEndOfStore(store, keyKind),
     };
   }
+}
+
+/**
+ * Returns the maximum `endAt(i)` across every row in the store.
+ * For `time` keys we can short-circuit on the last row (Time has
+ * end === begin, and begins are sorted within a store). For
+ * `timeRange` / `interval` we scan every row — see the rationale
+ * in `validateDisjointKeys`.
+ */
+function maxEndOfStore<S extends ColumnSchema>(
+  store: ColumnarStore<S>,
+  keyKind: string,
+): number {
+  if (store.length === 0) {
+    // Caller guards against empty stores reaching this path.
+    return -Infinity;
+  }
+  if (keyKind === 'time') {
+    // For Time, end === begin, and begin is sorted; last row carries the max.
+    return store.keys.endAt(store.length - 1);
+  }
+  let maxEnd = store.keys.endAt(0);
+  for (let i = 1; i < store.length; i += 1) {
+    const e = store.keys.endAt(i);
+    if (e > maxEnd) maxEnd = e;
+  }
+  return maxEnd;
 }
 
 function computeTotalLength<S extends ColumnSchema>(
@@ -187,6 +227,13 @@ function computeTotalLength<S extends ColumnSchema>(
   for (let s = 0; s < stores.length; s += 1) {
     total += stores[s]!.length;
   }
+  // Validate the aggregate before downstream `concatKeyColumns`
+  // allocates a flat `Float64Array(totalLength)`. Two individually
+  // valid stores can sum past `MAX_COLUMN_LENGTH` and trigger an
+  // opaque typed-array allocation failure (worst case: OOM) instead
+  // of a predictable rejection. `validateColumnLength` produces a
+  // `RangeError` with the framework's standard message.
+  validateColumnLength(total, 'concatSorted aggregate');
   return total;
 }
 

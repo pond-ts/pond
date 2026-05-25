@@ -235,6 +235,39 @@ describe('concatSorted (TimeRange keys)', () => {
     const s2 = makeTRStore([[2000, 4000]], [99]);
     expect(() => concatSorted([s1, s2])).toThrow(/temporally disjoint/);
   });
+
+  // Regression: Codex round-1 finding. The framework's
+  // `TimeRangeKeyColumn` allows begin-sorted stores whose maximum
+  // `endAt(i)` does not occur at the last row — e.g. a long-running
+  // row 0 (`[1000, 5000]`) followed by a short row 1 (`[2000, 2500]`)
+  // is structurally valid even though the max end is at row 0. The
+  // disjointness check must scan all `endAt` values; relying on
+  // `endAt(length - 1)` alone would let a next store starting at
+  // 3000 slip through despite overlapping row 0's range.
+  it('rejects next-store overlap that is hidden by a non-final long-running row', () => {
+    const s1 = makeTRStore(
+      [
+        [1000, 5000],
+        [2000, 2500],
+      ],
+      [10, 20],
+    );
+    const s2 = makeTRStore([[3000, 6000]], [30]);
+    expect(() => concatSorted([s1, s2])).toThrow(/temporally disjoint/);
+  });
+
+  it('accepts the same shape when next-store begin clears the actual max end', () => {
+    const s1 = makeTRStore(
+      [
+        [1000, 5000],
+        [2000, 2500],
+      ],
+      [10, 20],
+    );
+    const s2 = makeTRStore([[5000, 6000]], [30]); // boundary-touch on max end.
+    const out = concatSorted([s1, s2]);
+    expect(out.length).toBe(3);
+  });
 });
 
 /* -------------------------------------------------------------------------- */
