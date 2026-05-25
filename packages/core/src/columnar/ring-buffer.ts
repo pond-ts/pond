@@ -210,9 +210,26 @@ export class ColumnarRingBuffer<S extends ColumnSchema = ColumnSchema> {
     this.#values = new Map();
     for (let i = 1; i < schema.length; i += 1) {
       const def = schema[i]!;
+      // Validate every value column kind at construction. Without
+      // this, an upstream schema-drift bug (e.g. a 'timeRange'
+      // value column) would survive ring construction and surface
+      // only at first `snapshot()` via `fromTrustedStore` — far
+      // from the schema-misconfiguration site. Closed Codex round
+      // 4's medium finding on PR #149.
+      const valueKind = def.kind;
+      if (
+        valueKind !== 'number' &&
+        valueKind !== 'boolean' &&
+        valueKind !== 'string' &&
+        valueKind !== 'array'
+      ) {
+        throw new RangeError(
+          `ColumnarRingBuffer: schema[${i}].kind '${valueKind}' is not a valid value-column kind ('number' | 'boolean' | 'string' | 'array')`,
+        );
+      }
       this.#values.set(
         def.name,
-        initValueRing(def.kind as ColumnKind, initialCapacity),
+        initValueRing(valueKind as ColumnKind, initialCapacity),
       );
     }
   }
@@ -277,6 +294,23 @@ export class ColumnarRingBuffer<S extends ColumnSchema = ColumnSchema> {
         willEvict = overflow;
       }
     }
+    // **Pre-stage all throwing work BEFORE destructive ops.**
+    // Two operations in the append flow can throw under memory
+    // pressure: (1) typed-array allocation in `#grow`, and (2)
+    // `slice()` + `Object.freeze` on array-column cells in
+    // `writeValueCell`. Both happen before `#length += toAppend`
+    // — so a throw between the destructive op and the commit
+    // would leave retained rows discarded and new rows
+    // uncommitted. Closed Codex round 4's high finding: pre-walk
+    // every array-kind value column and gather its frozen cells
+    // into a temporary `Map` while the ring is still intact;
+    // the write phase then assigns those pre-frozen cells with
+    // a plain reference copy (no realistic throw).
+    const stagedArrayCells = this.#stageArrayCellsForAppend(
+      batch,
+      batchStart,
+      toAppend,
+    );
     // After the planned destructive op, the remaining live rows
     // will be `willClearAll ? 0 : #length - willEvict`. We need
     // enough capacity for that plus the `toAppend` new rows.
@@ -298,10 +332,55 @@ export class ColumnarRingBuffer<S extends ColumnSchema = ColumnSchema> {
     }
     // **Vectorized write per column.** Walk the batch's rows once
     // per column; for each, compute the destination physical
-    // position and write. Per-cell write goes through `column.read`
-    // which handles per-batch validity transparently.
-    this.#writeBatch(batch, batchStart, toAppend);
+    // position and write. Array-kind columns use the pre-staged
+    // frozen cells; other kinds read directly from the source
+    // column (no allocation, can't throw).
+    this.#writeBatch(batch, batchStart, toAppend, stagedArrayCells);
     this.#length += toAppend;
+  }
+
+  /**
+   * Pre-stages array-column cells before any destructive ring
+   * mutation. For each `kind: 'array'` value column in the
+   * schema, walks the batch's rows in `[batchStart, batchStart +
+   * toAppend)` and copies + freezes each defined cell into a
+   * fresh list. Returns a `Map<columnName, Array<ArrayValue |
+   * undefined>>` indexed by `j` (the row offset within the
+   * `toAppend` window).
+   *
+   * **Why this exists.** `writeValueCell` for array kind does
+   * `Object.freeze((value as ArrayValue).slice())` — both
+   * `Array.prototype.slice()` and the freeze-result allocation
+   * can throw under memory pressure. Performing those throws
+   * BEFORE the destructive `clear` / `evict` keeps `appendBatch`
+   * failure-atomic for array columns (matching what `#grow` does
+   * for typed-array allocations). After this returns, the write
+   * phase just assigns the pre-frozen cell with no realistic
+   * throw path.
+   *
+   * Returns an empty `Map` when the schema has no array columns —
+   * the common case, no extra cost for non-array workloads.
+   */
+  #stageArrayCellsForAppend(
+    batch: ColumnarStore<S>,
+    batchStart: number,
+    toAppend: number,
+  ): Map<string, Array<ArrayValue | undefined>> {
+    const staged = new Map<string, Array<ArrayValue | undefined>>();
+    for (let c = 1; c < this.schema.length; c += 1) {
+      const def = this.schema[c]!;
+      if (def.kind !== 'array') continue;
+      const sourceCol = batch.columns.get(def.name)!;
+      const cells = new Array<ArrayValue | undefined>(toAppend);
+      for (let j = 0; j < toAppend; j += 1) {
+        const value = sourceCol.read(batchStart + j);
+        cells[j] = Array.isArray(value)
+          ? (Object.freeze((value as ArrayValue).slice()) as ArrayValue)
+          : undefined;
+      }
+      staged.set(def.name, cells);
+    }
+    return staged;
   }
 
   /**
@@ -423,7 +502,9 @@ export class ColumnarRingBuffer<S extends ColumnSchema = ColumnSchema> {
    * positions, using circular indexing
    * (`(head + length + j) % capacity`). Assumes
    * `#validateBatchSchema` has run, capacity is sufficient
-   * (`#grow` was called if needed), and any necessary eviction
+   * (`#grow` was called if needed), `stagedArrayCells` has been
+   * built from the source (pre-frozen by
+   * `#stageArrayCellsForAppend`), and any necessary eviction
    * has already advanced `#head` / `#length`.
    *
    * **Key kinds:**
@@ -433,12 +514,15 @@ export class ColumnarRingBuffer<S extends ColumnSchema = ColumnSchema> {
    *   `labelKind`, either a string slot or a Float64 slot).
    *
    * Value-column writes delegate to `writeValueColumnRows` for
-   * per-kind branching.
+   * per-kind branching; array-kind columns use the pre-staged
+   * frozen cells so the inner write is a plain reference copy
+   * with no allocation.
    */
   #writeBatch(
     batch: ColumnarStore<S>,
     batchStart: number,
     toAppend: number,
+    stagedArrayCells: Map<string, Array<ArrayValue | undefined>>,
   ): void {
     // Key buffers.
     const batchKeys = batch.keys;
@@ -463,6 +547,20 @@ export class ColumnarRingBuffer<S extends ColumnSchema = ColumnSchema> {
     for (let c = 1; c < this.schema.length; c += 1) {
       const def = this.schema[c]!;
       const ring = this.#values.get(def.name)!;
+      if (ring.kind === 'array') {
+        // Array columns use the pre-frozen cells gathered before
+        // any destructive op.
+        const cells = stagedArrayCells.get(def.name)!;
+        writeArrayColumnFromStaged(
+          ring,
+          cells,
+          toAppend,
+          this.#head,
+          this.#length,
+          this.#capacity,
+        );
+        continue;
+      }
       const srcCol = batch.columns.get(def.name)!;
       writeValueColumnRows(
         ring,
@@ -765,30 +863,38 @@ function initKeyRing(
  * memory savings.
  */
 function initValueRing(kind: ColumnKind, capacity: number): MutableValueRing {
-  if (kind === 'number') {
-    return {
-      kind: 'number',
-      values: new Float64Array(capacity),
-      validity: new Uint8Array(bitmapByteCount(capacity)),
-    };
+  switch (kind) {
+    case 'number':
+      return {
+        kind: 'number',
+        values: new Float64Array(capacity),
+        validity: new Uint8Array(bitmapByteCount(capacity)),
+      };
+    case 'boolean':
+      return {
+        kind: 'boolean',
+        values: new Uint8Array(bitmapByteCount(capacity)),
+        validity: new Uint8Array(bitmapByteCount(capacity)),
+      };
+    case 'string':
+      return {
+        kind: 'string',
+        values: new Array<string | undefined>(capacity),
+      };
+    case 'array':
+      return {
+        kind: 'array',
+        values: new Array<ArrayValue | undefined>(capacity),
+      };
+    default: {
+      // Exhaustiveness — the constructor validates `kind` upstream,
+      // so reaching here means a caller bypassed the public API.
+      const exhaust: never = kind;
+      throw new RangeError(
+        `initValueRing: unsupported column kind '${exhaust as string}'`,
+      );
+    }
   }
-  if (kind === 'boolean') {
-    return {
-      kind: 'boolean',
-      values: new Uint8Array(bitmapByteCount(capacity)),
-      validity: new Uint8Array(bitmapByteCount(capacity)),
-    };
-  }
-  if (kind === 'string') {
-    return {
-      kind: 'string',
-      values: new Array<string | undefined>(capacity),
-    };
-  }
-  return {
-    kind: 'array',
-    values: new Array<ArrayValue | undefined>(capacity),
-  };
 }
 
 /**
@@ -868,7 +974,7 @@ function buildRegrownValueRing(
  * number/boolean; `undefined` slot for string/array).
  */
 function writeValueColumnRows(
-  ring: MutableValueRing,
+  ring: MutableFloat64Ring | MutableBooleanRing | MutableStringRing,
   source: Column,
   batchStart: number,
   toAppend: number,
@@ -894,17 +1000,19 @@ function writeValueColumnRows(
  * - `string` — store the string or `undefined`. The slot's
  *   truthiness IS the defined discriminator (no separate
  *   validity bitmap).
- * - `array` — defensively `slice()` + `Object.freeze` the array
- *   cell, matching `ArrayColumn`'s constructor invariant so the
- *   ring can't be corrupted by a caller mutating its source
- *   array after append.
+ *
+ * Array-kind columns do NOT route through this function — they
+ * use `writeArrayColumnFromStaged` with cells pre-frozen by
+ * `#stageArrayCellsForAppend` so the throwing slice/freeze
+ * happens before the ring's destructive ops.
  *
  * Idempotent and clobber-safe: callers don't need to track
  * whether `physical` was previously defined — the writes set or
- * clear bits / values based purely on `value`'s type.
+ * clear bits / values based purely on `value`'s type. No
+ * allocations; this function can't throw on memory pressure.
  */
 function writeValueCell(
-  ring: MutableValueRing,
+  ring: MutableFloat64Ring | MutableBooleanRing | MutableStringRing,
   physical: number,
   value: unknown,
 ): void {
@@ -932,15 +1040,30 @@ function writeValueCell(
     }
     return;
   }
-  if (ring.kind === 'string') {
-    ring.values[physical] = typeof value === 'string' ? value : undefined;
-    return;
+  // string
+  ring.values[physical] = typeof value === 'string' ? value : undefined;
+}
+
+/**
+ * Array-column write path: assigns each pre-staged frozen cell
+ * directly into the ring at the correct physical position. No
+ * allocation, no slice, no freeze — those happened during
+ * `#stageArrayCellsForAppend` before the ring's destructive ops.
+ * This function can't throw on memory pressure, which is what
+ * makes the array-column `appendBatch` flow failure-atomic.
+ */
+function writeArrayColumnFromStaged(
+  ring: MutableArrayRing,
+  cells: ReadonlyArray<ArrayValue | undefined>,
+  toAppend: number,
+  head: number,
+  ringLengthBefore: number,
+  capacity: number,
+): void {
+  for (let j = 0; j < toAppend; j += 1) {
+    const dst = (head + ringLengthBefore + j) % capacity;
+    ring.values[dst] = cells[j];
   }
-  // array — defensive copy + freeze matching `ArrayColumn`'s constructor
-  // invariant.
-  ring.values[physical] = Array.isArray(value)
-    ? (Object.freeze((value as ArrayValue).slice()) as ArrayValue)
-    : undefined;
 }
 
 /**

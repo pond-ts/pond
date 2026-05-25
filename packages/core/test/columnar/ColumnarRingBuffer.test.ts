@@ -124,6 +124,37 @@ describe('ColumnarRingBuffer construction', () => {
         }),
     ).toThrow(RangeError);
   });
+
+  // Regression: Codex round 4's medium finding. The constructor
+  // previously cast `def.kind` to `ColumnKind` without runtime
+  // validation; `initValueRing` fell through to 'array' for any
+  // unknown kind, so a typo or schema-drift bug (e.g. a value
+  // column declaring `kind: 'timeRange'`) survived construction
+  // and only blew up at first `snapshot()` via
+  // `ColumnarStore.fromTrustedStore`'s kind check. The error
+  // should fire at the misconfiguration site.
+  it('rejects invalid value-column kinds at construction', () => {
+    expect(
+      () =>
+        new ColumnarRingBuffer(
+          [
+            { name: 'time', kind: 'time' },
+            { name: 'window', kind: 'timeRange' }, // key kind in a value slot
+          ] as const,
+          { retention: 10 },
+        ),
+    ).toThrow(/is not a valid value-column kind/);
+    expect(
+      () =>
+        new ColumnarRingBuffer(
+          [
+            { name: 'time', kind: 'time' },
+            { name: 'x', kind: 'notakind' as 'number' },
+          ] as const,
+          { retention: 10 },
+        ),
+    ).toThrow(/is not a valid value-column kind/);
+  });
 });
 
 /* -------------------------------------------------------------------------- */
