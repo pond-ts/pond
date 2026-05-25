@@ -91,29 +91,35 @@ export interface ColumnarRingBufferOptions {
 /* complicate the eviction/growth bookkeeping.                                */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * No `definedCount` field on these mutable rings. `snapshot()`
+ * computes it locally per column when it builds the validity
+ * bitmap, and nothing outside the ring needs an O(1) defined-
+ * count query at the framework layer. A maintained field would
+ * drift on edge paths (full-clear leaves stale string/array
+ * cells; batch-larger-than-retention resets length+head without
+ * touching the counter) and add bookkeeping nobody reads.
+ * Future LiveSeries-layer query needs can reintroduce a
+ * cached counter with a single source-of-truth update site.
+ */
 interface MutableFloat64Ring {
   readonly kind: 'number';
   values: Float64Array;
   validity: Uint8Array;
-  /** Number of defined cells across the live `length` rows. */
-  definedCount: number;
 }
 interface MutableBooleanRing {
   readonly kind: 'boolean';
   /** Bit-packed: `bit_i = values[physical_i >> 3] & (1 << (physical_i & 7))`. */
   values: Uint8Array;
   validity: Uint8Array;
-  definedCount: number;
 }
 interface MutableStringRing {
   readonly kind: 'string';
   values: Array<string | undefined>;
-  definedCount: number;
 }
 interface MutableArrayRing {
   readonly kind: 'array';
   values: Array<ArrayValue | undefined>;
-  definedCount: number;
 }
 type MutableValueRing =
   | MutableFloat64Ring
@@ -253,10 +259,15 @@ export class ColumnarRingBuffer<S extends ColumnSchema = ColumnSchema> {
     if (batchLength > this.retention) {
       batchStart = batchLength - this.retention;
       toAppend = this.retention;
-      // Existing rows are entirely replaced — clear first to
-      // avoid stale rows at the start of the ring.
+      // Existing rows are entirely replaced — clear position state
+      // AND wipe every slot's defined-state. Without the slot
+      // wipe, the upcoming writes would inherit the prior batch's
+      // defined-state on slots whose new value is undefined, and
+      // string/array slots would leak prior cells. Matches the
+      // full-clear branch in `evictPrefix`.
       this.#length = 0;
       this.#head = 0;
+      this.#clearAllSlots();
     }
     // **Eviction before grow.** If we're already at retention,
     // appending toAppend rows means advancing head by `toAppend`
@@ -293,21 +304,26 @@ export class ColumnarRingBuffer<S extends ColumnSchema = ColumnSchema> {
     }
     if (n === 0) return;
     if (n >= this.#length) {
-      // Clear: reset state, but also clear validity bits so a
-      // future grow (which unrolls in logical order) sees the
-      // empty range as defined-by-default (no validity bits set
-      // for slots we never write).
+      // Full clear: reset position state AND wipe every slot's
+      // defined-state. Without the slot wipe, future writes to
+      // previously-occupied slots would mis-read the prior
+      // defined-state and (for string/array) leak stale cells
+      // back into the snapshot. See `#clearAllSlots`.
       this.#length = 0;
       this.#head = 0;
-      this.#resetValidityCounters();
+      this.#clearAllSlots();
       return;
     }
-    // **Validity-counter bookkeeping.** Walk the n evicted rows
-    // and decrement each value column's `definedCount` for cells
-    // that were defined. Cheap: O(n × value-columns).
+    // Walk the n evicted rows; wipe each value column's
+    // defined-state at that physical slot. Without this, a slot
+    // reused by a later append would inherit the evicted row's
+    // string/array value as "previously defined" — fine if the
+    // overwrite is also defined, but if it's undefined the slot
+    // would silently keep the evicted data via the validity-bit
+    // path. Cheap: O(n × value-columns).
     for (let i = 0; i < n; i += 1) {
       const physical = (this.#head + i) % this.#capacity;
-      this.#decrementValidityForRow(physical);
+      this.#clearValidityForRow(physical);
     }
     this.#head = (this.#head + n) % this.#capacity;
     this.#length -= n;
@@ -546,29 +562,36 @@ export class ColumnarRingBuffer<S extends ColumnSchema = ColumnSchema> {
     return new IntervalKeyColumn(begin, end, labels, length);
   }
 
-  #resetValidityCounters(): void {
+  /**
+   * Clears every value column's per-cell defined-state so the
+   * ring is consistent at "all slots empty." Called when
+   * `evictPrefix(n >= length)` and when a batch larger than
+   * retention forces a full reset. **Must clear string/array
+   * values too**, not just the validity bitmaps — the per-slot
+   * undefined check is the defined-state discriminator for those
+   * kinds, and leaving stale data would mislead a later write's
+   * decision about whether the slot was previously occupied.
+   */
+  #clearAllSlots(): void {
     for (const [, ring] of this.#values) {
-      ring.definedCount = 0;
       if (ring.kind === 'number' || ring.kind === 'boolean') {
         ring.validity.fill(0);
+        continue;
+      }
+      // string / array — re-initialize so every slot is undefined.
+      for (let i = 0; i < ring.values.length; i += 1) {
+        ring.values[i] = undefined;
       }
     }
   }
 
-  #decrementValidityForRow(physical: number): void {
+  #clearValidityForRow(physical: number): void {
     for (const [, ring] of this.#values) {
       if (ring.kind === 'number' || ring.kind === 'boolean') {
-        const bit = ring.validity[physical >> 3]! & (1 << (physical & 7));
-        if (bit !== 0) {
-          ring.definedCount -= 1;
-          ring.validity[physical >> 3]! &= ~(1 << (physical & 7));
-        }
+        ring.validity[physical >> 3]! &= ~(1 << (physical & 7));
       } else {
         // String / Array: the slot's truthiness lives in `values[physical]`.
-        if (ring.values[physical] !== undefined) {
-          ring.definedCount -= 1;
-          ring.values[physical] = undefined;
-        }
+        ring.values[physical] = undefined;
       }
     }
   }
@@ -613,7 +636,6 @@ function initValueRing(kind: ColumnKind, capacity: number): MutableValueRing {
       kind: 'number',
       values: new Float64Array(capacity),
       validity: new Uint8Array(bitmapByteCount(capacity)),
-      definedCount: 0,
     };
   }
   if (kind === 'boolean') {
@@ -621,20 +643,17 @@ function initValueRing(kind: ColumnKind, capacity: number): MutableValueRing {
       kind: 'boolean',
       values: new Uint8Array(bitmapByteCount(capacity)),
       validity: new Uint8Array(bitmapByteCount(capacity)),
-      definedCount: 0,
     };
   }
   if (kind === 'string') {
     return {
       kind: 'string',
       values: new Array<string | undefined>(capacity),
-      definedCount: 0,
     };
   }
   return {
     kind: 'array',
     values: new Array<ArrayValue | undefined>(capacity),
-    definedCount: 0,
   };
 }
 
@@ -715,74 +734,38 @@ function writeValueCell(
   value: unknown,
 ): void {
   if (ring.kind === 'number') {
-    // Replace whatever was at `physical`. Update definedCount based on
-    // the prior bit state (rings can be over-written during growth but
-    // not during normal append — physical positions for new rows
-    // are always slots that were either freshly allocated or just
-    // evicted).
-    const wasDefined =
-      (ring.validity[physical >> 3]! & (1 << (physical & 7))) !== 0;
     if (typeof value === 'number') {
       ring.values[physical] = value;
-      if (!wasDefined) {
-        ring.validity[physical >> 3]! |= 1 << (physical & 7);
-        ring.definedCount += 1;
-      }
+      ring.validity[physical >> 3]! |= 1 << (physical & 7);
     } else {
       ring.values[physical] = 0;
-      if (wasDefined) {
-        ring.validity[physical >> 3]! &= ~(1 << (physical & 7));
-        ring.definedCount -= 1;
-      }
+      ring.validity[physical >> 3]! &= ~(1 << (physical & 7));
     }
     return;
   }
   if (ring.kind === 'boolean') {
-    const wasDefined =
-      (ring.validity[physical >> 3]! & (1 << (physical & 7))) !== 0;
     if (typeof value === 'boolean') {
       if (value) {
         ring.values[physical >> 3]! |= 1 << (physical & 7);
       } else {
         ring.values[physical >> 3]! &= ~(1 << (physical & 7));
       }
-      if (!wasDefined) {
-        ring.validity[physical >> 3]! |= 1 << (physical & 7);
-        ring.definedCount += 1;
-      }
+      ring.validity[physical >> 3]! |= 1 << (physical & 7);
     } else {
       ring.values[physical >> 3]! &= ~(1 << (physical & 7));
-      if (wasDefined) {
-        ring.validity[physical >> 3]! &= ~(1 << (physical & 7));
-        ring.definedCount -= 1;
-      }
+      ring.validity[physical >> 3]! &= ~(1 << (physical & 7));
     }
     return;
   }
   if (ring.kind === 'string') {
-    const prior = ring.values[physical];
-    if (typeof value === 'string') {
-      ring.values[physical] = value;
-      if (prior === undefined) ring.definedCount += 1;
-    } else {
-      ring.values[physical] = undefined;
-      if (prior !== undefined) ring.definedCount -= 1;
-    }
+    ring.values[physical] = typeof value === 'string' ? value : undefined;
     return;
   }
-  // array
-  const prior = ring.values[physical];
-  if (Array.isArray(value)) {
-    // Defensive copy + freeze, matching `ArrayColumn`'s constructor
-    // invariant.
-    ring.values[physical] = Object.freeze(
-      (value as ArrayValue).slice(),
-    ) as ArrayValue;
-    if (prior === undefined) ring.definedCount += 1;
-  } else {
-    ring.values[physical] = undefined;
-    if (prior !== undefined) ring.definedCount -= 1;
-  }
+  // array — defensive copy + freeze matching `ArrayColumn`'s constructor
+  // invariant.
+  ring.values[physical] = Array.isArray(value)
+    ? (Object.freeze((value as ArrayValue).slice()) as ArrayValue)
+    : undefined;
 }
 
 function snapshotValueColumn(

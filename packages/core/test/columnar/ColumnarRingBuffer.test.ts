@@ -619,4 +619,154 @@ describe('snapshot decoupling from the ring', () => {
     const snap = ring.snapshot();
     expect(Array.from((snap.keys as TimeKeyColumn).begin)).toEqual([3, 4, 5]);
   });
+
+  // Regression: L2 review caught the missing test for "snapshot
+  // survives buffer replacement under growth." Growth allocates
+  // fresh typed-array buffers and discards the old ones; if
+  // snapshot were aliasing the old buffers, this test would fail
+  // because the post-growth reads would return either nothing or
+  // the wrong values.
+  it('snapshots survive a subsequent ring growth event', () => {
+    // retention 500 so growth actually fires (initial cap = 64 < 500).
+    const ring = new ColumnarRingBuffer(TIME_SCHEMA, { retention: 500 });
+    // 50 rows — under initial capacity 64.
+    const t0 = Array.from({ length: 50 }, (_, i) => 1000 + i);
+    const v0 = Array.from({ length: 50 }, (_, i) => i * 10);
+    const f0 = Array.from({ length: 50 }, (_, i) => i % 2 === 0);
+    ring.appendBatch(makeTimeBatch(t0, v0, f0));
+    expect(ring.capacity).toBe(64);
+    const snap = ring.snapshot();
+    expect(snap.length).toBe(50);
+    // Append enough to force growth.
+    const t1 = Array.from({ length: 50 }, (_, i) => 2000 + i);
+    const v1 = Array.from({ length: 50 }, (_, i) => 500 + i * 10);
+    const f1 = Array.from({ length: 50 }, () => true);
+    ring.appendBatch(makeTimeBatch(t1, v1, f1));
+    expect(ring.capacity).toBeGreaterThan(64);
+    // Snapshot is unaffected — buffers were copied at snapshot time.
+    expect(snap.length).toBe(50);
+    expect(snap.beginAt(0)).toBe(1000);
+    expect(snap.beginAt(49)).toBe(1049);
+    expect(snap.valueAt(0, 'value')).toBe(0);
+    expect(snap.valueAt(49, 'value')).toBe(490);
+    expect(snap.valueAt(0, 'flag')).toBe(true);
+  });
+
+  // Regression: L2 review caught the missing growth-while-
+  // physically-wrapped test. Evict-then-fill leaves the logical
+  // rows straddling the physical wrap point; a subsequent grow
+  // must unroll the circular buffer into linear order without
+  // dropping the wrapped portion or shuffling rows.
+  it('grows correctly when the live window is physically wrapped', () => {
+    const SCHEMA = [
+      { name: 'time', kind: 'time' },
+      { name: 'value', kind: 'number' },
+    ] as const;
+    function batch(begin: number[], values: number[]) {
+      return ColumnarStore.fromTrustedStore(
+        SCHEMA,
+        timeKeyColumnFromArray(begin),
+        new Map([['value', float64ColumnFromArray(values)]]),
+      );
+    }
+    // retention 200 → initial lazy capacity 64.
+    const ring = new ColumnarRingBuffer(SCHEMA, { retention: 200 });
+    // Phase 1: fill exactly to capacity 64. No growth yet.
+    const t0 = Array.from({ length: 64 }, (_, i) => 1000 + i);
+    const v0 = Array.from({ length: 64 }, (_, i) => i);
+    ring.appendBatch(batch(t0, v0));
+    expect(ring.capacity).toBe(64);
+    // Phase 2: evict 20 → head=20, length=44, free slots=20 (in the
+    // 64-cap buffer).
+    ring.evictPrefix(20);
+    expect(ring.length).toBe(44);
+    // Phase 3: append exactly the 20 free slots. New writes wrap
+    // physically (positions 0..19). No growth yet — required (64)
+    // equals capacity (64).
+    const t1 = Array.from({ length: 20 }, (_, i) => 2000 + i);
+    const v1 = Array.from({ length: 20 }, (_, i) => 1000 + i);
+    ring.appendBatch(batch(t1, v1));
+    expect(ring.length).toBe(64);
+    expect(ring.capacity).toBe(64);
+    // Phase 4: append a 50-row batch — required (114) > capacity
+    // (64), so growth fires WHILE the live window is physically
+    // wrapped (head=20, length=64). `#grow` must unroll the
+    // circular buffer into a fresh linear buffer at the new
+    // capacity, preserving logical row order.
+    const t2 = Array.from({ length: 50 }, (_, i) => 3000 + i);
+    const v2 = Array.from({ length: 50 }, (_, i) => 5000 + i);
+    ring.appendBatch(batch(t2, v2));
+    expect(ring.length).toBe(114);
+    expect(ring.capacity).toBeGreaterThanOrEqual(114);
+    // Snapshot — every row in logical order, regardless of the
+    // pre-grow wrap.
+    const snap = ring.snapshot();
+    expect(snap.length).toBe(114);
+    // Rows 0..43: the 44 surviving rows from phase 1 (indices
+    // 20..63 of the initial 64-row batch).
+    for (let i = 0; i < 44; i += 1) {
+      expect(snap.beginAt(i)).toBe(1000 + 20 + i);
+      expect(snap.valueAt(i, 'value')).toBe(20 + i);
+    }
+    // Rows 44..63: the 20 rows from phase 3.
+    for (let i = 0; i < 20; i += 1) {
+      expect(snap.beginAt(44 + i)).toBe(2000 + i);
+      expect(snap.valueAt(44 + i, 'value')).toBe(1000 + i);
+    }
+    // Rows 64..113: the 50 rows from phase 4 (post-growth).
+    for (let i = 0; i < 50; i += 1) {
+      expect(snap.beginAt(64 + i)).toBe(3000 + i);
+      expect(snap.valueAt(64 + i, 'value')).toBe(5000 + i);
+    }
+  });
+
+  // Regression: addressing the L2 medium-confidence finding on the
+  // string/array stale-cell desync. After a full clear (either
+  // `evictPrefix(n >= length)` or a batch larger than retention),
+  // any later writes whose source cell is undefined must leave the
+  // ring's `values[i]` truly undefined — otherwise the snapshot
+  // leaks the prior batch's strings/arrays via the string/array
+  // "presence === defined" discriminator.
+  it('clears string/array slot data after full clear (no stale leakage)', () => {
+    const SCHEMA = [
+      { name: 'time', kind: 'time' },
+      { name: 'host', kind: 'string' },
+      { name: 'tags', kind: 'array' },
+    ] as const;
+    const ring = new ColumnarRingBuffer(SCHEMA, { retention: 4 });
+    // Batch 1: every cell defined.
+    ring.appendBatch(
+      ColumnarStore.fromTrustedStore(
+        SCHEMA,
+        timeKeyColumnFromArray([1, 2, 3]),
+        new Map([
+          ['host', stringColumnFromArray(['old1', 'old2', 'old3'])],
+          ['tags', arrayColumnFromArray([['a'], ['b'], ['c']])],
+        ]),
+      ),
+    );
+    // Full clear via evictPrefix(n >= length).
+    ring.evictPrefix(10);
+    expect(ring.length).toBe(0);
+    // Batch 2: cells are EXPLICITLY undefined. Without
+    // `#clearAllSlots` wiping the prior strings/arrays, the new
+    // undefined writes would leave the prior values in the
+    // physical slots, and snapshot would surface them.
+    ring.appendBatch(
+      ColumnarStore.fromTrustedStore(
+        SCHEMA,
+        timeKeyColumnFromArray([10, 20]),
+        new Map([
+          ['host', stringColumnFromArray([null, null])],
+          ['tags', arrayColumnFromArray([null, null])],
+        ]),
+      ),
+    );
+    const snap = ring.snapshot();
+    expect(snap.length).toBe(2);
+    expect(snap.valueAt(0, 'host')).toBeUndefined();
+    expect(snap.valueAt(1, 'host')).toBeUndefined();
+    expect(snap.valueAt(0, 'tags')).toBeUndefined();
+    expect(snap.valueAt(1, 'tags')).toBeUndefined();
+  });
 });
