@@ -2319,6 +2319,35 @@ describe('TimeSeries', () => {
       expect(big.atOrAfter(new Time(1500.5))?.get('value')).toBe(5010);
     });
 
+    // Regression: Codex round 4 on PR #150 caught that
+    // `at(NaN)` and `at(1.5)` previously returned `undefined`
+    // via JS array-indexing semantics; the post-2a route through
+    // `#store.eventAt` would proceed past the bounds check and
+    // throw from key materialization. The fix is an integer-guard
+    // at the `at()` boundary; other point accessors already
+    // produce integer indices internally (bisect's binary
+    // search uses `(low + high) >>> 1`).
+    it('at() returns undefined for non-integer / NaN / negative inputs (matches pre-2a array semantics)', () => {
+      const s = new TimeSeries({
+        name: 's',
+        schema,
+        rows: [
+          [1000, 10],
+          [2000, 20],
+          [3000, 30],
+        ],
+      });
+      expect(s.at(NaN)).toBeUndefined();
+      expect(s.at(1.5)).toBeUndefined();
+      expect(s.at(-1)).toBeUndefined();
+      expect(s.at(100)).toBeUndefined();
+      expect(s.at(Infinity)).toBeUndefined();
+      expect(s.at(-Infinity)).toBeUndefined();
+      // Valid integer indices still work.
+      expect(s.at(0)?.get('value')).toBe(10);
+      expect(s.at(2)?.get('value')).toBe(30);
+    });
+
     it('rejects interval-keyed series with mixed string + number labels at intake', () => {
       // Pre-2a, mixed-kind interval labels were silently tolerated
       // because events were stored as a raw array. The columnar

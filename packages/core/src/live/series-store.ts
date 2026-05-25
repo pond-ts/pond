@@ -198,6 +198,37 @@ export class SeriesStore<S extends SeriesSchema = SeriesSchema> {
   }
 
   /**
+   * Module-internal trusted-cache factory. Accepts a `ColumnarStore`
+   * AND a pre-aligned `eventCache` whose entries are **by-construction
+   * guaranteed** to match the store's columns at every row. Skips
+   * the per-entry structural validation that the public
+   * `fromTrustedStore` runs.
+   *
+   * The only legitimate caller is `buildSeriesStoreFromEvents`,
+   * which constructs the columnar store from the same events that
+   * populate the cache — by construction the two are aligned, so
+   * the O(N × M) per-entry validation pass in `fromTrustedStore`
+   * is pure redundant work. On a 100k-row series with two value
+   * columns the redundant validation contributed ~20 ms to intake
+   * time (the substrate build itself is ~10 ms). Bypassing it
+   * recovers most of the construction-time regression vs the
+   * pre-2a row-array baseline.
+   *
+   * **Not part of the public API.** The leading underscore + the
+   * module-private name signal "internal use only". Adopting an
+   * externally-supplied cache must always go through
+   * `fromTrustedStore` so the strict validation contract holds —
+   * a poisoned external cache would silently corrupt downstream
+   * `eventAt` reads.
+   */
+  static _fromValidatedStoreAndCacheModulePrivate<S extends SeriesSchema>(
+    store: ColumnarStore<S>,
+    cache: Map<number, SeriesEvent>,
+  ): SeriesStore<S> {
+    return new SeriesStore<S>(store, cache);
+  }
+
+  /**
    * Materializes the `EventKey` for row `i`. Returns the concrete
    * `Time` / `TimeRange` / `Interval` instance depending on the
    * underlying key column kind. Lazily cached — `keyAt(i) ===
@@ -591,7 +622,15 @@ function buildSeriesStoreFromEvents<S extends SeriesSchema>(
   for (let i = 0; i < length; i += 1) {
     cache.set(i, events[i]!);
   }
-  return SeriesStore.fromTrustedStore(store, { eventCache: cache });
+  // Fast path: skip the per-entry cache validation that
+  // `fromTrustedStore` runs. The cache was just built from the
+  // same events that populated the store's columns; by
+  // construction the two are aligned. Bypassing validation
+  // recovers the O(N × M) cost that otherwise dominates intake
+  // on large series — for 100k rows × 2 value columns the
+  // redundant pass was ~20 ms (the substrate-build itself is
+  // ~10 ms).
+  return SeriesStore._fromValidatedStoreAndCacheModulePrivate(store, cache);
 }
 
 // Re-exports so consumers can write `import { ColumnarStore, SeriesStore }
