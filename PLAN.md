@@ -4122,9 +4122,27 @@ See the RFC for the full argument.
      (skip validation pass) and framework-level `fromBuilders`
      factory on `ColumnarStore` — both reuse the in-place
      `buildSeriesStoreFromEvents` helper.
-   - **1f — Index views (`withRowSelection`, `materialize`),
-     zero-copy schema ops.** Next.
-   - **1g — ChunkedColumn, `concatSorted`.**
+   - **1f — Index views (`withRowSelection`, `materialize`) +
+     zero-copy schema ops.** ✅ Shipped (PR #147, merged
+     2026-05-27). 49 view tests; framework total ~370 tests.
+     Five framework-level ops: `withRowSelection` (materializing
+     gather via per-column `sliceByIndices`), `materialize`
+     (identity for 1f; stable surface for the future lazy-view
+     path), `withColumnsRenamed`, `withColumnReplaced`,
+     `withColumnAppended`, `withColumnsSelected`. All three
+     `KeyColumn` variants got `sliceByIndices(indices)` methods
+     to support the gather path. Three rounds of review (L2 +
+     Codex × 2) found real correctness gaps closed before merge:
+     eager out-of-range index validation (silent epoch-row
+     corruption under `withColumnsSelected([])`), unsafe column
+     names (`__proto__` / `prototype` / `constructor` reserved
+     centrally at `ColumnarStore.fromTrustedStore`), and
+     inherited-Object-prototype names as rename-map keys
+     (`renames[name]` walked `Object.prototype`; fixed with
+     `hasOwnProperty.call`). The materializing-vs-lazy decision
+     is documented; lazy view-mode columns are a future-doors
+     optimization with the existing API as the stable surface.
+   - **1g — ChunkedColumn, `concatSorted`.** Next.
    - **1h — `ColumnarRingBuffer`, `scatterByPartition`.**
 
    **Pause point (2026-05-13).** User on vacation ~1 week. State
