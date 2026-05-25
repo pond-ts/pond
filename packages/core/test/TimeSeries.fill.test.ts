@@ -146,6 +146,48 @@ describe('TimeSeries.fill', () => {
       expect(filled.at(0)?.get('host')).toBeUndefined();
     });
 
+    // Regression: Codex round 2 on PR #150 flagged that the
+    // silent-skip on non-numeric columns is a documented contract
+    // shift vs pre-2a (which set the literal `0` everywhere,
+    // producing type-broken events the columnar layer now
+    // rejects). The chosen semantic — silent skip + documented
+    // kind sensitivity — matches the user's natural intent for
+    // `fill('zero')` on a mixed-kind schema. Pins the contract
+    // explicitly so the next maintainer doesn't accidentally
+    // change it back to throw / fill-with-0.
+    it('bare-string `fill("zero")` is a no-op on non-numeric columns; numeric columns still fill', () => {
+      const ts = new TimeSeries({
+        name: 's',
+        schema,
+        rows: [
+          [1000, 10, 'host-a'],
+          [2000, undefined, undefined],
+          [3000, 30, 'host-c'],
+        ],
+      });
+      const filled = ts.fill('zero');
+      // Numeric column at row 1: filled with 0.
+      expect(filled.at(1)?.get('value')).toBe(0);
+      // String column at row 1: still undefined. Callers wanting
+      // a string fill use the object form.
+      expect(filled.at(1)?.get('host')).toBeUndefined();
+    });
+
+    it('object form lets callers pick a kind-appropriate per-column strategy', () => {
+      const ts = new TimeSeries({
+        name: 's',
+        schema,
+        rows: [
+          [1000, 10, 'host-a'],
+          [2000, undefined, undefined],
+          [3000, 30, 'host-c'],
+        ],
+      });
+      const filled = ts.fill({ value: 'zero', host: 'hold' });
+      expect(filled.at(1)?.get('value')).toBe(0);
+      expect(filled.at(1)?.get('host')).toBe('host-a');
+    });
+
     it('respects limit (all-or-nothing — gap of 2 with limit 1 leaves both unfilled)', () => {
       const filled = makeGappy().fill('zero', { limit: 1 });
       expect(filled.at(1)?.get('value')).toBeUndefined();

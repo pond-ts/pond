@@ -2396,6 +2396,24 @@ export class TimeSeries<S extends SeriesSchema> {
    * internal or leading gap (trailing has no next value). `"zero"`
    * and literal fills work on any gap that fits the size caps.
    *
+   * **Kind-sensitive strategies.** `"zero"` and `"linear"` are
+   * numeric-only — they're only meaningful for `kind: 'number'`
+   * columns. When applied via the bare-string form
+   * (`fill('zero')` / `fill('linear')`) on a mixed-kind schema,
+   * non-numeric columns silently skip — their gaps stay unfilled
+   * because the strategy has no kind-appropriate value to place
+   * there. The user's natural intent for `fill('zero')` on a
+   * `{ metric: number, host: string }` series is "fill numeric
+   * gaps with 0", not "fill every gap with the literal number 0
+   * regardless of column kind". To fill non-numeric gaps too,
+   * use the object form with a per-column kind-appropriate
+   * strategy, e.g. `fill({ value: 'zero', host: 'hold' })` or
+   * `fill({ host: 'unknown' })` (literal). `"hold"` / `"bfill"`
+   * are kind-agnostic (they copy whatever value is at the
+   * neighbor); `"literal"` carries whatever value the user
+   * supplies, so a kind-mismatched literal surfaces as a
+   * columnar-substrate error at intake.
+   *
    * **Multi-entity series:** fill walks one chronological event
    * sequence — `host-A`'s missing cell would `linear`-interpolate or
    * `hold`-carry against `host-B`'s neighboring value. On a series
@@ -2443,6 +2461,22 @@ export class TimeSeries<S extends SeriesSchema> {
         }
       }
     }
+
+    // **Kind-sensitive strategy contract (documented in JSDoc):**
+    // `'zero'` and `'linear'` are numeric-only operations — they're
+    // meaningful only for `kind: 'number'` columns. When applied
+    // via a bare-string strategy (`fill('zero')`) on a mixed-kind
+    // schema, non-numeric columns are silently left as-is rather
+    // than throwing or producing kind-broken cells. Users who want
+    // to fill non-numeric gaps too can use the object form
+    // (`fill({ value: 'zero', host: 'hold' })`) to pick a
+    // kind-appropriate strategy per column. The silent-skip
+    // matches users' natural intent — `fill('zero')` on a
+    // {metric: number, host: string} series means "fill numeric
+    // gaps with 0", not "fill every gap with the number 0
+    // regardless of column kind". Codex round 2 finding on PR
+    // #150 surfaced the question; reasoning above documents the
+    // chosen semantics.
 
     const limit = options?.limit;
     const maxGapMs =
@@ -2540,12 +2574,12 @@ export class TimeSeries<S extends SeriesSchema> {
             break;
           }
           case 'zero': {
-            // `'zero'` only fills numeric columns. Non-numeric
-            // columns at the same row index stay undefined — the
-            // gap is genuinely unfilled there.
-            if (colKinds.get(name) === 'number') {
-              for (let j = start; j < end; j++) col[j] = 0;
-            }
+            // `'zero'` is numeric-only — see the kind-sensitive
+            // strategy contract documented at the top of the
+            // method. Non-numeric columns silently skip; their
+            // gaps stay unfilled.
+            if (colKinds.get(name) !== 'number') break;
+            for (let j = start; j < end; j++) col[j] = 0;
             break;
           }
           case 'literal': {
@@ -2553,14 +2587,10 @@ export class TimeSeries<S extends SeriesSchema> {
             break;
           }
           case 'linear': {
-            // `'linear'` interpolates numerically. Only meaningful
-            // for `kind: 'number'` columns — applying it to a
-            // string / boolean / array column would produce
-            // `NaN` (string + arithmetic) or `false` (boolean
-            // arithmetic), then the columnar substrate would
-            // reject the kind-mismatched event at intake. Kind-
-            // sensitive like `'zero'` above: numeric columns
-            // interpolate; non-numeric columns stay undefined.
+            // `'linear'` is numeric-only — see the kind-sensitive
+            // strategy contract documented at the top of the
+            // method. Non-numeric columns silently skip; their
+            // gaps stay unfilled.
             if (colKinds.get(name) !== 'number') break;
             const before = col[start - 1] as number;
             const after = col[end] as number;
