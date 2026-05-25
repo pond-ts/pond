@@ -250,38 +250,51 @@ export class ColumnarRingBuffer<S extends ColumnSchema = ColumnSchema> {
     this.#validateBatchSchema(batch);
     const batchLength = batch.length;
     if (batchLength === 0) return;
+    // **Failure-atomic ordering.** Plan the final layout first
+    // (no mutation), then GROW BEFORE applying destructive ops
+    // (clear / evict). Growth is the only step that can throw on
+    // memory pressure; doing it first means a failed append leaves
+    // the ring unchanged. Closed Codex round 3's high finding on
+    // PR #149 — the previous order destroyed retained rows before
+    // calling `#grow`, so an OOM mid-append would lose data the
+    // caller still expected to be present.
+    //
     // **Retention overflow.** When a single batch's length exceeds
     // retention, only the last `retention` rows make it into the
     // ring. Skip the earlier rows entirely — no point writing
     // them just to immediately evict.
     let batchStart = 0;
     let toAppend = batchLength;
+    let willClearAll = false;
+    let willEvict = 0;
     if (batchLength > this.retention) {
       batchStart = batchLength - this.retention;
       toAppend = this.retention;
-      // Existing rows are entirely replaced — clear position state
-      // AND wipe every slot's defined-state. Without the slot
-      // wipe, the upcoming writes would inherit the prior batch's
-      // defined-state on slots whose new value is undefined, and
-      // string/array slots would leak prior cells. Matches the
-      // full-clear branch in `evictPrefix`.
+      willClearAll = true;
+    } else {
+      const overflow = this.#length + toAppend - this.retention;
+      if (overflow > 0) {
+        willEvict = overflow;
+      }
+    }
+    // After the planned destructive op, the remaining live rows
+    // will be `willClearAll ? 0 : #length - willEvict`. We need
+    // enough capacity for that plus the `toAppend` new rows.
+    const remainingAfter = willClearAll ? 0 : this.#length - willEvict;
+    const required = remainingAfter + toAppend;
+    if (required > this.#capacity) {
+      // `#grow` is itself failure-atomic — leaves the ring
+      // unchanged if any allocation throws.
+      this.#grow(required);
+    }
+    // Growth succeeded. From here on every operation is O(N)
+    // walks without allocation; no realistic throw path.
+    if (willClearAll) {
       this.#length = 0;
       this.#head = 0;
       this.#clearAllSlots();
-    }
-    // **Eviction before grow.** If we're already at retention,
-    // appending toAppend rows means advancing head by `toAppend`
-    // (clamped). This frees physical slots without needing growth.
-    const overflow = this.#length + toAppend - this.retention;
-    if (overflow > 0) {
-      // Drop the oldest `overflow` rows.
-      this.evictPrefix(overflow);
-    }
-    // **Growth.** After eviction, we need enough capacity for
-    // current length + the rows about to be appended.
-    const required = this.#length + toAppend;
-    if (required > this.#capacity) {
-      this.#grow(required);
+    } else if (willEvict > 0) {
+      this.evictPrefix(willEvict);
     }
     // **Vectorized write per column.** Walk the batch's rows once
     // per column; for each, compute the destination physical

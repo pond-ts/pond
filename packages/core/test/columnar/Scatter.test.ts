@@ -229,6 +229,19 @@ describe('scatterByPartition errors', () => {
     expect(() => scatterByPartition(source, 'nope')).toThrow(/not present/);
   });
 
+  it('rejects an invalid onUndefined option (typo guard)', () => {
+    const source = makeStore([1, 2], ['a', 'b'], [10, 20], [true, false]);
+    // `'drpo'` is a typical typo for `'drop'`. Without explicit
+    // validation, this would silently fall through to the drop
+    // branch — exactly the silent-data-loss path that the
+    // 'throw' default is meant to prevent.
+    expect(() =>
+      scatterByPartition(source, 'host', {
+        onUndefined: 'drpo' as unknown as 'throw' | 'drop',
+      }),
+    ).toThrow(/options.onUndefined must be 'throw' or 'drop'/);
+  });
+
   it('rejects array-kind partition columns', () => {
     const SCHEMA_WITH_ARRAY = [
       { name: 'time', kind: 'time' },

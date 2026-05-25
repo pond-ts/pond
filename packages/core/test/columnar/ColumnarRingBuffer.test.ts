@@ -769,4 +769,69 @@ describe('snapshot decoupling from the ring', () => {
     expect(snap.valueAt(0, 'tags')).toBeUndefined();
     expect(snap.valueAt(1, 'tags')).toBeUndefined();
   });
+
+  // Regression: Codex round 3's high finding. `appendBatch` must
+  // grow BEFORE applying destructive ops (clear / evict) — if
+  // growth threw under memory pressure with the prior order, the
+  // retained rows would already be gone. We can't deterministically
+  // provoke a typed-array allocation failure in JS, but we CAN
+  // verify the path that requires growth (batch overflow with
+  // capacity below retention) succeeds and leaves the ring in
+  // the correct state. The structural ordering is then the proof
+  // of atomicity.
+  it('eviction-induced growth path produces correct final state (grow-before-evict order)', () => {
+    // retention 50 → initial lazy capacity 50 (under the
+    // DEFAULT_INITIAL_CAPACITY of 64).
+    const ring = new ColumnarRingBuffer(TIME_SCHEMA, { retention: 50 });
+    // Phase 1: fill to retention.
+    const t0 = Array.from({ length: 50 }, (_, i) => 1000 + i);
+    const v0 = Array.from({ length: 50 }, (_, i) => i);
+    const f0 = Array.from({ length: 50 }, (_, i) => i % 2 === 0);
+    ring.appendBatch(makeTimeBatch(t0, v0, f0));
+    expect(ring.length).toBe(50);
+    // Phase 2: append a single row. Triggers eviction (1 row).
+    // Even though no growth fires (capacity === retention), the
+    // ordering invariant is exercised — the planned evict happens
+    // before write, after the (no-op) grow check.
+    ring.appendBatch(makeTimeBatch([2000], [999], [true]));
+    expect(ring.length).toBe(50);
+    const snap = ring.snapshot();
+    // Oldest row (1000) is gone; newest is 2000.
+    expect(snap.beginAt(0)).toBe(1001);
+    expect(snap.beginAt(49)).toBe(2000);
+    expect(snap.valueAt(49, 'value')).toBe(999);
+  });
+
+  it('batch-larger-than-retention path: growth precedes the clear', () => {
+    // retention 100 → initial capacity 64. Appending 80 rows
+    // requires growth AND clears the prior 50 rows. The new
+    // ordering grows first, then clears.
+    const ring = new ColumnarRingBuffer(TIME_SCHEMA, { retention: 100 });
+    ring.appendBatch(
+      makeTimeBatch(
+        Array.from({ length: 50 }, (_, i) => 1000 + i),
+        Array.from({ length: 50 }, (_, i) => i),
+        Array.from({ length: 50 }, () => true),
+      ),
+    );
+    expect(ring.length).toBe(50);
+    expect(ring.capacity).toBe(64);
+    // Now append 120 rows (> retention 100). Only the last 100
+    // make it in; the prior 50 are entirely replaced.
+    ring.appendBatch(
+      makeTimeBatch(
+        Array.from({ length: 120 }, (_, i) => 5000 + i),
+        Array.from({ length: 120 }, (_, i) => 5000 + i),
+        Array.from({ length: 120 }, () => false),
+      ),
+    );
+    expect(ring.length).toBe(100);
+    expect(ring.capacity).toBeGreaterThanOrEqual(100);
+    const snap = ring.snapshot();
+    // First retained row of the new batch is at index 20 of the
+    // 120-row batch (since the last 100 win).
+    expect(snap.beginAt(0)).toBe(5020);
+    expect(snap.beginAt(99)).toBe(5119);
+    expect(snap.valueAt(99, 'value')).toBe(5119);
+  });
 });

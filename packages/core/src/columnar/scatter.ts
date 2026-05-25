@@ -84,7 +84,20 @@ export function scatterByPartition<S extends ColumnSchema>(
   partitionColumn: string,
   options?: ScatterByPartitionOptions,
 ): Map<ScalarValue, ColumnarStore<S>> {
-  const onUndefined: OnUndefinedPartition = options?.onUndefined ?? 'throw';
+  // Validate `onUndefined` up front. Without this, a typo
+  // (`{ onUndefined: 'drpo' }`) or a config-driven caller passing
+  // a stale string would silently fall through to drop behavior
+  // — exactly the silent-data-loss path the default 'throw' is
+  // meant to prevent. Closed Codex round 3's medium finding on
+  // PR #149.
+  const onUndefinedRaw = options?.onUndefined;
+  const onUndefined: OnUndefinedPartition =
+    onUndefinedRaw === undefined ? 'throw' : onUndefinedRaw;
+  if (onUndefined !== 'throw' && onUndefined !== 'drop') {
+    throw new RangeError(
+      `scatterByPartition: options.onUndefined must be 'throw' or 'drop', got ${JSON.stringify(onUndefinedRaw)}`,
+    );
+  }
   const keyName = source.schema[0]!.name;
   if (partitionColumn === keyName) {
     throw new RangeError(
