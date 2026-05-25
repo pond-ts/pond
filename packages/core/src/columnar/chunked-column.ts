@@ -709,6 +709,16 @@ export function materializeChunkedBoolean(
  * delegates to `stringColumnFromArray` so the dict-vs-fallback
  * heuristic makes the encoding decision on the whole compacted
  * column.
+ *
+ * **Aggregate validity is re-derived.** The chunked column's
+ * eagerly-computed aggregate is discarded; `stringColumnFromArray`
+ * derives a fresh validity bitmap by walking the gathered array
+ * once more. The redundancy is intentional for 1g — bypassing it
+ * would require teaching `stringColumnFromArray` to accept a
+ * pre-computed validity hint, which adds API surface for what's
+ * currently a one-off compact path. Future doors: a separate
+ * `stringColumnFromArrayWithValidity` factory if benches flag the
+ * extra walk.
  */
 export function materializeChunkedString(
   chunked: ChunkedStringColumn,
@@ -730,6 +740,14 @@ export function materializeChunkedString(
  * Walks every cell via `chunk.read(j)` (which honors per-chunk
  * validity) and builds a `(ArrayValue | undefined)[]` for the
  * plain constructor.
+ *
+ * **Aggregate validity is re-derived.** Same trade-off as
+ * `materializeChunkedString`: the eagerly-computed aggregate is
+ * discarded and a fresh validity bitmap is derived from
+ * `undefined` slots in the gathered array. Avoiding the redundant
+ * walk would require a constructor path that trusts a pre-built
+ * validity bitmap without re-validating cell shapes — a future
+ * optimization gated by benchmarks.
  */
 export function materializeChunkedArray(
   chunked: ChunkedArrayColumn,

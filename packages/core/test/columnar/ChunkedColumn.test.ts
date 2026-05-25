@@ -182,6 +182,31 @@ describe('ChunkedFloat64Column', () => {
     expect(col.length).toBe(3);
     expect(col.chunks.length).toBe(1);
   });
+
+  // Pins the binary-search path of `findChunkForRow`. The linear/binary
+  // crossover sits at `chunkOffsets.length > 9` (i.e., ≥9 chunks); 16
+  // single-row chunks exercises the binary-search branch end-to-end,
+  // including the boundary indices that trip off-by-one errors.
+  it('read works correctly with many chunks (exercises binary-search path)', () => {
+    const chunks: Float64Column[] = [];
+    for (let i = 0; i < 16; i += 1) {
+      chunks.push(new Float64Column(Float64Array.of(i * 10), 1));
+    }
+    const col = new ChunkedFloat64Column(chunks);
+    expect(col.length).toBe(16);
+    // Every row, including chunk-boundary indices.
+    for (let i = 0; i < 16; i += 1) {
+      expect(col.read(i)).toBe(i * 10);
+    }
+    // Edges and out-of-range still return undefined.
+    expect(col.read(-1)).toBeUndefined();
+    expect(col.read(16)).toBeUndefined();
+    // sliceByRange spanning a binary-search slice.
+    const middle = col.sliceByRange(3, 12);
+    expect(middle.length).toBe(9);
+    expect(middle.read(0)).toBe(30);
+    expect(middle.read(8)).toBe(110);
+  });
 });
 
 /* -------------------------------------------------------------------------- */
