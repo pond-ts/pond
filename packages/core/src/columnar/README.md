@@ -421,6 +421,23 @@ code is structured to absorb them later without API breakage.
   buffers can be replaced with WASM implementations without
   touching the substrate. The discriminator and method interfaces
   give us the contract.
+- **`SharedArrayBuffer` + Worker pool for reducer parallelism.**
+  The substrate's packed `Float64Array` / `Uint8Array` buffers are
+  shape-compatible with `SharedArrayBuffer` — a worker pool could
+  partition row ranges across cores for `sum` / `count` / `groupby`
+  /`filter` with zero serialization. Deferred for two reasons:
+  (1) v1.0 is browser-first, and `SharedArrayBuffer` requires
+  cross-origin isolation (`COOP` + `COEP` response headers) which
+  many hosts don't ship by default; (2) keeping a single substrate
+  shape across Node and browser is more valuable than per-runtime
+  perf wins at this stage. The trigger is a Node-side reducer
+  workload (likely in step 5+ — string / dictionary reducers, or
+  the aggregate planner) where the parallelism payoff covers the
+  workers'-startup-cost floor, and where we can plumb an opt-in
+  pool without affecting the browser shape. Adjacent prior art:
+  `@cervid/data` makes this its core perf story for Node-only
+  dataframes; the typed-array layout there is structurally
+  identical to ours.
 
 ## Test surface
 
