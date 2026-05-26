@@ -4179,36 +4179,35 @@ See the RFC for the full argument.
      optimization with the existing API as the stable surface.
    - **1g — Chunked value columns + `concatSorted` + `materialize`
      compaction.** ✅ Shipped (PR #148, merged 2026-05-25). 62
-     framework tests after Codex round-1 fixes (42 `ChunkedColumn`
-     - 20 `Concat`); framework total ~433 tests.
-       Four chunked value-column variants
-       (`ChunkedFloat64Column`, `ChunkedBooleanColumn`,
-       `ChunkedStringColumn`, `ChunkedArrayColumn`) — each holds a
-       `ReadonlyArray<Plain>` of chunks + `chunkOffsets: Int32Array`
-       (prefix sum), eagerly computes an aggregate validity bitmap
-       (preserving the "no bitmap ⇒ all defined" convention), and
-       implements the shared `Column` interface
-       (`read`/`scan`/`sliceByRange`/`sliceByIndices`). The `Column`
-       union widens to include them; a new `storage: 'packed' |
+     framework tests after Codex round-1 fixes (42 `ChunkedColumn` - 20 `Concat`); framework total ~433 tests.
+     Four chunked value-column variants
+     (`ChunkedFloat64Column`, `ChunkedBooleanColumn`,
+     `ChunkedStringColumn`, `ChunkedArrayColumn`) — each holds a
+     `ReadonlyArray<Plain>` of chunks + `chunkOffsets: Int32Array`
+     (prefix sum), eagerly computes an aggregate validity bitmap
+     (preserving the "no bitmap ⇒ all defined" convention), and
+     implements the shared `Column` interface
+     (`read`/`scan`/`sliceByRange`/`sliceByIndices`). The `Column`
+     union widens to include them; a new `storage: 'packed' |
 'chunked'` secondary discriminator lets hot-path callers
-       (reducers) narrow on `kind === 'number' && storage ===
+     (reducers) narrow on `kind === 'number' && storage ===
 'packed'` to dereference `Float64Column.values` etc.
-       `sliceByRange` stays chunked across multi-chunk ranges
-       (zero-copy on chunk boundaries) and collapses to plain
-       within a single chunk; `sliceByIndices` always
-       materializes (gather destroys chunk locality).
-       `concatSorted(stores)` N-way concat over temporally-disjoint
-       stores: validates schema structural equality, key disjointness
-       (strict `<` for Time, half-open `<=` for TimeRange/Interval),
-       materializes the key column (`begin`/`end`/labels — labels
-       rebuilt via `stringColumnFromArray` so the dict-vs-fallback
-       heuristic runs on the whole), and flattens nested chunked
-       inputs so chunks always stay one level deep. `materialize`
-       now does real work: walks each value column, compacts any
-       chunked variants to their plain counterparts via dedicated
-       `materializeChunked*` helpers, and returns the input
-       unchanged when every column is already packed (identity
-       fast-path).
+     `sliceByRange` stays chunked across multi-chunk ranges
+     (zero-copy on chunk boundaries) and collapses to plain
+     within a single chunk; `sliceByIndices` always
+     materializes (gather destroys chunk locality).
+     `concatSorted(stores)` N-way concat over temporally-disjoint
+     stores: validates schema structural equality, key disjointness
+     (strict `<` for Time, half-open `<=` for TimeRange/Interval),
+     materializes the key column (`begin`/`end`/labels — labels
+     rebuilt via `stringColumnFromArray` so the dict-vs-fallback
+     heuristic runs on the whole), and flattens nested chunked
+     inputs so chunks always stay one level deep. `materialize`
+     now does real work: walks each value column, compacts any
+     chunked variants to their plain counterparts via dedicated
+     `materializeChunked*` helpers, and returns the input
+     unchanged when every column is already packed (identity
+     fast-path).
    - **1h — `ColumnarRingBuffer` + `scatterByPartition`.** ✅
      Shipped (PR pending, branch `feat/columnar-step-1h`). 49 new
      framework tests (35 `ColumnarRingBuffer` + 14 `Scatter`);
@@ -4425,6 +4424,10 @@ adjusts.
   interact.
 - [`docs/rfcs/charts.md`](docs/rfcs/charts.md) — chart RFC; v1
   charts share columnar primitives with core.
+- [`docs/rfcs/column-api.md`](docs/rfcs/column-api.md) — column-centric
+  public API RFC (draft, 2026-05-26); supplements `columnar-core.md`
+  with the public `Column` surface returned by `series.column('x')`.
+  Awaiting multi-agent review.
 - The previous "row-oriented core stays" deferred-design entry
   (now superseded; walked back in the Deferred Design Decisions
   section above).
