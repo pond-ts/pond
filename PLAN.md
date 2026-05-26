@@ -126,6 +126,40 @@ sweep producing three RFC-style design docs.
   experiment is now considered fully realized for the M3.5
   scope and ready for its writeup.
 
+### Charts experiment (kicked off 2026-05-26; validates Phase 4.7 substrate against chart use case)
+
+Claude agent at
+[`pjm17971/pond-ts-charts-experiment`](https://github.com/pjm17971/pond-ts-charts-experiment).
+Pulled forward from the planned step-8 chart-extraction alignment
+because pre-step-3 was the right moment to validate that the
+substrate ACTUALLY serves the chart use case it was strategically
+motivated by. Steps 3–7 are downstream of that justification; if
+the chart adapter can't consume the substrate cleanly, the
+back-half of the columnar roadmap is mis-targeted.
+
+The pond-ts side already shipped:
+- **Spike PR #152** — `series.column(name)` + `series.keyColumn()`
+  experimental accessors. Measured **~9× faster per-frame walk**
+  via typed arrays vs the row-API path at N=1M.
+- **Friction notes** at
+  [`docs/notes/chart-spike-friction.md`](docs/notes/chart-spike-friction.md)
+  capturing 7 design questions for steps 3–8.
+
+The experiment repo's job is to **validate the spike's claims in a
+real browser environment** with an interactive chart (pan / zoom /
+range-select). Five workloads in priority order: (1) single-column
+line chart scaling 100k → 1M → 10M; (2) multi-column overlay;
+(3) chunked-column rendering after `concatSorted`;
+(4) range slicing for zoom; (5) interval-keyed heatmap.
+
+- **Will drive:** step 8 (chart-extraction alignment) scope
+  refinement based on real friction. May also drive step 4
+  (derived transforms) if windowing / slicing surfaces gaps.
+- **Stack:** Vite + React + TypeScript + raw Canvas (no chart
+  library — pond-ts friction in foreground).
+- **Status:** Initial scaffold committed. M1 (single-column line
+  chart) pending. Runs in parallel with step 3 in pond-ts main.
+
 ### Webapp telemetry (ongoing; drove v0.11.8)
 
 Codex agent. Frontend telemetry-stats reporting (collect latency
