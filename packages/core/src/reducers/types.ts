@@ -1,3 +1,4 @@
+import type { Float64Column } from '../columnar/index.js';
 import type { ColumnValue } from '../schema/index.js';
 
 /**
@@ -58,6 +59,40 @@ export type ReducerDef = {
     defined: ReadonlyArray<ColumnValue>,
     numeric: ReadonlyArray<number>,
   ): ColumnValue | undefined;
+
+  /**
+   * **Phase 4.7 step 3 column-fast-path.** Optional — when present and
+   * the input is a packed `Float64Column`, callers may take this path
+   * instead of materializing `defined` / `numeric` arrays from row-API
+   * events. Skips both the lazy `series.events` materialization and the
+   * `defined`/`numeric` filter passes (which together dominate
+   * reduction cost on large series).
+   *
+   * Numeric reducers (`sum` / `count` / `min` / `max` / `avg` /
+   * `stdev` / `median` / `percentile`) implement this. Reducers that
+   * preserve source kind (`first` / `last` / `keep`) or build arrays
+   * (`unique` / `top` / `samples`) don't — their fast path goes through
+   * `reduce(defined, numeric)` over the raw values.
+   *
+   * Implementations should:
+   * - Honor `col.validity` — skip rows where `validity.isDefined(i)` is
+   *   false (or use `col.validity === undefined` to know "all defined").
+   * - Iterate the underlying `col.values: Float64Array` directly. The
+   *   whole point is to avoid the per-cell object access of the
+   *   row-API path.
+   *
+   * Falls back to the `reduce(defined, numeric)` path whenever:
+   * - The column kind isn't `'number'` (string / boolean / array
+   *   reducers).
+   * - The column storage isn't `'packed'` (chunked columns — caller
+   *   can `materialize()` first, or this reducer skips the fast path).
+   * - The reducer doesn't define `reduceColumn` (e.g., `first` /
+   *   `last`).
+   *
+   * Caller is responsible for the dispatch check; the reducer's
+   * `reduceColumn` may assume the column is a packed `Float64Column`.
+   */
+  reduceColumn?(col: Float64Column): ColumnValue | undefined;
 
   /** Return a fresh incremental state for one aggregation bucket. */
   bucketState(): AggregateBucketState;

@@ -25,6 +25,12 @@ export const count: ReducerDef = {
   reduce(defined) {
     return defined.length;
   },
+  reduceColumn(col) {
+    // O(1) when validity is precomputed (it always is on Float64Column —
+    // `validity.definedCount` is cached at construction). Falls back to
+    // `col.length` when no validity bitmap exists (every cell defined).
+    return col.validity === undefined ? col.length : col.validity.definedCount;
+  },
   bucketState() {
     let n = 0;
     return {

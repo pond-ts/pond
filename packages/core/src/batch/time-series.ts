@@ -509,6 +509,30 @@ function aggregateValues(
   return resolveReducer(operation).reduce(defined, numeric);
 }
 
+/**
+ * Phase 4.7 step 3 — column-fast-path entry for `series.reduce(col,
+ * reducer)`. When the reducer defines `reduceColumn` and the column
+ * is a packed `Float64Column`, skip `series.events` materialization
+ * + the row-API `defined` / `numeric` filter passes; walk the
+ * underlying typed array directly. Falls back to `null` for the
+ * caller to take the row-API path otherwise (mixed kinds, chunked
+ * storage, reducers that don't have a column fast path like
+ * `first` / `last`).
+ */
+function tryReduceColumnFastPath(
+  reducer: AggregateReducer,
+  column: import('../columnar/index.js').Column | undefined,
+): { ok: true; value: ColumnValue | undefined } | { ok: false } {
+  if (!isBuiltInAggregateReducer(reducer)) return { ok: false };
+  if (column === undefined) return { ok: false };
+  if (column.kind !== 'number' || column.storage !== 'packed') {
+    return { ok: false };
+  }
+  const def = resolveReducer(reducer);
+  if (def.reduceColumn === undefined) return { ok: false };
+  return { ok: true, value: def.reduceColumn(column) };
+}
+
 function isBuiltInAggregateReducer(
   reducer: AggregateReducer,
 ): reducer is AggregateFunction {
@@ -1745,6 +1769,17 @@ export class TimeSeries<S extends SeriesSchema> {
     reducer?: AggregateReducer,
   ): ColumnValue | undefined | Record<string, ColumnValue | undefined> {
     if (typeof columnOrMapping === 'string') {
+      // Column-fast-path: when the reducer is a built-in numeric
+      // reducer (sum/avg/count/min/max/stdev/median/percentile) and
+      // the target column is a packed Float64Column, walk the typed
+      // array directly via reducer.reduceColumn. Skips the lazy
+      // `series.events` materialization + the `defined`/`numeric`
+      // row-API filter passes. Phase 4.7 step 3.
+      const fastPath = tryReduceColumnFastPath(
+        reducer!,
+        this.column(columnOrMapping),
+      );
+      if (fastPath.ok) return fastPath.value;
       const values = this.events.map((event) => {
         const data = event.data();
         return data[columnOrMapping as keyof typeof data];
@@ -1755,6 +1790,16 @@ export class TimeSeries<S extends SeriesSchema> {
     const columns = normalizeAggregateColumns(this.schema, columnOrMapping);
     const result: Record<string, ColumnValue | undefined> = {};
     for (const col of columns) {
+      // Same fast path as the single-column branch — applied per
+      // entry of the column-spec map.
+      const fastPath = tryReduceColumnFastPath(
+        col.reducer,
+        this.column(col.source),
+      );
+      if (fastPath.ok) {
+        result[col.output] = fastPath.value;
+        continue;
+      }
       const values = this.events.map((event) => {
         const data = event.data();
         return data[col.source as keyof typeof data];
