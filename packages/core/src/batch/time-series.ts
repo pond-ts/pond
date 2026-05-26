@@ -93,6 +93,10 @@ import { Event } from '../core/event.js';
 import { PartitionedTimeSeries } from './partitioned-time-series.js';
 import type { BatchSampleStrategy } from '../sequence/sample.js';
 import { Sequence } from '../sequence/sequence.js';
+import {
+  type Column as ColumnarColumn,
+  type KeyColumn as ColumnarKeyColumn,
+} from '../columnar/index.js';
 import { SeriesStore } from '../live/series-store.js';
 import { validateAndNormalize } from './validate.js';
 import type { DurationInput } from '../core/duration.js';
@@ -1053,6 +1057,64 @@ export class TimeSeries<S extends SeriesSchema> {
   /** Example: `series.firstColumnKind`. Returns the first-column kind from the series schema. */
   get firstColumnKind(): FirstColKind {
     return this.schema[0]!.kind;
+  }
+
+  /**
+   * Example: `series.column('cpu').values`. Returns the underlying
+   * `Column` (typed-array-backed) for a named value column.
+   *
+   * **Phase 4.7 spike API — shape not yet stable.** This is the
+   * minimum-viable surface that lets chart / typed-array consumers
+   * reach the columnar substrate without going through row-shaped
+   * `Event` materialization. The intended consumers are external
+   * adapters (`@pond-ts/charts`, future Arrow / WASM-kernel
+   * bridges) that need direct access to:
+   *
+   * - `column.values` — `Float64Array` (number), bit-packed
+   *   `Uint8Array` (boolean), dictionary + indices (string,
+   *   dict-encoded), or fallback array (string fallback / array
+   *   kind).
+   * - `column.validity` — `ValidityBitmap | undefined` (absent
+   *   means "every cell defined" per the framework convention).
+   * - `column.kind` / `column.storage` — discriminators for
+   *   dispatching on per-kind shape.
+   *
+   * Returns `undefined` when `name` is not a value column in the
+   * schema (or names the key column). Use `keyColumn()` for the
+   * key axis.
+   *
+   * Step-8 chart-extraction alignment will commit a stable shape
+   * — that step may rename / restructure based on what consumer
+   * agents actually need. Until then, treat this surface as
+   * experimental.
+   */
+  column(name: string): ColumnarColumn | undefined {
+    return this.#store.store.columns.get(name);
+  }
+
+  /**
+   * Example: `series.keyColumn().begin`. Returns the underlying
+   * `KeyColumn` (a `TimeKeyColumn` / `TimeRangeKeyColumn` /
+   * `IntervalKeyColumn` discriminated by the schema's first
+   * column kind).
+   *
+   * **Phase 4.7 spike API — shape not yet stable.** Companion to
+   * `column(name)` for chart / typed-array consumers that need
+   * direct access to the time axis. Per-variant fields:
+   *
+   * - **`TimeKeyColumn`** — `begin: Float64Array` (end === begin
+   *   semantically; same buffer reference).
+   * - **`TimeRangeKeyColumn`** — `begin: Float64Array` +
+   *   `end: Float64Array`.
+   * - **`IntervalKeyColumn`** — `begin` + `end` + `labels`
+   *   (`StringColumn | Float64Column` per `labelKind`).
+   *
+   * Same step-8 caveat as `column(name)` — surface shape may
+   * change once consumer-agent friction reports inform the
+   * stable shape.
+   */
+  keyColumn(): ColumnarKeyColumn {
+    return this.#store.store.keys;
   }
 
   /** Example: `series.rows`. Returns the normalized row view of the series. */
