@@ -1060,8 +1060,21 @@ export class TimeSeries<S extends SeriesSchema> {
   }
 
   /**
-   * Example: `series.column('cpu').values`. Returns the underlying
-   * `Column` (typed-array-backed) for a named value column.
+   * Example (after kind narrowing):
+   * ```ts
+   * const col = series.column('cpu');
+   * if (col?.kind === 'number' && col.storage === 'packed') {
+   *   const xs = series.keyColumn().begin; // Float64Array
+   *   const ys = col.values;               // Float64Array
+   *   for (let i = 0; i < ys.length; i += 1) ctx.lineTo(xs[i], ys[i]);
+   * }
+   * ```
+   *
+   * Returns the underlying `Column` (typed-array-backed) for a
+   * named value column. The `Column` union is 8 variants
+   * (number / boolean / string / array × packed / chunked); callers
+   * narrow on `column.kind` first, then `column.storage`, to reach
+   * the kind-specific hot-path fields.
    *
    * **Phase 4.7 spike API — shape not yet stable.** This is the
    * minimum-viable surface that lets chart / typed-array consumers
@@ -1070,10 +1083,11 @@ export class TimeSeries<S extends SeriesSchema> {
    * adapters (`@pond-ts/charts`, future Arrow / WASM-kernel
    * bridges) that need direct access to:
    *
-   * - `column.values` — `Float64Array` (number), bit-packed
-   *   `Uint8Array` (boolean), dictionary + indices (string,
+   * - `column.values` — `Float64Array` (number, packed), bit-packed
+   *   `Uint8Array` (boolean, packed), dictionary + indices (string,
    *   dict-encoded), or fallback array (string fallback / array
-   *   kind).
+   *   kind). Not present on chunked variants — those expose
+   *   `column.chunks` instead.
    * - `column.validity` — `ValidityBitmap | undefined` (absent
    *   means "every cell defined" per the framework convention).
    * - `column.kind` / `column.storage` — discriminators for
@@ -1082,6 +1096,13 @@ export class TimeSeries<S extends SeriesSchema> {
    * Returns `undefined` when `name` is not a value column in the
    * schema (or names the key column). Use `keyColumn()` for the
    * key axis.
+   *
+   * **Treat the returned buffers as read-only.** `readonly` on
+   * `Column.values` is a TS marker; the `Float64Array` / `Uint8Array`
+   * itself is mutable at runtime. Writing to `column.values[i]`
+   * would corrupt the trusted-construction substrate (and any
+   * subarray views shared with other consumers). The framework
+   * doesn't defensively clone on read.
    *
    * Step-8 chart-extraction alignment will commit a stable shape
    * — that step may rename / restructure based on what consumer
@@ -1108,6 +1129,11 @@ export class TimeSeries<S extends SeriesSchema> {
    *   `end: Float64Array`.
    * - **`IntervalKeyColumn`** — `begin` + `end` + `labels`
    *   (`StringColumn | Float64Column` per `labelKind`).
+   *
+   * **Treat the returned buffers as read-only.** Same caveat as
+   * `column(name)` — the `Float64Array` itself is mutable at
+   * runtime; writing to `keyColumn().begin[i]` would corrupt the
+   * trusted-construction substrate.
    *
    * Same step-8 caveat as `column(name)` — surface shape may
    * change once consumer-agent friction reports inform the

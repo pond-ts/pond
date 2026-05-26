@@ -180,7 +180,34 @@ The first pattern is the columnar substrate's natural shape.
 **Verify the experiment agent (Option B) tests both patterns** —
 multi-host dashboards usually use the second.
 
-### 7. Interval-keyed charts (heatmap-style)
+### 7. Public type re-exports for `Column` / `KeyColumn`
+
+L2 review on the spike PR caught this. Callers can invoke
+`series.column(name)` and `series.keyColumn()` today, but the
+return types (`Column`, `KeyColumn`) aren't re-exported from
+`pond-ts`'s top-level entrypoint — they live in
+`packages/core/src/columnar/index.ts` which is framework-internal.
+A typed call site looking like
+
+```ts
+import type { Column } from 'pond-ts';
+function drawSeries(series: TimeSeries<MySchema>) {
+  const col: Column | undefined = series.column('cpu');
+  // ...
+}
+```
+
+doesn't compile today because the type isn't exported.
+
+For the spike this is fine — callers can use
+`ReturnType<typeof series.column>` or skip the annotation entirely.
+**Step 8 should commit to the public type surface** at the same
+time it commits to the method surface. Re-export the relevant
+columnar types from the top-level package, OR introduce a
+chart-extraction-specific wrapper type that doesn't leak the full
+substrate vocabulary.
+
+### 8. Interval-keyed charts (heatmap-style)
 
 Most chart libraries' API is point-shaped: `(x, y)` pairs.
 Interval-keyed data — `(start, end, label, value)` per row —
@@ -227,9 +254,9 @@ Three items to log:
 1. **Step 8 scope refinement** — the chart-extraction alignment
    includes the kind/storage dispatch helpers (item 1), the
    inline-validity-bitmap question (item 2), the range-window
-   convenience (item 3), and the chunked-column dispatch decision
-   (item 4). The substrate access pattern is validated; the
-   helpers are the work.
+   convenience (item 3), the chunked-column dispatch decision
+   (item 4), and the public type re-exports (item 7). The
+   substrate access pattern is validated; the helpers are the work.
 2. **Step 7 + 8 joint design** — LiveSeries update model for
    charts (item 5). Both surfaces touch this; don't design in
    isolation.
