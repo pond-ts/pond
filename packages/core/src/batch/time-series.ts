@@ -95,11 +95,8 @@ import { Event } from '../core/event.js';
 import { PartitionedTimeSeries } from './partitioned-time-series.js';
 import type { BatchSampleStrategy } from '../sequence/sample.js';
 import { Sequence } from '../sequence/sequence.js';
-import {
-  type Column as ColumnarColumn,
-  type KeyColumn as ColumnarKeyColumn,
-} from '../columnar/index.js';
-import type { PublicColumnForKind } from '../column-api.js';
+import { type Column as ColumnarColumn } from '../columnar/index.js';
+import type { KeyColumnForSchema, PublicColumnForKind } from '../column-api.js';
 import { SeriesStore } from '../live/series-store.js';
 import { validateAndNormalize } from './validate.js';
 import type { DurationInput } from '../core/duration.js';
@@ -1175,12 +1172,15 @@ export class TimeSeries<S extends SeriesSchema> {
    * runtime; writing to `keyColumn().begin[i]` would corrupt the
    * trusted-construction substrate.
    *
-   * Same step-8 caveat as `column(name)` — surface shape may
-   * change once consumer-agent friction reports inform the
-   * stable shape.
+   * **Step 8d narrowing:** the return type is now
+   * `KeyColumnForSchema<S>` (RFC §7.5) — a `time`-keyed schema
+   * returns `TimeKeyColumn`, `interval` returns `IntervalKeyColumn`,
+   * `timeRange` returns `TimeRangeKeyColumn`. Consumers no longer
+   * need `instanceof` / discriminator checks just to access kind-
+   * specific fields like `.labels`.
    */
-  keyColumn(): ColumnarKeyColumn {
-    return this.#store.store.keys;
+  keyColumn(): KeyColumnForSchema<S> {
+    return this.#store.store.keys as KeyColumnForSchema<S>;
   }
 
   /** Example: `series.rows`. Returns the normalized row view of the series. */

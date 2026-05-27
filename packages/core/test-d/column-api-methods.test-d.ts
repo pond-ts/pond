@@ -256,3 +256,77 @@ fcol.bin(100, 'xyz');
 s.column('host').bin(100, 'count');
 // @ts-expect-error — BooleanColumn has no bin in v1
 s.column('active').bin(100, 'count');
+
+// ─── KeyColumn — schema-narrowed return + at / slice (step 8d) ──
+
+import type {
+  IntervalKeyColumn,
+  TimeKeyColumn,
+  TimeRangeKeyColumn,
+} from '../src/index.js';
+
+// time-keyed schema → series.keyColumn() narrows to TimeKeyColumn.
+// .at(i) returns `number | undefined` (raw begin timestamp).
+const _kt: TimeKeyColumn = s.keyColumn();
+void _kt;
+const _ktAt: number | undefined = s.keyColumn().at(0);
+void _ktAt;
+const _ktSlice: TimeKeyColumn = s.keyColumn().slice(0, 10);
+void _ktSlice;
+// Chained: slice then at, the hover/tooltip pattern.
+const _ktChain: number | undefined = s.keyColumn().slice(0, 10).at(5);
+void _ktChain;
+
+// timeRange-keyed schema → series.keyColumn() narrows to
+// TimeRangeKeyColumn. .at(i) returns `{ begin, end } | undefined`.
+const sTimeRange = new TimeSeries({
+  name: 'tr',
+  schema: [
+    { name: 'timeRange', kind: 'timeRange' },
+    { name: 'load', kind: 'number' },
+  ] as const,
+  rows: [],
+});
+const _ktr: TimeRangeKeyColumn = sTimeRange.keyColumn();
+void _ktr;
+const _ktrAt: { readonly begin: number; readonly end: number } | undefined =
+  sTimeRange.keyColumn().at(0);
+void _ktrAt;
+const _ktrSlice: TimeRangeKeyColumn = sTimeRange.keyColumn().slice(0, 10);
+void _ktrSlice;
+
+// interval-keyed schema → series.keyColumn() narrows to
+// IntervalKeyColumn. .at(i) returns `{ begin, end, label } |
+// undefined` where label is `string | number`.
+const sInterval = new TimeSeries({
+  name: 'iv',
+  schema: [
+    { name: 'interval', kind: 'interval' },
+    { name: 'level', kind: 'number' },
+  ] as const,
+  rows: [],
+});
+const _kiv: IntervalKeyColumn = sInterval.keyColumn();
+void _kiv;
+const _kivAt:
+  | {
+      readonly begin: number;
+      readonly end: number;
+      readonly label: string | number;
+    }
+  | undefined = sInterval.keyColumn().at(0);
+void _kivAt;
+const _kivSlice: IntervalKeyColumn = sInterval.keyColumn().slice(0, 10);
+void _kivSlice;
+
+// Negative case: TimeKeyColumn.at returns a number, not an object
+// with .begin — that shape is for range/interval keys only.
+// @ts-expect-error — number has no .begin
+const _ktAtBegin: number = s.keyColumn().at(0)?.begin;
+void _ktAtBegin;
+
+// Negative case: the slice return type narrows on the variant —
+// can't assign IntervalKeyColumn to a TimeKeyColumn binding.
+// @ts-expect-error — IntervalKeyColumn isn't a TimeKeyColumn
+const _wrongSliceType: TimeKeyColumn = sInterval.keyColumn().slice(0, 10);
+void _wrongSliceType;

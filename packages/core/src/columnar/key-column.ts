@@ -125,6 +125,24 @@ export class TimeKeyColumn implements KeyColumnBase<'time'> {
   }
 
   /**
+   * Zero-copy index-range view: returns a `TimeKeyColumn` over
+   * `begin.subarray(start, end)`. Same trusted-buffer-immutability
+   * contract as the source — the underlying `Float64Array` is
+   * shared. `start` clamps to `[0, length]`; `end` clamps to
+   * `[start, length]`. Empty range produces a `length: 0` column.
+   *
+   * Mirrors `Float64Column.sliceByRange` in shape and semantics so
+   * `series.column('x').slice(s, e)` and
+   * `series.keyColumn().slice(s, e)` compose with the same
+   * boundary handling.
+   */
+  sliceByRange(start: number, end: number): TimeKeyColumn {
+    const s = Math.max(0, Math.min(start | 0, this.length));
+    const e = Math.max(s, Math.min(end | 0, this.length));
+    return new TimeKeyColumn(this.begin.subarray(s, e), e - s);
+  }
+
+  /**
    * Gathers rows by index into a new `TimeKeyColumn`. Out-of-range
    * source indices produce a `0` slot in the output buffer — the
    * caller is responsible for ensuring `indices` are valid (typically
@@ -199,6 +217,28 @@ export class TimeRangeKeyColumn implements KeyColumnBase<'timeRange'> {
       );
     }
     return this.end[i]!;
+  }
+
+  /**
+   * Zero-copy index-range view: returns a `TimeRangeKeyColumn` over
+   * `begin.subarray(s, e)` + `end.subarray(s, e)`. Same trusted-
+   * buffer-immutability contract as the source.
+   *
+   * Note on max-end: the range-key invariant says `begin[i] <=
+   * end[i]` per row, NOT that `end[i]` is monotonically increasing.
+   * A long early event can extend past the final row's end. The
+   * slice preserves this — `out.end[length - 1]` is the end of the
+   * final row in the slice, NOT the maximum end across the slice.
+   * See RFC §4 close-cases for why range-key max-end is deferred.
+   */
+  sliceByRange(start: number, end: number): TimeRangeKeyColumn {
+    const s = Math.max(0, Math.min(start | 0, this.length));
+    const e = Math.max(s, Math.min(end | 0, this.length));
+    return new TimeRangeKeyColumn(
+      this.begin.subarray(s, e),
+      this.end.subarray(s, e),
+      e - s,
+    );
   }
 
   /**
@@ -345,6 +385,30 @@ export class IntervalKeyColumn implements KeyColumnBase<'interval'> {
    */
   labelAt(i: number): string | number | undefined {
     return this.labels.read(i);
+  }
+
+  /**
+   * Zero-copy index-range view: returns an `IntervalKeyColumn` over
+   * `begin.subarray(s, e)`, `end.subarray(s, e)`, and the labels
+   * column's `sliceByRange(s, e)` (string-dict shared by reference;
+   * numeric-label buffer subarrayed). Same trusted-buffer-
+   * immutability contract as the source.
+   *
+   * Same caveat as `TimeRangeKeyColumn.sliceByRange` for max-end:
+   * the slice preserves per-row `begin[i] <= end[i]` but does NOT
+   * compute the maximum end across the slice (which may exceed
+   * `end[length - 1]`).
+   */
+  sliceByRange(start: number, end: number): IntervalKeyColumn {
+    const s = Math.max(0, Math.min(start | 0, this.length));
+    const e = Math.max(s, Math.min(end | 0, this.length));
+    const slicedLabels = this.labels.sliceByRange(s, e);
+    return new IntervalKeyColumn(
+      this.begin.subarray(s, e),
+      this.end.subarray(s, e),
+      slicedLabels as StringColumn | Float64Column,
+      e - s,
+    );
   }
 
   /**

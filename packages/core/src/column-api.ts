@@ -35,7 +35,10 @@ import {
   ChunkedFloat64Column,
   ChunkedStringColumn,
   Float64Column,
+  IntervalKeyColumn,
   StringColumn,
+  TimeKeyColumn,
+  TimeRangeKeyColumn,
   materializeChunkedArray,
   materializeChunkedBoolean,
   materializeChunkedFloat64,
@@ -44,6 +47,7 @@ import {
 import type { ScalarValue } from './columnar/index.js';
 import { resolveReducer } from './reducers/index.js';
 import { percentileReducer } from './reducers/percentile.js';
+import type { SeriesSchema } from './schema/series.js';
 
 /**
  * Public column type for a given declared schema kind. Used by the
@@ -122,6 +126,54 @@ export type BinReducerName =
 export type BinOutput<R extends BinReducerName> = R extends 'minMax'
   ? { lo: Float64Array; hi: Float64Array }
   : Float64Array;
+
+/**
+ * Public column type for a schema's key column, narrowed by the
+ * first-column kind. Mirrors `PublicColumnForKind` on the value
+ * side. Used by the schema-narrowed `TimeSeries.keyColumn()`
+ * signature (RFC §7.5) so a `time`-keyed series returns
+ * `TimeKeyColumn`, an `interval`-keyed series returns
+ * `IntervalKeyColumn`, etc., without a cast at the consumer site.
+ *
+ * Why a single concrete class per kind (no chunked variant)? Key
+ * columns are never chunked in the substrate — `ColumnarStore`'s
+ * key column is the single source of truth for row ordering, and
+ * chunked storage shows up only on the value side (typically post-
+ * `concatSorted`). If chunked keys ever land they'll widen this
+ * type the same way `PublicColumnForKind` widens for values.
+ */
+export type KeyColumnForSchema<S extends SeriesSchema> =
+  S[0]['kind'] extends 'time'
+    ? TimeKeyColumn
+    : S[0]['kind'] extends 'timeRange'
+      ? TimeRangeKeyColumn
+      : S[0]['kind'] extends 'interval'
+        ? IntervalKeyColumn
+        : never;
+
+/**
+ * Shape returned by `TimeRangeKeyColumn.at(i)` — a frozen-by-
+ * convention POJO with both endpoints. POJO (not a class
+ * instance) keeps the column-API in the substrate idiom of raw
+ * values; the row-API path (`series.keyAt(i)`) returns the
+ * `TimeRange` class for consumers that want methods on the key.
+ */
+export type TimeRangeKeyAt = {
+  readonly begin: number;
+  readonly end: number;
+};
+
+/**
+ * Shape returned by `IntervalKeyColumn.at(i)` — the begin / end
+ * timestamps plus the row's label (discriminated by `labelKind` on
+ * the column). Numeric labels are finite; string labels come from
+ * the dictionary-encoded label column.
+ */
+export type IntervalKeyAt = {
+  readonly begin: number;
+  readonly end: number;
+  readonly label: string | number;
+};
 
 // ─── Type-level augmentations ────────────────────────────────────
 //
@@ -289,6 +341,53 @@ declare module './columnar/chunked-column.js' {
     last(): ReadonlyArray<ScalarValue> | undefined;
     firstDefined(): ReadonlyArray<ScalarValue> | undefined;
     lastDefined(): ReadonlyArray<ScalarValue> | undefined;
+  }
+}
+
+declare module './columnar/key-column.js' {
+  interface TimeKeyColumn {
+    /**
+     * Returns the begin timestamp at row `i` as a raw number, or
+     * `undefined` for out-of-range. For point-in-time keys
+     * `begin === end`, so this is the only timestamp at row `i`.
+     *
+     * The columnar idiom: returns the raw value, not a `Time`
+     * class instance. The row-API path `series.keyAt(i)` returns
+     * the `Time` wrapper for consumers that want methods on the
+     * key — pick the layer that matches the use case.
+     */
+    at(i: number): number | undefined;
+
+    /**
+     * Zero-copy index-range view. `start` clamps to `[0, length]`,
+     * `end` clamps to `[start, length]`. Composes with the column-
+     * side `slice` so chart adapters can slice both axes the same
+     * way: `series.keyColumn().slice(s, e)` /
+     * `series.column('x').slice(s, e)`.
+     */
+    slice(start: number, end: number): TimeKeyColumn;
+  }
+
+  interface TimeRangeKeyColumn {
+    /**
+     * Returns `{ begin, end }` at row `i`, or `undefined` for
+     * out-of-range. Raw POJO; consumers wanting the `TimeRange`
+     * class use the row-API path.
+     */
+    at(i: number): TimeRangeKeyAt | undefined;
+    slice(start: number, end: number): TimeRangeKeyColumn;
+  }
+
+  interface IntervalKeyColumn {
+    /**
+     * Returns `{ begin, end, label }` at row `i`, or `undefined`
+     * for out-of-range. The label type matches the column's
+     * `labelKind` (`'string'` → `string`; `'number'` → `number`),
+     * preserving the `string | number` `IntervalValue` semantics
+     * the schema declared.
+     */
+    at(i: number): IntervalKeyAt | undefined;
+    slice(start: number, end: number): IntervalKeyColumn;
   }
 }
 
@@ -952,4 +1051,62 @@ ChunkedArrayColumn.prototype.lastDefined = function ():
   | ReadonlyArray<ScalarValue>
   | undefined {
   return materializeChunkedArray(this).lastDefined();
+};
+
+// ─── KeyColumn runtime implementations (step 8d) ─────────────────
+//
+// Mirrors `Column.at(i)` / `Column.slice(s, e)` on the key axis.
+// Substrate has `beginAt(i)` / `endAt(i)` / `labelAt(i)` already —
+// `at(i)` is the column-API alias that returns the row-shape POJO
+// per RFC §7.5. `slice(s, e)` delegates to the substrate's
+// `sliceByRange`.
+
+TimeKeyColumn.prototype.at = function (i: number): number | undefined {
+  // Bounds-check rather than throwing — matches `Column.at(i)`'s
+  // `T | undefined` contract; consumers that want the throw semantics
+  // can still call `beginAt(i)` directly.
+  if (i < 0 || i >= this.length) return undefined;
+  return this.begin[i];
+};
+
+TimeKeyColumn.prototype.slice = function (
+  start: number,
+  end: number,
+): TimeKeyColumn {
+  return this.sliceByRange(start, end);
+};
+
+TimeRangeKeyColumn.prototype.at = function (
+  i: number,
+): TimeRangeKeyAt | undefined {
+  if (i < 0 || i >= this.length) return undefined;
+  return { begin: this.begin[i]!, end: this.end[i]! };
+};
+
+TimeRangeKeyColumn.prototype.slice = function (
+  start: number,
+  end: number,
+): TimeRangeKeyColumn {
+  return this.sliceByRange(start, end);
+};
+
+IntervalKeyColumn.prototype.at = function (
+  i: number,
+): IntervalKeyAt | undefined {
+  if (i < 0 || i >= this.length) return undefined;
+  // Per the IntervalKeyColumn constructor invariant, every row has
+  // a defined label, so `labels.read(i)` won't be undefined for a
+  // valid `i`. The `?? 0` is unreachable in practice but pins the
+  // type — `read(i)` is `string | number | undefined` on the
+  // labels column.
+  const label = this.labels.read(i);
+  if (label === undefined) return undefined;
+  return { begin: this.begin[i]!, end: this.end[i]!, label };
+};
+
+IntervalKeyColumn.prototype.slice = function (
+  start: number,
+  end: number,
+): IntervalKeyColumn {
+  return this.sliceByRange(start, end);
 };
