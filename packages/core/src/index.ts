@@ -29,6 +29,54 @@ export { Sequence } from './sequence/sequence.js';
 export { TimeSeries, type KeyLike } from './batch/time-series.js';
 export { top } from './reducers/index.js';
 export { ValidationError } from './core/errors.js';
+
+// ─── Column-centric public API (Phase 4.7 step 8a) ──────────────
+//
+// Public column types per docs/rfcs/column-api.md (V3, adopted
+// 2026-05-27). The substrate classes that back `series.column('x')`
+// and `series.keyColumn()` are now part of the public surface.
+// Consumers can import them by name (for type annotations and
+// `instanceof` checks) rather than reaching into `pond-ts/columnar`
+// or eliding the type and relying on TS inference.
+//
+// What's exposed: the per-kind column classes (Float64Column,
+// BooleanColumn, StringColumn, ArrayColumn), the chunked variants
+// (ChunkedFloat64Column, etc.) so storage-discriminator narrowing
+// works at the consumer call site, the key-column variants
+// (TimeKeyColumn, TimeRangeKeyColumn, IntervalKeyColumn), and the
+// union/discriminator types (Column, KeyColumn, ColumnKind,
+// ColumnStorage, ScanOptions, ValidityBitmap, IntervalLabelKind).
+//
+// What's NOT exposed (intentionally — still substrate-internal):
+// builders, validity helpers, ColumnarStore, view transforms,
+// concatSorted, scatterByPartition, ColumnarRingBuffer. These
+// remain reachable via internal paths but aren't part of the
+// public Column API surface; they may evolve without a major
+// version bump.
+export {
+  type Column,
+  type ColumnKind,
+  type ColumnStorage,
+  type ScanOptions,
+  BooleanColumn,
+  Float64Column,
+} from './columnar/column.js';
+export { StringColumn } from './columnar/string-column.js';
+export { ArrayColumn } from './columnar/array-column.js';
+export {
+  ChunkedArrayColumn,
+  ChunkedBooleanColumn,
+  ChunkedFloat64Column,
+  ChunkedStringColumn,
+} from './columnar/chunked-column.js';
+export {
+  type IntervalLabelKind,
+  type KeyColumn,
+  IntervalKeyColumn,
+  TimeKeyColumn,
+  TimeRangeKeyColumn,
+} from './columnar/key-column.js';
+export { type ValidityBitmap } from './columnar/validity.js';
 export type {
   AlignSchema,
   ArrayColumnNameForSchema,
