@@ -136,17 +136,54 @@ export class TimeKeyColumn implements KeyColumnBase<'time'> {
    * Mirrors `Float64Column.sliceByRange`'s clamping shape exactly
    * — including the behavior on `NaN` / `Infinity` / non-integer
    * inputs: `NaN` propagates through `Math.max` / `Math.min` and
-   * surfaces via the `validateColumnLength(NaN)` check in the
-   * constructor; non-integer `start - end` deltas land in
-   * `validateColumnLength` for the same throw.
+   * surfaces via the `validateColumnLength(NaN)` check; non-
+   * integer `start - end` deltas land in `validateColumnLength`
+   * for the same throw.
+   *
+   * Uses `fromValidatedSubarray` (not the public constructor) so
+   * the per-row finiteness scan doesn't re-run on every slice —
+   * the source was already validated, and a subarray of a finite
+   * buffer is also finite. Keeps the chart's pan/zoom/hover loops
+   * O(1) on the key axis rather than O(e − s).
    */
   sliceByRange(start: number, end: number): TimeKeyColumn {
     const lo = Math.max(0, start);
     const hi = Math.min(this.length, end);
     if (hi <= lo) {
-      return new TimeKeyColumn(new Float64Array(0), 0);
+      return TimeKeyColumn.fromValidatedSubarray(new Float64Array(0), 0);
     }
-    return new TimeKeyColumn(this.begin.subarray(lo, hi), hi - lo);
+    return TimeKeyColumn.fromValidatedSubarray(
+      this.begin.subarray(lo, hi),
+      hi - lo,
+    );
+  }
+
+  /**
+   * @internal Trusted-buffer factory used by slice paths. Skips
+   * the per-row finiteness scan that the public constructor runs;
+   * the caller MUST pass a subarray of (or otherwise equivalently
+   * pre-validated) buffer from a `TimeKeyColumn` that was itself
+   * constructed via the public path. External callers must use
+   * `new TimeKeyColumn(...)`.
+   *
+   * Still validates structural invariants: finite non-negative
+   * integer `length` and `length <= begin.length`. Those are O(1)
+   * and protect against caller-passed garbage.
+   */
+  static fromValidatedSubarray(
+    begin: Float64Array,
+    length: number,
+  ): TimeKeyColumn {
+    validateColumnLength(length, 'TimeKeyColumn.fromValidatedSubarray');
+    if (length > begin.length) {
+      throw new RangeError(
+        `TimeKeyColumn.fromValidatedSubarray buffer underflow: length ${length} exceeds begin.length ${begin.length}`,
+      );
+    }
+    const c: TimeKeyColumn = Object.create(TimeKeyColumn.prototype);
+    // Runtime fields are writable; `readonly` is compile-time only.
+    Object.assign(c, { kind: 'time' as const, length, begin, end: begin });
+    return c;
   }
 
   /**
@@ -242,17 +279,56 @@ export class TimeRangeKeyColumn implements KeyColumnBase<'timeRange'> {
     const lo = Math.max(0, start);
     const hi = Math.min(this.length, end);
     if (hi <= lo) {
-      return new TimeRangeKeyColumn(
+      return TimeRangeKeyColumn.fromValidatedSubarray(
         new Float64Array(0),
         new Float64Array(0),
         0,
       );
     }
-    return new TimeRangeKeyColumn(
+    return TimeRangeKeyColumn.fromValidatedSubarray(
       this.begin.subarray(lo, hi),
       this.end.subarray(lo, hi),
       hi - lo,
     );
+  }
+
+  /**
+   * @internal Trusted-buffer factory for slice paths. Skips per-
+   * row finiteness scans on both buffers AND the `begin[i] <=
+   * end[i]` invariant check — the caller MUST pass subarrays of
+   * (or equivalently pre-validated) buffers from a
+   * `TimeRangeKeyColumn` that was itself constructed via the
+   * public path. External callers must use
+   * `new TimeRangeKeyColumn(...)`.
+   *
+   * Still validates O(1) structural invariants: finite non-
+   * negative integer `length`, and `length <= min(begin.length,
+   * end.length)`.
+   */
+  static fromValidatedSubarray(
+    begin: Float64Array,
+    end: Float64Array,
+    length: number,
+  ): TimeRangeKeyColumn {
+    validateColumnLength(length, 'TimeRangeKeyColumn.fromValidatedSubarray');
+    if (length > begin.length) {
+      throw new RangeError(
+        `TimeRangeKeyColumn.fromValidatedSubarray buffer underflow: length ${length} exceeds begin.length ${begin.length}`,
+      );
+    }
+    if (length > end.length) {
+      throw new RangeError(
+        `TimeRangeKeyColumn.fromValidatedSubarray buffer underflow: length ${length} exceeds end.length ${end.length}`,
+      );
+    }
+    const c: TimeRangeKeyColumn = Object.create(TimeRangeKeyColumn.prototype);
+    Object.assign(c, {
+      kind: 'timeRange' as const,
+      length,
+      begin,
+      end,
+    });
+    return c;
   }
 
   /**
@@ -418,28 +494,82 @@ export class IntervalKeyColumn implements KeyColumnBase<'interval'> {
     const hi = Math.min(this.length, end);
     if (hi <= lo) {
       // Empty: defer to `labels.sliceByRange(0, 0)` so the empty
-      // labels column matches the kind discriminator of the source
-      // (String or Float64); the constructor's `labels.length ===
-      // length` check then passes trivially.
+      // labels column matches the labelKind discriminator (String
+      // or Float64); the trusted-construction path's
+      // `labels.length === length` check passes trivially.
       const emptyLabels = this.labels.sliceByRange(0, 0) as
         | StringColumn
         | Float64Column;
-      return new IntervalKeyColumn(
+      return IntervalKeyColumn.fromValidatedSubarray(
         new Float64Array(0),
         new Float64Array(0),
         emptyLabels,
+        this.labelKind,
         0,
       );
     }
     const slicedLabels = this.labels.sliceByRange(lo, hi) as
       | StringColumn
       | Float64Column;
-    return new IntervalKeyColumn(
+    return IntervalKeyColumn.fromValidatedSubarray(
       this.begin.subarray(lo, hi),
       this.end.subarray(lo, hi),
       slicedLabels,
+      this.labelKind,
       hi - lo,
     );
+  }
+
+  /**
+   * @internal Trusted-buffer factory for slice paths. Skips
+   * per-row validation: finiteness scans on begin/end, the
+   * begin[i] <= end[i] invariant check, AND the per-row label
+   * defined-and-type-matches check (which is the dominant cost
+   * for IntervalKeyColumn — `labels.read(i)` per row).
+   *
+   * Caller MUST pass subarrays / pre-validated buffers from an
+   * `IntervalKeyColumn` that was constructed via the public path
+   * (or compositionally from other trusted paths). External
+   * callers must use `new IntervalKeyColumn(...)`.
+   *
+   * The `labelKind` argument is explicit (rather than re-derived
+   * from `labels.kind`) so callers retain the source column's
+   * discriminator without an extra branch — trusted construction
+   * trusts the caller knows what they have.
+   */
+  static fromValidatedSubarray(
+    begin: Float64Array,
+    end: Float64Array,
+    labels: StringColumn | Float64Column,
+    labelKind: IntervalLabelKind,
+    length: number,
+  ): IntervalKeyColumn {
+    validateColumnLength(length, 'IntervalKeyColumn.fromValidatedSubarray');
+    if (length > begin.length) {
+      throw new RangeError(
+        `IntervalKeyColumn.fromValidatedSubarray buffer underflow: length ${length} exceeds begin.length ${begin.length}`,
+      );
+    }
+    if (length > end.length) {
+      throw new RangeError(
+        `IntervalKeyColumn.fromValidatedSubarray buffer underflow: length ${length} exceeds end.length ${end.length}`,
+      );
+    }
+    if (labels.length !== length) {
+      throw new RangeError(
+        `IntervalKeyColumn.fromValidatedSubarray label column length ${labels.length} does not match column length ${length}`,
+      );
+    }
+    const c: IntervalKeyColumn = Object.create(IntervalKeyColumn.prototype);
+    Object.assign(c, {
+      kind: 'interval' as const,
+      length,
+      begin,
+      end,
+      labels,
+      labelKind,
+    });
+    return c;
   }
 
   /**

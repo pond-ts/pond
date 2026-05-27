@@ -128,12 +128,37 @@ export type BinOutput<R extends BinReducerName> = R extends 'minMax'
   : Float64Array;
 
 /**
+ * Public key-column class for a single first-column kind.
+ * Distributes over its naked type parameter, so a broad union
+ * like `'time' | 'timeRange' | 'interval'` produces the matching
+ * union of key-column classes rather than collapsing to `never`.
+ */
+export type KeyColumnForKind<K extends 'time' | 'timeRange' | 'interval'> =
+  K extends 'time'
+    ? TimeKeyColumn
+    : K extends 'timeRange'
+      ? TimeRangeKeyColumn
+      : K extends 'interval'
+        ? IntervalKeyColumn
+        : never;
+
+/**
  * Public column type for a schema's key column, narrowed by the
  * first-column kind. Mirrors `PublicColumnForKind` on the value
  * side. Used by the schema-narrowed `TimeSeries.keyColumn()`
  * signature (RFC §7.5) so a `time`-keyed series returns
  * `TimeKeyColumn`, an `interval`-keyed series returns
  * `IntervalKeyColumn`, etc., without a cast at the consumer site.
+ *
+ * Implemented in two steps so the inner conditional distributes
+ * over the kind union — `S[0]['kind']` is a union for a broad
+ * `S` like `SeriesSchema`, and a non-naked conditional check
+ * would collapse to `never` rather than producing the matching
+ * key-column union. The `KeyColumnForKind<K>` helper takes `K` as
+ * a naked type parameter so distribution applies; a
+ * `TimeSeries<SeriesSchema>.keyColumn()` then types as
+ * `TimeKeyColumn | TimeRangeKeyColumn | IntervalKeyColumn` as
+ * expected. Closes Codex finding on PR #159.
  *
  * Why a single concrete class per kind (no chunked variant)? Key
  * columns are never chunked in the substrate — `ColumnarStore`'s
@@ -142,14 +167,9 @@ export type BinOutput<R extends BinReducerName> = R extends 'minMax'
  * `concatSorted`). If chunked keys ever land they'll widen this
  * type the same way `PublicColumnForKind` widens for values.
  */
-export type KeyColumnForSchema<S extends SeriesSchema> =
-  S[0]['kind'] extends 'time'
-    ? TimeKeyColumn
-    : S[0]['kind'] extends 'timeRange'
-      ? TimeRangeKeyColumn
-      : S[0]['kind'] extends 'interval'
-        ? IntervalKeyColumn
-        : never;
+export type KeyColumnForSchema<S extends SeriesSchema> = KeyColumnForKind<
+  S[0]['kind']
+>;
 
 /**
  * Shape returned by `TimeRangeKeyColumn.at(i)` — a POJO with both
@@ -1067,9 +1087,13 @@ ChunkedArrayColumn.prototype.lastDefined = function ():
 
 TimeKeyColumn.prototype.at = function (i: number): number | undefined {
   // Bounds-check rather than throwing — matches `Column.at(i)`'s
-  // `T | undefined` contract; consumers that want the throw semantics
-  // can still call `beginAt(i)` directly.
-  if (i < 0 || i >= this.length) return undefined;
+  // `T | undefined` contract; consumers that want the throw
+  // semantics can still call `beginAt(i)` directly. The
+  // `Number.isInteger` gate rejects `NaN` / `±Infinity` /
+  // fractional indexes so callers don't silently get bogus rows
+  // from typed-array property-key fallbacks. Closes Codex finding
+  // on PR #159.
+  if (!Number.isInteger(i) || i < 0 || i >= this.length) return undefined;
   return this.begin[i];
 };
 
@@ -1083,7 +1107,7 @@ TimeKeyColumn.prototype.slice = function (
 TimeRangeKeyColumn.prototype.at = function (
   i: number,
 ): TimeRangeKeyAt | undefined {
-  if (i < 0 || i >= this.length) return undefined;
+  if (!Number.isInteger(i) || i < 0 || i >= this.length) return undefined;
   return { begin: this.begin[i]!, end: this.end[i]! };
 };
 
@@ -1097,7 +1121,7 @@ TimeRangeKeyColumn.prototype.slice = function (
 IntervalKeyColumn.prototype.at = function (
   i: number,
 ): IntervalKeyAt | undefined {
-  if (i < 0 || i >= this.length) return undefined;
+  if (!Number.isInteger(i) || i < 0 || i >= this.length) return undefined;
   // The IntervalKeyColumn constructor invariant guarantees every
   // row has a defined label, so for a valid `i` `labels.read(i)`
   // is never undefined. The defensive `undefined` branch is

@@ -330,3 +330,13 @@ void _ktAtBegin;
 // @ts-expect-error — IntervalKeyColumn isn't a TimeKeyColumn
 const _wrongSliceType: TimeKeyColumn = sInterval.keyColumn().slice(0, 10);
 void _wrongSliceType;
+
+// Codex finding: KeyColumnForSchema must distribute over a broad
+// schema's first-column kind union. For `TimeSeries<SeriesSchema>`
+// where `S[0]['kind']` is the full union, `keyColumn()` should
+// return the full key-column union — NOT collapse to `never`.
+import type { SeriesSchema } from '../src/schema/index.js';
+declare const sBroad: TimeSeries<SeriesSchema>;
+const _kBroad: TimeKeyColumn | TimeRangeKeyColumn | IntervalKeyColumn =
+  sBroad.keyColumn();
+void _kBroad;

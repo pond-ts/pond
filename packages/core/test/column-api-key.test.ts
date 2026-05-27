@@ -62,6 +62,19 @@ describe('TimeKeyColumn.at', () => {
     expect(typeof v).toBe('number');
     expect(v).toBe(1500);
   });
+
+  it('rejects NaN / fractional / Infinity indexes (Codex finding)', () => {
+    // The `Number.isInteger(i)` gate rejects values that aren't
+    // integer row indexes — otherwise typed-array property-key
+    // access would silently return `undefined` for fractional `i`,
+    // and the bounds-check alone wouldn't catch it because NaN
+    // comparisons are always false.
+    const col = timeKeyColumnFromArray([1, 2, 3]);
+    expect(col.at(NaN)).toBeUndefined();
+    expect(col.at(1.5)).toBeUndefined();
+    expect(col.at(Infinity)).toBeUndefined();
+    expect(col.at(-Infinity)).toBeUndefined();
+  });
 });
 
 describe('TimeKeyColumn.slice', () => {
@@ -161,6 +174,21 @@ describe('TimeRangeKeyColumn.at', () => {
     const row = col.at(0)!;
     expect(row.begin).toBeLessThanOrEqual(row.end);
   });
+
+  it('rejects NaN / fractional / Infinity indexes (Codex finding)', () => {
+    // Without the `Number.isInteger` gate, the bounds-check alone
+    // would let NaN/fractional indexes fall through to typed-array
+    // property-key access and produce a `{ begin: undefined, end:
+    // undefined }` POJO whose declared `number` fields lie.
+    const col = timeRangeKeyColumnFromPairs([
+      [10, 100],
+      [200, 300],
+    ]);
+    expect(col.at(NaN)).toBeUndefined();
+    expect(col.at(0.5)).toBeUndefined();
+    expect(col.at(Infinity)).toBeUndefined();
+    expect(col.at(-Infinity)).toBeUndefined();
+  });
 });
 
 describe('TimeRangeKeyColumn.slice', () => {
@@ -229,6 +257,13 @@ describe('IntervalKeyColumn.at — string labels', () => {
   it('returns undefined for out-of-range', () => {
     expect(col.at(-1)).toBeUndefined();
     expect(col.at(3)).toBeUndefined();
+  });
+
+  it('rejects NaN / fractional / Infinity indexes (Codex finding)', () => {
+    expect(col.at(NaN)).toBeUndefined();
+    expect(col.at(1.5)).toBeUndefined();
+    expect(col.at(Infinity)).toBeUndefined();
+    expect(col.at(-Infinity)).toBeUndefined();
   });
 });
 
@@ -350,5 +385,80 @@ describe('series.keyColumn() — column-API access', () => {
     expect(window.at(0)).toBe(10_000);
     expect(window.at(5)).toBe(15_000);
     expect(window.length).toBe(10);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Trusted-slice perf — Codex finding: slice must be O(1), not O(N).          */
+/* -------------------------------------------------------------------------- */
+
+describe('KeyColumn.sliceByRange — trusted-construction (Codex finding)', () => {
+  // The chart's pan/zoom/hover loops call slice() on the visible
+  // window every frame. If slice() re-ran the constructor's per-
+  // row finiteness scan (and for range/interval, the begin <= end
+  // and label-defined scans), every frame would be O(N) on the
+  // key axis. The trusted-construction factory skips that
+  // validation when the source buffer is already validated.
+  //
+  // We don't bench wall-clock here (Node noise on small inputs);
+  // we just pin that the slice returns the right column kind and
+  // values without triggering the public constructor's per-row
+  // throws — a malformed source row would still throw at *source*
+  // construction, but a clean source's slice never re-runs the
+  // scan.
+
+  it('TimeKeyColumn: slice does not re-run finiteness scan', () => {
+    // Construct a large source column to make sure validation
+    // doesn't fire spuriously when slicing.
+    const buf = new Float64Array(10_000);
+    for (let i = 0; i < buf.length; i += 1) buf[i] = i * 1000;
+    const col = new TimeKeyColumn(buf, buf.length);
+    // Repeatedly slicing should be cheap — exercise the path.
+    for (let i = 0; i < 100; i += 1) {
+      const s = col.slice(1000, 2000);
+      expect(s.length).toBe(1000);
+      expect(s.at(0)).toBe(1_000_000);
+    }
+  });
+
+  it('TimeRangeKeyColumn: slice does not re-run finiteness/ordering scans', () => {
+    const beginBuf = new Float64Array(10_000);
+    const endBuf = new Float64Array(10_000);
+    for (let i = 0; i < 10_000; i += 1) {
+      beginBuf[i] = i * 1000;
+      endBuf[i] = i * 1000 + 500;
+    }
+    const col = new TimeRangeKeyColumn(beginBuf, endBuf, 10_000);
+    for (let i = 0; i < 100; i += 1) {
+      const s = col.slice(1000, 2000);
+      expect(s.length).toBe(1000);
+      expect(s.at(0)).toEqual({ begin: 1_000_000, end: 1_000_500 });
+    }
+  });
+
+  it('IntervalKeyColumn: slice does not re-run label-defined scan', () => {
+    const beginBuf = new Float64Array(10_000);
+    const endBuf = new Float64Array(10_000);
+    const labelArr: string[] = new Array(10_000);
+    for (let i = 0; i < 10_000; i += 1) {
+      beginBuf[i] = i * 1000;
+      endBuf[i] = i * 1000 + 500;
+      labelArr[i] = i % 2 === 0 ? 'a' : 'b';
+    }
+    const col = new IntervalKeyColumn(
+      beginBuf,
+      endBuf,
+      stringColumnFromArray(labelArr),
+      10_000,
+    );
+    for (let i = 0; i < 100; i += 1) {
+      const s = col.slice(1000, 2000);
+      expect(s.length).toBe(1000);
+      expect(s.at(0)).toEqual({
+        begin: 1_000_000,
+        end: 1_000_500,
+        label: 'a',
+      });
+    }
   });
 });

@@ -51,6 +51,7 @@ export type {
   BinOutput,
   BinReducerName,
   IntervalKeyAt,
+  KeyColumnForKind,
   KeyColumnForSchema,
   PublicColumnForKind,
   TimeRangeKeyAt,
