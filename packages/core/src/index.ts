@@ -39,6 +39,16 @@ export { ValidationError } from './core/errors.js';
 // `columnar/` so the substrate stays pure (no reducer dependency
 // in `columnar/*.ts`; the `series-store` purity test enforces it).
 import './column-api.js';
+// Step 8c: re-export the binnedByIndex reducer-name + output type
+// helpers so downstream consumers can build typed wrappers (e.g. a
+// chart-package `binnedToImage(col, W, 'minMax') => ImageData`
+// wrapper that takes the BinnedByIndexOutput<'minMax'> shape
+// explicitly without re-deriving the conditional return type).
+export type {
+  BinnedByIndexOutput,
+  BinnedByIndexReducerName,
+  PublicColumnForKind,
+} from './column-api.js';
 
 // Step 8a: type re-exports. ────────────────────────────────────
 //

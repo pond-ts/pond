@@ -119,12 +119,25 @@ describe("Float64Column.binnedByIndex — percentile via 'p${q}'", () => {
     expect(Array.from(c.binnedByIndex(5, 'p100'))).toEqual([2, 4, 6, 8, 10]);
   });
 
-  it('fractional percentile (p99.9) parses', () => {
+  it('fractional percentile (p99.9) parses and produces values near the bin max', () => {
+    // 5 bins of 2 elements over [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
+    //   bin maxes: 2, 4, 6, 8, 10
+    // p99.9 on a 2-element bin interpolates between the lower and
+    // upper value at rank = 0.999 — extremely close to the max. A
+    // regression that truncated 'p99.9' to 'p99' would interpolate
+    // slightly less, so this assertion catches it.
     const c = f64([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    // Just check it doesn't throw and returns sensible values.
     const out = c.binnedByIndex(5, 'p99.9');
     expect(out.length).toBe(5);
-    for (const v of out) expect(Number.isFinite(v)).toBe(true);
+    const expectedMaxes = [2, 4, 6, 8, 10];
+    for (let i = 0; i < 5; i += 1) {
+      expect(out[i]).toBeCloseTo(expectedMaxes[i]!, 2);
+      // Sanity: must be greater than the p99 value (which would be
+      // 1.99, 3.99, etc. — but extremely close. The right check is
+      // "between p99 and p100").
+      expect(out[i]!).toBeLessThanOrEqual(expectedMaxes[i]!);
+      expect(out[i]!).toBeGreaterThan(expectedMaxes[i]! - 0.01);
+    }
   });
 });
 
@@ -255,7 +268,7 @@ describe('ChunkedFloat64Column.binnedByIndex — same output as packed', () => {
     return new ChunkedFloat64Column(chunks);
   }
 
-  it('matches the packed result over a 3-chunk column', () => {
+  it('matches the packed result over a 3-chunk column (all-defined)', () => {
     const chunked = makeChunked([
       [1, 2, 3, 4],
       [5, 6, 7, 8],
@@ -272,5 +285,51 @@ describe('ChunkedFloat64Column.binnedByIndex — same output as packed', () => {
     const pMinMax = packed.binnedByIndex(5, 'minMax');
     expect(Array.from(cMinMax.lo)).toEqual(Array.from(pMinMax.lo));
     expect(Array.from(cMinMax.hi)).toEqual(Array.from(pMinMax.hi));
+  });
+
+  it('matches the packed result with chunk-level validity gaps', () => {
+    // Build a chunked column with validity gaps inside each chunk.
+    // The materialize helper must propagate the per-chunk validity
+    // into the aggregate; the chunked binnedByIndex (which goes
+    // through materialize) must produce identical output to the
+    // packed equivalent. A regression that lost validity during
+    // materialization would corrupt per-bin reductions.
+    function f64WithValidity(
+      values: number[],
+      validity: boolean[],
+    ): Float64Column {
+      const buf = Float64Array.from(values);
+      const v = createValidityBitmap(values.length);
+      for (let i = 0; i < values.length; i += 1) {
+        if (validity[i]) v.set(i);
+      }
+      return new Float64Column(buf, values.length, v.freeze());
+    }
+    // Three chunks; each chunk has at least one invalid cell.
+    const chunked = new ChunkedFloat64Column([
+      f64WithValidity([10, 999, 30], [true, false, true]),
+      f64WithValidity([999, 50, 60], [false, true, true]),
+      f64WithValidity([70, 999], [true, false]),
+    ]);
+    const packed = materializeChunkedFloat64(chunked);
+    // Bin layout (4 bins of 2 indices over length=8):
+    //   bin 0 (idx 0-1): defined = [10]      → min=10, count=1, sum=10
+    //   bin 1 (idx 2-3): defined = [30]      → min=30, count=1, sum=30
+    //   bin 2 (idx 4-5): defined = [50, 60]  → min=50, count=2, sum=110
+    //   bin 3 (idx 6-7): defined = [70]      → min=70, count=1, sum=70
+    const cMins = Array.from(chunked.binnedByIndex(4, 'min'));
+    const pMins = Array.from(packed.binnedByIndex(4, 'min'));
+    expect(cMins).toEqual(pMins);
+    expect(cMins).toEqual([10, 30, 50, 70]);
+
+    const cCounts = Array.from(chunked.binnedByIndex(4, 'count'));
+    expect(cCounts).toEqual([1, 1, 2, 1]);
+
+    const cSums = Array.from(chunked.binnedByIndex(4, 'sum'));
+    expect(cSums).toEqual([10, 30, 110, 70]);
+
+    const cMinMax = chunked.binnedByIndex(4, 'minMax');
+    expect(Array.from(cMinMax.lo)).toEqual([10, 30, 50, 70]);
+    expect(Array.from(cMinMax.hi)).toEqual([10, 30, 60, 70]);
   });
 });

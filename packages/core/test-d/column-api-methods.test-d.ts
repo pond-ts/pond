@@ -243,8 +243,16 @@ fcol.binnedByIndex(100, 'cpu');
 // @ts-expect-error — invalid percentile prefix (not pNN)
 fcol.binnedByIndex(100, 'xyz');
 
-// @ts-expect-error — binnedByIndex is on Float64Column only (not on
-// StringColumn / BooleanColumn / ArrayColumn for v1)
+// binnedByIndex isn't on StringColumn / BooleanColumn / ArrayColumn
+// (no declare-module augmentation in column-api.ts), so the call
+// fails with "Property 'binnedByIndex' does not exist." The
+// inaccessibility comes from the missing augmentation, not from
+// any narrowing on the binned signature itself — if v1 adds
+// binnedByIndex to other kinds (per RFC §11 step 6), these expect-
+// error directives will become unused and the test:type CI step
+// will flag them as a heads-up to refresh this section.
+
+// @ts-expect-error — StringColumn has no binnedByIndex in v1
 s.column('host').binnedByIndex(100, 'count');
-// @ts-expect-error — binnedByIndex is on Float64Column only
+// @ts-expect-error — BooleanColumn has no binnedByIndex in v1
 s.column('active').binnedByIndex(100, 'count');
