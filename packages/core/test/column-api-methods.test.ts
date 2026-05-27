@@ -229,6 +229,141 @@ describe('Float64Column public methods', () => {
       expect(c.lastDefined()).toBeUndefined();
     });
   });
+
+  describe('toFloat64Array — storage-agnostic gather', () => {
+    it('packed: returns the underlying .values reference (no allocation)', () => {
+      const c = f64([1, 2, 3, 4, 5]);
+      const out = c.toFloat64Array();
+      // Identity: same Float64Array reference as .values. Caller
+      // shares the column's trusted-buffer read-only contract.
+      // This is the load-bearing contract for adapters that
+      // compare reference equality.
+      expect(out).toBe(c.values);
+      expect(out).toBeInstanceOf(Float64Array);
+      expect(Array.from(out)).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it('packed empty column returns an empty Float64Array', () => {
+      const c = f64([]);
+      const out = c.toFloat64Array();
+      expect(out).toBeInstanceOf(Float64Array);
+      expect(out.length).toBe(0);
+      // Identity holds for the empty case too.
+      expect(out).toBe(c.values);
+    });
+
+    it('packed with oversized buffer: bounded subarray (NOT raw values)', () => {
+      // Float64Column's constructor permits `length < values.length`
+      // — used by ColumnarRingBuffer and other capacity-grown
+      // patterns. The contract is "returns Float64Array of length
+      // this.length"; if we returned `this.values` directly, callers
+      // would see the tail capacity (slots that read / scan / reducers
+      // never expose). Regression test pinned by Codex finding on
+      // PR #165.
+      const buf = Float64Array.of(1, 2, 999, 999);
+      const c = new Float64Column(buf, 2); // logical length 2, buffer length 4
+      const out = c.toFloat64Array();
+      expect(out.length).toBe(2);
+      expect(out.length).toBe(c.length);
+      expect(Array.from(out)).toEqual([1, 2]);
+      // Still a view over the same buffer (no copy) — just bounded.
+      expect(out.buffer).toBe(buf.buffer);
+      // NOT identity with .values in this case (subarray is a fresh
+      // TypedArray view object).
+      expect(out).not.toBe(c.values);
+    });
+
+    it('packed with validity: returns raw values including undefined-marked slots', () => {
+      // The undefined-marked positions still carry whatever value
+      // the source put there — toFloat64Array doesn't replace
+      // them with NaN. Validity-aware iteration is a separate
+      // concern via .validity / .scan.
+      const c = f64([10, 999, 20, 999, 30], [true, false, true, false, true]);
+      const out = c.toFloat64Array();
+      expect(Array.from(out)).toEqual([10, 999, 20, 999, 30]);
+    });
+
+    it('packed slice: identity holds against slice.values (NOT the source)', () => {
+      // Stronger contract than buffer-identity. The slice has its
+      // own subarray view; toFloat64Array on the slice returns
+      // THAT view, not the source's .values. Buffer is shared
+      // (subarray semantics), but the Float64Array objects are
+      // distinct between source and slice.
+      const c = f64([1, 2, 3, 4, 5]);
+      const slice = c.slice(1, 4);
+      const out = slice.toFloat64Array();
+      expect(out).toBe(slice.values);
+      expect(out).not.toBe(c.values);
+      // Buffer-identity still holds (subarray shares backing).
+      expect(out.buffer).toBe(c.values.buffer);
+      expect(Array.from(out)).toEqual([2, 3, 4]);
+    });
+
+    it('chunked: gathers all chunks; out.length === col.length exactly', async () => {
+      // Import lazily so the test file can stay symmetric with the
+      // other per-kind blocks above.
+      const { ChunkedFloat64Column } =
+        await import('../src/columnar/chunked-column.js');
+      const chunked = new ChunkedFloat64Column([
+        new Float64Column(Float64Array.from([1, 2, 3]), 3),
+        new Float64Column(Float64Array.from([4, 5]), 2),
+        new Float64Column(Float64Array.from([6, 7, 8, 9]), 4),
+      ]);
+      const out = chunked.toFloat64Array();
+      expect(out).toBeInstanceOf(Float64Array);
+      // Length matches the chunked column's length exactly — NOT
+      // the sum of chunks' raw values.length (which could include
+      // unused tail capacity per chunk if the chunk was
+      // constructed with a logical length < buffer length).
+      expect(out.length).toBe(chunked.length);
+      expect(out.length).toBe(9);
+      expect(Array.from(out)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    });
+
+    it('chunked: each call allocates fresh (chunked has no aliasable buffer)', async () => {
+      const { ChunkedFloat64Column } =
+        await import('../src/columnar/chunked-column.js');
+      const chunked = new ChunkedFloat64Column([
+        new Float64Column(Float64Array.from([1, 2]), 2),
+        new Float64Column(Float64Array.from([3, 4]), 2),
+      ]);
+      const a = chunked.toFloat64Array();
+      const b = chunked.toFloat64Array();
+      expect(Array.from(a)).toEqual([1, 2, 3, 4]);
+      expect(Array.from(b)).toEqual([1, 2, 3, 4]);
+      // Two distinct allocations — chunked has no single buffer
+      // to alias, so successive calls must each materialize.
+      expect(a).not.toBe(b);
+    });
+
+    it('chunked: single-chunk column still gathers correctly', async () => {
+      // Degenerate case — a chunked column with only one chunk.
+      // The gather should still produce a fresh Float64Array with
+      // the right contents (it materialises through the
+      // multi-chunk path uniformly rather than aliasing the
+      // single chunk's values buffer).
+      const { ChunkedFloat64Column } =
+        await import('../src/columnar/chunked-column.js');
+      const chunked = new ChunkedFloat64Column([
+        new Float64Column(Float64Array.from([10, 20, 30]), 3),
+      ]);
+      const out = chunked.toFloat64Array();
+      expect(out.length).toBe(chunked.length);
+      expect(Array.from(out)).toEqual([10, 20, 30]);
+    });
+
+    it('chunked: zero-length column returns an empty Float64Array', async () => {
+      // Well-formed edge case — chunked column constructed with
+      // no data. Gather should produce a zero-length array.
+      const { ChunkedFloat64Column } =
+        await import('../src/columnar/chunked-column.js');
+      const chunked = new ChunkedFloat64Column([]);
+      const out = chunked.toFloat64Array();
+      expect(out).toBeInstanceOf(Float64Array);
+      expect(out.length).toBe(0);
+      expect(out.length).toBe(chunked.length);
+    });
+  });
 });
 
 // ─── BooleanColumn ──────────────────────────────────────────────

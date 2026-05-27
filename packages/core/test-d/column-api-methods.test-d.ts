@@ -88,6 +88,21 @@ void _slice;
 const _slicedMin: number | undefined = fcol.slice(0, 100).min();
 void _slicedMin;
 
+// toFloat64Array returns Float64Array, NOT Float64Array | undefined.
+// (Empty column still returns a zero-length Float64Array.)
+const _toF64: Float64Array = fcol.toFloat64Array();
+void _toF64;
+// Chained: series.column('value').toFloat64Array() narrows cleanly.
+const _seriesToF64: Float64Array = s.column('value').toFloat64Array();
+void _seriesToF64;
+
+// Negative cases: toFloat64Array is on Float64Column only (and
+// ChunkedFloat64Column via the chunked declare-module).
+// @ts-expect-error — BooleanColumn has no toFloat64Array
+s.column('active').toFloat64Array();
+// @ts-expect-error — StringColumn has no toFloat64Array
+s.column('host').toFloat64Array();
+
 // ─── BooleanColumn methods exist + return the right types ───────
 
 declare const bcol: BooleanColumn;

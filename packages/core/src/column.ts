@@ -245,6 +245,62 @@ declare module './columnar/column.js' {
     lastDefined(): number | undefined;
 
     /**
+     * Storage-agnostic typed-array gather. Returns a
+     * `Float64Array` of length **exactly** `this.length`,
+     * identity-when-possible:
+     *
+     * - **Packed** (`Float64Column`), exact-sized buffer (the
+     *   typical case where `values.length === length`): returns
+     *   `this.values` exactly — same reference, no allocation.
+     * - **Packed**, oversized buffer (`values.length > length`
+     *   — capacity-grown columns from `ColumnarRingBuffer` or
+     *   similar): returns `this.values.subarray(0, length)` — a
+     *   bounded view over the same backing buffer (no copy, but
+     *   a fresh `Float64Array` view object).
+     * - **Chunked** (`ChunkedFloat64Column`): allocates a fresh
+     *   `Float64Array(this.length)` and gathers the chunks into
+     *   it via the substrate's `materializeChunkedFloat64`. One
+     *   linear pass.
+     *
+     * The returned buffer shares the column's storage and
+     * inherits its read-only-by-convention contract (writes
+     * through the buffer corrupt trusted-construction
+     * invariants).
+     *
+     * Motivating use case: chart adapters that want raw typed-
+     * array access for inline canvas draw without caring about
+     * storage. Replaces the awkward storage guard
+     *
+     * ```ts
+     * if (col.storage !== 'packed') throw ...;
+     * const values = col.values;
+     * ```
+     *
+     * with
+     *
+     * ```ts
+     * const values = col.toFloat64Array();
+     * ```
+     *
+     * Validity is not encoded — `toFloat64Array` returns the
+     * raw value buffer including any undefined-marked slots.
+     * Callers that need gap-aware iteration check
+     * `col.hasMissing()` / `col.validity` separately, or use
+     * `col.scan(fn)` for the storage-agnostic skip-undefined
+     * walk.
+     *
+     * Cross-kind note: this method is intentionally scoped to
+     * the numeric column today. A symmetric method on other
+     * kinds isn't a guaranteed fit because their `.values`
+     * shapes diverge — `BooleanColumn.values` is bit-packed
+     * (one bit per row), so a hypothetical
+     * `BooleanColumn.toUint8Array()` wouldn't be identity on
+     * packed. Each kind earns its own gather API on its own
+     * merits; v1 ships only the numeric version.
+     */
+    toFloat64Array(): Float64Array;
+
+    /**
      * Index-bucketed reduction. See `docs/rfcs/column-api.md` §7.3
      * and §8 worked example.
      *
@@ -339,6 +395,15 @@ declare module './columnar/chunked-column.js' {
     last(): number | undefined;
     firstDefined(): number | undefined;
     lastDefined(): number | undefined;
+    /**
+     * Gather all chunks into a fresh `Float64Array(this.length)`.
+     * Mirrors `Float64Column.toFloat64Array`'s shape — always
+     * returns a `Float64Array` whose length equals `this.length`.
+     * For chunked columns the result is always a fresh
+     * allocation (chunked storage has no single contiguous
+     * buffer to alias).
+     */
+    toFloat64Array(): Float64Array;
     bin<R extends BinReducerName>(bins: number, reducer: R): BinOutput<R>;
   }
 
@@ -552,6 +617,24 @@ Float64Column.prototype.lastDefined = function (): number | undefined {
     if (v.isDefined(i)) return this.values[i];
   }
   return undefined;
+};
+
+Float64Column.prototype.toFloat64Array = function (): Float64Array {
+  // The public contract is "returns a Float64Array of length
+  // this.length". Float64Column's constructor accepts oversized
+  // buffers (length < values.length is permitted; see the
+  // ColumnarRingBuffer / capacity-grown allocation patterns).
+  // Returning `this.values` directly would leak the tail
+  // capacity to callers, exposing slots that read / scan /
+  // reducers never expose. Closes Codex finding on PR #165.
+  //
+  // Exact-sized buffer (the typical case): return `this.values`
+  // for identity / zero allocation. Oversized buffer: return a
+  // subarray view bounded to `this.length` — still a view
+  // (no buffer copy), but a fresh TypedArray view object.
+  return this.values.length === this.length
+    ? this.values
+    : this.values.subarray(0, this.length);
 };
 
 /**
@@ -1020,6 +1103,11 @@ ChunkedFloat64Column.prototype.firstDefined = function (): number | undefined {
 };
 ChunkedFloat64Column.prototype.lastDefined = function (): number | undefined {
   return materializeChunkedFloat64(this).lastDefined();
+};
+ChunkedFloat64Column.prototype.toFloat64Array = function (): Float64Array {
+  // Chunked storage has no single contiguous buffer; materialize
+  // gathers chunks into a fresh `Float64Array(this.length)`.
+  return materializeChunkedFloat64(this).values;
 };
 ChunkedFloat64Column.prototype.bin = function <R extends BinReducerName>(
   bins: number,
