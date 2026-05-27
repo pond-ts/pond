@@ -197,6 +197,58 @@ describe('Float64Column.bin — validity-aware', () => {
     const sums = Array.from(c.bin(2, 'sum'));
     expect(sums).toEqual([10, 0]);
   });
+
+  it('minMax over a validity-aware column reduces only defined cells (packed inline path)', () => {
+    // Direct coverage for the inlined minMax+validity path on the
+    // packed column class. Existing minMax tests run on validity-
+    // free columns; this pins the validity branch end-to-end.
+    //
+    // 6 values, indices 1 and 4 invalid. Bins of 2:
+    //   bin 0 (idx 0-1): defined [10]     → lo=10, hi=10
+    //   bin 1 (idx 2-3): defined [20, 30] → lo=20, hi=30
+    //   bin 2 (idx 4-5): defined [40]     → lo=40, hi=40
+    const c = f64(
+      [10, 999, 20, 30, 999, 40],
+      [true, false, true, true, false, true],
+    );
+    const { lo, hi } = c.bin(3, 'minMax');
+    expect(Array.from(lo)).toEqual([10, 20, 40]);
+    expect(Array.from(hi)).toEqual([10, 30, 40]);
+  });
+
+  it('minMax bin with no defined cells writes NaN to both lo and hi (packed inline path)', () => {
+    // bin 1 (idx 2-3) is entirely invalid — both channels must
+    // land NaN regardless of any sentinel values in the slot
+    // before bin runs.
+    const c = f64([10, 999, 999, 999], [true, false, false, false]);
+    const out = {
+      lo: new Float64Array(2),
+      hi: new Float64Array(2),
+    };
+    out.lo.fill(123);
+    out.hi.fill(456);
+    c.bin(2, 'minMax', { out });
+    expect(out.lo[0]).toBe(10);
+    expect(out.hi[0]).toBe(10);
+    expect(Number.isNaN(out.lo[1]!)).toBe(true);
+    expect(Number.isNaN(out.hi[1]!)).toBe(true);
+  });
+
+  it('minMax over a column with all leading-invalid then a defined cell at the bin tail', () => {
+    // Verify the `while (i < end && !validity.isDefined(i))` skip-
+    // ahead correctly finds the first defined cell when the start
+    // of the bin is all-undefined. Bin of 4 indices, only idx 3
+    // defined.
+    const c = f64(
+      [999, 999, 999, 50, 60, 70, 80, 90],
+      [false, false, false, true, true, true, true, true],
+    );
+    // bin 0 (idx 0-3): defined [50] only → lo=50, hi=50
+    // bin 1 (idx 4-7): defined [60,70,80,90] → lo=60, hi=90
+    const { lo, hi } = c.bin(2, 'minMax');
+    expect(Array.from(lo)).toEqual([50, 60]);
+    expect(Array.from(hi)).toEqual([50, 90]);
+  });
 });
 
 // ─── Edge cases ─────────────────────────────────────────────────

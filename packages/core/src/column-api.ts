@@ -678,13 +678,20 @@ Float64Column.prototype.bin = function <R extends BinReducerName>(
     // subarray view + optionally a validity-bitmap slice on every
     // bin, then dispatched into the minMax method. Inlining
     // hoists the validity branch (it's the same for every bin)
-    // and removes the per-bin construction overhead. Measured
-    // ~30-50% win at chart-typical workloads (W=1024 over N=100k
-    // to N=10M) per `scripts/perf-bin.mjs`.
+    // and removes the per-bin construction overhead.
     //
-    // The chart-experiment M2 friction note's "the bulk of the
-    // overhead is per-bin allocation inside bin()" finding is what
-    // motivated this. The inner-loop math is byte-identical to
+    // Measured wins (`scripts/perf-bin.mjs`, median of 30 × 3
+    // runs): ~23% on fine-bins (N=100k, W=1024) where per-bin
+    // overhead is the biggest fraction of work; ~9% on chart-
+    // typical (N=1M, W=1024); within noise (~5%) on N=10M where
+    // the inner buffer walk dominates and the per-bin construction
+    // is a small relative cost. The chart-experiment M2.1
+    // friction note motivated this; the actual win is smaller than
+    // its initial framing suggested but real where it counts most
+    // (fine zoom levels where the chart writes the most bins per
+    // unit of input data).
+    //
+    // The inner-loop math is byte-identical to
     // `Float64Column.prototype.minMax` (same NaN parity, same
     // empty handling) — just over a (start, end) slice of the
     // underlying buffer.
