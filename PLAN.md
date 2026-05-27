@@ -4462,12 +4462,30 @@ columnar.mjs`.
      from the time axis (§5 guardrail), so `col.bin` is necessarily
      index-domain. RFC's V3 amendment log records the rename with
      historical context.
-   - **8d — `KeyColumn` `.at(i)` + `.slice(s, e)`.** Mirrors
-     Column's shape on the key axis. KeyColumn does NOT get scalar
-     reductions in v1 (TimeKeyColumn min/max are trivial; range-
-     key max-end requires a scan and is deferred). Unblocks
-     experiment M5 (heatmap) and tooltip / crosshair flows.
-     Pending.
+   - **8d — `KeyColumn` `.at(i)` + `.slice(s, e)` + narrowed
+     `keyColumn()`.** ✅ Shipped 2026-05-27. Mirrors Column's shape
+     on the key axis: `.at(i)` returns the raw row shape (`number`
+     for `TimeKeyColumn`, `{ begin, end }` for `TimeRangeKeyColumn`,
+     `{ begin, end, label }` for `IntervalKeyColumn`) per the
+     substrate columnar idiom; `.slice(s, e)` is a zero-copy
+     index-range view (typed-array `subarray` under the hood; for
+     `IntervalKeyColumn` the labels column is sliced in lockstep).
+     Substrate gained `sliceByRange(start, end)` on all three key-
+     column variants. `TimeSeries.keyColumn()` return type now
+     narrows to `KeyColumnForSchema<S>` per RFC §7.5 — consumers
+     no longer need `instanceof` / discriminator checks just to
+     reach kind-specific fields like `.labels`. Closes the
+     chart-experiment's NF4 (hover/tooltip flow wants
+     `keyColumn().at(i)`) and unblocks M5 heatmap. KeyColumn does
+     NOT get scalar reductions in v1 — TimeKeyColumn min/max are
+     trivial (`begin[0]` / `begin[length - 1]`); range-key max-end
+     requires a scan and is RFC-deferred per §4 close-cases. 24
+     new runtime tests + type-test narrowing per variant. Wide
+     `ColumnarKeyColumn` return on `keyColumn()` retired — the
+     impl signature still returns the substrate union internally,
+     but the public contract is the narrowed type. New public
+     type re-exports: `KeyColumnForSchema`, `TimeRangeKeyAt`,
+     `IntervalKeyAt`.
    - **8e — M1 chart adopts the new API.** ✅ Shipped 2026-05-27 in
      pond-ts-charts-experiment commit
      [`e89eca1`](https://github.com/pjm17971/pond-ts-charts-experiment/commit/e89eca1).

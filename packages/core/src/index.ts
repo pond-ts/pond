@@ -44,10 +44,17 @@ import './column-api.js';
 // chart-package `binnedToImage(col, W, 'minMax') => ImageData`
 // wrapper that takes the BinOutput<'minMax'> shape
 // explicitly without re-deriving the conditional return type).
+// Step 8d also re-exports KeyColumnForSchema (schema-narrowed
+// keyColumn() return type) + the per-row POJO shapes for range /
+// interval keys.
 export type {
   BinOutput,
   BinReducerName,
+  IntervalKeyAt,
+  KeyColumnForKind,
+  KeyColumnForSchema,
   PublicColumnForKind,
+  TimeRangeKeyAt,
 } from './column-api.js';
 
 // Step 8a: type re-exports. ────────────────────────────────────
