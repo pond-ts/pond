@@ -257,6 +257,56 @@ s.column('host').bin(100, 'count');
 // @ts-expect-error — BooleanColumn has no bin in v1
 s.column('active').bin(100, 'count');
 
+// ─── bin — optional out-buffer narrowing ─────────────────────────
+
+// Scalar reducer: out must be Float64Array(W).
+const _scalarOut: Float64Array = fcol.bin(100, 'mean', {
+  out: new Float64Array(100),
+});
+void _scalarOut;
+const _sumOutBuf = new Float64Array(50);
+const _sumOut: Float64Array = fcol.bin(50, 'sum', { out: _sumOutBuf });
+void _sumOut;
+
+// 'minMax' reducer: out must be { lo, hi } pair of Float64Arrays.
+const _minMaxOut: { lo: Float64Array; hi: Float64Array } = fcol.bin(
+  100,
+  'minMax',
+  { out: { lo: new Float64Array(100), hi: new Float64Array(100) } },
+);
+void _minMaxOut;
+
+// Percentile via 'p${q}': scalar Float64Array out.
+const _pctOut: Float64Array = fcol.bin(100, 'p95', {
+  out: new Float64Array(100),
+});
+void _pctOut;
+
+// Negative case: passing { lo, hi } to a scalar reducer fails.
+// Helper bindings keep the @ts-expect-error directive on the same
+// line as the error TypeScript reports (the assignment to `out`).
+const _badScalarOut = {
+  lo: new Float64Array(100),
+  hi: new Float64Array(100),
+};
+fcol.bin(100, 'min', {
+  // @ts-expect-error — scalar reducer needs Float64Array, not { lo, hi }
+  out: _badScalarOut,
+});
+
+// Negative case: passing Float64Array to 'minMax' fails.
+// @ts-expect-error — minMax needs { lo, hi }, not Float64Array
+fcol.bin(100, 'minMax', { out: new Float64Array(100) });
+
+// Chained: series.column('value').slice(s, e).bin(W, reducer, opts)
+const _chainedOut: { lo: Float64Array; hi: Float64Array } = s
+  .column('value')
+  .slice(0, 100)
+  .bin(50, 'minMax', {
+    out: { lo: new Float64Array(50), hi: new Float64Array(50) },
+  });
+void _chainedOut;
+
 // ─── KeyColumn — schema-narrowed return + at / slice (step 8d) ──
 
 import type {

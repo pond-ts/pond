@@ -329,3 +329,221 @@ describe('ChunkedFloat64Column.bin — same output as packed', () => {
     expect(Array.from(cMinMax.hi)).toEqual([10, 30, 60, 70]);
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* Pre-allocated output buffer — closes M1 NF2 / M2 MF2.                      */
+/* -------------------------------------------------------------------------- */
+
+describe('Float64Column.bin — options.out (pre-allocated output)', () => {
+  it('scalar reducer: writes into provided Float64Array and returns it', () => {
+    const col = f64([1, 2, 3, 4, 5, 6, 7, 8]);
+    const out = new Float64Array(4);
+    const result = col.bin(4, 'min', { out });
+    // Identity — the returned object IS the out buffer.
+    expect(result).toBe(out);
+    expect(Array.from(out)).toEqual([1, 3, 5, 7]);
+  });
+
+  it("'minMax' reducer: writes into provided { lo, hi } and returns it", () => {
+    const col = f64([1, 8, 2, 7, 3, 6, 4, 5]);
+    const lo = new Float64Array(4);
+    const hi = new Float64Array(4);
+    const result = col.bin(4, 'minMax', { out: { lo, hi } });
+    // Identity preserved.
+    expect(result.lo).toBe(lo);
+    expect(result.hi).toBe(hi);
+    expect(Array.from(lo)).toEqual([1, 2, 3, 4]);
+    expect(Array.from(hi)).toEqual([8, 7, 6, 5]);
+  });
+
+  it('reuses the same buffer across calls (chart hot-path pattern)', () => {
+    // The motivating use case — caller pre-allocates once, calls bin
+    // every frame. Verify the buffer can be reused safely.
+    const col1 = f64([1, 2, 3, 4]);
+    const col2 = f64([10, 20, 30, 40]);
+    const out = new Float64Array(2);
+    col1.bin(2, 'sum', { out });
+    expect(Array.from(out)).toEqual([3, 7]);
+    // Second call overwrites — no stale data carried over.
+    col2.bin(2, 'sum', { out });
+    expect(Array.from(out)).toEqual([30, 70]);
+  });
+
+  it('empty bins still write the empty sentinel (NaN/0) into out', () => {
+    // bins > length forces sparse output. The bin loop must write
+    // EVERY slot — pre-filling 'out' with garbage shouldn't leak
+    // through. Mathematical reducers write 0; others write NaN.
+    //
+    // Bin boundaries: floor((b*n)/bins). With n=1, bins=4, the
+    // single row lands in bin 3 (last). Bins 0-2 are empty.
+    const col = f64([10]);
+    const out = new Float64Array(4);
+    out.fill(999); // sentinel — must be overwritten
+
+    col.bin(4, 'min', { out });
+    expect(out[0]).toBeNaN();
+    expect(out[1]).toBeNaN();
+    expect(out[2]).toBeNaN();
+    expect(out[3]).toBe(10);
+
+    out.fill(999);
+    col.bin(4, 'sum', { out });
+    // sum's empty = 0 (mathematical).
+    expect(Array.from(out)).toEqual([0, 0, 0, 10]);
+  });
+
+  it('empty bins write NaN into both lo and hi', () => {
+    // n=1, bins=3 → row lands in bin 2; bins 0-1 are empty.
+    const col = f64([5]);
+    const lo = new Float64Array(3);
+    const hi = new Float64Array(3);
+    lo.fill(999);
+    hi.fill(999);
+    col.bin(3, 'minMax', { out: { lo, hi } });
+    expect(lo[0]).toBeNaN();
+    expect(hi[0]).toBeNaN();
+    expect(lo[1]).toBeNaN();
+    expect(hi[1]).toBeNaN();
+    expect(lo[2]).toBe(5);
+    expect(hi[2]).toBe(5);
+  });
+
+  it('throws on scalar/minMax shape mismatch', () => {
+    const col = f64([1, 2, 3, 4]);
+    // Scalar reducer with {lo, hi} shape → throws.
+    expect(() =>
+      col.bin(2, 'min', {
+        out: {
+          lo: new Float64Array(2),
+          hi: new Float64Array(2),
+        } as unknown as Float64Array,
+      }),
+    ).toThrow(/scalar reducer/);
+    // 'minMax' with bare Float64Array → throws.
+    expect(() =>
+      col.bin(2, 'minMax', {
+        out: new Float64Array(2) as unknown as {
+          lo: Float64Array;
+          hi: Float64Array;
+        },
+      }),
+    ).toThrow(/'minMax'.*requires.*lo.*hi/);
+  });
+
+  it('throws when out.length does not match bins', () => {
+    const col = f64([1, 2, 3, 4]);
+    expect(() => col.bin(2, 'min', { out: new Float64Array(3) })).toThrow(
+      /length must equal bins/,
+    );
+    expect(() => col.bin(2, 'min', { out: new Float64Array(1) })).toThrow(
+      /length must equal bins/,
+    );
+  });
+
+  it('throws on minMax when lo or hi length mismatches bins', () => {
+    const col = f64([1, 2, 3, 4]);
+    expect(() =>
+      col.bin(2, 'minMax', {
+        out: { lo: new Float64Array(2), hi: new Float64Array(3) },
+      }),
+    ).toThrow(/length must equal bins/);
+    expect(() =>
+      col.bin(2, 'minMax', {
+        out: { lo: new Float64Array(3), hi: new Float64Array(2) },
+      }),
+    ).toThrow(/length must equal bins/);
+  });
+
+  it('produces identical output to the non-out path', () => {
+    // Pinning the contract: out doesn't change the result — only
+    // where it's stored.
+    const col = f64([5, 3, 8, 1, 9, 2, 7, 4]);
+    const allocated = col.bin(4, 'mean');
+    const out = new Float64Array(4);
+    const supplied = col.bin(4, 'mean', { out });
+    expect(supplied).toBe(out);
+    expect(Array.from(out)).toEqual(Array.from(allocated));
+
+    const a = col.bin(4, 'minMax');
+    const lo = new Float64Array(4);
+    const hi = new Float64Array(4);
+    col.bin(4, 'minMax', { out: { lo, hi } });
+    expect(Array.from(lo)).toEqual(Array.from(a.lo));
+    expect(Array.from(hi)).toEqual(Array.from(a.hi));
+  });
+
+  it('rejects aliased lo/hi buffers for minMax (silent-aliasing footgun)', () => {
+    // If lo and hi point to the same Float64Array, the loop's
+    // `lo[b] = extent[0]; hi[b] = extent[1]` would alias and
+    // silently produce [max, max, ...] in the shared slot.
+    // The check throws so callers get a clear error instead.
+    const col = f64([1, 2, 3, 4]);
+    const shared = new Float64Array(2);
+    expect(() =>
+      col.bin(2, 'minMax', { out: { lo: shared, hi: shared } }),
+    ).toThrow(/distinct buffers/);
+  });
+
+  it('works at bins = 1 with out', () => {
+    // Smallest bin count — single slot covers the whole column.
+    const col = f64([1, 2, 3, 4, 5]);
+    const out = new Float64Array(1);
+    col.bin(1, 'sum', { out });
+    expect(out[0]).toBe(15);
+
+    const lo = new Float64Array(1);
+    const hi = new Float64Array(1);
+    col.bin(1, 'minMax', { out: { lo, hi } });
+    expect(lo[0]).toBe(1);
+    expect(hi[0]).toBe(5);
+  });
+
+  it("works with percentile-via-'p${q}' string + out", () => {
+    // Percentile reducers route through resolveReducer's
+    // parsePercentile; verify they accept the out option too.
+    const col = f64([10, 20, 30, 40, 50, 60, 70, 80]);
+    const out = new Float64Array(2);
+    const result = col.bin(2, 'p95', { out });
+    expect(result).toBe(out);
+    // Bin 0: [10,20,30,40] → p95 ≈ 38.5
+    // Bin 1: [50,60,70,80] → p95 ≈ 78.5
+    // Just verify the slots got real numbers (not NaN, not stale).
+    expect(out[0]).toBeGreaterThan(30);
+    expect(out[0]).toBeLessThan(45);
+    expect(out[1]).toBeGreaterThan(70);
+    expect(out[1]).toBeLessThan(85);
+  });
+});
+
+describe('ChunkedFloat64Column.bin — options.out (delegates through materialize)', () => {
+  it('writes into provided Float64Array on the materialized path', () => {
+    const c1 = f64([1, 2, 3, 4]);
+    const c2 = f64([5, 6, 7, 8]);
+    const chunked = new ChunkedFloat64Column([c1, c2], 8);
+    const out = new Float64Array(4);
+    const result = chunked.bin(4, 'min', { out });
+    expect(result).toBe(out);
+    expect(Array.from(out)).toEqual([1, 3, 5, 7]);
+  });
+
+  it("'minMax' on chunked writes into provided { lo, hi }", () => {
+    const c1 = f64([1, 8, 2, 7]);
+    const c2 = f64([3, 6, 4, 5]);
+    const chunked = new ChunkedFloat64Column([c1, c2], 8);
+    const lo = new Float64Array(4);
+    const hi = new Float64Array(4);
+    const result = chunked.bin(4, 'minMax', { out: { lo, hi } });
+    expect(result.lo).toBe(lo);
+    expect(result.hi).toBe(hi);
+    expect(Array.from(lo)).toEqual([1, 2, 3, 4]);
+    expect(Array.from(hi)).toEqual([8, 7, 6, 5]);
+  });
+
+  it('chunked propagates length-mismatch errors from the underlying packed bin', () => {
+    const c1 = f64([1, 2]);
+    const chunked = new ChunkedFloat64Column([c1], 2);
+    expect(() => chunked.bin(2, 'min', { out: new Float64Array(3) })).toThrow(
+      /length must equal bins/,
+    );
+  });
+});

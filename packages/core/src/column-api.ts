@@ -244,9 +244,43 @@ declare module './columnar/column.js' {
     firstDefined(): number | undefined;
     lastDefined(): number | undefined;
 
-    // Index-bucketed reduction. See `docs/rfcs/column-api.md` §7.3
-    // and §8 worked example.
-    bin<R extends BinReducerName>(bins: number, reducer: R): BinOutput<R>;
+    /**
+     * Index-bucketed reduction. See `docs/rfcs/column-api.md` §7.3
+     * and §8 worked example.
+     *
+     * The optional `options.out` lets callers supply a pre-
+     * allocated output buffer matching the reducer's `BinOutput<R>`
+     * shape — `Float64Array(bins)` for scalar reducers,
+     * `{ lo: Float64Array(bins); hi: Float64Array(bins) }` for
+     * `'minMax'`. When provided, `bin` writes into it instead of
+     * allocating a fresh buffer; the returned object is the
+     * `out` itself (same reference). Lengths must match `bins`
+     * exactly — mismatch throws `RangeError`.
+     *
+     * Constraints on `out` for `'minMax'`: `lo` and `hi` must be
+     * **distinct** `Float64Array`s. Passing the same reference for
+     * both throws `TypeError` (the loop's `lo[b]=` / `hi[b]=`
+     * writes would otherwise alias and silently produce
+     * `[max, max, ...]` output).
+     *
+     * Resizable / shared array buffers: `bin` captures length at
+     * call time. Mid-call resize / detach is undefined behavior;
+     * keep the buffer stable for the duration of the call.
+     *
+     * The motivating use case is a chart adapter's per-frame
+     * pixel-bin loop. Without `out`, each frame allocates two
+     * `Float64Array(W)` for `'minMax'` (or one for scalar
+     * reducers); at 60 fps with multiple columns this is real
+     * allocation churn — the chart-experiment M2 milestone
+     * measured ~2× cost vs a fused / pre-allocated walk
+     * ([friction note](https://github.com/pjm17971/pond-ts-charts-experiment/blob/main/friction-notes/M2-multi-column-overlay.md)).
+     * Reusing a buffer across frames retires that churn.
+     */
+    bin<R extends BinReducerName>(
+      bins: number,
+      reducer: R,
+      options?: { out: BinOutput<R> },
+    ): BinOutput<R>;
   }
 
   interface BooleanColumn {
@@ -326,7 +360,11 @@ declare module './columnar/chunked-column.js' {
     last(): number | undefined;
     firstDefined(): number | undefined;
     lastDefined(): number | undefined;
-    bin<R extends BinReducerName>(bins: number, reducer: R): BinOutput<R>;
+    bin<R extends BinReducerName>(
+      bins: number,
+      reducer: R,
+      options?: { out: BinOutput<R> },
+    ): BinOutput<R>;
   }
 
   interface ChunkedBooleanColumn {
@@ -577,6 +615,7 @@ Float64Column.prototype.lastDefined = function (): number | undefined {
 Float64Column.prototype.bin = function <R extends BinReducerName>(
   bins: number,
   reducer: R,
+  options?: { out: BinOutput<R> },
 ): BinOutput<R> {
   if (!Number.isInteger(bins) || bins <= 0) {
     throw new RangeError(
@@ -593,8 +632,45 @@ Float64Column.prototype.bin = function <R extends BinReducerName>(
   // channels — half the memory traffic of `[min(), max()]`.
 
   if (reducer === 'minMax') {
-    const lo = new Float64Array(bins);
-    const hi = new Float64Array(bins);
+    let lo: Float64Array;
+    let hi: Float64Array;
+    if (options?.out !== undefined) {
+      // Validate the caller-supplied out has the minMax shape and
+      // matching lengths. Length-mismatch throws rather than
+      // silently writing past the end / leaving stale slots — the
+      // out-buffer contract is "this is exactly the output."
+      const provided = options.out as unknown as {
+        lo?: Float64Array;
+        hi?: Float64Array;
+      };
+      if (
+        !(provided.lo instanceof Float64Array) ||
+        !(provided.hi instanceof Float64Array)
+      ) {
+        throw new TypeError(
+          `Float64Column.bin: 'minMax' reducer requires options.out to be { lo: Float64Array, hi: Float64Array }`,
+        );
+      }
+      if (provided.lo.length !== bins || provided.hi.length !== bins) {
+        throw new RangeError(
+          `Float64Column.bin: options.out.lo / options.out.hi length must equal bins (${bins}); got lo.length=${provided.lo.length}, hi.length=${provided.hi.length}`,
+        );
+      }
+      if (provided.lo === provided.hi) {
+        // Aliased buffers — `lo[b] = extent[0]; hi[b] = extent[1]`
+        // would silently produce `[max]` over the same slots because
+        // `hi`'s write follows `lo`'s. Throw rather than producing
+        // wrong output. Closes L2 finding on PR #161.
+        throw new TypeError(
+          `Float64Column.bin: options.out.lo and options.out.hi must be distinct buffers; got the same reference`,
+        );
+      }
+      lo = provided.lo;
+      hi = provided.hi;
+    } else {
+      lo = new Float64Array(bins);
+      hi = new Float64Array(bins);
+    }
     for (let b = 0; b < bins; b += 1) {
       const start = Math.floor((b * n) / bins);
       const end = Math.floor(((b + 1) * n) / bins);
@@ -636,7 +712,23 @@ Float64Column.prototype.bin = function <R extends BinReducerName>(
     );
   }
 
-  const out = new Float64Array(bins);
+  let out: Float64Array;
+  if (options?.out !== undefined) {
+    const provided = options.out as unknown;
+    if (!(provided instanceof Float64Array)) {
+      throw new TypeError(
+        `Float64Column.bin: scalar reducer '${reducer}' requires options.out to be a Float64Array`,
+      );
+    }
+    if (provided.length !== bins) {
+      throw new RangeError(
+        `Float64Column.bin: options.out length must equal bins (${bins}); got ${provided.length}`,
+      );
+    }
+    out = provided;
+  } else {
+    out = new Float64Array(bins);
+  }
   for (let b = 0; b < bins; b += 1) {
     const start = Math.floor((b * n) / bins);
     const end = Math.floor(((b + 1) * n) / bins);
@@ -956,12 +1048,15 @@ ChunkedFloat64Column.prototype.lastDefined = function (): number | undefined {
 ChunkedFloat64Column.prototype.bin = function <R extends BinReducerName>(
   bins: number,
   reducer: R,
+  options?: { out: BinOutput<R> },
 ): BinOutput<R> {
   // v1: materialize then delegate. Future PR can walk chunks per
   // bin without the materialize copy when bin boundaries align with
   // chunk boundaries (the common case after concatSorted of two
-  // equal-sized chunks at a chart-friendly bin count).
-  return materializeChunkedFloat64(this).bin(bins, reducer);
+  // equal-sized chunks at a chart-friendly bin count). The `out`
+  // option passes straight through — the same buffer the chunked
+  // caller supplied gets written by the underlying packed bin.
+  return materializeChunkedFloat64(this).bin(bins, reducer, options);
 };
 
 // ─── ChunkedBooleanColumn runtime implementations ────────────────
