@@ -252,6 +252,27 @@ describe('Float64Column public methods', () => {
       expect(out).toBe(c.values);
     });
 
+    it('packed with oversized buffer: bounded subarray (NOT raw values)', () => {
+      // Float64Column's constructor permits `length < values.length`
+      // — used by ColumnarRingBuffer and other capacity-grown
+      // patterns. The contract is "returns Float64Array of length
+      // this.length"; if we returned `this.values` directly, callers
+      // would see the tail capacity (slots that read / scan / reducers
+      // never expose). Regression test pinned by Codex finding on
+      // PR #165.
+      const buf = Float64Array.of(1, 2, 999, 999);
+      const c = new Float64Column(buf, 2); // logical length 2, buffer length 4
+      const out = c.toFloat64Array();
+      expect(out.length).toBe(2);
+      expect(out.length).toBe(c.length);
+      expect(Array.from(out)).toEqual([1, 2]);
+      // Still a view over the same buffer (no copy) — just bounded.
+      expect(out.buffer).toBe(buf.buffer);
+      // NOT identity with .values in this case (subarray is a fresh
+      // TypedArray view object).
+      expect(out).not.toBe(c.values);
+    });
+
     it('packed with validity: returns raw values including undefined-marked slots', () => {
       // The undefined-marked positions still carry whatever value
       // the source put there — toFloat64Array doesn't replace

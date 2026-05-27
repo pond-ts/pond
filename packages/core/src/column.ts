@@ -246,18 +246,26 @@ declare module './columnar/column.js' {
 
     /**
      * Storage-agnostic typed-array gather. Returns a
-     * `Float64Array` of length `this.length`, identity-on-
-     * packed and gather-on-chunked:
+     * `Float64Array` of length **exactly** `this.length`,
+     * identity-when-possible:
      *
-     * - **Packed** (`Float64Column`): returns `this.values`
-     *   exactly — same reference, no allocation. The returned
-     *   buffer shares the column's storage and inherits its
-     *   read-only-by-convention contract (writes through the
-     *   buffer corrupt trusted-construction invariants).
+     * - **Packed** (`Float64Column`), exact-sized buffer (the
+     *   typical case where `values.length === length`): returns
+     *   `this.values` exactly — same reference, no allocation.
+     * - **Packed**, oversized buffer (`values.length > length`
+     *   — capacity-grown columns from `ColumnarRingBuffer` or
+     *   similar): returns `this.values.subarray(0, length)` — a
+     *   bounded view over the same backing buffer (no copy, but
+     *   a fresh `Float64Array` view object).
      * - **Chunked** (`ChunkedFloat64Column`): allocates a fresh
      *   `Float64Array(this.length)` and gathers the chunks into
      *   it via the substrate's `materializeChunkedFloat64`. One
      *   linear pass.
+     *
+     * The returned buffer shares the column's storage and
+     * inherits its read-only-by-convention contract (writes
+     * through the buffer corrupt trusted-construction
+     * invariants).
      *
      * Motivating use case: chart adapters that want raw typed-
      * array access for inline canvas draw without caring about
@@ -612,10 +620,21 @@ Float64Column.prototype.lastDefined = function (): number | undefined {
 };
 
 Float64Column.prototype.toFloat64Array = function (): Float64Array {
-  // Identity on packed — `this.values` IS the Float64Array.
-  // Same buffer, no allocation. Read-only by convention (same as
-  // .values).
-  return this.values;
+  // The public contract is "returns a Float64Array of length
+  // this.length". Float64Column's constructor accepts oversized
+  // buffers (length < values.length is permitted; see the
+  // ColumnarRingBuffer / capacity-grown allocation patterns).
+  // Returning `this.values` directly would leak the tail
+  // capacity to callers, exposing slots that read / scan /
+  // reducers never expose. Closes Codex finding on PR #165.
+  //
+  // Exact-sized buffer (the typical case): return `this.values`
+  // for identity / zero allocation. Oversized buffer: return a
+  // subarray view bounded to `this.length` — still a view
+  // (no buffer copy), but a fresh TypedArray view object.
+  return this.values.length === this.length
+    ? this.values
+    : this.values.subarray(0, this.length);
 };
 
 /**
