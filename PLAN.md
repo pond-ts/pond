@@ -4431,14 +4431,37 @@ columnar.mjs`.
      Review chain: L2 medium → 3 substantive fixes (chunked
      type-safety hole, missing negative tests, JSDoc/code
      mismatch) → Codex pass approve, no material findings.
-   - **8c — `slice` + `bin` together (single PR).** Zero-
-     copy view + binned-reducer family. They ship together because
-     they're "useless apart" — `bin` without `slice`
-     would need a four-arg `(start, end, W, reducer)` signature;
-     `slice` without `bin` loses the chart's headline
-     win. The `'minMax'` variant returns `{ lo: Float64Array(W);
-hi: Float64Array(W) }` per the chart-experiment reviewer's
-     stride-1 cache-pattern finding. Pending.
+   - **8c — `bin` (chart per-pixel downsampler).** ✅ Shipped (PR
+     #156, merged 2026-05-27). `Float64Column.bin(W, reducer)` lands the chart's
+     headline primitive: equal-width index bins with a reducer per
+     bin, output type narrowing per reducer name (`'minMax'` →
+     `{ lo, hi }`, scalar reducers → `Float64Array(W)`). The fused
+     `'minMax'` variant collapses the chart's manual per-pixel
+     min/max loop into one method call; the `{ lo, hi }` shape was
+     the chart-experiment reviewer's stride-1 cache-pattern finding.
+     Empty-bin convention: `sum` / `count` → 0 (mathematical),
+     others → NaN (canvas-friendly: `ctx.lineTo(px, NaN)` breaks
+     the sub-path). `slice` (zero-copy view) was already on the
+     substrate from earlier work and exposed via 8b — the original
+     8c framing of "slice + bin together" was unnecessary once 8b
+     shipped slice as part of the substrate's already-mounted
+     surface, so 8c was scoped to bin alone. Implementation
+     delegates per bin to PR #153's `reducer.reduceColumn` fast
+     paths; `minMax` inlines through the substrate's existing
+     fused walk. Chunked variant delegates to materialize-then-bin
+     per the 8b pattern. Tests: 28 new runtime tests covering all
+     reducers, percentile via `'p${q}'`, empty / sparse bins,
+     validity gaps (including chunked-specific coverage), edge
+     cases, plus type-test narrowing per reducer. **Naming
+     walkback:** V3 of the RFC originally proposed `binnedByIndex`
+     to disambiguate from a deferred `binnedByTime`; in review the
+     past-tense form felt overlong, so the method renamed to `bin`
+     with the time-axis companion renamed to `binByTime` for
+     parallelism. The disambiguation V3 was protecting is
+     preserved by the operation's location — Column is detached
+     from the time axis (§5 guardrail), so `col.bin` is necessarily
+     index-domain. RFC's V3 amendment log records the rename with
+     historical context.
    - **8d — `KeyColumn` `.at(i)` + `.slice(s, e)`.** Mirrors
      Column's shape on the key axis. KeyColumn does NOT get scalar
      reductions in v1 (TimeKeyColumn min/max are trivial; range-
