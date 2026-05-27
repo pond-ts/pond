@@ -190,3 +190,61 @@ s.column('time');
 // @ts-expect-error — StringColumn.values isn't a Float64Array
 const _stringValuesAsFloat: Float64Array = s.column('host').values;
 void _stringValuesAsFloat;
+
+// ─── binnedByIndex — output type narrows on reducer name ─────────
+
+// Scalar reducers all return Float64Array.
+const _binMin: Float64Array = fcol.binnedByIndex(100, 'min');
+const _binMax: Float64Array = fcol.binnedByIndex(100, 'max');
+const _binSum: Float64Array = fcol.binnedByIndex(100, 'sum');
+const _binMean: Float64Array = fcol.binnedByIndex(100, 'mean');
+const _binStdev: Float64Array = fcol.binnedByIndex(100, 'stdev');
+const _binMedian: Float64Array = fcol.binnedByIndex(100, 'median');
+const _binCount: Float64Array = fcol.binnedByIndex(100, 'count');
+const _binP95: Float64Array = fcol.binnedByIndex(100, 'p95');
+const _binP999: Float64Array = fcol.binnedByIndex(100, 'p99.9');
+void _binMin;
+void _binMax;
+void _binSum;
+void _binMean;
+void _binStdev;
+void _binMedian;
+void _binCount;
+void _binP95;
+void _binP999;
+
+// 'minMax' narrows to the two-channel shape.
+const _binMinMax: { lo: Float64Array; hi: Float64Array } = fcol.binnedByIndex(
+  100,
+  'minMax',
+);
+void _binMinMax;
+const _binLo: Float64Array = _binMinMax.lo;
+const _binHi: Float64Array = _binMinMax.hi;
+void _binLo;
+void _binHi;
+
+// Cross-call: series.column('value').binnedByIndex(...) chains.
+const _chartBins: { lo: Float64Array; hi: Float64Array } = s
+  .column('value')
+  .binnedByIndex(800, 'minMax');
+void _chartBins;
+
+// Slice then bin still narrows correctly.
+const _slicedBins: Float64Array = s
+  .column('value')
+  .slice(0, 1000)
+  .binnedByIndex(100, 'mean');
+void _slicedBins;
+
+// @ts-expect-error — unknown reducer name
+fcol.binnedByIndex(100, 'cpu');
+
+// @ts-expect-error — invalid percentile prefix (not pNN)
+fcol.binnedByIndex(100, 'xyz');
+
+// @ts-expect-error — binnedByIndex is on Float64Column only (not on
+// StringColumn / BooleanColumn / ArrayColumn for v1)
+s.column('host').binnedByIndex(100, 'count');
+// @ts-expect-error — binnedByIndex is on Float64Column only
+s.column('active').binnedByIndex(100, 'count');

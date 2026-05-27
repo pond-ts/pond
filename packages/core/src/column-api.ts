@@ -81,6 +81,47 @@ export type PublicColumnForKind<
         ? ArrayColumn | ChunkedArrayColumn
         : never;
 
+/**
+ * Reducer-name string accepted by `Float64Column.binnedByIndex(W,
+ * reducer)`. Built-in scalar reducers (`'min'`, `'max'`, `'sum'`,
+ * `'mean'`, `'stdev'`, `'median'`, `'count'`) produce one number per
+ * bin. The percentile family is reached via the `'p${q}'`
+ * convention (e.g. `'p95'`, `'p99.9'`) where `q` is in `[0, 100]` —
+ * runtime check enforces the range. The fused `'minMax'` is special:
+ * it returns a two-channel `{ lo, hi }` rather than a single
+ * `Float64Array`.
+ */
+export type BinnedByIndexReducerName =
+  | 'min'
+  | 'max'
+  | 'sum'
+  | 'mean'
+  | 'stdev'
+  | 'median'
+  | 'count'
+  | `p${number}`
+  | 'minMax';
+
+/**
+ * Output type for `Float64Column.binnedByIndex(W, reducer)`. Narrows
+ * on the reducer name so consumers don't need a runtime cast:
+ *
+ * - Scalar reducers (min/max/sum/mean/stdev/median/count/p${q})
+ *   produce `Float64Array(W)` — one number per bin. Empty bins
+ *   land as `NaN` (or `0` for `'count'` and `'sum'`, where empty
+ *   has a well-defined mathematical value).
+ * - `'minMax'` produces `{ lo: Float64Array(W); hi: Float64Array(W) }`
+ *   — stride-1 access per channel matches the canvas-2D inner draw
+ *   loop's per-pixel `lo[px]` / `hi[px]` reads. Empty bins on both
+ *   channels are `NaN`.
+ *
+ * Generalized for future multi-point reducers (e.g. LTTB) — those
+ * would land as their own output shape (e.g. `{ keys, values }`
+ * with W output points). The shape per reducer is the contract.
+ */
+export type BinnedByIndexOutput<R extends BinnedByIndexReducerName> =
+  R extends 'minMax' ? { lo: Float64Array; hi: Float64Array } : Float64Array;
+
 // ─── Type-level augmentations ────────────────────────────────────
 //
 // `declare module` adds members to each class's interface. The
@@ -125,6 +166,13 @@ declare module './columnar/column.js' {
     last(): number | undefined;
     firstDefined(): number | undefined;
     lastDefined(): number | undefined;
+
+    // Index-bucketed reduction. See `docs/rfcs/column-api.md` §7.3
+    // and §8 worked example.
+    binnedByIndex<R extends BinnedByIndexReducerName>(
+      bins: number,
+      reducer: R,
+    ): BinnedByIndexOutput<R>;
   }
 
   interface BooleanColumn {
@@ -204,6 +252,10 @@ declare module './columnar/chunked-column.js' {
     last(): number | undefined;
     firstDefined(): number | undefined;
     lastDefined(): number | undefined;
+    binnedByIndex<R extends BinnedByIndexReducerName>(
+      bins: number,
+      reducer: R,
+    ): BinnedByIndexOutput<R>;
   }
 
   interface ChunkedBooleanColumn {
@@ -369,6 +421,118 @@ Float64Column.prototype.lastDefined = function (): number | undefined {
     if (v.isDefined(i)) return this.values[i];
   }
   return undefined;
+};
+
+/**
+ * Equal-width index-bucketed reduction. Splits `[0, length)` into
+ * `bins` ranges of (near-)equal index count, applies the reducer
+ * to each range's column slice, and packs the results into the
+ * output buffer.
+ *
+ * The chart's per-frame downsampler:
+ *
+ * ```ts
+ * const visible = series.column('value').slice(startIdx, endIdx);
+ * const { lo, hi } = visible.binnedByIndex(cssWidth, 'minMax');
+ * for (let px = 0; px < cssWidth; px += 1) {
+ *   ctx.moveTo(px, scaleY(hi[px]!));
+ *   ctx.lineTo(px, scaleY(lo[px]!));
+ * }
+ * ```
+ *
+ * Empty bins (which happen when `bins > length`) land as `NaN` for
+ * reducers whose mathematical empty is undefined (min / max /
+ * mean / stdev / median / percentile), and as `0` for reducers
+ * whose empty has a well-defined value (sum / count). The `NaN`
+ * convention is canvas-friendly: `ctx.lineTo(px, NaN)` breaks the
+ * sub-path, which is the correct visual for "no data here."
+ *
+ * **Uniform-sampling precondition** (per RFC §8): equal-width
+ * **index** bins match equal-width **pixel** bins only when adjacent
+ * samples are uniformly time-spaced. For bursty / irregular data
+ * the chart needs time-aware binning (deferred to step 8g
+ * `series.binnedByTime`); `binnedByIndex` then becomes "correct
+ * for uniform input, lying for non-uniform" and is the wrong
+ * tool. The method name spells out the index-domain semantics so
+ * the call site can't confuse the two.
+ */
+Float64Column.prototype.binnedByIndex = function <
+  R extends BinnedByIndexReducerName,
+>(bins: number, reducer: R): BinnedByIndexOutput<R> {
+  if (!Number.isInteger(bins) || bins <= 0) {
+    throw new RangeError(
+      `Float64Column.binnedByIndex: bins must be a positive integer, got ${bins}`,
+    );
+  }
+  const n = this.length;
+
+  // ─── Fused minMax — two-channel output ─────────────────────────
+  //
+  // Special-cased because it's the chart's per-pixel hot path and
+  // its output shape ({lo, hi}) doesn't fit the scalar Float64Array
+  // mold. Each bin walks once, fuses both reductions, writes both
+  // channels — half the memory traffic of `[min(), max()]`.
+
+  if (reducer === 'minMax') {
+    const lo = new Float64Array(bins);
+    const hi = new Float64Array(bins);
+    for (let b = 0; b < bins; b += 1) {
+      const start = Math.floor((b * n) / bins);
+      const end = Math.floor(((b + 1) * n) / bins);
+      if (end <= start) {
+        lo[b] = NaN;
+        hi[b] = NaN;
+        continue;
+      }
+      const extent = this.sliceByRange(start, end).minMax();
+      if (extent === undefined) {
+        lo[b] = NaN;
+        hi[b] = NaN;
+      } else {
+        lo[b] = extent[0];
+        hi[b] = extent[1];
+      }
+    }
+    return { lo, hi } as BinnedByIndexOutput<R>;
+  }
+
+  // ─── Scalar reducers ──────────────────────────────────────────
+  //
+  // Dispatch to the registered reducer's reduceColumn fast path
+  // (PR #153) once per bin. The 'mean' → 'avg' mapping mirrors
+  // the public Float64Column.mean() shim. Percentile-via-string
+  // ('p95', 'p99.9', etc.) routes through resolveReducer's
+  // parsePercentile.
+
+  const internalName = reducer === 'mean' ? 'avg' : reducer;
+  let reducerDef;
+  try {
+    reducerDef = resolveReducer(internalName);
+  } catch {
+    throw new TypeError(
+      `Float64Column.binnedByIndex: unknown reducer '${reducer}'`,
+    );
+  }
+  if (reducerDef.reduceColumn === undefined) {
+    throw new TypeError(
+      `Float64Column.binnedByIndex: reducer '${reducer}' has no reduceColumn fast path`,
+    );
+  }
+
+  const out = new Float64Array(bins);
+  for (let b = 0; b < bins; b += 1) {
+    const start = Math.floor((b * n) / bins);
+    const end = Math.floor(((b + 1) * n) / bins);
+    if (end <= start) {
+      // Preserve mathematical-empty for sum / count (both = 0);
+      // NaN for reducers whose empty is undefined.
+      out[b] = reducer === 'sum' || reducer === 'count' ? 0 : NaN;
+      continue;
+    }
+    const result = reducerDef.reduceColumn(this.sliceByRange(start, end));
+    out[b] = typeof result === 'number' ? result : NaN;
+  }
+  return out as BinnedByIndexOutput<R>;
 };
 
 // ─── BooleanColumn runtime implementations ───────────────────────
@@ -671,6 +835,15 @@ ChunkedFloat64Column.prototype.firstDefined = function (): number | undefined {
 };
 ChunkedFloat64Column.prototype.lastDefined = function (): number | undefined {
   return materializeChunkedFloat64(this).lastDefined();
+};
+ChunkedFloat64Column.prototype.binnedByIndex = function <
+  R extends BinnedByIndexReducerName,
+>(bins: number, reducer: R): BinnedByIndexOutput<R> {
+  // v1: materialize then delegate. Future PR can walk chunks per
+  // bin without the materialize copy when bin boundaries align with
+  // chunk boundaries (the common case after concatSorted of two
+  // equal-sized chunks at a chart-friendly bin count).
+  return materializeChunkedFloat64(this).binnedByIndex(bins, reducer);
 };
 
 // ─── ChunkedBooleanColumn runtime implementations ────────────────
