@@ -30,8 +30,16 @@
 import {
   ArrayColumn,
   BooleanColumn,
+  ChunkedArrayColumn,
+  ChunkedBooleanColumn,
+  ChunkedFloat64Column,
+  ChunkedStringColumn,
   Float64Column,
   StringColumn,
+  materializeChunkedArray,
+  materializeChunkedBoolean,
+  materializeChunkedFloat64,
+  materializeChunkedString,
 } from './columnar/index.js';
 import type { ScalarValue } from './columnar/index.js';
 import { resolveReducer } from './reducers/index.js';
@@ -40,36 +48,37 @@ import { percentileReducer } from './reducers/percentile.js';
 /**
  * Public column type for a given declared schema kind. Used by the
  * schema-narrowed `TimeSeries.column(name)` signature (RFC §7.2)
- * so `series.column('value')` is typed as `Float64Column`,
- * `series.column('host')` as `StringColumn`, etc.
+ * so `series.column('value')` is typed as `Float64Column |
+ * ChunkedFloat64Column`, `series.column('host')` as
+ * `StringColumn | ChunkedStringColumn`, etc.
  *
- * **v1 scope: packed only.** The method augmentations in this
- * file only attach to the packed substrate classes. Chunked
- * variants (`ChunkedFloat64Column`, etc.) exist in the substrate
- * but don't yet have the public method surface — a future PR
- * adds them, either via parallel augmentation or by routing
- * through `materialize()`. Callers who genuinely need to handle
- * chunked storage today use the wide `column(name: string):
- * ColumnarColumn | undefined` overload and narrow via `instanceof
- * Chunked...Column`.
+ * Both packed and chunked variants carry the full public method
+ * surface (per the augmentations below). Chunked methods delegate
+ * to `materialize().method()` for v1 — correct, but ~2× the cost
+ * of the packed-native path. A future PR may add chunked-native
+ * implementations for the hot reductions; the v1 contract holds
+ * either way.
  *
- * In practice: chart-extraction (M1), per-frame reductions, and
- * single-pass aggregates all run on packed columns from
- * `new TimeSeries({rows})`. Chunked columns only appear after
- * `concatSorted` — a deliberately-internal substrate primitive.
- * v1's packed-only narrowing covers the public-API surface
- * cleanly; chunked surfaces when the friction earns it.
+ * Why include chunked in the narrow return rather than packing-
+ * only? An earlier draft narrowed to packed-only and pushed
+ * chunked callers to the wide `column(name: string)` overload,
+ * but L2 review on PR #155 flagged this as a runtime type-safety
+ * hole: `concatSorted` and other substrate paths can produce
+ * chunked columns at runtime where the type system would say
+ * packed. Better to widen the type and pay the
+ * materialize-per-method cost on the rare chunked path than to
+ * lie at the type level about what `column(name)` can return.
  */
 export type PublicColumnForKind<
   K extends 'number' | 'boolean' | 'string' | 'array',
 > = K extends 'number'
-  ? Float64Column
+  ? Float64Column | ChunkedFloat64Column
   : K extends 'boolean'
-    ? BooleanColumn
+    ? BooleanColumn | ChunkedBooleanColumn
     : K extends 'string'
-      ? StringColumn
+      ? StringColumn | ChunkedStringColumn
       : K extends 'array'
-        ? ArrayColumn
+        ? ArrayColumn | ChunkedArrayColumn
         : never;
 
 // ─── Type-level augmentations ────────────────────────────────────
@@ -95,6 +104,15 @@ declare module './columnar/column.js' {
     stdev(): number | undefined;
     median(): number | undefined;
     percentile(q: number): number | undefined;
+
+    /**
+     * Count of **defined cells** (validity-bitmap-aware). NOT the
+     * event count — diverges from `series.length` when the column
+     * has any undefined cells. For an all-defined column equals
+     * `col.length`. Matches the data-frame `count` idiom (Polars /
+     * Pandas / numpy all use `count` for non-null counting on a
+     * column).
+     */
     count(): number;
     minMax(): [number, number] | undefined;
 
@@ -143,6 +161,81 @@ declare module './columnar/array-column.js' {
   interface ArrayColumn {
     at(i: number): ReadonlyArray<ScalarValue> | undefined;
     slice(start: number, end: number): ArrayColumn;
+    hasMissing(): boolean;
+    nullCount(): number;
+    first(): ReadonlyArray<ScalarValue> | undefined;
+    last(): ReadonlyArray<ScalarValue> | undefined;
+    firstDefined(): ReadonlyArray<ScalarValue> | undefined;
+    lastDefined(): ReadonlyArray<ScalarValue> | undefined;
+  }
+}
+
+// ─── Chunked variants — same public surface, materialize-backed ───
+//
+// Each chunked class delegates reductions to its `materialize*()`
+// helper, then dispatches the method on the packed result. This is
+// ~2× the cost of the packed-native path but is correct without
+// chunked-native algorithm work. A future PR can replace the
+// delegations with chunked-native implementations for the hot
+// reductions (`min`/`max` decompose per-chunk; `sum` decomposes;
+// `stdev` doesn't in general — see §B of the column-api RFC's V3
+// amendment for the friction-driven sequencing).
+//
+// `slice` uses the chunked-native `sliceByRange` which preserves
+// chunked storage where possible. `at(i)` uses the chunked `read(i)`
+// which is already O(log chunks) via the offset binary search.
+
+declare module './columnar/chunked-column.js' {
+  interface ChunkedFloat64Column {
+    at(i: number): number | undefined;
+    slice(start: number, end: number): Float64Column | ChunkedFloat64Column;
+    min(): number | undefined;
+    max(): number | undefined;
+    sum(): number;
+    mean(): number | undefined;
+    stdev(): number | undefined;
+    median(): number | undefined;
+    percentile(q: number): number | undefined;
+    count(): number;
+    minMax(): [number, number] | undefined;
+    hasMissing(): boolean;
+    nullCount(): number;
+    first(): number | undefined;
+    last(): number | undefined;
+    firstDefined(): number | undefined;
+    lastDefined(): number | undefined;
+  }
+
+  interface ChunkedBooleanColumn {
+    at(i: number): boolean | undefined;
+    slice(start: number, end: number): BooleanColumn | ChunkedBooleanColumn;
+    all(): boolean;
+    any(): boolean;
+    none(): boolean;
+    count(): number;
+    hasMissing(): boolean;
+    nullCount(): number;
+    first(): boolean | undefined;
+    last(): boolean | undefined;
+    firstDefined(): boolean | undefined;
+    lastDefined(): boolean | undefined;
+  }
+
+  interface ChunkedStringColumn {
+    at(i: number): string | undefined;
+    slice(start: number, end: number): StringColumn | ChunkedStringColumn;
+    uniqueCount(): number;
+    hasMissing(): boolean;
+    nullCount(): number;
+    first(): string | undefined;
+    last(): string | undefined;
+    firstDefined(): string | undefined;
+    lastDefined(): string | undefined;
+  }
+
+  interface ChunkedArrayColumn {
+    at(i: number): ReadonlyArray<ScalarValue> | undefined;
+    slice(start: number, end: number): ArrayColumn | ChunkedArrayColumn;
     hasMissing(): boolean;
     nullCount(): number;
     first(): ReadonlyArray<ScalarValue> | undefined;
@@ -516,4 +609,179 @@ ArrayColumn.prototype.lastDefined = function ():
     if (v.isDefined(i)) return this.read(i);
   }
   return undefined;
+};
+
+// ─── ChunkedFloat64Column runtime implementations ────────────────
+
+ChunkedFloat64Column.prototype.at = function (i: number): number | undefined {
+  return this.read(i);
+};
+ChunkedFloat64Column.prototype.slice = function (start: number, end: number) {
+  return this.sliceByRange(start, end);
+};
+ChunkedFloat64Column.prototype.min = function (): number | undefined {
+  return materializeChunkedFloat64(this).min();
+};
+ChunkedFloat64Column.prototype.max = function (): number | undefined {
+  return materializeChunkedFloat64(this).max();
+};
+ChunkedFloat64Column.prototype.sum = function (): number {
+  return materializeChunkedFloat64(this).sum();
+};
+ChunkedFloat64Column.prototype.mean = function (): number | undefined {
+  return materializeChunkedFloat64(this).mean();
+};
+ChunkedFloat64Column.prototype.stdev = function (): number | undefined {
+  return materializeChunkedFloat64(this).stdev();
+};
+ChunkedFloat64Column.prototype.median = function (): number | undefined {
+  return materializeChunkedFloat64(this).median();
+};
+ChunkedFloat64Column.prototype.percentile = function (
+  q: number,
+): number | undefined {
+  return materializeChunkedFloat64(this).percentile(q);
+};
+ChunkedFloat64Column.prototype.count = function (): number {
+  // Validity-defined-count is available without materializing.
+  if (!this.validity) return this.length;
+  return this.validity.definedCount;
+};
+ChunkedFloat64Column.prototype.minMax = function ():
+  | [number, number]
+  | undefined {
+  return materializeChunkedFloat64(this).minMax();
+};
+ChunkedFloat64Column.prototype.hasMissing = function (): boolean {
+  if (!this.validity) return false;
+  return this.validity.definedCount < this.length;
+};
+ChunkedFloat64Column.prototype.nullCount = function (): number {
+  if (!this.validity) return 0;
+  return this.length - this.validity.definedCount;
+};
+ChunkedFloat64Column.prototype.first = function (): number | undefined {
+  return this.read(0);
+};
+ChunkedFloat64Column.prototype.last = function (): number | undefined {
+  return this.read(this.length - 1);
+};
+ChunkedFloat64Column.prototype.firstDefined = function (): number | undefined {
+  return materializeChunkedFloat64(this).firstDefined();
+};
+ChunkedFloat64Column.prototype.lastDefined = function (): number | undefined {
+  return materializeChunkedFloat64(this).lastDefined();
+};
+
+// ─── ChunkedBooleanColumn runtime implementations ────────────────
+
+ChunkedBooleanColumn.prototype.at = function (i: number): boolean | undefined {
+  return this.read(i);
+};
+ChunkedBooleanColumn.prototype.slice = function (start: number, end: number) {
+  return this.sliceByRange(start, end);
+};
+ChunkedBooleanColumn.prototype.all = function (): boolean {
+  return materializeChunkedBoolean(this).all();
+};
+ChunkedBooleanColumn.prototype.any = function (): boolean {
+  return materializeChunkedBoolean(this).any();
+};
+ChunkedBooleanColumn.prototype.none = function (): boolean {
+  return materializeChunkedBoolean(this).none();
+};
+ChunkedBooleanColumn.prototype.count = function (): number {
+  if (!this.validity) return this.length;
+  return this.validity.definedCount;
+};
+ChunkedBooleanColumn.prototype.hasMissing = function (): boolean {
+  if (!this.validity) return false;
+  return this.validity.definedCount < this.length;
+};
+ChunkedBooleanColumn.prototype.nullCount = function (): number {
+  if (!this.validity) return 0;
+  return this.length - this.validity.definedCount;
+};
+ChunkedBooleanColumn.prototype.first = function (): boolean | undefined {
+  return this.read(0);
+};
+ChunkedBooleanColumn.prototype.last = function (): boolean | undefined {
+  return this.read(this.length - 1);
+};
+ChunkedBooleanColumn.prototype.firstDefined = function (): boolean | undefined {
+  return materializeChunkedBoolean(this).firstDefined();
+};
+ChunkedBooleanColumn.prototype.lastDefined = function (): boolean | undefined {
+  return materializeChunkedBoolean(this).lastDefined();
+};
+
+// ─── ChunkedStringColumn runtime implementations ─────────────────
+
+ChunkedStringColumn.prototype.at = function (i: number): string | undefined {
+  return this.read(i);
+};
+ChunkedStringColumn.prototype.slice = function (start: number, end: number) {
+  return this.sliceByRange(start, end);
+};
+ChunkedStringColumn.prototype.uniqueCount = function (): number {
+  return materializeChunkedString(this).uniqueCount();
+};
+ChunkedStringColumn.prototype.hasMissing = function (): boolean {
+  if (!this.validity) return false;
+  return this.validity.definedCount < this.length;
+};
+ChunkedStringColumn.prototype.nullCount = function (): number {
+  if (!this.validity) return 0;
+  return this.length - this.validity.definedCount;
+};
+ChunkedStringColumn.prototype.first = function (): string | undefined {
+  return this.read(0);
+};
+ChunkedStringColumn.prototype.last = function (): string | undefined {
+  return this.read(this.length - 1);
+};
+ChunkedStringColumn.prototype.firstDefined = function (): string | undefined {
+  return materializeChunkedString(this).firstDefined();
+};
+ChunkedStringColumn.prototype.lastDefined = function (): string | undefined {
+  return materializeChunkedString(this).lastDefined();
+};
+
+// ─── ChunkedArrayColumn runtime implementations ──────────────────
+
+ChunkedArrayColumn.prototype.at = function (
+  i: number,
+): ReadonlyArray<ScalarValue> | undefined {
+  return this.read(i);
+};
+ChunkedArrayColumn.prototype.slice = function (start: number, end: number) {
+  return this.sliceByRange(start, end);
+};
+ChunkedArrayColumn.prototype.hasMissing = function (): boolean {
+  if (!this.validity) return false;
+  return this.validity.definedCount < this.length;
+};
+ChunkedArrayColumn.prototype.nullCount = function (): number {
+  if (!this.validity) return 0;
+  return this.length - this.validity.definedCount;
+};
+ChunkedArrayColumn.prototype.first = function ():
+  | ReadonlyArray<ScalarValue>
+  | undefined {
+  return this.read(0);
+};
+ChunkedArrayColumn.prototype.last = function ():
+  | ReadonlyArray<ScalarValue>
+  | undefined {
+  return this.read(this.length - 1);
+};
+ChunkedArrayColumn.prototype.firstDefined = function ():
+  | ReadonlyArray<ScalarValue>
+  | undefined {
+  return materializeChunkedArray(this).firstDefined();
+};
+ChunkedArrayColumn.prototype.lastDefined = function ():
+  | ReadonlyArray<ScalarValue>
+  | undefined {
+  return materializeChunkedArray(this).lastDefined();
 };

@@ -126,7 +126,7 @@ void _sfirst;
 
 declare const acol: ArrayColumn;
 
-const _aat = acol.at(0); // ReadonlyArray<ScalarValue> | undefined
+const _aat: ReadonlyArray<unknown> | undefined = acol.at(0);
 void _aat;
 const _aslice: ArrayColumn = acol.slice(0, 10);
 void _aslice;
@@ -169,3 +169,24 @@ s.column('active').median();
 declare const ac: ArrayColumn;
 // @ts-expect-error — ArrayColumn has no count() in current scope
 ac.count();
+
+// ─── Schema-narrowed column() — RFC §7.2 negative cases ─────────
+//
+// The headline narrowing claim from RFC §7.2: typos and key-column
+// names fail to compile rather than silently returning `undefined`
+// at runtime. These tests pin that contract.
+
+// @ts-expect-error — 'cpu' is not a value column in this schema
+s.column('cpu');
+
+// @ts-expect-error — typo on the real 'value' column
+s.column('valuue');
+
+// @ts-expect-error — 'time' is the key column; use keyColumn() instead
+s.column('time');
+
+// StringColumn.values is ReadonlyArray<string> | Uint32Array, NOT
+// Float64Array — Float64Array is only on numeric kinds.
+// @ts-expect-error — StringColumn.values isn't a Float64Array
+const _stringValuesAsFloat: Float64Array = s.column('host').values;
+void _stringValuesAsFloat;

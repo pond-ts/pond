@@ -1140,19 +1140,15 @@ export class TimeSeries<S extends SeriesSchema> {
    * scalar-reduction methods mounted by `src/column-api.ts`
    * (`.min()`, `.max()`, `.mean()`, etc.). `series.column('host')`
    * (`kind: 'string'`) returns `StringColumn | ChunkedStringColumn`,
-   * without the numeric methods. See `docs/rfcs/column-api.md` §7.2
-   * for the design + §7.4 for the type-level acceptance tests.
+   * without the numeric methods. Both packed and chunked variants
+   * carry the full method surface — chunked delegates reductions
+   * to `materialize().method()` for v1; see
+   * `docs/rfcs/column-api.md` §7.2 for the design and §7.4 for the
+   * type-level acceptance tests.
    */
   column<Name extends ValueColumnNameForSchema<S>>(
     name: Name,
   ): PublicColumnForKind<ValueColumnKindForName<S, Name>>;
-  /**
-   * @deprecated Use the schema-narrowed overload. This wider signature
-   * is retained for dynamic-name callers (e.g. iterating
-   * `series.schema`) and returns the wide `Column | undefined` union;
-   * narrow via `.kind` / `.storage` to reach the per-kind methods.
-   */
-  column(name: string): ColumnarColumn | undefined;
   column(name: string): ColumnarColumn | undefined {
     return this.#store.store.columns.get(name);
   }

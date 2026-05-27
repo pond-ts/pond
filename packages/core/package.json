@@ -11,6 +11,9 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "sideEffects": [
+    "./dist/column-api.js"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

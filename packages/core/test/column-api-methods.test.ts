@@ -258,10 +258,22 @@ describe('BooleanColumn public methods', () => {
     expect(bool([false, true, false]).none()).toBe(false);
   });
 
-  it('all/any skip invalid cells', () => {
+  it('all skips invalid cells', () => {
     // false at index 0 is invalid, so all-defined = [true, true]
     const c = bool([false, true, true], [false, true, true]);
     expect(c.all()).toBe(true);
+  });
+
+  it('any skips invalid cells', () => {
+    // true at index 0 is invalid, so any-defined = [false, false] → false
+    const c = bool([true, false, false], [false, true, true]);
+    expect(c.any()).toBe(false);
+  });
+
+  it('none skips invalid cells', () => {
+    // true at index 0 is invalid, so none-defined = [false, false] → true
+    const c = bool([true, false, false], [false, true, true]);
+    expect(c.none()).toBe(true);
   });
 
   it('count / hasMissing / nullCount', () => {
