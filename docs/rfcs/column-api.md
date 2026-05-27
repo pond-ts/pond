@@ -46,17 +46,17 @@ walkback, and that's the right cost basis.
 
 **Authorship:**
 
-| Section                                                  | Contributor                                                      |
-| -------------------------------------------------------- | ---------------------------------------------------------------- |
-| Original draft (thesis + tier model + division of labor) | pond-ts library agent (Claude) + pjm17971, 2026-05-26            |
-| Key insight: "Column is detached from the time axis"     | pjm17971, 2026-05-26                                             |
-| Review notes — chart-experiment perspective              | pond-ts charts experiment perspective agent (Claude), 2026-05-26 |
-| Review notes — independent library perspective           | independent pond-ts library agent (Claude), 2026-05-26           |
-| V2 amendment (response to reviews)                       | pond-ts library agent (Claude) + pjm17971, 2026-05-26            |
-| Codex adversarial pass on V2                             | Codex, 2026-05-26                                                |
-| §7 type system rewrite (piece A)                         | pond-ts library agent (Claude) + pjm17971, 2026-05-26            |
-| V3 amendment (single-spec restructure, pieces D + E)     | pond-ts library agent (Claude) + pjm17971, 2026-05-27            |
-| Codex adversarial pass on V3                             | _pending_                                                        |
+| Section                                                      | Contributor                                                      |
+| ------------------------------------------------------------ | ---------------------------------------------------------------- |
+| Original draft (thesis + tier model + division of labor)     | pond-ts library agent (Claude) + pjm17971, 2026-05-26            |
+| Key insight: "Column is detached from the time axis"         | pjm17971, 2026-05-26                                             |
+| Review notes — chart-experiment perspective                  | pond-ts charts experiment perspective agent (Claude), 2026-05-26 |
+| Review notes — independent library perspective               | independent pond-ts library agent (Claude), 2026-05-26           |
+| V2 amendment (response to reviews)                           | pond-ts library agent (Claude) + pjm17971, 2026-05-26            |
+| Codex adversarial pass on V2                                 | Codex, 2026-05-26                                                |
+| §7 type system rewrite (piece A)                             | pond-ts library agent (Claude) + pjm17971, 2026-05-26            |
+| V3 amendment (single-spec restructure, pieces B + C + D + E) | pond-ts library agent (Claude) + pjm17971, 2026-05-27            |
+| Codex adversarial pass on V3                                 | _pending_                                                        |
 
 **Audience:** future pond-ts contributors deciding what should live on
 the public `Column` surface vs. what should stay on `TimeSeries`;
@@ -143,16 +143,18 @@ reductions** (`.min()`, `.max()`, `.sum()`, `.mean()`, `.stdev()`,
 predicates** (`.hasMissing()`, `.nullCount()`), **position-indexed
 access** (`.first()`, `.last()`, `.firstDefined()`, `.lastDefined()`,
 `.at(i)`, `.values`, `.validity`, `.length`), **index-based slicing**
-(`.slice(s, e)`), **index-based binning** (`.binned(W, reducer)`), and
-**adjacency-based fills** that don't need time spacing (`.fill('forward'
-| 'backward' | 'zero' | { constant: N })`). Per-kind narrowing
-restricts each method set: `Float64Column` gets the numeric reductions;
+(`.slice(s, e)`), and **index-based binning**
+(`.binnedByIndex(W, reducer)`). Per-kind narrowing restricts each
+method set: `Float64Column` gets the numeric reductions;
 `StringColumn` gets `.uniqueCount()` and access methods but not
-`.min()`/`.max()`; `BooleanColumn` gets `.all()` / `.any()` / `.none()`.
+`.min()` / `.max()`; `BooleanColumn` gets `.all()` / `.any()` / `.none()`.
 
 Column does **not** expose any operation that references the time
-axis, takes a `KeyLike` argument, or produces a modified TimeSeries.
-Those stay on `TimeSeries`.
+axis, takes a `KeyLike` argument, produces a modified TimeSeries,
+or carries semantics that depend on time context — including
+adjacency-based fills. `series.fill(...)` stays on TimeSeries, where
+time-aware limits (e.g. "don't carry a value across a gap longer
+than 1 hour") can be expressed.
 
 ### 4. The Column / TimeSeries division of labor
 
@@ -166,58 +168,66 @@ The table below is **illustrative, not exhaustive**; the test in §5
 is the discipline. Adding new operations applies the test, not the
 table.
 
-| Operation                                                    | Belongs on                 | Why                                                                                                                                                                        |
-| ------------------------------------------------------------ | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `min`, `max`, `sum`, `mean`                                  | `Column`                   | Pure value-vector reductions                                                                                                                                               |
-| `stdev`, `median`, `percentile(q)`                           | `Column`                   | Same — operate only on the value vector + validity                                                                                                                         |
-| `minMax`                                                     | `Column`                   | Single-pass `[min, max]` — fused for chart Y-extent (§B.1 / §B.2)                                                                                                          |
-| `count`                                                      | `Column`                   | Defined-cell count via validity bitmap; no key needed. Diverges from `series.length` when validity has gaps — see §B.7                                                     |
-| `any`, `all`, `none`                                         | `Column` (`BooleanColumn`) | Boolean predicates over validity-defined cells                                                                                                                             |
-| `uniqueCount`                                                | `Column` (`StringColumn`)  | Distinct-value cardinality; no time needed                                                                                                                                 |
-| `hasMissing`, `nullCount`                                    | `Column`                   | Validity-bitmap-only queries                                                                                                                                               |
-| `first`, `last`, `firstDefined`, `lastDefined`               | `Column`                   | Position-indexed; time-agnostic                                                                                                                                            |
-| `at(i)`, `values`, `validity`, `length`                      | `Column`                   | Position-indexed access                                                                                                                                                    |
-| `slice(start, end)`                                          | `Column`                   | Index-based; produces a Column view. `.length` on the view is O(1)                                                                                                         |
-| `binned(W, reducer)`                                         | `Column`                   | Equal-width index bins, scalar reducer per bin. For uniformly-sampled data only — see §5 close-cases                                                                       |
-| `fill('forward' \| 'backward' \| 'zero' \| { constant: N })` | `Column`                   | Adjacency- or constant-based — no time gap involved                                                                                                                        |
-| **`fill('linear')`**                                         | `TimeSeries`               | Interpolation rate depends on time gaps; needs key column                                                                                                                  |
-| `aggregate(every('5s'))`                                     | `TimeSeries`               | Bucket boundaries are time-shaped                                                                                                                                          |
-| `rolling('5s')`                                              | `TimeSeries`               | Window width is time                                                                                                                                                       |
-| `align(every('1s'))`                                         | `TimeSeries`               | Explicitly aligns values to a time grid                                                                                                                                    |
-| `within(t0, t1)`                                             | `TimeSeries`               | Time-based windowing — needs key column to translate `t` → index                                                                                                           |
-| `bisect(t)`                                                  | `TimeSeries`               | The bridge from time-space to index-space; this **is** the place where you cross from TimeSeries-land to Column-land for the chart use case                                |
-| `join`, `concat`, `groupBy`                                  | `TimeSeries`               | Multi-series / multi-column ops                                                                                                                                            |
-| `keyColumn().at(i)`, `keyColumn().slice(s, e)`               | `KeyColumn`                | Position-indexed access on the time/interval/timeRange axis. KeyColumn does NOT get reductions — `min`/`max` are trivially `begin[0]` / `end[length - 1]` given sortedness |
+| Operation                                                                                                                          | Belongs on                 | Why                                                                                                                                                                                                                                                                                                      |
+| ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `min`, `max`, `sum`, `mean`                                                                                                        | `Column`                   | Pure value-vector reductions                                                                                                                                                                                                                                                                             |
+| `stdev`, `median`, `percentile(q)`                                                                                                 | `Column`                   | Same — operate only on the value vector + validity                                                                                                                                                                                                                                                       |
+| `minMax`                                                                                                                           | `Column`                   | Single-pass `[min, max]` — fused for chart Y-extent (§B.1 / §B.2)                                                                                                                                                                                                                                        |
+| `count`                                                                                                                            | `Column`                   | Defined-cell count via validity bitmap; no key needed. Diverges from `series.length` when validity has gaps — see §B.7                                                                                                                                                                                   |
+| `any`, `all`, `none`                                                                                                               | `Column` (`BooleanColumn`) | Boolean predicates over validity-defined cells                                                                                                                                                                                                                                                           |
+| `uniqueCount`                                                                                                                      | `Column` (`StringColumn`)  | Distinct-value cardinality; no time needed                                                                                                                                                                                                                                                               |
+| `hasMissing`, `nullCount`                                                                                                          | `Column`                   | Validity-bitmap-only queries                                                                                                                                                                                                                                                                             |
+| `first`, `last`, `firstDefined`, `lastDefined`                                                                                     | `Column`                   | Position-indexed; time-agnostic                                                                                                                                                                                                                                                                          |
+| `at(i)`, `values`, `validity`, `length`                                                                                            | `Column`                   | Position-indexed access                                                                                                                                                                                                                                                                                  |
+| `slice(start, end)`                                                                                                                | `Column`                   | Index-based; produces a Column view. `.length` on the view is O(1)                                                                                                                                                                                                                                       |
+| `binnedByIndex(W, reducer)`                                                                                                        | `Column`                   | Equal-width **index** bins, scalar reducer per bin. The name spells out the index-domain semantics — see §5 close-cases for when it does and doesn't match per-pixel binning                                                                                                                             |
+| **`fill(...)`** (all modes — `'forward'`, `'backward'`, `'linear'`, `'zero'`, `{ constant: N }`, with optional time-aware `limit`) | `TimeSeries`               | Fill stays on TimeSeries _entirely_. Even adjacency-based fills (`'forward'` / `'backward'`) carry implicit time-context in real use — gap limits like "don't carry across a 1-hour gap" need the key column to express. Putting fill on Column would smuggle time semantics into a time-detached object |
+| `aggregate(every('5s'))`                                                                                                           | `TimeSeries`               | Bucket boundaries are time-shaped                                                                                                                                                                                                                                                                        |
+| `rolling('5s')`                                                                                                                    | `TimeSeries`               | Window width is time                                                                                                                                                                                                                                                                                     |
+| `align(every('1s'))`                                                                                                               | `TimeSeries`               | Explicitly aligns values to a time grid                                                                                                                                                                                                                                                                  |
+| `within(t0, t1)`                                                                                                                   | `TimeSeries`               | Time-based windowing — needs key column to translate `t` → index                                                                                                                                                                                                                                         |
+| `bisect(t)`                                                                                                                        | `TimeSeries`               | The bridge from time-space to index-space; this **is** the place where you cross from TimeSeries-land to Column-land for the chart use case                                                                                                                                                              |
+| `join`, `concat`, `groupBy`                                                                                                        | `TimeSeries`               | Multi-series / multi-column ops                                                                                                                                                                                                                                                                          |
+| `keyColumn().at(i)`, `keyColumn().slice(s, e)`                                                                                     | `KeyColumn`                | Position-indexed access on the time/interval/timeRange axis. KeyColumn does NOT get reductions — `min`/`max` are trivially `begin[0]` / `end[length - 1]` given sortedness                                                                                                                               |
 
 The line should be drawn precisely. Close-call cases worth pinning:
 
-- **`fill('linear')` vs `fill('forward')`.** Linear interpolation
-  needs the time deltas between defined cells to compute the slope;
-  forward fill just propagates the last defined value across the
-  adjacent index. So linear is TimeSeries, forward is Column. This
-  _exposes_ the dependency in the API shape, where today both live
-  on `series.fill(...)` uniformly and the time-dependence is
-  hidden in the implementation.
+- **Why `fill` stays entirely on TimeSeries.** Earlier drafts split
+  fill modes — putting `'forward'` / `'backward'` / `'zero'` on
+  Column (adjacency-based, no key needed) and `'linear'` on
+  TimeSeries (time-aware interpolation). The split is correct in
+  the syntactic sense (you _can_ implement forward-fill knowing
+  only the value vector + validity), but it fails the §5 semantic
+  clause: in real telemetry data, "carry the last value forward"
+  almost always needs a gap limit (don't carry across a multi-hour
+  gap), and the gap is time-shaped. Putting `fill` on Column would
+  ship the easy API and force the time-aware option into a separate
+  TimeSeries method, fragmenting the surface and inviting the
+  unbounded forward-fill bug. Keeping all fill modes on TimeSeries
+  forces the time-context decision to be explicit. Closes Codex's
+  V2 review finding #3.
 - **`slice` vs `within`.** `col.slice(startIdx, endIdx)` is
   index-based and lives on Column; `series.within(t0, t1)` is
   time-based and lives on TimeSeries. The bridge is `series.bisect(t)`.
-- **`binned` vs `aggregate`.** `col.binned(W, reducer)` is
-  index-bucket reduction (equal-width, W bins); `series.aggregate(every('5s'), ...)`
-  is time-bucket reduction (boundaries derived from time). The
-  chart's per-pixel downsampler uses `binned` when sampling is
-  uniform; analytics pipelines computing "5-minute averages" use
-  `aggregate`. For non-uniformly-sampled chart data the chart needs
-  time-aware binning, which lives on TimeSeries — see §11 sequencing
-  and the close-case below.
-- **`binned` (index-domain) vs `series.binnedByTime` (time-domain).**
-  `col.binned(W, reducer)` divides the column's index range into W
-  equal-count bins. That's correct when adjacent samples are
-  uniformly time-spaced; if the data is bursty / gappy / irregular,
-  index bins won't align with pixel/time spans. The time-aware
-  variant — proposed as `series.binnedByTime(name, W, range, reducer)`
-  — lives on TimeSeries because it needs the key column to pick
-  bin boundaries. The chart picks one or the other based on whether
-  the data is known to be uniformly sampled.
+- **`binnedByIndex` vs `aggregate`.** `col.binnedByIndex(W, reducer)`
+  is index-bucket reduction (equal-width, W index bins);
+  `series.aggregate(every('5s'), ...)` is time-bucket reduction
+  (boundaries derived from time). The chart's per-pixel downsampler
+  uses `binnedByIndex` when sampling is uniform; analytics pipelines
+  computing "5-minute averages" use `aggregate`. For non-uniformly-
+  sampled chart data the chart needs time-aware binning, which
+  lives on TimeSeries — see the close-case below.
+- **`binnedByIndex` (index-domain) vs `series.binnedByTime`
+  (time-domain).** `col.binnedByIndex(W, reducer)` divides the
+  column's index range into W equal-count bins. That's correct when
+  adjacent samples are uniformly time-spaced; if the data is bursty
+  / gappy / irregular, index bins won't align with pixel/time spans.
+  The time-aware variant — proposed as
+  `series.binnedByTime(name, W, range, reducer)` — lives on
+  TimeSeries because it needs the key column to pick bin boundaries.
+  The chart picks one or the other based on whether the data is
+  known to be uniformly sampled. The two method names spell out
+  which domain they bin in, so the call site is unambiguous.
 
 ### 5. The "detached from time axis" guardrail
 
@@ -277,7 +287,7 @@ const endIdx = series.bisect(viewport.end);
 
 // Step 2: Column-space from here (no time involved)
 const col = series.column('value').slice(startIdx, endIdx);
-const extents = col.binned(pixelWidth, 'minMax');
+const extents = col.binnedByIndex(pixelWidth, 'minMax');
 // extents.lo: Float64Array(W)  — per-pixel min
 // extents.hi: Float64Array(W)  — per-pixel max
 ```
@@ -678,7 +688,7 @@ function drawFrame() {
     // Per-pixel min/max downsampling — single column-method call.
     // Returns two channels; canvas inner-loop reads `lo[px]` then
     // `hi[px]` (stride-1 access on each channel).
-    const { lo, hi } = visible.binned(cssWidth, 'minMax');
+    const { lo, hi } = visible.binnedByIndex(cssWidth, 'minMax');
     // ... draw vertical lines from lo[px] to hi[px] per pixel
   } else {
     // No downsampling needed; draw raw values
@@ -688,13 +698,13 @@ function drawFrame() {
 }
 ```
 
-`visible.binned(cssWidth, 'minMax')` is the column-centric expression
-of M1 friction item #6 (`reduceColumnRange(col, start, end)`). The
-shape is cleaner than the friction note proposed — the consumer
+`visible.binnedByIndex(cssWidth, 'minMax')` is the column-centric
+expression of M1 friction item #6 (`reduceColumnRange(col, start, end)`).
+The shape is cleaner than the friction note proposed — the consumer
 doesn't think in terms of "column ranges" as a primitive; they think
 "give me min and max per pixel" as a single call.
 
-**Uniform-sampling precondition.** `col.binned(W, ...)` does
+**Uniform-sampling precondition.** `col.binnedByIndex(W, ...)` does
 equal-width index binning. If the data's adjacent samples are
 uniformly time-spaced (M1 chart's 1-per-second data, a 60Hz sensor,
 etc.), pixel-aligned bins fall out naturally. If sample timing is
@@ -720,8 +730,15 @@ review:
   `series.rolling(...)`.
 - **`col.range(t0, t1)`** — time-based range. Use
   `series.within(t0, t1).column('x')`.
-- **`col.fill('linear')`** — interpolation slope is time-based. Use
-  `series.fill({ x: 'linear' })`.
+- **`col.fill(...)` — _any_ fill mode.** Even adjacency-based fills
+  (`'forward'`, `'backward'`) carry implicit time-context in real
+  use (gap limits like "don't carry across a 1-hour gap"). The
+  syntactic case for forward-fill on Column is sound — you can
+  implement it from the value vector + validity alone — but the
+  semantic case fails the §5 second clause. Use `series.fill({ x:
+'forward', limit: ... })` and make the time-aware decision
+  explicit at the TimeSeries layer. See §4 close-case for the
+  full argument.
 - **`col.binnedByTime(W, t0, t1, reducer)`** — time-based binning;
   needs the key column. Use `series.binnedByTime(name, W, range, reducer)`.
 - **`col.isMonotonicIncreasing()` and other monotonicity-aware
@@ -854,15 +871,16 @@ Suggested sequencing once this RFC adopts:
    `ReducerDef.reduceColumn` machinery shipped in PR #153 — no new
    perf work, just method-level access. Ships with the type-level
    acceptance tests (§7.4) under `tsc --noEmit` CI enforcement.
-3. **Slice + binned together (single PR).** `Float64Column.slice(start, end)`
-   (zero-copy view via the existing `sliceByRange` substrate
-   primitive) and `Float64Column.binned<R>(W, reducer)`
-   (implementation is a loop over `reducer.reduceColumnRange`; the
-   `'minMax'` variant is the fused single-pass min+max returning
-   `{ lo, hi }`). They ship together because they're "useless apart"
-   — `binned` without `slice` would need a four-arg
-   `(start, end, W, reducer)` signature; `slice` without `binned`
-   loses the chart's headline win.
+3. **Slice + `binnedByIndex` together (single PR).**
+   `Float64Column.slice(start, end)` (zero-copy view via the
+   existing `sliceByRange` substrate primitive) and
+   `Float64Column.binnedByIndex<R>(W, reducer)` (implementation is
+   a loop over `reducer.reduceColumnRange`; the `'minMax'` variant
+   is the fused single-pass min+max returning `{ lo, hi }`). They
+   ship together because they're "useless apart" — `binnedByIndex`
+   without `slice` would need a four-arg
+   `(start, end, W, reducer)` signature; `slice` without
+   `binnedByIndex` loses the chart's headline win.
 4. **`KeyColumn` `.at(i)` + `.slice(s, e)`.** Mirrors Column's
    shape on the key axis. KeyColumn does NOT get scalar reductions.
    Unblocks M5 (heatmap) and tooltip / crosshair flows.
@@ -910,10 +928,11 @@ Each step lands as its own PR with the standard two-pass review
   callback overload for custom reducers. Matches `series.reduce(col,
 reducer)` shape.
 - ~~_`'extent'` reducer output kind._~~ — Resolved by the V2 rename
-  to `'minMax'`. The output shape is `{ lo: Float64Array(W); hi:
-Float64Array(W) }` for the binned variant and `[number, number]`
-  for the scalar variant. Special-cased in `binned`'s
-  implementation; doesn't introduce a new reducer-output kind.
+  to `'minMax'`. The output shape is
+  `{ lo: Float64Array(W); hi: Float64Array(W) }` for the
+  `binnedByIndex` variant and `[number, number]` for the scalar
+  variant. Special-cased in `binnedByIndex`'s implementation;
+  doesn't introduce a new reducer-output kind.
 - ~~_`series.column('x')` caching / identity stability._~~ —
   Decided: cached, identity-stable for the parent series' lifetime.
   `series.column('x') === series.column('x')` holds. A
@@ -1218,10 +1237,10 @@ section is gone — its content was inlined into §1–§13 directly.
 **What changed in the body:**
 
 - **§3 (proposal):** rewritten to reflect final API names — `minMax`,
-  generalized `binned<R>`, no `col.fill` rich variants (just the
-  discriminated `fill(method)` for v1; see open question above for
-  whether even that survives Codex's "fill violates the read-only
-  thesis" finding, addressed in piece C).
+  generalized `binnedByIndex<R>`. Fill is _not_ on Column at all
+  (closed in piece C); all fill modes — including adjacency-based
+  ones — stay on TimeSeries where time-aware limits can be
+  expressed.
 - **§4 (division of labor):** table expanded with V2 additions
   (`any` / `all` / `none`, `hasMissing` / `nullCount`, `first` /
   `last` / `firstDefined` / `lastDefined`, `minMax`,
@@ -1273,21 +1292,42 @@ section is gone — its content was inlined into §1–§13 directly.
   of the document. A V4 amendment can address that header-metadata
   edit if Codex's next pass flags it; this V3 focused on the body.
 
-**What V3 does NOT do (still deferred to pieces B and C):**
+**Piece B — `binned` → `binnedByIndex` rename (landed):**
 
-- **B: `binned` → `binnedByIndex` rename.** The body still calls
-  the method `binned`. Codex's finding #2 (index bins are not pixel
-  bins for irregular data) is partially addressed by §4's close-case
-  note and §8's uniform-sampling precondition, but the rename
-  itself is piece B.
-- **C: Remove `col.fill` entirely.** The body still shows
-  `col.fill(method)` per V2. Codex's finding #3 (fill violates the
-  read-only thesis; forward-fill depends on time-gap semantics)
-  recommends removing fill from Column for v1. Piece C handles
-  the deletion.
+The body now consistently calls the method `binnedByIndex`. The
+name spells out the index-domain semantics so the call site reads
+unambiguously against the time-aware
+`series.binnedByTime(name, W, range, reducer)` companion. Closes
+Codex's finding #2 in name; the underlying semantic fix (chart
+adapters must choose index-domain vs time-domain binning based on
+sampling regularity) is documented in §4's close-case and §8's
+uniform-sampling precondition.
 
-Both pieces are mechanical edits to the post-V3 body and don't
-require additional design.
+**Piece C — remove `col.fill` (landed):**
+
+All fill modes now live on TimeSeries. Closes Codex's V2 finding #3.
+The underlying argument: even adjacency-based fills (`'forward'`,
+`'backward'`) carry implicit time-context in real telemetry use —
+gap limits like "don't carry across a 1-hour gap" need the key
+column to express. The syntactic case for putting forward-fill on
+Column is sound (you can implement it from the value vector +
+validity alone), but the semantic case fails §5's second clause.
+Keeping all fill modes on TimeSeries forces the time-context
+decision to be explicit and untangles a class of unbounded-forward-
+fill bugs.
+
+Concretely:
+
+- Struck `.fill(...)` from §3's proposal.
+- The §4 division-of-labor table now has a single `fill(...)` row on
+  the TimeSeries side covering all modes (including a `limit`
+  option for gap-aware behavior).
+- §4 close-case explains _why_ all fill modes stay on TimeSeries
+  rather than splitting by mode.
+- §9 anti-patterns has `col.fill(...) — any fill mode` as an
+  explicit entry.
+- §11 sequencing has no fill step (fill stays where it already is
+  on TimeSeries; nothing new to land on Column).
 
 **Adoption gate (unchanged from V2's framing):**
 
