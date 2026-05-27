@@ -4468,13 +4468,34 @@ columnar.mjs`.
      key max-end requires a scan and is deferred). Unblocks
      experiment M5 (heatmap) and tooltip / crosshair flows.
      Pending.
-   - **8e — M1 chart adopts the new API.** The
-     pond-ts-charts-experiment updates its M1 implementation from
-     the spike accessors to the column-centric idiom. Friction
-     report from the update loop feeds any V4 amendment or new
-     follow-up RFCs. This is the validation gate: if M1 retires
-     its kind/storage dispatch boilerplate cleanly, the API
-     shape is proven. Pending.
+   - **8e — M1 chart adopts the new API.** ✅ Shipped 2026-05-27 in
+     pond-ts-charts-experiment commit
+     [`e89eca1`](https://github.com/pjm17971/pond-ts-charts-experiment/commit/e89eca1).
+     The single-column line chart rewrote from spike accessors
+     (`series.column('x').values` + manual per-pixel min/max loop)
+     to the column-centric idiom
+     (`series.column('x').slice(s, e).bin(W, 'minMax')`). Per-frame
+     chart work shrank from ~33 lines of hand-written reducer +
+     downsampler code to 8 lines of method calls. Bench confirms
+     a clean win at the load-bearing scale: N=10M full-window
+     drops from 13.1 ms → 10.7 ms (-18%), comfortably under the
+     16.7 ms 60 fps budget with real headroom for canvas draw.
+     **Validation gate verdict:** kind dispatch retires cleanly
+     (schema narrowing eliminates the `kind !== 'number'` and
+     `| undefined` guards). Storage dispatch survives at the
+     `.values` boundary because pond-ts doesn't yet expose a
+     storage-agnostic typed-array materializer at the column-API
+     surface — captured as friction NF3 in
+     [`M1-column-api-adoption.md`](https://github.com/pjm17971/pond-ts-charts-experiment/blob/main/friction-notes/M1-column-api-adoption.md).
+     Carry-forward items into the next pond-ts wave (in priority
+     order): `series.bisectBegin(ts: number): number` (was F3,
+     ergonomic), `col.toFloat64Array(): Float64Array`
+     (storage-agnostic gather, closes F1 + NF3),
+     `TimeSeries.fromTrustedColumns(...)` (was F5, producer-side
+     intake), JSDoc note on `bin`'s NaN empty-bin convention
+     (NF1, doc-only). API shape is proven for single-column
+     line charts; M2 (multi-column) and M3 (chunked) are the
+     next validation passes.
    - **8f — `BooleanColumn` / `StringColumn` reductions, on
      demand.** `all` / `any` / `none` on `BooleanColumn`;
      `uniqueCount` on `StringColumn`. Each method lands when an
