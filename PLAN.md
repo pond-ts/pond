@@ -4375,7 +4375,75 @@ columnar.mjs`.
 5. Aggregate planner (~2 weeks).
 6. String / dictionary reducer adaptation (~2 weeks).
 7. `LiveSeries` numeric ring buffer (~2 weeks).
-8. Chart-extraction alignment (~1 week).
+8. Chart-extraction alignment — **column-centric public API**
+   (~2-3 weeks total, per the sub-step sequencing).
+
+   Implements [`docs/rfcs/column-api.md`](docs/rfcs/column-api.md)
+   (V3, adopted 2026-05-27). The RFC promotes the PR #152 spike
+   accessor (`series.column('x')` / `series.keyColumn()`) into a
+   canonical, kind-narrowed, time-detached public surface for
+   single-column work. Multi-column composition and time-aware
+   operations stay event-shaped per
+   [`columnar-core.md`](docs/rfcs/columnar-core.md). RFC went
+   through original draft → chart-experiment review → independent
+   library review → V2 amendment → Codex pass on V2 → piece A
+   (type system rewrite) → V3 restructure (pieces B + C + D + E) →
+   Codex pass on V3 → V3.1 fixes (KeyColumn range-key invariant,
+   per-kind method consistency, walkback log cleanup). Adopted as
+   the binding spec; sub-step status:
+   - **8a — Public type re-exports.** Land `Column` /
+     `Float64Column` / `BooleanColumn` / `StringColumn` /
+     `ArrayColumn` / `KeyColumn` variants from the `pond-ts`
+     top-level barrel (M1 friction #4). Prerequisite for everything
+     else; small. Pending.
+   - **8b — `Float64Column` scalar reductions.** `min`, `max`,
+     `sum`, `mean`, `stdev`, `median`, `percentile(q)`, `count`,
+     `minMax`, `hasMissing`, `nullCount`, `first`, `last`,
+     `firstDefined`, `lastDefined`. Plus `scan(fn, options?)` for
+     validity-aware iteration. Dispatches through PR #153's
+     internal `reduceColumn` fast path — no new perf work.
+     Ships with `.test-d.ts` type-level acceptance tests per RFC
+     §7.4 under `tsc --noEmit` CI enforcement. Pending.
+   - **8c — `slice` + `binnedByIndex` together (single PR).** Zero-
+     copy view + binned-reducer family. They ship together because
+     they're "useless apart" — `binnedByIndex` without `slice`
+     would need a four-arg `(start, end, W, reducer)` signature;
+     `slice` without `binnedByIndex` loses the chart's headline
+     win. The `'minMax'` variant returns `{ lo: Float64Array(W);
+hi: Float64Array(W) }` per the chart-experiment reviewer's
+     stride-1 cache-pattern finding. Pending.
+   - **8d — `KeyColumn` `.at(i)` + `.slice(s, e)`.** Mirrors
+     Column's shape on the key axis. KeyColumn does NOT get scalar
+     reductions in v1 (TimeKeyColumn min/max are trivial; range-
+     key max-end requires a scan and is deferred). Unblocks
+     experiment M5 (heatmap) and tooltip / crosshair flows.
+     Pending.
+   - **8e — M1 chart adopts the new API.** The
+     pond-ts-charts-experiment updates its M1 implementation from
+     the spike accessors to the column-centric idiom. Friction
+     report from the update loop feeds any V4 amendment or new
+     follow-up RFCs. This is the validation gate: if M1 retires
+     its kind/storage dispatch boilerplate cleanly, the API
+     shape is proven. Pending.
+   - **8f — `BooleanColumn` / `StringColumn` reductions, on
+     demand.** `all` / `any` / `none` on `BooleanColumn`;
+     `uniqueCount` on `StringColumn`. Each method lands when an
+     actual consumer use case earns it — not on spec. Docs lead
+     with the generic Column shape and surface per-kind reductions
+     as additive. Pending; awaits experiment friction.
+   - **8g — (Deferred) `series.binnedByTime(name, W, range,
+     reducer)` on TimeSeries.** Time-aware variant for irregular-
+     sample charts. Composable today as
+     `series.within(t0, t1).aggregate(every((t1-t0)/W), { col:
+reducer }).column(col).values`; the dedicated shortcut lands
+     only when measured per-frame friction earns it. Deferred per
+     pond's "friction-driven additions" discipline.
+   - **8h — Docs update.** JSDoc on `series.reduce(col, reducer)`
+     points single-column callers at `series.column(name).method()`
+     as the recommended idiom. Docs site recipe for the column-
+     centric pattern (and a `@pond-ts/react` section on column
+     identity, memoization, and `useEffect` dependencies — see
+     RFC §12 caching decision). Lands alongside 8b.
 
 Each step lands as its own PR with the standard two-pass review
 (Layer 2 + Codex). The framework layer is the most load-bearing;
@@ -4425,9 +4493,14 @@ adjusts.
 - [`docs/rfcs/charts.md`](docs/rfcs/charts.md) — chart RFC; v1
   charts share columnar primitives with core.
 - [`docs/rfcs/column-api.md`](docs/rfcs/column-api.md) — column-centric
-  public API RFC (draft, 2026-05-26); supplements `columnar-core.md`
-  with the public `Column` surface returned by `series.column('x')`.
-  Awaiting multi-agent review.
+  public API RFC (V3 adopted 2026-05-27). Binding spec for Phase 4.7
+  step 8's sub-step sequencing (8a-8h above). Deliberate, small,
+  scoped walkback of `columnar-core.md`'s "public API remains
+  event-shaped" commitment, scoped to single-column / time-agnostic
+  operations. Survived original draft → two parallel reviews →
+  V2 amendment → Codex pass → V3 restructure → second Codex pass
+  → V3.1 fixes. Type-system design verified compilable; type-level
+  acceptance tests pinned in RFC §7.4 as CI-enforced contract.
 - The previous "row-oriented core stays" deferred-design entry
   (now superseded; walked back in the Deferred Design Decisions
   section above).
