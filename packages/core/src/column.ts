@@ -245,22 +245,23 @@ declare module './columnar/column.js' {
     lastDefined(): number | undefined;
 
     /**
-     * Storage-agnostic typed-array gather. Returns the column's
-     * values as a `Float64Array` whose length equals `this.length`,
-     * identity-on-packed and gather-on-chunked:
+     * Storage-agnostic typed-array gather. Returns a
+     * `Float64Array` of length `this.length`, identity-on-
+     * packed and gather-on-chunked:
      *
-     * - **Packed** (`Float64Column`): returns `this.values` —
-     *   same reference, no allocation. The returned buffer
-     *   shares the underlying storage with the column; same
-     *   trusted-buffer read-only contract as `.values`.
+     * - **Packed** (`Float64Column`): returns `this.values`
+     *   exactly — same reference, no allocation. The returned
+     *   buffer shares the column's storage and inherits its
+     *   read-only-by-convention contract (writes through the
+     *   buffer corrupt trusted-construction invariants).
      * - **Chunked** (`ChunkedFloat64Column`): allocates a fresh
      *   `Float64Array(this.length)` and gathers the chunks into
-     *   it via `materializeChunkedFloat64`. One linear pass.
+     *   it via the substrate's `materializeChunkedFloat64`. One
+     *   linear pass.
      *
-     * Motivating use case (chart-experiment M2 friction note
-     * F1 / NF3 / MF4): chart adapters that want raw typed-array
-     * access for inline canvas draw without caring about
-     * storage. Replaces the awkward
+     * Motivating use case: chart adapters that want raw typed-
+     * array access for inline canvas draw without caring about
+     * storage. Replaces the awkward storage guard
      *
      * ```ts
      * if (col.storage !== 'packed') throw ...;
@@ -280,10 +281,14 @@ declare module './columnar/column.js' {
      * `col.scan(fn)` for the storage-agnostic skip-undefined
      * walk.
      *
-     * Symmetric methods on other kinds (`BooleanColumn` →
-     * `Uint8Array`, etc.) can land as friction-driven additions;
-     * the chart's hot path is numeric, so v1 ships only the
-     * `Float64Column` version.
+     * Cross-kind note: this method is intentionally scoped to
+     * the numeric column today. A symmetric method on other
+     * kinds isn't a guaranteed fit because their `.values`
+     * shapes diverge — `BooleanColumn.values` is bit-packed
+     * (one bit per row), so a hypothetical
+     * `BooleanColumn.toUint8Array()` wouldn't be identity on
+     * packed. Each kind earns its own gather API on its own
+     * merits; v1 ships only the numeric version.
      */
     toFloat64Array(): Float64Array;
 

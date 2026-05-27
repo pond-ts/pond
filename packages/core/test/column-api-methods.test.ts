@@ -236,6 +236,8 @@ describe('Float64Column public methods', () => {
       const out = c.toFloat64Array();
       // Identity: same Float64Array reference as .values. Caller
       // shares the column's trusted-buffer read-only contract.
+      // This is the load-bearing contract for adapters that
+      // compare reference equality.
       expect(out).toBe(c.values);
       expect(out).toBeInstanceOf(Float64Array);
       expect(Array.from(out)).toEqual([1, 2, 3, 4, 5]);
@@ -246,6 +248,8 @@ describe('Float64Column public methods', () => {
       const out = c.toFloat64Array();
       expect(out).toBeInstanceOf(Float64Array);
       expect(out.length).toBe(0);
+      // Identity holds for the empty case too.
+      expect(out).toBe(c.values);
     });
 
     it('packed with validity: returns raw values including undefined-marked slots', () => {
@@ -258,16 +262,23 @@ describe('Float64Column public methods', () => {
       expect(Array.from(out)).toEqual([10, 999, 20, 999, 30]);
     });
 
-    it('packed slice: returns the subarray view (still shares buffer)', () => {
+    it('packed slice: identity holds against slice.values (NOT the source)', () => {
+      // Stronger contract than buffer-identity. The slice has its
+      // own subarray view; toFloat64Array on the slice returns
+      // THAT view, not the source's .values. Buffer is shared
+      // (subarray semantics), but the Float64Array objects are
+      // distinct between source and slice.
       const c = f64([1, 2, 3, 4, 5]);
       const slice = c.slice(1, 4);
       const out = slice.toFloat64Array();
-      expect(Array.from(out)).toEqual([2, 3, 4]);
-      // Subarray view → shares the parent buffer.
+      expect(out).toBe(slice.values);
+      expect(out).not.toBe(c.values);
+      // Buffer-identity still holds (subarray shares backing).
       expect(out.buffer).toBe(c.values.buffer);
+      expect(Array.from(out)).toEqual([2, 3, 4]);
     });
 
-    it('chunked: gathers all chunks into a fresh Float64Array', async () => {
+    it('chunked: gathers all chunks; out.length === col.length exactly', async () => {
       // Import lazily so the test file can stay symmetric with the
       // other per-kind blocks above.
       const { ChunkedFloat64Column } =
@@ -279,6 +290,11 @@ describe('Float64Column public methods', () => {
       ]);
       const out = chunked.toFloat64Array();
       expect(out).toBeInstanceOf(Float64Array);
+      // Length matches the chunked column's length exactly — NOT
+      // the sum of chunks' raw values.length (which could include
+      // unused tail capacity per chunk if the chunk was
+      // constructed with a logical length < buffer length).
+      expect(out.length).toBe(chunked.length);
       expect(out.length).toBe(9);
       expect(Array.from(out)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     });
@@ -297,6 +313,34 @@ describe('Float64Column public methods', () => {
       // Two distinct allocations — chunked has no single buffer
       // to alias, so successive calls must each materialize.
       expect(a).not.toBe(b);
+    });
+
+    it('chunked: single-chunk column still gathers correctly', async () => {
+      // Degenerate case — a chunked column with only one chunk.
+      // The gather should still produce a fresh Float64Array with
+      // the right contents (it materialises through the
+      // multi-chunk path uniformly rather than aliasing the
+      // single chunk's values buffer).
+      const { ChunkedFloat64Column } =
+        await import('../src/columnar/chunked-column.js');
+      const chunked = new ChunkedFloat64Column([
+        new Float64Column(Float64Array.from([10, 20, 30]), 3),
+      ]);
+      const out = chunked.toFloat64Array();
+      expect(out.length).toBe(chunked.length);
+      expect(Array.from(out)).toEqual([10, 20, 30]);
+    });
+
+    it('chunked: zero-length column returns an empty Float64Array', async () => {
+      // Well-formed edge case — chunked column constructed with
+      // no data. Gather should produce a zero-length array.
+      const { ChunkedFloat64Column } =
+        await import('../src/columnar/chunked-column.js');
+      const chunked = new ChunkedFloat64Column([]);
+      const out = chunked.toFloat64Array();
+      expect(out).toBeInstanceOf(Float64Array);
+      expect(out.length).toBe(0);
+      expect(out.length).toBe(chunked.length);
     });
   });
 });
