@@ -30,7 +30,17 @@ export { TimeSeries, type KeyLike } from './batch/time-series.js';
 export { top } from './reducers/index.js';
 export { ValidationError } from './core/errors.js';
 
-// ─── Column-centric public API (Phase 4.7 step 8a) ──────────────
+// ─── Column-centric public API (Phase 4.7 steps 8a + 8b) ────────
+//
+// Step 8b: side-effect import of `./column-api.js` mounts the
+// public methods (min, max, sum, mean, ..., scan-friendly access,
+// `at`, `slice`, etc.) onto the substrate column classes via
+// prototype augmentation. The augmentation lives outside
+// `columnar/` so the substrate stays pure (no reducer dependency
+// in `columnar/*.ts`; the `series-store` purity test enforces it).
+import './column-api.js';
+
+// Step 8a: type re-exports. ────────────────────────────────────
 //
 // Public column types per docs/rfcs/column-api.md (V3, adopted
 // 2026-05-27). The substrate classes that back `series.column('x')`

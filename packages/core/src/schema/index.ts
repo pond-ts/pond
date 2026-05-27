@@ -24,6 +24,7 @@ export type {
   TimeRangeKeyedSchema,
   ValueColumn,
   ValueColumnKindForName,
+  ValueColumnNameForSchema,
   ValueColumnsForSchema,
   ValueForKind,
 } from './series.js';

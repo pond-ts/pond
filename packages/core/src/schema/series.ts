@@ -124,6 +124,16 @@ export type ValueColumnKindForName<
   V extends string,
 > = Extract<ValueColumnsForSchema<S>[number], { name: V }>['kind'];
 
+/**
+ * Names of all value columns in schema `S`, regardless of kind. Used by
+ * the public `series.column(name)` accessor (RFC §7.2) to constrain
+ * `name` to a schema-valid value column at compile time — typos and
+ * key-column names fail to compile rather than returning `undefined`
+ * at runtime.
+ */
+export type ValueColumnNameForSchema<S extends SeriesSchema> =
+  ValueColumnsForSchema<S>[number]['name'];
+
 // ---------------------------------------------------------------------------
 // Column-tuple transforms — shared private helpers used across the schema
 // layer (aggregate, diff, reshape, join). Kept here so each derivation file
