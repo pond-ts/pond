@@ -22,7 +22,7 @@
 import { performance } from 'node:perf_hooks';
 import { Float64Column } from '../dist/columnar/column.js';
 // Side-effect import — installs bin / minMax / etc.
-import '../dist/column-api.js';
+import '../dist/column.js';
 
 function makeColumn(length) {
   const buf = new Float64Array(length);

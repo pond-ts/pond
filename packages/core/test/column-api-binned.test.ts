@@ -29,7 +29,7 @@ import {
   ChunkedFloat64Column,
   materializeChunkedFloat64,
 } from '../src/columnar/chunked-column.js';
-import '../src/column-api.js'; // installs the augmentations
+import '../src/column.js'; // installs the augmentations
 
 function f64(values: number[], validity?: boolean[]): Float64Column {
   const buf = Float64Array.from(values);

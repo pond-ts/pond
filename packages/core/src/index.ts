@@ -32,13 +32,13 @@ export { ValidationError } from './core/errors.js';
 
 // ─── Column-centric public API (Phase 4.7 steps 8a + 8b) ────────
 //
-// Step 8b: side-effect import of `./column-api.js` mounts the
+// Step 8b: side-effect import of `./column.js` mounts the
 // public methods (min, max, sum, mean, ..., scan-friendly access,
 // `at`, `slice`, etc.) onto the substrate column classes via
 // prototype augmentation. The augmentation lives outside
 // `columnar/` so the substrate stays pure (no reducer dependency
 // in `columnar/*.ts`; the `series-store` purity test enforces it).
-import './column-api.js';
+import './column.js';
 // Step 8c: re-export the bin reducer-name + output type
 // helpers so downstream consumers can build typed wrappers (e.g. a
 // chart-package `binnedToImage(col, W, 'minMax') => ImageData`
@@ -55,7 +55,7 @@ export type {
   KeyColumnForSchema,
   PublicColumnForKind,
   TimeRangeKeyAt,
-} from './column-api.js';
+} from './column.js';
 
 // Step 8a: type re-exports. ────────────────────────────────────
 //

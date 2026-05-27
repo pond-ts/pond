@@ -12,7 +12,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "sideEffects": [
-    "./dist/column-api.js"
+    "./dist/column.js"
   ],
   "exports": {
     ".": {

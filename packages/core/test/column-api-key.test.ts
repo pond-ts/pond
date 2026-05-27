@@ -27,7 +27,7 @@ import {
 } from '../src/columnar/index.js';
 import { TimeSeries } from '../src/index.js';
 // Side-effect import — installs the at / slice augmentations.
-import '../src/column-api.js';
+import '../src/column.js';
 
 /* -------------------------------------------------------------------------- */
 /* TimeKeyColumn                                                              */

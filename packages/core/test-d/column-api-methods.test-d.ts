@@ -25,7 +25,7 @@ import { TimeSeries } from '../src/index.js';
 
 // Side-effect import to install method augmentations on the class
 // prototypes that this test references via the public types.
-import '../src/column-api.js';
+import '../src/column.js';
 
 const schema = [
   { name: 'time', kind: 'time' },
@@ -244,7 +244,7 @@ fcol.bin(100, 'cpu');
 fcol.bin(100, 'xyz');
 
 // bin isn't on StringColumn / BooleanColumn / ArrayColumn
-// (no declare-module augmentation in column-api.ts), so the call
+// (no declare-module augmentation in column.ts), so the call
 // fails with "Property 'bin' does not exist." The
 // inaccessibility comes from the missing augmentation, not from
 // any narrowing on the binned signature itself — if v1 adds

@@ -96,7 +96,7 @@ import { PartitionedTimeSeries } from './partitioned-time-series.js';
 import type { BatchSampleStrategy } from '../sequence/sample.js';
 import { Sequence } from '../sequence/sequence.js';
 import { type Column as ColumnarColumn } from '../columnar/index.js';
-import type { KeyColumnForSchema, PublicColumnForKind } from '../column-api.js';
+import type { KeyColumnForSchema, PublicColumnForKind } from '../column.js';
 import { SeriesStore } from '../live/series-store.js';
 import { validateAndNormalize } from './validate.js';
 import type { DurationInput } from '../core/duration.js';
@@ -1134,7 +1134,7 @@ export class TimeSeries<S extends SeriesSchema> {
    * returning `undefined` at runtime. The return type narrows by
    * kind: `series.column('value')` (where `value` is `kind: 'number'`)
    * returns `Float64Column | ChunkedFloat64Column`, with all the
-   * scalar-reduction methods mounted by `src/column-api.ts`
+   * scalar-reduction methods mounted by `src/column.ts`
    * (`.min()`, `.max()`, `.mean()`, etc.). `series.column('host')`
    * (`kind: 'string'`) returns `StringColumn | ChunkedStringColumn`,
    * without the numeric methods. Both packed and chunked variants

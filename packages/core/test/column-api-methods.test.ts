@@ -2,7 +2,7 @@
  * Runtime tests for Phase 4.7 step 8b — the column-API method
  * surface mounted on `Float64Column` / `BooleanColumn` /
  * `StringColumn` / `ArrayColumn` via prototype augmentation in
- * `src/column-api.ts`.
+ * `src/column.ts`.
  *
  * The reducer-backed methods (min/max/sum/mean/stdev/median/
  * percentile/count) delegate to PR #153's
@@ -30,12 +30,12 @@ import {
   stringColumnFromArray,
 } from '../src/columnar/string-column.js';
 
-// `column-api.ts` mounts the methods via side-effect import. The
+// `column.ts` mounts the methods via side-effect import. The
 // public barrel (`src/index.ts`) imports it; the side-effect
 // import below installs the prototype augmentations on the
 // in-tree substrate classes that the test references via the
 // `'../src/...'` paths below.
-import '../src/column-api.js';
+import '../src/column.js';
 
 // ─── Helpers ────────────────────────────────────────────────────
 
