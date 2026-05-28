@@ -1,7 +1,7 @@
 // Chart-extraction spike for Phase 4.7 step 2 → step 8.
 //
 // Hypothesis: a chart adapter walking the typed-array buffers directly
-// via `series.column('value').values` + `series.keyColumn().begin` is
+// via `series.column('value').toFloat64Array()` + `series.keyColumn().begin` is
 // dramatically faster than the row-API path
 // (`series.events[i].get('value')` + `series.events[i].begin()`).
 //
@@ -15,7 +15,7 @@
 //          adapter would write today if it didn't know about the
 //          substrate. Forces full event materialization on first
 //          access.
-//      (b) Columnar API: `series.column('value').values[i]` — the
+//      (b) Columnar API: `series.column('value').toFloat64Array()[i]` — the
 //          minimum-viable shape this spike adds.
 //      (c) Hoisted refs: same as (b) but the typed arrays are
 //          dereferenced once before the loop, so the inner loop is
@@ -88,11 +88,11 @@ const results = [];
 //     a new series, like after a store update).
 results.push(
   bench(
-    `(b) columnar API — series.column('value').values[i] × ${N} (fresh series)`,
+    `(b) columnar API — series.column('value').toFloat64Array()[i] × ${N} (fresh series)`,
     () => {
       const series = new TimeSeries({ name: 's', schema: SCHEMA, rows });
       const xs = series.keyColumn().begin;
-      const ys = series.column('value').values;
+      const ys = series.column('value').toFloat64Array();
       let sum = 0;
       for (let i = 0; i < xs.length; i += 1) {
         sum += xs[i] + ys[i];
@@ -108,7 +108,7 @@ results.push(
 {
   const series = new TimeSeries({ name: 's', schema: SCHEMA, rows });
   const xs = series.keyColumn().begin;
-  const ys = series.column('value').values;
+  const ys = series.column('value').toFloat64Array();
   results.push(
     bench(`(c) hoisted typed arrays — pure inner loop × ${N}`, () => {
       let sum = 0;

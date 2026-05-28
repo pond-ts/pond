@@ -250,11 +250,11 @@ declare module './columnar/column.js' {
      * identity-when-possible:
      *
      * - **Packed** (`Float64Column`), exact-sized buffer (the
-     *   typical case where `values.length === length`): returns
-     *   `this.values` exactly — same reference, no allocation.
-     * - **Packed**, oversized buffer (`values.length > length`
+     *   typical case where `_values.length === length`): returns
+     *   `this._values` exactly — same reference, no allocation.
+     * - **Packed**, oversized buffer (`_values.length > length`
      *   — capacity-grown columns from `ColumnarRingBuffer` or
-     *   similar): returns `this.values.subarray(0, length)` — a
+     *   similar): returns `this._values.subarray(0, length)` — a
      *   bounded view over the same backing buffer (no copy, but
      *   a fresh `Float64Array` view object).
      * - **Chunked** (`ChunkedFloat64Column`): allocates a fresh
@@ -273,7 +273,7 @@ declare module './columnar/column.js' {
      *
      * ```ts
      * if (col.storage !== 'packed') throw ...;
-     * const values = col._values;
+     * const values = col._values;  // substrate-internal handle
      * ```
      *
      * with
