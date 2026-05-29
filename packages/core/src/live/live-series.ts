@@ -25,11 +25,7 @@ import { TimeSeries, toKey, type KeyLike } from '../batch/time-series.js';
 import { ValidationError } from '../core/errors.js';
 import { parseJsonRows } from '../batch/json.js';
 import type { TimeZoneOptions } from '../core/calendar.js';
-import type {
-  EventKey,
-  IntervalInput,
-  TimeRangeInput,
-} from '../core/temporal.js';
+import type { IntervalInput, TimeRangeInput } from '../core/temporal.js';
 import type { Sequence } from '../sequence/sequence.js';
 import {
   EMITS_EVICT,
@@ -60,6 +56,11 @@ import type {
 } from '../schema/index.js';
 import { LiveFusedRolling } from './live-fused-rolling.js';
 import { LiveReduce } from './live-reduce.js';
+import {
+  EventArrayLiveStorage,
+  compareKeys,
+  type LiveStorage,
+} from './live-storage.js';
 import type { SampleStrategy } from '../sequence/sample.js';
 import type {
   FusedMapping,
@@ -154,24 +155,6 @@ function assertCellKind(kind: string, value: unknown, name: string): void {
   }
 }
 
-/**
- * Comparator used by `#insert` to order the live buffer. Delegates
- * to `EventKey.compare`, which:
- *   - For Time / TimeRange: begin / end / type
- *   - For Interval: begin / end / value (so two intervals with the
- *     same span but different values are ordered by value)
- *
- * Must match the comparator that Tier 2 query primitives
- * (`bisect`, `includesKey`, `atOrBefore`, `atOrAfter`) use to
- * search the buffer — otherwise interval-keyed series can hold
- * same-span intervals in arrival order while bisect expects
- * value-ascending order, producing false-negative `includesKey`
- * results. Codex caught this on PR #125 review.
- */
-function compareKeys(a: EventKey, b: EventKey): number {
-  return a.compare(b);
-}
-
 // ── Types ───────────────────────────────────────────────────────
 
 export type OrderingMode = 'strict' | 'drop' | 'reorder';
@@ -224,7 +207,7 @@ export class LiveSeries<S extends SeriesSchema> {
   readonly #maxEvents: number;
   readonly #maxAgeMs: number;
 
-  #events: EventForSchema<S>[];
+  #storage: LiveStorage<S>;
 
   readonly #onEvent: Set<EventListener<S>>;
   readonly #onBatch: Set<BatchListener<S>>;
@@ -273,16 +256,23 @@ export class LiveSeries<S extends SeriesSchema> {
       );
     }
 
-    this.#events = [];
+    validateSchema(this.schema);
+
+    // Storage strategy. The behavior-preserving extraction uses the
+    // `Event[]` backing for every ordering mode. A follow-up adds a
+    // `ColumnarRingBuffer` backing for the append-only `strict` /
+    // `drop` modes; `reorder` keeps the array backing (an append-only
+    // ring cannot splice mid-stream). Selecting here keeps every
+    // accessor below storage-agnostic.
+    this.#storage = new EventArrayLiveStorage<S>(this.schema);
+
     this.#onEvent = new Set();
     this.#onBatch = new Set();
     this.#onEvict = new Set();
-
-    validateSchema(this.schema);
   }
 
   get length(): number {
-    return this.#events.length;
+    return this.#storage.length;
   }
 
   get graceWindowMs(): number {
@@ -290,16 +280,16 @@ export class LiveSeries<S extends SeriesSchema> {
   }
 
   at(index: number): EventForSchema<S> | undefined {
-    if (index < 0) index = this.#events.length + index;
-    return this.#events[index];
+    if (index < 0) index = this.#storage.length + index;
+    return this.#storage.at(index);
   }
 
   first(): EventForSchema<S> | undefined {
-    return this.#events[0];
+    return this.#storage.at(0);
   }
 
   last(): EventForSchema<S> | undefined {
-    return this.#events[this.#events.length - 1];
+    return this.#storage.last();
   }
 
   // ── Query primitives ─────────────────────────────────────────
@@ -315,31 +305,42 @@ export class LiveSeries<S extends SeriesSchema> {
   find(
     predicate: (event: EventForSchema<S>, index: number) => boolean,
   ): EventForSchema<S> | undefined {
-    return this.#events.find((event, index) => predicate(event, index));
+    const len = this.#storage.length;
+    for (let i = 0; i < len; i += 1) {
+      const event = this.#storage.at(i)!;
+      if (predicate(event, i)) return event;
+    }
+    return undefined;
   }
 
   /** Example: `live.some(e => e.get('healthy'))`. True when at least one event matches. */
   some(
     predicate: (event: EventForSchema<S>, index: number) => boolean,
   ): boolean {
-    return this.#events.some((event, index) => predicate(event, index));
+    const len = this.#storage.length;
+    for (let i = 0; i < len; i += 1) {
+      if (predicate(this.#storage.at(i)!, i)) return true;
+    }
+    return false;
   }
 
   /** Example: `live.every(e => e.get('healthy'))`. True when every event matches. */
   every(
     predicate: (event: EventForSchema<S>, index: number) => boolean,
   ): boolean {
-    return this.#events.every((event, index) => predicate(event, index));
+    const len = this.#storage.length;
+    for (let i = 0; i < len; i += 1) {
+      if (!predicate(this.#storage.at(i)!, i)) return false;
+    }
+    return true;
   }
 
   /** Example: `live.includesKey(new Time(t))`. True when an event with an exactly matching key exists. */
   includesKey(key: KeyLike): boolean {
     const normalizedKey = toKey(key);
     const index = this.bisect(normalizedKey);
-    return (
-      index < this.#events.length &&
-      this.#events[index]!.key().equals(normalizedKey)
-    );
+    const keyAt = this.#storage.keyAt(index);
+    return keyAt !== undefined && keyAt.equals(normalizedKey);
   }
 
   /**
@@ -351,10 +352,10 @@ export class LiveSeries<S extends SeriesSchema> {
   bisect(key: KeyLike): number {
     const normalizedKey = toKey(key);
     let low = 0;
-    let high = this.#events.length;
+    let high = this.#storage.length;
     while (low < high) {
       const mid = (low + high) >>> 1;
-      if (this.#events[mid]!.key().compare(normalizedKey) < 0) {
+      if (this.#storage.keyAt(mid)!.compare(normalizedKey) < 0) {
         low = mid + 1;
       } else {
         high = mid;
@@ -367,18 +368,16 @@ export class LiveSeries<S extends SeriesSchema> {
   atOrBefore(key: KeyLike): EventForSchema<S> | undefined {
     const normalizedKey = toKey(key);
     const index = this.bisect(normalizedKey);
-    if (
-      index < this.#events.length &&
-      this.#events[index]!.key().equals(normalizedKey)
-    ) {
-      return this.#events[index];
+    const keyAt = this.#storage.keyAt(index);
+    if (keyAt !== undefined && keyAt.equals(normalizedKey)) {
+      return this.#storage.at(index);
     }
-    return index === 0 ? undefined : this.#events[index - 1];
+    return index === 0 ? undefined : this.#storage.at(index - 1);
   }
 
   /** Example: `live.atOrAfter(new Time(t))`. Event with the exact key, or the nearest later one. */
   atOrAfter(key: KeyLike): EventForSchema<S> | undefined {
-    return this.#events[this.bisect(key)];
+    return this.#storage.at(this.bisect(key));
   }
 
   push(...rows: RowForSchema<S>[]): void {
@@ -413,8 +412,8 @@ export class LiveSeries<S extends SeriesSchema> {
       if (this.#insert(event)) {
         // Increment the counter immediately after a successful
         // insert and BEFORE listener fan-out. If a listener throws
-        // partway through the loop, the event is committed in
-        // `#events` and reflected in `length` — `ingested` must
+        // partway through the loop, the event is committed in the
+        // buffer and reflected in `length` — `ingested` must
         // reflect that too, so callers can recover from listener
         // exceptions without observability counters lying.
         this.#statsIngested++;
@@ -533,8 +532,7 @@ export class LiveSeries<S extends SeriesSchema> {
   }
 
   clear(): void {
-    const evicted = this.#events;
-    this.#events = [];
+    const evicted = this.#storage.clear();
     if (evicted.length > 0) {
       // `clear()` is observable via the same `'evict'` channel as
       // retention-driven removal, so it increments the same
@@ -546,18 +544,7 @@ export class LiveSeries<S extends SeriesSchema> {
   }
 
   toTimeSeries(name?: string): TimeSeries<S> {
-    const rows = this.#events.map((event) => {
-      const row: unknown[] = [event.key()];
-      for (let col = 1; col < this.schema.length; col++) {
-        row.push(event.get((this.schema[col] as any).name));
-      }
-      return row;
-    });
-    return new TimeSeries({
-      name: name ?? this.name,
-      schema: this.schema,
-      rows: rows as RowForSchema<S>[],
-    });
+    return this.#storage.snapshot(name ?? this.name);
   }
 
   /**
@@ -855,10 +842,9 @@ export class LiveSeries<S extends SeriesSchema> {
    * `O(1)` — reads first/last directly.
    */
   timeRange(): number {
-    if (this.#events.length < 2) return 0;
-    return (
-      this.#events[this.#events.length - 1]!.begin() - this.#events[0]!.begin()
-    );
+    const len = this.#storage.length;
+    if (len < 2) return 0;
+    return this.#storage.beginAt(len - 1)! - this.#storage.beginAt(0)!;
   }
 
   /**
@@ -873,7 +859,7 @@ export class LiveSeries<S extends SeriesSchema> {
   eventRate(): number {
     const span = this.timeRange();
     if (span === 0) return 0;
-    return (this.#events.length / span) * 1000;
+    return (this.#storage.length / span) * 1000;
   }
 
   /**
@@ -906,7 +892,7 @@ export class LiveSeries<S extends SeriesSchema> {
     earliestTs?: number;
     latestTs?: number;
   } {
-    const length = this.#events.length;
+    const length = this.#storage.length;
     const result: {
       ingested: number;
       evicted: number;
@@ -921,8 +907,8 @@ export class LiveSeries<S extends SeriesSchema> {
       length,
     };
     if (length > 0) {
-      result.earliestTs = this.#events[0]!.begin();
-      result.latestTs = this.#events[length - 1]!.begin();
+      result.earliestTs = this.#storage.beginAt(0)!;
+      result.latestTs = this.#storage.beginAt(length - 1)!;
     }
     return result;
   }
@@ -1122,11 +1108,25 @@ export class LiveSeries<S extends SeriesSchema> {
     return new Event(key, data) as unknown as EventForSchema<S>;
   }
 
+  /**
+   * Ordering-policy gate. Decides whether `event` is accepted into
+   * the buffer, and via which storage mutation:
+   *
+   * - In-order (key `>=` last): appended at the tail.
+   * - Out-of-order under `strict`: throws.
+   * - Out-of-order under `drop`: returns `false` (rejected).
+   * - Out-of-order under `reorder` (within grace): sorted-inserted.
+   * - Out-of-order under `reorder` (past grace): throws.
+   *
+   * `LiveSeries` owns the policy; the storage backing owns the
+   * mutation (`appendTrusted` / `insertSortedTrusted`). Returns
+   * `true` if the event was accepted, `false` if dropped.
+   */
   #insert(event: EventForSchema<S>): boolean {
-    const last = this.#events[this.#events.length - 1];
+    const last = this.#storage.last();
 
     if (!last || compareKeys(last.key(), event.key()) <= 0) {
-      this.#events.push(event);
+      this.#storage.appendTrusted(event);
       return true;
     }
 
@@ -1149,34 +1149,37 @@ export class LiveSeries<S extends SeriesSchema> {
               `(latest: ${last.begin()}, grace: ${this.#graceWindowMs}ms)`,
           );
         }
-        let lo = 0;
-        let hi = this.#events.length;
-        while (lo < hi) {
-          const mid = (lo + hi) >>> 1;
-          if (compareKeys(this.#events[mid]!.key(), event.key()) <= 0) {
-            lo = mid + 1;
-          } else {
-            hi = mid;
-          }
-        }
-        this.#events.splice(lo, 0, event);
+        this.#storage.insertSortedTrusted(event);
         return true;
       }
     }
   }
 
-  #applyRetention(): EventForSchema<S>[] {
+  /**
+   * Retention policy. Computes how many oldest rows to evict from
+   * `maxEvents` (count cap) and `maxAge` (time cap), then asks the
+   * storage backing to drop that prefix and return the evicted
+   * events for the `'evict'` listener.
+   *
+   * `LiveSeries` owns the policy (reading `length` + `beginAt`);
+   * the storage backing owns the eviction mechanics. Runs once per
+   * push, AFTER the per-event listener fan-out — so a per-event
+   * listener observes the pre-retention buffer state, preserving
+   * the `event → retention → batch → evict` contract.
+   */
+  #applyRetention(): ReadonlyArray<EventForSchema<S>> {
     let evictCount = 0;
+    const len = this.#storage.length;
 
-    if (this.#events.length > this.#maxEvents) {
-      evictCount = this.#events.length - this.#maxEvents;
+    if (len > this.#maxEvents) {
+      evictCount = len - this.#maxEvents;
     }
 
-    if (this.#maxAgeMs !== Infinity && this.#events.length > 0) {
-      const latest = this.#events[this.#events.length - 1]!;
-      const cutoff = latest.begin() - this.#maxAgeMs;
+    if (this.#maxAgeMs !== Infinity && len > 0) {
+      const latest = this.#storage.beginAt(len - 1)!;
+      const cutoff = latest - this.#maxAgeMs;
       let i = evictCount;
-      while (i < this.#events.length && this.#events[i]!.begin() < cutoff) {
+      while (i < len && this.#storage.beginAt(i)! < cutoff) {
         i++;
       }
       evictCount = Math.max(evictCount, i);
@@ -1184,6 +1187,6 @@ export class LiveSeries<S extends SeriesSchema> {
 
     if (evictCount === 0) return [];
 
-    return this.#events.splice(0, evictCount);
+    return this.#storage.evictPrefix(evictCount);
   }
 }
