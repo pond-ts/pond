@@ -866,3 +866,223 @@ describe('snapshot decoupling from the ring', () => {
     expect(snap.valueAt(99, 'value')).toBe(5119);
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* _appendRowTrusted — row-shape streaming intake (Step 7 prerequisite)        */
+/* -------------------------------------------------------------------------- */
+
+describe('_appendRowTrusted (Time keys)', () => {
+  it('appends a single row and snapshots it', () => {
+    const ring = new ColumnarRingBuffer(TIME_SCHEMA, { retention: 100 });
+    ring._appendRowTrusted(1000, 1000, undefined, [10, true]);
+    expect(ring.length).toBe(1);
+    const snap = ring.snapshot();
+    expect(snap.length).toBe(1);
+    expect(snap.beginAt(0)).toBe(1000);
+    expect(snap.valueAt(0, 'value')).toBe(10);
+    expect(snap.valueAt(0, 'flag')).toBe(true);
+  });
+
+  it('appends multiple rows in order via repeated calls', () => {
+    const ring = new ColumnarRingBuffer(TIME_SCHEMA, { retention: 100 });
+    for (let i = 0; i < 5; i += 1) {
+      const begin = (i + 1) * 1000;
+      ring._appendRowTrusted(begin, begin, undefined, [
+        (i + 1) * 10,
+        i % 2 === 0,
+      ]);
+    }
+    expect(ring.length).toBe(5);
+    const snap = ring.snapshot();
+    for (let i = 0; i < 5; i += 1) {
+      expect(snap.beginAt(i)).toBe((i + 1) * 1000);
+      expect(snap.valueAt(i, 'value')).toBe((i + 1) * 10);
+      expect(snap.valueAt(i, 'flag')).toBe(i % 2 === 0);
+    }
+  });
+
+  it('evicts oldest row when length reaches retention', () => {
+    const ring = new ColumnarRingBuffer(TIME_SCHEMA, { retention: 3 });
+    // Fill to retention.
+    ring._appendRowTrusted(1, 1, undefined, [10, true]);
+    ring._appendRowTrusted(2, 2, undefined, [20, false]);
+    ring._appendRowTrusted(3, 3, undefined, [30, true]);
+    expect(ring.length).toBe(3);
+    // Push past retention.  Row 1 evicts.
+    ring._appendRowTrusted(4, 4, undefined, [40, false]);
+    expect(ring.length).toBe(3);
+    const snap = ring.snapshot();
+    expect(snap.beginAt(0)).toBe(2);
+    expect(snap.beginAt(2)).toBe(4);
+    expect(snap.valueAt(0, 'value')).toBe(20);
+    expect(snap.valueAt(2, 'value')).toBe(40);
+  });
+
+  it('grows capacity from the default 64 as needed', () => {
+    const ring = new ColumnarRingBuffer(TIME_SCHEMA, { retention: 500 });
+    expect(ring.capacity).toBe(64);
+    for (let i = 0; i < 100; i += 1) {
+      ring._appendRowTrusted(i, i, undefined, [i, true]);
+    }
+    expect(ring.length).toBe(100);
+    expect(ring.capacity).toBeGreaterThanOrEqual(100);
+    expect(ring.capacity).toBeLessThanOrEqual(500);
+    const snap = ring.snapshot();
+    expect(snap.beginAt(0)).toBe(0);
+    expect(snap.beginAt(99)).toBe(99);
+  });
+
+  it('preserves `undefined` for nullable value cells', () => {
+    const ring = new ColumnarRingBuffer(TIME_SCHEMA, { retention: 100 });
+    ring._appendRowTrusted(1000, 1000, undefined, [undefined, undefined]);
+    ring._appendRowTrusted(2000, 2000, undefined, [20, true]);
+    const snap = ring.snapshot();
+    expect(snap.valueAt(0, 'value')).toBeUndefined();
+    expect(snap.valueAt(0, 'flag')).toBeUndefined();
+    expect(snap.valueAt(1, 'value')).toBe(20);
+    expect(snap.valueAt(1, 'flag')).toBe(true);
+  });
+
+  it('mixes cleanly with appendBatch', () => {
+    const ring = new ColumnarRingBuffer(TIME_SCHEMA, { retention: 100 });
+    ring._appendRowTrusted(1000, 1000, undefined, [10, true]);
+    ring.appendBatch(makeTimeBatch([2000, 3000], [20, 30], [false, true]));
+    ring._appendRowTrusted(4000, 4000, undefined, [40, false]);
+    expect(ring.length).toBe(4);
+    const snap = ring.snapshot();
+    expect(snap.beginAt(0)).toBe(1000);
+    expect(snap.beginAt(1)).toBe(2000);
+    expect(snap.beginAt(2)).toBe(3000);
+    expect(snap.beginAt(3)).toBe(4000);
+    expect(snap.valueAt(0, 'value')).toBe(10);
+    expect(snap.valueAt(3, 'value')).toBe(40);
+  });
+});
+
+describe('_appendRowTrusted (TimeRange keys)', () => {
+  it('writes begin + end for timeRange schemas', () => {
+    const schema = [
+      { name: 'window', kind: 'timeRange' },
+      { name: 'value', kind: 'number' },
+    ] as const;
+    const ring = new ColumnarRingBuffer(schema, { retention: 10 });
+    ring._appendRowTrusted(1000, 2000, undefined, [42]);
+    ring._appendRowTrusted(2000, 3000, undefined, [43]);
+    const snap = ring.snapshot();
+    expect(snap.length).toBe(2);
+    expect(snap.beginAt(0)).toBe(1000);
+    expect(snap.endAt(0)).toBe(2000);
+    expect(snap.beginAt(1)).toBe(2000);
+    expect(snap.endAt(1)).toBe(3000);
+  });
+});
+
+describe('_appendRowTrusted (Interval keys, string labels)', () => {
+  it('writes string labels alongside begin + end', () => {
+    const schema = [
+      { name: 'period', kind: 'interval' },
+      { name: 'value', kind: 'number' },
+    ] as const;
+    const ring = new ColumnarRingBuffer(schema, {
+      retention: 10,
+      intervalLabelKind: 'string',
+    });
+    ring._appendRowTrusted(1000, 2000, 'foo', [1]);
+    ring._appendRowTrusted(2000, 3000, 'bar', [2]);
+    const snap = ring.snapshot();
+    expect(snap.length).toBe(2);
+    const keys = snap.keys as IntervalKeyColumn;
+    expect(keys.labelAt(0)).toBe('foo');
+    expect(keys.labelAt(1)).toBe('bar');
+  });
+});
+
+describe('_appendRowTrusted (Interval keys, numeric labels)', () => {
+  it('writes numeric labels into the Float64 label slot', () => {
+    const schema = [
+      { name: 'period', kind: 'interval' },
+      { name: 'value', kind: 'number' },
+    ] as const;
+    const ring = new ColumnarRingBuffer(schema, {
+      retention: 10,
+      intervalLabelKind: 'number',
+    });
+    ring._appendRowTrusted(1000, 2000, 42, [1]);
+    ring._appendRowTrusted(2000, 3000, 99, [2]);
+    const snap = ring.snapshot();
+    const keys = snap.keys as IntervalKeyColumn;
+    expect(keys.labelAt(0)).toBe(42);
+    expect(keys.labelAt(1)).toBe(99);
+  });
+});
+
+describe('_appendRowTrusted (String value columns)', () => {
+  it('writes string values', () => {
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'name', kind: 'string' },
+    ] as const;
+    const ring = new ColumnarRingBuffer(schema, { retention: 10 });
+    ring._appendRowTrusted(1000, 1000, undefined, ['alpha']);
+    ring._appendRowTrusted(2000, 2000, undefined, ['beta']);
+    ring._appendRowTrusted(3000, 3000, undefined, [undefined]);
+    const snap = ring.snapshot();
+    expect(snap.valueAt(0, 'name')).toBe('alpha');
+    expect(snap.valueAt(1, 'name')).toBe('beta');
+    expect(snap.valueAt(2, 'name')).toBeUndefined();
+  });
+});
+
+describe('_appendRowTrusted (Array value columns)', () => {
+  it('defensively freezes incoming array cells', () => {
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'samples', kind: 'array' },
+    ] as const;
+    const ring = new ColumnarRingBuffer(schema, { retention: 10 });
+    const incoming = [1, 2, 3];
+    ring._appendRowTrusted(1000, 1000, undefined, [incoming]);
+    // Caller can mutate their original — the ring's copy is frozen.
+    incoming.push(4);
+    const snap = ring.snapshot();
+    const cell = snap.valueAt(0, 'samples') as ReadonlyArray<number>;
+    expect(cell).toEqual([1, 2, 3]);
+    expect(Object.isFrozen(cell)).toBe(true);
+  });
+
+  it('writes undefined for missing array cells', () => {
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'samples', kind: 'array' },
+    ] as const;
+    const ring = new ColumnarRingBuffer(schema, { retention: 10 });
+    ring._appendRowTrusted(1000, 1000, undefined, [undefined]);
+    const snap = ring.snapshot();
+    expect(snap.valueAt(0, 'samples')).toBeUndefined();
+  });
+});
+
+describe('_appendRowTrusted — eviction recency under sustained push', () => {
+  it('a single-row append past retention preserves the most-recent rows', () => {
+    // After length === retention, every subsequent _appendRowTrusted
+    // evicts one. The ring's order must remain consistent: oldest at
+    // index 0, newest at index length-1.
+    //
+    // Note: failure-atomic semantics (a throw mid-call leaves the
+    // ring unchanged) are not provokable at the JS runtime level —
+    // the structural ordering of stage → grow → evict → write IS
+    // the proof, mirroring how `appendBatch`'s tests cover the same
+    // property. The describe name says what this test does, not the
+    // property the structural ordering provides.
+    const ring = new ColumnarRingBuffer(TIME_SCHEMA, { retention: 3 });
+    for (let i = 1; i <= 10; i += 1) {
+      ring._appendRowTrusted(i * 1000, i * 1000, undefined, [i, true]);
+    }
+    expect(ring.length).toBe(3);
+    const snap = ring.snapshot();
+    expect(snap.beginAt(0)).toBe(8 * 1000);
+    expect(snap.beginAt(2)).toBe(10 * 1000);
+    expect(snap.valueAt(0, 'value')).toBe(8);
+    expect(snap.valueAt(2, 'value')).toBe(10);
+  });
+});
