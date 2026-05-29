@@ -129,16 +129,25 @@ per-reducer work (Welford / monotonic-deque expressed columnar).
 
 ## 5. Hard design questions (need decisions before Phase 1 code)
 
-### Q1 — retention exactness (the one public-behavior risk)
+### Q1 — retention exactness (the one public-behavior risk) — ✅ RESOLVED: exact slicing
 
 Batch-granular retention would make `live.length ≥ maxEvents` (window
-= "last K full chunks"), a behavior change. **Recommendation: preserve
-exact `maxEvents`** by slicing the boundary chunk — drop whole chunks
-that are fully out, then replace the boundary chunk with
-`store.sliceByRange(...)` (zero-copy subarray on Float64 columns).
-`live.length === maxEvents` exactly, as today. `maxAge` is naturally
-chunk-friendly (drop chunks whose newest row < cutoff; exact at the
-row level via the same boundary slice). **No behavior change.**
+= "last K full chunks"), a behavior change. **Decision: preserve exact
+retention** by slicing the boundary chunk — drop whole chunks that are
+fully out, then replace the boundary chunk with `store.sliceByRange(...)`
+(zero-copy subarray on Float64 columns). Exact at the row level for
+both `maxEvents` (`length === maxEvents`) and `maxAge` (drop chunks
+whose newest row < cutoff, slice the boundary chunk at the cutoff).
+
+**Confirmed by the gRPC agent (2026-05-29):** the experiment uses
+`maxAge`, and its `live.on('evict')` listener increments `eventsEvicted`
+
+- tracks `firstEventTs` for the dashboard's `window_age_seconds`
+  warmup readout, plus a conservation check (`emitted ≈ ingested +
+throws + rejected + evicted`). Batch-granular eviction would delay
+  both by up to a chunk's worth of events and fuzz the conservation
+  check. Zero-copy boundary slicing avoids that — one chunk-header
+  tweak per eviction, in the noise.
 
 ### Q2 — the `'event'` listener compat path
 
@@ -159,18 +168,30 @@ eviction on the ring branch — that fix is identity-independent and
 should be carried forward (it's strictly more robust). Re-audit every
 `'evict'` consumer for identity assumptions (only LiveReduce had one).
 
-### Q4 — `reorder` ordering mode
+### Q4 — `reorder` ordering mode — ✅ RESOLVED: OOM is on `strict`
 
 A chunked append-only buffer can't sorted-insert mid-stream (same
-constraint as the ring). **Recommendation:** `reorder` keeps the
-`EventArrayLiveStorage` backing (the strategy layer already routes by
-mode); chunked columnar serves `strict`/`drop`. The gRPC aggregator
-is `strict`/`reorder` — wait, M4 uses `reorder` for late data. **Open:
-does the OOM happen on the `reorder` (late-data) path or the `strict`
-firehose path?** If OOM is on `reorder`, the chunked buffer doesn't
-help it directly and we need the indexed-columnar approach (deferred
-in the Step 7 brief §11). **This needs confirming against the actual
-OOM workload before committing.**
+constraint as the ring), so `reorder` keeps the `EventArrayLiveStorage`
+backing (the strategy layer routes by mode); chunked columnar serves
+`strict`/`drop`.
+
+**Confirmed by the gRPC agent (2026-05-29) — documented at commit
+granularity, not memory:** every OOM in the aggregator's history was
+on default `ordering: 'strict'` (the `ORDERING` env option was added
+in `324e0fe`, _after_ all three OOM-driving retention commits
+`3f985a2` `'6m'` → `dfc4eeb` `'90s'` "OOM at moderate" → `dd3aeb5`
+`'30s'` "OOM at firehose"). The driver is explicit in
+`aggregator/src/index.ts:42-48`: **~6.3M events × ~600 bytes ≈ 3.8 GB
+in the source `LiveSeries` deque alone**, past V8's 4 GB ceiling —
+the source deque, not rolling state or snapshot history (those have
+separate ~12k-row rings). **Phase 1's chunked buffer targets exactly
+that structure on exactly the ordering mode that OOMs.**
+
+**Deferred follow-up:** `reorder` at firehose is _untested_ (M4's
+drift harness ran ~2400 events total). Whether `reorder`-firehose
+OOMs differently — and thus needs the indexed-columnar path (Step 7
+brief §11) — is an open question, NOT a known different failure. It
+does not gate Phase 1.
 
 ### Q5 — interval-keyed series
 
@@ -210,10 +231,18 @@ mode, Phase 1 proceeds with a clear target.
 
 ## 9. Status
 
-**Awaiting design review.** Open decisions: Q1 (recommend exact via
-boundary slice), Q4 (confirm OOM ordering mode — may need the
-indexed-columnar path instead). Once resolved, Phase 1 is the first
-implementation PR, gated on the gRPC heap re-bench.
+**Design review complete (2026-05-29). Both gating questions resolved
+by the gRPC agent with documented evidence:** Q1 → exact boundary
+slicing; Q4 → OOM is on `strict` firehose, driven by the source
+`LiveSeries` deque's retained `Event[]` (~3.8 GB), which is exactly
+what Phase 1's chunked buffer replaces. `reorder`-firehose is a
+deferred follow-up, not a Phase 1 gate.
+
+**Phase 1 cleared to start.** Bench "before" number: the gRPC agent
+captures a heap profile at the historical OOM cell (90s/firehose,
+strict — Event count + retained size) to anchor the Phase 1 PR's
+before/after. Build proceeds in parallel; the two converge at the PR
+bench. Human merge approval per the wave standing rule.
 
 ## Cross-references
 
