@@ -102,19 +102,49 @@ _rate_. Removing them needs the rolling reducer to consume columns
 
 ## 4. Phasing
 
-### Phase 1 — chunked columnar buffer + column-native intake (the OOM fix)
+### Feed granularity — the OOM is the BATCHED source deque (resolved 2026-05-29)
 
-`ChunkedColumnarLiveStorage` + `pushMany` column-native intake.
-Retained heap drops ~4.6×. The `'event'` listener still fires (Events
-materialized transiently — young-gen, GC'd; the compat/slow path).
-`at(i)` lazy-materializes + caches. **This is the targeted OOM fix and
-is self-contained.**
+The gRPC agent confirmed the OOM driver is the **source `LiveSeries`
+deque** ("~3.8 GB in the source deque alone… not the rolling state or
+snapshot history, which have separate ~12k-row rings"). The source
+deque is the **top-level `live`** fed by **batched** `pushMany(wireBatch)`.
+Two consequences:
 
-- **Bench gate:** gRPC re-bench, 92k/s × 1k hosts. Target: 1857 MB →
-  ≤ 800 MB (and ideally ~500). Plus the pond-side `perf-live-columnar.mjs`
-  (ingest/consume/heap, the spike promoted to a real bench).
-- **Public API:** zero new surface. Retention semantics preserved
-  (see Q1). The `'event'` / `at(i)` / `toTimeSeries` contracts hold.
+1. **No coalescing needed.** The OOM-prone structure is batched at
+   ingest (high throughput goes hand-in-hand with chunking; per-event
+   gRPC delivery would bottleneck before reaching pond). Chunked
+   one-chunk-per-`pushMany` targets it directly. The earlier
+   single-push-proliferation worry is moot for the OOM path.
+2. **Partition sub-series are NOT the primary OOM driver.** They're
+   fed per-event by `#routeEvent` (`_pushTrustedEvents([event])`), so
+   chunking them naively would make 1-row chunks — but they're not
+   where the memory dies, so **Phase 1 keeps partition sub-series
+   array-backed** (gated by an internal backing flag). Chunking
+   partitions later uses **(B) batched routing** — `LivePartitionedSeries`
+   groups a source `pushMany`'s events by partition and feeds each
+   partition one batch — chosen over storage-level coalescing because
+   (a) it keeps the storage simple, (b) it's a per-event-routing-
+   overhead win, and (c) the source-deque fix doesn't depend on it.
+   Deferred follow-on, validated by the gRPC heap profile (which will
+   show whether per-partition chunk sizes warrant it).
+
+### Phase 1 — chunked columnar buffer for the top-level source deque (the OOM fix)
+
+`ChunkedColumnarLiveStorage` selected for **top-level** strict/drop +
+time/timeRange series; `pushMany` validates each batch into one chunk
+(column-native intake, no per-row `Event`). Partition sub-series stay
+array-backed (not the OOM driver). Retained heap on the source deque
+drops ~4.6×. The `'event'` listener still fires (Events materialized
+transiently — young-gen, GC'd; compat path). `at(i)` lazy-materializes
+
+- caches.
+
+* **Bench gate:** in-pond `perf-live-columnar.mjs` (batched pushMany,
+  chunked vs array source — ingest/consume/heap) confirms the spike's
+  win survives integration; then gRPC re-bench at the OOM cells with
+  the heap profile as the before-number.
+* **Public API:** zero new surface. Retention preserved (Q1). The
+  `'event'` / `at(i)` / `toTimeSeries` contracts hold.
 
 ### Phase 2 — columnar rolling reducer (= Step 3C, the GC-rate win)
 
