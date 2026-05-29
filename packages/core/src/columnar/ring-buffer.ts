@@ -340,6 +340,139 @@ export class ColumnarRingBuffer<S extends ColumnSchema = ColumnSchema> {
   }
 
   /**
+   * @internal — trusted per-row append for streaming row-shape sources.
+   *
+   * Accepts a single row's key + value primitives directly, skipping
+   * the `ColumnarStore` wrapper that `appendBatch` requires. Schema
+   * validation happens once at ring construction; trusted-append
+   * skips per-call structural checks and writes directly to circular
+   * buffers in one pass.
+   *
+   * **Trust contract.** The caller guarantees:
+   *
+   * 1. `values.length === schema.length - 1` (positional, matches
+   *    the schema's value columns in declaration order).
+   * 2. Each `values[c - 1]` is assignment-compatible with
+   *    `schema[c].kind`:
+   *    - `'number'`: `typeof === 'number'` or `undefined`
+   *    - `'boolean'`: `typeof === 'boolean'` or `undefined`
+   *    - `'string'`: `typeof === 'string'` or `undefined`
+   *    - `'array'`: `Array.isArray(value)` (will be sliced + frozen)
+   *      or `undefined`
+   * 3. For `interval` rings, `keyLabel` is a `string` if
+   *    `labelKind === 'string'`, a finite `number` if
+   *    `labelKind === 'number'`. For non-interval rings, `keyLabel`
+   *    is ignored (pass `undefined`).
+   * 4. For `time` rings, `keyEnd === keyBegin` (the caller is
+   *    responsible for matching the `time` kind's
+   *    `end === begin` invariant; the ring stores only `begin`
+   *    for `time` keys but the caller must still pass a value).
+   *
+   * Misuse is the caller's bug; the ring may produce silently
+   * incorrect data rather than throwing on misuse. Use `appendBatch`
+   * if you need schema validation.
+   *
+   * **Failure-atomic.** Mirrors `appendBatch`'s discipline:
+   *
+   * - For array-kind value columns, the slice + freeze of the
+   *   incoming `ArrayValue` happens BEFORE any destructive ring
+   *   mutation (growth, eviction, length advance). Closed Codex
+   *   round 4's high finding on PR #149 for batch path; same
+   *   discipline applied here.
+   * - `#grow` is the only typed-array allocation in the flow and
+   *   is itself failure-atomic.
+   * - A throw mid-call leaves the ring unchanged.
+   *
+   * **Use case.** `LiveSeries.pushMany` calls this per row inside
+   * its row-validation loop. Preserves the per-row `'event'`
+   * listener fan-out contract while skipping the per-row
+   * ColumnarStore wrapper allocation that the batch path would
+   * pay. The row-shape API matches the workload the ring buffer
+   * was designed for ("streaming sources emit rows
+   * continuously").
+   *
+   * Not exported from `packages/core/src/index.ts`; reach via the
+   * `ColumnarRingBuffer` class only from in-package trusted
+   * callers.
+   */
+  _appendRowTrusted(
+    keyBegin: number,
+    keyEnd: number,
+    keyLabel: string | number | undefined,
+    values: ReadonlyArray<unknown>,
+  ): void {
+    const schemaLen = this.schema.length;
+
+    // Stage any array-column cells BEFORE destructive ops. Mirrors
+    // `#stageArrayCellsForAppend`'s role on the batch path: copy +
+    // freeze can throw under memory pressure, and we want any throw
+    // to land before we mutate the ring. Single-row path stages at
+    // most one cell per array column.
+    let stagedArrayCells: Map<string, ArrayValue | undefined> | null = null;
+    for (let c = 1; c < schemaLen; c += 1) {
+      const def = this.schema[c]!;
+      if (def.kind !== 'array') continue;
+      if (stagedArrayCells === null) stagedArrayCells = new Map();
+      const value = values[c - 1];
+      stagedArrayCells.set(
+        def.name,
+        Array.isArray(value)
+          ? (Object.freeze((value as ArrayValue).slice()) as ArrayValue)
+          : undefined,
+      );
+    }
+
+    // Eviction-by-1 needed when length === retention and we're
+    // about to add one more row.
+    const willEvict = this.#length + 1 > this.retention ? 1 : 0;
+
+    // Capacity required after the planned eviction.
+    const remainingAfter = this.#length - willEvict;
+    const required = remainingAfter + 1;
+    if (required > this.#capacity) {
+      // `#grow` is failure-atomic — leaves the ring unchanged on
+      // any throw.
+      this.#grow(required);
+    }
+
+    // Apply eviction (post-grow; no throws remaining).
+    if (willEvict > 0) this.evictPrefix(willEvict);
+
+    // Write the row. All operations from here are non-throwing.
+    const dst = (this.#head + this.#length) % this.#capacity;
+    this.#keys.begin[dst] = keyBegin;
+    if (this.#keys.kind === 'timeRange' || this.#keys.kind === 'interval') {
+      this.#keys.end[dst] = keyEnd;
+    }
+    if (this.#keys.kind === 'interval') {
+      if (this.#keys.labelKind === 'string') {
+        (this.#keys.labels as Array<string | undefined>)[dst] =
+          keyLabel as string;
+      } else {
+        (this.#keys.labels as Float64Array)[dst] = keyLabel as number;
+      }
+    }
+
+    // Value columns. Array kind uses the pre-staged cell; other
+    // kinds write through the shared `writeValueCell` helper.
+    for (let c = 1; c < schemaLen; c += 1) {
+      const def = this.schema[c]!;
+      const ring = this.#values.get(def.name)!;
+      if (ring.kind === 'array') {
+        const cell = stagedArrayCells!.get(def.name);
+        (ring as MutableArrayRing).values[dst] = cell;
+        // Array columns derive validity from undefined slots during
+        // snapshot (per `snapshotValueColumn`'s array path); no
+        // per-cell validity-bit write needed here.
+        continue;
+      }
+      writeValueCell(ring, dst, values[c - 1]);
+    }
+
+    this.#length += 1;
+  }
+
+  /**
    * Pre-stages array-column cells before any destructive ring
    * mutation. For each `kind: 'array'` value column in the
    * schema, walks the batch's rows in `[batchStart, batchStart +
