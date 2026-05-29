@@ -120,13 +120,13 @@ Two consequences:
    chunking them naively would make 1-row chunks — but they're not
    where the memory dies, so **Phase 1 keeps partition sub-series
    array-backed** (gated by an internal backing flag). Chunking
-   partitions later uses **(B) batched routing** — `LivePartitionedSeries`
-   groups a source `pushMany`'s events by partition and feeds each
-   partition one batch — chosen over storage-level coalescing because
-   (a) it keeps the storage simple, (b) it's a per-event-routing-
-   overhead win, and (c) the source-deque fix doesn't depend on it.
-   Deferred follow-on, validated by the gRPC heap profile (which will
-   show whether per-partition chunk sizes warrant it).
+   partitions later uses **(B) batched routing**, now realized as
+   **columnar routing via `scatterByPartition`** — see Phase 2 (i).
+   That feeds each partition its scatter-slice as one chunk (good
+   chunk sizes), removes the per-event source materialization, and is
+   chosen over storage-level coalescing because it keeps the storage
+   simple and reuses an existing substrate primitive. Deferred
+   follow-on; the source-deque fix (Phase 1) doesn't depend on it.
 
 ### Phase 1 — chunked columnar buffer for the top-level source deque (the OOM fix)
 
@@ -160,16 +160,56 @@ number` 320 MB + `Event` 258 MB + `Time` 257 MB + deque arrays
 * **Public API:** zero new surface. Retention preserved (Q1). The
   `'event'` / `at(i)` / `toTimeSeries` contracts hold.
 
-### Phase 2 — columnar rolling reducer (= Step 3C, the GC-rate win)
+### Phase 2 — columnar consume: routing + rolling (the GC-rate win)
 
-The rolling reducer gains an `ingestBatch(columnarChunk)` path that
-walks the value column instead of per-event `Event`s. Removes the
-transient per-row `Event` allocation on fan-out → cuts the 22% GC
-rate → throughput win. Builds on Phase 1's chunked buffer. Bigger,
-per-reducer work (Welford / monotonic-deque expressed columnar).
+Phase 1 cuts retained heap (the OOM) but the `'event'` listener still
+materializes a transient `Event` per row for consumers — that's the
+V5 22% GC _rate_. Phase 2 removes it by making consumers read the
+batch's columns instead of per-event `Event`s. **Two distinct levers,
+both consuming columns; the `'event'` listener becomes the
+compatibility/slow path, columnar is the fast path:**
 
-- **Bench gate:** gRPC V6 ceiling re-bench. Target: the
-  `LivePartitionedFusedRolling.ingest` self-time + GC % both drop.
+**(i) Columnar routing via `scatterByPartition` — the bigger lever
+for the partition fan-out.** Surfaced by asking _why_ the partition
+router subscribes to `'event'` (2026-05-29): there's no deep reason —
+it's the natural per-event "route each event by its key" hook, written
+before there was a columnar batch to route over. But that `'event'`
+subscription is **the only reason a chunked source must materialize
+transient `Event`s at all** — the listener signature forces an `Event`
+per row purely so `#routeEvent` can read its partition key and forward
+it. Both the partition key and the row data are columns, and the
+substrate **already has the primitive**: `scatterByPartition(store,
+columnName)` (step 1h, PR #149) → `Map<value, ColumnarStore>`. So:
+
+```
+pushMany batch → ColumnarStore → scatterByPartition(store, by)
+  → feed each partition its sub-store as a chunk
+```
+
+This one change collapses three things at once: (a) removes the
+transient per-row materialization on the source (GC-rate win), (b) IS
+the **(B) batched routing** decided above — each partition gets its
+scatter-slice as one batch/chunk, no per-event feed, and (c) thereby
+makes **partition sub-series chunk-friendly** (good chunk sizes), so
+they can adopt `ChunkedColumnarLiveStorage` too and get the same heap
+cut. `scatterByPartition` already drops `undefined`/`NaN` partition
+cells and rejects array/key partition columns — the routing semantics
+the live router needs.
+
+**(ii) Columnar rolling reducer (= Step 3C).** The rolling reducer
+gains an `ingestBatch(columnarChunk)` path that walks the value column
+instead of per-event `Event`s. Per-reducer work (Welford /
+monotonic-deque expressed columnar). Removes the per-row `Event` on
+the rolling-consume side.
+
+Together (i)+(ii) make the source→partition→rolling path fully
+column-native: no `Event` materialized anywhere on the hot path. (i)
+is arguably the higher-leverage half for the gRPC fan-out (1000
+partitions); (ii) is the deeper per-reducer work.
+
+- **Bench gate:** gRPC V6 ceiling re-bench. Targets: the
+  `LivePartitionedFusedRolling.ingest` self-time + GC % both drop;
+  per-event routing overhead (`#routeEvent` inclusive time) drops.
 
 ## 5. Hard design questions (need decisions before Phase 1 code)
 
