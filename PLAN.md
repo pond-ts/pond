@@ -4740,19 +4740,38 @@ it shares a spine with are captured in
 [`docs/rfcs/columnar-live-protocol.md`](docs/rfcs/columnar-live-protocol.md)
 — RFC context, not committed.
 
-**Active next step (earned): column-native output (§A).** The RFC's
-multi-agent review surfaced a _measured_ friction signal from the gRPC
-experiment — at saturation, ~80% of the per-`pushMany` budget is
-per-`Event` listener work (`fanout.ts`: 0.44 ms p99 serialize tax ≈ 50%
-of the budget; ~6.7M transient row-object allocs/min). PR #170 zeroed the
-_storage_-side `Event` cost on the chunked path; §A removes the remaining
-_output_-side cost (a columnar-window listener; `'event'` becomes the
-materialize adaptor). This is the one part of the RFC that has graduated
-from "deferred" to earned. Spike plan:
-[`docs/briefs/column-native-output-spike.md`](docs/briefs/column-native-output-spike.md)
-— resolves the payload fork (`TimeSeries<S>` vs a lighter `LiveRun` view)
-and the additive listener name, gated on the gRPC A/B measurement and a
-human API sign-off (it widens the public `LiveSeries` listener surface).
+**The V6 re-bench corrected the target (2026-05-30).** The gRPC
+experiment re-benched against the released v0.18.0
+([pond-grpc-experiment#42](https://github.com/pjm17971/pond-grpc-experiment/pull/42))
+and **falsified Phase 1's heap framing for the real consumer.** The
+chunked backing engaged on the source (67k chunks), but the retained
+`Event` count was **unchanged (6.77M)** and net heap went **up ~210 MB** —
+because the dominant retention is the **100 `partitionBy('host')`
+sub-series**, which Phase 1 carved out to `Event[]` (`__backing: 'array'`)
+on the assumption "partitions aren't the OOM driver." That assumption was
+wrong: ~67k retained Events per partition × 100. Phase 1 aimed at the
+wrong tier. What it _did_ deliver is real and worth keeping: minor GC max
+pause **−74%**, ingest→fanout p99 **−78%**, pushManyTotal p99 **−77%** —
+Phase 1 is a churn/latency fix, **not** the heap fix it was billed as.
+
+**Active next step (earned, re-prioritized): Phase 2 — column-native
+partition routing.** The genuine OOM fix, now measured-earned and ahead of
+§A. `partitionBy(...)` routes source chunks to per-partition **column
+batches** via `scatterByPartition` (substrate shipped #149), and strict-
+time partition sub-series move to the chunked backing — replacing the
+per-partition `Event[]` retention (the 6.77M) with columnar chunks. Scope
+plan:
+[`docs/briefs/columnar-partition-routing.md`](docs/briefs/columnar-partition-routing.md).
+Gated on a gRPC V7 re-run (pass condition: partition `Event`/`Time`
+retention finally drops ~5–9×) + human API sign-off (touches `partitionBy`
+internals).
+
+**Then: column-native output (§A).** Before-number locked by V6:
+**~11.7 MB/s** transient at the OOM cell (~90k Events/s + ~90k row-objects/s
+for the shared `'batch'` listeners). §A removes that _output-boundary_
+slice — separate from the partition-retention fix above, and sequenced
+after it. Spike plan:
+[`docs/briefs/column-native-output-spike.md`](docs/briefs/column-native-output-spike.md).
 §B (columnar reorder) stays unearned.
 
 **Cross-references:**
@@ -4762,9 +4781,14 @@ human API sign-off (it widens the public `LiveSeries` listener surface).
   reorder corral/LSM overlay (§B), and the structural-delta spine that
   unifies them (§C). Successor-direction to this wave's chunked backing.
   Carries the full multi-agent review layer + V2 amendments.
+- [`docs/briefs/columnar-partition-routing.md`](docs/briefs/columnar-partition-routing.md)
+  — **Phase 2, the measured-earned OOM fix** (re-prioritized ahead of §A
+  by the gRPC V6 re-bench): column-native partition routing via
+  `scatterByPartition` + chunked-backed strict-time partition sub-series.
 - [`docs/briefs/column-native-output-spike.md`](docs/briefs/column-native-output-spike.md)
-  — the earned §A increment: scopes the column-native output spike
-  (payload fork, additive listener name, gRPC A/B measurement, API gate).
+  — the §A increment (column-native output), now sequenced **after**
+  Phase 2: payload fork, additive listener name, before-number locked by
+  the V6 re-bench, API gate.
 - [`docs/rfcs/columnar-core.md`](docs/rfcs/columnar-core.md) — the
   binding RFC with full library-agent response.
 - [`docs/briefs/core-columnar-store-spike.md`](docs/briefs/core-columnar-store-spike.md)
