@@ -4754,23 +4754,34 @@ wrong tier. What it _did_ deliver is real and worth keeping: minor GC max
 pause **−74%**, ingest→fanout p99 **−78%**, pushManyTotal p99 **−77%** —
 Phase 1 is a churn/latency fix, **not** the heap fix it was billed as.
 
-**Active next step (earned, re-prioritized): Phase 2 — column-native
-partition routing.** The genuine OOM fix, now measured-earned and ahead of
-§A. `partitionBy(...)` routes source chunks to per-partition **column
-batches** via `scatterByPartition` (substrate shipped #149), and strict-
-time partition sub-series move to the chunked backing — replacing the
-per-partition `Event[]` retention (the 6.77M) with columnar chunks. Scope
-plan:
+**Phase 2 — column-native partition routing (DELIVERED, gRPC V8 clean
+win; awaiting merge).** The genuine OOM fix. `partitionBy(...)` over a
+chunked source routes its chunks to per-partition slices and stages them
+into chunked-backed partition sub-series — replacing the per-partition
+`Event[]` retention with columnar chunks. The naive "one chunk per
+(batch × partition)" was a V7 regression (1.58M chunks, 4.1× heap,
+throughput collapse — the thin-scatter / ~1-row-chunk pathology); the fix
+is a **per-partition coalescing tier** (`ChunkedColumnarLiveStorage`
+stages gathered tuples and flushes one packed chunk per 256 rows). gRPC
+**V8** cleared every gate: ColumnarStore 1.58M→94k (60×, matches the
+threshold), retained heap 2.22 GB→1.92 GB (−13.5%, below the V6
+baseline), Event retention 6.77M→37,891 (−99.4%, the remainder all
+emit-side), sustained throughput 41k→51k/s (+24%), ingest→fanout p99
+−25%. One soft caveat: `pushManyTotalMs` p99 7.1 ms vs 3.6 ms (the flush
+lands on threshold-crossing batches; p50 unchanged, under deadline) —
+smoothable later, not a blocker. Branch `feat/columnar-partition-routing`;
+**no new public surface** (only `_`-internal hooks), so per CLAUDE.md no
+public-surface sign-off is required, but the wave's human-merge gate
+still applies. Scope plan:
 [`docs/briefs/columnar-partition-routing.md`](docs/briefs/columnar-partition-routing.md).
-Gated on a gRPC V7 re-run (pass condition: partition `Event`/`Time`
-retention finally drops ~5–9×) + human API sign-off (touches `partitionBy`
-internals).
 
-**Then: column-native output (§A).** Before-number locked by V6:
-**~11.7 MB/s** transient at the OOM cell (~90k Events/s + ~90k row-objects/s
-for the shared `'batch'` listeners). §A removes that _output-boundary_
-slice — separate from the partition-retention fix above, and sequenced
-after it. Spike plan:
+**Next (now unblocked by Phase 2): column-native output (§A).**
+Before-number locked by V6: **~11.7 MB/s** transient at the OOM cell
+(~90k Events/s + ~90k row-objects/s for the shared `'batch'` listeners),
+and the V8 result confirms it's the dominant remaining allocation slice
+(the 37k retained Events are all emit-side). §A removes that
+_output-boundary_ slice — separate from the partition-retention fix
+above. Spike plan:
 [`docs/briefs/column-native-output-spike.md`](docs/briefs/column-native-output-spike.md).
 §B (columnar reorder) stays unearned.
 

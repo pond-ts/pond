@@ -198,10 +198,11 @@ export type LiveSeriesOptions<S extends SeriesSchema> = {
    * @internal Storage-backing override. `'auto'` (default) selects the
    * column-native chunked backing for top-level `strict` time-keyed
    * series, else the `Event[]` backing. `'array'` forces the `Event[]`
-   * backing — used by `LivePartitionedSeries` for partition sub-series
-   * and `collect`/`apply` unified buffers (they're fed per-event, and
-   * are not the OOM driver — chunking them is deferred to the columnar
-   * routing work). Not part of the public API.
+   * backing — used by `LivePartitionedSeries` for the per-event routing
+   * path (a non-chunked source) and the `collect` / `apply` unified
+   * buffers. Partition sub-series of a chunked source instead route
+   * column-native and adopt the chunked backing (see `_stageRows`). Not
+   * part of the public API.
    */
   __backing?: 'array' | 'auto';
 };
