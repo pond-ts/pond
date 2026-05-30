@@ -280,6 +280,10 @@ export class LivePartitionedSeries<
     const unifiedOptions: LiveSeriesOptions<S> = {
       name: options?.name ?? this.name,
       schema: this.schema,
+      // Fed per-event via `_pushTrustedEvents` (partition fan-in), so
+      // it stays on the Event[] backing — chunked is for batched
+      // top-level ingest only.
+      __backing: 'array',
     };
     // Default-inherit ordering / graceWindow from this partitioned
     // series (which itself inherits from its source LiveSeries via
@@ -400,6 +404,7 @@ export class LivePartitionedSeries<
     const stub = new LiveSeries<S>({
       name: `${this.name}/_stub`,
       schema: this.schema,
+      __backing: 'array',
     });
     const stubOut = factory(stub);
     const outSchema: R = stubOut.schema;
@@ -407,6 +412,8 @@ export class LivePartitionedSeries<
     const opts: LiveSeriesOptions<R> = {
       name: options?.name ?? this.name,
       schema: outSchema,
+      // Per-event fan-in buffer — Event[] backing (see collect()).
+      __backing: 'array',
     };
     // Default-inherit ordering / graceWindow from the partitioned
     // series — same shape as collect() above. Without this the
@@ -976,6 +983,11 @@ export class LivePartitionedSeries<
     const opts: LiveSeriesOptions<S> = {
       name: `${this.name}/${String(key)}`,
       schema: this.schema,
+      // Partition sub-series are fed per-event via `_pushTrustedEvents`
+      // by `#routeEvent`, so they use the Event[] backing. They're not
+      // the OOM driver; chunking them is deferred to columnar routing
+      // (`scatterByPartition`) — see the column-native-live-pipeline brief.
+      __backing: 'array',
     };
     if (this.#partitionOptions.ordering !== undefined)
       opts.ordering = this.#partitionOptions.ordering;
@@ -1108,6 +1120,7 @@ export class LivePartitionedView<
     const stub = new LiveSeries<SBase>({
       name: `${root.name}/_stub`,
       schema: root.schema,
+      __backing: 'array',
     });
     const stubOut = factory(stub);
     this.schema = stubOut.schema;

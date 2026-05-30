@@ -4688,6 +4688,26 @@ until a consumer friction earns their shape. The chart-experiment's
 M3 (chunked rendering) and M5 (interval heatmap) remain deferred
 per their respective notes.
 
+**Deferred (surfaced by the chunked-live wave, PR #170 Codex pass).**
+`LiveReduce` over an `ordering: 'reorder'` source **with retention**
+returns stale/`undefined` snapshots for the windowed reducers
+(`min` / `max` / `first` / `last` / `samples`). Their rolling state
+(monotone deque / head-removal ordered entries) assumes eviction
+removes the oldest-*arrived* event first — true for `strict` / `drop`
+and the chunked backing (all append-only), but `reorder`'s
+sorted-prefix eviction can drop a later arrival, which those
+structures can't represent. Value-based reducers (`avg` / `count` /
+`sum` / `stdev` / `median` / `percentile` / `unique`) remove by value
+and stay correct. This is **pre-existing** (true on `main` before the
+chunked work; the PR #170 FIFO change merely swapped one wrong answer
+for another, now reverted to identity-primary) and is documented in
+`LiveReduce`'s class JSDoc + pinned by the value-based test in
+`live-buffer-as-window.test.ts`. The fix, when a consumer earns it:
+give `min`/`max` a removal-by-value structure (sorted array, as
+`median` already uses) selected only for reorder sources — keeping
+the O(1) monotone deque on the append-only hot path. Workaround today:
+`live.toTimeSeries().reduce(...)`.
+
 **Cross-references:**
 
 - [`docs/rfcs/columnar-core.md`](docs/rfcs/columnar-core.md) — the

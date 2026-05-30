@@ -60,7 +60,14 @@ import {
   EventArrayLiveStorage,
   compareKeys,
   type LiveStorage,
+  type ReadableLiveStorage,
 } from './live-storage.js';
+import {
+  ChunkedColumnarLiveStorage,
+  materializeEventsFromStore,
+} from './live-chunked-storage.js';
+import { validateAndNormalizeColumnar } from '../batch/validate.js';
+import { ColumnarStore } from '../columnar/store.js';
 import type { SampleStrategy } from '../sequence/sample.js';
 import type {
   FusedMapping,
@@ -185,6 +192,17 @@ export type LiveSeriesOptions<S extends SeriesSchema> = {
    */
   graceWindow?: DurationInput;
   retention?: RetentionPolicy;
+
+  /**
+   * @internal Storage-backing override. `'auto'` (default) selects the
+   * column-native chunked backing for top-level `strict` time-keyed
+   * series, else the `Event[]` backing. `'array'` forces the `Event[]`
+   * backing — used by `LivePartitionedSeries` for partition sub-series
+   * and `collect`/`apply` unified buffers (they're fed per-event, and
+   * are not the OOM driver — chunking them is deferred to the columnar
+   * routing work). Not part of the public API.
+   */
+  __backing?: 'array' | 'auto';
 };
 
 type EventListener<S extends SeriesSchema> = (event: EventForSchema<S>) => void;
@@ -207,7 +225,13 @@ export class LiveSeries<S extends SeriesSchema> {
   readonly #maxEvents: number;
   readonly #maxAgeMs: number;
 
-  #storage: LiveStorage<S>;
+  // Reads / retention / snapshot route through `#storage` (uniform).
+  // Exactly one of `#perRow` / `#chunked` is non-null — the append
+  // path branches on which. The chunked backing takes whole batches
+  // (`appendStore`); the array backing takes per-row events.
+  #storage: ReadableLiveStorage<S>;
+  #perRow: LiveStorage<S> | null;
+  #chunked: ChunkedColumnarLiveStorage<S> | null;
 
   readonly #onEvent: Set<EventListener<S>>;
   readonly #onBatch: Set<BatchListener<S>>;
@@ -258,13 +282,35 @@ export class LiveSeries<S extends SeriesSchema> {
 
     validateSchema(this.schema);
 
-    // Storage strategy. The behavior-preserving extraction uses the
-    // `Event[]` backing for every ordering mode. A follow-up adds a
-    // `ColumnarRingBuffer` backing for the append-only `strict` /
-    // `drop` modes; `reorder` keeps the array backing (an append-only
-    // ring cannot splice mid-stream). Selecting here keeps every
-    // accessor below storage-agnostic.
-    this.#storage = new EventArrayLiveStorage<S>(this.schema);
+    // Storage strategy. The column-native chunked backing is used for
+    // **top-level `strict` time-keyed** series — the batched-source
+    // case the OOM fix targets (each `pushMany` batch becomes a chunk,
+    // retaining zero `Event` objects). Everything else uses the
+    // `Event[]` backing: `reorder` (needs sorted mid-stream insert),
+    // `drop` (needs per-row out-of-order filtering), `timeRange`
+    // (strict order is (begin, end) — the batch begin-only check
+    // wouldn't catch same-begin/different-end inversions; deferred),
+    // interval keys, and any series forced to `__backing: 'array'`
+    // (partition sub-series / `collect`/`apply` buffers — fed
+    // per-event, not the OOM driver). Reads stay storage-agnostic via
+    // `#storage`; only the append path branches on `#chunked` vs
+    // `#perRow`.
+    const keyKind = this.schema[0]!.kind;
+    const chunkedEligible =
+      (options.__backing ?? 'auto') !== 'array' &&
+      this.#ordering === 'strict' &&
+      keyKind === 'time';
+    if (chunkedEligible) {
+      const chunked = new ChunkedColumnarLiveStorage<S>(this.schema);
+      this.#chunked = chunked;
+      this.#perRow = null;
+      this.#storage = chunked;
+    } else {
+      const array = new EventArrayLiveStorage<S>(this.schema);
+      this.#chunked = null;
+      this.#perRow = array;
+      this.#storage = array;
+    }
 
     this.#onEvent = new Set();
     this.#onBatch = new Set();
@@ -401,15 +447,41 @@ export class LiveSeries<S extends SeriesSchema> {
    * For JSON-shape rows arriving over the wire, prefer
    * {@link LiveSeries.pushJson} — it accepts the JSON envelope
    * (nulls, raw timestamps) and parses through `parseJsonRow`.
+   *
+   * **Commit granularity differs by backing.** On the `Event[]`
+   * backing each row is appended then its `'event'` fires, so a
+   * handler observes `length` grow row-by-row (`1, 2, …`) within one
+   * `pushMany`, and a handler that throws mid-batch leaves only the
+   * rows up to the throw committed. On the chunked columnar backing
+   * (top-level `strict` time-keyed series) the whole batch is appended
+   * as one chunk *before* any `'event'` fires — so a handler sees the
+   * full post-batch `length` for every event of the batch, and a
+   * handler that throws mid-fan-out leaves the *entire* batch committed
+   * (the chunk is already appended). Both leave `length` and `ingested`
+   * mutually consistent after a throw; they differ only in how much of
+   * the batch is committed. This is intrinsic to all-or-nothing
+   * columnar append — per-row commit would reintroduce the per-row
+   * `Event` cost the chunked backing exists to avoid. The cross-backing
+   * contract callers can rely on: every successfully-ingested row fires
+   * exactly one `'event'`, in order, before `'batch'`/`'evict'`.
    */
   pushMany(rows: ReadonlyArray<RowForSchema<S>>): void {
     if (rows.length === 0) return;
 
+    // Chunked (column-native) path: validate the whole batch into
+    // columns, no per-row Event. Only top-level strict time-keyed
+    // series select this backing.
+    if (this.#chunked) {
+      this.#pushManyColumnar(rows);
+      return;
+    }
+
+    // Per-row (Event[]) path.
     const added: EventForSchema<S>[] = [];
 
     for (const row of rows) {
       const event = this.#validateRow(row);
-      if (this.#insert(event)) {
+      if (this.#insertPerRow(event)) {
         // Increment the counter immediately after a successful
         // insert and BEFORE listener fan-out. If a listener throws
         // partway through the loop, the event is committed in the
@@ -429,10 +501,94 @@ export class LiveSeries<S extends SeriesSchema> {
 
     if (added.length === 0) return;
 
+    // `#applyRetention` updates `#statsEvicted` internally and returns
+    // the materialized evicted events only when an `'evict'` listener
+    // will consume them.
     const evicted = this.#applyRetention();
-    if (evicted.length > 0) this.#statsEvicted += evicted.length;
 
     for (const fn of this.#onBatch) fn(added);
+    if (evicted.length > 0) {
+      for (const fn of this.#onEvict) fn(evicted);
+    }
+  }
+
+  /**
+   * Column-native batch ingest for the chunked backing. Validates the
+   * whole batch into typed columns (no per-row `Event`), enforces the
+   * strict ordering policy on the batch, appends one chunk, then fans
+   * out transient events to listeners only if any are subscribed
+   * (no listeners ⇒ no `Event` created — the heap/GC win).
+   *
+   * Preserves the `event → retention → batch → evict` ordering: all
+   * `'event'` fan-out happens before `#applyRetention`.
+   */
+  #pushManyColumnar(rows: ReadonlyArray<RowForSchema<S>>): void {
+    const chunked = this.#chunked!;
+    const { keys, columns } = validateAndNormalizeColumnar<S>({
+      name: this.name,
+      schema: this.schema,
+      rows,
+    });
+
+    // Strict ordering, two parts:
+    //   (1) INTRA-batch order is already enforced by
+    //       `validateAndNormalizeColumnar` above — it throws
+    //       `ValidationError("row N is out of order")` on a
+    //       non-decreasing-by-(begin,end) violation within the batch.
+    //   (2) CROSS-batch boundary — the batch's first key must be `>=`
+    //       the buffer's current last. `validateAndNormalizeColumnar`
+    //       can't see `last`, so we check it here, with the same
+    //       `ValidationError` shape/message as the per-row
+    //       `#insertPerRow` strict path.
+    // (All-or-nothing: a violating batch is rejected before the chunk
+    // is appended. Strict callers send in-order batches; an intra-batch
+    // inversion surfaces the column-intake's "row N" message rather
+    // than the timestamp message — both `ValidationError`, type
+    // contract preserved.)
+    const n = keys.length;
+    if (n > 0 && chunked.length > 0) {
+      const firstBegin = keys.beginAt(0);
+      const lastBegin = chunked.beginAt(chunked.length - 1)!;
+      if (firstBegin < lastBegin) {
+        throw new ValidationError(
+          `out-of-order event: timestamp ${firstBegin} is before latest ${lastBegin}`,
+        );
+      }
+    }
+
+    // All-or-nothing commit: the whole batch lands as one chunk BEFORE
+    // any `'event'` fires. This is the deliberate divergence from the
+    // per-row `Event[]` path documented on `pushMany` — handlers see
+    // the full post-batch `length`, and a mid-fan-out throw leaves the
+    // entire batch committed (vs the row path's prefix commit). Per-row
+    // commit here would mean a per-row `Event`, defeating the backing.
+    const store = ColumnarStore.fromTrustedStore(this.schema, keys, columns);
+    chunked.appendStore(store);
+    this.#statsIngested += n;
+
+    // Materialize the batch's events as transient objects ONLY if an
+    // `'event'` / `'batch'` listener will consume them — with no row
+    // listeners, no `Event` is ever created (the heap/GC win).
+    const added =
+      this.#onEvent.size > 0 || this.#onBatch.size > 0
+        ? materializeEventsFromStore(store, this.schema)
+        : null;
+
+    // `'event'` fan-out fires before retention (the ordering contract).
+    if (added) {
+      for (const ev of added) {
+        for (const fn of this.#onEvent) fn(ev);
+      }
+    }
+
+    // Retention always runs. It updates `#statsEvicted` internally and
+    // returns the materialized evicted events only when an `'evict'`
+    // listener exists (else `dropPrefix`, returning `[]`).
+    const evicted = this.#applyRetention();
+
+    if (added) {
+      for (const fn of this.#onBatch) fn(added);
+    }
     if (evicted.length > 0) {
       for (const fn of this.#onEvict) fn(evicted);
     }
@@ -469,10 +625,25 @@ export class LiveSeries<S extends SeriesSchema> {
   _pushTrustedEvents(events: ReadonlyArray<EventForSchema<S>>): void {
     if (events.length === 0) return;
 
+    // Chunked backing: route through the columnar batch path. The
+    // partition router feeds array-backed sub-series, so this is only
+    // reached by direct callers of `_pushTrustedEvents` on a top-level
+    // chunked series. Reconstruct rows and reuse `#pushManyColumnar`
+    // (re-validates — acceptable on this rare path; the strict
+    // order-check still applies, matching the per-row trusted path).
+    if (this.#chunked) {
+      const rows: RowForSchema<S>[] = new Array(events.length);
+      for (let i = 0; i < events.length; i += 1) {
+        rows[i] = this.#eventToRow(events[i]!);
+      }
+      this.#pushManyColumnar(rows);
+      return;
+    }
+
     const added: EventForSchema<S>[] = [];
 
     for (const event of events) {
-      if (this.#insert(event)) {
+      if (this.#insertPerRow(event)) {
         // See pushMany — counter advances before listener fan-out
         // so partial-failure on any listener still leaves
         // `ingested` consistent with `length`.
@@ -487,7 +658,6 @@ export class LiveSeries<S extends SeriesSchema> {
     if (added.length === 0) return;
 
     const evicted = this.#applyRetention();
-    if (evicted.length > 0) this.#statsEvicted += evicted.length;
 
     for (const fn of this.#onBatch) fn(added);
     if (evicted.length > 0) {
@@ -1108,6 +1278,15 @@ export class LiveSeries<S extends SeriesSchema> {
     return new Event(key, data) as unknown as EventForSchema<S>;
   }
 
+  /** Reconstruct a row tuple `[key, ...values]` from an event. */
+  #eventToRow(event: EventForSchema<S>): RowForSchema<S> {
+    const row: unknown[] = [event.key()];
+    for (let col = 1; col < this.schema.length; col += 1) {
+      row.push(event.get((this.schema[col] as { name: string }).name));
+    }
+    return row as RowForSchema<S>;
+  }
+
   /**
    * Ordering-policy gate. Decides whether `event` is accepted into
    * the buffer, and via which storage mutation:
@@ -1118,15 +1297,18 @@ export class LiveSeries<S extends SeriesSchema> {
    * - Out-of-order under `reorder` (within grace): sorted-inserted.
    * - Out-of-order under `reorder` (past grace): throws.
    *
-   * `LiveSeries` owns the policy; the storage backing owns the
+   * `LiveSeries` owns the policy; the array backing owns the
    * mutation (`appendTrusted` / `insertSortedTrusted`). Returns
-   * `true` if the event was accepted, `false` if dropped.
+   * `true` if the event was accepted, `false` if dropped. Only the
+   * per-row (array) path uses this; the chunked path validates +
+   * order-checks the whole batch in `#pushManyColumnar`.
    */
-  #insert(event: EventForSchema<S>): boolean {
-    const last = this.#storage.last();
+  #insertPerRow(event: EventForSchema<S>): boolean {
+    const perRow = this.#perRow!;
+    const last = perRow.last();
 
     if (!last || compareKeys(last.key(), event.key()) <= 0) {
-      this.#storage.appendTrusted(event);
+      perRow.appendTrusted(event);
       return true;
     }
 
@@ -1149,7 +1331,7 @@ export class LiveSeries<S extends SeriesSchema> {
               `(latest: ${last.begin()}, grace: ${this.#graceWindowMs}ms)`,
           );
         }
-        this.#storage.insertSortedTrusted(event);
+        perRow.insertSortedTrusted(event);
         return true;
       }
     }
@@ -1166,6 +1348,12 @@ export class LiveSeries<S extends SeriesSchema> {
    * push, AFTER the per-event listener fan-out — so a per-event
    * listener observes the pre-retention buffer state, preserving
    * the `event → retention → batch → evict` contract.
+   *
+   * Updates `#statsEvicted` by count internally (listener-independent)
+   * and only materializes the evicted events when an `'evict'`
+   * listener will consume them — otherwise `dropPrefix` skips the
+   * per-row materialization (the dominant avoidable cost on the
+   * chunked backing's retention hot path).
    */
   #applyRetention(): ReadonlyArray<EventForSchema<S>> {
     let evictCount = 0;
@@ -1187,6 +1375,11 @@ export class LiveSeries<S extends SeriesSchema> {
 
     if (evictCount === 0) return [];
 
+    this.#statsEvicted += evictCount;
+    if (this.#onEvict.size === 0) {
+      this.#storage.dropPrefix(evictCount);
+      return [];
+    }
     return this.#storage.evictPrefix(evictCount);
   }
 }

@@ -222,6 +222,98 @@ describe('LiveSeries.reduce — basic semantics', () => {
   });
 });
 
+describe('LiveSeries.reduce — eviction slot resolution (PR #170 regression)', () => {
+  // The reducer removes an evicted event's contribution by its
+  // arrival-assigned slot index. Resolving the evicted event back to
+  // that slot uses object identity for the `Event[]` backing (the
+  // SAME object is re-handed on evict — the only correct path for
+  // `reorder`, where eviction order ≠ arrival order), falling back to
+  // the FIFO frontier only for the chunked backing's freshly
+  // materialized evictions (append-only → oldest-first → FIFO exact).
+  //
+  // The bug Codex caught: a pure-FIFO resolution removed the
+  // oldest-ARRIVED slot for every source — wrong for `reorder`, whose
+  // sorted-prefix eviction can drop a later arrival. The fix restores
+  // identity-primary, matching main's pre-chunked behavior on the
+  // array backing while keeping the chunked path correct.
+  //
+  // NOTE on `reorder` + retention: the *value-based* reducers
+  // (`avg`/`sum`/`count`/`median`/`percentile`/`stdev`/`unique`)
+  // remove by value and are correct regardless of eviction order — the
+  // guarantee pinned here. The *windowed* reducers
+  // (`min`/`max`/`first`/`last`/`samples`) use forward-sliding-window
+  // state (monotone deque / head-removal ordered entries) that assumes
+  // monotonic oldest-by-arrival eviction; `reorder`'s sorted-prefix
+  // eviction violates that, so they are NOT reliable for
+  // `reorder` + retention. That is a pre-existing limitation (true on
+  // main before the chunked work) and is documented in `LiveReduce`'s
+  // class JSDoc — see PLAN.md "Deferred". This PR neither introduces
+  // nor fixes it.
+
+  it('reorder + retention: value-based reducers track the retained window', () => {
+    // Arrivals 30, 20, 10 (descending time); maxEvents:2 evicts the
+    // sorted-oldest (1000→10) immediately on its own insert. Retained
+    // buffer is {2000→20, 3000→30}. The evicted event's value (10) is
+    // removed from value-based state regardless of which slot index the
+    // resolver picks, so these stay correct under the fix.
+    const live = new LiveSeries({
+      name: 'reorder-value-based',
+      schema,
+      ordering: 'reorder',
+      retention: { maxEvents: 2 },
+    });
+    const r = live.reduce({
+      mean: { from: 'cpu', using: 'avg' },
+      n: { from: 'cpu', using: 'count' },
+      mid: { from: 'cpu', using: 'median' },
+    });
+
+    live.push([3000, 30, 'a']); // arrival 0
+    live.push([2000, 20, 'a']); // arrival 1
+    live.push([1000, 10, 'a']); // arrival 2 → evicts sorted-oldest (10)
+
+    expect(r.value().mean).toBe(25); // (20 + 30) / 2
+    expect(r.value().n).toBe(2);
+    expect(r.value().mid).toBe(25); // median of {20, 30}
+
+    r.dispose();
+  });
+
+  it('chunked source: eviction across the replay→forward boundary keeps min correct', () => {
+    // A reduce over a non-empty chunked source replays the buffered
+    // events (materialized + cached → identity HITS on evict). Forward
+    // events are transient (identity MISSES → FIFO fallback). As
+    // retention evicts past the last replayed event into the forward
+    // events, the FIFO frontier must already be advanced past the hits
+    // — otherwise the first miss removes an already-removed slot and
+    // min corrupts. (Top-level strict+time auto-selects chunked.)
+    const live = new LiveSeries({
+      name: 'chunked-boundary',
+      schema,
+      retention: { maxEvents: 3 },
+    });
+    live.push([0, 50, 'a']);
+    live.push([1000, 40, 'a']);
+    live.push([2000, 30, 'a']);
+
+    const r = live.reduce({ lo: { from: 'cpu', using: 'min' } });
+    expect(r.value().lo).toBe(30); // over replayed {50,40,30}
+
+    live.push([3000, 20, 'a']); // evicts replayed 50 (hit) → {40,30,20}
+    expect(r.value().lo).toBe(20);
+    live.push([4000, 10, 'a']); // evicts replayed 40 (hit) → {30,20,10}
+    expect(r.value().lo).toBe(10);
+    live.push([5000, 5, 'a']); // evicts replayed 30 (hit) → {20,10,5}
+    expect(r.value().lo).toBe(5);
+    live.push([6000, 100, 'a']); // evicts FIRST forward (miss → FIFO) → {10,5,100}
+    expect(r.value().lo).toBe(5);
+    live.push([7000, 1, 'a']); // evicts forward (miss) → {5,100,1}
+    expect(r.value().lo).toBe(1);
+
+    r.dispose();
+  });
+});
+
 describe('LiveSeries.reduce — triggers', () => {
   it('Trigger.every emits at clock boundaries', async () => {
     const live = makeLive();
