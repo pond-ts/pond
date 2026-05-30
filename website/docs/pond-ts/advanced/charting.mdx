@@ -484,6 +484,30 @@ will eventually wrap visx with opinionated defaults; until then,
 build your own thin wrapper if you find yourself repeating the same
 visx scaffolding.
 
+## Large datasets: the column API
+
+`toPoints()` is the right bridge for row-shaped chart libraries (Recharts,
+Plot, visx props). But at large point counts — the "canvas faster" row in the
+table above — you don't want one object per row at all. Reach for the
+[column API](./columns) instead: pull a dense `Float64Array` or downsample to
+one bucket per pixel, and draw straight to a canvas with no per-`Event`
+allocation.
+
+```ts
+// Downsample a million points to the canvas width, then draw.
+const visible = series.column('cpu').slice(startIdx, endIdx);
+const { lo, hi } = visible.bin(cssWidth, 'minMax');
+for (let px = 0; px < cssWidth; px += 1) {
+  ctx.moveTo(px, scaleY(hi[px]!));
+  ctx.lineTo(px, scaleY(lo[px]!));
+}
+```
+
+`series.column('cpu').toFloat64Array()` gives you the raw values for a custom
+draw loop; `series.keyColumn().at(i)` (or `.slice(s, e)`) the X axis. See
+[Columns](./columns) for the full surface. (A first-party `@pond-ts/charts`
+will eventually wrap this; until then it's the build-your-own-canvas path.)
+
 ## Why no first-party charts yet
 
 Chart components carry a lot of opinions — dimensions, themes,

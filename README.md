@@ -1,7 +1,7 @@
 # pond-ts
 
 **Highly optimised, fully typed Timeseries library for TypeScript**
- 
+
 Schema-driven events, composable batch transforms, push-based streaming
 ingest, multi-entity partitioning, and an optional React integration —
 all strict TypeScript end to end, all immutable.
@@ -31,6 +31,11 @@ npm install @pond-ts/react          # React hooks (optional)
   single node.js instance.)
 - **Triggers** — for control of rolling emission cadences. Synchronised
   partitioned rolling fires across partitions on every boundary.
+- **Typed column extraction** — `series.column('cpu')` returns a
+  schema-narrowed typed column with single-pass reductions
+  (`min`/`max`/`sum`/`mean`/`stdev`/`median`/`percentile`/`minMax`),
+  index downsampling (`bin`), and a zero-copy `toFloat64Array()` for
+  canvas / WebGL draw loops — no per-event allocation on the hot path.
 - **No legacy baggage**
 
 ## Quick start: batch

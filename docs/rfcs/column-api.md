@@ -1,6 +1,8 @@
 # RFC: Column-centric public API
 
-**Status:** **draft, awaiting review.**
+**Status:** **adopted (V3, 2026-05-27); shipped in v0.18.0 (2026-05-30).**
+The public column API documented here landed as Phase 4.7 step 8. User-facing
+docs: [Columns](../../website/docs/pond-ts/advanced/columns.mdx).
 
 **Relationship to PLAN.md:** This RFC is strategic context, not a
 commitment. [PLAN.md](../../PLAN.md) is the binding source of truth

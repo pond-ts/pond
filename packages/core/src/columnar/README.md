@@ -13,10 +13,20 @@ which wraps a `ColumnarStore` with a `SeriesSchema` and provides
 lazy `Map<number, Event>` cache and the five public-API invariants from
 the RFC.
 
-This directory is **framework-internal**. Nothing here is re-exported
-from [`packages/core/src/index.ts`](../index.ts) — the framework's API
-surface stays mobile until step 2 (TimeSeries integration) commits the
-public shape.
+**As of v0.18.0 (Phase 4.7 step 8), the per-kind column classes are
+public.** The `Float64Column` / `BooleanColumn` / `StringColumn` /
+`ArrayColumn` classes, their chunked variants, and the `KeyColumn`
+variants are re-exported from [`packages/core/src/index.ts`](../index.ts)
+so consumers can name the types `series.column('x')` returns. The
+public-facing method surface (reductions, `bin`, `toFloat64Array`,
+`at` / `slice`) is mounted onto these classes from
+[`../column.ts`](../column.ts), one layer up, so this directory stays a
+pure substrate (no reducer dependency — enforced by the `series-store`
+purity test).
+
+The rest of this directory remains framework-internal and may evolve
+without a major bump: builders, validity helpers, `ColumnarStore`, view
+transforms, `concatSorted`, `scatterByPartition`, `ColumnarRingBuffer`.
 
 ## What's in here
 

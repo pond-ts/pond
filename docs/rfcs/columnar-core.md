@@ -1,14 +1,21 @@
 # RFC: Hybrid columnar core
 
-**Status:** **adopted as v1.0 substrate (2026-05-11).** Implementation is
-committed; sequencing and architecture details in the library-agent response
-below.
+**Status:** **adopted as Phase 4.7; shipped in v0.18.0 (2026-05-30).** The
+substrate, the column-native intake, the reducer fast-path, and the public
+column API all landed in v0.18.0.
+
+> **Historical-framing note (added 2026-05-30):** This RFC originally framed
+> the columnar substrate as the **"v1.0 substrate."** That target has been
+> dropped — pond-ts is staying pre-1.0 while the API moves into its right
+> shape. The substrate shipped as a normal pre-1.0 minor (v0.18.0), not a 1.0
+> commitment. Read the "v1.0" language throughout this document as
+> May-2026 historical context, not a release target.
 
 **Relationship to PLAN.md:** Adopted as Phase 4.7 — see
 [`PLAN.md`](../../PLAN.md). The previous "row-oriented core stays" deferred-
-design entry has been walked back; columnar substrate is now the v1.0 wave.
-LiveSeries row-oriented behavior is preserved at the public API boundary
-under the invariants section below.
+design entry has been walked back; the columnar substrate is the Phase 4.7
+direction. LiveSeries row-oriented behavior is preserved at the public API
+boundary under the invariants section below.
 
 **Evidence base:** [`docs/briefs/core-columnar-store-spike.md`](../briefs/core-columnar-store-spike.md).
 Implementation prototype on branch `codex/core-columnar-store-spike`

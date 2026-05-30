@@ -1,0 +1,177 @@
+---
+sidebar_position: 18
+---
+
+# Columns
+
+Every `TimeSeries` is backed by typed columns (one per schema field) plus a
+key column. The **column API** exposes those directly — typed-array access and
+O(1)/O(n) reductions without materializing one `Event` object per row.
+
+Reach for it when you want **throughput**: charting large series, computing a
+scalar over one field, or handing a dense `Float64Array` to a canvas / WebGL
+draw loop. The row API (`series.events`, `series.at(i)`, `toPoints()`) is still
+the right default for per-event logic; the column API is the fast path beside
+it, not a replacement.
+
+It's fully additive — nothing about the row/`Event` API changed.
+
+## `series.column(name)`
+
+Returns a typed, schema-narrowed view of one value column:
+
+```ts
+const cpu = series.column('cpu'); // Float64Column (number kind)
+const host = series.column('host'); // StringColumn (string kind)
+const up = series.column('healthy'); // BooleanColumn (boolean kind)
+```
+
+The return type is narrowed by the schema, so `column('cpu')` is a
+`Float64Column` (no cast needed). The view is read-only and zero-copy over the
+series' backing storage.
+
+## `series.keyColumn()`
+
+The key axis (the schema's first column), narrowed by kind:
+
+```ts
+const t = series.keyColumn(); // TimeKeyColumn for a time-keyed series
+t.at(0); // 1_700_000_000_000  — begin timestamp (raw number, not a Time)
+t.slice(100, 200); // zero-copy index-range view
+```
+
+For `timeRange` keys, `at(i)` returns `{ begin, end }`; for `interval` keys,
+`{ begin, end, label }`. Raw POJOs in the columnar idiom — if you want the
+`Time` / `TimeRange` / `Interval` class wrapper, reach for it via the row path
+(`series.events[i].key()`).
+
+## Numeric reductions
+
+`Float64Column` carries the scalar reductions, each a single pass, validity-aware
+(undefined cells are skipped):
+
+```ts
+const cpu = series.column('cpu');
+
+cpu.min(); // number | undefined
+cpu.max();
+cpu.sum(); // number (0 over an empty/all-undefined column)
+cpu.mean();
+cpu.stdev();
+cpu.median();
+cpu.percentile(95); // q in [0, 100]; throws RangeError outside
+cpu.minMax(); // [min, max] | undefined — one scan, not two
+cpu.count(); // count of DEFINED cells (not series.length when gaps exist)
+```
+
+`minMax()` is the fused single-pass `[min, max]` — cheaper than
+`[cpu.min(), cpu.max()]` and the natural per-frame Y-extent for a chart.
+
+### Missing values
+
+The reductions skip undefined cells. `count()` returns the number of **defined**
+cells (the data-frame convention) — it diverges from `series.length` exactly
+when the column has gaps:
+
+```ts
+cpu.hasMissing(); // boolean
+cpu.nullCount(); // length - definedCount
+```
+
+## Positional access
+
+```ts
+cpu.at(5); // number | undefined  (bounds-checked, like Array.at)
+cpu.first(); // value at index 0
+cpu.last(); // value at index length-1
+cpu.firstDefined(); // first non-undefined value
+cpu.lastDefined();
+cpu.slice(100, 200); // zero-copy Float64Column view over [100, 200)
+```
+
+## `toFloat64Array()` — the canvas bridge
+
+A storage-agnostic gather into a dense `Float64Array` of length exactly
+`column.length`. Zero-copy when the backing buffer is exact-sized (the typical
+case); a bounded view or single linear copy otherwise:
+
+```ts
+const values = series.column('cpu').toFloat64Array();
+// hand straight to a canvas / WebGL draw loop — no per-row Event, no per-row read
+```
+
+This replaces the substrate-internal storage guard (`if (col.storage !==
+'packed') …`) with one call that works for packed and chunked columns alike.
+The buffer shares the column's storage and is read-only by convention — writing
+through it corrupts the series.
+
+## `bin(bins, reducer)` — index downsampling
+
+Splits `[0, length)` into `bins` equal-index ranges and reduces each. The
+chart's per-frame downsampler: collapse a million points to one bucket per
+pixel.
+
+```ts
+const visible = series.column('cpu').slice(startIdx, endIdx);
+const { lo, hi } = visible.bin(cssWidth, 'minMax');
+for (let px = 0; px < cssWidth; px += 1) {
+  ctx.moveTo(px, scaleY(hi[px]!));
+  ctx.lineTo(px, scaleY(lo[px]!));
+}
+```
+
+Scalar reducers (`'min'`, `'max'`, `'sum'`, `'mean'`, `'stdev'`, `'median'`,
+`'count'`, and the percentile family `'p95'` / `'p99.9'`) return a
+`Float64Array(bins)`; `'minMax'` returns `{ lo, hi }` (two channels, the canvas
+hot path). Empty bins land as `NaN` (or `0` for `'sum'` / `'count'`) — and
+`ctx.lineTo(px, NaN)` correctly breaks the line for "no data here."
+
+:::note Index bins, not time bins
+`bin` splits by **index**, which matches pixel columns only when samples are
+uniformly time-spaced. For bursty / irregular data you want time-aware binning
+(on the roadmap); `bin` is the right tool for uniform input.
+:::
+
+## `scan(fn, options)` — skip-undefined walk
+
+A storage-agnostic linear walk. By default it skips invalid cells
+(`skipInvalid: true`); pass `{ skipInvalid: false }` to visit every slot:
+
+```ts
+let total = 0;
+series.column('cpu').scan((value, i) => {
+  total += value;
+});
+```
+
+## Other column kinds
+
+| Kind      | Class           | Extra methods                         |
+| --------- | --------------- | ------------------------------------- |
+| `number`  | `Float64Column` | reductions, `bin`, `toFloat64Array`   |
+| `boolean` | `BooleanColumn` | `all()`, `any()`, `none()`, `count()` |
+| `string`  | `StringColumn`  | `uniqueCount()`                       |
+| `array`   | `ArrayColumn`   | `at`, `slice`, first/last             |
+
+All kinds share `at` / `slice` / `first` / `last` / `firstDefined` /
+`lastDefined` / `hasMissing` / `nullCount`.
+
+```ts
+series.column('healthy').all(); // every defined cell true?
+series.column('host').uniqueCount(); // distinct hosts
+```
+
+## Chunked columns
+
+Some operations (e.g. `concatSorted` of live windows) produce **chunked**
+columns — the same public surface, backed by multiple segments. Reductions on
+chunked columns materialize internally (≈2× the packed-native cost) but the
+result and the API are identical; `column('x')`'s narrowed type already covers
+both (`Float64Column | ChunkedFloat64Column`). You don't branch on storage —
+call the method.
+
+## See also
+
+- [Charting](./charting) — the column API is the high-throughput path for large
+  series and canvas rendering (the `toFloat64Array` / `bin('minMax')` loop
+  above); `toPoints()` remains the bridge for row-shaped chart libraries.

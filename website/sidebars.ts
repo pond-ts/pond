@@ -60,7 +60,11 @@ const sidebars: SidebarsConfig = {
         {
           type: 'category',
           label: 'Advanced',
-          items: ['pond-ts/advanced/charting', 'pond-ts/advanced/arrays'],
+          items: [
+            'pond-ts/advanced/columns',
+            'pond-ts/advanced/charting',
+            'pond-ts/advanced/arrays',
+          ],
         },
         {
           type: 'link',
