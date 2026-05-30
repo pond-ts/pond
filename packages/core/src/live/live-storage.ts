@@ -12,24 +12,27 @@
  *
  * Two implementations:
  *
- * - {@link EventArrayLiveStorage} — the row-oriented `Event[]`
- *   backing. Supports `insertSortedTrusted` (the `reorder` mode's
- *   sorted mid-stream insertion). This is the only backing used in
- *   the first storage-strategy PR (behavior-preserving extraction).
+ * - {@link EventArrayLiveStorage} — the row-oriented `Event[]` backing.
+ *   Supports per-row `appendTrusted` + `insertSortedTrusted` (the
+ *   `reorder` mode's sorted mid-stream insertion). Used for `reorder`,
+ *   `drop`, interval-keyed series, and all internally-created series
+ *   (partition sub-series, `collect`/`apply` unified buffers).
  *
- * - `RingLiveStorage` (added in the follow-up) — `ColumnarRingBuffer`
- *   backing for the append-only `strict` / `drop` modes. Skips the
- *   long-lived `Event` retention that drives GC pressure at high
- *   ingest rates. Does NOT support `insertSortedTrusted` (an
- *   append-only ring cannot splice mid-stream); `LiveSeries` only
- *   routes `reorder` mode to the array backing, so the ring backing
- *   never sees that call.
+ * - `ChunkedColumnarLiveStorage` (`live-chunked-storage.ts`) — a
+ *   batch-granular columnar backing for top-level append-only `strict`
+ *   time/timeRange series. Each `pushMany` batch becomes one
+ *   `ColumnarStore` chunk (no per-row `Event`), retaining zero `Event`
+ *   objects — the OOM fix. It implements {@link ReadableLiveStorage}
+ *   (reads + evict + snapshot) but NOT the per-row append methods (it
+ *   takes whole batches via `appendStore`); `LiveSeries` branches its
+ *   `pushMany` accordingly.
  *
- * The interface is intentionally small. Anything that can be
- * expressed in terms of `length` + `at(i)` + `keyAt(i)` lives in
- * `LiveSeries` (e.g. `find` / `some` / `every` / `bisect`), so the
- * storage surface stays minimal and each implementation stays
- * coherent.
+ * The interface is split: {@link ReadableLiveStorage} is the read +
+ * evict + snapshot surface both backings share (so `LiveSeries`'s
+ * accessors are storage-agnostic), and {@link LiveStorage} extends it
+ * with the per-row append methods the array backing provides.
+ * Anything expressible via `length` + `at(i)` + `keyAt(i)` lives in
+ * `LiveSeries` (`find` / `some` / `every` / `bisect`).
  *
  * Framework-internal; not exported from `packages/core/src/index.ts`.
  */
@@ -62,10 +65,12 @@ export function compareKeys(a: EventKey, b: EventKey): number {
 }
 
 /**
- * Private storage strategy behind `LiveSeries`. See the module
- * docstring for the layering contract.
+ * The read + evict + snapshot surface every backing shares. Lets
+ * `LiveSeries`'s accessors (`length` / `at` / `bisect` / retention /
+ * `toTimeSeries`) be storage-agnostic regardless of how the backing
+ * ingests rows.
  */
-export interface LiveStorage<S extends SeriesSchema> {
+export interface ReadableLiveStorage<S extends SeriesSchema> {
   /** Current row count. */
   readonly length: number;
 
@@ -95,26 +100,21 @@ export interface LiveStorage<S extends SeriesSchema> {
   last(): EventForSchema<S> | undefined;
 
   /**
-   * Append an event at the tail. The caller guarantees the event's
-   * key is `>=` the current last key (ordering policy is enforced by
-   * `LiveSeries` before this is called).
-   */
-  appendTrusted(event: EventForSchema<S>): void;
-
-  /**
-   * Insert an event at its sorted position (the `reorder` mode's
-   * mid-stream insertion). Only the array backing supports this; the
-   * ring backing throws, since `LiveSeries` never routes `reorder`
-   * mode to it.
-   */
-  insertSortedTrusted(event: EventForSchema<S>): void;
-
-  /**
    * Drop the oldest `n` rows and return them as materialized events
    * (for the `evict` listener). `n` is computed by `LiveSeries`'s
-   * retention policy and is always `<= length`.
+   * retention policy and is always `<= length`. Use this only when an
+   * `'evict'` listener will consume the result — otherwise prefer
+   * {@link dropPrefix}, which skips materialization.
    */
   evictPrefix(n: number): ReadonlyArray<EventForSchema<S>>;
+
+  /**
+   * Drop the oldest `n` rows WITHOUT materializing them. The retention
+   * hot path with no `'evict'` listener uses this — on the chunked
+   * backing, materializing evicted events just to discard them is the
+   * dominant avoidable cost. `n` is always `<= length`.
+   */
+  dropPrefix(n: number): void;
 
   /**
    * Empty the buffer and return all events that were in it (for the
@@ -124,6 +124,30 @@ export interface LiveStorage<S extends SeriesSchema> {
 
   /** Immutable snapshot of the current buffer as a `TimeSeries<S>`. */
   snapshot(name: string): TimeSeries<S>;
+}
+
+/**
+ * The per-row-append backing (the `Event[]` strategy). Extends
+ * {@link ReadableLiveStorage} with the row-at-a-time append methods
+ * `LiveSeries`'s per-row `pushMany` / `_pushTrustedEvents` paths use.
+ * The chunked backing does NOT implement this — it takes whole
+ * batches via `appendStore`.
+ */
+export interface LiveStorage<
+  S extends SeriesSchema,
+> extends ReadableLiveStorage<S> {
+  /**
+   * Append an event at the tail. The caller guarantees the event's
+   * key is `>=` the current last key (ordering policy is enforced by
+   * `LiveSeries` before this is called).
+   */
+  appendTrusted(event: EventForSchema<S>): void;
+
+  /**
+   * Insert an event at its sorted position (the `reorder` mode's
+   * mid-stream insertion).
+   */
+  insertSortedTrusted(event: EventForSchema<S>): void;
 }
 
 /**
@@ -192,6 +216,11 @@ export class EventArrayLiveStorage<
   evictPrefix(n: number): ReadonlyArray<EventForSchema<S>> {
     if (n <= 0) return [];
     return this.#events.splice(0, n);
+  }
+
+  dropPrefix(n: number): void {
+    if (n <= 0) return;
+    this.#events.splice(0, n);
   }
 
   clear(): ReadonlyArray<EventForSchema<S>> {

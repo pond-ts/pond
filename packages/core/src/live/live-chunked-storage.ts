@@ -47,6 +47,38 @@ import type {
   RowForSchema,
   SeriesSchema,
 } from '../schema/index.js';
+import type { ReadableLiveStorage } from './live-storage.js';
+
+/**
+ * Materialize a fresh `Event[]` from a (time / timeRange) store —
+ * used by `LiveSeries`'s transient `'event'` / `'batch'` fan-out on
+ * the chunked path. These events are NOT cached (young-gen, GC'd
+ * after the listeners run), so they don't defeat the heap win.
+ */
+export function materializeEventsFromStore<S extends SeriesSchema>(
+  store: ColumnarStore<S>,
+  schema: S,
+): EventForSchema<S>[] {
+  const keyKind = schema[0].kind;
+  const valueNames: string[] = [];
+  for (let i = 1; i < schema.length; i += 1) {
+    valueNames.push((schema[i] as { name: string }).name);
+  }
+  const out: EventForSchema<S>[] = new Array(store.length);
+  for (let i = 0; i < store.length; i += 1) {
+    const begin = store.beginAt(i);
+    const key =
+      keyKind === 'time'
+        ? new Time(begin)
+        : new TimeRange({ start: begin, end: store.endAt(i) });
+    const data: Record<string, unknown> = {};
+    for (let v = 0; v < valueNames.length; v += 1) {
+      data[valueNames[v]!] = store.valueAt(i, valueNames[v]!);
+    }
+    out[i] = new Event(key, data) as unknown as EventForSchema<S>;
+  }
+  return out;
+}
 
 /** Row-range slice of a store: sliced keys + each column sliced in lockstep. */
 function sliceStore<S extends SeriesSchema>(
@@ -63,7 +95,9 @@ function sliceStore<S extends SeriesSchema>(
   return ColumnarStore.fromTrustedStore(store.schema, keys, columns);
 }
 
-export class ChunkedColumnarLiveStorage<S extends SeriesSchema> {
+export class ChunkedColumnarLiveStorage<
+  S extends SeriesSchema,
+> implements ReadableLiveStorage<S> {
   readonly #schema: S;
   readonly #keyKind: 'time' | 'timeRange';
   readonly #valueNames: ReadonlyArray<string>;
@@ -101,7 +135,19 @@ export class ChunkedColumnarLiveStorage<S extends SeriesSchema> {
       schema: this.#schema,
       rows,
     });
-    const store = ColumnarStore.fromTrustedStore(this.#schema, keys, columns);
+    this.appendStore(
+      ColumnarStore.fromTrustedStore(this.#schema, keys, columns),
+    );
+  }
+
+  /**
+   * Append a pre-validated `ColumnarStore` as a chunk (the mechanic).
+   * `LiveSeries`'s `pushMany` validates + order-checks the batch, then
+   * calls this; `appendChunkFromRows` is the validate-and-append
+   * convenience used by the isolated tests.
+   */
+  appendStore(store: ColumnarStore<S>): void {
+    if (store.length === 0) return;
     this.#chunks.push(store);
     this.#total += store.length;
   }

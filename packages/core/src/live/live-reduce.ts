@@ -131,13 +131,24 @@ export class LiveReduce<
   readonly #states: RollingReducerState[];
 
   /**
-   * Map from source `Event` reference → absolute index used in the
-   * reducer state. Set on `'event'` (add), looked up on `'evict'`
-   * (remove). WeakMap so the source's eviction releases the
-   * reference.
+   * Absolute-index cursors for reducer state. Both retention and
+   * `clear()` evict the OLDEST events first (prefix eviction), and
+   * adds are sequential, so reducer-state membership is a FIFO:
+   * `#nextAbsIdx` is the next index to assign on add; `#nextEvictIdx`
+   * is the next to remove on evict. The i-th evicted event
+   * (oldest-first) removes index `#nextEvictIdx + i`.
+   *
+   * Replaced an earlier `WeakMap<Event, absIdx>` keyed by source-event
+   * reference, which assumed the `'evict'` callback delivered the SAME
+   * `Event` object the `'event'` callback did — true for the row
+   * backing (stores the object) but NOT for the chunked backing (it
+   * materializes events lazily, so an evicted event is a fresh object
+   * with equal value, different identity). FIFO position is
+   * identity-independent and correct for both, since retention is
+   * always oldest-first.
    */
-  readonly #eventToAbsIdx: WeakMap<EventForSchema<S>, number>;
   #nextAbsIdx: number;
+  #nextEvictIdx: number;
 
   readonly #trigger: Trigger;
   #lastClockBucketIdx: number | undefined;
@@ -175,7 +186,7 @@ export class LiveReduce<
     this.#lastClockBucketIdx = undefined;
     this.#countSinceLastEmit = 0;
     this.#nextAbsIdx = 0;
-    this.#eventToAbsIdx = new WeakMap();
+    this.#nextEvictIdx = 0;
     this.#outputEvents = [];
     this.#onEvent = new Set();
     this.#pendingEmitKey = undefined;
@@ -280,7 +291,7 @@ export class LiveReduce<
    *   stats() docs. Never decreases.
    * - `evictions`: total events removed from reducer state via
    *   the source's `'evict'` channel. Events that predated this
-   *   `LiveReduce` (so weren't in `#eventToAbsIdx`) don't count.
+   *   `LiveReduce` (already past the FIFO evict cursor) don't count.
    *   Never decreases.
    * - `emissions`: total output events fired. Never decreases.
    *   For `Trigger.event`, a single `pushMany(K)` fires ONE
@@ -326,7 +337,6 @@ export class LiveReduce<
     if (this.#disposed) return;
     this.#statsEventsObserved++;
     const absIdx = this.#nextAbsIdx++;
-    this.#eventToAbsIdx.set(event, absIdx);
     const data = event.data() as Record<string, ColumnValue | undefined>;
     for (let i = 0; i < this.#columns.length; i++) {
       this.#states[i]!.add(absIdx, data[this.#columns[i]!.source]);
@@ -388,9 +398,12 @@ export class LiveReduce<
 
   #evictOne(event: EventForSchema<S>): void {
     if (this.#disposed) return;
-    const absIdx = this.#eventToAbsIdx.get(event);
-    if (absIdx === undefined) return; // event predated this LiveReduce
-    this.#eventToAbsIdx.delete(event);
+    // FIFO: the oldest live event leaves next. If everything added has
+    // already been evicted, this is an evict for an event that predated
+    // this LiveReduce (or a double-evict) — skip, matching the prior
+    // WeakMap-miss guard.
+    if (this.#nextEvictIdx >= this.#nextAbsIdx) return;
+    const absIdx = this.#nextEvictIdx++;
     this.#statsEvictions++;
     const data = event.data() as Record<string, ColumnValue | undefined>;
     for (let i = 0; i < this.#columns.length; i++) {
