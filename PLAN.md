@@ -4720,7 +4720,7 @@ per their respective notes.
 returns stale/`undefined` snapshots for the windowed reducers
 (`min` / `max` / `first` / `last` / `samples`). Their rolling state
 (monotone deque / head-removal ordered entries) assumes eviction
-removes the oldest-*arrived* event first — true for `strict` / `drop`
+removes the oldest-_arrived_ event first — true for `strict` / `drop`
 and the chunked backing (all append-only), but `reorder`'s
 sorted-prefix eviction can drop a later arrival, which those
 structures can't represent. Value-based reducers (`avg` / `count` /
@@ -4733,10 +4733,20 @@ for another, now reverted to identity-primary) and is documented in
 give `min`/`max` a removal-by-value structure (sorted array, as
 `median` already uses) selected only for reorder sources — keeping
 the O(1) monotone deque on the append-only hot path. Workaround today:
-`live.toTimeSeries().reduce(...)`.
+`live.toTimeSeries().reduce(...)`. The broader architecture for a
+columnar `reorder` (append-only main store + sorted "late corral"
+overlay + watermark compaction) and the column-native output boundary
+it shares a spine with are captured in
+[`docs/rfcs/columnar-live-protocol.md`](docs/rfcs/columnar-live-protocol.md)
+— RFC context, not committed; earns its build when a reorder/output
+consumer surfaces the friction.
 
 **Cross-references:**
 
+- [`docs/rfcs/columnar-live-protocol.md`](docs/rfcs/columnar-live-protocol.md)
+  — the live boundary protocol: column-native output (§A), columnar
+  reorder corral/LSM overlay (§B), and the structural-delta spine that
+  unifies them (§C). Successor-direction to this wave's chunked backing.
 - [`docs/rfcs/columnar-core.md`](docs/rfcs/columnar-core.md) — the
   binding RFC with full library-agent response.
 - [`docs/briefs/core-columnar-store-spike.md`](docs/briefs/core-columnar-store-spike.md)
