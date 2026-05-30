@@ -157,6 +157,34 @@ describe('chunked LiveSeries — listener fan-out', () => {
     expect(live.length).toBe(100);
     expect(live.at(0)!.get('value')).toBe(400);
   });
+
+  // All-or-nothing batch commit (the documented divergence from the
+  // per-row Event[] path, see pushMany JSDoc): the whole chunk is
+  // appended BEFORE any 'event' fires, so every event of a batch
+  // observes the full post-batch length — not a row-by-row 1,2,3.
+  it('every event of a pushMany observes the full post-batch length', () => {
+    const live = chunkedLive();
+    const seen: number[] = [];
+    live.on('event', () => seen.push(live.length));
+    live.pushMany(batch(0, 3));
+    expect(seen).toEqual([3, 3, 3]); // not [1, 2, 3]
+  });
+
+  // A listener that throws mid-fan-out leaves the ENTIRE batch
+  // committed (the chunk is already appended), and length/ingested
+  // stay mutually consistent. (The per-row path would commit only the
+  // prefix up to the throw — intrinsic, documented difference.)
+  it('a mid-fan-out listener throw leaves the whole batch committed', () => {
+    const live = chunkedLive();
+    let fired = 0;
+    live.on('event', () => {
+      fired += 1;
+      if (fired === 2) throw new Error('boom');
+    });
+    expect(() => live.pushMany(batch(0, 3))).toThrow('boom');
+    expect(live.length).toBe(3); // all 3 committed despite the throw on #2
+    expect(live.stats().ingested).toBe(3);
+  });
 });
 
 describe('chunked LiveSeries — LiveReduce (FIFO eviction)', () => {

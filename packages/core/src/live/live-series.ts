@@ -195,7 +195,7 @@ export type LiveSeriesOptions<S extends SeriesSchema> = {
 
   /**
    * @internal Storage-backing override. `'auto'` (default) selects the
-   * column-native chunked backing for top-level `strict` time/timeRange
+   * column-native chunked backing for top-level `strict` time-keyed
    * series, else the `Event[]` backing. `'array'` forces the `Event[]`
    * backing — used by `LivePartitionedSeries` for partition sub-series
    * and `collect`/`apply` unified buffers (they're fed per-event, and
@@ -447,12 +447,29 @@ export class LiveSeries<S extends SeriesSchema> {
    * For JSON-shape rows arriving over the wire, prefer
    * {@link LiveSeries.pushJson} — it accepts the JSON envelope
    * (nulls, raw timestamps) and parses through `parseJsonRow`.
+   *
+   * **Commit granularity differs by backing.** On the `Event[]`
+   * backing each row is appended then its `'event'` fires, so a
+   * handler observes `length` grow row-by-row (`1, 2, …`) within one
+   * `pushMany`, and a handler that throws mid-batch leaves only the
+   * rows up to the throw committed. On the chunked columnar backing
+   * (top-level `strict` time-keyed series) the whole batch is appended
+   * as one chunk *before* any `'event'` fires — so a handler sees the
+   * full post-batch `length` for every event of the batch, and a
+   * handler that throws mid-fan-out leaves the *entire* batch committed
+   * (the chunk is already appended). Both leave `length` and `ingested`
+   * mutually consistent after a throw; they differ only in how much of
+   * the batch is committed. This is intrinsic to all-or-nothing
+   * columnar append — per-row commit would reintroduce the per-row
+   * `Event` cost the chunked backing exists to avoid. The cross-backing
+   * contract callers can rely on: every successfully-ingested row fires
+   * exactly one `'event'`, in order, before `'batch'`/`'evict'`.
    */
   pushMany(rows: ReadonlyArray<RowForSchema<S>>): void {
     if (rows.length === 0) return;
 
     // Chunked (column-native) path: validate the whole batch into
-    // columns, no per-row Event. Only top-level strict time/timeRange
+    // columns, no per-row Event. Only top-level strict time-keyed
     // series select this backing.
     if (this.#chunked) {
       this.#pushManyColumnar(rows);
@@ -539,6 +556,12 @@ export class LiveSeries<S extends SeriesSchema> {
       }
     }
 
+    // All-or-nothing commit: the whole batch lands as one chunk BEFORE
+    // any `'event'` fires. This is the deliberate divergence from the
+    // per-row `Event[]` path documented on `pushMany` — handlers see
+    // the full post-batch `length`, and a mid-fan-out throw leaves the
+    // entire batch committed (vs the row path's prefix commit). Per-row
+    // commit here would mean a per-row `Event`, defeating the backing.
     const store = ColumnarStore.fromTrustedStore(this.schema, keys, columns);
     chunked.appendStore(store);
     this.#statsIngested += n;
