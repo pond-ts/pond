@@ -64,6 +64,34 @@ describe('column-native partition routing — chunked source', () => {
     expect(c.at(0)!.get('value')).toBe(99);
   });
 
+  it('coalesces thin per-partition routing into few chunks (gRPC V7 fix)', () => {
+    // The pathology: thin scatter (1 row per partition per source batch)
+    // would make one chunk per (batch × partition) — gRPC V7 measured
+    // 23.5× the object count. Coalescing accumulates and flushes at the
+    // threshold, so per-partition chunk count stays bounded by
+    // ~rows / flushThreshold, not = number of source batches.
+    const live = new LiveSeries({ name: 's', schema: SCHEMA }); // strict+time → chunked
+    const byHost = live.partitionBy('host');
+    const T = 600;
+    for (let t = 0; t < T; t += 1) {
+      live.pushMany([
+        [t, t, 'a'],
+        [t, t * 2, 'b'],
+        [t, t * 3, 'c'],
+      ]); // 1 row per host per batch — the thin-scatter case
+    }
+    const a = byHost.toMap().get('a')! as unknown as {
+      length: number;
+      _chunkCount: number;
+      at(i: number): { get(c: string): unknown } | undefined;
+    };
+    expect(a.length).toBe(T); // every routed row present
+    expect(a.at(0)!.get('value')).toBe(0);
+    expect(a.at(T - 1)!.get('value')).toBe(T - 1);
+    // Bounded by ~T/256 committed chunks — NOT T (one per source batch).
+    expect(a._chunkCount).toBeLessThanOrEqual(3);
+  });
+
   it('per-partition retention is exact through routing', () => {
     const live = new LiveSeries({
       name: 's',

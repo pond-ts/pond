@@ -11,7 +11,6 @@ import {
   type LiveFillMapping,
   type LiveFillStrategy,
 } from './live-view.js';
-import { withRowSelection } from '../columnar/view.js';
 import type { ColumnarStore } from '../columnar/store.js';
 import type { Trigger } from './triggers.js';
 import {
@@ -1071,14 +1070,16 @@ export class LivePartitionedSeries<
   }
 
   /**
-   * Column-native routing: scatter a source chunk into per-partition
-   * column sub-batches and append each to its chunked partition — **no
-   * per-row `Event`** (the partition-retention OOM fix). Bucketing uses
-   * the SAME key derivation as {@link partitionKey} (String-coerced;
-   * `' undefined'` sentinel) so chunked and per-event routing partition
-   * identically. (`scatterByPartition` itself keys by raw value and
-   * throws on undefined, so we bucket inline and gather via
-   * `withRowSelection` — scatter's underlying packed-gather primitive.)
+   * Column-native routing: bucket a source chunk's rows by partition and
+   * stage each partition's slice into its chunked backing's coalescing
+   * tier — **no per-row `Event`** (the partition-retention OOM fix).
+   * Bucketing uses the SAME key derivation as {@link partitionKey}
+   * (String-coerced; `' undefined'` sentinel) so chunked and per-event
+   * routing partition identically. (`scatterByPartition` keys by raw
+   * value and throws on undefined, so we bucket inline.) The slices are
+   * staged (not turned into a chunk each) so thin scatter — ~1 row per
+   * partition per source batch — coalesces instead of producing a 1-row
+   * chunk per (batch × partition), which was the gRPC V7 blow-up.
    */
   #routeChunk(store: ColumnarStore<S>): void {
     const col = store.columns.get(String(this.by));
@@ -1098,14 +1099,11 @@ export class LivePartitionedSeries<
     for (const [key, indices] of buckets) {
       const part = this.#ensurePartition(key);
       this.#statsEventsRouted += indices.length;
-      // `withRowSelection` gathers the bucket's rows into a packed
-      // sub-store (typed-array copy, no `Event`); the partition's chunked
-      // backing takes it as one chunk via `_appendChunkTrusted`.
-      const sub = withRowSelection(
-        store,
-        Int32Array.from(indices),
-      ) as ColumnarStore<S>;
-      part._appendChunkTrusted(sub);
+      // Stage the slice directly into the partition's coalescing tier —
+      // gathered tuples accumulate and flush as one packed chunk at the
+      // threshold. No per-(batch × partition) sub-store, which was the
+      // gRPC V7 chunk explosion (23.5×) + throughput collapse.
+      part._stageRows(store, indices);
     }
   }
 

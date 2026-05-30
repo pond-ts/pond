@@ -65,6 +65,7 @@ import {
 import {
   ChunkedColumnarLiveStorage,
   materializeEventsFromStore,
+  materializeEventsFromStoreAt,
 } from './live-chunked-storage.js';
 import { validateAndNormalizeColumnar } from '../batch/validate.js';
 import { ColumnarStore } from '../columnar/store.js';
@@ -549,12 +550,11 @@ export class LiveSeries<S extends SeriesSchema> {
    * @internal — append a pre-validated `ColumnarStore` as one chunk to a
    * chunked-backed series, with the full fan-out + retention pass. Trust
    * contract: the caller guarantees the store conforms to this series'
-   * schema and is internally sorted (intra-chunk order). Used by the
-   * column-native partition router (`LivePartitionedSeries.#routeChunk`),
-   * which scatters a source chunk into per-partition sub-stores via
-   * `withRowSelection` (a packed gather) and appends each here — **no
-   * per-row `Event` is materialized** on that path, which is the
-   * partition-retention OOM fix. Empty stores are a no-op.
+   * schema and is internally sorted (intra-chunk order). A
+   * whole-store-per-chunk primitive — appropriate when the store is
+   * already a real batch (≥ tens of rows). For thin partition routing
+   * (one row per partition per source batch) use {@link _stageRows},
+   * which coalesces instead of making a 1-row chunk. Empty stores no-op.
    */
   _appendChunkTrusted(store: ColumnarStore<S>): void {
     if (this.#chunked === null) {
@@ -564,6 +564,66 @@ export class LiveSeries<S extends SeriesSchema> {
     }
     if (store.length === 0) return;
     this.#commitChunk(store);
+  }
+
+  /**
+   * @internal — the column-native partition-routing path. Stage the
+   * rows of `source` at `indices` (a partition's slice of a source
+   * chunk) into the chunked backing's coalescing tier: gathered tuples
+   * accumulate (no per-batch `ColumnarStore`) and flush as ONE packed
+   * chunk at the storage threshold. This is the gRPC-V7-earned fix for
+   * thin scatter — one chunk per (source-batch × partition) was 23.5×
+   * the object count + a throughput collapse. `'event'` / `'batch'`
+   * fan-out fires for the staged slice (transient, young-gen — the
+   * downstream-output boundary is §A, separate from retention), then
+   * retention. Trust contract: the gathered rows are `>=` the current
+   * last key (strict source + order-preserving scatter).
+   */
+  _stageRows(source: ColumnarStore<S>, indices: ArrayLike<number>): void {
+    const chunked = this.#chunked;
+    if (chunked === null) {
+      throw new Error(
+        'LiveSeries._stageRows: series is not chunked-backed (internal misuse)',
+      );
+    }
+    const k = indices.length;
+    if (k === 0) return;
+
+    // Cross-batch boundary: the slice's first key must be `>=` the
+    // buffer's current last (which includes any pending-tier rows).
+    if (chunked.length > 0) {
+      const firstBegin = source.beginAt(indices[0]!);
+      const lastBegin = chunked.beginAt(chunked.length - 1)!;
+      if (firstBegin < lastBegin) {
+        throw new ValidationError(
+          `out-of-order event: timestamp ${firstBegin} is before latest ${lastBegin}`,
+        );
+      }
+    }
+
+    chunked.stageRows(source, indices);
+    this.#statsIngested += k;
+
+    // Transient fan-out for the staged slice — only if a row listener
+    // will consume it (else zero `Event`s, the heap/GC win).
+    const added =
+      this.#onEvent.size > 0 || this.#onBatch.size > 0
+        ? materializeEventsFromStoreAt(source, indices, this.schema)
+        : null;
+    if (added) {
+      for (const ev of added) {
+        for (const fn of this.#onEvent) fn(ev);
+      }
+    }
+
+    const evicted = this.#applyRetention();
+
+    if (added) {
+      for (const fn of this.#onBatch) fn(added);
+    }
+    if (evicted.length > 0) {
+      for (const fn of this.#onEvict) fn(evicted);
+    }
   }
 
   /**
@@ -712,6 +772,16 @@ export class LiveSeries<S extends SeriesSchema> {
    */
   get _isChunked(): boolean {
     return this.#chunked !== null;
+  }
+
+  /**
+   * @internal — committed (compacted) chunk count on the chunked backing,
+   * or 0 on the array backing. Test/bench observability for the
+   * coalescing win: under thin partition routing this stays bounded
+   * (≈ rows / flushThreshold) rather than one chunk per source batch.
+   */
+  get _chunkCount(): number {
+    return this.#chunked === null ? 0 : this.#chunked.committedChunkCount;
   }
 
   /**
