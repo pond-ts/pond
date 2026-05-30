@@ -4604,6 +4604,32 @@ columnar-core RFC's motivation), and the substrate has matured
 upstream of the gRPC workload without the gRPC hot path re-benching
 against it.
 
+**Outcome (2026-05-29): the wave ran, and the measurable conclusion
+is that the substrate's free wins were already delivered by v0.17.1;
+the next real lever (columnar rolling) doesn't earn its cost at
+current production headroom.** Phase A (V5 re-bench) completed; Phase
+B Step 7 (LiveSeries ring buffer) was attempted and **walked back**
+after the bench falsified it. Details below + in the experiment
+friction note. The phase descriptions that follow are the original
+plan, annotated with what actually happened.
+
+**Step 7 walk-back — the durable finding.** The LiveSeries columnar
+ring buffer was built and benched ([brief](docs/briefs/step-7-live-series-ring-buffer.md)):
+ingest 9.4× slower (630ms vs 67ms for 300k rows), heap retained
+_higher_ (36MB vs 28MB), not lower. **Why it can't win: the gRPC hot
+path needs `Event` objects** — the rolling pipeline subscribes to
+`'event'`, so `LiveSeries` materializes an Event per row regardless
+of backing. The ring then decomposes it back into columns (strictly
+more work than create + store-reference), and the "don't retain
+events" payoff didn't even show as a heap win. A columnar _buffer_
+can't avoid the allocation when the consumer needs events; only a
+columnar _rolling reducer_ (Step 3 Phase C) would cut the V5 GC
+pressure. Kept: the storage-strategy refactor (PR #168, earned its
+keep). Reverted: PR #169 reverts #167's `_appendRowTrusted`. The
+ring attempt is preserved on branch `feat/step-7-ring-storage`
+(not merged). Same measure-and-walk-back discipline as the `bin
+{out}` revert.
+
 **Wave shape.** Three phases. Documented in detail at
 [`pjm17971/pond-grpc-experiment/friction-notes/columnar-rebench.md`](https://github.com/pjm17971/pond-grpc-experiment/blob/main/friction-notes/columnar-rebench.md) —
 that file is the binding plan for the experiment-side work; this
@@ -4620,18 +4646,14 @@ section is the pond-ts side.
 
 - **Phase B — Library work prioritized by what V5 surfaces.** Two
   candidates, both pre-named in this Phase 4.7 roadmap:
-  - **Step 7 — `LiveSeries` numeric ring buffer.** The structural
-    fix for V4's 35.6% per-event GC pressure (vs 28.7% in manual
-    V1). Wires the already-shipped `ColumnarRingBuffer` (step 1h)
-    underneath `LiveSeries`'s internal storage. Skips per-event
-    Event/Time allocation on `pushMany`. **Public API consequence:**
-    The columnar-core RFC commits to "Public APIs (`Event`, `at(i)`,
-    `live.on('event')`, etc.) stay row-oriented at the boundary."
-    Step 7 must preserve every existing live-side invariant —
-    retention semantics, ordering modes, grace-window behavior,
-    subscriber ordering. The internal-vs-public split is the load-
-    bearing design question; ring buffer is internal, row-shape
-    intake/emission stays at the boundary.
+  - **Step 7 — `LiveSeries` numeric ring buffer.** ❌ **ATTEMPTED
+    AND WALKED BACK (2026-05-29).** Wired `ColumnarRingBuffer` (step
+    1h) under `LiveSeries` for strict/drop modes; bench showed 9.4×
+    slower ingest and _higher_ heap retention. The ring can't win
+    because the consumer (rolling pipeline) needs `Event` objects
+    regardless of backing — see the walk-back finding above. The
+    storage-strategy refactor that preceded it (PR #168) stays as
+    clean architecture; the ring backing was reverted.
   - **Step 3 Phase C — `series.rolling()` columnar fast path.** The
     structural fix for V4's 8.2% `LivePartitionedSyncRolling.ingest`
     self-time line. Per-reducer `rollingColumn` state factory (or
@@ -4643,10 +4665,15 @@ section is the pond-ts side.
     the V5-surfaced friction; if no custom-reducer driver shows up,
     keep it internal.
 
-  Ordering between Step 7 and Step 3C depends on V5's profile.
-  If GC pressure remains the dominant cost line, Step 7 first. If
-  reducer state work dominates after lazy events do whatever they
-  can do, Step 3 Phase C first.
+  Ordering between Step 7 and Step 3C depended on V5's profile.
+  V5 said "Step 7 first" (GC dominant at 22%), but the Step 7
+  walk-back proved that recommendation wrong: the GC line is driven
+  by the rolling pipeline's per-event `Event` consumption, not by
+  buffer storage. **Step 3 Phase C is the only lever that would
+  actually cut it** — but it's a much larger change (per-reducer
+  columnar state machines) and earns its slot only if a future
+  workload pushes near ceiling. Production target is 100k/s; V5 hits
+  ~210k/s (2.1× headroom). Deferred until friction earns it.
 
 - **Phase C — Consumer re-adoption + dashboard validation.** The
   gRPC experiment bumps to whatever ships from Phase B and

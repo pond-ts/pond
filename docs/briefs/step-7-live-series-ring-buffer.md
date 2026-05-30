@@ -14,6 +14,7 @@ method preserved. The substrate's first wiring through to the live
 hot path.
 
 Expected wins targeted by the V5 profile:
+
 - **Drop the 22% GC self-time line at ceiling.** Old: Events stored in
   buffer for up to `maxAge`/`maxEvents` lifetime → tenured allocations →
   major GC pressure. New: Events allocated only for listener fan-out →
@@ -40,7 +41,7 @@ established two things:
    (TimeSeries integration — lazy events, column-native intake), and
    Step 3 Phase A (reducer fast path) are all merged to pond-ts main.
    But the gRPC experiment's hot path (`pushMany` → `partitionBy →
-   rolling` → fanout) is unchanged — it still allocates `Event` per
+rolling` → fanout) is unchanged — it still allocates `Event` per
    row, stores them in an array, applies retention by `splice`,
    materializes a row array for snapshot.
 2. **The remaining ceiling cost is per-event allocation pressure.**
@@ -66,6 +67,7 @@ integration pattern Step 2 used for `TimeSeries`, applied to
 ### Internal storage swap
 
 **Before** (current `live/live-series.ts` lines 227–276):
+
 ```ts
 export class LiveSeries<S extends SeriesSchema> {
   ...
@@ -79,6 +81,7 @@ export class LiveSeries<S extends SeriesSchema> {
 ```
 
 **After:**
+
 ```ts
 export class LiveSeries<S extends SeriesSchema> {
   ...
@@ -101,6 +104,7 @@ export class LiveSeries<S extends SeriesSchema> {
 ```
 
 Two helpers needed:
+
 - `schemaToColumnSchema(s: SeriesSchema): ColumnSchema` — maps the row-API
   schema vocabulary onto the framework's column-schema vocabulary. Most
   fields map 1:1; key-kind discrimination + interval label kind handled.
@@ -216,43 +220,52 @@ Every method on `LiveSeries` preserved with identical signatures and
 identical behavioral contracts. Enumerated below.
 
 **Construction / lifecycle:**
+
 - `new LiveSeries(options: LiveSeriesOptions<S>)` — same options, same throws, same defaults.
 - `clear()` — empties the ring; fires `'evict'` listener with the cleared events (materialized from ring before clearing).
 
 **Read accessors (point):**
+
 - `at(i)` — schema-narrowed return type unchanged. Reference-stable via cache.
 - `first()`, `last()` — delegate to `at(0)` / `at(length - 1)`.
 - `length` getter — same.
 - `graceWindowMs` getter — same.
 
 **Read accessors (query — Tier 2 from v0.16.0):**
+
 - `find(pred)`, `some(pred)`, `every(pred)` — iterate via `at(i)`.
 - `includesKey(key)`, `bisect(key)`, `atOrBefore(key)`, `atOrAfter(key)` — binary search via `keyAt(i)` on the ring (no Event materialization needed for the search itself; only the returned event materializes through `at(i)`).
 
 **Write:**
+
 - `push(...rows)` — sugar over `pushMany`.
 - `pushMany(rows)` — see §2 above.
 - `pushJson(rows | json)` — delegates to `pushMany`.
 
 **Exports:**
+
 - `toTimeSeries(name?)` — see §2 above; cheaper.
 - `toRows()`, `toObjects()`, `toJSON({...})` — materialize from ring as before, but via column-native paths where possible.
 
 **Reactive composition:**
+
 - `filter(pred)`, `map(fn)`, `select(...)`, `window(size)` → return `LiveView<S>`.
 - `sample({stride})` → returns `LiveView<S>`.
 - `aggregate(seq, mapping)`, `rolling(spec, opts)`, `reduce(mapping)` → return `LiveAggregation` / `LiveRollingAggregation` / `LiveFusedRolling` / `LiveReduce`.
 
 **Stats + meta:**
+
 - `stats()`, `timeRange()`, `eventRate()`, `count()` — same shapes.
 - `on('event' | 'batch' | 'evict', fn)` — same listener contracts.
 - `fill({...})` — same.
 
 **Partitioning:**
+
 - `partitionBy(by, opts?)` — returns `LivePartitionedSeries<S>`. **The
   partitioned variant gets its own ring buffer per partition.**
 
 **Trusted internal path (already exists):**
+
 - `_pushTrustedEvents(events)` — internal-only fast path used by
   `LivePartitionedSeries.#routeEvent`. Step 7 rewires this to use
   column-native `appendBatch` directly. No change to public surface;
@@ -361,6 +374,7 @@ body locks. Each carries a recommended default.
 
 Current LiveSeries supports unbounded buffer growth (`maxEvents:
 Infinity`). The ring buffer requires a finite `retention`. Options:
+
 - **(a) High default ceiling, documented limit.** E.g. 2^24 = ~16M
   rows. Any realistic workload stays below. **Recommended.**
 - **(b) Substrate-extend the ring to support unbounded growth.** Adds
@@ -377,6 +391,7 @@ Today: `#applyRetention` returns `EventForSchema<S>[]` of evicted Events;
 After Step 7: the ring stores columns, not Events. Evicting `n` rows
 from the head leaves "n columns of data that nobody refs anymore."
 The `evict` listener wants `EventForSchema<S>[]`. Options:
+
 - **(a) Materialize on eviction.** Allocates Events at the moment of
   eviction. Probably fine — eviction is amortized O(1) per push but
   the per-eviction cost is 0..N (typically small). **Recommended.**
@@ -391,6 +406,7 @@ Today: per-row Event allocated unconditionally for the `event`
 listener fan-out, even when `#onEvent.size === 0`.
 
 After Step 7: same. Option to optimize:
+
 - **(a) Skip Event allocation when `#onEvent.size === 0`.** Saves
   allocation in the common gRPC case where the LivePartitionedSeries
   is the only consumer (it uses `_pushTrustedEvents` internally,
@@ -423,6 +439,7 @@ for interval-keyed schemas. The current LiveSeries doesn't expose this
 choice; it's inferred from the runtime data.
 
 Options:
+
 - **(a) Infer at construction from schema introspection.** If the
   interval column has a typed-label hint, use it; else default to
   `'string'` (the more general kind) and convert if data drifts.
@@ -441,9 +458,11 @@ Same V4 / V5 harness — `pnpm perf` in pond-grpc-experiment. PR body
 carries the V6 row of the V1→V5 table.
 
 **Primary success criterion:**
+
 - **GC self-time at ceiling drops from 22.0% (V5) to ≤ 10%.**
 
 **Secondary success criteria:**
+
 - **Ceiling rate moves materially toward V1's 410k/s.** Target: ≥ 280k/s
   (some recovery of V8's claimed one-off), stretch ≥ 350k/s.
 - **`toTimeSeries()` is at least 3× faster** (per the Step 2c TimeSeries
@@ -456,6 +475,7 @@ carries the V6 row of the V1→V5 table.
   per partition).
 
 **Non-regression criteria:**
+
 - No public API behavior changes (the 28 invariant pin-tests in §5).
 - No regression on `bench:aggregate` / `bench:rolling` / `bench:materialize`
   on the pond-ts side (those don't touch LiveSeries directly; safety check).
@@ -463,12 +483,14 @@ carries the V6 row of the V1→V5 table.
   new substrate code beyond what TimeSeries already pulls in).
 
 **Bench-runner sequence in the PR body:**
+
 1. **Pond-ts side perf:** `npm run build && cd packages/core && node scripts/perf-live-series.mjs` (new bench, mirror of `perf-timeseries-columnar.mjs` from PR #150 — push N rows, snapshot, push more, snapshot, etc.). Measures pond-only LiveSeries throughput.
 2. **gRPC experiment side perf:** `cd ../pond-grpc-experiment && pnpm perf` against linked pond-ts main. The V6 bench table.
 
 ## 8. Estimated PR size + review approach
 
 **LOC estimate:** 800-1,200 LOC across:
+
 - `packages/core/src/live/live-series.ts` — the storage swap (~400-500 LOC modified, ~100 added for cache helpers).
 - `packages/core/src/live/series-row-helpers.ts` (new file) — `schemaToColumnSchema`, `buildBatchFromEvents`, `materializeEventFromRing` helpers (~150 LOC).
 - `packages/core/test/LiveSeries.invariants.test.ts` (new file) — the 28 invariant pin-tests from §5 (~600 LOC).
@@ -480,6 +502,7 @@ are coherent and atomic. Splitting "swap" from "tests" creates a
 half-state where the contract isn't pinned.
 
 **Review approach:**
+
 1. **Layer 1 self-review.** Per CLAUDE.md PR review section — read diff
    cold, especially the invariants pin-tests vs the implementation.
 2. **Layer 2 adversarial agent review.** Mandatory; this PR is deep
@@ -536,15 +559,15 @@ in. Subsequent sessions: these are binding for the Step 7 PR.
 
   **Resolution: extend the substrate with an internal row-shape
   append method.** ColumnarRingBuffer gains `_appendRowTrusted(keys,
-  values)` (or similar — name TBD during implementation) following
+values)` (or similar — name TBD during implementation) following
   the existing `_underscore` convention for in-package trusted
   callers. Schema validation happens once at ring construction; the
   trusted-append path skips re-validation and writes directly to
   circular buffers in one pass.
 
   **Justification.** The substrate's header documents its purpose as
-  *"streaming sources (LiveSeries, gRPC ingest, websocket feeds)
-  emit rows continuously."* `appendBatch` was the right entry for
+  _"streaming sources (LiveSeries, gRPC ingest, websocket feeds)
+  emit rows continuously."_ `appendBatch` was the right entry for
   bulk-load-from-snapshot; the real-time streaming case wants
   row-shape natively. The addition aligns the substrate's API
   surface with the workload it was designed for, rather than forcing
@@ -553,6 +576,7 @@ in. Subsequent sessions: these are binding for the Step 7 PR.
   **Scope.** Internal-only method. Not exported from
   `packages/core/src/index.ts`. Pre-1.0 substrate API; the user
   approved managing any pre-1.0 churn here as we go.
+
 - **Q5 (interval-keyed LiveSeries):** Resolved as recommended —
   **deferred to Step 7.5**. Initial Step 7 supports time-keyed and
   timeRange-keyed schemas; interval-keyed support lands when a real
@@ -593,13 +617,13 @@ LiveSeries — extract a private storage-strategy layer.**
 interface LiveStorage<S extends SeriesSchema> {
   readonly length: number;
   at(index: number): EventForSchema<S> | undefined;
-  keyAt(index: number): EventKey | undefined;     // bisect / includesKey
-  beginAt(index: number): number | undefined;     // cheap; retention maxAge + ordering checks (zero key alloc)
+  keyAt(index: number): EventKey | undefined; // bisect / includesKey
+  beginAt(index: number): number | undefined; // cheap; retention maxAge + ordering checks (zero key alloc)
   first(): EventForSchema<S> | undefined;
   last(): EventForSchema<S> | undefined;
-  appendTrusted(event: EventForSchema<S>): void;          // strict / drop: append to tail
-  insertSortedTrusted(event: EventForSchema<S>): void;    // reorder: sorted insert (array impl only)
-  evictPrefix(n: number): ReadonlyArray<EventForSchema<S>>;  // materialize + drop oldest n
+  appendTrusted(event: EventForSchema<S>): void; // strict / drop: append to tail
+  insertSortedTrusted(event: EventForSchema<S>): void; // reorder: sorted insert (array impl only)
+  evictPrefix(n: number): ReadonlyArray<EventForSchema<S>>; // materialize + drop oldest n
   clear(): ReadonlyArray<EventForSchema<S>>;
   snapshot(name: string): TimeSeries<S>;
 }
@@ -609,8 +633,8 @@ interface LiveStorage<S extends SeriesSchema> {
 
 1. **`RingLiveStorage`** — `ordering: 'strict' | 'drop'`. Backs the
    append-only modes with `ColumnarRingBuffer` + `_appendRowTrusted`
-   + lazy event cache. **The measured GC win.** The V5 ceiling
-   workload runs `strict`, so this is exactly where the win lands.
+   - lazy event cache. **The measured GC win.** The V5 ceiling
+     workload runs `strict`, so this is exactly where the win lands.
 2. **`EventArrayLiveStorage`** — `ordering: 'reorder'`. Extraction
    of the current `Event[]` + `#insert`-splice + `#applyRetention`
    logic into a storage class. Behavior-identical to today. The safe
@@ -683,15 +707,39 @@ one large diff:
 - **PR-2b — `RingLiveStorage` for strict/drop + the win.** Add the
   ring-backed storage, switch strict/drop modes to it, add the
   invariant pin-tests (§5) and the perf bench. The measured GC win
-  + V6 gRPC bench land here.
+  - V6 gRPC bench land here.
 
 This is `#167`'s sibling discipline — substrate addition was its own
 PR; the LiveSeries work splits refactor-then-win.
 
 ## 13. Status
 
-**Approved 2026-05-29; architecture revised to strategy layer.
-Implementation pass begins with PR-2a (the refactor).**
+**PR-2a (storage-strategy layer) shipped — PR [#168](https://github.com/pjm17971/pond-ts/pull/168), merged.** Earned its keep: clean architecture, behavior-preserving, `EventArrayLiveStorage` is the sole backing.
+
+**PR-2b (`RingLiveStorage`) — WALKED BACK 2026-05-29 after the bench falsified the thesis.** NO-GO.
+
+| metric                                | ring    | Event[] | result               |
+| ------------------------------------- | ------- | ------- | -------------------- |
+| ingest (pushMany 300k, 50k window)    | 630 ms  | 67 ms   | ring **9.4× slower** |
+| heap retained (200k window, isolated) | 36.2 MB | 27.9 MB | ring uses **more**   |
+
+**Why (inherent, not a bug):** the gRPC hot path needs `Event`
+objects — the rolling pipeline subscribes to `'event'`, so
+`LiveSeries` materializes an Event per row regardless of backing.
+The ring then _decomposes_ it back into columns (strictly more work
+than create + store-ref), and the "don't retain events" payoff
+didn't even show as a heap win. A columnar _buffer_ can't avoid the
+allocation when the consumer needs events; only a columnar _rolling
+reducer_ (Step 3 Phase C) would cut the V5 GC pressure.
+
+**Disposition:**
+
+- Kept: PR #168 storage-strategy layer.
+- Reverted: PR [#169](https://github.com/pjm17971/pond-ts/pull/169) reverts #167's `_appendRowTrusted` (the ring prerequisite, now dead).
+- Abandoned (recoverable, not merged): branch `feat/step-7-ring-storage` holds the full attempt + `scripts/perf-live-series.mjs`.
+
+This brief stays as the durable record of _why_ the ring was tried
+and why it didn't earn its keep — a blind-alley trail per CLAUDE.md.
 
 PR merges **block on human approval** per the wave's standing rule.
 
