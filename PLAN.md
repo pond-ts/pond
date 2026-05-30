@@ -4735,11 +4735,25 @@ give `min`/`max` a removal-by-value structure (sorted array, as
 the O(1) monotone deque on the append-only hot path. Workaround today:
 `live.toTimeSeries().reduce(...)`. The broader architecture for a
 columnar `reorder` (append-only main store + sorted "late corral"
-overlay + watermark compaction) and the column-native output boundary
+overlay + grace-flush compaction) and the column-native output boundary
 it shares a spine with are captured in
 [`docs/rfcs/columnar-live-protocol.md`](docs/rfcs/columnar-live-protocol.md)
-— RFC context, not committed; earns its build when a reorder/output
-consumer surfaces the friction.
+— RFC context, not committed.
+
+**Active next step (earned): column-native output (§A).** The RFC's
+multi-agent review surfaced a _measured_ friction signal from the gRPC
+experiment — at saturation, ~80% of the per-`pushMany` budget is
+per-`Event` listener work (`fanout.ts`: 0.44 ms p99 serialize tax ≈ 50%
+of the budget; ~6.7M transient row-object allocs/min). PR #170 zeroed the
+_storage_-side `Event` cost on the chunked path; §A removes the remaining
+_output_-side cost (a columnar-window listener; `'event'` becomes the
+materialize adaptor). This is the one part of the RFC that has graduated
+from "deferred" to earned. Spike plan:
+[`docs/briefs/column-native-output-spike.md`](docs/briefs/column-native-output-spike.md)
+— resolves the payload fork (`TimeSeries<S>` vs a lighter `LiveRun` view)
+and the additive listener name, gated on the gRPC A/B measurement and a
+human API sign-off (it widens the public `LiveSeries` listener surface).
+§B (columnar reorder) stays unearned.
 
 **Cross-references:**
 
@@ -4747,6 +4761,10 @@ consumer surfaces the friction.
   — the live boundary protocol: column-native output (§A), columnar
   reorder corral/LSM overlay (§B), and the structural-delta spine that
   unifies them (§C). Successor-direction to this wave's chunked backing.
+  Carries the full multi-agent review layer + V2 amendments.
+- [`docs/briefs/column-native-output-spike.md`](docs/briefs/column-native-output-spike.md)
+  — the earned §A increment: scopes the column-native output spike
+  (payload fork, additive listener name, gRPC A/B measurement, API gate).
 - [`docs/rfcs/columnar-core.md`](docs/rfcs/columnar-core.md) — the
   binding RFC with full library-agent response.
 - [`docs/briefs/core-columnar-store-spike.md`](docs/briefs/core-columnar-store-spike.md)
