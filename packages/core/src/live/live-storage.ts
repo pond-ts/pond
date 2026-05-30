@@ -19,13 +19,13 @@
  *   (partition sub-series, `collect`/`apply` unified buffers).
  *
  * - `ChunkedColumnarLiveStorage` (`live-chunked-storage.ts`) — a
- *   batch-granular columnar backing for top-level append-only `strict`
- *   time/timeRange series. Each `pushMany` batch becomes one
- *   `ColumnarStore` chunk (no per-row `Event`), retaining zero `Event`
- *   objects — the OOM fix. It implements {@link ReadableLiveStorage}
- *   (reads + evict + snapshot) but NOT the per-row append methods (it
- *   takes whole batches via `appendStore`); `LiveSeries` branches its
- *   `pushMany` accordingly.
+ *   batch-granular columnar backing. `LiveSeries` selects it for
+ *   **top-level `strict` time-keyed** series (the OOM case). Each
+ *   `pushMany` batch becomes one `ColumnarStore` chunk (no per-row
+ *   `Event`), retaining zero `Event` objects — the OOM fix. It
+ *   implements {@link ReadableLiveStorage} (reads + evict + snapshot)
+ *   but NOT the per-row append methods (it takes whole batches via
+ *   `appendStore`); `LiveSeries` branches its `pushMany` accordingly.
  *
  * The interface is split: {@link ReadableLiveStorage} is the read +
  * evict + snapshot surface both backings share (so `LiveSeries`'s

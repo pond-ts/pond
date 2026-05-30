@@ -27,9 +27,12 @@
  * stability (`at(i) === at(i)`); the cache remaps on eviction so
  * identity survives the logical-index shift.
  *
- * **Append-only.** No sorted mid-stream insertion — `LiveSeries`
- * routes only `strict` / `drop` (+ time/timeRange keys) here;
- * `reorder` keeps the `Event[]` backing.
+ * **Append-only.** No sorted mid-stream insertion. The class itself
+ * supports `time` and `timeRange` keys, but `LiveSeries` currently
+ * routes only **top-level `strict` time-keyed** series here (the OOM
+ * case). `drop` (needs per-row out-of-order filtering), `timeRange`
+ * (strict order is `(begin, end)` — deferred), `reorder`, interval
+ * keys, and internally-created series keep the `Event[]` backing.
  *
  * Framework-internal; not exported from `packages/core/src/index.ts`.
  */

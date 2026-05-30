@@ -513,22 +513,30 @@ export class LiveSeries<S extends SeriesSchema> {
       rows,
     });
 
-    // Strict ordering check on the batch: begin non-decreasing AND the
-    // first row `>=` the current last. Throws with the same shape as
-    // the per-row `#insertPerRow` strict path. (All-or-nothing: an
-    // out-of-order row rejects the whole batch — the chunk is not
-    // appended. Strict callers send in-order batches.)
+    // Strict ordering, two parts:
+    //   (1) INTRA-batch order is already enforced by
+    //       `validateAndNormalizeColumnar` above — it throws
+    //       `ValidationError("row N is out of order")` on a
+    //       non-decreasing-by-(begin,end) violation within the batch.
+    //   (2) CROSS-batch boundary — the batch's first key must be `>=`
+    //       the buffer's current last. `validateAndNormalizeColumnar`
+    //       can't see `last`, so we check it here, with the same
+    //       `ValidationError` shape/message as the per-row
+    //       `#insertPerRow` strict path.
+    // (All-or-nothing: a violating batch is rejected before the chunk
+    // is appended. Strict callers send in-order batches; an intra-batch
+    // inversion surfaces the column-intake's "row N" message rather
+    // than the timestamp message — both `ValidationError`, type
+    // contract preserved.)
     const n = keys.length;
-    let prev =
-      chunked.length > 0 ? chunked.beginAt(chunked.length - 1)! : -Infinity;
-    for (let i = 0; i < n; i += 1) {
-      const b = keys.beginAt(i);
-      if (b < prev) {
+    if (n > 0 && chunked.length > 0) {
+      const firstBegin = keys.beginAt(0);
+      const lastBegin = chunked.beginAt(chunked.length - 1)!;
+      if (firstBegin < lastBegin) {
         throw new ValidationError(
-          `out-of-order event: timestamp ${b} is before latest ${prev}`,
+          `out-of-order event: timestamp ${firstBegin} is before latest ${lastBegin}`,
         );
       }
-      prev = b;
     }
 
     const store = ColumnarStore.fromTrustedStore(this.schema, keys, columns);
