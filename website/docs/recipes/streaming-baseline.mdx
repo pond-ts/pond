@@ -1,0 +1,213 @@
+---
+sidebar_position: 17
+---
+
+# Recipe: Incremental ±σ baselines
+
+A per-host **baseline band** — a rolling average with ±σ envelope, the
+primitive behind anomaly detection and band charts — is cheap to
+compute on a static snapshot. On a _live_ dashboard that re-renders
+several times a second, the obvious way to compute it gets expensive:
+every render re-walks the whole window. This recipe moves the rolling
+work onto the ingest path so each render is just a gather and a little
+arithmetic. In the reference dashboard the per-tick cost dropped
+**~16×** (22 ms → 1.3 ms at 12k events) and the host-count ceiling moved
+from ~64 to ~256 on the same hardware and frame budget.
+
+## The two shapes
+
+```
+SNAPSHOT BASELINE (re-walks the window every render)
+  push → LiveSeries → useWindow snapshot → snapshot.partitionBy('host')
+                                              .baseline('cpu', { window: '1m', … })
+                                            ▲ O(window) rolling pass, every tick
+
+STREAMING BASELINE (rolls once, at ingest)
+  push → LiveSeries.partitionBy('host').rolling('1m', { … }).collect()
+           ▲ O(1) amortized per event, once
+       → useWindow snapshot → gather typed arrays + avg ± σ·sd
+                              ▲ O(points) arithmetic, every tick
+```
+
+The snapshot form (covered in the
+[dashboard how-to guide](../how-to-guides/dashboard-guide)) is the right
+default when renders are infrequent or windows are small — there's
+nothing to maintain between ticks. Reach for the streaming form when the
+per-tick re-walk shows up in a profile: high render cadence, long
+windows, or many partitions.
+
+## Roll the baseline at ingest
+
+The key move is to compute the rolling `avg`/`stdev` _per host_ as events
+arrive, and fan the per-host outputs back into one series you can
+snapshot:
+
+```ts
+import { LiveSeries } from 'pond-ts';
+
+const schema = [
+  { name: 'time', kind: 'time' },
+  { name: 'cpu', kind: 'number' },
+  { name: 'host', kind: 'string' },
+] as const;
+
+const live = new LiveSeries({ name: 'metrics', schema });
+
+// Per-host 1-minute rolling baseline, fanned into one unified series.
+const baseline = live
+  .partitionBy('host')
+  .rolling(
+    '1m',
+    {
+      host: { from: 'host', using: 'last' }, // keep the partition tag — see note
+      cpu: { from: 'cpu', using: 'last' }, // most-recent raw value
+      avg: { from: 'cpu', using: 'avg' }, // rolling mean
+      sd: { from: 'cpu', using: 'stdev' }, // rolling standard deviation
+      n: { from: 'cpu', using: 'count' }, // window sample count
+    },
+    { minSamples: 20 }, // avg/sd stay undefined until 20 samples — hides the warm-up
+  )
+  .collect({ retention: { maxAge: '30m' } });
+// baseline: LiveSeries<{ time, host, cpu, avg, sd, n }>
+```
+
+Each source event updates exactly one partition's rolling state and emits
+one output event. There is no per-tick re-walk — the reducer state is
+maintained incrementally, at ingest.
+
+:::note[Two things that bite the first time]
+
+1. **The partition column drops by default.** On the per-event
+   (non-`clock`) partitioned `rolling`, the output schema only retains
+   columns you name in the mapping — so the `host` tag vanishes unless
+   you carry it through with a passthrough reducer
+   (`host: { from: 'host', using: 'last' }`). Without it, the unified
+   series has no `host` column and you can't re-partition the snapshot
+   downstream. (The synced `Trigger.clock(...)` and fused forms
+   auto-inject the partition column instead — a deliberate asymmetry,
+   since those forms own the merge.)
+
+2. **`collect()` is an append-only fan-in, and retention does _not_
+   inherit.** It subscribes to every partition (current and future) and
+   pushes their output events into one unified `LiveSeries<R>`. Per-host
+   retention bounds each partition's memory; the unified buffer has its
+   own, independent retention — pass `{ retention: … }` to `collect()`
+   to cap it, or it grows unbounded.
+   :::
+
+## Read it in React
+
+`collect()` returns a plain `LiveSeries`, so [`useWindow`](../react/hooks)
+snapshots it like any other live source:
+
+```tsx
+import { useMemo } from 'react';
+import { useWindow } from '@pond-ts/react';
+
+function useBaselineBands(baseline) {
+  // Throttled 5-minute snapshot — TimeSeries<R> | null.
+  const snap = useWindow(baseline, '5m', { throttle: 200 });
+
+  return useMemo(() => {
+    if (!snap) return new Map();
+    const sigma = 3;
+
+    return snap.partitionBy('host').toMap((host) => {
+      const xs = host.keyColumn().begin; // Float64Array — zero-copy x axis
+
+      // Raw line: zero-copy straight to the canvas, no arithmetic.
+      const cpu = host.column('cpu').toFloat64Array();
+
+      // Bands: avg ± σ·sd, element-wise. `.at(i)` is validity-aware, so the
+      // warm-up tail (n < minSamples) lands as NaN and the line breaks there.
+      const avgCol = host.column('avg');
+      const sdCol = host.column('sd');
+      const len = avgCol.length;
+      const avg = new Float64Array(len);
+      const upper = new Float64Array(len);
+      const lower = new Float64Array(len);
+      for (let i = 0; i < len; i += 1) {
+        const a = avgCol.at(i); // number | undefined
+        const s = sdCol.at(i);
+        if (a === undefined || s === undefined) {
+          avg[i] = upper[i] = lower[i] = NaN;
+        } else {
+          avg[i] = a;
+          upper[i] = a + sigma * s;
+          lower[i] = a - sigma * s;
+        }
+      }
+      return { xs, cpu, avg, upper, lower };
+    });
+  }, [snap]);
+}
+```
+
+Feed `xs` / `cpu` / `upper` / `lower` straight into a canvas draw loop —
+see [Charting](../pond-ts/advanced/charting) for the
+`moveTo`/`lineTo` over typed arrays, and [Columns](../pond-ts/advanced/columns)
+for the full column surface (`toFloat64Array`, `keyColumn().begin`,
+`bin('minMax')` for per-pixel downsampling).
+
+:::tip[Gaps as NaN]
+`toFloat64Array()` is zero-copy but ignores validity — undefined cells
+read as whatever sits in the backing buffer. For a single column where
+you want gaps to break the canvas line, either walk with the
+validity-aware `.at(i)` (as the bands do above) or gather once:
+
+```ts
+function values(col) {
+  if (!col.hasMissing()) return col.toFloat64Array(); // zero-copy fast path
+  const out = new Float64Array(col.length);
+  const src = col.toFloat64Array();
+  for (let i = 0; i < col.length; i += 1) {
+    out[i] = col.validity?.isDefined(i) ? src[i] : NaN;
+  }
+  return out;
+}
+```
+
+:::
+
+## Why it's faster
+
+| Hosts | Events  | Snapshot baseline | Streaming baseline | Frame verdict (streaming) |
+| ----- | ------- | ----------------- | ------------------ | ------------------------- |
+| 8     | 12 000  | 21.4 ms           | **1.3 ms**         | 60 fps, 15× headroom      |
+| 32    | 48 000  | 88 ms             | 6.8 ms             | 60 fps                    |
+| 64    | 96 000  | 177 ms            | 18 ms              | 60 fps boundary           |
+| 256   | 384 000 | 800 ms            | **90 ms**          | within one tick           |
+
+_(Node 22, M-series; per-tick memo work. Measured by the
+[`pond-ts-dashboard`](https://github.com/pjm17971/pond-ts-dashboard)
+experiment.)_
+
+The snapshot form re-runs an `O(window)` rolling pass on every render;
+the streaming form maintains the reducer state at ingest (~1.5 µs/event)
+and leaves the render path with only an `O(points)` gather plus the band
+arithmetic. The crossover is render cadence × window size — at a 5 Hz
+dashboard with a multi-thousand-event window it's already decisive.
+
+## Scaling past N hosts
+
+At very high partition counts the per-event rolling cost (now the only
+thing scaling with input size) starts to dominate. Two levers, both
+already in pond:
+
+- **Thin the input** — `partitionBy('host').sample({ stride: N }).rolling(…)`
+  decouples the baseline's effective window length from the event rate.
+  `sd / √N` standard error usually stays well under per-event noise even
+  at stride 10. (Sample _after_ `partitionBy`, so each host thins
+  independently — see [Sampling](../pond-ts/live/live-transforms#sampling).)
+- **Aggregate server-side** — push the rolling baseline to a streaming
+  aggregator and ship the dashboard a low-rate tick of pre-rolled rows.
+  The same `partitionBy(…).rolling(…)` primitive runs there too.
+
+## See also
+
+- [Live Transforms → Multi-window rolling](../pond-ts/live/live-transforms#multi-window)
+  — several windows over one ingest pass.
+- [Dashboard how-to guide](../how-to-guides/dashboard-guide) — the
+  snapshot-baseline form and the wider dashboard pattern.
+- [`useWindow`](../react/hooks) · [Columns](../pond-ts/advanced/columns)
+  · [Charting](../pond-ts/advanced/charting).

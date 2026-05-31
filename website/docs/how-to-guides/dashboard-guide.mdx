@@ -215,6 +215,16 @@ section ([`useDashboardData.ts`](https://github.com/pjm17971/pond-ts-dashboard/b
    `toMap` — it skips the unified-buffer round-trip and is ~3.3×
    faster.)
 
+:::tip[Live dashboards: roll the baseline at ingest]
+The pattern above re-runs `baseline`'s rolling pass on each snapshot —
+ideal when renders are infrequent or the window is small. For a
+high-cadence live dashboard, moving the rolling work onto the ingest path
+(`live.partitionBy('host').rolling('1m', { … }).collect()`) turns each
+render into a gather instead of a window re-walk — ~16× cheaper at
+dashboard scale. See
+[Recipe: Incremental ±σ baselines](../recipes/streaming-baseline).
+:::
+
 ### Anomaly detection falls out for free
 
 Once you have the baseline columns on each row, an outlier is just a
