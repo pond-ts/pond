@@ -241,7 +241,18 @@ export class LivePartitionedSeries<
     const chunkedSource =
       (source as { _isChunked?: unknown })._isChunked === true &&
       typeof (source as { _onChunk?: unknown })._onChunk === 'function';
-    this.#routeColumnar = chunkedSource;
+    // Route columnar ONLY when the partition sub-series will ACTUALLY be
+    // chunked. A `{ ordering: 'reorder' | 'drop' }` override on a chunked
+    // (strict) source spawns array-backed partitions (`'auto'` +
+    // non-strict ⇒ Event[]), but `#routeChunk` → `_stageRows` requires a
+    // chunked backing and would throw "not chunked-backed", crashing
+    // ingest on the first batch. Gate on the effective partition ordering
+    // and fall back to the per-event path otherwise. (Reintroduced
+    // footgun class of the v0.17.1 inheritance fix — caught in review.)
+    const routeColumnar =
+      chunkedSource &&
+      (this.#partitionOptions.ordering ?? 'strict') === 'strict';
+    this.#routeColumnar = routeColumnar;
 
     if (this.groups) {
       for (const g of this.groups) {
@@ -249,7 +260,7 @@ export class LivePartitionedSeries<
       }
     }
 
-    if (chunkedSource) {
+    if (routeColumnar) {
       // Replay the source's existing buffer: one chunk per partition via
       // the trusted path (one-time, cold — not the hot path).
       this.#replayChunked(source);
@@ -1071,39 +1082,36 @@ export class LivePartitionedSeries<
 
   /**
    * Column-native routing: bucket a source chunk's rows by partition and
-   * stage each partition's slice into its chunked backing's coalescing
-   * tier — **no per-row `Event`** (the partition-retention OOM fix).
-   * Bucketing uses the SAME key derivation as {@link partitionKey}
-   * (String-coerced; `' undefined'` sentinel) so chunked and per-event
-   * routing partition identically. (`scatterByPartition` keys by raw
-   * value and throws on undefined, so we bucket inline.) The slices are
-   * staged (not turned into a chunk each) so thin scatter — ~1 row per
-   * partition per source batch — coalesces instead of producing a 1-row
-   * chunk per (batch × partition), which was the gRPC V7 blow-up.
+   * stage each row into its partition's chunked backing's coalescing
+   * tier — **no per-row `Event`** on the storage path (the
+   * partition-retention OOM fix). The key derivation matches
+   * {@link partitionKey} (String-coerced; `' undefined'` sentinel) so
+   * chunked and per-event routing partition identically.
+   *
+   * **Routes per row in SOURCE order**, not bucketed per partition. A
+   * bucketed pass (all of partition A, then all of B) would emit the
+   * `'event'` fan-out out of source order — `a@0, a@2, b@1` for source
+   * `[a@0, b@1, a@2]` — and a live `collect()` / `apply()` fan-in into a
+   * strict unified buffer would throw on the out-of-order key. Per-row
+   * routing preserves the source-order fan-out (matching the per-event
+   * path); the heap win is unaffected because the partition's STORAGE
+   * still coalesces staged rows into one chunk per threshold regardless
+   * of staging granularity. (Caught by adversarial review on PR #175.)
    */
   #routeChunk(store: ColumnarStore<S>): void {
     const col = store.columns.get(String(this.by));
     if (col === undefined) return; // partition column always in schema
     const n = store.length;
-    const buckets = new Map<K, number[]>();
+    // Reused single-index array — `_stageRows` consumes it synchronously,
+    // so this avoids a per-row allocation.
+    const one: number[] = [0];
     for (let i = 0; i < n; i += 1) {
       const v = col.read(i);
       const key = (v === undefined ? ' undefined' : `${String(v)}`) as K;
-      let indices = buckets.get(key);
-      if (indices === undefined) {
-        indices = [];
-        buckets.set(key, indices);
-      }
-      indices.push(i);
-    }
-    for (const [key, indices] of buckets) {
       const part = this.#ensurePartition(key);
-      this.#statsEventsRouted += indices.length;
-      // Stage the slice directly into the partition's coalescing tier —
-      // gathered tuples accumulate and flush as one packed chunk at the
-      // threshold. No per-(batch × partition) sub-store, which was the
-      // gRPC V7 chunk explosion (23.5×) + throughput collapse.
-      part._stageRows(store, indices);
+      this.#statsEventsRouted += 1;
+      one[0] = i;
+      part._stageRows(store, one);
     }
   }
 

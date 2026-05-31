@@ -110,6 +110,25 @@ describe('column-native partition routing — chunked source', () => {
     expect([a.at(0)!.get('value'), a.at(1)!.get('value')]).toEqual([3, 4]);
   });
 
+  it('live collect() stays source-ordered across partitions (PR #175 P1)', () => {
+    // The fan-out must stay in SOURCE order across partitions, not
+    // bucketed per partition — else a live collect()'s strict unified
+    // buffer throws on an out-of-order key. Subscribe BEFORE ingest (the
+    // live path), then push a batch that interleaves partitions.
+    const live = new LiveSeries({ name: 's', schema: SCHEMA });
+    const byHost = live.partitionBy('host');
+    const collected = byHost.collect(); // live subscription before ingest
+    expect(() =>
+      live.pushMany([
+        [0, 1, 'a'],
+        [1000, 2, 'b'],
+        [2000, 3, 'a'], // bucketed routing would emit a@0,a@2 then b@1 → throw
+      ]),
+    ).not.toThrow();
+    expect(collected.length).toBe(3);
+    collected.dispose?.();
+  });
+
   it('collect aggregates correctly over the column-routed partitions', () => {
     const live = new LiveSeries({ name: 's', schema: SCHEMA });
     const byHost = live.partitionBy('host');
@@ -153,6 +172,29 @@ describe('column-native partition routing — chunked source', () => {
 });
 
 describe('column-native partition routing — array fallback', () => {
+  it('ordering override on a chunked source falls back to per-event (no crash, PR #175 P1)', () => {
+    // A chunked (strict) source with `partitionBy(col, { ordering: 'reorder' })`
+    // spawns ARRAY-backed partitions — column routing must NOT be selected
+    // (else #routeChunk → _stageRows throws "not chunked-backed" and crashes
+    // ingest). The view falls back to the per-event path.
+    for (const ordering of ['reorder', 'drop'] as const) {
+      const live = new LiveSeries({ name: 's', schema: SCHEMA }); // chunked (strict+time)
+      expect((live as unknown as Backed)._isChunked).toBe(true);
+      const byHost = live.partitionBy('host', { ordering });
+      expect(() =>
+        live.pushMany([
+          [0, 1, 'a'],
+          [1000, 2, 'b'],
+        ]),
+      ).not.toThrow();
+      const a = byHost.toMap().get('a')! as unknown as Backed & {
+        length: number;
+      };
+      expect(a._isChunked).toBe(false); // array-backed (non-strict partition)
+      expect(a.length).toBe(1);
+    }
+  });
+
   it('a reorder source keeps the per-event Event[] partition backing', () => {
     const live = new LiveSeries({
       name: 's',

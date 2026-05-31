@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { ChunkedColumnarLiveStorage } from '../../src/live/live-chunked-storage.js';
+import { ColumnarStore } from '../../src/columnar/store.js';
+import { validateAndNormalizeColumnar } from '../../src/batch/validate.js';
 import type { RowForSchema, SeriesSchema } from '../../src/schema/index.js';
 
 /* -------------------------------------------------------------------------- */
@@ -31,6 +33,82 @@ function batch(base: number, n: number): RowForSchema<S>[] {
   }
   return rows;
 }
+
+function srcStore(rows: RowForSchema<S>[]): ColumnarStore<S> {
+  const { keys, columns } = validateAndNormalizeColumnar<S>({
+    name: 'src',
+    schema: SCHEMA as unknown as S,
+    rows,
+  });
+  return ColumnarStore.fromTrustedStore(SCHEMA as unknown as S, keys, columns);
+}
+
+function staged(threshold: number) {
+  return new ChunkedColumnarLiveStorage<S>(SCHEMA as unknown as S, threshold);
+}
+
+describe('ChunkedColumnarLiveStorage — staging tier (coalescing)', () => {
+  it('stages rows readable in the pending tier, flushes one chunk at threshold', () => {
+    const s = staged(2);
+    const src = srcStore(batch(0, 4)); // begins/values 0..3
+    s.stageRows(src, [0]);
+    expect(s.length).toBe(1);
+    expect(s.committedChunkCount).toBe(0);
+    expect(s.pendingCount).toBe(1);
+    expect(s.at(0)!.get('value')).toBe(0); // readable while pending
+    s.stageRows(src, [1]); // crosses threshold 2 → flush
+    expect(s.committedChunkCount).toBe(1);
+    expect(s.pendingCount).toBe(0);
+    expect(s.length).toBe(2);
+    expect(s.at(0)!.get('value')).toBe(0);
+    expect(s.at(1)!.get('value')).toBe(1);
+  });
+
+  it('reads span committed + pending tiers', () => {
+    const s = staged(2);
+    const src = srcStore(batch(0, 5));
+    for (let i = 0; i < 5; i += 1) s.stageRows(src, [i]); // 2 chunks + 1 pending
+    expect(s.committedChunkCount).toBe(2);
+    expect(s.pendingCount).toBe(1);
+    expect(s.length).toBe(5);
+    for (let i = 0; i < 5; i += 1) expect(s.at(i)!.get('value')).toBe(i);
+    expect(s.beginAt(4)).toBe(4);
+    expect(s.last()!.get('value')).toBe(4);
+  });
+
+  it('retention evicts across the chunk→pending boundary', () => {
+    const s = staged(2);
+    const src = srcStore(batch(0, 5));
+    for (let i = 0; i < 5; i += 1) s.stageRows(src, [i]); // chunks [0,1] [2,3] + pending [4]
+    s.dropPrefix(3); // drop chunk [0,1] + boundary-slice 2 → leaves 3, 4 (pending survives)
+    expect(s.length).toBe(2);
+    expect(s.at(0)!.get('value')).toBe(3);
+    expect(s.at(1)!.get('value')).toBe(4);
+  });
+
+  it('evicts into the pending tier when retention exceeds committed rows', () => {
+    const s = staged(10); // never flushes for this input → all pending
+    const src = srcStore(batch(0, 4));
+    for (let i = 0; i < 4; i += 1) s.stageRows(src, [i]);
+    expect(s.committedChunkCount).toBe(0);
+    expect(s.pendingCount).toBe(4);
+    s.dropPrefix(3); // evict 3 from pending
+    expect(s.length).toBe(1);
+    expect(s.at(0)!.get('value')).toBe(3);
+  });
+
+  it('appendStore flushes pending first to keep committed order', () => {
+    const s = staged(10);
+    const src = srcStore(batch(0, 6));
+    s.stageRows(src, [0]);
+    s.stageRows(src, [1]); // pending [0,1]
+    s.appendStore(srcStore(batch(2, 2))); // direct chunk (begins 2,3) — flush pending first
+    expect(s.committedChunkCount).toBe(2); // flushed-pending chunk + direct chunk
+    expect(s.pendingCount).toBe(0);
+    expect(s.length).toBe(4);
+    for (let i = 0; i < 4; i += 1) expect(s.at(i)!.get('value')).toBe(i);
+  });
+});
 
 describe('ChunkedColumnarLiveStorage — append + read', () => {
   it('starts empty', () => {

@@ -16,6 +16,15 @@
 // host string, partitionBy('host'). Heap is measured in process
 // isolation per backing (the retained-partition-window heap is the
 // headline the V6 re-bench said #170 missed).
+//
+// CAVEAT — the heap numbers here are INDICATIVE, not authoritative.
+// `process.memoryUsage().heapUsed` after forced GC proved unreliable
+// during this work (it misreported a >37 MB retained state as ~6.6 MB in
+// one configuration). Trust the DIRECTION + the committed-chunk count
+// (deterministic, from the flush threshold) and the throughput timing
+// (stable); for the real retained-heap verdict, the gRPC experiment's
+// heap-snapshot tooling (V6/V7/V8 in friction-notes/columnar-rebench.md)
+// is the arbiter.
 
 import { performance } from 'node:perf_hooks';
 import { LiveSeries } from '../dist/index.js';
