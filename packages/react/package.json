@@ -27,7 +27,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "prepack": "cp ../../README.md ./README.md && cp ../../LICENSE ./LICENSE && cp ../../CHANGELOG.md ./CHANGELOG.md && npm run build",
-    "test": "vitest run",
+    "test": "npm run test:type && npm run test:runtime",
+    "test:type": "tsc -p tsconfig.types.json",
     "test:runtime": "vitest run"
   },
   "peerDependencies": {

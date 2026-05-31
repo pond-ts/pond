@@ -19,14 +19,15 @@ describe('useTimeSeries', () => {
     expect(result.current.at(0)!.get('cpu')).toBe(0.42);
   });
 
-  it('infers S from an as-const schema so column-narrowed accessors resolve (not never)', () => {
+  it('resolves the schema-narrowed column path (runtime)', () => {
     const { result } = renderHook(() => useTimeSeries(input));
-    // The STRICT, schema-narrowed path. Under the prior two-generic
-    // `<S, I extends Parameters<...>[0]>` signature `S` collapsed to
-    // `never` through the input-wrapper generic, so `.column('cpu')` was
-    // `never` and `.mean()` failed to compile (the loose `.get('cpu')`
-    // above masked it). This line is the compile-time regression pin.
-    const cpu = result.current.column('cpu'); // narrows to Float64Column
+    // Runtime check of the column-narrowed reduction. Note: this `.test.tsx`
+    // is NOT type-checked (esbuild strips types; the package tsconfig only
+    // includes `src`), so it can't guard the inference itself — `never.mean()`
+    // would erase to `.mean()` and still pass here. The real COMPILE-TIME
+    // guard that `S` infers (and `.column('cpu')` isn't `never`) lives in
+    // `test-d/use-time-series.test-d.ts`, checked by `npm run test:type`.
+    const cpu = result.current.column('cpu');
     expect(cpu.mean()).toBeCloseTo((0.42 + 0.51) / 2);
   });
 
