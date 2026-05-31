@@ -812,6 +812,41 @@ const grouped = ts.groupBy('host', (g) => g.reduce({ cpu: 'avg' }));
 const filled = ts.fill({ cpu: 'linear' });
 ```
 
+### Partitioned rolling → one unified series \{#collect\}
+
+`partitionBy(col)` runs a per-partition pipeline; `collect()` fans the
+per-partition outputs back into a single `LiveSeries` you can snapshot,
+`window()`, or hand to a React hook:
+
+```ts
+const baseline = live
+  .partitionBy('host')
+  .rolling('1m', {
+    host: { from: 'host', using: 'last' }, // partition tag drops by default — carry it
+    avg: { from: 'cpu', using: 'avg' },
+    sd: { from: 'cpu', using: 'stdev' },
+  })
+  .collect({ retention: { maxAge: '30m' } });
+// LiveSeries<{ time, host, avg, sd }> — one series, every host interleaved
+```
+
+Two things to know about `collect()`:
+
+- It is an **append-only fan-in** — it subscribes to every partition
+  (current and future) and pushes their output events into the unified
+  buffer. Per-partition retention bounds each partition; the unified
+  buffer's retention is **independent and does not inherit**. Pass
+  `{ retention: … }` to bound it, or it grows unbounded.
+- On the per-event (non-`clock`) partitioned `rolling`, the partition
+  column **drops** unless you carry it through with a passthrough
+  reducer (`host: { from: 'host', using: 'last' }`). The synced
+  `Trigger.clock(...)` and fused forms auto-inject it instead.
+
+This composition is the basis of an incremental dashboard baseline that
+costs a gather per render instead of a full re-walk — see
+[Recipe: Incremental ±σ baselines](../../recipes/streaming-baseline)
+for the end-to-end pattern (≈16× at dashboard scale).
+
 ## Cleanup
 
 Call `dispose()` on any view or accumulator to unsubscribe from its source.

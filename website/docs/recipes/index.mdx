@@ -18,6 +18,9 @@ Available recipes:
   bucketed by time, per-host breakdown
 - [**Streaming dashboard**](./streaming-dashboard) — live-series ingest
   from a WebSocket-style source, throttled React rendering
+- [**Incremental ±σ baselines**](./streaming-baseline) — move a per-host
+  rolling baseline onto the ingest path (`partitionBy.rolling().collect()`)
+  so each render is a gather, not a re-walk (~16× at dashboard scale)
 - [**Frontend telemetry reporting**](./telemetry-reporting) — collect
   high-frequency timing events, sample p95 latency to a backend every
   30 s, display the live p95 in React
