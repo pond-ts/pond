@@ -95,11 +95,22 @@ function pathA(view) {
     });
 }
 
-// Path B — walk-now grouped gather. Buckets event indices by the
-// partition column, then gathers only the read columns into Float64Arrays.
-// Reads the view through the public LiveSource surface (length / at(i));
-// constructs no TimeSeries. This is the spike's allocation-skip prototype.
+// Path B — the SHIPPED prototype: LiveView.partitionBy(col).toMap(fn).
+// Same call shape as Path A, but on the live view (walk-now gather, no
+// TimeSeries). This is what the dashboard would actually call.
 function pathB(view) {
+  return view.partitionBy('host').toMap((g) => {
+    const out = { ts: g.keyColumn().begin };
+    for (const name of READ) out[name] = g.column(name).toFloat64Array();
+    return out;
+  });
+}
+
+// Path C — hand-written direct gather (the allocation-skip *ideal*: no
+// intermediate (number|undefined)[] per column, no LiveColumnGroup). The
+// gap B→C is the overhead the shipped gather could still shed (it routes
+// through float64ColumnFromArray, which builds an intermediate array).
+function pathC(view) {
   const n = view.length;
   const buckets = new Map();
   for (let i = 0; i < n; i += 1) {
@@ -130,24 +141,27 @@ function pathB(view) {
   return result;
 }
 
-// Correctness gate — both paths must produce identical arrays.
-function assertParity(hosts, events) {
+// Correctness gate — `fn` must produce arrays identical to the snapshot path.
+function assertParity(label, fn, hosts, events) {
   const view = makeView(hosts, events);
   const a = pathA(view);
-  const b = pathB(view);
-  if (a.size !== b.size) throw new Error(`size ${a.size} != ${b.size}`);
+  const b = fn(view);
+  if (a.size !== b.size)
+    throw new Error(`${label}: size ${a.size} != ${b.size}`);
   for (const [key, av] of a) {
     const bv = b.get(key);
-    if (!bv) throw new Error(`missing ${key} in B`);
+    if (!bv) throw new Error(`${label}: missing ${key}`);
     for (const col of ['ts', ...READ]) {
       if (av[col].length !== bv[col].length)
-        throw new Error(`${key}.${col} length mismatch`);
+        throw new Error(`${label}: ${key}.${col} length mismatch`);
       for (let i = 0; i < av[col].length; i += 1) {
         if (
           av[col][i] !== bv[col][i] &&
           !(Number.isNaN(av[col][i]) && Number.isNaN(bv[col][i]))
         )
-          throw new Error(`${key}.${col}[${i}] ${av[col][i]} != ${bv[col][i]}`);
+          throw new Error(
+            `${label}: ${key}.${col}[${i}] ${av[col][i]} != ${bv[col][i]}`,
+          );
       }
     }
   }
@@ -160,20 +174,23 @@ const CELLS = [
   { hosts: 256, events: 384_000 },
 ];
 
-assertParity(8, 4_000);
-assertParity(64, 12_800);
+assertParity('liveView', pathB, 8, 4_000);
+assertParity('liveView', pathB, 64, 12_800);
+assertParity('ideal', pathC, 64, 12_800);
 
 const rows = [];
 for (const { hosts, events } of CELLS) {
   const view = makeView(hosts, events);
-  const a = bench(() => pathA(view));
-  const b = bench(() => pathB(view));
+  const snapshotMs = bench(() => pathA(view));
+  const liveViewMs = bench(() => pathB(view));
+  const idealMs = bench(() => pathC(view));
   rows.push({
     hosts,
     events,
-    snapshotMs: a,
-    walkNowMs: b,
-    speedup: Number((a / b).toFixed(2)),
+    snapshotMs,
+    liveViewMs,
+    idealMs,
+    speedup: Number((snapshotMs / liveViewMs).toFixed(2)),
   });
 }
 

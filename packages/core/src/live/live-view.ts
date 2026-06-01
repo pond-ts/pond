@@ -11,6 +11,14 @@ import { LiveReduce } from './live-reduce.js';
 import type { SampleStrategy } from '../sequence/sample.js';
 import { TimeSeries, toKey, type KeyLike } from '../batch/time-series.js';
 import type { Sequence } from '../sequence/sequence.js';
+// §A prong-2 spike: walk-now column reads off a LiveView's event buffer.
+import {
+  float64ColumnFromArray,
+  booleanColumnFromArray,
+} from '../columnar/column.js';
+import type { Float64Column, BooleanColumn } from '../columnar/column.js';
+import { TimeKeyColumn } from '../columnar/key-column.js';
+import type { PublicColumnForKind, KeyColumnForSchema } from '../column.js';
 import {
   EMITS_EVICT,
   type AggregateMap,
@@ -21,6 +29,8 @@ import {
   type EventForSchema,
   type LiveSource,
   type NumericColumnNameForSchema,
+  type ValueColumnNameForSchema,
+  type ValueColumnKindForName,
   type RollingSchema,
   type RowForSchema,
   type ScalarValue,
@@ -496,6 +506,83 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     });
   }
 
+  // ── §A prong-2 spike: column reads off the live view ─────────────
+  //
+  // The pull/read cut of docs/rfcs/columnar-live-protocol.md §A. These
+  // mirror `TimeSeries.column` / `keyColumn` / `partitionBy().toMap()`
+  // so a dashboard reading `useWindow(...)` snapshots can drop the
+  // snapshot and read columns straight off the live view. They gather
+  // from the view's `Event[]` buffer (the allocation-skip cut — no
+  // intermediate `TimeSeries`, only the columns actually read). Shape
+  // not stable; gated on API sign-off before any merge.
+
+  /**
+   * Example: `view.keyColumn().begin`. Gathers the time axis into a
+   * `TimeKeyColumn` directly from the view's current events. Spike
+   * limitation: time-keyed series only (the common live case).
+   */
+  keyColumn(): KeyColumnForSchema<S> {
+    return gatherTimeKeyColumn(
+      this.#events,
+      null,
+      this.schema,
+    ) as unknown as KeyColumnForSchema<S>;
+  }
+
+  /**
+   * Example: `view.column('cpu').toFloat64Array()`. Gathers one value
+   * column from the view's current events, narrowed by the schema kind.
+   * Spike limitation: `number` / `boolean` columns (the chart-feed
+   * case); `string` / `array` throw with a pointer to `toTimeSeries()`.
+   */
+  column<Name extends ValueColumnNameForSchema<S>>(
+    name: Name,
+  ): PublicColumnForKind<ValueColumnKindForName<S, Name>> {
+    return gatherColumnFromEvents(
+      this.#events,
+      null,
+      this.schema,
+      name,
+    ) as unknown as PublicColumnForKind<ValueColumnKindForName<S, Name>>;
+  }
+
+  /**
+   * Walk-now partition read. Buckets the view's current events by `col`
+   * and runs `fn` over each partition's column view, returning a `Map`
+   * keyed by the partition value — mirroring
+   * `TimeSeries.partitionBy(col).toMap(fn)` but skipping the
+   * per-partition `TimeSeries` construction (gathers only the columns
+   * `fn` reads). **Distinct from `LiveSeries.partitionBy`**, which is
+   * subscription-oriented (live sub-series); this is a snapshot-style
+   * read of the current window, the shape Codex's review flagged as
+   * "walk-now." Shape not stable.
+   */
+  partitionBy<Col extends ValueColumnNameForSchema<S>>(
+    col: Col,
+  ): { toMap<R>(fn: (group: LiveColumnGroup<S>) => R): Map<ScalarValue, R> } {
+    const events = this.#events;
+    const schema = this.schema;
+    return {
+      toMap: <R>(fn: (group: LiveColumnGroup<S>) => R): Map<ScalarValue, R> => {
+        const buckets = new Map<ScalarValue, number[]>();
+        for (let i = 0; i < events.length; i += 1) {
+          const key = events[i]!.get(col as any) as ScalarValue;
+          let idxs = buckets.get(key);
+          if (idxs === undefined) {
+            idxs = [];
+            buckets.set(key, idxs);
+          }
+          idxs.push(i);
+        }
+        const out = new Map<ScalarValue, R>();
+        for (const [key, idxs] of buckets) {
+          out.set(key, fn(new LiveColumnGroup(events, idxs, schema)));
+        }
+        return out;
+      },
+    };
+  }
+
   on(type: 'event', fn: EventListener<S>): () => void;
   on(type: 'evict', fn: EvictListener<S>): () => void;
   on(
@@ -549,6 +636,113 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
       );
     }
     this.#events.push(event);
+  }
+}
+
+// ── §A prong-2 spike: walk-now column read surface ───────────────
+//
+// Shared gather helpers + the per-partition group object. Read the
+// view's `Event[]` through indices (or the whole buffer when `indices`
+// is null), building only the columns requested — no `TimeSeries`, no
+// per-partition store. Shape not stable; gated on API sign-off.
+
+function gatherColumnFromEvents<S extends SeriesSchema>(
+  events: readonly EventForSchema<S>[],
+  indices: readonly number[] | null,
+  schema: S,
+  name: string,
+): Float64Column | BooleanColumn {
+  const def = schema.find((c) => (c as { name: string }).name === name) as
+    | { name: string; kind: string }
+    | undefined;
+  if (def === undefined) {
+    throw new ValidationError(
+      `LiveView.column(): '${name}' is not in the schema`,
+    );
+  }
+  const len = indices ? indices.length : events.length;
+  const src: (ScalarValue | undefined)[] = new Array(len);
+  for (let i = 0; i < len; i += 1) {
+    const e = events[indices ? indices[i]! : i]!;
+    src[i] = e.get(name as never) as ScalarValue | undefined;
+  }
+  switch (def.kind) {
+    case 'number':
+      return float64ColumnFromArray(src as (number | undefined)[]);
+    case 'boolean':
+      return booleanColumnFromArray(src as (boolean | undefined)[]);
+    default:
+      throw new ValidationError(
+        `LiveView.column(): the spike prototype gathers number/boolean ` +
+          `value columns; got kind '${def.kind}' for '${name}'. Read the ` +
+          `partition key as a scalar via at(i).get('${name}'), or snapshot ` +
+          `via toTimeSeries() for full kind coverage.`,
+      );
+  }
+}
+
+function gatherTimeKeyColumn<S extends SeriesSchema>(
+  events: readonly EventForSchema<S>[],
+  indices: readonly number[] | null,
+  schema: S,
+): TimeKeyColumn {
+  if ((schema[0] as { kind: string }).kind !== 'time') {
+    throw new ValidationError(
+      `LiveView.keyColumn(): the spike prototype supports time-keyed ` +
+        `series only (got '${(schema[0] as { kind: string }).kind}').`,
+    );
+  }
+  const len = indices ? indices.length : events.length;
+  const begin = new Float64Array(len);
+  for (let i = 0; i < len; i += 1) {
+    begin[i] = events[indices ? indices[i]! : i]!.begin();
+  }
+  return new TimeKeyColumn(begin, len);
+}
+
+/**
+ * The per-partition column view passed to
+ * `LiveView.partitionBy(col).toMap(fn)`. Holds the parent view's event
+ * buffer plus this partition's index list; gathers only the columns
+ * `fn` reads, into packed columns. No `TimeSeries` constructed. §A
+ * prong-2 spike — shape not stable, gated on API sign-off.
+ */
+export class LiveColumnGroup<S extends SeriesSchema> {
+  readonly #events: readonly EventForSchema<S>[];
+  readonly #indices: readonly number[];
+  readonly schema: S;
+
+  constructor(
+    events: readonly EventForSchema<S>[],
+    indices: readonly number[],
+    schema: S,
+  ) {
+    this.#events = events;
+    this.#indices = indices;
+    this.schema = schema;
+  }
+
+  get length(): number {
+    return this.#indices.length;
+  }
+
+  keyColumn(): KeyColumnForSchema<S> {
+    return gatherTimeKeyColumn(
+      this.#events,
+      this.#indices,
+      this.schema,
+    ) as unknown as KeyColumnForSchema<S>;
+  }
+
+  column<Name extends ValueColumnNameForSchema<S>>(
+    name: Name,
+  ): PublicColumnForKind<ValueColumnKindForName<S, Name>> {
+    return gatherColumnFromEvents(
+      this.#events,
+      this.#indices,
+      this.schema,
+      name,
+    ) as unknown as PublicColumnForKind<ValueColumnKindForName<S, Name>>;
   }
 }
 
