@@ -115,4 +115,40 @@ describe('LiveView.partitionBy().toMap() — walk-now', () => {
       .toMap((g) => g.length);
     expect(m.size).toBe(0);
   });
+
+  it('keeps a missing partition value distinct from the literal "undefined" (TimeSeries parity)', () => {
+    // Regression for the partition-key sentinel: String(undefined) ===
+    // 'undefined' would silently merge a missing host with a host literally
+    // named 'undefined'. TimeSeries uses the ' undefined' sentinel; LiveView
+    // must match.
+    const optSchema = [
+      { name: 'time', kind: 'time' },
+      { name: 'v', kind: 'number' },
+      { name: 'host', kind: 'string', required: false },
+    ] as const;
+    const live = new LiveSeries({
+      name: 's',
+      schema: optSchema,
+      ordering: 'strict',
+    });
+    live.pushMany([
+      [1000, 1, 'a'],
+      [1001, 2, undefined], // missing → ' undefined' sentinel
+      [1002, 3, 'undefined'], // literal string 'undefined'
+      [1003, 4, 'a'],
+    ]);
+    const view = live.window(10);
+    const walkNow = view.partitionBy('host').toMap((g) => g.length);
+    const snapshot = view
+      .toTimeSeries()
+      .partitionBy('host')
+      .toMap((g) => g.length);
+
+    // Three distinct buckets: 'a', the missing sentinel, the literal.
+    expect(walkNow.size).toBe(3);
+    expect([...walkNow.keys()].sort()).toEqual([...snapshot.keys()].sort());
+    for (const [key, n] of snapshot) {
+      expect(walkNow.get(key)).toBe(n);
+    }
+  });
 });

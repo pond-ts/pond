@@ -566,7 +566,11 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
       toMap: <R>(fn: (group: LiveColumnGroup<S>) => R): Map<string, R> => {
         const buckets = new Map<string, number[]>();
         for (let i = 0; i < events.length; i += 1) {
-          const key = String(events[i]!.get(col as never));
+          // Mirror TimeSeries `partitionKeyOf` (single-column): a missing
+          // partition value becomes the ' undefined' sentinel (leading
+          // space) so it never collides with the literal string 'undefined'.
+          const raw = events[i]!.get(col as never) as unknown;
+          const key = raw === undefined ? ' undefined' : `${String(raw)}`;
           let idxs = buckets.get(key);
           if (idxs === undefined) {
             idxs = [];
