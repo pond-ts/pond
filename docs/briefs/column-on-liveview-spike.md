@@ -144,6 +144,52 @@ signs off on the surface before it becomes real. Layer-2 review + a Codex pass
 3. **If the win lands**: human API sign-off → real implementation → a PLAN
    entry (the binding version; this brief + the RFC stay as the "why").
 
+## Review notes (Codex, 2026-06-01) + author amendments
+
+Codex reviewed this brief (PR #178) and endorsed the direction — the core
+reframing being that **`LiveView` should become the live read surface for "the
+current answer to this live query,"** not a row/`Event` cache that callers
+convert back into `TimeSeries` to get columns. Five boundaries it asked to keep
+explicit, and the amendments they drive:
+
+1. **Backing-dependent performance.** Affirms the wrinkle above — no change; the
+   dual-backing measurement already captures it.
+
+2. **Adding `column()` to today's `LiveView` is not by itself the win — the key
+   amendment.** Current `LiveView` owns `#events: Event[]`; over a chunked
+   source, `live.window('5m')` **materializes row events into the view today**.
+   So the "true zero-copy" row in the backing table is gated on a deeper change:
+   `LiveView` must be able to represent a window **structurally** (chunk ranges /
+   slices / masks), not as an event buffer. `column()` over a still-
+   event-materialized window is just another gather — useful (allocation-skip)
+   but not zero-copy.
+
+   **Spike-sequencing amendment:** lead with the lower-risk increment — the
+   `useSyncExternalStore` change signal + `column()` read over the _existing_
+   (Event[]) view, measuring the **allocation-skip** win on the dashboard's
+   actual baseline pipeline. Treat the **structural window** (chunk-slice-backed
+   `LiveView`) that unlocks true zero-copy as a deeper, separately-measured
+   increment — a bigger lift that shouldn't gate the first signal.
+
+3. **Preserve latency semantics.** The change signal fires **immediately** on
+   append; throttling lives in the React hook, not in core emission. No
+   artificial "columnar boundary" buffering. (Decision 4 already puts the
+   throttle in the hook; making it explicit.)
+
+4. **Row events as adapter, not privileged protocol.** Long-term the boundary
+   wants structural deltas / runs with row `event` listeners as a compatibility
+   projection — the RFC §C spine. Forward context for point 2's structural view;
+   out of scope for this spike.
+
+5. **Walk-now partition reads.** Affirms decision 3 — grouped _current_ columns,
+   not long-lived live partition sub-series; a separate shape from existing live
+   partition fan-out, free to optimize differently.
+
+Net: the spike proceeds, **sequenced allocation-skip-first** (low risk, covers
+the dashboard's baseline path) → **structural-zero-copy second** (the bigger
+chunk-slice `LiveView` change). The API must stay honest about which regime a
+given `column()` call is in. Full Codex comment on PR #178.
+
 ## Cross-references
 
 - [`docs/rfcs/columnar-live-protocol.md`](../rfcs/columnar-live-protocol.md) §A.
