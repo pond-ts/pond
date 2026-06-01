@@ -61,8 +61,12 @@ describe('LiveView.column / keyColumn', () => {
     expect(cpu.mean()).toBeCloseTo(20); // skips the undefined
   });
 
-  it('throws a clear spike-limit on a string-column read', () => {
-    expect(() => make().window(10).column('host')).toThrow(/number\/boolean/);
+  it('rejects a non-numeric column read at runtime (compile error via the types)', () => {
+    // column() is typed numeric-only; this is a compile error in typed code.
+    // The runtime backstop throws a clear message (test files aren't type-checked).
+    expect(() => make().window(10).column('host')).toThrow(
+      /numeric value columns/,
+    );
   });
 });
 

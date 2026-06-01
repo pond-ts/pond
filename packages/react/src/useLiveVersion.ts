@@ -12,8 +12,8 @@ export interface UseLiveVersionOptions {
 }
 
 /**
- * §A prong-2 spike — the React change signal for reading columns off a
- * live source without manufacturing a `TimeSeries` snapshot.
+ * The React change signal for reading columns off a live source without
+ * manufacturing a `TimeSeries` snapshot (§A pull/read, experimental).
  *
  * `LiveSeries` / `LiveView` mutate in place, so a `useMemo([liveView])`
  * keyed on the view never re-runs. This hook gives React a
@@ -34,8 +34,8 @@ export interface UseLiveVersionOptions {
  * );
  * ```
  *
- * Built on `useSyncExternalStore` (tearing-safe). Shape not stable;
- * gated on API sign-off before any merge.
+ * Built on `useSyncExternalStore` (tearing-safe). Experimental (0.19.0)
+ * — surface may change in 0.19.x.
  */
 export function useLiveVersion<S extends SeriesSchema>(
   source: LiveSource<S>,
