@@ -7,10 +7,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 file covers both packages. Pre-1.0: minor bumps may include new features and
 type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/pjm17971/pond-ts/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
 
 ## [Unreleased]
+
+## [0.19.0] — 2026-06-02
+
+Adds an **experimental column-read surface to the live side** — read typed
+columns straight off a `LiveView` without materializing a `TimeSeries`
+snapshot — driven by the dashboard experiment's per-tick memo cost. Plus a
+`useTimeSeries` schema-inference fix. The live column surface is
+**experimental and expected to keep moving in 0.19.x**.
+
+### Added
+
+- **`LiveView` column-read surface (experimental).** Read columns directly
+  off a windowed live view, the column-API counterpart to the batch
+  `TimeSeries` surface ([#179](https://github.com/pjm17971/pond-ts/pull/179)):
+  - `liveView.column(name)` — a numeric value column gathered from the view's
+    current events (string / array columns are a compile error; read those as
+    scalars or snapshot via `toTimeSeries()`).
+  - `liveView.keyColumn()` — the time axis (`TimeKeyColumn`; time-keyed views
+    only, enforced at compile time).
+  - `liveView.partitionBy(col).toMap(fn)` — a walk-now per-partition read
+    returning `Map<string, R>`, mirroring `TimeSeries.partitionBy().toMap()`
+    but without per-partition `TimeSeries` construction. Distinct from
+    `LiveSeries.partitionBy` (which is subscription-oriented). Throws on a
+    missing / key partition column rather than silently merging.
+  - `LiveColumnGroup` — the per-partition view passed to the `toMap` callback.
+- **`@pond-ts/react`: `useLiveVersion(source, { throttle })` (experimental)**
+  — a `useSyncExternalStore`-based change signal that bumps on append **and**
+  eviction, so a component can read columns off a live view each render
+  without manufacturing a `TimeSeries` snapshot. Closes the
+  render-before-subscribe gap; throttling bounds only the React notification
+  ([#179](https://github.com/pjm17971/pond-ts/pull/179)).
+
+### Changed
+
+- **`useTimeSeries` collapsed to a single generic** `<S extends SeriesSchema>`
+  so the schema infers from `input.schema`. The prior two-generic signature
+  lost `S` through the input-wrapper generic and resolved
+  `result.column('cpu')` to `never`; the accepted input type is unchanged, so
+  this is an inference fix — but a caller passing two explicit type arguments
+  must drop the second ([#176](https://github.com/pjm17971/pond-ts/pull/176)).
 
 ## [0.18.0] — 2026-05-30
 
