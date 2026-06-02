@@ -11,6 +11,11 @@ import { LiveReduce } from './live-reduce.js';
 import type { SampleStrategy } from '../sequence/sample.js';
 import { TimeSeries, toKey, type KeyLike } from '../batch/time-series.js';
 import type { Sequence } from '../sequence/sequence.js';
+// Column reads off a LiveView's event buffer (experimental, §A pull/read).
+import { float64ColumnFromArray } from '../columnar/column.js';
+import type { Float64Column } from '../columnar/column.js';
+import { TimeKeyColumn } from '../columnar/key-column.js';
+import type { PublicColumnForKind, KeyColumnForSchema } from '../column.js';
 import {
   EMITS_EVICT,
   type AggregateMap,
@@ -21,6 +26,7 @@ import {
   type EventForSchema,
   type LiveSource,
   type NumericColumnNameForSchema,
+  type ValueColumnNameForSchema,
   type RollingSchema,
   type RowForSchema,
   type ScalarValue,
@@ -67,6 +73,19 @@ type ViewOptions<S extends SeriesSchema> = {
    */
   windowMs?: number;
 };
+
+/**
+ * The key-column type for `LiveView.keyColumn()` — `TimeKeyColumn` for a
+ * time-keyed schema. The gather implements time keys only, so a
+ * non-time-keyed view resolves to an error-message string type: using the
+ * result (e.g. `.begin`) is a compile error rather than a runtime throw.
+ * (`never` wouldn't do — property access on `never` is silently allowed.)
+ * Reuses `KeyColumnForSchema`, gated on the time variant.
+ */
+type TimeKeyOnly<S extends SeriesSchema> =
+  KeyColumnForSchema<S> extends TimeKeyColumn
+    ? KeyColumnForSchema<S>
+    : 'LiveView.keyColumn() supports time-keyed views only — use toTimeSeries() for other key kinds';
 
 export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   readonly [EMITS_EVICT] = true as const;
@@ -496,6 +515,116 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     });
   }
 
+  // ── Column reads off the live view (experimental, §A pull/read) ──
+  //
+  // The pull/read cut of docs/rfcs/columnar-live-protocol.md §A. These
+  // mirror `TimeSeries.column` / `keyColumn` / `partitionBy().toMap()`
+  // so a dashboard reading `useWindow(...)` snapshots can drop the
+  // snapshot and read columns straight off the live view. They gather
+  // from the view's `Event[]` buffer (the allocation-skip cut — no
+  // intermediate `TimeSeries`, only the columns actually read).
+  //
+  // **Experimental (0.19.0).** Surface may change in 0.19.x — validated
+  // in-situ by the dashboard A/B (~1.5–2× per-tick memo where the
+  // snapshot is amortized; larger where snapshot-build is on the hot
+  // path). Structural / zero-copy retention is a separate increment.
+
+  /**
+   * Example: `view.keyColumn().begin`. Gathers the time axis into a
+   * `TimeKeyColumn` directly from the view's current events.
+   * Time-keyed series only.
+   */
+  keyColumn(): TimeKeyOnly<S> {
+    return gatherTimeKeyColumn(
+      this.#events,
+      null,
+      this.schema,
+    ) as unknown as TimeKeyOnly<S>;
+  }
+
+  /**
+   * Example: `view.column('cpu').toFloat64Array()`. Gathers a numeric
+   * value column from the view's current events. Restricted to numeric
+   * columns (the chart-feed case) — string / array columns are rejected
+   * at compile time; read the partition key as a scalar via
+   * `at(i).get(name)`, or `toTimeSeries()` for full kind coverage.
+   */
+  column<Name extends NumericColumnNameForSchema<S>>(
+    name: Name,
+  ): PublicColumnForKind<'number'> {
+    return gatherColumnFromEvents(
+      this.#events,
+      null,
+      this.schema,
+      name,
+    ) as unknown as PublicColumnForKind<'number'>;
+  }
+
+  /**
+   * Walk-now partition read. Buckets the view's current events by `col`
+   * and runs `fn` over each partition's column view, returning a `Map`
+   * keyed by the partition value (normalized to a string, matching
+   * `TimeSeries.partitionBy(col).toMap(fn)`) — but skipping the
+   * per-partition `TimeSeries` construction (gathers only the columns
+   * `fn` reads). **Distinct from `LiveSeries.partitionBy`**, which is
+   * subscription-oriented (live sub-series); this is a snapshot-style
+   * read of the current window.
+   */
+  partitionBy<Col extends ValueColumnNameForSchema<S>>(
+    col: Col,
+  ): { toMap<R>(fn: (group: LiveColumnGroup<S>) => R): Map<string, R> } {
+    // Validate the partition column at runtime. The generic restricts `col`
+    // to value columns at compile time, but a JS caller, an `as any`, a
+    // loose `SeriesSchema`, or schema drift can slip a bad / key / missing
+    // name through — and `get(col)` would then return undefined for every
+    // row, collapsing them all into the one ' undefined' bucket. That's a
+    // silent single-merged-series, not a loud failure. Fail fast instead,
+    // matching `TimeSeries.partitionBy`.
+    if (
+      !this.schema
+        .slice(1)
+        .some((c) => (c as { name: string }).name === (col as string))
+    ) {
+      throw new ValidationError(
+        `LiveView.partitionBy(): '${String(col)}' is not a value column in ` +
+          `the schema — partitioning by a missing or key column would ` +
+          `silently collapse every row into one bucket.`,
+      );
+    }
+    const live = this.#events;
+    const schema = this.schema;
+    return {
+      toMap: <R>(fn: (group: LiveColumnGroup<S>) => R): Map<string, R> => {
+        // Freeze the current window's row identity for the lifetime of the
+        // result. `#events` is mutated in place (append/evict), so a group
+        // (or a closure over it) returned by `fn` would otherwise read
+        // shifted / out-of-range rows after a later push. The shallow copy
+        // is event refs only (events are immutable) — cheap, and preserves
+        // the "snapshot-style read of the current window" contract.
+        const events = live.slice();
+        const buckets = new Map<string, number[]>();
+        for (let i = 0; i < events.length; i += 1) {
+          // Mirror TimeSeries `partitionKeyOf` (single-column): a missing
+          // partition value becomes the ' undefined' sentinel (leading
+          // space) so it never collides with the literal string 'undefined'.
+          const raw = events[i]!.get(col as never) as unknown;
+          const key = raw === undefined ? ' undefined' : `${String(raw)}`;
+          let idxs = buckets.get(key);
+          if (idxs === undefined) {
+            idxs = [];
+            buckets.set(key, idxs);
+          }
+          idxs.push(i);
+        }
+        const out = new Map<string, R>();
+        for (const [key, idxs] of buckets) {
+          out.set(key, fn(new LiveColumnGroup(events, idxs, schema)));
+        }
+        return out;
+      },
+    };
+  }
+
   on(type: 'event', fn: EventListener<S>): () => void;
   on(type: 'evict', fn: EvictListener<S>): () => void;
   on(
@@ -549,6 +678,113 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
       );
     }
     this.#events.push(event);
+  }
+}
+
+// ── Walk-now column read surface (experimental, §A pull/read) ─────
+//
+// Shared gather helpers + the per-partition group object. Read the
+// view's `Event[]` through indices (or the whole buffer when `indices`
+// is null), building only the columns requested — no `TimeSeries`, no
+// per-partition store. Experimental (0.19.0); surface may change in
+// 0.19.x.
+
+function gatherColumnFromEvents<S extends SeriesSchema>(
+  events: readonly EventForSchema<S>[],
+  indices: readonly number[] | null,
+  schema: S,
+  name: string,
+): Float64Column {
+  const def = schema.find((c) => (c as { name: string }).name === name) as
+    | { name: string; kind: string }
+    | undefined;
+  if (def === undefined) {
+    throw new ValidationError(
+      `LiveView.column(): '${name}' is not in the schema`,
+    );
+  }
+  // The public signature narrows `column()` to numeric column names, so a
+  // non-`number` kind here means the caller bypassed the types (cast). Keep
+  // the runtime guard as a clear backstop.
+  if (def.kind !== 'number') {
+    throw new ValidationError(
+      `LiveView.column(): reads numeric value columns; got kind ` +
+        `'${def.kind}' for '${name}'. Read a non-numeric column as a scalar ` +
+        `via at(i).get('${name}'), or snapshot via toTimeSeries() for full ` +
+        `kind coverage.`,
+    );
+  }
+  const len = indices ? indices.length : events.length;
+  const src: (number | undefined)[] = new Array(len);
+  for (let i = 0; i < len; i += 1) {
+    const e = events[indices ? indices[i]! : i]!;
+    src[i] = e.get(name as never) as number | undefined;
+  }
+  return float64ColumnFromArray(src);
+}
+
+function gatherTimeKeyColumn<S extends SeriesSchema>(
+  events: readonly EventForSchema<S>[],
+  indices: readonly number[] | null,
+  schema: S,
+): TimeKeyColumn {
+  if ((schema[0] as { kind: string }).kind !== 'time') {
+    throw new ValidationError(
+      `LiveView.keyColumn(): reads time-keyed series only (got ` +
+        `'${(schema[0] as { kind: string }).kind}').`,
+    );
+  }
+  const len = indices ? indices.length : events.length;
+  const begin = new Float64Array(len);
+  for (let i = 0; i < len; i += 1) {
+    begin[i] = events[indices ? indices[i]! : i]!.begin();
+  }
+  return new TimeKeyColumn(begin, len);
+}
+
+/**
+ * The per-partition column view passed to
+ * `LiveView.partitionBy(col).toMap(fn)`. Holds the parent view's event
+ * buffer plus this partition's index list; gathers only the columns
+ * `fn` reads, into packed columns. No `TimeSeries` constructed.
+ * Experimental (0.19.0) — surface may change in 0.19.x.
+ */
+export class LiveColumnGroup<S extends SeriesSchema> {
+  readonly #events: readonly EventForSchema<S>[];
+  readonly #indices: readonly number[];
+  readonly schema: S;
+
+  constructor(
+    events: readonly EventForSchema<S>[],
+    indices: readonly number[],
+    schema: S,
+  ) {
+    this.#events = events;
+    this.#indices = indices;
+    this.schema = schema;
+  }
+
+  get length(): number {
+    return this.#indices.length;
+  }
+
+  keyColumn(): TimeKeyOnly<S> {
+    return gatherTimeKeyColumn(
+      this.#events,
+      this.#indices,
+      this.schema,
+    ) as unknown as TimeKeyOnly<S>;
+  }
+
+  column<Name extends NumericColumnNameForSchema<S>>(
+    name: Name,
+  ): PublicColumnForKind<'number'> {
+    return gatherColumnFromEvents(
+      this.#events,
+      this.#indices,
+      this.schema,
+      name,
+    ) as unknown as PublicColumnForKind<'number'>;
   }
 }
 

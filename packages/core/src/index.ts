@@ -9,7 +9,7 @@ export {
   type LivePartitionedOptions,
 } from './live/live-partitioned-series.js';
 export { LiveSeries } from './live/live-series.js';
-export { LiveView } from './live/live-view.js';
+export { LiveView, LiveColumnGroup } from './live/live-view.js';
 export type { LiveFillMapping, LiveFillStrategy } from './live/live-view.js';
 export { LiveRollingAggregation } from './live/live-rolling-aggregation.js';
 export { LiveFusedRolling } from './live/live-fused-rolling.js';

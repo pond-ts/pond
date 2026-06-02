@@ -13,4 +13,8 @@ export { useLiveQuery } from './useLiveQuery.js';
 export { useLatest } from './useLatest.js';
 export { useCurrent, type UseCurrentOptions } from './useCurrent.js';
 export { useEventRate } from './useEventRate.js';
+export {
+  useLiveVersion,
+  type UseLiveVersionOptions,
+} from './useLiveVersion.js';
 export { takeSnapshot } from './takeSnapshot.js';
