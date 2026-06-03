@@ -186,3 +186,98 @@ describe('ChunkedColumnarLiveStorage — clear + snapshot', () => {
     expect(ts.at(59)!.get('value')).toBe(99);
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* windowColumn — zero-copy windowed columnar read (§A increment 2).           */
+/* batch(base, n) sets value = base + i, so windowColumn('value', a, b) must   */
+/* materialize to the contiguous run [a, b).                                   */
+/* -------------------------------------------------------------------------- */
+
+describe('ChunkedColumnarLiveStorage — windowColumn', () => {
+  function arr(s: ReturnType<typeof make>, a: number, b: number): number[] {
+    return Array.from(s.windowColumn('value', a, b));
+  }
+
+  it('reads a window inside a single chunk', () => {
+    const s = make();
+    s.appendChunkFromRows(batch(0, 1000));
+    expect(arr(s, 100, 105)).toEqual([100, 101, 102, 103, 104]);
+  });
+
+  it('reads a window spanning a chunk boundary', () => {
+    const s = make();
+    s.appendChunkFromRows(batch(0, 1000));
+    s.appendChunkFromRows(batch(1000, 1000));
+    // 998..1003 straddles the chunk-0 / chunk-1 boundary at index 1000.
+    expect(arr(s, 998, 1003)).toEqual([998, 999, 1000, 1001, 1002]);
+  });
+
+  it('reads a window spanning several whole + partial chunks', () => {
+    const s = make();
+    s.appendChunkFromRows(batch(0, 100));
+    s.appendChunkFromRows(batch(100, 100));
+    s.appendChunkFromRows(batch(200, 100));
+    s.appendChunkFromRows(batch(300, 100));
+    // 50..350: tail of chunk0, all of chunk1+chunk2, head of chunk3.
+    const out = arr(s, 50, 350);
+    expect(out.length).toBe(300);
+    expect(out[0]).toBe(50);
+    expect(out[299]).toBe(349);
+    expect(out).toEqual(Array.from({ length: 300 }, (_, i) => 50 + i));
+  });
+
+  it('reads the full range across all chunks', () => {
+    const s = make();
+    s.appendChunkFromRows(batch(0, 1000));
+    s.appendChunkFromRows(batch(1000, 500));
+    const out = s.windowColumn('value', 0, s.length);
+    expect(out.length).toBe(1500);
+    expect(out[0]).toBe(0);
+    expect(out[1499]).toBe(1499);
+  });
+
+  it('tracks logical indices after a boundary-sliced eviction', () => {
+    const s = make();
+    s.appendChunkFromRows(batch(0, 100));
+    s.appendChunkFromRows(batch(100, 100));
+    s.dropPrefix(40); // first chunk now [40, 100); length 160
+    // Logical [0, 5) === original values 40..44.
+    expect(arr(s, 0, 5)).toEqual([40, 41, 42, 43, 44]);
+    // Logical 60 === original index 100 (chunk-1 start).
+    expect(arr(s, 58, 62)).toEqual([98, 99, 100, 101]);
+  });
+
+  it('returns a zero-copy view for a single-chunk window', () => {
+    const s = make();
+    s.appendChunkFromRows(batch(0, 100));
+    const view = s.windowColumn('value', 10, 20);
+    expect(Array.from(view)).toEqual([10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+    // Aliases live storage: mutating the view is observed through at().
+    // (Read-only contract; this test deliberately violates it to prove the
+    // view shares the chunk buffer rather than copying.)
+    view[0] = -999;
+    expect(s.at(10)!.get('value')).toBe(-999);
+  });
+
+  it('clamps the end index to length', () => {
+    const s = make();
+    s.appendChunkFromRows(batch(0, 50));
+    expect(arr(s, 48, 999)).toEqual([48, 49]);
+  });
+
+  it('throws on an empty resolved range', () => {
+    const s = make();
+    s.appendChunkFromRows(batch(0, 10));
+    expect(() => s.windowColumn('value', 5, 5)).toThrow(/empty range/);
+    expect(() => s.windowColumn('value', 8, 3)).toThrow(/empty range/);
+  });
+
+  it('throws on a non-numeric or missing column', () => {
+    const s = make();
+    s.appendChunkFromRows(batch(0, 10));
+    expect(() => s.windowColumn('host', 0, 5)).toThrow(
+      /numeric value columns only/,
+    );
+    expect(() => s.windowColumn('nope', 0, 5)).toThrow(/no column/);
+  });
+});

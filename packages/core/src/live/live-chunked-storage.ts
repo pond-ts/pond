@@ -43,7 +43,7 @@ import { TimeRange } from '../core/time-range.js';
 import { TimeSeries } from '../batch/time-series.js';
 import { validateAndNormalizeColumnar } from '../batch/validate.js';
 import { ColumnarStore } from '../columnar/store.js';
-import type { Column } from '../columnar/column.js';
+import type { Column, Float64Column } from '../columnar/column.js';
 import type { EventKey } from '../core/temporal.js';
 import type {
   EventForSchema,
@@ -242,6 +242,74 @@ export class ChunkedColumnarLiveStorage<
       }
     }
     return new TimeSeries({ name, schema, rows: rows as RowForSchema<S>[] });
+  }
+
+  /**
+   * §A increment 2 substrate — zero-copy windowed column read. Returns the
+   * values of one numeric column over the row range `[startIdx, endIdx)` as
+   * a `Float64Array`, read straight off the chunk buffers: interior chunks
+   * are referenced whole, boundary chunks `subarray`'d. **No `Event` is
+   * materialized** — this is the read that increment 1's per-tick
+   * `Event.get()` gather replaces.
+   *
+   * When the window lands inside a single chunk the result is a **zero-copy
+   * `subarray` view** of that chunk's buffer; spanning chunks, it is a
+   * single `Float64Array` concat (one memcpy of contiguous typed arrays).
+   *
+   * **The view is read-only.** The single-chunk path aliases live storage —
+   * mutating the returned array corrupts the buffer. Consumers feed it to a
+   * chart; they do not write to it. (The real surface decides whether to
+   * copy defensively.)
+   *
+   * Numeric value columns only (the chart-feed case). Indices clamp to
+   * `[0, length]`; an empty resolved range throws (a windowed read with no
+   * rows is a caller error in the spike — the real surface will decide the
+   * empty-window contract).
+   */
+  windowColumn(name: string, startIdx: number, endIdx: number): Float64Array {
+    const def = this.#schema.find(
+      (c) => (c as { name: string }).name === name,
+    ) as { name: string; kind: string } | undefined;
+    if (def === undefined) {
+      throw new Error(`windowColumn: no column '${name}' in schema`);
+    }
+    if (def.kind !== 'number') {
+      throw new Error(
+        `windowColumn: column '${name}' has kind '${def.kind}' (numeric value columns only)`,
+      );
+    }
+    const lo = Math.max(0, Math.min(startIdx, this.#total));
+    const hi = Math.max(lo, Math.min(endIdx, this.#total));
+    if (hi <= lo) {
+      throw new RangeError(
+        `windowColumn: empty range [${startIdx}, ${endIdx}) over length ${this.#total}`,
+      );
+    }
+    const slices: Float64Array[] = [];
+    let acc = 0;
+    for (let c = 0; c < this.#chunks.length; c += 1) {
+      const chunk = this.#chunks[c]!;
+      const cStart = acc;
+      const cEnd = acc + chunk.length;
+      acc = cEnd;
+      if (cEnd <= lo) continue;
+      if (cStart >= hi) break;
+      const sLo = Math.max(0, lo - cStart);
+      const sHi = Math.min(chunk.length, hi - cStart);
+      const col = chunk.columns.get(name) as Float64Column;
+      slices.push(col._values.subarray(sLo, sHi));
+    }
+    // Single chunk → zero-copy view; multiple → one concat.
+    if (slices.length === 1) return slices[0]!;
+    let total = 0;
+    for (let i = 0; i < slices.length; i += 1) total += slices[i]!.length;
+    const out = new Float64Array(total);
+    let cursor = 0;
+    for (let i = 0; i < slices.length; i += 1) {
+      out.set(slices[i]!, cursor);
+      cursor += slices[i]!.length;
+    }
+    return out;
   }
 
   /** Drop exactly the oldest `n` rows: whole chunks then a boundary slice. */
