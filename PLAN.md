@@ -70,6 +70,41 @@ expert and reviews PRs touching that surface. Will inform
   `LiveView.eventRate()`, `useCurrent` value narrowing.
 - **Writeup:** `website/docs/how-to-guides/dashboard-guide.mdx`.
 
+**Current wave (2026-06): per-render cost at 256-host stress.** The
+dashboard now stress-tests at 256 hosts × 250–500 ev/s, which surfaced a
+cluster of allocation/rebuild friction (three reports in
+`~/Notes/Projects/Pond/`: snapshot-side `partitionBy.toMap` gather, snapshot
+flush cost, wide-schema metrics). The library response, ranked by
+value-per-surface (surface-area sensitivity is now an explicit constraint —
+no hard-to-explain toggles):
+
+- **Shipped:** [#180](https://github.com/pjm17971/pond-ts/pull/180) —
+  `LiveView.toTimeSeries()` memoized by a mutation counter (the flush-cost
+  report's issue #1). Back-to-back identical-state snapshots return by
+  reference: >1 s React commits → ~0 (44 ms → 0.0001 ms at 262k events).
+  **Zero public surface.**
+- **Queue** (surface-minimal first): NaN-as-missing error nudge (wide-schema
+  #3, zero surface); `push` × N vs `pushMany` jsdoc warning (90,000× gap,
+  zero surface); **`TimeSeries.partitionBy().toMap()` gather-only** — the
+  snapshot dual of increment 1's `LiveView` column gather, the dashboard's
+  biggest validated ask (workaround already bought 218 ms → 300 μs at 256
+  hosts); `column.dropMissing()` (wide-schema #7, the only correctness item).
+
+**Live zero-copy arc — explored, measured, DEFERRED (2026-06-03).** The
+"column-native output" arc (chunk `collect()`/rolling output for zero-copy
+per-partition reads) was scoped and sized, then parked. Two measurements
+killed it at realistic scale: `perf-band-gather.mjs` showed the per-partition
+band gather is **<6% of a frame at ≤64 hosts** (hot only at the 256-host /
+fast-clock ceiling), and the synchronized rolling output is
+partition-**interleaved** (not per-partition contiguous), so a zero-copy
+windowed read doesn't even apply without a hard-to-explain opt-in mode. The
+real friction is the snapshot-side cluster above, not the arc. #175 (its P0)
+stays merged on its own gRPC-OOM merits. Detailed briefs + the
+`windowColumn` spike + `perf-baseline-memo-split.mjs` /
+`perf-liveview-structural.mjs` live on branch `spike/structural-window`;
+`docs/briefs/collect-output-columnar-arc.md` is the arc's design record.
+Revisit only if a 256-host-class dashboard becomes a committed target.
+
 ### gRPC pipeline (M3.5 done; **V5 columnar re-bench wave queued 2026-05-28**)
 
 Claude agent. Three-process gRPC + WebSocket stack: producer
