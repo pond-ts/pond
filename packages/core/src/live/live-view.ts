@@ -93,6 +93,18 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   readonly schema: S;
 
   readonly #events: EventForSchema<S>[];
+  /**
+   * Monotonic mutation counter — bumped on every `#events` change
+   * (append, time-window eviction, source-eviction mirror). Keys the
+   * {@link toTimeSeries} snapshot cache so back-to-back identical-state
+   * builds (multiple subscribers, React commit batching, StrictMode
+   * double-invoke) are free instead of rebuilding the whole `TimeSeries`.
+   */
+  #version = 0;
+  /** Memoized `toTimeSeries()` result — valid while `#version` is unchanged. */
+  #snapshotCache:
+    | { version: number; name: string; ts: TimeSeries<S> }
+    | undefined;
   readonly #process: (event: any) => EventForSchema<S> | undefined;
   readonly #evict:
     | ((events: readonly EventForSchema<S>[]) => number)
@@ -150,6 +162,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
           i++;
         if (i > 0) {
           const removed = this.#events.splice(0, i);
+          this.#version += 1;
           for (const fn of this.#onEvict) fn(removed as any);
         }
       });
@@ -501,6 +514,20 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   }
 
   toTimeSeries(name?: string): TimeSeries<S> {
+    const resolvedName = name ?? this.name;
+    // Identical-state cache hit: the view hasn't mutated since the last
+    // build and the name matches. TimeSeries is immutable, so returning
+    // the cached instance by reference is safe. This is the dashboard
+    // flush-cost fix — back-to-back snapshots (multiple subscribers,
+    // commit batching) skip a full O(window) rebuild.
+    const cache = this.#snapshotCache;
+    if (
+      cache !== undefined &&
+      cache.version === this.#version &&
+      cache.name === resolvedName
+    ) {
+      return cache.ts;
+    }
     const rows = this.#events.map((event) => {
       const row: unknown[] = [event.key()];
       for (let col = 1; col < this.schema.length; col++) {
@@ -508,11 +535,13 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
       }
       return row;
     });
-    return new TimeSeries({
-      name: name ?? this.name,
+    const ts = new TimeSeries({
+      name: resolvedName,
       schema: this.schema,
       rows: rows as RowForSchema<S>[],
     });
+    this.#snapshotCache = { version: this.#version, name: resolvedName, ts };
+    return ts;
   }
 
   // ── Column reads off the live view (experimental, §A pull/read) ──
@@ -645,7 +674,10 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   #applyEviction(): void {
     if (!this.#evict) return;
     const count = this.#evict(this.#events);
-    if (count > 0) this.#events.splice(0, count);
+    if (count > 0) {
+      this.#events.splice(0, count);
+      this.#version += 1;
+    }
   }
 
   /**
@@ -678,6 +710,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
       );
     }
     this.#events.push(event);
+    this.#version += 1;
   }
 }
 

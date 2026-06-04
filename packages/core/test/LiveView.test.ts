@@ -843,3 +843,89 @@ describe('eviction mirroring', () => {
     agg.dispose();
   });
 });
+
+// ── toTimeSeries() snapshot cache ──────────────────────────────
+
+describe('toTimeSeries() snapshot cache', () => {
+  it('returns the same instance for back-to-back identical-state calls', () => {
+    const live = makeLive();
+    live.push([0, 10, 'a'], [1000, 20, 'b']);
+    const view = live.filter(() => true);
+    const a = view.toTimeSeries();
+    const b = view.toTimeSeries();
+    expect(b).toBe(a); // cache hit — no rebuild
+    expect(a.length).toBe(2);
+    view.dispose();
+  });
+
+  it('invalidates on append', () => {
+    const live = makeLive();
+    const view = live.filter(() => true);
+    live.push([0, 10, 'a']);
+    const a = view.toTimeSeries();
+    live.push([1000, 20, 'b']);
+    const b = view.toTimeSeries();
+    expect(b).not.toBe(a);
+    expect(a.length).toBe(1);
+    expect(b.length).toBe(2);
+    expect(b.at(1)?.get('value')).toBe(20);
+    view.dispose();
+  });
+
+  it('invalidates on source eviction (retention)', () => {
+    const live = new LiveSeries({
+      name: 'r',
+      schema,
+      retention: { maxEvents: 2 },
+    });
+    const view = live.filter(() => true);
+    live.push([0, 10, 'a'], [1000, 20, 'b']);
+    const a = view.toTimeSeries();
+    expect(a.length).toBe(2);
+    live.push([2000, 30, 'c']); // evicts [0]
+    const b = view.toTimeSeries();
+    expect(b).not.toBe(a);
+    expect(b.length).toBe(2);
+    expect(b.first()?.get('value')).toBe(20);
+    view.dispose();
+  });
+
+  it('invalidates on time-window eviction', () => {
+    const live = makeLive();
+    const view = live.window('3s');
+    live.push([0, 10, 'a'], [1000, 20, 'a']);
+    const a = view.toTimeSeries();
+    expect(a.length).toBe(2);
+    live.push([5000, 30, 'a']); // cutoff 2000 → evicts [0], [1000]
+    const b = view.toTimeSeries();
+    expect(b).not.toBe(a);
+    expect(b.length).toBe(1);
+    expect(b.first()?.get('value')).toBe(30);
+    view.dispose();
+  });
+
+  it('rebuilds for a different name (cache holds only the latest)', () => {
+    const live = makeLive();
+    live.push([0, 10, 'a']);
+    const view = live.filter(() => true);
+    const a = view.toTimeSeries('one');
+    const b = view.toTimeSeries('two');
+    expect(b).not.toBe(a);
+    expect(a.name).toBe('one');
+    expect(b.name).toBe('two');
+    view.dispose();
+  });
+
+  it('cache hit returns fresh content, never a stale empty snapshot', () => {
+    const live = makeLive();
+    const view = live.filter(() => true);
+    const empty = view.toTimeSeries();
+    expect(empty.length).toBe(0);
+    expect(view.toTimeSeries()).toBe(empty); // empty state caches too
+    live.push([0, 10, 'a']);
+    const filled = view.toTimeSeries();
+    expect(filled).not.toBe(empty);
+    expect(filled.length).toBe(1);
+    view.dispose();
+  });
+});
