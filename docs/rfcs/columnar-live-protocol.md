@@ -1,6 +1,7 @@
 # Columnar Live Protocol
 
-**Status:** planning note.
+**Status:** planning note. **Current prioritization → [Amendment V3 — North
+star (2026-06-04)](#amendment-v3--north-star-prioritized-goals-for-the-live-columnar-surface-2026-06-04).**
 
 **Relationship to PLAN.md:** This RFC is strategic context, not a
 commitment. [PLAN.md](../../PLAN.md) is the binding source of truth for what
@@ -21,6 +22,7 @@ section carries inline attribution; this table is the index for cold readers.
 | Review notes §2 (adversarial technical)              | Codex                                                                       |
 | Review notes §3 (use-case, gRPC)                     | gRPC experiment agent (Claude)                                              |
 | Author response & amendments — V2                    | pond-ts library agent (Claude)                                              |
+| Amendment V3 — north star (prioritized goals)        | pjm17971 (prioritization); pond-ts library agent (Claude), recording        |
 
 **Audience:** future pond-ts contributors deciding how the _live boundary_
 (the protocol between a `LiveSeries`/`LiveSource` and its listeners and
@@ -497,6 +499,71 @@ tax), §B's preconditions are explicit, and the narrow extrema fix is the
 proportionate near-term answer to the documented reducer gap. Next concrete
 move when the user chooses to act: an §A design spike + the gRPC A/B
 measurement — not a §B build.
+
+## Amendment V3 — North star: prioritized goals for the live columnar surface (2026-06-04)
+
+_(pjm17971's prioritization, recorded by the pond-ts library agent (Claude).
+Grounded in the 2026-06 dashboard-friction wave — three reports at 256-host
+stress — and the measurements it drove: #175, #180, and the
+`perf-band-gather.mjs` arc-deferral verdict. See PLAN.md "Dashboard → Current
+wave.")_
+
+The §A–§C draft framed the live boundary around **output tax** and **reorder
+blur**. Real-workload friction reprioritizes that frame. These four goals, in
+order, are the north star for the live columnar surface. They are **direction,
+not commitments** — they say which axis wins when axes trade off.
+
+**1. Reducer speed over a full buffer — the headline.** Reducing a live buffer
+many ways at once (avg / percentiles / min·max / per-partition / binned,
+simultaneously, on demand) is _why people reach for the library_ — even when
+ingest is throttled by the consumer (e.g. delivery to a web client). Columnar
+storage's largest payoff is that each reduction becomes a typed-array **scan**
+instead of an `Event[]` walk. This outranks every other axis.
+
+**2. Consistent columnar + event outputs.** The `column()` read/reduce surface
+should be available **uniformly** — batch and live, the same shape everywhere —
+not columnar in one place and event-only in another. Ship the columnar option
+even where it is _not_ zero-copy, or occasionally slower, and **document the
+quirk** rather than withhold it (columnar is the right handoff to data-vis, and
+`column()` has the ergonomics). Consistency is _surface-friendly_: a
+predictable, uniform API lowers cognitive load — the opposite of the
+hard-to-explain, inconsistent surface (e.g. a storage-representation opt-in
+toggle) that should be rejected.
+
+**3. Architectural simplicity / uniformity — the tie-breaker.** Prefer uniform
+engineering even at some performance cost. LLMs raise the complexity ceiling
+but do not remove the tax: clever per-case paths make agents struggle, reviews
+harder, humans lost. One uniform column-scan path beats N special cases.
+
+**4. Memory — lowest, and bounded.** A memory win is welcome but **rejected if
+it costs more than ~10% throughput** — OOM is a real failure mode for
+"`LiveSeries` as a mini stream-processor on real workloads," but it is one axis
+among four. And it only matters when **holding a whole buffer**, _not_ for
+aggregated downstream views.
+
+**What this reorders.**
+
+- It **validates deferring the "column-native output" arc** (chunk `collect()`
+  / rolling output for zero-copy reads). That arc aimed at memory + zero-copy
+  _ingest_ on an _aggregated downstream view_ — goal 4, the lowest axis, on the
+  one place memory does _not_ matter — and required a hard-to-explain opt-in
+  mode (goal 3 forbids). `perf-band-gather.mjs` confirmed the per-partition band
+  gather is <6% of a frame at ≤64 hosts. #175 lands memory exactly where it
+  counts (full-buffer hold) at no throughput cost — the right scope for goal 4.
+- It **moves the headline** from §A's "output tax" (avoid per-row `Event` on the
+  output boundary) to **reduction over the buffer**. The two overlap — both want
+  columns, not events — but the _motivation_ is reducer speed, not heap.
+
+**The open question goal 1 turns on (scan vs gather).** Does the live reduce
+path today — `view.column('cpu').mean()`, `partitionBy(col).toMap(g =>
+g.reduce(...))` — **scan the chunked columns directly**, or
+gather-from-`Event[]`-into-a-typed-array and _then_ reduce? On a chunked-backed
+buffer (#175) the typed arrays are already there to scan; if the path re-walks
+events to rebuild them, that is the unclaimed reducer-speed win — and the next
+concrete move is to **measure it before building**. The dashboard's
+snapshot-side `partitionBy.toMap` gather-only ask (the dual of increment 1) is
+the same question on the batch side, and is also goal 2 (closing a batch/live
+inconsistency).
 
 ## Cross-references
 
