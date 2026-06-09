@@ -7,11 +7,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 file covers both packages. Pre-1.0: minor bumps may include new features and
 type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/pjm17971/pond-ts/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/pjm17971/pond-ts/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
 
 ## [Unreleased]
+
+## [0.20.0] — 2026-06-04
+
+Two internal performance improvements driven by the dashboard experiment at
+256-host stress. **No public API changes** — both are behavior-preserving.
+
+### Changed
+
+- **Column-native partition routing.** `partitionBy(...)` over a strict
+  time-keyed source now routes its source chunks into per-partition
+  **chunked** sub-series via a coalescing staging tier, replacing the
+  per-partition `Event[]` retention. A large drop in retained memory and
+  object count at high partition counts (gRPC bench at 256 partitions: 60×
+  fewer columnar stores, −99.4% `Event` retention, +24% sustained throughput)
+  ([#175](https://github.com/pjm17971/pond-ts/pull/175)). Behavior-preserving;
+  internal only — no public surface added.
+- **`LiveView.toTimeSeries()` snapshot caching.** The built `TimeSeries` is
+  memoized against an internal mutation counter, so back-to-back
+  identical-state calls (multiple subscribers, framework commit batching,
+  StrictMode double-invoke) return the cached instance by reference instead of
+  rebuilding the whole snapshot — ~44 ms → ~0 at a 262k-event window. A
+  fresh-state call still builds; safe because `TimeSeries` is immutable
+  ([#180](https://github.com/pjm17971/pond-ts/pull/180)).
 
 ## [0.19.0] — 2026-06-02
 
