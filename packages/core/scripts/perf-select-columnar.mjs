@@ -81,13 +81,28 @@ for (const n of CELLS) {
     return acc;
   });
 
+  // rename — the same column-native mechanism (withColumnsRenamed +
+  // #fromTrustedStore); confirm it recovers the same per-transform tax.
+  const renameNewMs = bench(() => {
+    const s = new TimeSeries({ name: 's', schema, rows });
+    return s.rename({ a: 'x' }).column('x').sum();
+  });
+  const renameOldMs = bench(() => {
+    const s = new TimeSeries({ name: 's', schema, rows });
+    let acc = 0;
+    for (const e of s.events) acc += e.rename({ a: 'x' }).get('x');
+    return acc;
+  });
+
   out.push({
     rows: n,
     buildMs,
-    newPipelineMs: newMs,
-    oldPipelineMs: oldMs,
-    selectTaxRecovered: Number((oldMs - newMs).toFixed(3)),
-    pipelineSpeedup: Number((oldMs / newMs).toFixed(1)),
+    selectNewMs: newMs,
+    selectOldMs: oldMs,
+    selectSpeedup: Number((oldMs / newMs).toFixed(1)),
+    renameNewMs,
+    renameOldMs,
+    renameSpeedup: Number((renameOldMs / renameNewMs).toFixed(1)),
   });
 }
 
