@@ -75,6 +75,10 @@ import {
   normalizeAggregateColumns,
   tryAggregateColumnarTimeKeyed,
 } from './aggregate-columns.js';
+import {
+  cumulativeOp,
+  type CumulativeReducer,
+} from './operators/cumulative.js';
 import { BoundedSequence } from '../sequence/bounded-sequence.js';
 import {
   parseTimestampString,
@@ -2383,101 +2387,19 @@ export class TimeSeries<S extends SeriesSchema> {
       | ((acc: number, value: number) => number);
   }): TimeSeries<DiffSchema<S, Targets>> {
     type OutSchema = DiffSchema<S, Targets>;
-
-    const entries = Object.entries(spec) as [
-      string,
-      (
-        | 'sum'
-        | 'max'
-        | 'min'
-        | 'count'
-        | ((acc: number, value: number) => number)
-      ),
-    ][];
-
-    if (entries.length === 0) {
-      throw new Error('cumulative() requires at least one column');
-    }
-
-    const targetSet = new Set<string>(entries.map(([name]) => name));
-
-    const outSchema = Object.freeze(
-      this.schema.map((col, i) => {
-        if (i === 0) return col;
-        if (targetSet.has(col.name)) {
-          return { ...col, kind: 'number' as const, required: false as const };
-        }
-        return col;
-      }),
-    ) as unknown as OutSchema;
-
-    const events = this.events;
-    if (events.length === 0) {
-      return TimeSeries.#fromTrustedEvents<OutSchema>(this.name, outSchema, []);
-    }
-
-    const state = new Map<
-      string,
-      {
-        acc: number | undefined;
-        apply: (acc: number | undefined, value: number) => number;
-      }
-    >();
-    for (const [name, reducer] of entries) {
-      if (typeof reducer === 'function') {
-        const fn = reducer;
-        state.set(name, {
-          acc: undefined,
-          apply: (acc, v) => (acc === undefined ? v : fn(acc, v)),
-        });
-      } else {
-        switch (reducer) {
-          case 'sum':
-            state.set(name, {
-              acc: undefined,
-              apply: (acc, v) => (acc ?? 0) + v,
-            });
-            break;
-          case 'count':
-            state.set(name, { acc: undefined, apply: (acc) => (acc ?? 0) + 1 });
-            break;
-          case 'max':
-            state.set(name, {
-              acc: undefined,
-              apply: (acc, v) => (acc === undefined || v > acc ? v : acc),
-            });
-            break;
-          case 'min':
-            state.set(name, {
-              acc: undefined,
-              apply: (acc, v) => (acc === undefined || v < acc ? v : acc),
-            });
-            break;
-        }
-      }
-    }
-
-    const resultEvents: EventForSchema<OutSchema>[] = [];
-    for (const event of events) {
-      const data = { ...event.data() } as Record<string, unknown>;
-      for (const [name, s] of state) {
-        const raw = data[name];
-        if (typeof raw === 'number') {
-          s.acc = s.apply(s.acc, raw);
-          data[name] = s.acc;
-        } else {
-          data[name] = s.acc;
-        }
-      }
-      resultEvents.push(
-        new Event(event.key(), data) as unknown as EventForSchema<OutSchema>,
-      );
-    }
-
-    return TimeSeries.#fromTrustedEvents<OutSchema>(
+    // Column-native (Step 4): the running accumulation is computed straight
+    // off the store's columns in the extracted `cumulativeOp` — no
+    // `this.events` materialization, no per-row `Event`. The method is a
+    // thin delegate; the operator body lives in `operators/cumulative.ts`.
+    const { store, schema } = cumulativeOp<S, OutSchema>(
+      this.#store.store,
+      this.schema,
+      spec as unknown as Readonly<Record<string, CumulativeReducer>>,
+    );
+    return TimeSeries.#fromTrustedStore(
       this.name,
-      outSchema,
-      resultEvents,
+      schema,
+      store as unknown as ColumnarStore<ColumnSchema>,
     );
   }
 
