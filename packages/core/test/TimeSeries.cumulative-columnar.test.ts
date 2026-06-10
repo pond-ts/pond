@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { TimeSeries } from '../src/index.js';
+import {
+  ColumnarStore,
+  concatSorted,
+  float64ColumnFromArray,
+  timeKeyColumnFromArray,
+} from '../src/columnar/index.js';
+import { cumulativeOp } from '../src/batch/operators/cumulative.js';
 
 /* -------------------------------------------------------------------------- */
 /* Step 4 — column-native cumulative() guarantees.                             */
@@ -181,5 +188,56 @@ describe('column-native cumulative()', () => {
     expect(s.at(1)!.get('value')).toBe(20);
     // derived has the running sum
     expect(c.at(1)!.get('value')).toBe(30);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Direct operator — chunked input (unreachable through the method).           */
+/*                                                                             */
+/* cumulativeOp reads via col.read(i) to be storage-agnostic, but concat is    */
+/* events-based → packed, so the public method never feeds it a chunked store. */
+/* This pins the storage-agnostic contract directly (chunked coverage is now   */
+/* policy for every extracted operator — proven first on diff/rate in #192).   */
+/* -------------------------------------------------------------------------- */
+
+const numStore = (times: number[], values: Array<number | undefined>) =>
+  ColumnarStore.fromTrustedStore(
+    [
+      { name: 'time', kind: 'time' },
+      { name: 'v', kind: 'number' },
+    ] as const,
+    timeKeyColumnFromArray(times),
+    new Map([['v', float64ColumnFromArray(values)]]),
+  );
+
+describe('cumulativeOp on a chunked-storage store', () => {
+  it('folds the running sum correctly over chunked columns', () => {
+    // concatSorted of two disjoint stores yields zero-copy CHUNKED columns.
+    const chunked = concatSorted([
+      numStore([1000, 2000], [10, 20]),
+      numStore([3000, 4000], [30, 40]),
+    ]);
+    expect(chunked.columns.get('v')!.storage).toBe('chunked'); // guard
+
+    const { store } = cumulativeOp(chunked, chunked.schema, { v: 'sum' });
+    expect(store.length).toBe(4);
+    expect(store.valueAt(0, 'v')).toBe(10);
+    expect(store.valueAt(1, 'v')).toBe(30);
+    expect(store.valueAt(2, 'v')).toBe(60);
+    expect(store.valueAt(3, 'v')).toBe(100);
+  });
+
+  it('carries the accumulator across a gap in a chunked column', () => {
+    const chunked = concatSorted([
+      numStore([1000, 2000], [10, undefined]),
+      numStore([3000, 4000], [30, 40]),
+    ]);
+    expect(chunked.columns.get('v')!.storage).toBe('chunked');
+
+    const { store } = cumulativeOp(chunked, chunked.schema, { v: 'sum' });
+    expect(store.valueAt(0, 'v')).toBe(10);
+    expect(store.valueAt(1, 'v')).toBe(10); // gap carries the accumulator
+    expect(store.valueAt(2, 'v')).toBe(40);
+    expect(store.valueAt(3, 'v')).toBe(80);
   });
 });
