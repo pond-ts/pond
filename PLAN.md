@@ -4061,13 +4061,14 @@ reduce fast paths (3A: 59–73× numeric), **3B aggregate per-bucket** (#186/#18
 public column API (step 8), _conditional_ live chunked backing (step 7,
 strict-time-keyed only), and the **first transforms + operator extraction**
 (step 4: `select` #188, `rename` #189, `cumulative` #190 — the latter the first
-op pulled into `batch/operators/`, establishing the template). **The remaining
-middle of the pipeline — the rest of the transforms and windowed rolling — is
-still row-shaped.** Recommended remaining sequence (consultant §5,
-north-star-ranked), with the shipped prefix struck through: ~~3B aggregate
-per-bucket~~ → **4 transforms + operator extraction (in progress: `diff`/`rate`/
-`pctChange` → `fill` → `map` → `collapse` remain)** → chart carry-forwards →
-6 dict reducers → 5 planner → 3C rolling (last; numerical risk stacks there).
+op pulled into `batch/operators/`, establishing the template; `withRowRange`
+substrate #191; `diff`/`rate`/`pctChange` #192). **The remaining middle of the
+pipeline — the rest of the transforms and windowed rolling — is still
+row-shaped.** Recommended remaining sequence (consultant §5, north-star-ranked),
+with the shipped prefix struck through: ~~3B aggregate per-bucket~~ →
+**4 transforms + operator extraction (in progress: `fill` → `map` → `collapse`
+remain)** → chart carry-forwards → 6 dict reducers → 5 planner → 3C rolling
+(last; numerical risk stacks there).
 Every step before 3C is zero-or-negative public surface. Live §A (column-native output) stays **friction-gated** — the
 zero-copy arc was correctly killed by measurement (`perf-band-gather.mjs`).
 Near-term items tracked as backlog tasks (3B, step 4 + extraction, row/columnar
@@ -4486,11 +4487,24 @@ getColumn, buckets, columns)` in `batch/aggregate-columns.ts`
      template. 5.4–5.9× pipeline win. Exact parity (11 existing +
      7 column-native-edge tests); a type-defeated non-numeric target
      now fails fast (kind guard) instead of silently corrupting.
-   - **Remaining (sequential — shared god-file):** `diff` / `rate` /
-     `pctChange` (the `#diffOrRate` family; needs a `ColumnarStore`
-     row-slice for `drop`, may carry a small substrate precursor) →
-     `fill` → `map` → `collapse`. Each a focused PR in the
-     `cumulative` template shape.
+   - **`withRowRange` substrate** ✅ Shipped (PR #191, merged 2026-06).
+     Contiguous row-range store slice (`view.ts`) — the row-dimension
+     sibling of `withRowSelection`; the substrate precursor for
+     `drop` and the row-range transforms (`slice` / `head` / `tail`).
+   - **`diff` / `rate` / `pctChange`** ✅ Shipped (PR #192, merged
+     2026-06). `diffRateOp` in `batch/operators/diff-rate.ts`; first
+     consumer of `withRowRange` (`drop: true` slices off the
+     predecessor-less first row). 5.3–7× pipeline win. Exact parity
+     (31 existing tests, verified additionally by a 7,200-case
+     differential fuzz in L2) + 7 column-native-edge tests, incl. the
+     first **chunked-input direct-operator tests** (the storage-
+     agnostic `col.read` contract; unreachable through the method
+     since `concat` is still events-based → packed).
+   - **Remaining (sequential — shared god-file):** `fill` → `map` →
+     `collapse`, each a focused PR in the `cumulative`/`diff-rate`
+     template shape. Plus a tiny backfill adding the chunked-input
+     test to `cumulative` (the pattern proven in #192). Chunked-input
+     coverage is now policy for every extracted operator.
 5. Aggregate planner (~2 weeks).
 6. String / dictionary reducer adaptation (~2 weeks).
 7. `LiveSeries` numeric ring buffer (~2 weeks).
