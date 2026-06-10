@@ -73,6 +73,7 @@ import type {
 import {
   isAggregateOutputSpec,
   normalizeAggregateColumns,
+  tryAggregateColumnarTimeKeyed,
 } from './aggregate-columns.js';
 import { BoundedSequence } from '../sequence/bounded-sequence.js';
 import {
@@ -4710,6 +4711,25 @@ function aggregateInternal<S extends SeriesSchema>(
   const columns = aggregateColumns;
 
   if (isTimeKeyed(series)) {
+    // Step 3B columnar fast path: when every mapped column is a built-in
+    // numeric reducer with a `reduceColumn` kernel over a packed
+    // `Float64Column` source, reduce each bucket's contiguous index range
+    // off the typed arrays — no `series.events` materialization. Returns
+    // null (→ the row path below, unchanged) for any non-qualifying column.
+    const columnarRows = tryAggregateColumnarTimeKeyed(
+      series.keyColumn().begin,
+      (name) => series.column(name as ValueColumnsForSchema<S>[number]['name']),
+      buckets,
+      columns,
+    );
+    if (columnarRows !== null) {
+      return new TimeSeries({
+        name: series.name,
+        schema: resultSchema as unknown as SeriesSchema,
+        rows: columnarRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
+      });
+    }
+
     const builtInOnly = columns.every((column) =>
       isBuiltInAggregateReducer(column.reducer),
     );
