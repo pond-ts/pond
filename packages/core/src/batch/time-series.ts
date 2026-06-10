@@ -108,6 +108,7 @@ import {
   type ColumnSchema,
   withColumnsRenamed,
   withColumnsSelected,
+  withRowRange,
 } from '../columnar/index.js';
 import type { KeyColumnForSchema, PublicColumnForKind } from '../column.js';
 import { SeriesStore } from '../live/series-store.js';
@@ -3400,10 +3401,30 @@ export class TimeSeries<S extends SeriesSchema> {
 
   /** Example: `series.slice(0, 10)`. Returns a positional half-open slice of the series. */
   slice(beginIndex?: number, endIndex?: number): TimeSeries<S> {
-    return TimeSeries.#fromTrustedEvents(
+    // Column-native (Step 4): reshape the store's row range directly via
+    // `withRowRange` — no `this.events` materialization. The public contract
+    // is `Array.prototype.slice` (negative indices count from the end,
+    // non-integers truncate toward zero, out-of-range clamps), which
+    // `withRowRange` does not implement, so normalize to an absolute
+    // `[start, end)` here first (matching `Array.prototype.slice`'s
+    // `ToInteger` + from-end semantics), then slice the store.
+    const n = this.#store.store.length;
+    const toIndex = (i: number | undefined, dflt: number): number => {
+      if (i === undefined) return dflt;
+      if (Number.isNaN(i)) return 0; // ToInteger(NaN) === 0
+      const t = Math.trunc(i);
+      return t < 0 ? Math.max(0, n + t) : Math.min(t, n);
+    };
+    const start = toIndex(beginIndex, 0);
+    const end = toIndex(endIndex, n);
+    return TimeSeries.#fromTrustedStore(
       this.name,
       this.schema,
-      this.events.slice(beginIndex, endIndex),
+      withRowRange(
+        this.#store.store,
+        start,
+        end,
+      ) as unknown as ColumnarStore<ColumnSchema>,
     );
   }
 

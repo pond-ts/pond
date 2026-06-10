@@ -4066,8 +4066,10 @@ substrate #191; `diff`/`rate`/`pctChange` #192). **The remaining middle of the
 pipeline — the rest of the transforms and windowed rolling — is still
 row-shaped.** Recommended remaining sequence (consultant §5, north-star-ranked),
 with the shipped prefix struck through: ~~3B aggregate per-bucket~~ →
-**4 transforms + operator extraction (in progress: `fill` → `map` → `collapse`
-remain)** → chart carry-forwards → 6 dict reducers → 5 planner → 3C rolling
+**4 transforms + operator extraction (shipped: cumulative #190, diff/rate #192,
+fill #194, slice; remaining: `shift` → `collapse`, with `tail`/`filter` as
+judgment calls — `map` is out of scope, it's an arbitrary event→event closure)**
+→ chart carry-forwards → 6 dict reducers → 5 planner → 3C rolling
 (last; numerical risk stacks there).
 Every step before 3C is zero-or-negative public surface. Live §A (column-native output) stays **friction-gated** — the
 zero-copy arc was correctly killed by measurement (`perf-band-gather.mjs`).
@@ -4500,11 +4502,35 @@ getColumn, buckets, columns)` in `batch/aggregate-columns.ts`
      first **chunked-input direct-operator tests** (the storage-
      agnostic `col.read` contract; unreachable through the method
      since `concat` is still events-based → packed).
-   - **Remaining (sequential — shared god-file):** `fill` → `map` →
-     `collapse`, each a focused PR in the `cumulative`/`diff-rate`
-     template shape. Plus a tiny backfill adding the chunked-input
-     test to `cumulative` (the pattern proven in #192). Chunked-input
-     coverage is now policy for every extracted operator.
+   - **`cumulative` chunked-input backfill** ✅ Shipped (PR #193,
+     merged 2026-06). Completed the chunked-coverage policy for every
+     extracted operator (the pattern proven on diff/rate in #192).
+   - **`fill`** ✅ Shipped (PR #194, merged 2026-06). `fillOp` in
+     `batch/operators/fill.ts` — the largest transform body
+     (god-file −181 net). Multi-kind rebuild (number/string/boolean/
+     array), only-rebuild-changed zero-copy passthrough, lazy times,
+     `withRowRange` not needed (schema-stable). 4.9–5.5× pipeline win.
+     L2 + a Codex pass both cleared it. One **deliberate behavior
+     change** (not parity, now documented): a kind-mismatched literal
+     throws (was: a silently-inconsistent series). 47 existing + 7
+     column-native-edge tests.
+   - **`slice`** ✅ Shipped (PR — this wave-step). Inline reshape via
+     `withRowRange` (like `select`/`rename`, no per-row walk → no
+     operator file); normalizes `Array.prototype.slice` semantics
+     (negative indices, `ToInteger` truncation, clamps) to an absolute
+     range first. Pinned by an 11-case suite incl. a differential
+     sweep against `Array.prototype.slice`.
+   - **Remaining (genuinely column-native-able, sequential):**
+     `shift` (per-target numeric shift+pad, `cumulative`-shaped) →
+     `collapse` (reads only the keyed columns, per-row reducer over a
+     minimal `{key: value}` object, no full Event). Judgment calls:
+     `tail(duration)` (key-bisect + `withRowRange`), `filter`
+     (predicate is event-shaped; result subset via `withRowSelection`).
+     **`map` is NOT in scope** — it's an arbitrary event→event closure
+     (`map(nextSchema, (event, i) => newEvent)`); it cannot be
+     vectorized over columns and correctly stays event-shaped (the
+     escape hatch for arbitrary transforms). An earlier PLAN draft
+     wrongly listed `map` as a wave step.
 5. Aggregate planner (~2 weeks).
 6. String / dictionary reducer adaptation (~2 weeks).
 7. `LiveSeries` numeric ring buffer (~2 weeks).
