@@ -54,6 +54,15 @@ function buildApply(
  * Returns the reshaped store + the output schema (targets widened to optional
  * `number`). The result-schema cast is the single trust boundary; the
  * `TimeSeries.cumulative` method wraps the store via `#fromTrustedStore`.
+ *
+ * A non-numeric target name is unreachable through the typed surface
+ * (`cumulative<Targets extends NumericColumnNameForSchema<S>>`); it can only
+ * arrive by defeating that constraint (`(series as any).cumulative(...)`).
+ * On such a type-illegal input the all-`undefined` replacement column is
+ * `kind: 'number'`, so `withColumnReplaced`'s kind guard throws a `RangeError`
+ * naming the column. This is a deliberate improvement over the old events path,
+ * which silently overwrote the column with all-`undefined` — fail-fast beats
+ * silent corruption on input the type already forbids.
  */
 export function cumulativeOp<
   S extends SeriesSchema,

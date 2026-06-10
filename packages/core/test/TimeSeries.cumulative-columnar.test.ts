@@ -141,6 +141,28 @@ describe('column-native cumulative()', () => {
     expect(chained.at(2)!.get('value')).toBeNaN();
   });
 
+  it('throws (not silently corrupts) on a type-defeated non-numeric target', () => {
+    // `cumulative<Targets extends NumericColumnNameForSchema<S>>` forbids a
+    // string column at the type level; this reaches the column-native path
+    // only by defeating the type. The old events path silently produced an
+    // all-undefined column; the column-native path fails fast via
+    // withColumnReplaced's kind guard, naming the offending column.
+    const s = new TimeSeries({
+      name: 'wrong-kind',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'label', kind: 'string' },
+      ] as const,
+      rows: [
+        [0, 'a'],
+        [1000, 'b'],
+      ],
+    });
+    expect(() => (s as any).cumulative({ label: 'sum' })).toThrow(
+      /kind 'number' does not match schema kind 'string'/,
+    );
+  });
+
   it('leaves the source series untouched', () => {
     const s = new TimeSeries({
       name: 'src',
