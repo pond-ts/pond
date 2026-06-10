@@ -16,10 +16,13 @@ type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
-- **`select` / `rename` are now column-native.** They reshape the columnar
-  store directly instead of materializing events, so the columnar
-  construction win is preserved through these transforms — build → transform →
-  read pipelines run ~7–10× faster. No API change.
+- **`select` / `rename` / `cumulative` / `diff` / `rate` / `pctChange` are now
+  column-native.** They reshape the columnar store directly instead of
+  materializing events, so the columnar construction win is preserved through
+  these transforms — build → transform → read pipelines run several× faster
+  (~7–10× for `select` / `rename`; ~5–7× for the `cumulative` / `diff` / `rate`
+  folds). No API change. `cumulative` / `diff` / `rate` / `pctChange` are also
+  the first operators extracted into `batch/operators/` (internal refactor).
 
 ### Fixed
 

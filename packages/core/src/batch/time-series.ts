@@ -79,6 +79,7 @@ import {
   cumulativeOp,
   type CumulativeReducer,
 } from './operators/cumulative.js';
+import { diffRateOp, type DiffRateMode } from './operators/diff-rate.js';
 import { BoundedSequence } from '../sequence/bounded-sequence.js';
 import {
   parseTimestampString,
@@ -2276,90 +2277,29 @@ export class TimeSeries<S extends SeriesSchema> {
     Target extends NumericColumnNameForSchema<SX>,
   >(
     series: TimeSeries<SX>,
-    mode: 'diff' | 'rate' | 'pctChange',
+    mode: DiffRateMode,
     columns: Target | readonly Target[],
     options?: { drop?: boolean },
   ): TimeSeries<DiffSchema<SX, Target>> {
     type OutSchema = DiffSchema<SX, Target>;
-
+    // Column-native (Step 4): successive differences are folded straight
+    // off the store's columns in the extracted `diffRateOp` — no
+    // `series.events` materialization, no per-row `Event`. `drop: true`
+    // slices off the predecessor-less first row via `withRowRange`. The
+    // method is a thin delegate; the operator body lives in
+    // `operators/diff-rate.ts`.
     const cols = typeof columns === 'string' ? [columns] : columns;
-    const drop = options?.drop === true;
-
-    if (cols.length === 0) {
-      throw new Error(`${mode}() requires at least one column name`);
-    }
-
-    const targetSet = new Set<string>(cols);
-
-    const outSchema = Object.freeze(
-      series.schema.map((col, i) => {
-        if (i === 0) return col;
-        if (targetSet.has(col.name)) {
-          return { ...col, kind: 'number' as const, required: false as const };
-        }
-        return col;
-      }),
-    ) as unknown as OutSchema;
-
-    const events = series.events;
-    if (events.length === 0) {
-      return TimeSeries.#fromTrustedEvents<OutSchema>(
-        series.name,
-        outSchema,
-        [],
-      );
-    }
-
-    const resultEvents: EventForSchema<OutSchema>[] = [];
-
-    if (!drop) {
-      const firstData = { ...events[0]!.data() } as Record<string, unknown>;
-      for (const col of cols) {
-        firstData[col] = undefined;
-      }
-      resultEvents.push(
-        new Event(
-          events[0]!.key(),
-          firstData,
-        ) as unknown as EventForSchema<OutSchema>,
-      );
-    }
-
-    for (let i = 1; i < events.length; i++) {
-      const prev = events[i - 1]!;
-      const curr = events[i]!;
-      const data = { ...curr.data() } as Record<string, unknown>;
-
-      const dt =
-        mode === 'rate' ? (curr.begin() - prev.begin()) / 1000 : undefined;
-
-      for (const col of cols) {
-        const prevVal = (prev.data() as Record<string, unknown>)[col];
-        const currVal = data[col];
-
-        if (typeof currVal === 'number' && typeof prevVal === 'number') {
-          const delta = currVal - prevVal;
-          if (mode === 'pctChange') {
-            data[col] = prevVal !== 0 ? delta / prevVal : undefined;
-          } else if (mode === 'rate') {
-            data[col] = dt !== 0 ? delta / dt! : undefined;
-          } else {
-            data[col] = delta;
-          }
-        } else {
-          data[col] = undefined;
-        }
-      }
-
-      resultEvents.push(
-        new Event(curr.key(), data) as unknown as EventForSchema<OutSchema>,
-      );
-    }
-
-    return TimeSeries.#fromTrustedEvents<OutSchema>(
+    const { store, schema } = diffRateOp<SX, OutSchema>(
+      series.#store.store,
+      series.schema,
+      mode,
+      cols as readonly string[],
+      options?.drop === true,
+    );
+    return TimeSeries.#fromTrustedStore(
       series.name,
-      outSchema,
-      resultEvents,
+      schema,
+      store as unknown as ColumnarStore<ColumnSchema>,
     );
   }
 
