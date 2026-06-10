@@ -96,7 +96,12 @@ import { Event } from '../core/event.js';
 import { PartitionedTimeSeries } from './partitioned-time-series.js';
 import type { BatchSampleStrategy } from '../sequence/sample.js';
 import { Sequence } from '../sequence/sequence.js';
-import { type Column as ColumnarColumn } from '../columnar/index.js';
+import {
+  type Column as ColumnarColumn,
+  type ColumnarStore,
+  type ColumnSchema,
+  withColumnsSelected,
+} from '../columnar/index.js';
 import type { KeyColumnForSchema, PublicColumnForKind } from '../column.js';
 import { SeriesStore } from '../live/series-store.js';
 import { validateAndNormalize } from './validate.js';
@@ -1047,6 +1052,37 @@ export class TimeSeries<S extends SeriesSchema> {
       events as unknown as ReadonlyArray<
         Parameters<typeof SeriesStore.fromTrustedEvents>[1][number]
       >,
+    ) as SeriesStore<NextSchema>;
+    const trustedInput: TrustedStoreInput<NextSchema> = {
+      name,
+      schema: frozenSchema,
+      [TRUSTED_STORE_SENTINEL]: store,
+    };
+    return new TimeSeries<NextSchema>(
+      trustedInput as unknown as TimeSeriesInput<NextSchema>,
+    );
+  }
+
+  /**
+   * Column-native trusted constructor — the counterpart to
+   * {@link TimeSeries.#fromTrustedEvents} for transforms that reshape
+   * the columnar store directly (`select`, and future pure-reshape
+   * ops) instead of rebuilding from events. Wraps a pre-built,
+   * already-validated `ColumnarStore` in a fresh `SeriesStore` (no
+   * per-row event materialization, no re-validation) and installs it
+   * via the trusted-store sentinel. Events lazy-materialize from the
+   * new store on demand. The caller guarantees `columnarStore`'s
+   * shape matches `schema` — that assertion is the single cast, the
+   * trust boundary (Step 4).
+   */
+  static #fromTrustedStore<NextSchema extends SeriesSchema>(
+    name: string,
+    schema: NextSchema,
+    columnarStore: ColumnarStore<ColumnSchema>,
+  ): TimeSeries<NextSchema> {
+    const frozenSchema = Object.freeze(schema.slice()) as NextSchema;
+    const store = SeriesStore.fromTrustedStore(
+      columnarStore as unknown as ColumnarStore<NextSchema>,
     ) as SeriesStore<NextSchema>;
     const trustedInput: TrustedStoreInput<NextSchema> = {
       name,
@@ -3974,15 +4010,19 @@ export class TimeSeries<S extends SeriesSchema> {
       ...selectedColumns,
     ]) as unknown as SelectSchema<S, Keys[number] & string>;
 
-    const resultEvents = this.events.map((event) => {
-      const selectedEvent = event.select(...keys);
-      return selectedEvent;
-    });
-
-    return TimeSeries.#fromTrustedEvents(
+    // Column-native (Step 4): reshape the store's columns directly —
+    // a zero-copy reference of the selected value columns + the shared
+    // key axis — instead of materializing `this.events`, building one
+    // new `Event` per row, and re-storing. Recovers the columnar
+    // construction win for pipeline users at the first transform.
+    const reshaped = withColumnsSelected(
+      this.#store.store,
+      selectedColumns.map((column) => column.name),
+    );
+    return TimeSeries.#fromTrustedStore(
       this.name,
       resultSchema as unknown as SeriesSchema,
-      resultEvents as unknown as EventForSchema<SeriesSchema>[],
+      reshaped,
     ) as unknown as TimeSeries<SelectSchema<S, Keys[number] & string>>;
   }
 
