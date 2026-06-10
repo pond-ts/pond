@@ -100,6 +100,7 @@ import {
   type Column as ColumnarColumn,
   type ColumnarStore,
   type ColumnSchema,
+  withColumnsRenamed,
   withColumnsSelected,
 } from '../columnar/index.js';
 import type { KeyColumnForSchema, PublicColumnForKind } from '../column.js';
@@ -4031,26 +4032,36 @@ export class TimeSeries<S extends SeriesSchema> {
     mapping: Mapping,
   ): TimeSeries<RenameSchema<S, Mapping>> {
     const firstColumn = this.schema[0]!;
+    // `hasOwnProperty` lookup (not bracket access) so a column named
+    // `toString` / `valueOf` / etc. doesn't pick up an inherited
+    // `Object.prototype` member as its rename target — matches
+    // `withColumnsRenamed`'s guard. Preserve the full def (incl.
+    // `required`) on the result schema.
     const renamedColumns = this.schema.slice(1).map((column) => ({
       ...column,
-      name:
-        (mapping as Partial<Record<string, string>>)[column.name] ??
-        column.name,
+      name: Object.prototype.hasOwnProperty.call(mapping, column.name)
+        ? (mapping as Record<string, string>)[column.name]!
+        : column.name,
     }));
     const resultSchema = Object.freeze([
       firstColumn,
       ...renamedColumns,
     ]) as unknown as RenameSchema<S, Mapping>;
 
-    const resultEvents = this.events.map((event) => {
-      const renamedEvent = event.rename(mapping);
-      return renamedEvent;
-    });
-
-    return TimeSeries.#fromTrustedEvents(
+    // Column-native (Step 4): relabel the store's columns directly — a
+    // zero-copy reference of the same value columns under new names +
+    // the shared key axis — instead of materializing `this.events` and
+    // building one renamed `Event` per row. `withColumnsRenamed` also
+    // rejects key renames + target-name collisions (the old event path
+    // silently produced a duplicate-named schema).
+    const reshaped = withColumnsRenamed(
+      this.#store.store,
+      mapping as Readonly<Record<string, string>>,
+    );
+    return TimeSeries.#fromTrustedStore(
       this.name,
       resultSchema as unknown as SeriesSchema,
-      resultEvents as unknown as EventForSchema<SeriesSchema>[],
+      reshaped,
     ) as unknown as TimeSeries<RenameSchema<S, Mapping>>;
   }
 

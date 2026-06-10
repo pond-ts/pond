@@ -14,6 +14,21 @@ type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **`select` / `rename` are now column-native.** They reshape the columnar
+  store directly instead of materializing events, so the columnar
+  construction win is preserved through these transforms — build → transform →
+  read pipelines run ~7–10× faster. No API change.
+
+### Fixed
+
+- **`rename` now rejects target-name collisions** (e.g. renaming `a` → `b`
+  when `b` already exists) with a clear error, instead of silently producing a
+  duplicate-named schema. Also fixes a prototype-chain bug where a column named
+  `toString` (or another `Object.prototype` member) could be corrupted during
+  a rename.
+
 ## [0.20.0] — 2026-06-04
 
 Two internal performance improvements driven by the dashboard experiment at
