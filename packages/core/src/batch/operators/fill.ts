@@ -82,10 +82,19 @@ function buildFilledColumn(kind: string, values: unknown[]): Column {
  * each column's **kind** — `hold` / `bfill` / `literal` apply to any
  * kind — so a changed column is rebuilt with the kind-appropriate
  * builder (`buildFilledColumn`). A `literal` whose runtime type
- * doesn't match the column kind throws when it would be placed
- * (gap-dependent, matching the old path where the kind-broken cell
- * surfaced as a `SeriesStore` construction error) — with a clearer,
- * column-named message here.
+ * doesn't match the column kind throws a `RangeError` naming the
+ * column when it would be placed (gap-dependent).
+ *
+ * **This throw is a deliberate behavior change, not parity.** The old
+ * events path did NOT throw on a kind-mismatched literal: it stored
+ * the literal in the event cache *and* coerced it into the numeric
+ * buffer, yielding an internally-inconsistent series (`.get()`
+ * returned the string, `.column().sum()` returned `NaN`). Column-
+ * native has a single representation, so that dual-view inconsistency
+ * is unreproducible — failing fast on the nonsensical input (a kind-
+ * mismatched literal is only writable because `FillMapping` values
+ * are the broad `FillStrategy | ScalarValue`) is the principled
+ * replacement.
  *
  * The schema is unchanged (fill never widens or drops); the cast is
  * the single trust boundary, and the `TimeSeries.fill` method wraps

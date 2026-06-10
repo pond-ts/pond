@@ -21,9 +21,11 @@ type-level changes; patch bumps are strictly additive.
   materializing events, so the columnar construction win is preserved through
   these transforms — build → transform → read pipelines run several× faster
   (~7–10× for `select` / `rename`; ~5–7× for the `cumulative` / `diff` / `rate`
-  / `fill` folds). No API change. `cumulative` / `diff` / `rate` / `pctChange` /
-  `fill` are also the first operators extracted into `batch/operators/`
-  (internal refactor); `fill` rebuilds only the columns it actually changes.
+  / `fill` folds). No API change for type-correct callers (one narrow `fill`
+  behavior change is noted under Fixed). `cumulative` / `diff` / `rate` /
+  `pctChange` / `fill` are also the first operators extracted into
+  `batch/operators/` (internal refactor); `fill` rebuilds only the columns it
+  actually changes.
 
 ### Fixed
 
@@ -32,6 +34,13 @@ type-level changes; patch bumps are strictly additive.
   duplicate-named schema. Also fixes a prototype-chain bug where a column named
   `toString` (or another `Object.prototype` member) could be corrupted during
   a rename.
+- **`fill` now throws on a kind-mismatched literal** (e.g.
+  `fill({ value: 'banana' })` where `value` is numeric — type-allowed because
+  mapping values are the broad `FillStrategy | ScalarValue`) with a clear
+  `RangeError` naming the column, instead of silently producing an
+  internally-inconsistent series (the old events path returned the literal
+  from `.get()` while the numeric column read `NaN`). The throw is
+  gap-dependent — it only fires when the literal would actually be placed.
 
 ## [0.20.0] — 2026-06-04
 

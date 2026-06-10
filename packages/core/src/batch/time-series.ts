@@ -2457,9 +2457,16 @@ export class TimeSeries<S extends SeriesSchema> {
    * strategy, e.g. `fill({ value: 'zero', host: 'hold' })` or
    * `fill({ host: 'unknown' })` (literal). `"hold"` / `"bfill"`
    * are kind-agnostic (they copy whatever value is at the
-   * neighbor); `"literal"` carries whatever value the user
-   * supplies, so a kind-mismatched literal surfaces as a
-   * columnar-substrate error at intake.
+   * neighbor); a `"literal"` whose runtime type doesn't match the
+   * column kind (e.g. a string fill on a numeric column — type-
+   * allowed, since mapping values are the broad
+   * `FillStrategy | ScalarValue`) **throws** a `RangeError` naming
+   * the column when it would be placed (gap-dependent). This is a
+   * deliberate change from the pre-columnar path, which silently
+   * produced an internally-inconsistent series (the event view
+   * returned the literal while the numeric column read `NaN`); the
+   * column-native single representation makes fail-fast the
+   * principled replacement.
    *
    * **Multi-entity series:** fill walks one chronological event
    * sequence — `host-A`'s missing cell would `linear`-interpolate or

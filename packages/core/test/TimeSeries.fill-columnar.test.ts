@@ -83,9 +83,11 @@ describe('column-native fill() — multi-kind rebuild', () => {
   });
 
   it('throws when a literal does not match the column kind', () => {
-    // 'banana' (non-keyword string) → literal on a numeric column. The old
-    // path surfaced this as a SeriesStore intake error; column-native throws
-    // with a clearer column-named message when the literal would be placed.
+    // 'banana' (non-keyword string) → literal on a numeric column. This is a
+    // deliberate behavior CHANGE, not parity: the old events path did NOT
+    // throw — it stored the literal in the event cache while the numeric
+    // column read NaN, an internally-inconsistent series. Column-native has a
+    // single representation, so it fails fast when the literal would be placed.
     const s = new TimeSeries({
       name: 'mismatch',
       schema: [
