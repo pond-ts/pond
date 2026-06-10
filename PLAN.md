@@ -4050,6 +4050,24 @@ post-Phase 4.7.
 
 Status: adopted 2026-05-11. Not started.
 
+**Status update (2026-06-10)** — the framing below is the original adoption
+note; for current ground-truth see the consultant assessment
+([`docs/notes/columnar-arc-assessment-2026-06.md`](docs/notes/columnar-arc-assessment-2026-06.md),
+against v0.20.0). **Shipped:** substrate (1a–1h), batch columnar-first intake,
+reduce fast paths (3A: 59–73× numeric), public column API (step 8), and
+_conditional_ live chunked backing (step 7, strict-time-keyed only). **The
+middle of the pipeline — transforms and windowed aggregation — is still
+row-shaped.** Recommended remaining sequence (consultant §5, north-star-ranked):
+**3B aggregate per-bucket → 4 transforms + operator extraction →
+chart carry-forwards → 6 dict reducers → 5 planner → 3C rolling (last;
+numerical risk stacks there).** Every step before 3C is zero-or-negative
+public surface. Live §A (column-native output) stays **friction-gated** — the
+zero-copy arc was correctly killed by measurement (`perf-band-gather.mjs`).
+Near-term items tracked as backlog tasks (3B, step 4 + extraction, row/columnar
+parity suite, `toFloat64Array` carry-forward, bundle-budget re-pin). North
+star: overall performance with a consistent, clear API surface — reducer speed
+first ([columnar-live-protocol RFC Amendment V3](docs/rfcs/columnar-live-protocol.md)).
+
 This is the **v1.0 substrate**. Adoption decision documented in
 [`docs/rfcs/columnar-core.md`](docs/rfcs/columnar-core.md) ("Library-agent
 response and adoption" section); evidence base in
