@@ -172,12 +172,27 @@ describe('aggregate() columnar fast path — hand-computed values', () => {
       count: { from: 'value', using: 'count' },
       avg: { from: 'value', using: 'avg' },
       min: { from: 'value', using: 'min' },
+      max: { from: 'value', using: 'max' },
+      stdev: { from: 'value', using: 'stdev' },
+      med: { from: 'value', using: 'median' },
+      p95: { from: 'value', using: 'p95' },
     });
     // buckets: [0,1000)=7, [1000,2000)/[2000,3000)/[3000,4000)=empty, [4000,5000)=9
     expect(vals(r, 'count')).toEqual([1, 0, 0, 0, 1]);
     expect(vals(r, 'sum')).toEqual([7, 0, 0, 0, 9]);
     expect(vals(r, 'avg')).toEqual([7, undefined, undefined, undefined, 9]);
     expect(vals(r, 'min')).toEqual([7, undefined, undefined, undefined, 9]);
+    expect(vals(r, 'max')).toEqual([7, undefined, undefined, undefined, 9]);
+    // The sort/variance reducers are the likeliest place reduceColumn(empty)
+    // could diverge from a zero-add bucket snapshot — pin the empty buckets
+    // (indices 1–3) explicitly for each.
+    for (const name of ['stdev', 'med', 'p95']) {
+      expect(vals(r, name).slice(1, 4)).toEqual([
+        undefined,
+        undefined,
+        undefined,
+      ]);
+    }
   });
 });
 
