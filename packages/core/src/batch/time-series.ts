@@ -80,6 +80,7 @@ import {
   type CumulativeReducer,
 } from './operators/cumulative.js';
 import { diffRateOp, type DiffRateMode } from './operators/diff-rate.js';
+import { fillOp, type ResolvedFillSpec } from './operators/fill.js';
 import { BoundedSequence } from '../sequence/bounded-sequence.js';
 import {
   parseTimestampString,
@@ -146,9 +147,6 @@ type JoinOptions = ErrorJoinOptions | PrefixJoinOptions<readonly string[]>;
 type PivotByGroupOptions = { aggregate?: AggregateReducer };
 type PivotByGroupOptionsTyped<Groups extends readonly string[]> =
   PivotByGroupOptions & { groups: Groups };
-type ResolvedFillSpec =
-  | { mode: FillStrategy }
-  | { mode: 'literal'; value: ScalarValue };
 type SeriesTuple = readonly [
   TimeSeries<SeriesSchema>,
   ...TimeSeries<SeriesSchema>[],
@@ -2459,9 +2457,16 @@ export class TimeSeries<S extends SeriesSchema> {
    * strategy, e.g. `fill({ value: 'zero', host: 'hold' })` or
    * `fill({ host: 'unknown' })` (literal). `"hold"` / `"bfill"`
    * are kind-agnostic (they copy whatever value is at the
-   * neighbor); `"literal"` carries whatever value the user
-   * supplies, so a kind-mismatched literal surfaces as a
-   * columnar-substrate error at intake.
+   * neighbor); a `"literal"` whose runtime type doesn't match the
+   * column kind (e.g. a string fill on a numeric column — type-
+   * allowed, since mapping values are the broad
+   * `FillStrategy | ScalarValue`) **throws** a `RangeError` naming
+   * the column when it would be placed (gap-dependent). This is a
+   * deliberate change from the pre-columnar path, which silently
+   * produced an internally-inconsistent series (the event view
+   * returned the literal while the numeric column read `NaN`); the
+   * column-native single representation makes fail-fast the
+   * principled replacement.
    *
    * **Multi-entity series:** fill walks one chronological event
    * sequence — `host-A`'s missing cell would `linear`-interpolate or
@@ -2474,26 +2479,27 @@ export class TimeSeries<S extends SeriesSchema> {
     strategy: FillStrategy | FillMapping<S>,
     options?: { limit?: number; maxGap?: DurationInput },
   ): TimeSeries<S> {
-    if (this.events.length === 0) {
+    // Column-native (Step 4): fill walks each column's gaps straight off
+    // the store in the extracted `fillOp` — no `this.events`
+    // materialization, no per-row `Event`. Only columns that actually
+    // change are rebuilt; the rest (and the key) pass through by
+    // reference. The method resolves the user-facing strategy input into
+    // a per-column spec map, then delegates.
+    if (this.#store.store.length === 0) {
       return this;
     }
 
-    const colNames = this.schema.slice(1).map((c) => c.name);
-    // Per-column kind lookup, used by the kind-sensitive fill cases
-    // (e.g. `'zero'` only applies to numeric columns — filling a
-    // string column with the number `0` would emit a kind-mismatched
-    // cell that the columnar substrate rejects at `SeriesStore`
-    // construction). Pre-columnar behavior silently produced
-    // type-broken events; the columnar layer surfaces that.
-    const colKinds = new Map<string, string>();
-    for (let i = 1; i < this.schema.length; i += 1) {
-      colKinds.set(this.schema[i]!.name, this.schema[i]!.kind);
-    }
     const specs: Map<string, ResolvedFillSpec> = new Map();
-
     if (typeof strategy === 'string') {
-      for (const name of colNames) {
-        specs.set(name, { mode: strategy });
+      // Bare-string strategy applies to every value column. `'zero'` /
+      // `'linear'` are numeric-only and silently skip non-numeric
+      // columns inside `fillOp` (the kind-sensitive contract: a
+      // mixed-kind `fill('zero')` means "fill numeric gaps with 0", not
+      // "put 0 in every column" — Codex round 2 on PR #150). To fill
+      // non-numeric gaps too, use the object form with a per-column
+      // kind-appropriate strategy.
+      for (let i = 1; i < this.schema.length; i += 1) {
+        specs.set(this.schema[i]!.name, { mode: strategy });
       }
     } else {
       const strategies: Set<string> = new Set([
@@ -2511,169 +2517,20 @@ export class TimeSeries<S extends SeriesSchema> {
       }
     }
 
-    // **Kind-sensitive strategy contract (documented in JSDoc):**
-    // `'zero'` and `'linear'` are numeric-only operations — they're
-    // meaningful only for `kind: 'number'` columns. When applied
-    // via a bare-string strategy (`fill('zero')`) on a mixed-kind
-    // schema, non-numeric columns are silently left as-is rather
-    // than throwing or producing kind-broken cells. Users who want
-    // to fill non-numeric gaps too can use the object form
-    // (`fill({ value: 'zero', host: 'hold' })`) to pick a
-    // kind-appropriate strategy per column. The silent-skip
-    // matches users' natural intent — `fill('zero')` on a
-    // {metric: number, host: string} series means "fill numeric
-    // gaps with 0", not "fill every gap with the number 0
-    // regardless of column kind". Codex round 2 finding on PR
-    // #150 surfaced the question; reasoning above documents the
-    // chosen semantics.
-
-    const limit = options?.limit;
     const maxGapMs =
       options?.maxGap === undefined ? undefined : parseDuration(options.maxGap);
-    const n = this.events.length;
 
-    const columns: Record<string, (ScalarValue | undefined)[]> = {};
-    for (const name of colNames) {
-      columns[name] = new Array(n);
-    }
-    for (let i = 0; i < n; i++) {
-      const data = this.events[i]!.data();
-      for (const name of colNames) {
-        columns[name]![i] = data[name as keyof typeof data] as
-          | ScalarValue
-          | undefined;
-      }
-    }
-
-    const times = new Array<number>(n);
-    for (let i = 0; i < n; i++) {
-      times[i] = this.events[i]!.begin();
-    }
-
-    // Walk each column and apply per-strategy fill on a per-gap basis,
-    // with all-or-nothing limit / maxGap checks.
-    for (const [name, spec] of specs) {
-      const col = columns[name];
-      if (!col) continue;
-
-      let i = 0;
-      while (i < n) {
-        if (col[i] !== undefined) {
-          i += 1;
-          continue;
-        }
-        // Found the start of a gap.
-        const start = i;
-        while (i < n && col[i] === undefined) i += 1;
-        const end = i; // exclusive
-        const length = end - start;
-        const hasPrev = start > 0;
-        const hasNext = end < n;
-
-        // Strategy-level fillability: do we have the neighbors required?
-        let strategyOk: boolean;
-        switch (spec.mode) {
-          case 'linear':
-            strategyOk = hasPrev && hasNext;
-            break;
-          case 'hold':
-            strategyOk = hasPrev;
-            break;
-          case 'bfill':
-            strategyOk = hasNext;
-            break;
-          default:
-            strategyOk = true; // zero, literal — no neighbor needed
-        }
-        if (!strategyOk) continue;
-
-        // Size caps: count and temporal span.
-        if (limit !== undefined && length > limit) continue;
-        if (maxGapMs !== undefined) {
-          // Span = time from the last known value to the next known
-          // value. For internal gaps this uses both neighbors; for
-          // edge-only gaps (hold trailing, bfill leading), use the
-          // available neighbor and the gap's own first/last timestamp
-          // as the other end so maxGap caps the carry-forward distance.
-          let span: number;
-          if (hasPrev && hasNext) {
-            span = times[end]! - times[start - 1]!;
-          } else if (hasPrev) {
-            // trailing gap (hold): cap distance from prev known to last gap cell
-            span = times[end - 1]! - times[start - 1]!;
-          } else if (hasNext) {
-            // leading gap (bfill): cap distance from first gap cell to next known
-            span = times[end]! - times[start]!;
-          } else {
-            span = 0; // unreachable given strategyOk above, but safe
-          }
-          if (span > maxGapMs) continue;
-        }
-
-        // Fill the gap per strategy.
-        switch (spec.mode) {
-          case 'hold': {
-            const v = col[start - 1];
-            for (let j = start; j < end; j++) col[j] = v;
-            break;
-          }
-          case 'bfill': {
-            const v = col[end];
-            for (let j = start; j < end; j++) col[j] = v;
-            break;
-          }
-          case 'zero': {
-            // `'zero'` is numeric-only — see the kind-sensitive
-            // strategy contract documented at the top of the
-            // method. Non-numeric columns silently skip; their
-            // gaps stay unfilled.
-            if (colKinds.get(name) !== 'number') break;
-            for (let j = start; j < end; j++) col[j] = 0;
-            break;
-          }
-          case 'literal': {
-            for (let j = start; j < end; j++) col[j] = spec.value;
-            break;
-          }
-          case 'linear': {
-            // `'linear'` is numeric-only — see the kind-sensitive
-            // strategy contract documented at the top of the
-            // method. Non-numeric columns silently skip; their
-            // gaps stay unfilled.
-            if (colKinds.get(name) !== 'number') break;
-            const before = col[start - 1] as number;
-            const after = col[end] as number;
-            const t0 = times[start - 1]!;
-            const t1 = times[end]!;
-            const tspan = t1 - t0;
-            for (let j = start; j < end; j++) {
-              if (tspan === 0) {
-                col[j] = before;
-              } else {
-                col[j] = before + (after - before) * ((times[j]! - t0) / tspan);
-              }
-            }
-            break;
-          }
-        }
-      }
-    }
-
-    const resultEvents: EventForSchema<S>[] = [];
-    for (let i = 0; i < n; i++) {
-      const data: Record<string, unknown> = {};
-      for (const name of colNames) {
-        data[name] = columns[name]![i];
-      }
-      resultEvents.push(
-        new Event(this.events[i]!.key(), data) as unknown as EventForSchema<S>,
-      );
-    }
-
-    return TimeSeries.#fromTrustedEvents<S>(
-      this.name,
+    const { store, schema } = fillOp<S>(
+      this.#store.store,
       this.schema,
-      resultEvents,
+      specs,
+      options?.limit,
+      maxGapMs,
+    );
+    return TimeSeries.#fromTrustedStore(
+      this.name,
+      schema,
+      store as unknown as ColumnarStore<ColumnSchema>,
     );
   }
 
