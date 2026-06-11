@@ -129,6 +129,7 @@ export {
   withColumnReplaced,
   withColumnsRenamed,
   withColumnsSelected,
+  withKeyColumn,
   withRowRange,
   withRowSelection,
 } from './view.js';

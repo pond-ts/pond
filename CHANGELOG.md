@@ -15,6 +15,26 @@ type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **`asTime` / `asTimeRange` / `asInterval` are now column-native.** They
+  reinterpret the key's kind (a "rekey") straight off the existing key's
+  `begin` / `end` buffers instead of materializing events — value columns pass
+  through by reference. `asTimeRange` and `asTime` with `begin` / `end` reuse
+  the key buffer zero-copy (≈ **9×** faster on a build → rekey → read pipeline);
+  `asTime({ at: 'center' })` adds one midpoint pass; `asInterval` builds the
+  label column (string → `StringColumn`, number → `Float64Column`, inferred
+  from the first label and required consistent across rows).
+- **Breaking: `asInterval`'s label function now receives the interval's
+  `TimeRange` (its `[begin, end]` extent) and index — not the whole `Event`.**
+  The canonical form is unchanged: `series.asInterval(range => range.begin())`
+  works exactly as before (both `Event` and `TimeRange` expose `begin()` /
+  `end()`). Only a label fn that read a _value column_ off the event (e.g.
+  `event => event.get('label')`) needs rewriting — compute the label before
+  `asInterval`, or derive it from the extent. The constant form
+  (`asInterval('bucket')` / `asInterval(42)`) is unaffected. (Pre-1.0 minor;
+  this is the change that lets the function form stay on the columnar path.)
+
 ## [0.21.0] — 2026-06-11
 
 ### Added

@@ -109,8 +109,16 @@ import {
   type Column as ColumnarColumn,
   type ColumnarStore,
   type ColumnSchema,
+  Float64Column,
+  IntervalKeyColumn,
+  StringColumn,
+  TimeKeyColumn,
+  TimeRangeKeyColumn,
+  float64ColumnFromArray,
+  stringColumnFromArray,
   withColumnsRenamed,
   withColumnsSelected,
+  withKeyColumn,
   withRowRange,
 } from '../columnar/index.js';
 import type { KeyColumnForSchema, PublicColumnForKind } from '../column.js';
@@ -1340,65 +1348,114 @@ export class TimeSeries<S extends SeriesSchema> {
   asTime(
     options: { at?: 'begin' | 'center' | 'end' } = {},
   ): TimeSeries<TimeKeyedSchema<S>> {
+    // Column-native rekey: reinterpret the key as `time` straight off the
+    // existing key's begin/end buffers — no `this.events`. `begin`/`end`
+    // reuse the source buffer zero-copy; `center` computes midpoints.
     const schema = Object.freeze([
       { name: 'time', kind: 'time' as const },
       ...this.schema.slice(1),
     ]) as TimeKeyedSchema<S>;
-
-    const resultEvents = this.events.map((event) => event.asTime(options));
-
-    if ((options.at ?? 'begin') === 'begin') {
-      return TimeSeries.#fromTrustedEvents(
-        this.name,
-        schema,
-        resultEvents as EventForSchema<typeof schema>[],
-      );
+    const keys = this.#store.store.keys;
+    const at = options.at ?? 'begin';
+    let beginBuf: Float64Array;
+    if (at === 'center') {
+      const n = keys.length;
+      beginBuf = new Float64Array(n);
+      for (let i = 0; i < n; i += 1) {
+        beginBuf[i] = (keys.begin[i]! + keys.end[i]!) / 2;
+      }
+    } else {
+      beginBuf = at === 'end' ? keys.end : keys.begin;
     }
-
-    return new TimeSeries({
-      name: this.name,
+    const store = withKeyColumn(
+      this.#store.store,
+      schema[0]!,
+      new TimeKeyColumn(beginBuf, keys.length),
+    );
+    return TimeSeries.#fromTrustedStore(
+      this.name,
       schema,
-      rows: toRows(schema, resultEvents as EventForSchema<typeof schema>[]),
-    });
+      store as unknown as ColumnarStore<ColumnSchema>,
+    );
   }
 
   /** Example: `series.asTimeRange()`. Converts the series key type to `"timeRange"` while preserving each event extent. */
   asTimeRange(): TimeSeries<TimeRangeKeyedSchema<S>> {
+    // Column-native rekey: the timeRange covers each row's existing extent —
+    // reuse the key's begin/end buffers zero-copy, no events.
     const schema = Object.freeze([
       { name: 'timeRange', kind: 'timeRange' as const },
       ...this.schema.slice(1),
     ]) as TimeRangeKeyedSchema<S>;
-
-    const resultEvents = this.events.map((event) => event.asTimeRange());
-
-    return TimeSeries.#fromTrustedEvents(
+    const keys = this.#store.store.keys;
+    const store = withKeyColumn(
+      this.#store.store,
+      schema[0]!,
+      new TimeRangeKeyColumn(keys.begin, keys.end, keys.length),
+    );
+    return TimeSeries.#fromTrustedStore(
       this.name,
       schema,
-      resultEvents as EventForSchema<typeof schema>[],
+      store as unknown as ColumnarStore<ColumnSchema>,
     );
   }
 
-  /** Example: `series.asInterval(event => event.begin())`. Converts the series key type to `"interval"` while preserving each event extent and supplying interval labels. */
+  /** Example: `series.asInterval(range => range.begin())`. Converts the series key type to `"interval"` while preserving each event extent and supplying interval labels. */
   asInterval(value: IntervalValue): TimeSeries<IntervalKeyedSchema<S>>;
   asInterval(
-    value: (event: EventForSchema<S>, index: number) => IntervalValue,
+    value: (range: TimeRange, index: number) => IntervalValue,
   ): TimeSeries<IntervalKeyedSchema<S>>;
   asInterval(
-    value:
-      | IntervalValue
-      | ((event: EventForSchema<S>, index: number) => IntervalValue),
+    value: IntervalValue | ((range: TimeRange, index: number) => IntervalValue),
   ): TimeSeries<IntervalKeyedSchema<S>> {
+    // Column-native rekey: build the interval labels straight off the key's
+    // begin/end buffers — no events. The label fn receives the interval's
+    // TimeRange (its [begin, end] extent) + index, NOT the whole event
+    // (breaking — see CHANGELOG [Unreleased]). Label kind is inferred from the
+    // first label — the two `IntervalValue` kinds, string → StringColumn /
+    // number → Float64Column — and must be consistent across rows (a mix
+    // throws, as at event intake). A type-defeated non-string/number label
+    // (e.g. a boolean via `as any`) is rejected here rather than coerced the
+    // way intake would (`true → 1`); throwing on the nonsense input is safer.
     const schema = Object.freeze([
       { name: 'interval', kind: 'interval' as const },
       ...this.schema.slice(1),
     ]) as IntervalKeyedSchema<S>;
-    const nextEvents = this.events.map((event, index) => {
-      return typeof value === 'function'
-        ? event.asInterval(() => value(event, index))
-        : event.asInterval(value);
-    }) as EventForSchema<typeof schema>[];
+    const keys = this.#store.store.keys;
+    const n = keys.length;
 
-    return TimeSeries.#fromTrustedEvents(this.name, schema, nextEvents);
+    const labels: IntervalValue[] = new Array(n);
+    if (typeof value === 'function') {
+      for (let i = 0; i < n; i += 1) {
+        labels[i] = value(new TimeRange([keys.begin[i]!, keys.end[i]!]), i);
+      }
+    } else {
+      labels.fill(value);
+    }
+
+    const labelKind = n > 0 ? typeof labels[0] : 'string';
+    for (let i = 1; i < n; i += 1) {
+      if (typeof labels[i] !== labelKind) {
+        throw new Error(
+          `asInterval: interval label at row ${i} is ${typeof labels[i]} but earlier rows were ${labelKind} — interval labels must be one type throughout`,
+        );
+      }
+    }
+    const labelCol =
+      labelKind === 'number'
+        ? float64ColumnFromArray(labels as number[])
+        : stringColumnFromArray(labels as string[]);
+
+    const store = withKeyColumn(
+      this.#store.store,
+      schema[0]!,
+      new IntervalKeyColumn(keys.begin, keys.end, labelCol, n),
+    );
+    return TimeSeries.#fromTrustedStore(
+      this.name,
+      schema,
+      store as unknown as ColumnarStore<ColumnSchema>,
+    );
   }
 
   /**
