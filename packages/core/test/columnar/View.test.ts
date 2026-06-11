@@ -14,9 +14,14 @@ import {
   withColumnReplaced,
   withColumnsRenamed,
   withColumnsSelected,
+  withKeyColumn,
   withRowRange,
   withRowSelection,
 } from '../../src/columnar/index.js';
+import {
+  TimeKeyColumn,
+  TimeRangeKeyColumn,
+} from '../../src/columnar/key-column.js';
 
 /* -------------------------------------------------------------------------- */
 /* Setup helpers                                                              */
@@ -737,5 +742,67 @@ describe('withColumnsRenamed handles Object.prototype-name source columns safely
     const renamed = withColumnsRenamed(source, { toString: 'stringified' });
     expect(renamed.schema[1]!.name).toBe('stringified');
     expect(renamed.valueAt(0, 'stringified')).toBe(10);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* withKeyColumn — rekey (swap schema[0] + key axis, value columns shared)     */
+/* -------------------------------------------------------------------------- */
+
+describe('withKeyColumn', () => {
+  it('swaps the key column + schema[0]; value columns pass through by reference', () => {
+    const source = makeBasicStore(); // time key, values [value, load]
+    // Reinterpret time → timeRange over the same begin buffer (zero-width).
+    const begin = (source.keys as TimeKeyColumn).begin;
+    const newKey = new TimeRangeKeyColumn(begin, begin, source.length);
+    const out = withKeyColumn(
+      source,
+      { name: 'timeRange', kind: 'timeRange' },
+      newKey,
+    );
+    expect(out.schema[0]).toEqual({ name: 'timeRange', kind: 'timeRange' });
+    expect(out.schema.slice(1)).toEqual(source.schema.slice(1)); // value defs intact
+    expect(out.keys).toBe(newKey);
+    // value columns are the SAME instances (zero-copy passthrough)
+    expect(out.columns.get('value')).toBe(source.columns.get('value'));
+    expect(out.columns.get('load')).toBe(source.columns.get('load'));
+    expect(out.valueAt(2, 'value')).toBe(30);
+    expect(out.beginAt(2)).toBe(3000);
+  });
+
+  it('builds a fresh-buffer key (e.g. time → time anchored elsewhere)', () => {
+    const source = makeBasicStore();
+    const shifted = Float64Array.from(
+      (source.keys as TimeKeyColumn).begin,
+      (t) => t + 1,
+    );
+    const out = withKeyColumn(
+      source,
+      { name: 'time', kind: 'time' },
+      new TimeKeyColumn(shifted, source.length),
+    );
+    expect(out.beginAt(0)).toBe(1001);
+    expect(out.columns.get('value')).toBe(source.columns.get('value'));
+  });
+
+  it('throws when keyDef.kind disagrees with the key column kind', () => {
+    const source = makeBasicStore();
+    const tr = new TimeRangeKeyColumn(
+      (source.keys as TimeKeyColumn).begin,
+      (source.keys as TimeKeyColumn).begin,
+      source.length,
+    );
+    // keyDef says 'time' but the key is a timeRange column → fromTrustedStore guard.
+    expect(() =>
+      withKeyColumn(source, { name: 'time', kind: 'time' }, tr),
+    ).toThrow(/kind/i);
+  });
+
+  it('throws when the new key length disagrees with the value columns', () => {
+    const source = makeBasicStore(); // length 5
+    const shortKey = timeKeyColumnFromArray([1, 2, 3]);
+    expect(() =>
+      withKeyColumn(source, { name: 'time', kind: 'time' }, shortKey),
+    ).toThrow(/length/i);
   });
 });

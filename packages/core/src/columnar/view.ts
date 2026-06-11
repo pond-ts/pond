@@ -341,6 +341,30 @@ export function withColumnReplaced<S extends ColumnSchema>(
 }
 
 /**
+ * Replaces the key column (`schema[0]`) with a new one — a **rekey**.
+ * The value columns + their data pass through by reference; only
+ * `schema[0]` (name + kind) and the key axis change. The key-dimension
+ * counterpart of `withColumnReplaced`.
+ *
+ * Used by `asTime` / `asTimeRange` / `asInterval` to reinterpret the
+ * key's kind (e.g. `time` → `timeRange`) straight off the existing
+ * key's `begin` / `end` buffers, with no event materialization.
+ *
+ * `keyDef.kind` must match `key.kind` and `key.length` must match
+ * `source.length` — both enforced by `fromTrustedStore` (a key whose
+ * kind disagrees with `schema[0]`, or whose length disagrees with the
+ * value columns, throws `RangeError`).
+ */
+export function withKeyColumn<S extends ColumnSchema>(
+  source: ColumnarStore<S>,
+  keyDef: ColumnDef,
+  key: KeyColumn,
+): ColumnarStore<ColumnSchema> {
+  const newSchema = [keyDef, ...source.schema.slice(1)] as ColumnSchema;
+  return ColumnarStore.fromTrustedStore(newSchema, key, source.columns);
+}
+
+/**
  * Appends a new value column to the schema. The new column must
  * match `source.length`. Other columns share by reference.
  */

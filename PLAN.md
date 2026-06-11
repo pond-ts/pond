@@ -4559,6 +4559,18 @@ getColumn, buckets, columns)` in `batch/aggregate-columns.ts`
      (distinct from the new per-cell `mapColumns`). **Follow-up:**
      extract the shared `columnFromValuesByKind` kind→builder dispatch
      (duplicated across `fillOp` / `mapOp` / `collapseOp`).
+   - **`asTime` / `asTimeRange` / `asInterval` rekeys** ✅ Shipped
+     (post-wave). Key-axis kind reinterpretation via the new internal
+     `withKeyColumn` view op (the key-dimension sibling of
+     `withColumnReplaced`): reads the existing key's `begin`/`end`
+     buffers, builds the new-kind `KeyColumn`, reuses value columns by
+     reference — no events. `asTimeRange` ~9× (zero-copy buffer reuse).
+     **Breaking:** `asInterval`'s label fn now takes the interval's
+     `TimeRange` + index, not the whole `Event` (this is what lets the
+     function form stay columnar) — `range => range.begin()` unchanged;
+     CHANGELOG [Unreleased]. This corrects the earlier mis-bucketing of
+     `asX` as "inherently event-shaped" — they were always key-axis
+     rekeys, just needing the `withKeyColumn` primitive.
 5. Aggregate planner (~2 weeks).
 6. String / dictionary reducer adaptation (~2 weeks).
 7. `LiveSeries` numeric ring buffer (~2 weeks).
