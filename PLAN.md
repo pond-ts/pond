@@ -4067,7 +4067,7 @@ pipeline — the rest of the transforms and windowed rolling — is still
 row-shaped.** Recommended remaining sequence (consultant §5, north-star-ranked),
 with the shipped prefix struck through: ~~3B aggregate per-bucket~~ →
 **4 transforms + operator extraction (shipped: cumulative #190, diff/rate #192,
-fill #194, slice #195, mapColumns; remaining: `shift` → `collapse`, with
+fill #194, slice #195, mapColumns #196, shift; remaining: `collapse`, with
 `tail`/`filter` as judgment calls — the event-based `map` stays out of scope,
 distinct from the new per-cell `mapColumns`)** → chart carry-forwards → 6 dict
 reducers → 5 planner → 3C rolling
@@ -4532,8 +4532,13 @@ getColumn, buckets, columns)` in `batch/aggregate-columns.ts`
      level (`mapColumns.test-d.ts`); chunked-input + NaN pinned via
      direct `mapOp`. Surfaced by the user from the PR-comment scope
      note below.
-   - **Remaining (genuinely column-native-able, sequential):**
-     `shift` (per-target numeric shift+pad, `cumulative`-shaped) →
+   - **`shift`** ✅ Shipped (PR — this wave-step). `shiftOp` in
+     `batch/operators/shift.ts`; per-target numeric shift+pad
+     (`out[i] = col.read(i−n)`, else undefined-pad), `cumulative`-shaped
+     (widens targets to optional number). 5.8–6.8× pipeline win. Exact
+     parity (11 existing tests) + 8 column-native-edge tests incl.
+     chunked-input.
+   - **Remaining (genuinely column-native-able):**
      `collapse` (reads only the keyed columns, per-row reducer over a
      minimal `{key: value}` object, no full Event). Judgment calls:
      `tail(duration)` (key-bisect + `withRowRange`), `filter`

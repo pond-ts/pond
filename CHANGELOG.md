@@ -29,16 +29,17 @@ type-level changes; patch bumps are strictly additive.
 ### Changed
 
 - **`select` / `rename` / `slice` / `cumulative` / `diff` / `rate` /
-  `pctChange` / `fill` are now column-native.** They reshape the columnar store
-  directly instead of materializing events, so the columnar construction win is
-  preserved through these transforms — build → transform → read pipelines run
-  several× faster (~7–10× for `select` / `rename` / `slice`; ~5–7× for the
-  `cumulative` / `diff` / `rate` / `fill` folds). No API change for type-correct
-  callers (one narrow `fill` behavior change is noted under Fixed). `cumulative`
-  / `diff` / `rate` / `pctChange` / `fill` are also the first operators
-  extracted into `batch/operators/` (internal refactor); `fill` rebuilds only
-  the columns it actually changes; `slice` normalizes `Array.prototype.slice`
-  semantics onto a zero-copy `withRowRange` reshape.
+  `pctChange` / `fill` / `shift` are now column-native.** They reshape the
+  columnar store directly instead of materializing events, so the columnar
+  construction win is preserved through these transforms — build → transform →
+  read pipelines run several× faster (~7–10× for `select` / `rename` / `slice`;
+  ~5–7× for the `cumulative` / `diff` / `rate` / `fill` / `shift` folds). No API
+  change for type-correct callers (one narrow `fill` behavior change is noted
+  under Fixed). `cumulative` / `diff` / `rate` / `pctChange` / `fill` / `shift`
+  are also the first operators extracted into `batch/operators/` (internal
+  refactor); `fill` rebuilds only the columns it actually changes; `slice`
+  normalizes `Array.prototype.slice` semantics onto a zero-copy `withRowRange`
+  reshape.
 
 ### Fixed
 

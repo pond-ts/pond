@@ -82,6 +82,7 @@ import {
 import { diffRateOp, type DiffRateMode } from './operators/diff-rate.js';
 import { fillOp, type ResolvedFillSpec } from './operators/fill.js';
 import { mapOp, type ColumnMapper } from './operators/map.js';
+import { shiftOp } from './operators/shift.js';
 import { BoundedSequence } from '../sequence/bounded-sequence.js';
 import {
   parseTimestampString,
@@ -2406,56 +2407,21 @@ export class TimeSeries<S extends SeriesSchema> {
     n: number,
   ): TimeSeries<DiffSchema<S, Target>> {
     type OutSchema = DiffSchema<S, Target>;
-
+    // Column-native (Step 4): each target column is shifted by `n` rows
+    // straight off the store in the extracted `shiftOp` — row i takes the
+    // value at row i−n (else undefined-pad) — no `this.events`
+    // materialization, no per-row `Event`. The method is a thin delegate.
     const cols = typeof columns === 'string' ? [columns] : columns;
-
-    if (cols.length === 0) {
-      throw new Error('shift() requires at least one column name');
-    }
-    if (!Number.isInteger(n)) {
-      throw new Error('shift() requires an integer offset');
-    }
-
-    const targetSet = new Set<string>(cols);
-
-    const outSchema = Object.freeze(
-      this.schema.map((col, i) => {
-        if (i === 0) return col;
-        if (targetSet.has(col.name)) {
-          return { ...col, kind: 'number' as const, required: false as const };
-        }
-        return col;
-      }),
-    ) as unknown as OutSchema;
-
-    const events = this.events;
-    if (events.length === 0) {
-      return TimeSeries.#fromTrustedEvents<OutSchema>(this.name, outSchema, []);
-    }
-
-    const resultEvents: EventForSchema<OutSchema>[] = [];
-    for (let i = 0; i < events.length; i++) {
-      const data = { ...events[i]!.data() } as Record<string, unknown>;
-      const srcIdx = i - n;
-      for (const col of cols) {
-        if (srcIdx >= 0 && srcIdx < events.length) {
-          data[col] = (events[srcIdx]!.data() as Record<string, unknown>)[col];
-        } else {
-          data[col] = undefined;
-        }
-      }
-      resultEvents.push(
-        new Event(
-          events[i]!.key(),
-          data,
-        ) as unknown as EventForSchema<OutSchema>,
-      );
-    }
-
-    return TimeSeries.#fromTrustedEvents<OutSchema>(
+    const { store, schema } = shiftOp<S, OutSchema>(
+      this.#store.store,
+      this.schema,
+      cols as readonly string[],
+      n,
+    );
+    return TimeSeries.#fromTrustedStore(
       this.name,
-      outSchema,
-      resultEvents,
+      schema,
+      store as unknown as ColumnarStore<ColumnSchema>,
     );
   }
 
