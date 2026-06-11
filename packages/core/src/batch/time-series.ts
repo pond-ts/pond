@@ -83,6 +83,7 @@ import { diffRateOp, type DiffRateMode } from './operators/diff-rate.js';
 import { fillOp, type ResolvedFillSpec } from './operators/fill.js';
 import { mapOp, type ColumnMapper } from './operators/map.js';
 import { shiftOp } from './operators/shift.js';
+import { collapseOp, type CollapseReducer } from './operators/collapse.js';
 import { BoundedSequence } from '../sequence/bounded-sequence.js';
 import {
   parseTimestampString,
@@ -3850,39 +3851,26 @@ export class TimeSeries<S extends SeriesSchema> {
     reducer: (values: Pick<EventDataForSchema<S>, Keys[number]>) => R,
     options?: { append?: boolean },
   ): any {
-    const nextEvents = this.events.map((event) => {
-      if (options?.append === true) {
-        return event.collapse(keys, output, reducer, { append: true });
-      }
-      return event.collapse(keys, output, reducer);
-    });
-
-    const firstColumn = this.schema[0]!;
-    const append = options?.append === true;
-    const keptColumns = append
-      ? this.schema.slice(1)
-      : this.schema
-          .slice(1)
-          .filter((column) => !keys.includes(column.name as Keys[number]));
-
-    const resultSchema = Object.freeze([
-      firstColumn,
-      ...keptColumns,
-      {
-        name: output,
-        kind:
-          typeof nextEvents[0]?.get(output) === 'number'
-            ? 'number'
-            : typeof nextEvents[0]?.get(output) === 'boolean'
-              ? 'boolean'
-              : 'string',
-      },
-    ]) as unknown as CollapseSchema<S, Keys[number] & string, Name, R, boolean>;
-
-    return TimeSeries.#fromTrustedEvents(
+    // Column-native (Step 4): the reducer runs over the keyed columns read
+    // straight off the store in the extracted `collapseOp` — no
+    // `this.events` materialization, no per-row `Event`. Kept columns + the
+    // key pass through by reference; the output column is appended. The
+    // method is a thin delegate.
+    const { store, schema } = collapseOp<
+      S,
+      CollapseSchema<S, Keys[number] & string, Name, R, boolean>
+    >(
+      this.#store.store,
+      this.schema,
+      keys as readonly string[],
+      output,
+      reducer as unknown as CollapseReducer,
+      options?.append === true,
+    );
+    return TimeSeries.#fromTrustedStore(
       this.name,
-      resultSchema as unknown as SeriesSchema,
-      nextEvents as unknown as EventForSchema<SeriesSchema>[],
+      schema as unknown as SeriesSchema,
+      store as unknown as ColumnarStore<ColumnSchema>,
     ) as unknown as TimeSeries<
       CollapseSchema<S, Keys[number] & string, Name, R, boolean>
     >;

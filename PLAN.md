@@ -4066,11 +4066,11 @@ substrate #191; `diff`/`rate`/`pctChange` #192). **The remaining middle of the
 pipeline — the rest of the transforms and windowed rolling — is still
 row-shaped.** Recommended remaining sequence (consultant §5, north-star-ranked),
 with the shipped prefix struck through: ~~3B aggregate per-bucket~~ →
-**4 transforms + operator extraction (shipped: cumulative #190, diff/rate #192,
-fill #194, slice #195, mapColumns #196, shift; remaining: `collapse`, with
-`tail`/`filter` as judgment calls — the event-based `map` stays out of scope,
-distinct from the new per-cell `mapColumns`)** → chart carry-forwards → 6 dict
-reducers → 5 planner → 3C rolling
+~~4 transforms + operator extraction~~ ✅ **COMPLETE** (cumulative #190,
+diff/rate #192, fill #194, slice #195, mapColumns #196, shift #197, collapse;
+`tail`/`filter` left as deferred judgment calls, event-based `map` permanently
+out of scope) → **chart carry-forwards (next)** → 6 dict reducers → 5 planner →
+3C rolling
 (last; numerical risk stacks there).
 Every step before 3C is zero-or-negative public surface. Live §A (column-native output) stays **friction-gated** — the
 zero-copy arc was correctly killed by measurement (`perf-band-gather.mjs`).
@@ -4538,16 +4538,27 @@ getColumn, buckets, columns)` in `batch/aggregate-columns.ts`
      (widens targets to optional number). 5.8–6.8× pipeline win. Exact
      parity (11 existing tests) + 8 column-native-edge tests incl.
      chunked-input.
-   - **Remaining (genuinely column-native-able):**
-     `collapse` (reads only the keyed columns, per-row reducer over a
-     minimal `{key: value}` object, no full Event). Judgment calls:
-     `tail(duration)` (key-bisect + `withRowRange`), `filter`
-     (predicate is event-shaped; result subset via `withRowSelection`).
-     **The event-based `map(nextSchema, (event, i) => newEvent)` is NOT
-     in scope** — an arbitrary event→event closure can't be vectorized
-     over columns; it stays event-shaped (the escape hatch). (This is
-     distinct from the new per-cell `mapColumns` above — an earlier
-     PLAN draft conflated them.)
+   - **`collapse`** ✅ Shipped (PR — this wave-step). `collapseOp` in
+     `batch/operators/collapse.ts` — reads only the keyed columns,
+     runs the reducer over a minimal `{key: value}` object (no full
+     Event), composes via `withColumnsSelected` (drop keyed unless
+     `append`) + `withColumnAppended`; output kind inferred from row 0.
+     4.7–6.5× pipeline win (more modest in spirit — the per-row reducer
+     dominates both paths — but the event-materialization tax still
+     dominates the measured number). Parity pinned by the existing
+     `TimeSeries.test`/`Event.test` collapse cases + 8 column-native-edge
+     tests incl. chunked-input.
+   - **Transform wave COMPLETE.** All genuinely column-native-able
+     batch transforms now read columns, not `this.events`. Judgment
+     calls left intentionally event-shaped / deferred: `tail(duration)`
+     (key-bisect + `withRowRange` — convertible, low value),
+     `filter` (predicate is event-shaped; only the row-subset assembly
+     via `withRowSelection` would be column-native). The event-based
+     `map(nextSchema, (event, i) => newEvent)` is permanently out of
+     scope — an arbitrary event→event closure can't be vectorized
+     (distinct from the new per-cell `mapColumns`). **Follow-up:**
+     extract the shared `columnFromValuesByKind` kind→builder dispatch
+     (duplicated across `fillOp` / `mapOp` / `collapseOp`).
 5. Aggregate planner (~2 weeks).
 6. String / dictionary reducer adaptation (~2 weeks).
 7. `LiveSeries` numeric ring buffer (~2 weeks).
