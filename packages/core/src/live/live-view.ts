@@ -88,6 +88,7 @@ type TimeKeyOnly<S extends SeriesSchema> =
     : 'LiveView.keyColumn() supports time-keyed views only — use toTimeSeries() for other key kinds';
 
 export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
+  /** @internal */
   readonly [EMITS_EVICT] = true as const;
   readonly name: string;
   readonly schema: S;
