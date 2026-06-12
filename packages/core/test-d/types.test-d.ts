@@ -526,22 +526,16 @@ const renamedAggregatedCpuEvent = renamedAggregatedCpuSeries.first();
 if (!renamedAggregatedCpuEvent) {
   throw new Error('missing renamed aggregated event');
 }
-// `AggregateOutputMap` (renamed-output) erases the schema to `SeriesSchema`,
-// so payload cells resolve to the full `ColumnValue` union — which now
-// includes `ArrayValue` for array-kind columns produced by `unique`-like
-// reducers.
-const renamedAggregatedCpuAvg:
-  | string
-  | number
-  | boolean
-  | ReadonlyArray<string | number | boolean>
-  | undefined = renamedAggregatedCpuEvent.get('cpu_avg');
-const renamedAggregatedHostLast:
-  | string
-  | number
-  | boolean
-  | ReadonlyArray<string | number | boolean>
-  | undefined = renamedAggregatedCpuEvent.get('host_last');
+// Renamed-output (`{ from, using }`) specs narrow per output key: the
+// `avg` spec emits `number`, the `last` spec emits the source string
+// column's `string`. (Before v0.23.0 / audit v2 §5 F1 these erased to
+// the wide `ColumnValue` union; the unified result schema now narrows
+// them — see the assertions further down on `mixed*` and the all-spec
+// block below.) The values stay assignable to the wide union too.
+const renamedAggregatedCpuAvg: number | undefined =
+  renamedAggregatedCpuEvent.get('cpu_avg');
+const renamedAggregatedHostLast: string | undefined =
+  renamedAggregatedCpuEvent.get('host_last');
 void renamedAggregatedCpuAvg;
 void renamedAggregatedHostLast;
 
@@ -706,6 +700,146 @@ const aggregatedOutputLast: string | undefined =
   aggregatedOutputEvent.get('host_last');
 void aggregatedOutputAvg;
 void aggregatedOutputLast;
+
+// ---------------------------------------------------------------------------
+// F1 (audit v2 §5): MIXED shorthand + `{ from, using }` specs in ONE call.
+//
+// This is the docs-blessed pattern. Before v0.23.0 a mixed literal
+// silently resolved to the shorthand overload, which iterated SOURCE
+// columns and kept only output keys whose name was a source-column name.
+// Every spec-keyed output column (`cpu_p95`, `host_first`) was dropped
+// from the result type while the runtime still emitted it — so
+// `mixed.at(0)?.get('cpu_p95')` failed to compile. The unify (one
+// overload over a unified map + a per-output-key result schema) keeps
+// every column. Each block below asserts:
+//   - the shorthand key narrows to its reducer's kind,
+//   - each spec key narrows to its reducer's output kind,
+//   - a string-source `first` spec narrows to `string | undefined`,
+// and uses `satisfies` to pin EXACT narrowing (catches silent widening).
+
+// `aggregate` (sequence-keyed → Interval first column).
+const mixedAggregate = cpuSeries.aggregate(Sequence.every('1m'), {
+  cpu: 'avg', // shorthand → number
+  cpu_p95: { from: 'cpu', using: 'p95' }, // spec, numeric reducer → number
+  host_first: { from: 'host', using: 'first' }, // spec, string source → string
+  hosts: { from: 'host', using: 'unique' }, // spec, array reducer → array
+});
+const mixedAggregateEvent = mixedAggregate.first();
+if (!mixedAggregateEvent) {
+  throw new Error('missing mixed aggregate event');
+}
+const mixedAggKey: Interval = mixedAggregateEvent.key();
+const mixedAggCpu = mixedAggregateEvent.get('cpu') satisfies number | undefined;
+const mixedAggP95 = mixedAggregateEvent.get('cpu_p95') satisfies
+  | number
+  | undefined;
+const mixedAggHostFirst = mixedAggregateEvent.get('host_first') satisfies
+  | string
+  | undefined;
+const mixedAggHosts = mixedAggregateEvent.get('hosts') satisfies
+  | ReadonlyArray<string | number | boolean>
+  | undefined;
+// Exact-narrowing: each cell must be assignable BOTH ways. A widening
+// regression (e.g. `cpu_p95` back to `ColumnValue`) breaks these.
+const mixedAggCpuExact: number | undefined = mixedAggCpu;
+const mixedAggP95Exact: number | undefined = mixedAggP95;
+const mixedAggHostFirstExact: string | undefined = mixedAggHostFirst;
+void mixedAggKey;
+void mixedAggCpuExact;
+void mixedAggP95Exact;
+void mixedAggHostFirstExact;
+void mixedAggHosts;
+
+// `rolling` (event-driven → Time first column preserved).
+const mixedRolling = cpuSeries.rolling('1m', {
+  cpu: 'avg', // shorthand → number
+  cpu_max: { from: 'cpu', using: 'max' }, // spec → number
+  host_last: { from: 'host', using: 'last' }, // spec, string source → string
+  healthy: 'last', // shorthand, boolean source → boolean
+});
+const mixedRollingEvent = mixedRolling.first();
+if (!mixedRollingEvent) {
+  throw new Error('missing mixed rolling event');
+}
+const mixedRollKey: Time = mixedRollingEvent.key();
+const mixedRollCpu: number | undefined = mixedRollingEvent.get('cpu');
+const mixedRollMax: number | undefined = mixedRollingEvent.get('cpu_max');
+const mixedRollHostLast: string | undefined =
+  mixedRollingEvent.get('host_last');
+const mixedRollHealthy: boolean | undefined = mixedRollingEvent.get('healthy');
+void mixedRollKey;
+void mixedRollCpu;
+void mixedRollMax;
+void mixedRollHostLast;
+void mixedRollHealthy;
+
+// `rolling` (sequence-driven → Interval first column).
+const mixedRollingSeq = cpuSeries.rolling(
+  Sequence.every('1m'),
+  '5m',
+  {
+    cpu: 'avg', // shorthand → number
+    cpu_sd: { from: 'cpu', using: 'stdev' }, // spec → number
+    host_first: { from: 'host', using: 'first' }, // spec, string source → string
+  },
+  { range: new TimeRange({ start: 1735689600000, end: 1735689660000 }) },
+);
+const mixedRollingSeqEvent = mixedRollingSeq.first();
+if (!mixedRollingSeqEvent) {
+  throw new Error('missing mixed rolling sequence event');
+}
+const mixedRollSeqKey: Interval = mixedRollingSeqEvent.key();
+const mixedRollSeqCpu: number | undefined = mixedRollingSeqEvent.get('cpu');
+const mixedRollSeqSd: number | undefined = mixedRollingSeqEvent.get('cpu_sd');
+const mixedRollSeqHostFirst: string | undefined =
+  mixedRollingSeqEvent.get('host_first');
+void mixedRollSeqKey;
+void mixedRollSeqCpu;
+void mixedRollSeqSd;
+void mixedRollSeqHostFirst;
+
+// `reduce` (record output, no first column).
+const mixedReduce = cpuSeries.reduce({
+  cpu: 'avg', // shorthand → number
+  cpu_p99: { from: 'cpu', using: 'p99' }, // spec → number
+  host_first: { from: 'host', using: 'first' }, // spec, string source → string
+  hosts: { from: 'host', using: 'unique' }, // spec, array reducer → ReadonlyArray<string>
+});
+const mixedReduceCpu = mixedReduce.cpu satisfies number | undefined;
+const mixedReduceP99 = mixedReduce.cpu_p99 satisfies number | undefined;
+const mixedReduceHostFirst = mixedReduce.host_first satisfies
+  | string
+  | undefined;
+// `unique` on a string column narrows to ReadonlyArray<string> in reduce
+// (ReduceResult tracks element kind from the spec's `from`).
+const mixedReduceHosts = mixedReduce.hosts satisfies
+  | ReadonlyArray<string>
+  | undefined;
+const mixedReduceCpuExact: number | undefined = mixedReduceCpu;
+const mixedReduceP99Exact: number | undefined = mixedReduceP99;
+const mixedReduceHostFirstExact: string | undefined = mixedReduceHostFirst;
+const mixedReduceHostsExact: ReadonlyArray<string> | undefined =
+  mixedReduceHosts;
+void mixedReduceCpuExact;
+void mixedReduceP99Exact;
+void mixedReduceHostFirstExact;
+void mixedReduceHostsExact;
+
+// Spec entries in `reduce` also respect an explicit `kind` override and
+// keep the custom-reducer fallback wide.
+const mixedReduceExplicit = cpuSeries.reduce({
+  cpu_str: { from: 'cpu', using: 'first', kind: 'string' }, // explicit kind wins
+  cpu_custom: { from: 'cpu', using: (values) => values.length }, // custom fn → wide
+});
+const mixedReduceExplicitStr: string | undefined = mixedReduceExplicit.cpu_str;
+const mixedReduceCustomWide:
+  | string
+  | number
+  | boolean
+  | ReadonlyArray<string | number | boolean>
+  | undefined = mixedReduceExplicit.cpu_custom;
+void mixedReduceExplicitStr;
+void mixedReduceCustomWide;
 
 const smoothedCpuSeries = cpuSeries.smooth('cpu', 'ema', { alpha: 0.5 });
 type SmoothedCpuSchema = SmoothSchema<typeof cpuSchema, 'cpu'>;

@@ -35,10 +35,6 @@ import {
   type ValueColumnsForSchema,
 } from '../schema/index.js';
 import type {
-  AggregateOutputMapResultSchema,
-  RollingOutputMapSchema,
-} from '../schema/index.js';
-import type {
   FusedMapping,
   FusedMappingValid,
   FusedRollingSchema,
@@ -401,14 +397,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     sequence: Sequence,
     mapping: M,
   ): LiveAggregation<S, AggregateSchema<S, M>>;
-  aggregate<const M extends AggregateOutputMap<S>>(
-    sequence: Sequence,
-    mapping: M,
-  ): LiveAggregation<S, AggregateOutputMapResultSchema<S, M>>;
-  aggregate(
-    sequence: Sequence,
-    mapping: AggregateMap<S> | AggregateOutputMap<S>,
-  ): LiveAggregation<S> {
+  aggregate(sequence: Sequence, mapping: AggregateMap<S>): LiveAggregation<S> {
     return new LiveAggregation(this, sequence, mapping);
   }
 
@@ -417,11 +406,6 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     mapping: M,
     options?: LiveRollingOptions,
   ): LiveRollingAggregation<S, RollingSchema<S, M>>;
-  rolling<const M extends AggregateOutputMap<S>>(
-    window: RollingWindow,
-    mapping: M,
-    options?: LiveRollingOptions,
-  ): LiveRollingAggregation<S, RollingOutputMapSchema<S, M>>;
   /**
    * Keyed-form fused multi-window rolling on a `LiveView`. See
    * {@link LiveSeries.rolling} for the full surface — chained-from-
@@ -463,12 +447,8 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     mapping: M,
     options?: LiveRollingOptions,
   ): LiveReduce<S, RollingSchema<S, M>>;
-  reduce<const M extends AggregateOutputMap<S>>(
-    mapping: M,
-    options?: LiveRollingOptions,
-  ): LiveReduce<S, RollingOutputMapSchema<S, M>>;
   reduce(
-    mapping: AggregateMap<S> | AggregateOutputMap<S>,
+    mapping: AggregateMap<S>,
     options?: LiveRollingOptions,
   ): LiveReduce<S> {
     return new LiveReduce(this, mapping, options);

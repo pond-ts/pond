@@ -233,12 +233,7 @@ export class LiveFusedRolling<
       // Reuse the same column-normalisation helper used by the
       // single-window rolling — keeps reducer-state behavior
       // identical to today's-shape `LiveRollingAggregation`.
-      const columns = normalizeAggregateColumns(
-        source.schema,
-        innerMapping as
-          | AggregateMap<SeriesSchema>
-          | AggregateOutputMap<SeriesSchema>,
-      );
+      const columns = normalizeAggregateColumns(source.schema, innerMapping);
       const states = columns.map((c) => rollingStateFor(c.reducer));
 
       windows.push({

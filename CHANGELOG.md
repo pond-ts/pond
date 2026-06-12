@@ -16,6 +16,34 @@ type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Mixed shorthand + `{ from, using }` mappings now keep every output
+  column in the result type (Audit v2 §5 F1).** Calling
+  `aggregate` / `rolling` / `reduce` with a mapping that mixes the
+  shorthand form (`cpu: 'avg'`) and the spec form
+  (`cpu_p95: { from: 'cpu', using: 'p95' }`) in one call — the
+  docs-blessed pattern — previously resolved to the shorthand overload
+  and **silently dropped every spec-keyed output column from the result
+  type** (`event.get('cpu_p95')` failed to compile with `TS2345`), even
+  though the runtime emitted the column. The two overloads
+  (`AggregateMap` shorthand + `AggregateOutputMap` spec) are now
+  collapsed into one unified mapping shape whose result schema dispatches
+  per output key, so all columns survive and each narrows to its
+  reducer's output kind. Runtime behavior is unchanged — this is a
+  types-only fix plus the tests that should have caught it.
+
+### Changed
+
+- **The shorthand reducer is no longer kind-checked against its source
+  column.** As a consequence of unifying the two mapping shapes above,
+  an invalid shorthand reducer for a column kind (e.g. `host: 'avg'` on
+  a `string` column) is no longer a compile-time error. The spec form's
+  `using` is still kind-checked. Runtime behavior is unchanged, and this
+  matches how the fused-rolling mapping already treats shorthand entries.
+  `AggregateOutputMap` is retained as a back-compat alias of
+  `AggregateMap`.
+
 ## [0.22.0] — 2026-06-12
 
 ### Changed

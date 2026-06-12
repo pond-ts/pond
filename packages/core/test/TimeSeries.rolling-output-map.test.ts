@@ -244,3 +244,85 @@ describe('rolling: schema-order preservation for AggregateMap', () => {
     expect(at1.get('c')).toBe(150);
   });
 });
+
+// F1 (audit v2 §5): the runtime has always emitted every output column
+// for a MIXED shorthand + `{ from, using }` mapping. The bug was purely
+// in the *result type* (the mixed literal resolved to the shorthand
+// overload, which dropped spec-keyed columns from the schema type while
+// the runtime kept them). These tests lock the type/runtime parity: the
+// emitted `.schema` and values must match what the unified result type
+// now describes, so a future regression in either layer is caught.
+describe('mixed shorthand + spec mapping (F1 type/runtime parity)', () => {
+  it('aggregate: emits every output column with correct kinds + values', () => {
+    const aggregated = makeSeries().aggregate(Sequence.every('5s'), {
+      cpu: 'avg', // shorthand → number
+      cpu_max: { from: 'cpu', using: 'max' }, // spec → number
+      host_first: { from: 'host', using: 'first' }, // spec, string source → string
+      hosts: { from: 'host', using: 'unique' }, // spec → array
+    });
+
+    // Every output column is present (the spec-keyed ones were the
+    // columns F1 dropped from the type).
+    expect(aggregated.schema.map((c) => c.name)).toEqual([
+      'interval',
+      'cpu',
+      'cpu_max',
+      'host_first',
+      'hosts',
+    ]);
+    const kinds = Object.fromEntries(
+      aggregated.schema.slice(1).map((c) => [c.name, c.kind]),
+    );
+    expect(kinds).toEqual({
+      cpu: 'number',
+      cpu_max: 'number',
+      host_first: 'string',
+      hosts: 'array',
+    });
+
+    // One 5s bucket over [0,5000): cpu [10,20,30,40,50], hosts api-1..3.
+    const bucket = aggregated.at(0)!;
+    expect(bucket.get('cpu')).toBe(30); // avg
+    expect(bucket.get('cpu_max')).toBe(50); // max
+    expect(bucket.get('host_first')).toBe('api-1'); // first
+    expect(bucket.get('hosts')).toEqual(['api-1', 'api-2', 'api-3']); // unique
+  });
+
+  it('rolling (event-driven): emits every output column for a mixed mapping', () => {
+    const rolled = makeSeries().rolling('3s', {
+      cpu: 'avg', // shorthand → number
+      cpu_sd: { from: 'cpu', using: 'stdev' }, // spec → number
+      host_last: { from: 'host', using: 'last' }, // spec, string source → string
+    });
+
+    expect(rolled.schema.map((c) => c.name)).toEqual([
+      'time',
+      'cpu',
+      'cpu_sd',
+      'host_last',
+    ]);
+
+    // t=4000 trailing 3s window: t=[2000,3000,4000] -> cpu [30,40,50].
+    const at4 = rolled.at(4)!;
+    expect(at4.get('cpu')).toBe(40); // avg
+    expect(at4.get('cpu_sd')).toBeCloseTo(Math.sqrt(200 / 3), 5); // stdev
+    expect(at4.get('host_last')).toBe('api-3'); // last
+  });
+
+  it('reduce: emits every output key for a mixed mapping', () => {
+    const reduced = makeSeries().reduce({
+      cpu: 'avg', // shorthand → number
+      cpu_max: { from: 'cpu', using: 'max' }, // spec → number
+      host_first: { from: 'host', using: 'first' }, // spec, string source → string
+      hosts: { from: 'host', using: 'unique' }, // spec → array
+    });
+
+    expect(Object.keys(reduced).sort()).toEqual(
+      ['cpu', 'cpu_max', 'host_first', 'hosts'].sort(),
+    );
+    expect(reduced.cpu).toBe(30);
+    expect(reduced.cpu_max).toBe(50);
+    expect(reduced.host_first).toBe('api-1');
+    expect(reduced.hosts).toEqual(['api-1', 'api-2', 'api-3']);
+  });
+});
