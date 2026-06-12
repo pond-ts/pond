@@ -224,42 +224,54 @@ describe('aggregate() columnar fast path — row-path fallbacks', () => {
 /* -------------------------------------------------------------------------- */
 /* stdev — numerical stability across paths (audit v2 §1.1).                    */
 /*                                                                             */
-/* The fast path (two-pass reduceColumn) and the row path (bucketState) must   */
-/* agree. Pre-fix bucketState used one-pass `sq/n − mean²`, which cancels       */
+/* The fast path (reduceColumn) and the row path (bucketState) must agree.      */
+/* Pre-fix bucketState used one-pass `sq/n − mean²`, which cancels              */
 /* catastrophically on near-equal large values — so aggregate('stdev') silently */
 /* changed result (or crashed with NaN) when an unrelated mapping flipped the   */
-/* all-or-nothing fast path to the row path. bucketState is now Welford.        */
+/* all-or-nothing fast path to the row path. All batch paths now share one      */
+/* Welford recurrence, so they agree regardless of magnitude.                   */
 /* -------------------------------------------------------------------------- */
 describe('aggregate(stdev) — path-independent (audit §1.1)', () => {
   const seq = Sequence.every('1s');
-  // Near-equal large values in one bucket → population stdev = sqrt(5/4).
-  const bigCluster: Row[] = [
-    [0, 1e10, 'a'],
-    [200, 1e10 + 1, 'a'],
-    [400, 1e10 + 2, 'a'],
-    [800, 1e10 + 3, 'a'],
-  ];
   const STDEV_5_4 = Math.sqrt(5 / 4); // ≈ 1.118033988749895
 
-  it('fast path and forced row path agree (was 1.118 vs 0)', () => {
-    const s = series(bigCluster);
-    // pure numeric built-in → columnar fast path (two-pass reduceColumn)
+  // A bucket of four consecutive integers offset by `base`: population stdev is
+  // always sqrt(5/4), but large `base` stresses floating-point precision.
+  const cluster = (base: number): Row[] =>
+    [0, 1, 2, 3].map((k, i) => [i * 200, base + k, 'a'] as Row);
+
+  // fast = pure numeric built-in (columnar fast path); row = forced to the row
+  // path (Welford bucketState) by an unrelated string-source mapping that
+  // disqualifies the all-or-nothing fast path for the whole call.
+  const bothPaths = (rows: Row[]) => {
+    const s = series(rows);
     const fast = s.aggregate(seq, { sd: { from: 'value', using: 'stdev' } });
-    // a string-source mapping disqualifies the all-or-nothing fast path for
-    // the whole call → stdev goes through the row path (Welford bucketState)
     const row = s.aggregate(seq, {
       sd: { from: 'value', using: 'stdev' },
       hc: { from: 'host', using: 'count' },
     });
-    const f = (vals(fast, 'sd') as number[])[0]!;
-    const r = (vals(row, 'sd') as number[])[0]!;
-    expect(f).toBeCloseTo(STDEV_5_4, 9);
-    expect(r).toBeCloseTo(STDEV_5_4, 9); // pre-fix: 0
-    // The two paths agree to ~1e-15 *relative* — not bit-for-bit (Welford
-    // accumulates in add-order, the two-pass in array-order). Assert relative
-    // agreement so this holds at any magnitude, not just where they happen to
-    // round identically.
-    expect(Math.abs(r - f) / f).toBeLessThan(1e-12);
+    return {
+      fast: (vals(fast, 'sd') as number[])[0]!,
+      row: (vals(row, 'sd') as number[])[0]!,
+    };
+  };
+
+  it('fast path and forced row path agree on near-equal large values (was 1.118 vs 0)', () => {
+    const { fast, row } = bothPaths(cluster(1e10));
+    expect(fast).toBeCloseTo(STDEV_5_4, 9);
+    expect(row).toBeCloseTo(STDEV_5_4, 9); // pre-fix row path: 0
+    expect(Math.abs(row - fast) / fast).toBeLessThan(1e-12);
+  });
+
+  it('fast and row paths agree at the 2^52 precision boundary (Codex finding)', () => {
+    // Before the paths were unified, reduceColumn (two-pass) computed 1.2247
+    // here — its `Σv/n` mean rounds at 2^52 spacing — while Welford bucketState
+    // computed the correct 1.118. An unrelated mapping flipping the path then
+    // changed stdev ~8.7%. One shared recurrence closes that.
+    const { fast, row } = bothPaths(cluster(2 ** 52));
+    expect(fast).toBeCloseTo(STDEV_5_4, 9);
+    expect(row).toBeCloseTo(STDEV_5_4, 9);
+    expect(Math.abs(row - fast) / fast).toBeLessThan(1e-12);
   });
 
   it('forced row path stays finite on cancellation-prone data (was NaN→throw)', () => {
