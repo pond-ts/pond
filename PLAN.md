@@ -55,6 +55,28 @@ around rather than report. As the available model improves, re-run.
     extraction + type-safe schema helpers. Two findings cross-validated
     independent signals (partition OOM; the "which aggregation style"
     doc gap), which bumped their rank.
+- **2026-06-12 (opus, against v0.21.0):**
+  [`docs/notes/technical-audit-2026-06-v2.md`](docs/notes/technical-audit-2026-06-v2.md).
+  Confirmed the Step-4 column-native wave goal empirically (pipeline tax
+  fixed; ~11.8k differential-fuzz cases, zero mismatches on type-correct
+  input). Surfaced **three P0s — all fixed for v0.22.0:** §1.2 `asTime`
+  monotonicity guard ([#201](https://github.com/pjm17971/pond-ts/pull/201));
+  §1.3 `mapColumns` rejects non-finite numeric results at write, consistent
+  with intake ([#202](https://github.com/pjm17971/pond-ts/pull/202)); §1.1
+  `aggregate('stdev')` silent numeric change + NaN crash, fixed by unifying
+  `reduce` / `reduceColumn` / `bucketState` on one **Welford** recurrence
+  ([#203](https://github.com/pjm17971/pond-ts/pull/203) — a Codex pass caught
+  that bucketState-only Welford still diverged from the two-pass `reduceColumn`
+  ~8.7% at 2^52; Welford chosen over buffered two-pass to keep the shared live
+  path O(1), at the cost of `reduceColumn` stdev ~3× a divisionless scan).
+  **Open follow-up (not gating 0.22.0):** the computed columnar writers
+  (`cumulative` / `diff` / `shift` / `collapse` via `float64ColumnFromArray`)
+  can still pack non-finite (overflow → Inf, 0/0 → NaN) — the §1.3 sibling; the
+  candidate fix is a principled reducer NaN policy (consistent fast/row/bucket/
+  rolling for all inputs), not a blanket builder throw. Perf P1s still open:
+  partitioned `aggregate` never takes the 3B fast path; cold `aggregate()`
+  materializes via `timeRange()` (columnar `timeRange` is the cheap fix);
+  `partitionBy().op().collect()` (~920 ns/row) is the top batch hotspot.
 
 ### CSV-cleaner (complete; v0.9.x)
 
