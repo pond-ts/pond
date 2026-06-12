@@ -218,6 +218,7 @@ type EvictListener<S extends SeriesSchema> = (
 // ── LiveSeries ──────────────────────────────────────────────────
 
 export class LiveSeries<S extends SeriesSchema> {
+  /** @internal */
   readonly [EMITS_EVICT] = true as const;
   readonly name: string;
   readonly schema: S;
