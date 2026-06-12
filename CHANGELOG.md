@@ -35,6 +35,18 @@ type-level changes; patch bumps are strictly additive.
   (`asInterval('bucket')` / `asInterval(42)`) is unaffected. (Pre-1.0 minor;
   this is the change that lets the function form stay on the columnar path.)
 
+### Fixed
+
+- **`mapColumns` rejects a non-finite numeric result at write.** A mapper on a
+  `number` column that returns `NaN` or `±Infinity` now throws a `RangeError`,
+  consistent with construction intake (which already rejects non-finite
+  numbers). Previously the value was packed into the column, where the reduce
+  fast path and the row path could disagree on the same bucket (e.g.
+  `aggregate('min')` returning a different result depending on which path ran).
+  A stored `NaN` is still a defined value the mapper sees — map it to a finite
+  number, or to `undefined` (missing), to clean it. (Closes a hole introduced
+  alongside `mapColumns` in 0.21.0.)
+
 ## [0.21.0] — 2026-06-11
 
 ### Added

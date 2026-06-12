@@ -113,6 +113,27 @@ describe('TimeSeries.mapColumns', () => {
       /requires at least one column/,
     );
   });
+
+  // Audit v2 §1.3: a mapper that writes NaN into a packed numeric column made
+  // aggregate(min) return 3 via the fast path but 1 via the row path on the
+  // same bucket. Rejecting NaN at write closes the divergence at the source.
+  it('rejects a mapper that produces NaN (no packed-NaN reducer divergence)', () => {
+    const s = new TimeSeries({
+      name: 'd',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number' },
+      ] as const,
+      rows: [
+        [0, 1],
+        [1000, 2],
+        [2000, 3],
+      ] as any,
+    });
+    expect(() => s.mapColumns({ v: (x) => (x === 2 ? NaN : x) })).toThrow(
+      /non-finite/,
+    );
+  });
 });
 
 /* -------------------------------------------------------------------------- */
@@ -147,7 +168,7 @@ describe('mapOp on inputs the method cannot produce', () => {
     expect(store.valueAt(3, 'v')).toBe(400);
   });
 
-  it('calls the mapper on a stored NaN (defined value)', () => {
+  it('invokes the mapper on a stored NaN (defined value) — and can clean it to a finite value', () => {
     const withNaN = numStore([0, 1000, 2000], [10, NaN, 30]);
     let sawNaN = false;
     const { store } = mapOp(
@@ -157,7 +178,10 @@ describe('mapOp on inputs the method cannot produce', () => {
         [
           'v',
           (x: unknown) => {
-            if (Number.isNaN(x)) sawNaN = true;
+            if (Number.isNaN(x)) {
+              sawNaN = true;
+              return 0; // clean the NaN to a finite value
+            }
             return (x as number) + 1;
           },
         ],
@@ -165,6 +189,36 @@ describe('mapOp on inputs the method cannot produce', () => {
     );
     expect(sawNaN).toBe(true); // NaN is a defined value → mapper invoked
     expect(store.valueAt(0, 'v')).toBe(11);
+    expect(store.valueAt(1, 'v')).toBe(0); // cleaned
     expect(store.valueAt(2, 'v')).toBe(31);
+  });
+
+  it('rejects a non-finite numeric mapper result (NaN / ±Infinity) at write', () => {
+    // Passing a stored NaN straight through would poison the packed column.
+    const withNaN = numStore([0, 1000, 2000], [10, NaN, 30]);
+    expect(() =>
+      mapOp(
+        withNaN,
+        withNaN.schema,
+        new Map([['v', (x: unknown) => x as number]]),
+      ),
+    ).toThrow(/non-finite/);
+
+    // A finite source whose mapper produces non-finite output also throws.
+    const finite = numStore([0, 1000], [1, 2]);
+    for (const bad of [NaN, Infinity, -Infinity]) {
+      expect(() =>
+        mapOp(finite, finite.schema, new Map([['v', () => bad]])),
+      ).toThrow(/non-finite/);
+    }
+
+    // A finite mapper on the same source is unaffected (no false positive).
+    const { store } = mapOp(
+      finite,
+      finite.schema,
+      new Map([['v', (x: unknown) => (x as number) * 10]]),
+    );
+    expect(store.valueAt(0, 'v')).toBe(10);
+    expect(store.valueAt(1, 'v')).toBe(20);
   });
 });
