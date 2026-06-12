@@ -230,10 +230,7 @@ export class LiveReduce<
     // Reuse the same column-normalization helper as the rest of
     // the live aggregation surface; keeps `LiveReduce`'s reducer
     // semantics identical to `aggregate` / `rolling`.
-    this.#columns = normalizeAggregateColumns(
-      source.schema,
-      mapping as AggregateMap<SeriesSchema> | AggregateOutputMap<SeriesSchema>,
-    );
+    this.#columns = normalizeAggregateColumns(source.schema, mapping);
     this.#states = this.#columns.map((c) => rollingStateFor(c.reducer));
 
     // Output schema: source's first (time/keyed) column + each

@@ -50,10 +50,6 @@ import {
   type TimeSeriesJsonOutputArray,
   type TimeSeriesJsonOutputObject,
 } from '../schema/index.js';
-import type {
-  AggregateOutputMapResultSchema,
-  RollingOutputMapSchema,
-} from '../schema/index.js';
 import { LiveFusedRolling } from './live-fused-rolling.js';
 import { LiveReduce } from './live-reduce.js';
 import {
@@ -1017,14 +1013,7 @@ export class LiveSeries<S extends SeriesSchema> {
     sequence: Sequence,
     mapping: M,
   ): LiveAggregation<S, AggregateSchema<S, M>>;
-  aggregate<const M extends AggregateOutputMap<S>>(
-    sequence: Sequence,
-    mapping: M,
-  ): LiveAggregation<S, AggregateOutputMapResultSchema<S, M>>;
-  aggregate(
-    sequence: Sequence,
-    mapping: AggregateMap<S> | AggregateOutputMap<S>,
-  ): LiveAggregation<S> {
+  aggregate(sequence: Sequence, mapping: AggregateMap<S>): LiveAggregation<S> {
     return new LiveAggregation(this, sequence, mapping);
   }
 
@@ -1033,11 +1022,6 @@ export class LiveSeries<S extends SeriesSchema> {
     mapping: M,
     options?: LiveRollingOptions,
   ): LiveRollingAggregation<S, RollingSchema<S, M>>;
-  rolling<const M extends AggregateOutputMap<S>>(
-    window: RollingWindow,
-    mapping: M,
-    options?: LiveRollingOptions,
-  ): LiveRollingAggregation<S, RollingOutputMapSchema<S, M>>;
   /**
    * Keyed-form fused multi-window rolling. Maintains N windows in
    * one ingest pass over a single shared deque; emits one merged
@@ -1107,12 +1091,8 @@ export class LiveSeries<S extends SeriesSchema> {
     mapping: M,
     options?: LiveRollingOptions,
   ): LiveReduce<S, RollingSchema<S, M>>;
-  reduce<const M extends AggregateOutputMap<S>>(
-    mapping: M,
-    options?: LiveRollingOptions,
-  ): LiveReduce<S, RollingOutputMapSchema<S, M>>;
   reduce(
-    mapping: AggregateMap<S> | AggregateOutputMap<S>,
+    mapping: AggregateMap<S>,
     options?: LiveRollingOptions,
   ): LiveReduce<S> {
     return new LiveReduce(this, mapping, options);

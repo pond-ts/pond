@@ -84,6 +84,14 @@ Use the explicit form when you want to rename, run multiple reducers
 over one source column, or use a custom reducer whose output kind
 differs from the source.
 
+Mixing the two forms keeps every output column in the result type,
+each narrowed per its reducer — `cpu` and `requests_total` come back
+as `number | undefined`, a `{ from: 'host', using: 'first' }` spec as
+`string | undefined`, and so on. (Before v0.23.0 a mixed mapping
+silently dropped the `{ from, using }`-keyed columns from the result
+type — they were still emitted at runtime, but `event.get('cpu_p95')`
+wouldn't type-check. The single unified mapping shape fixes this.)
+
 ### Custom reducers
 
 Reducers are

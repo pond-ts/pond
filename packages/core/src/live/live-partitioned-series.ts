@@ -25,7 +25,6 @@ import {
   type RowForSchema,
   type SeriesSchema,
 } from '../schema/index.js';
-import type { RollingOutputMapSchema } from '../schema/index.js';
 import type {
   FusedMapping,
   FusedMappingValid,
@@ -683,24 +682,14 @@ export class LivePartitionedSeries<
     mapping: M,
     options?: LiveRollingOptions & { trigger?: { kind: 'event' | 'count' } },
   ): LivePartitionedView<S, RollingSchema<S, M>, K, ByCol>;
-  rolling<const M extends AggregateOutputMap<S>>(
-    window: RollingWindow,
-    mapping: M,
-    options?: LiveRollingOptions & { trigger?: { kind: 'event' | 'count' } },
-  ): LivePartitionedView<S, RollingOutputMapSchema<S, M>, K, ByCol>;
   rolling<const M extends AggregateMap<S>>(
     window: RollingWindow,
     mapping: M,
     options: LiveRollingOptions & { trigger: { kind: 'clock' } & Trigger },
   ): LivePartitionedSyncRolling<S, K, SeriesSchema>;
-  rolling<const M extends AggregateOutputMap<S>>(
-    window: RollingWindow,
-    mapping: M,
-    options: LiveRollingOptions & { trigger: { kind: 'clock' } & Trigger },
-  ): LivePartitionedSyncRolling<S, K, SeriesSchema>;
-  // Catch-all overloads for callers that pass `options` as a variable
+  // Catch-all overload for callers that pass `options` as a variable
   // typed `LiveRollingOptions` (rather than an inline literal whose
-  // `trigger` field TS can narrow). Without these the four narrowed
+  // `trigger` field TS can narrow). Without it the two narrowed
   // overloads above don't match — the trigger discriminator is unknown
   // at the call site, so the result is the union of both branches.
   rolling<const M extends AggregateMap<S>>(
@@ -709,13 +698,6 @@ export class LivePartitionedSeries<
     options: LiveRollingOptions,
   ):
     | LivePartitionedView<S, RollingSchema<S, M>, K, ByCol>
-    | LivePartitionedSyncRolling<S, K, SeriesSchema>;
-  rolling<const M extends AggregateOutputMap<S>>(
-    window: RollingWindow,
-    mapping: M,
-    options: LiveRollingOptions,
-  ):
-    | LivePartitionedView<S, RollingOutputMapSchema<S, M>, K, ByCol>
     | LivePartitionedSyncRolling<S, K, SeriesSchema>;
   /**
    * Keyed-form fused multi-window partitioned rolling. Maintains N
@@ -1408,22 +1390,12 @@ export class LivePartitionedView<
     mapping: M,
     options?: LiveRollingOptions & { trigger?: { kind: 'event' | 'count' } },
   ): LivePartitionedView<SBase, RollingSchema<R, M>, K, ByCol>;
-  rolling<const M extends AggregateOutputMap<R>>(
-    window: RollingWindow,
-    mapping: M,
-    options?: LiveRollingOptions & { trigger?: { kind: 'event' | 'count' } },
-  ): LivePartitionedView<SBase, RollingOutputMapSchema<R, M>, K, ByCol>;
   rolling<const M extends AggregateMap<R>>(
     window: RollingWindow,
     mapping: M,
     options: LiveRollingOptions & { trigger: { kind: 'clock' } & Trigger },
   ): LivePartitionedSyncRolling<R, K, SeriesSchema>;
-  rolling<const M extends AggregateOutputMap<R>>(
-    window: RollingWindow,
-    mapping: M,
-    options: LiveRollingOptions & { trigger: { kind: 'clock' } & Trigger },
-  ): LivePartitionedSyncRolling<R, K, SeriesSchema>;
-  // Catch-all overloads for callers that pass `options` as a variable
+  // Catch-all overload for callers that pass `options` as a variable
   // typed `LiveRollingOptions`. See the matching block on
   // `LivePartitionedSeries.rolling` for the full rationale.
   rolling<const M extends AggregateMap<R>>(
@@ -1432,13 +1404,6 @@ export class LivePartitionedView<
     options: LiveRollingOptions,
   ):
     | LivePartitionedView<SBase, RollingSchema<R, M>, K, ByCol>
-    | LivePartitionedSyncRolling<R, K, SeriesSchema>;
-  rolling<const M extends AggregateOutputMap<R>>(
-    window: RollingWindow,
-    mapping: M,
-    options: LiveRollingOptions,
-  ):
-    | LivePartitionedView<SBase, RollingOutputMapSchema<R, M>, K, ByCol>
     | LivePartitionedSyncRolling<R, K, SeriesSchema>;
   /**
    * Keyed-form fused multi-window rolling on a chained

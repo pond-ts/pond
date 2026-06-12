@@ -63,16 +63,6 @@ type AggregateFunctionsForKind<Kind extends ScalarKind> = Kind extends 'number'
         | `top${number}`
         | CustomAggregateReducer;
 
-type AggregateMapEntries<S extends SeriesSchema> = {
-  [C in ValueColumnsForSchema<S>[number] as C['name']]?: AggregateFunctionsForKind<
-    C['kind']
-  >;
-};
-
-export type AggregateMap<S extends SeriesSchema> = Readonly<
-  AggregateMapEntries<S>
->;
-
 type ValueColumnByName<
   S extends SeriesSchema,
   Name extends ValueColumnsForSchema<S>[number]['name'],
@@ -93,54 +83,163 @@ export type AggregateOutputSpec<
   kind?: ScalarKind;
 }>;
 
-export type AggregateOutputMap<S extends SeriesSchema> = Readonly<
-  Record<string, AggregateOutputSpec<S>>
+/**
+ * Unified per-output-key value for an aggregate / rolling / reduce
+ * mapping. One mapping may freely mix two forms per key:
+ *
+ * - **Shorthand** — `cpu: 'avg'`: the key names a source column and the
+ *   value is a reducer (built-in name or {@link CustomAggregateReducer}).
+ *   Output name == source name == key.
+ * - **Spec** — `cpu_p95: { from: 'cpu', using: 'p95' }`: the key names
+ *   an arbitrary output column, `from` names the source column, `using`
+ *   names the reducer. This is the only form that can apply multiple
+ *   reducers to one source column or rename the output.
+ *
+ * The constraint is deliberately permissive (any reducer or spec on any
+ * key). The result schema dispatches per output key (see
+ * {@link AggregateColumns}), so mixing the two forms keeps every output
+ * column.
+ *
+ * Before v0.23.0 the two forms lived on separate overloads
+ * (`AggregateMap` for shorthand, `AggregateOutputMap` for specs); a
+ * mixed literal silently resolved to the shorthand overload and dropped
+ * every spec-keyed output column from the result type (audit v2 §5 F1).
+ * Collapsing to one overload over this unified map fixes that.
+ *
+ * Note: the pre-unification shorthand overload additionally constrained
+ * each shorthand reducer to its source column's kind (rejecting e.g.
+ * `host: 'avg'` on a string column at compile time). Unifying into one
+ * permissive map relaxes that compile-time guard — an invalid
+ * shorthand reducer for a column kind is no longer a type error. Runtime
+ * behavior is unchanged (the reducer registry handles or ignores it as
+ * before); this matches how `FusedMapping` already treats shorthand
+ * entries. The narrowing of *valid* mappings is unaffected.
+ */
+export type AggregateMap<S extends SeriesSchema> = Readonly<
+  Record<string, AggregateReducer | AggregateOutputSpec<S>>
 >;
 
-type AggregateKindForColumn<
-  Column extends ValueColumn,
-  Op extends AggregateReducer,
-> = Op extends AggregateFunction
-  ? Op extends 'sum' | 'avg' | 'count'
-    ? 'number'
-    : Op extends 'unique' | 'samples' | `top${number}`
-      ? 'array'
-      : Column['kind']
-  : Column['kind'];
+/**
+ * Back-compat alias for {@link AggregateMap}. Before v0.23.0 the
+ * `{ from, using }` (renamed-output / multi-reducer) form lived on a
+ * separate `AggregateOutputMap` type and a separate overload. The two
+ * are now unified into {@link AggregateMap}, which accepts both the
+ * shorthand and spec forms (and mixtures). Retained as an exported alias
+ * so existing imports keep resolving.
+ */
+export type AggregateOutputMap<S extends SeriesSchema> = AggregateMap<S>;
 
-type AggregateColumnForMap<
-  Column extends ValueColumn,
-  Mapping,
-> = Column['name'] extends keyof Mapping
-  ? Mapping[Column['name']] extends AggregateReducer
-    ? ColumnDef<
-        Column['name'],
-        AggregateKindForColumn<Column, Mapping[Column['name']]>
-      > & {
-        readonly required: false;
-      }
-    : never
-  : never;
+/**
+ * Look up a value column's kind by name within a value-column array.
+ * Resolves to `never` when `Name` is not a column in `Columns`.
+ */
+type ColumnKindByName<
+  Columns extends readonly ValueColumn[],
+  Name extends string,
+> = Extract<Columns[number], { name: Name }>['kind'];
 
+/**
+ * Output column kind for one mapping entry, dispatching on the entry's
+ * shape. Resolves the four cases F1 unified:
+ *
+ * 1. **Explicit `kind`** on a spec wins — `{ from, using, kind }` emits
+ *    `kind` regardless of reducer.
+ * 2. **Spec** `{ from, using }` — kind inferred from `using`, with
+ *    source-preserving reducers (`first`/`last`/`keep`) looking up the
+ *    `from` column's kind.
+ * 3. **Bare reducer** (shorthand) — output name == source name == the
+ *    key `K`; kind inferred from the reducer, with source-preserving
+ *    reducers looking up `K`'s column kind. A **custom reducer fn** in
+ *    shorthand position falls back to the *source column's* kind (the
+ *    pre-unification shorthand behavior — `cpu: (vals) => …` keeps
+ *    `cpu`'s `number` kind), not the wide `ScalarKind`.
+ * 4. **Custom reducer fn in a spec** (`{ from, using: fn }`) → `ScalarKind`
+ *    fallback (runtime-determined output kind — the pre-unification spec
+ *    behavior). This shorthand/spec asymmetry is preserved deliberately
+ *    to keep the change types-only.
+ *
+ * Numeric-output and array-output reducer sets are enumerated inline and
+ * must stay in sync with `ReduceResult` in `./reduce.ts`, the reducer
+ * registry's `outputKind`, and `FusedReducerKind` in `./rolling.ts`.
+ */
+type UnifiedOutputKind<
+  Columns extends readonly ValueColumn[],
+  K extends string,
+  V,
+> = V extends { kind: infer ExplicitKind extends ScalarKind }
+  ? ExplicitKind
+  : V extends { from: infer From extends string; using: infer Using }
+    ? // spec: custom-fn fallback is the wide ScalarKind
+      ReducerOutputKind<Columns, From, Using, ScalarKind>
+    : // bare reducer (shorthand): output name == source name == key.
+      // custom-fn fallback is the source column's own kind.
+      ReducerOutputKind<
+        Columns,
+        K,
+        V,
+        K extends Columns[number]['name']
+          ? ColumnKindByName<Columns, K>
+          : ScalarKind
+      >;
+
+/**
+ * Reducer-string-to-output-kind dispatch shared by the spec and
+ * shorthand branches of {@link UnifiedOutputKind}. `From` is the source
+ * column name (the spec's `from`, or the shorthand key); `Using` is the
+ * reducer; `Fallback` is the kind to use when `Using` is a custom
+ * reducer function (or otherwise unrecognized) — the spec branch passes
+ * `ScalarKind`, the shorthand branch passes the source column's kind.
+ */
+type ReducerOutputKind<
+  Columns extends readonly ValueColumn[],
+  From extends string,
+  Using,
+  Fallback extends ScalarKind,
+> = Using extends
+  | 'sum'
+  | 'avg'
+  | 'count'
+  | 'min'
+  | 'max'
+  | 'median'
+  | 'stdev'
+  | 'difference'
+  | `p${number}`
+  ? 'number'
+  : Using extends 'unique' | 'samples' | `top${number}`
+    ? 'array'
+    : Using extends 'first' | 'last' | 'keep'
+      ? From extends Columns[number]['name']
+        ? ColumnKindByName<Columns, From>
+        : ScalarKind
+      : Fallback;
+
+/**
+ * Union of typed `ColumnDef`s — one per **output key** in the mapping
+ * (not per source column). Used as the `...Rest` of the schema tuple;
+ * the result is a `readonly [FirstColumn, ...Array<ColumnDefUnion>]`.
+ * `DataColumnsForSchema` + `EventDataForSchema` flatten that union into
+ * the right combined record so `event.get(outputName)` narrows correctly
+ * per output key — including spec-keyed outputs whose names are not
+ * source-column names. Iterating output keys (rather than source
+ * columns, as the pre-v0.23.0 implementation did) is what keeps mixed
+ * shorthand+spec mappings from dropping their spec-keyed columns (F1).
+ */
 export type AggregateColumns<
   Columns extends readonly ValueColumn[],
   Mapping,
-> = Columns extends readonly [infer Head, ...infer Tail]
-  ? Head extends ValueColumn
-    ? Tail extends readonly ValueColumn[]
-      ? Head['name'] extends keyof Mapping
-        ? [
-            AggregateColumnForMap<Head, Mapping>,
-            ...AggregateColumns<Tail, Mapping>,
-          ]
-        : AggregateColumns<Tail, Mapping>
-      : []
-    : []
-  : [];
+> = {
+  [K in keyof Mapping & string]: ColumnDef<
+    K,
+    UnifiedOutputKind<Columns, K, Mapping[K]>
+  > & {
+    readonly required: false;
+  };
+}[keyof Mapping & string];
 
 export type AggregateSchema<S extends SeriesSchema, Mapping> = readonly [
   ColumnDef<'interval', 'interval'>,
-  ...AggregateColumns<ValueColumnsForSchema<S>, Mapping>,
+  ...Array<AggregateColumns<ValueColumnsForSchema<S>, Mapping>>,
 ];
 
 export type AlignSchema<S extends SeriesSchema> = readonly [
@@ -161,89 +260,35 @@ export type MaterializeSchema<S extends SeriesSchema> = readonly [
 ];
 
 // ---------------------------------------------------------------------------
-// AggregateOutputMap output-kind widening — formerly in types-aggregate.ts
+// Back-compat aliases — the all-spec ("output-map") result schemas now
+// resolve through the same unified path as the shorthand ones. Before
+// v0.23.0 these were distinct types fed by separate overloads; the F1 fix
+// (audit v2 §5) collapsed the overload pairs, so both shapes share
+// `AggregateColumns` / `AggregateSchema`. Retained as exported aliases so
+// existing imports (live mirrors, partitioned series) keep resolving.
 // ---------------------------------------------------------------------------
 
 /**
- * Infer the output column kind for one `AggregateOutputSpec` entry.
- *
- * Precedence:
- *
- * 1. Explicit `kind` on the spec wins — `{ from, using, kind: 'number' }`
- *    always emits `'number'` regardless of reducer.
- * 2. Numeric-output reducers (`'sum'`, `'avg'`, `'count'`, `'median'`,
- *    `'stdev'`, `'difference'`, any `` `p${number}` ``) → `'number'`.
- * 3. Array-output reducers (`'unique'`, any `` `top${number}` ``) →
- *    `'array'`.
- * 4. Source-preserving reducers (`'first'`, `'last'`, `'keep'`) →
- *    the source column's kind looked up by `spec.from`.
- * 5. Custom reducer functions → `ScalarKind` fallback (output kind is
- *    runtime-determined).
- *
- * Same branch set as `ReduceResult` in `./reduce.ts`. Keep the
- * two in sync if the reducer registry grows.
- */
-type OutputSpecKind<S extends SeriesSchema, Spec> = Spec extends {
-  kind: infer K extends ScalarKind;
-}
-  ? K
-  : Spec extends { from: infer From extends string; using: infer Using }
-    ? Using extends
-        | 'sum'
-        | 'avg'
-        | 'count'
-        | 'min'
-        | 'max'
-        | 'median'
-        | 'stdev'
-        | 'difference'
-        | `p${number}`
-      ? 'number'
-      : Using extends 'unique' | `top${number}`
-        ? 'array'
-        : Using extends 'first' | 'last' | 'keep'
-          ? From extends ValueColumnsForSchema<S>[number]['name']
-            ? Extract<ValueColumnsForSchema<S>[number], { name: From }>['kind']
-            : ScalarKind
-          : ScalarKind
-    : ScalarKind;
-
-/**
- * Union of typed `ColumnDef`s — one per entry in the output-map
- * mapping. Used as the `...Rest` of the schema tuple; the result is a
- * `readonly [FirstColumn, ...Array<ColumnDefUnion>]`. `DataColumnsForSchema`
- * + `EventDataForSchema` flatten that union into the right combined
- * record so `event.get(outputName)` narrows correctly per output key.
- */
-type AggregateOutputMapColumns<S extends SeriesSchema, Mapping> = {
-  [K in keyof Mapping & string]: ColumnDef<K, OutputSpecKind<S, Mapping[K]>> & {
-    readonly required: false;
-  };
-}[keyof Mapping & string];
-
-/**
- * Schema for `rolling(window, mapping)` where `mapping` is an
- * `AggregateOutputMap`. Preserves the source's first-column kind
- * (same as `RollingSchema`) and narrows each value column per the
- * output-map spec.
+ * Schema for `rolling(window, mapping)`. Preserves the source's
+ * first-column kind (`S[0]`) and narrows each output column per the
+ * unified per-key dispatch in {@link AggregateColumns}. Now identical to
+ * `RollingSchema` — kept as an alias for back-compat.
  */
 export type RollingOutputMapSchema<S extends SeriesSchema, Mapping> = readonly [
   S[0],
-  ...Array<AggregateOutputMapColumns<S, Mapping>>,
+  ...Array<AggregateColumns<ValueColumnsForSchema<S>, Mapping>>,
 ];
 
 /**
  * Schema for sequence-driven `rolling(seq, window, mapping)` and for
- * `aggregate(seq, mapping)` where `mapping` is an `AggregateOutputMap`.
- * The first column is the `'interval'` key produced by the sequence.
+ * `aggregate(seq, mapping)`. The first column is the `'interval'` key
+ * produced by the sequence. Now identical to {@link AggregateSchema} —
+ * kept as an alias for back-compat.
  */
 export type AggregateOutputMapResultSchema<
   S extends SeriesSchema,
   Mapping,
-> = readonly [
-  ColumnDef<'interval', 'interval'>,
-  ...Array<AggregateOutputMapColumns<S, Mapping>>,
-];
+> = AggregateSchema<S, Mapping>;
 
 // ---------------------------------------------------------------------------
 // Array-aggregate and array-explode output schemas

@@ -64,6 +64,30 @@ type-level changes; patch bumps are strictly additive.
   `pivotByGroup` (whose runtime error now says so too); the rolling page
   documents `value()` as `Record<string, ColumnValue | undefined>`.
   (Audit v2 §5 F6/F7/F9/F10/F11)
+- **Mixed shorthand + `{ from, using }` mappings now keep every output
+  column in the result type (Audit v2 §5 F1).** Calling
+  `aggregate` / `rolling` / `reduce` with a mapping that mixes the
+  shorthand form (`cpu: 'avg'`) and the spec form
+  (`cpu_p95: { from: 'cpu', using: 'p95' }`) in one call — the
+  docs-blessed pattern — previously resolved to the shorthand overload
+  and **silently dropped every spec-keyed output column from the result
+  type** (`event.get('cpu_p95')` failed to compile with `TS2345`), even
+  though the runtime emitted the column. The two overloads
+  (`AggregateMap` shorthand + `AggregateOutputMap` spec) are now
+  collapsed into one unified mapping shape whose result schema dispatches
+  per output key, so all columns survive and each narrows to its
+  reducer's output kind. Runtime behavior is unchanged — this is a
+  types-only fix plus the tests that should have caught it.
+- **The unified mapping keeps the shorthand compile-time guards.** A
+  shorthand reducer is still kind-checked against its source column
+  (`host: 'avg'` on a `string` column stays a compile error), and a bare
+  reducer on a key that is not a source column (`ghost: 'avg'` — a typo
+  the runtime rejects with "unknown source column") is now a compile
+  error too. Spec keys (`{ from, using }`) remain free output names.
+  Inline mapping literals get full validation; values pre-widened to
+  `AggregateMap<S>` and broad-schema (`TimeSeries<SeriesSchema>`)
+  callers keep the permissive shape. `AggregateOutputMap` is retained
+  as a back-compat alias of `AggregateMap`.
 
 ## [0.22.0] — 2026-06-12
 

@@ -15,7 +15,7 @@ export type RollingAlignment = 'trailing' | 'leading' | 'centered';
 
 export type RollingSchema<S extends SeriesSchema, Mapping> = readonly [
   S[0],
-  ...AggregateColumns<ValueColumnsForSchema<S>, Mapping>,
+  ...Array<AggregateColumns<ValueColumnsForSchema<S>, Mapping>>,
 ];
 
 // ---------------------------------------------------------------------------

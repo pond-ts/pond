@@ -50,41 +50,86 @@ type ColumnByName<S extends SeriesSchema, Name extends string> = Extract<
  *   `undefined` included). Array-kind source columns fall back to
  *   `ColumnValue | undefined` because tracking element kind is out of
  *   scope for the schema.
- * - Custom reducer functions and `AggregateOutputSpec` entries fall
- *   back to `ColumnValue | undefined` — their output kind is set at
- *   runtime and the type system can't see through it.
+ * - **Spec entries** (`{ from, using }`, `{ from, using, kind }`) narrow
+ *   the same way, sourcing the column kind from `from` rather than the
+ *   key. An explicit `kind` on the spec widens to that kind's value
+ *   type. Before v0.23.0 a spec entry in `reduce` fell back to the wide
+ *   `ColumnValue | undefined` (audit v2 §5 F1) — it now narrows per
+ *   reducer.
+ * - Custom reducer functions fall back to `ColumnValue | undefined` —
+ *   their output kind is set at runtime and the type system can't see
+ *   through it.
+ *
+ * The spec and shorthand branches share `ReduceValueForReducer`, which
+ * stays inline (nested conditionals, no delegation to schema-layer kind
+ * types) to keep the type compatible with the `arrayAggregate` /
+ * `arrayExplode` overloads' implementation signature — see the note
+ * above on TS2394.
  */
 export type ReduceResult<S extends SeriesSchema, Mapping> = {
-  [K in keyof Mapping & string]: Mapping[K] extends
-    | 'sum'
-    | 'avg'
-    | 'count'
-    | 'min'
-    | 'max'
-    | 'median'
-    | 'stdev'
-    | 'difference'
-    | `p${number}`
-    ? number | undefined
-    : Mapping[K] extends 'unique' | 'samples' | `top${number}`
-      ? K extends ValueColumnsForSchema<S>[number]['name']
-        ? ColumnByName<S, K>['kind'] extends 'number'
-          ? ReadonlyArray<number> | undefined
-          : ColumnByName<S, K>['kind'] extends 'string'
-            ? ReadonlyArray<string> | undefined
-            : ColumnByName<S, K>['kind'] extends 'boolean'
-              ? ReadonlyArray<boolean> | undefined
-              : ReadonlyArray<string | number | boolean> | undefined
-        : ReadonlyArray<string | number | boolean> | undefined
-      : Mapping[K] extends 'first' | 'last' | 'keep'
-        ? K extends ValueColumnsForSchema<S>[number]['name']
-          ? ColumnByName<S, K>['kind'] extends 'number'
-            ? number | undefined
-            : ColumnByName<S, K>['kind'] extends 'string'
-              ? string | undefined
-              : ColumnByName<S, K>['kind'] extends 'boolean'
-                ? boolean | undefined
-                : ColumnValue | undefined
-          : ColumnValue | undefined
-        : ColumnValue | undefined;
+  [K in keyof Mapping & string]: Mapping[K] extends {
+    kind: infer ExplicitKind;
+  }
+    ? ValueForScalarKind<ExplicitKind>
+    : Mapping[K] extends { from: infer From extends string; using: infer Using }
+      ? ReduceValueForReducer<S, From, Using>
+      : ReduceValueForReducer<S, K, Mapping[K]>;
 };
+
+/**
+ * Value type one reducer produces over a source column named `From`.
+ * Inline (no schema-layer delegation) — shared by `ReduceResult`'s spec
+ * and shorthand branches. `From` is the spec's `from` or the shorthand
+ * key; `Using` is the reducer.
+ */
+type ReduceValueForReducer<
+  S extends SeriesSchema,
+  From extends string,
+  Using,
+> = Using extends
+  | 'sum'
+  | 'avg'
+  | 'count'
+  | 'min'
+  | 'max'
+  | 'median'
+  | 'stdev'
+  | 'difference'
+  | `p${number}`
+  ? number | undefined
+  : Using extends 'unique' | 'samples' | `top${number}`
+    ? From extends ValueColumnsForSchema<S>[number]['name']
+      ? ColumnByName<S, From>['kind'] extends 'number'
+        ? ReadonlyArray<number> | undefined
+        : ColumnByName<S, From>['kind'] extends 'string'
+          ? ReadonlyArray<string> | undefined
+          : ColumnByName<S, From>['kind'] extends 'boolean'
+            ? ReadonlyArray<boolean> | undefined
+            : ReadonlyArray<string | number | boolean> | undefined
+      : ReadonlyArray<string | number | boolean> | undefined
+    : Using extends 'first' | 'last' | 'keep'
+      ? From extends ValueColumnsForSchema<S>[number]['name']
+        ? ColumnByName<S, From>['kind'] extends 'number'
+          ? number | undefined
+          : ColumnByName<S, From>['kind'] extends 'string'
+            ? string | undefined
+            : ColumnByName<S, From>['kind'] extends 'boolean'
+              ? boolean | undefined
+              : ColumnValue | undefined
+        : ColumnValue | undefined
+      : ColumnValue | undefined;
+
+/**
+ * Value type for an explicit `kind` on a reduce spec. Mirrors
+ * `NormalizedValueForKind` but stays inline here for the same TS2394
+ * reason as {@link ReduceValueForReducer}.
+ */
+type ValueForScalarKind<K> = K extends 'number'
+  ? number | undefined
+  : K extends 'string'
+    ? string | undefined
+    : K extends 'boolean'
+      ? boolean | undefined
+      : K extends 'array'
+        ? ReadonlyArray<string | number | boolean> | undefined
+        : ColumnValue | undefined;

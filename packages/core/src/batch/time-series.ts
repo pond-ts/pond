@@ -41,10 +41,6 @@ import type {
   RenameMap,
 } from '../schema/index.js';
 import type {
-  AggregateOutputMapResultSchema,
-  RollingOutputMapSchema,
-} from '../schema/index.js';
-import type {
   RenameSchema,
   RollingAlignment,
   RollingSchema,
@@ -1921,14 +1917,9 @@ export class TimeSeries<S extends SeriesSchema> {
     mapping: Mapping,
     options?: { range?: TemporalLike },
   ): TimeSeries<AggregateSchema<S, Mapping>>;
-  aggregate<const Mapping extends AggregateOutputMap<S>>(
-    sequence: SequenceLike,
-    mapping: Mapping,
-    options?: { range?: TemporalLike },
-  ): TimeSeries<AggregateOutputMapResultSchema<S, Mapping>>;
   aggregate(
     sequence: SequenceLike,
-    mapping: AggregateMap<S> | AggregateOutputMap<S>,
+    mapping: AggregateMap<S>,
     options: { range?: TemporalLike } = {},
   ): any {
     return aggregateInternal(this, sequence, mapping, options);
@@ -1953,14 +1944,8 @@ export class TimeSeries<S extends SeriesSchema> {
   reduce<const Mapping extends AggregateMap<S>>(
     mapping: Mapping,
   ): ReduceResult<S, Mapping>;
-  reduce<const Mapping extends AggregateOutputMap<S>>(
-    mapping: Mapping,
-  ): ReduceResult<S, Mapping>;
   reduce(
-    columnOrMapping:
-      | ValueColumnsForSchema<S>[number]['name']
-      | AggregateMap<S>
-      | AggregateOutputMap<S>,
+    columnOrMapping: ValueColumnsForSchema<S>[number]['name'] | AggregateMap<S>,
     reducer?: AggregateReducer,
   ): ColumnValue | undefined | Record<string, ColumnValue | undefined> {
     if (typeof columnOrMapping === 'string') {
@@ -2850,11 +2835,6 @@ export class TimeSeries<S extends SeriesSchema> {
     mapping: Mapping,
     options?: { alignment?: RollingAlignment; minSamples?: number },
   ): TimeSeries<RollingSchema<S, Mapping>>;
-  rolling<const Mapping extends AggregateOutputMap<S>>(
-    window: DurationInput,
-    mapping: Mapping,
-    options?: { alignment?: RollingAlignment; minSamples?: number },
-  ): TimeSeries<RollingOutputMapSchema<S, Mapping>>;
   rolling<const Mapping extends AggregateMap<S>>(
     sequence: SequenceLike,
     window: DurationInput,
@@ -2866,23 +2846,11 @@ export class TimeSeries<S extends SeriesSchema> {
       minSamples?: number;
     },
   ): TimeSeries<AggregateSchema<S, Mapping>>;
-  rolling<const Mapping extends AggregateOutputMap<S>>(
-    sequence: SequenceLike,
-    window: DurationInput,
-    mapping: Mapping,
-    options?: {
-      alignment?: RollingAlignment;
-      sample?: AlignSample;
-      range?: TemporalLike;
-      minSamples?: number;
-    },
-  ): TimeSeries<AggregateOutputMapResultSchema<S, Mapping>>;
   rolling(
     sequenceOrWindow: SequenceLike | DurationInput,
-    windowOrMapping: DurationInput | AggregateMap<S> | AggregateOutputMap<S>,
+    windowOrMapping: DurationInput | AggregateMap<S>,
     mappingOrOptions?:
       | AggregateMap<S>
-      | AggregateOutputMap<S>
       | {
           alignment?: RollingAlignment;
           sample?: AlignSample;
