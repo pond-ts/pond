@@ -540,7 +540,7 @@ export class LiveSeries<S extends SeriesSchema> {
     });
 
     // INTRA-batch order is enforced by `validateAndNormalizeColumnar`
-    // above (it throws `ValidationError("row N is out of order")`). The
+    // above (it throws a `ValidationError` naming the out-of-order row). The
     // cross-batch boundary check + commit/fan-out live in `#commitChunk`.
     const store = ColumnarStore.fromTrustedStore(this.schema, keys, columns);
     this.#commitChunk(store);
