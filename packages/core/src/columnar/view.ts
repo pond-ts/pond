@@ -354,6 +354,13 @@ export function withColumnReplaced<S extends ColumnSchema>(
  * `source.length` — both enforced by `fromTrustedStore` (a key whose
  * kind disagrees with `schema[0]`, or whose length disagrees with the
  * value columns, throws `RangeError`).
+ *
+ * **Precondition (NOT checked here): `key` must be monotonic in `begin`.**
+ * A `ColumnarStore`'s rows are ordered by the key axis; this op trusts the
+ * supplied key, so passing a non-monotonic key silently produces a store
+ * whose row order disagrees with its key (breaking `bisect` / key-range
+ * ops). Callers that can reorder (e.g. `asTime({ at: 'end' })` on
+ * overlapping extents) must validate before calling — see `TimeSeries.asTime`.
  */
 export function withKeyColumn<S extends ColumnSchema>(
   source: ColumnarStore<S>,

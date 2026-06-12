@@ -24,7 +24,10 @@ type-level changes; patch bumps are strictly additive.
   the key buffer zero-copy (≈ **9×** faster on a build → rekey → read pipeline);
   `asTime({ at: 'center' })` adds one midpoint pass; `asInterval` builds the
   label column (string → `StringColumn`, number → `Float64Column`, inferred
-  from the first label and required consistent across rows).
+  from the first label and required consistent across rows). `asTime` with
+  `center` / `end` throws if anchoring a source with overlapping extents would
+  produce a non-monotonic time axis (preserving the prior validation — `begin`
+  is always sorted and is exempt).
 - **Breaking: `asInterval`'s label function now receives the interval's
   `TimeRange` (its `[begin, end]` extent) and index — not the whole `Event`.**
   The canonical form is unchanged: `series.asInterval(range => range.begin())`

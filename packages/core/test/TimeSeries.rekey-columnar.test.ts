@@ -73,6 +73,30 @@ describe('asTime (column-native rekey)', () => {
     r.asTime({ at: 'center' });
     expect(r.schema[0]!.kind).toBe('timeRange');
   });
+
+  // Regression (audit v2 §1.2): overlapping extents make end/center anchors
+  // reorder rows → a non-monotonic time axis. Pre-#200 the validating
+  // constructor threw; #200 (column-native) must restore that throw rather
+  // than silently corrupt bisect/timeRange.
+  it('throws on a non-monotonic axis from overlapping extents (end/center)', () => {
+    const overlapping = new TimeSeries({
+      name: 'ov',
+      schema: rangeSchema,
+      rows: [
+        [[0, 1000], 1],
+        [[10, 20], 2],
+        [[30, 40], 3],
+      ] as any,
+    });
+    // ends [1000, 20, 40] — out of order.
+    expect(() => overlapping.asTime({ at: 'end' })).toThrow(/non-monotonic/);
+    // centers [500, 15, 35] — out of order.
+    expect(() => overlapping.asTime({ at: 'center' })).toThrow(/non-monotonic/);
+    // begin [0, 10, 30] — still sorted, so it's allowed.
+    expect(
+      Array.from(overlapping.asTime({ at: 'begin' }).keyColumn().begin),
+    ).toEqual([0, 10, 30]);
+  });
 });
 
 describe('asTimeRange (column-native rekey)', () => {

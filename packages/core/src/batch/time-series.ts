@@ -1357,15 +1357,35 @@ export class TimeSeries<S extends SeriesSchema> {
     ]) as TimeKeyedSchema<S>;
     const keys = this.#store.store.keys;
     const at = options.at ?? 'begin';
+    const n = keys.length;
     let beginBuf: Float64Array;
     if (at === 'center') {
-      const n = keys.length;
       beginBuf = new Float64Array(n);
       for (let i = 0; i < n; i += 1) {
         beginBuf[i] = (keys.begin[i]! + keys.end[i]!) / 2;
       }
     } else {
       beginBuf = at === 'end' ? keys.end : keys.begin;
+    }
+    // The source is ordered by `begin`, so `begin` stays monotonic — but for a
+    // ranged source with overlapping extents, anchoring at `end` / `center`
+    // can REORDER rows, producing a non-monotonic time axis. The pre-#200 path
+    // routed these anchors through the validating constructor, which threw on
+    // an unsorted result; `withKeyColumn` → `#fromTrustedStore` trusts the key
+    // and would silently accept it (breaking `bisect` / `timeRange` / key-range
+    // ops). Restore the throw with an O(n) scan. (`begin` can't reorder, so it
+    // is exempt — and `withKeyColumn` documents the monotonic-key precondition.)
+    if (at !== 'begin') {
+      for (let i = 1; i < n; i += 1) {
+        if (beginBuf[i]! < beginBuf[i - 1]!) {
+          throw new Error(
+            `asTime({ at: '${at}' }) produced a non-monotonic time axis at ` +
+              `row ${i} (${beginBuf[i]} < ${beginBuf[i - 1]}): the source ` +
+              `extents overlap, so anchoring at '${at}' reorders rows. Anchor ` +
+              `at 'begin', or re-sort after converting.`,
+          );
+        }
+      }
     }
     const store = withKeyColumn(
       this.#store.store,
