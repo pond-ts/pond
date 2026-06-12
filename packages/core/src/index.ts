@@ -114,6 +114,7 @@ export type {
   AggregateOutputSpec,
   AggregateMap,
   AggregateSchema,
+  ValidatedAggregateMap,
   ColumnDef,
   CollapseData,
   ArrayAggregateAppendSchema,

@@ -1,10 +1,10 @@
 import { useMemo, useRef } from 'react';
 import type {
-  AggregateMap,
   DurationInput,
   LiveSource,
   ReduceResult,
   SeriesSchema,
+  ValidatedAggregateMap,
 } from 'pond-ts';
 import {
   useSnapshot,
@@ -118,7 +118,13 @@ function stabilizeFields<R extends Record<string, unknown>>(
  */
 export function useCurrent<
   S extends SeriesSchema,
-  const Mapping extends AggregateMap<S>,
+  // Same per-key validating constraint as the core mapping methods —
+  // without it, the both-generic shape (S and Mapping both type
+  // parameters here) defers constraint checking entirely and react
+  // consumers lose the shorthand guards (caught in #211's L2 review).
+  // The inner `reduce(mapping)` call satisfies core's identical
+  // constraint by deferral, so no trust cast is needed.
+  const Mapping extends ValidatedAggregateMap<S, Mapping>,
 >(
   source: SnapshotSource<S> | LiveSource<S> | null,
   mapping: Mapping,

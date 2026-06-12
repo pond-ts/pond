@@ -49,3 +49,31 @@ void _explicitMean;
 // Negative: a column name absent from the schema is rejected.
 // @ts-expect-error 'nope' is not a column in the schema
 ts.column('nope');
+
+// ---------------------------------------------------------------------------
+// useCurrent guard preservation (#211 L2 finding): the both-generic
+// shape (S and Mapping both inferred here) must carry the same
+// per-key ValidatedAggregateMap constraint as the core methods —
+// otherwise react consumers silently lose the shorthand guards.
+import { useCurrent } from '../src/index.js';
+import { LiveSeries } from 'pond-ts';
+
+const liveGuard = new LiveSeries({ name: 'guard', schema });
+
+// Valid mixed mapping narrows per key (the F1 win, on the hook).
+const current = useCurrent(liveGuard, {
+  cpu: 'avg',
+  cpu_p95: { from: 'cpu', using: 'p95' },
+  host_first: { from: 'host', using: 'first' },
+});
+const _currentCpu: number | undefined = current.cpu;
+const _currentP95: number | undefined = current.cpu_p95;
+const _currentHostFirst: string | undefined = current.host_first;
+void _currentCpu;
+void _currentP95;
+void _currentHostFirst;
+
+// @ts-expect-error — wrong-kind shorthand ('avg' on the string column)
+useCurrent(liveGuard, { host: 'avg' });
+// @ts-expect-error — bare reducer on a non-source key (typo)
+useCurrent(liveGuard, { ghost: 'avg' });
