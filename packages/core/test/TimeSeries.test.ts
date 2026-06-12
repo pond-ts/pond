@@ -2327,7 +2327,7 @@ describe('TimeSeries', () => {
     // at the `at()` boundary; other point accessors already
     // produce integer indices internally (bisect's binary
     // search uses `(low + high) >>> 1`).
-    it('at() returns undefined for non-integer / NaN / negative inputs (matches pre-2a array semantics)', () => {
+    it('at() returns undefined for non-integer / NaN / out-of-range inputs; negatives count from the end', () => {
       const s = new TimeSeries({
         name: 's',
         schema,
@@ -2339,10 +2339,12 @@ describe('TimeSeries', () => {
       });
       expect(s.at(NaN)).toBeUndefined();
       expect(s.at(1.5)).toBeUndefined();
-      expect(s.at(-1)).toBeUndefined();
       expect(s.at(100)).toBeUndefined();
       expect(s.at(Infinity)).toBeUndefined();
       expect(s.at(-Infinity)).toBeUndefined();
+      // Negative indices count from the end (F8); deep underflow → undefined.
+      expect(s.at(-1)?.get('value')).toBe(30);
+      expect(s.at(-100)).toBeUndefined();
       // Valid integer indices still work.
       expect(s.at(0)?.get('value')).toBe(10);
       expect(s.at(2)?.get('value')).toBe(30);

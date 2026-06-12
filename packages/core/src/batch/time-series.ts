@@ -1274,14 +1274,16 @@ export class TimeSeries<S extends SeriesSchema> {
    * series.events[i]` holds whenever both are accessed.
    */
   at(index: number): EventForSchema<S> | undefined {
-    // Match pre-2a array-indexing semantics: non-integer or NaN
-    // inputs return undefined rather than throwing downstream from
-    // `#store.eventAt`. `this.events[NaN]` returned undefined per
-    // JS array semantics (key coercion + miss); the direct route
-    // to `#store.eventAt(NaN)` would proceed past the bounds check
-    // and attempt key materialization at the invalid row. Closed
-    // Codex round 4's medium finding on PR #150.
-    if (!Number.isInteger(index) || index < 0 || index >= this.#store.length) {
+    // Non-integer / NaN inputs return undefined rather than throwing
+    // downstream from `#store.eventAt` (`this.events[NaN]` returned undefined
+    // per JS array semantics; the direct route to `#store.eventAt(NaN)` would
+    // proceed past the bounds check and materialize a key at an invalid row).
+    // Closed Codex round 4's medium finding on PR #150.
+    if (!Number.isInteger(index)) return undefined;
+    // Negative indices count from the end — parity with `LiveSeries.at` and
+    // `Array.prototype.at` (`at(-1)` is the last event).
+    if (index < 0) index += this.#store.length;
+    if (index < 0 || index >= this.#store.length) {
       return undefined;
     }
     return this.#store.eventAt(index) as unknown as EventForSchema<S>;
