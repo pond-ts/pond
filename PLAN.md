@@ -78,6 +78,60 @@ around rather than report. As the available model improves, re-run.
   materializes via `timeRange()` (columnar `timeRange` is the cheap fix);
   `partitionBy().op().collect()` (~920 ns/row) is the top batch hotspot.
 
+  **v2 backlog beyond the P0s** (full detail in the linked doc; this is the
+  actionable integration so the findings aren't stranded in the note):
+  - **P1 — live robustness cluster** (§4; empirically reproduced, third audit):
+    listener error isolation (a throw skips retention entirely + a derived
+    `filter()` view desyncs permanently), re-entrancy (3 failures incl. the
+    `[object Object]` error at `live-view.ts:704`), unbounded partitions
+    (push-driven `maxAge` never evicts quiet keys; `maxPartitions` silently
+    ignored), **chained dispose** (`live.filter().map()` orphans the
+    intermediate — no way to dispose it; `dispose()` has no JSDoc). Items 1–3 →
+    tasks #98/#99; chained-dispose + evict-staleness + the empirical upgrade →
+    new task #114.
+  - **P1 — columnar `timeRange()`** (§3.3): cold `aggregate()` defaults `range`
+    to `series.timeRange()`, materializing all events (430 ms/1M) before the
+    fast path runs (one-shot callers see ~1.09×). `begins[0]..begins[n−1]` off
+    the key column (`time-series.ts:3664`) → ~21× faster cold path, every
+    caller benefits → new task #115.
+  - **P1 — partitioned-aggregate fast path + columnar partitionBy split**
+    (§3.2/§3.3): the auto-injected `'first'` partition reducer has no
+    `reduceColumn`, so the all-or-nothing gate bails for _every_ partitioned
+    aggregate (~14× slower than it should be); and `partitionBy().<op>()` buckets
+    via `source.events` + rebuilds via `fromEvents`, re-paying the tax — the top
+    batch hotspot and the library's own recommended pattern. Columnar partition
+    split (scatter by group index) is the highest-leverage next batch target,
+    ahead of 3C → new task #116.
+  - **P1 — greenfield adoption killers** (§5): F1 — mixed shorthand+`{from,
+using}` aggregate mappings resolve to the shorthand overload and silently
+    drop every spec-keyed output column from the result _type_ (runtime emits
+    it); F2 — shipped `.d.ts` fail under `skipLibCheck: false` (`EMITS_EVICT`
+    stripped from `series.d.ts` but its re-export survives in `index.d.ts` →
+    TS2305). Both first-hour killers, both cheap → new task #117.
+  - **P2 — wave mediums** (§7): `collapse` mixed-kind → silent missing (row-0
+    inference); `fill` literal `undefined` now throws; `slice`/rekey dropped
+    cross-derivation identity + zero-copy results pin the parent's full buffers
+    (subarray retention — doc + copy-out pointer); inconsistent unknown-column
+    handling across the 6 ops (2 skip, 4 crash); `kind→builder` triplicated
+    (fill/map/collapse); `withKeyColumn` breaks `with<Noun><Participle>`;
+    `asInterval` cast-bypassed label rejection works by accident → fold into
+    #104 (papercuts) + #106 (parity matrix covers NaN-untested).
+  - **P2 — smaller** (new task #118): `Sequence.calendar('hour')` accepted with
+    no unit validation → silent garbage (runtime throw, §6); `validateAndNormalize`
+    is dead code — cleanup (§2); #200's three redundant self-casts at
+    `time-series.ts:1378/1399/1457` (§2); F3–F12 doc/type (unsorted-rows
+    `{sort:true}` + ingest doc, `Time.asString`, CJS error, source maps, §5).
+  - **Carried, already tracked:** CI TZ matrix + perf-in-CI (§3.3/§6 → #100),
+    cast growth + schema helpers (§2 → #102), parity matrix (§1.1/§7 → #106),
+    bundle re-pin 48.5 KB vs <25 KB RFC (§7 → #108), 3C rolling after the NaN
+    doc (§3.4).
+  - **Process (§8), discipline note not a task:** #186 merged 66 min after a
+    medium-confidence L2 that recommended Codex + deferred two decisions, with
+    no committed record — the exact gap this wave's stdev re-fix _avoided_ by
+    actually running the Codex pass. The confidence machinery was accurate (the
+    dimension it "cleared," parity, is where all three P0s lived); hold the
+    merge discipline around it.
+
 ### CSV-cleaner (complete; v0.9.x)
 
 Three-agent run (Claude, Codex, Gemini) on a real per-host metrics
