@@ -29,6 +29,7 @@ import type {
   FusedMapping,
   FusedMappingValid,
   FusedPartitionedRollingSchema,
+  ValidatedAggregateMap,
 } from '../schema/index.js';
 import type { DurationInput } from '../core/duration.js';
 import type {
@@ -677,12 +678,12 @@ export class LivePartitionedSeries<
    * );
    * ```
    */
-  rolling<const M extends AggregateMap<S>>(
+  rolling<const M extends ValidatedAggregateMap<S, M>>(
     window: RollingWindow,
     mapping: M,
     options?: LiveRollingOptions & { trigger?: { kind: 'event' | 'count' } },
   ): LivePartitionedView<S, RollingSchema<S, M>, K, ByCol>;
-  rolling<const M extends AggregateMap<S>>(
+  rolling<const M extends ValidatedAggregateMap<S, M>>(
     window: RollingWindow,
     mapping: M,
     options: LiveRollingOptions & { trigger: { kind: 'clock' } & Trigger },
@@ -692,7 +693,7 @@ export class LivePartitionedSeries<
   // `trigger` field TS can narrow). Without it the two narrowed
   // overloads above don't match — the trigger discriminator is unknown
   // at the call site, so the result is the union of both branches.
-  rolling<const M extends AggregateMap<S>>(
+  rolling<const M extends ValidatedAggregateMap<S, M>>(
     window: RollingWindow,
     mapping: M,
     options: LiveRollingOptions,
@@ -1385,12 +1386,12 @@ export class LivePartitionedView<
    * partition column with a passthrough reducer (e.g.
    * `host: 'last'`) to keep it visible in the unified output.
    */
-  rolling<const M extends AggregateMap<R>>(
+  rolling<const M extends ValidatedAggregateMap<R, M>>(
     window: RollingWindow,
     mapping: M,
     options?: LiveRollingOptions & { trigger?: { kind: 'event' | 'count' } },
   ): LivePartitionedView<SBase, RollingSchema<R, M>, K, ByCol>;
-  rolling<const M extends AggregateMap<R>>(
+  rolling<const M extends ValidatedAggregateMap<R, M>>(
     window: RollingWindow,
     mapping: M,
     options: LiveRollingOptions & { trigger: { kind: 'clock' } & Trigger },
@@ -1398,7 +1399,7 @@ export class LivePartitionedView<
   // Catch-all overload for callers that pass `options` as a variable
   // typed `LiveRollingOptions`. See the matching block on
   // `LivePartitionedSeries.rolling` for the full rationale.
-  rolling<const M extends AggregateMap<R>>(
+  rolling<const M extends ValidatedAggregateMap<R, M>>(
     window: RollingWindow,
     mapping: M,
     options: LiveRollingOptions,

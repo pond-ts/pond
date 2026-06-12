@@ -39,6 +39,7 @@ import type {
   PrefixedJoinSchema,
   ReduceResult,
   RenameMap,
+  ValidatedAggregateMap,
 } from '../schema/index.js';
 import type {
   RenameSchema,
@@ -1912,7 +1913,7 @@ export class TimeSeries<S extends SeriesSchema> {
    * `series.partitionBy(col).aggregate(seq, mapping).collect()` to
    * aggregate per entity. See {@link TimeSeries.partitionBy}.
    */
-  aggregate<const Mapping extends AggregateMap<S>>(
+  aggregate<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
     sequence: SequenceLike,
     mapping: Mapping,
     options?: { range?: TemporalLike },
@@ -1941,7 +1942,7 @@ export class TimeSeries<S extends SeriesSchema> {
     column: ValueColumnsForSchema<S>[number]['name'],
     reducer: AggregateReducer,
   ): ColumnValue | undefined;
-  reduce<const Mapping extends AggregateMap<S>>(
+  reduce<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
     mapping: Mapping,
   ): ReduceResult<S, Mapping>;
   reduce(
@@ -2830,12 +2831,12 @@ export class TimeSeries<S extends SeriesSchema> {
    * `series.partitionBy(col).rolling(...).collect()` to scope per
    * entity. See {@link TimeSeries.partitionBy}.
    */
-  rolling<const Mapping extends AggregateMap<S>>(
+  rolling<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
     window: DurationInput,
     mapping: Mapping,
     options?: { alignment?: RollingAlignment; minSamples?: number },
   ): TimeSeries<RollingSchema<S, Mapping>>;
-  rolling<const Mapping extends AggregateMap<S>>(
+  rolling<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
     sequence: SequenceLike,
     window: DurationInput,
     mapping: Mapping,
@@ -4358,12 +4359,18 @@ export class TimeSeries<S extends SeriesSchema> {
     } = {};
     if (alignment !== undefined) rollingOptions.alignment = alignment;
     if (minSamples !== undefined) rollingOptions.minSamples = minSamples;
-    const rolling = this.rolling(
+    // Trust boundary: a generic mapping can't prove it satisfies the
+    // public overload's ValidatedAggregateMap constraint (S is
+    // unresolved here), so route through the broad-schema escape hatch
+    // — for concrete SeriesSchema the constraint degrades to the
+    // permissive AggregateMap by design. The computed spec keys are
+    // collision-checked above.
+    const rolling = (this as unknown as TimeSeries<SeriesSchema>).rolling(
       window,
       {
         [avgName]: { from: col as string, using: 'avg' as const },
         [sdName]: { from: col as string, using: 'stdev' as const },
-      } as unknown as AggregateOutputMap<S>,
+      } as AggregateOutputMap<SeriesSchema>,
       rollingOptions,
     ) as unknown as TimeSeries<SeriesSchema>;
 
@@ -4465,14 +4472,16 @@ export class TimeSeries<S extends SeriesSchema> {
     const rollingMapping = {
       [ROLL_AVG]: { from: col as string, using: 'avg' as const },
       [ROLL_SD]: { from: col as string, using: 'stdev' as const },
-    } as unknown as AggregateOutputMap<S>;
+    } as AggregateOutputMap<SeriesSchema>;
     const rollingOptions: {
       alignment?: RollingAlignment;
       minSamples?: number;
     } = {};
     if (alignment !== undefined) rollingOptions.alignment = alignment;
     if (minSamples !== undefined) rollingOptions.minSamples = minSamples;
-    const rolling = this.rolling(
+    // Trust boundary: see baseline() above — generic mapping routed
+    // through the broad-schema escape hatch of ValidatedAggregateMap.
+    const rolling = (this as unknown as TimeSeries<SeriesSchema>).rolling(
       window,
       rollingMapping,
       rollingOptions,

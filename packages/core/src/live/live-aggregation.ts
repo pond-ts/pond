@@ -37,6 +37,7 @@ import type {
   SelectSchema,
   SeriesSchema,
   ValueColumnsForSchema,
+  ValidatedAggregateMap,
 } from '../schema/index.js';
 import type { RollingOutputMapSchema } from '../schema/index.js';
 
@@ -257,7 +258,7 @@ export class LiveAggregation<
     return makeCumulativeView(this as any, spec);
   }
 
-  rolling<const M extends AggregateMap<Out>>(
+  rolling<const M extends ValidatedAggregateMap<Out, M>>(
     windowSize: RollingWindow,
     mapping: M,
     options?: LiveRollingOptions,

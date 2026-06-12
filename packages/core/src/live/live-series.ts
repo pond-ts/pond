@@ -70,6 +70,7 @@ import type {
   FusedMapping,
   FusedMappingValid,
   FusedRollingSchema,
+  ValidatedAggregateMap,
 } from '../schema/index.js';
 
 import type { DurationInput } from '../core/duration.js';
@@ -1009,7 +1010,7 @@ export class LiveSeries<S extends SeriesSchema> {
     );
   }
 
-  aggregate<const M extends AggregateMap<S>>(
+  aggregate<const M extends ValidatedAggregateMap<S, M>>(
     sequence: Sequence,
     mapping: M,
   ): LiveAggregation<S, AggregateSchema<S, M>>;
@@ -1017,7 +1018,7 @@ export class LiveSeries<S extends SeriesSchema> {
     return new LiveAggregation(this, sequence, mapping);
   }
 
-  rolling<const M extends AggregateMap<S>>(
+  rolling<const M extends ValidatedAggregateMap<S, M>>(
     window: RollingWindow,
     mapping: M,
     options?: LiveRollingOptions,
@@ -1087,7 +1088,7 @@ export class LiveSeries<S extends SeriesSchema> {
    * `[time, ...mappingColumns]`. Composes with the rest of the
    * live operator surface.
    */
-  reduce<const M extends AggregateMap<S>>(
+  reduce<const M extends ValidatedAggregateMap<S, M>>(
     mapping: M,
     options?: LiveRollingOptions,
   ): LiveReduce<S, RollingSchema<S, M>>;

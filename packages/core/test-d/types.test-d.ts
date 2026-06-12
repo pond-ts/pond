@@ -1,4 +1,6 @@
 import {
+  type AggregateMap,
+  type SeriesSchema,
   BoundedSequence,
   type CalendarOptions,
   type CalendarUnit,
@@ -841,6 +843,63 @@ const mixedReduceCustomWide:
 void mixedReduceExplicitStr;
 void mixedReduceCustomWide;
 
+// ---------------------------------------------------------------------------
+// Guard preservation (F1 follow-through): unifying the mapping shapes
+// must NOT lose the shorthand compile-time guards the pre-unification
+// overloads had. ValidatedAggregateMap validates inline literals per
+// key at every public aggregate/rolling/reduce signature.
+
+// (1) Wrong-kind shorthand: 'avg' is not a valid reducer for the
+// string column `host` (runtime would emit an always-empty column).
+// @ts-expect-error — shorthand reducer kind-checked against its source column
+cpuSeries.aggregate(Sequence.every('1m'), { host: 'avg' });
+// @ts-expect-error — same guard on event-driven rolling
+cpuSeries.rolling('1m', { host: 'avg' });
+// @ts-expect-error — same guard on reduce
+cpuSeries.reduce({ host: 'avg' });
+
+// (2) Shorthand typo: `ghost` is not a source column, so a bare
+// reducer is rejected (the runtime throws "unknown source column").
+// @ts-expect-error — bare reducer on a non-source key
+cpuSeries.aggregate(Sequence.every('1m'), { ghost: 'avg' });
+// @ts-expect-error — bare reducer on a non-source key (rolling)
+cpuSeries.rolling('1m', { ghost: 'avg' });
+// @ts-expect-error — bare reducer on a non-source key (reduce)
+cpuSeries.reduce({ ghost: 'avg' });
+
+// Spec keys remain free output names — the same key with a spec is fine
+// and narrows by its reducer.
+const ghostSpecOk = cpuSeries.reduce({ ghost: { from: 'cpu', using: 'avg' } });
+const ghostSpecVal: number | undefined = ghostSpecOk.ghost;
+void ghostSpecVal;
+
+// (3) The guards hold inside MIXED mappings — one bad entry fails the
+// whole call.
+// @ts-expect-error — wrong-kind shorthand inside an otherwise-valid mixed mapping
+cpuSeries.reduce({ cpu: 'avg', host: 'avg' });
+
+// (4) Kind-appropriate shorthand on every kind still accepted.
+const kindOkShorthand = cpuSeries.reduce({
+  cpu: 'p99',
+  host: 'first',
+  healthy: 'last',
+});
+const kindOkHost: string | undefined = kindOkShorthand.host;
+const kindOkHealthy: boolean | undefined = kindOkShorthand.healthy;
+void kindOkHost;
+void kindOkHealthy;
+
+// (5) Deliberate escape hatches, pinned so a future tightening is a
+// conscious decision: a value pre-widened to AggregateMap<S> has
+// index-signature keys (no literals to validate)…
+const widenedMapping: AggregateMap<typeof cpuSchema> = { host: 'avg' };
+const widenedResult = cpuSeries.aggregate(Sequence.every('1m'), widenedMapping);
+void widenedResult;
+// …and broad-schema receivers have no column names to validate against.
+const broadGuardSeries = cpuSeries as unknown as TimeSeries<SeriesSchema>;
+const broadGuardResult = broadGuardSeries.reduce({ anything: 'avg' });
+void broadGuardResult;
+
 const smoothedCpuSeries = cpuSeries.smooth('cpu', 'ema', { alpha: 0.5 });
 type SmoothedCpuSchema = SmoothSchema<typeof cpuSchema, 'cpu'>;
 const smoothedCpuEvent = smoothedCpuSeries.first();
@@ -1366,6 +1425,13 @@ const liveCpuSchema = [
 ] as const;
 
 const liveCpu = new LiveSeries({ name: 'cpu', schema: liveCpuSchema });
+
+// Guard preservation on the live mirrors (same ValidatedAggregateMap
+// constraint as the batch methods).
+// @ts-expect-error — wrong-kind shorthand on LiveSeries.rolling
+liveCpu.rolling('1m', { host: 'avg' });
+// @ts-expect-error — bare reducer on a non-source key (live aggregate)
+liveCpu.aggregate(Sequence.every('1m'), { ghost: 'avg' });
 
 // Inline literal: untyped → routes to event-trigger overload (returns
 // LivePartitionedView).

@@ -92,6 +92,12 @@ silently dropped the `{ from, using }`-keyed columns from the result
 type — they were still emitted at runtime, but `event.get('cpu_p95')`
 wouldn't type-check. The single unified mapping shape fixes this.)
 
+Shorthand entries stay validated at compile time: a reducer that
+doesn't fit the source column's kind (`host: 'avg'` on a string
+column) or a bare reducer on a column that doesn't exist
+(`ghost: 'avg'` — a typo) is a type error. Spec keys are free output
+names — only their `from` must name a real column.
+
 ### Custom reducers
 
 Reducers are

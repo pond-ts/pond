@@ -95,8 +95,13 @@ export type AggregateOutputSpec<
  *   names the reducer. This is the only form that can apply multiple
  *   reducers to one source column or rename the output.
  *
- * The constraint is deliberately permissive (any reducer or spec on any
- * key). The result schema dispatches per output key (see
+ * This shape is deliberately permissive (any reducer or spec on any
+ * key) — it is the *assignment* surface, used by implementation
+ * signatures, internal delegation, and pre-widened values. The public
+ * `aggregate` / `rolling` / `reduce` signatures additionally constrain
+ * inline literals through {@link ValidatedAggregateMap}, which restores
+ * the per-key compile-time guards the pre-unification overloads had.
+ * The result schema dispatches per output key (see
  * {@link AggregateColumns}), so mixing the two forms keeps every output
  * column.
  *
@@ -105,19 +110,75 @@ export type AggregateOutputSpec<
  * mixed literal silently resolved to the shorthand overload and dropped
  * every spec-keyed output column from the result type (audit v2 §5 F1).
  * Collapsing to one overload over this unified map fixes that.
- *
- * Note: the pre-unification shorthand overload additionally constrained
- * each shorthand reducer to its source column's kind (rejecting e.g.
- * `host: 'avg'` on a string column at compile time). Unifying into one
- * permissive map relaxes that compile-time guard — an invalid
- * shorthand reducer for a column kind is no longer a type error. Runtime
- * behavior is unchanged (the reducer registry handles or ignores it as
- * before); this matches how `FusedMapping` already treats shorthand
- * entries. The narrowing of *valid* mappings is unaffected.
  */
 export type AggregateMap<S extends SeriesSchema> = Readonly<
   Record<string, AggregateReducer | AggregateOutputSpec<S>>
 >;
+
+/**
+ * Per-key validating constraint over a candidate mapping `M` — applied
+ * by the public `aggregate` / `rolling` / `reduce` signatures on top of
+ * the permissive {@link AggregateMap} shape, as a self-referential
+ * constraint:
+ *
+ * ```ts
+ * aggregate<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
+ *   sequence: SequenceLike,
+ *   mapping: Mapping,
+ * ): TimeSeries<AggregateSchema<S, Mapping>>;
+ * ```
+ *
+ * Inference still comes from the argument (the `const` type parameter
+ * keeps literal types); the constraint then checks each entry by key:
+ *
+ * - **Key names a source column** → a shorthand reducer must be valid
+ *   for that column's kind ({@link AggregateFunctionsForKind} — so
+ *   `host: 'avg'` on a `string` column is a compile error), or any
+ *   spec.
+ * - **Any other literal key** → spec form only. A bare reducer on an
+ *   unknown key (`ghost: 'avg'`) is a typo the runtime rejects with
+ *   "unknown source column"; this surfaces it at compile time instead.
+ *
+ * Spec values are intentionally NOT correlated between `from` and
+ * `using` here — `AggregateOutputSpec<S>` checks `using` against the
+ * union of all columns' reducers, not the specific `from` column's
+ * (`{ from: 'host', using: 'avg' }` compiles; the runtime emits an
+ * empty column). That looseness predates the unification; tightening it
+ * requires a distributed spec union and is left as a follow-up so this
+ * change stays guard-restoring only.
+ *
+ * Two deliberate escape hatches degrade to the permissive
+ * {@link AggregateMap} shape:
+ *
+ * - **Broad schemas** (`TimeSeries<SeriesSchema>`) — there are no
+ *   literal column names to validate against.
+ * - **Pre-widened values** (a variable explicitly typed
+ *   `AggregateMap<S>`, whose keys are an index signature) — validation
+ *   applies to literal keys, which inline mapping literals always have.
+ *
+ * Internal generic call sites (live mirrors, partitioned delegation)
+ * cannot prove a generic `M` satisfies its own validation and must not
+ * call through the public overloads — they route through the loose
+ * implementation paths instead (see the trust-boundary notes at those
+ * sites).
+ */
+export type ValidatedAggregateMap<S extends SeriesSchema, M> = [
+  ValueColumnsForSchema<S>,
+] extends [never]
+  ? AggregateMap<S> // schema too broad to extract value columns at all
+  : string extends ValueColumnsForSchema<S>[number]['name']
+    ? AggregateMap<S>
+    : {
+        readonly [K in keyof M]: K extends ValueColumnsForSchema<S>[number]['name']
+          ?
+              | AggregateFunctionsForKind<
+                  ColumnKindByName<ValueColumnsForSchema<S>, K & string>
+                >
+              | AggregateOutputSpec<S>
+          : string extends K
+            ? AggregateReducer | AggregateOutputSpec<S>
+            : AggregateOutputSpec<S>;
+      };
 
 /**
  * Back-compat alias for {@link AggregateMap}. Before v0.23.0 the

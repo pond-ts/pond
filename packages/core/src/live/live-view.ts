@@ -38,6 +38,7 @@ import type {
   FusedMapping,
   FusedMappingValid,
   FusedRollingSchema,
+  ValidatedAggregateMap,
 } from '../schema/index.js';
 
 export type LiveFillStrategy = 'hold' | 'zero';
@@ -394,7 +395,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     return this.#events.length / (this.#windowMs / 1000);
   }
 
-  aggregate<const M extends AggregateMap<S>>(
+  aggregate<const M extends ValidatedAggregateMap<S, M>>(
     sequence: Sequence,
     mapping: M,
   ): LiveAggregation<S, AggregateSchema<S, M>>;
@@ -402,7 +403,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
     return new LiveAggregation(this, sequence, mapping);
   }
 
-  rolling<const M extends AggregateMap<S>>(
+  rolling<const M extends ValidatedAggregateMap<S, M>>(
     window: RollingWindow,
     mapping: M,
     options?: LiveRollingOptions,
@@ -444,7 +445,7 @@ export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
    * Streaming reduce over the view's current buffer. See
    * {@link LiveSeries.reduce} for the full surface.
    */
-  reduce<const M extends AggregateMap<S>>(
+  reduce<const M extends ValidatedAggregateMap<S, M>>(
     mapping: M,
     options?: LiveRollingOptions,
   ): LiveReduce<S, RollingSchema<S, M>>;

@@ -23,6 +23,7 @@ import type {
   SmoothAppendSchema,
   SmoothMethod,
   SmoothSchema,
+  ValidatedAggregateMap,
 } from '../schema/index.js';
 
 type SequenceLike = Sequence | BoundedSequence;
@@ -613,12 +614,12 @@ export class PartitionedTimeSeries<
   }
 
   /** Per-partition `rolling`. See {@link TimeSeries.rolling}. */
-  rolling<const Mapping extends AggregateMap<S>>(
+  rolling<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
     window: DurationInput,
     mapping: Mapping,
     options?: { alignment?: RollingAlignment; minSamples?: number },
   ): PartitionedTimeSeries<RollingSchema<S, Mapping>, K>;
-  rolling<const Mapping extends AggregateMap<S>>(
+  rolling<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
     sequence: SequenceLike,
     window: DurationInput,
     mapping: Mapping,
@@ -796,7 +797,7 @@ export class PartitionedTimeSeries<
   }
 
   /** Per-partition `aggregate`. See {@link TimeSeries.aggregate}. */
-  aggregate<const Mapping extends AggregateMap<S>>(
+  aggregate<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
     sequence: SequenceLike,
     mapping: Mapping,
     options?: { range?: TemporalLike },

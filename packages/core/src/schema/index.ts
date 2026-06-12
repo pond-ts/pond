@@ -70,6 +70,7 @@ export type {
   AggregateReducer,
   AggregateSchema,
   AlignSchema,
+  ValidatedAggregateMap,
   ArrayAggregateAppendSchema,
   ArrayAggregateKind,
   ArrayAggregateReplaceSchema,
