@@ -49,6 +49,24 @@ type-level changes; patch bumps are strictly additive.
   A stored `NaN` is still a defined value the mapper sees — map it to a finite
   number, or to `undefined` (missing), to clean it. (Closes a hole introduced
   alongside `mapColumns` in 0.21.0.)
+- **`aggregate('stdev')` is now numerically stable and path-independent.** The
+  bucketed row path (`bucketState`) used a one-pass `sq/n − mean²` accumulator
+  that cancels catastrophically on near-equal large-magnitude values —
+  returning `0` (e.g. `[1e10, 1e10+1, 1e10+2, 1e10+3]` → `0` instead of
+  `≈1.118`), or a negative variance whose `sqrt` is `NaN` that the validating
+  constructor then rejected with a throw. Because the columnar fast path is
+  all-or-nothing, an unrelated mapping (e.g. a `count` over a string column)
+  could silently flip the _same_ series' stdev. All three batch paths (`reduce`,
+  `reduceColumn`, `bucketState`) now share **one Welford recurrence** — O(1) per
+  element, no buffer (so the live aggregation path that shares `bucketState`
+  stays O(1)), `m2 ≥ 0` by construction — so they agree regardless of magnitude.
+  (Even the prior two-pass `Σv/n`-then-deviations drifted ~8.7% from the true
+  value at `2^52`, where the summed mean rounds — so unifying on Welford, not
+  two-pass, was necessary.) **Correction:** 0.21.0's columnar `aggregate()` fast
+  path (#186) was described as "signature + semantics unchanged", but it did
+  change released `stdev` output for fast-path-qualifying aggregates; this fix
+  makes every path agree. (`rolling`/`smooth` stdev keep the one-pass form for
+  now — a separate, deferred item.)
 
 ## [0.21.0] — 2026-06-11
 

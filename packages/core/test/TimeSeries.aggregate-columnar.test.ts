@@ -220,3 +220,75 @@ describe('aggregate() columnar fast path — row-path fallbacks', () => {
     expect(vals(r, 'hosts')).toEqual([2, 1]);
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* stdev — numerical stability across paths (audit v2 §1.1).                    */
+/*                                                                             */
+/* The fast path (reduceColumn) and the row path (bucketState) must agree.      */
+/* Pre-fix bucketState used one-pass `sq/n − mean²`, which cancels              */
+/* catastrophically on near-equal large values — so aggregate('stdev') silently */
+/* changed result (or crashed with NaN) when an unrelated mapping flipped the   */
+/* all-or-nothing fast path to the row path. All batch paths now share one      */
+/* Welford recurrence, so they agree regardless of magnitude.                   */
+/* -------------------------------------------------------------------------- */
+describe('aggregate(stdev) — path-independent (audit §1.1)', () => {
+  const seq = Sequence.every('1s');
+  const STDEV_5_4 = Math.sqrt(5 / 4); // ≈ 1.118033988749895
+
+  // A bucket of four consecutive integers offset by `base`: population stdev is
+  // always sqrt(5/4), but large `base` stresses floating-point precision.
+  const cluster = (base: number): Row[] =>
+    [0, 1, 2, 3].map((k, i) => [i * 200, base + k, 'a'] as Row);
+
+  // fast = pure numeric built-in (columnar fast path); row = forced to the row
+  // path (Welford bucketState) by an unrelated string-source mapping that
+  // disqualifies the all-or-nothing fast path for the whole call.
+  const bothPaths = (rows: Row[]) => {
+    const s = series(rows);
+    const fast = s.aggregate(seq, { sd: { from: 'value', using: 'stdev' } });
+    const row = s.aggregate(seq, {
+      sd: { from: 'value', using: 'stdev' },
+      hc: { from: 'host', using: 'count' },
+    });
+    return {
+      fast: (vals(fast, 'sd') as number[])[0]!,
+      row: (vals(row, 'sd') as number[])[0]!,
+    };
+  };
+
+  it('fast path and forced row path agree on near-equal large values (was 1.118 vs 0)', () => {
+    const { fast, row } = bothPaths(cluster(1e10));
+    expect(fast).toBeCloseTo(STDEV_5_4, 9);
+    expect(row).toBeCloseTo(STDEV_5_4, 9); // pre-fix row path: 0
+    expect(Math.abs(row - fast) / fast).toBeLessThan(1e-12);
+  });
+
+  it('fast and row paths agree at the 2^52 precision boundary (Codex finding)', () => {
+    // Before the paths were unified, reduceColumn (two-pass) computed 1.2247
+    // here — its `Σv/n` mean rounds at 2^52 spacing — while Welford bucketState
+    // computed the correct 1.118. An unrelated mapping flipping the path then
+    // changed stdev ~8.7%. One shared recurrence closes that.
+    const { fast, row } = bothPaths(cluster(2 ** 52));
+    expect(fast).toBeCloseTo(STDEV_5_4, 9);
+    expect(row).toBeCloseTo(STDEV_5_4, 9);
+    expect(Math.abs(row - fast) / fast).toBeLessThan(1e-12);
+  });
+
+  it('forced row path stays finite on cancellation-prone data (was NaN→throw)', () => {
+    // [5e7+0.1, 5e7+0.2, 5e7+0.3] → pop stdev = sqrt(0.02/3) ≈ 0.0816. The
+    // old one-pass formula computed a negative variance → sqrt → NaN, which
+    // the validating constructor then rejected. Welford's M2 ≥ 0.
+    const s = series([
+      [0, 5e7 + 0.1, 'a'],
+      [200, 5e7 + 0.2, 'a'],
+      [400, 5e7 + 0.3, 'a'],
+    ]);
+    const row = s.aggregate(seq, {
+      sd: { from: 'value', using: 'stdev' },
+      hc: { from: 'host', using: 'count' }, // force the row path
+    });
+    const v = (vals(row, 'sd') as number[])[0];
+    expect(Number.isFinite(v)).toBe(true);
+    expect(v).toBeCloseTo(Math.sqrt(0.02 / 3), 6);
+  });
+});
