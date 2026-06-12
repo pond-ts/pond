@@ -47,6 +47,18 @@ TypeScript widens the schema tuple to a regular array and the column
 kinds widen to `string`, breaking type inference across every
 transform.
 
+Rows must be in **non-decreasing key order** — the constructor throws on
+out-of-order rows (the error names the offending row). For unsorted input (a
+CSV read in arrival order, merged sources), pass `sort: true` to sort on
+construction instead of pre-sorting yourself:
+
+```ts
+const cpu = new TimeSeries({ name: 'cpu', schema, rows, sort: true });
+```
+
+The sort is **stable**, so rows with equal keys keep their input order.
+`TimeSeries.fromJSON({ …, sort: true })` accepts the same option.
+
 For the full schema-as-contract story (kinds, narrowing,
 `required: false`), see [Concepts → Series](./concepts/series).
 For messy or partially-bad input, see
@@ -59,10 +71,10 @@ import { LiveSeries } from 'pond-ts';
 
 const live = new LiveSeries({
   name: 'cpu',
-  schema,                              // same schema as batch
-  retention: { maxEvents: 10_000 },    // bounded buffer
-  ordering:  'reorder',                // accept moderately late events
-  graceWindow: '5s',                   // ... up to 5s late
+  schema, // same schema as batch
+  retention: { maxEvents: 10_000 }, // bounded buffer
+  ordering: 'reorder', // accept moderately late events
+  graceWindow: '5s', // ... up to 5s late
 });
 
 live.push([Date.now(), 0.42, 'api-1']);

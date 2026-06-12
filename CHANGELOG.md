@@ -16,6 +16,16 @@ type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **`new TimeSeries({ …, sort: true })` (and `TimeSeries.fromJSON`) sort rows by
+  key on construction.** Pond requires rows in non-decreasing key order and
+  throws otherwise; `sort: true` accepts unsorted input (messy CSVs, merged
+  sources) and sorts it for you instead of forcing a manual pre-sort. The sort
+  is **stable** — rows with equal keys keep their input order — matching what
+  `TimeSeries.fromEvents` already does. The out-of-order error now names the
+  option. (Audit v2 §5 F3.)
+
 ### Fixed
 
 - **Shipped `.d.ts` now type-check under `skipLibCheck: false`.** The internal

@@ -481,11 +481,15 @@ export function validateAndNormalizeColumnar<S extends SeriesSchema>(
     const prevBegin = beginBuf[i - 1]!;
     const curBegin = beginBuf[i]!;
     if (prevBegin > curBegin) {
-      throw new ValidationError(`row ${i} is out of order`);
+      throw new ValidationError(
+        `row ${i} is out of order — keys must be non-decreasing; pass { sort: true } to sort rows on construction, or pre-sort them`,
+      );
     }
     if (prevBegin === curBegin && endBuf !== beginBuf) {
       if (endBuf[i - 1]! > endBuf[i]!) {
-        throw new ValidationError(`row ${i} is out of order`);
+        throw new ValidationError(
+          `row ${i} is out of order — keys must be non-decreasing; pass { sort: true } to sort rows on construction, or pre-sort them`,
+        );
       }
     }
   }

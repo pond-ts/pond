@@ -19,6 +19,16 @@ export type TimeSeriesInput<S extends SeriesSchema> = {
   name: string;
   schema: S;
   rows: ReadonlyArray<RowForSchema<S>>;
+  /**
+   * Sort `rows` by key on construction. Off by default — pond requires rows
+   * in non-decreasing key order and throws otherwise. Set `true` when
+   * ingesting unsorted data (messy CSVs, merged sources) rather than
+   * pre-sorting yourself. The sort is **stable**, so rows with equal keys keep
+   * their input order. (This is what `TimeSeries.fromEvents` does
+   * unconditionally; `sort` brings the same convenience to the row
+   * constructor.)
+   */
+  sort?: boolean;
 };
 
 export type NormalizedRowForSchema<
