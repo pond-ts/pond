@@ -1,3 +1,11 @@
+// `@internal` so `stripInternal` drops this re-export from the emitted
+// `.d.ts`. The symbol is `@internal` in `series.ts` (stripped from
+// `series.d.ts`), so an un-annotated re-export here would dangle —
+// `dist/schema/index.d.ts` referencing a name absent from `series.d.ts`,
+// which fails strict consumer builds with TS2305 under `skipLibCheck: false`
+// (audit v2 §5 F2). Internal live-layer code still imports it from this
+// barrel at source-compile time; `stripInternal` only affects `.d.ts` emit.
+/** @internal */
 export { EMITS_EVICT } from './series.js';
 export type {
   AppendColumn,

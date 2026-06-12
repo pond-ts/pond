@@ -16,6 +16,17 @@ type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Shipped `.d.ts` now type-check under `skipLibCheck: false`.** The internal
+  `EMITS_EVICT` marker symbol was `@internal` (stripped from the emitted
+  `series.d.ts`) but still referenced by un-stripped public declarations — a
+  by-name re-export in `schema/index.d.ts` and the `[EMITS_EVICT]` brand members
+  on `LiveSeries` / `LiveView` — leaving dangling references that broke strict
+  consumer builds with **TS2305**. Those references are now `@internal` too, so
+  the symbol is fully stripped from the published types; runtime behavior is
+  unchanged. (Audit v2 §5 F2.)
+
 ## [0.22.0] — 2026-06-12
 
 ### Changed
