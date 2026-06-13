@@ -152,20 +152,24 @@ const points = series.sample({ reservoir: { size: 500 } }).toRows();
 
 ## Performance
 
-pond-ts is **7.6x faster** than pondjs on average across all comparable
-operations, with no regressions. The advantage grows with data size.
+pond-ts is faster on **every** comparable operation, with no regressions —
+a **~17x** geometric-mean speedup across the measurable ops, plus a handful
+of transforms (`select` / `rename`) that are **effectively instant** (O(1)
+column rebinds, below the timer's resolution). The advantage grows with data
+size.
 
-| Category          | Speedup (N=16k) | Notes                                         |
-| ----------------- | --------------- | --------------------------------------------- |
-| **Aggregation**   | 25–32x          | O(N+B) bucketing vs O(N×B) Pipeline           |
-| **Alignment**     | 32x             | Forward cursor vs repeated binary search      |
-| **Rate/diff**     | 18x             | Direct array walk vs Pipeline materialization |
-| **Fill**          | 10–11x          | Single-pass vs Pipeline per strategy          |
-| **Transforms**    | 3–16x           | Pre-validated constructor skips re-validation |
-| **Construction**  | 7x              | Plain objects vs ImmutableJS wrapping         |
-| **Statistics**    | 7–9x            | Direct computation vs ImmutableJS iteration   |
-| **Serialization** | 4x              | Simpler internal representation               |
-| **Event access**  | 23x             | Array indexing vs ImmutableJS `get()`         |
+| Category          | Speedup (N=16k)                                      | Notes                                         |
+| ----------------- | ---------------------------------------------------- | --------------------------------------------- |
+| **Rate**          | ~120x                                                | Single columnar walk vs Pipeline              |
+| **Fill**          | 77–87x                                               | Single columnar pass vs Pipeline per strategy |
+| **Aggregation**   | 57–82x                                               | O(N+B) bucketing vs O(N×B) Pipeline           |
+| **Statistics**    | 18–80x                                               | Typed-array reduce vs ImmutableJS iteration   |
+| **Alignment**     | 42x                                                  | Forward cursor vs repeated binary search      |
+| **Construction**  | 13x                                                  | Columnar intake vs ImmutableJS wrapping       |
+| **Chained**       | 8x                                                   | Derived constructors vs per-step Pipeline     |
+| **Transforms**    | `select`/`rename` instant; `collapse` 30x; `map` ~4x | Column reshapes vs Pipeline                   |
+| **Event access**  | 6x                                                   | Array indexing vs ImmutableJS `get()`         |
+| **Serialization** | 4x                                                   | Lightweight columnar representation           |
 
 See the [full benchmark results](website/docs/reference/benchmarks.mdx)
 for detailed numbers. Run locally:

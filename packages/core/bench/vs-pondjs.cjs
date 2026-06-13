@@ -491,6 +491,13 @@ async function runBenchmarks() {
   console.log('='.repeat(90));
   console.log();
 
+  // pond-ts median below the timer's usable resolution → "instant" (metadata
+  // reshapes like select / rename, which are O(1) column-store rebinds post the
+  // columnar wave). Excluded from the geomean below — there the ratio is a
+  // near-zero divisor, not a meaningful speedup, and would dominate it.
+  const INSTANT_MS = 0.005;
+  const isInstant = (r) => r.pondtsTime.median < INSTANT_MS;
+
   // Group by category
   const categories = [...new Set(results.map((r) => r.category))];
   for (const cat of categories) {
@@ -508,16 +515,18 @@ async function runBenchmarks() {
     const catResults = results.filter((r) => r.category === cat);
     for (const r of catResults) {
       const winner = r.speedup >= 1.0 ? 'pond-ts' : 'pondjs';
-      const speedupStr =
-        r.speedup >= 1.0
+      const speedupStr = isInstant(r)
+        ? 'instant'
+        : r.speedup >= 1.0
           ? `${r.speedup.toFixed(1)}x`
           : `${(1 / r.speedup).toFixed(1)}x`;
-      const marker = r.speedup >= 2.0 ? ' ★' : r.speedup < 0.8 ? ' ⚠' : '';
+      const marker =
+        isInstant(r) || r.speedup >= 2.0 ? ' ★' : r.speedup < 0.8 ? ' ⚠' : '';
       console.log(
         padR(r.operation, 32) +
           padR(String(r.size), 7) +
           padR(r.pondjsTime.median.toFixed(2), 13) +
-          padR(r.pondtsTime.median.toFixed(2), 13) +
+          padR(isInstant(r) ? '<0.01' : r.pondtsTime.median.toFixed(2), 13) +
           padR(speedupStr, 10) +
           winner +
           marker,
@@ -534,14 +543,23 @@ async function runBenchmarks() {
   const losses = results.filter((r) => r.speedup < 1.0).length;
   const bigWins = results.filter((r) => r.speedup >= 2.0).length;
   const bigLosses = results.filter((r) => r.speedup < 0.5).length;
+  // Geomean over MEASURABLE ops only — instant (sub-resolution) ops would
+  // dominate it with a near-zero divisor.
+  const measurable = results.filter((r) => !isInstant(r));
+  const instantCount = results.length - measurable.length;
   const geoMean = Math.exp(
-    results.reduce((s, r) => s + Math.log(r.speedup), 0) / results.length,
+    measurable.reduce((s, r) => s + Math.log(r.speedup), 0) / measurable.length,
   );
 
   console.log(`Total benchmarks: ${results.length}`);
   console.log(`pond-ts faster: ${wins}  (${bigWins} by 2x+)`);
   console.log(`pondjs faster:  ${losses}  (${bigLosses} by 2x+)`);
-  console.log(`Geometric mean speedup: ${geoMean.toFixed(2)}x`);
+  console.log(
+    `Effectively instant (pond-ts below timer resolution): ${instantCount}`,
+  );
+  console.log(
+    `Geometric mean speedup (measurable ops): ${geoMean.toFixed(2)}x`,
+  );
 
   // Flag any regressions
   const regressions = results.filter((r) => r.speedup < 0.8);
