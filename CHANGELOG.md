@@ -17,6 +17,21 @@ type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **`TimeSeries.timeRange()` is now a columnar key-axis read instead of a
+  reduce over materialized events.** Behavior is unchanged, but the old
+  implementation materialized every `Event` on its first call — and because
+  `aggregate()` defaults its `range` to `series.timeRange()`, a one-shot
+  `aggregate()` paid full event materialization before the columnar fast
+  path could run, erasing the win. The new path reads the key column's
+  begin/end axis directly: O(1) for time-keyed series, a typed-array scan
+  for range/interval-keyed series, with no event materialization. Measured
+  on 1M rows: `timeRange()` itself ~407 ms → ~0.002 ms (time-keyed); cold
+  `aggregate()` with a defaulted range ~387 ms → ~6 ms (~63×). Every
+  `timeRange()` / `overlaps` / `contains` / `intersection` caller benefits.
+  (Audit v2 §3.3.)
+
 ## [0.23.0] — 2026-06-13
 
 ### Added

@@ -3673,16 +3673,36 @@ export class TimeSeries<S extends SeriesSchema> {
 
   /** Example: `series.timeRange()`. Returns the overall temporal extent of the series, if the series is not empty. */
   timeRange(): TimeRange | undefined {
-    const first = this.first();
-    if (!first) {
+    // Columnar key-axis read. The old implementation reduced over
+    // `this.events`, materializing every Event (the ~495 ns/row + heap
+    // tax) on every call — including the cold `aggregate()` default
+    // range, which erased the 3B fast-path win for one-shot pipelines.
+    const key = this.keyColumn();
+    const n = key.length;
+    if (n === 0) {
       return undefined;
     }
 
-    const start = first.begin();
-    const end = this.events.reduce(
-      (maxEnd, event) => Math.max(maxEnd, event.end()),
-      first.end(),
-    );
+    // `begin` is sorted non-decreasing (the intake invariant) for every
+    // key kind, so the minimum start is always `begin[0]`.
+    const start = key.begin[0]!;
+    let end: number;
+    if (key.kind === 'time') {
+      // Point-in-time keys: `end === begin`, and begin is sorted, so the
+      // maximum end is the final begin. O(1).
+      end = key.begin[n - 1]!;
+    } else {
+      // Range / interval keys: `begin[i] <= end[i]` per row, but `end` is
+      // NOT monotonic (a long early event can outlast the final row), so
+      // the max end needs a scan — a typed-array scan, not Event
+      // materialization. Seeds with `end[0]` and maxes the rest, matching
+      // the old `reduce` seeded at `first.end()`.
+      const ends = key.end;
+      end = ends[0]!;
+      for (let i = 1; i < n; i += 1) {
+        if (ends[i]! > end) end = ends[i]!;
+      }
+    }
     return new TimeRange({ start, end });
   }
 
