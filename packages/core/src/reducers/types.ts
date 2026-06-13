@@ -94,6 +94,23 @@ export type ReducerDef = {
    */
   reduceColumn?(col: Float64Column): ColumnValue | undefined;
 
+  /**
+   * **Columnar fast-path for boundary selectors.** Present only on
+   * `first` / `last`. Marks the reducer as "pick the {first|last}
+   * *defined* value in the bucket" — which a columnar caller can compute
+   * as a boundary scan over the source column (via `col.read(i)`, any
+   * kind / any storage) instead of bailing the whole call to the row
+   * path just because these reducers lack a numeric `reduceColumn`.
+   *
+   * Semantics match `reduce` / `bucketState` exactly: scan past *missing*
+   * cells to the first/last cell whose `read(i)` is not `undefined`; an
+   * all-missing or empty bucket yields `undefined`. This is what lets the
+   * partitioned-`aggregate` fast path run — the auto-injected
+   * partition-column reducer is `'first'` (see `PartitionedTimeSeries`),
+   * which previously tripped the all-or-nothing gate for every call.
+   */
+  definedBoundary?: 'first' | 'last';
+
   /** Return a fresh incremental state for one aggregation bucket. */
   bucketState(): AggregateBucketState;
 
