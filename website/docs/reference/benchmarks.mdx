@@ -9,47 +9,61 @@ This page documents how the two libraries compare across all shared core operati
 
 ## Summary
 
-**pond-ts wins every benchmark** — 54 out of 54 operations tested, across three
-data sizes (1k, 4k, 16k events). The geometric mean speedup is **7.6x**, and
-the advantage grows with data size.
+**pond-ts is faster on every benchmark** — 54 out of 54 operations tested, across
+three data sizes (1k, 4k, 16k events), with zero regressions. The geometric mean
+speedup across the **measurable** operations is **~17x**, and the advantage grows
+with data size. A further **6 operations** (`select` / `rename` at each size) are
+**effectively instant** — pond-ts runs them below the timer's usable resolution
+(`<0.01 ms`), so they're reported as "instant" rather than a misleading
+`pondjs / ~0` ratio and are excluded from the geometric mean.
 
-| Category      | Speedup at N=16k | Key architectural difference                     |
-| ------------- | ---------------- | ------------------------------------------------ |
-| Aggregation   | 25–32x           | O(N+B) single-pass bucketing vs O(N×B) Pipeline  |
-| Alignment     | 32x              | Forward cursor vs repeated binary search         |
-| Rate/diff     | 18x              | Direct array walk vs Pipeline materialization    |
-| Fill          | 10–11x           | Single-pass per strategy vs Pipeline per column  |
-| Transforms    | 3–16x            | Pre-validated constructor skips re-validation    |
-| Construction  | 7x               | Plain frozen objects vs ImmutableJS wrapping     |
-| Statistics    | 7–9x             | Direct array operations vs ImmutableJS iteration |
-| Serialization | 4x               | Lightweight internal representation              |
-| Event access  | 23x              | Array indexing vs ImmutableJS `get()`            |
+| Category      | Speedup at N=16k                                     | Key architectural difference                         |
+| ------------- | ---------------------------------------------------- | ---------------------------------------------------- |
+| Rate          | ~120x                                                | Single columnar walk vs Pipeline materialization     |
+| Fill          | 77–87x                                               | Single columnar pass per strategy vs Pipeline/column |
+| Aggregation   | 57–82x                                               | O(N+B) single-pass bucketing vs O(N×B) Pipeline      |
+| Statistics    | 18–80x                                               | Direct typed-array reduce vs ImmutableJS iteration   |
+| Alignment     | 42x                                                  | Forward cursor vs repeated binary search             |
+| Construction  | 13x                                                  | Columnar intake + frozen objects vs ImmutableJS      |
+| Chained       | 8x                                                   | Derived constructors vs per-step Pipeline + collect  |
+| Transforms    | `select`/`rename` instant; `collapse` 30x; `map` ~4x | Column-store reshapes vs Pipeline per event          |
+| Event access  | 6x                                                   | Array indexing vs ImmutableJS `get()`                |
+| Serialization | 4x                                                   | Lightweight columnar representation                  |
 
-Zero regressions were found. The narrowest gap is `map()` at N=1000 (1.6x),
-still a clear win.
+The narrowest measurable gaps are `map()` (~2–4x, both libraries call a
+user-supplied function per event) and event access / serialization (~2–6x).
+
+> These are single-machine medians (Node, medians-of-20, pondjs 0.9.0); treat the
+> absolute milliseconds as illustrative and the ratios as the signal. The numbers
+> grew substantially over earlier releases as pond-ts moved to a columnar store
+> (the v0.2x "columnar wave") — transforms like `select` / `rename` became O(1)
+> metadata rebinds rather than per-event work.
 
 ## Why it's faster
 
-Three architectural decisions account for most of the improvement:
+A few architectural decisions account for most of the improvement:
 
-### 1. No Pipeline overhead
+### 1. A columnar store, not per-event Pipelines
 
 pondjs routes every operation through a Pipeline abstraction — even simple
 transforms like `select()` or `rename()` construct a pipeline, push events
 through observable nodes, and collect output into keyed collections. This is
-flexible but adds constant overhead per event that dominates at scale.
+flexible but adds constant per-event overhead that dominates at scale.
 
-pond-ts operates directly on arrays. Each transform walks the event array once,
-applies the operation, and passes results to a pre-validated constructor that
-skips redundant schema checks.
+pond-ts keeps data in a columnar store. Many transforms never touch per-event
+objects at all: `select` and `rename` are **metadata-only column rebinds** (the
+underlying typed-array buffers are shared by reference), which is why they clock
+below the timer's resolution. Aggregation, fill, rate, and the statistical
+reducers walk the typed arrays directly, once.
 
 ### 2. No ImmutableJS
 
 pondjs wraps event data in ImmutableJS maps. Every `get()` call, every
 `setData()`, and every event construction pays for ImmutableJS overhead.
 
-pond-ts uses plain frozen JavaScript objects. `Object.freeze()` provides the
-same immutability guarantee at near-zero cost. Event access is a property
+pond-ts uses plain frozen JavaScript objects (materialized lazily from the
+column store only when you actually read events). `Object.freeze()` provides the
+same immutability guarantee at near-zero cost; event access is a property
 lookup, not a map traversal.
 
 ### 3. Algorithmic improvements
@@ -71,8 +85,11 @@ npm run build
 node bench/vs-pondjs.cjs
 ```
 
-The benchmark script measures median execution time over 20 iterations (with 3
-warmup rounds) at N = 1000, 4000, and 16000 events.
+The script measures median execution time over 20 iterations (3 warmup rounds)
+at N = 1000, 4000, and 16000 events, against pondjs 0.9.0. Operations whose
+pond-ts median falls below the timer's usable resolution (`<0.01 ms`) are
+reported as **instant** and excluded from the geometric mean — quoting a
+`pondjs / ~0` ratio there would be meaningless.
 
 ## Detailed results
 
@@ -80,93 +97,97 @@ warmup rounds) at N = 1000, 4000, and 16000 events.
 
 ```
 Operation          N      pondjs (ms)  pond-ts (ms) Speedup
-new TimeSeries()   1000   0.94         0.23         4.1x
-new TimeSeries()   4000   2.91         0.53         5.5x
-new TimeSeries()   16000  14.36        2.17         6.6x
+new TimeSeries()   1000   0.53         0.19         2.8x
+new TimeSeries()   4000   2.59         0.22         11.9x
+new TimeSeries()   16000  12.33        0.94         13.1x
 ```
 
-Construction speedup grows with N because pondjs wraps each event's data in
-an ImmutableJS map during construction.
+Construction speedup grows with N because pondjs wraps each event's data in an
+ImmutableJS map during construction; pond-ts writes straight into columnar
+buffers.
 
 ### Aggregation
 
 ```
 Operation                   N      pondjs (ms)  pond-ts (ms) Speedup
-aggregate(10s, avg)         1000   1.67         0.19         8.9x
-aggregate(1m, sum)          1000   0.91         0.08         11.0x
-aggregate(10s, avg+max+min) 1000   1.86         0.20         9.1x
-aggregate(10s, avg)         4000   4.89         0.20         24.9x
-aggregate(1m, sum)          4000   3.86         0.12         31.2x
-aggregate(10s, avg+max+min) 4000   7.09         0.34         21.2x
-aggregate(10s, avg)         16000  20.35        0.83         24.7x
-aggregate(1m, sum)          16000  15.39        0.49         31.5x
-aggregate(10s, avg+max+min) 16000  32.41        1.33         24.5x
+aggregate(10s, avg)         1000   1.26         0.10         12.1x
+aggregate(1m, sum)          1000   0.85         0.04         19.9x
+aggregate(10s, avg+max+min) 1000   1.56         0.07         22.2x
+aggregate(10s, avg)         4000   4.74         0.17         27.7x
+aggregate(1m, sum)          4000   3.65         0.05         69.5x
+aggregate(10s, avg+max+min) 4000   6.54         0.16         42.0x
+aggregate(10s, avg)         16000  18.20        0.31         58.8x
+aggregate(1m, sum)          16000  13.49        0.17         81.5x
+aggregate(10s, avg+max+min) 16000  28.00        0.50         56.5x
 ```
 
-The largest speedups in the suite. pond-ts's O(N+B) bucket assignment means
-the number of buckets barely affects total time. pondjs's Pipeline-based
-`fixedWindowRollup` does more work per event.
+Among the largest speedups in the suite. pond-ts's O(N+B) bucket assignment
+walks the packed column once, so the number of buckets barely affects total
+time. pondjs's Pipeline-based `fixedWindowRollup` does more work per event.
 
 ### Rate
 
 ```
 Operation      N      pondjs (ms)  pond-ts (ms) Speedup
-rate(value)    1000   1.06         0.27         4.0x
-rate(value)    4000   5.26         0.35         15.1x
-rate(value)    16000  23.81        1.35         17.7x
+rate(value)    1000   0.78         0.09         8.3x
+rate(value)    4000   4.33         0.04         108.4x
+rate(value)    16000  22.01        0.18         119.7x
 ```
 
-pondjs routes `rate()` through the Pipeline. pond-ts walks the array once,
+pondjs routes `rate()` through the Pipeline. pond-ts walks the column once,
 computing deltas in place.
 
 ### Fill
 
 ```
 Operation       N      pondjs (ms)  pond-ts (ms) Speedup
-fill(hold/pad)  1000   0.67         0.29         2.3x
-fill(zero)      1000   0.66         0.30         2.2x
-fill(linear)    1000   0.65         0.31         2.1x
-fill(hold/pad)  4000   3.02         0.81         3.7x
-fill(zero)      4000   3.05         0.29         10.4x
-fill(linear)    4000   3.09         0.29         10.5x
-fill(hold/pad)  16000  12.55        1.20         10.5x
-fill(zero)      16000  12.27        1.19         10.3x
-fill(linear)    16000  12.66        1.18         10.7x
+fill(hold/pad)  1000   0.55         0.03         17.7x
+fill(zero)      1000   0.51         0.03         16.9x
+fill(linear)    1000   0.53         0.06         9.1x
+fill(hold/pad)  4000   2.44         0.13         19.4x
+fill(zero)      4000   2.35         0.03         77.2x
+fill(linear)    4000   2.44         0.03         70.4x
+fill(hold/pad)  16000  11.03        0.13         86.9x
+fill(zero)      16000  10.58        0.13         79.5x
+fill(linear)    16000  11.17        0.15         76.7x
 ```
 
-pondjs's `fill()` constructs a Pipeline per call. For `linear` fill with
-multiple columns, it constructs a separate Pipeline per column. pond-ts handles
-all strategies in a single pass.
+pondjs's `fill()` constructs a Pipeline per call (and, for `linear` over
+multiple columns, a separate Pipeline per column). pond-ts handles all
+strategies in a single columnar pass.
 
 ### Transforms
 
 ```
 Operation                  N      pondjs (ms)  pond-ts (ms) Speedup
-select(value)              1000   0.75         0.14         5.3x
-map(x*2)                   1000   0.73         0.44         1.6x
-collapse(a+b+c, sum)       1000   1.17         0.27         4.3x
-rename(value→measurement)  1000   0.82         0.20         4.2x
-select(value)              4000   3.68         0.26         14.2x
-map(x*2)                   4000   3.43         1.02         3.4x
-collapse(a+b+c, sum)       4000   5.09         0.83         6.1x
-rename(value→measurement)  4000   4.28         0.45         9.6x
-select(value)              16000  16.07        1.01         15.9x
-map(x*2)                   16000  15.39        4.79         3.2x
-collapse(a+b+c, sum)       16000  23.40        3.63         6.4x
-rename(value→measurement)  16000  21.43        1.67         12.8x
+select(value)              1000   0.60         <0.01        instant
+map(x*2)                   1000   0.57         0.28         2.0x
+collapse(a+b+c, sum)       1000   0.96         0.14         7.1x
+rename(value→measurement)  1000   0.84         <0.01        instant
+select(value)              4000   2.92         <0.01        instant
+map(x*2)                   4000   2.68         0.57         4.7x
+collapse(a+b+c, sum)       4000   3.84         0.38         10.2x
+rename(value→measurement)  4000   3.79         <0.01        instant
+select(value)              16000  14.50        <0.01        instant
+map(x*2)                   16000  14.47        3.24         4.5x
+collapse(a+b+c, sum)       16000  19.34        0.65         29.9x
+rename(value→measurement)  16000  18.90        <0.01        instant
 ```
 
-`map()` shows the narrowest gap because both libraries must call a user-provided
-function per event. The difference is entirely in construction overhead: pond-ts
-uses a pre-validated internal constructor path for derived series.
+`select` and `rename` are **metadata-only column rebinds** in pond-ts — they
+return a new series whose columns reference the same underlying buffers, with no
+per-event work — so they run below the timer's resolution at every size
+(reported as "instant"; pondjs still pushes every event through a Pipeline).
+`map()` shows the narrowest measurable gap because both libraries must call a
+user-provided function per event; the difference is construction overhead.
 
 ### Alignment
 
 ```
 Operation              N      pondjs (ms)  pond-ts (ms) Speedup
-align(5s, linear)      1000   1.10         0.13         8.8x
-align(5s, linear)      4000   4.19         0.17         24.7x
-align(10s, linear)     16000  14.13        0.44         32.3x
+align(5s, linear)      1000   1.04         0.11         9.6x
+align(5s, linear)      4000   3.73         0.13         28.6x
+align(10s, linear)     16000  14.11        0.33         42.3x
 ```
 
 pond-ts uses a forward cursor that advances through the source array in sync
@@ -177,45 +198,50 @@ O(M log N) vs pond-ts's O(N + M).
 
 ```
 Operation               N      pondjs (ms)  pond-ts (ms) Speedup
-at(i).get() full scan   1000   0.23         0.08         2.9x
-at(i).get() full scan   4000   0.59         0.17         3.5x
-at(i).get() full scan   16000  2.55         0.11         22.9x
+at(i).get() full scan   1000   0.17         0.08         2.2x
+at(i).get() full scan   4000   0.45         0.13         3.5x
+at(i).get() full scan   16000  1.83         0.30         6.1x
 ```
 
-Pure data access. The gap is ImmutableJS `get()` vs plain property lookup.
+Pure data access. The gap is ImmutableJS `get()` vs plain property lookup on a
+lazily-materialized event.
 
 ### Serialization
 
 ```
 Operation   N      pondjs (ms)  pond-ts (ms) Speedup
-toJSON()    1000   0.41         0.14         3.0x
-toJSON()    4000   1.27         0.28         4.5x
-toJSON()    16000  5.70         1.31         4.4x
+toJSON()    1000   0.31         0.12         2.6x
+toJSON()    4000   1.07         0.29         3.6x
+toJSON()    16000  5.36         1.23         4.4x
 ```
 
 ### Chained operations
 
 ```
 Operation       N      pondjs (ms)  pond-ts (ms) Speedup
-map → select    1000   1.52         0.35         4.3x
-map → select    4000   7.27         1.23         5.9x
-map → select    16000  32.25        6.31         5.1x
+map → select    1000   1.23         0.15         8.0x
+map → select    4000   6.04         0.60         10.1x
+map → select    16000  29.07        3.45         8.4x
 ```
 
 Each step in pondjs creates a new Pipeline and materializes a new collection.
-pond-ts chains derived constructors without re-validating the output.
+pond-ts chains derived constructors on the column store without re-validating
+the output.
 
 ### Statistics
 
 ```
 Operation       N      pondjs (ms)  pond-ts (ms) Speedup
-median(value)   1000   0.29         0.07         4.3x
-stdev(value)    1000   0.23         0.07         3.5x
-median(value)   4000   1.65         0.25         6.5x
-stdev(value)    4000   1.07         0.14         7.9x
-median(value)   16000  9.70         1.31         7.4x
-stdev(value)    16000  5.22         0.57         9.1x
+median(value)   1000   0.26         0.03         8.5x
+stdev(value)    1000   0.23         0.02         12.5x
+median(value)   4000   1.35         0.07         20.2x
+stdev(value)    4000   0.90         0.02         58.1x
+median(value)   16000  8.25         0.47         17.7x
+stdev(value)    16000  4.40         0.05         80.3x
 ```
+
+`stdev` reduces straight over the packed numeric column (Welford, single pass);
+`median` pays for a sort but still walks a typed array rather than ImmutableJS.
 
 ## Capabilities only in pond-ts
 
