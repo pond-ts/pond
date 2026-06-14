@@ -321,40 +321,47 @@ reductions over number columns" (§0) deliver exactly as designed.
   on perf at this scale. First concrete data point for §7's "do not open the
   kind system for geo alone."
 
-### 10.3 New friction not in §5 (row construction + validity)
+### 10.3 New friction not in §5 (row construction)
 
-Both surfaced from the same place: building a track whose optional `ele`/`hr`
-cells may be missing.
+Surfaced from building a track whose optional `ele`/`hr` cells may be missing.
 
 - **F-geo-row-optional — the tuple-row constructor can't express a missing
-  optional cell.** Three-way mismatch:
+  optional cell** (the one genuine new finding here). Three-way mismatch:
   - The **type** `RowForSchema` types every cell strictly by kind and _ignores_
     `required: false` — `null`/`undefined` in a row tuple doesn't typecheck
     (only the JSON object-row input allows `null`).
   - At **runtime** the constructor rejects both `null` **and `NaN`**
     (`ValidationError: row N col M: expected finite number`).
-  - `undefined` _is_ accepted at runtime — but the type forbids it.
-    So the only path is `undefined` + a cast, or a finite sentinel. We sanitise to
-    a finite value, which is wrong in principle (a `0` elevation is real data).
-    **Proposed:** make `RowForSchema` honour `required: false`
-    (`… | null | undefined` for optional cells) so the type matches the runtime's
-    `undefined` acceptance, and document the intended tuple-row missing sentinel.
+  - `undefined` _is_ accepted at runtime — and sets the validity bit correctly
+    (see 10.4) — but the type forbids it.
+  - So the lossless path is `undefined` + a cast. estela casts the rows
+    (`rows: points as never`). It works and is lossless; the only residue is the
+    **type-level** mismatch.
+  - **Proposed:** make `RowForSchema` honour `required: false`
+    (`… | null | undefined` for optional cells) so the type matches the
+    runtime's `undefined` acceptance, and document the intended tuple-row
+    missing sentinel.
 
-- **F-geo-validity — `toFloat64Array()` flattens missing to `0`.** A missing/
-  `undefined` optional cell reads back as `0` from `toFloat64Array()`,
-  indistinguishable from a real `0` — the zero-copy read drops the validity
-  bitmap. Didn't bite M1 (no gaps in the fixture) but will on messy re-imports.
-  **Proposed:** a paired validity accessor (`column('ele').validityMask():
-Uint8Array`) or a documented fill option (`toFloat64Array({ fill: NaN })`);
-  geo wants NaN-fill so missing propagates through math.
+### 10.4 Refuted predictions (verified before claiming)
 
-### 10.4 One refuted prediction (verify before claiming)
+Two assumptions checked against pond's actual types and **retracted** — flagged
+so the friction list stays honest (and as a reminder to grep the public surface
+first):
 
-The implicit assumption that the _key/time_ column had no typed-array accessor
-is **false** — `track.keyColumn().begin` returns the `Float64Array` of ms
-timestamps, clean and fast. (An initial `toArray()` + per-event walk was both
-wrong and slow; corrected to `keyColumn().begin`.) Flagging it so the friction
-list stays honest.
+- **"No typed-array accessor for the key/time column."** False —
+  `track.keyColumn().begin` returns the `Float64Array` of ms timestamps, clean
+  and fast. (An initial `toArray()` + per-event walk was both wrong and slow;
+  corrected.)
+- **"`toFloat64Array()` flattens missing to `0` irrecoverably"** (an earlier
+  draft of this section claimed this as `F-geo-validity` and asked for a new
+  `validityMask()`). Also false: pond already exposes validity publicly —
+  `column.hasMissing()`, `column.validity` (`ValidityBitmap.isDefined(i)`), and
+  `column.scan(fn, { skipInvalid })`; `count()` is validity-aware. The
+  `0`-flattening of `toFloat64Array()` is by design, with validity available
+  alongside (its own JSDoc says so). estela now reads missing cells back as
+  `NaN` via `column.validity` — **no library change needed.** Caught in the
+  estela-side adversarial review before it reached you; recording it here rather
+  than silently dropping it.
 
 ### 10.5 Open questions still open after M1
 
