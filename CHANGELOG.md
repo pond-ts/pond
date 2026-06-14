@@ -55,7 +55,12 @@ type-level changes; patch bumps are strictly additive.
   partitions: `toMap()` ~389 → ~25 ns/row (~15×, no event materialization at
   all); `diff().collect()` ~2×; `fill(hold).collect()` ~1.7× (the residual is
   `TimeSeries.concat` still materializing to re-sort — a separate follow-up).
-  (Audit v2 §3.2.)
+  Declared-`groups` membership is validated by the same columnar scan, so that
+  path is materialization-free too (~331 → ~33 ns/row). **Behavior note:**
+  per-partition sub-series from `toMap()` / `apply()` now lazily materialize
+  their own `Event` objects rather than reusing the source's instances — cell
+  values are identical; only object identity differs (`collect()`, which
+  returns the source unchanged, is unaffected). (Audit v2 §3.2.)
 
 ## [0.23.0] — 2026-06-13
 

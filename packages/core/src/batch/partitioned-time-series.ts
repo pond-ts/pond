@@ -140,16 +140,16 @@ export class PartitionedTimeSeries<
     }
   }
 
-  // Validate that every event's partition value appears in the
-  // declared groups. Mirrors the partition encoder so the comparison
-  // accepts the same string forms toMap will produce as keys.
+  // Validate that every partition value appears in the declared groups.
+  // Scans the partition column columnar-natively via `_distinctPartitionKeys`
+  // (no event materialization — same encoding `toMap` produces), so the
+  // declared-`groups` path is materialization-free like the rest of the
+  // split.
   private validateGroupMembership(): void {
     if (!this.groups) return;
     const col = this.by[0]!;
     const declared = new Set<string>(this.groups);
-    const keyOf = PartitionedTimeSeries.partitionKeyOf<S>(this.by);
-    for (const event of this.source.events) {
-      const key = keyOf(event);
+    for (const key of this.source._distinctPartitionKeys(this.by)) {
       if (!declared.has(key)) {
         // Decode the encoder's leading-space sentinel so the message
         // shows the user-facing concept, not the internal encoding.
@@ -372,34 +372,6 @@ export class PartitionedTimeSeries<
       result.set(key as K, transform ? transform(sub) : sub);
     }
     return result;
-  }
-
-  // Build the encoder that produces a string key for an event given
-  // the partition columns. Single-column case avoids the JSON encoding
-  // overhead. Multi-column uses JSON.stringify to guarantee no key
-  // collisions on values containing separators (e.g. region names with
-  // spaces) — a naive `parts.join('|')` would collide. `undefined` in a
-  // single-column key becomes the literal `' undefined'` (with the
-  // leading space ensuring it can never collide with a string column
-  // whose value is the literal `'undefined'`).
-  private static partitionKeyOf<SX extends SeriesSchema>(
-    by: ReadonlyArray<keyof EventDataForSchema<SX> & string>,
-  ): (event: EventForSchema<SX>) => string {
-    if (by.length === 1) {
-      const col = by[0]!;
-      return (event) => {
-        const v = (event.data() as Record<string, unknown>)[col];
-        return v === undefined ? ' undefined' : `${String(v)}`;
-      };
-    }
-    return (event) => {
-      const data = event.data() as Record<string, unknown>;
-      const parts: unknown[] = new Array(by.length);
-      for (let i = 0; i < by.length; i += 1) {
-        parts[i] = data[by[i]!] ?? null;
-      }
-      return JSON.stringify(parts);
-    };
   }
 
   // Internal helper used by both `apply` (terminal) and the sugar

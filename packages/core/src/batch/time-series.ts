@@ -1128,19 +1128,52 @@ export class TimeSeries<S extends SeriesSchema> {
   }
 
   /**
+   * @internal Per-row partition-key encoder, mirroring the (removed)
+   * event-based `partitionKeyOf` exactly: single column → `String(value)`,
+   * or `' undefined'` (leading space, so it can't collide with the literal
+   * string `'undefined'`) for a missing cell; composite → `JSON.stringify`
+   * of the cells with a `?? null` fallback. Reads cells by index off the
+   * store — no event materialization; array cells stringify as the event
+   * path did. Shared by `_partitionByColumns` and `_distinctPartitionKeys`
+   * so the encoding can't drift between the split and the declared-`groups`
+   * membership check.
+   */
+  #partitionKeyEncoder(by: ReadonlyArray<string>): (i: number) => string {
+    const store = this.#store.store;
+    if (by.length === 1) {
+      // Single-column fast path — no per-row array allocation.
+      const col = store.columns.get(by[0]!)!;
+      return (i) => {
+        const value = col.read(i);
+        return value === undefined ? ' undefined' : `${String(value)}`;
+      };
+    }
+    const cols = by.map((name) => store.columns.get(name)!);
+    const parts: unknown[] = new Array(cols.length);
+    return (i) => {
+      for (let c = 0; c < cols.length; c += 1) {
+        parts[c] = cols[c]!.read(i) ?? null;
+      }
+      return JSON.stringify(parts);
+    };
+  }
+
+  /**
    * @internal Columnar partition split — groups row indices by the partition
-   * key, then gathers each group via `withRowSelection` and wraps it as a
-   * trusted-store `TimeSeries`, with **no event materialization**. The
-   * columnar dual of the old `fromEvents`-per-bucket split that
-   * `PartitionedTimeSeries` paid through `this.events`.
+   * key (see {@link TimeSeries.#partitionKeyEncoder}), gathers each group via
+   * `withRowSelection`, and wraps it as a trusted-store `TimeSeries`, with
+   * **no event materialization**. The columnar dual of the old
+   * `fromEvents`-per-bucket split that `PartitionedTimeSeries` paid through
+   * `this.events`. First-encountered partition order is preserved (Map
+   * insertion order), matching the previous `bucketByPartition`.
    *
-   * The key encoding mirrors `PartitionedTimeSeries.partitionKeyOf` exactly:
-   * single column → `String(value)`, or `' undefined'` (leading space, so it
-   * can't collide with the literal string `'undefined'`) for a missing cell;
-   * composite → `JSON.stringify` of the cells with a `?? null` fallback.
-   * First-encountered partition order is preserved (Map insertion order),
-   * matching the previous `bucketByPartition`. Partition columns of any
-   * scalar or array kind work — array cells stringify as the event path did.
+   * **Identity note:** each sub-series lazily materializes its own `Event`
+   * objects from the gathered store — it does NOT reuse the source's `Event`
+   * instances (the old `fromEvents` path did). Cell values are identical;
+   * only object identity differs, and only for the no-transform paths
+   * (`toMap()` / `apply(g => g)`). `collect()` returns the source unchanged,
+   * so it is unaffected. This is the deliberate cost of skipping
+   * materialization.
    *
    * Used by `PartitionedTimeSeries` (`collect` / sugar via `applyToSource`,
    * and `toMap`).
@@ -1148,33 +1181,16 @@ export class TimeSeries<S extends SeriesSchema> {
   _partitionByColumns(by: ReadonlyArray<string>): Map<string, TimeSeries<S>> {
     const columnarStore = this.#store.store;
     const length = columnarStore.length;
+    const encode = this.#partitionKeyEncoder(by);
     const groups = new Map<string, number[]>();
-
-    const pushIndex = (key: string, i: number): void => {
+    for (let i = 0; i < length; i += 1) {
+      const key = encode(i);
       let indices = groups.get(key);
       if (indices === undefined) {
         indices = [];
         groups.set(key, indices);
       }
       indices.push(i);
-    };
-
-    if (by.length === 1) {
-      // Single-column fast path — no per-row array allocation.
-      const col = columnarStore.columns.get(by[0]!)!;
-      for (let i = 0; i < length; i += 1) {
-        const value = col.read(i);
-        pushIndex(value === undefined ? ' undefined' : `${String(value)}`, i);
-      }
-    } else {
-      const cols = by.map((name) => columnarStore.columns.get(name)!);
-      const parts: unknown[] = new Array(by.length);
-      for (let i = 0; i < length; i += 1) {
-        for (let c = 0; c < cols.length; c += 1) {
-          parts[c] = cols[c]!.read(i) ?? null;
-        }
-        pushIndex(JSON.stringify(parts), i);
-      }
     }
 
     const result = new Map<string, TimeSeries<S>>();
@@ -1190,6 +1206,28 @@ export class TimeSeries<S extends SeriesSchema> {
       );
     }
     return result;
+  }
+
+  /**
+   * @internal Distinct partition keys in first-encountered order, encoded by
+   * {@link TimeSeries.#partitionKeyEncoder} (identical to
+   * `_partitionByColumns`). Scans the partition columns off the store — no
+   * event materialization. Used by `PartitionedTimeSeries`'s declared-`groups`
+   * membership check so that path is materialization-free too.
+   */
+  _distinctPartitionKeys(by: ReadonlyArray<string>): string[] {
+    const length = this.#store.store.length;
+    const encode = this.#partitionKeyEncoder(by);
+    const seen = new Set<string>();
+    const keys: string[] = [];
+    for (let i = 0; i < length; i += 1) {
+      const key = encode(i);
+      if (!seen.has(key)) {
+        seen.add(key);
+        keys.push(key);
+      }
+    }
+    return keys;
   }
 
   /**

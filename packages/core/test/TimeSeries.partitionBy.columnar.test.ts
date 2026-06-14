@@ -84,6 +84,49 @@ describe('partitionBy columnar split — key encoding parity', () => {
     expect(m.get('3')?.length).toBe(1);
   });
 
+  it('sub-series carry equal cell values but not source Event identity', () => {
+    // Deliberate trade for skipping materialization: the columnar split
+    // gathers a fresh store per partition, so its events lazily materialize
+    // as new instances rather than reusing the source's `Event` objects.
+    // Cell values are identical; only object identity differs. (The old
+    // `fromEvents` path reused source instances.)
+    const ts = new TimeSeries({
+      name: 's',
+      schema,
+      rows: [
+        [0, 1, 'a'],
+        [10_000, 2, 'a'],
+      ],
+    });
+    const sub = ts.partitionBy('host').toMap().get('a');
+    expect(sub?.at(0)?.get('cpu')).toBe(1); // value identical to source row 0
+    expect(sub?.at(0)?.get('host')).toBe('a');
+    expect(sub?.at(0)).not.toBe(ts.at(0)); // but not the same Event instance
+  });
+
+  it('declared groups validate via a columnar scan (no materialization)', () => {
+    // The membership check now scans the partition column off the store; an
+    // out-of-group value still throws at construction, same as before.
+    const rows = [
+      [0, 1, 'a'],
+      [10_000, 2, 'c'], // 'c' not in declared groups
+    ] as const;
+    expect(() =>
+      new TimeSeries({ name: 's', schema, rows: rows.map((r) => [...r]) }) //
+        .partitionBy('host', { groups: ['a', 'b'] as const }),
+    ).toThrow(/not in declared groups/);
+    // Valid membership constructs fine and toMap honors declared order.
+    const ok = new TimeSeries({
+      name: 's',
+      schema,
+      rows: [
+        [0, 1, 'b'],
+        [10_000, 2, 'a'],
+      ],
+    }).partitionBy('host', { groups: ['a', 'b'] as const });
+    expect([...ok.toMap().keys()]).toEqual(['a', 'b']); // declared order
+  });
+
   it('encodes a composite partition with a missing component as null', () => {
     const cSchema = [
       { name: 'time', kind: 'time' },

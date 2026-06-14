@@ -85,6 +85,15 @@ for (const n of [100_000]) {
       ({ length: s.partitionBy('host').toMap().size }),
     ),
   );
+  // Declared-groups path: membership is validated in the constructor. It now
+  // scans the partition column columnar-natively (was: a full `source.events`
+  // walk), so this path is materialization-free too.
+  const hostGroups = Array.from({ length: 64 }, (_, i) => `host-${i}`);
+  results.push(
+    benchmark('partitionBy(host,{groups}).toMap()', n, (s) => ({
+      length: s.partitionBy('host', { groups: hostGroups }).toMap().size,
+    })),
+  );
 }
 
 console.log(JSON.stringify(results, null, 2));
