@@ -117,6 +117,7 @@ import {
   withColumnsSelected,
   withKeyColumn,
   withRowRange,
+  withRowSelection,
 } from '../columnar/index.js';
 import type { KeyColumnForSchema, PublicColumnForKind } from '../column.js';
 import { SeriesStore } from '../live/series-store.js';
@@ -1124,6 +1125,71 @@ export class TimeSeries<S extends SeriesSchema> {
     return new TimeSeries<NextSchema>(
       trustedInput as unknown as TimeSeriesInput<NextSchema>,
     );
+  }
+
+  /**
+   * @internal Columnar partition split — groups row indices by the partition
+   * key, then gathers each group via `withRowSelection` and wraps it as a
+   * trusted-store `TimeSeries`, with **no event materialization**. The
+   * columnar dual of the old `fromEvents`-per-bucket split that
+   * `PartitionedTimeSeries` paid through `this.events`.
+   *
+   * The key encoding mirrors `PartitionedTimeSeries.partitionKeyOf` exactly:
+   * single column → `String(value)`, or `' undefined'` (leading space, so it
+   * can't collide with the literal string `'undefined'`) for a missing cell;
+   * composite → `JSON.stringify` of the cells with a `?? null` fallback.
+   * First-encountered partition order is preserved (Map insertion order),
+   * matching the previous `bucketByPartition`. Partition columns of any
+   * scalar or array kind work — array cells stringify as the event path did.
+   *
+   * Used by `PartitionedTimeSeries` (`collect` / sugar via `applyToSource`,
+   * and `toMap`).
+   */
+  _partitionByColumns(by: ReadonlyArray<string>): Map<string, TimeSeries<S>> {
+    const columnarStore = this.#store.store;
+    const length = columnarStore.length;
+    const groups = new Map<string, number[]>();
+
+    const pushIndex = (key: string, i: number): void => {
+      let indices = groups.get(key);
+      if (indices === undefined) {
+        indices = [];
+        groups.set(key, indices);
+      }
+      indices.push(i);
+    };
+
+    if (by.length === 1) {
+      // Single-column fast path — no per-row array allocation.
+      const col = columnarStore.columns.get(by[0]!)!;
+      for (let i = 0; i < length; i += 1) {
+        const value = col.read(i);
+        pushIndex(value === undefined ? ' undefined' : `${String(value)}`, i);
+      }
+    } else {
+      const cols = by.map((name) => columnarStore.columns.get(name)!);
+      const parts: unknown[] = new Array(by.length);
+      for (let i = 0; i < length; i += 1) {
+        for (let c = 0; c < cols.length; c += 1) {
+          parts[c] = cols[c]!.read(i) ?? null;
+        }
+        pushIndex(JSON.stringify(parts), i);
+      }
+    }
+
+    const result = new Map<string, TimeSeries<S>>();
+    for (const [key, rowIndices] of groups) {
+      const sub = withRowSelection(columnarStore, new Int32Array(rowIndices));
+      result.set(
+        key,
+        TimeSeries.#fromTrustedStore(
+          this.name,
+          this.schema,
+          sub as unknown as ColumnarStore<ColumnSchema>,
+        ),
+      );
+    }
+    return result;
   }
 
   /**

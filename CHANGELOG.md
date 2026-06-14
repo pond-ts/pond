@@ -42,6 +42,20 @@ type-level changes; patch bumps are strictly additive.
   `{ cpu: 'avg', host: 'first' }`: ~37.7 ms → ~4.8 ms (~7.8×); the
   pure-numeric path is unchanged. (The remaining `partitionBy` materialization
   cost is addressed separately by the columnar `partitionBy` split.)
+- **`partitionBy(...)` now splits the columnar store directly instead of
+  materializing events.** `collect()` / the per-partition sugar methods
+  (`fill` / `diff` / `rolling` / …) and `toMap()` previously walked
+  `this.events` to bucket rows, then rebuilt each partition via `fromEvents`
+  (re-validating + re-packing) — silently re-paying the event-materialization
+  tax the columnar wave removed, and making `partitionBy(host).fill().collect()`
+  the #1 batch hotspot. They now group row indices off the store and gather
+  each partition via a zero-materialization columnar selection. Behavior is
+  unchanged (partition order, the `' undefined'` missing-key bucket, composite
+  keys, and declared `groups` all preserved). Measured on 100k rows / 64
+  partitions: `toMap()` ~389 → ~25 ns/row (~15×, no event materialization at
+  all); `diff().collect()` ~2×; `fill(hold).collect()` ~1.7× (the residual is
+  `TimeSeries.concat` still materializing to re-sort — a separate follow-up).
+  (Audit v2 §3.2.)
 
 ## [0.23.0] — 2026-06-13
 
