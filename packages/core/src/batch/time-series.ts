@@ -126,6 +126,8 @@ import type { DurationInput } from '../core/duration.js';
 import { parseDuration } from '../core/duration.js';
 import {
   resolveReducer,
+  bucketStateFor,
+  rollingStateFor,
   type AggregateBucketState,
   type RollingReducerState,
 } from '../reducers/index.js';
@@ -520,8 +522,13 @@ function aggregateValues(
   operation: AggregateFunction,
   values: ReadonlyArray<ColumnValue | undefined>,
 ): ColumnValue | undefined {
+  // Non-finite numerics (NaN / ±Inf) are treated as missing — excluded from
+  // both `defined` and `numeric` so every built-in reducer skips them exactly
+  // as it skips a missing cell. See docs/notes/reducer-nan-policy.md.
   const defined = values.filter(
-    (value): value is ColumnValue => value !== undefined,
+    (value): value is ColumnValue =>
+      value !== undefined &&
+      (typeof value !== 'number' || Number.isFinite(value)),
   );
   const numeric = defined.filter(
     (value): value is number => typeof value === 'number',
@@ -577,7 +584,9 @@ function applyAggregateReducer(
 function createAggregateBucketState(
   operation: AggregateFunction,
 ): AggregateBucketState {
-  return resolveReducer(operation).bucketState();
+  // Delegates to the shared factory so the non-finite skip policy
+  // (docs/notes/reducer-nan-policy.md) applies uniformly to batch + live.
+  return bucketStateFor(operation);
 }
 
 /**
@@ -602,7 +611,9 @@ function resolveArrayAggregateKind(
 function createRollingReducerState(
   operation: AggregateFunction,
 ): RollingReducerState {
-  return resolveReducer(operation).rollingState();
+  // Delegates to the shared factory so the non-finite skip policy
+  // (docs/notes/reducer-nan-policy.md) applies uniformly to batch + live.
+  return rollingStateFor(operation);
 }
 
 function duplicateValueColumnNames(

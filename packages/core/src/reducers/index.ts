@@ -56,6 +56,45 @@ export function resolveReducer(operation: string): ReducerDef {
 }
 
 /**
+ * Non-finite numerics (`NaN` / `±Infinity`) are treated as **missing** by
+ * every built-in reducer — the reducer non-finite policy
+ * (docs/notes/reducer-nan-policy.md). Row intake keeps user data finite; these
+ * values only arise inside computed columns (e.g. `cumulative` overflow) or
+ * trusted construction, and skipping them keeps every reducer consistent
+ * across all four execution paths. Mapping to `undefined` here lets the
+ * existing skip-missing logic in each incremental state do the work — so the
+ * policy holds for both the batch and live incremental paths without touching
+ * any reducer body. Custom-function reducers are intentionally NOT wrapped:
+ * they receive values as-is (the escape hatch decides its own semantics).
+ */
+function finiteOrMissing(
+  value: ColumnValue | undefined,
+): ColumnValue | undefined {
+  return typeof value === 'number' && !Number.isFinite(value)
+    ? undefined
+    : value;
+}
+
+/** Wrap a bucket state so non-finite numerics are skipped. {@link finiteOrMissing} */
+function skipNonFiniteBucket(
+  state: AggregateBucketState,
+): AggregateBucketState {
+  return {
+    add: (value) => state.add(finiteOrMissing(value)),
+    snapshot: () => state.snapshot(),
+  };
+}
+
+/** Wrap a rolling state so non-finite numerics are skipped. {@link finiteOrMissing} */
+function skipNonFiniteRolling(state: RollingReducerState): RollingReducerState {
+  return {
+    add: (index, value) => state.add(index, finiteOrMissing(value)),
+    remove: (index, value) => state.remove(index, finiteOrMissing(value)),
+    snapshot: () => state.snapshot(),
+  };
+}
+
+/**
  * Build an `AggregateBucketState` for a reducer that may be either a
  * built-in name (string) or a custom function. Built-ins use their
  * dedicated incremental machinery (O(1) `add`, O(1) `snapshot`).
@@ -68,7 +107,7 @@ export function bucketStateFor(
   reducer: AggregateReducer,
 ): AggregateBucketState {
   if (typeof reducer === 'string') {
-    return resolveReducer(reducer).bucketState();
+    return skipNonFiniteBucket(resolveReducer(reducer).bucketState());
   }
   // Custom-function adapter: buffer values, call fn at snapshot time.
   const items: Array<ColumnValue | undefined> = [];
@@ -109,7 +148,7 @@ export function rollingStateFor(
   reducer: AggregateReducer,
 ): RollingReducerState {
   if (typeof reducer === 'string') {
-    return resolveReducer(reducer).rollingState();
+    return skipNonFiniteRolling(resolveReducer(reducer).rollingState());
   }
   // Custom-function adapter: Map keyed by event index for O(1) remove.
   const items = new Map<number, ColumnValue | undefined>();

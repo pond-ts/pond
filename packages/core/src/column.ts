@@ -555,30 +555,52 @@ Float64Column.prototype.minMax = function (): [number, number] | undefined {
   const values = this._values;
   const n = this.length;
   if (n === 0) return undefined;
-  let i = 0;
-  let lo: number;
-  let hi: number;
-  if (!v) {
-    lo = values[0]!;
+  if (this.allFinite) {
+    // Provably finite (the chart axis hot path) → no per-element finite
+    // guard; the seeded comparison is unambiguous without NaN.
+    let i = 0;
+    let lo: number;
+    let hi: number;
+    if (!v) {
+      lo = values[0]!;
+      hi = lo;
+      for (i = 1; i < n; i += 1) {
+        const x = values[i]!;
+        lo = lo <= x ? lo : x;
+        hi = hi >= x ? hi : x;
+      }
+      return [lo, hi];
+    }
+    while (i < n && !v.isDefined(i)) i += 1;
+    if (i >= n) return undefined;
+    lo = values[i]!;
     hi = lo;
-    for (i = 1; i < n; i += 1) {
+    for (i += 1; i < n; i += 1) {
+      if (!v.isDefined(i)) continue;
       const x = values[i]!;
       lo = lo <= x ? lo : x;
       hi = hi >= x ? hi : x;
     }
     return [lo, hi];
   }
-  while (i < n && !v.isDefined(i)) i += 1;
-  if (i >= n) return undefined;
-  lo = values[i]!;
-  hi = lo;
-  for (i += 1; i < n; i += 1) {
-    if (!v.isDefined(i)) continue;
+  // Guarded: skip non-finite (and missing) cells, matching the reducer
+  // `min`/`max` (reducer non-finite policy — docs/notes/reducer-nan-policy.md).
+  // All-non-finite (or empty) → undefined.
+  let lo: number | undefined;
+  let hi: number | undefined;
+  for (let i = 0; i < n; i += 1) {
+    if (v && !v.isDefined(i)) continue;
     const x = values[i]!;
-    lo = lo <= x ? lo : x;
-    hi = hi >= x ? hi : x;
+    if (!Number.isFinite(x)) continue;
+    if (lo === undefined) {
+      lo = x;
+      hi = x;
+    } else {
+      if (x < lo) lo = x;
+      if (x > hi!) hi = x;
+    }
   }
-  return [lo, hi];
+  return lo === undefined ? undefined : [lo, hi!];
 };
 
 Float64Column.prototype.hasMissing = function (): boolean {
@@ -712,6 +734,38 @@ Float64Column.prototype.bin = function <R extends BinReducerName>(
     // underlying buffer.
     const values = this._values;
     const validity = this.validity;
+    if (!this.allFinite) {
+      // Guarded path: skip non-finite values (reducer non-finite policy —
+      // docs/notes/reducer-nan-policy.md), matching `minMax()` / the reducer
+      // min/max. A bin with no finite value (all-missing or all-non-finite)
+      // keeps the NaN empty-bin sentinel.
+      for (let b = 0; b < bins; b += 1) {
+        const start = Math.floor((b * n) / bins);
+        const end = Math.floor(((b + 1) * n) / bins);
+        let loVal: number | undefined;
+        let hiVal: number | undefined;
+        for (let i = start; i < end; i += 1) {
+          if (validity !== undefined && !validity.isDefined(i)) continue;
+          const x = values[i]!;
+          if (!Number.isFinite(x)) continue;
+          if (loVal === undefined) {
+            loVal = x;
+            hiVal = x;
+          } else {
+            if (x < loVal) loVal = x;
+            if (x > hiVal!) hiVal = x;
+          }
+        }
+        if (loVal === undefined) {
+          lo[b] = NaN;
+          hi[b] = NaN;
+        } else {
+          lo[b] = loVal;
+          hi[b] = hiVal!;
+        }
+      }
+      return { lo, hi } as BinOutput<R>;
+    }
     if (validity === undefined) {
       for (let b = 0; b < bins; b += 1) {
         const start = Math.floor((b * n) / bins);
@@ -1075,9 +1129,15 @@ ChunkedFloat64Column.prototype.percentile = function (
   return materializeChunkedFloat64(this).percentile(q);
 };
 ChunkedFloat64Column.prototype.count = function (): number {
-  // Validity-defined-count is available without materializing.
-  if (!this.validity) return this.length;
-  return this.validity.definedCount;
+  // The O(1) defined-count is correct only when the column is provably
+  // finite. Non-finite cells are skipped (reducer non-finite policy —
+  // docs/notes/reducer-nan-policy.md), so when finiteness isn't proven,
+  // delegate to the materialized packed `count()` (which routes through the
+  // count reducer and skips non-finite) — matching packed `Float64Column`.
+  if (this.allFinite) {
+    return this.validity ? this.validity.definedCount : this.length;
+  }
+  return materializeChunkedFloat64(this).count();
 };
 ChunkedFloat64Column.prototype.minMax = function ():
   | [number, number]

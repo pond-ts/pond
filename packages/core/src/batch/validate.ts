@@ -526,7 +526,13 @@ export function validateAndNormalizeColumnar<S extends SeriesSchema>(
     let column: Column;
     switch (kind) {
       case 'number':
-        column = new Float64Column(numberBufs[c]!, length, validity);
+        // Strict intake: `assertCellKind` (kind 'number') already
+        // rejected every non-finite cell with a `ValidationError`
+        // before it reached `numberBufs`, so a surviving column is
+        // provably all-finite → `allFinite: true` (lets reducers skip
+        // the per-element finite guard). See the reducer non-finite
+        // policy + `Float64Column.allFinite`'s safety contract.
+        column = new Float64Column(numberBufs[c]!, length, validity, true);
         break;
       case 'boolean':
         column = new BooleanColumn(booleanBufs[c]!, length, validity);

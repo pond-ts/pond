@@ -26,10 +26,37 @@ export const count: ReducerDef = {
     return defined.length;
   },
   reduceColumn(col) {
-    // O(1) when validity is precomputed (it always is on Float64Column —
-    // `validity.definedCount` is cached at construction). Falls back to
-    // `col.length` when no validity bitmap exists (every cell defined).
-    return col.validity === undefined ? col.length : col.validity.definedCount;
+    const values = col._values;
+    const validity = col.validity;
+    // Fast path: every defined cell is finite (`Float64Column.allFinite`),
+    // so "defined" and "defined AND finite" coincide — the O(1) shortcut
+    // is exact again (`definedCount`, or `col.length` when no bitmap).
+    // This is the O(N)→O(1) recovery the non-finite policy cost count
+    // (docs/notes/reducer-nan-policy.md).
+    if (col.allFinite) {
+      return validity === undefined ? col.length : validity.definedCount;
+    }
+    // Guarded path: O(N) scan, NOT the `definedCount` shortcut — the
+    // non-finite policy excludes non-finite cells, and `definedCount`
+    // counts them as present, so a defined-but-NaN cell would over-count.
+    // Walk and count valid AND finite cells.
+    let n = 0;
+    if (validity === undefined) {
+      for (let i = 0; i < col.length; i += 1) {
+        if (Number.isFinite(values[i]!)) n += 1;
+      }
+      return n;
+    }
+    const bits = validity.bits;
+    for (let i = 0; i < col.length; i += 1) {
+      if (
+        (bits[i >> 3]! & (1 << (i & 7))) !== 0 &&
+        Number.isFinite(values[i]!)
+      ) {
+        n += 1;
+      }
+    }
+    return n;
   },
   bucketState() {
     let n = 0;

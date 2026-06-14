@@ -9,32 +9,41 @@ export const min: ReducerDef = {
       : numeric.reduce((a, b) => (a <= b ? a : b));
   },
   reduceColumn(col) {
-    // **NaN parity with row API.** The row-API path uses
-    //   numeric.reduce((a, b) => a <= b ? a : b)
-    // which has surprising NaN behavior: on `[1, NaN, 2]` it returns
-    // `2` because the first `1 <= NaN` is false (returning NaN),
-    // then `NaN <= 2` is also false (returning 2). The "natural"
-    // column-side loop `if (v < lo) lo = v` would instead return
-    // `1` (NaN comparisons always false → NaN is skipped). The two
-    // paths diverge on NaN-bearing input.
-    //
-    // We mirror the row-API comparison expression exactly to
-    // preserve the parity claim, even though both paths exhibit
-    // surprising results on NaN (which can only reach a `kind:
-    // 'number'` column via trusted construction — `assertCellKind`
-    // rejects it at public intake). Closed Codex review finding on
-    // PR #153. A principled "filter NaN consistently across both
-    // paths" fix is a separate concern tracked in the followup
-    // issue.
     const values = col._values;
     const validity = col.validity;
     let lo: number | undefined;
-    if (validity === undefined) {
-      if (col.length === 0) return undefined;
-      lo = values[0]!;
-      for (let i = 1; i < col.length; i += 1) {
+    // Fast path: every defined cell is finite (`Float64Column.allFinite`),
+    // so we seed `lo` from the first defined cell and run a plain `v < lo`
+    // compare with NO per-element `Number.isFinite` guard and NO in-loop
+    // `lo === undefined` check (the seed hoists it out). There is no NaN to
+    // mishandle, so this also sidesteps the position-dependent `a<=b?a:b`
+    // extremum bug the policy fixed (docs/notes/reducer-nan-policy.md). This
+    // is the pre-policy column loop, recovered.
+    if (col.allFinite) {
+      const len = col.length;
+      if (len === 0) return undefined;
+      if (validity === undefined) {
+        lo = values[0]!;
+        for (let i = 1; i < len; i += 1) {
+          const v = values[i]!;
+          if (v < lo) lo = v;
+        }
+        return lo;
+      }
+      const bits = validity.bits;
+      for (let i = 0; i < len; i += 1) {
+        if ((bits[i >> 3]! & (1 << (i & 7))) === 0) continue;
         const v = values[i]!;
-        lo = lo <= v ? lo : v;
+        if (lo === undefined || v < lo) lo = v;
+      }
+      return lo;
+    }
+    // Guarded path: skip non-finite cells (reducer non-finite policy) —
+    // matches `bucketState`'s `v < lo`.
+    if (validity === undefined) {
+      for (let i = 0; i < col.length; i += 1) {
+        const v = values[i]!;
+        if (Number.isFinite(v) && (lo === undefined || v < lo)) lo = v;
       }
       return lo;
     }
@@ -42,7 +51,7 @@ export const min: ReducerDef = {
     for (let i = 0; i < col.length; i += 1) {
       if ((bits[i >> 3]! & (1 << (i & 7))) === 0) continue;
       const v = values[i]!;
-      lo = lo === undefined ? v : lo <= v ? lo : v;
+      if (Number.isFinite(v) && (lo === undefined || v < lo)) lo = v;
     }
     return lo;
   },
