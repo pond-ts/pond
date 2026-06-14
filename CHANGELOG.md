@@ -31,6 +31,17 @@ type-level changes; patch bumps are strictly additive.
   `aggregate()` with a defaulted range ~387 ms → ~6 ms (~63×). Every
   `timeRange()` / `overlaps` / `contains` / `intersection` caller benefits.
   (Audit v2 §3.3.)
+- **`aggregate()` now takes the columnar fast path when a mapping mixes
+  numeric reducers with `first` / `last`.** Previously a single `first` or
+  `last` column (they have no numeric `reduceColumn`) bailed the entire call
+  to the row path. They now qualify via a boundary scan — the first/last
+  _defined_ cell, on any column kind. Behavior is unchanged. The big
+  beneficiary is **partitioned `aggregate`**, which auto-injects a `'first'`
+  reducer for the partition column and so was excluded from the fast path on
+  every call (audit v2 §3.2/§3.3). Measured on 1M rows, flat
+  `{ cpu: 'avg', host: 'first' }`: ~37.7 ms → ~4.8 ms (~7.8×); the
+  pure-numeric path is unchanged. (The remaining `partitionBy` materialization
+  cost is addressed separately by the columnar `partitionBy` split.)
 
 ## [0.23.0] — 2026-06-13
 

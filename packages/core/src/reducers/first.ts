@@ -4,6 +4,7 @@ import { rollingOrderedEntries } from './rolling.js';
 
 export const first: ReducerDef = {
   outputKind: 'source',
+  definedBoundary: 'first',
   reduce(defined) {
     return defined[0];
   },

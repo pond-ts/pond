@@ -130,9 +130,17 @@ export function normalizeAggregateColumns<S extends SeriesSchema>(
  * row path pays. Reuses the shipped step-3A `reduceColumn` kernels
  * (sum/min/max/avg 59–73×, stdev 35×, median/p95 3.4×) per bucket.
  *
+ * `first` / `last` also qualify, on **any** column kind / storage, via a
+ * boundary scan (the first/last *defined* cell in the bucket — see
+ * `ReducerDef.definedBoundary`). This is what lets a partitioned
+ * `aggregate` take the fast path: its auto-injected partition-column
+ * reducer is `'first'`, which previously tripped the all-or-nothing gate
+ * for every partitioned call.
+ *
  * Returns `null` — caller takes the unchanged row path — when any column
- * doesn't qualify: a custom-function reducer, a reducer with no
- * `reduceColumn` (`first` / `last` / `unique` / `top` / `samples`), or a
+ * doesn't qualify: a custom-function reducer; a reducer that is neither a
+ * numeric `reduceColumn` kernel nor a `first`/`last` boundary selector
+ * (`unique` / `top` / `samples` / `keep`); or a numeric reducer over a
  * non-numeric / chunked / missing source column. All-or-nothing per call
  * keeps the bucket walk single-pass; mixed mappings fall back wholesale.
  *
@@ -144,6 +152,14 @@ export function normalizeAggregateColumns<S extends SeriesSchema>(
  * empty-input result (the step-3A parity contract guarantees this matches
  * a zero-`add` bucket snapshot).
  */
+type ColumnarAggregatePlan =
+  | {
+      kind: 'reduce';
+      column: Float64Column;
+      reduce: (col: Float64Column) => ColumnValue | undefined;
+    }
+  | { kind: 'boundary'; column: Column; which: 'first' | 'last' };
+
 export function tryAggregateColumnarTimeKeyed<
   B extends { begin(): number; end(): number },
 >(
@@ -152,23 +168,32 @@ export function tryAggregateColumnarTimeKeyed<
   buckets: ReadonlyArray<B>,
   columns: ReadonlyArray<AggregateColumnSpec>,
 ): Array<ReadonlyArray<unknown>> | null {
-  const plans: Array<{
-    column: Float64Column;
-    reduce: (col: Float64Column) => ColumnValue | undefined;
-  }> = [];
+  const plans: ColumnarAggregatePlan[] = [];
   for (const spec of columns) {
     if (typeof spec.reducer !== 'string') return null; // custom function
     const def = resolveReducer(spec.reducer);
-    if (def.reduceColumn === undefined) return null; // first/last/unique/...
     const source = getColumn(spec.source);
-    if (
-      source === undefined ||
-      source.kind !== 'number' ||
-      source.storage !== 'packed'
-    ) {
-      return null; // non-numeric / chunked / missing source
+    if (source === undefined) return null; // missing source
+
+    if (def.definedBoundary !== undefined) {
+      // `first` / `last`: pick the first/last *defined* cell in the bucket
+      // via a boundary scan over any column kind / storage (`col.read(i)`).
+      // This is what lets a partitioned `aggregate` — whose auto-injected
+      // partition-column reducer is `'first'` — take the fast path instead
+      // of bailing the whole call for lack of a numeric `reduceColumn`.
+      plans.push({
+        kind: 'boundary',
+        column: source,
+        which: def.definedBoundary,
+      });
+      continue;
     }
-    plans.push({ column: source, reduce: def.reduceColumn });
+
+    if (def.reduceColumn === undefined) return null; // unique / top / samples / keep
+    if (source.kind !== 'number' || source.storage !== 'packed') {
+      return null; // non-numeric / chunked numeric source
+    }
+    plans.push({ kind: 'reduce', column: source, reduce: def.reduceColumn });
   }
 
   const n = begins.length;
@@ -187,7 +212,31 @@ export function tryAggregateColumnarTimeKeyed<
     const reduced: Array<ColumnValue | undefined> = new Array(plans.length);
     for (let p = 0; p < plans.length; p += 1) {
       const plan = plans[p]!;
-      reduced[p] = plan.reduce(plan.column.sliceByRange(start, scan));
+      if (plan.kind === 'reduce') {
+        reduced[p] = plan.reduce(plan.column.sliceByRange(start, scan));
+      } else if (plan.which === 'first') {
+        // First defined cell in [start, scan); scans past missing cells.
+        let value: ColumnValue | undefined;
+        for (let i = start; i < scan; i += 1) {
+          const cell = plan.column.read(i);
+          if (cell !== undefined) {
+            value = cell;
+            break;
+          }
+        }
+        reduced[p] = value;
+      } else {
+        // Last defined cell in [start, scan); scans backward past missing.
+        let value: ColumnValue | undefined;
+        for (let i = scan - 1; i >= start; i -= 1) {
+          const cell = plan.column.read(i);
+          if (cell !== undefined) {
+            value = cell;
+            break;
+          }
+        }
+        reduced[p] = value;
+      }
     }
     rows[b] = Object.freeze([bucket, ...reduced]);
   }
