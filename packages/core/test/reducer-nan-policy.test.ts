@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Event, Sequence, Time, TimeSeries } from '../src/index.js';
 import { bucketStateFor, rollingStateFor } from '../src/reducers/index.js';
+import { Float64Column } from '../src/columnar/index.js';
 import type { ColumnValue } from '../src/schema/index.js';
 
 // Parity matrix for the reducer non-finite policy
@@ -216,5 +217,55 @@ describe('reducer non-finite policy — allFinite is data-derived on computed co
     // cases above would still pass vacuously. Confirm the packed value is Inf.
     const computed = cumulativeWithInfinity();
     expect(computed.at(1)?.get('value' as never)).toBe(Infinity);
+  });
+});
+
+// Exercises the `allFinite: true` FAST reduceColumn loop directly and pins it
+// against the guarded loop. Row-API intake → `allFinite: true` (the guard is
+// skipped); `fromEvents` → builder → `allFinite: false` (guarded). On finite
+// data the two loops must agree exactly. The broad suite covers the fast path
+// implicitly; this is the explicit drift-defense between the two variants.
+describe('reducer non-finite policy — allFinite fast path == guarded path', () => {
+  const finite = [5, 1, 9, 3];
+  const fastPath = new TimeSeries({
+    name: 's',
+    schema,
+    rows: finite.map((v, i) => [i * 1000, v]),
+  });
+  const guardedPath = makeSeries(finite);
+
+  it('intake column is allFinite (fast); fromEvents column is not (guarded)', () => {
+    expect((fastPath.column('value') as Float64Column).allFinite).toBe(true);
+    expect((guardedPath.column('value') as Float64Column).allFinite).toBe(
+      false,
+    );
+  });
+
+  for (const name of [
+    'sum',
+    'count',
+    'avg',
+    'min',
+    'max',
+    'median',
+    'p95',
+    'stdev',
+  ]) {
+    it(`${name}: fast path === guarded path on finite data`, () => {
+      // Same arithmetic, guard merely skipped → bit-identical result.
+      expect(fastPath.reduce('value', name)).toBe(
+        guardedPath.reduce('value', name),
+      );
+      expect(aggregateAll(fastPath, name)).toBe(
+        aggregateAll(guardedPath, name) as never,
+      );
+    });
+  }
+
+  it('sanity: known values on the fast path', () => {
+    expect(fastPath.reduce('value', 'sum')).toBe(18);
+    expect(fastPath.reduce('value', 'min')).toBe(1);
+    expect(fastPath.reduce('value', 'max')).toBe(9);
+    expect(fastPath.reduce('value', 'count')).toBe(4);
   });
 });
