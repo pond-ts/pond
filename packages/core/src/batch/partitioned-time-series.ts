@@ -140,16 +140,16 @@ export class PartitionedTimeSeries<
     }
   }
 
-  // Validate that every event's partition value appears in the
-  // declared groups. Mirrors the partition encoder so the comparison
-  // accepts the same string forms toMap will produce as keys.
+  // Validate that every partition value appears in the declared groups.
+  // Scans the partition column columnar-natively via `_distinctPartitionKeys`
+  // (no event materialization — same encoding `toMap` produces), so the
+  // declared-`groups` path is materialization-free like the rest of the
+  // split.
   private validateGroupMembership(): void {
     if (!this.groups) return;
     const col = this.by[0]!;
     const declared = new Set<string>(this.groups);
-    const keyOf = PartitionedTimeSeries.partitionKeyOf<S>(this.by);
-    for (const event of this.source.events) {
-      const key = keyOf(event);
+    for (const key of this.source._distinctPartitionKeys(this.by)) {
       if (!declared.has(key)) {
         // Decode the encoder's leading-space sentinel so the message
         // shows the user-facing concept, not the internal encoding.
@@ -341,10 +341,13 @@ export class PartitionedTimeSeries<
   toMap<R>(transform: (group: TimeSeries<S>) => R): Map<K, R>;
   toMap(transform?: (group: TimeSeries<S>) => unknown): Map<K, unknown> {
     const result = new Map<K, unknown>();
-    const buckets =
-      this.source.events.length === 0
-        ? new Map<string, EventForSchema<S>[]>()
-        : PartitionedTimeSeries.bucketByPartition(this.source, this.by);
+    // Columnar partition split — each sub-series is gathered straight off
+    // the store, no event materialization (the old path rebuilt every
+    // partition via `fromEvents`). Map order = first-encountered partition.
+    const partitions =
+      this.source.length === 0
+        ? new Map<string, TimeSeries<S>>()
+        : this.source._partitionByColumns(this.by);
 
     if (this.groups) {
       // Declared-order iteration. Empty groups produce empty
@@ -352,11 +355,12 @@ export class PartitionedTimeSeries<
       // groups behavior, which emits a column for every declared
       // value even when no events match).
       for (const g of this.groups) {
-        const events = buckets.get(g) ?? [];
-        const sub = TimeSeries.fromEvents(events, {
-          schema: this.source.schema,
-          name: this.source.name,
-        });
+        const sub =
+          partitions.get(g) ??
+          TimeSeries.fromEvents([] as ReadonlyArray<EventForSchema<S>>, {
+            schema: this.source.schema,
+            name: this.source.name,
+          });
         result.set(g, transform ? transform(sub) : sub);
       }
       return result;
@@ -364,63 +368,10 @@ export class PartitionedTimeSeries<
 
     // Insertion-order iteration (matches the order each partition was
     // first encountered in the source events).
-    for (const [key, events] of buckets) {
-      const sub = TimeSeries.fromEvents(events, {
-        schema: this.source.schema,
-        name: this.source.name,
-      });
+    for (const [key, sub] of partitions) {
       result.set(key as K, transform ? transform(sub) : sub);
     }
     return result;
-  }
-
-  // Build the encoder that produces a string key for an event given
-  // the partition columns. Single-column case avoids the JSON encoding
-  // overhead. Multi-column uses JSON.stringify to guarantee no key
-  // collisions on values containing separators (e.g. region names with
-  // spaces) — a naive `parts.join('|')` would collide. `undefined` in a
-  // single-column key becomes the literal `' undefined'` (with the
-  // leading space ensuring it can never collide with a string column
-  // whose value is the literal `'undefined'`).
-  private static partitionKeyOf<SX extends SeriesSchema>(
-    by: ReadonlyArray<keyof EventDataForSchema<SX> & string>,
-  ): (event: EventForSchema<SX>) => string {
-    if (by.length === 1) {
-      const col = by[0]!;
-      return (event) => {
-        const v = (event.data() as Record<string, unknown>)[col];
-        return v === undefined ? ' undefined' : `${String(v)}`;
-      };
-    }
-    return (event) => {
-      const data = event.data() as Record<string, unknown>;
-      const parts: unknown[] = new Array(by.length);
-      for (let i = 0; i < by.length; i += 1) {
-        parts[i] = data[by[i]!] ?? null;
-      }
-      return JSON.stringify(parts);
-    };
-  }
-
-  // Group source events into buckets keyed by partition value. Returned
-  // Map iteration order = insertion order, which matches the order
-  // partitions were first seen in the source events array.
-  private static bucketByPartition<SX extends SeriesSchema>(
-    source: TimeSeries<SX>,
-    by: ReadonlyArray<keyof EventDataForSchema<SX> & string>,
-  ): Map<string, EventForSchema<SX>[]> {
-    const keyOf = PartitionedTimeSeries.partitionKeyOf<SX>(by);
-    const buckets = new Map<string, EventForSchema<SX>[]>();
-    for (const event of source.events) {
-      const key = keyOf(event);
-      let bucket = buckets.get(key);
-      if (!bucket) {
-        bucket = [];
-        buckets.set(key, bucket);
-      }
-      bucket.push(event);
-    }
-    return buckets;
   }
 
   // Internal helper used by both `apply` (terminal) and the sugar
@@ -432,7 +383,7 @@ export class PartitionedTimeSeries<
   ): TimeSeries<R> {
     // Empty source: apply fn to an empty group so the output schema
     // and name come from fn, not from inferring R structurally.
-    if (source.events.length === 0) {
+    if (source.length === 0) {
       const empty = TimeSeries.fromEvents(
         [] as ReadonlyArray<EventForSchema<SX>>,
         {
@@ -443,13 +394,14 @@ export class PartitionedTimeSeries<
       return fn(empty);
     }
 
-    const buckets = PartitionedTimeSeries.bucketByPartition(source, by);
+    // Columnar partition split — no event materialization. The old path
+    // walked `source.events` to bucket, then rebuilt each partition via
+    // `fromEvents` (re-validating + re-packing), silently re-paying the
+    // 495 ns/row tax the columnar wave removed. `_partitionByColumns`
+    // gathers each partition straight off the store (audit v2 §3.2).
+    const partitions = source._partitionByColumns(by);
     const transformed: TimeSeries<R>[] = [];
-    for (const events of buckets.values()) {
-      const sub = TimeSeries.fromEvents(events, {
-        schema: source.schema,
-        name: source.name,
-      });
+    for (const sub of partitions.values()) {
       transformed.push(fn(sub));
     }
 
