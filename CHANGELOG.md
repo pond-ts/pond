@@ -18,6 +18,28 @@ type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **Reducers now treat non-finite numerics (`NaN` / `±Infinity`) as missing —
+  they are skipped — uniformly across every built-in reducer and all four
+  execution paths (`reduce`, the columnar fast path, `aggregate`/bucket, and
+  `rolling`/live).** Previously the paths disagreed on non-finite input: e.g.
+  `min`/`max` returned a position-dependent wrong extreme on the batch/columnar
+  paths but the true extreme on aggregate/rolling; `sum`/`avg` propagated
+  `NaN`. Non-finite can't enter via the row API (intake rejects it) — it only
+  arises inside computed columns (`cumulative` overflow, `diff`/`rate`
+  overflow, `collapse`, trusted construction) — so this only changes results
+  for those degenerate values, and makes every path agree. The three-layer
+  contract: **intake** stays strict (rejects non-finite), **computed writers**
+  stay permissive (pack honest non-finite), **reducers** are robust (skip it).
+  A standing parity-matrix test now pins all paths together. See
+  `docs/notes/reducer-nan-policy.md`. This also resolves the `aggregate('stdev')`
+  divergence class and the `min`/`max` NaN-laundering bug.
+- Internal: `Float64Column` gained an `allFinite` fast-path flag (data-derived
+  at construction, conservative-by-default) so reducers skip the per-element
+  finite check on provably-finite columns — keeping the policy's cost off the
+  hot path (min/max/count stay at their pre-policy speed).
+
 ## [0.24.0] — 2026-06-14
 
 ### Changed

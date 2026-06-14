@@ -222,6 +222,16 @@ export class ChunkedFloat64Column {
   readonly chunks: ReadonlyArray<Float64Column>;
   readonly chunkOffsets: Int32Array;
   readonly validity?: ValidityBitmap;
+  /**
+   * `true` iff **every** chunk is itself `allFinite` — the merged
+   * column is all-finite IFF each input is (an AND). Defaults to
+   * `false` whenever any chunk's flag is `false` (or absent), which is
+   * the safe direction: a chunk that didn't prove finiteness keeps the
+   * whole column on the guarded reducer path. Mirrors
+   * `Float64Column.allFinite`'s safety contract — see it for why a
+   * wrong `true` is unsafe.
+   */
+  readonly allFinite: boolean;
 
   constructor(chunks: ReadonlyArray<Float64Column>) {
     assertChunkKinds(chunks, 'number', 'ChunkedFloat64Column');
@@ -235,6 +245,16 @@ export class ChunkedFloat64Column {
     this.chunks = Object.freeze(chunks.slice());
     this.chunkOffsets = chunkOffsets;
     if (validity !== undefined) this.validity = validity;
+    // AND across chunks: all-finite IFF every chunk is. An empty chunk
+    // list is vacuously all-finite (no non-finite cell exists).
+    let allFinite = true;
+    for (let c = 0; c < chunks.length; c += 1) {
+      if (!chunks[c]!.allFinite) {
+        allFinite = false;
+        break;
+      }
+    }
+    this.allFinite = allFinite;
   }
 
   /**
@@ -328,13 +348,17 @@ export class ChunkedFloat64Column {
       out[i] = this.chunks[c]!._values[local]!;
       validBits[i >> 3]! |= 1 << (i & 7);
     }
+    // A gather only reads existing defined cells (out-of-range / invalid
+    // slots are skipped → marked invalid below), so the result is finite
+    // whenever this chunked column is. Propagate the AND-of-chunks flag.
     if (!hasInvalid) {
-      return new Float64Column(out, indices.length);
+      return new Float64Column(out, indices.length, undefined, this.allFinite);
     }
     return new Float64Column(
       out,
       indices.length,
       validityFromBits(validBits, indices.length),
+      this.allFinite,
     );
   }
 }
@@ -721,7 +745,15 @@ export function materializeChunkedFloat64(
     out.set(chunk._values.subarray(0, chunk.length), cursor);
     cursor += chunk.length;
   }
-  return new Float64Column(out, chunked.length, chunked.validity);
+  // Compacting doesn't touch values, so finiteness carries over from
+  // the chunked column (which is the AND of its chunks). This is what
+  // lets a `concatSorted(...).reduce(...)` take the reducer fast path.
+  return new Float64Column(
+    out,
+    chunked.length,
+    chunked.validity,
+    chunked.allFinite,
+  );
 }
 
 /**

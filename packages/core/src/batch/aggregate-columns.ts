@@ -215,25 +215,29 @@ export function tryAggregateColumnarTimeKeyed<
       if (plan.kind === 'reduce') {
         reduced[p] = plan.reduce(plan.column.sliceByRange(start, scan));
       } else if (plan.which === 'first') {
-        // First defined cell in [start, scan); scans past missing cells.
+        // First defined cell in [start, scan); scans past missing cells and
+        // past non-finite numeric cells (reducer non-finite policy,
+        // docs/notes/reducer-nan-policy.md — a NaN/±Inf numeric is "not a
+        // contributor", matching the row path's `defined` filter).
         let value: ColumnValue | undefined;
         for (let i = start; i < scan; i += 1) {
           const cell = plan.column.read(i);
-          if (cell !== undefined) {
-            value = cell;
-            break;
-          }
+          if (cell === undefined) continue;
+          if (typeof cell === 'number' && !Number.isFinite(cell)) continue;
+          value = cell;
+          break;
         }
         reduced[p] = value;
       } else {
-        // Last defined cell in [start, scan); scans backward past missing.
+        // Last defined cell in [start, scan); scans backward past missing and
+        // past non-finite numeric cells (see the 'first' branch above).
         let value: ColumnValue | undefined;
         for (let i = scan - 1; i >= start; i -= 1) {
           const cell = plan.column.read(i);
-          if (cell !== undefined) {
-            value = cell;
-            break;
-          }
+          if (cell === undefined) continue;
+          if (typeof cell === 'number' && !Number.isFinite(cell)) continue;
+          value = cell;
+          break;
         }
         reduced[p] = value;
       }

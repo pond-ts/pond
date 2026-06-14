@@ -21,36 +21,20 @@ export function parsePercentile(op: string): number | undefined {
 /**
  * Shared `reduceColumn` body for percentile-shaped reducers
  * (`median`, `p50`, `p95`, etc.). Walks the validity bitmap to
- * gather defined cells into a dense `Float64Array`, detecting NaN
- * cells in the same pass; sorts and reads the percentile from
- * the sorted view.
+ * gather defined **and finite** cells into a dense `Float64Array`,
+ * sorts with the typed-array intrinsic, and reads the percentile
+ * from the sorted view.
  *
- * **NaN parity with row API.** Two sort behaviors diverge:
+ * Non-finite cells (`NaN` / `±Infinity`) are excluded by the
+ * reducer non-finite policy (docs/notes/reducer-nan-policy.md) —
+ * uniformly, across every path. With non-finite filtered out
+ * before the sort, `Float64Array.prototype.sort()` (the numeric,
+ * NaN-free intrinsic, ~2× faster than `Array.sort` with a
+ * comparator) produces the same total order as the row path's
+ * `Array.sort((a, b) => a - b)` over the same finite values — so
+ * there is no longer any NaN-ordering seam to special-case.
  *
- * - `Array.prototype.sort((a, b) => a - b)` (row-API path) returns
- *   NaN from the comparator on NaN inputs; V8 treats this as
- *   "equal" and leaves NaN cells in undefined order — the
- *   resulting percentile is whatever cell happens to land at the
- *   computed rank, possibly NaN itself.
- * - `Float64Array.prototype.sort()` (typed-array intrinsic) puts
- *   NaN deterministically at the end of the sorted view — the
- *   percentile rank then reads a non-NaN cell unless the rank
- *   lands in the NaN suffix.
- *
- * The first-pass NaN detection lets us use `Float64Array.sort`'s
- * 2× speedup for the common no-NaN case (full parity with row API
- * because both produce identical sorted orders when no NaN
- * present), and fall back to `Array.sort` with comparator only
- * when NaN is present (preserving bug-for-bug row-API parity on
- * the rare contract-violating input).
- *
- * NaN can only reach a `kind: 'number'` column via trusted
- * construction (`fromEvents`); the public `assertCellKind`
- * rejects it at intake. Closed Codex review finding on PR #153 —
- * earlier L2 fix that filtered NaN was correct in spirit but
- * introduced a *different* divergence from the row API. A
- * principled "filter NaN consistently across both paths" fix is
- * tracked in the followup issue.
+ * Empty (no defined+finite values) → `undefined`.
  */
 export function reducePercentileColumn(
   col: Float64Column,
@@ -60,13 +44,37 @@ export function reducePercentileColumn(
   const values = col._values;
   let dense: Float64Array;
   let denseLength = 0;
-  let hasNaN = false;
-  if (validity === undefined) {
+  // Fast path: every defined cell is finite (`Float64Column.allFinite`),
+  // so we gather defined cells with no per-element `Number.isFinite`
+  // filter (reducer non-finite policy, docs/notes/reducer-nan-policy.md).
+  // The subsequent `Float64Array.sort` is the same NaN-free intrinsic
+  // either way → identical order, identical percentile.
+  if (col.allFinite) {
+    if (validity === undefined) {
+      if (col.length === 0) return undefined;
+      dense = new Float64Array(col.length);
+      for (let i = 0; i < col.length; i += 1) {
+        dense[denseLength] = values[i]!;
+        denseLength += 1;
+      }
+    } else {
+      const definedCount = validity.definedCount;
+      if (definedCount === 0) return undefined;
+      dense = new Float64Array(definedCount);
+      const bits = validity.bits;
+      for (let i = 0; i < col.length; i += 1) {
+        if ((bits[i >> 3]! & (1 << (i & 7))) === 0) continue;
+        dense[denseLength] = values[i]!;
+        denseLength += 1;
+      }
+    }
+  } else if (validity === undefined) {
+    // Guarded path: filter non-finite before the sort.
     if (col.length === 0) return undefined;
     dense = new Float64Array(col.length);
     for (let i = 0; i < col.length; i += 1) {
       const v = values[i]!;
-      if (Number.isNaN(v)) hasNaN = true;
+      if (!Number.isFinite(v)) continue;
       dense[denseLength] = v;
       denseLength += 1;
     }
@@ -78,21 +86,14 @@ export function reducePercentileColumn(
     for (let i = 0; i < col.length; i += 1) {
       if ((bits[i >> 3]! & (1 << (i & 7))) === 0) continue;
       const v = values[i]!;
-      if (Number.isNaN(v)) hasNaN = true;
+      if (!Number.isFinite(v)) continue;
       dense[denseLength] = v;
       denseLength += 1;
     }
   }
   if (denseLength === 0) return undefined;
-  if (hasNaN) {
-    // Match row-API exactly via `Array.sort` with comparator —
-    // diverges from `Float64Array.sort` on NaN ordering.
-    const arr = Array.from(dense.subarray(0, denseLength));
-    arr.sort((a, b) => a - b);
-    return percentileOfSorted(arr, q);
-  }
-  // No NaN: `Float64Array.sort` is parity-correct (same total
-  // order as `Array.sort` with comparator) and ~2× faster.
+  // Non-finite excluded upstream by policy → `Float64Array.sort` (numeric,
+  // NaN-free) gives the same order as the row path's comparator sort.
   const view = dense.subarray(0, denseLength);
   view.sort();
   const rank = (q / 100) * (denseLength - 1);

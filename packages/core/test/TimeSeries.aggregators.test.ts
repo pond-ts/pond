@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Event, Sequence, Time, TimeSeries } from '../src/index.js';
+import { Sequence, TimeSeries } from '../src/index.js';
 
 const schema = [
   { name: 'time', kind: 'time' },
@@ -130,82 +130,6 @@ describe('stdev', () => {
     // the exact answer.
     const result = s.reduce('value', 'stdev') as number;
     expect(result).toBeCloseTo(Math.sqrt(5 / 4), 10);
-  });
-});
-
-// ── NaN parity (Codex round 1 on PR #153) ───────────────────
-//
-// The column fast path must match the row-API path exactly when a
-// numeric column contains NaN cells. NaN can only reach a `kind:
-// 'number'` column through trusted construction (`fromEvents`);
-// the public constructor's `assertCellKind('number', value)`
-// rejects non-finite values at intake. Neither the row API nor
-// the column path has principled NaN semantics today; the
-// guarantee this test pins is *parity* (both paths agree, even
-// though both produce surprising NaN-laundered results).
-
-describe('NaN parity row vs column path', () => {
-  function makeNaNSeries() {
-    // `fromEvents` is the only public API that lets NaN reach a
-    // `kind: 'number'` column — `new TimeSeries({ rows })` rejects
-    // it via `assertCellKind` at intake.
-    return TimeSeries.fromEvents(
-      [
-        new Event(new Time(0), { value: 1 }),
-        new Event(new Time(1000), { value: NaN }),
-        new Event(new Time(2000), { value: 2 }),
-      ],
-      {
-        schema: [
-          { name: 'time', kind: 'time' },
-          { name: 'value', kind: 'number' },
-        ] as const,
-        name: 's',
-      },
-    );
-  }
-
-  it('min: column matches row API NaN-laundered comparison', () => {
-    // Row API: `numeric.reduce((a, b) => a <= b ? a : b)` on
-    // [1, NaN, 2] returns 2 because (1 <= NaN) is false → NaN,
-    // then (NaN <= 2) is false → 2.
-    expect(makeNaNSeries().reduce('value', 'min')).toBe(2);
-  });
-
-  it('max: column matches row API NaN-laundered comparison', () => {
-    // Symmetric: [2, NaN, 1] would return 1; here [1, NaN, 2]
-    // routes through `a >= b ? a : b` and gives 2.
-    expect(makeNaNSeries().reduce('value', 'max')).toBe(2);
-  });
-
-  it('sum: both paths poison with NaN', () => {
-    expect(makeNaNSeries().reduce('value', 'sum')).toBeNaN();
-  });
-
-  it('avg: both paths poison with NaN', () => {
-    expect(makeNaNSeries().reduce('value', 'avg')).toBeNaN();
-  });
-
-  it('stdev: both paths poison with NaN', () => {
-    expect(makeNaNSeries().reduce('value', 'stdev')).toBeNaN();
-  });
-
-  it('count: both paths include NaN cells', () => {
-    // Row API: `numeric.length` after `typeof === 'number'` filter
-    // (NaN passes). Column path: `validity.definedCount`.
-    expect(makeNaNSeries().reduce('value', 'count')).toBe(3);
-  });
-
-  it('median: column matches row API Array.sort behavior', () => {
-    // `Array.sort((a, b) => a - b)` returns NaN on NaN inputs;
-    // V8 treats NaN as "equal" and leaves NaN cells in-place.
-    // On [1, NaN, 2] the sorted array is [1, NaN, 2] and the
-    // middle cell is NaN. Both paths return NaN.
-    expect(makeNaNSeries().reduce('value', 'median')).toBeNaN();
-  });
-
-  it('p95: column matches row API Array.sort behavior', () => {
-    expect(makeNaNSeries().reduce('value', 'p95')).toBeNaN();
   });
 });
 

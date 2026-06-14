@@ -170,8 +170,31 @@ export class Float64Column implements ColumnBase<number, 'number'> {
    */
   readonly _values: Float64Array;
   readonly validity?: ValidityBitmap;
+  /**
+   * **Safety contract.** `true` MUST mean "every *defined* cell is
+   * finite — no `NaN`, no `±Infinity`" (missing cells, tracked by
+   * `validity`, are irrelevant). It is a promise the producer makes
+   * so reducers can skip the per-element `Number.isFinite` guard that
+   * the reducer non-finite policy (docs/notes/reducer-nan-policy.md)
+   * otherwise requires on every numeric `reduceColumn`.
+   *
+   * A wrongly-`true` flag makes `reduceColumn` take the unguarded fast
+   * path and silently include a non-finite cell → wrong result. So the
+   * **default is `false`** (conservative: guarded path, correct-but-
+   * slower) and a producer sets `true` ONLY where finiteness is proven
+   * — either data-derived by inspecting every cell, validated upstream
+   * (strict intake), or propagated from a source column that was
+   * itself `allFinite`. When unsure, leave it `false`: a missed `true`
+   * is slower, never wrong.
+   */
+  readonly allFinite: boolean;
 
-  constructor(values: Float64Array, length: number, validity?: ValidityBitmap) {
+  constructor(
+    values: Float64Array,
+    length: number,
+    validity?: ValidityBitmap,
+    allFinite = false,
+  ) {
     validateColumnLength(length, 'Float64Column');
     if (length > values.length) {
       throw new RangeError(
@@ -186,6 +209,7 @@ export class Float64Column implements ColumnBase<number, 'number'> {
     this._values = values;
     this.length = length;
     if (validity !== undefined) this.validity = validity;
+    this.allFinite = allFinite;
   }
 
   read(i: number): number | undefined {
@@ -226,7 +250,13 @@ export class Float64Column implements ColumnBase<number, 'number'> {
       hi,
       this.length,
     );
-    return new Float64Column(valuesSlice, hi - lo, validitySlice);
+    // A contiguous slice of an all-finite column is all-finite.
+    return new Float64Column(
+      valuesSlice,
+      hi - lo,
+      validitySlice,
+      this.allFinite,
+    );
   }
 
   sliceByIndices(indices: Int32Array): Float64Column {
@@ -242,7 +272,10 @@ export class Float64Column implements ColumnBase<number, 'number'> {
       indices,
       this.length,
     );
-    return new Float64Column(out, indices.length, validity);
+    // A gathered subset of finite cells is finite. Out-of-range slots
+    // read 0 (finite) and are marked invalid by the validity gather, so
+    // they can't violate the contract either way.
+    return new Float64Column(out, indices.length, validity, this.allFinite);
   }
 }
 
@@ -361,15 +394,25 @@ export function float64ColumnFromArray(
   const length = source.length;
   validateColumnLength(length, 'Float64Column');
   const values = new Float64Array(length);
+  // Data-derive `allFinite` in the copy loop: only *defined* cells
+  // count (a missing slot doesn't make the column non-finite). Finite
+  // data → `true` (reducers take the fast path); an overflow / NaN cell
+  // → `false` (guarded path, correct). See the field's safety contract.
+  let allFinite = true;
   for (let i = 0; i < length; i += 1) {
     const v = source[i];
-    values[i] = typeof v === 'number' ? v : 0;
+    if (typeof v === 'number') {
+      values[i] = v;
+      if (!Number.isFinite(v)) allFinite = false;
+    } else {
+      values[i] = 0;
+    }
   }
   const validity = validityFromPredicate(length, (i) => {
     const v = source[i];
     return typeof v === 'number';
   });
-  return new Float64Column(values, length, validity);
+  return new Float64Column(values, length, validity, allFinite);
 }
 
 /**

@@ -9,19 +9,41 @@ export const max: ReducerDef = {
       : numeric.reduce((a, b) => (a >= b ? a : b));
   },
   reduceColumn(col) {
-    // **NaN parity with row API.** Mirror the row-API expression
-    //   numeric.reduce((a, b) => a >= b ? a : b)
-    // exactly. See `min.ts` for the full rationale. Closed Codex
-    // review finding on PR #153.
     const values = col._values;
     const validity = col.validity;
     let hi: number | undefined;
-    if (validity === undefined) {
-      if (col.length === 0) return undefined;
-      hi = values[0]!;
-      for (let i = 1; i < col.length; i += 1) {
+    // Fast path: every defined cell is finite (`Float64Column.allFinite`),
+    // so we seed `hi` from the first defined cell and run a plain `v > hi`
+    // compare with NO per-element `Number.isFinite` guard and NO in-loop
+    // `hi === undefined` check (the seed hoists it out). No NaN to mishandle,
+    // also sidesteps the position-dependent `a>=b?a:b` extremum bug the policy
+    // fixed (docs/notes/reducer-nan-policy.md). The pre-policy column loop,
+    // recovered.
+    if (col.allFinite) {
+      const len = col.length;
+      if (len === 0) return undefined;
+      if (validity === undefined) {
+        hi = values[0]!;
+        for (let i = 1; i < len; i += 1) {
+          const v = values[i]!;
+          if (v > hi) hi = v;
+        }
+        return hi;
+      }
+      const bits = validity.bits;
+      for (let i = 0; i < len; i += 1) {
+        if ((bits[i >> 3]! & (1 << (i & 7))) === 0) continue;
         const v = values[i]!;
-        hi = hi >= v ? hi : v;
+        if (hi === undefined || v > hi) hi = v;
+      }
+      return hi;
+    }
+    // Guarded path: skip non-finite cells (reducer non-finite policy) —
+    // matches `bucketState`'s `v > hi`.
+    if (validity === undefined) {
+      for (let i = 0; i < col.length; i += 1) {
+        const v = values[i]!;
+        if (Number.isFinite(v) && (hi === undefined || v > hi)) hi = v;
       }
       return hi;
     }
@@ -29,7 +51,7 @@ export const max: ReducerDef = {
     for (let i = 0; i < col.length; i += 1) {
       if ((bits[i >> 3]! & (1 << (i & 7))) === 0) continue;
       const v = values[i]!;
-      hi = hi === undefined ? v : hi >= v ? hi : v;
+      if (Number.isFinite(v) && (hi === undefined || v > hi)) hi = v;
     }
     return hi;
   },
