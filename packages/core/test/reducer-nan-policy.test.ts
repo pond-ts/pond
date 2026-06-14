@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { Event, Sequence, Time, TimeSeries } from '../src/index.js';
 import { bucketStateFor, rollingStateFor } from '../src/reducers/index.js';
-import { Float64Column } from '../src/columnar/index.js';
+import {
+  ColumnarStore,
+  Float64Column,
+  concatSorted,
+  float64ColumnFromArray,
+  timeKeyColumnFromArray,
+} from '../src/columnar/index.js';
 import type { ColumnValue } from '../src/schema/index.js';
 
 // Parity matrix for the reducer non-finite policy
@@ -267,5 +273,54 @@ describe('reducer non-finite policy — allFinite fast path == guarded path', ()
     expect(fastPath.reduce('value', 'min')).toBe(1);
     expect(fastPath.reduce('value', 'max')).toBe(9);
     expect(fastPath.reduce('value', 'count')).toBe(4);
+  });
+});
+
+// The column-API reductions: `min`/`max`/`sum`/`mean`/`stdev`/`median`/
+// `percentile` delegate to the (fixed) reducer `reduceColumn`, but `minMax()`
+// and `bin('minMax')` inline a fused loop, and chunked `count()` had an O(1)
+// shortcut — all three bypassed the policy until this PR. Codex flagged them.
+describe('reducer non-finite policy — column-API minMax / bin / chunked count', () => {
+  // Computed non-finite column: cumulative fold injects Infinity → packed via
+  // float64ColumnFromArray → allFinite false. Cells: [10, Infinity, 30].
+  function computedCol(): Float64Column {
+    const ts = makeSeries([10, 20, 30]).cumulative({
+      value: (_a: number, v: number) => (v === 20 ? Infinity : v),
+    }) as unknown as TimeSeries<typeof schema>;
+    return ts.column('value') as Float64Column;
+  }
+
+  it('minMax() skips non-finite and agrees with [min(), max()]', () => {
+    const col = computedCol();
+    expect(col.minMax()).toEqual([10, 30]); // not [10, Infinity]
+    expect(col.minMax()).toEqual([col.min(), col.max()]);
+  });
+
+  it("bin('minMax') channels agree with bin('min') / bin('max')", () => {
+    const col = computedCol(); // 3 cells, 1 bin
+    const mm = col.bin(1, 'minMax');
+    expect(Array.from(mm.lo)).toEqual(Array.from(col.bin(1, 'min')));
+    expect(Array.from(mm.hi)).toEqual(Array.from(col.bin(1, 'max')));
+    expect(mm.hi[0]).toBe(30); // Infinity skipped, not the bin max
+  });
+
+  it('chunked count() skips non-finite (matches the reducer/materialized count)', () => {
+    const numStore = (times: number[], values: Array<number | undefined>) =>
+      ColumnarStore.fromTrustedStore(
+        [
+          { name: 'time', kind: 'time' },
+          { name: 'v', kind: 'number' },
+        ] as const,
+        timeKeyColumnFromArray(times),
+        new Map([['v', float64ColumnFromArray(values)]]),
+      );
+    const chunked = concatSorted([
+      numStore([1000, 2000], [10, Infinity]),
+      numStore([3000, 4000], [30, NaN]),
+    ]);
+    const col = chunked.columns.get('v')!;
+    expect(col.storage).toBe('chunked'); // guard
+    // Cells [10, Infinity, 30, NaN] → 2 finite defined cells.
+    expect((col as unknown as { count(): number }).count()).toBe(2);
   });
 });
