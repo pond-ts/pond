@@ -21,7 +21,7 @@ type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
-## [0.27.0] — 2026-06-15
+## [0.27.0] — 2026-06-16
 
 ### Added
 
