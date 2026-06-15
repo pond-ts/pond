@@ -428,3 +428,57 @@ recommendation:
   smoothed column via `toFloat64Array()` — is the whole NP smoothing step, and
   it's clean. The timeseries-native metric (NP) is exactly where pond shines;
   the value-axis ones (distribution/zones) are exactly where it doesn't yet.
+
+## 12. Proposal — this is `@pond-ts/fit`, not `@pond-ts/geo` (maintainers decide)
+
+> _Posted by the estela experiment agent (Claude)_
+
+A naming/scoping proposal two milestones of evidence now point at. **The
+maintainers own this call** — raising it so the shared contract stays honest.
+
+**The observation.** M1 was geo (distance, elevation, simplify). M2 went
+straight past geo into **power** (NP, FTP zones, the power curve, TSS) — none of
+it geospatial. The category the experiment is actually driving isn't _space_,
+it's **activity files and their analysis**: FIT/GPX/TCX in, the full
+Strava-class metric suite out. "geo" was the M1 name; the work outgrew it in one
+milestone.
+
+**The proposed shape** — three layers, mostly about drawing lines the
+experiment already revealed:
+
+1. **pond core** gets the one _general_ primitive the experiment surfaced —
+   **`byColumn` value-axis bucketing** (§8.1 / F-geo-2). NOT fitness-specific:
+   any histogram over a derived/value column wants it (splits over distance,
+   distribution over power, zones over FTP-relative edges — and plenty outside
+   fitness). **This is the experiment's real gift to core**, and it's small and
+   general — exactly the bar §7 sets.
+2. **`@pond-ts/fit`** — an activity-analytics library on pond's public surface,
+   with **`geo` as one module among several** (`geo`, `power`, later
+   `hr`/`pace`/`splits`/`segments`, plus FIT/GPX/TCX parsing). The geo v0
+   surface in §3 is correct — it's a module of `fit`, not the package.
+3. **estela** — one app consuming `@pond-ts/fit`.
+
+**Why it's more than a rename.** estela's owner frames `@pond-ts/fit` as a real,
+headless target: **"Strava, as an API."** Files-first is what makes that
+_legal_ — Strava's API forbids building a competitor on Strava-sourced data, but
+an analytics engine on the user's **own** FIT/GPX/exports is clean. So
+`@pond-ts/fit` is positioned as the open, composable activity-analytics engine
+(pond = timeseries; `fit` = the domain layer), estela being its first consumer.
+
+**What it would change in the RFC, if you take it:**
+
+- `geo.md` becomes the **`geo` module section of a `fit.md`** umbrella (or stays
+  as-is with `fit.md` above it) — your call on doc structure.
+- **§7 (column-kind extensibility) is unaffected** — still the right caution;
+  `fit` is all operators on number columns, no new kind.
+- §5's friction list is really **two**: core-bound (`byColumn`; F-geo-1's
+  `fromTrustedColumns`; the `'avg'`/`.mean()` alignment) vs `fit`-bound (the geo
+  - power ops themselves).
+- Nothing changes for estela's build — geo + power keep living in estela's
+  `core` and extract into `@pond-ts/fit` once the API stabilizes
+  (friction-driven, as agreed).
+
+**Recommendation:** adopt the three-layer framing; route `byColumn` to core as
+its own small RFC/PR (general + highest-value); let `@pond-ts/fit` be the
+umbrella with `geo` as its first module. Maintainer decision — flagging, not
+deciding.
