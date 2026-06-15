@@ -189,6 +189,15 @@ export const stdev: ReducerDef = {
         }
         const meanWith = mean;
         n -= 1;
+        if (n === 1) {
+          // A single remaining element has population variance *exactly* 0.
+          // Setting it directly (rather than via the subtraction below) keeps
+          // the n→1 result exact at any magnitude — the reverse step alone
+          // leaves rounding residue at large offsets (e.g. ~0.016 on 1e10).
+          mean = meanWith * 2 - v; // the one survivor: 2·mean₂ − removed
+          m2 = 0;
+          return;
+        }
         // Deviation-space mean update (mean − (v − mean)/n): avoids the large
         // `n·mean − v` product, staying precise at large magnitudes.
         mean = meanWith - (v - meanWith) / n;
