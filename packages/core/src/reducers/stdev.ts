@@ -138,16 +138,23 @@ export const stdev: ReducerDef = {
     };
   },
   rollingState() {
-    // Numerically-stable sliding-window population stdev: Welford's online
-    // variance with an **order-independent delete**. `add(v)` is the standard
-    // recurrence; `remove(v)` reverses it, both working in deviation space — so
-    // unlike the old one-pass `sq/n − mean²` there is no catastrophic
-    // cancellation on near-equal large values (`[1e10, 1e10+1, …]` → 0, or a
-    // negative variance → NaN; the audit-§1.1 failure mode, previously still
-    // live on this path) and no drift on trending data (cumulative distance,
-    // elevation). Stable wherever the running mean stays representable (~1e15,
-    // vs the one-pass's ~sqrt(2^52) ≈ 6.7e7 squaring ceiling — pond's domain
-    // data sits far below that).
+    // Sliding-window population stdev: Welford's online variance with an
+    // **order-independent delete**. `add(v)` is the standard recurrence;
+    // `remove(v)` reverses it. Working in deviation space, it fixes the old
+    // one-pass `sq/n − mean²` failure modes — catastrophic cancellation on
+    // near-equal large values (`[1e10, 1e10+1, …]` → 0 or a negative variance →
+    // NaN; the audit-§1.1 case, previously still live on this path) and shift
+    // drift on trending data (cumulative distance, elevation).
+    //
+    // Limitation — **outlier eviction** (shared with the old one-pass, so not a
+    // regression): like any *subtractive* sliding variance, evicting a value far
+    // outside the residual spread cancels — `m2 −= huge` loses the small
+    // remainder, and the error persists in the running accumulator (the clamp
+    // floors it to 0 at the extreme). Negligible until the evicted point is
+    // ~1e7–1e8× the residual stdev (e.g. a ~1e6 spike over a ~0.01-σ baseline) —
+    // far beyond realistic monitoring / activity data, and exactly why the
+    // add-only paths use plain Welford. A FIFO-only two-stack merge avoids it
+    // entirely but can't serve the by-value eviction the live layer needs.
     //
     // Removal is **by value, not by position**. That is load-bearing for the
     // live layer: `LiveReduce` shares this state, and a `reorder`-mode source
@@ -187,7 +194,9 @@ export const stdev: ReducerDef = {
         mean = meanWith - (v - meanWith) / n;
         // Reverse Welford: M2 −= (v − meanNew)·(v − meanOld).
         m2 -= (v - mean) * (v - meanWith);
-        if (m2 < 0) m2 = 0; // clamp FP round-off (never a gross negative)
+        // Normally absorbs FP round-off; on a gross outlier eviction (see the
+        // limitation note above) the subtraction can cancel below 0 — clamp.
+        if (m2 < 0) m2 = 0;
       },
       snapshot() {
         return n === 0 ? undefined : Math.sqrt(Math.max(0, m2 / n));

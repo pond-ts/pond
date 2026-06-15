@@ -355,4 +355,23 @@ describe('rolling(stdev) — numerically stable sliding window', () => {
     expect(b).toBeCloseTo(STDEV_5_4, 9);
     expect(Math.abs(r - b) / b).toBeLessThan(1e-12);
   });
+
+  it('recovers the residual stdev after a realistic spike leaves the window', () => {
+    // Outlier eviction is the subtractive-variance weak spot (see stdev.ts):
+    // removing a value far outside the residual spread cancels `m2`. For
+    // realistic magnitudes it is negligible — a 1000× spike enters then slides
+    // off a 3-event window, and once gone the residual stdev still matches a
+    // fresh computation of the trailing window. (Only pathological spikes —
+    // ~1e7×+ the residual stdev — corrupt the running accumulator.)
+    const rows: Row[] = [];
+    for (let i = 0; i < 12; i += 1) {
+      rows.push([i * 1000, i === 4 ? 1000 : 1 + (i % 3), 'a'] as Row);
+    }
+    const s = series(rows);
+    const out = s.rolling('3s', { sd: { from: 'value', using: 'stdev' } });
+    const vals = rows.map((r) => r[1]);
+    // i=8: half-open '3s' window = {6,7,8}; the spike at i=4 is long gone.
+    const got = out.at(8)!.get('sd') as number;
+    expect(got).toBeCloseTo(popStdev(vals.slice(6, 9)), 9);
+  });
 });
