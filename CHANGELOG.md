@@ -7,7 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 file covers both packages. Pre-1.0: minor bumps may include new features and
 type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/pjm17971/pond-ts/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/pjm17971/pond-ts/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/pjm17971/pond-ts/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/pjm17971/pond-ts/compare/v0.21.0...v0.22.0
@@ -17,6 +18,8 @@ type-level changes; patch bumps are strictly additive.
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
 
 ## [Unreleased]
+
+## [0.25.0] — 2026-06-15
 
 ### Changed
 
@@ -39,6 +42,28 @@ type-level changes; patch bumps are strictly additive.
   at construction, conservative-by-default) so reducers skip the per-element
   finite check on provably-finite columns — keeping the policy's cost off the
   hot path (min/max/count stay at their pre-policy speed).
+
+### Fixed
+
+- **`rolling(window, { x: 'stdev' })` is now numerically stable.** It was the
+  last batch stdev path still on the one-pass `Σx²/n − mean²`, which cancels
+  catastrophically on near-equal large values (`[1e10, 1e10+1, …]` → `0`
+  instead of ≈1.118, or a negative variance → `NaN`) and drifts on trending
+  data (cumulative distance, elevation). It now uses Welford's online variance
+  with an order-independent **delete** — deviation-space, so no cancellation,
+  and removal **by value**, which keeps it correct under the live layer's
+  `reorder`-mode eviction (a positional/FIFO remove would have broken it; the
+  documented "stdev is reorder-safe" contract is preserved). Rolling-stdev
+  values shift in the last ULPs (now correct); the path stays O(1) and within
+  run-noise of the old one-pass, and a single-element window now reports exactly
+  `0` at any magnitude. Like any subtractive sliding variance, evicting an
+  outlier far outside the residual spread loses precision — negligible until the
+  evicted point is ~1e7–1e8× the residual stdev, far beyond realistic data.
+- A standing differential-fuzz parity suite now pins every built-in reducer's
+  execution paths (columnar fast path vs `bucket` vs `rolling`, and the FIFO
+  sliding window vs a from-scratch recompute) against silent drift across
+  randomized magnitudes and window sizes — the class of bug behind the stdev
+  and `min`/`max` divergences.
 
 ## [0.24.0] — 2026-06-14
 
