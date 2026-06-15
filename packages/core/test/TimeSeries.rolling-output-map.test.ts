@@ -4,7 +4,7 @@
  * `aggregate`). Added in v0.5.4 to close the feature-parity gap.
  */
 import { describe, expect, it } from 'vitest';
-import { Sequence, TimeSeries } from '../src/index.js';
+import { Sequence, TimeSeries, ValidationError } from '../src/index.js';
 
 const schema = [
   { name: 'time', kind: 'time' },
@@ -324,5 +324,123 @@ describe('mixed shorthand + spec mapping (F1 type/runtime parity)', () => {
     expect(reduced.cpu_max).toBe(50);
     expect(reduced.host_first).toBe('api-1');
     expect(reduced.hosts).toEqual(['api-1', 'api-2', 'api-3']);
+  });
+});
+
+describe('TimeSeries.rolling — non-finite / wrong-kind output is rejected', () => {
+  // The columnar output path (3C) assembles result columns via trusted
+  // construction, which skips the constructor's strict intake — AND the
+  // `*FromArray` builders silently coerce a kind mismatch to a missing cell.
+  // So a defined result that doesn't match the declared output kind (a
+  // non-finite number, or a wrong-typed value from a custom reducer / `kind`
+  // override) is rejected at write, preserving the throw the old event-based
+  // path enforced via intake (matching `mapColumns`). Missing cells (the
+  // minSamples warm-up) are unaffected. (Codex finding on #225.)
+  const numSchema = [
+    { name: 'time', kind: 'time' },
+    { name: 'v', kind: 'number' },
+  ] as const;
+
+  it('throws when a window sum overflows to Infinity', () => {
+    const s = new TimeSeries({
+      name: 's',
+      schema: numSchema,
+      rows: [
+        [0, 1e308],
+        [1000, 1e308],
+        [2000, 1e308],
+      ],
+    });
+    // 3e308 overflows to Infinity inside the 10s window → rejected.
+    expect(() => s.rolling('10s', { v: 'sum' })).toThrow(
+      /not a valid 'number' value/,
+    );
+  });
+
+  it('throws when a custom reducer returns a non-finite number', () => {
+    const s = new TimeSeries({
+      name: 's',
+      schema: numSchema,
+      rows: [
+        [0, 1],
+        [1000, 2],
+      ],
+    });
+    expect(() =>
+      s.rolling('10s', { v: { from: 'v', using: () => Infinity } }),
+    ).toThrow(/not a valid 'number' value/);
+  });
+
+  it('throws on a wrong-kind result (number reducer, string kind override)', () => {
+    const s = new TimeSeries({
+      name: 's',
+      schema: numSchema,
+      rows: [
+        [0, 1],
+        [1000, 2],
+      ],
+    });
+    // `sum` produces a number, but the output column is declared `string` —
+    // the old intake path threw `ValidationError`; the columnar path must too
+    // (same class, not a silent coercion to a missing cell).
+    expect(() =>
+      s.rolling('10s', { out: { from: 'v', using: 'sum', kind: 'string' } }),
+    ).toThrow(/not a valid 'string' value/);
+    expect(() =>
+      s.rolling('10s', { out: { from: 'v', using: 'sum', kind: 'string' } }),
+    ).toThrow(ValidationError); // class parity with intake (Codex round 3)
+  });
+
+  it('throws on a wrong-kind custom result (string into a number column)', () => {
+    const s = new TimeSeries({
+      name: 's',
+      schema: numSchema,
+      rows: [
+        [0, 1],
+        [1000, 2],
+      ],
+    });
+    expect(() =>
+      s.rolling('10s', {
+        out: { from: 'v', using: () => 'oops', kind: 'number' },
+      }),
+    ).toThrow(/not a valid 'number' value/);
+  });
+
+  it('throws on a sparse array result (a hole is an invalid element)', () => {
+    // `new Array(1)` is a one-hole sparse array. `.every` skips holes; the
+    // validator must use an indexed scan (matching intake) so the `undefined`
+    // slot is rejected rather than silently coerced to a missing cell.
+    const s = new TimeSeries({
+      name: 's',
+      schema: numSchema,
+      rows: [
+        [0, 1],
+        [1000, 2],
+      ],
+    });
+    expect(() =>
+      s.rolling('10s', {
+        out: { from: 'v', using: () => new Array(1), kind: 'array' },
+      }),
+    ).toThrow(/not a valid 'array' value/);
+  });
+
+  it('throws ValidationError (not TypeError) on an unstringifiable bad result', () => {
+    // An array element that throws from `String(...)` (a Symbol) must not mask
+    // the kind rejection with a TypeError — the message is built defensively.
+    const s = new TimeSeries({
+      name: 's',
+      schema: numSchema,
+      rows: [
+        [0, 1],
+        [1000, 2],
+      ],
+    });
+    expect(() =>
+      s.rolling('10s', {
+        out: { from: 'v', using: () => [Symbol('x')], kind: 'array' },
+      }),
+    ).toThrow(ValidationError);
   });
 });

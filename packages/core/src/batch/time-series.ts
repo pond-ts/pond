@@ -81,6 +81,10 @@ import { fillOp, type ResolvedFillSpec } from './operators/fill.js';
 import { mapOp, type ColumnMapper } from './operators/map.js';
 import { shiftOp } from './operators/shift.js';
 import { collapseOp, type CollapseReducer } from './operators/collapse.js';
+import {
+  assertColumnValuesMatchKind,
+  columnFromValuesByKind,
+} from './operators/column-builders.js';
 import { BoundedSequence } from '../sequence/bounded-sequence.js';
 import {
   parseTimestampString,
@@ -104,7 +108,7 @@ import type { BatchSampleStrategy } from '../sequence/sample.js';
 import { Sequence } from '../sequence/sequence.js';
 import {
   type Column as ColumnarColumn,
-  type ColumnarStore,
+  ColumnarStore,
   type ColumnSchema,
   Float64Column,
   IntervalKeyColumn,
@@ -2945,6 +2949,14 @@ export class TimeSeries<S extends SeriesSchema> {
    * series carrying multiple entities (host, region, device id), use
    * `series.partitionBy(col).rolling(...).collect()` to scope per
    * entity. See {@link TimeSeries.partitionBy}.
+   *
+   * **`array`-column identity:** the window reads values from the
+   * columnar store, so on an `array`-kind source column an identity-
+   * comparing reducer (`keep`, or a custom reducer using `===` on the
+   * cell) compares the stored cell, not the original object reference
+   * from construction. Two rows that were given the *same* array object
+   * therefore read as distinct values here. Scalar columns
+   * (number / string / boolean) are unaffected (value semantics).
    */
   rolling<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
     window: DurationInput,
@@ -3108,42 +3120,38 @@ export class TimeSeries<S extends SeriesSchema> {
       this.schema[0],
       ...resultColumnDefs,
     ]) as unknown as SeriesSchema;
+    // Columnar output path (3C): read the key + source columns straight off
+    // the store and build the result columns directly — no `this.events`
+    // materialization, no per-row `Event`, no row re-validation/re-pack.
+    const store = this.#store.store;
+    const rowCount = store.length;
+    const sourceCols = columnSpecs.map(
+      (spec) => store.columns.get(spec.source as string)!,
+    );
     const reducerStates = columnSpecs.map((spec) =>
       isBuiltInAggregateReducer(spec.reducer)
         ? createRollingReducerState(spec.reducer)
         : null,
     );
-    const beginTimes = this.events.map((event) => event.begin());
-    const resultRows: TimeSeriesInput<SeriesSchema>['rows'][number][] =
-      new Array(this.events.length);
+    // Begin axis from the key buffer (replaces `this.events.map(e => e.begin())`).
+    const beginTimes = store.keys.begin;
+    // One value accumulator per output column; the result columns are built
+    // from these and assembled via trusted construction below.
+    const outValues: (ColumnValue | undefined)[][] = columnSpecs.map(
+      () => new Array(rowCount),
+    );
     let windowStart = 0;
     let windowEnd = 0;
     const addEvent = (index: number): void => {
-      const event = this.events[index]!;
-      const data = event.data();
       for (let i = 0; i < reducerStates.length; i++) {
         const state = reducerStates[i];
-        if (state) {
-          const spec = columnSpecs[i]!;
-          state.add(
-            index,
-            data[spec.source as keyof typeof data] as ColumnValue | undefined,
-          );
-        }
+        if (state) state.add(index, sourceCols[i]!.read(index));
       }
     };
     const removeEvent = (index: number): void => {
-      const event = this.events[index]!;
-      const data = event.data();
       for (let i = 0; i < reducerStates.length; i++) {
         const state = reducerStates[i];
-        if (state) {
-          const spec = columnSpecs[i]!;
-          state.remove(
-            index,
-            data[spec.source as keyof typeof data] as ColumnValue | undefined,
-          );
-        }
+        if (state) state.remove(index, sourceCols[i]!.read(index));
       }
     };
     const snapshotWindow = (): (ColumnValue | undefined)[] => {
@@ -3151,31 +3159,38 @@ export class TimeSeries<S extends SeriesSchema> {
       return columnSpecs.map((spec, i) => {
         const state = reducerStates[i];
         if (state) return state.snapshot();
-        const values = this.events
-          .slice(windowStart, windowEnd)
-          .map((event) => {
-            const data = event.data();
-            return data[spec.source as keyof typeof data];
-          }) as ReadonlyArray<ColumnValue | undefined>;
+        // Custom reducer: read the window's source values directly off the
+        // column in arrival order — identical value list to the old
+        // `this.events.slice(windowStart, windowEnd)` path.
+        const col = sourceCols[i]!;
+        const values: (ColumnValue | undefined)[] = [];
+        for (let j = windowStart; j < windowEnd; j++) values.push(col.read(j));
         return applyAggregateReducer(spec.reducer, values);
       });
     };
+    // Scatter one window's aggregated values across every row of an equal-key
+    // group (replaces the per-row frozen `[key, ...aggregated]` tuple write).
+    const writeGroup = (
+      groupStart: number,
+      groupEnd: number,
+      aggregated: (ColumnValue | undefined)[],
+    ): void => {
+      for (let index = groupStart; index < groupEnd; index++) {
+        for (let c = 0; c < outValues.length; c++) {
+          outValues[c]![index] = aggregated[c];
+        }
+      }
+    };
 
     if (alignment === 'trailing') {
-      for (let groupStart = 0; groupStart < this.events.length; ) {
+      for (let groupStart = 0; groupStart < rowCount; ) {
         const anchor = beginTimes[groupStart]!;
         let groupEnd = groupStart + 1;
-        while (
-          groupEnd < this.events.length &&
-          beginTimes[groupEnd] === anchor
-        ) {
+        while (groupEnd < rowCount && beginTimes[groupEnd] === anchor) {
           groupEnd += 1;
         }
 
-        while (
-          windowEnd < this.events.length &&
-          beginTimes[windowEnd]! <= anchor
-        ) {
+        while (windowEnd < rowCount && beginTimes[windowEnd]! <= anchor) {
           addEvent(windowEnd);
           windowEnd += 1;
         }
@@ -3189,24 +3204,15 @@ export class TimeSeries<S extends SeriesSchema> {
           windowStart += 1;
         }
 
-        const aggregated = snapshotWindow();
-        for (let index = groupStart; index < groupEnd; index++) {
-          resultRows[index] = Object.freeze([
-            this.events[index]!.key(),
-            ...aggregated,
-          ]) as unknown as TimeSeriesInput<SeriesSchema>['rows'][number];
-        }
+        writeGroup(groupStart, groupEnd, snapshotWindow());
 
         groupStart = groupEnd;
       }
     } else if (alignment === 'leading') {
-      for (let groupStart = 0; groupStart < this.events.length; ) {
+      for (let groupStart = 0; groupStart < rowCount; ) {
         const anchor = beginTimes[groupStart]!;
         let groupEnd = groupStart + 1;
-        while (
-          groupEnd < this.events.length &&
-          beginTimes[groupEnd] === anchor
-        ) {
+        while (groupEnd < rowCount && beginTimes[groupEnd] === anchor) {
           groupEnd += 1;
         }
 
@@ -3220,33 +3226,21 @@ export class TimeSeries<S extends SeriesSchema> {
         }
 
         const upperBound = anchor + windowMs;
-        while (
-          windowEnd < this.events.length &&
-          beginTimes[windowEnd]! < upperBound
-        ) {
+        while (windowEnd < rowCount && beginTimes[windowEnd]! < upperBound) {
           addEvent(windowEnd);
           windowEnd += 1;
         }
 
-        const aggregated = snapshotWindow();
-        for (let index = groupStart; index < groupEnd; index++) {
-          resultRows[index] = Object.freeze([
-            this.events[index]!.key(),
-            ...aggregated,
-          ]) as unknown as TimeSeriesInput<SeriesSchema>['rows'][number];
-        }
+        writeGroup(groupStart, groupEnd, snapshotWindow());
 
         groupStart = groupEnd;
       }
     } else {
       const halfWindow = windowMs / 2;
-      for (let groupStart = 0; groupStart < this.events.length; ) {
+      for (let groupStart = 0; groupStart < rowCount; ) {
         const anchor = beginTimes[groupStart]!;
         let groupEnd = groupStart + 1;
-        while (
-          groupEnd < this.events.length &&
-          beginTimes[groupEnd] === anchor
-        ) {
+        while (groupEnd < rowCount && beginTimes[groupEnd] === anchor) {
           groupEnd += 1;
         }
 
@@ -3260,31 +3254,54 @@ export class TimeSeries<S extends SeriesSchema> {
         }
 
         const upperBound = anchor + halfWindow;
-        while (
-          windowEnd < this.events.length &&
-          beginTimes[windowEnd]! < upperBound
-        ) {
+        while (windowEnd < rowCount && beginTimes[windowEnd]! < upperBound) {
           addEvent(windowEnd);
           windowEnd += 1;
         }
 
-        const aggregated = snapshotWindow();
-        for (let index = groupStart; index < groupEnd; index++) {
-          resultRows[index] = Object.freeze([
-            this.events[index]!.key(),
-            ...aggregated,
-          ]) as unknown as TimeSeriesInput<SeriesSchema>['rows'][number];
-        }
+        writeGroup(groupStart, groupEnd, snapshotWindow());
 
         groupStart = groupEnd;
       }
     }
 
-    return new TimeSeries({
-      name: this.name,
-      schema: resultSchema,
-      rows: resultRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-    });
+    // Assemble the result columns from the per-column accumulators and wrap via
+    // trusted construction — the key column passes through zero-copy, and there
+    // is no row re-validation / re-pack (the win this path exists for).
+    const outColumns = new Map<string, ColumnarColumn>();
+    for (let c = 0; c < columnSpecs.length; c++) {
+      const kind = resultColumnDefs[c]!.kind;
+      const values = outValues[c]!;
+      // The old event-based path re-packed via the constructor's strict intake,
+      // which rejected any defined result that didn't match the declared output
+      // kind — a non-finite number (a `sum` overflow), or a wrong-typed value
+      // (a custom reducer / `kind` override producing a string for a number
+      // column, etc.). Trusted construction skips intake, and the `*FromArray`
+      // builders silently coerce a kind mismatch to a *missing* cell — so
+      // re-assert the same contract here (same value rules AND the same
+      // `ValidationError` class as intake), keeping packed columns clean.
+      // Missing cells (`undefined`, e.g. the minSamples warm-up) are
+      // unaffected. (#225 Codex finding.)
+      assertColumnValuesMatchKind(
+        kind,
+        values,
+        `rolling column '${columnSpecs[c]!.output}'`,
+      );
+      outColumns.set(
+        columnSpecs[c]!.output,
+        columnFromValuesByKind(kind, values),
+      );
+    }
+    const outStore = ColumnarStore.fromTrustedStore(
+      resultSchema as unknown as ColumnSchema,
+      store.keys,
+      outColumns,
+    );
+    return TimeSeries.#fromTrustedStore(
+      this.name,
+      resultSchema,
+      outStore as unknown as ColumnarStore<ColumnSchema>,
+    );
   }
 
   /**
