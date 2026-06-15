@@ -294,6 +294,24 @@ describe('TimeSeries.byColumn — Codex regressions', () => {
       ),
     ).toThrow(/representable range/);
   });
+
+  it('assigns a fractional boundary value to the bin that contains it', () => {
+    // floor((v-0)/0.1) and origin+i*0.1 round inconsistently: v = -3*0.1 floors
+    // to bin -4, but -4's range [-0.4, -0.3…4) excludes v (v === end). The row
+    // must land in exactly one bin whose [start, end) actually contains it.
+    const v = -3 * 0.1; // -0.30000000000000004 in JS
+    const s = make([[0, v, 5, 0]]);
+    const bins = s.byColumn(
+      'dist',
+      { width: 0.1 },
+      { n: { from: 'ele', using: 'count' } },
+    );
+    const containing = bins.filter((b) => b.start <= v && v < b.end);
+    expect(containing).toHaveLength(1);
+    expect(containing[0]!.n).toBe(1);
+    // counted exactly once across all bins (no bin claims a value outside it)
+    expect(bins.reduce((acc, b) => acc + (b.n as number), 0)).toBe(1);
+  });
 });
 
 describe('TimeSeries.byColumn — validation', () => {

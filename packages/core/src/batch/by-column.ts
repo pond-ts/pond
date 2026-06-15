@@ -99,7 +99,21 @@ export function computeByColumn(
     if (!Number.isFinite(origin)) {
       throw new RangeError('byColumn: origin must be finite');
     }
-    binOf = (v) => Math.floor((v - origin) / width);
+    binOf = (v) => {
+      let bin = Math.floor((v - origin) / width);
+      // `floor((v−origin)/width)` (division) and the emitted boundary
+      // `origin + i*width` (multiplication) round independently, so for
+      // fractional widths a value can land just outside its floored bin's
+      // `[start, end)` (e.g. width 0.1, v = −3*0.1 → bin −4 whose end *is* v).
+      // Nudge the bin so `v ∈ [origin + bin*width, origin + (bin+1)*width)` —
+      // a ≤1-step correction for normal inputs. The counter caps the loop so a
+      // collapsed range (origin/width beyond float precision) can't spin; emit's
+      // representability check then rejects that bin.
+      let guard = 0;
+      while (v < origin + bin * width && guard++ < 4) bin -= 1;
+      while (v >= origin + (bin + 1) * width && guard++ < 4) bin += 1;
+      return bin;
+    };
     rangeOf = (i) => ({
       start: origin + i * width,
       end: origin + (i + 1) * width,
