@@ -263,6 +263,12 @@ describe('rolling parity — FIFO sliding window matches recompute', () => {
           // covers worst-case drift with margin, yet still 2 orders below the
           // order-1 errors the gross cancellation this test defends against
           // would produce). Tight (1e-9 relative) at small magnitudes.
+          //
+          // CALIBRATION (do not widen blindly): this floor sits ~100× above the
+          // fixed impl's own drift (~3e-4 at B=1e10) yet well below the bug
+          // class — reverting #222 (rolling-stdev → one-pass) fails this test
+          // with maxErr ≈ 496. Widening it risks blinding the suite; if you
+          // must, re-confirm a reverted #222 still fails here.
           agree(
             name,
             got,
