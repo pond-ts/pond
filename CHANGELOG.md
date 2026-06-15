@@ -7,7 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 file covers both packages. Pre-1.0: minor bumps may include new features and
 type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/pjm17971/pond-ts/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/pjm17971/pond-ts/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/pjm17971/pond-ts/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/pjm17971/pond-ts/compare/v0.22.0...v0.23.0
@@ -18,6 +19,27 @@ type-level changes; patch bumps are strictly additive.
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
 
 ## [Unreleased]
+
+## [0.26.0] — 2026-06-15
+
+### Changed
+
+- **`rolling(...)` now builds its output columns directly instead of
+  materializing events.** The rolling family was the last batch operator still
+  assembling a row per event and re-validating/re-packing it through the
+  constructor; it now reads the key axis and source values straight off the
+  columnar store and writes the result columns via trusted construction. The
+  result is unchanged for the common (scalar) cases. Measured: `rolling` with
+  `avg`/`sum` ~2.2–2.7× faster; rolling `stdev` on 100k events ~3.3–7.3×
+  (a 1-event window 45.7 ms → 6.3 ms); partitioned rolling ~1.8×.
+  `baseline` / `outliers` (which delegate to `rolling`) inherit the speedup.
+  - **Behavior note — `array` columns:** an identity-comparing reducer (`keep`,
+    or a custom reducer using `===` on the cell) on an `array`-kind source
+    column now compares the value stored in the column, not the original object
+    reference passed at construction. Two rows given the *same* array object
+    therefore read as distinct. Scalar columns (number / string / boolean) are
+    unaffected. A non-finite or wrong-kind reducer result is still rejected with
+    a `ValidationError`, exactly as the constructor's intake did.
 
 ## [0.25.0] — 2026-06-15
 
