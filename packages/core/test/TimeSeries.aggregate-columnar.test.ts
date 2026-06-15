@@ -292,3 +292,86 @@ describe('aggregate(stdev) — path-independent (audit §1.1)', () => {
     expect(v).toBeCloseTo(Math.sqrt(0.02 / 3), 6);
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* rolling(stdev) — numerically stable sliding window.                         */
+/*                                                                             */
+/* rollingState needs `remove`, which plain one-pass `sq/n − mean²` can't do   */
+/* stably — it cancelled on near-equal large values ([1e10, …] → 0 or a        */
+/* negative variance → NaN) and drifted on large trending data. The two-stack  */
+/* Welford-Chan aggregator gives the bucket path's accuracy on the window:     */
+/* m2 ≥ 0, no cancellation, no shift-reference drift, agreeing to FP noise.    */
+/* -------------------------------------------------------------------------- */
+describe('rolling(stdev) — numerically stable sliding window', () => {
+  const STDEV_5_4 = Math.sqrt(5 / 4); // ≈ 1.118033988749895
+
+  // Population stdev over a plain array (the ground truth).
+  const popStdev = (xs: number[]): number => {
+    const m = xs.reduce((a, b) => a + b, 0) / xs.length;
+    return Math.sqrt(xs.reduce((a, b) => a + (b - m) ** 2, 0) / xs.length);
+  };
+
+  it('full window on near-equal large values → 1.118, not 0/NaN (was the deferred one-pass)', () => {
+    // Four consecutive integers offset by 1e10: pop stdev is sqrt(5/4)
+    // regardless of offset, but 1e10 makes `sq/n − mean²` cancel to 0 (or a
+    // negative variance → NaN). A '10s' window covers all four at the last event.
+    const s = series(
+      [0, 1, 2, 3].map((k, i) => [i * 1000, 1e10 + k, 'a'] as Row),
+    );
+    const out = s.rolling('10s', { sd: { from: 'value', using: 'stdev' } });
+    const last = out.at(out.length - 1)!.get('sd') as number;
+    expect(Number.isFinite(last)).toBe(true);
+    expect(last).toBeCloseTo(STDEV_5_4, 9);
+  });
+
+  it('every sliding window matches brute-force pop stdev on large trending data', () => {
+    // Cumulative-distance-like trend at 1e9 scale (where the shift-reference
+    // one-pass drifted): a 3s trailing window slides add+remove across 12
+    // points. Each output must equal the population stdev of its half-open
+    // trailing window {j : j > i − 3} to floating-point noise.
+    const base = 1e9;
+    const vs = Array.from({ length: 12 }, (_, i) => base + i * 7);
+    const s = series(vs.map((v, i) => [i * 1000, v, 'a'] as Row));
+    const out = s.rolling('3s', { sd: { from: 'value', using: 'stdev' } });
+    for (let i = 0; i < vs.length; i += 1) {
+      const win = vs.slice(Math.max(0, i - 2), i + 1);
+      const got = out.at(i)!.get('sd') as number;
+      expect(Number.isFinite(got)).toBe(true);
+      expect(got).toBeCloseTo(popStdev(win), 9);
+    }
+  });
+
+  it('rolling full-window stdev agrees with aggregate (bucket) stdev', () => {
+    // Same cancellation-prone data, both batch paths → identical sqrt(5/4).
+    const rows = [0, 1, 2, 3].map((k, i) => [i * 1000, 1e10 + k, 'a'] as Row);
+    const s = series(rows);
+    const rolled = s.rolling('10s', { sd: { from: 'value', using: 'stdev' } });
+    const bucketed = s.aggregate(Sequence.every('10s'), {
+      sd: { from: 'value', using: 'stdev' },
+    });
+    const r = rolled.at(rolled.length - 1)!.get('sd') as number;
+    const b = bucketed.at(0)!.get('sd') as number;
+    expect(r).toBeCloseTo(STDEV_5_4, 9);
+    expect(b).toBeCloseTo(STDEV_5_4, 9);
+    expect(Math.abs(r - b) / b).toBeLessThan(1e-12);
+  });
+
+  it('recovers the residual stdev after a realistic spike leaves the window', () => {
+    // Outlier eviction is the subtractive-variance weak spot (see stdev.ts):
+    // removing a value far outside the residual spread cancels `m2`. For
+    // realistic magnitudes it is negligible — a 1000× spike enters then slides
+    // off a 3-event window, and once gone the residual stdev still matches a
+    // fresh computation of the trailing window. (Only pathological spikes —
+    // ~1e7×+ the residual stdev — corrupt the running accumulator.)
+    const rows: Row[] = [];
+    for (let i = 0; i < 12; i += 1) {
+      rows.push([i * 1000, i === 4 ? 1000 : 1 + (i % 3), 'a'] as Row);
+    }
+    const s = series(rows);
+    const out = s.rolling('3s', { sd: { from: 'value', using: 'stdev' } });
+    const vals = rows.map((r) => r[1]);
+    // i=8: half-open '3s' window = {6,7,8}; the spike at i=4 is long gone.
+    const got = out.at(8)!.get('sd') as number;
+    expect(got).toBeCloseTo(popStdev(vals.slice(6, 9)), 9);
+  });
+});

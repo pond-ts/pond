@@ -80,8 +80,12 @@ describe('TimeSeries.outliers', () => {
     }
     const s = new TimeSeries({ name: 'cpu', schema, rows });
 
+    // 10-event window: a lone spike after k identical normals sits at
+    // exactly z=√k, so a 5-event window (k=4) lands it *on* the 2σ line
+    // (a knife-edge the strict `>` resolves by FP luck); 10 events (k=9)
+    // → z=3, robustly outside the band.
     const anomalyCounts = s
-      .outliers('cpu', { window: '5s', sigma: 2 })
+      .outliers('cpu', { window: '10s', sigma: 2 })
       .aggregate(Sequence.every('15s'), { cpu: 'count' });
 
     expect(anomalyCounts.length).toBeGreaterThan(0);
@@ -407,8 +411,11 @@ describe('TimeSeries.fromPoints', () => {
     // Dashboard pattern: flatten outliers to points (e.g. for chart
     // rendering), then round-trip back to a TimeSeries for bucketed
     // counting.
+    // 10-event window so the clustered spikes sit at z≈3, robustly
+    // outside the 2σ band (a 5-event window puts a lone spike at exactly
+    // z=2 — a knife-edge; see the bucketed-counts test above).
     const pts = s
-      .outliers('cpu', { window: '5s', sigma: 2 })
+      .outliers('cpu', { window: '10s', sigma: 2 })
       .select('cpu')
       .toPoints();
     expect(pts.length).toBeGreaterThan(0);

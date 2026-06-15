@@ -22,9 +22,12 @@ import type { ReducerDef } from './types.js';
  * agree to floating-point noise — bit-for-bit when they see the values in the
  * same order, which the bucketed paths do.
  *
- * `rollingState` is the exception: its sliding window needs `remove`, which
- * Welford can't do stably (windowed removal drifts), so it keeps the one-pass
- * `sq/n − mean²` (with its clamp). A stable rolling stdev is a deferred item.
+ * `rollingState` adds `remove` for its sliding window via Welford's
+ * **order-independent delete** (the reverse recurrence). It works in the same
+ * deviation space — no `sq/n − mean²` cancellation, no shift drift — and
+ * removes *by value*, so it stays correct under the live layer's reorder-mode
+ * eviction (which removes the sorted-prefix, not the oldest-arrived event).
+ * See its inline note for the mechanics.
  */
 
 // Welford accumulator: `add` each value, then read `result()` for the
@@ -135,31 +138,68 @@ export const stdev: ReducerDef = {
     };
   },
   rollingState() {
-    // One-pass `sq/n − mean²` with the `Math.max(0, …)` clamp. Unlike the other
-    // paths this has a `remove` for the sliding window, which Welford can't do
-    // stably — a stable rolling stdev is deferred (see the module note above).
-    let s = 0;
-    let sq = 0;
+    // Sliding-window population stdev: Welford's online variance with an
+    // **order-independent delete**. `add(v)` is the standard recurrence;
+    // `remove(v)` reverses it. Working in deviation space, it fixes the old
+    // one-pass `sq/n − mean²` failure modes — catastrophic cancellation on
+    // near-equal large values (`[1e10, 1e10+1, …]` → 0 or a negative variance →
+    // NaN; the audit-§1.1 case, previously still live on this path) and shift
+    // drift on trending data (cumulative distance, elevation).
+    //
+    // Limitation — **outlier eviction** (shared with the old one-pass, so not a
+    // regression): like any *subtractive* sliding variance, evicting a value far
+    // outside the residual spread cancels — `m2 −= huge` loses the small
+    // remainder, and the error persists in the running accumulator (the clamp
+    // floors it to 0 at the extreme). Negligible until the evicted point is
+    // ~1e7–1e8× the residual stdev (e.g. a ~1e6 spike over a ~0.01-σ baseline) —
+    // far beyond realistic monitoring / activity data, and exactly why the
+    // add-only paths use plain Welford. A FIFO-only two-stack merge avoids it
+    // entirely but can't serve the by-value eviction the live layer needs.
+    //
+    // Removal is **by value, not by position**. That is load-bearing for the
+    // live layer: `LiveReduce` shares this state, and a `reorder`-mode source
+    // with retention evicts the sorted-prefix — which may be a later arrival,
+    // not the oldest — so a positional (FIFO) remove would corrupt the window.
+    // A value-based delete is correct regardless of eviction order (the
+    // documented contract; see live-reduce.ts and live-buffer-as-window.test).
+    // The batch rolling driver removes strictly oldest-first — a special case.
+    //
+    // Non-finite / missing cells arrive as `undefined` (the factory wrapper
+    // applies the non-finite policy); `add`/`remove` both skip them symmetrically
+    // so they never enter `n`.
     let n = 0;
+    let mean = 0;
+    let m2 = 0;
     return {
       add(_i, v) {
-        if (typeof v === 'number') {
-          s += v;
-          sq += v * v;
-          n++;
-        }
+        if (typeof v !== 'number') return;
+        n += 1;
+        const delta = v - mean;
+        mean += delta / n;
+        m2 += delta * (v - mean);
       },
       remove(_i, v) {
-        if (typeof v === 'number') {
-          s -= v;
-          sq -= v * v;
-          n--;
+        if (typeof v !== 'number') return;
+        if (n <= 1) {
+          // Removing the final contributor — reset exactly (no 0/0, no drift).
+          n = 0;
+          mean = 0;
+          m2 = 0;
+          return;
         }
+        const meanWith = mean;
+        n -= 1;
+        // Deviation-space mean update (mean − (v − mean)/n): avoids the large
+        // `n·mean − v` product, staying precise at large magnitudes.
+        mean = meanWith - (v - meanWith) / n;
+        // Reverse Welford: M2 −= (v − meanNew)·(v − meanOld).
+        m2 -= (v - mean) * (v - meanWith);
+        // Normally absorbs FP round-off; on a gross outlier eviction (see the
+        // limitation note above) the subtraction can cancel below 0 — clamp.
+        if (m2 < 0) m2 = 0;
       },
       snapshot() {
-        if (n === 0) return undefined;
-        const mean = s / n;
-        return Math.sqrt(Math.max(0, sq / n - mean * mean));
+        return n === 0 ? undefined : Math.sqrt(Math.max(0, m2 / n));
       },
     };
   },
