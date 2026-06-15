@@ -322,6 +322,40 @@ React). Real production code in a trading-platform app.
   satisfy `AggregateMap`'s "one reducer per column" constraint —
   exactly the gap PLAN's deferred section predicted.
 
+### estela (geo + power; drives `@pond-ts/fit`; kicked off 2026-06-14)
+
+estela — "a story-first record of long journeys" (sibling repo) — is the
+use-case experiment driving **`@pond-ts/fit`**, the activity-analytics umbrella
+(reframe from `@pond-ts/geo`, adopted 2026-06-15:
+[`docs/rfcs/fit.md`](docs/rfcs/fit.md)). Two milestones, both validated against
+Strava's own numbers on real files, both built entirely on pond's public
+surface (zero core changes — the geo-RFC thesis held; of a 4.2 ms M1 pipeline,
+<0.3 ms touches pond):
+
+- **M1 (geo):** a 123 km / 15,207-pt ride — distance / elevation / splits /
+  profile / polyline; +0.2% distance vs Strava, exact elapsed.
+- **M2 (power):** a power-meter FIT — NP / FTP zones / mean-maximal curve /
+  work / TSS; **exact** zone split + work vs Strava.
+
+Docs: [`docs/rfcs/fit.md`](docs/rfcs/fit.md),
+[`docs/rfcs/geo.md`](docs/rfcs/geo.md) §10–§13 (use-case feedback + library
+ruling), estela's `docs/pond-friction.md`.
+
+**Core-bound carry-forwards (accepted; queued behind the NaN-policy → rolling
+sequence):**
+
+- **`byColumn` value-axis aggregation** — the headline. Bucket `aggregate` over
+  any column: monotonic → contiguous ranges (splits / profile), non-monotonic →
+  histogram (power distribution / FTP zones). Confirmed ×3. Own design-note → PR.
+- **`withColumn` / `fromTrustedColumns`** — attach a computed `Float64Array` as
+  a column; double-signalled with the chart carry-forwards (#107).
+  `byColumn`'s precursor.
+- **`RowForSchema` honoring `required: false`** — the known greenfield F4 /
+  ARCHITECTURE §4 limitation, now use-case-confirmed.
+- **`'mean'` reducer alias** for `'avg'` (minor DX).
+- **Data point against opening the kind system:** a packed geo column earned
+  nothing on perf at GPS scale (reinforces `geo.md` §7).
+
 ---
 
 ## Completed work
