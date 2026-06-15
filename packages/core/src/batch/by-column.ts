@@ -69,7 +69,7 @@ export function computeByColumn(
     }
     const last = edges.length - 1;
     binOf = (v) => {
-      if (v < edges[0]! || v >= edges[last]!) return -1; // out of range
+      if (v < edges[0]! || v >= edges[last]!) return NaN; // out of range → drop
       // rightmost edge <= v, clamped to a valid bin [0, last)
       let lo = 0;
       let hi = last; // bins are [0, last)
@@ -105,7 +105,7 @@ export function computeByColumn(
     const bv = binCol.read(i);
     if (typeof bv !== 'number' || !Number.isFinite(bv)) continue;
     const bin = binOf(bv);
-    if (bin < 0) continue;
+    if (Number.isNaN(bin)) continue; // edges out-of-range (width bins may be negative)
     let cells = states.get(bin);
     if (cells === undefined) {
       cells = columnSpecs.map((s) => bucketStateFor(s.reducer));
@@ -118,10 +118,13 @@ export function computeByColumn(
     if (bin > maxBin) maxBin = bin;
   }
 
-  // Empty-bin value per output column (a fresh state's snapshot — immutable, so
-  // it can be reused across every empty bin).
-  const emptySnapshot = columnSpecs.map((s) =>
-    bucketStateFor(s.reducer).snapshot(),
+  // Empty-bin value per output column. A scalar reducer's empty value is an
+  // immutable primitive (count → 0, avg → undefined) safe to share across every
+  // empty bin; an array-kind reducer (samples / unique / top) yields a fresh
+  // `[]` that must NOT be aliased between bins, so those are re-snapshotted per
+  // empty bin below.
+  const emptyScalar = columnSpecs.map((s) =>
+    s.kind === 'array' ? undefined : bucketStateFor(s.reducer).snapshot(),
   );
 
   const out: BinRecord[] = [];
@@ -130,9 +133,12 @@ export function computeByColumn(
     const cells = states.get(binIndex);
     const rec: BinRecord = { start, end };
     for (let c = 0; c < columnSpecs.length; c += 1) {
-      rec[columnSpecs[c]!.output] = cells
+      const spec = columnSpecs[c]!;
+      rec[spec.output] = cells
         ? cells[c]!.snapshot()
-        : emptySnapshot[c];
+        : spec.kind === 'array'
+          ? bucketStateFor(spec.reducer).snapshot() // fresh array per empty bin
+          : emptyScalar[c];
     }
     out.push(rec);
   };

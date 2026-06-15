@@ -191,6 +191,45 @@ describe('TimeSeries.byColumn — edges + drops', () => {
   });
 });
 
+describe('TimeSeries.byColumn — Codex regressions', () => {
+  it('keeps negative width bins for values below origin (default 0)', () => {
+    // floor((v-0)/100): -150 → -2, -50 → -1, 50 → 0. The width path must NOT
+    // treat a negative bin index as "out of range" (only edges drops).
+    const s = make([
+      [0, -150, 1, 0],
+      [1000, -50, 1, 0],
+      [2000, 50, 1, 0],
+    ]);
+    const bins = s.byColumn(
+      'dist',
+      { width: 100 },
+      { n: { from: 'ele', using: 'count' } },
+    );
+    expect(bins).toEqual([
+      { start: -200, end: -100, n: 1 },
+      { start: -100, end: 0, n: 1 },
+      { start: 0, end: 100, n: 1 },
+    ]);
+  });
+
+  it('does not alias the empty array value across empty bins', () => {
+    // dist 0 → bin 0, dist 3000 → bin 3; bins 1 & 2 are empty. An array-kind
+    // reducer's empty value must be a fresh array per bin, not one shared ref.
+    const s = make([
+      [0, 0, 1, 0],
+      [1000, 3000, 1, 0],
+    ]);
+    const bins = s.byColumn(
+      'dist',
+      { width: 1000 },
+      { vals: { from: 'ele', using: 'unique' } },
+    );
+    expect(bins[1]!.vals).toEqual([]);
+    expect(bins[2]!.vals).toEqual([]);
+    expect(bins[1]!.vals).not.toBe(bins[2]!.vals); // distinct instances
+  });
+});
+
 describe('TimeSeries.byColumn — validation', () => {
   const s = make([[0, 0, 0, 0]]);
 
