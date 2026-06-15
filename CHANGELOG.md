@@ -7,7 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 file covers both packages. Pre-1.0: minor bumps may include new features and
 type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.26.0...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.27.0...HEAD
+[0.27.0]: https://github.com/pjm17971/pond-ts/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/pjm17971/pond-ts/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/pjm17971/pond-ts/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/pjm17971/pond-ts/compare/v0.23.0...v0.24.0
@@ -20,7 +21,22 @@ type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
-## [0.26.0] — 2026-06-15
+## [0.27.0] — 2026-06-15
+
+### Added
+
+- **`TimeSeries.byColumn(col, { width, origin? } | { edges }, mapping)` —
+  value-axis aggregation.** Where `aggregate` buckets the temporal key,
+  `byColumn` buckets rows by the **value** of a numeric column and reduces each
+  bin, returning an ordered array of `{ start, end, ...aggregates }` records
+  (one per bin) — not a `TimeSeries`, since value-bins (distance / power ranges)
+  aren't time-indexed. `{ width }` gives even bins emitted contiguously from the
+  lowest to highest occupied bin (monotonic source → splits / profile;
+  non-monotonic → histogram); `{ edges }` gives explicit ascending bins (e.g.
+  power zones). Reuses the reducer mapping + non-finite policy. Rows whose bin
+  value is missing / non-finite (or, for `edges`, out of range) are dropped;
+  empty bins emit the reducer's empty value; a non-finite / wrong-kind reducer
+  result throws `ValidationError`. See `docs/notes/bycolumn-value-axis.md`.
 
 ### Changed
 
