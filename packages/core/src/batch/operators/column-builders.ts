@@ -103,9 +103,18 @@ export function assertColumnValuesMatchKind(
     if (!ok) {
       // `ValidationError` (not `RangeError`) so the failure class matches the
       // constructor's strict intake — a caller that catches `ValidationError`
-      // for bad user data sees columnar-rolling rejections identically.
+      // for bad user data sees columnar-rolling rejections identically. The
+      // value is stringified defensively: some invalid values (e.g. an array
+      // containing a `Symbol`) throw from `String(...)`, which would mask the
+      // `ValidationError` with a `TypeError`.
+      let shown: string;
+      try {
+        shown = String(v);
+      } catch {
+        shown = `<unstringifiable ${typeof v}>`;
+      }
       throw new ValidationError(
-        `${label}: result ${String(v)} is not a valid '${kind}' value`,
+        `${label}: result ${shown} is not a valid '${kind}' value`,
       );
     }
   }

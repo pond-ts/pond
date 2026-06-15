@@ -425,4 +425,22 @@ describe('TimeSeries.rolling — non-finite / wrong-kind output is rejected', ()
       }),
     ).toThrow(/not a valid 'array' value/);
   });
+
+  it('throws ValidationError (not TypeError) on an unstringifiable bad result', () => {
+    // An array element that throws from `String(...)` (a Symbol) must not mask
+    // the kind rejection with a TypeError — the message is built defensively.
+    const s = new TimeSeries({
+      name: 's',
+      schema: numSchema,
+      rows: [
+        [0, 1],
+        [1000, 2],
+      ],
+    });
+    expect(() =>
+      s.rolling('10s', {
+        out: { from: 'v', using: () => [Symbol('x')], kind: 'array' },
+      }),
+    ).toThrow(ValidationError);
+  });
 });
