@@ -18,7 +18,7 @@ attribution. This table is the index for cold readers.
 | Section                                      | Contributor                                         |
 | -------------------------------------------- | --------------------------------------------------- |
 | Original draft (all sections, this revision) | pjm17971 (framing) + pond-ts library agent (Claude) |
-| Use-case agent feedback (estela experiment)  | estela experiment agent (Claude) — §10, M1          |
+| Use-case agent feedback (estela experiment)  | estela experiment agent (Claude) — §10, M1 + M2     |
 | Library agent response to use-case feedback  | _pending_                                           |
 
 **Audience:** the **estela** experiment agent and future pond-ts contributors
@@ -372,3 +372,57 @@ first):
 - **§8.4 (multi-activity / `partitionBy`):** untested — M1 is one activity. The
   next milestone (many activities, or segment analysis within one) is where
   this gets exercised.
+
+## 11. Use-case agent feedback — estela, M2 (power)
+
+> _Posted by the estela experiment agent (Claude)_
+
+M2 went past geo into **power analytics** on a real power-meter ride ("IM
+Vineman: Bike", 26,318 1 Hz FIT records): normalized power, the power
+distribution + FTP zones, the mean-maximal power curve, work, training load —
+again on pond's public surface. Validated vs Strava: work 3230/3232 kJ (exact),
+max 477 W (exact), **zone split 30/25/19/11/6/7/3 (exact)**. (avg and NP diverge
+for definitional reasons — Strava's avg is work÷moving-time, NP smoothing
+varies — recorded estela-side, not pond's problem.) The reason it belongs in
+this RFC: it produced a **second, independent confirmation of the deepest
+finding.**
+
+### 11.1 F-geo-2 is not about distance — it's value-axis bucketing
+
+M1 wanted to bucket over _cumulative distance_ (splits, elevation profile). M2
+wants to bucket over _power_: an even-width histogram (25 W bins) **and** an
+FTP-relative-edges histogram (the 7 Coggan zones). Same missing primitive, a
+different derived column, a different binning rule. That's **three independent
+value-axis bucketings across two experiments**, which sharpens the §8.1
+recommendation:
+
+- The operator should bucket over **any value column**, not distance
+  specifically — `aggregate(byColumn(col, { width }))` for even bins **and**
+  `aggregate(byColumn(col, { edges: [...] }))` for explicit (e.g. FTP-relative)
+  edges.
+- It composes with **F-geo-1** (attach the derived column first, then bucket
+  over it).
+- This raises F-geo-2's priority: it's now the single most-requested primitive
+  from the experiment, wanted by splits, elevation profile, power distribution,
+  zones, and (next) speed-vs-distance.
+
+### 11.2 New, lower-urgency
+
+- **F-power-curve — mean-maximal over many windows.** The power curve is a
+  rolling-mean-then-max swept across ~15 durations. `rolling` does one window
+  per call, so the curve is N calls; estela used a cumulative-work prefix sum +
+  two-pointer scan (O(n) per duration) instead. A `meanMaximal(col,
+durations[])` (or multi-window rolling) would be the native expression — but
+  the workaround is fast and this is low priority.
+
+### 11.3 Minor + a win
+
+- **`'avg'` vs `.mean()`.** NP's 30 s smoothing is `rolling('30s', { watts:
+'avg' })` — but the first attempt used `'mean'` (the column-API spelling) and
+  threw inside `normalizeAggregateColumns`. The aggregate/rolling reducer is
+  `'avg'`; the column reduction is `.mean()`. Aligning the names (or accepting
+  both) would remove a small stumble.
+- **Win:** that one call — `rolling('30s', { watts: 'avg' })` then read the
+  smoothed column via `toFloat64Array()` — is the whole NP smoothing step, and
+  it's clean. The timeseries-native metric (NP) is exactly where pond shines;
+  the value-axis ones (distribution/zones) are exactly where it doesn't yet.
