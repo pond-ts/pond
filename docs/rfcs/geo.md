@@ -409,11 +409,13 @@ recommendation:
 ### 11.2 New, lower-urgency
 
 - **F-power-curve — mean-maximal over many windows.** The power curve is a
-  rolling-mean-then-max swept across ~15 durations. `rolling` does one window
-  per call, so the curve is N calls; estela used a cumulative-work prefix sum +
-  two-pointer scan (O(n) per duration) instead. A `meanMaximal(col,
-durations[])` (or multi-window rolling) would be the native expression — but
-  the workaround is fast and this is low priority.
+  rolling-mean-then-max swept across ~15 durations. **Batch**
+  `TimeSeries.rolling` is one-window-per-call, so the batch curve would be N
+  calls; estela used a cumulative-work prefix sum + two-pointer scan (O(n) per
+  duration) instead. (Caveat: pond _does_ have fused multi-window rolling — on
+  the **`live`** surface, not batch — so this gap is specifically a _batch_
+  mean-maximal helper. The prefix-sum is the right batch tool today.) A batch
+  `meanMaximal(col, durations[])` would be the native expression — low priority.
 
 ### 11.3 Minor + a win
 
