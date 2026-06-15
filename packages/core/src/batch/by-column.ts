@@ -46,6 +46,15 @@ export function computeByColumn(
       `byColumn: column '${binColName}' must be a number column (got '${binCol.kind}')`,
     );
   }
+  // `start` / `end` carry the bin range in every record, so a mapping output
+  // can't claim them (it would silently overwrite the range).
+  for (const s of columnSpecs) {
+    if (s.output === 'start' || s.output === 'end') {
+      throw new RangeError(
+        `byColumn: output name '${s.output}' is reserved for the bin range`,
+      );
+    }
+  }
   const sourceCols = columnSpecs.map((s) => store.columns.get(s.source)!);
   const n = store.length;
 
@@ -118,27 +127,19 @@ export function computeByColumn(
     if (bin > maxBin) maxBin = bin;
   }
 
-  // Empty-bin value per output column. A scalar reducer's empty value is an
-  // immutable primitive (count → 0, avg → undefined) safe to share across every
-  // empty bin; an array-kind reducer (samples / unique / top) yields a fresh
-  // `[]` that must NOT be aliased between bins, so those are re-snapshotted per
-  // empty bin below.
-  const emptyScalar = columnSpecs.map((s) =>
-    s.kind === 'array' ? undefined : bucketStateFor(s.reducer).snapshot(),
-  );
-
   const out: BinRecord[] = [];
   const emit = (binIndex: number): void => {
     const { start, end } = rangeOf(binIndex);
     const cells = states.get(binIndex);
     const rec: BinRecord = { start, end };
     for (let c = 0; c < columnSpecs.length; c += 1) {
-      const spec = columnSpecs[c]!;
-      rec[spec.output] = cells
+      // Occupied bin → that bin's own accumulated snapshot. Empty bin → a FRESH
+      // empty snapshot per bin (not a cached/shared value): array-kind reducers
+      // would otherwise alias one `[]` across bins, and a custom reducer's empty
+      // is `fn([])` which `aggregate` evaluates per empty bucket — match that.
+      rec[columnSpecs[c]!.output] = cells
         ? cells[c]!.snapshot()
-        : spec.kind === 'array'
-          ? bucketStateFor(spec.reducer).snapshot() // fresh array per empty bin
-          : emptyScalar[c];
+        : bucketStateFor(columnSpecs[c]!.reducer).snapshot();
     }
     out.push(rec);
   };
@@ -147,6 +148,14 @@ export function computeByColumn(
     const binCount = spec.edges.length - 1;
     for (let b = 0; b < binCount; b += 1) emit(b);
   } else if (states.size > 0) {
+    // A finite-but-huge value can floor to a bin index past the safe-integer
+    // range (or to ±Infinity on overflow); the emit loop's `b += 1` would then
+    // never advance. Reject it rather than spin.
+    if (!Number.isSafeInteger(minBin) || !Number.isSafeInteger(maxBin)) {
+      throw new RangeError(
+        'byColumn: the data range and width produce a bin index outside the safe integer range; use a larger width',
+      );
+    }
     const binCount = maxBin - minBin + 1;
     if (binCount > MAX_WIDTH_BINS) {
       throw new RangeError(

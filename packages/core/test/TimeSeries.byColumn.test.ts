@@ -228,6 +228,45 @@ describe('TimeSeries.byColumn — Codex regressions', () => {
     expect(bins[2]!.vals).toEqual([]);
     expect(bins[1]!.vals).not.toBe(bins[2]!.vals); // distinct instances
   });
+
+  it('gives distinct empty values for a custom array-returning reducer', () => {
+    // A custom reducer can return an array without `kind: 'array'` (kind then
+    // defaults to 'string'), so the empty value can't be cached off `kind` —
+    // it must be a fresh `fn([])` per empty bin (aggregate semantics).
+    const s = make([
+      [0, 0, 1, 0],
+      [1000, 3000, 1, 0],
+    ]); // bins 1 & 2 empty
+    const bins = s.byColumn(
+      'dist',
+      { width: 1000 },
+      { vals: { from: 'ele', using: () => [] as ReadonlyArray<number> } },
+    );
+    expect(bins[1]!.vals).not.toBe(bins[2]!.vals);
+  });
+
+  it('throws when width produces a bin index outside the safe integer range', () => {
+    // floor(1e20 / 1) is finite but not a safe integer → the emit loop's
+    // `b += 1` could never advance, so reject instead of spinning.
+    const s = make([[0, 1e20, 1, 0]]);
+    expect(() =>
+      s.byColumn('dist', { width: 1 }, { n: { from: 'ele', using: 'count' } }),
+    ).toThrow(/safe integer range/);
+  });
+
+  it("rejects a mapping output named 'start' or 'end'", () => {
+    const s = make([[0, 0, 1, 0]]);
+    expect(() =>
+      s.byColumn('dist', { width: 1000 }, {
+        start: { from: 'ele', using: 'sum' },
+      } as never),
+    ).toThrow(/reserved/);
+    expect(() =>
+      s.byColumn('dist', { width: 1000 }, {
+        end: { from: 'ele', using: 'sum' },
+      } as never),
+    ).toThrow(/reserved/);
+  });
 });
 
 describe('TimeSeries.byColumn — validation', () => {
