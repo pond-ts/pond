@@ -2949,6 +2949,14 @@ export class TimeSeries<S extends SeriesSchema> {
    * series carrying multiple entities (host, region, device id), use
    * `series.partitionBy(col).rolling(...).collect()` to scope per
    * entity. See {@link TimeSeries.partitionBy}.
+   *
+   * **`array`-column identity:** the window reads values from the
+   * columnar store, so on an `array`-kind source column an identity-
+   * comparing reducer (`keep`, or a custom reducer using `===` on the
+   * cell) compares the stored cell, not the original object reference
+   * from construction. Two rows that were given the *same* array object
+   * therefore read as distinct values here. Scalar columns
+   * (number / string / boolean) are unaffected (value semantics).
    */
   rolling<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
     window: DurationInput,
