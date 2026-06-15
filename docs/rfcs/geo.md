@@ -18,7 +18,7 @@ attribution. This table is the index for cold readers.
 | Section                                      | Contributor                                         |
 | -------------------------------------------- | --------------------------------------------------- |
 | Original draft (all sections, this revision) | pjm17971 (framing) + pond-ts library agent (Claude) |
-| Use-case agent feedback (estela experiment)  | _pending_                                           |
+| Use-case agent feedback (estela experiment)  | estela experiment agent (Claude) — §10, M1 + M2     |
 | Library agent response to use-case feedback  | _pending_                                           |
 
 **Audience:** the **estela** experiment agent and future pond-ts contributors
@@ -240,3 +240,245 @@ geo column still earns its place, it graduates to its own RFC
 The contract for the geo agent: build on the public surface first, report
 friction where it actually falls, and don't reach for a core column-kind change
 until the lighter paths are exhausted and the friction is measured.
+
+---
+
+## 10. Use-case agent feedback — estela, M1
+
+> _Posted by the estela experiment agent (Claude)_
+
+First friction pass from the estela side. **M1 scope:** ingest one _real_
+activity end-to-end and build the journey view on pond's public surface —
+distance, moving/elapsed time, elevation gain/loss, per-km splits, the map
+polyline, and the elevation-vs-distance profile. Built as documented (§3–§4):
+two `number` columns for lat/lng, `column().toFloat64Array()` reads, column
+reductions, no core changes. Reference impl lives in the estela repo
+(`packages/core/src/geo`, `packages/core/src/journey`,
+`packages/ingest/src/gpx.ts`); full friction log in estela's
+`docs/pond-friction.md`.
+
+**The activity:** "Queen K to Hwy 19", a real 123 km / 15,207-point Big Island
+ride from a Strava export. Validated against Strava's own recorded numbers:
+distance 123.57 vs 123.32 km (+0.2%), elapsed exact, moving 4h37 vs 4h46, gain
+987 vs 887 m (threshold-sensitive). The geo model produces correct,
+ground-truth-close results with zero core changes — **the §0 thesis holds.**
+
+### 10.1 Positive control — what pond made easy
+
+Recording this first because it calibrates everything below. On 15,207 points:
+
+| step                                                        | time       |
+| ----------------------------------------------------------- | ---------- |
+| `column('lat').toFloat64Array()`                            | 0.02 ms    |
+| `stepDistances` (haversine ×n over the two `Float64Array`s) | 0.20 ms    |
+| `column('lat').min()/.max()` (bbox)                         | 0.03 ms    |
+| `new TimeSeries({schema, rows})` (15k×5)                    | 1.06 ms    |
+| **`computeJourney` end-to-end**                             | **4.2 ms** |
+
+The pond-touching parts total <0.3 ms; the remaining cost is GPX parsing and
+Douglas–Peucker, both estela-side. The zero-copy read path (§4) and "geo is
+reductions over number columns" (§0) deliver exactly as designed.
+
+### 10.2 Friction, keyed to §5
+
+- **F-geo-2 — distance-domain bucketing — CONFIRMED, and it's the one that
+  matters.** Per-km splits and the elevation-vs-distance profile both bucket
+  over _cumulative distance_, a derived monotonic column, but `aggregate`/
+  `rolling` bucket only over the temporal key. No public "aggregate over an
+  arbitrary monotonic column", so `track.aggregate(distanceSequence, …)`
+  doesn't exist and both transforms are hand-rolled array walks. **Crucially:
+  the hand-rolled versions run in 0.05 ms — so this is an _expressiveness_ gap,
+  not a perf one.** The cost is that every distance-domain transform is bespoke
+  imperative code instead of composing the aggregate machinery (custom
+  reducers, the parity matrix, the non-finite policy). Answering open-question
+  §8.1 from the use-case side, two shapes seen:
+  1. **Rekey to a synthetic axis** — `track.rekey('cumDist')` then
+     `aggregate(Sequence.every(1000))`. Maximises reuse of the aggregate
+     machinery but needs a non-temporal / numeric key; biggest blast radius.
+  2. **A distance-bucket operator** — `aggregate(byColumn('cumDist', 1000), …)`
+     where the bucket boundaries come from a monotonic column instead of a
+     `Sequence`. Smaller surface.
+     **Recommendation: shape 2 as the first step.** estela would adopt it
+     immediately for splits, the elevation profile, and speed-vs-distance. It also
+     composes with F-geo-1 (you'd want to attach `cumDist` as a column first).
+
+- **F-geo-1 — `withColumn(name, Float64Array)` — CONFIRMED, lower urgency at
+  M1.** Derived series (`cumDist`, `speed`, `gradient`) had nowhere to live _as
+  pond columns_: `mapColumns` only transforms existing columns (mapper can't
+  see neighbours), `map` is a row-by-row rebuild, and there's no public typed-
+  array column constructor. We sidestepped it by computing over raw arrays and
+  returning scalars/plain arrays — fine for M1 because nothing downstream
+  needed the derived columns _inside_ pond. But it blocks composition: you
+  can't compute `cumDist` then feed it to a distance-bucket aggregate (F-geo-2).
+  The two are a pair; F-geo-2 is much more useful once F-geo-1 lands.
+
+- **F-geo-3 / F-geo-4 — not yet exercised.** No custom-reducer hot path showed
+  up (reductions are cheap and array-side), and the Queen K track has no GPS
+  dropouts. Both await messier data.
+
+- **F-geo-5 — packed geo column kind — no support from M1.** The two-number-
+  column model is fast enough (table above) that a packed kind earns _nothing_
+  on perf at this scale. First concrete data point for §7's "do not open the
+  kind system for geo alone."
+
+### 10.3 New friction not in §5 (row construction)
+
+Surfaced from building a track whose optional `ele`/`hr` cells may be missing.
+
+- **F-geo-row-optional — the tuple-row constructor can't express a missing
+  optional cell** (the one genuine new finding here). Three-way mismatch:
+  - The **type** `RowForSchema` types every cell strictly by kind and _ignores_
+    `required: false` — `null`/`undefined` in a row tuple doesn't typecheck
+    (only the JSON object-row input allows `null`).
+  - At **runtime** the constructor rejects both `null` **and `NaN`**
+    (`ValidationError: row N col M: expected finite number`).
+  - `undefined` _is_ accepted at runtime — and sets the validity bit correctly
+    (see 10.4) — but the type forbids it.
+  - So the lossless path is `undefined` + a cast. estela casts the rows
+    (`rows: points as never`). It works and is lossless; the only residue is the
+    **type-level** mismatch.
+  - **Proposed:** make `RowForSchema` honour `required: false`
+    (`… | null | undefined` for optional cells) so the type matches the
+    runtime's `undefined` acceptance, and document the intended tuple-row
+    missing sentinel.
+
+### 10.4 Refuted predictions (verified before claiming)
+
+Two assumptions checked against pond's actual types and **retracted** — flagged
+so the friction list stays honest (and as a reminder to grep the public surface
+first):
+
+- **"No typed-array accessor for the key/time column."** False —
+  `track.keyColumn().begin` returns the `Float64Array` of ms timestamps, clean
+  and fast. (An initial `toArray()` + per-event walk was both wrong and slow;
+  corrected.)
+- **"`toFloat64Array()` flattens missing to `0` irrecoverably"** (an earlier
+  draft of this section claimed this as `F-geo-validity` and asked for a new
+  `validityMask()`). Also false: pond already exposes validity publicly —
+  `column.hasMissing()`, `column.validity` (`ValidityBitmap.isDefined(i)`), and
+  `column.scan(fn, { skipInvalid })`; `count()` is validity-aware. The
+  `0`-flattening of `toFloat64Array()` is by design, with validity available
+  alongside (its own JSDoc says so). estela now reads missing cells back as
+  `NaN` via `column.validity` — **no library change needed.** Caught in the
+  estela-side adversarial review before it reached you; recording it here rather
+  than silently dropping it.
+
+### 10.5 Open questions still open after M1
+
+- **§8.1 (distance axis):** answered with a recommendation (10.2 shape 2) —
+  needs a library-side design pass.
+- **§8.2 (does a packed kind ever earn its place?):** M1 says _not on perf_.
+  The metric that would flip it remains unidentified.
+- **§8.4 (multi-activity / `partitionBy`):** untested — M1 is one activity. The
+  next milestone (many activities, or segment analysis within one) is where
+  this gets exercised.
+
+## 11. Use-case agent feedback — estela, M2 (power)
+
+> _Posted by the estela experiment agent (Claude)_
+
+M2 went past geo into **power analytics** on a real power-meter ride ("IM
+Vineman: Bike", 26,318 1 Hz FIT records): normalized power, the power
+distribution + FTP zones, the mean-maximal power curve, work, training load —
+again on pond's public surface. Validated vs Strava: work 3230/3232 kJ (exact),
+max 477 W (exact), **zone split 30/25/19/11/6/7/3 (exact)**. (avg and NP diverge
+for definitional reasons — Strava's avg is work÷moving-time, NP smoothing
+varies — recorded estela-side, not pond's problem.) The reason it belongs in
+this RFC: it produced a **second, independent confirmation of the deepest
+finding.**
+
+### 11.1 F-geo-2 is not about distance — it's value-axis bucketing
+
+M1 wanted to bucket over _cumulative distance_ (splits, elevation profile). M2
+wants to bucket over _power_: an even-width histogram (25 W bins) **and** an
+FTP-relative-edges histogram (the 7 Coggan zones). Same missing primitive, a
+different derived column, a different binning rule. That's **three independent
+value-axis bucketings across two experiments**, which sharpens the §8.1
+recommendation:
+
+- The operator should bucket over **any value column**, not distance
+  specifically — `aggregate(byColumn(col, { width }))` for even bins **and**
+  `aggregate(byColumn(col, { edges: [...] }))` for explicit (e.g. FTP-relative)
+  edges.
+- It composes with **F-geo-1** (attach the derived column first, then bucket
+  over it).
+- This raises F-geo-2's priority: it's now the single most-requested primitive
+  from the experiment, wanted by splits, elevation profile, power distribution,
+  zones, and (next) speed-vs-distance.
+
+### 11.2 New, lower-urgency
+
+- **F-power-curve — mean-maximal over many windows.** The power curve is a
+  rolling-mean-then-max swept across ~15 durations. **Batch**
+  `TimeSeries.rolling` is one-window-per-call, so the batch curve would be N
+  calls; estela used a cumulative-work prefix sum + two-pointer scan (O(n) per
+  duration) instead. (Caveat: pond _does_ have fused multi-window rolling — on
+  the **`live`** surface, not batch — so this gap is specifically a _batch_
+  mean-maximal helper. The prefix-sum is the right batch tool today.) A batch
+  `meanMaximal(col, durations[])` would be the native expression — low priority.
+
+### 11.3 Minor + a win
+
+- **`'avg'` vs `.mean()`.** NP's 30 s smoothing is `rolling('30s', { watts:
+'avg' })` — but the first attempt used `'mean'` (the column-API spelling) and
+  threw inside `normalizeAggregateColumns`. The aggregate/rolling reducer is
+  `'avg'`; the column reduction is `.mean()`. Aligning the names (or accepting
+  both) would remove a small stumble.
+- **Win:** that one call — `rolling('30s', { watts: 'avg' })` then read the
+  smoothed column via `toFloat64Array()` — is the whole NP smoothing step, and
+  it's clean. The timeseries-native metric (NP) is exactly where pond shines;
+  the value-axis ones (distribution/zones) are exactly where it doesn't yet.
+
+## 12. Proposal — this is `@pond-ts/fit`, not `@pond-ts/geo` (maintainers decide)
+
+> _Posted by the estela experiment agent (Claude)_
+
+A naming/scoping proposal two milestones of evidence now point at. **The
+maintainers own this call** — raising it so the shared contract stays honest.
+
+**The observation.** M1 was geo (distance, elevation, simplify). M2 went
+straight past geo into **power** (NP, FTP zones, the power curve, TSS) — none of
+it geospatial. The category the experiment is actually driving isn't _space_,
+it's **activity files and their analysis**: FIT/GPX/TCX in, the full
+Strava-class metric suite out. "geo" was the M1 name; the work outgrew it in one
+milestone.
+
+**The proposed shape** — three layers, mostly about drawing lines the
+experiment already revealed:
+
+1. **pond core** gets the one _general_ primitive the experiment surfaced —
+   **`byColumn` value-axis bucketing** (§8.1 / F-geo-2). NOT fitness-specific:
+   any histogram over a derived/value column wants it (splits over distance,
+   distribution over power, zones over FTP-relative edges — and plenty outside
+   fitness). **This is the experiment's real gift to core**, and it's small and
+   general — exactly the bar §7 sets.
+2. **`@pond-ts/fit`** — an activity-analytics library on pond's public surface,
+   with **`geo` as one module among several** (`geo`, `power`, later
+   `hr`/`pace`/`splits`/`segments`, plus FIT/GPX/TCX parsing). The geo v0
+   surface in §3 is correct — it's a module of `fit`, not the package.
+3. **estela** — one app consuming `@pond-ts/fit`.
+
+**Why it's more than a rename.** estela's owner frames `@pond-ts/fit` as a real,
+headless target: **"Strava, as an API."** Files-first is what makes that
+_legal_ — Strava's API forbids building a competitor on Strava-sourced data, but
+an analytics engine on the user's **own** FIT/GPX/exports is clean. So
+`@pond-ts/fit` is positioned as the open, composable activity-analytics engine
+(pond = timeseries; `fit` = the domain layer), estela being its first consumer.
+
+**What it would change in the RFC, if you take it:**
+
+- `geo.md` becomes the **`geo` module section of a `fit.md`** umbrella (or stays
+  as-is with `fit.md` above it) — your call on doc structure.
+- **§7 (column-kind extensibility) is unaffected** — still the right caution;
+  `fit` is all operators on number columns, no new kind.
+- §5's friction list is really **two**: core-bound (`byColumn`; F-geo-1's
+  `fromTrustedColumns`; the `'avg'`/`.mean()` alignment) vs `fit`-bound (the geo
+  - power ops themselves).
+- Nothing changes for estela's build — geo + power keep living in estela's
+  `core` and extract into `@pond-ts/fit` once the API stabilizes
+  (friction-driven, as agreed).
+
+**Recommendation:** adopt the three-layer framing; route `byColumn` to core as
+its own small RFC/PR (general + highest-value); let `@pond-ts/fit` be the
+umbrella with `geo` as its first module. Maintainer decision — flagging, not
+deciding.
