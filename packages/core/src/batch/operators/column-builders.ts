@@ -38,3 +38,56 @@ export function columnFromValuesByKind(
       throw new TypeError(`columnFromValuesByKind: unsupported kind '${kind}'`);
   }
 }
+
+/**
+ * Throw if any *defined* value fails the column's `kind` contract, mirroring
+ * the constructor's strict intake (`validate.ts`): a `number` must be finite;
+ * `string` / `boolean` must match `typeof`; an `array` must be a real array
+ * whose elements are each a finite number, string, or boolean. `undefined`
+ * (missing) values are allowed.
+ *
+ * Computed-writer paths that assemble via trusted construction bypass intake,
+ * and {@link columnFromValuesByKind}'s `*FromArray` builders silently coerce a
+ * kind mismatch to a *missing* cell — so a caller that must preserve the intake
+ * rejection (e.g. columnar `rolling`, matching `mapColumns`) calls this first.
+ * `label` is prefixed to the thrown message.
+ */
+export function assertColumnValuesMatchKind(
+  kind: string,
+  values: ReadonlyArray<unknown>,
+  label: string,
+): void {
+  for (let i = 0; i < values.length; i += 1) {
+    const v = values[i];
+    if (v === undefined) continue; // missing cell — allowed
+    let ok: boolean;
+    switch (kind) {
+      case 'number':
+        ok = typeof v === 'number' && Number.isFinite(v);
+        break;
+      case 'string':
+        ok = typeof v === 'string';
+        break;
+      case 'boolean':
+        ok = typeof v === 'boolean';
+        break;
+      case 'array':
+        ok =
+          Array.isArray(v) &&
+          v.every(
+            (el) =>
+              (typeof el === 'number' && Number.isFinite(el)) ||
+              typeof el === 'string' ||
+              typeof el === 'boolean',
+          );
+        break;
+      default:
+        ok = false;
+    }
+    if (!ok) {
+      throw new RangeError(
+        `${label}: result ${String(v)} is not a valid '${kind}' value`,
+      );
+    }
+  }
+}

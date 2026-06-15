@@ -327,13 +327,15 @@ describe('mixed shorthand + spec mapping (F1 type/runtime parity)', () => {
   });
 });
 
-describe('TimeSeries.rolling — non-finite numeric output is rejected', () => {
+describe('TimeSeries.rolling — non-finite / wrong-kind output is rejected', () => {
   // The columnar output path (3C) assembles result columns via trusted
-  // construction, which skips the constructor's strict intake. A non-finite
-  // numeric result (a `sum` overflow, or a custom reducer returning NaN/±Inf)
-  // is rejected at write anyway — preserving the throw the old event-based path
-  // enforced via intake, and matching `mapColumns`. Packed numeric columns stay
-  // NaN-free; missing cells (the minSamples warm-up) are unaffected.
+  // construction, which skips the constructor's strict intake — AND the
+  // `*FromArray` builders silently coerce a kind mismatch to a missing cell.
+  // So a defined result that doesn't match the declared output kind (a
+  // non-finite number, or a wrong-typed value from a custom reducer / `kind`
+  // override) is rejected at write, preserving the throw the old event-based
+  // path enforced via intake (matching `mapColumns`). Missing cells (the
+  // minSamples warm-up) are unaffected. (Codex finding on #225.)
   const numSchema = [
     { name: 'time', kind: 'time' },
     { name: 'v', kind: 'number' },
@@ -350,7 +352,9 @@ describe('TimeSeries.rolling — non-finite numeric output is rejected', () => {
       ],
     });
     // 3e308 overflows to Infinity inside the 10s window → rejected.
-    expect(() => s.rolling('10s', { v: 'sum' })).toThrow(/non-finite/);
+    expect(() => s.rolling('10s', { v: 'sum' })).toThrow(
+      /not a valid 'number' value/,
+    );
   });
 
   it('throws when a custom reducer returns a non-finite number', () => {
@@ -364,6 +368,39 @@ describe('TimeSeries.rolling — non-finite numeric output is rejected', () => {
     });
     expect(() =>
       s.rolling('10s', { v: { from: 'v', using: () => Infinity } }),
-    ).toThrow(/non-finite/);
+    ).toThrow(/not a valid 'number' value/);
+  });
+
+  it('throws on a wrong-kind result (number reducer, string kind override)', () => {
+    const s = new TimeSeries({
+      name: 's',
+      schema: numSchema,
+      rows: [
+        [0, 1],
+        [1000, 2],
+      ],
+    });
+    // `sum` produces a number, but the output column is declared `string` —
+    // the old intake path threw `expected string`; the columnar path must too
+    // (not silently coerce to a missing cell).
+    expect(() =>
+      s.rolling('10s', { out: { from: 'v', using: 'sum', kind: 'string' } }),
+    ).toThrow(/not a valid 'string' value/);
+  });
+
+  it('throws on a wrong-kind custom result (string into a number column)', () => {
+    const s = new TimeSeries({
+      name: 's',
+      schema: numSchema,
+      rows: [
+        [0, 1],
+        [1000, 2],
+      ],
+    });
+    expect(() =>
+      s.rolling('10s', {
+        out: { from: 'v', using: () => 'oops', kind: 'number' },
+      }),
+    ).toThrow(/not a valid 'number' value/);
   });
 });

@@ -81,7 +81,10 @@ import { fillOp, type ResolvedFillSpec } from './operators/fill.js';
 import { mapOp, type ColumnMapper } from './operators/map.js';
 import { shiftOp } from './operators/shift.js';
 import { collapseOp, type CollapseReducer } from './operators/collapse.js';
-import { columnFromValuesByKind } from './operators/column-builders.js';
+import {
+  assertColumnValuesMatchKind,
+  columnFromValuesByKind,
+} from './operators/column-builders.js';
 import { BoundedSequence } from '../sequence/bounded-sequence.js';
 import {
   parseTimestampString,
@@ -3262,21 +3265,19 @@ export class TimeSeries<S extends SeriesSchema> {
       const kind = resultColumnDefs[c]!.kind;
       const values = outValues[c]!;
       // The old event-based path re-packed via the constructor's strict intake,
-      // which rejected a non-finite numeric result (a `sum` overflow, or a
-      // custom reducer returning NaN / ±Infinity). Trusted construction skips
-      // intake, so preserve that rejection explicitly here — matching
-      // `mapColumns` (#202) and keeping packed numeric columns NaN-free. Missing
-      // cells (`undefined`, e.g. the minSamples warm-up) are unaffected.
-      if (kind === 'number') {
-        for (let r = 0; r < values.length; r += 1) {
-          const v = values[r];
-          if (typeof v === 'number' && !Number.isFinite(v)) {
-            throw new RangeError(
-              `rolling: non-finite result ${String(v)} for column '${columnSpecs[c]!.output}' — a reducer overflowed or returned a non-finite value`,
-            );
-          }
-        }
-      }
+      // which rejected any defined result that didn't match the declared output
+      // kind — a non-finite number (a `sum` overflow), or a wrong-typed value
+      // (a custom reducer / `kind` override producing a string for a number
+      // column, etc.). Trusted construction skips intake, and the `*FromArray`
+      // builders silently coerce a kind mismatch to a *missing* cell — so
+      // re-assert the kind contract here, matching `mapColumns` (#202) and
+      // keeping packed columns clean. Missing cells (`undefined`, e.g. the
+      // minSamples warm-up) are unaffected. (#225 Codex finding.)
+      assertColumnValuesMatchKind(
+        kind,
+        values,
+        `rolling column '${columnSpecs[c]!.output}'`,
+      );
       outColumns.set(
         columnSpecs[c]!.output,
         columnFromValuesByKind(kind, values),
