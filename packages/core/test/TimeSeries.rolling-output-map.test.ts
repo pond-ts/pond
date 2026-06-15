@@ -4,7 +4,7 @@
  * `aggregate`). Added in v0.5.4 to close the feature-parity gap.
  */
 import { describe, expect, it } from 'vitest';
-import { Sequence, TimeSeries } from '../src/index.js';
+import { Sequence, TimeSeries, ValidationError } from '../src/index.js';
 
 const schema = [
   { name: 'time', kind: 'time' },
@@ -381,11 +381,14 @@ describe('TimeSeries.rolling — non-finite / wrong-kind output is rejected', ()
       ],
     });
     // `sum` produces a number, but the output column is declared `string` —
-    // the old intake path threw `expected string`; the columnar path must too
-    // (not silently coerce to a missing cell).
+    // the old intake path threw `ValidationError`; the columnar path must too
+    // (same class, not a silent coercion to a missing cell).
     expect(() =>
       s.rolling('10s', { out: { from: 'v', using: 'sum', kind: 'string' } }),
     ).toThrow(/not a valid 'string' value/);
+    expect(() =>
+      s.rolling('10s', { out: { from: 'v', using: 'sum', kind: 'string' } }),
+    ).toThrow(ValidationError); // class parity with intake (Codex round 3)
   });
 
   it('throws on a wrong-kind custom result (string into a number column)', () => {

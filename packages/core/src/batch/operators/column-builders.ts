@@ -5,6 +5,7 @@ import {
   float64ColumnFromArray,
   stringColumnFromArray,
 } from '../../columnar/index.js';
+import { ValidationError } from '../../core/errors.js';
 
 /**
  * Build a typed {@link Column} from a per-row value array, dispatching on the
@@ -100,7 +101,10 @@ export function assertColumnValuesMatchKind(
         ok = false;
     }
     if (!ok) {
-      throw new RangeError(
+      // `ValidationError` (not `RangeError`) so the failure class matches the
+      // constructor's strict intake — a caller that catches `ValidationError`
+      // for bad user data sees columnar-rolling rejections identically.
+      throw new ValidationError(
         `${label}: result ${String(v)} is not a valid '${kind}' value`,
       );
     }

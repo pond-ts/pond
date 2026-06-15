@@ -3270,9 +3270,10 @@ export class TimeSeries<S extends SeriesSchema> {
       // (a custom reducer / `kind` override producing a string for a number
       // column, etc.). Trusted construction skips intake, and the `*FromArray`
       // builders silently coerce a kind mismatch to a *missing* cell — so
-      // re-assert the kind contract here, matching `mapColumns` (#202) and
-      // keeping packed columns clean. Missing cells (`undefined`, e.g. the
-      // minSamples warm-up) are unaffected. (#225 Codex finding.)
+      // re-assert the same contract here (same value rules AND the same
+      // `ValidationError` class as intake), keeping packed columns clean.
+      // Missing cells (`undefined`, e.g. the minSamples warm-up) are
+      // unaffected. (#225 Codex finding.)
       assertColumnValuesMatchKind(
         kind,
         values,
