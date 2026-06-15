@@ -267,6 +267,33 @@ describe('TimeSeries.byColumn — Codex regressions', () => {
       } as never),
     ).toThrow(/reserved/);
   });
+
+  it('throws when a bin boundary collapses (origin/width beyond float precision)', () => {
+    // origin 1e20 + width 1: 1e20 + 1 === 1e20, so start === end (collapsed).
+    const s = make([[0, 1e20, 1, 0]]);
+    expect(() =>
+      s.byColumn(
+        'dist',
+        { width: 1, origin: 1e20 },
+        { n: { from: 'ele', using: 'count' } },
+      ),
+    ).toThrow(/representable range/);
+  });
+
+  it('throws when a bin boundary overflows to Infinity', () => {
+    // width 1e308: bin 1's end = 0 + 2*1e308 = Infinity.
+    const s = make([
+      [0, 0, 1, 0],
+      [1000, 1e308, 1, 0],
+    ]);
+    expect(() =>
+      s.byColumn(
+        'dist',
+        { width: 1e308 },
+        { n: { from: 'ele', using: 'count' } },
+      ),
+    ).toThrow(/representable range/);
+  });
 });
 
 describe('TimeSeries.byColumn — validation', () => {

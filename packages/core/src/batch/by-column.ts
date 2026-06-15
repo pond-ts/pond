@@ -130,6 +130,17 @@ export function computeByColumn(
   const out: BinRecord[] = [];
   const emit = (binIndex: number): void => {
     const { start, end } = rangeOf(binIndex);
+    // Every emitted bin must be a representable half-open `[start, end)`. A safe
+    // bin INDEX doesn't guarantee representable BOUNDARIES: at extreme
+    // magnitudes `origin + i*width` can collapse (`start === end`, e.g.
+    // origin 1e20 + width 1) or overflow (`end === Infinity`, e.g. width 1e308).
+    // (Edges are pre-validated finite + strictly ascending, so this only ever
+    // fires on a pathological width/origin.)
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      throw new RangeError(
+        `byColumn: bin [${start}, ${end}) is not a representable range — the origin/width magnitude exceeds float precision; use a larger width or explicit edges`,
+      );
+    }
     const cells = states.get(binIndex);
     const rec: BinRecord = { start, end };
     for (let c = 0; c < columnSpecs.length; c += 1) {
