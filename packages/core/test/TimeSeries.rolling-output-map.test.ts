@@ -403,4 +403,23 @@ describe('TimeSeries.rolling — non-finite / wrong-kind output is rejected', ()
       }),
     ).toThrow(/not a valid 'number' value/);
   });
+
+  it('throws on a sparse array result (a hole is an invalid element)', () => {
+    // `new Array(1)` is a one-hole sparse array. `.every` skips holes; the
+    // validator must use an indexed scan (matching intake) so the `undefined`
+    // slot is rejected rather than silently coerced to a missing cell.
+    const s = new TimeSeries({
+      name: 's',
+      schema: numSchema,
+      rows: [
+        [0, 1],
+        [1000, 2],
+      ],
+    });
+    expect(() =>
+      s.rolling('10s', {
+        out: { from: 'v', using: () => new Array(1), kind: 'array' },
+      }),
+    ).toThrow(/not a valid 'array' value/);
+  });
 });

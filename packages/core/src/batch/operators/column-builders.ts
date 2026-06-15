@@ -71,16 +71,31 @@ export function assertColumnValuesMatchKind(
       case 'boolean':
         ok = typeof v === 'boolean';
         break;
-      case 'array':
-        ok =
-          Array.isArray(v) &&
-          v.every(
-            (el) =>
+      case 'array': {
+        if (!Array.isArray(v)) {
+          ok = false;
+          break;
+        }
+        // Indexed loop, NOT `.every` (which skips holes): a sparse array's
+        // hole reads as `undefined`, an invalid element that intake's indexed
+        // scan rejects. Match it exactly so sparse arrays throw here rather
+        // than getting silently coerced to a missing cell by the builder.
+        ok = true;
+        for (let j = 0; j < v.length; j += 1) {
+          const el = v[j];
+          if (
+            !(
               (typeof el === 'number' && Number.isFinite(el)) ||
               typeof el === 'string' ||
-              typeof el === 'boolean',
-          );
+              typeof el === 'boolean'
+            )
+          ) {
+            ok = false;
+            break;
+          }
+        }
         break;
+      }
       default:
         ok = false;
     }
