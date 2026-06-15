@@ -85,6 +85,7 @@ import {
   assertColumnValuesMatchKind,
   columnFromValuesByKind,
 } from './operators/column-builders.js';
+import { type BinSpec, computeByColumn } from './by-column.js';
 import { BoundedSequence } from '../sequence/bounded-sequence.js';
 import {
   parseTimestampString,
@@ -2107,6 +2108,50 @@ export class TimeSeries<S extends SeriesSchema> {
       result[col.output] = applyAggregateReducer(col.reducer, values);
     }
     return result;
+  }
+
+  /**
+   * Example:
+   * `series.byColumn('cumDist', { width: 1000 }, { gain: { from: 'ele', using: 'sum' } })`.
+   *
+   * **Value-axis aggregation.** Where `aggregate` buckets the temporal key and
+   * `reduce` collapses the whole series to one record, `byColumn` buckets rows
+   * by the **value** of a numeric column and collapses **each value-bin** to one
+   * record. Returns an ordered array of `{ start, end, ...aggregates }` — the
+   * bin's `[start, end)` range plus the mapped reducers — *not* a `TimeSeries`,
+   * because value-bins (distance / power ranges) are not time-indexed.
+   *
+   * Two binning modes:
+   * - `{ width, origin? }` — even-width bins (`origin` defaults to `0`). Bins are
+   *   emitted contiguously from the lowest to the highest occupied bin (interior
+   *   empty bins included), so a histogram / profile has no gaps. A monotonic
+   *   source (cumulative distance / work) yields contiguous ranges (per-km
+   *   splits, elevation-vs-distance profile); a non-monotonic source (power)
+   *   yields a histogram (distribution).
+   * - `{ edges }` — explicit ascending edges `[e₀ … eₙ]` → `n` bins, bin `i` =
+   *   `[eᵢ, eᵢ₊₁)` (e.g. FTP / Coggan power zones). Always emits all `n` bins.
+   *
+   * A row whose bin value is missing / non-finite (or, for `edges`, outside
+   * `[e₀, eₙ)`) contributes to no bin. The reducer non-finite policy still
+   * applies to the *source* columns. Empty bins emit each reducer's empty value
+   * (`count` → 0, `avg` / `min` / … → `undefined`), like an empty `aggregate`
+   * bucket. See `docs/notes/bycolumn-value-axis.md`.
+   */
+  byColumn<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
+    col: NumericColumnNameForSchema<S>,
+    spec: BinSpec,
+    mapping: Mapping,
+  ): Array<{ start: number; end: number } & ReduceResult<S, Mapping>> {
+    const columnSpecs = normalizeAggregateColumns(
+      this.schema,
+      mapping as unknown as AggregateMap<S>,
+    );
+    return computeByColumn(
+      this.#store.store as unknown as ColumnarStore<ColumnSchema>,
+      col as string,
+      spec,
+      columnSpecs,
+    ) as Array<{ start: number; end: number } & ReduceResult<S, Mapping>>;
   }
 
   /**
