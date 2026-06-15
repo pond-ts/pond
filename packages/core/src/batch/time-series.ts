@@ -3259,9 +3259,27 @@ export class TimeSeries<S extends SeriesSchema> {
     // is no row re-validation / re-pack (the win this path exists for).
     const outColumns = new Map<string, ColumnarColumn>();
     for (let c = 0; c < columnSpecs.length; c++) {
+      const kind = resultColumnDefs[c]!.kind;
+      const values = outValues[c]!;
+      // The old event-based path re-packed via the constructor's strict intake,
+      // which rejected a non-finite numeric result (a `sum` overflow, or a
+      // custom reducer returning NaN / ±Infinity). Trusted construction skips
+      // intake, so preserve that rejection explicitly here — matching
+      // `mapColumns` (#202) and keeping packed numeric columns NaN-free. Missing
+      // cells (`undefined`, e.g. the minSamples warm-up) are unaffected.
+      if (kind === 'number') {
+        for (let r = 0; r < values.length; r += 1) {
+          const v = values[r];
+          if (typeof v === 'number' && !Number.isFinite(v)) {
+            throw new RangeError(
+              `rolling: non-finite result ${String(v)} for column '${columnSpecs[c]!.output}' — a reducer overflowed or returned a non-finite value`,
+            );
+          }
+        }
+      }
       outColumns.set(
         columnSpecs[c]!.output,
-        columnFromValuesByKind(resultColumnDefs[c]!.kind, outValues[c]!),
+        columnFromValuesByKind(kind, values),
       );
     }
     const outStore = ColumnarStore.fromTrustedStore(

@@ -326,3 +326,44 @@ describe('mixed shorthand + spec mapping (F1 type/runtime parity)', () => {
     expect(reduced.hosts).toEqual(['api-1', 'api-2', 'api-3']);
   });
 });
+
+describe('TimeSeries.rolling — non-finite numeric output is rejected', () => {
+  // The columnar output path (3C) assembles result columns via trusted
+  // construction, which skips the constructor's strict intake. A non-finite
+  // numeric result (a `sum` overflow, or a custom reducer returning NaN/±Inf)
+  // is rejected at write anyway — preserving the throw the old event-based path
+  // enforced via intake, and matching `mapColumns`. Packed numeric columns stay
+  // NaN-free; missing cells (the minSamples warm-up) are unaffected.
+  const numSchema = [
+    { name: 'time', kind: 'time' },
+    { name: 'v', kind: 'number' },
+  ] as const;
+
+  it('throws when a window sum overflows to Infinity', () => {
+    const s = new TimeSeries({
+      name: 's',
+      schema: numSchema,
+      rows: [
+        [0, 1e308],
+        [1000, 1e308],
+        [2000, 1e308],
+      ],
+    });
+    // 3e308 overflows to Infinity inside the 10s window → rejected.
+    expect(() => s.rolling('10s', { v: 'sum' })).toThrow(/non-finite/);
+  });
+
+  it('throws when a custom reducer returns a non-finite number', () => {
+    const s = new TimeSeries({
+      name: 's',
+      schema: numSchema,
+      rows: [
+        [0, 1],
+        [1000, 2],
+      ],
+    });
+    expect(() =>
+      s.rolling('10s', { v: { from: 'v', using: () => Infinity } }),
+    ).toThrow(/non-finite/);
+  });
+});
