@@ -2,12 +2,11 @@ import { performance } from 'node:perf_hooks';
 import { TimeSeries } from '../dist/index.js';
 
 // Perf check for rolling('stdev') after replacing the one-pass `sq/n − mean²`
-// rollingState with a two-stack Welford-Chan FIFO aggregator (numerical
-// stability — docs/notes/reducer-nan-policy.md + stdev.ts). The old path did
-// O(1) arithmetic per add/remove with ZERO allocation; the two-stack allocates
-// a small entry per add and one merged partition per flip, so this measures
-// what the stability win costs in time + GC. Narrow windows are the allocation
-// worst case (every step flips the back stack into the front).
+// rollingState with Welford's online variance + order-independent delete
+// (numerical stability — docs/notes/reducer-nan-policy.md + stdev.ts). Both the
+// old and new paths are O(1) per add/remove with zero allocation, so the
+// scenarios sweep window sizes (and a partitioned case) to confirm the delete
+// arithmetic adds no asymptotic cost over the one-pass.
 
 const schema = Object.freeze([
   { name: 'time', kind: 'time' },
@@ -61,15 +60,15 @@ const results = [
   benchmark('100k · window 60s (~60 events)', () =>
     typical.rolling(60_000, { value: 'stdev' }),
   ),
-  // Narrow window: ~5 events. Maximum stack-flip churn (allocation worst case).
-  benchmark('100k · window 5s (~5 events, flip-heavy)', () =>
+  // Narrow window: ~5 events. Highest add+remove churn per output.
+  benchmark('100k · window 5s (~5 events, churn-heavy)', () =>
     typical.rolling(5_000, { value: 'stdev' }),
   ),
-  // Per-element floor: 1 event per window — constant flip on every step.
+  // Per-element floor: 1 event per window — add+remove every step.
   benchmark('100k · window 1s (1 event, per-step floor)', () =>
     typical.rolling(1_000, { value: 'stdev' }),
   ),
-  // Wide window: ~3600 events. Remove-light, large running aggregate.
+  // Wide window: ~3600 events. Remove-light, large running accumulator.
   benchmark('100k · window 3600s (~3600 events, wide)', () =>
     typical.rolling(3_600_000, { value: 'stdev' }),
   ),

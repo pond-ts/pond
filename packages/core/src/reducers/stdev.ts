@@ -22,12 +22,12 @@ import type { ReducerDef } from './types.js';
  * agree to floating-point noise — bit-for-bit when they see the values in the
  * same order, which the bucketed paths do.
  *
- * `rollingState` needs `remove` for its sliding window, which plain Welford
- * can't do stably. It uses a **two-stack FIFO aggregator** that merges Welford
- * partitions via Chan's parallel formula (variance is a mergeable monoid) — so
- * it is just as stable as the other paths (no cancellation, no shift drift),
- * O(1) amortized, and agrees with them to floating-point noise. See its inline
- * note for the mechanics.
+ * `rollingState` adds `remove` for its sliding window via Welford's
+ * **order-independent delete** (the reverse recurrence). It works in the same
+ * deviation space — no `sq/n − mean²` cancellation, no shift drift — and
+ * removes *by value*, so it stays correct under the live layer's reorder-mode
+ * eviction (which removes the sorted-prefix, not the oldest-arrived event).
+ * See its inline note for the mechanics.
  */
 
 // Welford accumulator: `add` each value, then read `result()` for the
@@ -138,68 +138,58 @@ export const stdev: ReducerDef = {
     };
   },
   rollingState() {
-    // Numerically-stable sliding-window population stdev. Variance is a
-    // **mergeable monoid** — two Welford partitions `(n, mean, m2)` combine via
-    // Chan's parallel formula — so a **two-stack FIFO aggregator** maintains the
-    // window's combined `m2` with O(1) amortized `add`/`remove` and **no**
-    // catastrophic cancellation (unlike the old one-pass `sq/n − mean²`, which
-    // collapsed on near-equal large values — `[1e10, 1e10+1, …]` → 0 or a
+    // Numerically-stable sliding-window population stdev: Welford's online
+    // variance with an **order-independent delete**. `add(v)` is the standard
+    // recurrence; `remove(v)` reverses it, both working in deviation space — so
+    // unlike the old one-pass `sq/n − mean²` there is no catastrophic
+    // cancellation on near-equal large values (`[1e10, 1e10+1, …]` → 0, or a
     // negative variance → NaN; the audit-§1.1 failure mode, previously still
-    // live here) and **no** shift-reference drift on trending data (cumulative
-    // distance, elevation). Replaces the deferred one-pass.
+    // live on this path) and no drift on trending data (cumulative distance,
+    // elevation). Stable wherever the running mean stays representable (~1e15,
+    // vs the one-pass's ~sqrt(2^52) ≈ 6.7e7 squaring ceiling — pond's domain
+    // data sits far below that).
     //
-    // The rolling driver advances a strict FIFO window (adds at the tail,
-    // removes the oldest first), so the classic two-stack queue applies: `back`
-    // collects adds, `front` serves removes; flipping `back` into `front`
-    // reverses order so the oldest is on top. Each stack position carries the
-    // running merge of itself with everything below it, so the two tops give
-    // each half's aggregate in O(1) and `merge(frontTop, backTop)` is the whole
-    // window. Non-finite / missing cells arrive as `undefined` (the factory
-    // wrapper applies the non-finite policy) and contribute the identity
-    // partition, so they occupy a window slot without affecting the result.
+    // Removal is **by value, not by position**. That is load-bearing for the
+    // live layer: `LiveReduce` shares this state, and a `reorder`-mode source
+    // with retention evicts the sorted-prefix — which may be a later arrival,
+    // not the oldest — so a positional (FIFO) remove would corrupt the window.
+    // A value-based delete is correct regardless of eviction order (the
+    // documented contract; see live-reduce.ts and live-buffer-as-window.test).
+    // The batch rolling driver removes strictly oldest-first — a special case.
     //
-    // Each stack entry is a plain Welford object (`{n, mean, m2}`). A
-    // struct-of-arrays variant (parallel `number[]`, zero per-element
-    // allocation) was benchmarked and is no faster at the median
-    // (scripts/perf-rolling-stdev.mjs): the ~25% cost over the old one-pass is
-    // the stable algorithm's extra arithmetic + the flip, not GC pressure — so
-    // the readable object form stands. That ~25% buys correctness: the old
-    // one-pass returned 0 / NaN on near-equal large values (audit §1.1, the
-    // same hole the bucket path already closed).
-    type Welford = { n: number; mean: number; m2: number };
-    const IDENTITY: Welford = { n: 0, mean: 0, m2: 0 };
-    const merge = (a: Welford, b: Welford): Welford => {
-      if (a.n === 0) return b;
-      if (b.n === 0) return a;
-      const n = a.n + b.n;
-      const delta = b.mean - a.mean;
-      const mean = a.mean + (delta * b.n) / n;
-      const m2 = a.m2 + b.m2 + (delta * delta * a.n * b.n) / n;
-      return { n, mean, m2 };
-    };
-    const singleton = (v: unknown): Welford =>
-      typeof v === 'number' ? { n: 1, mean: v, m2: 0 } : IDENTITY;
-    const back: Array<{ value: Welford; agg: Welford }> = [];
-    const front: Array<{ value: Welford; agg: Welford }> = [];
-    const topAgg = (stack: Array<{ value: Welford; agg: Welford }>): Welford =>
-      stack.length === 0 ? IDENTITY : stack[stack.length - 1]!.agg;
+    // Non-finite / missing cells arrive as `undefined` (the factory wrapper
+    // applies the non-finite policy); `add`/`remove` both skip them symmetrically
+    // so they never enter `n`.
+    let n = 0;
+    let mean = 0;
+    let m2 = 0;
     return {
       add(_i, v) {
-        const value = singleton(v);
-        back.push({ value, agg: merge(topAgg(back), value) });
+        if (typeof v !== 'number') return;
+        n += 1;
+        const delta = v - mean;
+        mean += delta / n;
+        m2 += delta * (v - mean);
       },
-      remove() {
-        if (front.length === 0) {
-          // Flip `back` onto `front`, reversing so the oldest ends up on top.
-          while (back.length > 0) {
-            const { value } = back.pop()!;
-            front.push({ value, agg: merge(value, topAgg(front)) });
-          }
+      remove(_i, v) {
+        if (typeof v !== 'number') return;
+        if (n <= 1) {
+          // Removing the final contributor — reset exactly (no 0/0, no drift).
+          n = 0;
+          mean = 0;
+          m2 = 0;
+          return;
         }
-        front.pop();
+        const meanWith = mean;
+        n -= 1;
+        // Deviation-space mean update (mean − (v − mean)/n): avoids the large
+        // `n·mean − v` product, staying precise at large magnitudes.
+        mean = meanWith - (v - meanWith) / n;
+        // Reverse Welford: M2 −= (v − meanNew)·(v − meanOld).
+        m2 -= (v - mean) * (v - meanWith);
+        if (m2 < 0) m2 = 0; // clamp FP round-off (never a gross negative)
       },
       snapshot() {
-        const { n, m2 } = merge(topAgg(front), topAgg(back));
         return n === 0 ? undefined : Math.sqrt(Math.max(0, m2 / n));
       },
     };

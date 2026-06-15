@@ -279,6 +279,37 @@ describe('LiveSeries.reduce — eviction slot resolution (PR #170 regression)', 
     r.dispose();
   });
 
+  it('reorder + retention: stdev removes by value, not by position', () => {
+    // Regression guard for the value-based-stdev contract (live-reduce.ts).
+    // The {20,30} case above is symmetric, so a wrong removal would still
+    // give the right stdev — this asymmetric case actually discriminates.
+    // Arrivals (by value) 50, 60, 70, then a late event cpu=10 with the
+    // OLDEST timestamp, so the source evicts cpu=10 (the sorted-prefix), not
+    // cpu=50 (oldest-arrived). A positional/FIFO remove would instead drop
+    // cpu=50 and compute stdev over {60,70,10} (≈26.2); the value-based
+    // delete drops cpu=10 and recovers {50,60,70} → pop stdev sqrt(200/3).
+    const live = new LiveSeries({
+      name: 'reorder-stdev',
+      schema,
+      ordering: 'reorder',
+      retention: { maxEvents: 3 },
+    });
+    const r = live.reduce({
+      sd: { from: 'cpu', using: 'stdev' },
+      mean: { from: 'cpu', using: 'avg' },
+    });
+
+    live.push([4000, 50, 'a']); // arrival 0
+    live.push([3000, 60, 'a']); // arrival 1
+    live.push([2000, 70, 'a']); // arrival 2
+    live.push([1000, 10, 'a']); // arrival 3: oldest ts → evicts cpu=10
+
+    expect(r.value().mean).toBe(60); // (50 + 60 + 70) / 3
+    expect(r.value().sd as number).toBeCloseTo(Math.sqrt(200 / 3), 10);
+
+    r.dispose();
+  });
+
   it('chunked source: eviction across the replay→forward boundary keeps min correct', () => {
     // A reduce over a non-empty chunked source replays the buffered
     // events (materialized + cached → identity HITS on evict). Forward
