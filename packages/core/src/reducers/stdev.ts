@@ -22,9 +22,12 @@ import type { ReducerDef } from './types.js';
  * agree to floating-point noise — bit-for-bit when they see the values in the
  * same order, which the bucketed paths do.
  *
- * `rollingState` is the exception: its sliding window needs `remove`, which
- * Welford can't do stably (windowed removal drifts), so it keeps the one-pass
- * `sq/n − mean²` (with its clamp). A stable rolling stdev is a deferred item.
+ * `rollingState` needs `remove` for its sliding window, which plain Welford
+ * can't do stably. It uses a **two-stack FIFO aggregator** that merges Welford
+ * partitions via Chan's parallel formula (variance is a mergeable monoid) — so
+ * it is just as stable as the other paths (no cancellation, no shift drift),
+ * O(1) amortized, and agrees with them to floating-point noise. See its inline
+ * note for the mechanics.
  */
 
 // Welford accumulator: `add` each value, then read `result()` for the
@@ -135,31 +138,69 @@ export const stdev: ReducerDef = {
     };
   },
   rollingState() {
-    // One-pass `sq/n − mean²` with the `Math.max(0, …)` clamp. Unlike the other
-    // paths this has a `remove` for the sliding window, which Welford can't do
-    // stably — a stable rolling stdev is deferred (see the module note above).
-    let s = 0;
-    let sq = 0;
-    let n = 0;
+    // Numerically-stable sliding-window population stdev. Variance is a
+    // **mergeable monoid** — two Welford partitions `(n, mean, m2)` combine via
+    // Chan's parallel formula — so a **two-stack FIFO aggregator** maintains the
+    // window's combined `m2` with O(1) amortized `add`/`remove` and **no**
+    // catastrophic cancellation (unlike the old one-pass `sq/n − mean²`, which
+    // collapsed on near-equal large values — `[1e10, 1e10+1, …]` → 0 or a
+    // negative variance → NaN; the audit-§1.1 failure mode, previously still
+    // live here) and **no** shift-reference drift on trending data (cumulative
+    // distance, elevation). Replaces the deferred one-pass.
+    //
+    // The rolling driver advances a strict FIFO window (adds at the tail,
+    // removes the oldest first), so the classic two-stack queue applies: `back`
+    // collects adds, `front` serves removes; flipping `back` into `front`
+    // reverses order so the oldest is on top. Each stack position carries the
+    // running merge of itself with everything below it, so the two tops give
+    // each half's aggregate in O(1) and `merge(frontTop, backTop)` is the whole
+    // window. Non-finite / missing cells arrive as `undefined` (the factory
+    // wrapper applies the non-finite policy) and contribute the identity
+    // partition, so they occupy a window slot without affecting the result.
+    //
+    // Each stack entry is a plain Welford object (`{n, mean, m2}`). A
+    // struct-of-arrays variant (parallel `number[]`, zero per-element
+    // allocation) was benchmarked and is no faster at the median
+    // (scripts/perf-rolling-stdev.mjs): the ~25% cost over the old one-pass is
+    // the stable algorithm's extra arithmetic + the flip, not GC pressure — so
+    // the readable object form stands. That ~25% buys correctness: the old
+    // one-pass returned 0 / NaN on near-equal large values (audit §1.1, the
+    // same hole the bucket path already closed).
+    type Welford = { n: number; mean: number; m2: number };
+    const IDENTITY: Welford = { n: 0, mean: 0, m2: 0 };
+    const merge = (a: Welford, b: Welford): Welford => {
+      if (a.n === 0) return b;
+      if (b.n === 0) return a;
+      const n = a.n + b.n;
+      const delta = b.mean - a.mean;
+      const mean = a.mean + (delta * b.n) / n;
+      const m2 = a.m2 + b.m2 + (delta * delta * a.n * b.n) / n;
+      return { n, mean, m2 };
+    };
+    const singleton = (v: unknown): Welford =>
+      typeof v === 'number' ? { n: 1, mean: v, m2: 0 } : IDENTITY;
+    const back: Array<{ value: Welford; agg: Welford }> = [];
+    const front: Array<{ value: Welford; agg: Welford }> = [];
+    const topAgg = (stack: Array<{ value: Welford; agg: Welford }>): Welford =>
+      stack.length === 0 ? IDENTITY : stack[stack.length - 1]!.agg;
     return {
       add(_i, v) {
-        if (typeof v === 'number') {
-          s += v;
-          sq += v * v;
-          n++;
-        }
+        const value = singleton(v);
+        back.push({ value, agg: merge(topAgg(back), value) });
       },
-      remove(_i, v) {
-        if (typeof v === 'number') {
-          s -= v;
-          sq -= v * v;
-          n--;
+      remove() {
+        if (front.length === 0) {
+          // Flip `back` onto `front`, reversing so the oldest ends up on top.
+          while (back.length > 0) {
+            const { value } = back.pop()!;
+            front.push({ value, agg: merge(value, topAgg(front)) });
+          }
         }
+        front.pop();
       },
       snapshot() {
-        if (n === 0) return undefined;
-        const mean = s / n;
-        return Math.sqrt(Math.max(0, sq / n - mean * mean));
+        const { n, m2 } = merge(topAgg(front), topAgg(back));
+        return n === 0 ? undefined : Math.sqrt(Math.max(0, m2 / n));
       },
     };
   },
