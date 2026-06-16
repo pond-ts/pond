@@ -278,6 +278,52 @@ describe('TimeSeries.rollingByColumn — missing / undefined handling', () => {
     expect(out[1]).toEqual({ n: 2, sum: 40 }); // window {0,1,2}; defined 10,30
     expect(out[2]).toEqual({ n: 1, sum: 30 }); // window {row1,row2}; row1 val skipped
   });
+
+  it('empty snapshots on missing-axis rows are fresh per row (array reducers do not alias)', () => {
+    // An array-kind reducer's empty value is `[]`; a cached/shared empty would
+    // alias one array across every missing-axis row. Two adjacent missing-axis
+    // rows must get DISTINCT empty arrays.
+    const s = withGaps([
+      [0, 0, 1],
+      [1, undefined, 2],
+      [2, undefined, 3],
+      [3, 10, 4],
+    ]);
+    const out = s.rollingByColumn(
+      'dist',
+      { radius: 100 },
+      {
+        s: { from: 'val', using: 'samples' },
+      },
+    );
+    expect(out[1]!.s).toEqual([]);
+    expect(out[2]!.s).toEqual([]);
+    expect(out[1]!.s).not.toBe(out[2]!.s); // distinct instances, no aliasing
+  });
+
+  it('a missing-axis row between finite rows: the shared deque resumes correctly', () => {
+    // The missing row hits the `continue` path and does NOT touch the shared
+    // window state — so the next finite row must resume the min/max deque (and
+    // its eviction) as if the missing row were absent.
+    const s = withGaps([
+      [0, 0, 50],
+      [1, 10, 10],
+      [2, undefined, 999], // excluded from every window
+      [3, 20, 20],
+      [4, 30, 5],
+    ]);
+    const out = s.rollingByColumn(
+      'dist',
+      { radius: 15 },
+      {
+        lo: { from: 'val', using: 'min' },
+        hi: { from: 'val', using: 'max' },
+      },
+    );
+    // windows by dist (±15): {0,10}, {0,10,20}, —, {10,20,30}, {20,30}
+    expect(out.map((r) => r.lo)).toEqual([10, 10, undefined, 5, 5]);
+    expect(out.map((r) => r.hi)).toEqual([50, 50, undefined, 20, 20]);
+  });
 });
 
 describe('TimeSeries.rollingByColumn — custom-function reducer', () => {

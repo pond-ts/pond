@@ -21,6 +21,19 @@ type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **`TimeSeries.rollingByColumn(col, { radius }, mapping)` — windowed value-axis
+  aggregation.** The sliding-window sibling of `byColumn`: slides a centered
+  `±radius` window along a **non-decreasing** numeric column and reduces it at
+  every row, returning one record per row (positionally aligned with the
+  series). Where `byColumn` collapses rows into disjoint value-bins (the
+  value-axis analogue of `aggregate`), `rollingByColumn` is the value-axis
+  analogue of `rolling`. Built for windowed-percentile bands over a derived axis
+  (e.g. a spread band over cumulative distance). A missing/non-finite axis row is
+  excluded from every window and emits each reducer's empty value. O(n) two-pointer
+  sweep. See `docs/notes/rolling-by-column.md`.
+
 ## [0.27.0] — 2026-06-16
 
 ### Added
@@ -52,7 +65,7 @@ type-level changes; patch bumps are strictly additive.
   - **Behavior note — `array` columns:** an identity-comparing reducer (`keep`,
     or a custom reducer using `===` on the cell) on an `array`-kind source
     column now compares the value stored in the column, not the original object
-    reference passed at construction. Two rows given the *same* array object
+    reference passed at construction. Two rows given the _same_ array object
     therefore read as distinct. Scalar columns (number / string / boolean) are
     unaffected. A non-finite or wrong-kind reducer result is still rejected with
     a `ValidationError`, exactly as the constructor's intake did.
