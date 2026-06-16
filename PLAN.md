@@ -80,7 +80,12 @@ around rather than report. As the available model improves, re-run.
 
   **v2 backlog beyond the P0s** (full detail in the linked doc; this is the
   actionable integration so the findings aren't stranded in the note):
-  - **P1 — live robustness cluster** (§4; empirically reproduced, third audit):
+  - **P1 — live robustness cluster** (§4; empirically reproduced, third audit)
+    — ⏳ **STILL OPEN; the standing live-correctness P1** (#114/#98/#99). The
+    one piece of non-speculative core debt left from this audit — confirmed
+    wrong-answer behavior under code already in flight, not an optimization.
+    Travels with the reorder+retention windowed-extrema bug from the
+    live-columnar assessment (`docs/notes/live-columnar-assessment-2026-06.md`).
     listener error isolation (a throw skips retention entirely + a derived
     `filter()` view desyncs permanently), re-entrancy (3 failures incl. the
     `[object Object]` error at `live-view.ts:704`), unbounded partitions
@@ -89,21 +94,21 @@ around rather than report. As the available model improves, re-run.
     intermediate — no way to dispose it; `dispose()` has no JSDoc). Items 1–3 →
     tasks #98/#99; chained-dispose + evict-staleness + the empirical upgrade →
     new task #114.
-  - **P1 — columnar `timeRange()`** (§3.3): cold `aggregate()` defaults `range`
+  - **P1 — columnar `timeRange()`** (§3.3) — ✅ **SHIPPED #214 (v0.24.0)**: cold `aggregate()` defaults `range`
     to `series.timeRange()`, materializing all events (430 ms/1M) before the
     fast path runs (one-shot callers see ~1.09×). `begins[0]..begins[n−1]` off
     the key column (`time-series.ts:3664`) → ~21× faster cold path, every
     caller benefits → new task #115.
   - **P1 — partitioned-aggregate fast path + columnar partitionBy split**
-    (§3.2/§3.3): the auto-injected `'first'` partition reducer has no
+    (§3.2/§3.3) — ✅ **SHIPPED #215 + #216 (v0.24.0)**: the auto-injected `'first'` partition reducer had no
     `reduceColumn`, so the all-or-nothing gate bails for _every_ partitioned
     aggregate (~14× slower than it should be); and `partitionBy().<op>()` buckets
     via `source.events` + rebuilds via `fromEvents`, re-paying the tax — the top
     batch hotspot and the library's own recommended pattern. Columnar partition
     split (scatter by group index) is the highest-leverage next batch target,
     ahead of 3C → new task #116.
-  - **P1 — greenfield adoption killers** (§5): F1 — mixed shorthand+`{from,
-using}` aggregate mappings resolve to the shorthand overload and silently
+  - **P1 — greenfield adoption killers** (§5) — ✅ **SHIPPED #206 + #211 (v0.23.0)**: F1 — mixed shorthand+`{from,
+using}` aggregate mappings resolved to the shorthand overload and silently
     drop every spec-keyed output column from the result _type_ (runtime emits
     it); F2 — shipped `.d.ts` fail under `skipLibCheck: false` (`EMITS_EVICT`
     stripped from `series.d.ts` but its re-export survives in `index.d.ts` →
@@ -341,15 +346,24 @@ Docs: [`docs/rfcs/fit.md`](docs/rfcs/fit.md),
 [`docs/rfcs/geo.md`](docs/rfcs/geo.md) §10–§13 (use-case feedback + library
 ruling), estela's `docs/pond-friction.md`.
 
-**Core-bound carry-forwards (accepted; queued behind the NaN-policy → rolling
-sequence):**
+**Core-bound carry-forwards.** The gating sequence (NaN-policy → byColumn) has
+**shipped**; the remaining items are sequenced behind the next estela milestone:
 
-- **`byColumn` value-axis aggregation** — the headline. Bucket `aggregate` over
-  any column: monotonic → contiguous ranges (splits / profile), non-monotonic →
-  histogram (power distribution / FTP zones). Confirmed ×3. Own design-note → PR.
-- **`withColumn` / `fromTrustedColumns`** — attach a computed `Float64Array` as
-  a column; double-signalled with the chart carry-forwards (#107).
-  `byColumn`'s precursor.
+- **`byColumn` value-axis aggregation** — ✅ **SHIPPED v0.27.0** (#227, docs
+  #229). Bucket `aggregate` over any column: monotonic → contiguous ranges
+  (splits / profile, `{ width, origin? }`), non-monotonic → histogram (power
+  distribution / FTP zones, `{ edges }`). Returns an ordered array of
+  `{ start, end, ...aggregates }` bin records (owner decision: value-bins aren't
+  time-indexed, so not a `TimeSeries` — `docs/notes/bycolumn-value-axis.md`).
+  Was queued behind the NaN-policy (#218, shipped) → rolling-stdev stability
+  (#222, shipped); both cleared, then byColumn landed. **Open watch:** the
+  design note flagged composition friction (e.g. `rolling` over the bins) as the
+  thing to surface on real adoption — estela adopting it is the validation.
+- **`withColumn` / `fromTrustedColumns`** — **now the lead remaining
+  carry-forward.** Attach a computed `Float64Array` as a column; double-signalled
+  with the chart carry-forwards (#107). Was framed as `byColumn`'s precursor;
+  with byColumn shipped via the columnar store directly, this stands on its own
+  as the highest-leverage next primitive — it serves estela _and_ the chart feed.
 - **`RowForSchema` honoring `required: false`** — the known greenfield F4 /
   ARCHITECTURE §4 limitation, now use-case-confirmed.
 - **`'mean'` reducer alias** for `'avg'` (minor DX).
@@ -4189,6 +4203,36 @@ parity suite, `toFloat64Array` carry-forward, bundle-budget re-pin). North
 star: overall performance with a consistent, clear API surface — reducer speed
 first ([columnar-live-protocol RFC Amendment V3](docs/rfcs/columnar-live-protocol.md)).
 
+**Status update (2026-06-16, against v0.27.0) — the batch columnar wave is
+COMPLETE.** Everything in the "recommended remaining sequence" above that lives
+on the batch path has shipped. Since the 2026-06-10 note: columnar `timeRange()`
+(#214, killed the cold-aggregate cliff), `first`/`last` columnar fast path
+(#215) + columnar `partitionBy` split (#216) (the two v2-audit P1s #115/#116),
+the principled non-finite reducer policy (#218), numerically-stable rolling
+stdev via Welford order-independent delete (#222) + a standing differential
+parity-fuzz suite (#223), the **columnar rolling _output_ path** (#225), and
+**`byColumn` value-axis aggregation** (#227). Plus the v0.23 greenfield-polish
+wave (#206–#211: stripped internal `EMITS_EVICT` from the `.d.ts`, `{ sort: true }`
+intake, `at(-1)` parity, F1 type unify). There is no row-shaped middle left in
+the batch pipeline that a consumer has flagged.
+
+**The one label that confuses every reading of this roadmap:** "3C rolling"
+above means the batch rolling **output** path — SHIPPED (#225). The
+gRPC-rebench section below uses "Step 3 Phase C" for the _live_ rolling
+**reducer** columnar state — still DEFERRED, unearned. Same number, different
+layer.
+
+**Live columnar is a different shape and a different bar.** It went columnar
+only where a consumer's measured pain proved it pays, and it is at a defensible
+**retention-boundary waypoint**, not an end-to-end rewrite — the originating
+live problem (gRPC partition-retention OOM) is _solved_ (chunked backing +
+column-native partition routing #175). Full state, batch-vs-live asymmetry, the
+parked items + the measurement that parked each, and the one live correctness
+loose end (reorder+retention windowed extrema, which belongs with the
+robustness cluster #98/#99/#114, not the optimization queue) in the consultant
+assessment
+([`docs/notes/live-columnar-assessment-2026-06.md`](docs/notes/live-columnar-assessment-2026-06.md)).
+
 This is the **v1.0 substrate**. Adoption decision documented in
 [`docs/rfcs/columnar-core.md`](docs/rfcs/columnar-core.md) ("Library-agent
 response and adoption" section); evidence base in
@@ -5056,8 +5100,8 @@ wrong tier. What it _did_ deliver is real and worth keeping: minor GC max
 pause **−74%**, ingest→fanout p99 **−78%**, pushManyTotal p99 **−77%** —
 Phase 1 is a churn/latency fix, **not** the heap fix it was billed as.
 
-**Phase 2 — column-native partition routing (DELIVERED, gRPC V8 clean
-win; awaiting merge).** The genuine OOM fix. `partitionBy(...)` over a
+**Phase 2 — column-native partition routing (✅ MERGED #175, 2026-06-03;
+gRPC V8 clean win).** The genuine OOM fix. `partitionBy(...)` over a
 chunked source routes its chunks to per-partition slices and stages them
 into chunked-backed partition sub-series — replacing the per-partition
 `Event[]` retention with columnar chunks. The naive "one chunk per
@@ -5071,10 +5115,10 @@ baseline), Event retention 6.77M→37,891 (−99.4%, the remainder all
 emit-side), sustained throughput 41k→51k/s (+24%), ingest→fanout p99
 −25%. One soft caveat: `pushManyTotalMs` p99 7.1 ms vs 3.6 ms (the flush
 lands on threshold-crossing batches; p50 unchanged, under deadline) —
-smoothable later, not a blocker. Branch `feat/columnar-partition-routing`;
-**no new public surface** (only `_`-internal hooks), so per CLAUDE.md no
-public-surface sign-off is required, but the wave's human-merge gate
-still applies. Scope plan:
+smoothable later, not a blocker. Merged as #175 (2026-06-03) after a fresh
+L2 + Codex re-review (task #89); **no new public surface** (only `_`-internal
+hooks). Implementation now on `main` (`live/live-partitioned-series.ts`
+`#routeChunk`, `live/live-chunked-storage.ts` coalescing tier). Scope plan:
 [`docs/briefs/columnar-partition-routing.md`](docs/briefs/columnar-partition-routing.md).
 
 **Next (now unblocked by Phase 2): column-native output (§A).**
