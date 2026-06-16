@@ -14,6 +14,7 @@ import type {
   AggregateOutputSpec,
   AggregateMap,
   AggregateSchema,
+  AppendColumn,
   CollapseSchema,
   EventDataForSchema,
   EventForSchema,
@@ -122,6 +123,7 @@ import {
   TimeRangeKeyColumn,
   float64ColumnFromArray,
   stringColumnFromArray,
+  withColumnAppended,
   withColumnsRenamed,
   withColumnsSelected,
   withKeyColumn,
@@ -4128,6 +4130,68 @@ export class TimeSeries<S extends SeriesSchema> {
       resultSchema as unknown as SeriesSchema,
       reshaped,
     ) as unknown as TimeSeries<RenameSchema<S, Mapping>>;
+  }
+
+  /**
+   * Example:
+   * `series.withColumn('cumDist', cumulativeDistances)` (a `Float64Array`).
+   *
+   * **Attach a computed numeric column.** Returns a new series with `values`
+   * appended as a new `number` column named `name`, so downstream pond ops
+   * (`aggregate`, `byColumn`, `rollingByColumn`, `column(name)`) can reference
+   * it. The existing key + value columns are shared by reference (zero-copy);
+   * only the new column is added. This is the seam that lets a derived array
+   * (cumulative distance, speed, gradient) re-enter the pond pipeline as a real
+   * column instead of staying a side-channel.
+   *
+   * `values` is a `Float64Array` (dense) or a `(number | undefined)[]` (where
+   * `undefined` marks a missing cell), and must have exactly `series.length`
+   * entries. Defined values are validated against the numeric intake contract —
+   * **non-finite (`NaN` / `±Infinity`) is rejected** (a `ValidationError`,
+   * matching construction), so packed numeric columns stay NaN-free; pass
+   * `undefined` for a missing cell, never `NaN`. `name` must not collide with an
+   * existing column.
+   *
+   * This is the *validated* attach. A trusted bulk-construction path
+   * (`fromTrustedColumns`, skipping the finite scan) is a deferred sibling for
+   * when a perf-critical consumer earns it.
+   */
+  withColumn<const Name extends string>(
+    name: Name,
+    values: ReadonlyArray<number | undefined> | Float64Array,
+  ): TimeSeries<AppendColumn<S, Name, 'number'>> {
+    if (values.length !== this.length) {
+      throw new RangeError(
+        `withColumn: values length ${values.length} does not match series length ${this.length}`,
+      );
+    }
+    // Re-assert the numeric intake contract (finite-or-missing) — trusted
+    // construction below bypasses the constructor's strict intake, so a
+    // non-finite cell would otherwise pack into the column and break the
+    // reducer non-finite policy's NaN-free invariant.
+    assertColumnValuesMatchKind(
+      'number',
+      values as ReadonlyArray<unknown>,
+      `withColumn '${String(name)}'`,
+    );
+    const column = columnFromValuesByKind(
+      'number',
+      values as unknown as unknown[],
+    );
+    const reshaped = withColumnAppended(
+      this.#store.store,
+      name as string,
+      column,
+    );
+    const resultSchema = Object.freeze([
+      ...this.schema,
+      { name, kind: 'number' },
+    ]) as unknown as SeriesSchema;
+    return TimeSeries.#fromTrustedStore(
+      this.name,
+      resultSchema,
+      reshaped,
+    ) as unknown as TimeSeries<AppendColumn<S, Name, 'number'>>;
   }
 
   /** Example: `series.collapse(["in", "out"], "avg", fn)`. Collapses selected payload fields into a single derived field across each event in the series. */

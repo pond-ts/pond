@@ -33,8 +33,15 @@ type-level changes; patch bumps are strictly additive.
   (e.g. a spread band over cumulative distance). A missing/non-finite axis row is
   excluded from every window and emits each reducer's empty value. O(n) two-pointer
   sweep. See `docs/notes/rolling-by-column.md`.
-
-## [0.27.0] — 2026-06-16
+- **`TimeSeries.withColumn(name, values)` — attach a computed numeric column.**
+  Appends a `Float64Array` / `(number | undefined)[]` as a new `number` column
+  (the schema type widens to include it), so a derived array — cumulative
+  distance, speed, gradient — can re-enter the pond pipeline as a real column
+  that `aggregate` / `byColumn` / `rollingByColumn` / `column(name)` can
+  reference. Existing key + value columns are shared by reference (zero-copy);
+  only the new column is added. `values` must match `series.length`; defined
+  cells are validated against the numeric intake contract (**non-finite is
+  rejected** — pass `undefined` for a missing cell, not `NaN`).
 
 ### Added
 
