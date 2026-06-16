@@ -86,6 +86,10 @@ import {
   columnFromValuesByKind,
 } from './operators/column-builders.js';
 import { type BinSpec, computeByColumn } from './by-column.js';
+import {
+  type WindowSpec,
+  computeRollingByColumn,
+} from './rolling-by-column.js';
 import { BoundedSequence } from '../sequence/bounded-sequence.js';
 import {
   parseTimestampString,
@@ -2152,6 +2156,48 @@ export class TimeSeries<S extends SeriesSchema> {
       spec,
       columnSpecs,
     ) as Array<{ start: number; end: number } & ReduceResult<S, Mapping>>;
+  }
+
+  /**
+   * Example:
+   * `series.rollingByColumn('cumDist', { radius: 120 }, { lo: { from: 'speed', using: 'p5' }, hi: { from: 'speed', using: 'p95' } })`.
+   *
+   * **Windowed value-axis aggregation — the sliding-window sibling of
+   * `byColumn`.** Where `byColumn` collapses rows into disjoint value-bins (the
+   * value-axis analogue of `aggregate`), `rollingByColumn` slides a **centered
+   * window** along a value axis and reduces the window at every row (the
+   * value-axis analogue of `rolling`). For each row it reduces the rows whose
+   * `col` value lies within `±radius` of that row's value, and returns **one
+   * record per row, positionally aligned with the series** (`out[i]` is the
+   * window centered at row `i`) — *not* a `TimeSeries`, and with no `start`/`end`
+   * range (the caller already has the axis column to zip against).
+   *
+   * `col` must be a **non-decreasing** numeric column — the ordering is what
+   * makes a sliding window meaningful (vs `byColumn`'s order-free group-by) and
+   * is enforced (a descending step throws). A row whose `col` value is missing /
+   * non-finite is excluded from every window and its own slot gets each
+   * reducer's empty snapshot, so the result stays positionally aligned. The
+   * reducer non-finite policy still applies to the *source* columns.
+   *
+   * The window is centered and inclusive (`col[i] − radius ≤ col[j] ≤ col[i] +
+   * radius`); a single O(n) two-pointer sweep maintains the window. See
+   * `docs/notes/rolling-by-column.md`.
+   */
+  rollingByColumn<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
+    col: NumericColumnNameForSchema<S>,
+    spec: WindowSpec,
+    mapping: Mapping,
+  ): Array<ReduceResult<S, Mapping>> {
+    const columnSpecs = normalizeAggregateColumns(
+      this.schema,
+      mapping as unknown as AggregateMap<S>,
+    );
+    return computeRollingByColumn(
+      this.#store.store as unknown as ColumnarStore<ColumnSchema>,
+      col as string,
+      spec,
+      columnSpecs,
+    ) as Array<ReduceResult<S, Mapping>>;
   }
 
   /**
