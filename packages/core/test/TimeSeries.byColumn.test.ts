@@ -362,3 +362,54 @@ describe('TimeSeries.byColumn — validation', () => {
     ).toThrow(/must be a number column/);
   });
 });
+
+describe('TimeSeries.byColumn — { edges } inclusivity', () => {
+  it("'(]' puts a boundary value in the lower bin; '[)' (default) in the upper", () => {
+    const s = make([
+      [0, 0, 0, 0],
+      [1, 0, 0, 100], // exactly on the interior edge
+      [2, 0, 0, 200],
+    ]);
+    // default '[)': bins [0,100),[100,200) — 0→bin0, 100→bin1, 200 dropped (>= last)
+    expect(
+      s
+        .byColumn(
+          'watts',
+          { edges: [0, 100, 200] },
+          {
+            sum: { from: 'watts', using: 'sum' },
+          },
+        )
+        .map((b) => b.sum),
+    ).toEqual([0, 100]);
+    // '(]': bins (0,100],(100,200] — 0 dropped (<= first), 100→bin0, 200→bin1
+    expect(
+      s
+        .byColumn(
+          'watts',
+          { edges: [0, 100, 200], inclusive: '(]' },
+          {
+            sum: { from: 'watts', using: 'sum' },
+          },
+        )
+        .map((b) => b.sum),
+    ).toEqual([100, 200]);
+  });
+
+  it("'(]' expresses Coggan zones (top-edge sample is the lower zone) without an epsilon nudge", () => {
+    const ftp = 250;
+    const edges = [0, 0.75 * ftp, 0.9 * ftp, 1.05 * ftp]; // [0, 187.5, 225, 262.5]
+    const s = make([
+      [0, 0, 0, 187.5], // exactly 0.75·FTP → lower zone (bin 0) under '(]'
+      [1, 0, 0, 225], // exactly 0.9·FTP → bin 1
+    ]);
+    const out = s.byColumn(
+      'watts',
+      { edges, inclusive: '(]' },
+      {
+        n: { from: 'watts', using: 'count' },
+      },
+    );
+    expect(out.map((b) => b.n)).toEqual([1, 1, 0]);
+  });
+});

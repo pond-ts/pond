@@ -22,6 +22,27 @@ type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **`byColumn({ edges, inclusive })`** — `inclusive: '(]'` makes edge bins
+  upper-inclusive (`(eᵢ, eᵢ₊₁]`), for Coggan power / HR zones where a sample on a
+  zone's top edge belongs to the lower zone (the first edge becomes an exclusive
+  floor). Defaults to `'[)'` (unchanged — lower-inclusive `[eᵢ, eᵢ₊₁)`). (estela
+  F-geo-2 zone inclusivity.)
+- **`'mean'` reducer alias** — `'mean'` is now accepted anywhere a built-in
+  reducer name is (`aggregate` / `rolling` / `byColumn` / `rollingByColumn` /
+  `reduce`) as an alias for `'avg'`, matching the column API's
+  `Float64Column.mean()`. (estela F-reducer-naming.)
+
+### Fixed
+
+- **`RowForSchema` honors `required: false`** — a column declared
+  `required: false` now accepts `undefined` in its tuple-row cell **at the type
+  level** (matching the runtime, which records it as a missing value), so
+  optional cells no longer need an `as never` cast. `null` is still not admitted
+  for tuple rows (only the JSON object-row path takes `null`). Strictly a type
+  widening on input — non-breaking. (estela F-geo-row-optional.)
+
 ## [0.28.0] — 2026-06-17
 
 ### Added

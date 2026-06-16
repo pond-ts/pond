@@ -93,9 +93,19 @@ export type KindForValue<V extends ScalarValue> = V extends number
     ? 'string'
     : 'boolean';
 
+/**
+ * Tuple-row input type for a schema. A column declared `required: false`
+ * accepts `undefined` in its cell (a missing value — the constructor records
+ * it in the validity bitmap), matching the runtime's intake. `null` is **not**
+ * admitted: the tuple-row constructor rejects it (only the JSON object-row path
+ * accepts `null`), so the type stays honest to what intake actually takes —
+ * pass `undefined` for a missing tuple cell. (estela F-geo-row-optional.)
+ */
 export type RowForSchema<S extends readonly ColumnDef<string, string>[]> = {
   [I in keyof S]: S[I] extends ColumnDef<any, infer K>
-    ? ValueForKind<K>
+    ? S[I] extends { required: false }
+      ? ValueForKind<K> | undefined
+      : ValueForKind<K>
     : never;
 };
 

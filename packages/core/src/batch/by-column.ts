@@ -11,7 +11,7 @@ import type { AggregateColumnSpec } from './aggregate-columns.js';
  */
 export type BinSpec =
   | { width: number; origin?: number }
-  | { edges: readonly number[] };
+  | { edges: readonly number[]; inclusive?: '[)' | '(]' };
 
 /** One value-bin's record: its `[start, end)` range plus the mapped aggregates. */
 export type BinRecord = { start: number; end: number } & Record<
@@ -77,18 +77,39 @@ export function computeByColumn(
       }
     }
     const last = edges.length - 1;
-    binOf = (v) => {
-      if (v < edges[0]! || v >= edges[last]!) return NaN; // out of range → drop
-      // rightmost edge <= v, clamped to a valid bin [0, last)
-      let lo = 0;
-      let hi = last; // bins are [0, last)
-      while (lo < hi) {
-        const mid = (lo + hi + 1) >>> 1;
-        if (edges[mid]! <= v) lo = mid;
-        else hi = mid - 1;
-      }
-      return lo;
-    };
+    // `inclusive` picks the bin a value exactly on an interior edge falls into.
+    // `'[)'` (default): bins are `[eᵢ, eᵢ₊₁)`, lower-inclusive — a boundary value
+    // goes to the bin ABOVE; range is `[e₀, eₙ)`. `'(]'`: bins are `(eᵢ, eᵢ₊₁]`,
+    // upper-inclusive (Coggan power/HR zones — a sample at exactly a zone's top
+    // edge is the LOWER zone) — a boundary value goes to the bin BELOW; range is
+    // `(e₀, eₙ]`, so the first edge is an exclusive floor (set it below your
+    // minimum to keep the minimum in bin 0).
+    binOf =
+      spec.inclusive === '(]'
+        ? (v) => {
+            if (v <= edges[0]! || v > edges[last]!) return NaN; // out of (e₀, eₙ]
+            // rightmost edge STRICTLY less than v, clamped to a valid bin [0, last)
+            let lo = 0;
+            let hi = last;
+            while (lo < hi) {
+              const mid = (lo + hi + 1) >>> 1;
+              if (edges[mid]! < v) lo = mid;
+              else hi = mid - 1;
+            }
+            return lo;
+          }
+        : (v) => {
+            if (v < edges[0]! || v >= edges[last]!) return NaN; // out of [e₀, eₙ)
+            // rightmost edge <= v, clamped to a valid bin [0, last)
+            let lo = 0;
+            let hi = last;
+            while (lo < hi) {
+              const mid = (lo + hi + 1) >>> 1;
+              if (edges[mid]! <= v) lo = mid;
+              else hi = mid - 1;
+            }
+            return lo;
+          };
     rangeOf = (i) => ({ start: edges[i]!, end: edges[i + 1]! });
   } else {
     const width = spec.width;

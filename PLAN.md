@@ -359,7 +359,7 @@ ruling), estela's `docs/pond-friction.md`.
   (#222, shipped); both cleared, then byColumn landed. **Open watch:** the
   design note flagged composition friction (e.g. `rolling` over the bins) as the
   thing to surface on real adoption — estela adopting it is the validation.
-- **`rollingByColumn` value-axis windowing** — 🚧 **in flight (PR #231, estela
+- **`rollingByColumn` value-axis windowing** — ✅ **SHIPPED v0.28.0 (#231, estela
   wave 1/3).** The sliding-window sibling of `byColumn`: a centered `±radius`
   window over a non-decreasing numeric column, reduced per row. Addresses the #1
   instance of estela's "window/scan over a derived monotonic axis" digest (4
@@ -367,7 +367,7 @@ ruling), estela's `docs/pond-friction.md`.
   instances of that digest stay deferred: the extremal-window **sweep**
   (best-efforts / power curve, low urgency) and the stateful **scan** (splits,
   out of scope per estela). Design note: `docs/notes/rolling-by-column.md`.
-- **`withColumn`** — 🚧 **in flight (PR #232, estela wave 2/3).** Attach a
+- **`withColumn`** — ✅ **SHIPPED v0.28.0 (#232, estela wave 2/3).** Attach a
   computed `Float64Array` / `(number | undefined)[]` as a new `number` column
   (schema type widens); the seam that lets a derived array re-enter the pipeline
   as a real column `aggregate` / `byColumn` / `rollingByColumn` / `column(name)`
@@ -378,9 +378,19 @@ ruling), estela's `docs/pond-friction.md`.
     builds a series straight from columns and **skips** the finite scan (the perf
     escape hatch). Build when a perf-critical consumer earns it; `withColumn`'s
     validated attach covers the estela need today.
-- **`RowForSchema` honoring `required: false`** — the known greenfield F4 /
-  ARCHITECTURE §4 limitation, now use-case-confirmed.
-- **`'mean'` reducer alias** for `'avg'` (minor DX).
+- **DX bundle (estela wave 3/3)** — 🚧 **in flight (PR #234, unreleased).** Three
+  small, confirmed papercuts in one PR: `byColumn({ edges, inclusive: '(]' })`
+  (upper-inclusive zone bins, removes the ε-nudge — F-geo-2 zone inclusivity);
+  `'mean'` reducer alias for `'avg'` (F-reducer-naming); `RowForSchema` honoring
+  `required: false` so an optional tuple cell accepts `undefined` with no cast
+  (the known greenfield F4 / ARCHITECTURE §4 limitation, F-geo-row-optional,
+  confirmed ×4). Also corrected a `columnFromValuesByKind` JSDoc non-finite
+  inaccuracy found during wave 2.
+  - **`F-schema-key-name` (key column must be named `time`) — DEFERRED.** The
+    real fix (accept any name for a `kind:'time'` key) widens `FirstColumn`,
+    which `SeriesSchema` and key-name assumptions across the codebase depend on —
+    structural blast radius, not a cheap-bundle item. Workaround (name the key
+    `time`) is trivial; revisit if it recurs.
 - **Data point against opening the kind system:** a packed geo column earned
   nothing on perf at GPS scale (reinforces `geo.md` §7).
 
