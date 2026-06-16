@@ -367,11 +367,17 @@ ruling), estela's `docs/pond-friction.md`.
   instances of that digest stay deferred: the extremal-window **sweep**
   (best-efforts / power curve, low urgency) and the stateful **scan** (splits,
   out of scope per estela). Design note: `docs/notes/rolling-by-column.md`.
-- **`withColumn` / `fromTrustedColumns`** — **now the lead remaining
-  carry-forward.** Attach a computed `Float64Array` as a column; double-signalled
-  with the chart carry-forwards (#107). Was framed as `byColumn`'s precursor;
-  with byColumn shipped via the columnar store directly, this stands on its own
-  as the highest-leverage next primitive — it serves estela _and_ the chart feed.
+- **`withColumn`** — 🚧 **in flight (PR #232, estela wave 2/3).** Attach a
+  computed `Float64Array` / `(number | undefined)[]` as a new `number` column
+  (schema type widens); the seam that lets a derived array re-enter the pipeline
+  as a real column `aggregate` / `byColumn` / `rollingByColumn` / `column(name)`
+  can see. Validated attach (re-asserts the numeric intake contract — non-finite
+  rejected). Double-signalled with the chart carry-forwards (#107); serves estela
+  _and_ the chart feed.
+  - **`fromTrustedColumns`** — deferred sibling: the bulk-construction path that
+    builds a series straight from columns and **skips** the finite scan (the perf
+    escape hatch). Build when a perf-critical consumer earns it; `withColumn`'s
+    validated attach covers the estela need today.
 - **`RowForSchema` honoring `required: false`** — the known greenfield F4 /
   ARCHITECTURE §4 limitation, now use-case-confirmed.
 - **`'mean'` reducer alias** for `'avg'` (minor DX).
