@@ -359,6 +359,14 @@ ruling), estela's `docs/pond-friction.md`.
   (#222, shipped); both cleared, then byColumn landed. **Open watch:** the
   design note flagged composition friction (e.g. `rolling` over the bins) as the
   thing to surface on real adoption — estela adopting it is the validation.
+- **`rollingByColumn` value-axis windowing** — 🚧 **in flight (PR #231, estela
+  wave 1/3).** The sliding-window sibling of `byColumn`: a centered `±radius`
+  window over a non-decreasing numeric column, reduced per row. Addresses the #1
+  instance of estela's "window/scan over a derived monotonic axis" digest (4
+  votes) — `geo.rollingSpread`, the zoom-stable variance band. The other two
+  instances of that digest stay deferred: the extremal-window **sweep**
+  (best-efforts / power curve, low urgency) and the stateful **scan** (splits,
+  out of scope per estela). Design note: `docs/notes/rolling-by-column.md`.
 - **`withColumn` / `fromTrustedColumns`** — **now the lead remaining
   carry-forward.** Attach a computed `Float64Array` as a column; double-signalled
   with the chart carry-forwards (#107). Was framed as `byColumn`'s precursor;
