@@ -29,10 +29,11 @@ type-level changes; patch bumps are strictly additive.
   zone's top edge belongs to the lower zone (the first edge becomes an exclusive
   floor). Defaults to `'[)'` (unchanged — lower-inclusive `[eᵢ, eᵢ₊₁)`). (estela
   F-geo-2 zone inclusivity.)
-- **`'mean'` reducer alias** — `'mean'` is now accepted anywhere a built-in
-  reducer name is (`aggregate` / `rolling` / `byColumn` / `rollingByColumn` /
-  `reduce`) as an alias for `'avg'`, matching the column API's
-  `Float64Column.mean()`. (estela F-reducer-naming.)
+- **`'mean'` reducer alias** — `'mean'` now resolves to `'avg'` at runtime
+  anywhere a reducer name is taken (`aggregate` / `rolling` / `byColumn` /
+  `rollingByColumn` / `reduce`); previously it threw. Matches the column API's
+  `Float64Column.mean()`. Reducer names are typed as `string`, so this is a
+  runtime alias, not a type-level change. (estela F-reducer-naming.)
 
 ### Fixed
 

@@ -384,8 +384,7 @@ ruling), estela's `docs/pond-friction.md`.
   `'mean'` reducer alias for `'avg'` (F-reducer-naming); `RowForSchema` honoring
   `required: false` so an optional tuple cell accepts `undefined` with no cast
   (the known greenfield F4 / ARCHITECTURE §4 limitation, F-geo-row-optional,
-  confirmed ×4). Also corrected a `columnFromValuesByKind` JSDoc non-finite
-  inaccuracy found during wave 2.
+  confirmed ×4).
   - **`F-schema-key-name` (key column must be named `time`) — DEFERRED.** The
     real fix (accept any name for a `kind:'time'` key) widens `FirstColumn`,
     which `SeriesSchema` and key-name assumptions across the codebase depend on —
