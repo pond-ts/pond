@@ -7,7 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 file covers both packages. Pre-1.0: minor bumps may include new features and
 type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.28.0...HEAD
+[0.28.0]: https://github.com/pjm17971/pond-ts/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/pjm17971/pond-ts/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/pjm17971/pond-ts/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/pjm17971/pond-ts/compare/v0.24.0...v0.25.0
@@ -20,6 +21,8 @@ type-level changes; patch bumps are strictly additive.
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
 
 ## [Unreleased]
+
+## [0.28.0] — 2026-06-17
 
 ### Added
 
