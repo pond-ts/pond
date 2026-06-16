@@ -14,11 +14,14 @@ rollup of every event in this bucket?"** — per-minute averages,
 hourly counts, daily peaks. For "what was the value at this grid
 point?", reach for [Alignment](./alignment) instead.
 
-This page covers three shapes of "collapse many events into fewer":
+This page covers four shapes of "collapse many events into fewer":
 
-- [**`aggregate(seq, mapping)`**](#aggregate) — one row per bucket on a sequence grid.
+- [**`aggregate(seq, mapping)`**](#aggregate) — one row per bucket on a
+  sequence grid (the **time** axis).
 - [**`reduce(mapping)`**](#reduce) — collapse a whole series into a
   single record. "Bucket size: all of it."
+- [**`byColumn(col, binning, mapping)`**](#bycolumn) — one row per
+  value-bin of a numeric column (a **value** axis, not time).
 - [**`arrayAggregate(col, reducer)`**](#arrayaggregate) — reduce one
   array cell per event.
 
@@ -197,6 +200,80 @@ See
 [Reducer reference → Type narrowing on reduce](./reducer-reference#type-narrowing-on-reducemapping)
 for the full narrowing story.
 
+## `byColumn` \{#bycolumn\}
+
+`aggregate` buckets the **temporal key**; `byColumn` buckets a numeric
+**value column**. Same reducer mapping, but each output row is one
+_value-bin_ — per-kilometre splits over cumulative distance, a power
+histogram, time-in-zone over heart-rate edges.
+
+```ts
+// Per-kilometre elevation gain and average speed over a ride.
+const splits = ride.byColumn(
+  'cumDist',
+  { width: 1000 },
+  {
+    gain: { from: 'ele', using: 'sum' },
+    speed: { from: 'speed', using: 'avg' },
+  },
+);
+// → [{ start: 0, end: 1000, gain: 12.4, speed: 7.1 },
+//    { start: 1000, end: 2000, gain: 8.0, speed: 6.4 }, ...]
+```
+
+The result is a plain **array of bin records**, each
+`{ start, end, ...aggregates }` — **not** a `TimeSeries`. Value-bins
+(distance, power) aren't time-indexed, so there's no key to build one
+from; this mirrors `reduce`'s plain-record return. Reach for `byColumn`
+whenever the x-axis of your rollup is a _value_ rather than time.
+
+### Even bins — `{ width, origin? }`
+
+Fixed-`width` bins (shifted by `origin`, default `0`), emitted
+**contiguously** from the lowest to the highest occupied bin — interior
+empty bins included, so a histogram or profile has no gaps:
+
+```ts
+// Power distribution: seconds spent in each 25 W band.
+ride.byColumn('watts', { width: 25 }, {
+  secs: { from: 'watts', using: 'count' },
+});
+// → [{ start: 0, end: 25, secs: 3 }, { start: 25, end: 50, secs: 0 }, ...]
+```
+
+A **monotonic** source (cumulative distance, work) yields contiguous
+ranges — splits, an elevation-vs-distance profile. A **non-monotonic**
+source (instantaneous power) yields a histogram. Same call, both shapes.
+
+### Explicit bins — `{ edges }`
+
+Ascending `edges` `[e₀, …, eₙ]` give `n` bins, bin `i` = `[eᵢ, eᵢ₊₁)` —
+one record per bin, in order. Use them for named zones:
+
+```ts
+// Time in each power zone (FTP-relative edges).
+ride.byColumn('watts', { edges: [0, 150, 250, 350, 500] }, {
+  secs: { from: 'watts', using: 'count' },
+});
+// → one record per [0,150), [150,250), [250,350), [350,500)
+```
+
+A value below the first edge or at/above the last is **out of range**,
+and that row is dropped.
+
+### Edge cases
+
+- A row whose bin value is **missing or non-finite** contributes to no
+  bin. Within a bin, the
+  [reducer non-finite policy](./reducer-reference#empty-bucket-behavior)
+  still applies to the _source_ columns.
+- **Empty bins** emit each reducer's empty value (`count` → `0`,
+  `avg` / `min` / … → `undefined`) — exactly like an empty `aggregate`
+  bucket.
+- `start` and `end` are reserved output names (they carry the bin
+  range), and a non-finite or wrong-kind reducer result throws —
+  the same write-time guard `aggregate` enforces.
+
 ## `arrayAggregate` \{#arrayaggregate\}
 
 Reduce one array cell per event — feeds each event's array to a
@@ -259,6 +336,7 @@ that does and doesn't propagate further down the pipeline.
 | `aggregate(seq, mapping)`      | `TimeSeries<S>` — one row per bucket                 |
 | `reduce(col, reducer)`         | Wide `ColumnValue \| undefined`                      |
 | `reduce(mapping)`              | `Record<key, narrowed>`                              |
+| `byColumn(col, binning, m)`    | `Array<{ start, end, ...aggregates }>` — one per value-bin |
 | `arrayAggregate(col, reducer)` | `TimeSeries<S>` — one cell reduced per event         |
 | `LiveAggregation(src, seq, m)` | Stream of closed buckets + provisional bucket events |
 
