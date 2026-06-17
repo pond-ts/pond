@@ -1,0 +1,65 @@
+name: charts-e2e
+
+# Real-browser test layers for @pond-ts/charts (Storybook behavior + Playwright
+# visual regression). Separate from the main `CI` workflow because it needs a
+# browser + a Storybook build; the unit/type/build layers run there via
+# `npm run verify`.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/charts/**'
+      - '.github/workflows/charts-e2e.yml'
+  pull_request:
+    paths:
+      - 'packages/charts/**'
+      - '.github/workflows/charts-e2e.yml'
+  # Manual: regenerate the Linux baselines and upload them as an artifact to
+  # commit. Canvas pixels are platform-specific, so CI (Linux) is the source of
+  # truth for committed baselines — see PLAN.md → Testing strategy.
+  workflow_dispatch:
+    inputs:
+      update_baselines:
+        description: 'Regenerate Linux visual baselines and upload as an artifact'
+        type: boolean
+        default: false
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+        working-directory: packages/charts
+
+      - name: Run Storybook e2e (behavior + visual)
+        run: npm run test:e2e --workspace=@pond-ts/charts ${{ inputs.update_baselines && '-- --update-snapshots' || '' }}
+
+      - name: Upload regenerated baselines
+        if: ${{ inputs.update_baselines }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: charts-linux-baselines
+          path: packages/charts/e2e/**/*-linux.png
+          if-no-files-found: error
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: packages/charts/playwright-report/
+          retention-days: 7

@@ -65,18 +65,22 @@ that the pixels are right or that an interaction behaved. Four layers:
 1. **Unit** — vitest + happy-dom + a recording-mock 2D context. Pure logic
    (scales, decimation, store append/evict) and draw-call *sequences* (a gap →
    `moveTo`, not `lineTo`). Fast, no browser.
-2. **Storybook 8** (Vite builder) — `*.stories.tsx` as the design surface and
+2. **Storybook 10** (Vite builder) — `*.stories.tsx` as the design surface and
    the canonical fixture set (estela activity + gaps / NaN / dense / sparse /
    dual-axis / band / each theme). Stories feed layers 3–4.
-3. **Behavior** — Storybook `play` functions (`@storybook/test`) driving
-   pan / zoom / scrub / brush, asserting callbacks + readout state, in a real
-   browser.
+3. **Behavior** — Playwright specs driving pan / zoom / scrub / brush against
+   the static Storybook, asserting callbacks + readout state in a real browser.
+   (Storybook `play` functions remain available for in-UI interaction debugging.)
 4. **Visual regression** — Playwright screenshots of the canvas diffed against
    committed baselines.
 
-Runner: Storybook's Vitest addon runs stories *as* vitest browser-mode tests
-(Playwright provider), unifying layers 3–4 under the repo's `vitest` command;
-`@storybook/test-runner` is the fallback. **Visual baselines are self-hosted**
+Runner: **Playwright (`@playwright/test`) drives both real-browser layers**
+against a static Storybook build (`npm run test:e2e`) — stories are the
+fixtures, `toHaveScreenshot` does visual regression. (The Storybook Vitest addon
+was the original plan; Playwright-against-Storybook proved simpler and gives
+best-in-class visual diffing. Every visual assertion first gates on the canvas
+having actually painted — `toBeVisible` waits for the element, not the pixels.)
+**Visual baselines are self-hosted**
 (pjm17971's call, 2026-06-17 — no external service / no cost / no data leaves
 the repo, chosen over Chromatic). Canvas pixels differ across OS / GPU / fonts,
 so **CI (Linux + Playwright's pinned Chromium) owns the baselines** — commit the
@@ -90,7 +94,7 @@ best-effort.
   Canvas-in-test decision: a recording-mock 2D context for unit tests (assert
   draw calls, no native dep); real-browser visual + behavior testing stands up
   in M0.5 (below).
-- **M0.5 — testing harness.** Stand up Storybook 8 + the four-layer test stack
+- **M0.5 — testing harness.** Stand up Storybook 10 + the four-layer test stack
   (above) against a trivial example, *before* component work, so M1's
   `LineChart` is built test-first and becomes the template every later component
   copies. Adds the CI browser-test job + the baseline-update workflow.
