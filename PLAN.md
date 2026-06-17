@@ -98,15 +98,47 @@ best-effort.
   (above) against a trivial example, *before* component work, so M1's
   `LineChart` is built test-first and becomes the template every later component
   copies. Adds the CI browser-test job + the baseline-update workflow.
-- **M1 — rendering spine.** Typed-array store + `fromTimeSeries` adapter +
-  `ChartContainer` / `ChartRow` + `LineChart` drawing to canvas with DPR
-  scaling + gap handling (`Number.isFinite`, not `!= null`). Proves pond data →
-  canvas line end-to-end. Built test-first against the M0.5 harness: unit
-  (store / scales / draw-call sequence) + a Storybook story + its behavior +
-  visual baselines.
+- **M1 — rendering spine.** ✅ Built 2026-06-17 (PR pending). `fromTimeSeries`
+  adapter + `ChartContainer` (time axis) / `ChartRow` (y-domain + canvas +
+  draw-layer registry) / `LineChart` (gap-aware line), d3-scale. Renders a pond
+  `TimeSeries` → canvas line end-to-end with the coast reading as a break, not a
+  drop to zero. Test-first against the M0.5 harness: 14 unit (draw-call
+  sequence, gap-break, extent, DPR) + 5 e2e (behavior + visual baselines).
+  **Surfaced F-1 (HIGH):** pond-ts's prototype-augmented column-API methods
+  (`toFloat64Array`, `at`, `slice`, scalar reductions, `bin`) are **tree-shaken
+  out of Vite/Rollup browser bundles** despite core's
+  `sideEffects: ["./dist/column.js"]` — they work in Node/vitest but throw
+  `"not a function"` in a bundled app. Hits **any** browser consumer
+  (estela / dashboard), not just charts. M1 works around with `col.read(i)`
+  (a class method, bundle-safe, per-element) and forfeits the columnar bulk-read
+  throughput win until core makes the augmentation bundle-safe. Full analysis +
+  fix candidates in
+  [`docs/notes/charts-m1-friction.md`](docs/notes/charts-m1-friction.md); this
+  is the top charts→core carry-forward.
 - **M2 — axes + theme.** `YAxis` (auto-extending domain, the widen-not-cap
   trap), wall-clock-anchored x-ticks, the `ChartTheme` system + `defaultTheme`
   + `estelaTheme`, dual y-axis.
+  - **Row-layout decision (2026-06-17, with pjm17971 / the RTC author).**
+    `ChartRow`'s direct children are a **horizontal** layout — left `YAxis`(es),
+    a `<Layers>` wrapper (the plot area), right `YAxis`(es) — e.g.
+    `<YAxis/><YAxis/><Layers>…</Layers><YAxis/>`. Inside `<Layers>` is the
+    **z-stack** of draw layers (declaration order, last on top — the
+    `ChartRow` JSDoc convention). Same ordered-children pattern as the row, on a
+    different axis (x → z). The wrapper is **mandatory** (no optional-when-single
+    sugar — that would force the row to sniff axis-vs-layer roles and give two
+    ways to write one chart) and serves as the **context boundary**: children
+    inside `<Layers>` register as draw layers, direct row children as axes — so a
+    layer knows what it is from *where it sits*, not a `role` prop. Named
+    `<Layers>` over RTC's `<Charts>` / a `<Group>` — it names the z-stacking role
+    rather than the contents, and reads clearly beside the axes.
+  - **Theme decision.** A single typed `ChartTheme` object is the **one styling
+    channel** for drawn layers — canvas has no CSS cascade into pixels, and that
+    constraint is *why* this avoids RTC's styling bugs (RTC had two overlapping
+    channels: CSS + per-element `style` props with deep merges). Role tokens
+    (primary / secondary / context line colours, band fill opacities, axis tint,
+    grid stroke + dash, label typography), `defaultTheme` + `estelaTheme`,
+    threaded via `ChartContainer` context. DOM chrome (axis labels, legend)
+    derives its styles from the same theme object — still one source of truth.
 - **M3 — `BandChart` + variance underlay.** Two-tone band from `rollingByColumn`
   percentiles + `{at}` grid; gap-aware smooth wired into centerline + edges.
 - **M4 — interactions.** Pan / zoom (controlled + uncontrolled), brush, scrub

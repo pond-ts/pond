@@ -41,6 +41,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # The Storybook bundle imports `pond-ts`, which Vite resolves to
+      # packages/core/dist — absent on a fresh checkout, so build the packages
+      # first (workspaces are dependency-ordered: core → react → charts).
+      - name: Build packages
+        run: npm run build
+
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
         working-directory: packages/charts

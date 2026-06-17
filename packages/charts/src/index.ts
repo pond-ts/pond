@@ -7,14 +7,25 @@
  * canvas renderer → React shell) is documented in the charts RFC at
  * `docs/rfcs/charts.md`; the milestone plan lives in `PLAN.md`.
  *
- * **M0.5 — testing harness.** The public surface so far is the low-level
- * {@link Canvas} primitive every draw layer sits on; it is the proving ground
- * for the four-layer test stack (unit mock-context, Storybook stories,
- * Playwright behavior, Playwright visual regression). The chart components
- * (`ChartContainer`, `ChartRow`, `LineChart`, …) land in M1.
+ * **M1 — rendering spine.** The layout shell + the first draw layer:
+ * `<ChartContainer>` (time axis) → `<ChartRow>` (y-axis + canvas) →
+ * `<LineChart>` (a gap-aware line), fed from a pond `TimeSeries` via
+ * {@link fromTimeSeries}. Axes, themes, the variance band, and interactions
+ * land in M2–M4. {@link Canvas} is the low-level DPR-aware primitive the rows
+ * sit on.
  *
  * @packageDocumentation
  */
 
 export { Canvas } from './Canvas.js';
 export type { CanvasProps, CanvasDraw } from './Canvas.js';
+
+export { ChartContainer } from './ChartContainer.js';
+export type { ChartContainerProps } from './ChartContainer.js';
+export { ChartRow } from './ChartRow.js';
+export type { ChartRowProps } from './ChartRow.js';
+export { LineChart } from './LineChart.js';
+export type { LineChartProps } from './LineChart.js';
+
+export { fromTimeSeries } from './data.js';
+export type { ChartSeries } from './data.js';
