@@ -2140,9 +2140,11 @@ export class TimeSeries<S extends SeriesSchema> {
    *   yields a histogram (distribution).
    * - `{ edges, inclusive? }` — explicit ascending edges `[e₀ … eₙ]` → `n` bins.
    *   `inclusive` defaults to `'[)'` (bin `i` = `[eᵢ, eᵢ₊₁)`, lower-inclusive);
-   *   pass `'(]'` for upper-inclusive bins (`(eᵢ, eᵢ₊₁]`) — Coggan power / HR
-   *   zones, where a sample exactly on a zone's top edge belongs to the lower
-   *   zone (the first edge becomes an exclusive floor). Always emits all `n` bins.
+   *   pass `'(]'` for upper-inclusive interior bins (`(eᵢ, eᵢ₊₁]`) — Coggan power
+   *   / HR zones, where a sample exactly on a zone's top edge belongs to the
+   *   lower zone. The floor `e₀` stays **inclusive** (bin 0 is `[e₀, e₁]`), so a
+   *   minimum-edge value (e.g. a `0` W coast sample) lands in bin 0 rather than
+   *   being dropped. Always emits all `n` bins.
    *
    * A row whose bin value is missing / non-finite (or, for `edges`, outside
    * `[e₀, eₙ)`) contributes to no bin. The reducer non-finite policy still
@@ -2189,7 +2191,12 @@ export class TimeSeries<S extends SeriesSchema> {
    * reducer non-finite policy still applies to the *source* columns.
    *
    * The window is centered and inclusive (`col[i] − radius ≤ col[j] ≤ col[i] +
-   * radius`); a single O(n) two-pointer sweep maintains the window. See
+   * radius`); a single O(n) two-pointer sweep maintains the window.
+   *
+   * Pass `{ radius, at }` — a **non-decreasing** array of explicit center values
+   * (e.g. a chart's coarse display grid) — to evaluate at those centers instead
+   * of at every row, returning **one record per center** (a center with no rows
+   * in range yields each reducer's empty value). See
    * `docs/notes/rolling-by-column.md`.
    */
   rollingByColumn<const Mapping extends ValidatedAggregateMap<S, Mapping>>(

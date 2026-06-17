@@ -23,6 +23,25 @@ type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **`rollingByColumn(col, { radius, at }, mapping)` — evaluate at explicit
+  centers.** `at` takes a **non-decreasing** array of center values (e.g. a chart's
+  coarse display grid) and returns **one record per center**, instead of the
+  default one-per-row. A center with no rows within `±radius` yields each
+  reducer's empty value. Same O(n + centers) two-pointer. Closes the
+  evaluate-at-grid gap surfaced adopting `rollingByColumn` for a chart variance
+  band. (estela F-rolling-by-row.)
+
+### Changed
+
+- **`byColumn(…, { inclusive: '(]' })` floor edge is now inclusive.** Under
+  `'(]'`, interior bins stay upper-inclusive (`(eᵢ, eᵢ₊₁]`) but the **floor `e₀`
+  is inclusive** (bin 0 is `[e₀, e₁]`), so a value at exactly the minimum edge —
+  e.g. a `0` W coast/stop sample at a zone floor of 0 — lands in bin 0 instead of
+  being dropped (the `include_lowest` convention). Previously the floor was
+  exclusive. (estela F-inclusive-floor.)
+
 ## [0.29.0] — 2026-06-17
 
 ### Added

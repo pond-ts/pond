@@ -79,16 +79,20 @@ export function computeByColumn(
     const last = edges.length - 1;
     // `inclusive` picks the bin a value exactly on an interior edge falls into.
     // `'[)'` (default): bins are `[eᵢ, eᵢ₊₁)`, lower-inclusive — a boundary value
-    // goes to the bin ABOVE; range is `[e₀, eₙ)`. `'(]'`: bins are `(eᵢ, eᵢ₊₁]`,
-    // upper-inclusive (Coggan power/HR zones — a sample at exactly a zone's top
-    // edge is the LOWER zone) — a boundary value goes to the bin BELOW; range is
-    // `(e₀, eₙ]`, so the first edge is an exclusive floor (set it below your
-    // minimum to keep the minimum in bin 0).
+    // goes to the bin ABOVE; range is `[e₀, eₙ)`. `'(]'`: interior bins are
+    // `(eᵢ, eᵢ₊₁]`, upper-inclusive (Coggan power/HR zones — a sample at exactly
+    // a zone's top edge is the LOWER zone) — a boundary value goes to the bin
+    // BELOW. The **floor `e₀` is inclusive** (bin 0 is `[e₀, e₁]`), so a value at
+    // exactly the minimum edge — e.g. a `0` W coast/stop sample — lands in bin 0
+    // rather than being dropped (the `include_lowest` convention; estela
+    // F-inclusive-floor). Range is `[e₀, eₙ]`.
     binOf =
       spec.inclusive === '(]'
         ? (v) => {
-            if (v <= edges[0]! || v > edges[last]!) return NaN; // out of (e₀, eₙ]
-            // rightmost edge STRICTLY less than v, clamped to a valid bin [0, last)
+            if (v < edges[0]! || v > edges[last]!) return NaN; // out of [e₀, eₙ]
+            // rightmost edge STRICTLY less than v (so an interior edge goes to
+            // the bin below), clamped to [0, last); v === e₀ → bin 0 (floor
+            // inclusive).
             let lo = 0;
             let hi = last;
             while (lo < hi) {

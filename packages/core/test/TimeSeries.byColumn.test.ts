@@ -364,36 +364,32 @@ describe('TimeSeries.byColumn — validation', () => {
 });
 
 describe('TimeSeries.byColumn — { edges } inclusivity', () => {
-  it("'(]' puts a boundary value in the lower bin; '[)' (default) in the upper", () => {
+  it("'(]' puts an interior boundary in the lower bin + keeps the floor inclusive; '[)' (default) puts a boundary in the upper", () => {
     const s = make([
-      [0, 0, 0, 0],
+      [0, 0, 0, 0], // the floor value
       [1, 0, 0, 100], // exactly on the interior edge
       [2, 0, 0, 200],
     ]);
-    // default '[)': bins [0,100),[100,200) — 0→bin0, 100→bin1, 200 dropped (>= last)
+    // '[)': bins [0,100),[100,200) — 0→bin0, 100→bin1, 200 dropped (>= last)
     expect(
       s
         .byColumn(
           'watts',
           { edges: [0, 100, 200] },
-          {
-            sum: { from: 'watts', using: 'sum' },
-          },
+          { n: { from: 'watts', using: 'count' } },
         )
-        .map((b) => b.sum),
-    ).toEqual([0, 100]);
-    // '(]': bins (0,100],(100,200] — 0 dropped (<= first), 100→bin0, 200→bin1
+        .map((b) => b.n),
+    ).toEqual([1, 1]); // bin0={0}, bin1={100}
+    // '(]': interior bins (eᵢ,eᵢ₊₁] but floor e₀ inclusive — 0→bin0, 100→bin0, 200→bin1
     expect(
       s
         .byColumn(
           'watts',
           { edges: [0, 100, 200], inclusive: '(]' },
-          {
-            sum: { from: 'watts', using: 'sum' },
-          },
+          { n: { from: 'watts', using: 'count' } },
         )
-        .map((b) => b.sum),
-    ).toEqual([100, 200]);
+        .map((b) => b.n),
+    ).toEqual([2, 1]); // bin0={0,100}, bin1={200}
   });
 
   it("'(]' expresses Coggan zones (top-edge sample is the lower zone) without an epsilon nudge", () => {
@@ -432,7 +428,7 @@ describe('TimeSeries.byColumn — { edges } inclusivity', () => {
         )
         .map((b) => [b.start, b.end, b.n]),
     ).toEqual([[100, 200, 1 + 1]]); // {100,150}
-    // '(]' → (100,200]: 150,200 in; 99 and 100 at/below first → dropped
+    // '(]' → [100,200] (floor inclusive): 100,150,200 in; 99 below → dropped
     expect(
       s
         .byColumn(
@@ -443,7 +439,22 @@ describe('TimeSeries.byColumn — { edges } inclusivity', () => {
           },
         )
         .map((b) => [b.start, b.end, b.n]),
-    ).toEqual([[100, 200, 1 + 1]]); // {150,200}
+    ).toEqual([[100, 200, 3]]); // {100,150,200}
+  });
+
+  it("'(]' floor edge is inclusive — a floor-value sample (e.g. 0 W coast) lands in bin 0, not dropped (F-inclusive-floor)", () => {
+    const s = make([
+      [0, 0, 0, 0], // a 0 W coast/stop sample, exactly at the floor edge
+      [1, 0, 0, 120],
+    ]);
+    const out = s.byColumn(
+      'watts',
+      { edges: [0, 100, 200], inclusive: '(]' },
+      {
+        n: { from: 'watts', using: 'count' },
+      },
+    );
+    expect(out.map((b) => b.n)).toEqual([1, 1]); // bin0={0} (Z1), bin1={120}
   });
 
   it('just-below-first / just-above-last are dropped (both modes)', () => {
@@ -464,8 +475,8 @@ describe('TimeSeries.byColumn — { edges } inclusivity', () => {
         )
         .map((b) => b.n),
     ).toEqual([0, 1]);
-    // '(]' (100,300]: 99.999 <= 100... actually 99.999 < 100 → out; 300.001 > 300
-    // dropped; 250 → bin1
+    // '(]' [100,300] (floor inclusive): 99.999 < 100 → out; 300.001 > 300 → out;
+    // 250 → bin1
     expect(
       s
         .byColumn(
