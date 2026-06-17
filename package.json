@@ -16,8 +16,8 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces --if-present",
-    "format": "prettier --write \"packages/*/src/**/*.ts\" \"packages/*/test/**/*.ts\"",
-    "format:check": "prettier --check \"packages/*/src/**/*.ts\" \"packages/*/test/**/*.ts\"",
+    "format": "prettier --write \"packages/*/{src,test}/**/*.{ts,tsx}\"",
+    "format:check": "prettier --check \"packages/*/{src,test}/**/*.{ts,tsx}\"",
     "verify": "npm run format:check && npm run build && npm test"
   },
   "devDependencies": {

@@ -1,0 +1,52 @@
+{
+  "name": "@pond-ts/charts",
+  "version": "0.30.0",
+  "private": true,
+  "description": "Canvas-rendered, streaming-first time-series charts for pond-ts",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pjm17971/pond-ts.git",
+    "directory": "packages/charts"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/cjs-fallback.cjs"
+    }
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "cp ../../README.md ./README.md && cp ../../LICENSE ./LICENSE && cp ../../CHANGELOG.md ./CHANGELOG.md && npm run build && cp cjs-fallback.cjs dist/cjs-fallback.cjs && find dist -name '*.map' -delete",
+    "test": "npm run test:type && npm run test:runtime",
+    "test:type": "tsc -p tsconfig.types.json",
+    "test:runtime": "vitest run"
+  },
+  "peerDependencies": {
+    "pond-ts": "^0.30.0",
+    "@pond-ts/react": "^0.30.0",
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.2.3",
+    "happy-dom": "^20.9.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.2.5",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}

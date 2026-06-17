@@ -805,3 +805,66 @@ Estimated 2,000–3,000 LOC for the v1 spine. Working from the
 gRPC experiment's PR #37, the trap catalogue, the uPlot inventory,
 and Codex's architectural framing, this is "plumb known answers in"
 rather than design from first principles.
+
+---
+
+## Decision: canvas-first confirmed; estela is the proving consumer; theme system (2026-06-17)
+
+> _Decision by pjm17971; consolidated by the pond-ts library agent (Claude).
+> This section moves the RFC from "planning note" to "in build" — the binding
+> milestone plan lives in [PLAN.md → Current focus](../../PLAN.md); this section
+> records the decision and the deltas it forces on the v1 scope above._
+
+A renderer fork surfaced while scoping the actual first commit: the RFC's whole
+architecture targets the **gRPC firehose** (canvas-mandatory, the SVG cliff),
+but the freshest real consumer — estela's `@estela/ui` `DataChart` — is a
+**working SVG chart** at a scale (one activity, a few thousand points) that
+never hits the cliff. estela's spec even says "SVG, no canvas needed." So the
+question was: is `@pond-ts/charts` v1 a renderer-agnostic data layer, an
+SVG-first package modeled on estela, or the canvas engine this RFC describes?
+
+**Resolved: canvas-first, no SVG.** Rationale (pjm17971):
+
+- SVG is a dead end for the firehose / dashboard consumers — the cliff is real
+  and structural, not a tuning problem.
+- estela not pulling on canvas as hard *today* doesn't mean it won't. One
+  canvas engine that also owns interactions gives us a chart that works for
+  **both** regimes; an SVG branch would be a fork we'd have to abandon.
+- More work up front (interactions on canvas are harder than SVG's
+  hit-testing), but the end state is a single engine, not two.
+
+This **confirms** the canvas architecture in the "Library agent response"
+section above. It changes three things about the v1 scope:
+
+1. **estela is the proving consumer, and its feature set is the v1 success
+   bar** — "estela can swap our chart in for `DataChart` with no regressions."
+   That promotes several items the response section had as v1.1/later into v1
+   must-haves: **dual y-axis** (left single-select group channel + right HR),
+   the **two-tone variance underlay** (p5/p95 outer + p25/p75 inner over a
+   *fixed value-window*, from `rollingByColumn` percentiles + the `{at}` grid —
+   both shipped in v0.30.0 for exactly this), **gap-aware smooth**
+   (`smooth missing:'skip'`, also v0.30.0), a **pace axis** (sec/distance
+   inversion), **scrub** readout, and the **zoom-stable spread** property
+   (band width depends on distance + radius, not bucket time-width).
+
+2. **A theme system is now first-class** — the RFC predates this requirement.
+   estela's fixed role palette (primary foam-white / HR coral / elevation teal)
+   becomes *one theme*, not hardcoded colours in the draw layers. A `ChartTheme`
+   (line role colours, band fill opacities, axis tint, gridline style,
+   typography) is threaded through `ChartContainer` context with a
+   `defaultTheme`; estela ships as `estelaTheme`. This is what makes the engine
+   reusable by the dashboard / gRPC / other consumers ("target other uses too").
+
+3. **Interactions are in v1**, not deferred — pan / zoom / brush / cursor sync
+   (already in the response section's v1 list) plus estela's **scrub** readout.
+
+Nothing else in the architecture changes: the hard layers, the typed-array
+store, the chunked Path2D cache, the `ChartDataSource` adapters, and the
+`useSyncExternalStore`-for-meta / rAF-for-draws split all stand as written
+above. The dual-axis and theme requirements thread through `ChartRow` (Y-domain
++ axis config per side) and `ChartContainer` (theme context) respectively, which
+the layered design already accommodates.
+
+**Home:** `packages/charts` in this monorepo, `"private": true` until M5 parity
+so the unified release workflow doesn't publish a half-built package; flipped
+public at first parity. Lockstep-versioned with core + react.
