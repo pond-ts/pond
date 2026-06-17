@@ -1,0 +1,12 @@
+# Storybook static build
+storybook-static/
+
+# Playwright run artifacts
+playwright-report/
+test-results/
+blob-report/
+
+# Visual-regression baselines: CI (Linux) is authoritative and its baselines are
+# committed; local platform baselines are best-effort and not committed.
+e2e/**/*-darwin.png
+e2e/**/*-win32.png

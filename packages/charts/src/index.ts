@@ -7,18 +7,14 @@
  * canvas renderer → React shell) is documented in the charts RFC at
  * `docs/rfcs/charts.md`; the milestone plan lives in `PLAN.md`.
  *
- * **M0 — skeleton.** This package currently exports only its identity marker so
- * the build emits a `.d.ts` and the monorepo plumbing (build / test / format /
- * release) is wired. The rendering spine — the typed-array store, the
- * `ChartContainer` / `ChartRow` layout shell, and the first `LineChart` draw
- * layer — lands in M1.
+ * **M0.5 — testing harness.** The public surface so far is the low-level
+ * {@link Canvas} primitive every draw layer sits on; it is the proving ground
+ * for the four-layer test stack (unit mock-context, Storybook stories,
+ * Playwright behavior, Playwright visual regression). The chart components
+ * (`ChartContainer`, `ChartRow`, `LineChart`, …) land in M1.
  *
  * @packageDocumentation
  */
 
-/**
- * Package identity marker. A placeholder export so the M0 skeleton has a public
- * surface to build and test against; it is replaced by the real chart API
- * (`ChartContainer`, `ChartRow`, `LineChart`, …) in M1.
- */
-export const PACKAGE_NAME = '@pond-ts/charts';
+export { Canvas } from './Canvas.js';
+export type { CanvasProps, CanvasDraw } from './Canvas.js';

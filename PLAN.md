@@ -74,9 +74,13 @@ that the pixels are right or that an interaction behaved. Four layers:
 4. **Visual regression** — Playwright screenshots of the canvas diffed against
    committed baselines.
 
-Runner: Storybook's Vitest addon runs stories *as* vitest browser-mode tests
-(Playwright provider), unifying layers 3–4 under the repo's `vitest` command;
-`@storybook/test-runner` is the fallback. **Visual baselines are self-hosted**
+Runner: **Playwright (`@playwright/test`) drives both real-browser layers**
+against a static Storybook build (`npm run test:e2e`) — stories are the
+fixtures, `toHaveScreenshot` does visual regression. (The Storybook Vitest addon
+was the original plan; Playwright-against-Storybook proved simpler and gives
+best-in-class visual diffing. Every visual assertion first gates on the canvas
+having actually painted — `toBeVisible` waits for the element, not the pixels.)
+**Visual baselines are self-hosted**
 (pjm17971's call, 2026-06-17 — no external service / no cost / no data leaves
 the repo, chosen over Chromatic). Canvas pixels differ across OS / GPU / fonts,
 so **CI (Linux + Playwright's pinned Chromium) owns the baselines** — commit the
