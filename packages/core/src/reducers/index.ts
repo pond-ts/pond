@@ -48,6 +48,10 @@ const registry: Record<string, ReducerDef> = {
 export function resolveReducer(operation: string): ReducerDef {
   const r = registry[operation];
   if (r) return r;
+  // `'mean'` is an accepted alias for `'avg'` in aggregate/rolling mappings,
+  // matching the column API (`Float64Column.mean()` → the `'avg'` kernel). Keeps
+  // the registry free of a duplicate entry. (estela F-reducer-naming.)
+  if (operation === 'mean') return avg;
   const q = parsePercentile(operation);
   if (q !== undefined) return percentileReducer(q);
   const n = parseTopN(operation);

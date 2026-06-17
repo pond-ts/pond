@@ -130,6 +130,7 @@ type FusedReducerKind<
 > = Using extends
   | 'sum'
   | 'avg'
+  | 'mean'
   | 'count'
   | 'min'
   | 'max'

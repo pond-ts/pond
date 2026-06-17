@@ -22,6 +22,33 @@ type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **`byColumn({ edges, inclusive })`** — `inclusive: '(]'` makes edge bins
+  upper-inclusive (`(eᵢ, eᵢ₊₁]`), for Coggan power / HR zones where a sample on a
+  zone's top edge belongs to the lower zone (the first edge becomes an exclusive
+  floor). Defaults to `'[)'` (unchanged — lower-inclusive `[eᵢ, eᵢ₊₁)`). (estela
+  F-geo-2 zone inclusivity.)
+- **`'mean'` reducer alias for `'avg'`** — `'mean'` is now an accepted built-in
+  reducer name across `aggregate` / `rolling` / `byColumn` / `rollingByColumn` /
+  `reduce` (and the live equivalents), at **both runtime and the type level**: it
+  resolves to the `avg` kernel and classifies as numeric output
+  (`number | undefined`), exactly like `'avg'`. Matches the column API's
+  `Float64Column.mean()`. (estela F-reducer-naming.)
+
+### Fixed
+
+- **`RowForSchema` honors `required: false`** — a **value** column declared
+  `required: false` now accepts `undefined` in its tuple-row cell at the type
+  level (matching the runtime, which records it as missing), so optional cells no
+  longer need an `as never` cast. The **key (first) column stays required** even
+  if marked `required: false` (the constructor always requires it). `null` is
+  still not admitted for tuple rows (only the JSON object-row path takes `null`).
+  Correspondingly, **`.rows` / `toRows()` now type an optional cell as
+  `… | undefined`** (`NormalizedRowForSchema`), so reading a possibly-missing
+  cell is no longer unsoundly typed as present — a type tightening on output for
+  schemas that use `required: false`. (estela F-geo-row-optional; Codex-hardened.)
+
 ## [0.28.0] — 2026-06-17
 
 ### Added

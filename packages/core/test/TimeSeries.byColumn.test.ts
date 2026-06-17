@@ -362,3 +362,120 @@ describe('TimeSeries.byColumn — validation', () => {
     ).toThrow(/must be a number column/);
   });
 });
+
+describe('TimeSeries.byColumn — { edges } inclusivity', () => {
+  it("'(]' puts a boundary value in the lower bin; '[)' (default) in the upper", () => {
+    const s = make([
+      [0, 0, 0, 0],
+      [1, 0, 0, 100], // exactly on the interior edge
+      [2, 0, 0, 200],
+    ]);
+    // default '[)': bins [0,100),[100,200) — 0→bin0, 100→bin1, 200 dropped (>= last)
+    expect(
+      s
+        .byColumn(
+          'watts',
+          { edges: [0, 100, 200] },
+          {
+            sum: { from: 'watts', using: 'sum' },
+          },
+        )
+        .map((b) => b.sum),
+    ).toEqual([0, 100]);
+    // '(]': bins (0,100],(100,200] — 0 dropped (<= first), 100→bin0, 200→bin1
+    expect(
+      s
+        .byColumn(
+          'watts',
+          { edges: [0, 100, 200], inclusive: '(]' },
+          {
+            sum: { from: 'watts', using: 'sum' },
+          },
+        )
+        .map((b) => b.sum),
+    ).toEqual([100, 200]);
+  });
+
+  it("'(]' expresses Coggan zones (top-edge sample is the lower zone) without an epsilon nudge", () => {
+    const ftp = 250;
+    const edges = [0, 0.75 * ftp, 0.9 * ftp, 1.05 * ftp]; // [0, 187.5, 225, 262.5]
+    const s = make([
+      [0, 0, 0, 187.5], // exactly 0.75·FTP → lower zone (bin 0) under '(]'
+      [1, 0, 0, 225], // exactly 0.9·FTP → bin 1
+    ]);
+    const out = s.byColumn(
+      'watts',
+      { edges, inclusive: '(]' },
+      {
+        n: { from: 'watts', using: 'count' },
+      },
+    );
+    expect(out.map((b) => b.n)).toEqual([1, 1, 0]);
+  });
+
+  it('2-edge array → a single bin, both inclusivity modes', () => {
+    const s = make([
+      [0, 0, 0, 99], // below range
+      [1, 0, 0, 100], // on first edge
+      [2, 0, 0, 150], // interior
+      [3, 0, 0, 200], // on last edge
+    ]);
+    // '[)' → [100,200): 100,150 in; 99 below, 200 at/above last → dropped
+    expect(
+      s
+        .byColumn(
+          'watts',
+          { edges: [100, 200] },
+          {
+            n: { from: 'watts', using: 'count' },
+          },
+        )
+        .map((b) => [b.start, b.end, b.n]),
+    ).toEqual([[100, 200, 1 + 1]]); // {100,150}
+    // '(]' → (100,200]: 150,200 in; 99 and 100 at/below first → dropped
+    expect(
+      s
+        .byColumn(
+          'watts',
+          { edges: [100, 200], inclusive: '(]' },
+          {
+            n: { from: 'watts', using: 'count' },
+          },
+        )
+        .map((b) => [b.start, b.end, b.n]),
+    ).toEqual([[100, 200, 1 + 1]]); // {150,200}
+  });
+
+  it('just-below-first / just-above-last are dropped (both modes)', () => {
+    const s = make([
+      [0, 0, 0, 99.999], // just below first edge
+      [1, 0, 0, 300.001], // just above last edge
+      [2, 0, 0, 250], // safely interior (bin 1)
+    ]);
+    // '[)' [100,200,300]: 99.999 < 100 dropped; 300.001 >= 300 dropped; 250 → bin1
+    expect(
+      s
+        .byColumn(
+          'watts',
+          { edges: [100, 200, 300] },
+          {
+            n: { from: 'watts', using: 'count' },
+          },
+        )
+        .map((b) => b.n),
+    ).toEqual([0, 1]);
+    // '(]' (100,300]: 99.999 <= 100... actually 99.999 < 100 → out; 300.001 > 300
+    // dropped; 250 → bin1
+    expect(
+      s
+        .byColumn(
+          'watts',
+          { edges: [100, 200, 300], inclusive: '(]' },
+          {
+            n: { from: 'watts', using: 'count' },
+          },
+        )
+        .map((b) => b.n),
+    ).toEqual([0, 1]);
+  });
+});

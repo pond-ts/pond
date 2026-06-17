@@ -14,6 +14,7 @@ import type {
 export type AggregateFunction =
   | 'sum'
   | 'avg'
+  | 'mean'
   | 'min'
   | 'max'
   | 'count'
@@ -259,6 +260,7 @@ type ReducerOutputKind<
 > = Using extends
   | 'sum'
   | 'avg'
+  | 'mean'
   | 'count'
   | 'min'
   | 'max'
@@ -362,6 +364,7 @@ export type AggregateOutputMapResultSchema<
 type NumericAggregateFunction =
   | 'sum'
   | 'avg'
+  | 'mean'
   | 'count'
   | 'min'
   | 'max'

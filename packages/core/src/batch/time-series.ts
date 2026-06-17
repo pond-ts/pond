@@ -1370,7 +1370,11 @@ export class TimeSeries<S extends SeriesSchema> {
 
   /** Example: `series.rows`. Returns the normalized row view of the series. */
   get rows(): ReadonlyArray<NormalizedRowForSchema<S>> {
-    return toRows(this.schema, this.events) as ReadonlyArray<
+    // `toRows` returns runtime-normalized rows (Time/Interval keys, `undefined`
+    // for missing cells); the double cast is the existing trust point — the
+    // `RowForSchema`→`NormalizedRowForSchema` conditional types no longer overlap
+    // structurally for a direct cast now that both honor `required: false`.
+    return toRows(this.schema, this.events) as unknown as ReadonlyArray<
       NormalizedRowForSchema<S>
     >;
   }
@@ -2134,8 +2138,11 @@ export class TimeSeries<S extends SeriesSchema> {
    *   source (cumulative distance / work) yields contiguous ranges (per-km
    *   splits, elevation-vs-distance profile); a non-monotonic source (power)
    *   yields a histogram (distribution).
-   * - `{ edges }` — explicit ascending edges `[e₀ … eₙ]` → `n` bins, bin `i` =
-   *   `[eᵢ, eᵢ₊₁)` (e.g. FTP / Coggan power zones). Always emits all `n` bins.
+   * - `{ edges, inclusive? }` — explicit ascending edges `[e₀ … eₙ]` → `n` bins.
+   *   `inclusive` defaults to `'[)'` (bin `i` = `[eᵢ, eᵢ₊₁)`, lower-inclusive);
+   *   pass `'(]'` for upper-inclusive bins (`(eᵢ, eᵢ₊₁]`) — Coggan power / HR
+   *   zones, where a sample exactly on a zone's top edge belongs to the lower
+   *   zone (the first edge becomes an exclusive floor). Always emits all `n` bins.
    *
    * A row whose bin value is missing / non-finite (or, for `edges`, outside
    * `[e₀, eₙ)`) contributes to no bin. The reducer non-finite policy still

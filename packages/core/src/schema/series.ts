@@ -34,6 +34,14 @@ export type ColumnDef<Name extends string, Kind extends string> = {
   required?: boolean;
 };
 
+/**
+ * The key (first) column of a schema. Its **name must equal its kind** —
+ * `time` / `timeRange` / `interval`. So `{ name: 'time', kind: 'time' }` is the
+ * only valid time key; `{ name: 'at', kind: 'time' }` does **not** typecheck
+ * (the error surfaces as a name/literal-type mismatch, e.g. `'"at"' is not
+ * assignable to '"time"'` — read it as "the key column must be named for its
+ * kind", not as a value error). Value columns, by contrast, take any name.
+ */
 export type FirstColumn =
   | ColumnDef<'time', 'time'>
   | ColumnDef<'interval', 'interval'>
@@ -93,9 +101,21 @@ export type KindForValue<V extends ScalarValue> = V extends number
     ? 'string'
     : 'boolean';
 
+/**
+ * Tuple-row input type for a schema. A column declared `required: false`
+ * accepts `undefined` in its cell (a missing value — the constructor records
+ * it in the validity bitmap), matching the runtime's intake. `null` is **not**
+ * admitted: the tuple-row constructor rejects it (only the JSON object-row path
+ * accepts `null`), so the type stays honest to what intake actually takes —
+ * pass `undefined` for a missing tuple cell. (estela F-geo-row-optional.)
+ */
 export type RowForSchema<S extends readonly ColumnDef<string, string>[]> = {
   [I in keyof S]: S[I] extends ColumnDef<any, infer K>
-    ? ValueForKind<K>
+    ? I extends '0'
+      ? ValueForKind<K> // the key (first) column is always required at runtime
+      : S[I] extends { required: false }
+        ? ValueForKind<K> | undefined
+        : ValueForKind<K>
     : never;
 };
 
