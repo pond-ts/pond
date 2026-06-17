@@ -1500,3 +1500,77 @@ const chainAlias = liveCpu
   .fill({ cpu: 'hold' })
   .rolling('1m', { mean: { from: 'cpu', using: 'avg' } }, optsVarEmpty);
 void chainAlias;
+
+// ---------------------------------------------------------------------------
+// `'mean'` reducer alias (estela F-reducer-naming). Must be accepted anywhere a
+// built-in reducer name is AND classify as numeric output, exactly like `'avg'`
+// (runtime resolves `'mean'` → the avg kernel). Lives in test-d because `test/`
+// files are NOT typechecked — a runtime-only alias passes vitest but fails real
+// TS callers (the hole Codex caught on PR #234).
+// ---------------------------------------------------------------------------
+const meanReduceSpec: number | undefined = reduceSeries.reduce({
+  cpuMean: { from: 'cpu', using: 'mean' },
+}).cpuMean;
+void meanReduceSpec;
+const meanReduceShorthand: number | undefined = reduceSeries.reduce({
+  cpu: 'mean',
+}).cpu;
+void meanReduceShorthand;
+const meanAggregate = reduceSeries.aggregate(Sequence.every('1m'), {
+  cpuMean: { from: 'cpu', using: 'mean' },
+});
+void meanAggregate;
+const meanByColumnBin: number | undefined = reduceSeries.byColumn(
+  'cpu',
+  { width: 1 },
+  { m: { from: 'cpu', using: 'mean' } },
+)[0]?.m;
+void meanByColumnBin;
+const meanRollingWin: number | undefined = reduceSeries.rollingByColumn(
+  'cpu',
+  { radius: 1 },
+  { m: { from: 'cpu', using: 'mean' } },
+)[0]?.m;
+void meanRollingWin;
+// `'mean'` is numeric-only, like `'avg'` — rejected on a string column.
+// @ts-expect-error 'mean' is not valid for a string column
+reduceSeries.reduce({ host: 'mean' });
+
+// ---------------------------------------------------------------------------
+// `required: false` row types (estela F-geo-row-optional). Optional VALUE cells
+// accept `undefined`; the KEY column never does; `.rows` reports an optional
+// cell as `| undefined`.
+// ---------------------------------------------------------------------------
+const optSchema = [
+  { name: 'time', kind: 'time' },
+  { name: 'lat', kind: 'number' },
+  { name: 'ele', kind: 'number', required: false },
+] as const;
+const optRowOk: RowForSchema<typeof optSchema> = [Date.now(), 1, undefined];
+void optRowOk;
+// @ts-expect-error required 'lat' cell cannot be undefined
+const optRowBadValue: RowForSchema<typeof optSchema> = [
+  Date.now(),
+  undefined,
+  1,
+];
+void optRowBadValue;
+// The key (first) column is always required, even if marked `required: false`.
+const optKeySchema = [
+  { name: 'time', kind: 'time', required: false },
+  { name: 'lat', kind: 'number' },
+] as const;
+// @ts-expect-error the key column must be present
+const optKeyBad: RowForSchema<typeof optKeySchema> = [undefined, 1];
+void optKeyBad;
+// `.rows` types an optional cell as `number | undefined`; the key stays present.
+const optSeries = new TimeSeries({
+  name: 'opt',
+  schema: optSchema,
+  rows: [[Date.now(), 1, 2]],
+});
+const optEle: number | undefined = optSeries.rows[0]![2];
+void optEle;
+// @ts-expect-error optional 'ele' is `number | undefined`, not `number`
+const optEleStrict: number = optSeries.rows[0]![2];
+void optEleStrict;

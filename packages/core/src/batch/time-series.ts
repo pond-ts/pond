@@ -1370,7 +1370,11 @@ export class TimeSeries<S extends SeriesSchema> {
 
   /** Example: `series.rows`. Returns the normalized row view of the series. */
   get rows(): ReadonlyArray<NormalizedRowForSchema<S>> {
-    return toRows(this.schema, this.events) as ReadonlyArray<
+    // `toRows` returns runtime-normalized rows (Time/Interval keys, `undefined`
+    // for missing cells); the double cast is the existing trust point — the
+    // `RowForSchema`→`NormalizedRowForSchema` conditional types no longer overlap
+    // structurally for a direct cast now that both honor `required: false`.
+    return toRows(this.schema, this.events) as unknown as ReadonlyArray<
       NormalizedRowForSchema<S>
     >;
   }

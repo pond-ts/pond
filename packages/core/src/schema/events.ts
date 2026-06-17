@@ -35,7 +35,11 @@ export type NormalizedRowForSchema<
   S extends readonly ColumnDef<string, string>[],
 > = {
   [I in keyof S]: S[I] extends ColumnDef<any, infer K>
-    ? NormalizedValueForKind<K>
+    ? I extends '0'
+      ? NormalizedValueForKind<K> // key column is always present
+      : S[I] extends { required: false }
+        ? NormalizedValueForKind<K> | undefined
+        : NormalizedValueForKind<K>
     : never;
 };
 

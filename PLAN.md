@@ -385,11 +385,14 @@ ruling), estela's `docs/pond-friction.md`.
   `required: false` so an optional tuple cell accepts `undefined` with no cast
   (the known greenfield F4 / ARCHITECTURE §4 limitation, F-geo-row-optional,
   confirmed ×4).
-  - **`F-schema-key-name` (key column must be named `time`) — DEFERRED.** The
-    real fix (accept any name for a `kind:'time'` key) widens `FirstColumn`,
+  - **`F-schema-key-name` (key column must be named `time`) — structural fix
+    DEFERRED.** Accepting any name for a `kind:'time'` key widens `FirstColumn`,
     which `SeriesSchema` and key-name assumptions across the codebase depend on —
     structural blast radius, not a cheap-bundle item. Workaround (name the key
-    `time`) is trivial; revisit if it recurs.
+    `time`) is trivial; revisit if it recurs. **Action taken:** a clarifying
+    JSDoc on `FirstColumn` (the key column's name must equal its kind) so the
+    opaque `'"at"' is not assignable to '"time"'` error doesn't cost a debug
+    cycle.
 - **Data point against opening the kind system:** a packed geo column earned
   nothing on perf at GPS scale (reinforces `geo.md` §7).
 

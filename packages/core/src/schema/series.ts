@@ -34,6 +34,14 @@ export type ColumnDef<Name extends string, Kind extends string> = {
   required?: boolean;
 };
 
+/**
+ * The key (first) column of a schema. Its **name must equal its kind** —
+ * `time` / `timeRange` / `interval`. So `{ name: 'time', kind: 'time' }` is the
+ * only valid time key; `{ name: 'at', kind: 'time' }` does **not** typecheck
+ * (the error surfaces as a name/literal-type mismatch, e.g. `'"at"' is not
+ * assignable to '"time"'` — read it as "the key column must be named for its
+ * kind", not as a value error). Value columns, by contrast, take any name.
+ */
 export type FirstColumn =
   | ColumnDef<'time', 'time'>
   | ColumnDef<'interval', 'interval'>
@@ -103,9 +111,11 @@ export type KindForValue<V extends ScalarValue> = V extends number
  */
 export type RowForSchema<S extends readonly ColumnDef<string, string>[]> = {
   [I in keyof S]: S[I] extends ColumnDef<any, infer K>
-    ? S[I] extends { required: false }
-      ? ValueForKind<K> | undefined
-      : ValueForKind<K>
+    ? I extends '0'
+      ? ValueForKind<K> // the key (first) column is always required at runtime
+      : S[I] extends { required: false }
+        ? ValueForKind<K> | undefined
+        : ValueForKind<K>
     : never;
 };
 
