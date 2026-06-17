@@ -46,10 +46,10 @@ jobs:
         working-directory: packages/charts
 
       - name: Run Storybook e2e (behavior + visual)
-        run: npm run test:e2e --workspace=@pond-ts/charts -- --update-snapshots # BOOTSTRAP: revert to compare mode after baselines land
+        run: npm run test:e2e --workspace=@pond-ts/charts ${{ inputs.update_baselines && '-- --update-snapshots' || '' }}
 
       - name: Upload regenerated baselines
-        if: always() # BOOTSTRAP: revert to inputs.update_baselines after baselines land
+        if: ${{ inputs.update_baselines }}
         uses: actions/upload-artifact@v4
         with:
           name: charts-linux-baselines
