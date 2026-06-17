@@ -11,11 +11,12 @@ export interface LineChartProps<S extends SeriesSchema> {
   column: string;
   /**
    * Semantic identifier for this series — what the data _is_ (e.g. `heartrate`,
-   * `power`, or a generic `primary`). The theme maps it to a {@link LineStyle}
-   * (`theme.line[semantic] ?? theme.line.default`); defaults to the `column`
-   * name. There is intentionally no per-component colour/width override — that
-   * second styling channel is what bred react-timeseries-charts' styling bugs;
-   * restyle by editing the theme (or adding an identifier to it).
+   * `power`). The theme maps it to a {@link LineStyle}
+   * (`theme.line[semantic] ?? theme.line.default`). **Omitted ⇒ the line draws
+   * the theme's `default` style** — the `column` name is data, never a styling
+   * key. There is intentionally no per-component colour/width override; that
+   * second styling channel is what bred react-timeseries-charts' styling bugs,
+   * so restyle by editing the theme (or adding an identifier to it).
    */
   semantic?: string;
 }
@@ -41,10 +42,12 @@ export function LineChart<S extends SeriesSchema>({
   }
 
   const cs = useMemo(() => fromTimeSeries(series, column), [series, column]);
-  // column → semantic identifier (defaults to the column name) → theme style.
-  // The single styling channel; no per-component override.
+  // Styling: semantic identifier → theme style. An untagged line draws the
+  // theme's `default`; the column name is data, not a styling key. Single
+  // channel, no per-component override.
   const { line } = container.theme;
-  const style = line[semantic ?? column] ?? line.default;
+  const style =
+    (semantic !== undefined ? line[semantic] : undefined) ?? line.default;
   const layer = useMemo<RowLayer>(
     () => ({
       yExtent: () => yExtent(cs),
