@@ -2,7 +2,7 @@ import { useContext, useEffect, useMemo } from 'react';
 import type { SeriesSchema, TimeSeries } from 'pond-ts';
 import { fromTimeSeries } from './data.js';
 import { drawLine, yExtent } from './line.js';
-import { ContainerContext, RowContext, type RowLayer } from './context.js';
+import { ContainerContext, LayersContext, type RowLayer } from './context.js';
 
 export interface LineChartProps<S extends SeriesSchema> {
   /** The source series. Its key column supplies the time axis. */
@@ -35,9 +35,9 @@ export function LineChart<S extends SeriesSchema>({
   if (container === null) {
     throw new Error('<LineChart> must be rendered inside a <ChartContainer>');
   }
-  const row = useContext(RowContext);
-  if (row === null) {
-    throw new Error('<LineChart> must be rendered inside a <ChartRow>');
+  const layers = useContext(LayersContext);
+  if (layers === null) {
+    throw new Error('<LineChart> must be rendered inside a <Layers>');
   }
 
   const cs = useMemo(() => fromTimeSeries(series, column), [series, column]);
@@ -54,7 +54,7 @@ export function LineChart<S extends SeriesSchema>({
     }),
     [cs, style],
   );
-  useEffect(() => row.register(layer), [row, layer]);
+  useEffect(() => layers.register(layer), [layers, layer]);
 
   return null;
 }

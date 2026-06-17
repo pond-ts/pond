@@ -1,46 +1,27 @@
-import {
-  useCallback,
-  useContext,
-  useMemo,
-  useState,
-  type ReactNode,
-} from 'react';
-import { scaleLinear } from 'd3-scale';
-import { Canvas } from './Canvas.js';
-import {
-  ContainerContext,
-  RowContext,
-  type RowLayer,
-  type RowRegistry,
-} from './context.js';
+import { useContext, useMemo, type ReactNode } from 'react';
+import { ContainerContext, RowContext, type RowFrame } from './context.js';
 
 export interface ChartRowProps {
   /** Row height in CSS pixels. */
   height: number;
   /**
-   * Explicit y-domain `[min, max]`. Omitted ⇒ auto-fit to the union of the
-   * row's layers' finite-value extents (a flat line gets ±1 of headroom).
+   * Explicit y-domain `[min, max]` for the plot. Omitted ⇒ `<Layers>` auto-fits
+   * to its layers' finite-value extents (a flat line gets ±1 of headroom).
    */
   yDomain?: readonly [number, number];
   children?: ReactNode;
 }
 
 /**
- * A horizontal band sharing the container's time axis. Owns the y-domain, a
- * single `<canvas>`, and a draw-layer registry: child layers
- * ({@link LineChart}, …) register via context and are drawn in one canvas pass.
+ * A horizontal band sharing the container's time axis. `ChartRow` owns the
+ * **horizontal layout** — axes positioned left/right around a `<Layers>` plot
+ * area — and the row's height + y-domain, which it provides to its children via
+ * context. The plot canvas and the draw-layer z-stack live in {@link Layers};
+ * the y-axis is per-row (`YAxis`, M2.3).
  *
- * **Z-order — declaration order, last child on top.** Layers paint in the order
- * they appear in JSX: the first child renders at the back, the last on top.
- * This matches SVG / DOM document order and react-timeseries-charts, so a row
- * is authored back-to-front (e.g. `<BandChart/>` then `<LineChart/>` puts the
- * line over its band — estela's terrain → bands → lines stack).
- *
- * M1 derives this from registration order, which equals declaration order on
- * mount; a layer that re-registers after any prop change (`series` / `stroke` /
- * `strokeWidth`) currently moves to the front. That's invisible with one layer
- * per row — it's hardened to a stable slot when M3 brings the overlaid variance
- * band in (the first row that actually stacks).
+ * Children are laid out left-to-right. Until `YAxis` lands the only child is
+ * `<Layers>`, which spans the full width (`plotWidth === container.width`); when
+ * axes arrive they take fixed gutters and `plotWidth` shrinks to the remainder.
  */
 export function ChartRow({ height, yDomain, children }: ChartRowProps) {
   const container = useContext(ContainerContext);
@@ -48,54 +29,28 @@ export function ChartRow({ height, yDomain, children }: ChartRowProps) {
     throw new Error('<ChartRow> must be rendered inside a <ChartContainer>');
   }
 
-  const [layers, setLayers] = useState<readonly RowLayer[]>([]);
-  const registry = useMemo<RowRegistry>(
+  // plotWidth is the full row width until axes reserve gutters (M2.3).
+  const frame = useMemo<RowFrame>(
     () => ({
-      register: (layer) => {
-        setLayers((ls) => [...ls, layer]);
-        return () => setLayers((ls) => ls.filter((l) => l !== layer));
-      },
+      height,
+      plotWidth: container.width,
+      yDomain: yDomain,
     }),
-    [],
-  );
-
-  const domain = useMemo<[number, number]>(() => {
-    if (yDomain) return [yDomain[0], yDomain[1]];
-    let min = Infinity;
-    let max = -Infinity;
-    for (const layer of layers) {
-      const e = layer.yExtent();
-      if (e) {
-        if (e[0] < min) min = e[0];
-        if (e[1] > max) max = e[1];
-      }
-    }
-    if (min === Infinity) return [0, 1]; // no finite data yet
-    if (min === max) return [min - 1, max + 1]; // flat — give it room
-    return [min, max];
-  }, [layers, yDomain]);
-
-  const yScale = useMemo(
-    () => scaleLinear().domain(domain).range([height, 0]),
-    [domain, height],
-  );
-
-  const background = container.theme.background;
-  const draw = useCallback(
-    (ctx: CanvasRenderingContext2D, w: number, h: number) => {
-      if (background !== undefined) {
-        ctx.fillStyle = background;
-        ctx.fillRect(0, 0, w, h);
-      }
-      for (const layer of layers) layer.draw(ctx, container.xScale, yScale);
-    },
-    [layers, container.xScale, yScale, background],
+    [height, container.width, yDomain],
   );
 
   return (
-    <RowContext.Provider value={registry}>
-      <Canvas width={container.width} height={height} draw={draw} />
-      {children}
+    <RowContext.Provider value={frame}>
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'row',
+          width: `${container.width}px`,
+          height: `${height}px`,
+        }}
+      >
+        {children}
+      </div>
     </RowContext.Provider>
   );
 }

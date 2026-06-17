@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { TimeSeries } from 'pond-ts';
 import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
+import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import type { ChartTheme } from './theme.js';
 
@@ -53,7 +54,9 @@ export const WithGap: Story = {
     return (
       <ChartContainer timeRange={[0, N - 1]} width={480}>
         <ChartRow height={200}>
-          <LineChart series={series} column="v" />
+          <Layers>
+            <LineChart series={series} column="v" />
+          </Layers>
         </ChartRow>
       </ChartContainer>
     );
@@ -67,7 +70,9 @@ export const Flat: Story = {
     return (
       <ChartContainer timeRange={[0, N - 1]} width={480}>
         <ChartRow height={200}>
-          <LineChart series={series} column="v" as="context" />
+          <Layers>
+            <LineChart series={series} column="v" as="context" />
+          </Layers>
         </ChartRow>
       </ChartContainer>
     );
@@ -91,7 +96,9 @@ export const Themed: Story = {
     return (
       <ChartContainer timeRange={[0, N - 1]} width={480} theme={darkTheme}>
         <ChartRow height={200}>
-          <LineChart series={series} column="v" />
+          <Layers>
+            <LineChart series={series} column="v" />
+          </Layers>
         </ChartRow>
       </ChartContainer>
     );
@@ -121,7 +128,9 @@ export const SemanticFoam: Story = {
     return (
       <ChartContainer timeRange={[0, N - 1]} width={480} theme={foamTheme}>
         <ChartRow height={200}>
-          <LineChart series={series} column="v" as="foam" />
+          <Layers>
+            <LineChart series={series} column="v" as="foam" />
+          </Layers>
         </ChartRow>
       </ChartContainer>
     );

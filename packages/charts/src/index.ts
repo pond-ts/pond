@@ -24,6 +24,8 @@ export { ChartContainer } from './ChartContainer.js';
 export type { ChartContainerProps } from './ChartContainer.js';
 export { ChartRow } from './ChartRow.js';
 export type { ChartRowProps } from './ChartRow.js';
+export { Layers } from './Layers.js';
+export type { LayersProps } from './Layers.js';
 export { LineChart } from './LineChart.js';
 export type { LineChartProps } from './LineChart.js';
 
