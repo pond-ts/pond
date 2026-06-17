@@ -1,0 +1,39 @@
+import { useMemo, type ReactNode } from 'react';
+import { scaleLinear } from 'd3-scale';
+import { ContainerContext, type ContainerFrame } from './context.js';
+
+export interface ChartContainerProps {
+  /** Time domain `[start, end]` in ms — the shared x-axis for all rows. */
+  timeRange: readonly [number, number];
+  /** Plot width in CSS pixels. */
+  width: number;
+  children?: ReactNode;
+}
+
+/**
+ * The top of the chart layout (react-timeseries-charts-style). Owns the time
+ * (x) axis and the plot width, and provides the shared x-scale to its
+ * {@link ChartRow}s via context so multiple rows line up on one time axis. The
+ * y-axis is per-row.
+ */
+export function ChartContainer({
+  timeRange,
+  width,
+  children,
+}: ChartContainerProps) {
+  const t0 = timeRange[0];
+  const t1 = timeRange[1];
+  const frame = useMemo<ContainerFrame>(
+    () => ({
+      xScale: scaleLinear().domain([t0, t1]).range([0, width]),
+      width,
+      timeRange: [t0, t1],
+    }),
+    [t0, t1, width],
+  );
+  return (
+    <ContainerContext.Provider value={frame}>
+      <div style={{ width: `${width}px` }}>{children}</div>
+    </ContainerContext.Provider>
+  );
+}

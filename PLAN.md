@@ -98,12 +98,23 @@ best-effort.
   (above) against a trivial example, *before* component work, so M1's
   `LineChart` is built test-first and becomes the template every later component
   copies. Adds the CI browser-test job + the baseline-update workflow.
-- **M1 — rendering spine.** Typed-array store + `fromTimeSeries` adapter +
-  `ChartContainer` / `ChartRow` + `LineChart` drawing to canvas with DPR
-  scaling + gap handling (`Number.isFinite`, not `!= null`). Proves pond data →
-  canvas line end-to-end. Built test-first against the M0.5 harness: unit
-  (store / scales / draw-call sequence) + a Storybook story + its behavior +
-  visual baselines.
+- **M1 — rendering spine.** ✅ Built 2026-06-17 (PR pending). `fromTimeSeries`
+  adapter + `ChartContainer` (time axis) / `ChartRow` (y-domain + canvas +
+  draw-layer registry) / `LineChart` (gap-aware line), d3-scale. Renders a pond
+  `TimeSeries` → canvas line end-to-end with the coast reading as a break, not a
+  drop to zero. Test-first against the M0.5 harness: 14 unit (draw-call
+  sequence, gap-break, extent, DPR) + 5 e2e (behavior + visual baselines).
+  **Surfaced F-1 (HIGH):** pond-ts's prototype-augmented column-API methods
+  (`toFloat64Array`, `at`, `slice`, scalar reductions, `bin`) are **tree-shaken
+  out of Vite/Rollup browser bundles** despite core's
+  `sideEffects: ["./dist/column.js"]` — they work in Node/vitest but throw
+  `"not a function"` in a bundled app. Hits **any** browser consumer
+  (estela / dashboard), not just charts. M1 works around with `col.read(i)`
+  (a class method, bundle-safe, per-element) and forfeits the columnar bulk-read
+  throughput win until core makes the augmentation bundle-safe. Full analysis +
+  fix candidates in
+  [`docs/notes/charts-m1-friction.md`](docs/notes/charts-m1-friction.md); this
+  is the top charts→core carry-forward.
 - **M2 — axes + theme.** `YAxis` (auto-extending domain, the widen-not-cap
   trap), wall-clock-anchored x-ticks, the `ChartTheme` system + `defaultTheme`
   + `estelaTheme`, dual y-axis.
