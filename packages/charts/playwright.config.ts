@@ -19,6 +19,11 @@ export default defineConfig({
   use: {
     baseURL: `http://127.0.0.1:${PORT}`,
     trace: 'on-first-retry',
+    // The time axis uses d3 `scaleTime`, which ticks + formats in the browser's
+    // local timezone/locale. Pin both so visual baselines are reproducible
+    // across machines (the component still renders local time in production).
+    timezoneId: 'UTC',
+    locale: 'en-US',
   },
   expect: {
     // A small tolerance absorbs sub-pixel anti-aliasing differences without

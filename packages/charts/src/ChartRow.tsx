@@ -1,6 +1,7 @@
 import {
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -10,6 +11,7 @@ import {
   ContainerContext,
   RowContext,
   type AxisSpec,
+  type GutterReq,
   type LayerEntry,
   type RowFrame,
 } from './context.js';
@@ -27,10 +29,14 @@ export interface ChartRowProps {
  * A horizontal band sharing the container's time axis. `ChartRow` owns the
  * **horizontal layout** (axes left/right around a `<Layers>` plot area) and
  * coordinates the row's two registries — axes (`<YAxis>`) and draw layers
- * (`<LineChart>`, registered through `<Layers>`). From them it derives a y-scale
- * **per axis** (each axis auto-fits the layers linked to it, or uses its
- * explicit `[min, max]`) and the x-scale over the plot width, and provides them
- * via context.
+ * (`<LineChart>`, registered through `<Layers>`). From the layers it derives a
+ * y-scale **per axis** (each axis auto-fits the layers linked to it, or uses its
+ * explicit `[min, max]`), and provides them via context.
+ *
+ * The x geometry (plot width, time scale) is shared and lives on the
+ * {@link ChartContainer}: the row reports its per-side gutter need so the
+ * container can reserve a *uniform* gutter, then pads with spacers so its plot
+ * left-aligns with every other row under the one time axis.
  *
  * Children lay out left-to-right in author order, so `<YAxis side="left"/>` goes
  * before `<Layers/>` and `<YAxis side="right"/>` after.
@@ -72,19 +78,27 @@ export function ChartRow({ height, children }: ChartRowProps) {
   );
   const defaultAxisId = effectiveAxes[0]!.id;
 
-  const plotWidth = useMemo(() => {
-    let gutters = 0;
-    for (const ax of effectiveAxes) gutters += ax.width;
-    return Math.max(0, container.width - gutters);
-  }, [effectiveAxes, container.width]);
+  // This row's own per-side gutter (sum of its axis widths each side). Reported
+  // to the container, which reserves the max each side across all rows.
+  const { ownLeft, ownRight } = useMemo(() => {
+    let l = 0;
+    let r = 0;
+    for (const ax of effectiveAxes) {
+      if (ax.side === 'left') l += ax.width;
+      else r += ax.width;
+    }
+    return { ownLeft: l, ownRight: r };
+  }, [effectiveAxes]);
 
-  const xScale = useMemo(
-    () =>
-      scaleLinear()
-        .domain([container.timeRange[0], container.timeRange[1]])
-        .range([0, plotWidth]),
-    [container.timeRange, plotWidth],
+  const { registerGutter } = container;
+  const gutterReq = useMemo<GutterReq>(
+    () => ({ left: ownLeft, right: ownRight }),
+    [ownLeft, ownRight],
   );
+  // Depend on the *stable* registerGutter (a useCallback) + the memoized req —
+  // not the container frame, which is recreated whenever the reservation
+  // changes (depending on it would loop register → re-render → re-register).
+  useEffect(() => registerGutter(gutterReq), [registerGutter, gutterReq]);
 
   // One y-scale per axis. A layer counts toward an axis when its (late-resolved)
   // axis id matches; an axis with no finite data gets [0, 1], a flat one ±1.
@@ -123,25 +137,20 @@ export function ChartRow({ height, children }: ChartRowProps) {
   const frame = useMemo<RowFrame>(
     () => ({
       height,
-      plotWidth,
-      xScale,
       yScales,
       defaultAxisId,
       registerAxis,
       registerLayer,
       layers,
     }),
-    [
-      height,
-      plotWidth,
-      xScale,
-      yScales,
-      defaultAxisId,
-      registerAxis,
-      registerLayer,
-      layers,
-    ],
+    [height, yScales, defaultAxisId, registerAxis, registerLayer, layers],
   );
+
+  // Pad to the container's uniform gutter so this row's plot left-aligns with
+  // the others (and with the time axis). Zero on a row that owns the widest
+  // gutter — invisible until rows differ.
+  const leftSpacer = container.leftGutter - ownLeft;
+  const rightSpacer = container.rightGutter - ownRight;
 
   return (
     <RowContext.Provider value={frame}>
@@ -153,7 +162,9 @@ export function ChartRow({ height, children }: ChartRowProps) {
           height: `${height}px`,
         }}
       >
+        {leftSpacer > 0 && <div style={{ flex: `0 0 ${leftSpacer}px` }} />}
         {children}
+        {rightSpacer > 0 && <div style={{ flex: `0 0 ${rightSpacer}px` }} />}
       </div>
     </RowContext.Provider>
   );

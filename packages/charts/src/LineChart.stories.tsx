@@ -7,13 +7,18 @@ import { LineChart } from './LineChart.js';
 import type { ChartTheme } from './theme.js';
 
 const N = 60;
+/** Fixed base epoch (2026-01-01 12:00 UTC) + 1-minute step, so the time axis
+ *  shows wall-clock labels and the visual baselines stay deterministic. */
+const BASE = Date.UTC(2026, 0, 1, 12, 0, 0);
+const STEP = 60_000;
+const TIME_RANGE: readonly [number, number] = [BASE, BASE + (N - 1) * STEP];
 
 /** A deterministic sine wave with a coast (gap) from index 25–31. */
 function sineWithGap() {
   const rows: Array<[number, number | undefined]> = [];
   for (let i = 0; i < N; i += 1) {
     const inGap = i >= 25 && i < 32;
-    rows.push([i, inGap ? undefined : 50 + 40 * Math.sin(i / 5)]);
+    rows.push([BASE + i * STEP, inGap ? undefined : 50 + 40 * Math.sin(i / 5)]);
   }
   return new TimeSeries({
     name: 'demo',
@@ -28,7 +33,7 @@ function sineWithGap() {
 /** A flat constant series — exercises the `min === max` y-domain headroom. */
 function flat() {
   const rows: Array<[number, number]> = [];
-  for (let i = 0; i < N; i += 1) rows.push([i, 42]);
+  for (let i = 0; i < N; i += 1) rows.push([BASE + i * STEP, 42]);
   return new TimeSeries({
     name: 'flat',
     schema: [
@@ -52,7 +57,7 @@ export const WithGap: Story = {
   render: () => {
     const series = sineWithGap();
     return (
-      <ChartContainer timeRange={[0, N - 1]} width={480}>
+      <ChartContainer timeRange={TIME_RANGE} width={480}>
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="v" />
@@ -68,7 +73,7 @@ export const Flat: Story = {
   render: () => {
     const series = flat();
     return (
-      <ChartContainer timeRange={[0, N - 1]} width={480}>
+      <ChartContainer timeRange={TIME_RANGE} width={480}>
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="v" as="context" />
@@ -95,7 +100,7 @@ export const Themed: Story = {
   render: () => {
     const series = sineWithGap();
     return (
-      <ChartContainer timeRange={[0, N - 1]} width={480} theme={darkTheme}>
+      <ChartContainer timeRange={TIME_RANGE} width={480} theme={darkTheme}>
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="v" />
@@ -128,7 +133,7 @@ export const SemanticFoam: Story = {
   render: () => {
     const series = sineWithGap();
     return (
-      <ChartContainer timeRange={[0, N - 1]} width={480} theme={foamTheme}>
+      <ChartContainer timeRange={TIME_RANGE} width={480} theme={foamTheme}>
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="v" as="foam" />

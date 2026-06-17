@@ -1,17 +1,41 @@
 import { createContext } from 'react';
-import type { ScaleLinear } from 'd3-scale';
+import type { ScaleLinear, ScaleTime } from 'd3-scale';
 import type { ChartTheme } from './theme.js';
 
 /**
- * The frame a {@link ChartContainer} provides: the shared **time domain**, the
- * total width, and the resolved theme. The x *pixel* scale is derived per-row
- * (it depends on that row's plot width after axis gutters), so it lives on the
- * {@link RowFrame}, not here.
+ * The frame a {@link ChartContainer} provides to its rows and the time axis.
+ * The container owns the **shared x geometry**: it reserves a *uniform* gutter
+ * each side (the max any row needs — see {@link GutterReq}) so every row's plot
+ * left-aligns under one time axis, then derives `plotWidth` and the shared
+ * time→pixel `xScale` from it. Y scales stay per-row (row-local data), on the
+ * {@link RowFrame}.
  */
 export interface ContainerFrame {
   readonly timeRange: readonly [number, number];
   readonly width: number;
   readonly theme: ChartTheme;
+  /** Plot width in px after the uniform gutters — shared by every row. */
+  readonly plotWidth: number;
+  /** Uniform reserved gutters (the max of any row's per-side axis widths). */
+  readonly leftGutter: number;
+  readonly rightGutter: number;
+  /**
+   * Shared time→pixel scale, range `[0, plotWidth]`. A d3 `scaleTime` so ticks
+   * land on wall-clock boundaries; the domain is the container's `timeRange`
+   * (epoch ms, which `scaleTime` coerces).
+   */
+  readonly xScale: ScaleTime<number, number>;
+  /**
+   * A row reports its per-side gutter need; the container reserves the max each
+   * side so every row's plot left-aligns. Returns an unregister fn for cleanup.
+   */
+  registerGutter(req: GutterReq): () => void;
+}
+
+/** A row's per-side gutter requirement (sum of its axis widths on each side). */
+export interface GutterReq {
+  readonly left: number;
+  readonly right: number;
 }
 
 export const ContainerContext = createContext<ContainerFrame | null>(null);
@@ -57,14 +81,13 @@ export interface AxisSpec {
 
 /**
  * The frame a {@link ChartRow} provides to its axes (`<YAxis>`) and plot area
- * (`<Layers>`): the resolved scales, dimensions, and the registries. `ChartRow`
- * coordinates two registries — axes and layers — and computes a y-scale per
- * axis id; the x-scale maps the shared time domain to `[0, plotWidth]`.
+ * (`<Layers>`): the row height, the per-axis y-scales, and the registries.
+ * `ChartRow` coordinates two registries — axes and layers — and computes a
+ * y-scale **per axis id** (range `[height, 0]`). The x geometry (plot width,
+ * time scale) is shared and lives on the {@link ContainerFrame}.
  */
 export interface RowFrame {
   readonly height: number;
-  readonly plotWidth: number;
-  readonly xScale: ScaleLinear<number, number>;
   readonly yScales: ReadonlyMap<string, ScaleLinear<number, number>>;
   /** The axis a layer uses when it names none (the first declared, or implicit). */
   readonly defaultAxisId: string;

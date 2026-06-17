@@ -39,7 +39,9 @@ export function Layers({ children }: LayersProps) {
   );
 
   const background = container.theme.background;
-  const { layers, yScales, xScale, defaultAxisId } = row;
+  const { layers, yScales, defaultAxisId } = row;
+  // x geometry is shared and lives on the container (uniform across rows).
+  const { xScale, plotWidth } = container;
   const draw = useCallback(
     (ctx: CanvasRenderingContext2D, w: number, h: number) => {
       if (background !== undefined) {
@@ -57,7 +59,7 @@ export function Layers({ children }: LayersProps) {
 
   return (
     <LayersContext.Provider value={registry}>
-      <Canvas width={row.plotWidth} height={row.height} draw={draw} />
+      <Canvas width={plotWidth} height={row.height} draw={draw} />
       {children}
     </LayersContext.Provider>
   );
