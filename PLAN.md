@@ -58,16 +58,48 @@ this section is the binding milestone plan.
   workflow doesn't publish a half-built package); lockstep-versioned with the
   monorepo.
 
+**Testing strategy (set 2026-06-17).** React + canvas needs more than unit
+tests — a mock-context unit test can assert a `lineTo` was *called* but never
+that the pixels are right or that an interaction behaved. Four layers:
+
+1. **Unit** — vitest + happy-dom + a recording-mock 2D context. Pure logic
+   (scales, decimation, store append/evict) and draw-call *sequences* (a gap →
+   `moveTo`, not `lineTo`). Fast, no browser.
+2. **Storybook 8** (Vite builder) — `*.stories.tsx` as the design surface and
+   the canonical fixture set (estela activity + gaps / NaN / dense / sparse /
+   dual-axis / band / each theme). Stories feed layers 3–4.
+3. **Behavior** — Storybook `play` functions (`@storybook/test`) driving
+   pan / zoom / scrub / brush, asserting callbacks + readout state, in a real
+   browser.
+4. **Visual regression** — Playwright screenshots of the canvas diffed against
+   committed baselines.
+
+Runner: Storybook's Vitest addon runs stories *as* vitest browser-mode tests
+(Playwright provider), unifying layers 3–4 under the repo's `vitest` command;
+`@storybook/test-runner` is the fallback. **Visual baselines are self-hosted**
+(pjm17971's call, 2026-06-17 — no external service / no cost / no data leaves
+the repo, chosen over Chromatic). Canvas pixels differ across OS / GPU / fonts,
+so **CI (Linux + Playwright's pinned Chromium) owns the baselines** — commit the
+Linux PNGs, use a small `maxDiffPixelRatio` threshold, local visual runs are
+best-effort.
+
 **Milestones** (branch + PR + Layer-2 review each; check-in at each boundary):
 
 - **M0 — package skeleton.** ✅ 2026-06-17. `@pond-ts/charts` workspace +
   build/test/format/release wiring; root format glob broadened to `.tsx`.
   Canvas-in-test decision: a recording-mock 2D context for unit tests (assert
-  draw calls, no native dep); real-pixel visual regression deferred to M5.
+  draw calls, no native dep); real-browser visual + behavior testing stands up
+  in M0.5 (below).
+- **M0.5 — testing harness.** Stand up Storybook 8 + the four-layer test stack
+  (above) against a trivial example, *before* component work, so M1's
+  `LineChart` is built test-first and becomes the template every later component
+  copies. Adds the CI browser-test job + the baseline-update workflow.
 - **M1 — rendering spine.** Typed-array store + `fromTimeSeries` adapter +
   `ChartContainer` / `ChartRow` + `LineChart` drawing to canvas with DPR
   scaling + gap handling (`Number.isFinite`, not `!= null`). Proves pond data →
-  canvas line end-to-end. Headless perf + gap tests.
+  canvas line end-to-end. Built test-first against the M0.5 harness: unit
+  (store / scales / draw-call sequence) + a Storybook story + its behavior +
+  visual baselines.
 - **M2 — axes + theme.** `YAxis` (auto-extending domain, the widen-not-cap
   trap), wall-clock-anchored x-ticks, the `ChartTheme` system + `defaultTheme`
   + `estelaTheme`, dual y-axis.
