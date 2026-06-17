@@ -1,14 +1,16 @@
 import { createContext } from 'react';
 import type { ScaleLinear } from 'd3-scale';
+import type { ChartTheme } from './theme.js';
 
 /**
- * The time-axis frame a {@link ChartContainer} provides to its rows: the shared
- * x-scale (time→pixels), the plot width, and the time domain.
+ * The frame a {@link ChartContainer} provides to its rows: the shared x-scale
+ * (time→pixels), the plot width, the time domain, and the resolved theme.
  */
 export interface ContainerFrame {
   readonly xScale: ScaleLinear<number, number>;
   readonly width: number;
   readonly timeRange: readonly [number, number];
+  readonly theme: ChartTheme;
 }
 
 export const ContainerContext = createContext<ContainerFrame | null>(null);

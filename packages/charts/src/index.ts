@@ -29,3 +29,6 @@ export type { LineChartProps } from './LineChart.js';
 
 export { fromTimeSeries } from './data.js';
 export type { ChartSeries } from './data.js';
+
+export { defaultTheme } from './theme.js';
+export type { ChartTheme } from './theme.js';

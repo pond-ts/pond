@@ -1,12 +1,15 @@
 import { useMemo, type ReactNode } from 'react';
 import { scaleLinear } from 'd3-scale';
 import { ContainerContext, type ContainerFrame } from './context.js';
+import { defaultTheme, type ChartTheme } from './theme.js';
 
 export interface ChartContainerProps {
   /** Time domain `[start, end]` in ms — the shared x-axis for all rows. */
   timeRange: readonly [number, number];
   /** Plot width in CSS pixels. */
   width: number;
+  /** Visual theme for all rows; defaults to {@link defaultTheme}. */
+  theme?: ChartTheme;
   children?: ReactNode;
 }
 
@@ -19,6 +22,7 @@ export interface ChartContainerProps {
 export function ChartContainer({
   timeRange,
   width,
+  theme,
   children,
 }: ChartContainerProps) {
   const t0 = timeRange[0];
@@ -28,8 +32,9 @@ export function ChartContainer({
       xScale: scaleLinear().domain([t0, t1]).range([0, width]),
       width,
       timeRange: [t0, t1],
+      theme: theme ?? defaultTheme,
     }),
-    [t0, t1, width],
+    [t0, t1, width, theme],
   );
   return (
     <ContainerContext.Provider value={frame}>

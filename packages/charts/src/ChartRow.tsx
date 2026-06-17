@@ -80,11 +80,16 @@ export function ChartRow({ height, yDomain, children }: ChartRowProps) {
     [domain, height],
   );
 
+  const background = container.theme.background;
   const draw = useCallback(
-    (ctx: CanvasRenderingContext2D) => {
+    (ctx: CanvasRenderingContext2D, w: number, h: number) => {
+      if (background !== undefined) {
+        ctx.fillStyle = background;
+        ctx.fillRect(0, 0, w, h);
+      }
       for (const layer of layers) layer.draw(ctx, container.xScale, yScale);
     },
-    [layers, container.xScale, yScale],
+    [layers, container.xScale, yScale, background],
   );
 
   return (
