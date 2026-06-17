@@ -97,3 +97,33 @@ export const Themed: Story = {
     );
   },
 };
+
+/**
+ * The full pipeline with real names. The column `v` is the *data*; `semantic`
+ * tags it as `foam` (what it *is*); the theme maps the identifier `foam` to a
+ * concrete style — white, 2 px. Nothing about the colour or width lives at the
+ * call site.
+ *
+ *   column "v"  →  semantic "foam"  →  theme.line.foam = { color: white, width: 2 }
+ */
+const foamTheme: ChartTheme = {
+  background: '#0f172a',
+  line: {
+    default: { color: '#64748b', width: 1.5 },
+    foam: { color: '#ffffff', width: 2 },
+  },
+  font: { family: 'system-ui, sans-serif', size: 11 },
+};
+
+export const SemanticFoam: Story = {
+  render: () => {
+    const series = sineWithGap();
+    return (
+      <ChartContainer timeRange={[0, N - 1]} width={480} theme={foamTheme}>
+        <ChartRow height={200}>
+          <LineChart series={series} column="v" semantic="foam" />
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
