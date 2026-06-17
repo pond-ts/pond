@@ -3428,6 +3428,17 @@ export class TimeSeries<S extends SeriesSchema> {
    * When `output` is omitted, the smoothed values replace the target column. When `output` is
    * supplied, the smoothed values are appended as a new optional numeric column.
    *
+   * **Missing cells** (`movingAverage` / `loess`): by default (`missing:
+   * 'bridge'`) a cell whose own value is missing is still assigned a smoothed
+   * value computed from its present neighbours — i.e. the line is drawn *across*
+   * the hole. Pass `missing: 'skip'` to keep a missing cell **missing** in the
+   * output, so a sustained dropout (a coast, a sensor gap) is preserved as a
+   * break rather than fabricated through. Present cells already smooth over only
+   * the present values in their window either way. `ema` is causal and never
+   * fabricates across a gap, so it takes no `missing` option. (estela
+   * F-smooth-interactive; a `maxGap` hard segment boundary is a deferred
+   * follow-on.)
+   *
    * **Multi-entity series:** the smoothing window pulls values from
    * every entity into each smoothed point — `host-A`'s smoothed value
    * is blended with `host-B`'s and `host-C`'s. On a series carrying
@@ -3443,8 +3454,13 @@ export class TimeSeries<S extends SeriesSchema> {
     method: SmoothMethod,
     options:
       | { alpha: number; warmup?: number; output?: Output }
-      | { window: DurationInput; alignment?: RollingAlignment; output?: Output }
-      | { span: number; output?: Output },
+      | {
+          window: DurationInput;
+          alignment?: RollingAlignment;
+          output?: Output;
+          missing?: 'skip' | 'bridge';
+        }
+      | { span: number; output?: Output; missing?: 'skip' | 'bridge' },
   ): TimeSeries<
     Output extends string
       ? SmoothAppendSchema<S, Output>
@@ -3564,13 +3580,15 @@ export class TimeSeries<S extends SeriesSchema> {
         }
       }
 
+      // `missing: 'skip'` — a cell whose own value is missing stays missing
+      // (don't fit a fabricated value across the hole from its present
+      // neighbours). Default `'bridge'` is the prior behaviour (fit everywhere).
+      const skipMissing = options.missing === 'skip';
       const resultRows = this.events.map((event, index) => {
-        const smoothed = loessAt(
-          anchors[index]!,
-          loessAnchors,
-          loessValues,
-          span,
-        );
+        const smoothed =
+          skipMissing && sourceValues[index] === undefined
+            ? undefined
+            : loessAt(anchors[index]!, loessAnchors, loessValues, span);
         const nextEvent =
           output === undefined
             ? event.set(column, smoothed as EventDataForSchema<S>[Target])
@@ -3605,6 +3623,7 @@ export class TimeSeries<S extends SeriesSchema> {
     const window = options.window;
     const windowMs = parseDuration(window!);
     const alignment = options.alignment ?? 'trailing';
+    const skipMissing = options.missing === 'skip';
     const resultValues = new Array<number | undefined>(this.events.length);
     let windowStart = 0;
     let windowEnd = 0;
@@ -3684,7 +3703,12 @@ export class TimeSeries<S extends SeriesSchema> {
 
       const smoothed = snapshot();
       for (let index = groupStart; index < groupEnd; index++) {
-        resultValues[index] = smoothed;
+        // `missing: 'skip'` — a cell whose own value is missing stays missing
+        // (don't fabricate it from the window average). Default `'bridge'` fills.
+        resultValues[index] =
+          skipMissing && sourceValues[index] === undefined
+            ? undefined
+            : smoothed;
       }
 
       groupStart = groupEnd;
