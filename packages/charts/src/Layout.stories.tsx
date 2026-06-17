@@ -78,3 +78,87 @@ export const LeftAxis: Story = {
     );
   },
 };
+
+/**
+ * Two y-axes with independent scales — a left axis and a right one (authored
+ * *after* `<Layers>`). Each line links to its own axis via `axis="…"`, so the
+ * two series share the time axis but read different y-domains. `as="secondary"`
+ * gives the right-axis line its own colour — style (`as`) and scale (`axis`)
+ * are separate.
+ */
+export const DualAxis: Story = {
+  render: () => {
+    const temp = demo(0, 8, 20); // ~12–28
+    const humidity = demo(2, 28, 58); // ~30–86
+    return (
+      <ChartContainer timeRange={TIME_RANGE} width={560}>
+        <ChartRow height={220}>
+          <YAxis id="temp" label="°C" />
+          <Layers>
+            <LineChart series={temp} column="v" axis="temp" />
+            <LineChart
+              series={humidity}
+              column="v"
+              axis="humidity"
+              as="secondary"
+            />
+          </Layers>
+          <YAxis id="humidity" side="right" label="%" />
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * Three stacked rows on one shared time axis — the canonical dashboard. Each row
+ * auto-fits its own y-scale; the single time axis is drawn once at the bottom.
+ */
+export const MultiRow: Story = {
+  render: () => (
+    <ChartContainer timeRange={TIME_RANGE} width={520}>
+      <ChartRow height={120}>
+        <YAxis id="a" label="v" />
+        <Layers>
+          <LineChart series={demo(0)} column="v" />
+        </Layers>
+      </ChartRow>
+      <ChartRow height={120}>
+        <YAxis id="b" label="v" />
+        <Layers>
+          <LineChart series={demo(1.5)} column="v" as="secondary" />
+        </Layers>
+      </ChartRow>
+      <ChartRow height={120}>
+        <YAxis id="c" label="v" />
+        <Layers>
+          <LineChart series={demo(3)} column="v" as="context" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
+ * Rows with different gutters still left-align: the top row has a y-axis, the
+ * bottom has none, yet both plots start at the same x (and under the time axis)
+ * because the container reserves a *uniform* gutter and the axis-less row pads
+ * with a spacer.
+ */
+export const VaryingGutters: Story = {
+  render: () => (
+    <ChartContainer timeRange={TIME_RANGE} width={520}>
+      <ChartRow height={130}>
+        <YAxis id="withAxis" label="v" />
+        <Layers>
+          <LineChart series={demo(0)} column="v" />
+        </Layers>
+      </ChartRow>
+      <ChartRow height={130}>
+        <Layers>
+          <LineChart series={demo(1.5)} column="v" as="context" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
