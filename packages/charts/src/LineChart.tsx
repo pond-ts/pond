@@ -10,14 +10,14 @@ export interface LineChartProps<S extends SeriesSchema> {
   /** Name of the numeric value column to plot. */
   column: string;
   /**
-   * Which theme line-role this series draws as: `primary` (default), the
-   * `secondary` colour (e.g. a right-axis HR line), or the `context` underlay
-   * (e.g. elevation). Colour **and** width come from `theme.line` — there is
-   * intentionally no per-component colour/width override. That escape hatch is
-   * the second styling channel that bred react-timeseries-charts' styling bugs;
-   * to restyle, change the theme (or add a role), not the component.
+   * Semantic identifier for this series — what the data _is_ (e.g. `heartrate`,
+   * `power`, or a generic `primary`). The theme maps it to a {@link LineStyle}
+   * (`theme.line[semantic] ?? theme.line.default`); defaults to the `column`
+   * name. There is intentionally no per-component colour/width override — that
+   * second styling channel is what bred react-timeseries-charts' styling bugs;
+   * restyle by editing the theme (or adding an identifier to it).
    */
-  role?: 'primary' | 'secondary' | 'context';
+  semantic?: string;
 }
 
 /**
@@ -29,7 +29,7 @@ export interface LineChartProps<S extends SeriesSchema> {
 export function LineChart<S extends SeriesSchema>({
   series,
   column,
-  role = 'primary',
+  semantic,
 }: LineChartProps<S>) {
   const container = useContext(ContainerContext);
   if (container === null) {
@@ -41,18 +41,16 @@ export function LineChart<S extends SeriesSchema>({
   }
 
   const cs = useMemo(() => fromTimeSeries(series, column), [series, column]);
-  // Colour + width come from the theme by role — the single styling channel.
+  // column → semantic identifier (defaults to the column name) → theme style.
+  // The single styling channel; no per-component override.
   const { line } = container.theme;
+  const style = line[semantic ?? column] ?? line.default;
   const layer = useMemo<RowLayer>(
     () => ({
       yExtent: () => yExtent(cs),
-      draw: (ctx, xScale, yScale) =>
-        drawLine(ctx, cs, xScale, yScale, {
-          stroke: line[role],
-          strokeWidth: line.width,
-        }),
+      draw: (ctx, xScale, yScale) => drawLine(ctx, cs, xScale, yScale, style),
     }),
-    [cs, line, role],
+    [cs, style],
   );
   useEffect(() => row.register(layer), [row, layer]);
 

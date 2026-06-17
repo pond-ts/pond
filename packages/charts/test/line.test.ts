@@ -9,7 +9,7 @@ const cs = (x: number[], y: number[]): ChartSeries => ({
   length: x.length,
 });
 const identity = (v: number) => v;
-const style = { stroke: '#000', strokeWidth: 1 };
+const style = { color: '#000', width: 1 };
 
 describe('yExtent', () => {
   it('returns [min, max] of finite values, ignoring NaN gaps', () => {
@@ -89,8 +89,8 @@ describe('drawLine', () => {
   it('applies stroke colour + width', () => {
     const { ctx, calls } = recordingContext();
     drawLine(ctx, cs([0, 1], [1, 2]), identity, identity, {
-      stroke: '#abc',
-      strokeWidth: 2.5,
+      color: '#abc',
+      width: 2.5,
     });
     expect(
       calls.find((c) => c.type === 'set' && c.name === 'strokeStyle')?.args,
