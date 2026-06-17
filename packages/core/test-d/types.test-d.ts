@@ -1546,14 +1546,14 @@ const optSchema = [
   { name: 'lat', kind: 'number' },
   { name: 'ele', kind: 'number', required: false },
 ] as const;
-const optRowOk: RowForSchema<typeof optSchema> = [Date.now(), 1, undefined];
+// Alias keeps the `@ts-expect-error` assertion on a single line — prettier
+// reflowing a long typed array literal would orphan the directive from the
+// erroring element.
+type OptRow = RowForSchema<typeof optSchema>;
+const optRowOk: OptRow = [Date.now(), 1, undefined];
 void optRowOk;
 // @ts-expect-error required 'lat' cell cannot be undefined
-const optRowBadValue: RowForSchema<typeof optSchema> = [
-  Date.now(),
-  undefined,
-  1,
-];
+const optRowBadValue: OptRow = [Date.now(), undefined, 1];
 void optRowBadValue;
 // The key (first) column is always required, even if marked `required: false`.
 const optKeySchema = [
