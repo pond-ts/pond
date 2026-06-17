@@ -47,6 +47,32 @@ describe('drawLine', () => {
     expect(pen).toEqual(['moveTo', 'lineTo']);
   });
 
+  it('handles a trailing gap (no segment drawn into the gap)', () => {
+    const { ctx, calls } = recordingContext();
+    drawLine(
+      ctx,
+      cs([0, 1, 2, 3], [5, 6, NaN, NaN]),
+      identity,
+      identity,
+      style,
+    );
+    const pen = calls
+      .filter((c) => c.name === 'moveTo' || c.name === 'lineTo')
+      .map((c) => c.name);
+    expect(pen).toEqual(['moveTo', 'lineTo']); // 5→move, 6→line, then nothing
+  });
+
+  it('draws no path ops when every value is a gap', () => {
+    const { ctx, calls } = recordingContext();
+    drawLine(ctx, cs([0, 1, 2], [NaN, NaN, NaN]), identity, identity, style);
+    expect(
+      calls.filter((c) => c.name === 'moveTo' || c.name === 'lineTo'),
+    ).toEqual([]);
+    // still brackets the (empty) path so canvas state stays consistent
+    const seq = calls.filter((c) => c.type === 'call').map((c) => c.name);
+    expect(seq).toEqual(['beginPath', 'stroke']);
+  });
+
   it('maps points through the provided scales', () => {
     const { ctx, calls } = recordingContext();
     drawLine(

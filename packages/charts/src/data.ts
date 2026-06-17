@@ -30,6 +30,10 @@ export function fromTimeSeries<S extends SeriesSchema>(
   series: TimeSeries<S>,
   column: string,
 ): ChartSeries {
+  // Runtime-necessary even though it reads as dead code: `column()` returns
+  // `undefined` for an unknown name at runtime, but core's public overload
+  // currently types the result as non-`undefined` (see F-3 in the M1 friction
+  // note). Keep the guard — the "throws on unknown column" test exercises it.
   const col = series.column(column);
   if (col === undefined) {
     throw new RangeError(`fromTimeSeries: unknown column '${column}'`);

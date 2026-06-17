@@ -34,8 +34,9 @@ module was eliminated.
 the browser (estela, the dashboard, the chart-experiment) and calls a
 prototype-augmented column method hits this. It silently passes Node tests and
 throws only in the bundled app. The columnar **performance thesis** for charts
-(the spike's ~9× typed-array read win) is blocked until the bulk readers are
-reachable in a bundle.
+(the spike's ~9× typed-array read win — **measured in Node, not through a
+bundle**; the in-bundle delta is unquantified and a charts perf check is still
+owed) is blocked until the bulk readers are reachable in a bundle.
 
 **M1 workaround (shipped).** `fromTimeSeries` reads values with `col.read(i)` —
 a method on the column _class_ (part of the class definition, never
@@ -75,6 +76,17 @@ adapter must NaN-fill from `col.validity.isDefined(i)` (or the inlined
 save every chart/SVG adapter that loop — the gap-as-NaN convention is what every
 renderer wants. (`read(i)` already encapsulates this, which is a secondary
 reason the M1 workaround is clean.)
+
+## F-3 (LOW) — `TimeSeries.column()` types its result as non-`undefined`
+
+`series.column(name)` returns `undefined` at runtime for an unknown name (the
+adapter relies on this for its "unknown column" error), but core's **public
+overload types the result as non-`undefined`** — the `| undefined` impl
+signature is stripped from the `.d.ts`. So a caller's `col === undefined` guard
+reads as dead code to TS while being runtime-necessary; worse, a caller who
+*trusts* the type and skips the guard gets a latent `undefined` deref. Minor
+soundness gap; the fix is to widen the public overload to `… | undefined`.
+Charts keeps an explicit runtime guard regardless.
 
 ## What worked
 

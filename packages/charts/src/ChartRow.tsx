@@ -37,10 +37,10 @@ export interface ChartRowProps {
  * line over its band — estela's terrain → bands → lines stack).
  *
  * M1 derives this from registration order, which equals declaration order on
- * mount; a layer that re-registers after a data change currently moves to the
- * front. That's invisible with one layer per row — it's hardened to a stable
- * slot when M3 brings the overlaid variance band in (the first row that
- * actually stacks).
+ * mount; a layer that re-registers after any prop change (`series` / `stroke` /
+ * `strokeWidth`) currently moves to the front. That's invisible with one layer
+ * per row — it's hardened to a stable slot when M3 brings the overlaid variance
+ * band in (the first row that actually stacks).
  */
 export function ChartRow({ height, yDomain, children }: ChartRowProps) {
   const container = useContext(ContainerContext);
