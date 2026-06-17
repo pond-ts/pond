@@ -36,8 +36,8 @@ What is still not stable enough to build on aggressively:
 SVG.** The renderer-fork scoping (the canvas RFC, built for the gRPC firehose,
 vs estela's working SVG chart) resolved to **canvas**: SVG is a dead end for the
 firehose / dashboard consumers, and one canvas engine that also handles
-interactions serves estela *and* them. estela not pulling on canvas as hard
-*today* doesn't mean it won't — we build the chart that works for both. The
+interactions serves estela _and_ them. estela not pulling on canvas as hard
+_today_ doesn't mean it won't — we build the chart that works for both. The
 charts RFC ([docs/rfcs/charts.md](docs/rfcs/charts.md)) is the architecture;
 this section is the binding milestone plan.
 
@@ -51,19 +51,19 @@ this section is the binding milestone plan.
   value-window), gap-aware smooth (`smooth missing:'skip'`), pace axis, scrub
   readout, zoom-stable spread.
 - **Theme system (new, first-class):** estela's role palette (foam/coral/teal)
-  is *one theme*, not hardcoded. `ChartTheme` threaded through container context
-  + a `defaultTheme`, so dashboard / gRPC / other consumers restyle. This is the
-  "target other uses too" requirement.
+  is _one theme_, not hardcoded. `ChartTheme` threaded through container context
+  - a `defaultTheme`, so dashboard / gRPC / other consumers restyle. This is the
+    "target other uses too" requirement.
 - **Home:** `packages/charts`, `"private": true` until M5 parity (so the release
   workflow doesn't publish a half-built package); lockstep-versioned with the
   monorepo.
 
 **Testing strategy (set 2026-06-17).** React + canvas needs more than unit
-tests — a mock-context unit test can assert a `lineTo` was *called* but never
+tests — a mock-context unit test can assert a `lineTo` was _called_ but never
 that the pixels are right or that an interaction behaved. Four layers:
 
 1. **Unit** — vitest + happy-dom + a recording-mock 2D context. Pure logic
-   (scales, decimation, store append/evict) and draw-call *sequences* (a gap →
+   (scales, decimation, store append/evict) and draw-call _sequences_ (a gap →
    `moveTo`, not `lineTo`). Fast, no browser.
 2. **Storybook 10** (Vite builder) — `*.stories.tsx` as the design surface and
    the canonical fixture set (estela activity + gaps / NaN / dense / sparse /
@@ -95,7 +95,7 @@ best-effort.
   draw calls, no native dep); real-browser visual + behavior testing stands up
   in M0.5 (below).
 - **M0.5 — testing harness.** Stand up Storybook 10 + the four-layer test stack
-  (above) against a trivial example, *before* component work, so M1's
+  (above) against a trivial example, _before_ component work, so M1's
   `LineChart` is built test-first and becomes the template every later component
   copies. Adds the CI browser-test job + the baseline-update workflow.
 - **M1 — rendering spine.** ✅ Built 2026-06-17 (PR pending). `fromTimeSeries`
@@ -115,9 +115,32 @@ best-effort.
   fix candidates in
   [`docs/notes/charts-m1-friction.md`](docs/notes/charts-m1-friction.md); this
   is the top charts→core carry-forward.
-- **M2 — axes + theme.** `YAxis` (auto-extending domain, the widen-not-cap
-  trap), wall-clock-anchored x-ticks, the `ChartTheme` system + `defaultTheme`
-  + `estelaTheme`, dual y-axis.
+- **M2 — axes + theme.** ✅ Built 2026-06-17 (branch `feat/charts-m2-axes-theme`,
+  PR pending). `YAxis` (per-axis auto-fit domain, the widen-not-cap trap; DOM
+  gutter chrome) + wall-clock `scaleTime` x-axis + the `ChartTheme` system
+  (`defaultTheme` + `estelaTheme`) + dual y-axis + gridlines. Six Layout stories
+  (SingleRow / LeftAxis / DualAxis / MultiRow / VaryingGutters / EstelaShaped)
+  are the visual baselines; 20 unit tests. Slices: **M2.1** theme/`as` pipeline,
+  **M2.2** `<Layers>` + horizontal shell, **M2.3a** per-axis y-scales + `YAxis`,
+  **M2.3b** shared time axis + uniform gutters, **M2.3c** layout stories, **M2.4**
+  gridlines + `estelaTheme`.
+  - **Shared-x-geometry decision (M2.3b, 2026-06-17).** The bottom time axis must
+    align across stacked rows, so the **x geometry lives on `ChartContainer`,
+    not the row**: the container collects each row's per-side gutter need and
+    reserves a _uniform_ gutter (the max each side), then owns `plotWidth` + the
+    shared `scaleTime` `xScale`. A row with a narrower gutter pads with a flex
+    spacer so its plot left-aligns. Y-scales stay per-row (row-local data). This
+    resolves the cross-row-alignment item the RFC parked. The x scale is
+    `scaleTime` so ticks land on wall-clock boundaries; it renders in local time
+    (Playwright pins `timezoneId: 'UTC'` for reproducible baselines — a
+    configurable display tz is a later feature).
+  - **Gridlines decision (M2.4, 2026-06-17).** Faint dashed gridlines are **on by
+    default**, drawn behind the data from the same ticks the axes label (vertical
+    = time scale, horizontal = the row's default y-axis), consuming
+    `theme.axis.grid` + `gridDash`. No per-chart toggle yet (YAGNI; add if estela
+    wants gridless). `estelaTheme` colours (`foam`/`coral`/`teal` on a dark
+    ground) are **representative pending the exact `@estela/ui` palette** pinned
+    at M5 parity — M2 proves the _shape_ (roles + dark ground), not the hexes.
   - **Row-layout decision (2026-06-17, with pjm17971 / the RTC author).**
     `ChartRow`'s direct children are a **horizontal** layout — left `YAxis`(es),
     a `<Layers>` wrapper (the plot area), right `YAxis`(es) — e.g.
@@ -128,12 +151,12 @@ best-effort.
     sugar — that would force the row to sniff axis-vs-layer roles and give two
     ways to write one chart) and serves as the **context boundary**: children
     inside `<Layers>` register as draw layers, direct row children as axes — so a
-    layer knows what it is from *where it sits*, not a `role` prop. Named
+    layer knows what it is from _where it sits_, not a `role` prop. Named
     `<Layers>` over RTC's `<Charts>` / a `<Group>` — it names the z-stacking role
     rather than the contents, and reads clearly beside the axes.
   - **Theme decision.** A single typed `ChartTheme` object is the **one styling
     channel** for drawn layers — canvas has no CSS cascade into pixels, and that
-    constraint is *why* this avoids RTC's styling bugs (RTC had two overlapping
+    constraint is _why_ this avoids RTC's styling bugs (RTC had two overlapping
     channels: CSS + per-element `style` props with deep merges). Role tokens
     (primary / secondary / context line colours, band fill opacities, axis tint,
     grid stroke + dash, label typography), `defaultTheme` + `estelaTheme`,
@@ -149,7 +172,7 @@ best-effort.
     the column → semantic-identifier mapping should be definable **once for the
     app** (a global `column → identifier` registry, so `power` always renders
     `foam` everywhere) rather than tagged per `<LineChart>`. It composes as a
-    layer *above* the per-chart `as` (registry supplies the default `as`; the
+    layer _above_ the per-chart `as` (registry supplies the default `as`; the
     prop overrides) and mirrors estela's existing `CHANNEL_META`. Not built —
     feeling out the surface; estela adoption decides whether charts owns the
     registry or the app provides it. The per-chart `as` prop is the primitive
