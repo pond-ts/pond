@@ -22,6 +22,8 @@ export interface ChartTheme {
     readonly primary: string;
     readonly secondary: string;
     readonly context: string;
+    /** Stroke width (px) for all line layers. */
+    readonly width: number;
   };
   /** Label / tick typography. Defined here so axes and chrome share one source. */
   readonly font: {
@@ -39,6 +41,7 @@ export const defaultTheme: ChartTheme = {
     primary: '#2563eb',
     secondary: '#e8836b',
     context: '#5eb5a6',
+    width: 1.5,
   },
   font: {
     family: 'system-ui, -apple-system, sans-serif',

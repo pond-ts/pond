@@ -67,7 +67,7 @@ export const Flat: Story = {
     return (
       <ChartContainer timeRange={[0, N - 1]} width={480}>
         <ChartRow height={200}>
-          <LineChart series={series} column="v" stroke="#10b981" />
+          <LineChart series={series} column="v" role="context" />
         </ChartRow>
       </ChartContainer>
     );
@@ -78,7 +78,12 @@ export const Flat: Story = {
  *  no per-component style overrides. Demonstrates the single styling channel. */
 const darkTheme: ChartTheme = {
   background: '#0f172a',
-  line: { primary: '#f59e0b', secondary: '#e8836b', context: '#5eb5a6' },
+  line: {
+    primary: '#f59e0b',
+    secondary: '#e8836b',
+    context: '#5eb5a6',
+    width: 1.5,
+  },
   font: { family: 'system-ui, sans-serif', size: 11 },
 };
 

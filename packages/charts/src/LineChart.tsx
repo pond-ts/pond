@@ -9,10 +9,15 @@ export interface LineChartProps<S extends SeriesSchema> {
   series: TimeSeries<S>;
   /** Name of the numeric value column to plot. */
   column: string;
-  /** Line colour; defaults to the theme's `line.primary`. */
-  stroke?: string;
-  /** Line width in CSS pixels (default 1.5). */
-  strokeWidth?: number;
+  /**
+   * Which theme line-role this series draws as: `primary` (default), the
+   * `secondary` colour (e.g. a right-axis HR line), or the `context` underlay
+   * (e.g. elevation). Colour **and** width come from `theme.line` — there is
+   * intentionally no per-component colour/width override. That escape hatch is
+   * the second styling channel that bred react-timeseries-charts' styling bugs;
+   * to restyle, change the theme (or add a role), not the component.
+   */
+  role?: 'primary' | 'secondary' | 'context';
 }
 
 /**
@@ -24,8 +29,7 @@ export interface LineChartProps<S extends SeriesSchema> {
 export function LineChart<S extends SeriesSchema>({
   series,
   column,
-  stroke,
-  strokeWidth = 1.5,
+  role = 'primary',
 }: LineChartProps<S>) {
   const container = useContext(ContainerContext);
   if (container === null) {
@@ -37,18 +41,18 @@ export function LineChart<S extends SeriesSchema>({
   }
 
   const cs = useMemo(() => fromTimeSeries(series, column), [series, column]);
-  // Default to the theme's primary line colour; an explicit `stroke` overrides.
-  const resolvedStroke = stroke ?? container.theme.line.primary;
+  // Colour + width come from the theme by role — the single styling channel.
+  const { line } = container.theme;
   const layer = useMemo<RowLayer>(
     () => ({
       yExtent: () => yExtent(cs),
       draw: (ctx, xScale, yScale) =>
         drawLine(ctx, cs, xScale, yScale, {
-          stroke: resolvedStroke,
-          strokeWidth,
+          stroke: line[role],
+          strokeWidth: line.width,
         }),
     }),
-    [cs, resolvedStroke, strokeWidth],
+    [cs, line, role],
   );
   useEffect(() => row.register(layer), [row, layer]);
 
