@@ -1,5 +1,4 @@
 import { useMemo, type ReactNode } from 'react';
-import { scaleLinear } from 'd3-scale';
 import { ContainerContext, type ContainerFrame } from './context.js';
 import { defaultTheme, type ChartTheme } from './theme.js';
 
@@ -29,7 +28,6 @@ export function ChartContainer({
   const t1 = timeRange[1];
   const frame = useMemo<ContainerFrame>(
     () => ({
-      xScale: scaleLinear().domain([t0, t1]).range([0, width]),
       width,
       timeRange: [t0, t1],
       theme: theme ?? defaultTheme,

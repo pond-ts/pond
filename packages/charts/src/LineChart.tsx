@@ -2,7 +2,7 @@ import { useContext, useEffect, useMemo } from 'react';
 import type { SeriesSchema, TimeSeries } from 'pond-ts';
 import { fromTimeSeries } from './data.js';
 import { drawLine, yExtent } from './line.js';
-import { ContainerContext, LayersContext, type RowLayer } from './context.js';
+import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
 
 export interface LineChartProps<S extends SeriesSchema> {
   /** The source series. Its key column supplies the time axis. */
@@ -18,18 +18,25 @@ export interface LineChartProps<S extends SeriesSchema> {
    * is what bred react-timeseries-charts' styling bugs; restyle via the theme).
    */
   as?: string;
+  /**
+   * Which `<YAxis>` (by its `id`) this line scales against — picks the *scale*,
+   * where `as` picks the *style* (separate concerns). **Omitted ⇒ the row's
+   * default axis** (the first declared, or the implicit auto-domain axis).
+   */
+  axis?: string;
 }
 
 /**
  * A line draw layer. Reads `column` from `series` into a {@link ChartSeries}
- * (columnar, gaps as NaN), registers itself into the enclosing
- * {@link ChartRow}, and renders nothing to the DOM — the row draws it. The line
- * breaks at gaps rather than spanning them.
+ * (columnar, gaps as NaN), registers itself into the enclosing {@link Layers}
+ * (scaling against its `axis`), and renders nothing to the DOM — the row draws
+ * it. The line breaks at gaps rather than spanning them.
  */
 export function LineChart<S extends SeriesSchema>({
   series,
   column,
   as: semantic,
+  axis,
 }: LineChartProps<S>) {
   const container = useContext(ContainerContext);
   if (container === null) {
@@ -41,20 +48,21 @@ export function LineChart<S extends SeriesSchema>({
   }
 
   const cs = useMemo(() => fromTimeSeries(series, column), [series, column]);
-  // Styling: semantic identifier → theme style. An untagged line draws the
-  // theme's `default`; the column name is data, not a styling key. Single
-  // channel, no per-component override.
+  // Styling: semantic identifier → theme style. The single styling channel.
   const { line } = container.theme;
   const style =
     (semantic !== undefined ? line[semantic] : undefined) ?? line.default;
-  const layer = useMemo<RowLayer>(
+  const entry = useMemo<LayerEntry>(
     () => ({
-      yExtent: () => yExtent(cs),
-      draw: (ctx, xScale, yScale) => drawLine(ctx, cs, xScale, yScale, style),
+      layer: {
+        yExtent: () => yExtent(cs),
+        draw: (ctx, xScale, yScale) => drawLine(ctx, cs, xScale, yScale, style),
+      },
+      axisId: axis,
     }),
-    [cs, style],
+    [cs, style, axis],
   );
-  useEffect(() => layers.register(layer), [layers, layer]);
+  useEffect(() => layers.registerLayer(entry), [layers, entry]);
 
   return null;
 }

@@ -3,37 +3,24 @@ import type { ScaleLinear } from 'd3-scale';
 import type { ChartTheme } from './theme.js';
 
 /**
- * The frame a {@link ChartContainer} provides to its rows: the shared x-scale
- * (time→pixels), the plot width, the time domain, and the resolved theme.
+ * The frame a {@link ChartContainer} provides: the shared **time domain**, the
+ * total width, and the resolved theme. The x *pixel* scale is derived per-row
+ * (it depends on that row's plot width after axis gutters), so it lives on the
+ * {@link RowFrame}, not here.
  */
 export interface ContainerFrame {
-  readonly xScale: ScaleLinear<number, number>;
-  readonly width: number;
   readonly timeRange: readonly [number, number];
+  readonly width: number;
   readonly theme: ChartTheme;
 }
 
 export const ContainerContext = createContext<ContainerFrame | null>(null);
 
 /**
- * The frame a {@link ChartRow} provides to its plot area (`<Layers>`) and axes:
- * the row height, the pixel width available for the plot (the row width minus
- * any axis gutters — full width until `YAxis` lands in M2.3), and the optional
- * explicit y-domain.
- */
-export interface RowFrame {
-  readonly height: number;
-  readonly plotWidth: number;
-  readonly yDomain: readonly [number, number] | undefined;
-}
-
-export const RowContext = createContext<RowFrame | null>(null);
-
-/**
- * A draw layer registered into a {@link Layers}. The plot area computes its
- * y-domain from the union of its layers' {@link RowLayer.yExtent} (unless the
- * row gives an explicit domain), then runs each layer's {@link RowLayer.draw} in
- * declaration order in one canvas pass.
+ * A draw layer ({@link LineChart}, …) registered into a {@link Layers}, paired
+ * with the id of the axis it scales against. The row computes a y-scale per
+ * axis from the union of its linked layers' extents (or the axis's explicit
+ * domain); each layer draws with its own axis's scale.
  */
 export interface RowLayer {
   /** This layer's finite-value `[min, max]`, or `null` if it has none. */
@@ -46,10 +33,55 @@ export interface RowLayer {
   ): void;
 }
 
-/** The registry a {@link Layers} exposes to its child draw layers. */
+/** A registered layer plus the axis id it draws against. */
+export interface LayerEntry {
+  readonly layer: RowLayer;
+  /**
+   * The axis id this layer draws against, or `undefined` for the row's default
+   * axis. Resolved late (at scale/draw time), so a layer that mounts before its
+   * `<YAxis>` still binds to it.
+   */
+  readonly axisId: string | undefined;
+}
+
+/** A y-axis declared in a {@link ChartRow} via `<YAxis>`. */
+export interface AxisSpec {
+  readonly id: string;
+  readonly side: 'left' | 'right';
+  /** Gutter width in CSS pixels. */
+  readonly width: number;
+  /** Explicit domain bounds, or `undefined` to auto-fit linked layers. */
+  readonly min: number | undefined;
+  readonly max: number | undefined;
+}
+
+/**
+ * The frame a {@link ChartRow} provides to its axes (`<YAxis>`) and plot area
+ * (`<Layers>`): the resolved scales, dimensions, and the registries. `ChartRow`
+ * coordinates two registries — axes and layers — and computes a y-scale per
+ * axis id; the x-scale maps the shared time domain to `[0, plotWidth]`.
+ */
+export interface RowFrame {
+  readonly height: number;
+  readonly plotWidth: number;
+  readonly xScale: ScaleLinear<number, number>;
+  readonly yScales: ReadonlyMap<string, ScaleLinear<number, number>>;
+  /** The axis a layer uses when it names none (the first declared, or implicit). */
+  readonly defaultAxisId: string;
+  registerAxis(spec: AxisSpec): () => void;
+  registerLayer(entry: LayerEntry): () => void;
+  readonly layers: readonly LayerEntry[];
+}
+
+export const RowContext = createContext<RowFrame | null>(null);
+
+/**
+ * The registry a {@link Layers} exposes to its child draw layers — the boundary
+ * that makes a layer a layer (children here register; a layer outside `<Layers>`
+ * errors). Forwards to the row's layer registry.
+ */
 export interface LayerRegistry {
-  /** Register a layer; returns an unregister function for effect cleanup. */
-  register(layer: RowLayer): () => void;
+  registerLayer(entry: LayerEntry): () => void;
 }
 
 export const LayersContext = createContext<LayerRegistry | null>(null);

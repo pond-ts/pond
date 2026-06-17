@@ -25,6 +25,13 @@ export interface ChartTheme {
     readonly default: LineStyle;
     readonly [semantic: string]: LineStyle;
   };
+  /** Axis chrome: tick-label colour, gridline stroke + dash pattern. */
+  readonly axis: {
+    readonly label: string;
+    readonly grid: string;
+    /** Gridline dash pattern (px on/off pairs); `[]` for solid. */
+    readonly gridDash: readonly number[];
+  };
   /** Label / tick typography. One source for axes + chrome. */
   readonly font: {
     readonly family: string;
@@ -51,6 +58,11 @@ export const defaultTheme: ChartTheme = {
     primary: { color: '#2563eb', width: 1.5 },
     secondary: { color: '#e8836b', width: 1.5 },
     context: { color: '#5eb5a6', width: 1.5 },
+  },
+  axis: {
+    label: '#64748b',
+    grid: '#e2e8f0',
+    gridDash: [2, 2],
   },
   font: {
     family: 'system-ui, -apple-system, sans-serif',
