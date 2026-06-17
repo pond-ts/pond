@@ -118,6 +118,27 @@ best-effort.
 - **M2 — axes + theme.** `YAxis` (auto-extending domain, the widen-not-cap
   trap), wall-clock-anchored x-ticks, the `ChartTheme` system + `defaultTheme`
   + `estelaTheme`, dual y-axis.
+  - **Row-layout decision (2026-06-17, with pjm17971 / the RTC author).**
+    `ChartRow`'s direct children are a **horizontal** layout — left `YAxis`(es),
+    a `<Layers>` wrapper (the plot area), right `YAxis`(es) — e.g.
+    `<YAxis/><YAxis/><Layers>…</Layers><YAxis/>`. Inside `<Layers>` is the
+    **z-stack** of draw layers (declaration order, last on top — the
+    `ChartRow` JSDoc convention). Same ordered-children pattern as the row, on a
+    different axis (x → z). The wrapper is **mandatory** (no optional-when-single
+    sugar — that would force the row to sniff axis-vs-layer roles and give two
+    ways to write one chart) and serves as the **context boundary**: children
+    inside `<Layers>` register as draw layers, direct row children as axes — so a
+    layer knows what it is from *where it sits*, not a `role` prop. Named
+    `<Layers>` over RTC's `<Charts>` / a `<Group>` — it names the z-stacking role
+    rather than the contents, and reads clearly beside the axes.
+  - **Theme decision.** A single typed `ChartTheme` object is the **one styling
+    channel** for drawn layers — canvas has no CSS cascade into pixels, and that
+    constraint is *why* this avoids RTC's styling bugs (RTC had two overlapping
+    channels: CSS + per-element `style` props with deep merges). Role tokens
+    (primary / secondary / context line colours, band fill opacities, axis tint,
+    grid stroke + dash, label typography), `defaultTheme` + `estelaTheme`,
+    threaded via `ChartContainer` context. DOM chrome (axis labels, legend)
+    derives its styles from the same theme object — still one source of truth.
 - **M3 — `BandChart` + variance underlay.** Two-tone band from `rollingByColumn`
   percentiles + `{at}` grid; gap-aware smooth wired into centerline + edges.
 - **M4 — interactions.** Pan / zoom (controlled + uncontrolled), brush, scrub

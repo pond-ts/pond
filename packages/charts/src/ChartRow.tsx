@@ -28,9 +28,19 @@ export interface ChartRowProps {
 /**
  * A horizontal band sharing the container's time axis. Owns the y-domain, a
  * single `<canvas>`, and a draw-layer registry: child layers
- * ({@link LineChart}, …) register via context and are drawn in registration
- * order in one canvas pass — so z-order and canvas state are consistent and the
- * row paints once per frame.
+ * ({@link LineChart}, …) register via context and are drawn in one canvas pass.
+ *
+ * **Z-order — declaration order, last child on top.** Layers paint in the order
+ * they appear in JSX: the first child renders at the back, the last on top.
+ * This matches SVG / DOM document order and react-timeseries-charts, so a row
+ * is authored back-to-front (e.g. `<BandChart/>` then `<LineChart/>` puts the
+ * line over its band — estela's terrain → bands → lines stack).
+ *
+ * M1 derives this from registration order, which equals declaration order on
+ * mount; a layer that re-registers after a data change currently moves to the
+ * front. That's invisible with one layer per row — it's hardened to a stable
+ * slot when M3 brings the overlaid variance band in (the first row that
+ * actually stacks).
  */
 export function ChartRow({ height, yDomain, children }: ChartRowProps) {
   const container = useContext(ContainerContext);
