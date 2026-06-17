@@ -32,6 +32,16 @@ type-level changes; patch bumps are strictly additive.
   reducer's empty value. Same O(n + centers) two-pointer. Closes the
   evaluate-at-grid gap surfaced adopting `rollingByColumn` for a chart variance
   band. (estela F-rolling-by-row.)
+- **`smooth(col, 'movingAverage' | 'loess', { …, missing: 'skip' })` —
+  validity-respecting smoothing.** By default (`missing: 'bridge'`) a cell whose
+  own value is missing is still assigned a smoothed value from its present
+  neighbours — the line is drawn _across_ the hole. `missing: 'skip'` keeps a
+  missing cell **missing** in the output, so a sustained dropout (a coast, a
+  sensor gap) is preserved as a break rather than fabricated through. Present
+  cells smooth over only the present values in their window either way. `ema`
+  takes no `missing` option (it is causal and never fabricates across a gap). A
+  `maxGap` hard segment boundary is a deferred follow-on. (estela
+  F-smooth-interactive.)
 
 ### Changed
 
