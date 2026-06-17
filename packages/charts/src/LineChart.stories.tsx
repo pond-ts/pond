@@ -67,7 +67,7 @@ export const Flat: Story = {
     return (
       <ChartContainer timeRange={[0, N - 1]} width={480}>
         <ChartRow height={200}>
-          <LineChart series={series} column="v" semantic="context" />
+          <LineChart series={series} column="v" as="context" />
         </ChartRow>
       </ChartContainer>
     );
@@ -121,7 +121,7 @@ export const SemanticFoam: Story = {
     return (
       <ChartContainer timeRange={[0, N - 1]} width={480} theme={foamTheme}>
         <ChartRow height={200}>
-          <LineChart series={series} column="v" semantic="foam" />
+          <LineChart series={series} column="v" as="foam" />
         </ChartRow>
       </ChartContainer>
     );

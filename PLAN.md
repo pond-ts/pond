@@ -139,6 +139,21 @@ best-effort.
     grid stroke + dash, label typography), `defaultTheme` + `estelaTheme`,
     threaded via `ChartContainer` context. DOM chrome (axis labels, legend)
     derives its styles from the same theme object — still one source of truth.
+    Realised in M2.1 (built 2026-06-17) as a three-stage pipeline — **column →
+    semantic identifier → theme style** — where a draw layer tags its column via
+    the `as` prop (`<LineChart column="power" as="foam" />`), the theme maps the
+    identifier → `LineStyle` (`theme.line[as] ?? theme.line.default`), an
+    untagged line draws `default`, and there is no per-component colour/width
+    override (the leak pjm17971 caught).
+  - **Parked idea (2026-06-17, pjm17971 — let experiments validate).** Whether
+    the column → semantic-identifier mapping should be definable **once for the
+    app** (a global `column → identifier` registry, so `power` always renders
+    `foam` everywhere) rather than tagged per `<LineChart>`. It composes as a
+    layer *above* the per-chart `as` (registry supplies the default `as`; the
+    prop overrides) and mirrors estela's existing `CHANNEL_META`. Not built —
+    feeling out the surface; estela adoption decides whether charts owns the
+    registry or the app provides it. The per-chart `as` prop is the primitive
+    either way.
 - **M3 — `BandChart` + variance underlay.** Two-tone band from `rollingByColumn`
   percentiles + `{at}` grid; gap-aware smooth wired into centerline + edges.
 - **M4 — interactions.** Pan / zoom (controlled + uncontrolled), brush, scrub

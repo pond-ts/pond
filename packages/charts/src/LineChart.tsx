@@ -10,15 +10,14 @@ export interface LineChartProps<S extends SeriesSchema> {
   /** Name of the numeric value column to plot. */
   column: string;
   /**
-   * Semantic identifier for this series — what the data _is_ (e.g. `heartrate`,
-   * `power`). The theme maps it to a {@link LineStyle}
-   * (`theme.line[semantic] ?? theme.line.default`). **Omitted ⇒ the line draws
-   * the theme's `default` style** — the `column` name is data, never a styling
-   * key. There is intentionally no per-component colour/width override; that
-   * second styling channel is what bred react-timeseries-charts' styling bugs,
-   * so restyle by editing the theme (or adding an identifier to it).
+   * The series' semantic identifier — what the data _is_ / how it should read
+   * (e.g. `heartrate`, `power`, or a role name like `foam`). The theme maps it
+   * to a {@link LineStyle} (`theme.line[as] ?? theme.line.default`). **Omitted ⇒
+   * the `default` style** — `column` is the data, `as` is the identity, and
+   * there's no per-component colour/width override (that second styling channel
+   * is what bred react-timeseries-charts' styling bugs; restyle via the theme).
    */
-  semantic?: string;
+  as?: string;
 }
 
 /**
@@ -30,7 +29,7 @@ export interface LineChartProps<S extends SeriesSchema> {
 export function LineChart<S extends SeriesSchema>({
   series,
   column,
-  semantic,
+  as: semantic,
 }: LineChartProps<S>) {
   const container = useContext(ContainerContext);
   if (container === null) {
