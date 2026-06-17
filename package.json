@@ -8,7 +8,9 @@
     "url": "git+https://github.com/pjm17971/pond-ts.git"
   },
   "workspaces": [
-    "packages/*"
+    "packages/core",
+    "packages/react",
+    "packages/charts"
   ],
   "engines": {
     "node": ">=18"
