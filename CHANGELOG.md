@@ -26,7 +26,7 @@ type-level changes; patch bumps are strictly additive.
 ### Added
 
 - **`rollingByColumn(col, { radius, at }, mapping)` — evaluate at explicit
-  centers.** `at` takes an **ascending** array of center values (e.g. a chart's
+  centers.** `at` takes a **non-decreasing** array of center values (e.g. a chart's
   coarse display grid) and returns **one record per center**, instead of the
   default one-per-row. A center with no rows within `±radius` yields each
   reducer's empty value. Same O(n + centers) two-pointer. Closes the

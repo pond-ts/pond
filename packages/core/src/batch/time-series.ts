@@ -2193,7 +2193,7 @@ export class TimeSeries<S extends SeriesSchema> {
    * The window is centered and inclusive (`col[i] − radius ≤ col[j] ≤ col[i] +
    * radius`); a single O(n) two-pointer sweep maintains the window.
    *
-   * Pass `{ radius, at }` — an **ascending** array of explicit center values
+   * Pass `{ radius, at }` — a **non-decreasing** array of explicit center values
    * (e.g. a chart's coarse display grid) — to evaluate at those centers instead
    * of at every row, returning **one record per center** (a center with no rows
    * in range yields each reducer's empty value). See

@@ -116,7 +116,7 @@ array, w = window occupancy). One pass, no event materialization. Perf check
 
 ## Shipped follow-on
 
-- **Arbitrary query grid (`{ radius, at }`) — ✅ SHIPPED v0.30.0.** The per-row
+- **Arbitrary query grid (`{ radius, at }`) — ✅ shipped (Unreleased).** The per-row
   form proved insufficient on estela's adoption exactly as anticipated below
   (`F-rolling-by-row`): the chart's variance band is evaluated at the display
   grid (query centers ≠ raw samples). `at` takes an ascending array of explicit

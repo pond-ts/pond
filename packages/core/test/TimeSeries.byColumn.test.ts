@@ -475,8 +475,8 @@ describe('TimeSeries.byColumn — { edges } inclusivity', () => {
         )
         .map((b) => b.n),
     ).toEqual([0, 1]);
-    // '(]' (100,300]: 99.999 <= 100... actually 99.999 < 100 → out; 300.001 > 300
-    // dropped; 250 → bin1
+    // '(]' [100,300] (floor inclusive): 99.999 < 100 → out; 300.001 > 300 → out;
+    // 250 → bin1
     expect(
       s
         .byColumn(

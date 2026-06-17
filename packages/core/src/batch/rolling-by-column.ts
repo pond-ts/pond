@@ -9,7 +9,7 @@ import type { AggregateColumnSpec } from './aggregate-columns.js';
  * half-width `radius`, in the axis column's own units.
  *
  * By default a window is evaluated at **every input row** (one record per row).
- * Pass `at` — an **ascending** array of explicit center values (e.g. a chart's
+ * Pass `at` — a **non-decreasing** array of explicit center values (e.g. a chart's
  * coarse display grid) — to evaluate at those centers instead, returning one
  * record per center. Each center's window is the rows whose axis value lies
  * within `±radius` of it; a center need not coincide with any row, and a center
