@@ -69,3 +69,33 @@ export const defaultTheme: ChartTheme = {
     size: 11,
   },
 };
+
+/**
+ * The estela theme — estela's fixed role palette as *one theme*, on its dark
+ * ground. The role identifiers (`foam` primary group-channel / `coral` HR /
+ * `teal` elevation) are the same names estela uses; a chart tags a column with
+ * one (`<LineChart as="foam" />`) and the colour lives here, not at the call
+ * site. The proving consumer for "target other uses too": the same engine,
+ * restyled by swapping this object for {@link defaultTheme}.
+ *
+ * Colours are representative pending the exact `@estela/ui` palette pinned at
+ * M5 parity; the *shape* (roles, dark ground, dashed grid) is what M2 proves.
+ */
+export const estelaTheme: ChartTheme = {
+  background: '#0e1a18',
+  line: {
+    default: { color: '#eaf4f1', width: 1.5 },
+    foam: { color: '#eaf4f1', width: 2 },
+    coral: { color: '#ff7d68', width: 1.5 },
+    teal: { color: '#5eb5a6', width: 1.5 },
+  },
+  axis: {
+    label: '#6f9b93',
+    grid: '#1c302c',
+    gridDash: [2, 3],
+  },
+  font: {
+    family: 'system-ui, -apple-system, sans-serif',
+    size: 11,
+  },
+};

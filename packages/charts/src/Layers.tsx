@@ -1,11 +1,15 @@
 import { useCallback, useContext, useMemo, type ReactNode } from 'react';
 import { Canvas } from './Canvas.js';
+import { drawGrid } from './grid.js';
 import {
   ContainerContext,
   LayersContext,
   RowContext,
   type LayerRegistry,
 } from './context.js';
+
+/** Gridline tick count — matches the axes (`YAxis`/`TimeAxis`) so they align. */
+const GRID_TICKS = 5;
 
 export interface LayersProps {
   children?: ReactNode;
@@ -39,6 +43,7 @@ export function Layers({ children }: LayersProps) {
   );
 
   const background = container.theme.background;
+  const { grid: gridColor, gridDash } = container.theme.axis;
   const { layers, yScales, defaultAxisId } = row;
   // x geometry is shared and lives on the container (uniform across rows).
   const { xScale, plotWidth } = container;
@@ -48,13 +53,19 @@ export function Layers({ children }: LayersProps) {
         ctx.fillStyle = background;
         ctx.fillRect(0, 0, w, h);
       }
+      // Gridlines behind the data, from the same ticks the axes label: vertical
+      // from the shared time scale, horizontal from the row's default y-axis.
+      const gridY = yScales.get(defaultAxisId);
+      const xTicks = xScale.ticks(GRID_TICKS).map((d) => xScale(d));
+      const yTicks = gridY ? gridY.ticks(GRID_TICKS).map((t) => gridY(t)) : [];
+      drawGrid(ctx, xTicks, yTicks, w, h, gridColor, gridDash);
       for (const entry of layers) {
         const yScale = yScales.get(entry.axisId ?? defaultAxisId);
         if (yScale === undefined) continue;
         entry.layer.draw(ctx, xScale, yScale);
       }
     },
-    [layers, yScales, xScale, defaultAxisId, background],
+    [layers, yScales, xScale, defaultAxisId, background, gridColor, gridDash],
   );
 
   return (

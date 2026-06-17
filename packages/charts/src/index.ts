@@ -34,5 +34,5 @@ export type { LineChartProps } from './LineChart.js';
 export { fromTimeSeries } from './data.js';
 export type { ChartSeries } from './data.js';
 
-export { defaultTheme } from './theme.js';
+export { defaultTheme, estelaTheme } from './theme.js';
 export type { ChartTheme, LineStyle } from './theme.js';
