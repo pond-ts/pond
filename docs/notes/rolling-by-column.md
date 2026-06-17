@@ -114,13 +114,18 @@ array, w = window occupancy). One pass, no event materialization. Perf check
 - A degenerate window (single row, or all rows within `radius`) reduces over
   exactly the in-window rows — no special-casing.
 
+## Shipped follow-on
+
+- **Arbitrary query grid (`{ radius, at }`) — ✅ SHIPPED v0.30.0.** The per-row
+  form proved insufficient on estela's adoption exactly as anticipated below
+  (`F-rolling-by-row`): the chart's variance band is evaluated at the display
+  grid (query centers ≠ raw samples). `at` takes an ascending array of explicit
+  centers and returns one record per center — the chart grid is the canonical
+  `at`. Same O(n + centers) two-pointer; a center with no rows in range yields
+  the empty value.
+
 ## Deferred (noted, not built)
 
-- **Arbitrary query grid.** `rollingSpread` is evaluated at the chart's _bucket_
-  positions, windowing the _raw_ samples — query points ≠ data rows. PR 1
-  evaluates at data rows (call it on the raw series, downsample after; or on the
-  bucketed series for a coarser band). An explicit query-positions argument is
-  the extension if the per-row form proves insufficient on adoption.
 - **Trailing / asymmetric windows** (`{ width, align }`, `{ before, after }`) —
   add only if a use case earns them; `{ radius }` is the demonstrated need.
 - The **sweep** (#2/#3) and **scan** (#4) primitives above.

@@ -6,11 +6,17 @@ import type { AggregateColumnSpec } from './aggregate-columns.js';
 
 /**
  * Window spec for {@link TimeSeries.rollingByColumn}: a **centered** window of
- * half-width `radius`, in the axis column's own units. The window for a row is
- * every row whose axis value lies within `±radius` of it. See
+ * half-width `radius`, in the axis column's own units.
+ *
+ * By default a window is evaluated at **every input row** (one record per row).
+ * Pass `at` — an **ascending** array of explicit center values (e.g. a chart's
+ * coarse display grid) — to evaluate at those centers instead, returning one
+ * record per center. Each center's window is the rows whose axis value lies
+ * within `±radius` of it; a center need not coincide with any row, and a center
+ * with no rows in range yields each reducer's empty value. See
  * `docs/notes/rolling-by-column.md`.
  */
-export type WindowSpec = { radius: number };
+export type WindowSpec = { radius: number; at?: readonly number[] };
 
 /** One windowed record: the mapped aggregates over the window centered at a row. */
 export type WindowRecord = Record<string, ColumnValue | undefined>;
@@ -86,6 +92,54 @@ export function computeRollingByColumn(
     rollingStateFor(s.reducer),
   );
   const specCount = columnSpecs.length;
+
+  // `at` mode (estela F-rolling-by-row): evaluate at explicit ascending centers
+  // (e.g. a chart's display grid) rather than at every input row. One record per
+  // center; the two-pointer sweeps the same shared states across the centers, so
+  // it stays O(n + at.length). A center with no rows in `±radius` empties the
+  // window and yields each reducer's empty value.
+  if (spec.at !== undefined) {
+    const at = spec.at;
+    for (let k = 0; k < at.length; k += 1) {
+      if (!Number.isFinite(at[k]!)) {
+        throw new RangeError(`rollingByColumn: at[${k}] is not finite`);
+      }
+      if (k > 0 && at[k]! < at[k - 1]!) {
+        throw new RangeError(
+          'rollingByColumn: at centers must be non-decreasing',
+        );
+      }
+    }
+    const atOut: WindowRecord[] = new Array(at.length);
+    let alo = 0;
+    let ahi = 0; // window holds compact positions [alo, ahi)
+    for (let k = 0; k < at.length; k += 1) {
+      const c = at[k]!;
+      const wlo = c - radius;
+      const whi = c + radius;
+      while (ahi < m && ax[ahi]! <= whi) {
+        const r = idx[ahi]!;
+        for (let cc = 0; cc < specCount; cc += 1) {
+          states[cc]!.add(r, sourceCols[cc]!.read(r));
+        }
+        ahi += 1;
+      }
+      while (alo < ahi && ax[alo]! < wlo) {
+        const r = idx[alo]!;
+        for (let cc = 0; cc < specCount; cc += 1) {
+          states[cc]!.remove(r, sourceCols[cc]!.read(r));
+        }
+        alo += 1;
+      }
+      const rec: WindowRecord = {};
+      for (let cc = 0; cc < specCount; cc += 1) {
+        rec[columnSpecs[cc]!.output] = states[cc]!.snapshot();
+      }
+      atOut[k] = rec;
+    }
+    return atOut;
+  }
+
   const out: WindowRecord[] = new Array(n);
 
   let lo = 0;

@@ -58,6 +58,10 @@ function benchmark(label, fn, repeats = 7) {
 
 const N = 100_000;
 const s = makeSeries(N);
+// A coarse chart grid of ~2000 ascending evaluation centers over the 100k raw
+// samples — the estela `{ at }` workload (F-rolling-by-row): evaluate at the
+// display grid, not at every sample.
+const centers = Array.from({ length: 2000 }, (_, i) => i * 350);
 
 const results = [
   // Moderate window (~100 rows), value reducers — the O(N) path.
@@ -82,6 +86,19 @@ const results = [
         iqlo: { from: 'watts', using: 'p25' },
         mid: { from: 'watts', using: 'median' },
         iqhi: { from: 'watts', using: 'p75' },
+        hi: { from: 'watts', using: 'p95' },
+      },
+    ),
+  ),
+  // The estela `{ at }` workload: percentile band at ~2000 chart-grid centers
+  // over 100k raw samples — one record per center, O(N + centers) sweep.
+  benchmark('100k · radius 350 band @ 2000 grid centers ({ at })', () =>
+    s.rollingByColumn(
+      'dist',
+      { radius: 350, at: centers },
+      {
+        lo: { from: 'watts', using: 'p5' },
+        mid: { from: 'watts', using: 'median' },
         hi: { from: 'watts', using: 'p95' },
       },
     ),

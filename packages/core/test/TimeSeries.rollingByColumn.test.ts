@@ -431,3 +431,72 @@ describe('TimeSeries.rollingByColumn — validation', () => {
     ).toThrow(/must be a number column/);
   });
 });
+
+describe('TimeSeries.rollingByColumn — { at } explicit centers (F-rolling-by-row)', () => {
+  const ride = () =>
+    make([
+      [0, 0, 10],
+      [1, 10, 20],
+      [2, 20, 30],
+      [3, 30, 40],
+      [4, 40, 50],
+    ]);
+
+  it('evaluates the window at each explicit center → one record per center', () => {
+    const out = ride().rollingByColumn(
+      'dist',
+      { radius: 10, at: [5, 25, 45] },
+      {
+        n: { from: 'val', using: 'count' },
+        sum: { from: 'val', using: 'sum' },
+      },
+    );
+    expect(out).toHaveLength(3); // one per center, NOT per row
+    expect(out).toEqual([
+      { n: 2, sum: 30 }, // center 5: window [-5,15] → dist 0,10
+      { n: 2, sum: 70 }, // center 25: [15,35] → dist 20,30
+      { n: 1, sum: 50 }, // center 45: [35,55] → dist 40
+    ]);
+  });
+
+  it('at = the row axis values reproduces the per-row result', () => {
+    const s = ride();
+    const perRow = s.rollingByColumn(
+      'dist',
+      { radius: 10 },
+      {
+        n: { from: 'val', using: 'count' },
+      },
+    );
+    const atRows = s.rollingByColumn(
+      'dist',
+      { radius: 10, at: [0, 10, 20, 30, 40] },
+      {
+        n: { from: 'val', using: 'count' },
+      },
+    );
+    expect(atRows).toEqual(perRow); // [2,3,3,3,2]
+  });
+
+  it('a center with no rows in range yields the empty value', () => {
+    const out = ride().rollingByColumn(
+      'dist',
+      { radius: 6, at: [5, 1000] },
+      {
+        n: { from: 'val', using: 'count' },
+      },
+    );
+    expect(out.map((r) => r.n)).toEqual([2, 0]); // center 1000 → empty window
+  });
+
+  it('throws on non-ascending or non-finite centers', () => {
+    const s = ride();
+    const m = { n: { from: 'val', using: 'count' } } as const;
+    expect(() =>
+      s.rollingByColumn('dist', { radius: 1, at: [10, 5] }, m),
+    ).toThrow(/non-decreasing/);
+    expect(() =>
+      s.rollingByColumn('dist', { radius: 1, at: [NaN] }, m),
+    ).toThrow(/finite/);
+  });
+});
