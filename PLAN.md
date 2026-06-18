@@ -138,9 +138,19 @@ best-effort.
     default**, drawn behind the data from the same ticks the axes label (vertical
     = time scale, horizontal = the row's default y-axis), consuming
     `theme.axis.grid` + `gridDash`. No per-chart toggle yet (YAGNI; add if estela
-    wants gridless). `estelaTheme` colours (`foam`/`coral`/`teal` on a dark
-    ground) are **representative pending the exact `@estela/ui` palette** pinned
-    at M5 parity — M2 proves the _shape_ (roles + dark ground), not the hexes.
+    wants gridless — pjm17971 confirmed "fine for now," 2026-06-18).
+  - **estelaTheme pinned (2026-06-18).** The real `@estela/ui` palette is now in
+    `theme.ts` (no longer representative) — full token ramp in the
+    `estela-design-palette` memory. Line roles: `default`→`--es-estela` (action
+    teal), `foam`→`--es-foam` (shared motion trace for power/speed/cadence),
+    `hr`→`--es-filament` (warm accent); ground `--es-bg`, grid `--es-ink`, labels
+    `--es-slate`, `--es-font-data` (JetBrains Mono) ticks. `elevation` (reef) +
+    band fills land with `BandChart` (M3).
+  - **Per-component hardening pass (planned, pjm17971 2026-06-18).** Once the
+    charts are more end-to-end, do a multi-agent pass **over each component** to
+    build out + lock the features each needs (gridline toggles, axis tick
+    control, label measurement, etc.). M2 ships the spine + sensible defaults;
+    that pass is where per-component depth gets nailed down.
   - **Row-layout decision (2026-06-17, with pjm17971 / the RTC author).**
     `ChartRow`'s direct children are a **horizontal** layout — left `YAxis`(es),
     a `<Layers>` wrapper (the plot area), right `YAxis`(es) — e.g.
