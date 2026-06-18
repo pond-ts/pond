@@ -6,7 +6,8 @@ import { Layers } from './Layers.js';
 import { BandChart } from './BandChart.js';
 import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
-import { estelaTheme } from './theme.js';
+import { defaultTheme, estelaTheme, type ChartTheme } from './theme.js';
+import { sanFranciscoTemperatures } from './sf-temperatures.fixture.js';
 
 const N = 60;
 const BASE = Date.UTC(2026, 0, 1, 12, 0, 0);
@@ -111,6 +112,37 @@ export const WithGap: Story = {
           <YAxis id="v" label="v" min={0} max={100} />
           <Layers>
             <BandChart series={g} lower="lo" upper="hi" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/** d3's solid steelblue band (no underlay opacity) — the look the example uses. */
+const d3BandTheme: ChartTheme = {
+  ...defaultTheme,
+  band: { default: { fill: '#4682b4', opacity: 1 } },
+};
+
+/**
+ * The d3 "Band chart" reproduced from its real data: San Francisco daily
+ * low→high temperature (°F) over a year (Oct 2010 – Sep 2011), one `<BandChart>`,
+ * no centerline — matching https://observablehq.com/@d3/band-chart. A
+ * recognizable real-world dataset as a band regression baseline; the y-axis
+ * auto-fits the temperature range and the time axis spans the year.
+ */
+export const SanFranciscoTemperature: Story = {
+  render: () => {
+    const sf = sanFranciscoTemperatures();
+    const begins = sf.keyColumn().begin;
+    const timeRange: [number, number] = [begins[0]!, begins[sf.length - 1]!];
+    return (
+      <ChartContainer timeRange={timeRange} width={720} theme={d3BandTheme}>
+        <ChartRow height={240}>
+          <YAxis id="degF" label="°F" />
+          <Layers>
+            <BandChart series={sf} lower="low" upper="high" />
           </Layers>
         </ChartRow>
       </ChartContainer>
