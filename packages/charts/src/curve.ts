@@ -14,10 +14,14 @@ import {
  * polyline; a curve smooths the path (RTC's `interpolation`).
  *
  * - `linear` (default) — straight segments; passes through every point.
- * - `monotone` — smooth, monotone in x, **passes through** points (safe default
- *   curve for time series — no overshoot).
- * - `natural` — smooth natural cubic spline, passes through points.
- * - `basis` — B-spline; smoothest, but **approximates** (does not touch points).
+ * - `monotone` — smooth, monotone in x, **passes through** points (no overshoot;
+ *   best for **lines**). It assumes *increasing* x, so on a band — whose lower
+ *   edge is drawn right→left — it smooths the two edges asymmetrically; prefer a
+ *   symmetric curve for bands.
+ * - `natural` — smooth natural cubic spline, passes through points; **symmetric**
+ *   (direction-independent), so a good band curve.
+ * - `basis` — B-spline; smoothest and symmetric, but **approximates** (does not
+ *   touch points). The classic band/envelope curve.
  * - `step` — right-angle steps.
  */
 export type Curve = 'linear' | 'monotone' | 'natural' | 'basis' | 'step';

@@ -203,14 +203,14 @@ export const RollingPercentiles: Story = {
               lower="p5"
               upper="p95"
               as="outer"
-              curve="monotone"
+              curve="natural"
             />
             <BandChart
               series={b}
               lower="p25"
               upper="p75"
               as="inner"
-              curve="monotone"
+              curve="natural"
             />
             <LineChart series={b} column="p50" as="foam" curve="monotone" />
           </Layers>

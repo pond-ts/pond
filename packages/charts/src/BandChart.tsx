@@ -28,8 +28,10 @@ export interface BandChartProps<S extends SeriesSchema> {
   axis?: string;
   /**
    * Render-time edge interpolation — both edges drawn with this curve. **Omitted
-   * ⇒ `'linear'`.** `'basis'`/`'monotone'` smooth a sparse aggregated envelope
-   * (RTC's `interpolation`); denoise the underlying values with `smooth()`.
+   * ⇒ `'linear'`.** Prefer a **symmetric** curve (`'natural'`/`'basis'`) to
+   * smooth a sparse aggregated envelope (RTC's `interpolation`) — `'monotone'`
+   * assumes increasing x and smooths the right→left lower edge asymmetrically.
+   * Denoise the underlying values with `smooth()`, not this.
    */
   curve?: Curve;
   /**
