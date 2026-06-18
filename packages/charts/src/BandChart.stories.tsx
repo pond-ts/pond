@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { TimeSeries } from 'pond-ts';
+import { Sequence, TimeSeries } from 'pond-ts';
 import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
@@ -143,6 +143,64 @@ export const SanFranciscoTemperature: Story = {
           <YAxis id="degF" label="°F" />
           <Layers>
             <BandChart series={sf} lower="low" upper="high" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * The real pond pipeline: a noisy raw metric rolled up into percentiles, fed to
+ * the composed two-tone band — no hand-rolled percentiles. The band columns come
+ * from `rolling(Sequence.every('2m'), '5m', { p5…p95 })`, which returns a
+ * chart-ready `TimeSeries` keyed by the 2-minute grid; the reducers live in the
+ * data layer (pond), the view just composes. (The *value-axis* / pace variant
+ * uses `rollingByColumn` — records over a numeric axis — and lands with the pace
+ * axis later.)
+ */
+function rollingBand() {
+  const N = 240;
+  const STEP = 15_000; // one raw sample / 15s over an hour
+  const rows: Array<[number, number]> = [];
+  for (let i = 0; i < N; i += 1) {
+    // Deterministic "noise": a slow trend + faster wiggles so each rolling
+    // window has real spread (→ a visible percentile envelope).
+    const slow = 50 + 20 * Math.sin(i / 40);
+    const fast =
+      10 * Math.sin(i * 1.3) + 6 * Math.sin(i * 2.7) + 4 * Math.sin(i * 0.7);
+    rows.push([BASE + i * STEP, slow + fast]);
+  }
+  const raw = new TimeSeries({
+    name: 'raw',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'metric', kind: 'number' },
+    ] as const,
+    rows,
+  });
+  return raw.rolling(Sequence.every('2m'), '5m', {
+    p5: { from: 'metric', using: 'p5' },
+    p25: { from: 'metric', using: 'p25' },
+    p50: { from: 'metric', using: 'p50' },
+    p75: { from: 'metric', using: 'p75' },
+    p95: { from: 'metric', using: 'p95' },
+  });
+}
+
+export const RollingPercentiles: Story = {
+  render: () => {
+    const b = rollingBand();
+    const begins = b.keyColumn().begin;
+    const timeRange: [number, number] = [begins[0]!, begins[b.length - 1]!];
+    return (
+      <ChartContainer timeRange={timeRange} width={560} theme={estelaTheme}>
+        <ChartRow height={240}>
+          <YAxis id="v" label="v" />
+          <Layers>
+            <BandChart series={b} lower="p5" upper="p95" as="outer" />
+            <BandChart series={b} lower="p25" upper="p75" as="inner" />
+            <LineChart series={b} column="p50" as="foam" />
           </Layers>
         </ChartRow>
       </ChartContainer>
