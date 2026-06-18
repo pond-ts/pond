@@ -92,17 +92,18 @@ export interface RowFrame {
   /** The axis a layer uses when it names none (the first declared, or implicit). */
   readonly defaultAxisId: string;
   /**
-   * Register or **update** an axis, keyed by a stable per-instance `id`. Update
+   * Register or **update** an axis, keyed by a stable per-instance slot key (a
+   * `Symbol` from `useSlotKey` — instance identity, not the data `id`). Update
    * is in place — the entry keeps its slot — so a `min`/`max`/`side` change
    * doesn't reorder the axes (the first declared stays the default). Pair with
-   * `unregisterAxis(id)` on unmount only.
+   * `unregisterAxis(key)` on unmount only.
    */
-  registerAxis(id: string, spec: AxisSpec): void;
-  unregisterAxis(id: string): void;
-  /** Register or update a draw layer by stable `id`; in-place so a series/style
-   *  change keeps the layer's z-slot. Pair with `unregisterLayer` on unmount. */
-  registerLayer(id: string, entry: LayerEntry): void;
-  unregisterLayer(id: string): void;
+  registerAxis(key: symbol, spec: AxisSpec): void;
+  unregisterAxis(key: symbol): void;
+  /** Register or update a draw layer by stable slot key; in-place so a
+   *  series/style change keeps the layer's z-slot. Unregister on unmount. */
+  registerLayer(key: symbol, entry: LayerEntry): void;
+  unregisterLayer(key: symbol): void;
   /** Draw layers in stable declaration order — the z-stack, first at the back. */
   readonly layers: readonly LayerEntry[];
 }
@@ -113,12 +114,12 @@ export const RowContext = createContext<RowFrame | null>(null);
  * The registry a {@link Layers} exposes to its child draw layers — the boundary
  * that makes a layer a layer (children here register; a layer outside `<Layers>`
  * errors). Forwards to the row's layer registry; layers are keyed by a stable
- * per-instance `id` so re-registering on a prop change updates in place rather
- * than reordering the z-stack.
+ * per-instance slot key (`useSlotKey`) so re-registering on a prop change
+ * updates in place rather than reordering the z-stack.
  */
 export interface LayerRegistry {
-  registerLayer(id: string, entry: LayerEntry): void;
-  unregisterLayer(id: string): void;
+  registerLayer(key: symbol, entry: LayerEntry): void;
+  unregisterLayer(key: symbol): void;
 }
 
 export const LayersContext = createContext<LayerRegistry | null>(null);

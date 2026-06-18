@@ -54,32 +54,32 @@ export function ChartRow({ height, children }: ChartRowProps) {
   // across updates; only mount/unmount reorders. (registerAxis/Layer return
   // void and update in place — *not* unregister-and-append, which would let a
   // min/max or series change silently rebind axes / reorder the z-stack.)
-  const [axes, setAxes] = useState<ReadonlyMap<string, AxisSpec>>(
+  const [axes, setAxes] = useState<ReadonlyMap<symbol, AxisSpec>>(
     () => new Map(),
   );
-  const [layers, setLayers] = useState<ReadonlyMap<string, LayerEntry>>(
+  const [layers, setLayers] = useState<ReadonlyMap<symbol, LayerEntry>>(
     () => new Map(),
   );
 
-  const registerAxis = useCallback((id: string, spec: AxisSpec) => {
-    setAxes((m) => new Map(m).set(id, spec));
+  const registerAxis = useCallback((key: symbol, spec: AxisSpec) => {
+    setAxes((m) => new Map(m).set(key, spec));
   }, []);
-  const unregisterAxis = useCallback((id: string) => {
+  const unregisterAxis = useCallback((key: symbol) => {
     setAxes((m) => {
-      if (!m.has(id)) return m;
+      if (!m.has(key)) return m;
       const next = new Map(m);
-      next.delete(id);
+      next.delete(key);
       return next;
     });
   }, []);
-  const registerLayer = useCallback((id: string, entry: LayerEntry) => {
-    setLayers((m) => new Map(m).set(id, entry));
+  const registerLayer = useCallback((key: symbol, entry: LayerEntry) => {
+    setLayers((m) => new Map(m).set(key, entry));
   }, []);
-  const unregisterLayer = useCallback((id: string) => {
+  const unregisterLayer = useCallback((key: symbol) => {
     setLayers((m) => {
-      if (!m.has(id)) return m;
+      if (!m.has(key)) return m;
       const next = new Map(m);
-      next.delete(id);
+      next.delete(key);
       return next;
     });
   }, []);

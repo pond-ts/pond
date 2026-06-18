@@ -1,8 +1,9 @@
-import { useContext, useEffect, useId, useMemo } from 'react';
+import { useContext, useEffect, useMemo } from 'react';
 import type { SeriesSchema, TimeSeries } from 'pond-ts';
 import { fromTimeSeries } from './data.js';
 import { drawLine, yExtent } from './line.js';
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
+import { useSlotKey } from './use-slot-key.js';
 
 export interface LineChartProps<S extends SeriesSchema> {
   /** The source series. Its key column supplies the time axis. */
@@ -62,15 +63,16 @@ export function LineChart<S extends SeriesSchema>({
     }),
     [cs, style, axis],
   );
-  // A stable per-instance slot key keeps this layer's z-position fixed: a series
-  // or style change updates the slot in place rather than re-appending (which
-  // would jump the layer to the front of the z-stack on every live update).
-  const slotId = useId();
+  // A stable per-instance slot (see useSlotKey) keeps this layer's z-position
+  // fixed: a series or style change updates the slot in place rather than
+  // re-appending (which would jump the layer to the front of the z-stack on
+  // every live update).
+  const slot = useSlotKey();
   // Unregister on unmount only (stable deps); register + update in place.
-  useEffect(() => () => layers.unregisterLayer(slotId), [layers, slotId]);
+  useEffect(() => () => layers.unregisterLayer(slot), [layers, slot]);
   useEffect(() => {
-    layers.registerLayer(slotId, entry);
-  }, [layers, slotId, entry]);
+    layers.registerLayer(slot, entry);
+  }, [layers, slot, entry]);
 
   return null;
 }
