@@ -112,6 +112,33 @@ export const DualAxis: Story = {
 };
 
 /**
+ * **Proof that each line is bound to its own axis's scale.** The *same* series
+ * (values ~2–22) is drawn twice: once against a left `0–25` axis, once against a
+ * right `0–100` axis. Identical data, two scales → the `0–25` line rides high
+ * (22 is near the top of 25) while the `0–100` line sits low (22 is ~a fifth up
+ * 100). If the `axis` binding were broken — both lines reading one scale — the
+ * two curves would overlap exactly; their divergence is the test. (`DualAxis`
+ * can't show this: each line auto-fits, so both fill the plot regardless.)
+ */
+export const SameSeriesTwoAxes: Story = {
+  render: () => {
+    const series = demo(0, 10, 12); // one series, values ~2–22
+    return (
+      <ChartContainer timeRange={TIME_RANGE} width={560}>
+        <ChartRow height={240}>
+          <YAxis id="zoomed" label="0–25" min={0} max={25} />
+          <Layers>
+            <LineChart series={series} column="v" axis="zoomed" />
+            <LineChart series={series} column="v" axis="full" as="secondary" />
+          </Layers>
+          <YAxis id="full" side="right" label="0–100" min={0} max={100} />
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
  * Three stacked rows on one shared time axis — the canonical dashboard. Each row
  * auto-fits its own y-scale; the single time axis is drawn once at the bottom.
  */

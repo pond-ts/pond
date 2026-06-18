@@ -16,6 +16,7 @@ const cases: ReadonlyArray<readonly [id: string, file: string]> = [
   ['layout--single-row', 'layout-single-row.png'],
   ['layout--left-axis', 'layout-left-axis.png'],
   ['layout--dual-axis', 'layout-dual-axis.png'],
+  ['layout--same-series-two-axes', 'layout-same-series-two-axes.png'],
   ['layout--multi-row', 'layout-multi-row.png'],
   ['layout--varying-gutters', 'layout-varying-gutters.png'],
   ['layout--estela-shaped', 'layout-estela-shaped.png'],
