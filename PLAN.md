@@ -98,7 +98,7 @@ best-effort.
   (above) against a trivial example, _before_ component work, so M1's
   `LineChart` is built test-first and becomes the template every later component
   copies. Adds the CI browser-test job + the baseline-update workflow.
-- **M1 — rendering spine.** ✅ Built 2026-06-17 (PR pending). `fromTimeSeries`
+- **M1 — rendering spine.** ✅ Built 2026-06-17, merged (#241). `fromTimeSeries`
   adapter + `ChartContainer` (time axis) / `ChartRow` (y-domain + canvas +
   draw-layer registry) / `LineChart` (gap-aware line), d3-scale. Renders a pond
   `TimeSeries` → canvas line end-to-end with the coast reading as a break, not a
@@ -115,8 +115,8 @@ best-effort.
   fix candidates in
   [`docs/notes/charts-m1-friction.md`](docs/notes/charts-m1-friction.md); this
   is the top charts→core carry-forward.
-- **M2 — axes + theme.** ✅ Built 2026-06-17 (branch `feat/charts-m2-axes-theme`,
-  PR pending). `YAxis` (per-axis auto-fit domain, the widen-not-cap trap; DOM
+- **M2 — axes + theme.** ✅ Built 2026-06-17, merged 2026-06-18 (#242).
+  `YAxis` (per-axis auto-fit domain, the widen-not-cap trap; DOM
   gutter chrome) + wall-clock `scaleTime` x-axis + the `ChartTheme` system
   (`defaultTheme` + `estelaTheme`) + dual y-axis + gridlines. Six Layout stories
   (SingleRow / LeftAxis / DualAxis / MultiRow / VaryingGutters / EstelaShaped)
@@ -187,8 +187,25 @@ best-effort.
     feeling out the surface; estela adoption decides whether charts owns the
     registry or the app provides it. The per-chart `as` prop is the primitive
     either way.
-- **M3 — `BandChart` + variance underlay.** Two-tone band from `rollingByColumn`
-  percentiles + `{at}` grid; gap-aware smooth wired into centerline + edges.
+- **M3 — `BandChart` + variance underlay.** ✅ Built 2026-06-18 (branch
+  `feat/charts-m3-band`). The variance band as **composed** primitives — two
+  single-band `<BandChart lower upper>` (gap-aware filled envelope) + a
+  `<LineChart>` centerline in the z-stack, *not* a bundled outer/inner/center
+  prop (pjm17971's call, weighed against RTC's `aggregation`). Slices: M3.1 band
+  spine + theme band tokens; M3.2 real `rolling` percentile pipeline (the chart
+  consumes pond-computed columns); M3.3 draw primitives on **d3-shape**
+  (`line`/`area`, `.defined` gaps) + a `curve` prop (RTC's `interpolation`); plus
+  a d3 SF-temperature real-data baseline and a gap-aware `smooth(missing:'skip')`
+  story.
+  - **Band-data decision.** Reducers live **upstream in pond**, not a chart prop
+    (more pond-oriented than RTC's bundled `aggregation`).
+    `rolling(sequence, window, mapping)` returns a chart-ready `TimeSeries` for a
+    **time**-window band; `rollingByColumn` (records over a numeric axis) is the
+    **value-axis** (pace) tool → a records→`TimeSeries` gather is the carry-forward
+    for the pace axis.
+  - **Two smoothing axes, kept distinct.** `curve` = view-layer d3 path
+    interpolation; pond `smooth()` = data-layer denoise, gap-aware via
+    `missing:'skip'`.
 - **M4 — interactions.** Pan / zoom (controlled + uncontrolled), brush, scrub
   readout, cursor sync across rows; chunked Path2D cache invalidation on scale
   change.
