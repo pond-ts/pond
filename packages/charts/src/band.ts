@@ -1,3 +1,4 @@
+import { area as d3area, curveLinear, type CurveFactory } from 'd3-shape';
 import type { BandSeries } from './data.js';
 import type { Scale } from './line.js';
 import type { BandStyle } from './theme.js';
@@ -23,15 +24,18 @@ export function bandExtent(band: BandSeries): [number, number] | null {
 }
 
 /**
- * Fill the variance envelope between `band.lower` and `band.upper`, mapping
- * data→pixels through `xScale`/`yScale`.
+ * Fill the variance envelope between `band.lower` and `band.upper`, connecting
+ * edges with `curve` (d3-shape; default linear).
  *
- * **Gap-aware** (`docs/rfcs/charts.md` trap #2): a sample counts only where both
- * edges are finite. Each contiguous finite run is filled as its own closed
- * polygon — `upper` left→right, then `lower` right→left — so a gap breaks the
- * fill rather than bridging it (one `NaN` edge would otherwise pull the polygon
- * across the hole). `globalAlpha` carries the fill opacity and is restored so it
- * doesn't leak into later layers.
+ * Built on d3-shape's `area()` (`y0`=lower, `y1`=upper). **Gap-aware** via
+ * `.defined` — a sample counts only where both edges are finite, so a gap ends
+ * the current subpath and the next finite run starts a fresh one; a single fill
+ * paints all subpaths, and the envelope never bridges the hole
+ * (`docs/rfcs/charts.md` trap #2). `globalAlpha` carries the opacity and is
+ * restored so it doesn't leak into later layers.
+ *
+ * `band.lower` (a `Float64Array`) is the datum iterable; every accessor reads
+ * by index, so there's no per-point object allocation.
  */
 export function drawBand(
   ctx: CanvasRenderingContext2D,
@@ -39,30 +43,21 @@ export function drawBand(
   xScale: Scale,
   yScale: Scale,
   style: BandStyle,
+  curve: CurveFactory = curveLinear,
 ): void {
+  const gen = d3area<number>()
+    .defined((_, i) => isFinitePair(band, i))
+    .x((_, i) => xScale(band.x[i]!))
+    .y0((_, i) => yScale(band.lower[i]!))
+    .y1((_, i) => yScale(band.upper[i]!))
+    .curve(curve)
+    .context(ctx);
   ctx.save();
   ctx.fillStyle = style.fill;
   ctx.globalAlpha = style.opacity;
-  let i = 0;
-  while (i < band.length) {
-    if (!isFinitePair(band, i)) {
-      i += 1;
-      continue;
-    }
-    const start = i;
-    while (i < band.length && isFinitePair(band, i)) i += 1;
-    const end = i; // run is [start, end)
-    ctx.beginPath();
-    ctx.moveTo(xScale(band.x[start]!), yScale(band.upper[start]!));
-    for (let j = start + 1; j < end; j += 1) {
-      ctx.lineTo(xScale(band.x[j]!), yScale(band.upper[j]!));
-    }
-    for (let j = end - 1; j >= start; j -= 1) {
-      ctx.lineTo(xScale(band.x[j]!), yScale(band.lower[j]!));
-    }
-    ctx.closePath();
-    ctx.fill();
-  }
+  ctx.beginPath();
+  gen(band.lower);
+  ctx.fill();
   ctx.restore();
 }
 

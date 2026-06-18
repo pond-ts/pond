@@ -43,7 +43,7 @@ describe('drawBand', () => {
     ]);
   });
 
-  it('breaks into a separate fill per contiguous run, not across the gap', () => {
+  it('breaks the envelope at a gap — a fresh subpath each side, one fill', () => {
     const { ctx, calls } = recordingContext();
     // gap at index 2 → two runs: [0,1] and [3]
     drawBand(
@@ -53,8 +53,10 @@ describe('drawBand', () => {
       identity,
       style,
     );
-    expect(calls.filter((c) => c.name === 'fill')).toHaveLength(2);
-    expect(calls.filter((c) => c.name === 'beginPath')).toHaveLength(2);
+    // d3-shape fills one path; each run is its own subpath (a fresh moveTo), so
+    // the gap is a break, not a fill bridging it.
+    expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(2);
+    expect(calls.filter((c) => c.name === 'fill')).toHaveLength(1);
   });
 
   it('maps edges through the scales', () => {
@@ -87,7 +89,7 @@ describe('drawBand', () => {
     expect(names[names.length - 1]).toBe('restore');
   });
 
-  it('fills nothing (but still brackets) when no sample is finite', () => {
+  it('emits no path when no sample is finite (still brackets)', () => {
     const { ctx, calls } = recordingContext();
     drawBand(
       ctx,
@@ -96,9 +98,14 @@ describe('drawBand', () => {
       identity,
       style,
     );
-    expect(calls.filter((c) => c.name === 'fill')).toHaveLength(0);
+    // Empty path: no vertices. The fill runs on an empty path → paints nothing.
+    expect(
+      calls.filter((c) => c.name === 'moveTo' || c.name === 'lineTo'),
+    ).toEqual([]);
     expect(calls.filter((c) => c.type === 'call').map((c) => c.name)).toEqual([
       'save',
+      'beginPath',
+      'fill',
       'restore',
     ]);
   });

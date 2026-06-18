@@ -198,9 +198,21 @@ export const RollingPercentiles: Story = {
         <ChartRow height={240}>
           <YAxis id="v" label="v" />
           <Layers>
-            <BandChart series={b} lower="p5" upper="p95" as="outer" />
-            <BandChart series={b} lower="p25" upper="p75" as="inner" />
-            <LineChart series={b} column="p50" as="foam" />
+            <BandChart
+              series={b}
+              lower="p5"
+              upper="p95"
+              as="outer"
+              curve="monotone"
+            />
+            <BandChart
+              series={b}
+              lower="p25"
+              upper="p75"
+              as="inner"
+              curve="monotone"
+            />
+            <LineChart series={b} column="p50" as="foam" curve="monotone" />
           </Layers>
         </ChartRow>
       </ChartContainer>

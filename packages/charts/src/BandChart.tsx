@@ -2,6 +2,7 @@ import { useContext, useEffect, useMemo } from 'react';
 import type { SeriesSchema, TimeSeries } from 'pond-ts';
 import { bandFromTimeSeries } from './data.js';
 import { bandExtent, drawBand } from './band.js';
+import { resolveCurve, type Curve } from './curve.js';
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
 import { useSlotKey } from './use-slot-key.js';
 
@@ -25,6 +26,12 @@ export interface BandChartProps<S extends SeriesSchema> {
    * `as` picks the *style*. **Omitted ⇒ the row's default axis.**
    */
   axis?: string;
+  /**
+   * Render-time edge interpolation — both edges drawn with this curve. **Omitted
+   * ⇒ `'linear'`.** `'basis'`/`'monotone'` smooth a sparse aggregated envelope
+   * (RTC's `interpolation`); denoise the underlying values with `smooth()`.
+   */
+  curve?: Curve;
   /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
@@ -55,6 +62,7 @@ export function BandChart<S extends SeriesSchema>({
   upper,
   as: semantic,
   axis,
+  curve,
   index = 0,
 }: BandChartProps<S>) {
   const container = useContext(ContainerContext);
@@ -74,16 +82,18 @@ export function BandChart<S extends SeriesSchema>({
   const { band } = container.theme;
   const style =
     (semantic !== undefined ? band[semantic] : undefined) ?? band.default;
+  const curveFactory = resolveCurve(curve);
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
         yExtent: () => bandExtent(bs),
-        draw: (ctx, xScale, yScale) => drawBand(ctx, bs, xScale, yScale, style),
+        draw: (ctx, xScale, yScale) =>
+          drawBand(ctx, bs, xScale, yScale, style, curveFactory),
       },
       axisId: axis,
       index,
     }),
-    [bs, style, axis, index],
+    [bs, style, curveFactory, axis, index],
   );
   // Stable per-instance slot (see useSlotKey): keeps this band's z-position +
   // identity across prop updates; the injected index drives the sort.

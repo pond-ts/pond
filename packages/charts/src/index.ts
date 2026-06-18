@@ -36,5 +36,7 @@ export type { BandChartProps } from './BandChart.js';
 export { fromTimeSeries, bandFromTimeSeries } from './data.js';
 export type { ChartSeries, BandSeries } from './data.js';
 
+export type { Curve } from './curve.js';
+
 export { defaultTheme, estelaTheme } from './theme.js';
 export type { ChartTheme, LineStyle, BandStyle } from './theme.js';
