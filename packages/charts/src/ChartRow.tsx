@@ -1,9 +1,13 @@
 import {
+  Children,
+  cloneElement,
+  isValidElement,
   useCallback,
   useContext,
   useEffect,
   useMemo,
   useState,
+  type ReactElement,
   type ReactNode,
 } from 'react';
 import { scaleLinear, type ScaleLinear } from 'd3-scale';
@@ -84,15 +88,19 @@ export function ChartRow({ height, children }: ChartRowProps) {
     });
   }, []);
 
-  // Layers in stable declaration order (the z-stack).
-  const layerList = useMemo(() => Array.from(layers.values()), [layers]);
+  // Layers in declaration order (the z-stack) — sorted by their injected JSX
+  // index, so order follows the markup regardless of mount timing.
+  const layerList = useMemo(
+    () => Array.from(layers.values()).sort((a, b) => a.index - b.index),
+    [layers],
+  );
 
-  // Declared axes (stable declaration order), or a single implicit auto-domain
-  // axis (no gutter) so a row with no <YAxis> still scales — M1/M2 behaviour.
+  // Declared axes (in declaration order, by injected index), or a single
+  // implicit auto-domain axis (no gutter) so a row with no <YAxis> still scales.
   const effectiveAxes = useMemo<readonly AxisSpec[]>(
     () =>
       axes.size > 0
-        ? Array.from(axes.values())
+        ? Array.from(axes.values()).sort((a, b) => a.index - b.index)
         : [
             {
               id: IMPLICIT_AXIS_ID,
@@ -100,6 +108,7 @@ export function ChartRow({ height, children }: ChartRowProps) {
               width: 0,
               min: undefined,
               max: undefined,
+              index: 0,
             },
           ],
     [axes],
@@ -175,6 +184,15 @@ export function ChartRow({ height, children }: ChartRowProps) {
   const leftSpacer = container.leftGutter - ownLeft;
   const rightSpacer = container.rightGutter - ownRight;
 
+  // Inject each direct child's JSX position so axes register their declaration
+  // order (the default-axis source). `<Layers>` receives an index too (harmless
+  // — it's not an axis) and injects its own into the draw layers.
+  const indexedChildren = Children.map(children, (child, index) =>
+    isValidElement(child)
+      ? cloneElement(child as ReactElement<{ index?: number }>, { index })
+      : child,
+  );
+
   return (
     <RowContext.Provider value={frame}>
       <div
@@ -186,7 +204,7 @@ export function ChartRow({ height, children }: ChartRowProps) {
         }}
       >
         {leftSpacer > 0 && <div style={{ flex: `0 0 ${leftSpacer}px` }} />}
-        {children}
+        {indexedChildren}
         {rightSpacer > 0 && <div style={{ flex: `0 0 ${rightSpacer}px` }} />}
       </div>
     </RowContext.Provider>

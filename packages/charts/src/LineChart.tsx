@@ -25,6 +25,11 @@ export interface LineChartProps<S extends SeriesSchema> {
    * default axis** (the first declared, or the implicit auto-domain axis).
    */
   axis?: string;
+  /**
+   * @internal Declaration position among the `<Layers>` children, injected by
+   * `Layers` so z-order follows JSX order. Do not set.
+   */
+  index?: number;
 }
 
 /**
@@ -38,6 +43,7 @@ export function LineChart<S extends SeriesSchema>({
   column,
   as: semantic,
   axis,
+  index = 0,
 }: LineChartProps<S>) {
   const container = useContext(ContainerContext);
   if (container === null) {
@@ -60,8 +66,9 @@ export function LineChart<S extends SeriesSchema>({
         draw: (ctx, xScale, yScale) => drawLine(ctx, cs, xScale, yScale, style),
       },
       axisId: axis,
+      index,
     }),
-    [cs, style, axis],
+    [cs, style, axis, index],
   );
   // A stable per-instance slot (see useSlotKey) keeps this layer's z-position
   // fixed: a series or style change updates the slot in place rather than

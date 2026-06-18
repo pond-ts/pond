@@ -90,4 +90,30 @@ describe('registry order stability', () => {
     rerender(tree(mk([5, 6, 7]))); // new series object for the FIRST layer only
     expect(last(spy).order).toEqual(['a', 'b']); // z-order held (not ['b','a'])
   });
+
+  it('orders layers by declaration position, not mount order', () => {
+    const spy = vi.fn();
+    const sA = mk([1, 2, 3]);
+    const sM = mk([4, 5, 6]);
+    const sB = mk([7, 8, 9]);
+    const tree = (showMiddle: boolean) => (
+      <ChartContainer timeRange={[0, 3]} width={300}>
+        <ChartRow height={100}>
+          <Layers>
+            <LineChart series={sA} column="v" axis="a" />
+            {showMiddle && <LineChart series={sM} column="v" axis="m" />}
+            <LineChart series={sB} column="v" axis="b" />
+          </Layers>
+          <Probe spy={spy} />
+        </ChartRow>
+      </ChartContainer>
+    );
+    const { rerender } = render(tree(false));
+    expect(last(spy).order).toEqual(['a', 'b']);
+
+    spy.mockClear();
+    rerender(tree(true)); // 'm' mounts LAST but is declared between a and b
+    // Slots into its JSX position, not appended on top (which mount order gives).
+    expect(last(spy).order).toEqual(['a', 'm', 'b']);
+  });
 });

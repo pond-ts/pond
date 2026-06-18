@@ -66,6 +66,13 @@ export interface LayerEntry {
    * `<YAxis>` still binds to it.
    */
   readonly axisId: string | undefined;
+  /**
+   * Declaration position among the `<Layers>` children, injected by the parent
+   * (see `Layers`). The row sorts layers by this for z-order, so the stack
+   * follows JSX order regardless of mount timing — a layer toggled in between
+   * two others slots into place rather than landing on top.
+   */
+  readonly index: number;
 }
 
 /** A y-axis declared in a {@link ChartRow} via `<YAxis>`. */
@@ -77,6 +84,12 @@ export interface AxisSpec {
   /** Explicit domain bounds, or `undefined` to auto-fit linked layers. */
   readonly min: number | undefined;
   readonly max: number | undefined;
+  /**
+   * Declaration position among the row's children, injected by `ChartRow`. The
+   * row sorts axes by this, so the **first declared** axis is the default
+   * regardless of which axis last re-rendered.
+   */
+  readonly index: number;
 }
 
 /**

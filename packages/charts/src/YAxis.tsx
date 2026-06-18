@@ -19,6 +19,11 @@ export interface YAxisProps {
   max?: number;
   /** Gutter width in CSS pixels (default 50). */
   width?: number;
+  /**
+   * @internal Declaration position among the row's children, injected by
+   * `ChartRow` so the first-declared axis stays the default. Do not set.
+   */
+  index?: number;
 }
 
 const DEFAULT_WIDTH = 50;
@@ -39,6 +44,7 @@ export function YAxis({
   min,
   max,
   width = DEFAULT_WIDTH,
+  index = 0,
 }: YAxisProps) {
   const container = useContext(ContainerContext);
   if (container === null) {
@@ -50,8 +56,8 @@ export function YAxis({
   }
 
   const spec = useMemo<AxisSpec>(
-    () => ({ id, side, width, min, max }),
-    [id, side, width, min, max],
+    () => ({ id, side, width, min, max, index }),
+    [id, side, width, min, max, index],
   );
   // A stable per-instance slot (see useSlotKey) keeps this axis in a fixed
   // registry position, so a min/max/side change updates in place rather than

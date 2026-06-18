@@ -1,4 +1,13 @@
-import { useCallback, useContext, useMemo, type ReactNode } from 'react';
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  useCallback,
+  useContext,
+  useMemo,
+  type ReactElement,
+  type ReactNode,
+} from 'react';
 import { Canvas } from './Canvas.js';
 import { drawGrid } from './grid.js';
 import {
@@ -24,9 +33,12 @@ export interface LayersProps {
  *
  * **Z-order — declaration order, last child on top** (SVG / DOM / RTC). A row is
  * authored back-to-front: `<BandChart/>` then `<LineChart/>` puts the line over
- * its band. Layers register into a stable, id-keyed slot, so a series/style/prop
- * change updates in place and the z-order holds (it doesn't jump to the front on
- * every update — the trap that bites live charts).
+ * its band. Order comes from each child's **injected JSX index** (so the stack
+ * follows the markup regardless of mount timing — a layer toggled in between two
+ * others slots into place, not onto the top), and each layer keeps a stable,
+ * id-keyed slot so a series/style update holds its position (no jump to the
+ * front — the trap that bites live charts). Draw layers must be **direct
+ * children** of `<Layers>` for the index to reach them.
  */
 export function Layers({ children }: LayersProps) {
   const container = useContext(ContainerContext);
@@ -72,10 +84,18 @@ export function Layers({ children }: LayersProps) {
     [layers, yScales, xScale, defaultAxisId, background, gridColor, gridDash],
   );
 
+  // Inject each draw layer's JSX position so it registers its declaration order
+  // (z-stack: lower index at the back), independent of mount timing.
+  const indexedChildren = Children.map(children, (child, index) =>
+    isValidElement(child)
+      ? cloneElement(child as ReactElement<{ index?: number }>, { index })
+      : child,
+  );
+
   return (
     <LayersContext.Provider value={registry}>
       <Canvas width={plotWidth} height={row.height} draw={draw} />
-      {children}
+      {indexedChildren}
     </LayersContext.Provider>
   );
 }
