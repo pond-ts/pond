@@ -145,3 +145,53 @@ export const SemanticFoam: Story = {
     );
   },
 };
+
+/** A noisy signal with a coast (gap, indices 25–31) — raw material for smoothing. */
+function noisy() {
+  const rows: Array<[number, number | undefined]> = [];
+  for (let i = 0; i < N; i += 1) {
+    const inGap = i >= 25 && i < 32;
+    const base = 50 + 24 * Math.sin(i / 9);
+    const wobble = 9 * Math.sin(i * 1.7) + 5 * Math.sin(i * 3.1);
+    rows.push([BASE + i * STEP, inGap ? undefined : base + wobble]);
+  }
+  return new TimeSeries({
+    name: 'noisy',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'v', kind: 'number', required: false },
+    ] as const,
+    rows: rows as never,
+  });
+}
+
+/**
+ * Gap-aware data smoothing — and how it differs from `curve`. The faint line is
+ * the raw noisy signal (with a coast); the bright line is
+ * `smooth('v', 'movingAverage', { window: '5m', missing: 'skip' })` — denoised
+ * **in the data**, then rendered *linear* (the smoothness is the values, not the
+ * path). `missing:'skip'` keeps the coast a break instead of fabricating across
+ * it (`'bridge'`, the default, would join it). So: `curve` shapes the path,
+ * `smooth` reshapes the values — this is the latter, the RFC's "gap-aware
+ * smooth" (it applies the same way to a band's edges).
+ */
+export const GapAwareSmooth: Story = {
+  render: () => {
+    const sm = noisy().smooth('v', 'movingAverage', {
+      window: '5m',
+      alignment: 'centered',
+      missing: 'skip',
+      output: 'vSmooth',
+    });
+    return (
+      <ChartContainer timeRange={TIME_RANGE} width={520} theme={foamTheme}>
+        <ChartRow height={220}>
+          <Layers>
+            <LineChart series={sm} column="v" />
+            <LineChart series={sm} column="vSmooth" as="foam" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
