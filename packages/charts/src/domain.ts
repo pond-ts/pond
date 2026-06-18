@@ -34,10 +34,17 @@ export function resolveYDomain(
     dataMax += 1;
   }
 
-  const lo = min ?? dataMin;
+  let lo = min ?? dataMin;
   let hi = max ?? dataMax;
-  // A partial explicit bound can still sit at/above the auto-fit other side
-  // (e.g. explicit min above empty-data's [0,1] max); keep the axis ascending.
-  if (lo >= hi) hi = lo + 1;
+  // A partial explicit bound can sit at/above the auto-fit other side (explicit
+  // min above empty-data's max, or explicit max below the data). Keep the axis
+  // ascending by moving the *auto-fit* side — never discard the caller's
+  // explicit bound. Exactly one side is explicit here: both-explicit returned
+  // early, and a both-auto domain can't invert after the empty/flat guards.
+  if (lo >= hi) {
+    if (min === undefined)
+      lo = hi - 1; // max is explicit → preserve it
+    else hi = lo + 1; // min is explicit → preserve it
+  }
   return [lo, hi];
 }

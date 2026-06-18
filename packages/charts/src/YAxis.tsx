@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo } from 'react';
+import { useContext, useEffect, useId, useMemo } from 'react';
 import { ContainerContext, RowContext, type AxisSpec } from './context.js';
 
 export interface YAxisProps {
@@ -52,11 +52,18 @@ export function YAxis({
     () => ({ id, side, width, min, max }),
     [id, side, width, min, max],
   );
-  // Depend on the *stable* registerAxis (a useCallback), NOT the whole `row`
-  // frame — the frame is recreated on every registration, so depending on it
-  // would re-register in a loop (register → re-render → re-register).
-  const { registerAxis } = row;
-  useEffect(() => registerAxis(spec), [registerAxis, spec]);
+  // A stable per-instance slot key (distinct from the user-facing `id` prop):
+  // it keeps this axis in a fixed registry slot so a `min`/`max`/`side` change
+  // updates in place rather than re-appending (which would move the first axis
+  // behind a later one and silently rebind the row's default-axis charts).
+  const slotId = useId();
+  const { registerAxis, unregisterAxis } = row;
+  // Unregister on unmount only (deps are stable, so cleanup never runs early).
+  useEffect(() => () => unregisterAxis(slotId), [unregisterAxis, slotId]);
+  // Register on mount + update in place on every spec change — no reorder.
+  useEffect(() => {
+    registerAxis(slotId, spec);
+  }, [registerAxis, slotId, spec]);
 
   const { theme } = container;
   const yScale = row.yScales.get(id);

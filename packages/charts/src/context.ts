@@ -91,8 +91,19 @@ export interface RowFrame {
   readonly yScales: ReadonlyMap<string, ScaleLinear<number, number>>;
   /** The axis a layer uses when it names none (the first declared, or implicit). */
   readonly defaultAxisId: string;
-  registerAxis(spec: AxisSpec): () => void;
-  registerLayer(entry: LayerEntry): () => void;
+  /**
+   * Register or **update** an axis, keyed by a stable per-instance `id`. Update
+   * is in place — the entry keeps its slot — so a `min`/`max`/`side` change
+   * doesn't reorder the axes (the first declared stays the default). Pair with
+   * `unregisterAxis(id)` on unmount only.
+   */
+  registerAxis(id: string, spec: AxisSpec): void;
+  unregisterAxis(id: string): void;
+  /** Register or update a draw layer by stable `id`; in-place so a series/style
+   *  change keeps the layer's z-slot. Pair with `unregisterLayer` on unmount. */
+  registerLayer(id: string, entry: LayerEntry): void;
+  unregisterLayer(id: string): void;
+  /** Draw layers in stable declaration order — the z-stack, first at the back. */
   readonly layers: readonly LayerEntry[];
 }
 
@@ -101,10 +112,13 @@ export const RowContext = createContext<RowFrame | null>(null);
 /**
  * The registry a {@link Layers} exposes to its child draw layers — the boundary
  * that makes a layer a layer (children here register; a layer outside `<Layers>`
- * errors). Forwards to the row's layer registry.
+ * errors). Forwards to the row's layer registry; layers are keyed by a stable
+ * per-instance `id` so re-registering on a prop change updates in place rather
+ * than reordering the z-stack.
  */
 export interface LayerRegistry {
-  registerLayer(entry: LayerEntry): () => void;
+  registerLayer(id: string, entry: LayerEntry): void;
+  unregisterLayer(id: string): void;
 }
 
 export const LayersContext = createContext<LayerRegistry | null>(null);

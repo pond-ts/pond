@@ -37,8 +37,14 @@ describe('resolveYDomain', () => {
     expect(resolveYDomain(5, undefined, [null])).toEqual([5, 6]);
   });
 
-  it('keeps ascending when an explicit max sits below flat data', () => {
-    // flat data at 8 → auto lo would be 7; explicit max 5 is below it.
-    expect(resolveYDomain(undefined, 5, [[8, 8]])).toEqual([7, 8]);
+  it('honours an explicit max, pushing the auto-fit lo below it', () => {
+    // flat data at 8 → auto lo 7; explicit max 5 is below it. Preserve max=5
+    // and move lo to 4 (data above 5 is intentionally off the top — that's what
+    // an explicit max means), rather than discarding max and showing [7, 8].
+    expect(resolveYDomain(undefined, 5, [[8, 8]])).toEqual([4, 5]);
+    // max-only, no data: lo auto-fits below the explicit max.
+    expect(resolveYDomain(undefined, 5, [])).toEqual([0, 5]);
+    // max-only, data below the max: lo fits the data, max honoured.
+    expect(resolveYDomain(undefined, 5, [[1, 3]])).toEqual([1, 5]);
   });
 });

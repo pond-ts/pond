@@ -48,24 +48,51 @@ export function ChartRow({ height, children }: ChartRowProps) {
     throw new Error('<ChartRow> must be rendered inside a <ChartContainer>');
   }
 
-  const [axes, setAxes] = useState<readonly AxisSpec[]>([]);
-  const [layers, setLayers] = useState<readonly LayerEntry[]>([]);
+  // Keyed by a stable per-instance id (Map preserves insertion order; setting an
+  // existing key updates in place). So a re-register on a prop change keeps the
+  // entry's slot — the axis-default (first axis) and layer z-order stay stable
+  // across updates; only mount/unmount reorders. (registerAxis/Layer return
+  // void and update in place — *not* unregister-and-append, which would let a
+  // min/max or series change silently rebind axes / reorder the z-stack.)
+  const [axes, setAxes] = useState<ReadonlyMap<string, AxisSpec>>(
+    () => new Map(),
+  );
+  const [layers, setLayers] = useState<ReadonlyMap<string, LayerEntry>>(
+    () => new Map(),
+  );
 
-  const registerAxis = useCallback((spec: AxisSpec) => {
-    setAxes((a) => [...a, spec]);
-    return () => setAxes((a) => a.filter((x) => x !== spec));
+  const registerAxis = useCallback((id: string, spec: AxisSpec) => {
+    setAxes((m) => new Map(m).set(id, spec));
   }, []);
-  const registerLayer = useCallback((entry: LayerEntry) => {
-    setLayers((l) => [...l, entry]);
-    return () => setLayers((l) => l.filter((x) => x !== entry));
+  const unregisterAxis = useCallback((id: string) => {
+    setAxes((m) => {
+      if (!m.has(id)) return m;
+      const next = new Map(m);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+  const registerLayer = useCallback((id: string, entry: LayerEntry) => {
+    setLayers((m) => new Map(m).set(id, entry));
+  }, []);
+  const unregisterLayer = useCallback((id: string) => {
+    setLayers((m) => {
+      if (!m.has(id)) return m;
+      const next = new Map(m);
+      next.delete(id);
+      return next;
+    });
   }, []);
 
-  // Declared axes, or a single implicit auto-domain axis (no gutter) so a row
-  // with no <YAxis> still scales — the M1/M2 behaviour, unchanged.
+  // Layers in stable declaration order (the z-stack).
+  const layerList = useMemo(() => Array.from(layers.values()), [layers]);
+
+  // Declared axes (stable declaration order), or a single implicit auto-domain
+  // axis (no gutter) so a row with no <YAxis> still scales — M1/M2 behaviour.
   const effectiveAxes = useMemo<readonly AxisSpec[]>(
     () =>
-      axes.length > 0
-        ? axes
+      axes.size > 0
+        ? Array.from(axes.values())
         : [
             {
               id: IMPLICIT_AXIS_ID,
@@ -109,7 +136,7 @@ export function ChartRow({ height, children }: ChartRowProps) {
     for (const ax of effectiveAxes) {
       const extents: Array<readonly [number, number] | null> =
         ax.min === undefined || ax.max === undefined
-          ? layers
+          ? layerList
               .filter((entry) => (entry.axisId ?? defaultAxisId) === ax.id)
               .map((entry) => entry.layer.yExtent())
           : [];
@@ -117,7 +144,7 @@ export function ChartRow({ height, children }: ChartRowProps) {
       map.set(ax.id, scaleLinear().domain([lo, hi]).range([height, 0]));
     }
     return map;
-  }, [effectiveAxes, layers, height, defaultAxisId]);
+  }, [effectiveAxes, layerList, height, defaultAxisId]);
 
   const frame = useMemo<RowFrame>(
     () => ({
@@ -125,10 +152,21 @@ export function ChartRow({ height, children }: ChartRowProps) {
       yScales,
       defaultAxisId,
       registerAxis,
+      unregisterAxis,
       registerLayer,
-      layers,
+      unregisterLayer,
+      layers: layerList,
     }),
-    [height, yScales, defaultAxisId, registerAxis, registerLayer, layers],
+    [
+      height,
+      yScales,
+      defaultAxisId,
+      registerAxis,
+      unregisterAxis,
+      registerLayer,
+      unregisterLayer,
+      layerList,
+    ],
   );
 
   // Pad to the container's uniform gutter so this row's plot left-aligns with

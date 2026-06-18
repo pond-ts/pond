@@ -24,8 +24,9 @@ export interface LayersProps {
  *
  * **Z-order — declaration order, last child on top** (SVG / DOM / RTC). A row is
  * authored back-to-front: `<BandChart/>` then `<LineChart/>` puts the line over
- * its band. (Currently registration-order; hardened to a stable slot when M3's
- * overlaid band lands.)
+ * its band. Layers register into a stable, id-keyed slot, so a series/style/prop
+ * change updates in place and the z-order holds (it doesn't jump to the front on
+ * every update — the trap that bites live charts).
  */
 export function Layers({ children }: LayersProps) {
   const container = useContext(ContainerContext);
@@ -38,8 +39,11 @@ export function Layers({ children }: LayersProps) {
   }
 
   const registry = useMemo<LayerRegistry>(
-    () => ({ registerLayer: row.registerLayer }),
-    [row.registerLayer],
+    () => ({
+      registerLayer: row.registerLayer,
+      unregisterLayer: row.unregisterLayer,
+    }),
+    [row.registerLayer, row.unregisterLayer],
   );
 
   const background = container.theme.background;
