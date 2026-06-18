@@ -30,9 +30,13 @@ export { YAxis } from './YAxis.js';
 export type { YAxisProps } from './YAxis.js';
 export { LineChart } from './LineChart.js';
 export type { LineChartProps } from './LineChart.js';
+export { BandChart } from './BandChart.js';
+export type { BandChartProps } from './BandChart.js';
 
-export { fromTimeSeries } from './data.js';
-export type { ChartSeries } from './data.js';
+export { fromTimeSeries, bandFromTimeSeries } from './data.js';
+export type { ChartSeries, BandSeries } from './data.js';
+
+export type { Curve } from './curve.js';
 
 export { defaultTheme, estelaTheme } from './theme.js';
-export type { ChartTheme, LineStyle } from './theme.js';
+export type { ChartTheme, LineStyle, BandStyle } from './theme.js';

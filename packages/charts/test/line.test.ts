@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { drawLine, yExtent } from '../src/line.js';
+import { resolveCurve } from '../src/curve.js';
 import { recordingContext } from './canvas-mock.js';
 import type { ChartSeries } from '../src/data.js';
 
@@ -98,5 +99,19 @@ describe('drawLine', () => {
     expect(
       calls.find((c) => c.type === 'set' && c.name === 'lineWidth')?.args,
     ).toEqual([2.5]);
+  });
+
+  it('draws a curved path (bezier ops) when given a non-linear curve', () => {
+    const { ctx, calls } = recordingContext();
+    drawLine(
+      ctx,
+      cs([0, 1, 2, 3], [1, 3, 1, 3]),
+      identity,
+      identity,
+      style,
+      resolveCurve('basis'),
+    );
+    const ops = calls.filter((c) => c.type === 'call').map((c) => c.name);
+    expect(ops).toContain('bezierCurveTo'); // smooth, not straight lineTo
   });
 });

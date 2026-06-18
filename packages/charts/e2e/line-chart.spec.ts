@@ -20,4 +20,13 @@ test.describe('LineChart', () => {
     await waitForCanvasPaint(canvas);
     await expect(canvas).toHaveScreenshot('linechart-flat.png');
   });
+
+  // Gap-aware data smoothing: the raw noisy line + the smooth(missing:'skip')
+  // line, both breaking at the coast (the denoise-vs-curve distinction).
+  test('renders raw vs gap-aware-smoothed lines', async ({ page }) => {
+    await page.goto(story('charts-linechart--gap-aware-smooth'));
+    const canvas = page.locator('canvas');
+    await waitForCanvasPaint(canvas);
+    await expect(canvas).toHaveScreenshot('linechart-gap-aware-smooth.png');
+  });
 });
