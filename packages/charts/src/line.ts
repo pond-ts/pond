@@ -1,10 +1,5 @@
 import type { ChartSeries } from './data.js';
-
-/** Stroke style for a line layer. */
-export interface LineStyle {
-  stroke: string;
-  strokeWidth: number;
-}
+import type { LineStyle } from './theme.js';
 
 /** Maps a data value to a pixel coordinate (a d3 scale is assignable to this). */
 export type Scale = (value: number) => number;
@@ -58,7 +53,7 @@ export function drawLine(
       penDown = true;
     }
   }
-  ctx.strokeStyle = style.stroke;
-  ctx.lineWidth = style.strokeWidth;
+  ctx.strokeStyle = style.color;
+  ctx.lineWidth = style.width;
   ctx.stroke();
 }

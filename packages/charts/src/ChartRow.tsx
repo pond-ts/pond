@@ -1,96 +1,212 @@
 import {
+  Children,
+  cloneElement,
+  isValidElement,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
+  type ReactElement,
   type ReactNode,
 } from 'react';
-import { scaleLinear } from 'd3-scale';
-import { Canvas } from './Canvas.js';
+import { scaleLinear, type ScaleLinear } from 'd3-scale';
+import { resolveYDomain } from './domain.js';
 import {
   ContainerContext,
   RowContext,
-  type RowLayer,
-  type RowRegistry,
+  type AxisSpec,
+  type GutterReq,
+  type LayerEntry,
+  type RowFrame,
 } from './context.js';
+
+/** Sentinel id for the implicit axis a row gets when no `<YAxis>` is declared. */
+const IMPLICIT_AXIS_ID = '__default__';
 
 export interface ChartRowProps {
   /** Row height in CSS pixels. */
   height: number;
-  /**
-   * Explicit y-domain `[min, max]`. Omitted ⇒ auto-fit to the union of the
-   * row's layers' finite-value extents (a flat line gets ±1 of headroom).
-   */
-  yDomain?: readonly [number, number];
   children?: ReactNode;
 }
 
 /**
- * A horizontal band sharing the container's time axis. Owns the y-domain, a
- * single `<canvas>`, and a draw-layer registry: child layers
- * ({@link LineChart}, …) register via context and are drawn in one canvas pass.
+ * A horizontal band sharing the container's time axis. `ChartRow` owns the
+ * **horizontal layout** (axes left/right around a `<Layers>` plot area) and
+ * coordinates the row's two registries — axes (`<YAxis>`) and draw layers
+ * (`<LineChart>`, registered through `<Layers>`). From the layers it derives a
+ * y-scale **per axis** (each axis auto-fits the layers linked to it, or uses its
+ * explicit `[min, max]`), and provides them via context.
  *
- * **Z-order — declaration order, last child on top.** Layers paint in the order
- * they appear in JSX: the first child renders at the back, the last on top.
- * This matches SVG / DOM document order and react-timeseries-charts, so a row
- * is authored back-to-front (e.g. `<BandChart/>` then `<LineChart/>` puts the
- * line over its band — estela's terrain → bands → lines stack).
+ * The x geometry (plot width, time scale) is shared and lives on the
+ * {@link ChartContainer}: the row reports its per-side gutter need so the
+ * container can reserve a *uniform* gutter, then pads with spacers so its plot
+ * left-aligns with every other row under the one time axis.
  *
- * M1 derives this from registration order, which equals declaration order on
- * mount; a layer that re-registers after any prop change (`series` / `stroke` /
- * `strokeWidth`) currently moves to the front. That's invisible with one layer
- * per row — it's hardened to a stable slot when M3 brings the overlaid variance
- * band in (the first row that actually stacks).
+ * Children lay out left-to-right in author order, so `<YAxis side="left"/>` goes
+ * before `<Layers/>` and `<YAxis side="right"/>` after.
  */
-export function ChartRow({ height, yDomain, children }: ChartRowProps) {
+export function ChartRow({ height, children }: ChartRowProps) {
   const container = useContext(ContainerContext);
   if (container === null) {
     throw new Error('<ChartRow> must be rendered inside a <ChartContainer>');
   }
 
-  const [layers, setLayers] = useState<readonly RowLayer[]>([]);
-  const registry = useMemo<RowRegistry>(
-    () => ({
-      register: (layer) => {
-        setLayers((ls) => [...ls, layer]);
-        return () => setLayers((ls) => ls.filter((l) => l !== layer));
-      },
-    }),
-    [],
+  // Keyed by a stable per-instance id (Map preserves insertion order; setting an
+  // existing key updates in place). So a re-register on a prop change keeps the
+  // entry's slot — the axis-default (first axis) and layer z-order stay stable
+  // across updates; only mount/unmount reorders. (registerAxis/Layer return
+  // void and update in place — *not* unregister-and-append, which would let a
+  // min/max or series change silently rebind axes / reorder the z-stack.)
+  const [axes, setAxes] = useState<ReadonlyMap<symbol, AxisSpec>>(
+    () => new Map(),
+  );
+  const [layers, setLayers] = useState<ReadonlyMap<symbol, LayerEntry>>(
+    () => new Map(),
   );
 
-  const domain = useMemo<[number, number]>(() => {
-    if (yDomain) return [yDomain[0], yDomain[1]];
-    let min = Infinity;
-    let max = -Infinity;
-    for (const layer of layers) {
-      const e = layer.yExtent();
-      if (e) {
-        if (e[0] < min) min = e[0];
-        if (e[1] > max) max = e[1];
-      }
+  const registerAxis = useCallback((key: symbol, spec: AxisSpec) => {
+    setAxes((m) => new Map(m).set(key, spec));
+  }, []);
+  const unregisterAxis = useCallback((key: symbol) => {
+    setAxes((m) => {
+      if (!m.has(key)) return m;
+      const next = new Map(m);
+      next.delete(key);
+      return next;
+    });
+  }, []);
+  const registerLayer = useCallback((key: symbol, entry: LayerEntry) => {
+    setLayers((m) => new Map(m).set(key, entry));
+  }, []);
+  const unregisterLayer = useCallback((key: symbol) => {
+    setLayers((m) => {
+      if (!m.has(key)) return m;
+      const next = new Map(m);
+      next.delete(key);
+      return next;
+    });
+  }, []);
+
+  // Layers in declaration order (the z-stack) — sorted by their injected JSX
+  // index, so order follows the markup regardless of mount timing.
+  const layerList = useMemo(
+    () => Array.from(layers.values()).sort((a, b) => a.index - b.index),
+    [layers],
+  );
+
+  // Declared axes (in declaration order, by injected index), or a single
+  // implicit auto-domain axis (no gutter) so a row with no <YAxis> still scales.
+  const effectiveAxes = useMemo<readonly AxisSpec[]>(
+    () =>
+      axes.size > 0
+        ? Array.from(axes.values()).sort((a, b) => a.index - b.index)
+        : [
+            {
+              id: IMPLICIT_AXIS_ID,
+              side: 'left',
+              width: 0,
+              min: undefined,
+              max: undefined,
+              index: 0,
+            },
+          ],
+    [axes],
+  );
+  const defaultAxisId = effectiveAxes[0]!.id;
+
+  // This row's own per-side gutter (sum of its axis widths each side). Reported
+  // to the container, which reserves the max each side across all rows.
+  const { ownLeft, ownRight } = useMemo(() => {
+    let l = 0;
+    let r = 0;
+    for (const ax of effectiveAxes) {
+      if (ax.side === 'left') l += ax.width;
+      else r += ax.width;
     }
-    if (min === Infinity) return [0, 1]; // no finite data yet
-    if (min === max) return [min - 1, max + 1]; // flat — give it room
-    return [min, max];
-  }, [layers, yDomain]);
+    return { ownLeft: l, ownRight: r };
+  }, [effectiveAxes]);
 
-  const yScale = useMemo(
-    () => scaleLinear().domain(domain).range([height, 0]),
-    [domain, height],
+  const { registerGutter } = container;
+  const gutterReq = useMemo<GutterReq>(
+    () => ({ left: ownLeft, right: ownRight }),
+    [ownLeft, ownRight],
+  );
+  // Depend on the *stable* registerGutter (a useCallback) + the memoized req —
+  // not the container frame, which is recreated whenever the reservation
+  // changes (depending on it would loop register → re-render → re-register).
+  useEffect(() => registerGutter(gutterReq), [registerGutter, gutterReq]);
+
+  // One y-scale per axis. A layer counts toward an axis when its (late-resolved)
+  // axis id matches; `resolveYDomain` handles the auto-fit + empty/flat/inverted
+  // edges. yExtent() is O(points), so only walk the layers when a bound auto-fits.
+  const yScales = useMemo(() => {
+    const map = new Map<string, ScaleLinear<number, number>>();
+    for (const ax of effectiveAxes) {
+      const extents: Array<readonly [number, number] | null> =
+        ax.min === undefined || ax.max === undefined
+          ? layerList
+              .filter((entry) => (entry.axisId ?? defaultAxisId) === ax.id)
+              .map((entry) => entry.layer.yExtent())
+          : [];
+      const [lo, hi] = resolveYDomain(ax.min, ax.max, extents);
+      map.set(ax.id, scaleLinear().domain([lo, hi]).range([height, 0]));
+    }
+    return map;
+  }, [effectiveAxes, layerList, height, defaultAxisId]);
+
+  const frame = useMemo<RowFrame>(
+    () => ({
+      height,
+      yScales,
+      defaultAxisId,
+      registerAxis,
+      unregisterAxis,
+      registerLayer,
+      unregisterLayer,
+      layers: layerList,
+    }),
+    [
+      height,
+      yScales,
+      defaultAxisId,
+      registerAxis,
+      unregisterAxis,
+      registerLayer,
+      unregisterLayer,
+      layerList,
+    ],
   );
 
-  const draw = useCallback(
-    (ctx: CanvasRenderingContext2D) => {
-      for (const layer of layers) layer.draw(ctx, container.xScale, yScale);
-    },
-    [layers, container.xScale, yScale],
+  // Pad to the container's uniform gutter so this row's plot left-aligns with
+  // the others (and with the time axis). Zero on a row that owns the widest
+  // gutter — invisible until rows differ.
+  const leftSpacer = container.leftGutter - ownLeft;
+  const rightSpacer = container.rightGutter - ownRight;
+
+  // Inject each direct child's JSX position so axes register their declaration
+  // order (the default-axis source). `<Layers>` receives an index too (harmless
+  // — it's not an axis) and injects its own into the draw layers.
+  const indexedChildren = Children.map(children, (child, index) =>
+    isValidElement(child)
+      ? cloneElement(child as ReactElement<{ index?: number }>, { index })
+      : child,
   );
 
   return (
-    <RowContext.Provider value={registry}>
-      <Canvas width={container.width} height={height} draw={draw} />
-      {children}
+    <RowContext.Provider value={frame}>
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'row',
+          width: `${container.width}px`,
+          height: `${height}px`,
+        }}
+      >
+        {leftSpacer > 0 && <div style={{ flex: `0 0 ${leftSpacer}px` }} />}
+        {indexedChildren}
+        {rightSpacer > 0 && <div style={{ flex: `0 0 ${rightSpacer}px` }} />}
+      </div>
     </RowContext.Provider>
   );
 }
