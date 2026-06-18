@@ -52,12 +52,14 @@ jobs:
         working-directory: packages/charts
 
       - name: Run Storybook e2e (behavior + visual)
-        # In update_baselines mode, creating a *brand-new* snapshot exits
-        # non-zero (Playwright won't silently pass on first creation). Tolerate
-        # that here so the upload step still runs and we collect the written
-        # PNGs; normal PR runs (update_baselines=false) keep failing on diffs.
-        continue-on-error: ${{ inputs.update_baselines }}
-        run: npm run test:e2e --workspace=@pond-ts/charts ${{ inputs.update_baselines && '-- --update-snapshots' || '' }}
+        # In update_baselines mode, append `|| true`: writing a *brand-new*
+        # snapshot exits non-zero (Playwright won't silently pass on first
+        # creation), which would otherwise skip the upload below. Swallow it so
+        # the freshly-written PNGs always upload. The `||`/`&&` ternary lives in
+        # the inline string (the only context where a `gh -f` boolean input
+        # coerces reliably — `if:`/`continue-on-error:` boolean contexts don't).
+        # Normal PR runs (update_baselines=false) append nothing → diffs fail.
+        run: npm run test:e2e --workspace=@pond-ts/charts ${{ inputs.update_baselines && '-- --update-snapshots || true' || '' }}
 
       - name: Upload regenerated baselines
         if: ${{ inputs.update_baselines }}
