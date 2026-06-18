@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from 'react';
 import { scaleLinear, type ScaleLinear } from 'd3-scale';
+import { resolveYDomain } from './domain.js';
 import {
   ContainerContext,
   RowContext,
@@ -101,34 +102,18 @@ export function ChartRow({ height, children }: ChartRowProps) {
   useEffect(() => registerGutter(gutterReq), [registerGutter, gutterReq]);
 
   // One y-scale per axis. A layer counts toward an axis when its (late-resolved)
-  // axis id matches; an axis with no finite data gets [0, 1], a flat one ±1.
+  // axis id matches; `resolveYDomain` handles the auto-fit + empty/flat/inverted
+  // edges. yExtent() is O(points), so only walk the layers when a bound auto-fits.
   const yScales = useMemo(() => {
     const map = new Map<string, ScaleLinear<number, number>>();
     for (const ax of effectiveAxes) {
-      let lo = ax.min ?? Infinity;
-      let hi = ax.max ?? -Infinity;
-      if (ax.min === undefined || ax.max === undefined) {
-        let min = Infinity;
-        let max = -Infinity;
-        for (const entry of layers) {
-          const id = entry.axisId ?? defaultAxisId;
-          if (id !== ax.id) continue;
-          const e = entry.layer.yExtent();
-          if (e) {
-            if (e[0] < min) min = e[0];
-            if (e[1] > max) max = e[1];
-          }
-        }
-        if (min === Infinity) {
-          min = 0;
-          max = 1;
-        } else if (min === max) {
-          min -= 1;
-          max += 1;
-        }
-        if (ax.min === undefined) lo = min;
-        if (ax.max === undefined) hi = max;
-      }
+      const extents: Array<readonly [number, number] | null> =
+        ax.min === undefined || ax.max === undefined
+          ? layers
+              .filter((entry) => (entry.axisId ?? defaultAxisId) === ax.id)
+              .map((entry) => entry.layer.yExtent())
+          : [];
+      const [lo, hi] = resolveYDomain(ax.min, ax.max, extents);
       map.set(ax.id, scaleLinear().domain([lo, hi]).range([height, 0]));
     }
     return map;
