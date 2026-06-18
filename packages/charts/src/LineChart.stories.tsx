@@ -92,6 +92,7 @@ const darkTheme: ChartTheme = {
     default: { color: '#f59e0b', width: 1.5 },
     context: { color: '#5eb5a6', width: 1.5 },
   },
+  band: { default: { fill: '#f59e0b', opacity: 0.15 } },
   axis: { label: '#94a3b8', grid: '#1e293b', gridDash: [2, 2] },
   font: { family: 'system-ui, sans-serif', size: 11 },
 };
@@ -125,6 +126,7 @@ const foamTheme: ChartTheme = {
     default: { color: '#64748b', width: 1.5 },
     foam: { color: '#ffffff', width: 2 },
   },
+  band: { default: { fill: '#64748b', opacity: 0.15 } },
   axis: { label: '#94a3b8', grid: '#1e293b', gridDash: [2, 2] },
   font: { family: 'system-ui, sans-serif', size: 11 },
 };

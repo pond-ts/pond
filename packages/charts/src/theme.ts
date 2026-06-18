@@ -25,6 +25,16 @@ export interface ChartTheme {
     readonly default: LineStyle;
     readonly [semantic: string]: LineStyle;
   };
+  /**
+   * Map from a band's semantic identifier to its fill style — the variance
+   * underlay ({@link BandChart}). `default` is the fallback; a two-tone spread
+   * is two bands composed in the z-stack (e.g. `outer` p5/p95 + `inner`
+   * p25/p75), each resolving `band[semantic] ?? band.default`.
+   */
+  readonly band: {
+    readonly default: BandStyle;
+    readonly [semantic: string]: BandStyle;
+  };
   /** Axis chrome: tick-label colour, gridline stroke + dash pattern. */
   readonly axis: {
     readonly label: string;
@@ -45,6 +55,12 @@ export interface LineStyle {
   readonly width: number;
 }
 
+/** A resolved band style: fill colour + opacity (0–1) for the variance envelope. */
+export interface BandStyle {
+  readonly fill: string;
+  readonly opacity: number;
+}
+
 /**
  * The neutral default theme. `default` / `primary` match the M1 `LineChart`
  * colour (`#2563eb`) so adopting the theme channel doesn't shift existing
@@ -58,6 +74,11 @@ export const defaultTheme: ChartTheme = {
     primary: { color: '#2563eb', width: 1.5 },
     secondary: { color: '#e8836b', width: 1.5 },
     context: { color: '#5eb5a6', width: 1.5 },
+  },
+  band: {
+    default: { fill: '#2563eb', opacity: 0.15 },
+    outer: { fill: '#2563eb', opacity: 0.1 },
+    inner: { fill: '#2563eb', opacity: 0.2 },
   },
   axis: {
     label: '#64748b',
@@ -85,8 +106,8 @@ export const defaultTheme: ChartTheme = {
  *
  * Chrome: `--es-bg` ground, `--es-ink` gridlines, `--es-slate` labels, and the
  * `--es-font-data` (JetBrains Mono) face for crisp numeric ticks (falls back to
- * `ui-monospace` where the webfont isn't loaded). `elevation` (a reef teal) and
- * the band fills land with `BandChart` in M3.
+ * `ui-monospace` where the webfont isn't loaded). Band fills: `outer`
+ * (`--es-reef`) + `inner` (`--es-shallows`) for the two-tone variance spread.
  */
 export const estelaTheme: ChartTheme = {
   background: '#06191D', // --es-bg
@@ -94,6 +115,11 @@ export const estelaTheme: ChartTheme = {
     default: { color: '#15B3A6', width: 1.5 }, // --es-estela (primary / action)
     foam: { color: '#F1FBF9', width: 2 }, // --es-foam (motion — shared primary trace)
     hr: { color: '#E0B36A', width: 1.5 }, // --es-filament (rare warm accent)
+  },
+  band: {
+    default: { fill: '#45CDBE', opacity: 0.18 }, // --es-shallows
+    outer: { fill: '#7FE2D2', opacity: 0.12 }, // --es-reef (wide p5/p95 spread)
+    inner: { fill: '#45CDBE', opacity: 0.22 }, // --es-shallows (tight p25/p75)
   },
   axis: {
     label: '#4E6B6B', // --es-slate
