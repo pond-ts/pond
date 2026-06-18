@@ -166,11 +166,11 @@ export const VaryingGutters: Story = {
 
 /**
  * The estela shape on `estelaTheme`: a dual-axis activity chart — power (left,
- * `foam`) + heart rate (right, `coral`) — on estela's dark ground with dashed
- * gridlines. The whole look comes from swapping `theme={estelaTheme}`; the
- * chart markup is identical to {@link DualAxis}. This is the "drop-in for
- * estela" proof for M2 (the variance band + elevation `teal` underlay land in
- * M3).
+ * `as="foam"` → `--es-foam`) + heart rate (right, `as="hr"` → the warm
+ * `--es-filament` accent) — on estela's dark ground with dashed gridlines. The
+ * whole look comes from swapping `theme={estelaTheme}`; the chart markup is
+ * identical to {@link DualAxis}. This is the "drop-in for estela" proof for M2
+ * (the variance band + elevation underlay land in M3).
  */
 export const EstelaShaped: Story = {
   render: () => {
@@ -182,7 +182,7 @@ export const EstelaShaped: Story = {
           <YAxis id="power" label="W" />
           <Layers>
             <LineChart series={power} column="v" axis="power" as="foam" />
-            <LineChart series={hr} column="v" axis="hr" as="coral" />
+            <LineChart series={hr} column="v" axis="hr" as="hr" />
           </Layers>
           <YAxis id="hr" side="right" label="bpm" />
         </ChartRow>

@@ -71,31 +71,37 @@ export const defaultTheme: ChartTheme = {
 };
 
 /**
- * The estela theme — estela's fixed role palette as *one theme*, on its dark
- * ground. The role identifiers (`foam` primary group-channel / `coral` HR /
- * `teal` elevation) are the same names estela uses; a chart tags a column with
- * one (`<LineChart as="foam" />`) and the colour lives here, not at the call
- * site. The proving consumer for "target other uses too": the same engine,
- * restyled by swapping this object for {@link defaultTheme}.
+ * The estela theme — estela's real `@estela/ui` palette as *one theme*, on its
+ * dark ground. A chart tags a column with a role (`<LineChart as="foam" />`) and
+ * the colour lives here, not at the call site. The proving consumer for "target
+ * other uses too": the same engine, restyled by swapping this for
+ * {@link defaultTheme}.
  *
- * Colours are representative pending the exact `@estela/ui` palette pinned at
- * M5 parity; the *shape* (roles, dark ground, dashed grid) is what M2 proves.
+ * Line roles map to estela's palette tokens:
+ * - `default` → `--es-estela` `#15B3A6` (primary / action — the brand teal)
+ * - `foam` → `--es-foam` `#F1FBF9` (the shared "motion" trace estela uses for
+ *   its primary channels — power / speed / cadence all render foam)
+ * - `hr` → `--es-filament` `#E0B36A` (the rare warm accent — heart rate)
+ *
+ * Chrome: `--es-bg` ground, `--es-ink` gridlines, `--es-slate` labels, and the
+ * `--es-font-data` (JetBrains Mono) face for crisp numeric ticks (falls back to
+ * `ui-monospace` where the webfont isn't loaded). `elevation` (a reef teal) and
+ * the band fills land with `BandChart` in M3.
  */
 export const estelaTheme: ChartTheme = {
-  background: '#0e1a18',
+  background: '#06191D', // --es-bg
   line: {
-    default: { color: '#eaf4f1', width: 1.5 },
-    foam: { color: '#eaf4f1', width: 2 },
-    coral: { color: '#ff7d68', width: 1.5 },
-    teal: { color: '#5eb5a6', width: 1.5 },
+    default: { color: '#15B3A6', width: 1.5 }, // --es-estela (primary / action)
+    foam: { color: '#F1FBF9', width: 2 }, // --es-foam (motion — shared primary trace)
+    hr: { color: '#E0B36A', width: 1.5 }, // --es-filament (rare warm accent)
   },
   axis: {
-    label: '#6f9b93',
-    grid: '#1c302c',
+    label: '#4E6B6B', // --es-slate
+    grid: '#06343A', // --es-ink
     gridDash: [2, 3],
   },
   font: {
-    family: 'system-ui, -apple-system, sans-serif',
+    family: '"JetBrains Mono", ui-monospace, monospace', // --es-font-data
     size: 11,
   },
 };
