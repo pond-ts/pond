@@ -1,6 +1,6 @@
 import { useContext, useEffect, useMemo } from 'react';
 import type { SeriesSchema, TimeSeries } from 'pond-ts';
-import { fromTimeSeries, nearestIndex } from './data.js';
+import { fromTimeSeries } from './data.js';
 import { drawLine, yExtent } from './line.js';
 import { resolveCurve, type Curve } from './curve.js';
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
@@ -75,11 +75,23 @@ export function LineChart<S extends SeriesSchema>({
       layer: {
         yExtent: () => yExtent(cs),
         sampleAt: (time) => {
-          const i = nearestIndex(cs.x, cs.length, time);
-          if (i < 0) return [];
-          const v = cs.y[i]!;
-          return Number.isFinite(v)
-            ? [{ x: cs.x[i]!, value: v, color: style.color, label }]
+          // No readout past the data (tracker policy — core's nearest() clamps
+          // to an endpoint outside the span); bounds from the columnar time axis.
+          if (
+            cs.length === 0 ||
+            time < cs.x[0]! ||
+            time > cs.x[cs.length - 1]!
+          ) {
+            return [];
+          }
+          const e = series.nearest(time);
+          if (e === undefined) return [];
+          // get() wants a literal key; column is a runtime string (same reason
+          // data.ts reads via column().read). Runtime-safe string read + guard.
+          const read = e.get as unknown as (field: string) => unknown;
+          const v = read(column);
+          return typeof v === 'number' && Number.isFinite(v)
+            ? [{ x: e.begin(), value: v, color: style.color, label }]
             : [];
         },
         draw: (ctx, xScale, yScale) =>
@@ -88,7 +100,7 @@ export function LineChart<S extends SeriesSchema>({
       axisId: axis,
       index,
     }),
-    [cs, style, label, curveFactory, axis, index],
+    [cs, series, column, style, label, curveFactory, axis, index],
   );
   // A stable per-instance slot (see useSlotKey) keeps this layer's z-position
   // fixed: a series or style change updates the slot in place rather than

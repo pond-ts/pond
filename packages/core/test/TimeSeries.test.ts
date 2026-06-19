@@ -776,6 +776,34 @@ describe('TimeSeries', () => {
     ).toBe(2);
   });
 
+  it('nearest rounds to the closest event by key distance', () => {
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'value', kind: 'number' },
+    ] as const;
+    const ts = new TimeSeries({
+      name: 'pts',
+      schema,
+      rows: [
+        [new Time(0), 1],
+        [new Time(10), 2],
+        [new Time(20), 3],
+      ],
+    });
+    // Within the span: the nearer neighbour; ties go to the earlier event.
+    expect(ts.nearest(new Time(12))?.get('value')).toBe(2); // closer to 10
+    expect(ts.nearest(new Time(16))?.get('value')).toBe(3); // closer to 20
+    expect(ts.nearest(new Time(15))?.get('value')).toBe(2); // tie → earlier
+    expect(ts.nearest(new Time(10))?.get('value')).toBe(2); // exact
+    // Out of range: the nearest endpoint that exists (closest existing event).
+    expect(ts.nearest(new Time(-5))?.get('value')).toBe(1);
+    expect(ts.nearest(new Time(999))?.get('value')).toBe(3);
+    // Empty series → undefined.
+    expect(
+      new TimeSeries({ name: 'empty', schema, rows: [] }).nearest(new Time(5)),
+    ).toBeUndefined();
+  });
+
   it('aligns a point series onto a sequence using hold sampling', () => {
     const schema = [
       { name: 'time', kind: 'time' },

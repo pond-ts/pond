@@ -3934,6 +3934,32 @@ export class TimeSeries<S extends SeriesSchema> {
     return this.at(this.bisect(key));
   }
 
+  /**
+   * Example: `series.nearest(new Time(Date.now()))`. Returns the event whose key
+   * is **closest** to `key` by `begin()` distance, or `undefined` only when the
+   * series is empty.
+   *
+   * Where `atOrBefore` / `atOrAfter` bound to one side, this rounds to the nearer
+   * neighbour (ties go to the earlier event). A key outside the series resolves
+   * to the first or last event — the nearest that exists — so callers that want
+   * "no match past the data" should range-check against {@link timeRange}.
+   *
+   * O(log N) via `bisect`; the columnar key buffer is probed by `begin()`, with
+   * no Event allocation beyond the single result.
+   */
+  nearest(key: KeyLike): EventForSchema<S> | undefined {
+    const n = this.#store.length;
+    if (n === 0) return undefined;
+    const normalizedKey = toKey(key);
+    const index = this.bisect(normalizedKey); // first index with keyAt(i) >= key
+    if (index <= 0) return this.at(0);
+    if (index >= n) return this.at(n - 1);
+    const target = normalizedKey.begin();
+    const before = this.#store.keyAt(index - 1).begin();
+    const after = this.#store.keyAt(index).begin();
+    return this.at(target - before <= after - target ? index - 1 : index);
+  }
+
   /** Example: `series.timeRange()`. Returns the overall temporal extent of the series, if the series is not empty. */
   timeRange(): TimeRange | undefined {
     // Columnar key-axis read. The old implementation reduced over

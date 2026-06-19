@@ -1,6 +1,6 @@
 import { useContext, useEffect, useMemo } from 'react';
 import type { SeriesSchema, TimeSeries } from 'pond-ts';
-import { bandFromTimeSeries, nearestIndex } from './data.js';
+import { bandFromTimeSeries } from './data.js';
 import { bandExtent, drawBand } from './band.js';
 import { resolveCurve, type Curve } from './curve.js';
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
@@ -90,16 +90,35 @@ export function BandChart<S extends SeriesSchema>({
       layer: {
         yExtent: () => bandExtent(bs),
         sampleAt: (time) => {
-          const i = nearestIndex(bs.x, bs.length, time);
-          if (i < 0) return [];
-          const lo = bs.lower[i]!;
-          const hi = bs.upper[i]!;
-          if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [];
+          // No readout past the data (tracker policy — nearest() clamps); bounds
+          // from the columnar time axis.
+          if (
+            bs.length === 0 ||
+            time < bs.x[0]! ||
+            time > bs.x[bs.length - 1]!
+          ) {
+            return [];
+          }
+          const e = series.nearest(time);
+          if (e === undefined) return [];
+          // get() wants a literal key; lower/upper are runtime strings — same
+          // runtime-safe read data.ts uses for columns.
+          const read = e.get as unknown as (field: string) => unknown;
+          const lo = read(lower);
+          const hi = read(upper);
+          if (
+            typeof lo !== 'number' ||
+            !Number.isFinite(lo) ||
+            typeof hi !== 'number' ||
+            !Number.isFinite(hi)
+          ) {
+            return [];
+          }
           // Both edges, labelled by their column (e.g. p25 / p75), in the band's
           // fill colour. A gap on either edge yields no readout (like the fill).
           return [
-            { x: bs.x[i]!, value: lo, color: style.fill, label: lower },
-            { x: bs.x[i]!, value: hi, color: style.fill, label: upper },
+            { x: e.begin(), value: lo, color: style.fill, label: lower },
+            { x: e.begin(), value: hi, color: style.fill, label: upper },
           ];
         },
         draw: (ctx, xScale, yScale) =>
@@ -108,7 +127,7 @@ export function BandChart<S extends SeriesSchema>({
       axisId: axis,
       index,
     }),
-    [bs, style, curveFactory, axis, index],
+    [bs, series, lower, upper, style, curveFactory, axis, index],
   );
   // Stable per-instance slot (see useSlotKey): keeps this band's z-position +
   // identity across prop updates; the injected index drives the sort.
