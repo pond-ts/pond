@@ -227,9 +227,23 @@ best-effort.
     - **`<YAxis>` label** position (top / mid-height) + optional rotation (text
       bottom facing the plot).
     - **d3 scale variety** — log / pow / sqrt / … beyond linear.
-- **M4 — interactions.** Pan / zoom (controlled + uncontrolled), brush, scrub
-  readout, cursor sync across rows; chunked Path2D cache invalidation on scale
-  change.
+- **M4 — interactions.**
+  - **M4.1 ✅ scrub tracker + cross-row cursor sync** (branch
+    `feat/charts-m4-tracker`, #245). Crosshair + per-series dots on a per-row
+    **overlay canvas** above the data (the data canvas never repaints on hover —
+    protects the future Path2D cache); `ChartContainer` owns the hover state, so
+    the cursor syncs across rows for free. Tracked by **plot pixel, not
+    timestamp**, so a still cursor stays put while a live window slides under it
+    (the drift bug pjm17971 caught on LiveSine — a timestamp drew at
+    `xScale(t)`, which moves as the window scrolls). Readout is opt-in + modal:
+    `readout` = `none` (default — crosshair + dots, values emitted) / `flag`
+    (chips at the crosshair top) / `inline` (chip by each dot), chip-styled
+    (`chip` theme token); the **preferred surface is outside the chart** via
+    `onTrackerChanged({ time, values })` (pjm17971: in-chart tooltips are "ick").
+    Layers register as tracker sources so the container fans in every series'
+    value. LiveSine playground gained sine / tooltip-method / light-dark controls.
+  - **Remaining:** M4.2 pan/zoom (controlled + uncontrolled), M4.3 brush, M4.4
+    chunked Path2D cache invalidation on scale change.
 - **M5 — estela parity.** Faithful `DataChart` reproduction on real activity
   data; prove no-regressions; hand the production swap to the estela agent; flip
   `private:false` + first publish.
