@@ -46,6 +46,19 @@ export interface ChartContainerProps {
    * you can render a readout outside the chart), and `null` on leave.
    */
   onTrackerChanged?: (info: TrackerInfo | null) => void;
+  /**
+   * Enable pan/zoom: drag the plot to pan the time range, wheel to zoom around
+   * the cursor. **Default off** — so it doesn't capture drag/scroll unless asked.
+   */
+  panZoom?: boolean;
+  /**
+   * Controlled view range — fires on pan/zoom with the new `[start, end]` (epoch
+   * ms). Wire it back to `timeRange` for a controlled chart; omit for
+   * uncontrolled (the container holds the view internally).
+   */
+  onTimeRangeChange?: (range: [number, number]) => void;
+  /** Zoom-in floor — the minimum visible duration in ms. Default `1`. */
+  minDuration?: number;
   /** Visual theme for all rows; defaults to {@link defaultTheme}. */
   theme?: ChartTheme;
   children?: ReactNode;
@@ -67,12 +80,30 @@ export function ChartContainer({
   timeAxis = true,
   trackerPosition,
   onTrackerChanged,
+  panZoom = false,
+  onTimeRangeChange,
+  minDuration = 1,
   readout = 'none',
   theme,
   children,
 }: ChartContainerProps) {
-  const t0 = timeRange[0];
-  const t1 = timeRange[1];
+  // View range: pan/zoom moves it. Controlled (onTimeRangeChange) reads the prop
+  // and routes gestures back through the callback; uncontrolled holds it
+  // internally (seeded from the prop). With panZoom off, the prop is used
+  // directly — so a static or live (sliding-prop) chart tracks the prop as before.
+  const [internalRange, setInternalRange] = useState(timeRange);
+  const uncontrolled = panZoom && onTimeRangeChange === undefined;
+  const view = uncontrolled ? internalRange : timeRange;
+  const t0 = view[0];
+  const t1 = view[1];
+
+  const onRangeRef = useRef(onTimeRangeChange);
+  onRangeRef.current = onTimeRangeChange;
+  const applyRange = useCallback((range: [number, number]) => {
+    const cb = onRangeRef.current;
+    if (cb) cb(range);
+    else setInternalRange(range);
+  }, []);
 
   // Cross-row tracker. We store the cursor's plot-pixel x (not a timestamp), so a
   // still cursor stays put while a live window slides under it; a controlled
@@ -172,6 +203,9 @@ export function ChartContainer({
       registerTrackerSource,
       unregisterTrackerSource,
       xScale,
+      panZoom,
+      minDuration,
+      applyRange,
       registerGutter,
     }),
     [
@@ -190,6 +224,9 @@ export function ChartContainer({
       registerTrackerSource,
       unregisterTrackerSource,
       xScale,
+      panZoom,
+      minDuration,
+      applyRange,
       registerGutter,
     ],
   );

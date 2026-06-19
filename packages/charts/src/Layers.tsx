@@ -4,7 +4,9 @@ import {
   isValidElement,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type ReactElement,
@@ -13,6 +15,7 @@ import {
 import { Canvas } from './Canvas.js';
 import { drawGrid } from './grid.js';
 import { drawCrosshair, drawTrackerDot } from './tracker.js';
+import { panRange, zoomRange } from './viewport.js';
 import {
   ContainerContext,
   LayersContext,
@@ -22,6 +25,9 @@ import {
 
 /** Gridline tick count — matches the axes (`YAxis`/`TimeAxis`) so they align. */
 const GRID_TICKS = 5;
+
+/** Wheel-zoom sensitivity: `factor = exp(deltaY * k)` (one ~100px notch ≈ ±15%). */
+const ZOOM_SENSITIVITY = 0.0015;
 
 /** Past this fraction of the plot, a readout label flips left of its dot so it
  *  doesn't overflow the right edge. */
@@ -103,7 +109,7 @@ export function Layers({ children }: LayersProps) {
   // cursorX — set by whichever row the pointer is over — syncs the cursor across
   // every row for free. cursorX is a *pixel*, so it stays put while a live window
   // slides; the time + values under it derive from the current xScale.
-  const { cursorX, setHoverX, readout } = container;
+  const { cursorX, readout } = container;
   const cursorColor = container.theme.cursor ?? container.theme.axis.label;
   // Only read a time when the cursor is within the plot. An out-of-bounds
   // controlled trackerPosition hides the crosshair (overlay guard below), so the
@@ -147,14 +153,90 @@ export function Layers({ children }: LayersProps) {
     [cursorX, cursorColor, trackerSamples, background],
   );
 
+  // Pan/zoom + tracker share the plot's event surface. Container fields are read
+  // through a ref so the handlers + the (once-attached) wheel listener always see
+  // the latest frame without re-subscribing.
+  const containerRef = useRef(container);
+  containerRef.current = container;
+  const plotRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{
+    startX: number;
+    startRange: [number, number];
+  } | null>(null);
+
+  const handlePointerDown = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      const c = containerRef.current;
+      if (!c.panZoom) return;
+      const r = c.timeRange;
+      dragRef.current = { startX: e.clientX, startRange: [r[0], r[1]] };
+      c.setHoverX(null); // hide the tracker while panning
+      // Capture so the pan continues outside the plot; an enhancement, not
+      // critical — guard the throw for synthetic / already-released pointers.
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+    },
+    [],
+  );
+
   const handlePointerMove = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
+      const c = containerRef.current;
+      const drag = dragRef.current;
+      if (drag) {
+        // Pan from the start range by the total drag — right → earlier (−dt).
+        const dx = e.clientX - drag.startX;
+        const span = drag.startRange[1] - drag.startRange[0];
+        const dt = c.plotWidth > 0 ? -dx * (span / c.plotWidth) : 0;
+        c.applyRange(panRange(drag.startRange, dt));
+        return; // tracker suppressed during a pan
+      }
       const rect = e.currentTarget.getBoundingClientRect();
-      setHoverX(Math.max(0, Math.min(plotWidth, e.clientX - rect.left)));
+      c.setHoverX(Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left)));
     },
-    [plotWidth, setHoverX],
+    [],
   );
-  const handlePointerLeave = useCallback(() => setHoverX(null), [setHoverX]);
+
+  const handlePointerUp = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (dragRef.current) {
+        dragRef.current = null;
+        try {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+      }
+    },
+    [],
+  );
+  const handlePointerLeave = useCallback(
+    () => containerRef.current.setHoverX(null),
+    [],
+  );
+
+  // Wheel-zoom — a native non-passive listener so `preventDefault` works (React's
+  // onWheel is passive). Attached once; no-ops (and lets the page scroll) when
+  // panZoom is off.
+  useEffect(() => {
+    const el = plotRef.current;
+    if (el === null) return;
+    const onWheel = (e: WheelEvent) => {
+      const c = containerRef.current;
+      if (!c.panZoom) return;
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const localX = Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left));
+      const pivot = +c.xScale.invert(localX);
+      const factor = Math.exp(e.deltaY * ZOOM_SENSITIVITY);
+      c.applyRange(zoomRange(c.timeRange, pivot, factor, c.minDuration));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
 
   // Readout value chips (the crosshair + dots always show; only the value text
   // is modal). 'none' keeps values out of the plot — surface them outside via
@@ -186,13 +268,19 @@ export function Layers({ children }: LayersProps) {
   return (
     <LayersContext.Provider value={registry}>
       <div
+        ref={plotRef}
         style={{
           position: 'relative',
           width: `${plotWidth}px`,
           height: `${row.height}px`,
           cursor: 'crosshair',
+          // Let pan/zoom own touch gestures (no native scroll) when enabled.
+          touchAction: container.panZoom ? 'none' : 'auto',
         }}
         onPointerMove={handlePointerMove}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
         onPointerLeave={handlePointerLeave}
       >
         <Canvas width={plotWidth} height={row.height} draw={draw} />
