@@ -95,12 +95,17 @@ export function ChartRow({ height, children }: ChartRowProps) {
     [layers],
   );
 
-  // Declared axes (in declaration order, by injected index), or a single
-  // implicit auto-domain axis (no gutter) so a row with no <YAxis> still scales.
+  // Real declared axes in declaration order (by injected index) — the rendered
+  // <YAxis> children. A row with none gets a single implicit auto-domain axis,
+  // for *scaling* only (zero width, not rendered), so it still has a default.
+  const realAxes = useMemo<readonly AxisSpec[]>(
+    () => Array.from(axes.values()).sort((a, b) => a.index - b.index),
+    [axes],
+  );
   const effectiveAxes = useMemo<readonly AxisSpec[]>(
     () =>
-      axes.size > 0
-        ? Array.from(axes.values()).sort((a, b) => a.index - b.index)
+      realAxes.length > 0
+        ? realAxes
         : [
             {
               id: IMPLICIT_AXIS_ID,
@@ -111,31 +116,61 @@ export function ChartRow({ height, children }: ChartRowProps) {
               index: 0,
             },
           ],
-    [axes],
+    [realAxes],
   );
   const defaultAxisId = effectiveAxes[0]!.id;
 
-  // This row's own per-side gutter (sum of its axis widths each side). Reported
-  // to the container, which reserves the max each side across all rows.
-  const { ownLeft, ownRight } = useMemo(() => {
-    let l = 0;
-    let r = 0;
-    for (const ax of effectiveAxes) {
-      if (ax.side === 'left') l += ax.width;
-      else r += ax.width;
-    }
-    return { ownLeft: l, ownRight: r };
-  }, [effectiveAxes]);
+  // This row's axes per side, in slot order (slot 0 = innermost, nearest the
+  // plot). Left axes are authored outer→inner so reverse them; right axes are
+  // authored inner→outer already. Reported to the container as the per-slot
+  // widths it maxes across rows.
+  const { leftAxes, rightAxes, ownLeftSlots, ownRightSlots } = useMemo(() => {
+    const l = realAxes.filter((a) => a.side === 'left');
+    const r = realAxes.filter((a) => a.side === 'right');
+    return {
+      leftAxes: l,
+      rightAxes: r,
+      ownLeftSlots: l.map((a) => a.width).reverse(),
+      ownRightSlots: r.map((a) => a.width),
+    };
+  }, [realAxes]);
 
   const { registerGutter } = container;
   const gutterReq = useMemo<GutterReq>(
-    () => ({ left: ownLeft, right: ownRight }),
-    [ownLeft, ownRight],
+    () => ({ left: ownLeftSlots, right: ownRightSlots }),
+    [ownLeftSlots, ownRightSlots],
   );
   // Depend on the *stable* registerGutter (a useCallback) + the memoized req —
   // not the container frame, which is recreated whenever the reservation
   // changes (depending on it would loop register → re-render → re-register).
   useEffect(() => registerGutter(gutterReq), [registerGutter, gutterReq]);
+
+  // Map each axis id to its reserved slot width, and the outer-slot padding this
+  // row lacks. A left axis authored at position i (0 = outermost) sits in slot
+  // (count-1-i) counting from the plot; a right axis at position j sits in slot
+  // j. A row with fewer axes than the widest pads the outer slots so its plot
+  // stays aligned. (Falls back to own width until the container has reserved.)
+  const containerLeftSlots = container.leftSlots;
+  const containerRightSlots = container.rightSlots;
+  const { axisSlots, leftPad, rightPad } = useMemo(() => {
+    const slotFor = new Map<string, number>();
+    leftAxes.forEach((ax, i) => {
+      const slotIdx = leftAxes.length - 1 - i;
+      slotFor.set(ax.id, containerLeftSlots[slotIdx] ?? ax.width);
+    });
+    rightAxes.forEach((ax, j) => {
+      slotFor.set(ax.id, containerRightSlots[j] ?? ax.width);
+    });
+    let lPad = 0;
+    for (let i = leftAxes.length; i < containerLeftSlots.length; i++) {
+      lPad += containerLeftSlots[i] ?? 0;
+    }
+    let rPad = 0;
+    for (let j = rightAxes.length; j < containerRightSlots.length; j++) {
+      rPad += containerRightSlots[j] ?? 0;
+    }
+    return { axisSlots: slotFor, leftPad: lPad, rightPad: rPad };
+  }, [leftAxes, rightAxes, containerLeftSlots, containerRightSlots]);
 
   // One y-scale per axis. A layer counts toward an axis when its (late-resolved)
   // axis id matches; `resolveYDomain` handles the auto-fit + empty/flat/inverted
@@ -160,6 +195,7 @@ export function ChartRow({ height, children }: ChartRowProps) {
       height,
       yScales,
       defaultAxisId,
+      axisSlots,
       registerAxis,
       unregisterAxis,
       registerLayer,
@@ -170,6 +206,7 @@ export function ChartRow({ height, children }: ChartRowProps) {
       height,
       yScales,
       defaultAxisId,
+      axisSlots,
       registerAxis,
       unregisterAxis,
       registerLayer,
@@ -177,12 +214,6 @@ export function ChartRow({ height, children }: ChartRowProps) {
       layerList,
     ],
   );
-
-  // Pad to the container's uniform gutter so this row's plot left-aligns with
-  // the others (and with the time axis). Zero on a row that owns the widest
-  // gutter — invisible until rows differ.
-  const leftSpacer = container.leftGutter - ownLeft;
-  const rightSpacer = container.rightGutter - ownRight;
 
   // Inject each direct child's JSX position so axes register their declaration
   // order (the default-axis source). `<Layers>` receives an index too (harmless
@@ -203,9 +234,9 @@ export function ChartRow({ height, children }: ChartRowProps) {
           height: `${height}px`,
         }}
       >
-        {leftSpacer > 0 && <div style={{ flex: `0 0 ${leftSpacer}px` }} />}
+        {leftPad > 0 && <div style={{ flex: `0 0 ${leftPad}px` }} />}
         {indexedChildren}
-        {rightSpacer > 0 && <div style={{ flex: `0 0 ${rightSpacer}px` }} />}
+        {rightPad > 0 && <div style={{ flex: `0 0 ${rightPad}px` }} />}
       </div>
     </RowContext.Provider>
   );

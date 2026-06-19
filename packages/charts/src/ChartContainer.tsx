@@ -5,6 +5,7 @@ import {
   type ContainerFrame,
   type GutterReq,
 } from './context.js';
+import { maxSlotWidths, sum } from './slots.js';
 import { TimeAxis } from './TimeAxis.js';
 import { defaultTheme, type ChartTheme } from './theme.js';
 
@@ -13,6 +14,10 @@ export interface ChartContainerProps {
   timeRange: readonly [number, number];
   /** Total width in CSS pixels (plot + axis gutters). */
   width: number;
+  /** Vertical space between rows in CSS pixels (not under the time axis). Default 0. */
+  rowGap?: number;
+  /** Render the shared time (x) axis under the rows. Default `true`. */
+  timeAxis?: boolean;
   /** Visual theme for all rows; defaults to {@link defaultTheme}. */
   theme?: ChartTheme;
   children?: ReactNode;
@@ -20,35 +25,41 @@ export interface ChartContainerProps {
 
 /**
  * The top of the chart layout (react-timeseries-charts-style). Owns the shared
- * **x geometry**: it collects each row's per-side gutter need, reserves the max
- * each side so every row's plot left-aligns, and from that derives `plotWidth`
- * and the shared time `xScale`. It renders its rows then one {@link TimeAxis} at
- * the bottom, aligned under the plots. Y axes are per-row (`<YAxis>`).
+ * **x geometry**: it collects each row's per-slot gutter widths, reserves each
+ * slot's max across rows (so the innermost axis aligns column-by-column and
+ * every row's plot left-aligns), and from the slot sums derives `plotWidth` and
+ * the shared time `xScale`. It renders its rows (separated by `rowGap`) then one
+ * {@link TimeAxis} at the bottom, aligned under the plots. Y axes are per-row
+ * (`<YAxis>`).
  */
 export function ChartContainer({
   timeRange,
   width,
+  rowGap = 0,
+  timeAxis = true,
   theme,
   children,
 }: ChartContainerProps) {
   const t0 = timeRange[0];
   const t1 = timeRange[1];
 
-  // Rows report their per-side gutter need; we reserve the max each side.
+  // Rows report their per-slot gutter widths; we reserve each slot's max.
   const [gutters, setGutters] = useState<readonly GutterReq[]>([]);
   const registerGutter = useCallback((req: GutterReq) => {
     setGutters((g) => [...g, req]);
     return () => setGutters((g) => g.filter((x) => x !== req));
   }, []);
 
-  const leftGutter = useMemo(
-    () => gutters.reduce((m, g) => Math.max(m, g.left), 0),
+  const leftSlots = useMemo(
+    () => maxSlotWidths(gutters.map((g) => g.left)),
     [gutters],
   );
-  const rightGutter = useMemo(
-    () => gutters.reduce((m, g) => Math.max(m, g.right), 0),
+  const rightSlots = useMemo(
+    () => maxSlotWidths(gutters.map((g) => g.right)),
     [gutters],
   );
+  const leftGutter = sum(leftSlots);
+  const rightGutter = sum(rightSlots);
   const plotWidth = Math.max(0, width - leftGutter - rightGutter);
 
   const xScale = useMemo(
@@ -62,8 +73,11 @@ export function ChartContainer({
       width,
       theme: theme ?? defaultTheme,
       plotWidth,
+      leftSlots,
+      rightSlots,
       leftGutter,
       rightGutter,
+      rowGap,
       xScale,
       registerGutter,
     }),
@@ -73,8 +87,11 @@ export function ChartContainer({
       width,
       theme,
       plotWidth,
+      leftSlots,
+      rightSlots,
       leftGutter,
       rightGutter,
+      rowGap,
       xScale,
       registerGutter,
     ],
@@ -83,8 +100,16 @@ export function ChartContainer({
   return (
     <ContainerContext.Provider value={frame}>
       <div style={{ width: `${width}px` }}>
-        {children}
-        <TimeAxis />
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: `${rowGap}px`,
+          }}
+        >
+          {children}
+        </div>
+        {timeAxis && <TimeAxis />}
       </div>
     </ContainerContext.Provider>
   );
