@@ -76,43 +76,58 @@ export function YAxis({
   const yScale = row.yScales.get(id);
   const ticks = yScale ? yScale.ticks(TICK_COUNT) : [];
 
+  // The row reserves a slot per axis column (the widest in that column across
+  // rows). Size the box to the slot and align this axis's own (narrower)
+  // content toward the plot — left axes flush right, right axes flush left — so
+  // axes line up column-by-column. Keyed by this instance's slot key (not `id`,
+  // which may repeat across a mirror). Falls back to own width until reserved.
+  const slotWidth = row.axisSlots.get(slot) ?? width;
+
   return (
     <div
       style={{
-        position: 'relative',
-        flex: `0 0 ${width}px`,
-        width: `${width}px`,
+        flex: `0 0 ${slotWidth}px`,
+        display: 'flex',
+        justifyContent: side === 'left' ? 'flex-end' : 'flex-start',
         height: `${row.height}px`,
-        fontFamily: theme.font.family,
-        fontSize: `${theme.font.size}px`,
-        color: theme.axis.label,
       }}
     >
-      {yScale &&
-        ticks.map((t) => (
-          <div
-            key={t}
-            style={{
-              position: 'absolute',
-              top: `${yScale(t)}px`,
-              [side === 'left' ? 'right' : 'left']: '4px',
-              transform: 'translateY(-50%)',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {t}
-          </div>
-        ))}
       <div
         style={{
-          position: 'absolute',
-          [side === 'left' ? 'left' : 'right']: '2px',
-          top: '0',
-          fontSize: `${theme.font.size - 1}px`,
-          opacity: 0.7,
+          position: 'relative',
+          width: `${width}px`,
+          height: `${row.height}px`,
+          fontFamily: theme.font.family,
+          fontSize: `${theme.font.size}px`,
+          color: theme.axis.label,
         }}
       >
-        {label ?? id}
+        {yScale &&
+          ticks.map((t) => (
+            <div
+              key={t}
+              style={{
+                position: 'absolute',
+                top: `${yScale(t)}px`,
+                [side === 'left' ? 'right' : 'left']: '4px',
+                transform: 'translateY(-50%)',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {t}
+            </div>
+          ))}
+        <div
+          style={{
+            position: 'absolute',
+            [side === 'left' ? 'left' : 'right']: '2px',
+            top: '0',
+            fontSize: `${theme.font.size - 1}px`,
+            opacity: 0.7,
+          }}
+        >
+          {label ?? id}
+        </div>
       </div>
     </div>
   );

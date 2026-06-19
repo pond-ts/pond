@@ -217,3 +217,169 @@ export const EstelaShaped: Story = {
     );
   },
 };
+
+/**
+ * Two left axes on one row, different widths (64 + 44). Authored outer→inner —
+ * the last `<YAxis>` before `<Layers>` sits against the plot. Each axis gets its
+ * own slot; the plot starts after both. Each line binds to its own axis.
+ */
+export const TwoLeftAxes: Story = {
+  render: () => {
+    const power = demo(0, 60, 220);
+    const hr = demo(0.8, 22, 150);
+    return (
+      <ChartContainer timeRange={TIME_RANGE} width={560}>
+        <ChartRow height={220}>
+          <YAxis id="watts" label="W" width={64} />
+          <YAxis id="bpm" label="bpm" width={44} />
+          <Layers>
+            <LineChart series={power} column="v" axis="watts" />
+            <LineChart series={hr} column="v" axis="bpm" as="secondary" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **The per-slot rule.** Top row: one wide left axis (80). Bottom row: two
+ * narrower left axes (40 outer + 40 inner). Slot 0 (nearest the plot) reserves
+ * max(80, 40) = 80, slot 1 reserves 40 → leftGutter = 120 on both, so the plots
+ * start at the same x under the one time axis. The bottom row's inner axis is
+ * right-aligned within the 80-wide slot 0 (40px slack on its left), so the inner
+ * axes share a column. This is the case M2's single-block gutter got wrong.
+ */
+export const PerSlotAlignment: Story = {
+  render: () => (
+    <ChartContainer timeRange={TIME_RANGE} width={560}>
+      <ChartRow height={130}>
+        <YAxis id="wide" label="wide" width={80} />
+        <Layers>
+          <LineChart series={demo(0)} column="v" axis="wide" />
+        </Layers>
+      </ChartRow>
+      <ChartRow height={130}>
+        <YAxis id="outer" label="out" width={40} />
+        <YAxis id="inner" label="in" width={40} />
+        <Layers>
+          <LineChart series={demo(1.5)} column="v" axis="outer" />
+          <LineChart
+            series={demo(2.5)}
+            column="v"
+            axis="inner"
+            as="secondary"
+          />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
+ * Multiple axes on **both** sides with different widths — two left (60 + 44),
+ * two right (44 + 56). Each side splits into slots; left axes align flush-right
+ * (toward the plot), right axes flush-left. The plot is what's left in the
+ * middle, identical across rows.
+ */
+export const MultiAxisBothSides: Story = {
+  render: () => {
+    const power = demo(0, 60, 220);
+    const hr = demo(0.8, 22, 150);
+    const cadence = demo(1.2, 18, 85);
+    const temp = demo(2, 8, 20);
+    return (
+      <ChartContainer timeRange={TIME_RANGE} width={620} theme={estelaTheme}>
+        <ChartRow height={240}>
+          <YAxis id="watts" label="W" width={60} />
+          <YAxis id="bpm" label="bpm" width={44} />
+          <Layers>
+            <LineChart series={power} column="v" axis="watts" as="foam" />
+            <LineChart series={hr} column="v" axis="bpm" as="hr" />
+            <LineChart series={cadence} column="v" axis="rpm" />
+            <LineChart series={temp} column="v" axis="degc" as="hr" />
+          </Layers>
+          <YAxis id="rpm" side="right" label="rpm" width={44} />
+          <YAxis id="degc" side="right" label="°C" width={56} />
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * `rowGap` on `<ChartContainer>` puts vertical space between rows (but not under
+ * the time axis, which still hugs the last row). Three stacked rows, 24px apart.
+ */
+export const RowGap: Story = {
+  render: () => (
+    <ChartContainer timeRange={TIME_RANGE} width={520} rowGap={24}>
+      <ChartRow height={110}>
+        <YAxis id="a" label="v" />
+        <Layers>
+          <LineChart series={demo(0)} column="v" />
+        </Layers>
+      </ChartRow>
+      <ChartRow height={110}>
+        <YAxis id="b" label="v" />
+        <Layers>
+          <LineChart series={demo(1.5)} column="v" as="secondary" />
+        </Layers>
+      </ChartRow>
+      <ChartRow height={110}>
+        <YAxis id="c" label="v" />
+        <Layers>
+          <LineChart series={demo(3)} column="v" as="context" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
+ * Rows can be different heights — each `<ChartRow>` sets its own `height` (80 /
+ * 180 / 120 here). They still left-align on the shared gutter, and the one time
+ * axis sits under all of them.
+ */
+export const DifferentHeights: Story = {
+  render: () => (
+    <ChartContainer timeRange={TIME_RANGE} width={520}>
+      <ChartRow height={80}>
+        <YAxis id="a" label="v" />
+        <Layers>
+          <LineChart series={demo(0)} column="v" />
+        </Layers>
+      </ChartRow>
+      <ChartRow height={180}>
+        <YAxis id="b" label="v" />
+        <Layers>
+          <LineChart series={demo(1.5)} column="v" as="secondary" />
+        </Layers>
+      </ChartRow>
+      <ChartRow height={120}>
+        <YAxis id="c" label="v" />
+        <Layers>
+          <LineChart series={demo(3)} column="v" as="context" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
+ * `timeAxis={false}` drops the shared x axis — for a compact, sparkline-style
+ * chart, or when the time context comes from elsewhere. The rows keep their
+ * heights; the ~22px axis strip is simply omitted.
+ */
+export const NoTimeAxis: Story = {
+  render: () => (
+    <ChartContainer timeRange={TIME_RANGE} width={520} timeAxis={false}>
+      <ChartRow height={140}>
+        <YAxis id="a" label="v" />
+        <Layers>
+          <LineChart series={demo(0)} column="v" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};

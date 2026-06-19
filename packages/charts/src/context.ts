@@ -4,21 +4,32 @@ import type { ChartTheme } from './theme.js';
 
 /**
  * The frame a {@link ChartContainer} provides to its rows and the time axis.
- * The container owns the **shared x geometry**: it reserves a *uniform* gutter
- * each side (the max any row needs — see {@link GutterReq}) so every row's plot
- * left-aligns under one time axis, then derives `plotWidth` and the shared
- * time→pixel `xScale` from it. Y scales stay per-row (row-local data), on the
+ * The container owns the **shared x geometry**: each side is split into *slots*
+ * (one axis column each, indexed from the plot outward — slot 0 nearest the
+ * plot), and the container reserves each slot's max width across rows (see
+ * {@link GutterReq}). The slot sums (`leftGutter`/`rightGutter`) are uniform, so
+ * every row's plot left-aligns under one time axis; `plotWidth` and the shared
+ * time→pixel `xScale` follow. Y scales stay per-row (row-local data), on the
  * {@link RowFrame}.
  */
 export interface ContainerFrame {
   readonly timeRange: readonly [number, number];
   readonly width: number;
   readonly theme: ChartTheme;
-  /** Plot width in px after the uniform gutters — shared by every row. */
+  /** Plot width in px after the gutters — shared by every row. */
   readonly plotWidth: number;
-  /** Uniform reserved gutters (the max of any row's per-side axis widths). */
+  /**
+   * Reserved width of each left/right slot, slot 0 nearest the plot. A row
+   * aligns its axis toward the plot within its slot's reserved width and pads
+   * the outer slots it lacks. `leftGutter`/`rightGutter` are the sums.
+   */
+  readonly leftSlots: readonly number[];
+  readonly rightSlots: readonly number[];
+  /** Total reserved gutter each side (sum of the slot widths) — the plot offsets. */
   readonly leftGutter: number;
   readonly rightGutter: number;
+  /** Vertical space between rows in px (not under the time axis). */
+  readonly rowGap: number;
   /**
    * Shared time→pixel scale, range `[0, plotWidth]`. A d3 `scaleTime` so ticks
    * land on wall-clock boundaries; the domain is the container's `timeRange`
@@ -26,16 +37,20 @@ export interface ContainerFrame {
    */
   readonly xScale: ScaleTime<number, number>;
   /**
-   * A row reports its per-side gutter need; the container reserves the max each
-   * side so every row's plot left-aligns. Returns an unregister fn for cleanup.
+   * A row reports its per-slot gutter widths each side; the container reserves
+   * each slot's max so every row's plot left-aligns. Returns an unregister fn.
    */
   registerGutter(req: GutterReq): () => void;
 }
 
-/** A row's per-side gutter requirement (sum of its axis widths on each side). */
+/**
+ * A row's per-slot axis widths each side, **slot 0 nearest the plot** (so the
+ * innermost axis aligns across rows). A row with `k` axes on a side fills slots
+ * `0..k-1`; it has no entry for the outer slots, which it pads.
+ */
 export interface GutterReq {
-  readonly left: number;
-  readonly right: number;
+  readonly left: readonly number[];
+  readonly right: readonly number[];
 }
 
 export const ContainerContext = createContext<ContainerFrame | null>(null);
@@ -104,6 +119,14 @@ export interface RowFrame {
   readonly yScales: ReadonlyMap<string, ScaleLinear<number, number>>;
   /** The axis a layer uses when it names none (the first declared, or implicit). */
   readonly defaultAxisId: string;
+  /**
+   * Reserved slot width for each axis, keyed by its **instance** slot key (the
+   * `useSlotKey` symbol), not its data id — two axes may share an id (a
+   * left/right mirror) yet need distinct slots. A `<YAxis>` sizes its box to this
+   * and aligns its own narrower content toward the plot, so axes line up
+   * column-by-column across rows.
+   */
+  readonly axisSlots: ReadonlyMap<symbol, number>;
   /**
    * Register or **update** an axis, keyed by a stable per-instance slot key (a
    * `Symbol` from `useSlotKey` — instance identity, not the data `id`). Update

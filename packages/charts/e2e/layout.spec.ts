@@ -20,6 +20,13 @@ const cases: ReadonlyArray<readonly [id: string, file: string]> = [
   ['layout--multi-row', 'layout-multi-row.png'],
   ['layout--varying-gutters', 'layout-varying-gutters.png'],
   ['layout--estela-shaped', 'layout-estela-shaped.png'],
+  // Multi-axis per-slot layout + rowGap + optional time axis.
+  ['layout--two-left-axes', 'layout-two-left-axes.png'],
+  ['layout--per-slot-alignment', 'layout-per-slot-alignment.png'],
+  ['layout--multi-axis-both-sides', 'layout-multi-axis-both-sides.png'],
+  ['layout--row-gap', 'layout-row-gap.png'],
+  ['layout--different-heights', 'layout-different-heights.png'],
+  ['layout--no-time-axis', 'layout-no-time-axis.png'],
 ];
 
 test.describe('Layout', () => {

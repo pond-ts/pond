@@ -206,6 +206,27 @@ best-effort.
   - **Two smoothing axes, kept distinct.** `curve` = view-layer d3 path
     interpolation; pond `smooth()` = data-layer denoise, gap-aware via
     `missing:'skip'`.
+- **Layout hardening (pre-M4).** ✅ 2026-06-19 (branch
+  `feat/charts-multi-axis-layout`, #244). **Per-slot gutters**: each side is N
+  axis-column slots indexed from the plot outward (slot 0 nearest the plot); the
+  container reserves each slot's max width across rows, and a row aligns its axis
+  *toward the plot* within its slot and pads the outer slots it lacks
+  (generalizes M2's single block, which couldn't column-align multi-axis rows).
+  Plus `rowGap` and `timeAxis={false}` on `<ChartContainer>`; different per-row
+  heights confirmed. `slots.ts` holds the pure `maxSlotWidths` rule; single-axis
+  baselines byte-identical (one slot == the old block).
+  - **Axis backlog (pjm17971).** Surfaced reviewing the layout; pull each in as
+    the relevant chart (or M4) needs it, not before:
+    - **Time-label alignment** — an `align` place-prop on `<ChartContainer>`:
+      `center` (label centered under the tick), `left`/`right` (label alongside a
+      longer tick, e.g. `| 0:15`). Today's auto edge-align reads as uneven when
+      the axis is moving.
+    - **Wall-clock vs relative** time axis (elapsed time).
+    - **Custom labels at custom ticks** — estela's intervals/splits (e.g. `1 2 3`
+      at specific times); lands with the bar chart.
+    - **`<YAxis>` label** position (top / mid-height) + optional rotation (text
+      bottom facing the plot).
+    - **d3 scale variety** — log / pow / sqrt / … beyond linear.
 - **M4 — interactions.** Pan / zoom (controlled + uncontrolled), brush, scrub
   readout, cursor sync across rows; chunked Path2D cache invalidation on scale
   change.
