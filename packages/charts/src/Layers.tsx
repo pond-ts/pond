@@ -5,11 +5,13 @@ import {
   useCallback,
   useContext,
   useMemo,
+  type PointerEvent as ReactPointerEvent,
   type ReactElement,
   type ReactNode,
 } from 'react';
 import { Canvas } from './Canvas.js';
 import { drawGrid } from './grid.js';
+import { drawCrosshair, drawTrackerDot } from './tracker.js';
 import {
   ContainerContext,
   LayersContext,
@@ -19,6 +21,16 @@ import {
 
 /** Gridline tick count — matches the axes (`YAxis`/`TimeAxis`) so they align. */
 const GRID_TICKS = 5;
+
+/** Past this fraction of the plot, a readout label flips left of its dot so it
+ *  doesn't overflow the right edge. */
+const LABEL_FLIP_FRACTION = 0.85;
+
+/** Compact value formatting for the scrub readout — ≤2 decimals, no trailing
+ *  zeros. (Per-axis formatting is a separate axis-backlog item.) */
+function formatValue(v: number): string {
+  return String(Math.round(v * 100) / 100);
+}
 
 export interface LayersProps {
   children?: ReactNode;
@@ -84,6 +96,61 @@ export function Layers({ children }: LayersProps) {
     [layers, yScales, xScale, defaultAxisId, background, gridColor, gridDash],
   );
 
+  // Interaction overlay: a crosshair at the shared hover time, drawn on a second
+  // canvas above the data so hovering never repaints the data layers (the data
+  // canvas's `draw` doesn't depend on hoverTime). Reading the container's
+  // hoverTime — set by whichever row the pointer is over — is what syncs the
+  // cursor across every row for free.
+  const { hoverTime, setHoverTime } = container;
+  const cursorColor = container.theme.cursor ?? container.theme.axis.label;
+
+  // Per-layer readout samples at the hovered time (nearest data point) — pixel
+  // position + value + colour. Drives both the overlay dots and the DOM value
+  // labels. Empty when not hovering, so the data canvas is never touched.
+  const trackerSamples = useMemo(() => {
+    if (hoverTime === null) return [];
+    const out: { px: number; py: number; value: number; color: string }[] = [];
+    for (const entry of layers) {
+      const yScale = yScales.get(entry.axisId ?? defaultAxisId);
+      if (yScale === undefined) continue;
+      for (const s of entry.layer.sampleAt(hoverTime)) {
+        out.push({
+          px: xScale(s.x),
+          py: yScale(s.value),
+          value: s.value,
+          color: s.color,
+        });
+      }
+    }
+    return out;
+  }, [hoverTime, layers, yScales, xScale, defaultAxisId]);
+
+  const overlayDraw = useCallback(
+    (ctx: CanvasRenderingContext2D, w: number, h: number) => {
+      if (hoverTime === null) return;
+      const x = xScale(hoverTime);
+      if (x < 0 || x > w) return; // off-plot (e.g. a controlled tracker out of range)
+      drawCrosshair(ctx, x, h, cursorColor);
+      for (const s of trackerSamples) {
+        drawTrackerDot(ctx, s.px, s.py, s.color, background);
+      }
+    },
+    [hoverTime, xScale, cursorColor, trackerSamples, background],
+  );
+
+  const handlePointerMove = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const localX = Math.max(0, Math.min(plotWidth, e.clientX - rect.left));
+      setHoverTime(+xScale.invert(localX));
+    },
+    [plotWidth, xScale, setHoverTime],
+  );
+  const handlePointerLeave = useCallback(
+    () => setHoverTime(null),
+    [setHoverTime],
+  );
+
   // Inject each draw layer's JSX position so it registers its declaration order
   // (z-stack: lower index at the back), independent of mount timing.
   const indexedChildren = Children.map(children, (child, index) =>
@@ -94,7 +161,53 @@ export function Layers({ children }: LayersProps) {
 
   return (
     <LayersContext.Provider value={registry}>
-      <Canvas width={plotWidth} height={row.height} draw={draw} />
+      <div
+        style={{
+          position: 'relative',
+          width: `${plotWidth}px`,
+          height: `${row.height}px`,
+          cursor: 'crosshair',
+        }}
+        onPointerMove={handlePointerMove}
+        onPointerLeave={handlePointerLeave}
+      >
+        <Canvas width={plotWidth} height={row.height} draw={draw} />
+        <Canvas
+          width={plotWidth}
+          height={row.height}
+          draw={overlayDraw}
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            pointerEvents: 'none',
+          }}
+        />
+        {trackerSamples.map((s, i) => {
+          // Flip the label left of its dot near the right edge so it stays in-plot.
+          const flip = s.px > plotWidth * LABEL_FLIP_FRACTION;
+          return (
+            <div
+              key={i}
+              style={{
+                position: 'absolute',
+                top: `${s.py}px`,
+                left: flip ? undefined : `${s.px + 6}px`,
+                right: flip ? `${plotWidth - s.px + 6}px` : undefined,
+                transform: 'translateY(-50%)',
+                color: s.color,
+                fontFamily: container.theme.font.family,
+                fontSize: `${container.theme.font.size}px`,
+                fontVariantNumeric: 'tabular-nums',
+                whiteSpace: 'nowrap',
+                pointerEvents: 'none',
+              }}
+            >
+              {formatValue(s.value)}
+            </div>
+          );
+        })}
+      </div>
       {indexedChildren}
     </LayersContext.Provider>
   );

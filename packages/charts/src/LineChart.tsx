@@ -1,6 +1,6 @@
 import { useContext, useEffect, useMemo } from 'react';
 import type { SeriesSchema, TimeSeries } from 'pond-ts';
-import { fromTimeSeries } from './data.js';
+import { fromTimeSeries, nearestIndex } from './data.js';
 import { drawLine, yExtent } from './line.js';
 import { resolveCurve, type Curve } from './curve.js';
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
@@ -72,6 +72,14 @@ export function LineChart<S extends SeriesSchema>({
     () => ({
       layer: {
         yExtent: () => yExtent(cs),
+        sampleAt: (time) => {
+          const i = nearestIndex(cs.x, cs.length, time);
+          if (i < 0) return [];
+          const v = cs.y[i]!;
+          return Number.isFinite(v)
+            ? [{ x: cs.x[i]!, value: v, color: style.color }]
+            : [];
+        },
         draw: (ctx, xScale, yScale) =>
           drawLine(ctx, cs, xScale, yScale, style, curveFactory),
       },

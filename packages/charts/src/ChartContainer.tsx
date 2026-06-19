@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
 import { scaleTime } from 'd3-scale';
 import {
   ContainerContext,
@@ -18,6 +18,14 @@ export interface ChartContainerProps {
   rowGap?: number;
   /** Render the shared time (x) axis under the rows. Default `true`. */
   timeAxis?: boolean;
+  /**
+   * Controlled tracker position (epoch ms) — pins the synced crosshair across
+   * rows. Omit for uncontrolled (the chart tracks the pointer itself); pass
+   * `null` to force it hidden. See {@link onTrackerChanged}.
+   */
+  trackerPosition?: number | null;
+  /** Fires with the hovered time (epoch ms) on pointer move, `null` on leave. */
+  onTrackerChanged?: (time: number | null) => void;
   /** Visual theme for all rows; defaults to {@link defaultTheme}. */
   theme?: ChartTheme;
   children?: ReactNode;
@@ -37,11 +45,26 @@ export function ChartContainer({
   width,
   rowGap = 0,
   timeAxis = true,
+  trackerPosition,
+  onTrackerChanged,
   theme,
   children,
 }: ChartContainerProps) {
   const t0 = timeRange[0];
   const t1 = timeRange[1];
+
+  // Cross-row tracker. Uncontrolled by default (we track the pointer); a
+  // `trackerPosition` prop overrides for the controlled case. `onTrackerChanged`
+  // is held in a ref so `setHoverTime` stays stable even with an inline callback
+  // (a new fn each render would otherwise churn the frame → re-render all rows).
+  const [hover, setHover] = useState<number | null>(null);
+  const onTrackerRef = useRef(onTrackerChanged);
+  onTrackerRef.current = onTrackerChanged;
+  const setHoverTime = useCallback((time: number | null) => {
+    setHover(time);
+    onTrackerRef.current?.(time);
+  }, []);
+  const hoverTime = trackerPosition !== undefined ? trackerPosition : hover;
 
   // Rows report their per-slot gutter widths; we reserve each slot's max.
   const [gutters, setGutters] = useState<readonly GutterReq[]>([]);
@@ -78,6 +101,8 @@ export function ChartContainer({
       leftGutter,
       rightGutter,
       rowGap,
+      hoverTime,
+      setHoverTime,
       xScale,
       registerGutter,
     }),
@@ -92,6 +117,8 @@ export function ChartContainer({
       leftGutter,
       rightGutter,
       rowGap,
+      hoverTime,
+      setHoverTime,
       xScale,
       registerGutter,
     ],

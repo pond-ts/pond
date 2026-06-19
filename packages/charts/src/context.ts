@@ -31,6 +31,14 @@ export interface ContainerFrame {
   /** Vertical space between rows in px (not under the time axis). */
   readonly rowGap: number;
   /**
+   * The time (epoch ms) the cursor is over — shared across rows so the tracker
+   * crosshair syncs, or `null` when not hovering. Each row draws a crosshair at
+   * `xScale(hoverTime)`; this is the one piece of cross-row interaction state.
+   */
+  readonly hoverTime: number | null;
+  /** Set the hovered time; a row's plot event surface calls this on pointer move. */
+  setHoverTime(time: number | null): void;
+  /**
    * Shared time→pixel scale, range `[0, plotWidth]`. A d3 `scaleTime` so ticks
    * land on wall-clock boundaries; the domain is the container's `timeRange`
    * (epoch ms, which `scaleTime` coerces).
@@ -64,12 +72,28 @@ export const ContainerContext = createContext<ContainerFrame | null>(null);
 export interface RowLayer {
   /** This layer's finite-value `[min, max]`, or `null` if it has none. */
   yExtent(): [number, number] | null;
+  /**
+   * The layer's value(s) at `time` — the nearest sample — for the scrub tracker:
+   * one for a line, two (lower/upper) for a band, empty at a gap. Each carries
+   * the sample's own `x` (the dot snaps onto the data point) and dot colour.
+   */
+  sampleAt(time: number): readonly TrackerSample[];
   /** Draw into the plot canvas. `xScale`/`yScale` map data→pixels. */
   draw(
     ctx: CanvasRenderingContext2D,
     xScale: (value: number) => number,
     yScale: (value: number) => number,
   ): void;
+}
+
+/** One tracker readout point — a dot + value the overlay draws at the cursor. */
+export interface TrackerSample {
+  /** The sample's time (epoch ms); the dot sits at `xScale(x)`. */
+  readonly x: number;
+  /** The sample's value (y), placed at the layer's axis `yScale(value)`. */
+  readonly value: number;
+  /** Dot / label colour — the layer's resolved style colour. */
+  readonly color: string;
 }
 
 /** A registered layer plus the axis id it draws against. */
