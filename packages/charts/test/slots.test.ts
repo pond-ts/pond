@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { maxSlotWidths, placeAxisSlots, sum } from '../src/slots.js';
+import {
+  maxSlotWidths,
+  placeAxisSlots,
+  sum,
+  type SlotAxis,
+} from '../src/slots.js';
 
-const ax = (id: string, width: number) => ({ id, width });
+// A row axis with a fresh instance key (the label only aids the test's reading).
+const ax = (label: string, width: number): SlotAxis => ({
+  key: Symbol(label),
+  width,
+});
 
 describe('maxSlotWidths', () => {
   it('reserves each slot to the widest row in that column', () => {
@@ -33,26 +42,19 @@ describe('placeAxisSlots', () => {
   it('maps the inner axis to its reserved (cross-row max) slot, not its own width', () => {
     // Bottom row of PerSlotAlignment: out (40) + in (40); the container reserved
     // [80 inner, 40 outer] because another row had an 80-wide inner axis.
-    const { axisSlots, leftPad } = placeAxisSlots(
-      [ax('out', 40), ax('in', 40)],
-      [],
-      [80, 40],
-      [],
-    );
-    expect(axisSlots.get('in')).toBe(80); // slot 0 (inner) = max(80, 40)
-    expect(axisSlots.get('out')).toBe(40); // slot 1 (outer)
+    const out = ax('out', 40);
+    const inn = ax('in', 40);
+    const { axisSlots, leftPad } = placeAxisSlots([out, inn], [], [80, 40], []);
+    expect(axisSlots.get(inn.key)).toBe(80); // slot 0 (inner) = max(80, 40)
+    expect(axisSlots.get(out.key)).toBe(40); // slot 1 (outer)
     expect(leftPad).toBe(0); // has both slots
   });
 
   it('pads the outer slots a row lacks, keeping its plot aligned', () => {
     // Top row of PerSlotAlignment: one wide inner axis (80), missing the outer 40.
-    const { axisSlots, leftPad } = placeAxisSlots(
-      [ax('wide', 80)],
-      [],
-      [80, 40],
-      [],
-    );
-    expect(axisSlots.get('wide')).toBe(80); // slot 0
+    const wide = ax('wide', 80);
+    const { axisSlots, leftPad } = placeAxisSlots([wide], [], [80, 40], []);
+    expect(axisSlots.get(wide.key)).toBe(80); // slot 0
     expect(leftPad).toBe(40); // the missing outer slot
   });
 
@@ -69,20 +71,44 @@ describe('placeAxisSlots', () => {
   });
 
   it('maps right axes inner→slot0 in author order (flush toward the plot)', () => {
+    const inn = ax('in', 44);
+    const out = ax('out', 56);
     const { axisSlots, rightPad } = placeAxisSlots(
       [],
-      [ax('in', 44), ax('out', 56)],
+      [inn, out],
       [],
       [44, 56],
     );
-    expect(axisSlots.get('in')).toBe(44); // slot 0 (inner, authored first)
-    expect(axisSlots.get('out')).toBe(56); // slot 1 (outer)
+    expect(axisSlots.get(inn.key)).toBe(44); // slot 0 (inner, authored first)
+    expect(axisSlots.get(out.key)).toBe(56); // slot 1 (outer)
     expect(rightPad).toBe(0);
   });
 
   it('falls back to own width before the container has reserved', () => {
-    const { axisSlots, leftPad } = placeAxisSlots([ax('a', 50)], [], [], []);
-    expect(axisSlots.get('a')).toBe(50); // no reserved slots yet
+    const a = ax('a', 50);
+    const { axisSlots, leftPad } = placeAxisSlots([a], [], [], []);
+    expect(axisSlots.get(a.key)).toBe(50); // no reserved slots yet
     expect(leftPad).toBe(0);
+  });
+
+  // Codex regression: layout keys off instance, not the data id.
+  it('gives same-id axes on a side distinct slots (no collapse)', () => {
+    // Two left axes a user gave the same id="v" — distinct instances. If layout
+    // keyed by id they'd collapse to one slot and the gutter would mismatch.
+    const outer = ax('v', 40);
+    const inner = ax('v', 80);
+    const { axisSlots } = placeAxisSlots([outer, inner], [], [80, 40], []);
+    expect(axisSlots.size).toBe(2); // not collapsed
+    expect(axisSlots.get(outer.key)).toBe(40); // slot 1
+    expect(axisSlots.get(inner.key)).toBe(80); // slot 0
+  });
+
+  it('gives a left/right mirror of one id its own slot each side', () => {
+    const left = ax('v', 50);
+    const right = ax('v', 60);
+    const { axisSlots } = placeAxisSlots([left], [right], [50], [60]);
+    expect(axisSlots.size).toBe(2);
+    expect(axisSlots.get(left.key)).toBe(50);
+    expect(axisSlots.get(right.key)).toBe(60);
   });
 });

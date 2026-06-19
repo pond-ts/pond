@@ -33,10 +33,17 @@ export function sum(widths: readonly number[]): number {
   return total;
 }
 
+/** A row axis as the layout sees it: its per-instance slot **key** + width. */
+export interface SlotAxis {
+  /** Stable per-instance key (the `useSlotKey` symbol), NOT the data id. */
+  readonly key: symbol;
+  readonly width: number;
+}
+
 /** What {@link placeAxisSlots} computes for one row. */
 export interface AxisSlotPlacement {
-  /** Axis id → its reserved slot width (that column's max across rows). */
-  readonly axisSlots: ReadonlyMap<string, number>;
+  /** Axis instance key → its reserved slot width (that column's max across rows). */
+  readonly axisSlots: ReadonlyMap<symbol, number>;
   /** Width of the outer slots this row lacks — padded so its plot stays aligned. */
   readonly leftPad: number;
   readonly rightPad: number;
@@ -50,19 +57,23 @@ export interface AxisSlotPlacement {
  * width until the container has reserved); a row with fewer axes than the widest
  * pads the outer slots it lacks — so a no-axis row pads the whole gutter and its
  * plot still left-aligns.
+ *
+ * Keyed by **instance** (the `key` symbol), not the data `id`: two axes can share
+ * an id (a left/right mirror of one scale, or a duplicate) yet must keep distinct
+ * slots, or the rendered gutter would not match what the container reserved.
  */
 export function placeAxisSlots(
-  leftAxes: readonly { id: string; width: number }[],
-  rightAxes: readonly { id: string; width: number }[],
+  leftAxes: readonly SlotAxis[],
+  rightAxes: readonly SlotAxis[],
   leftSlots: readonly number[],
   rightSlots: readonly number[],
 ): AxisSlotPlacement {
-  const axisSlots = new Map<string, number>();
+  const axisSlots = new Map<symbol, number>();
   leftAxes.forEach((ax, i) => {
-    axisSlots.set(ax.id, leftSlots[leftAxes.length - 1 - i] ?? ax.width);
+    axisSlots.set(ax.key, leftSlots[leftAxes.length - 1 - i] ?? ax.width);
   });
   rightAxes.forEach((ax, j) => {
-    axisSlots.set(ax.id, rightSlots[j] ?? ax.width);
+    axisSlots.set(ax.key, rightSlots[j] ?? ax.width);
   });
   let leftPad = 0;
   for (let i = leftAxes.length; i < leftSlots.length; i++)

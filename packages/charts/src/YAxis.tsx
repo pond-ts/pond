@@ -79,8 +79,9 @@ export function YAxis({
   // The row reserves a slot per axis column (the widest in that column across
   // rows). Size the box to the slot and align this axis's own (narrower)
   // content toward the plot — left axes flush right, right axes flush left — so
-  // axes line up column-by-column. Falls back to own width until reserved.
-  const slotWidth = row.axisSlots.get(id) ?? width;
+  // axes line up column-by-column. Keyed by this instance's slot key (not `id`,
+  // which may repeat across a mirror). Falls back to own width until reserved.
+  const slotWidth = row.axisSlots.get(slot) ?? width;
 
   return (
     <div

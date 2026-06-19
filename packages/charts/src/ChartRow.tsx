@@ -12,7 +12,7 @@ import {
 } from 'react';
 import { scaleLinear, type ScaleLinear } from 'd3-scale';
 import { resolveYDomain } from './domain.js';
-import { placeAxisSlots } from './slots.js';
+import { placeAxisSlots, type SlotAxis } from './slots.js';
 import {
   ContainerContext,
   RowContext,
@@ -98,11 +98,17 @@ export function ChartRow({ height, children }: ChartRowProps) {
   );
 
   // Real declared axes in declaration order (by injected index) — the rendered
-  // <YAxis> children. A row with none gets a single implicit auto-domain axis,
-  // for *scaling* only (zero width, not rendered), so it still has a default.
-  const realAxes = useMemo<readonly AxisSpec[]>(
-    () => Array.from(axes.values()).sort((a, b) => a.index - b.index),
+  // <YAxis> children, as [slot key, spec] so layout can key off the per-instance
+  // symbol (not the data id, which may repeat across a mirror). A row with none
+  // gets a single implicit auto-domain axis, for *scaling* only (zero width, not
+  // rendered), so it still has a default.
+  const realEntries = useMemo<readonly (readonly [symbol, AxisSpec])[]>(
+    () => Array.from(axes.entries()).sort((a, b) => a[1].index - b[1].index),
     [axes],
+  );
+  const realAxes = useMemo<readonly AxisSpec[]>(
+    () => realEntries.map(([, spec]) => spec),
+    [realEntries],
   );
   const effectiveAxes = useMemo<readonly AxisSpec[]>(
     () =>
@@ -122,20 +128,23 @@ export function ChartRow({ height, children }: ChartRowProps) {
   );
   const defaultAxisId = effectiveAxes[0]!.id;
 
-  // This row's axes per side, in slot order (slot 0 = innermost, nearest the
-  // plot). Left axes are authored outer→inner so reverse them; right axes are
-  // authored inner→outer already. Reported to the container as the per-slot
-  // widths it maxes across rows.
+  // This row's axes per side (as {key, width}), in slot order (slot 0 = innermost,
+  // nearest the plot). Left axes are authored outer→inner so reverse them; right
+  // axes are authored inner→outer already. Reported to the container as the
+  // per-slot widths it maxes across rows.
   const { leftAxes, rightAxes, ownLeftSlots, ownRightSlots } = useMemo(() => {
-    const l = realAxes.filter((a) => a.side === 'left');
-    const r = realAxes.filter((a) => a.side === 'right');
+    const l: SlotAxis[] = [];
+    const r: SlotAxis[] = [];
+    for (const [key, spec] of realEntries) {
+      (spec.side === 'left' ? l : r).push({ key, width: spec.width });
+    }
     return {
       leftAxes: l,
       rightAxes: r,
       ownLeftSlots: l.map((a) => a.width).reverse(),
       ownRightSlots: r.map((a) => a.width),
     };
-  }, [realAxes]);
+  }, [realEntries]);
 
   const { registerGutter } = container;
   const gutterReq = useMemo<GutterReq>(

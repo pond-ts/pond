@@ -120,11 +120,13 @@ export interface RowFrame {
   /** The axis a layer uses when it names none (the first declared, or implicit). */
   readonly defaultAxisId: string;
   /**
-   * Reserved slot width for each axis id (the max width of any row's axis in
-   * that slot). A `<YAxis>` sizes its box to this and aligns its own narrower
-   * content toward the plot, so axes line up column-by-column across rows.
+   * Reserved slot width for each axis, keyed by its **instance** slot key (the
+   * `useSlotKey` symbol), not its data id — two axes may share an id (a
+   * left/right mirror) yet need distinct slots. A `<YAxis>` sizes its box to this
+   * and aligns its own narrower content toward the plot, so axes line up
+   * column-by-column across rows.
    */
-  readonly axisSlots: ReadonlyMap<string, number>;
+  readonly axisSlots: ReadonlyMap<symbol, number>;
   /**
    * Register or **update** an axis, keyed by a stable per-instance slot key (a
    * `Symbol` from `useSlotKey` — instance identity, not the data `id`). Update
