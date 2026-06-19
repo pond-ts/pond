@@ -242,7 +242,7 @@ best-effort.
     `onTrackerChanged({ time, values })` (pjm17971: in-chart tooltips are "ick").
     Layers register as tracker sources so the container fans in every series'
     value. LiveSine playground gained sine / tooltip-method / light-dark controls.
-  - **M4.2 ✅ pan/zoom** (branch `feat/charts-m4-panzoom`, #PRNUM). Drag-pan +
+  - **M4.2 ✅ pan/zoom** (branch `feat/charts-m4-panzoom`, #249). Drag-pan +
     wheel-zoom on the shared x-geometry; `panZoom` opt-in, **controlled**
     (`onTimeRangeChange`) or **uncontrolled** (internal view state). Pure math in
     `viewport.ts` (`panRange`/`zoomRange`, `minDuration` zoom floor) with unit
