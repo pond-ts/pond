@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useMemo,
+  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type ReactElement,
   type ReactNode,
@@ -101,7 +102,7 @@ export function Layers({ children }: LayersProps) {
   // canvas's `draw` doesn't depend on hoverTime). Reading the container's
   // hoverTime — set by whichever row the pointer is over — is what syncs the
   // cursor across every row for free.
-  const { hoverTime, setHoverTime } = container;
+  const { hoverTime, setHoverTime, readout } = container;
   const cursorColor = container.theme.cursor ?? container.theme.axis.label;
 
   // Per-layer readout samples at the hovered time (nearest data point) — pixel
@@ -151,6 +152,26 @@ export function Layers({ children }: LayersProps) {
     [setHoverTime],
   );
 
+  // Readout value chips (the crosshair + dots always show; only the value text
+  // is modal). 'none' keeps values out of the plot — surface them outside via
+  // onTrackerChanged. 'inline' chips sit beside each dot; 'flag' chips stack at
+  // the top of the crosshair.
+  const cursorX = hoverTime !== null ? xScale(hoverTime) : null;
+  const flagLineHeight = container.theme.font.size + 5;
+  const chipStyle: CSSProperties = {
+    position: 'absolute',
+    background: container.theme.chip?.background,
+    border: `1px solid ${gridColor}`,
+    borderRadius: '3px',
+    padding: '0 4px',
+    fontFamily: container.theme.font.family,
+    fontSize: `${container.theme.font.size}px`,
+    fontVariantNumeric: 'tabular-nums',
+    whiteSpace: 'nowrap',
+    pointerEvents: 'none',
+    lineHeight: 1.5,
+  };
+
   // Inject each draw layer's JSX position so it registers its declaration order
   // (z-stack: lower index at the back), independent of mount timing.
   const indexedChildren = Children.map(children, (child, index) =>
@@ -183,30 +204,46 @@ export function Layers({ children }: LayersProps) {
             pointerEvents: 'none',
           }}
         />
-        {trackerSamples.map((s, i) => {
-          // Flip the label left of its dot near the right edge so it stays in-plot.
-          const flip = s.px > plotWidth * LABEL_FLIP_FRACTION;
-          return (
-            <div
-              key={i}
-              style={{
-                position: 'absolute',
-                top: `${s.py}px`,
-                left: flip ? undefined : `${s.px + 6}px`,
-                right: flip ? `${plotWidth - s.px + 6}px` : undefined,
-                transform: 'translateY(-50%)',
-                color: s.color,
-                fontFamily: container.theme.font.family,
-                fontSize: `${container.theme.font.size}px`,
-                fontVariantNumeric: 'tabular-nums',
-                whiteSpace: 'nowrap',
-                pointerEvents: 'none',
-              }}
-            >
-              {formatValue(s.value)}
-            </div>
-          );
-        })}
+        {readout === 'inline' &&
+          trackerSamples.map((s, i) => {
+            // Flip the chip left of its dot near the right edge so it stays in-plot.
+            const flip = s.px > plotWidth * LABEL_FLIP_FRACTION;
+            return (
+              <div
+                key={i}
+                style={{
+                  ...chipStyle,
+                  top: `${s.py}px`,
+                  transform: 'translateY(-50%)',
+                  left: flip ? undefined : `${s.px + 8}px`,
+                  right: flip ? `${plotWidth - s.px + 8}px` : undefined,
+                  color: s.color,
+                }}
+              >
+                {formatValue(s.value)}
+              </div>
+            );
+          })}
+        {readout === 'flag' &&
+          cursorX !== null &&
+          trackerSamples.map((s, i) => {
+            // Flags stack at the top of the crosshair; flip near the right edge.
+            const flip = cursorX > plotWidth * LABEL_FLIP_FRACTION;
+            return (
+              <div
+                key={i}
+                style={{
+                  ...chipStyle,
+                  top: `${2 + i * flagLineHeight}px`,
+                  left: flip ? undefined : `${cursorX + 4}px`,
+                  right: flip ? `${plotWidth - cursorX + 4}px` : undefined,
+                  color: s.color,
+                }}
+              >
+                {formatValue(s.value)}
+              </div>
+            );
+          })}
       </div>
       {indexedChildren}
     </LayersContext.Provider>

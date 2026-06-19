@@ -38,6 +38,15 @@ export interface ContainerFrame {
   readonly hoverTime: number | null;
   /** Set the hovered time; a row's plot event surface calls this on pointer move. */
   setHoverTime(time: number | null): void;
+  /** In-chart readout presentation (the crosshair + dots always show on hover). */
+  readonly readout: ReadoutMode;
+  /**
+   * Register a draw layer as a tracker source so the container can fan in every
+   * series' value at the cursor for `onTrackerChanged`. Keyed by the layer's
+   * per-instance slot key; unregister on unmount.
+   */
+  registerTrackerSource(key: symbol, source: TrackerSource): void;
+  unregisterTrackerSource(key: symbol): void;
   /**
    * Shared time→pixel scale, range `[0, plotWidth]`. A d3 `scaleTime` so ticks
    * land on wall-clock boundaries; the domain is the container's `timeRange`
@@ -94,7 +103,27 @@ export interface TrackerSample {
   readonly value: number;
   /** Dot / label colour — the layer's resolved style colour. */
   readonly color: string;
+  /** Series identity (`as` ?? column) — labels the value in a readout. */
+  readonly label: string;
 }
+
+/** A source of tracker samples — a draw layer, registered with the container so
+ *  it can fan in every series' value at the cursor for {@link onTrackerChanged}. */
+export interface TrackerSource {
+  sampleAt(time: number): readonly TrackerSample[];
+}
+
+/** The hover snapshot handed to `onTrackerChanged` — the cursor time + every
+ *  series' value there, so a consumer can render the readout outside the chart. */
+export interface TrackerInfo {
+  readonly time: number;
+  readonly values: readonly TrackerSample[];
+}
+
+/** In-chart readout presentation (the value text; the crosshair + dots always
+ *  show on hover). `none` keeps values out of the plot — surface them outside via
+ *  {@link onTrackerChanged}. */
+export type ReadoutMode = 'none' | 'flag' | 'inline';
 
 /** A registered layer plus the axis id it draws against. */
 export interface LayerEntry {

@@ -95,11 +95,11 @@ export function BandChart<S extends SeriesSchema>({
           const lo = bs.lower[i]!;
           const hi = bs.upper[i]!;
           if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [];
-          // Both edges, in the band's fill colour (a sample is the [lower, upper]
-          // pair, like the fill — a gap on either edge yields no readout).
+          // Both edges, labelled by their column (e.g. p25 / p75), in the band's
+          // fill colour. A gap on either edge yields no readout (like the fill).
           return [
-            { x: bs.x[i]!, value: lo, color: style.fill },
-            { x: bs.x[i]!, value: hi, color: style.fill },
+            { x: bs.x[i]!, value: lo, color: style.fill, label: lower },
+            { x: bs.x[i]!, value: hi, color: style.fill, label: upper },
           ];
         },
         draw: (ctx, xScale, yScale) =>
@@ -117,6 +117,17 @@ export function BandChart<S extends SeriesSchema>({
   useEffect(() => {
     layers.registerLayer(slot, entry);
   }, [layers, slot, entry]);
+
+  // Also a tracker source: the container fans in the band edges at the cursor
+  // for the (outside-the-chart) readout.
+  const { registerTrackerSource, unregisterTrackerSource } = container;
+  useEffect(
+    () => () => unregisterTrackerSource(slot),
+    [unregisterTrackerSource, slot],
+  );
+  useEffect(() => {
+    registerTrackerSource(slot, entry.layer);
+  }, [registerTrackerSource, slot, entry.layer]);
 
   return null;
 }

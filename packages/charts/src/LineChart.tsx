@@ -67,6 +67,8 @@ export function LineChart<S extends SeriesSchema>({
   const { line } = container.theme;
   const style =
     (semantic !== undefined ? line[semantic] : undefined) ?? line.default;
+  // Series identity for the readout (the `as` role, else the column name).
+  const label = semantic ?? column;
   const curveFactory = resolveCurve(curve);
   const entry = useMemo<LayerEntry>(
     () => ({
@@ -77,7 +79,7 @@ export function LineChart<S extends SeriesSchema>({
           if (i < 0) return [];
           const v = cs.y[i]!;
           return Number.isFinite(v)
-            ? [{ x: cs.x[i]!, value: v, color: style.color }]
+            ? [{ x: cs.x[i]!, value: v, color: style.color, label }]
             : [];
         },
         draw: (ctx, xScale, yScale) =>
@@ -86,7 +88,7 @@ export function LineChart<S extends SeriesSchema>({
       axisId: axis,
       index,
     }),
-    [cs, style, curveFactory, axis, index],
+    [cs, style, label, curveFactory, axis, index],
   );
   // A stable per-instance slot (see useSlotKey) keeps this layer's z-position
   // fixed: a series or style change updates the slot in place rather than
@@ -98,6 +100,17 @@ export function LineChart<S extends SeriesSchema>({
   useEffect(() => {
     layers.registerLayer(slot, entry);
   }, [layers, slot, entry]);
+
+  // Also register as a tracker source so the container can fan in this series'
+  // value at the cursor for the (outside-the-chart) readout.
+  const { registerTrackerSource, unregisterTrackerSource } = container;
+  useEffect(
+    () => () => unregisterTrackerSource(slot),
+    [unregisterTrackerSource, slot],
+  );
+  useEffect(() => {
+    registerTrackerSource(slot, entry.layer);
+  }, [registerTrackerSource, slot, entry.layer]);
 
   return null;
 }

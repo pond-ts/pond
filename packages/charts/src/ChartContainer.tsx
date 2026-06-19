@@ -1,9 +1,19 @@
-import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { scaleTime } from 'd3-scale';
 import {
   ContainerContext,
   type ContainerFrame,
   type GutterReq,
+  type ReadoutMode,
+  type TrackerInfo,
+  type TrackerSource,
 } from './context.js';
 import { maxSlotWidths, sum } from './slots.js';
 import { TimeAxis } from './TimeAxis.js';
@@ -24,8 +34,17 @@ export interface ChartContainerProps {
    * `null` to force it hidden. See {@link onTrackerChanged}.
    */
   trackerPosition?: number | null;
-  /** Fires with the hovered time (epoch ms) on pointer move, `null` on leave. */
-  onTrackerChanged?: (time: number | null) => void;
+  /**
+   * In-chart readout presentation. **Default `'none'`** — just the crosshair +
+   * per-series dots, with values surfaced *outside* the chart via
+   * {@link onTrackerChanged}. `'flag'` / `'inline'` draw value chips in-plot.
+   */
+  readout?: ReadoutMode;
+  /**
+   * Fires on pointer move with the hovered time + every series' value there (so
+   * you can render a readout outside the chart), and `null` on leave.
+   */
+  onTrackerChanged?: (info: TrackerInfo | null) => void;
   /** Visual theme for all rows; defaults to {@link defaultTheme}. */
   theme?: ChartTheme;
   children?: ReactNode;
@@ -47,6 +66,7 @@ export function ChartContainer({
   timeAxis = true,
   trackerPosition,
   onTrackerChanged,
+  readout = 'none',
   theme,
   children,
 }: ChartContainerProps) {
@@ -54,17 +74,45 @@ export function ChartContainer({
   const t1 = timeRange[1];
 
   // Cross-row tracker. Uncontrolled by default (we track the pointer); a
-  // `trackerPosition` prop overrides for the controlled case. `onTrackerChanged`
-  // is held in a ref so `setHoverTime` stays stable even with an inline callback
-  // (a new fn each render would otherwise churn the frame → re-render all rows).
+  // `trackerPosition` prop overrides the displayed crosshair.
   const [hover, setHover] = useState<number | null>(null);
+  const hoverTime = trackerPosition !== undefined ? trackerPosition : hover;
+
+  // Draw layers register as tracker sources; on hover we fan in their values at
+  // the cursor and hand them out via onTrackerChanged (held in a ref so an
+  // inline callback doesn't churn the frame). This powers a readout rendered
+  // *outside* the chart — the preferred surface for hover values.
+  const [sources, setSources] = useState<ReadonlyMap<symbol, TrackerSource>>(
+    () => new Map(),
+  );
+  const registerTrackerSource = useCallback(
+    (key: symbol, source: TrackerSource) =>
+      setSources((m) => new Map(m).set(key, source)),
+    [],
+  );
+  const unregisterTrackerSource = useCallback((key: symbol) => {
+    setSources((m) => {
+      if (!m.has(key)) return m;
+      const next = new Map(m);
+      next.delete(key);
+      return next;
+    });
+  }, []);
+
   const onTrackerRef = useRef(onTrackerChanged);
   onTrackerRef.current = onTrackerChanged;
-  const setHoverTime = useCallback((time: number | null) => {
-    setHover(time);
-    onTrackerRef.current?.(time);
-  }, []);
-  const hoverTime = trackerPosition !== undefined ? trackerPosition : hover;
+  useEffect(() => {
+    const cb = onTrackerRef.current;
+    if (cb === undefined) return;
+    if (hover === null) {
+      cb(null);
+      return;
+    }
+    const values = Array.from(sources.values()).flatMap((s) =>
+      s.sampleAt(hover),
+    );
+    cb({ time: hover, values });
+  }, [hover, sources]);
 
   // Rows report their per-slot gutter widths; we reserve each slot's max.
   const [gutters, setGutters] = useState<readonly GutterReq[]>([]);
@@ -102,7 +150,10 @@ export function ChartContainer({
       rightGutter,
       rowGap,
       hoverTime,
-      setHoverTime,
+      setHoverTime: setHover,
+      readout,
+      registerTrackerSource,
+      unregisterTrackerSource,
       xScale,
       registerGutter,
     }),
@@ -118,7 +169,9 @@ export function ChartContainer({
       rightGutter,
       rowGap,
       hoverTime,
-      setHoverTime,
+      readout,
+      registerTrackerSource,
+      unregisterTrackerSource,
       xScale,
       registerGutter,
     ],
