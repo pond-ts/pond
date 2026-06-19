@@ -47,6 +47,14 @@ export interface ChartTheme {
     readonly family: string;
     readonly size: number;
   };
+  /** Crosshair / tracker stroke colour. Falls back to {@link axis.label} if unset. */
+  readonly cursor?: string;
+  /**
+   * Readout chip background (the `flag` / `inline` tracker modes). The value text
+   * is the series colour; this is the panel behind it. Falls back to the plot
+   * background if unset.
+   */
+  readonly chip?: { readonly background: string };
 }
 
 /** A resolved line style: stroke colour + width (px). */
@@ -89,6 +97,8 @@ export const defaultTheme: ChartTheme = {
     family: 'system-ui, -apple-system, sans-serif',
     size: 11,
   },
+  cursor: '#64748b',
+  chip: { background: '#ffffff' },
 };
 
 /**
@@ -130,4 +140,6 @@ export const estelaTheme: ChartTheme = {
     family: '"JetBrains Mono", ui-monospace, monospace', // --es-font-data
     size: 11,
   },
+  cursor: '#7FE2D2', // --es-reef (bright tracker on the dark ground)
+  chip: { background: '#0B4E58' }, // --es-deep (panel behind readout text)
 };

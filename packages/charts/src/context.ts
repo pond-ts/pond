@@ -31,6 +31,25 @@ export interface ContainerFrame {
   /** Vertical space between rows in px (not under the time axis). */
   readonly rowGap: number;
   /**
+   * The crosshair's **plot-pixel x** (`0..plotWidth`), shared across rows so the
+   * tracker syncs, or `null` when not hovering. A *pixel*, not a timestamp — so a
+   * still cursor stays put while a live window slides under it (a stored
+   * timestamp would drift sideways as `xScale` changes). A controlled
+   * `trackerPosition` (a timestamp) resolves to a pixel here.
+   */
+  readonly cursorX: number | null;
+  /** Set the hovered plot-pixel x; a row's event surface calls this on pointer move. */
+  setHoverX(x: number | null): void;
+  /** In-chart readout presentation (the crosshair + dots always show on hover). */
+  readonly readout: ReadoutMode;
+  /**
+   * Register a draw layer as a tracker source so the container can fan in every
+   * series' value at the cursor for `onTrackerChanged`. Keyed by the layer's
+   * per-instance slot key; unregister on unmount.
+   */
+  registerTrackerSource(key: symbol, source: TrackerSource): void;
+  unregisterTrackerSource(key: symbol): void;
+  /**
    * Shared time→pixel scale, range `[0, plotWidth]`. A d3 `scaleTime` so ticks
    * land on wall-clock boundaries; the domain is the container's `timeRange`
    * (epoch ms, which `scaleTime` coerces).
@@ -64,6 +83,12 @@ export const ContainerContext = createContext<ContainerFrame | null>(null);
 export interface RowLayer {
   /** This layer's finite-value `[min, max]`, or `null` if it has none. */
   yExtent(): [number, number] | null;
+  /**
+   * The layer's value(s) at `time` — the nearest sample — for the scrub tracker:
+   * one for a line, two (lower/upper) for a band, empty at a gap. Each carries
+   * the sample's own `x` (the dot snaps onto the data point) and dot colour.
+   */
+  sampleAt(time: number): readonly TrackerSample[];
   /** Draw into the plot canvas. `xScale`/`yScale` map data→pixels. */
   draw(
     ctx: CanvasRenderingContext2D,
@@ -71,6 +96,36 @@ export interface RowLayer {
     yScale: (value: number) => number,
   ): void;
 }
+
+/** One tracker readout point — a dot + value the overlay draws at the cursor. */
+export interface TrackerSample {
+  /** The sample's time (epoch ms); the dot sits at `xScale(x)`. */
+  readonly x: number;
+  /** The sample's value (y), placed at the layer's axis `yScale(value)`. */
+  readonly value: number;
+  /** Dot / label colour — the layer's resolved style colour. */
+  readonly color: string;
+  /** Series identity (`as` ?? column) — labels the value in a readout. */
+  readonly label: string;
+}
+
+/** A source of tracker samples — a draw layer, registered with the container so
+ *  it can fan in every series' value at the cursor for {@link onTrackerChanged}. */
+export interface TrackerSource {
+  sampleAt(time: number): readonly TrackerSample[];
+}
+
+/** The hover snapshot handed to `onTrackerChanged` — the cursor time + every
+ *  series' value there, so a consumer can render the readout outside the chart. */
+export interface TrackerInfo {
+  readonly time: number;
+  readonly values: readonly TrackerSample[];
+}
+
+/** In-chart readout presentation (the value text; the crosshair + dots always
+ *  show on hover). `none` keeps values out of the plot — surface them outside via
+ *  {@link onTrackerChanged}. */
+export type ReadoutMode = 'none' | 'flag' | 'inline';
 
 /** A registered layer plus the axis id it draws against. */
 export interface LayerEntry {

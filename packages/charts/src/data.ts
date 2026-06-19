@@ -32,6 +32,36 @@ export interface BandSeries {
 }
 
 /**
+ * Index of the sample whose time (`x`) is nearest `time`, by binary search —
+ * **only within the data span** `[x[0], x[length-1]]`. Returns `-1` when `time`
+ * is before the first sample or after the last (or the axis is empty), so the
+ * scrub tracker shows *no* readout past the ends rather than clamping to a stale
+ * endpoint (e.g. a stalled live stream whose window has scrolled past the data).
+ * `x` must be ascending (the key column always is).
+ */
+export function nearestIndex(
+  x: Float64Array,
+  length: number,
+  time: number,
+): number {
+  if (length === 0) return -1;
+  if (time < x[0]! || time > x[length - 1]!) return -1; // outside the data span
+  if (time === x[0]!) return 0;
+  if (time === x[length - 1]!) return length - 1;
+  let lo = 0;
+  let hi = length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const v = x[mid]!;
+    if (v === time) return mid;
+    if (v < time) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  // lo is the first index past `time`; hi === lo - 1. Pick the closer neighbour.
+  return time - x[hi]! <= x[lo]! - time ? hi : lo;
+}
+
+/**
  * Read a numeric column into a `Float64Array`, missing cells as `NaN`.
  *
  * Uses `read(i)` — a method on the column *class* — rather than the bulk

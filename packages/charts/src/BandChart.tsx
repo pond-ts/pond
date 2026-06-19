@@ -1,6 +1,6 @@
 import { useContext, useEffect, useMemo } from 'react';
 import type { SeriesSchema, TimeSeries } from 'pond-ts';
-import { bandFromTimeSeries } from './data.js';
+import { bandFromTimeSeries, nearestIndex } from './data.js';
 import { bandExtent, drawBand } from './band.js';
 import { resolveCurve, type Curve } from './curve.js';
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
@@ -89,6 +89,19 @@ export function BandChart<S extends SeriesSchema>({
     () => ({
       layer: {
         yExtent: () => bandExtent(bs),
+        sampleAt: (time) => {
+          const i = nearestIndex(bs.x, bs.length, time);
+          if (i < 0) return [];
+          const lo = bs.lower[i]!;
+          const hi = bs.upper[i]!;
+          if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [];
+          // Both edges, labelled by their column (e.g. p25 / p75), in the band's
+          // fill colour. A gap on either edge yields no readout (like the fill).
+          return [
+            { x: bs.x[i]!, value: lo, color: style.fill, label: lower },
+            { x: bs.x[i]!, value: hi, color: style.fill, label: upper },
+          ];
+        },
         draw: (ctx, xScale, yScale) =>
           drawBand(ctx, bs, xScale, yScale, style, curveFactory),
       },
@@ -104,6 +117,17 @@ export function BandChart<S extends SeriesSchema>({
   useEffect(() => {
     layers.registerLayer(slot, entry);
   }, [layers, slot, entry]);
+
+  // Also a tracker source: the container fans in the band edges at the cursor
+  // for the (outside-the-chart) readout.
+  const { registerTrackerSource, unregisterTrackerSource } = container;
+  useEffect(
+    () => () => unregisterTrackerSource(slot),
+    [unregisterTrackerSource, slot],
+  );
+  useEffect(() => {
+    registerTrackerSource(slot, entry.layer);
+  }, [registerTrackerSource, slot, entry.layer]);
 
   return null;
 }
