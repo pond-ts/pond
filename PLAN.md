@@ -250,8 +250,25 @@ best-effort.
 
 **Open decisions (surfaced when they gate, not before):** theme token depth (at
 M2); how the estela swap is coordinated across the two agents (at M5). The
-chart carry-forwards in the backlog (`toFloat64Array`, `bisectBegin`,
-`fromTrustedColumns`, `bin` NaN JSDoc) land into core as M1–M4 pull on them.
+chart carry-forwards in the backlog (`toFloat64Array`, `fromTrustedColumns`,
+`bin` NaN JSDoc) land into core as M1–M4 pull on them. (`bisectBegin` — done,
+landed as `nearest`, see below.)
+
+**`@pond-ts/fit` data points (from estela#76 review, `docs/notes/pond-fit-review.md`).**
+The fitness-library work surfaced the same core needs as charts — pulling these
+forward when they next gate:
+- **Validity-aware bulk read — now a SECOND consumer (priority).** Both the
+  fitness lib (`numberColumn`) and charts (`readNumericColumn`) hand-roll
+  "`toFloat64Array` with missing → `NaN`." Land a **bundle-safe, validity-aware
+  `column.toFloat64Array({ missing })`** in core so neither launders NaN by hand.
+  This is the `toFloat64Array` carry-forward above; estela#76 is what tips it.
+- **`column.hasAnyDefined()` / `allMissing()`** — the complement of `hasMissing()`;
+  replaces estela's O(N) presence scan and backs `series.has(col)`.
+- **`TimeSeries` (de)serialization** — the canonical-in-vault fast-read path needs
+  columnar rehydrate; a `pond-friction` item (mechanism TBD, architecture settled).
+- **Convergence:** the fit `activity.at(time)` (interpolated) is the same
+  sample-at-time family as the chart tracker — both land on core `nearest` +
+  `align`. Two consumers validate those primitives belong in core.
 
 **✅ Landed carry-forward — `nearest(time)` in core.** M4.1's tracker pulled on
 `bisectBegin`: it had a charts-local `nearestIndex` duplicating core's
