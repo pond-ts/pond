@@ -101,11 +101,11 @@ export function BandChart<S extends SeriesSchema>({
           }
           const e = series.nearest(time);
           if (e === undefined) return [];
-          // get() wants a literal key; lower/upper are runtime strings — same
-          // runtime-safe read data.ts uses for columns.
-          const read = e.get as unknown as (field: string) => unknown;
-          const lo = read(lower);
-          const hi = read(upper);
+          // get() wants a literal key; lower/upper are runtime strings. Cast the
+          // *event* (not the method — detaching `this` breaks `get`).
+          const ev = e as unknown as { get(field: string): unknown };
+          const lo = ev.get(lower);
+          const hi = ev.get(upper);
           if (
             typeof lo !== 'number' ||
             !Number.isFinite(lo) ||

@@ -86,10 +86,12 @@ export function LineChart<S extends SeriesSchema>({
           }
           const e = series.nearest(time);
           if (e === undefined) return [];
-          // get() wants a literal key; column is a runtime string (same reason
-          // data.ts reads via column().read). Runtime-safe string read + guard.
-          const read = e.get as unknown as (field: string) => unknown;
-          const v = read(column);
+          // get() wants a literal key; column is a runtime string. Cast the
+          // *event* (not the method — that would detach `this`) to a
+          // string-keyed get; runtime-safe read + guard.
+          const v = (e as unknown as { get(field: string): unknown }).get(
+            column,
+          );
           return typeof v === 'number' && Number.isFinite(v)
             ? [{ x: e.begin(), value: v, color: style.color, label }]
             : [];
