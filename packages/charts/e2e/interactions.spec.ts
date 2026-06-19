@@ -19,9 +19,22 @@ const cases: ReadonlyArray<readonly [id: string, file: string]> = [
 test.describe('Interactions', () => {
   for (const [id, file] of cases) {
     test(`renders ${id}`, async ({ page }) => {
+      // These stories render the tracker (sampleAt → value read), so guard
+      // against a throwing/erroring render — a regression test for the
+      // detached-method bug that crashed the tracker without a screenshot diff
+      // big enough to fail on its own.
+      const errors: string[] = [];
+      page.on('pageerror', (e) => errors.push(e.message));
+      page.on('console', (m) => {
+        if (m.type() === 'error') errors.push(m.text());
+      });
       await page.goto(story(id));
       await waitForCanvasPaint(page.locator('canvas').first());
       await expect(page.locator('#storybook-root')).toHaveScreenshot(file);
+      expect(
+        errors,
+        'no console/page errors while rendering the tracker',
+      ).toEqual([]);
     });
   }
 });
