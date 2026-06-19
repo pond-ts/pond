@@ -97,24 +97,27 @@ export function Layers({ children }: LayersProps) {
     [layers, yScales, xScale, defaultAxisId, background, gridColor, gridDash],
   );
 
-  // Interaction overlay: a crosshair at the shared hover time, drawn on a second
+  // Interaction overlay: a crosshair at the shared cursor pixel, on a second
   // canvas above the data so hovering never repaints the data layers (the data
-  // canvas's `draw` doesn't depend on hoverTime). Reading the container's
-  // hoverTime — set by whichever row the pointer is over — is what syncs the
-  // cursor across every row for free.
-  const { hoverTime, setHoverTime, readout } = container;
+  // canvas's `draw` doesn't depend on the cursor). Reading the container's
+  // cursorX — set by whichever row the pointer is over — syncs the cursor across
+  // every row for free. cursorX is a *pixel*, so it stays put while a live window
+  // slides; the time + values under it derive from the current xScale.
+  const { cursorX, setHoverX, readout } = container;
   const cursorColor = container.theme.cursor ?? container.theme.axis.label;
+  const cursorTime = cursorX !== null ? +xScale.invert(cursorX) : null;
 
-  // Per-layer readout samples at the hovered time (nearest data point) — pixel
-  // position + value + colour. Drives both the overlay dots and the DOM value
-  // labels. Empty when not hovering, so the data canvas is never touched.
+  // Per-layer readout samples at the cursor time (nearest data point) — pixel
+  // position + value + colour. Drives the overlay dots and the DOM value labels;
+  // recomputes as the cursor moves or the window slides under it. Empty when not
+  // hovering, so the data canvas is never touched.
   const trackerSamples = useMemo(() => {
-    if (hoverTime === null) return [];
+    if (cursorTime === null) return [];
     const out: { px: number; py: number; value: number; color: string }[] = [];
     for (const entry of layers) {
       const yScale = yScales.get(entry.axisId ?? defaultAxisId);
       if (yScale === undefined) continue;
-      for (const s of entry.layer.sampleAt(hoverTime)) {
+      for (const s of entry.layer.sampleAt(cursorTime)) {
         out.push({
           px: xScale(s.x),
           py: yScale(s.value),
@@ -124,39 +127,32 @@ export function Layers({ children }: LayersProps) {
       }
     }
     return out;
-  }, [hoverTime, layers, yScales, xScale, defaultAxisId]);
+  }, [cursorTime, layers, yScales, xScale, defaultAxisId]);
 
   const overlayDraw = useCallback(
     (ctx: CanvasRenderingContext2D, w: number, h: number) => {
-      if (hoverTime === null) return;
-      const x = xScale(hoverTime);
-      if (x < 0 || x > w) return; // off-plot (e.g. a controlled tracker out of range)
-      drawCrosshair(ctx, x, h, cursorColor);
+      if (cursorX === null || cursorX < 0 || cursorX > w) return;
+      drawCrosshair(ctx, cursorX, h, cursorColor);
       for (const s of trackerSamples) {
         drawTrackerDot(ctx, s.px, s.py, s.color, background);
       }
     },
-    [hoverTime, xScale, cursorColor, trackerSamples, background],
+    [cursorX, cursorColor, trackerSamples, background],
   );
 
   const handlePointerMove = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       const rect = e.currentTarget.getBoundingClientRect();
-      const localX = Math.max(0, Math.min(plotWidth, e.clientX - rect.left));
-      setHoverTime(+xScale.invert(localX));
+      setHoverX(Math.max(0, Math.min(plotWidth, e.clientX - rect.left)));
     },
-    [plotWidth, xScale, setHoverTime],
+    [plotWidth, setHoverX],
   );
-  const handlePointerLeave = useCallback(
-    () => setHoverTime(null),
-    [setHoverTime],
-  );
+  const handlePointerLeave = useCallback(() => setHoverX(null), [setHoverX]);
 
   // Readout value chips (the crosshair + dots always show; only the value text
   // is modal). 'none' keeps values out of the plot — surface them outside via
   // onTrackerChanged. 'inline' chips sit beside each dot; 'flag' chips stack at
   // the top of the crosshair.
-  const cursorX = hoverTime !== null ? xScale(hoverTime) : null;
   const flagLineHeight = container.theme.font.size + 5;
   const chipStyle: CSSProperties = {
     position: 'absolute',

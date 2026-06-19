@@ -73,10 +73,10 @@ export function ChartContainer({
   const t0 = timeRange[0];
   const t1 = timeRange[1];
 
-  // Cross-row tracker. Uncontrolled by default (we track the pointer); a
-  // `trackerPosition` prop overrides the displayed crosshair.
-  const [hover, setHover] = useState<number | null>(null);
-  const hoverTime = trackerPosition !== undefined ? trackerPosition : hover;
+  // Cross-row tracker. We store the cursor's plot-pixel x (not a timestamp), so a
+  // still cursor stays put while a live window slides under it; a controlled
+  // `trackerPosition` resolves to a pixel below.
+  const [hoverX, setHoverX] = useState<number | null>(null);
 
   // Draw layers register as tracker sources; on hover we fan in their values at
   // the cursor and hand them out via onTrackerChanged (held in a ref so an
@@ -101,18 +101,6 @@ export function ChartContainer({
 
   const onTrackerRef = useRef(onTrackerChanged);
   onTrackerRef.current = onTrackerChanged;
-  useEffect(() => {
-    const cb = onTrackerRef.current;
-    if (cb === undefined) return;
-    if (hover === null) {
-      cb(null);
-      return;
-    }
-    const values = Array.from(sources.values()).flatMap((s) =>
-      s.sampleAt(hover),
-    );
-    cb({ time: hover, values });
-  }, [hover, sources]);
 
   // Rows report their per-slot gutter widths; we reserve each slot's max.
   const [gutters, setGutters] = useState<readonly GutterReq[]>([]);
@@ -138,6 +126,36 @@ export function ChartContainer({
     [t0, t1, plotWidth],
   );
 
+  // Resolve the crosshair pixel: a controlled `trackerPosition` (timestamp) maps
+  // through the current xScale (so it rides with the data); otherwise the stored
+  // hover pixel (so it stays under a still cursor while a live window slides).
+  const cursorX =
+    trackerPosition === undefined
+      ? hoverX
+      : trackerPosition === null
+        ? null
+        : xScale(trackerPosition);
+
+  // Emit { time, values } for an outside readout — recomputed as the cursor moves
+  // *or* the window slides under it (xScale change → new time at the same pixel).
+  // The ref guard keeps a not-hovering live chart from spamming `null`.
+  const lastNullRef = useRef(false);
+  useEffect(() => {
+    const cb = onTrackerRef.current;
+    if (cb === undefined) return;
+    if (cursorX === null) {
+      if (!lastNullRef.current) cb(null);
+      lastNullRef.current = true;
+      return;
+    }
+    lastNullRef.current = false;
+    const time = +xScale.invert(cursorX);
+    const values = Array.from(sources.values()).flatMap((s) =>
+      s.sampleAt(time),
+    );
+    cb({ time, values });
+  }, [cursorX, xScale, sources]);
+
   const frame = useMemo<ContainerFrame>(
     () => ({
       timeRange: [t0, t1],
@@ -149,8 +167,8 @@ export function ChartContainer({
       leftGutter,
       rightGutter,
       rowGap,
-      hoverTime,
-      setHoverTime: setHover,
+      cursorX,
+      setHoverX,
       readout,
       registerTrackerSource,
       unregisterTrackerSource,
@@ -168,7 +186,7 @@ export function ChartContainer({
       leftGutter,
       rightGutter,
       rowGap,
-      hoverTime,
+      cursorX,
       readout,
       registerTrackerSource,
       unregisterTrackerSource,

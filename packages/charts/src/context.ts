@@ -31,13 +31,15 @@ export interface ContainerFrame {
   /** Vertical space between rows in px (not under the time axis). */
   readonly rowGap: number;
   /**
-   * The time (epoch ms) the cursor is over — shared across rows so the tracker
-   * crosshair syncs, or `null` when not hovering. Each row draws a crosshair at
-   * `xScale(hoverTime)`; this is the one piece of cross-row interaction state.
+   * The crosshair's **plot-pixel x** (`0..plotWidth`), shared across rows so the
+   * tracker syncs, or `null` when not hovering. A *pixel*, not a timestamp — so a
+   * still cursor stays put while a live window slides under it (a stored
+   * timestamp would drift sideways as `xScale` changes). A controlled
+   * `trackerPosition` (a timestamp) resolves to a pixel here.
    */
-  readonly hoverTime: number | null;
-  /** Set the hovered time; a row's plot event surface calls this on pointer move. */
-  setHoverTime(time: number | null): void;
+  readonly cursorX: number | null;
+  /** Set the hovered plot-pixel x; a row's event surface calls this on pointer move. */
+  setHoverX(x: number | null): void;
   /** In-chart readout presentation (the crosshair + dots always show on hover). */
   readonly readout: ReadoutMode;
   /**
