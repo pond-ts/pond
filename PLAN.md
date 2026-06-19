@@ -253,6 +253,19 @@ M2); how the estela swap is coordinated across the two agents (at M5). The
 chart carry-forwards in the backlog (`toFloat64Array`, `bisectBegin`,
 `fromTrustedColumns`, `bin` NaN JSDoc) land into core as M1–M4 pull on them.
 
+**✅ Landed carry-forward — `nearest(time)` in core.** M4.1's tracker pulled on
+`bisectBegin`: it had a charts-local `nearestIndex` duplicating core's
+`bisect`/`atOrBefore`/`atOrAfter`. Now core `TimeSeries.nearest(key)` — the
+closest event by `begin()` distance (ties → earlier; clamps to an endpoint
+outside the span; `undefined` iff empty), composed via `bisect`, O(log N) —
+complements `atOrBefore`/`atOrAfter`. The chart tracker (`LineChart`/`BandChart`
+`sampleAt`) calls `series.nearest`; the local `nearestIndex` is deleted. The "no
+readout past the data span" rule stays as **tracker policy** (a chart-side guard
+on the cursor time), per the chosen closest-existing semantics. Friction noted:
+`Event.get` is typed-key, so the tracker reads the value via a runtime-string
+cast (same shape as the column-API read in `data.ts`) — a candidate for a
+runtime-string value accessor on `Event`/`TimeSeries` later.
+
 ---
 
 ## Active experiments
