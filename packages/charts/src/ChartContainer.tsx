@@ -54,7 +54,11 @@ export interface ChartContainerProps {
   /**
    * Controlled view range — fires on pan/zoom with the new `[start, end]` (epoch
    * ms). Wire it back to `timeRange` for a controlled chart; omit for
-   * uncontrolled (the container holds the view internally).
+   * uncontrolled (the container holds the view internally). **Uncontrolled +
+   * `panZoom` takes `timeRange` as the _initial_ view only; later `timeRange`
+   * prop changes are ignored (re-syncing would fight the user's pan on every
+   * parent re-render). To drive the range externally — or to follow a live
+   * sliding window — use controlled mode (this callback).**
    */
   onTimeRangeChange?: (range: [number, number]) => void;
   /** Zoom-in floor — the minimum visible duration in ms. Default `1`. */

@@ -166,6 +166,42 @@ export const OutsideReadout: Story = {
 };
 
 /**
+ * **Controlled cursor (`trackerPosition`).** The other half of the tracker API:
+ * the app owns the cursor. Here a slider drives it — the way an external time
+ * control or a video playhead would — moving the synced crosshair + dots across
+ * both rows with no pointer involved. (The readout stories above drive the same
+ * crosshair from hover.)
+ */
+function ControlledCursorDemo() {
+  const [t, setT] = useState(BASE + 30 * STEP);
+  return (
+    <div>
+      <input
+        type="range"
+        min={TIME_RANGE[0]}
+        max={TIME_RANGE[1]}
+        step={STEP}
+        value={t}
+        onChange={(e) => setT(Number(e.target.value))}
+        style={{ display: 'block', width: '560px', marginBottom: '8px' }}
+      />
+      <ChartContainer
+        timeRange={TIME_RANGE}
+        width={560}
+        theme={estelaTheme}
+        trackerPosition={t}
+      >
+        <Rows />
+      </ChartContainer>
+    </div>
+  );
+}
+
+export const ControlledCursor: Story = {
+  render: () => <ControlledCursorDemo />,
+};
+
+/**
  * **Pan / zoom (uncontrolled).** `panZoom` with no `onTimeRangeChange` — the
  * container holds the view internally, so it works standalone: drag to pan the
  * time range, wheel to zoom around the cursor (to a 2-minute floor). The tracker

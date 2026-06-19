@@ -51,4 +51,23 @@ test.describe('Interactions', () => {
       ).toEqual([]);
     });
   }
+
+  // The controlled-tracker path draws the crosshair from `trackerPosition` (no
+  // pointer), so the hover-driven cases above don't exercise it. Anchor it with
+  // a no-throw smoke check — not screenshotted, since a controlled crosshair at
+  // time T is the same render as a hover at T (already baselined above).
+  test('renders controlled-cursor without error', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    page.on('console', (m) => {
+      if (m.type() === 'error') errors.push(m.text());
+    });
+    await page.goto(story('interactions--controlled-cursor'));
+    // The overlay (2nd canvas) paints the crosshair from the controlled position.
+    await waitForCanvasPaint(page.locator('canvas').nth(1));
+    expect(
+      errors,
+      'no console/page errors rendering the controlled tracker',
+    ).toEqual([]);
+  });
 });
