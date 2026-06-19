@@ -32,9 +32,12 @@ export interface BandSeries {
 }
 
 /**
- * Index of the sample whose time (`x`) is nearest `time`, by binary search, or
- * `-1` for an empty axis. The scrub tracker uses it to snap to the closest data
- * point. `x` must be ascending (the key column always is).
+ * Index of the sample whose time (`x`) is nearest `time`, by binary search —
+ * **only within the data span** `[x[0], x[length-1]]`. Returns `-1` when `time`
+ * is before the first sample or after the last (or the axis is empty), so the
+ * scrub tracker shows *no* readout past the ends rather than clamping to a stale
+ * endpoint (e.g. a stalled live stream whose window has scrolled past the data).
+ * `x` must be ascending (the key column always is).
  */
 export function nearestIndex(
   x: Float64Array,
@@ -42,8 +45,9 @@ export function nearestIndex(
   time: number,
 ): number {
   if (length === 0) return -1;
-  if (time <= x[0]!) return 0;
-  if (time >= x[length - 1]!) return length - 1;
+  if (time < x[0]! || time > x[length - 1]!) return -1; // outside the data span
+  if (time === x[0]!) return 0;
+  if (time === x[length - 1]!) return length - 1;
   let lo = 0;
   let hi = length - 1;
   while (lo <= hi) {

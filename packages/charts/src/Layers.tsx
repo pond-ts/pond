@@ -105,7 +105,14 @@ export function Layers({ children }: LayersProps) {
   // slides; the time + values under it derive from the current xScale.
   const { cursorX, setHoverX, readout } = container;
   const cursorColor = container.theme.cursor ?? container.theme.axis.label;
-  const cursorTime = cursorX !== null ? +xScale.invert(cursorX) : null;
+  // Only read a time when the cursor is within the plot. An out-of-bounds
+  // controlled trackerPosition hides the crosshair (overlay guard below), so the
+  // dots + chips must hide too — gating cursorTime makes trackerSamples empty,
+  // which drives both the canvas dots and the DOM chip branches.
+  const cursorTime =
+    cursorX !== null && cursorX >= 0 && cursorX <= plotWidth
+      ? +xScale.invert(cursorX)
+      : null;
 
   // Per-layer readout samples at the cursor time (nearest data point) — pixel
   // position + value + colour. Drives the overlay dots and the DOM value labels;

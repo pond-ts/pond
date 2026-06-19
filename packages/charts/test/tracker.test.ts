@@ -76,12 +76,14 @@ describe('nearestIndex', () => {
     expect(nearestIndex(x, 4, 12)).toBe(1); // closer to 10
     expect(nearestIndex(x, 4, 16)).toBe(2); // closer to 20
     expect(nearestIndex(x, 4, 15)).toBe(1); // tie → earlier
-    expect(nearestIndex(x, 4, 20)).toBe(2); // exact
+    expect(nearestIndex(x, 4, 20)).toBe(2); // exact interior
+    expect(nearestIndex(x, 4, 0)).toBe(0); // exact first
+    expect(nearestIndex(x, 4, 30)).toBe(3); // exact last
   });
 
-  it('clamps before the first / after the last sample', () => {
-    expect(nearestIndex(x, 4, -5)).toBe(0);
-    expect(nearestIndex(x, 4, 999)).toBe(3);
+  it('returns -1 outside the data span (no clamp to a stale endpoint)', () => {
+    expect(nearestIndex(x, 4, -5)).toBe(-1); // before the first sample
+    expect(nearestIndex(x, 4, 999)).toBe(-1); // after the last sample
   });
 
   it('returns -1 for an empty axis', () => {
