@@ -16,6 +16,7 @@ import {
   type TrackerSource,
 } from './context.js';
 import { maxSlotWidths, sum } from './slots.js';
+import { resolveCursorX } from './tracker.js';
 import { TimeAxis } from './TimeAxis.js';
 import { defaultTheme, type ChartTheme } from './theme.js';
 
@@ -126,24 +127,22 @@ export function ChartContainer({
     [t0, t1, plotWidth],
   );
 
-  // Resolve the crosshair pixel: a controlled `trackerPosition` (timestamp) maps
-  // through the current xScale (so it rides with the data); otherwise the stored
-  // hover pixel (so it stays under a still cursor while a live window slides).
-  const cursorX =
-    trackerPosition === undefined
-      ? hoverX
-      : trackerPosition === null
-        ? null
-        : xScale(trackerPosition);
+  // The crosshair pixel (see resolveCursorX). A stored hoverX is a *plot* pixel;
+  // if plotWidth changes mid-hover (a gutter reserving, or a width change) it's
+  // briefly stale until the next pointer move — rare, and the bounds check below
+  // hides an out-of-plot crosshair meanwhile.
+  const cursorX = resolveCursorX(trackerPosition, hoverX, xScale);
 
   // Emit { time, values } for an outside readout — recomputed as the cursor moves
   // *or* the window slides under it (xScale change → new time at the same pixel).
-  // The ref guard keeps a not-hovering live chart from spamming `null`.
+  // Out of the plot (null, or a controlled trackerPosition d3 extrapolated past
+  // the edges) → no readout, matching the hidden overlay; the ref guard keeps a
+  // not-hovering live chart from spamming `null`.
   const lastNullRef = useRef(false);
   useEffect(() => {
     const cb = onTrackerRef.current;
     if (cb === undefined) return;
-    if (cursorX === null) {
+    if (cursorX === null || cursorX < 0 || cursorX > plotWidth) {
       if (!lastNullRef.current) cb(null);
       lastNullRef.current = true;
       return;
@@ -154,7 +153,7 @@ export function ChartContainer({
       s.sampleAt(time),
     );
     cb({ time, values });
-  }, [cursorX, xScale, sources]);
+  }, [cursorX, xScale, sources, plotWidth]);
 
   const frame = useMemo<ContainerFrame>(
     () => ({

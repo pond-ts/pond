@@ -135,7 +135,7 @@ function LiveSineMonitor({
         width={620}
         theme={theme}
         readout={outside ? 'none' : readout}
-        onTrackerChanged={outside ? setInfo : undefined}
+        {...(outside ? { onTrackerChanged: setInfo } : {})}
       >
         <ChartRow height={280}>
           <YAxis id="v" label="v" min={yMin} max={yMax} />

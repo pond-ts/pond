@@ -1,9 +1,25 @@
 /**
- * Interaction-overlay primitives — drawn on a row's overlay canvas (above the
- * data, below the DOM readout) and redrawn on pointer move while the data canvas
- * stays put. Pure + canvas-only so the geometry is unit-tested directly, like
- * {@link drawLine} / {@link drawBand}.
+ * Interaction-overlay primitives + geometry — the crosshair/dot draws (on a
+ * row's overlay canvas, above the data and below the DOM readout) plus the pure
+ * cursor-resolution helper. All pure, so the geometry is unit-tested directly
+ * like {@link drawLine} / {@link drawBand}.
  */
+
+/**
+ * The crosshair's plot-pixel x from the tracker inputs. A controlled
+ * `trackerPosition` (epoch ms) maps through `xScale`, so a pinned time rides with
+ * the data; `null` hides it; `undefined` (uncontrolled) uses the stored hover
+ * pixel, so a still cursor stays put while a live window slides under it.
+ */
+export function resolveCursorX(
+  trackerPosition: number | null | undefined,
+  hoverX: number | null,
+  xScale: (time: number) => number,
+): number | null {
+  if (trackerPosition === undefined) return hoverX;
+  if (trackerPosition === null) return null;
+  return xScale(trackerPosition);
+}
 
 /**
  * A vertical crosshair at plot-x `x` (CSS px), full row height. Snapped to a

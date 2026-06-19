@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { drawCrosshair, drawTrackerDot } from '../src/tracker.js';
+import {
+  drawCrosshair,
+  drawTrackerDot,
+  resolveCursorX,
+} from '../src/tracker.js';
 import { nearestIndex } from '../src/data.js';
 import { recordingContext } from './canvas-mock.js';
 
@@ -82,5 +86,22 @@ describe('nearestIndex', () => {
 
   it('returns -1 for an empty axis', () => {
     expect(nearestIndex(new Float64Array(0), 0, 5)).toBe(-1);
+  });
+});
+
+describe('resolveCursorX', () => {
+  const xScale = (t: number) => t / 10; // simple linear time→pixel for the test
+
+  it('uses the hover pixel when uncontrolled (trackerPosition undefined)', () => {
+    expect(resolveCursorX(undefined, 42, xScale)).toBe(42);
+    expect(resolveCursorX(undefined, null, xScale)).toBeNull();
+  });
+
+  it('maps a controlled timestamp through xScale (ignoring hover)', () => {
+    expect(resolveCursorX(300, 42, xScale)).toBe(30);
+  });
+
+  it('hides on a controlled null', () => {
+    expect(resolveCursorX(null, 42, xScale)).toBeNull();
   });
 });
