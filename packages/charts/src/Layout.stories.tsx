@@ -368,8 +368,8 @@ export const DifferentHeights: Story = {
 
 /**
  * `timeAxis={false}` drops the shared x axis — for a compact, sparkline-style
- * chart, or when the time context comes from elsewhere. The plot reclaims the
- * axis strip's height.
+ * chart, or when the time context comes from elsewhere. The rows keep their
+ * heights; the ~22px axis strip is simply omitted.
  */
 export const NoTimeAxis: Story = {
   render: () => (

@@ -12,6 +12,7 @@ import {
 } from 'react';
 import { scaleLinear, type ScaleLinear } from 'd3-scale';
 import { resolveYDomain } from './domain.js';
+import { placeAxisSlots } from './slots.js';
 import {
   ContainerContext,
   RowContext,
@@ -39,9 +40,10 @@ export interface ChartRowProps {
  * explicit `[min, max]`), and provides them via context.
  *
  * The x geometry (plot width, time scale) is shared and lives on the
- * {@link ChartContainer}: the row reports its per-side gutter need so the
- * container can reserve a *uniform* gutter, then pads with spacers so its plot
- * left-aligns with every other row under the one time axis.
+ * {@link ChartContainer}: the row reports its per-slot gutter widths so the
+ * container can reserve each slot's max, then sizes each axis to its slot and
+ * pads the outer slots it lacks, so its plot left-aligns with every other row
+ * under the one time axis.
  *
  * Children lay out left-to-right in author order, so `<YAxis side="left"/>` goes
  * before `<Layers/>` and `<YAxis side="right"/>` after.
@@ -145,32 +147,21 @@ export function ChartRow({ height, children }: ChartRowProps) {
   // changes (depending on it would loop register → re-render → re-register).
   useEffect(() => registerGutter(gutterReq), [registerGutter, gutterReq]);
 
-  // Map each axis id to its reserved slot width, and the outer-slot padding this
-  // row lacks. A left axis authored at position i (0 = outermost) sits in slot
-  // (count-1-i) counting from the plot; a right axis at position j sits in slot
-  // j. A row with fewer axes than the widest pads the outer slots so its plot
-  // stays aligned. (Falls back to own width until the container has reserved.)
+  // Map each axis id to its reserved slot width + the outer-slot padding this
+  // row lacks (see placeAxisSlots — slot 0 nearest the plot, pad keeps the plot
+  // aligned). Falls back to own width until the container has reserved.
   const containerLeftSlots = container.leftSlots;
   const containerRightSlots = container.rightSlots;
-  const { axisSlots, leftPad, rightPad } = useMemo(() => {
-    const slotFor = new Map<string, number>();
-    leftAxes.forEach((ax, i) => {
-      const slotIdx = leftAxes.length - 1 - i;
-      slotFor.set(ax.id, containerLeftSlots[slotIdx] ?? ax.width);
-    });
-    rightAxes.forEach((ax, j) => {
-      slotFor.set(ax.id, containerRightSlots[j] ?? ax.width);
-    });
-    let lPad = 0;
-    for (let i = leftAxes.length; i < containerLeftSlots.length; i++) {
-      lPad += containerLeftSlots[i] ?? 0;
-    }
-    let rPad = 0;
-    for (let j = rightAxes.length; j < containerRightSlots.length; j++) {
-      rPad += containerRightSlots[j] ?? 0;
-    }
-    return { axisSlots: slotFor, leftPad: lPad, rightPad: rPad };
-  }, [leftAxes, rightAxes, containerLeftSlots, containerRightSlots]);
+  const { axisSlots, leftPad, rightPad } = useMemo(
+    () =>
+      placeAxisSlots(
+        leftAxes,
+        rightAxes,
+        containerLeftSlots,
+        containerRightSlots,
+      ),
+    [leftAxes, rightAxes, containerLeftSlots, containerRightSlots],
+  );
 
   // One y-scale per axis. A layer counts toward an axis when its (late-resolved)
   // axis id matches; `resolveYDomain` handles the auto-fit + empty/flat/inverted

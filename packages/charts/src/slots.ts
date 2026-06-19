@@ -32,3 +32,44 @@ export function sum(widths: readonly number[]): number {
   for (const w of widths) total += w;
   return total;
 }
+
+/** What {@link placeAxisSlots} computes for one row. */
+export interface AxisSlotPlacement {
+  /** Axis id → its reserved slot width (that column's max across rows). */
+  readonly axisSlots: ReadonlyMap<string, number>;
+  /** Width of the outer slots this row lacks — padded so its plot stays aligned. */
+  readonly leftPad: number;
+  readonly rightPad: number;
+}
+
+/**
+ * Place a row's real axes into the container's reserved slots (slot 0 nearest the
+ * plot). `leftAxes` are in author order (outer→inner), so the i-th sits in slot
+ * `len-1-i`; `rightAxes` are author order (inner→outer), so the j-th sits in slot
+ * `j`. Each axis's reserved width is its slot's max (falling back to its own
+ * width until the container has reserved); a row with fewer axes than the widest
+ * pads the outer slots it lacks — so a no-axis row pads the whole gutter and its
+ * plot still left-aligns.
+ */
+export function placeAxisSlots(
+  leftAxes: readonly { id: string; width: number }[],
+  rightAxes: readonly { id: string; width: number }[],
+  leftSlots: readonly number[],
+  rightSlots: readonly number[],
+): AxisSlotPlacement {
+  const axisSlots = new Map<string, number>();
+  leftAxes.forEach((ax, i) => {
+    axisSlots.set(ax.id, leftSlots[leftAxes.length - 1 - i] ?? ax.width);
+  });
+  rightAxes.forEach((ax, j) => {
+    axisSlots.set(ax.id, rightSlots[j] ?? ax.width);
+  });
+  let leftPad = 0;
+  for (let i = leftAxes.length; i < leftSlots.length; i++)
+    leftPad += leftSlots[i] ?? 0;
+  let rightPad = 0;
+  for (let j = rightAxes.length; j < rightSlots.length; j++) {
+    rightPad += rightSlots[j] ?? 0;
+  }
+  return { axisSlots, leftPad, rightPad };
+}
