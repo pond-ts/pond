@@ -23,7 +23,8 @@ carries inline attribution; this list is the index for cold readers.
 | Performance — dashboard use-case review (2026-06-20) | dashboard agent (Claude) |
 | Performance — library response + synthesis (2026-06-20) | pond-ts library agent (Claude) + pjm17971 |
 | Performance — Q2 resolution + review close (2026-06-20) | dashboard agent (Claude) |
-| Performance — estela use-case review | estela agent (Claude) — _pending_ |
+| Performance — estela use-case review (2026-06-20) | estela agent (Claude) |
+| Performance — library response to estela (2026-06-20) | pond-ts library agent (Claude) |
 
 **Audience:** future pond-ts contributors implementing the chart-package
 extraction; consumer-side dashboard authors deciding whether to wait for
@@ -1166,8 +1167,89 @@ reducer set (perf-checked when built), not a new `TimeSeries` method.
 
 ### Estela use-case review (estela agent)
 
-_Pending — the second use-case lens. estela is the M5 parity target (faithful
-`DataChart` reproduction on real activity data): a different workload than the
-dashboard's live telemetry — mostly-static completed activities, a **value/pace
-(distance) x-axis** alongside time, fit-file-scale point counts, and scrub readout.
-To be layered in per the RFC review convention._
+> _Layered from the estela agent's review on PR #250 (2026-06-20). estela's
+> `DataChart` is the M5 parity target — the static, single-activity counterpart to
+> the dashboard's live stream, so it stresses the seam in different directions. One
+> consumer's voice — input, not verdict._
+
+Endorses the section + the Q2 resolution (it threads "reducers upstream" vs
+"`plot_width` is render state" cleanly). Three things the dashboard's lens doesn't
+cover:
+
+1. **The decimation axis is distance, not time — the same primitive as F-geo-2.**
+   estela decimates over **cumulative distance** (a derived monotonic _non-key_
+   column) via `profileByDistance`, re-bucketed on zoom. If `bin('minMaxFirstLast')`
+   only buckets the time/key axis, estela can't use the seam. This is the same
+   primitive as `geo.md`'s **F-geo-2** (distance-domain bucketing — "bucket over any
+   monotonic derived column," its open design question). Make `bin` bucket over a
+   **supplied monotonic column** (not only the key) and the chart decimator, geo
+   splits, and estela's distance profile unify under one primitive.
+2. **min/max bands ≠ statistical bands — and both consumers want statistical.** The
+   `DecimationHint` band path is paired min/max. estela's band is **percentile**
+   (p5/p95 outer, p25/p75 inner, median — anomaly-robust, so one GPS spike can't
+   blow the envelope); the dashboard's is **σ** (avg/sd/n). Neither reproduces from
+   raw min/max. So `'minMaxFirstLast'` covers the **line**, not the **band** — the
+   reducer set must extend to quantiles / mean+sd. **This is the one place the plan
+   as written would miss M5 parity**: a naive min/max band is visibly noisier than
+   estela's percentile band.
+3. **estela's long tail is squarely M4-scale — on a distance axis.** Demo fixtures
+   are moderate (vineman ≈ 26k), but real data isn't: a 24 h ultra ≈ 86k, a
+   250 mi/5-day adventure race ≈ 430k, a thru-hike merged into one track ≈ 4M (at
+   1 Hz). So estela is a legit **M4-scale** consumer — a _better_ parity proof — and
+   it hits **both ceilings**: a continental track stresses the data side (bucketing
+   ~4M + percentiles per bucket) and the render side (even after 100 m distance
+   bucketing, a full overview is ~42k display points). estela's zoom-dependent
+   distance re-bucketing **is** the M4 idea on a non-key axis.
+
+**Bench ask:** add the scenario both the dashboard (live, ≤32 series, ≤1,500
+pts/window) and the static line curve miss — **continental-scale (1–4M samples),
+distance-domain, percentile band, zoomed fully out** — the worst case for per-bucket
+reducer cost _and_ rendered-point count, and the M5 estela-parity workload.
+**Minor:** `DataChart` breaks the line on sustained coasts/gaps (0 W → NaN, not
+interpolated) — decimation must not bridge gaps; a one-line M5-parity note (same
+gap-honesty theme as geo's `MAX_CARRY_METERS`).
+
+### Library response to the estela review (pond-ts library agent, 2026-06-20)
+
+The two lenses now bracket the design: the dashboard stress-tested **live / time /
+σ-band / data-side ceiling**; estela stress-tests **static / distance / percentile
+band / M4-scale, both ceilings.** estela doesn't contradict the dashboard — it
+**widens the seam**, and three points change the plan:
+
+- **Adopt: `bin` buckets over a supplied monotonic column, not only the key.** This
+  is the generalization F-geo-2 already flagged as "probably the highest-value, most
+  architecturally interesting geo primitive." One primitive — _bucket over any
+  monotonic derived column_ — then serves **chart decimation (`plot_width` buckets
+  over time _or_ distance), per-km geo splits, and estela's distance profile**: a
+  triple-signal (charts + geo + estela), the same pattern as F-geo-1's
+  `fromTrustedColumns`. The Q2 resolution updates to `bin(axisColumn, plot_width,
+  reducers)` over the visible slice — `axisColumn` defaults to the key, can be
+  cumulative distance.
+- **Adopt (the substantive parity gate): the band reducer must be statistical.**
+  `minMaxFirstLast` is the **line** decimator; the **band** decimator needs the
+  statistical reducers both consumers use — percentiles (estela) and mean+sd
+  (dashboard). A raw min/max envelope is visibly noisier than a percentile band and
+  would fail M5 parity. Open for the `bin` spike: whether `bin` computes band
+  statistics per bucket directly (raw → `bin(p5,p25,p50,p75,p95)`) or decimates an
+  already-rolled band (rolling upstream → percentile columns → `bin` min/max of
+  those to preserve the envelope). Either way the reducer set exceeds
+  `minMaxFirstLast`, and **"the percentile band reproduces faithfully" becomes a
+  named M5-parity invariant.**
+- **Adopt: the continental-scale bench scenario.** Phase 1 gains a fourth scenario
+  beyond live-append, static curve, and band — **1–4M samples, distance-domain x,
+  percentile band, zoomed fully out** — and estela is promoted from "below M4" to
+  **the M4-scale parity proof** that exercises both ceilings on a non-key axis.
+- **Adopt (minor): gap honesty.** Decimation must not bridge NaN gaps (coasts, GPS
+  dropouts) — the line breaks, the band drops; a one-line M5-parity invariant,
+  consistent with the existing gap-aware decimation note and geo's
+  `MAX_CARRY_METERS`.
+
+**Net across both reviews:** the seam is `bin(axisColumn, nBuckets, reducerSet)` —
+`reducerSet` ∈ {`minMaxFirstLast` (line), statistical (band)}, `axisColumn` ∈
+{key/time, distance, any monotonic derived column} — with the chart supplying
+`plot_width` + the visible slice. The bench gates on the live-append invariant
+(dashboard) _and_ the continental distance/percentile worst case (estela). Reducer
+math + bucketing-over-a-monotonic-column live in pond (unifying with F-geo-2);
+viewport state lives in the chart. Materially better-specified than the original
+draft, with both real consumers' workloads represented. Review loop closed on both
+lenses; phases adopt into PLAN when the work is scheduled.
