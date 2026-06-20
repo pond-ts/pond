@@ -42,3 +42,12 @@ export type { Curve } from './curve.js';
 
 export { defaultTheme, estelaTheme } from './theme.js';
 export type { ChartTheme, LineStyle, BandStyle, AreaStyle } from './theme.js';
+
+// Public interaction types — the callback params for the tracker + selection
+// (`onTrackerChanged`, `onSelect`) and the `readout` mode.
+export type {
+  ReadoutMode,
+  TrackerInfo,
+  TrackerSample,
+  SelectInfo,
+} from './context.js';

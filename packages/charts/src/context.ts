@@ -40,6 +40,24 @@ export interface ContainerFrame {
   readonly cursorX: number | null;
   /** Set the hovered plot-pixel x; a row's event surface calls this on pointer move. */
   setHoverX(x: number | null): void;
+  /**
+   * The selected mark, or `null`. Shared across rows (single selection). A layer
+   * highlights the mark matching **both** the key (epoch ms) and the series
+   * (`label`) — so two series sharing a timestamp don't both light up. A
+   * controlled `selected` prop pins it; otherwise a click on a selectable layer
+   * sets it. The full {@link SelectInfo} (not just the key) is the identity so
+   * multi-series Bar/Scatter can target the exact clicked mark.
+   */
+  readonly selected: SelectInfo | null;
+  /**
+   * Select a mark, or `null` to clear — a row's click surface calls this after
+   * hit-testing its layers. Always fires `onSelect`; manages the internal
+   * selection only when uncontrolled (no `selectedKey` prop). The split mirrors
+   * the tracker's `trackerPosition` (controlled by a *value* prop) + its
+   * `onTrackerChanged` notification — not `applyRange`, which is controlled by
+   * the presence of a *callback*.
+   */
+  select(hit: SelectInfo | null): void;
   /** In-chart readout presentation (the crosshair + dots always show on hover). */
   readonly readout: ReadoutMode;
   /**
@@ -99,6 +117,19 @@ export interface RowLayer {
    * the sample's own `x` (the dot snaps onto the data point) and dot colour.
    */
   sampleAt(time: number): readonly TrackerSample[];
+  /**
+   * Hit-test plot-pixel `(px, py)` against this layer's marks for click
+   * selection — the select-analog of {@link sampleAt}. Returns the hit mark or
+   * `null`. **Optional:** layers without discrete selectable marks (line, band,
+   * area) omit it; bar / box / scatter implement it. `xScale`/`yScale` map
+   * data→pixels (the row resolves the layer's axis scale, as for `draw`).
+   */
+  hitTest?(
+    px: number,
+    py: number,
+    xScale: (value: number) => number,
+    yScale: (value: number) => number,
+  ): SelectInfo | null;
   /** Draw into the plot canvas. `xScale`/`yScale` map data→pixels. */
   draw(
     ctx: CanvasRenderingContext2D,
@@ -123,6 +154,23 @@ export interface TrackerSample {
  *  it can fan in every series' value at the cursor for {@link onTrackerChanged}. */
 export interface TrackerSource {
   sampleAt(time: number): readonly TrackerSample[];
+}
+
+/**
+ * One selected mark — what {@link RowLayer.hitTest} returns and `onSelect`
+ * reports. Mirrors {@link TrackerSample}: the mark's key (its stable identity,
+ * for controlled selection + highlight matching), value, colour, and series
+ * label.
+ */
+export interface SelectInfo {
+  /** The mark's key as epoch ms (its event's `begin`) — its stable identity. */
+  readonly key: number;
+  /** The mark's value (the plotted column). */
+  readonly value: number;
+  /** The mark's resolved style colour. */
+  readonly color: string;
+  /** Series identity (`as` ?? column) — labels the selection in a readout. */
+  readonly label: string;
 }
 
 /** The hover snapshot handed to `onTrackerChanged` — the cursor time + every

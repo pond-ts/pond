@@ -13,6 +13,7 @@ import {
   type ContainerFrame,
   type GutterReq,
   type ReadoutMode,
+  type SelectInfo,
   type TrackerInfo,
   type TrackerSource,
 } from './context.js';
@@ -47,6 +48,20 @@ export interface ChartContainerProps {
    * you can render a readout outside the chart), and `null` on leave.
    */
   onTrackerChanged?: (info: TrackerInfo | null) => void;
+  /**
+   * Controlled selection — the selected mark (echo the `onSelect` arg back), or
+   * `null`. **Omitted ⇒ uncontrolled** (a click on a selectable layer manages it
+   * internally; pass `null` to force nothing selected). Selectable layers
+   * (`BarChart`, `BoxPlot`, `ScatterChart`) highlight the mark matching both its
+   * key and series — so two series sharing a timestamp don't both light up.
+   */
+  selected?: SelectInfo | null;
+  /**
+   * Fires when a selectable layer's mark is clicked, with the hit mark, or `null`
+   * when a click misses every mark (clears the selection). Notification only —
+   * works in both controlled and uncontrolled mode.
+   */
+  onSelect?: (hit: SelectInfo | null) => void;
   /**
    * Enable pan/zoom: drag the plot to pan the time range, wheel to zoom around
    * the cursor. **Default off** — so it doesn't capture drag/scroll unless asked.
@@ -87,6 +102,8 @@ export function ChartContainer({
   timeAxis = true,
   trackerPosition,
   onTrackerChanged,
+  selected,
+  onSelect,
   panZoom = false,
   onTimeRangeChange,
   minDuration = 1,
@@ -161,6 +178,31 @@ export function ChartContainer({
   const onTrackerRef = useRef(onTrackerChanged);
   onTrackerRef.current = onTrackerChanged;
 
+  // Selection: controlled (`selected` prop) or uncontrolled (internal). A click
+  // on a selectable layer calls `select()` after hit-testing; `onSelect` notifies
+  // in both modes, the internal state is managed only when uncontrolled. The full
+  // SelectInfo is the identity (key + series), so multi-series marks at one
+  // timestamp stay distinct. Refs written after commit (not in render) so the
+  // click handler never reads a callback / mode from a frame abandoned under
+  // concurrent rendering.
+  const [internalSelected, setInternalSelected] = useState<SelectInfo | null>(
+    null,
+  );
+  const controlledSelection = selected !== undefined;
+  const selectedValue = controlledSelection
+    ? (selected ?? null)
+    : internalSelected;
+  const onSelectRef = useRef(onSelect);
+  const controlledSelectionRef = useRef(controlledSelection);
+  useLayoutEffect(() => {
+    onSelectRef.current = onSelect;
+    controlledSelectionRef.current = controlledSelection;
+  });
+  const select = useCallback((hit: SelectInfo | null) => {
+    onSelectRef.current?.(hit);
+    if (!controlledSelectionRef.current) setInternalSelected(hit);
+  }, []);
+
   // Rows report their per-slot gutter widths; we reserve each slot's max.
   const [gutters, setGutters] = useState<readonly GutterReq[]>([]);
   const registerGutter = useCallback((req: GutterReq) => {
@@ -226,6 +268,8 @@ export function ChartContainer({
       rowGap,
       cursorX,
       setHoverX,
+      selected: selectedValue,
+      select,
       readout,
       registerTrackerSource,
       unregisterTrackerSource,
@@ -247,6 +291,8 @@ export function ChartContainer({
       rightGutter,
       rowGap,
       cursorX,
+      selectedValue,
+      select,
       readout,
       registerTrackerSource,
       unregisterTrackerSource,
