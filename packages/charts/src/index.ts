@@ -34,14 +34,26 @@ export { BandChart } from './BandChart.js';
 export type { BandChartProps } from './BandChart.js';
 export { AreaChart } from './AreaChart.js';
 export type { AreaChartProps } from './AreaChart.js';
+export { BarChart } from './BarChart.js';
+export type { BarChartProps } from './BarChart.js';
 
-export { fromTimeSeries, bandFromTimeSeries } from './data.js';
-export type { ChartSeries, BandSeries } from './data.js';
+export {
+  fromTimeSeries,
+  bandFromTimeSeries,
+  barsFromTimeSeries,
+} from './data.js';
+export type { ChartSeries, BandSeries, BarSeries } from './data.js';
 
 export type { Curve } from './curve.js';
 
 export { defaultTheme, estelaTheme } from './theme.js';
-export type { ChartTheme, LineStyle, BandStyle, AreaStyle } from './theme.js';
+export type {
+  ChartTheme,
+  LineStyle,
+  BandStyle,
+  AreaStyle,
+  BarStyle,
+} from './theme.js';
 
 // Public interaction types — the callback params for the tracker + selection
 // (`onTrackerChanged`, `onSelect`) and the `readout` mode.

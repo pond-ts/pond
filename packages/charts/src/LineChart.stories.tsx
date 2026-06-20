@@ -101,6 +101,16 @@ const darkTheme: ChartTheme = {
       fillOpacity: 0.3,
     },
   },
+  bar: {
+    default: {
+      fill: '#f59e0b',
+      opacity: 0.85,
+      highlight: '#d97706',
+      gap: 1,
+      minWidth: 1,
+      outlineWidth: 1.5,
+    },
+  },
   axis: { label: '#94a3b8', grid: '#1e293b', gridDash: [2, 2] },
   font: { family: 'system-ui, sans-serif', size: 11 },
 };
@@ -141,6 +151,16 @@ const foamTheme: ChartTheme = {
       width: 1.5,
       fill: '#64748b',
       fillOpacity: 0.3,
+    },
+  },
+  bar: {
+    default: {
+      fill: '#64748b',
+      opacity: 0.85,
+      highlight: '#475569',
+      gap: 1,
+      minWidth: 1,
+      outlineWidth: 1.5,
     },
   },
   axis: { label: '#94a3b8', grid: '#1e293b', gridDash: [2, 2] },

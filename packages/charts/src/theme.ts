@@ -47,6 +47,15 @@ export interface ChartTheme {
     readonly default: AreaStyle;
     readonly [semantic: string]: AreaStyle;
   };
+  /**
+   * Map from a bar's semantic identifier to its style — the fill, the
+   * selected-bar highlight, and the slot gap / minimum width ({@link BarChart}).
+   * `default` is the fallback; a bar resolves `bar[semantic] ?? bar.default`.
+   */
+  readonly bar: {
+    readonly default: BarStyle;
+    readonly [semantic: string]: BarStyle;
+  };
   /** Axis chrome: tick-label colour, gridline stroke + dash pattern. */
   readonly axis: {
     readonly label: string;
@@ -96,6 +105,22 @@ export interface AreaStyle {
 }
 
 /**
+ * A resolved bar style: the flat `fill` (scaled by `opacity`, 0–1) plus the
+ * `highlight` colour the selected bar takes (also its outline), and the bar
+ * geometry — `gap` (px between adjacent bars, the default for `<BarChart gap>`)
+ * and `minWidth` (the px floor so a too-thin bucket stays visible) handed to
+ * `barSpanPx`, with `outlineWidth` for the selected-bar stroke.
+ */
+export interface BarStyle {
+  readonly fill: string;
+  readonly opacity: number;
+  readonly highlight: string;
+  readonly gap: number;
+  readonly minWidth: number;
+  readonly outlineWidth: number;
+}
+
+/**
  * The neutral default theme. `default` / `primary` match the M1 `LineChart`
  * colour (`#2563eb`) so adopting the theme channel doesn't shift existing
  * renders. `primary` / `secondary` / `context` are a built-in generic role
@@ -125,6 +150,26 @@ export const defaultTheme: ChartTheme = {
     },
     in: { color: '#2563eb', width: 1.5, fill: '#2563eb', fillOpacity: 0.3 },
     out: { color: '#e8836b', width: 1.5, fill: '#e8836b', fillOpacity: 0.3 },
+  },
+  bar: {
+    // Flat blue fill; the selected bar brightens + outlines. `secondary` reuses
+    // the line's warm accent for a second series.
+    default: {
+      fill: '#2563eb',
+      opacity: 0.85,
+      highlight: '#1d4ed8',
+      gap: 1,
+      minWidth: 1,
+      outlineWidth: 1.5,
+    },
+    secondary: {
+      fill: '#e8836b',
+      opacity: 0.85,
+      highlight: '#d65f43',
+      gap: 1,
+      minWidth: 1,
+      outlineWidth: 1.5,
+    },
   },
   axis: {
     label: '#64748b',
@@ -180,6 +225,26 @@ export const estelaTheme: ChartTheme = {
     }, // --es-estela
     in: { color: '#15B3A6', width: 1.5, fill: '#15B3A6', fillOpacity: 0.35 }, // --es-estela
     out: { color: '#E0B36A', width: 1.5, fill: '#E0B36A', fillOpacity: 0.35 }, // --es-filament
+  },
+  bar: {
+    // Brand-teal fill on the dark ground; the selected bar lifts to the bright
+    // reef + an outline. `secondary` is the warm filament accent.
+    default: {
+      fill: '#15B3A6', // --es-estela
+      opacity: 0.85,
+      highlight: '#7FE2D2', // --es-reef (bright on the dark ground)
+      gap: 1,
+      minWidth: 1,
+      outlineWidth: 1.5,
+    },
+    secondary: {
+      fill: '#E0B36A', // --es-filament
+      opacity: 0.85,
+      highlight: '#F1D9A8',
+      gap: 1,
+      minWidth: 1,
+      outlineWidth: 1.5,
+    },
   },
   axis: {
     label: '#4E6B6B', // --es-slate

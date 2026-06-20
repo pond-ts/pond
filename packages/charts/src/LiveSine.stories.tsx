@@ -33,6 +33,16 @@ const lightTheme: ChartTheme = {
       fillOpacity: 0.3,
     },
   },
+  bar: {
+    default: {
+      fill: '#111827',
+      opacity: 0.85,
+      highlight: '#000000',
+      gap: 1,
+      minWidth: 1,
+      outlineWidth: 1.5,
+    },
+  },
   axis: { label: '#6b7280', grid: '#e5e7eb', gridDash: [2, 2] },
   font: { family: 'system-ui, -apple-system, sans-serif', size: 11 },
   cursor: '#6b7280',
