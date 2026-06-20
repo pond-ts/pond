@@ -9,6 +9,7 @@ import {
   useMemo,
   useRef,
   type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactElement,
   type ReactNode,
@@ -16,6 +17,7 @@ import {
 import { Canvas } from './Canvas.js';
 import { drawGrid } from './grid.js';
 import { drawCrosshair, drawTrackerDot } from './tracker.js';
+import { resolveSelection } from './select.js';
 import { panRange, zoomRange } from './viewport.js';
 import {
   ContainerContext,
@@ -168,9 +170,18 @@ export function Layers({ children }: LayersProps) {
     startX: number;
     startRange: [number, number];
   } | null>(null);
+  // Row read through a ref so the click handler hit-tests the latest layers +
+  // y-scales without re-subscribing (same after-commit discipline as containerRef).
+  const rowRef = useRef(row);
+  useLayoutEffect(() => {
+    rowRef.current = row;
+  });
+  // Pointer-down position, to tell a click (select) from the tail of a drag/pan.
+  const clickStartRef = useRef<{ x: number; y: number } | null>(null);
 
   const handlePointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
+      clickStartRef.current = { x: e.clientX, y: e.clientY };
       const c = containerRef.current;
       if (!c.panZoom) return;
       const r = c.timeRange;
@@ -222,6 +233,24 @@ export function Layers({ children }: LayersProps) {
     () => containerRef.current.setHoverX(null),
     [],
   );
+  // Click selection: ignore the click that ends a drag/pan (moved past a few px),
+  // else hit-test the row's layers top-down and select — or clear on a miss.
+  const handleClick = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
+    const start = clickStartRef.current;
+    if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 4)
+      return;
+    const c = containerRef.current;
+    const r = rowRef.current;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const hit = resolveSelection(
+      r.layers,
+      e.clientX - rect.left,
+      e.clientY - rect.top,
+      c.xScale,
+      (axisId) => r.yScales.get(axisId ?? r.defaultAxisId),
+    );
+    c.select(hit);
+  }, []);
 
   // Wheel-zoom — a native non-passive listener so `preventDefault` works (React's
   // onWheel is passive). Attached once; no-ops (and lets the page scroll) when
@@ -287,6 +316,7 @@ export function Layers({ children }: LayersProps) {
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
         onPointerLeave={handlePointerLeave}
+        onClick={handleClick}
       >
         <Canvas width={plotWidth} height={row.height} draw={draw} />
         <Canvas
