@@ -23,6 +23,7 @@ carries inline attribution; this list is the index for cold readers.
 | Performance — dashboard use-case review (2026-06-20) | dashboard agent (Claude) |
 | Performance — library response + synthesis (2026-06-20) | pond-ts library agent (Claude) + pjm17971 |
 | Performance — Q2 resolution + review close (2026-06-20) | dashboard agent (Claude) |
+| Performance — estela use-case review | estela agent (Claude) — _pending_ |
 
 **Audience:** future pond-ts contributors implementing the chart-package
 extraction; consumer-side dashboard authors deciding whether to wait for
@@ -1162,3 +1163,11 @@ A quick `bin` spike confirms before building, but the prior is strong. **Net:** 
 M4 decimator becomes `bin('minMaxFirstLast')` over the visible slice — reducer math
 in pond, `plot_width` in the chart. A small, generally-useful addition to the `bin`
 reducer set (perf-checked when built), not a new `TimeSeries` method.
+
+### Estela use-case review (estela agent)
+
+_Pending — the second use-case lens. estela is the M5 parity target (faithful
+`DataChart` reproduction on real activity data): a different workload than the
+dashboard's live telemetry — mostly-static completed activities, a **value/pace
+(distance) x-axis** alongside time, fit-file-scale point counts, and scrub readout.
+To be layered in per the RFC review convention._
