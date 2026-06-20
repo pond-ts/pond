@@ -47,6 +47,16 @@ export interface ChartTheme {
     readonly default: AreaStyle;
     readonly [semantic: string]: AreaStyle;
   };
+  /**
+   * Map from a box's semantic identifier to its style — a discrete
+   * box-and-whisker per key ({@link BoxPlot}), the bar-chart analog of the
+   * band. `default` is the fallback; a chart tags each box series with a role
+   * (`<BoxPlot as="latency" />`) resolving `box[semantic] ?? box.default`.
+   */
+  readonly box: {
+    readonly default: BoxStyle;
+    readonly [semantic: string]: BoxStyle;
+  };
   /** Axis chrome: tick-label colour, gridline stroke + dash pattern. */
   readonly axis: {
     readonly label: string;
@@ -79,6 +89,24 @@ export interface LineStyle {
 export interface BandStyle {
   readonly fill: string;
   readonly opacity: number;
+}
+
+/**
+ * A resolved box-and-whisker style ({@link BoxPlot}). The q1→q3 box is a filled
+ * rect (`fill` at `fillOpacity`) outlined by `stroke`/`strokeWidth`; the
+ * `median` line and the `whisker` (the lower/upper stems + caps) get their own
+ * colour/width so the median reads against the fill. Whiskers and the box
+ * outline are drawn at full alpha (only the box fill is graded by `fillOpacity`).
+ */
+export interface BoxStyle {
+  readonly fill: string;
+  readonly fillOpacity: number;
+  readonly stroke: string;
+  readonly strokeWidth: number;
+  readonly median: string;
+  readonly medianWidth: number;
+  readonly whisker: string;
+  readonly whiskerWidth: number;
 }
 
 /**
@@ -125,6 +153,20 @@ export const defaultTheme: ChartTheme = {
     },
     in: { color: '#2563eb', width: 1.5, fill: '#2563eb', fillOpacity: 0.3 },
     out: { color: '#e8836b', width: 1.5, fill: '#e8836b', fillOpacity: 0.3 },
+  },
+  box: {
+    // The blue brand box: a translucent fill outlined in the line colour, a
+    // bolder median, and matching whiskers.
+    default: {
+      fill: '#2563eb',
+      fillOpacity: 0.3,
+      stroke: '#2563eb',
+      strokeWidth: 1.5,
+      median: '#1e3a8a',
+      medianWidth: 2,
+      whisker: '#2563eb',
+      whiskerWidth: 1.5,
+    },
   },
   axis: {
     label: '#64748b',
@@ -180,6 +222,20 @@ export const estelaTheme: ChartTheme = {
     }, // --es-estela
     in: { color: '#15B3A6', width: 1.5, fill: '#15B3A6', fillOpacity: 0.35 }, // --es-estela
     out: { color: '#E0B36A', width: 1.5, fill: '#E0B36A', fillOpacity: 0.35 }, // --es-filament
+  },
+  box: {
+    // A teal box on the dark ground: `--es-shallows` fill, `--es-estela` outline
+    // + whiskers, and a bright `--es-foam` median so it reads against the fill.
+    default: {
+      fill: '#45CDBE', // --es-shallows
+      fillOpacity: 0.28,
+      stroke: '#15B3A6', // --es-estela
+      strokeWidth: 1.5,
+      median: '#F1FBF9', // --es-foam
+      medianWidth: 2,
+      whisker: '#7FE2D2', // --es-reef
+      whiskerWidth: 1.5,
+    },
   },
   axis: {
     label: '#4E6B6B', // --es-slate
