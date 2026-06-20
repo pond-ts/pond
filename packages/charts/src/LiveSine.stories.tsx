@@ -25,6 +25,14 @@ const lightTheme: ChartTheme = {
   background: '#ffffff',
   line: { default: { color: '#111827', width: 1.5 } },
   band: { default: { fill: '#111827', opacity: 0.12 } },
+  area: {
+    default: {
+      color: '#111827',
+      width: 1.5,
+      fill: '#111827',
+      fillOpacity: 0.3,
+    },
+  },
   axis: { label: '#6b7280', grid: '#e5e7eb', gridDash: [2, 2] },
   font: { family: 'system-ui, -apple-system, sans-serif', size: 11 },
   cursor: '#6b7280',
