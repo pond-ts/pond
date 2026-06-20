@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -55,10 +56,12 @@ export interface ChartContainerProps {
    * Controlled view range — fires on pan/zoom with the new `[start, end]` (epoch
    * ms). Wire it back to `timeRange` for a controlled chart; omit for
    * uncontrolled (the container holds the view internally). **Uncontrolled +
-   * `panZoom` takes `timeRange` as the _initial_ view only; later `timeRange`
-   * prop changes are ignored (re-syncing would fight the user's pan on every
-   * parent re-render). To drive the range externally — or to follow a live
-   * sliding window — use controlled mode (this callback).**
+   * `panZoom` seeds the internal view from `timeRange` whenever it isn't actively
+   * holding one — so toggling `panZoom` on, or a controlled→uncontrolled switch,
+   * starts from the current range, not the mount-time one. Once uncontrolled,
+   * later `timeRange` changes are ignored so they can't fight the user's pan. To
+   * drive the range externally — or to follow a live sliding window — use
+   * controlled mode (this callback).**
    */
   onTimeRangeChange?: (range: [number, number]) => void;
   /** Zoom-in floor — the minimum visible duration in ms. Default `1`. */
@@ -93,16 +96,36 @@ export function ChartContainer({
 }: ChartContainerProps) {
   // View range: pan/zoom moves it. Controlled (onTimeRangeChange) reads the prop
   // and routes gestures back through the callback; uncontrolled holds it
-  // internally (seeded from the prop). With panZoom off, the prop is used
-  // directly — so a static or live (sliding-prop) chart tracks the prop as before.
-  const [internalRange, setInternalRange] = useState(timeRange);
+  // internally. With panZoom off, the prop is used directly — so a static or live
+  // (sliding-prop) chart tracks the prop as before.
+  const [internalRange, setInternalRange] = useState<[number, number]>([
+    timeRange[0],
+    timeRange[1],
+  ]);
   const uncontrolled = panZoom && onTimeRangeChange === undefined;
+  // While the internal view isn't in use (not uncontrolled), keep it synced to
+  // the prop — so *entering* uncontrolled pan/zoom (toggling panZoom on, or a
+  // controlled→uncontrolled switch) starts from the current range, not the
+  // mount-time one. While uncontrolled, leave it alone so a timeRange change
+  // can't fight the user's pan. (Adjusting state during render — React re-renders
+  // before commit, no extra paint; the guard makes it converge in one step.)
+  if (
+    !uncontrolled &&
+    (internalRange[0] !== timeRange[0] || internalRange[1] !== timeRange[1])
+  ) {
+    setInternalRange([timeRange[0], timeRange[1]]);
+  }
   const view = uncontrolled ? internalRange : timeRange;
   const t0 = view[0];
   const t1 = view[1];
 
+  // Latest onTimeRangeChange in a ref so applyRange stays stable. Written after
+  // commit (not in render) so a gesture never reads a callback from a frame that
+  // was abandoned under concurrent rendering.
   const onRangeRef = useRef(onTimeRangeChange);
-  onRangeRef.current = onTimeRangeChange;
+  useLayoutEffect(() => {
+    onRangeRef.current = onTimeRangeChange;
+  });
   const applyRange = useCallback((range: [number, number]) => {
     const cb = onRangeRef.current;
     if (cb) cb(range);

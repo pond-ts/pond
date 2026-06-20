@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   type CSSProperties,
@@ -155,9 +156,13 @@ export function Layers({ children }: LayersProps) {
 
   // Pan/zoom + tracker share the plot's event surface. Container fields are read
   // through a ref so the handlers + the (once-attached) wheel listener always see
-  // the latest frame without re-subscribing.
+  // the latest frame without re-subscribing. Written after commit (not in render)
+  // so a wheel/pointer event can't read a frame that was abandoned mid-render
+  // under concurrent rendering.
   const containerRef = useRef(container);
-  containerRef.current = container;
+  useLayoutEffect(() => {
+    containerRef.current = container;
+  });
   const plotRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{
     startX: number;
