@@ -49,12 +49,13 @@ export interface ChartContainerProps {
    */
   onTrackerChanged?: (info: TrackerInfo | null) => void;
   /**
-   * Controlled selection — the selected mark's key (epoch ms), or `null`.
-   * **Omitted ⇒ uncontrolled** (a click on a selectable layer manages it
+   * Controlled selection — the selected mark (echo the `onSelect` arg back), or
+   * `null`. **Omitted ⇒ uncontrolled** (a click on a selectable layer manages it
    * internally; pass `null` to force nothing selected). Selectable layers
-   * (`BarChart`, `BoxPlot`, `ScatterChart`) highlight the mark whose key matches.
+   * (`BarChart`, `BoxPlot`, `ScatterChart`) highlight the mark matching both its
+   * key and series — so two series sharing a timestamp don't both light up.
    */
-  selectedKey?: number | null;
+  selected?: SelectInfo | null;
   /**
    * Fires when a selectable layer's mark is clicked, with the hit mark, or `null`
    * when a click misses every mark (clears the selection). Notification only —
@@ -101,7 +102,7 @@ export function ChartContainer({
   timeAxis = true,
   trackerPosition,
   onTrackerChanged,
-  selectedKey,
+  selected,
   onSelect,
   panZoom = false,
   onTimeRangeChange,
@@ -177,15 +178,19 @@ export function ChartContainer({
   const onTrackerRef = useRef(onTrackerChanged);
   onTrackerRef.current = onTrackerChanged;
 
-  // Selection: controlled (`selectedKey` prop) or uncontrolled (internal). A
-  // click on a selectable layer calls `select()` after hit-testing; `onSelect`
-  // notifies in both modes, the internal state is managed only when uncontrolled.
-  // Refs written after commit (not in render) so the click handler never reads a
-  // callback / mode from a frame abandoned under concurrent rendering.
-  const [internalSelected, setInternalSelected] = useState<number | null>(null);
-  const controlledSelection = selectedKey !== undefined;
-  const selected = controlledSelection
-    ? (selectedKey ?? null)
+  // Selection: controlled (`selected` prop) or uncontrolled (internal). A click
+  // on a selectable layer calls `select()` after hit-testing; `onSelect` notifies
+  // in both modes, the internal state is managed only when uncontrolled. The full
+  // SelectInfo is the identity (key + series), so multi-series marks at one
+  // timestamp stay distinct. Refs written after commit (not in render) so the
+  // click handler never reads a callback / mode from a frame abandoned under
+  // concurrent rendering.
+  const [internalSelected, setInternalSelected] = useState<SelectInfo | null>(
+    null,
+  );
+  const controlledSelection = selected !== undefined;
+  const selectedValue = controlledSelection
+    ? (selected ?? null)
     : internalSelected;
   const onSelectRef = useRef(onSelect);
   const controlledSelectionRef = useRef(controlledSelection);
@@ -195,7 +200,7 @@ export function ChartContainer({
   });
   const select = useCallback((hit: SelectInfo | null) => {
     onSelectRef.current?.(hit);
-    if (!controlledSelectionRef.current) setInternalSelected(hit?.key ?? null);
+    if (!controlledSelectionRef.current) setInternalSelected(hit);
   }, []);
 
   // Rows report their per-slot gutter widths; we reserve each slot's max.
@@ -263,7 +268,7 @@ export function ChartContainer({
       rowGap,
       cursorX,
       setHoverX,
-      selectedKey: selected,
+      selected: selectedValue,
       select,
       readout,
       registerTrackerSource,
@@ -286,7 +291,7 @@ export function ChartContainer({
       rightGutter,
       rowGap,
       cursorX,
-      selected,
+      selectedValue,
       select,
       readout,
       registerTrackerSource,

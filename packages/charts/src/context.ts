@@ -41,11 +41,14 @@ export interface ContainerFrame {
   /** Set the hovered plot-pixel x; a row's event surface calls this on pointer move. */
   setHoverX(x: number | null): void;
   /**
-   * The selected mark's key (epoch ms), or `null`. Shared across rows (single
-   * selection), so a layer highlights the mark whose key matches. A controlled
-   * `selectedKey` prop pins it; otherwise a click on a selectable layer sets it.
+   * The selected mark, or `null`. Shared across rows (single selection). A layer
+   * highlights the mark matching **both** the key (epoch ms) and the series
+   * (`label`) — so two series sharing a timestamp don't both light up. A
+   * controlled `selected` prop pins it; otherwise a click on a selectable layer
+   * sets it. The full {@link SelectInfo} (not just the key) is the identity so
+   * multi-series Bar/Scatter can target the exact clicked mark.
    */
-  readonly selectedKey: number | null;
+  readonly selected: SelectInfo | null;
   /**
    * Select a mark, or `null` to clear — a row's click surface calls this after
    * hit-testing its layers. Always fires `onSelect`; manages the internal

@@ -32,6 +32,11 @@ const GRID_TICKS = 5;
 /** Wheel-zoom sensitivity: `factor = exp(deltaY * k)` (one ~100px notch ≈ ±15%). */
 const ZOOM_SENSITIVITY = 0.0015;
 
+/** Pointer slop (px): a drag must exceed this before it pans, and a click within
+ *  it still selects. One threshold for both so a click never also nudges the pan
+ *  (and never hit-tests against a shifted scale). */
+const DRAG_SLOP = 4;
+
 /** Past this fraction of the plot, a readout label flips left of its dot so it
  *  doesn't overflow the right edge. */
 const LABEL_FLIP_FRACTION = 0.85;
@@ -205,6 +210,9 @@ export function Layers({ children }: LayersProps) {
       if (drag) {
         // Pan from the start range by the total drag — right → earlier (−dt).
         const dx = e.clientX - drag.startX;
+        // Don't pan until past the slop, so a click's 1–4px jitter neither moves
+        // the view nor shifts the scale the click then hit-tests against.
+        if (Math.abs(dx) <= DRAG_SLOP) return;
         const span = drag.startRange[1] - drag.startRange[0];
         const dt = c.plotWidth > 0 ? -dx * (span / c.plotWidth) : 0;
         c.applyRange(panRange(drag.startRange, dt));
@@ -237,7 +245,10 @@ export function Layers({ children }: LayersProps) {
   // else hit-test the row's layers top-down and select — or clear on a miss.
   const handleClick = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
     const start = clickStartRef.current;
-    if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 4)
+    if (
+      start &&
+      Math.hypot(e.clientX - start.x, e.clientY - start.y) > DRAG_SLOP
+    )
       return;
     const c = containerRef.current;
     const r = rowRef.current;
