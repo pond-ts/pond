@@ -33,6 +33,17 @@ const lightTheme: ChartTheme = {
       fillOpacity: 0.3,
     },
   },
+  scatter: {
+    default: {
+      color: '#111827',
+      radius: 4,
+      outline: '#ffffff',
+      outlineWidth: 1,
+      selectedOutline: '#111827',
+      selectedWidth: 2,
+      label: '#374151',
+    },
+  },
   axis: { label: '#6b7280', grid: '#e5e7eb', gridDash: [2, 2] },
   font: { family: 'system-ui, -apple-system, sans-serif', size: 11 },
   cursor: '#6b7280',

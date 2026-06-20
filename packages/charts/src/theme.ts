@@ -47,6 +47,22 @@ export interface ChartTheme {
     readonly default: AreaStyle;
     readonly [semantic: string]: AreaStyle;
   };
+  /**
+   * Map from a scatter's semantic identifier to its point style — the single
+   * styling channel for the **base mark** ({@link ScatterChart}): fill colour,
+   * base radius, outline, and the optional per-point label colour. `default` is
+   * the fallback; a scatter resolves `scatter[semantic] ?? scatter.default`.
+   *
+   * Scatter additionally supports **data-driven** radius + colour (a column run
+   * through a scale — see `src/encoding.ts`); that is the deliberate, signed-off
+   * exception to one-channel styling. The data-driven encoding *overrides* this
+   * style's `radius` / `color` per point; this remains the fallback for
+   * unencoded points and the source of the outline + label styling.
+   */
+  readonly scatter: {
+    readonly default: ScatterStyle;
+    readonly [semantic: string]: ScatterStyle;
+  };
   /** Axis chrome: tick-label colour, gridline stroke + dash pattern. */
   readonly axis: {
     readonly label: string;
@@ -79,6 +95,30 @@ export interface LineStyle {
 export interface BandStyle {
   readonly fill: string;
   readonly opacity: number;
+}
+
+/**
+ * A resolved scatter point style — the single styling channel for the base
+ * mark. `color` fills each point and `radius` (px) sizes it (both the fallback
+ * when a data-driven encoding leaves a point unencoded). `outline`/`outlineWidth`
+ * stroke a ring around each point for legibility on a busy plot; the *selected*
+ * point is restroked with `selectedOutline` at `selectedWidth` to lift it.
+ * `label` colours the optional per-point text (the font comes from `theme.font`).
+ */
+export interface ScatterStyle {
+  readonly color: string;
+  /** Base point radius in px (data-driven radius overrides this per point). */
+  readonly radius: number;
+  /** Per-point outline stroke colour. */
+  readonly outline: string;
+  /** Per-point outline width in px. */
+  readonly outlineWidth: number;
+  /** Outline colour for the selected point (the highlight ring). */
+  readonly selectedOutline: string;
+  /** Outline width for the selected point (px) — wider than `outlineWidth`. */
+  readonly selectedWidth: number;
+  /** Colour of the optional per-point text label. */
+  readonly label: string;
 }
 
 /**
@@ -125,6 +165,38 @@ export const defaultTheme: ChartTheme = {
     },
     in: { color: '#2563eb', width: 1.5, fill: '#2563eb', fillOpacity: 0.3 },
     out: { color: '#e8836b', width: 1.5, fill: '#e8836b', fillOpacity: 0.3 },
+  },
+  scatter: {
+    // Brand blue fill with a white ring (legible on a busy plot); the selected
+    // point gets a darker, wider ring. `primary`/`secondary` mirror the line
+    // roles so a scatter overlaid on a line can share its identity.
+    default: {
+      color: '#2563eb',
+      radius: 4,
+      outline: '#ffffff',
+      outlineWidth: 1,
+      selectedOutline: '#1e293b',
+      selectedWidth: 2,
+      label: '#334155',
+    },
+    primary: {
+      color: '#2563eb',
+      radius: 4,
+      outline: '#ffffff',
+      outlineWidth: 1,
+      selectedOutline: '#1e293b',
+      selectedWidth: 2,
+      label: '#334155',
+    },
+    secondary: {
+      color: '#e8836b',
+      radius: 4,
+      outline: '#ffffff',
+      outlineWidth: 1,
+      selectedOutline: '#1e293b',
+      selectedWidth: 2,
+      label: '#334155',
+    },
   },
   axis: {
     label: '#64748b',
@@ -180,6 +252,38 @@ export const estelaTheme: ChartTheme = {
     }, // --es-estela
     in: { color: '#15B3A6', width: 1.5, fill: '#15B3A6', fillOpacity: 0.35 }, // --es-estela
     out: { color: '#E0B36A', width: 1.5, fill: '#E0B36A', fillOpacity: 0.35 }, // --es-filament
+  },
+  scatter: {
+    // Brand-teal points ringed in the dark ground so they read as discrete
+    // marks; the selected point gets the bright reef ring (the tracker colour).
+    // `foam`/`hr` mirror the line roles for a scatter overlaid on those traces.
+    default: {
+      color: '#15B3A6', // --es-estela
+      radius: 4,
+      outline: '#06191D', // --es-bg (ring punches the point off the ground)
+      outlineWidth: 1,
+      selectedOutline: '#7FE2D2', // --es-reef (matches the tracker highlight)
+      selectedWidth: 2,
+      label: '#DBEAE8', // --es-mist (legible label on the dark ground)
+    },
+    foam: {
+      color: '#F1FBF9', // --es-foam (motion — shared primary trace)
+      radius: 4,
+      outline: '#06191D',
+      outlineWidth: 1,
+      selectedOutline: '#7FE2D2',
+      selectedWidth: 2,
+      label: '#DBEAE8', // --es-mist
+    },
+    hr: {
+      color: '#E0B36A', // --es-filament (rare warm accent — heart rate)
+      radius: 4,
+      outline: '#06191D',
+      outlineWidth: 1,
+      selectedOutline: '#7FE2D2',
+      selectedWidth: 2,
+      label: '#DBEAE8', // --es-mist
+    },
   },
   axis: {
     label: '#4E6B6B', // --es-slate
