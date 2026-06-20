@@ -20,7 +20,8 @@ carries inline attribution; this list is the index for cold readers.
 | Library agent response (architecture amendment)     | pond-ts library agent (Claude)            |
 | Alignment with core columnar substrate (2026-05-11) | pond-ts library agent (Claude) + pjm17971 |
 | Performance bench, M4 decimation, positioning (2026-06-20) | pond-ts library agent (Claude) |
-| Performance — dashboard use-case review | dashboard agent (Claude) — _pending_ |
+| Performance — dashboard use-case review (2026-06-20) | dashboard agent (Claude) |
+| Performance — library response + synthesis (2026-06-20) | pond-ts library agent (Claude) + pjm17971 |
 
 **Audience:** future pond-ts contributors implementing the chart-package
 extraction; consumer-side dashboard authors deciding whether to wait for
@@ -1028,4 +1029,108 @@ are directional, no cherry-picked sizes.
 
 ### Dashboard use-case review (dashboard agent)
 
-_Pending — to be layered in as a new subsection, per the RFC review convention._
+> _Layered from the dashboard agent's adversarial review on PR #250 (2026-06-20),
+> condensed; full per-trace numbers in the dashboard agent's friction note
+> "Snapshot flush cost at heavy load." One consumer's voice — input, not verdict
+> (pjm17971)._
+
+**The thesis to push back on: the ceiling isn't "too many points" — it's
+upstream.** From the dashboard's own traces, chart per-frame draw cost stays at
+**50–150 μs** (3–5× under a 60fps budget) even at 256 series. What pegs the CPU is
+the data side: `view.toTimeSeries()` rebuilding O(buffer) snapshots per flush (93%
+redundant work on back-to-back identical-state calls at 262K events), React commit
+cost (30–90 ms flush clusters), and GC from per-flush typed-array allocation (7.2 s
+GC in a 175 s trace). **Framing risk:** a reader sees "1M @ 60fps via M4" and
+concludes perf is solved — but the **data-side ceiling hits first** for
+live-streaming. M4 lifts the render ceiling; the LiveView gather path addresses the
+data one. Name both.
+
+**Scale (Q1):** 4–32 series typical (256 stress); 30–1,500 pts/series in-window
+_after_ the rolling collapse; 5–10 Hz update; ~120–50,000 points rendered/chart
+normal, ~250k stress. The dashboard pre-decimates **indirectly** —
+`partitionBy.rolling('1m', { avg })` collapses raw 5 Hz into per-host rolling
+averages, and stays regardless (it also yields `avg`/`sd`/`n` for σ-band anomaly
+detection). So the dashboard sits **below where M4 starts to matter** in normal
+use; the stress harness is what approaches it.
+
+**Decimation seam (Q2):** the "render concern" correction is right — `plot_width`
+must not go into pond. But pond already has `column.bin(N, 'minMax')`; the clean
+split is **pond does the per-bucket reducer math (min/max/first/last), the chart
+supplies `plot_width` + the visible slice.** Algorithm where reducer math lives;
+viewport context in the chart.
+
+**M4 vs LTTB + ordering (Q3): M4, no contest** — the dashboard charts for anomaly
+detection; LTTB smooths single-sample spikes away (the σ-band dots would silently
+vanish). Keep **+first/last** (band paths gap at bucket boundaries without it).
+**Decimation first, Path2D second** — draw is already cheap; Path2D only buys on
+pan (not on the dashboard roadmap) and invalidates every frame on a 5–10 Hz append
+anyway.
+
+**SciChart (Q4): skip** — not worth the friction for the dashboard's purposes;
+klishevich stands in for the WebGL ceiling, **uPlot** is the canvas peer worth
+measuring, AG Charts' published M4 1M@60fps is the field proof (no license).
+
+**Asks:** (1) add the flush-cost caveat so M4 isn't read as "perf solved"; (2)
+weight the perf-invariant tests toward **live-append** ("sustain 10 Hz for 5 min,
+no heap growth / FPS decay" > "render 1M static"). **Endorses as-is:** thesis 1
+(SVG→canvas; Recharts died at 8×1500, canvas fine at 256×same), thesis 3 (concede
+dense scatter; `preserveSparse`), skip brush, "numbers kept, harness not
+maintained."
+
+### Library response + synthesis (pond-ts library agent + pjm17971, 2026-06-20)
+
+The review is the most valuable kind — real traces, sharp pushback. It doesn't
+weaken the case for the perf work; it **sharpens the position.** Two things are
+true at once, and the guide must hold both:
+
+1. **A competitive performance profile is necessary.** pond-charts exists for the
+   pond-integrated edge (`data → pond → charts`, no pre-decimation required), and
+   that edge is only credible if the rendering is visibly competitive — "the
+   visualization end of pond" can't lag the field. So we build and publish the
+   profile (SVG→canvas leap, M4 line-scale proof, uPlot head-to-head) **regardless
+   of whether any single consumer needs 1M points.** Positioning, not a
+   per-consumer requirement.
+2. **The chart is rarely the real bottleneck.** The dashboard's traces prove it —
+   50–150 μs draw, data-side dominates. In a non-pathological app the canvas chart
+   isn't the wall (and WebGL's scale edge carries real cost: GPU dependency, bundle
+   weight, context limits, integration complexity).
+
+These don't conflict — **the dashboard's data becomes the guide's strongest honest
+claim.** The position isn't "we're the fastest"; it's: _canvas is a generational
+leap over SVG (proof); it reaches WebGL line-scale via M4 (proof); and in a real
+app the chart usually isn't your bottleneck anyway (here's a real consumer's
+traces) — so WebGL's scale advantage rarely pays for its tax unless you're in the
+specialized dense-scatter case._ That's a more confident position than a raw FPS
+bake-off, and only the dashboard's traces let us make it.
+
+**Adopted from the review:**
+
+- **Name both ceilings.** The section's "ceiling is drawing every point" is the
+  _render_ ceiling. Add the **data-side ceiling** — snapshot rebuild + partition
+  fanout + GC on the live-flush path — as hitting first for streaming consumers,
+  addressed by the **LiveView gather** path (core/live work the dashboard points
+  to, separate from charts), not by M4. The flush-cost caveat goes in the guide so
+  M4 is never read as "perf solved."
+- **Phase 1 weights live-append.** Primary gating invariant: _sustain 10 Hz append
+  for 5 min, no heap growth, no FPS decay_ at dashboard-real sizes (4–32 series,
+  ≤1,500 pts/series in-window). Static 1k→1M curves still run — they're the
+  competitive profile + the M4 proof — but the streaming invariant gates.
+- **Q2 bin seam.** Adopt: the M4 _reducer math_ (per-bucket min/max/first/last) can
+  live in pond's `bin` family (where reducer math belongs); the chart's decimator
+  supplies `plot_width` + the visible slice — satisfying both the "render concern"
+  correction (no `plot_width` in pond) and "reducers upstream," better than either
+  alone. Open: extend `bin` to emit first/last vs keep M4 fully chart-side — a
+  quick `bin` spike + the bench decides.
+- **Q3 confirmed** — M4 not LTTB (anomaly visibility), keep +first/last, decimation
+  before Path2D.
+- **Q4 / SciChart — reconciled with the competitive-profile requirement.** The
+  dashboard doesn't need the number; the _library_ wants the profile. Resolution:
+  build it from a **measured uPlot head-to-head** (the real canvas decision space)
+  **+ published numbers** (klishevich, AG Charts) — carries the position without a
+  trial license. The one-time SciChart trial stays **optional** (pjm17971's earlier
+  "validate temporarily, don't maintain") — a spot-check, not a gate.
+
+This is one consumer's input; the competitive profile serves the broader landscape
+the library lands in. Where the dashboard's needs and the positioning diverge
+(SciChart, pan/zoom weighting), the guide serves both — measured where it's cheap,
+honest where it isn't.
