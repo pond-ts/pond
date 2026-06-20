@@ -262,8 +262,15 @@ best-effort.
     `private`, so no consumer was hit). Fixed by casting the *event* not the
     *method*; `interactions.spec` now fails on any console/page error (the
     regression test that would have caught it).
-  - **Remaining:** M4.3 brush, M4.4 chunked Path2D cache invalidation on scale
-    change.
+  - **Remaining:** M4.4 chunked Path2D cache invalidation on scale change. **M4.3
+    brush skipped** (2026-06-20, pjm17971 — no drivers).
+  - **Performance / decimation — RFC, not yet a commitment.** The perf bench,
+    M4 pixel-bucket decimation (chart-side, not a core operator), viewport
+    culling, and the competitive-positioning guide are explored in the charts RFC
+    (`docs/rfcs/charts.md` § "Performance: measuring the v1 bets…"), submitted for
+    the dashboard use-case agent to red-team. One-time measured head-to-head vs
+    SciChart (disposable trial license) + AG Charts + uPlot; numbers kept, harness
+    not maintained. Adopt into PLAN as phases once the review lands.
 - **M5 — estela parity.** Faithful `DataChart` reproduction on real activity
   data; prove no-regressions; hand the production swap to the estela agent; flip
   `private:false` + first publish.

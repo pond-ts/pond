@@ -19,6 +19,8 @@ carries inline attribution; this list is the index for cold readers.
 | Codex architectural review                          | Codex                                     |
 | Library agent response (architecture amendment)     | pond-ts library agent (Claude)            |
 | Alignment with core columnar substrate (2026-05-11) | pond-ts library agent (Claude) + pjm17971 |
+| Performance bench, M4 decimation, positioning (2026-06-20) | pond-ts library agent (Claude) |
+| Performance — dashboard use-case review | dashboard agent (Claude) — _pending_ |
 
 **Audience:** future pond-ts contributors implementing the chart-package
 extraction; consumer-side dashboard authors deciding whether to wait for
@@ -868,3 +870,162 @@ the layered design already accommodates.
 **Home:** `packages/charts` in this monorepo, `"private": true` until M5 parity
 so the unified release workflow doesn't publish a half-built package; flipped
 public at first parity. Lockstep-versioned with core + react.
+
+---
+
+## Performance: measuring the v1 bets, M4 decimation, and honest positioning
+
+> _Section by the pond-ts library agent (Claude), 2026-06-20. The empirical +
+> competitive layer on the decimation (#8 "pixel-bucket min/max accumulator"),
+> semantic-hints (Codex 8), Path2D, typed-array (#7), and perf-invariant-testing
+> (Codex 9) commitments above. Submitted for the **dashboard use-case agent** to
+> red-team — review section pending below._
+
+The architecture above **commits** to decimation, Path2D caching, and typed
+arrays "at target scale," and to perf-invariant tests. What's missing is
+**numbers**: where draw-everything actually tops out, how much each lever buys,
+and how the result stacks against the libraries a consumer would otherwise reach
+for. This section proposes the bench that produces them, the build that lifts the
+ceiling, and the honest comparison that comes out the other end. As of writing,
+M0–M4.2 have shipped (axes, theme, BandChart, tracker, pan/zoom); **none of the
+scale machinery — decimation, culling, Path2D cache — exists yet.** Every point
+is drawn every frame the data canvas repaints. So the bench measures a real, not
+hypothetical, un-decimated renderer.
+
+### Thesis the numbers should support
+
+1. **Canvas is a generational leap over SVG — which is exactly what we succeed.**
+   The widely-cited klishevich benchmark (SciChart WebGL vs React-Charts Tanstack
+   **SVG**) is a _WebGL-vs-SVG_ result: SVG ~2 FPS / 53s for 10k points, WebGL
+   40+ FPS / 2.28s. pond-charts succeeds react-timeseries-charts — an **SVG**
+   library — so canvas is the leap over our own lineage and the SVG cliff this
+   RFC was born from (Recharts/Victory/Tanstack). This is the headline win and
+   the easiest to demonstrate; the bench just has to **quantify the cliff** with
+   our numbers against the published SVG ones.
+2. **The ceiling is drawing every point, not "canvas".** AG Charts renders 1M
+   points at 60 FPS on **canvas** via the **M4 algorithm** (Jugel et al., VLDB
+   2014: bucket by pixel column, keep min/max/first/last per column → a
+   pixel-identical line from O(plot-width) points). M4 _is_ the "pixel-bucket
+   min/max accumulator" this RFC already commits to (#8) — AG Charts is the
+   field proof that the bet pays off. So the competitive evidence **validates**
+   the existing plan; the work is to build and measure it.
+3. **WebGL wins only where decimation can't help — and that's narrow.** Dense
+   scatters and heatmaps: every mark spatially meaningful, nothing to bucket
+   away. But the **`preserveSparse` hint already specced (Codex 8)** covers the
+   _sparse_ scatter case (anomaly dots, reservoir samples) by rendering every
+   point — no decimation needed at sparse counts. The genuine WebGL win is
+   _dense_ scatter / heatmap fields (millions of overlapping marks). Concede that
+   one honestly; it is small and defensible.
+
+One-line position: **"Canvas is a generational leap over the SVG libraries
+pond-charts succeeds; it reaches WebGL-class _line_ scale (1M+) with the
+pixel-bucket decimation this RFC already plans; WebGL still wins for dense
+scatter/heatmap fields."**
+
+### Correction: decimation is a render concern, not a pond-core operator
+
+A first draft of this plan proposed an **M4 pond-core operator**
+(`TimeSeries.downsampleM4`). That contradicts the decision already made above —
+_"the chart owns its decimation grid"_ — and the existing decision is right.
+Pixel-bucket decimation depends on **plot width and zoom**, which are render
+state, not data semantics. pond's "reducers live upstream" principle governs
+**semantic** aggregation (rolling percentiles, `aggregate`); **pixel**
+decimation is the renderer's viewport/decimator stage. So M4 here means
+**implementing that stage**, formalized — not a new `TimeSeries` method, and
+therefore no human-merge-gate on the core public surface. (Recording the
+walked-back alternative per CLAUDE.md, so a future session doesn't re-propose
+it.)
+
+### Phase 1 — bench harness = Codex-9 perf invariants, measured
+
+Codex-9 already lists the perf-invariant tests (no heap growth after N append
+frames, bounded draw time at fixed size, pan/zoom invalidation, sparse-marker
+preservation, DPR resizing). Phase 1 **implements those as a measurement
+harness** and extends them to a competitive curve.
+
+- **Render bench (browser):** Playwright over Storybook. Metrics — initial render
+  (ms to first paint), live-append sustained FPS (rAF frame-count over a fixed
+  window; mirror the references' ~100 pts/20ms and a faster tier), pan/zoom
+  interaction FPS + input→paint latency, JS-heap (Chrome `performance.memory`;
+  directional, note the caveat).
+- **Sizes / scenarios:** 1k / 10k / 100k / 500k / 1M points × {single line, 3
+  series, band}. Seeded deterministic generator. Median of N; warm-up discarded;
+  **machine pinned and recorded — numbers are directional/relative, never
+  absolute.** Commit the JSON results so regressions surface later (the
+  perf-invariant tests become CI guards at a fixed fixture size).
+- **Output:** the baseline curve + a one-paragraph diagnosis of **where
+  draw-everything tops out and on which metric** (expect initial render + pan FPS
+  to degrade first, CPU stroke cost over N points). That diagnosis is what
+  justifies — and orders — the Phase 2 build.
+
+### Phase 2 — build the decimator (the M4 this RFC already specced)
+
+Chart-side viewport/decimator stage, per the existing pipeline (`typed-array
+store → viewport/decimator → canvas renderer`):
+
+- **M4 = pixel-bucket min/max _+ first/last_.** The RFC says min/max (#8); adding
+  first/last per bucket keeps the polyline continuous across bucket boundaries
+  (the line enters/exits each pixel column correctly). Driven by the
+  `DecimationHint` already specced — `line: 'minmax'`, `band:` paired
+  `(min lower, max upper)` so the envelope never inverts, `scatter:
+  preserveSparse`.
+- **Viewport culling (independent win).** Bisect the columnar x-array to the
+  visible range (+1 point each side) before drawing — pan/zoom on a large series
+  stops walking off-screen points. Do this even if M4 slips.
+- **Re-bench → target ~1M points @ 60 FPS for lines.** Report the lift as a
+  before/after table.
+- **The real engineering, flagged:** decimation is view-dependent; re-decimating
+  every pan frame is O(visible), up to O(1M) zoomed out. Options to benchmark,
+  simplest first: (i) cull-then-decimate per frame, measure if it's already
+  enough; (ii) cache the decimated set per `(view, width)` and reuse across pan
+  frames at one zoom; (iii) a multi-resolution pyramid. Escalate only on
+  evidence; `log` what was chosen.
+
+### Phase 3 — competitive comparison + honest guide
+
+A how-to / benchmark guide in `website/docs/how-to-guides/` (first-person,
+grounded in the measured numbers, per the experiment-guide template):
+
+- **One-time _measured_ head-to-head.** A temporary SciChart trial license +
+  AG Charts + pond-charts on identical scenarios, captured once. **The numbers
+  are kept; the harness is disposable** — SciChart is not added as a maintained
+  dependency (pjm17971's call). Document the methodology + machine for
+  reproducibility. uPlot (this RFC's existing streaming target) is the canvas
+  peer most worth measuring directly.
+- **The position** — §"Thesis" above, now backed by our curve: the SVG→canvas
+  leap (vs published Tanstack numbers, for anyone on Recharts/Victory/RTC),
+  reaching line scale via the planned decimation (vs AG Charts' M4 1M@60fps),
+  conceding dense scatter/heatmap to WebGL.
+- **Decision guide** — pond-charts when {timeseries dashboards, line/band/bar,
+  ≤~1M line points, lightweight, no GPU dep, and the data already lives in pond};
+  WebGL when {dense scatter/heatmap fields, many-million spatial marks}.
+
+### Open questions for the dashboard review
+
+The dashboard agent is the use-case voice here — it builds a real consumer and
+knows its actual workload. Specifically:
+
+1. **What dashboard-scale numbers actually matter?** Real series count, point
+   density, update rate, and window length — so the bench scenarios match
+   reality, not invented sizes. (charts.md notes the gRPC experiment _pre_
+   -decimated upstream and Recharts still collapsed — does the dashboard
+   pre-decimate today, and would it stop if the chart decimated natively?)
+2. **Does _any_ decimation belong upstream after all?** The "render concern"
+   correction above says no — but if the dashboard's pipeline already produces a
+   pixel-grid-aware reduction, is there a seam worth keeping? Red-team the
+   correction.
+3. **M4 vs LTTB**, and **Path2D × decimation ordering** — which lever the
+   dashboard's profile says matters most, and in what order to land them.
+4. **Is the one-time SciChart number worth the trial-license friction**, or do
+   published numbers + a direct uPlot comparison carry the guide?
+
+### Out of scope / non-goals
+
+Maintained SciChart dependency or head-to-head harness (the validation is a
+disposable one-off). Brush / range-select (M4.3, skipped — no drivers). Chasing
+dense-scatter WebGL parity. Over-claiming: report where canvas loses, numbers
+are directional, no cherry-picked sizes.
+
+### Dashboard use-case review (dashboard agent)
+
+_Pending — to be layered in as a new subsection, per the RFC review convention._
