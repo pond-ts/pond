@@ -63,6 +63,16 @@ export interface ChartTheme {
     readonly default: ScatterStyle;
     readonly [semantic: string]: ScatterStyle;
   };
+  /**
+   * Map from a box's semantic identifier to its style — a discrete
+   * box-and-whisker per key ({@link BoxPlot}), the bar-chart analog of the
+   * band. `default` is the fallback; a chart tags each box series with a role
+   * (`<BoxPlot as="latency" />`) resolving `box[semantic] ?? box.default`.
+   */
+  readonly box: {
+    readonly default: BoxStyle;
+    readonly [semantic: string]: BoxStyle;
+  };
   /** Axis chrome: tick-label colour, gridline stroke + dash pattern. */
   readonly axis: {
     readonly label: string;
@@ -119,6 +129,24 @@ export interface ScatterStyle {
   readonly selectedWidth: number;
   /** Colour of the optional per-point text label. */
   readonly label: string;
+}
+
+/**
+ * A resolved box-and-whisker style ({@link BoxPlot}). The q1→q3 box is a filled
+ * rect (`fill` at `fillOpacity`) outlined by `stroke`/`strokeWidth`; the
+ * `median` line and the `whisker` (the lower/upper stems + caps) get their own
+ * colour/width so the median reads against the fill. Whiskers and the box
+ * outline are drawn at full alpha (only the box fill is graded by `fillOpacity`).
+ */
+export interface BoxStyle {
+  readonly fill: string;
+  readonly fillOpacity: number;
+  readonly stroke: string;
+  readonly strokeWidth: number;
+  readonly median: string;
+  readonly medianWidth: number;
+  readonly whisker: string;
+  readonly whiskerWidth: number;
 }
 
 /**
@@ -196,6 +224,20 @@ export const defaultTheme: ChartTheme = {
       selectedOutline: '#1e293b',
       selectedWidth: 2,
       label: '#334155',
+    },
+  },
+  box: {
+    // The blue brand box: a translucent fill outlined in the line colour, a
+    // bolder median, and matching whiskers.
+    default: {
+      fill: '#2563eb',
+      fillOpacity: 0.3,
+      stroke: '#2563eb',
+      strokeWidth: 1.5,
+      median: '#1e3a8a',
+      medianWidth: 2,
+      whisker: '#2563eb',
+      whiskerWidth: 1.5,
     },
   },
   axis: {
@@ -283,6 +325,20 @@ export const estelaTheme: ChartTheme = {
       selectedOutline: '#7FE2D2',
       selectedWidth: 2,
       label: '#DBEAE8', // --es-mist
+    },
+  },
+  box: {
+    // A teal box on the dark ground: `--es-shallows` fill, `--es-estela` outline
+    // + whiskers, and a bright `--es-foam` median so it reads against the fill.
+    default: {
+      fill: '#45CDBE', // --es-shallows
+      fillOpacity: 0.28,
+      stroke: '#15B3A6', // --es-estela
+      strokeWidth: 1.5,
+      median: '#F1FBF9', // --es-foam
+      medianWidth: 2,
+      whisker: '#7FE2D2', // --es-reef
+      whiskerWidth: 1.5,
     },
   },
   axis: {

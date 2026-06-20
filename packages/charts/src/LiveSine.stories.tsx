@@ -44,6 +44,18 @@ const lightTheme: ChartTheme = {
       label: '#374151',
     },
   },
+  box: {
+    default: {
+      fill: '#111827',
+      fillOpacity: 0.25,
+      stroke: '#111827',
+      strokeWidth: 1.5,
+      median: '#111827',
+      medianWidth: 2,
+      whisker: '#111827',
+      whiskerWidth: 1.5,
+    },
+  },
   axis: { label: '#6b7280', grid: '#e5e7eb', gridDash: [2, 2] },
   font: { family: 'system-ui, -apple-system, sans-serif', size: 11 },
   cursor: '#6b7280',
