@@ -38,13 +38,22 @@ export { ScatterChart } from './ScatterChart.js';
 export type { ScatterChartProps } from './ScatterChart.js';
 export { BoxPlot } from './BoxPlot.js';
 export type { BoxPlotProps } from './BoxPlot.js';
+export { BarChart } from './BarChart.js';
+export type { BarChartProps } from './BarChart.js';
 
 export {
   fromTimeSeries,
   bandFromTimeSeries,
   boxFromTimeSeries,
+  barsFromTimeSeries,
 } from './data.js';
-export type { ChartSeries, BandSeries, BoxSeries, BoxColumns } from './data.js';
+export type {
+  ChartSeries,
+  BandSeries,
+  BoxSeries,
+  BoxColumns,
+  BarSeries,
+} from './data.js';
 
 // Scatter's data-driven point encoding (radius / colour from columns via
 // scales) — the deliberate, signed-off exception to single-channel styling.
@@ -60,6 +69,7 @@ export type {
   AreaStyle,
   ScatterStyle,
   BoxStyle,
+  BarStyle,
 } from './theme.js';
 
 // Public interaction types — the callback params for the tracker + selection
