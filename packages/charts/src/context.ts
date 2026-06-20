@@ -55,6 +55,16 @@ export interface ContainerFrame {
    * (epoch ms, which `scaleTime` coerces).
    */
   readonly xScale: ScaleTime<number, number>;
+  /** Pan/zoom enabled — the plot drag-pans and wheel-zooms the shared time range. */
+  readonly panZoom: boolean;
+  /** Minimum visible duration (ms) — the zoom-in floor. */
+  readonly minDuration: number;
+  /**
+   * Apply a new view range from a pan/zoom gesture. Routes to `onTimeRangeChange`
+   * (controlled) or the container's internal view state (uncontrolled). Only
+   * called while `panZoom` is on.
+   */
+  applyRange(range: readonly [number, number]): void;
   /**
    * A row reports its per-slot gutter widths each side; the container reserves
    * each slot's max so every row's plot left-aligns. Returns an unregister fn.

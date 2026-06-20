@@ -14,8 +14,6 @@ const N = 60;
 const BASE = Date.UTC(2026, 0, 1, 12, 0, 0);
 const STEP = 60_000;
 const TIME_RANGE: readonly [number, number] = [BASE, BASE + (N - 1) * STEP];
-/** A fixed mid-window tracker time (12:30) for the deterministic stories. */
-const PINNED = BASE + 30 * STEP;
 
 function demo(phase = 0, amp = 40, mid = 50) {
   const rows: Array<[number, number]> = [];
@@ -67,27 +65,23 @@ function Rows() {
 }
 
 /**
- * **Cross-row cursor sync (default `readout='none'`).** `trackerPosition` pins
- * the tracker at 12:30 — the synced crosshair + per-series dots show across both
- * rows, but no value text sits over the data. Surface the values outside via
- * `onTrackerChanged` (see `OutsideReadout`).
+ * **Cross-row cursor sync (default `readout='none'`).** Hover the plot — the
+ * crosshair + per-series dots sync across both rows (shared x), but no value text
+ * sits over the data. Surface the values outside via `onTrackerChanged` (see
+ * `OutsideReadout`). (Apps can also drive the cursor with `trackerPosition` — an
+ * external time slider, a video playhead — but hovering is the common case.)
  */
 export const CursorSync: Story = {
   render: () => (
-    <ChartContainer
-      timeRange={TIME_RANGE}
-      width={560}
-      theme={estelaTheme}
-      trackerPosition={PINNED}
-    >
+    <ChartContainer timeRange={TIME_RANGE} width={560} theme={estelaTheme}>
       <Rows />
     </ChartContainer>
   ),
 };
 
 /**
- * **`readout='flag'`.** Value chips stack at the top of the crosshair — in-chart,
- * but kept to the top edge, out of the data's way.
+ * **`readout='flag'`.** Hover the plot — value chips stack at the top of the
+ * crosshair, in-chart but kept to the top edge, out of the data's way.
  */
 export const FlagReadout: Story = {
   render: () => (
@@ -95,7 +89,6 @@ export const FlagReadout: Story = {
       timeRange={TIME_RANGE}
       width={560}
       theme={estelaTheme}
-      trackerPosition={PINNED}
       readout="flag"
     >
       <Rows />
@@ -104,8 +97,9 @@ export const FlagReadout: Story = {
 };
 
 /**
- * **`readout='inline'`.** A value chip beside each dot, at the point's height.
- * Most direct, but it sits over the data — the "chart ick" the others avoid.
+ * **`readout='inline'`.** Hover the plot — a value chip sits beside each dot at
+ * the point's height. Most direct, but it sits over the data — the "chart ick"
+ * the others avoid.
  */
 export const InlineReadout: Story = {
   render: () => (
@@ -113,7 +107,6 @@ export const InlineReadout: Story = {
       timeRange={TIME_RANGE}
       width={560}
       theme={estelaTheme}
-      trackerPosition={PINNED}
       readout="inline"
     >
       <Rows />
@@ -170,4 +163,60 @@ function OutsideReadoutDemo() {
 
 export const OutsideReadout: Story = {
   render: () => <OutsideReadoutDemo />,
+};
+
+/**
+ * **Controlled cursor (`trackerPosition`).** The other half of the tracker API:
+ * the app owns the cursor. Here a slider drives it — the way an external time
+ * control or a video playhead would — moving the synced crosshair + dots across
+ * both rows with no pointer involved. (The readout stories above drive the same
+ * crosshair from hover.)
+ */
+function ControlledCursorDemo() {
+  const [t, setT] = useState(BASE + 30 * STEP);
+  return (
+    <div>
+      <input
+        type="range"
+        min={TIME_RANGE[0]}
+        max={TIME_RANGE[1]}
+        step={STEP}
+        value={t}
+        onChange={(e) => setT(Number(e.target.value))}
+        style={{ display: 'block', width: '560px', marginBottom: '8px' }}
+      />
+      <ChartContainer
+        timeRange={TIME_RANGE}
+        width={560}
+        theme={estelaTheme}
+        trackerPosition={t}
+      >
+        <Rows />
+      </ChartContainer>
+    </div>
+  );
+}
+
+export const ControlledCursor: Story = {
+  render: () => <ControlledCursorDemo />,
+};
+
+/**
+ * **Pan / zoom (uncontrolled).** `panZoom` with no `onTimeRangeChange` — the
+ * container holds the view internally, so it works standalone: drag to pan the
+ * time range, wheel to zoom around the cursor (to a 2-minute floor). The tracker
+ * still works on hover and suppresses mid-pan; both rows move together (shared x).
+ */
+export const PanZoom: Story = {
+  render: () => (
+    <ChartContainer
+      timeRange={TIME_RANGE}
+      width={560}
+      theme={estelaTheme}
+      panZoom
+      minDuration={2 * STEP}
+    >
+      <Rows />
+    </ChartContainer>
+  ),
 };

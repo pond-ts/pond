@@ -242,8 +242,28 @@ best-effort.
     `onTrackerChanged({ time, values })` (pjm17971: in-chart tooltips are "ick").
     Layers register as tracker sources so the container fans in every series'
     value. LiveSine playground gained sine / tooltip-method / light-dark controls.
-  - **Remaining:** M4.2 pan/zoom (controlled + uncontrolled), M4.3 brush, M4.4
-    chunked Path2D cache invalidation on scale change.
+  - **M4.2 ✅ pan/zoom** (branch `feat/charts-m4-panzoom`, #249). Drag-pan +
+    wheel-zoom on the shared x-geometry; `panZoom` opt-in, **controlled**
+    (`onTimeRangeChange`) or **uncontrolled** (internal view state). Pure math in
+    `viewport.ts` (`panRange`/`zoomRange`, `minDuration` zoom floor) with unit
+    tests; wheel via a **native non-passive listener** so `preventDefault` works
+    (React's `onWheel` is passive). Tracker suppresses mid-pan; both rows move
+    together (shared x). The readout-mode stories
+    (`CursorSync`/`FlagReadout`/`InlineReadout`) became **hover-driven** —
+    dropped the fake controlled `trackerPosition`, so they're interactive in
+    Storybook (crosshair follows the pointer, synced across rows); the e2e drives
+    a deterministic pointer to 12:30 (30/59 of the window) so they stay
+    baseline-able (verified the driven hover reproduces the prior controlled
+    baseline exactly — no churn). The controlled `trackerPosition` API stays for
+    app-driven cursors (external slider / video playhead).
+  - **Tracker-crash hotfix** (#248). #246's runtime-string value read detached
+    `Event.get` from its receiver (`this` lost → `this.#data` threw), crashing
+    any tracker on render — missed by L2, Codex, and the e2e (the package is
+    `private`, so no consumer was hit). Fixed by casting the *event* not the
+    *method*; `interactions.spec` now fails on any console/page error (the
+    regression test that would have caught it).
+  - **Remaining:** M4.3 brush, M4.4 chunked Path2D cache invalidation on scale
+    change.
 - **M5 — estela parity.** Faithful `DataChart` reproduction on real activity
   data; prove no-regressions; hand the production swap to the estela agent; flip
   `private:false` + first publish.
