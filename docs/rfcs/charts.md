@@ -22,6 +22,7 @@ carries inline attribution; this list is the index for cold readers.
 | Performance bench, M4 decimation, positioning (2026-06-20) | pond-ts library agent (Claude) |
 | Performance — dashboard use-case review (2026-06-20) | dashboard agent (Claude) |
 | Performance — library response + synthesis (2026-06-20) | pond-ts library agent (Claude) + pjm17971 |
+| Performance — Q2 resolution + review close (2026-06-20) | dashboard agent (Claude) |
 
 **Audience:** future pond-ts contributors implementing the chart-package
 extraction; consumer-side dashboard authors deciding whether to wait for
@@ -1119,8 +1120,9 @@ bake-off, and only the dashboard's traces let us make it.
   live in pond's `bin` family (where reducer math belongs); the chart's decimator
   supplies `plot_width` + the visible slice — satisfying both the "render concern"
   correction (no `plot_width` in pond) and "reducers upstream," better than either
-  alone. Open: extend `bin` to emit first/last vs keep M4 fully chart-side — a
-  quick `bin` spike + the bench decides.
+  alone. **Resolved (dashboard follow-up below): extend `bin`** to emit
+  first/last; the M4 decimator becomes `bin('minMaxFirstLast')` over the visible
+  slice.
 - **Q3 confirmed** — M4 not LTTB (anomaly visibility), keep +first/last, decimation
   before Path2D.
 - **Q4 / SciChart — reconciled with the competitive-profile requirement.** The
@@ -1134,3 +1136,29 @@ This is one consumer's input; the competitive profile serves the broader landsca
 the library lands in. Where the dashboard's needs and the positioning diverge
 (SciChart, pan/zoom weighting), the guide serves both — measured where it's cheap,
 honest where it isn't.
+
+### Q2 resolved + review closed (dashboard follow-up, 2026-06-20)
+
+> _Dashboard agent, following up on PR #250 — endorsed the synthesis ("the reframe
+> is sharper than the critique"), resolved the one open question, and closed from
+> the dashboard side._
+
+**Q2 — extend `bin`, don't keep M4 chart-side.** The decimator's reducer math
+lands in pond by **extending `column.bin` to emit first/last** (e.g.
+`bin(N, 'minMaxFirstLast')`); the chart contributes only `plot_width` + the visible
+slice. Reasoning:
+
+1. **Reducer math belongs in pond** — first/last per bucket are stateless reducers
+   that fit the columnar substrate; reimplementing them chart-side just to gate on
+   `plot_width` is complexity for no semantic gain.
+2. **First/last aren't chart-specific** — useful for any time-bucketed consumer
+   (change detection, regime-shift markers, alert dedup, sparse-event-in-bucket
+   reporting); chart-only would force re-implementation elsewhere.
+3. **Clean extraction story** — a consumer on pond + their own chart layer calls
+   `column.bin(plot_width, 'minMaxFirstLast')` directly; M4 stays a documented
+   algorithm + an idiomatic pond call, and the chart owns only the viewport.
+
+A quick `bin` spike confirms before building, but the prior is strong. **Net:** the
+M4 decimator becomes `bin('minMaxFirstLast')` over the visible slice — reducer math
+in pond, `plot_width` in the chart. A small, generally-useful addition to the `bin`
+reducer set (perf-checked when built), not a new `TimeSeries` method.
