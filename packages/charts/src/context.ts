@@ -49,8 +49,10 @@ export interface ContainerFrame {
   /**
    * Select a mark, or `null` to clear — a row's click surface calls this after
    * hit-testing its layers. Always fires `onSelect`; manages the internal
-   * selection only when uncontrolled (no `selectedKey` prop), mirroring how
-   * `setHoverX`/`applyRange` split controlled vs internal.
+   * selection only when uncontrolled (no `selectedKey` prop). The split mirrors
+   * the tracker's `trackerPosition` (controlled by a *value* prop) + its
+   * `onTrackerChanged` notification — not `applyRange`, which is controlled by
+   * the presence of a *callback*.
    */
   select(hit: SelectInfo | null): void;
   /** In-chart readout presentation (the crosshair + dots always show on hover). */
