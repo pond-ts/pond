@@ -35,6 +35,18 @@ export interface ChartTheme {
     readonly default: BandStyle;
     readonly [semantic: string]: BandStyle;
   };
+  /**
+   * Map from an area's semantic identifier to its outline-plus-graded-fill style
+   * (`AreaChart`) — outline colour/width and the gradient (opaque at the line,
+   * fading to transparent at the baseline). `default` is the fallback; the
+   * esnet two-colour traffic look is two areas composed in the z-stack (e.g.
+   * `in` above the axis + `out` below), each resolving `area[semantic] ??
+   * area.default`.
+   */
+  readonly area: {
+    readonly default: AreaStyle;
+    readonly [semantic: string]: AreaStyle;
+  };
   /** Axis chrome: tick-label colour, gridline stroke + dash pattern. */
   readonly axis: {
     readonly label: string;
@@ -70,6 +82,20 @@ export interface BandStyle {
 }
 
 /**
+ * A resolved area style: an outline stroke plus a graded fill. `color`/`width`
+ * stroke the value line on top; `fill` is the gradient base colour, opaque
+ * (scaled by `fillOpacity`, 0–1) at the line and grading to transparent at the
+ * baseline. `fill` must be a CSS hex (`#rgb` / `#rrggbb`) so the transparent
+ * stop can be derived; other formats fall back to a flat fill.
+ */
+export interface AreaStyle {
+  readonly color: string;
+  readonly width: number;
+  readonly fill: string;
+  readonly fillOpacity: number;
+}
+
+/**
  * The neutral default theme. `default` / `primary` match the M1 `LineChart`
  * colour (`#2563eb`) so adopting the theme channel doesn't shift existing
  * renders. `primary` / `secondary` / `context` are a built-in generic role
@@ -87,6 +113,18 @@ export const defaultTheme: ChartTheme = {
     default: { fill: '#2563eb', opacity: 0.15 },
     outer: { fill: '#2563eb', opacity: 0.1 },
     inner: { fill: '#2563eb', opacity: 0.2 },
+  },
+  area: {
+    // Outline at the line colour; graded fill from it. `in`/`out` are the
+    // above/below-axis roles (esnet traffic), composed as two layers.
+    default: {
+      color: '#2563eb',
+      width: 1.5,
+      fill: '#2563eb',
+      fillOpacity: 0.3,
+    },
+    in: { color: '#2563eb', width: 1.5, fill: '#2563eb', fillOpacity: 0.3 },
+    out: { color: '#e8836b', width: 1.5, fill: '#e8836b', fillOpacity: 0.3 },
   },
   axis: {
     label: '#64748b',
@@ -130,6 +168,18 @@ export const estelaTheme: ChartTheme = {
     default: { fill: '#45CDBE', opacity: 0.18 }, // --es-shallows
     outer: { fill: '#7FE2D2', opacity: 0.12 }, // --es-reef (wide p5/p95 spread)
     inner: { fill: '#45CDBE', opacity: 0.22 }, // --es-shallows (tight p25/p75)
+  },
+  area: {
+    // Elevation: the brand teal outline over a graded teal shade. `in`/`out`
+    // are the above/below-axis traffic roles — teal `in`, warm filament `out`.
+    default: {
+      color: '#15B3A6',
+      width: 1.5,
+      fill: '#15B3A6',
+      fillOpacity: 0.35,
+    }, // --es-estela
+    in: { color: '#15B3A6', width: 1.5, fill: '#15B3A6', fillOpacity: 0.35 }, // --es-estela
+    out: { color: '#E0B36A', width: 1.5, fill: '#E0B36A', fillOpacity: 0.35 }, // --es-filament
   },
   axis: {
     label: '#4E6B6B', // --es-slate
