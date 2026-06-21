@@ -178,9 +178,8 @@ describe('drawBand gap modes', () => {
 
   it("'step' bridges both edges down-across-up to the axis floor", () => {
     const { ctx, calls } = recordingContext();
-    // identity y-scale with a domain ⇒ floor = y(0) = 0 here; use a scale whose
-    // domain[0] gives a distinct floor pixel.
-    const y = flipScale(); // floor pixel = y(0) = 100
+    // flipScale carries domain [0,100] → the band's floor is y(0) = 100 px.
+    const y = flipScale();
     drawBand(ctx, gapped(), identity, y, style, undefined, 'step');
     expect(calls.some((c) => c.name === 'setLineDash')).toBe(true);
     const lines = calls.filter((c) => c.name === 'lineTo').map((c) => c.args);
