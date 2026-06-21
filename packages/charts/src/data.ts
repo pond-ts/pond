@@ -32,6 +32,50 @@ export interface BandSeries {
 }
 
 /**
+ * A chart-ready view of a box-and-whisker series ({@link BoxPlot}): the
+ * interval-keyed time axis (`x` = key `begin`, `xEnd` = key `end`, the box's
+ * horizontal span) plus the five quantile edges per key —
+ * `lower`/`q1`/`median`/`q3`/`upper`. The quantiles are pre-computed columns
+ * (a `rolling`/`aggregate` percentile pass upstream); the chart only reads them.
+ *
+ * A key is drawn only where **all five** quantiles are finite; any one `NaN` is
+ * a gap (the box draws nothing — same gap contract as {@link BandSeries}).
+ *
+ * `x` and `xEnd` are zero-copy views of the key column's `begin`/`end` buffers
+ * (immutable by contract — do not mutate). For a point-in-time key the column's
+ * `end` coincides with `begin`, so `xEnd === x` and the box collapses to a
+ * minimum-width mark via `barSpanPx`; an interval key gives the box real width.
+ */
+export interface BoxSeries {
+  readonly x: Float64Array;
+  readonly xEnd: Float64Array;
+  readonly lower: Float64Array;
+  readonly q1: Float64Array;
+  readonly median: Float64Array;
+  readonly q3: Float64Array;
+  readonly upper: Float64Array;
+  readonly length: number;
+}
+
+/**
+ * A chart-ready view of an interval-keyed series for bars: each mark spans
+ * `[begin[i], end[i]]` (the key's range) with height `y[i]`. Unlike
+ * {@link ChartSeries} (a single `x` point per row), a bar needs **both** key
+ * endpoints to know its x-span, so the time axis is split into `begin`/`end`.
+ *
+ * Missing / non-finite values are `NaN` in `y` — the gap signal {@link drawBars}
+ * skips (no bar), same `Number.isFinite` contract as {@link ChartSeries}. For a
+ * **point-keyed** series (`begin === end`), `barsFromTimeSeries` derives a span
+ * from neighbour spacing so the bars still have width (see there).
+ */
+export interface BarSeries {
+  readonly begin: Float64Array;
+  readonly end: Float64Array;
+  readonly y: Float64Array;
+  readonly length: number;
+}
+
+/**
  * Read a numeric column into a `Float64Array`, missing cells as `NaN`.
  *
  * Uses `read(i)` — a method on the column *class* — rather than the bulk
@@ -80,6 +124,31 @@ function timeAxis<S extends SeriesSchema>(series: TimeSeries<S>): Float64Array {
 }
 
 /**
+ * The key column's `end` buffer aligned to the logical length (zero-copy). For a
+ * point-in-time key the column sets `end === begin`, so this returns the same
+ * timestamps as {@link timeAxis} — an interval key gives a distinct span.
+ */
+function timeEndAxis<S extends SeriesSchema>(
+  series: TimeSeries<S>,
+): Float64Array {
+  return series.keyColumn().end.subarray(0, series.length);
+}
+
+/** The five quantile column names a {@link boxFromTimeSeries} reads, in order. */
+export interface BoxColumns {
+  /** Lower whisker end (e.g. `p5` / `min`). */
+  readonly lower: string;
+  /** Box bottom — first quartile (e.g. `p25`). */
+  readonly q1: string;
+  /** Median line inside the box (e.g. `p50`). */
+  readonly median: string;
+  /** Box top — third quartile (e.g. `p75`). */
+  readonly q3: string;
+  /** Upper whisker end (e.g. `p95` / `max`). */
+  readonly upper: string;
+}
+
+/**
  * Build a {@link ChartSeries} from a pond `TimeSeries` by reading its columnar
  * buffers directly — no per-event materialization. `column` names a numeric
  * value column; the key column supplies the time axis (`begin`, in ms).
@@ -118,4 +187,98 @@ export function bandFromTimeSeries<S extends SeriesSchema>(
     upper: readNumericColumn(series, upper),
     length: series.length,
   };
+}
+
+/**
+ * Build a {@link BoxSeries} from a pond `TimeSeries` — five numeric quantile
+ * columns (`lower`/`q1`/`median`/`q3`/`upper`) sharing the series' interval time
+ * axis (`begin`/`end`, the box's horizontal span). The quantile columns are
+ * typically `rolling`/`aggregate` percentiles (e.g. p5/p25/p50/p75/p95); a key
+ * with any quantile missing reads as a gap (the box draws nothing).
+ *
+ * @throws RangeError if any quantile column does not exist.
+ * @throws TypeError if any quantile column is not a numeric column.
+ */
+export function boxFromTimeSeries<S extends SeriesSchema>(
+  series: TimeSeries<S>,
+  columns: BoxColumns,
+): BoxSeries {
+  return {
+    x: timeAxis(series),
+    xEnd: timeEndAxis(series),
+    lower: readNumericColumn(series, columns.lower),
+    q1: readNumericColumn(series, columns.q1),
+    median: readNumericColumn(series, columns.median),
+    q3: readNumericColumn(series, columns.q3),
+    upper: readNumericColumn(series, columns.upper),
+    length: series.length,
+  };
+}
+
+/**
+ * Per-row begin/end buffers for the key column, each aligned to the logical
+ * length (zero-copy views). For an interval / timeRange key these are the key's
+ * own endpoints; for a point (`time`) key `end === begin`, which
+ * {@link barsFromTimeSeries} then widens into a span.
+ */
+function keyBeginEnd<S extends SeriesSchema>(
+  series: TimeSeries<S>,
+): { begin: Float64Array; end: Float64Array } {
+  const key = series.keyColumn();
+  const n = series.length;
+  // `begin`/`end` may carry trailing capacity beyond the logical length; subarray
+  // so they line up with the value array. A `time` key's `end` aliases `begin`
+  // (point-in-time), which the caller's point-key fallback replaces.
+  return { begin: key.begin.subarray(0, n), end: key.end.subarray(0, n) };
+}
+
+/**
+ * Build a {@link BarSeries} from a pond `TimeSeries` — one bar per event, the
+ * key's `[begin, end]` as the x-span and `column` as the height.
+ *
+ * **Key-shape fallback (point-keyed series).** The primary form is
+ * interval / timeRange-keyed, where each key already carries a `[begin, end]`
+ * span. A **point-keyed** (`time`) series has `begin === end` (zero width), so
+ * this derives a span from neighbour spacing: each bar is centred on its
+ * timestamp and reaches **halfway to each neighbour** (a Voronoi cell on the
+ * time axis). The first/last bars mirror their single adjacent gap so the row's
+ * end bars match their interior width. A lone point (length 1) has no
+ * neighbour, so it keeps zero width and falls back to the renderer's `minWidth`.
+ *
+ * This makes a uniformly-sampled point series render as contiguous bars (the
+ * histogram look) without the caller pre-keying to intervals, while an
+ * interval-keyed series (e.g. an `aggregate`/`window` rollup) draws its true
+ * bucket spans. Detected by `keyColumn().kind === 'time'`.
+ *
+ * @throws RangeError if `column` does not exist.
+ * @throws TypeError if `column` is not a numeric column.
+ */
+export function barsFromTimeSeries<S extends SeriesSchema>(
+  series: TimeSeries<S>,
+  column: string,
+): BarSeries {
+  const y = readNumericColumn(series, column);
+  const n = series.length;
+  const kind = series.keyColumn().kind;
+  if (kind !== 'time') {
+    // Interval / timeRange: the key's own endpoints are the bar span.
+    const { begin, end } = keyBeginEnd(series);
+    return { begin, end, y, length: n };
+  }
+  // Point key (begin === end): synthesize a span from neighbour spacing so the
+  // bars have width. Copy into fresh buffers — the key's begin buffer is shared
+  // (zero-copy) and must not be mutated.
+  const src = series.keyColumn().begin;
+  const begin = new Float64Array(n);
+  const end = new Float64Array(n);
+  for (let i = 0; i < n; i += 1) {
+    const t = src[i]!;
+    // Half-gap to the previous point (mirror the next gap at the left edge).
+    const prevGap = i > 0 ? t - src[i - 1]! : i + 1 < n ? src[i + 1]! - t : 0;
+    // Half-gap to the next point (mirror the previous gap at the right edge).
+    const nextGap = i + 1 < n ? src[i + 1]! - t : i > 0 ? t - src[i - 1]! : 0;
+    begin[i] = t - prevGap / 2;
+    end[i] = t + nextGap / 2;
+  }
+  return { begin, end, y, length: n };
 }
