@@ -337,7 +337,19 @@ best-effort.
     deleted (never exported); `cursorParts` + `resolveCursorX` stay the pure
     geometry, unit-tested directly. e2e gotcha pinned: the line-mode cursor is a
     zero-width `<line>`, so the hover wait gates on `state:'attached'` (Playwright's
-    default `'visible'` needs a non-empty box and hangs). **Remaining cursor phases
+    default `'visible'` needs a non-empty box and hangs). **Phase 2 refinements
+    (#272, pjm17971's review):** the flag now **rides its data point** (`s.px`) —
+    flag + staff + dot read as one column, not split between the point (staff) and
+    the cursor (flag); and the **cursor-time chip shows once, atop the first row**
+    (a shared time shouldn't repeat per row). Rows can't learn their index from an
+    injection into the container's direct children (often wrapped in a `Rows()`-style
+    helper the injection can't reach through), so each row **registers on mount**
+    (effect order = top-to-bottom) → `firstRowKey` → `RowFrame.isFirstRow`; gating
+    the time on it also drops its top-of-stack space reservation on the other rows.
+    A single cursor-time source is kept, so times never diverge across rows (the
+    edge case — series whose nearest points sit at slightly different times — is
+    left to ride each series' own point; only one _time_ is ever shown).
+    **Remaining cursor phases
     (per `docs/rfcs/cursor.md`):** phase 3 bar (hover-highlight + rename the
     mis-named `hover` story; box whisker feather/solid/T styles), phases 4–5 box +
     scatter cursors.
