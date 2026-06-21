@@ -147,6 +147,17 @@ export interface RowLayer {
    */
   sampleAt(time: number): readonly TrackerSample[];
   /**
+   * The layer's **consolidated flag** at `time` — several values on **one** flag,
+   * each its own colour, anchored to a single point. For chart types whose `flag`
+   * cursor is one multi-line flag rather than a chip per series. **Optional:** only
+   * {@link BoxPlot} implements it (low/q1/median/q3/high on one flag at the box's
+   * top-centre); line/area/bar/scatter omit it and use the per-sample flag from
+   * {@link sampleAt}. `null` when nothing is under the cursor. (`sampleAt` still
+   * fans the same values to the off-chart readout; `cursorFlag` is the in-chart
+   * presentation only.)
+   */
+  cursorFlag?(time: number): CursorFlag | null;
+  /**
    * Hit-test plot-pixel `(px, py)` against this layer's marks for click
    * selection — the select-analog of {@link sampleAt}. Returns the hit mark or
    * `null`. **Optional:** layers without discrete selectable marks (line, band,
@@ -177,6 +188,26 @@ export interface TrackerSample {
   readonly color: string;
   /** Series identity (`as` ?? column) — labels the value in a readout. */
   readonly label: string;
+}
+
+/** One line of a {@link CursorFlag} — a labelled, coloured value. */
+export interface CursorFlagLine {
+  readonly value: number;
+  readonly color: string;
+  readonly label: string;
+}
+
+/**
+ * A consolidated multi-value flag for a {@link RowLayer.cursorFlag} layer (the
+ * BoxPlot): several values on **one** flag, anchored to `(x, topValue)` — the
+ * mark's centre time and the value its staff rises from (the box top). The lines
+ * render left→right in one horizontal row, each in its own colour (matched to its
+ * box piece).
+ */
+export interface CursorFlag {
+  readonly x: number;
+  readonly topValue: number;
+  readonly lines: readonly CursorFlagLine[];
 }
 
 /** A source of tracker samples — a draw layer, registered with the container so

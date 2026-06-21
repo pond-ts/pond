@@ -1,7 +1,7 @@
 import { useContext, useEffect, useMemo } from 'react';
 import type { SeriesSchema, TimeSeries } from 'pond-ts';
 import { boxFromTimeSeries } from './data.js';
-import { boxExtent, drawBox } from './box.js';
+import { boxExtent, boxIndexAtTime, drawBox, isFiniteBox } from './box.js';
 import {
   ContainerContext,
   LayersContext,
@@ -111,33 +111,47 @@ export function BoxPlot<S extends SeriesSchema>({
       layer: {
         yExtent: () => boxExtent(bx),
         sampleAt: (time) => {
-          // No readout past the data (tracker policy — nearest() clamps); bounds
-          // from the columnar interval axis (begin of the first key → end of the
-          // last). Empty series or out of range yields no readout.
-          if (
-            bx.length === 0 ||
-            time < bx.x[0]! ||
-            time > bx.xEnd[bx.length - 1]!
-          ) {
-            return [];
-          }
-          const e = series.nearest(time);
-          if (e === undefined) return [];
-          // get() wants a literal key; the column names are runtime strings. Cast
-          // the *event* (not the method — detaching `this` breaks `get`).
-          const ev = e as unknown as { get(field: string): unknown };
-          const at = e.begin();
+          // The readout reads the box **under the cursor** (boxIndexAtTime — span
+          // containment, not nearest-by-begin which flips past a wide box's
+          // midpoint), anchored at the box **centre** `(x + xEnd) / 2`. Outside
+          // every box → no readout. Off-chart fan-in only; the in-chart flag is
+          // `cursorFlag`.
+          if (bx.length === 0) return [];
+          const i = boxIndexAtTime(bx, time);
+          if (i < 0) return [];
+          const at = (bx.x[i]! + bx.xEnd[i]!) / 2;
           const samples: TrackerSample[] = [];
           // The median is the primary readout (median colour); the four quantile
           // edges ride the whisker colour, each labelled by its own column. A
           // single non-finite quantile is omitted (a gap key yields nothing — all
           // five missing — but a malformed partial set still reads what it has).
-          push(samples, at, ev.get(upper), style.whisker, upper);
-          push(samples, at, ev.get(q3), style.whisker, q3);
-          push(samples, at, ev.get(median), style.median, median);
-          push(samples, at, ev.get(q1), style.whisker, q1);
-          push(samples, at, ev.get(lower), style.whisker, lower);
+          push(samples, at, bx.upper[i], style.whisker, upper);
+          push(samples, at, bx.q3[i], style.whisker, q3);
+          push(samples, at, bx.median[i], style.median, median);
+          push(samples, at, bx.q1[i], style.whisker, q1);
+          push(samples, at, bx.lower[i], style.whisker, lower);
           return samples;
+        },
+        cursorFlag: (time) => {
+          // The in-chart `flag`: all five values on **one** flag at the box's
+          // top-centre. The staff rises from `upper` (the mark's top); the values
+          // run high→low across one horizontal row (Layers renders them
+          // left→right), each coloured to its box piece. All-or-nothing — a gap
+          // box (any quantile non-finite, not drawn) shows no flag.
+          if (bx.length === 0) return null;
+          const i = boxIndexAtTime(bx, time);
+          if (i < 0 || !isFiniteBox(bx, i)) return null;
+          return {
+            x: (bx.x[i]! + bx.xEnd[i]!) / 2,
+            topValue: bx.upper[i]!,
+            lines: [
+              { value: bx.upper[i]!, color: style.whisker, label: upper },
+              { value: bx.q3[i]!, color: style.whisker, label: q3 },
+              { value: bx.median[i]!, color: style.median, label: median },
+              { value: bx.q1[i]!, color: style.whisker, label: q1 },
+              { value: bx.lower[i]!, color: style.whisker, label: lower },
+            ],
+          };
         },
         draw: (ctx, xScale, yScale) =>
           drawBox(ctx, bx, xScale, yScale, style, gap, MIN_BOX_WIDTH_PX),

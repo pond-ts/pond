@@ -32,6 +32,21 @@ export function boxExtent(box: BoxSeries): [number, number] | null {
 }
 
 /**
+ * The index of the box whose interval `[x, xEnd]` contains `time` — the box
+ * **under the cursor** — or `-1` if `time` is in no box. The box analog of
+ * `barIndexAtTime`: containment, not nearest-by-`begin` (which flips to the next
+ * box past a wide box's midpoint). Boxes are sorted by `x`; at a shared edge the
+ * left box wins. A gap box (some quantile non-finite) still owns its span here;
+ * the caller drops it on the finiteness check. O(N) over the boxes (view-scale).
+ */
+export function boxIndexAtTime(box: BoxSeries, time: number): number {
+  for (let i = 0; i < box.length; i += 1) {
+    if (time >= box.x[i]! && time <= box.xEnd[i]!) return i;
+  }
+  return -1;
+}
+
+/**
  * Draw a discrete box-and-whisker per key of `box`, mapping data→pixels through
  * `xScale`/`yScale`. The bar-chart analog of {@link drawBand}: each key gets its
  * own box (q1→q3 rect), a median line, and whiskers out to lower/upper — drawn
@@ -115,7 +130,7 @@ export function drawBox(
 }
 
 /** All five quantiles finite at `i` — i.e. this key is drawn. */
-function isFiniteBox(box: BoxSeries, i: number): boolean {
+export function isFiniteBox(box: BoxSeries, i: number): boolean {
   return (
     Number.isFinite(box.lower[i]!) &&
     Number.isFinite(box.q1[i]!) &&
