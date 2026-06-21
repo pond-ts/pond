@@ -21,7 +21,9 @@ export interface YAxisProps {
   /**
    * Value formatting for the tick labels (and the cursor readout, which matches):
    * a d3 format specifier string (e.g. `'.0%'`, `',.2f'`) or a `(value) => string`
-   * function. Omit for the scale's d3 default. See {@link AxisFormat}.
+   * function. Omit for the scale's d3 default — which is calibrated to the tick
+   * step, so a between-ticks readout rounds to tick precision; pass a specifier
+   * (e.g. `',.2f'`) when you want finer readout precision. See {@link AxisFormat}.
    */
   format?: AxisFormat;
   /** Gutter width in CSS pixels (default 50). */
