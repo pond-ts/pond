@@ -314,13 +314,26 @@ export function Layers({ children }: LayersProps) {
   // Show the cursor's time atop the readout (opt-in via `cursorTime`), whenever
   // the cursor is active (any mode that draws marks). A single chip at the cursor
   // x, top of the row; for `flag` it sits above the value chips (which shift down).
+  // The time is shared across rows (one cursor, one time), so it shows **once**,
+  // atop the first row — not repeated per row. (Gating it here also drops the
+  // top-of-stack space reservation on the other rows, see `flagBase`.)
   const showTime =
-    showCursorTime && cursorTime !== null && (parts.line || parts.dots);
+    showCursorTime &&
+    cursorTime !== null &&
+    (parts.line || parts.dots) &&
+    row.isFirstRow;
   // Flag stacking geometry: chips stack from `flagBase` (below the time chip when
   // shown); each staff rises from its dot up to `stackBottom` (the stack's foot).
   const flagTop = 2;
   const flagBase = flagTop + (showTime ? flagLineHeight : 0);
   const stackBottom = flagBase + trackerSamples.length * flagLineHeight;
+  // The cursor-time chip caps the readout. In `flag` mode it tops the flag stack,
+  // so anchor it to the stack's x (the nearest sample's point) so time + flag +
+  // staff + dot read as one column; otherwise it labels the cursor line at cursorX.
+  const timeX =
+    parts.chip === 'flag' && trackerSamples.length > 0
+      ? trackerSamples[0]!.px
+      : cursorX;
 
   // Inject each draw layer's JSX position so it registers its declaration order
   // (z-stack: lower index at the back), independent of mount timing.
@@ -410,18 +423,18 @@ export function Layers({ children }: LayersProps) {
         </svg>
         {/* Cursor-time chip atop the readout (opt-in); the `!== null` checks gate
             to an in-bounds, active cursor and narrow the types. */}
-        {showTime && cursorX !== null && cursorTime !== null && (
+        {showTime && timeX !== null && cursorTime !== null && (
           <div
             style={{
               ...chipStyle,
               top: `${flagTop}px`,
               left:
-                cursorX > plotWidth * LABEL_FLIP_FRACTION
+                timeX > plotWidth * LABEL_FLIP_FRACTION
                   ? undefined
-                  : `${cursorX + 4}px`,
+                  : `${timeX + 4}px`,
               right:
-                cursorX > plotWidth * LABEL_FLIP_FRACTION
-                  ? `${plotWidth - cursorX + 4}px`
+                timeX > plotWidth * LABEL_FLIP_FRACTION
+                  ? `${plotWidth - timeX + 4}px`
                   : undefined,
               color: cursorColor,
             }}
@@ -459,16 +472,18 @@ export function Layers({ children }: LayersProps) {
         {parts.chip === 'flag' &&
           cursorX !== null &&
           trackerSamples.map((s, i) => {
-            // Flags stack at the top of the crosshair; flip near the right edge.
-            const flip = cursorX > plotWidth * LABEL_FLIP_FRACTION;
+            // Each flag caps its own staff — anchored to the data point's x
+            // (`s.px`), riding the point with the dot + staff, not the cursor.
+            // Flip left near the right edge so it stays in-plot.
+            const flip = s.px > plotWidth * LABEL_FLIP_FRACTION;
             return (
               <div
                 key={i}
                 style={{
                   ...chipStyle,
                   top: `${flagBase + i * flagLineHeight}px`,
-                  left: flip ? undefined : `${cursorX + 4}px`,
-                  right: flip ? `${plotWidth - cursorX + 4}px` : undefined,
+                  left: flip ? undefined : `${s.px + 4}px`,
+                  right: flip ? `${plotWidth - s.px + 4}px` : undefined,
                   color: s.color,
                 }}
               >

@@ -14,6 +14,7 @@ import { scaleLinear, type ScaleLinear } from 'd3-scale';
 import { resolveYDomain } from './domain.js';
 import { resolveAxisFormat } from './format.js';
 import { placeAxisSlots, type SlotAxis } from './slots.js';
+import { useSlotKey } from './use-slot-key.js';
 import { YAxis } from './YAxis.js';
 import {
   ContainerContext,
@@ -63,6 +64,13 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
   if (container === null) {
     throw new Error('<ChartRow> must be rendered inside a <ChartContainer>');
   }
+
+  // Register on mount so the container can mark the first (topmost) row by
+  // mount order — the shared cursor-time chip renders there only.
+  const rowKey = useSlotKey();
+  const { registerRow } = container;
+  useEffect(() => registerRow(rowKey), [registerRow, rowKey]);
+  const isFirstRow = container.firstRowKey === rowKey;
 
   // Keyed by a stable per-instance id (Map preserves insertion order; setting an
   // existing key updates in place). So a re-register on a prop change keeps the
@@ -216,6 +224,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
     () => ({
       height,
       cursor,
+      isFirstRow,
       yScales,
       formats,
       defaultAxisId,
@@ -229,6 +238,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
     [
       height,
       cursor,
+      isFirstRow,
       yScales,
       formats,
       defaultAxisId,
