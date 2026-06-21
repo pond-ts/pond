@@ -5,7 +5,6 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { AreaChart } from './AreaChart.js';
-import { BandChart } from './BandChart.js';
 import { YAxis } from './YAxis.js';
 import { estelaTheme } from './theme.js';
 import { type GapMode } from './gaps.js';
@@ -36,29 +35,6 @@ function sineWithGap() {
   });
 }
 
-/** A lo/hi envelope with the same coast — for the band gap-mode story. */
-function bandWithGap() {
-  const rows: Array<[number, number | undefined, number | undefined]> = [];
-  for (let i = 0; i < N; i += 1) {
-    const inGap = i >= 20 && i < 28;
-    const mid = 50 + 26 * Math.sin(i / 5);
-    rows.push([
-      BASE + i * STEP,
-      inGap ? undefined : mid - 12,
-      inGap ? undefined : mid + 12,
-    ]);
-  }
-  return new TimeSeries({
-    name: 'gapband',
-    schema: [
-      { name: 'time', kind: 'time' },
-      { name: 'lo', kind: 'number', required: false },
-      { name: 'hi', kind: 'number', required: false },
-    ] as const,
-    rows: rows as never,
-  });
-}
-
 const meta = {
   title: 'Charts/GapModes',
   parameters: { layout: 'centered' },
@@ -76,7 +52,8 @@ type Story = StoryObj;
  * - `none` bridges straight across (interpolated).
  * - `empty` (default) leaves a clean break.
  * - `dashed` breaks, then dashes across the hole.
- * - `step` breaks, then a dashed step drops to the axis floor and back.
+ * - `step` breaks, then a dashed step holds the last value across and corrects
+ *   up / down to the resumed value (sample-and-hold).
  * - `fade` is estela's fade-to-baseline at each gap edge.
  */
 export const Line: Story = {
@@ -113,36 +90,6 @@ export const Area: Story = {
             <YAxis id="v" label={mode} min={0} max={100} />
             <Layers>
               <AreaChart series={s} column="v" as="default" gaps={mode} />
-            </Layers>
-          </ChartRow>
-        ))}
-      </ChartContainer>
-    );
-  },
-};
-
-/**
- * The same five modes on a **band** (a lo/hi envelope). `none` fills the envelope
- * across the gap; the inferred-connector modes keep the fill broken and bridge
- * **both** edges (a band has two boundaries). The band carries no baseline, so
- * `step` / `fade` drop to the axis floor.
- */
-export const Band: Story = {
-  render: () => {
-    const b = bandWithGap();
-    return (
-      <ChartContainer timeRange={TIME_RANGE} width={520} theme={estelaTheme}>
-        {MODES.map((mode) => (
-          <ChartRow key={mode} height={90}>
-            <YAxis id="v" label={mode} min={0} max={100} />
-            <Layers>
-              <BandChart
-                series={b}
-                lower="lo"
-                upper="hi"
-                as="inner"
-                gaps={mode}
-              />
             </Layers>
           </ChartRow>
         ))}

@@ -1,12 +1,15 @@
 import type { Scale } from './line.js';
 
 /**
- * How a gap-aware draw layer ({@link LineChart}, {@link AreaChart},
- * {@link BandChart}) renders a **gap** — a run of non-finite (`NaN`) samples,
- * the signal a coast / dropout / missing bucket leaves in the columnar data
- * (`Number.isFinite`, never `!= null`; see `docs/rfcs/charts.md` trap #2). One
- * concept shared across the three layers, so a line, its fill, and a band all
- * speak the same vocabulary.
+ * How a gap-aware draw layer ({@link LineChart} / {@link AreaChart}) renders a
+ * **gap** — a run of non-finite (`NaN`) samples, the signal a coast / dropout /
+ * missing bucket leaves in the columnar data (`Number.isFinite`, never
+ * `!= null`; see `docs/rfcs/charts.md` trap #2). One concept shared across a
+ * line and its area fill, so both speak the same vocabulary.
+ *
+ * **Bands deliberately have no gap mode.** A filled envelope's break wants its
+ * own treatment (sharp edge vs. blurred), still to be designed; for now a band
+ * always breaks honestly at a gap.
  *
  * - **`none`** — bridge straight across the gap: an interior gap is linearly
  *   interpolated ({@link bridgeGaps}) so the line connects the bordering points
@@ -23,19 +26,22 @@ import type { Scale } from './line.js';
  *   broken. Reads as "we know the value resumed here, but didn't measure
  *   between" without pretending the line was continuous.
  * - **`step`** — the solid segments break as in `empty`, **plus** a dashed
- *   **step** bridges each gap: down from the last-good point to the baseline,
- *   across at the baseline, then up to the next-good point (the *down-across-up*
- *   form — see {@link drawGapSteps}). The fill stays broken. Reads as "the
- *   signal dropped out and came back".
+ *   **sample-and-hold step** bridges each gap: hold the last-good value across
+ *   the gap (a horizontal dashed line), then a vertical correction up / down to
+ *   the next-good value where the data resumes (see {@link drawGapSteps}). The
+ *   fill stays broken. Reads as "the value held until measurement resumed" —
+ *   how a held / last-known signal actually behaves through a dropout. Connects
+ *   one side of the line to the other, never dropping to the axis.
  * - **`fade`** — estela's coast look: at each gap edge the line drops to the
  *   baseline on a **vertical fade to transparent** (opaque at the line,
  *   transparent at the baseline), and fades back in on the far side. The fill
  *   stays broken. Replicates estela's `es-drop` gradient
  *   (`packages/ui/src/DataChart.tsx`) in the canvas renderer.
  *
- * The "baseline" the `step` / `fade` bridges drop to is the axis floor (the
- * y-scale's domain lower bound), resolved from the scale at draw time — the same
- * floor an {@link AreaChart} with no explicit `baseline` rests on.
+ * Only `fade` drops to a "baseline": for a line that's the axis floor (the
+ * y-scale's domain lower bound — resolved from the scale at draw time), for an
+ * {@link AreaChart} its own fill baseline. `step` no longer touches the baseline
+ * — it holds the last value across (above).
  */
 export type GapMode = 'none' | 'empty' | 'dashed' | 'step' | 'fade';
 
@@ -171,18 +177,18 @@ export function drawGapBridges(
 }
 
 /**
- * Stroke a **dashed step bridge** across each gap for the `step` mode: down from
- * the last-good point to `baselinePx`, across at the baseline, then up to the
- * next-good point — the *down-across-up* form (matching estela's coast `es-drop`
- * shape: drop, traverse the floor, rise). Chosen over *across-then-up* because it
- * mirrors the `fade` drop and reads as "the signal fell out and recovered"
- * rather than implying the value held until the far edge. Dashed so the bridge
- * reads as inferred. Bracketed by `save`/`restore`.
+ * Stroke a **dashed sample-and-hold step** across each gap for the `step` mode:
+ * hold the last-good value across the gap (a horizontal segment at `fromY`, from
+ * the last-good x to the next-good x), then a vertical correction to the
+ * next-good value where the data resumes — the *hold-then-correct* form. This
+ * connects one side of the line to the other through a held value (what a
+ * last-known / held signal actually does through a dropout), rather than dropping
+ * to the axis and back. Dashed so the bridge reads as inferred; needs no
+ * baseline. Bracketed by `save`/`restore`.
  */
 export function drawGapSteps(
   ctx: CanvasRenderingContext2D,
   edges: readonly GapEdge[],
-  baselinePx: number,
   color: string,
   width: number,
 ): void {
@@ -194,9 +200,8 @@ export function drawGapSteps(
   ctx.beginPath();
   for (const e of edges) {
     ctx.moveTo(e.fromX, e.fromY); // last-good point
-    ctx.lineTo(e.fromX, baselinePx); // down to the baseline
-    ctx.lineTo(e.toX, baselinePx); // across at the baseline
-    ctx.lineTo(e.toX, e.toY); // up to the next-good point
+    ctx.lineTo(e.toX, e.fromY); // hold the last value across the gap
+    ctx.lineTo(e.toX, e.toY); // correct (step) to the resumed value
   }
   ctx.stroke();
   ctx.restore();
