@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { scaleLinear } from 'd3-scale';
-import { resolveAxisFormat } from '../src/format.js';
+import { scaleLinear, scaleUtc } from 'd3-scale';
+import { resolveAxisFormat, resolveTimeFormat } from '../src/format.js';
 
 // A stub scale to isolate the routing (fn vs specifier vs default) from d3's
 // actual formatting: it echoes which path was taken.
@@ -37,5 +37,30 @@ describe('resolveAxisFormat', () => {
   it('uses d3 default formatting for a plain integer domain', () => {
     const s = scaleLinear().domain([0, 100]).range([0, 100]);
     expect(resolveAxisFormat(s, 5, undefined)(25)).toBe('25');
+  });
+});
+
+describe('resolveTimeFormat', () => {
+  const BASE = Date.UTC(2026, 0, 1, 13, 30, 0); // 2026-01-01 13:30 UTC
+  // scaleUtc so the specifier formats in UTC — TZ-independent assertions.
+  const utc = () =>
+    scaleUtc()
+      .domain([BASE, BASE + 3_600_000])
+      .range([0, 100]);
+
+  it('uses a function format verbatim (called with epoch ms)', () => {
+    expect(resolveTimeFormat(utc(), 5, (ms) => `t=${ms}`)(BASE)).toBe(
+      `t=${BASE}`,
+    );
+  });
+
+  it('routes a d3 time specifier through the scale, wrapping epoch ms in a Date', () => {
+    expect(resolveTimeFormat(utc(), 5, '%H:%M')(BASE)).toBe('13:30');
+  });
+
+  it('falls back to the scale multi-scale default when undefined', () => {
+    const out = resolveTimeFormat(utc(), 5, undefined)(BASE);
+    expect(typeof out).toBe('string');
+    expect(out.length).toBeGreaterThan(0);
   });
 });

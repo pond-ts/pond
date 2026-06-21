@@ -19,8 +19,13 @@ import {
 } from './context.js';
 import { maxSlotWidths, sum } from './slots.js';
 import { resolveCursorX, DEFAULT_CURSOR_MODE } from './tracker.js';
+import { resolveTimeFormat, type AxisFormat } from './format.js';
 import { TimeAxis } from './TimeAxis.js';
 import { defaultTheme, type ChartTheme } from './theme.js';
+
+/** Time-axis tick count — matches `<TimeAxis>` so the cursor-time formatter is
+ *  calibrated as the time-axis labels are. */
+const TIME_TICK_COUNT = 5;
 
 export interface ChartContainerProps {
   /** Time domain `[start, end]` in epoch ms — the shared x-axis for all rows. */
@@ -83,6 +88,19 @@ export interface ChartContainerProps {
   onTimeRangeChange?: (range: [number, number]) => void;
   /** Zoom-in floor — the minimum visible duration in ms. Default `1`. */
   minDuration?: number;
+  /**
+   * Show the cursor's time atop the in-chart readout (when a row's `cursor` draws
+   * one). **Default `false`.** Formatted by {@link timeFormat} to match the time
+   * axis.
+   */
+  cursorTime?: boolean;
+  /**
+   * Time-axis value formatting — a d3 time specifier string (e.g. `'%H:%M'`) or a
+   * `(epochMs) => string` function ({@link AxisFormat}); applies to both the time
+   * axis labels and the cursor-time readout. **Omitted ⇒ d3's multi-scale time
+   * format** (`12 PM`, `12:10`, …).
+   */
+  timeFormat?: AxisFormat;
   /** Visual theme for all rows; defaults to {@link defaultTheme}. */
   theme?: ChartTheme;
   children?: ReactNode;
@@ -110,6 +128,8 @@ export function ChartContainer({
   onTimeRangeChange,
   minDuration = 1,
   cursor = DEFAULT_CURSOR_MODE,
+  cursorTime = false,
+  timeFormat,
   theme,
   children,
 }: ChartContainerProps) {
@@ -229,6 +249,14 @@ export function ChartContainer({
     [t0, t1, plotWidth],
   );
 
+  // The time formatter shared by <TimeAxis> + the cursor-time readout (so a tick
+  // and the cursor time read identically), resolved from `timeFormat` against the
+  // shared time scale.
+  const formatTime = useMemo(
+    () => resolveTimeFormat(xScale, TIME_TICK_COUNT, timeFormat),
+    [xScale, timeFormat],
+  );
+
   // The crosshair pixel (see resolveCursorX). A stored hoverX is a *plot* pixel;
   // if plotWidth changes mid-hover (a gutter reserving, or a width change) it's
   // briefly stale until the next pointer move — rare, and the bounds check below
@@ -273,6 +301,8 @@ export function ChartContainer({
       selected: selectedValue,
       select,
       cursor,
+      cursorTime,
+      formatTime,
       registerTrackerSource,
       unregisterTrackerSource,
       xScale,
@@ -296,6 +326,8 @@ export function ChartContainer({
       selectedValue,
       select,
       cursor,
+      cursorTime,
+      formatTime,
       registerTrackerSource,
       unregisterTrackerSource,
       xScale,

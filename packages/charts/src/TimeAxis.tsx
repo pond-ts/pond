@@ -9,7 +9,9 @@ const TICK_COUNT = 5;
  * The shared time (x) axis, rendered once at the bottom of a
  * {@link ChartContainer} as DOM chrome (crisp text, themeable, accessible). It
  * reads the container's `xScale` (a d3 `scaleTime`), so ticks land on wall-clock
- * boundaries and labels use d3's multi-scale time format (`12 PM`, `12:10`, …).
+ * boundaries; labels use the container's shared `formatTime` — d3's multi-scale
+ * time format by default (`12 PM`, `12:10`, …), or `<ChartContainer timeFormat>` —
+ * the same formatter the cursor-time readout uses, so they always agree.
  *
  * Positioned with `marginLeft: leftGutter` and `width: plotWidth` so its origin
  * sits under every row's plot area (the container reserves uniform gutters), and
@@ -22,9 +24,8 @@ export function TimeAxis() {
     throw new Error('<TimeAxis> must be rendered inside a <ChartContainer>');
   }
 
-  const { xScale, plotWidth, leftGutter, theme } = container;
+  const { xScale, plotWidth, leftGutter, theme, formatTime } = container;
   const ticks = xScale.ticks(TICK_COUNT);
-  const fmt = xScale.tickFormat();
 
   return (
     <div
@@ -69,7 +70,7 @@ export function TimeAxis() {
                 whiteSpace: 'nowrap',
               }}
             >
-              {fmt(d)}
+              {formatTime(+d)}
             </div>
           </Fragment>
         );

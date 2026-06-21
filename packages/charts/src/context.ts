@@ -62,6 +62,12 @@ export interface ContainerFrame {
   /** The default in-chart cursor presentation for all rows ({@link CursorMode});
    *  a row may override it via its own `cursor`. */
   readonly cursor: CursorMode;
+  /** Show the cursor's time atop the in-chart readout (when a row's cursor draws
+   *  one), formatted by {@link formatTime} to match the time axis. */
+  readonly cursorTime: boolean;
+  /** Format an epoch-ms instant the same way the time axis labels its ticks —
+   *  shared by `<TimeAxis>` and the cursor-time readout. */
+  readonly formatTime: (epochMs: number) => string;
   /**
    * Register a draw layer as a tracker source so the container can fan in every
    * series' value at the cursor for `onTrackerChanged`. Keyed by the layer's
