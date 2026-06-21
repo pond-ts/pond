@@ -349,10 +349,18 @@ best-effort.
     A single cursor-time source is kept, so times never diverge across rows (the
     edge case — series whose nearest points sit at slightly different times — is
     left to ride each series' own point; only one _time_ is ever shown).
-    **Remaining cursor phases
-    (per `docs/rfcs/cursor.md`):** phase 3 bar (hover-highlight + rename the
-    mis-named `hover` story; box whisker feather/solid/T styles), phases 4–5 box +
-    scatter cursors.
+    **Phase 3 — bar (#274):** the flag rides the bar **under the cursor** (span
+    containment `barIndexAtTime`, not nearest-by-begin — which flipped past a wide
+    bar's midpoint) at the bar's top-centre; **hover-highlight** (a container
+    `hovered` mark, deduped → the data canvas repaints only on a bar transition;
+    `drawBars` fills the hovered bar, outlines the selected one). **Phase 4 — box
+    (#275):** the box `flag` is a **consolidated** flag — all five values on **one
+    horizontal-row chip** (each coloured to its piece, median brighter) + one staff
+    at the box top-centre, via a new optional `RowLayer.cursorFlag(time)` hook (a
+    box has five values, so the per-sample cursor doesn't fit); same containment +
+    centre-anchor as the bar. **Remaining (per `docs/rfcs/cursor.md`):** phase 5
+    scatter (line / inline-2D / flag); **box whisker styles** (feather / solid / T)
+    — RFC-flagged "separate from cursor", naming TBD with pjm17971.
   - **Remaining → the decimator (next).** Bench-ordered: viewport culling + M4
     pixel-bucket decimation **per-layer, first** (they hit the failing metric);
     Path2D cache (M4.4) **second**. Chart-side `bin(axisColumn, nBuckets,
