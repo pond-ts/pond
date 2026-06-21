@@ -59,6 +59,18 @@ export interface ContainerFrame {
    * the presence of a *callback*.
    */
   select(hit: SelectInfo | null): void;
+  /**
+   * The **hovered** mark, or `null` — the transient hover-highlight, distinct
+   * from the committed `selected`. A row's pointer-move surface hit-tests its
+   * selectable layers and sets it; a layer that supports hover-highlight (Bar)
+   * draws the matching mark lit (a lighter treatment than `selected`'s outline).
+   * Set-on-change (deduped by key+label) so the data canvas repaints only on a
+   * mark transition, not every pointer move.
+   */
+  readonly hovered: SelectInfo | null;
+  /** Set the hovered mark (or `null` to clear) from a pointer-move hit-test;
+   *  deduped, so an unchanged mark is a no-op (no repaint). */
+  setHovered(hit: SelectInfo | null): void;
   /** The default in-chart cursor presentation for all rows ({@link CursorMode});
    *  a row may override it via its own `cursor`. */
   readonly cursor: CursorMode;

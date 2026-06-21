@@ -96,10 +96,12 @@ export function barRect(
  * (inset by `gapPx`) from the resolved `baseline` to the value.
  *
  * A gap (non-finite value) is skipped — no bar, no zero-height sliver. A bar
- * whose key matches the current `selection` (same `begin` **and** the layer's
- * own `label`) is drawn in the style's `highlight` colour and outlined, so a
- * click reads back on the canvas; all others use the flat `fill`. `globalAlpha`
- * carries the fill opacity and is restored so it doesn't leak into later layers.
+ * matching the current `selection` (same `begin` **and** the layer's own `label`)
+ * draws in the style's `highlight` colour **and outlined**, so a click reads back
+ * on the canvas; a bar matching `hovered` draws in `highlight` **without** the
+ * outline (a lighter "this bar is live" on pointer-over); all others use the flat
+ * `fill`. `globalAlpha` carries the fill opacity and is restored so it doesn't
+ * leak into later layers.
  *
  * O(N) over the events, one fill (+ optional stroke) per bar, no per-bar
  * allocation beyond the rect tuple.
@@ -114,6 +116,7 @@ export function drawBars(
   gapPx: number,
   label: string,
   selection: { key: number; label: string } | null,
+  hovered: { key: number; label: string } | null,
 ): void {
   ctx.save();
   ctx.globalAlpha = style.opacity;
@@ -129,11 +132,19 @@ export function drawBars(
     );
     if (rect === null) continue;
     const [x0, x1, yTop, yBottom] = rect;
+    // Match by key (begin) **and** label, so two series sharing a timestamp don't
+    // both light up. Both the committed selection and the transient hover use the
+    // `highlight` fill; only the selection adds the outline, so hover reads as a
+    // lighter "this bar is live" and select as the committed pick.
     const selected =
       selection !== null &&
       selection.key === cs.begin[i] &&
       selection.label === label;
-    ctx.fillStyle = selected ? style.highlight : style.fill;
+    const isHovered =
+      hovered !== null &&
+      hovered.key === cs.begin[i] &&
+      hovered.label === label;
+    ctx.fillStyle = selected || isHovered ? style.highlight : style.fill;
     ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
     if (selected) {
       // The selected bar gets an outline so it reads at full strength over the
@@ -146,6 +157,26 @@ export function drawBars(
     }
   }
   ctx.restore();
+}
+
+/**
+ * The index of the bar whose key span `[begin, end]` contains `time` — the bar
+ * **under the cursor** — or `-1` if `time` falls in no bar's span. This is the
+ * cursor analog of {@link barAt}'s rect-containment: unlike nearest-by-`begin`,
+ * it doesn't flip to the next bar once the cursor passes a wide bar's midpoint
+ * (the readout-on-the-wrong-bar bug). At a shared edge (`end[i] === begin[i+1]`,
+ * contiguous bars) the left bar wins (first match). A gap bar (non-finite value)
+ * still owns its span here; the caller drops it on the finiteness check, so
+ * hovering a gap reads no value — as the line/area tracker breaks at a gap.
+ *
+ * O(N) over the bars (view-scale counts; the cursor moves often but the scan is
+ * cheap and allocation-free).
+ */
+export function barIndexAtTime(cs: BarSeries, time: number): number {
+  for (let i = 0; i < cs.length; i += 1) {
+    if (time >= cs.begin[i]! && time <= cs.end[i]!) return i;
+  }
+  return -1;
 }
 
 /**
