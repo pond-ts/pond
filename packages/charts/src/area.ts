@@ -2,6 +2,16 @@ import { area as d3area, curveLinear, type CurveFactory } from 'd3-shape';
 import type { ChartSeries } from './data.js';
 import type { Scale } from './line.js';
 import type { AreaStyle } from './theme.js';
+import {
+  bridgeGaps,
+  collectGapEdges,
+  drawGapBridges,
+  drawGapFades,
+  drawGapSteps,
+  withAlpha,
+  DEFAULT_GAP_MODE,
+  type GapMode,
+} from './gaps.js';
 
 /**
  * The `[min, max]` vertical extent an area occupies — the finite values of
@@ -54,14 +64,22 @@ export function areaExtent(
  *   two-colour traffic look; each layer's colour is its own `as` token (the
  *   single styling channel).
  *
- * **Gap-aware** via `.defined(Number.isFinite)` — a non-finite value ends the
- * current subpath; the next finite run starts a fresh one, so a coast is a break
- * in both the fill and the outline, never a bridge to the baseline
- * (`docs/rfcs/charts.md` trap #2).
+ * **Gap handling is driven by `gaps`** (a {@link GapMode}, default `'empty'`).
+ * In every mode **the fill obeys the mode's break/bridge decision**: `'none'`
+ * fills straight across the gap (interior gaps interpolated via
+ * {@link bridgeGaps}, so the value edge bridges and the fill spans it); every
+ * other mode breaks the fill (`.defined(Number.isFinite)` — a coast is a hole in
+ * the shade, never a slab to the baseline, `docs/rfcs/charts.md` trap #2). For
+ * `'dashed'` / `'step'` / `'fade'` the **outline** (the value line on top)
+ * additionally gets an inferred bridge across each interior gap — a dashed line,
+ * a dashed down-across-up step to the baseline, or estela's fade-to-baseline —
+ * while the *fill* stays broken. So the shade is always honest about absence;
+ * only the line offers the inferred connector.
  *
  * `cs.y` (a `Float64Array`) is the datum iterable; accessors read by index, so
  * there's no per-point object allocation. The gradient + `globalAlpha` are
- * bracketed by `save`/`restore` so they don't leak into later layers.
+ * bracketed by `save`/`restore` so they don't leak into later layers. Gap edges
+ * are collected by one O(N) walk ({@link collectGapEdges}).
  */
 export function drawArea(
   ctx: CanvasRenderingContext2D,
@@ -71,8 +89,13 @@ export function drawArea(
   style: AreaStyle,
   baselineValue: number,
   curve: CurveFactory = curveLinear,
+  gaps: GapMode = DEFAULT_GAP_MODE,
 ): void {
   const baselinePx = yScale(baselineValue);
+  // `none` interpolates interior gaps so the fill + outline bridge them; every
+  // other mode keeps NaN so d3 breaks both (the inferred line bridge, if any, is
+  // a separate overlay pass below).
+  const ys = gaps === 'none' ? bridgeGaps(cs.y, cs.length) : cs.y;
   const gen = d3area<number>()
     .defined((v) => Number.isFinite(v))
     .x((_, i) => xScale(cs.x[i]!))
@@ -84,11 +107,12 @@ export function drawArea(
   ctx.save();
   // The fill: a vertical gradient anchored at the baseline pixel, opaque at the
   // line and transparent at the baseline (see buildGradient — handles both the
-  // one-sided elevation form and the two-sided above/below form).
-  ctx.fillStyle = buildGradient(ctx, cs, yScale, baselinePx, style);
+  // one-sided elevation form and the two-sided above/below form). The gradient
+  // spans the drawn region; `ys` (gap-bridged for `none`) is what's drawn.
+  ctx.fillStyle = buildGradient(ctx, ys, cs.length, yScale, baselinePx, style);
   ctx.globalAlpha = style.fillOpacity;
   ctx.beginPath();
-  gen(cs.y);
+  gen(ys);
   ctx.fill();
   ctx.restore();
 
@@ -98,11 +122,31 @@ export function drawArea(
   const outline = gen.lineY1();
   ctx.save();
   ctx.beginPath();
-  outline(cs.y);
+  outline(ys);
   ctx.strokeStyle = style.color;
   ctx.lineWidth = style.width;
   ctx.stroke();
   ctx.restore();
+
+  // Inferred bridges for the line edge (fill stays broken). The bridges drop to
+  // the area's own baseline pixel — the fill floor — so step/fade are consistent
+  // with where the shade rests.
+  if (gaps === 'dashed' || gaps === 'step' || gaps === 'fade') {
+    const edges = collectGapEdges(
+      cs.length,
+      cs.x,
+      (i) => cs.y[i]!,
+      xScale,
+      (i) => yScale(cs.y[i]!),
+    );
+    if (gaps === 'dashed') {
+      drawGapBridges(ctx, edges, style.color, style.width);
+    } else if (gaps === 'step') {
+      drawGapSteps(ctx, edges, baselinePx, style.color, style.width);
+    } else {
+      drawGapFades(ctx, edges, baselinePx, style.color, style.width);
+    }
+  }
 }
 
 /**
@@ -125,15 +169,16 @@ export function drawArea(
  */
 function buildGradient(
   ctx: CanvasRenderingContext2D,
-  cs: ChartSeries,
+  ys: Float64Array,
+  length: number,
   yScale: Scale,
   baselinePx: number,
   style: AreaStyle,
 ): CanvasGradient | string {
   let topPx = Infinity; // smallest pixel y (highest on screen)
   let bottomPx = -Infinity; // largest pixel y (lowest on screen)
-  for (let i = 0; i < cs.length; i += 1) {
-    const v = cs.y[i]!;
+  for (let i = 0; i < length; i += 1) {
+    const v = ys[i]!;
     if (!Number.isFinite(v)) continue;
     const py = yScale(v);
     if (py < topPx) topPx = py;
@@ -167,29 +212,4 @@ function buildGradient(
     grad.addColorStop(1, opaque);
   }
   return grad;
-}
-
-/**
- * Re-express a CSS hex colour (`#rgb` / `#rrggbb`) as `rgba(...)` with the given
- * alpha, for the transparent gradient stop. A non-hex string (named colour,
- * already-rgba) is returned unchanged at alpha 0 only when it's hex; otherwise
- * we fall back to `transparent` so the stop is still see-through.
- */
-function withAlpha(color: string, alpha: number): string {
-  const hex = color.trim();
-  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex);
-  if (m === null) return alpha === 0 ? 'transparent' : color;
-  let r: number;
-  let g: number;
-  let b: number;
-  if (m[1]!.length === 3) {
-    r = parseInt(m[1]![0]! + m[1]![0]!, 16);
-    g = parseInt(m[1]![1]! + m[1]![1]!, 16);
-    b = parseInt(m[1]![2]! + m[1]![2]!, 16);
-  } else {
-    r = parseInt(m[1]!.slice(0, 2), 16);
-    g = parseInt(m[1]!.slice(2, 4), 16);
-    b = parseInt(m[1]!.slice(4, 6), 16);
-  }
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }

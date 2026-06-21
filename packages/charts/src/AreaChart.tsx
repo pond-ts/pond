@@ -3,6 +3,7 @@ import type { SeriesSchema, TimeSeries } from 'pond-ts';
 import { fromTimeSeries } from './data.js';
 import { areaExtent, drawArea } from './area.js';
 import { resolveCurve, type Curve } from './curve.js';
+import { DEFAULT_GAP_MODE, type GapMode } from './gaps.js';
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
 import { useSlotKey } from './use-slot-key.js';
 
@@ -49,6 +50,17 @@ export interface AreaChartProps<S extends SeriesSchema> {
    */
   curve?: Curve;
   /**
+   * How a **gap** (a coast / dropout — a run of NaN in `column`) is rendered (a
+   * {@link GapMode}). **Omitted ⇒ `'empty'`**: the fill *and* outline break at
+   * the gap, leaving a hole (the honest default). `'none'` fills + bridges
+   * straight across. For `'dashed'` / `'step'` / `'fade'` the **fill stays
+   * broken** and only the **outline** gets the inferred connector across the gap
+   * — dashed, a dashed step down to the baseline, or estela's fade-to-baseline.
+   * The step / fade drop to this area's own `baseline` (the fill floor). Shared
+   * with `<LineChart>` / `<BandChart>` — one concept.
+   */
+  gaps?: GapMode;
+  /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
    */
@@ -92,6 +104,7 @@ export function AreaChart<S extends SeriesSchema>({
   axis,
   baseline,
   curve,
+  gaps = DEFAULT_GAP_MODE,
   index = 0,
 }: AreaChartProps<S>) {
   const container = useContext(ContainerContext);
@@ -151,12 +164,24 @@ export function AreaChart<S extends SeriesSchema>({
             // verbatim.
             baseline ?? domainFloor(yScale),
             curveFactory,
+            gaps,
           ),
       },
       axisId: axis,
       index,
     }),
-    [cs, series, column, style, label, baseline, curveFactory, axis, index],
+    [
+      cs,
+      series,
+      column,
+      style,
+      label,
+      baseline,
+      curveFactory,
+      gaps,
+      axis,
+      index,
+    ],
   );
   // A stable per-instance slot (see useSlotKey) keeps this layer's z-position
   // fixed across series/style/prop updates (no jump to the front on live update).

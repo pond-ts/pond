@@ -9,6 +9,7 @@ import { story, waitForCanvasPaint } from './support.js';
 const cases: ReadonlyArray<readonly [id: string, file: string]> = [
   ['charts-areachart--elevation', 'area-elevation.png'],
   ['charts-areachart--above-below-axis', 'area-above-below-axis.png'],
+  ['charts-areachart--traffic-areas', 'area-traffic.png'],
 ];
 
 test.describe('AreaChart', () => {

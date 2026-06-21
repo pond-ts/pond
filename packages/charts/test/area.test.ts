@@ -266,3 +266,93 @@ describe('drawArea', () => {
     expect(ops).toContain('bezierCurveTo');
   });
 });
+
+/** A flipping y-scale with a domain, [0, 100] → floor pixel = y(0) = 100. */
+function flipScale(): (v: number) => number {
+  const f = (v: number) => 100 - v;
+  (f as unknown as { domain: () => number[] }).domain = () => [0, 100];
+  return f;
+}
+
+describe('drawArea gap modes', () => {
+  // gap at index 2 → interior gap [1]→[3].
+  const gapped = () => cs([0, 1, 2, 3], [20, 20, NaN, 40]);
+
+  it("'empty' (default) breaks the fill — no bridge, no dash, no extra gradient", () => {
+    const { ctx, calls, gradients } = areaContext();
+    drawArea(
+      ctx,
+      gapped(),
+      identity,
+      flipScale(),
+      style,
+      0,
+      undefined,
+      'empty',
+    );
+    // Two fill subpaths (moveTo) + two outline subpaths = 4; one gradient (fill).
+    expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(4);
+    expect(gradients).toHaveLength(1); // just the fill gradient
+    expect(calls.some((c) => c.name === 'setLineDash')).toBe(false);
+    // one fill stroke for the outline (no bridge pass).
+    expect(calls.filter((c) => c.name === 'stroke')).toHaveLength(1);
+  });
+
+  it("'none' bridges the fill + outline across the gap (one run each)", () => {
+    const { ctx, calls } = areaContext();
+    drawArea(ctx, gapped(), identity, flipScale(), style, 0, undefined, 'none');
+    // The interior NaN is interpolated → one continuous fill run + one outline
+    // run, so a single fill moveTo and a single outline moveTo = 2 (vs 4).
+    expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(2);
+    expect(calls.some((c) => c.name === 'setLineDash')).toBe(false);
+  });
+
+  it("'dashed' keeps the fill broken and adds a dashed outline bridge", () => {
+    const { ctx, calls } = areaContext();
+    drawArea(
+      ctx,
+      gapped(),
+      identity,
+      flipScale(),
+      style,
+      0,
+      undefined,
+      'dashed',
+    );
+    // fill still broken: two filled runs ⇒ two closePaths (the bridge pass adds
+    // no closePath, so this isolates the fill from the overlay).
+    expect(
+      calls.filter((c) => c.name === 'closePath').length,
+    ).toBeGreaterThanOrEqual(2);
+    // plus a dashed bridge pass.
+    expect(calls.some((c) => c.name === 'setLineDash')).toBe(true);
+    const dash = calls.find((c) => c.name === 'setLineDash');
+    expect(dash?.args).toEqual([[4, 4]]);
+    // bridge: last-good index1 (x=1, y(20)=80) → next-good index3 (x=3, y(40)=60).
+    const lines = calls.filter((c) => c.name === 'lineTo').map((c) => c.args);
+    expect(lines).toContainEqual([3, 60]);
+  });
+
+  it("'step' bridges the outline down-across-up to the area baseline", () => {
+    const { ctx, calls } = areaContext();
+    // baseline 0 → pixel y(0) = 100; the step drops to it.
+    drawArea(ctx, gapped(), identity, flipScale(), style, 0, undefined, 'step');
+    expect(calls.some((c) => c.name === 'setLineDash')).toBe(true);
+    const lines = calls.filter((c) => c.name === 'lineTo').map((c) => c.args);
+    expect(lines).toContainEqual([1, 100]); // down to the baseline (from x=1)
+    expect(lines).toContainEqual([3, 100]); // across at the baseline
+    expect(lines).toContainEqual([3, 60]); // up to the next-good point
+  });
+
+  it("'fade' adds vertical gradient drops at the gap edges (fill stays broken)", () => {
+    const { ctx, calls, gradients } = areaContext();
+    drawArea(ctx, gapped(), identity, flipScale(), style, 0, undefined, 'fade');
+    // gradients: 1 for the fill + 2 for the drops (the two gap edges) = 3.
+    expect(gradients).toHaveLength(3);
+    expect(calls.some((c) => c.name === 'setLineDash')).toBe(false);
+    // fill still broken: two filled runs ⇒ two closePaths.
+    expect(
+      calls.filter((c) => c.name === 'closePath').length,
+    ).toBeGreaterThanOrEqual(2);
+  });
+});

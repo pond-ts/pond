@@ -61,6 +61,37 @@ function traffic() {
   });
 }
 
+/**
+ * The esnet "site traffic" shape: a diurnal-ish `in` curve (bytes received,
+ * positive) mirrored by a smaller `out` curve (bytes sent, stored negative) so
+ * the two areas read as "Into Site" above the zero axis and "Out of site" below.
+ * Deterministic (two summed sines per channel) — the *static* reproduction of
+ * the classic esnet network-traffic example (the range-editing overlay is
+ * designed separately; this is just the picture).
+ */
+function siteTraffic() {
+  const rows: Array<[number, number, number]> = [];
+  for (let i = 0; i < N; i += 1) {
+    const phase = (i / (N - 1)) * Math.PI * 2; // one "day" across the window
+    // Inbound peaks mid-window (business hours), with a faster ripple.
+    const inbound =
+      520 + 360 * Math.sin(phase - Math.PI / 2) + 60 * Math.sin(i / 3);
+    // Outbound tracks it at ~40% with its own ripple — always less than inbound.
+    const outbound =
+      210 + 150 * Math.sin(phase - Math.PI / 2) + 40 * Math.sin(i / 4);
+    rows.push([BASE + i * STEP, inbound, -outbound]);
+  }
+  return new TimeSeries({
+    name: 'site-traffic',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'in', kind: 'number' },
+      { name: 'out', kind: 'number' },
+    ] as const,
+    rows,
+  });
+}
+
 const meta = {
   title: 'Charts/AreaChart',
   parameters: { layout: 'centered' },
@@ -106,6 +137,30 @@ export const AboveBelowAxis: Story = {
       <ChartContainer timeRange={TIME_RANGE} width={560} theme={estelaTheme}>
         <ChartRow height={240}>
           <YAxis id="mbps" label="Mb/s" />
+          <Layers>
+            <AreaChart series={t} column="in" baseline={0} as="in" />
+            <AreaChart series={t} column="out" baseline={0} as="out" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * The esnet network-traffic look reproduced statically: **"Into Site"** (teal,
+ * above the zero axis) over **"Out of site"** (warm filament, below), two
+ * `<AreaChart>`s on a shared `baseline={0}`, each side's shade fading toward the
+ * axis. This is the static picture from the classic esnet example — deterministic
+ * diurnal data, no brush (the range-editing overlay is designed separately).
+ */
+export const TrafficAreas: Story = {
+  render: () => {
+    const t = siteTraffic();
+    return (
+      <ChartContainer timeRange={TIME_RANGE} width={640} theme={estelaTheme}>
+        <ChartRow height={260}>
+          <YAxis id="bps" label="Gbps" />
           <Layers>
             <AreaChart series={t} column="in" baseline={0} as="in" />
             <AreaChart series={t} column="out" baseline={0} as="out" />

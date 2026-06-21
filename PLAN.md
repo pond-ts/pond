@@ -282,6 +282,30 @@ best-effort.
     cliff → per-point stroke cost dominates. **This orders the decimator.** The
     data-side ceiling (snapshot flush) is named as out-of-bench scope. Heap CI gate
     hardened (median baseline + 4×) so it can't flake.
+  - **Gap-rendering modes ✅** (2026-06-21, branch `feat/charts-gap-modes`).
+    Shared `gaps?: 'none' | 'empty' | 'dashed' | 'step' | 'fade'` prop (default
+    `'empty'` — today's break, so existing charts unchanged) on **LineChart /
+    AreaChart / BandChart**, threaded into the draw primitives. One concept across
+    the three (not line-only): `src/gaps.ts` holds the `GapMode` type + the O(N)
+    `collectGapEdges` walk + the bridge/step/fade drawers + the shared `withAlpha`
+    (lifted out of `area.ts`). **Decisions:** `none` = linear interpolation of
+    *interior* gaps (`bridgeGaps`) so fill+line bridge with real path ops, robust
+    to leading/trailing gaps (which stay broken) — chosen over `.defined(()=>true)`
+    which emits `lineTo(NaN)` and mis-handles a leading gap. `step` direction =
+    **down-across-up** (drop to the baseline, across, rise), matching estela's
+    `es-drop` shape and the `fade` drop — reads as "fell out and recovered". For
+    **area/band the fill stays honest**: only `none` fills across; `dashed`/`step`/
+    `fade` keep the fill broken and add the connector to the outline (area) / both
+    edges (band). `fade` replicates estela's `es-drop` `<linearGradient>` as a
+    per-edge vertical canvas `createLinearGradient` (opaque at line → transparent
+    at baseline); estela uses one `objectBoundingBox` gradient for the whole path,
+    we need one per drop (canvas gradients are user-space) — same visual. step/fade
+    drop to the area's own baseline; the band has none, so to the axis floor.
+    Stories: `GapModes.stories.tsx` (5 modes stacked × line/area/band, estelaTheme)
+    + `Area.stories.tsx` `TrafficAreas` (esnet "Into Site"/"Out of site", the
+    static part — no brush). +51 unit tests (recording-mock draw-call asserts) +
+    3 GapModes e2e + 1 area-traffic e2e baseline. O(N) per layer (band walks 2×,
+    one per edge); no perf script (straightforward per-segment draw).
   - **Remaining → the decimator (next).** Bench-ordered: viewport culling + M4
     pixel-bucket decimation **per-layer, first** (they hit the failing metric);
     Path2D cache (M4.4) **second**. Chart-side `bin(axisColumn, nBuckets,
