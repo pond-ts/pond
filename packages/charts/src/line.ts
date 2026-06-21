@@ -59,9 +59,10 @@ export function yExtent(cs: ChartSeries): [number, number] | null {
  *   trailing gaps, which stay a break). The one non-honest mode.
  * - `'dashed'` / `'step'` / `'fade'` — the **solid** segments break exactly as
  *   in `'empty'`, then a second pass draws the inferred bridge across each
- *   interior gap: a dashed straight line, a dashed down-across-up step to the
- *   axis floor, or estela's fade-to-baseline. The gap edges are collected by one
- *   O(N) walk ({@link collectGapEdges}).
+ *   interior gap: a dashed straight line, a dashed sample-and-hold step (hold
+ *   the last value across, then correct to the resumed value), or estela's
+ *   fade-to-baseline (the axis floor). The gap edges are collected by one O(N)
+ *   walk ({@link collectGapEdges}).
  *
  * The generator writes path ops to `ctx`; we bracket with `beginPath`/`stroke`.
  * `cs.y` (a `Float64Array`) is the datum iterable — `y` reads the value, `x`
@@ -93,7 +94,7 @@ export function drawLine(
   ctx.stroke();
 
   // Overlay bridges for the inferred-gap modes. The line y at index i is the
-  // value's pixel; the step/fade baseline is the axis floor.
+  // value's pixel; only `fade` drops to the axis floor (step holds the value).
   if (gaps === 'dashed' || gaps === 'step' || gaps === 'fade') {
     const edges = collectGapEdges(
       cs.length,
@@ -104,13 +105,16 @@ export function drawLine(
     );
     if (gaps === 'dashed') {
       drawGapBridges(ctx, edges, style.color, style.width);
+    } else if (gaps === 'step') {
+      drawGapSteps(ctx, edges, style.color, style.width);
     } else {
-      const baselinePx = baselinePxFromScale(yScale);
-      if (gaps === 'step') {
-        drawGapSteps(ctx, edges, baselinePx, style.color, style.width);
-      } else {
-        drawGapFades(ctx, edges, baselinePx, style.color, style.width);
-      }
+      drawGapFades(
+        ctx,
+        edges,
+        baselinePxFromScale(yScale),
+        style.color,
+        style.width,
+      );
     }
   }
 }

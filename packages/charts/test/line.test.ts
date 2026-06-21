@@ -222,17 +222,18 @@ describe('drawLine gap modes', () => {
     expect(calls.filter((c) => c.name === 'stroke')).toHaveLength(2);
   });
 
-  it("'step' bridges down-across-up to the axis floor, dashed", () => {
-    const { ctx, calls } = gradientContext();
-    const y = flipScale(); // domain [0,100] → floor pixel = y(0) = 100
-    drawLine(ctx, gapped(), identity, y, style, undefined, 'step');
+  it("'step' holds the last value across the gap, then corrects to the resumed value, dashed", () => {
+    const { ctx, calls } = recordingContext();
+    drawLine(ctx, gapped(), identity, identity, style, undefined, 'step');
     expect(calls.some((c) => c.name === 'setLineDash')).toBe(true);
-    // The step path: from last-good (x=0, y(5)=95) DOWN to baseline (0,100),
-    // ACROSS to (2,100), UP to next-good (x=2, y(7)=93).
+    // gapped(): last-good index0 (x=0,y=5), gap index1, next-good index2 (x=2,y=7).
+    // step: moveTo(0,5) → hold across at the last value (2,5) → correct to the
+    // resumed value (2,7). No drop to the axis floor.
+    const moves = calls.filter((c) => c.name === 'moveTo').map((c) => c.args);
     const lines = calls.filter((c) => c.name === 'lineTo').map((c) => c.args);
-    expect(lines).toContainEqual([0, 100]); // down to the floor
-    expect(lines).toContainEqual([2, 100]); // across at the floor
-    expect(lines).toContainEqual([2, 93]); // up to the next-good point
+    expect(moves).toContainEqual([0, 5]); // start at the last-good point
+    expect(lines).toContainEqual([2, 5]); // hold the last value across the gap
+    expect(lines).toContainEqual([2, 7]); // step to the resumed value
   });
 
   it("'fade' draws a vertical gradient drop to the floor at each gap edge", () => {

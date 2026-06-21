@@ -72,9 +72,10 @@ export function areaExtent(
  * the shade, never a slab to the baseline, `docs/rfcs/charts.md` trap #2). For
  * `'dashed'` / `'step'` / `'fade'` the **outline** (the value line on top)
  * additionally gets an inferred bridge across each interior gap — a dashed line,
- * a dashed down-across-up step to the baseline, or estela's fade-to-baseline —
- * while the *fill* stays broken. So the shade is always honest about absence;
- * only the line offers the inferred connector.
+ * a dashed sample-and-hold step (hold the last value across, then correct to the
+ * resumed value), or estela's fade-to-baseline — while the *fill* stays broken.
+ * So the shade is always honest about absence; only the line offers the inferred
+ * connector.
  *
  * `cs.y` (a `Float64Array`) is the datum iterable; accessors read by index, so
  * there's no per-point object allocation. The gradient + `globalAlpha` are
@@ -128,9 +129,9 @@ export function drawArea(
   ctx.stroke();
   ctx.restore();
 
-  // Inferred bridges for the line edge (fill stays broken). The bridges drop to
-  // the area's own baseline pixel — the fill floor — so step/fade are consistent
-  // with where the shade rests.
+  // Inferred bridges for the line edge (fill stays broken). `fade` drops to the
+  // area's own baseline pixel — the fill floor — so it's consistent with where
+  // the shade rests; `step` holds the last value across (no baseline).
   if (gaps === 'dashed' || gaps === 'step' || gaps === 'fade') {
     const edges = collectGapEdges(
       cs.length,
@@ -142,7 +143,7 @@ export function drawArea(
     if (gaps === 'dashed') {
       drawGapBridges(ctx, edges, style.color, style.width);
     } else if (gaps === 'step') {
-      drawGapSteps(ctx, edges, baselinePx, style.color, style.width);
+      drawGapSteps(ctx, edges, style.color, style.width);
     } else {
       drawGapFades(ctx, edges, baselinePx, style.color, style.width);
     }

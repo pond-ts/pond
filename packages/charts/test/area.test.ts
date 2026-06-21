@@ -333,15 +333,17 @@ describe('drawArea gap modes', () => {
     expect(lines).toContainEqual([3, 60]);
   });
 
-  it("'step' bridges the outline down-across-up to the area baseline", () => {
+  it("'step' holds the outline at the last value across the gap, then corrects to the resumed value", () => {
     const { ctx, calls } = areaContext();
-    // baseline 0 → pixel y(0) = 100; the step drops to it.
     drawArea(ctx, gapped(), identity, flipScale(), style, 0, undefined, 'step');
     expect(calls.some((c) => c.name === 'setLineDash')).toBe(true);
+    // gapped(): last-good index1 (x=1, y(20)=80), gap index2, next-good index3
+    // (x=3, y(40)=60). The step holds at 80 across to x=3, then corrects to 60 —
+    // both distinctive to the step pass (the fill only touches the baseline pixel
+    // 100, never these). No drop to the floor.
     const lines = calls.filter((c) => c.name === 'lineTo').map((c) => c.args);
-    expect(lines).toContainEqual([1, 100]); // down to the baseline (from x=1)
-    expect(lines).toContainEqual([3, 100]); // across at the baseline
-    expect(lines).toContainEqual([3, 60]); // up to the next-good point
+    expect(lines).toContainEqual([3, 80]); // hold the last value across the gap
+    expect(lines).toContainEqual([3, 60]); // step to the resumed value
   });
 
   it("'fade' adds vertical gradient drops at the gap edges (fill stays broken)", () => {
