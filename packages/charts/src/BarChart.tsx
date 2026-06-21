@@ -63,7 +63,11 @@ export interface BarChartProps<S extends SeriesSchema> {
  * **Interaction.** Hover joins the tracker (`sampleAt` → the bar's value at the
  * cursor). Click selects the hit bar (`hitTest`), and the matching bar — same
  * key **and** this series' `label` — draws highlighted, so two series sharing a
- * timestamp don't both light up.
+ * timestamp don't both light up. Hover and select resolve differently: select is
+ * **rect-containment** over the bar's `[begin, end]` span, while the tracker
+ * readout is **nearest-by-`begin`** — so near a *wide* bucket's edge a click can
+ * select bar *i* while the readout reads *i±1*. Both are correct (matching the
+ * line/area hover policy); they only diverge on wide buckets.
  *
  * **Distance domain is deferred** — v1 bars scale on the shared **time** xScale
  * only. estela's distance-domain (records over a monotonic value axis) needs

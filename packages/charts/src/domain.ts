@@ -1,8 +1,15 @@
+import { scaleLinear } from 'd3-scale';
+
 /**
  * Resolve a y-axis `[lo, hi]` domain from its explicit bounds and the extents of
  * the layers linked to it. An `undefined` bound auto-fits the data: with no
  * finite data the domain is `[0, 1]`, a flat extent gets ±1 of headroom (so a
  * constant line sits mid-row, not on an edge).
+ *
+ * A **fully auto-fit** domain (both bounds `undefined`) is rounded out to nice
+ * boundaries (d3 `.nice()`) — headroom so peaks / whisker caps don't sit on the
+ * plot edge, plus rounder tick values. An explicit bound (full or partial) is
+ * left **exact**: the caller's number is never nice'd or moved.
  *
  * Guarantees an **ascending, non-degenerate** domain whenever a bound was
  * auto-fit — a partial explicit bound with no (or flat) data on the other side
@@ -45,6 +52,11 @@ export function resolveYDomain(
     if (min === undefined)
       lo = hi - 1; // max is explicit → preserve it
     else hi = lo + 1; // min is explicit → preserve it
+  }
+  // Fully auto-fit → round the domain out for headroom + nicer ticks. A
+  // partial/full explicit bound is left exact (returned as-is below).
+  if (min === undefined && max === undefined) {
+    return scaleLinear().domain([lo, hi]).nice().domain() as [number, number];
   }
   return [lo, hi];
 }
