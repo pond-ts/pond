@@ -12,13 +12,13 @@ import {
   ContainerContext,
   type ContainerFrame,
   type GutterReq,
-  type ReadoutMode,
+  type CursorMode,
   type SelectInfo,
   type TrackerInfo,
   type TrackerSource,
 } from './context.js';
 import { maxSlotWidths, sum } from './slots.js';
-import { resolveCursorX } from './tracker.js';
+import { resolveCursorX, DEFAULT_CURSOR_MODE } from './tracker.js';
 import { TimeAxis } from './TimeAxis.js';
 import { defaultTheme, type ChartTheme } from './theme.js';
 
@@ -38,11 +38,13 @@ export interface ChartContainerProps {
    */
   trackerPosition?: number | null;
   /**
-   * In-chart readout presentation. **Default `'none'`** — just the crosshair +
-   * per-series dots, with values surfaced *outside* the chart via
-   * {@link onTrackerChanged}. `'flag'` / `'inline'` draw value chips in-plot.
+   * In-chart cursor presentation — the default for all rows (a row may override
+   * via `<ChartRow cursor>`). **Default `'line'`** — the synced vertical line,
+   * with values surfaced *outside* the chart via {@link onTrackerChanged}.
+   * `'point'` / `'inline'` / `'flag'` add per-series marks; `'none'` hides it.
+   * See {@link CursorMode}.
    */
-  readout?: ReadoutMode;
+  cursor?: CursorMode;
   /**
    * Fires on pointer move with the hovered time + every series' value there (so
    * you can render a readout outside the chart), and `null` on leave.
@@ -107,7 +109,7 @@ export function ChartContainer({
   panZoom = false,
   onTimeRangeChange,
   minDuration = 1,
-  readout = 'none',
+  cursor = DEFAULT_CURSOR_MODE,
   theme,
   children,
 }: ChartContainerProps) {
@@ -270,7 +272,7 @@ export function ChartContainer({
       setHoverX,
       selected: selectedValue,
       select,
-      readout,
+      cursor,
       registerTrackerSource,
       unregisterTrackerSource,
       xScale,
@@ -293,7 +295,7 @@ export function ChartContainer({
       cursorX,
       selectedValue,
       select,
-      readout,
+      cursor,
       registerTrackerSource,
       unregisterTrackerSource,
       xScale,

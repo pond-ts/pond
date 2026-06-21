@@ -242,7 +242,7 @@ function LiveLine({ windowSize, pushMs, batch }: Omit<LiveArgs, 'scenario'>) {
       timeRange={timeRange}
       width={WIDTH}
       theme={estelaTheme}
-      readout="none"
+      cursor="none"
     >
       <ChartRow height={HEIGHT}>
         <YAxis id="v" label="v" min={0} max={100} />
@@ -286,7 +286,7 @@ function LiveThree({ windowSize, pushMs, batch }: Omit<LiveArgs, 'scenario'>) {
       timeRange={timeRange}
       width={WIDTH}
       theme={estelaTheme}
-      readout="none"
+      cursor="none"
     >
       <ChartRow height={HEIGHT}>
         <YAxis id="v" label="v" min={0} max={100} />

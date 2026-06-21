@@ -17,6 +17,7 @@ import {
   ContainerContext,
   RowContext,
   type AxisSpec,
+  type CursorMode,
   type GutterReq,
   type LayerEntry,
   type RowFrame,
@@ -28,6 +29,9 @@ const IMPLICIT_AXIS_ID = '__default__';
 export interface ChartRowProps {
   /** Row height in CSS pixels. */
   height: number;
+  /** Cursor presentation for this row, overriding the container's default
+   *  ({@link ChartContainerProps.cursor}). Omit to inherit. See {@link CursorMode}. */
+  cursor?: CursorMode;
   children?: ReactNode;
 }
 
@@ -48,7 +52,7 @@ export interface ChartRowProps {
  * Children lay out left-to-right in author order, so `<YAxis side="left"/>` goes
  * before `<Layers/>` and `<YAxis side="right"/>` after.
  */
-export function ChartRow({ height, children }: ChartRowProps) {
+export function ChartRow({ height, cursor, children }: ChartRowProps) {
   const container = useContext(ContainerContext);
   if (container === null) {
     throw new Error('<ChartRow> must be rendered inside a <ChartContainer>');
@@ -193,6 +197,7 @@ export function ChartRow({ height, children }: ChartRowProps) {
   const frame = useMemo<RowFrame>(
     () => ({
       height,
+      cursor,
       yScales,
       defaultAxisId,
       axisSlots,
@@ -204,6 +209,7 @@ export function ChartRow({ height, children }: ChartRowProps) {
     }),
     [
       height,
+      cursor,
       yScales,
       defaultAxisId,
       axisSlots,

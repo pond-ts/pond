@@ -2,19 +2,20 @@ import { expect, test } from '@playwright/test';
 import { story, waitForCanvasPaint } from './support.js';
 
 /**
- * Visual baselines for the M4 tracker. The stories are hover-driven (no
+ * Visual baselines for the M4 cursor (tracker). The stories are hover-driven (no
  * controlled `trackerPosition`), so the test drives a deterministic pointer to
- * 12:30 — the same x the stories used to pin — before snapshotting. Captures the
- * crosshair + per-series dots (overlay canvas) and the readout chips (DOM)
- * together by snapshotting `#storybook-root`.
+ * 12:30 — the same x the stories used to pin — before snapshotting. Each story
+ * sets a different `cursor` mode; the snapshot of `#storybook-root` captures the
+ * mode's marks (the line / dots on the overlay canvas + any chips in the DOM).
  *
  * The uncontrolled / animated stories (`OutsideReadout`, `Playground/LiveSine`)
  * are panel- and time-driven, so they're intentionally not baselined.
  */
 const cases: ReadonlyArray<readonly [id: string, file: string]> = [
-  ['interactions--cursor-sync', 'interactions-cursor-sync.png'],
-  ['interactions--flag-readout', 'interactions-flag-readout.png'],
-  ['interactions--inline-readout', 'interactions-inline-readout.png'],
+  ['interactions--cursor-sync', 'interactions-cursor-sync.png'], // line (default)
+  ['interactions--point-cursor', 'interactions-point-cursor.png'], // point
+  ['interactions--flag-readout', 'interactions-flag-readout.png'], // flag
+  ['interactions--inline-readout', 'interactions-inline-readout.png'], // inline
 ];
 
 test.describe('Interactions', () => {

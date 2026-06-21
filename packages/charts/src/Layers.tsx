@@ -16,7 +16,7 @@ import {
 } from 'react';
 import { Canvas } from './Canvas.js';
 import { drawGrid } from './grid.js';
-import { drawCrosshair, drawTrackerDot } from './tracker.js';
+import { cursorParts, drawCrosshair, drawTrackerDot } from './tracker.js';
 import { resolveSelection } from './select.js';
 import { panRange, zoomRange } from './viewport.js';
 import {
@@ -117,7 +117,11 @@ export function Layers({ children }: LayersProps) {
   // cursorX — set by whichever row the pointer is over — syncs the cursor across
   // every row for free. cursorX is a *pixel*, so it stays put while a live window
   // slides; the time + values under it derive from the current xScale.
-  const { cursorX, readout } = container;
+  const { cursorX } = container;
+  // Cursor mode: the row's override, else the container default. One mode per
+  // row (the synced vertical line is shared across rows); each layer renders the
+  // mode in its own way. `parts` decomposes it into {line, dots, chip}.
+  const parts = cursorParts(row.cursor ?? container.cursor);
   const cursorColor = container.theme.cursor ?? container.theme.axis.label;
   // Only read a time when the cursor is within the plot. An out-of-bounds
   // controlled trackerPosition hides the crosshair (overlay guard below), so the
@@ -133,7 +137,10 @@ export function Layers({ children }: LayersProps) {
   // recomputes as the cursor moves or the window slides under it. Empty when not
   // hovering, so the data canvas is never touched.
   const trackerSamples = useMemo(() => {
-    if (cursorTime === null) return [];
+    // Only needed for the in-chart dots / chips; skip the per-layer walk when the
+    // mode shows neither (the off-chart readout fans in separately on the container).
+    if (cursorTime === null || (!parts.dots && parts.chip === 'none'))
+      return [];
     const out: { px: number; py: number; value: number; color: string }[] = [];
     for (const entry of layers) {
       const yScale = yScales.get(entry.axisId ?? defaultAxisId);
@@ -148,17 +155,29 @@ export function Layers({ children }: LayersProps) {
       }
     }
     return out;
-  }, [cursorTime, layers, yScales, xScale, defaultAxisId]);
+  }, [
+    cursorTime,
+    layers,
+    yScales,
+    xScale,
+    defaultAxisId,
+    parts.dots,
+    parts.chip,
+  ]);
 
   const overlayDraw = useCallback(
     (ctx: CanvasRenderingContext2D, w: number, h: number) => {
       if (cursorX === null || cursorX < 0 || cursorX > w) return;
-      drawCrosshair(ctx, cursorX, h, cursorColor);
-      for (const s of trackerSamples) {
-        drawTrackerDot(ctx, s.px, s.py, s.color, background);
+      // The synced vertical line in `line` mode; per-series dots in the
+      // dot-based modes (point / inline / flag).
+      if (parts.line) drawCrosshair(ctx, cursorX, h, cursorColor);
+      if (parts.dots) {
+        for (const s of trackerSamples) {
+          drawTrackerDot(ctx, s.px, s.py, s.color, background);
+        }
       }
     },
-    [cursorX, cursorColor, trackerSamples, background],
+    [cursorX, cursorColor, trackerSamples, background, parts.line, parts.dots],
   );
 
   // Pan/zoom + tracker share the plot's event surface. Container fields are read
@@ -283,10 +302,10 @@ export function Layers({ children }: LayersProps) {
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
-  // Readout value chips (the crosshair + dots always show; only the value text
-  // is modal). 'none' keeps values out of the plot — surface them outside via
-  // onTrackerChanged. 'inline' chips sit beside each dot; 'flag' chips stack at
-  // the top of the crosshair.
+  // Readout value chips for the inline / flag cursor modes (DOM, above the
+  // canvas). 'inline' chips sit beside each dot; 'flag' chips stack at the top
+  // (the point-anchored staffed flag lands in a later phase). The line / point /
+  // none modes draw no chips — surface values off-chart via onTrackerChanged.
   const flagLineHeight = container.theme.font.size + 5;
   const chipStyle: CSSProperties = {
     position: 'absolute',
@@ -341,7 +360,7 @@ export function Layers({ children }: LayersProps) {
             pointerEvents: 'none',
           }}
         />
-        {readout === 'inline' &&
+        {parts.chip === 'inline' &&
           trackerSamples.map((s, i) => {
             // Flip the chip left of its dot near the right edge so it stays in-plot.
             const flip = s.px > plotWidth * LABEL_FLIP_FRACTION;
@@ -361,7 +380,7 @@ export function Layers({ children }: LayersProps) {
               </div>
             );
           })}
-        {readout === 'flag' &&
+        {parts.chip === 'flag' &&
           cursorX !== null &&
           trackerSamples.map((s, i) => {
             // Flags stack at the top of the crosshair; flip near the right edge.
