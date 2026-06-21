@@ -1,0 +1,188 @@
+{
+  "machine": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 14,
+    "node": "v22.22.2",
+    "recordedAt": "2026-06-20T16:07:05.729Z",
+    "note": "Directional, machine-recorded — numbers are relative, never absolute. The durable signal is the shape of the curve (where draw-everything tops out, on which metric). Heap via Chrome performance.memory (--enable-precise-memory-info set in playwright.config); directional."
+  },
+  "static": [
+    {
+      "scenario": "line",
+      "size": 1000,
+      "initialRenderMs": 2569.7,
+      "panFps": 120.7,
+      "panMaxFrameGapMs": 16.4,
+      "zoomFps": 120.9
+    },
+    {
+      "scenario": "line",
+      "size": 10000,
+      "initialRenderMs": 40.8,
+      "panFps": 119.8,
+      "panMaxFrameGapMs": 16.8,
+      "zoomFps": 120.7
+    },
+    {
+      "scenario": "line",
+      "size": 100000,
+      "initialRenderMs": 665.9,
+      "panFps": 8,
+      "panMaxFrameGapMs": 333.1,
+      "zoomFps": 8.1
+    },
+    {
+      "scenario": "line",
+      "size": 500000,
+      "initialRenderMs": 1914.8,
+      "panFps": null,
+      "panMaxFrameGapMs": null,
+      "zoomFps": 2.2
+    },
+    {
+      "scenario": "line",
+      "size": 1000000,
+      "initialRenderMs": 6976.4,
+      "panFps": null,
+      "panMaxFrameGapMs": null,
+      "zoomFps": null
+    },
+    {
+      "scenario": "three",
+      "size": 1000,
+      "initialRenderMs": 1093.5,
+      "panFps": 121,
+      "panMaxFrameGapMs": 10.2,
+      "zoomFps": 120.2
+    },
+    {
+      "scenario": "three",
+      "size": 10000,
+      "initialRenderMs": 81.7,
+      "panFps": 86.4,
+      "panMaxFrameGapMs": 50.3,
+      "zoomFps": 100.9
+    },
+    {
+      "scenario": "three",
+      "size": 100000,
+      "initialRenderMs": 1763.9,
+      "panFps": 2.9,
+      "panMaxFrameGapMs": 874.7,
+      "zoomFps": 3
+    },
+    {
+      "scenario": "three",
+      "size": 500000,
+      "initialRenderMs": 5629.2,
+      "panFps": null,
+      "panMaxFrameGapMs": null,
+      "zoomFps": null
+    },
+    {
+      "scenario": "three",
+      "size": 1000000,
+      "initialRenderMs": 16287.4,
+      "panFps": null,
+      "panMaxFrameGapMs": null,
+      "zoomFps": null
+    },
+    {
+      "scenario": "band",
+      "size": 1000,
+      "initialRenderMs": 3649.3,
+      "panFps": 120.6,
+      "panMaxFrameGapMs": 17.7,
+      "zoomFps": 120.6
+    },
+    {
+      "scenario": "band",
+      "size": 10000,
+      "initialRenderMs": 3987.9,
+      "panFps": 119.4,
+      "panMaxFrameGapMs": 17.2,
+      "zoomFps": 119.7
+    },
+    {
+      "scenario": "band",
+      "size": 100000,
+      "initialRenderMs": 1151.8,
+      "panFps": 4.8,
+      "panMaxFrameGapMs": 533.3,
+      "zoomFps": 7
+    },
+    {
+      "scenario": "band",
+      "size": 500000,
+      "initialRenderMs": 2810,
+      "panFps": null,
+      "panMaxFrameGapMs": null,
+      "zoomFps": null
+    },
+    {
+      "scenario": "band",
+      "size": 1000000,
+      "initialRenderMs": 3048.2,
+      "panFps": null,
+      "panMaxFrameGapMs": null,
+      "zoomFps": null
+    }
+  ],
+  "live": [
+    {
+      "scenario": "line",
+      "windowSize": 1500,
+      "pushMs": 20,
+      "batch": 100,
+      "fps": 51.7,
+      "maxFrameGapMs": 26.7,
+      "heapSamples": [
+        49228537,
+        76783953,
+        24650264,
+        60320221,
+        61563905,
+        58849881,
+        48567485
+      ],
+      "heapSlopeBytesPerSample": -33488
+    },
+    {
+      "scenario": "line",
+      "windowSize": 1500,
+      "pushMs": 100,
+      "batch": 100,
+      "fps": 107.8,
+      "maxFrameGapMs": 25.3,
+      "heapSamples": [
+        12944812,
+        17548055,
+        21074398,
+        16891003,
+        16603984,
+        16608332,
+        16625336
+      ],
+      "heapSlopeBytesPerSample": 167561
+    },
+    {
+      "scenario": "three",
+      "windowSize": 1500,
+      "pushMs": 20,
+      "batch": 100,
+      "fps": 29,
+      "maxFrameGapMs": 42.9,
+      "heapSamples": [
+        32639300,
+        46261636,
+        30949776,
+        44618136,
+        62850304,
+        43155336,
+        58123684
+      ],
+      "heapSlopeBytesPerSample": 3647896
+    }
+  ]
+}

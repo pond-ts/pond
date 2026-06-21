@@ -34,7 +34,8 @@
     "test:runtime": "vitest run",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "perf": "PERF_BENCH=1 playwright test perf.spec.ts --workers=1"
   },
   "peerDependencies": {
     "@pond-ts/react": "^0.30.0",
