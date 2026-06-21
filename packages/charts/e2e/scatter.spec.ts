@@ -25,10 +25,9 @@ test.describe('ScatterChart', () => {
   }
 
   // Hover drives the tracker (sampleAt → value read). Drive a deterministic
-  // pointer to mid-plot and snapshot the cursor (SVG overlay; the default
-  // `line` mode until scatter gets its own cursor in a later phase) — and guard
-  // against a throwing render (the detached-method class of bug that crashed the
-  // tracker silently).
+  // pointer to mid-plot and snapshot the cursor (SVG overlay; the Encoded story
+  // sets no `cursor`, so the default `line` mode) — and guard against a throwing
+  // render (the detached-method class of bug that crashed the tracker silently).
   test('hover drives the tracker without error', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', (e) => errors.push(e.message));
