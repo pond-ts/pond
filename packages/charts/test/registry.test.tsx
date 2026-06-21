@@ -117,3 +117,33 @@ describe('registry order stability', () => {
     expect(last(spy).order).toEqual(['a', 'm', 'b']);
   });
 });
+
+/**
+ * Placement follows `side`, not JSX author order — so a `side="right"` axis
+ * renders right of the plot even when authored before `<Layers>`, keeping the
+ * DOM position consistent with the side-based gutter reservation.
+ */
+describe('axis placement by side', () => {
+  const FOLLOWING = Node.DOCUMENT_POSITION_FOLLOWING;
+
+  it('renders a side="right" axis after the plot even when authored before <Layers>', () => {
+    const { container, getByText } = render(
+      <ChartContainer timeRange={[0, 3]} width={400}>
+        <ChartRow height={100}>
+          <YAxis id="L" label="left-axis" min={0} max={10} />
+          {/* authored BEFORE <Layers>, but side="right" must win */}
+          <YAxis id="R" side="right" label="right-axis" min={0} max={10} />
+          <Layers>
+            <LineChart series={mk([1, 2, 3])} column="v" axis="L" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const canvas = container.querySelector('canvas')!;
+    const leftLabel = getByText('left-axis');
+    const rightLabel = getByText('right-axis');
+    // left axis precedes the plot; right axis follows it (DOM order = visual L→R).
+    expect(leftLabel.compareDocumentPosition(canvas) & FOLLOWING).toBeTruthy(); // canvas follows the left axis
+    expect(canvas.compareDocumentPosition(rightLabel) & FOLLOWING).toBeTruthy(); // right axis follows the canvas
+  });
+});

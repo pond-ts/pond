@@ -157,13 +157,27 @@ export const Formats: Story = {
         </Layers>
       </ChartRow>
       <ChartRow height={90}>
-        <YAxis id="k" label="requests" min={0} max={100000} format=",.0f" />
+        <YAxis
+          id="k"
+          label="requests"
+          min={0}
+          max={100000}
+          format=",.0f"
+          width={70}
+        />
         <Layers>
           <LineChart series={demo(0.5, 40000, 50000)} column="v" as="foam" />
         </Layers>
       </ChartRow>
       <ChartRow height={90}>
-        <YAxis id="si" label="bytes" min={0} max={100000} format=".2s" />
+        <YAxis
+          id="si"
+          label="bytes"
+          min={0}
+          max={100000}
+          format=".2s"
+          width={70}
+        />
         <Layers>
           <LineChart series={demo(1, 40000, 50000)} column="v" as="foam" />
         </Layers>
@@ -176,6 +190,8 @@ export const Formats: Story = {
       </ChartRow>
       <ChartRow height={90}>
         <YAxis id="L" label="ratio" min={0} max={1} format=".0%" />
+        {/* Authored before <Layers> but side="right" → ChartRow places it on the
+            right; placement follows `side`, not JSX order. */}
         <YAxis
           id="R"
           side="right"
@@ -183,6 +199,7 @@ export const Formats: Story = {
           min={0}
           max={1000}
           format=",.0f"
+          width={55}
         />
         <Layers>
           <LineChart series={demo(0, 0.4, 0.5)} column="v" as="foam" axis="L" />
