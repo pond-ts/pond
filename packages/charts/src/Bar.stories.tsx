@@ -108,11 +108,13 @@ export const Diverging: Story = {
 };
 
 /**
- * **Hover + select.** Hover the plot — a dot rides the nearest bar's value (the
- * bar joins the tracker, `cursor='flag'`). Click a bar
- * — it highlights (brighter fill + outline) and the panel above shows the
- * selection; click empty space to clear. The highlight matches the clicked bar's
- * key **and** this series' label, so selection is unambiguous.
+ * **Hover + select.** Hover the plot — the bar **under the cursor** lights up
+ * (hover-highlight) and a flag rises from its top-centre with the value
+ * (`cursor='flag'`). Click a bar — it stays lit **with an outline** and the panel
+ * above shows the selection; click empty space to clear. Hover and select both
+ * resolve by containment (the flag reads the same bar you click) and match the
+ * bar's key **and** this series' label, so they're unambiguous across series
+ * sharing a timestamp.
  */
 function HoverSelectDemo() {
   const v = hourlyVolume();

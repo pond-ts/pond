@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   barAt,
   barExtent,
+  barIndexAtTime,
   barRect,
   drawBars,
   resolveBarBaseline,
@@ -129,6 +130,7 @@ describe('drawBars', () => {
       0,
       'count',
       null,
+      null,
     );
     // two finite bars → two fillRect; the NaN bar is skipped.
     expect(calls.filter((c) => c.name === 'fillRect')).toHaveLength(2);
@@ -149,6 +151,7 @@ describe('drawBars', () => {
       0,
       0,
       'count',
+      null,
       null,
     );
     expect(
@@ -171,6 +174,7 @@ describe('drawBars', () => {
       0,
       'count',
       null,
+      null,
     );
     // x: [0*2, 10*2] = [0,20] → x0=0, width=20. y: value=100-40=60, base=100-0=100
     // → yTop=60, height=40.
@@ -190,6 +194,7 @@ describe('drawBars', () => {
       0,
       'count',
       { key: 1, label: 'count' }, // selects the second bar
+      null,
     );
     // the highlighted bar fills with the highlight colour and gets a strokeRect.
     expect(calls.some((c) => c.type === 'set' && c.args[0] === '#fff')).toBe(
@@ -210,11 +215,83 @@ describe('drawBars', () => {
       0,
       'count',
       { key: 1, label: 'other' }, // same key, different series → no highlight
+      null,
     );
     expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(0);
     expect(calls.some((c) => c.type === 'set' && c.args[0] === '#fff')).toBe(
       false,
     );
+  });
+
+  it('highlights a hovered bar with fill only — no outline (that is select)', () => {
+    const { ctx, calls } = recordingContext();
+    drawBars(
+      ctx,
+      bars([0, 1], [1, 2], [10, 20]),
+      identity,
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      null, // nothing selected
+      { key: 1, label: 'count' }, // hover the second bar
+    );
+    // hovered bar fills with the highlight colour...
+    expect(calls.some((c) => c.type === 'set' && c.args[0] === '#fff')).toBe(
+      true,
+    );
+    // ...but is NOT outlined — the outline is reserved for the committed select.
+    expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(0);
+  });
+
+  it('outlines a bar that is both selected and hovered (select wins)', () => {
+    const { ctx, calls } = recordingContext();
+    drawBars(
+      ctx,
+      bars([0, 1], [1, 2], [10, 20]),
+      identity,
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      { key: 1, label: 'count' }, // selected...
+      { key: 1, label: 'count' }, // ...and hovered — the same bar
+    );
+    // highlight fill + the select outline (the select branch still draws it).
+    expect(calls.some((c) => c.type === 'set' && c.args[0] === '#fff')).toBe(
+      true,
+    );
+    expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(1);
+  });
+});
+
+describe('barIndexAtTime', () => {
+  // Three contiguous bars: [0,10], [10,20], [20,30].
+  const cs = bars([0, 10, 20], [10, 20, 30], [5, 6, 7]);
+
+  it('returns the bar whose span contains the time', () => {
+    expect(barIndexAtTime(cs, 5)).toBe(0);
+    expect(barIndexAtTime(cs, 15)).toBe(1);
+    expect(barIndexAtTime(cs, 25)).toBe(2);
+  });
+
+  it('stays on the same bar past its midpoint (not nearest-by-begin)', () => {
+    // 18 is in the right half of bar 1 ([10,20]); nearest-by-begin would flip to
+    // bar 2 (begin 20 nearer than begin 10). Containment keeps it on bar 1 — the
+    // flag-on-the-wrong-bar fix.
+    expect(barIndexAtTime(cs, 18)).toBe(1);
+  });
+
+  it('returns the left bar at a shared edge (end[i] === begin[i+1])', () => {
+    expect(barIndexAtTime(cs, 10)).toBe(0);
+    expect(barIndexAtTime(cs, 20)).toBe(1);
+  });
+
+  it('returns -1 outside every bar span', () => {
+    expect(barIndexAtTime(cs, -1)).toBe(-1);
+    expect(barIndexAtTime(cs, 31)).toBe(-1);
   });
 });
 

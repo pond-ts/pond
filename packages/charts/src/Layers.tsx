@@ -202,6 +202,7 @@ export function Layers({ children }: LayersProps) {
       const r = c.timeRange;
       dragRef.current = { startX: e.clientX, startRange: [r[0], r[1]] };
       c.setHoverX(null); // hide the tracker while panning
+      c.setHovered(null); // and drop any hover-highlight
       // Capture so the pan continues outside the plot; an enhancement, not
       // critical — guard the throw for synthetic / already-released pointers.
       try {
@@ -229,7 +230,22 @@ export function Layers({ children }: LayersProps) {
         return; // tracker suppressed during a pan
       }
       const rect = e.currentTarget.getBoundingClientRect();
-      c.setHoverX(Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left)));
+      const px = Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left));
+      c.setHoverX(px);
+      // Hover-highlight: hit-test the row's selectable layers (Bar) under the
+      // pointer and set the hovered mark. Deduped in the container, so the data
+      // canvas repaints only on a mark transition — not every move (the move just
+      // slides the SVG cursor). A row with no selectable layer (line/area/band)
+      // resolves to null → a no-op.
+      const r = rowRef.current;
+      const hit = resolveSelection(
+        r.layers,
+        px,
+        e.clientY - rect.top,
+        c.xScale,
+        (axisId) => r.yScales.get(axisId ?? r.defaultAxisId),
+      );
+      c.setHovered(hit);
     },
     [],
   );
@@ -247,10 +263,11 @@ export function Layers({ children }: LayersProps) {
     },
     [],
   );
-  const handlePointerLeave = useCallback(
-    () => containerRef.current.setHoverX(null),
-    [],
-  );
+  const handlePointerLeave = useCallback(() => {
+    const c = containerRef.current;
+    c.setHoverX(null);
+    c.setHovered(null);
+  }, []);
   // Click selection: ignore the click that ends a drag/pan (moved past a few px),
   // else hit-test the row's layers top-down and select — or clear on a miss.
   const handleClick = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {

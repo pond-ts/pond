@@ -1,7 +1,13 @@
 import { useContext, useEffect, useMemo } from 'react';
 import type { SeriesSchema, TimeSeries } from 'pond-ts';
 import { barsFromTimeSeries } from './data.js';
-import { barAt, barExtent, drawBars, resolveBarBaseline } from './bars.js';
+import {
+  barAt,
+  barExtent,
+  barIndexAtTime,
+  drawBars,
+  resolveBarBaseline,
+} from './bars.js';
 import {
   ContainerContext,
   LayersContext,
@@ -60,14 +66,15 @@ export interface BarChartProps<S extends SeriesSchema> {
  * domain), or on the axis floor when an explicit `<YAxis min={…}>` sits above
  * zero (see {@link resolveBarBaseline}).
  *
- * **Interaction.** Hover joins the tracker (`sampleAt` → the bar's value at the
- * cursor). Click selects the hit bar (`hitTest`), and the matching bar — same
- * key **and** this series' `label` — draws highlighted, so two series sharing a
- * timestamp don't both light up. Hover and select resolve differently: select is
- * **rect-containment** over the bar's `[begin, end]` span, while the tracker
- * readout is **nearest-by-`begin`** — so near a *wide* bucket's edge a click can
- * select bar *i* while the readout reads *i±1*. Both are correct (matching the
- * line/area hover policy); they only diverge on wide buckets.
+ * **Interaction.** Hover joins the tracker (`sampleAt` → the value of the bar
+ * **under the cursor**) and lights that bar (hover-highlight). Click selects the
+ * hit bar (`hitTest`); the matching bar — same key **and** this series' `label`,
+ * so two series sharing a timestamp don't both light up — draws highlighted
+ * (outlined for the committed select, fill-only for the transient hover). Both
+ * resolve by **containment**: the tracker by the bar's `[begin, end]` time span
+ * (`barIndexAtTime`), the click by the bar's pixel rect (`barAt`) — so the
+ * readout reads the same bar you click, even across a wide bucket (they differ
+ * only by the `gap` inset, where the pixel rect is narrower than the span).
  *
  * **Distance domain is deferred** — v1 bars scale on the shared **time** xScale
  * only. estela's distance-domain (records over a monotonic value axis) needs
@@ -118,37 +125,50 @@ export function BarChart<S extends SeriesSchema>({
       selected === null ? null : { key: selected.key, label: selected.label },
     [selected],
   );
+  // The transient hover-highlight, narrowed to the match key (key + label) like
+  // the selection. Read here so a hover change re-registers the layer → the data
+  // canvas repaints with the lit bar. Deduped in the container, so this only
+  // fires on a bar transition (not every pointer move).
+  const hoveredMark = container.hovered;
+  const hover = useMemo(
+    () =>
+      hoveredMark === null
+        ? null
+        : { key: hoveredMark.key, label: hoveredMark.label },
+    [hoveredMark],
+  );
 
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
         yExtent: () => barExtent(bs),
         sampleAt: (time) => {
-          // No readout past the data (tracker policy — core's nearest() clamps
-          // to an endpoint outside the span). A bar spans [begin, end], so the
-          // window runs from the first bar's begin to the last bar's end (its
-          // right edge), not begin[n-1] — otherwise hovering the tail of the
-          // last bar would read nothing.
-          if (
-            bs.length === 0 ||
-            time < bs.begin[0]! ||
-            time > bs.end[bs.length - 1]!
-          ) {
-            return [];
-          }
-          const e = series.nearest(time);
-          if (e === undefined) return [];
-          // get() wants a literal key; column is a runtime string. Cast the
-          // *event* (not the method — that would detach `this`) to a
-          // string-keyed get; runtime-safe read + guard.
-          const v = (e as unknown as { get(field: string): unknown }).get(
-            column,
-          );
-          // The dot rides the bar's value, keyed at the bar's begin (its left
-          // edge — where the bar's x-span starts), coloured by the fill.
-          return typeof v === 'number' && Number.isFinite(v)
-            ? [{ x: e.begin(), value: v, color: style.fill, label }]
-            : [];
+          // The flag belongs to the bar **under the cursor** — the bar whose
+          // span `[begin, end]` contains `time` (barIndexAtTime), NOT
+          // nearest-by-begin (which flips to the next bar past a wide bar's
+          // midpoint, landing the flag on the wrong bar). For a point key the
+          // span is the neighbour-derived Voronoi cell (`barsFromTimeSeries`
+          // widens `begin === end` into one), so the cells tile the axis and a
+          // moving cursor always lands in one. Before the first / after the last
+          // bar → no readout, matching the line/area tracker.
+          if (bs.length === 0) return [];
+          const i = barIndexAtTime(bs, time);
+          if (i < 0) return [];
+          const v = bs.y[i]!;
+          if (!Number.isFinite(v)) return []; // a gap bar (missing value) reads nothing
+          // Anchor at the bar's **top-centre** (RFC): the span's centre time
+          // `(begin + end) / 2` (the bucket mid for an interval key; the Voronoi
+          // cell centre — ~on the point — for a point key), at `yScale(value)` =
+          // the bar top. A tall bar (top above the flag stack) drops the staff for
+          // free (the shared `s.py > stackBottom` rule).
+          return [
+            {
+              x: (bs.begin[i]! + bs.end[i]!) / 2,
+              value: v,
+              color: style.fill,
+              label,
+            },
+          ];
         },
         hitTest: (px, py, xScale, yScale): SelectInfo | null => {
           const baseline = resolveBarBaseline(yScale);
@@ -180,12 +200,13 @@ export function BarChart<S extends SeriesSchema>({
             gapPx,
             label,
             selection,
+            hover,
           ),
       },
       axisId: axis,
       index,
     }),
-    [bs, series, column, style, label, gapPx, selection, axis, index],
+    [bs, series, column, style, label, gapPx, selection, hover, axis, index],
   );
   // A stable per-instance slot (see useSlotKey) keeps this layer's z-position
   // fixed across series/style/selection updates (no jump to the front).

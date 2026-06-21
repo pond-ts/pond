@@ -225,6 +225,23 @@ export function ChartContainer({
     if (!controlledSelectionRef.current) setInternalSelected(hit);
   }, []);
 
+  // Hover-highlight: the transient mark under the pointer (distinct from the
+  // committed selection). Deduped by key+label so the data canvas repaints only
+  // when the hovered mark changes — not on every pointer move (the move itself
+  // just slides the SVG cursor, which never touches the data canvas).
+  const [hovered, setHoveredState] = useState<SelectInfo | null>(null);
+  const setHovered = useCallback((hit: SelectInfo | null) => {
+    setHoveredState((prev) =>
+      prev === hit ||
+      (prev !== null &&
+        hit !== null &&
+        prev.key === hit.key &&
+        prev.label === hit.label)
+        ? prev
+        : hit,
+    );
+  }, []);
+
   // Rows report their per-slot gutter widths; we reserve each slot's max.
   const [gutters, setGutters] = useState<readonly GutterReq[]>([]);
   const registerGutter = useCallback((req: GutterReq) => {
@@ -312,6 +329,8 @@ export function ChartContainer({
       setHoverX,
       selected: selectedValue,
       select,
+      hovered,
+      setHovered,
       cursor,
       cursorTime,
       formatTime,
@@ -339,6 +358,8 @@ export function ChartContainer({
       cursorX,
       selectedValue,
       select,
+      hovered,
+      setHovered,
       cursor,
       cursorTime,
       formatTime,
