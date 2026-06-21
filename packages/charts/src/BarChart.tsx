@@ -144,20 +144,23 @@ export function BarChart<S extends SeriesSchema>({
         yExtent: () => barExtent(bs),
         sampleAt: (time) => {
           // The flag belongs to the bar **under the cursor** — the bar whose
-          // span contains `time` (barIndexAtTime), NOT nearest-by-begin (which
-          // flips to the next bar past a wide bar's midpoint, landing the flag on
-          // the wrong bar). Outside every span (before/after the data, or a
-          // point-keyed gap) → no readout, matching the line/area tracker.
+          // span `[begin, end]` contains `time` (barIndexAtTime), NOT
+          // nearest-by-begin (which flips to the next bar past a wide bar's
+          // midpoint, landing the flag on the wrong bar). For a point key the
+          // span is the neighbour-derived Voronoi cell (`barsFromTimeSeries`
+          // widens `begin === end` into one), so the cells tile the axis and a
+          // moving cursor always lands in one. Before the first / after the last
+          // bar → no readout, matching the line/area tracker.
           if (bs.length === 0) return [];
           const i = barIndexAtTime(bs, time);
           if (i < 0) return [];
           const v = bs.y[i]!;
-          if (!Number.isFinite(v)) return []; // a gap bar owns its span but reads nothing
-          // Anchor at the bar's **top-centre** (RFC): the centre time
-          // `(begin + end) / 2` (the bar mid for an interval key; the point
-          // itself for a point key, begin === end), at `yScale(value)` = the bar
-          // top. A tall bar (top above the flag stack) drops the staff for free
-          // (the shared `s.py > stackBottom` rule).
+          if (!Number.isFinite(v)) return []; // a gap bar (missing value) reads nothing
+          // Anchor at the bar's **top-centre** (RFC): the span's centre time
+          // `(begin + end) / 2` (the bucket mid for an interval key; the Voronoi
+          // cell centre — ~on the point — for a point key), at `yScale(value)` =
+          // the bar top. A tall bar (top above the flag stack) drops the staff for
+          // free (the shared `s.py > stackBottom` rule).
           return [
             {
               x: (bs.begin[i]! + bs.end[i]!) / 2,

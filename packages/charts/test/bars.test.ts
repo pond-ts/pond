@@ -244,6 +244,27 @@ describe('drawBars', () => {
     // ...but is NOT outlined — the outline is reserved for the committed select.
     expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(0);
   });
+
+  it('outlines a bar that is both selected and hovered (select wins)', () => {
+    const { ctx, calls } = recordingContext();
+    drawBars(
+      ctx,
+      bars([0, 1], [1, 2], [10, 20]),
+      identity,
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      { key: 1, label: 'count' }, // selected...
+      { key: 1, label: 'count' }, // ...and hovered — the same bar
+    );
+    // highlight fill + the select outline (the select branch still draws it).
+    expect(calls.some((c) => c.type === 'set' && c.args[0] === '#fff')).toBe(
+      true,
+    );
+    expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(1);
+  });
 });
 
 describe('barIndexAtTime', () => {
