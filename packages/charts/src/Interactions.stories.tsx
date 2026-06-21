@@ -135,12 +135,14 @@ export const PointCursor: Story = {
 };
 
 /**
- * **Axis format → the readout matches.** `<YAxis format=".0%">` labels the ticks
- * as percentages; the `inline` cursor uses the *same* formatter, so a hovered
- * value reads e.g. `62%` exactly as the axis does. `format` takes a d3 specifier
- * string or a `(value) => string` function.
+ * **Axis `format` — d3 specifiers + a custom fn, each matched by the readout.**
+ * `cursor='inline'`, so every row's readout uses the *same* formatter as its
+ * ticks: a percent (`.0%`), a grouped thousands (`,.0f`), an SI prefix (`.2s`),
+ * and a custom `(v) => \`${v} ms\`` function. The last row is **dual-axis** —
+ * `%` left, count right — proving the formatter is resolved **per axis**. (Axis
+ * labels render rotated by default.)
  */
-export const FormattedAxis: Story = {
+export const Formats: Story = {
   render: () => (
     <ChartContainer
       timeRange={TIME_RANGE}
@@ -148,10 +150,43 @@ export const FormattedAxis: Story = {
       theme={estelaTheme}
       cursor="inline"
     >
-      <ChartRow height={200}>
-        <YAxis id="r" label="ratio" min={0} max={1} format=".0%" />
+      <ChartRow height={90}>
+        <YAxis id="pct" label="ratio" min={0} max={1} format=".0%" />
         <Layers>
           <LineChart series={demo(0, 0.4, 0.5)} column="v" as="foam" />
+        </Layers>
+      </ChartRow>
+      <ChartRow height={90}>
+        <YAxis id="k" label="requests" min={0} max={100000} format=",.0f" />
+        <Layers>
+          <LineChart series={demo(0.5, 40000, 50000)} column="v" as="foam" />
+        </Layers>
+      </ChartRow>
+      <ChartRow height={90}>
+        <YAxis id="si" label="bytes" min={0} max={100000} format=".2s" />
+        <Layers>
+          <LineChart series={demo(1, 40000, 50000)} column="v" as="foam" />
+        </Layers>
+      </ChartRow>
+      <ChartRow height={90}>
+        <YAxis id="ms" label="latency" format={(v) => `${Math.round(v)} ms`} />
+        <Layers>
+          <LineChart series={demo(1.5, 40, 50)} column="v" as="foam" />
+        </Layers>
+      </ChartRow>
+      <ChartRow height={90}>
+        <YAxis id="L" label="ratio" min={0} max={1} format=".0%" />
+        <YAxis
+          id="R"
+          side="right"
+          label="count"
+          min={0}
+          max={1000}
+          format=",.0f"
+        />
+        <Layers>
+          <LineChart series={demo(0, 0.4, 0.5)} column="v" as="foam" axis="L" />
+          <LineChart series={demo(2, 400, 500)} column="v" as="hr" axis="R" />
         </Layers>
       </ChartRow>
     </ChartContainer>

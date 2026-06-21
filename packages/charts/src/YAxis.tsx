@@ -130,16 +130,33 @@ export function YAxis({
               {fmt(t)}
             </div>
           ))}
+        {/* The axis label, rotated to a thin vertical strip at the outer edge +
+            centred down the axis (the standard y-axis convention) — so it doesn't
+            collide with the tick labels (which sit flush toward the plot) in a
+            narrow gutter. Left axes read bottom→top, right axes top→bottom. */}
         <div
           style={{
             position: 'absolute',
-            [side === 'left' ? 'left' : 'right']: '2px',
-            top: '0',
+            [side === 'left' ? 'left' : 'right']: '1px',
+            top: 0,
+            bottom: 0,
+            width: `${theme.font.size + 2}px`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
             fontSize: `${theme.font.size - 1}px`,
             opacity: 0.7,
+            pointerEvents: 'none',
           }}
         >
-          {label ?? id}
+          <span
+            style={{
+              whiteSpace: 'nowrap',
+              transform: `rotate(${side === 'left' ? -90 : 90}deg)`,
+            }}
+          >
+            {label ?? id}
+          </span>
         </div>
       </div>
     </div>

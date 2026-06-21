@@ -16,7 +16,7 @@ const cases: ReadonlyArray<readonly [id: string, file: string]> = [
   ['interactions--point-cursor', 'interactions-point-cursor.png'], // point
   ['interactions--flag-readout', 'interactions-flag-readout.png'], // flag
   ['interactions--inline-readout', 'interactions-inline-readout.png'], // inline
-  ['interactions--formatted-axis', 'interactions-formatted-axis.png'], // format → readout
+  ['interactions--formats', 'interactions-formats.png'], // format → readout (multi)
 ];
 
 test.describe('Interactions', () => {
