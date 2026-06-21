@@ -210,10 +210,10 @@ export const Formats: Story = {
 };
 
 /**
- * **Cursor time (`cursorTime`).** Hover — the cursor's time shows atop the
- * readout, formatted to match the time axis. Here `timeFormat='%I:%M %p'` (reads
- * `12:30 PM`); omit it for d3's multi-scale default. Works with any readout mode
- * (shown with `flag`).
+ * **Cursor time (`cursorTime`).** Hover — the cursor's time shows **once, atop
+ * the first row's readout** (it's shared across rows), formatted to match the
+ * time axis. Here `timeFormat='%I:%M %p'` (reads `12:30 PM`); omit it for d3's
+ * multi-scale default. Works with any readout mode (shown with `flag`).
  */
 export const CursorTime: Story = {
   render: () => (

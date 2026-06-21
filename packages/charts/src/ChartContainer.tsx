@@ -232,6 +232,18 @@ export function ChartContainer({
     return () => setGutters((g) => g.filter((x) => x !== req));
   }, []);
 
+  // Rows register on mount so we can mark the first (topmost) one — the shared
+  // cursor-time chip shows there only. Effect order = mount order = top-to-bottom
+  // for siblings, so the first row registers first (`rowKeys[0]`); this is robust
+  // even when rows are wrapped in a fragment/helper component, where an index
+  // injected into our direct children wouldn't reach through the wrapper.
+  const [rowKeys, setRowKeys] = useState<readonly symbol[]>([]);
+  const registerRow = useCallback((key: symbol) => {
+    setRowKeys((k) => (k.includes(key) ? k : [...k, key]));
+    return () => setRowKeys((k) => k.filter((x) => x !== key));
+  }, []);
+  const firstRowKey = rowKeys[0] ?? null;
+
   const leftSlots = useMemo(
     () => maxSlotWidths(gutters.map((g) => g.left)),
     [gutters],
@@ -310,6 +322,8 @@ export function ChartContainer({
       minDuration,
       applyRange,
       registerGutter,
+      registerRow,
+      firstRowKey,
     }),
     [
       t0,
@@ -335,6 +349,8 @@ export function ChartContainer({
       minDuration,
       applyRange,
       registerGutter,
+      registerRow,
+      firstRowKey,
     ],
   );
 

@@ -96,6 +96,15 @@ export interface ContainerFrame {
    * each slot's max so every row's plot left-aligns. Returns an unregister fn.
    */
   registerGutter(req: GutterReq): () => void;
+  /**
+   * A row registers on mount so the container can identify the **first** (top)
+   * row by mount/DOM order — its key becomes {@link firstRowKey}. Used to show
+   * the shared cursor-time chip once, atop the first row, not repeated per row.
+   * Keyed by the row's per-instance `useSlotKey` symbol; returns an unregister fn.
+   */
+  registerRow(key: symbol): () => void;
+  /** The first (topmost) row's key, or `null` before any row has registered. */
+  readonly firstRowKey: symbol | null;
 }
 
 /**
@@ -257,6 +266,9 @@ export interface RowFrame {
   /** This row's cursor-mode override, or `undefined` to inherit the container's
    *  default ({@link ContainerFrame.cursor}). */
   readonly cursor: CursorMode | undefined;
+  /** Whether this is the first (topmost) row — the shared cursor-time chip shows
+   *  here only, not repeated on every row. Derived from {@link ContainerFrame.firstRowKey}. */
+  readonly isFirstRow: boolean;
   /** The axis a layer uses when it names none (the first declared, or implicit). */
   readonly defaultAxisId: string;
   /**
