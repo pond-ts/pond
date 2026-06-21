@@ -314,6 +314,33 @@ best-effort.
     "Into Site"/"Out of site", the static part — no brush). Unit tests
     (recording-mock draw-call asserts) + 2 GapModes e2e + 1 area-traffic e2e
     baseline. O(N) per layer; no perf script (straightforward per-segment draw).
+  - **Cursor model + readout formats ✅** (2026-06-21, #265–#270). M4.1's
+    `readout` prop (`none`/`flag`/`inline`) became the **`cursor` mode**
+    (`none`/`line`/`point`/`inline`/`flag`), set on the **container** (default
+    `line`) with an optional **per-row override** (`row.cursor ?? container.cursor`)
+    — one mode per row, since mixing cursor types across layers in a stack reads
+    badly (pjm17971). #266 **axis value format** (`format`: a d3 specifier string
+    or `(v)=>string`), resolved per-axis through `scale.tickFormat` so the readout
+    chip uses the **same** formatter as the ticks. #268 made **`side` authoritative**
+    for axis placement — a `side="right"` axis renders right even when authored
+    before `<Layers>` (fixes the space-reserved-on-the-wrong-side desync pjm17971
+    caught), `ChartRow` partitions children by `side` not author order. #269 added
+    the optional **cursor-time** chip atop the readout (matched to the time axis via
+    a shared `formatTime`) + a `TimeAxis` `timeFormat`. **Phase 2 (#270): the
+    staffed flag.** `flag` now raises a faint staff (`opacity 0.5`, at the data
+    point's x) from each point up to its value flag stacked near the top, drawn
+    only when the dot sits below the stack. The whole cursor presentation moved
+    **off the second canvas onto a DOM/SVG overlay** — line/dots/staffs as SVG
+    (crisp 1px for free), value chips as DOM divs. The M4.1 invariant holds: the
+    overlay never touches the data canvas, so the hover-doesn't-repaint-data
+    (Path2D-cache) protection survives. Internal `drawCrosshair`/`drawTrackerDot`
+    deleted (never exported); `cursorParts` + `resolveCursorX` stay the pure
+    geometry, unit-tested directly. e2e gotcha pinned: the line-mode cursor is a
+    zero-width `<line>`, so the hover wait gates on `state:'attached'` (Playwright's
+    default `'visible'` needs a non-empty box and hangs). **Remaining cursor phases
+    (per `docs/rfcs/cursor.md`):** phase 3 bar (hover-highlight + rename the
+    mis-named `hover` story; box whisker feather/solid/T styles), phases 4–5 box +
+    scatter cursors.
   - **Remaining → the decimator (next).** Bench-ordered: viewport culling + M4
     pixel-bucket decimation **per-layer, first** (they hit the failing metric);
     Path2D cache (M4.4) **second**. Chart-side `bin(axisColumn, nBuckets,
