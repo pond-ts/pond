@@ -46,8 +46,12 @@ test.describe('ScatterChart', () => {
       box.x + (box.width * 24) / 47,
       box.y + box.height / 2,
     );
-    // Wait for the cursor's SVG marks to render after the hover.
-    await page.locator('svg line, svg circle').first().waitFor();
+    // Wait for a cursor SVG mark to attach (the line-mode cursor is a zero-width
+    // <line>, so Playwright's default 'visible' gate never passes — use 'attached').
+    await page
+      .locator('svg line, svg circle')
+      .first()
+      .waitFor({ state: 'attached' });
     await expect(page.locator('#storybook-root')).toHaveScreenshot(
       'scatter-hover-snap.png',
     );

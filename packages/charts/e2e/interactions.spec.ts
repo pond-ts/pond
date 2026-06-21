@@ -45,8 +45,13 @@ test.describe('Interactions', () => {
         box.x + (box.width * 30) / 59,
         box.y + box.height / 2,
       );
-      // Wait for the cursor's SVG marks (line / dots / staff) to render post-hover.
-      await page.locator('svg line, svg circle').first().waitFor();
+      // Wait for a cursor SVG mark to attach. The line-mode cursor is a
+      // zero-width vertical <line>, so Playwright's default 'visible' gate
+      // (needs a non-empty box) never passes — wait for 'attached' instead.
+      await page
+        .locator('svg line, svg circle')
+        .first()
+        .waitFor({ state: 'attached' });
       await expect(page.locator('#storybook-root')).toHaveScreenshot(file);
       expect(
         errors,
@@ -66,8 +71,12 @@ test.describe('Interactions', () => {
       if (m.type() === 'error') errors.push(m.text());
     });
     await page.goto(story('interactions--controlled-cursor'));
-    // The cursor's SVG marks render from the controlled position.
-    await page.locator('svg line, svg circle').first().waitFor();
+    // The cursor's SVG marks render from the controlled position (zero-width
+    // line ⇒ gate on 'attached', not the default 'visible').
+    await page
+      .locator('svg line, svg circle')
+      .first()
+      .waitFor({ state: 'attached' });
     expect(
       errors,
       'no console/page errors rendering the controlled tracker',
