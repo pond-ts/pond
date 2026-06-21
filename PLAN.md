@@ -262,15 +262,34 @@ best-effort.
     `private`, so no consumer was hit). Fixed by casting the *event* not the
     *method*; `interactions.spec` now fails on any console/page error (the
     regression test that would have caught it).
-  - **Remaining:** M4.4 chunked Path2D cache invalidation on scale change. **M4.3
-    brush skipped** (2026-06-20, pjm17971 — no drivers).
-  - **Performance / decimation — RFC, not yet a commitment.** The perf bench,
-    M4 pixel-bucket decimation (chart-side, not a core operator), viewport
-    culling, and the competitive-positioning guide are explored in the charts RFC
-    (`docs/rfcs/charts.md` § "Performance: measuring the v1 bets…"), submitted for
-    the dashboard use-case agent to red-team. One-time measured head-to-head vs
-    SciChart (disposable trial license) + AG Charts + uPlot; numbers kept, harness
-    not maintained. Adopt into PLAN as phases once the review lands.
+  - **Chart-type wave ✅** (2026-06-20, #257 — built as #252 interaction
+    groundwork, #253 scatter, #254 box, #255 bar [#251 area earlier]; the types
+    merged together so cross-cutting fixes land on one tree). **AreaChart**
+    (outline + graded fill, above/below-axis), **ScatterChart** (data-driven
+    radius/colour encoding — column → scale, the signed-off exception — hover /
+    select / label / nearest), **BoxPlot** (per-key box-and-whisker from quantile
+    columns), **BarChart** (interval-keyed bars, neighbour-width fallback for point
+    keys, hover / select). On the **interaction groundwork** (`select` + per-layer
+    `hitTest`, `barSpanPx`, the full-`SelectInfo` identity). Built by parallel
+    worktree-isolated agents, each L2'd (groundwork also Codex'd). **Cross-cutting
+    follow-ups deferred to fix on main:** shared **axis-headroom** policy (no
+    layer's auto-fit pads the top edge); BarChart **hover-vs-select** wide-bucket
+    JSDoc; theme tokens **required → optional-with-default** at M5 (so a new chart
+    type isn't a breaking `ChartTheme` change).
+  - **Perf bench Phase-1 ✅** (#256/#257). Playwright render harness + baseline
+    curve. **Diagnosis: interaction FPS tops out 10k–100k** (pan 120fps → 8fps @
+    100k; initial render degrades gently, ~7s @ 1M); band + 3-series hit the same
+    cliff → per-point stroke cost dominates. **This orders the decimator.** The
+    data-side ceiling (snapshot flush) is named as out-of-bench scope. Heap CI gate
+    hardened (median baseline + 4×) so it can't flake.
+  - **Remaining → the decimator (next).** Bench-ordered: viewport culling + M4
+    pixel-bucket decimation **per-layer, first** (they hit the failing metric);
+    Path2D cache (M4.4) **second**. Chart-side `bin(axisColumn, nBuckets,
+    reducerSet)` per the charts RFC perf section + its two-lens review — reducer
+    math + monotonic-column bucketing in pond (unifies with geo F-geo-2),
+    `plot_width` + visible slice in the chart; **statistical bands an M5-parity
+    gate**. **M4.3 brush skipped** (no drivers). One-time competitive head-to-head
+    (SciChart trial + AG Charts + uPlot) stays optional.
 - **M5 — estela parity.** Faithful `DataChart` reproduction on real activity
   data; prove no-regressions; hand the production swap to the estela agent; flip
   `private:false` + first publish.
