@@ -220,20 +220,34 @@ describe('drawLine gap modes', () => {
     expect(lines).toContainEqual([2, 7]); // bridge end = next good point
     // two strokes: the solid line + the dashed bridge.
     expect(calls.filter((c) => c.name === 'stroke')).toHaveLength(2);
+    // the bridge is faint by default (DEFAULT_GAP_CONNECTOR_OPACITY = 0.5).
+    expect(
+      calls.some(
+        (c) =>
+          c.type === 'set' && c.name === 'globalAlpha' && c.args?.[0] === 0.5,
+      ),
+    ).toBe(true);
   });
 
-  it("'step' holds the last value across the gap, then corrects to the resumed value, dashed", () => {
+  it("'step' draws a faint flat dashed line at the average of the two edge values", () => {
     const { ctx, calls } = recordingContext();
-    drawLine(ctx, gapped(), identity, identity, style, undefined, 'step');
+    drawLine(ctx, gapped(), identity, identity, style, undefined, 'step', 0.4);
     expect(calls.some((c) => c.name === 'setLineDash')).toBe(true);
-    // gapped(): last-good index0 (x=0,y=5), gap index1, next-good index2 (x=2,y=7).
-    // step: moveTo(0,5) → hold across at the last value (2,5) → correct to the
-    // resumed value (2,7). No drop to the axis floor.
+    // gapped(): edges index0 (x=0,y=5) → index2 (x=2,y=7); avg = 6. A horizontal
+    // segment at y=6 across the gap — no vertical step.
     const moves = calls.filter((c) => c.name === 'moveTo').map((c) => c.args);
     const lines = calls.filter((c) => c.name === 'lineTo').map((c) => c.args);
-    expect(moves).toContainEqual([0, 5]); // start at the last-good point
-    expect(lines).toContainEqual([2, 5]); // hold the last value across the gap
-    expect(lines).toContainEqual([2, 7]); // step to the resumed value
+    expect(moves).toContainEqual([0, 6]); // average, left edge
+    expect(lines).toContainEqual([2, 6]); // flat to the right edge
+    expect(lines).not.toContainEqual([2, 5]); // not the old hold-then-correct shape
+    expect(lines).not.toContainEqual([2, 7]);
+    // faint: the connector pass set globalAlpha to the passed opacity.
+    expect(
+      calls.some(
+        (c) =>
+          c.type === 'set' && c.name === 'globalAlpha' && c.args?.[0] === 0.4,
+      ),
+    ).toBe(true);
   });
 
   it("'fade' draws a vertical gradient drop to the floor at each gap edge", () => {

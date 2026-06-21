@@ -333,17 +333,36 @@ describe('drawArea gap modes', () => {
     expect(lines).toContainEqual([3, 60]);
   });
 
-  it("'step' holds the outline at the last value across the gap, then corrects to the resumed value", () => {
+  it("'step' draws a faint flat dashed outline at the average of the two edge values", () => {
     const { ctx, calls } = areaContext();
-    drawArea(ctx, gapped(), identity, flipScale(), style, 0, undefined, 'step');
+    drawArea(
+      ctx,
+      gapped(),
+      identity,
+      flipScale(),
+      style,
+      0,
+      undefined,
+      'step',
+      0.4,
+    );
     expect(calls.some((c) => c.name === 'setLineDash')).toBe(true);
-    // gapped(): last-good index1 (x=1, y(20)=80), gap index2, next-good index3
-    // (x=3, y(40)=60). The step holds at 80 across to x=3, then corrects to 60 —
-    // both distinctive to the step pass (the fill only touches the baseline pixel
-    // 100, never these). No drop to the floor.
+    // gapped(): edges index1 (x=1,y(20)=80) → index3 (x=3,y(40)=60); avg pixel
+    // = 70. A horizontal segment at y=70 from x=1 to x=3 (the fill only ever
+    // touches the baseline pixel 100, never 70).
+    const moves = calls.filter((c) => c.name === 'moveTo').map((c) => c.args);
     const lines = calls.filter((c) => c.name === 'lineTo').map((c) => c.args);
-    expect(lines).toContainEqual([3, 80]); // hold the last value across the gap
-    expect(lines).toContainEqual([3, 60]); // step to the resumed value
+    expect(moves).toContainEqual([1, 70]); // average, left edge
+    expect(lines).toContainEqual([3, 70]); // flat to the right edge
+    expect(lines).not.toContainEqual([3, 60]); // no vertical correction
+    // faint connector: globalAlpha set to the passed opacity, distinct from the
+    // fill's own 0.3.
+    expect(
+      calls.some(
+        (c) =>
+          c.type === 'set' && c.name === 'globalAlpha' && c.args?.[0] === 0.4,
+      ),
+    ).toBe(true);
   });
 
   it("'fade' adds vertical gradient drops at the gap edges (fill stays broken)", () => {

@@ -8,6 +8,7 @@ import {
   drawGapFades,
   drawGapSteps,
   DEFAULT_GAP_MODE,
+  DEFAULT_GAP_CONNECTOR_OPACITY,
   type GapMode,
 } from './gaps.js';
 
@@ -59,10 +60,10 @@ export function yExtent(cs: ChartSeries): [number, number] | null {
  *   trailing gaps, which stay a break). The one non-honest mode.
  * - `'dashed'` / `'step'` / `'fade'` — the **solid** segments break exactly as
  *   in `'empty'`, then a second pass draws the inferred bridge across each
- *   interior gap: a dashed straight line, a dashed sample-and-hold step (hold
- *   the last value across, then correct to the resumed value), or estela's
- *   fade-to-baseline (the axis floor). The gap edges are collected by one O(N)
- *   walk ({@link collectGapEdges}).
+ *   interior gap: a dashed straight line, a flat dashed line at the average of
+ *   the edge values, or estela's fade-to-baseline (the axis floor). `dashed` /
+ *   `step` are drawn faint (`gapConnectorOpacity`); the gap edges are collected
+ *   by one O(N) walk ({@link collectGapEdges}).
  *
  * The generator writes path ops to `ctx`; we bracket with `beginPath`/`stroke`.
  * `cs.y` (a `Float64Array`) is the datum iterable — `y` reads the value, `x`
@@ -76,6 +77,7 @@ export function drawLine(
   style: LineStyle,
   curve: CurveFactory = curveLinear,
   gaps: GapMode = DEFAULT_GAP_MODE,
+  gapConnectorOpacity: number = DEFAULT_GAP_CONNECTOR_OPACITY,
 ): void {
   // `none` interpolates interior gaps so the line bridges them; every other mode
   // keeps NaN so d3 breaks the solid path (the inferred bridge, if any, is a
@@ -93,8 +95,8 @@ export function drawLine(
   ctx.lineWidth = style.width;
   ctx.stroke();
 
-  // Overlay bridges for the inferred-gap modes. The line y at index i is the
-  // value's pixel; only `fade` drops to the axis floor (step holds the value).
+  // Overlay bridges for the inferred-gap modes. `dashed` / `step` are faint
+  // dashed connectors (gapConnectorOpacity); only `fade` drops to the axis floor.
   if (gaps === 'dashed' || gaps === 'step' || gaps === 'fade') {
     const edges = collectGapEdges(
       cs.length,
@@ -104,9 +106,9 @@ export function drawLine(
       (i) => yScale(cs.y[i]!),
     );
     if (gaps === 'dashed') {
-      drawGapBridges(ctx, edges, style.color, style.width);
+      drawGapBridges(ctx, edges, style.color, style.width, gapConnectorOpacity);
     } else if (gaps === 'step') {
-      drawGapSteps(ctx, edges, style.color, style.width);
+      drawGapSteps(ctx, edges, style.color, style.width, gapConnectorOpacity);
     } else {
       drawGapFades(
         ctx,

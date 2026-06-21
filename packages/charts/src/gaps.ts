@@ -22,31 +22,37 @@ import type { Scale } from './line.js';
  *   one after it (d3-shape's `.defined`). Today's behavior; the fill / band
  *   leaves a hole. The honest default — a gap reads as a gap.
  * - **`dashed`** — the solid segments break as in `empty`, **plus** a dashed
- *   line bridges each gap (last-good point → next-good point). The fill stays
- *   broken. Reads as "we know the value resumed here, but didn't measure
- *   between" without pretending the line was continuous.
- * - **`step`** — the solid segments break as in `empty`, **plus** a dashed
- *   **sample-and-hold step** bridges each gap: hold the last-good value across
- *   the gap (a horizontal dashed line), then a vertical correction up / down to
- *   the next-good value where the data resumes (see {@link drawGapSteps}). The
- *   fill stays broken. Reads as "the value held until measurement resumed" —
- *   how a held / last-known signal actually behaves through a dropout. Connects
- *   one side of the line to the other, never dropping to the axis.
+ *   line bridges each gap **straight** (last-good point → next-good point). The
+ *   fill stays broken. Reads as "we know the value resumed here, but didn't
+ *   measure between" without pretending the line was continuous.
+ * - **`step`** — the solid segments break as in `empty`, **plus** a single
+ *   **flat dashed line at the average** of the two edge values bridges each gap
+ *   (a horizontal `- - -`, no vertical step — see {@link drawGapSteps}). The
+ *   fill stays broken. A neutral "the value sat around here" estimate — flatter
+ *   and less committal than `dashed`'s straight interpolation between the edges.
  * - **`fade`** — estela's coast look: at each gap edge the line drops to the
  *   baseline on a **vertical fade to transparent** (opaque at the line,
  *   transparent at the baseline), and fades back in on the far side. The fill
  *   stays broken. Replicates estela's `es-drop` gradient
  *   (`packages/ui/src/DataChart.tsx`) in the canvas renderer.
  *
- * Only `fade` drops to a "baseline": for a line that's the axis floor (the
- * y-scale's domain lower bound — resolved from the scale at draw time), for an
- * {@link AreaChart} its own fill baseline. `step` no longer touches the baseline
- * — it holds the last value across (above).
+ * `dashed` and `step` are the **inferred dashed connectors** — both drawn fainter
+ * than the solid line (theme `gap.connectorOpacity`, {@link DEFAULT_GAP_CONNECTOR_OPACITY})
+ * so an inferred bridge reads as secondary to measured data. Only `fade` drops to
+ * a "baseline": for a line the axis floor (the y-scale's domain lower bound,
+ * resolved at draw time), for an {@link AreaChart} its own fill baseline.
  */
 export type GapMode = 'none' | 'empty' | 'dashed' | 'step' | 'fade';
 
 /** The default gap mode — break at the gap, leave a hole (today's behavior). */
 export const DEFAULT_GAP_MODE: GapMode = 'empty';
+
+/**
+ * Default opacity for the inferred dashed gap connectors (`dashed` / `step`) when
+ * a theme sets no `gap.connectorOpacity` — fainter than the solid line so the
+ * inferred bridge reads as secondary to measured data.
+ */
+export const DEFAULT_GAP_CONNECTOR_OPACITY = 0.5;
 
 /**
  * One gap in a columnar value series: the index of the last finite sample
@@ -153,19 +159,22 @@ export function collectGapEdges(
 /**
  * Stroke a **dashed straight bridge** across each gap (`from` → `to`), for the
  * `dashed` mode. The solid segments are drawn separately (the `empty` pass); this
- * adds only the bridges, dashed so they read as inferred, not measured. Bracketed
- * by `save`/`restore` so the dash pattern + stroke don't leak into later layers.
+ * adds only the bridges, dashed (and faint, via `opacity`) so they read as
+ * inferred, not measured. Bracketed by `save`/`restore` so the dash pattern,
+ * alpha, and stroke don't leak into later layers.
  */
 export function drawGapBridges(
   ctx: CanvasRenderingContext2D,
   edges: readonly GapEdge[],
   color: string,
   width: number,
+  opacity = 1,
 ): void {
   if (edges.length === 0) return;
   ctx.save();
   ctx.strokeStyle = color;
   ctx.lineWidth = width;
+  ctx.globalAlpha = opacity;
   ctx.setLineDash(GAP_DASH);
   ctx.beginPath();
   for (const e of edges) {
@@ -177,31 +186,33 @@ export function drawGapBridges(
 }
 
 /**
- * Stroke a **dashed sample-and-hold step** across each gap for the `step` mode:
- * hold the last-good value across the gap (a horizontal segment at `fromY`, from
- * the last-good x to the next-good x), then a vertical correction to the
- * next-good value where the data resumes — the *hold-then-correct* form. This
- * connects one side of the line to the other through a held value (what a
- * last-known / held signal actually does through a dropout), rather than dropping
- * to the axis and back. Dashed so the bridge reads as inferred; needs no
- * baseline. Bracketed by `save`/`restore`.
+ * Stroke a **flat dashed line at the average** of the two edge values across each
+ * gap, for the `step` mode: one horizontal segment at the midpoint of `fromY` and
+ * `toY`, spanning the gap (`- - -`) — no vertical step. A neutral "the value sat
+ * around here" estimate, flatter and less committal than `dashed`'s straight
+ * interpolation between the edges. Dashed (and faint, via `opacity`) so it reads
+ * as inferred. Bracketed by `save`/`restore`.
  */
 export function drawGapSteps(
   ctx: CanvasRenderingContext2D,
   edges: readonly GapEdge[],
   color: string,
   width: number,
+  opacity = 1,
 ): void {
   if (edges.length === 0) return;
   ctx.save();
   ctx.strokeStyle = color;
   ctx.lineWidth = width;
+  ctx.globalAlpha = opacity;
   ctx.setLineDash(GAP_DASH);
   ctx.beginPath();
   for (const e of edges) {
-    ctx.moveTo(e.fromX, e.fromY); // last-good point
-    ctx.lineTo(e.toX, e.fromY); // hold the last value across the gap
-    ctx.lineTo(e.toX, e.toY); // correct (step) to the resumed value
+    // The average of the two edge values; with a linear y-scale the pixel
+    // midpoint equals yScale of the value average, so no value round-trip.
+    const midY = (e.fromY + e.toY) / 2;
+    ctx.moveTo(e.fromX, midY);
+    ctx.lineTo(e.toX, midY);
   }
   ctx.stroke();
   ctx.restore();

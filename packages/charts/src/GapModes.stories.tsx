@@ -21,7 +21,7 @@ const MODES: readonly GapMode[] = ['none', 'empty', 'dashed', 'step', 'fade'];
 /**
  * A sine value column with a deliberate coast (gap) at indices 14–19 — placed on
  * a **falling slope** (last-good ≈ 67, next-good ≈ 24) so the `step` mode's
- * hold-then-correct shape is visibly distinct from a straight `dashed` bridge.
+ * flat-at-average line is visibly distinct from `dashed`'s diagonal bridge.
  */
 function sineWithGap() {
   const rows: Array<[number, number | undefined]> = [];
@@ -55,10 +55,12 @@ type Story = StoryObj;
  *
  * - `none` bridges straight across (interpolated).
  * - `empty` (default) leaves a clean break.
- * - `dashed` breaks, then dashes straight across the hole (last-good → next-good).
- * - `step` breaks, then a dashed step holds the last value across and corrects
- *   up / down to the resumed value (sample-and-hold) — an L, not a diagonal.
+ * - `dashed` breaks, then a faint dashed diagonal across the hole (last → next).
+ * - `step` breaks, then a faint flat dashed line at the **average** of the two
+ *   edge values (`- - -`) — flatter than `dashed`'s diagonal.
  * - `fade` is estela's fade-to-baseline at each gap edge.
+ *
+ * (`dashed` / `step` render faint via `theme.gap.connectorOpacity`.)
  */
 export const Line: Story = {
   render: () => {

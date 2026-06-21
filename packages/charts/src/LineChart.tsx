@@ -3,7 +3,11 @@ import type { SeriesSchema, TimeSeries } from 'pond-ts';
 import { fromTimeSeries } from './data.js';
 import { drawLine, yExtent } from './line.js';
 import { resolveCurve, type Curve } from './curve.js';
-import { DEFAULT_GAP_MODE, type GapMode } from './gaps.js';
+import {
+  DEFAULT_GAP_MODE,
+  DEFAULT_GAP_CONNECTOR_OPACITY,
+  type GapMode,
+} from './gaps.js';
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
 import { useSlotKey } from './use-slot-key.js';
 
@@ -37,9 +41,11 @@ export interface LineChartProps<S extends SeriesSchema> {
    * How a **gap** (a coast / dropout — a run of NaN in `column`) is rendered (a
    * {@link GapMode}). **Omitted ⇒ `'empty'`**: the line breaks at the gap and
    * leaves a hole (the honest default). `'none'` bridges straight across;
-   * `'dashed'` adds a dashed bridge over the break; `'step'` adds a dashed step
-   * down to the axis floor and back; `'fade'` is estela's fade-to-baseline at
-   * each gap edge. Shared with `<AreaChart>` / `<BandChart>` — one concept.
+   * `'dashed'` adds a faint dashed bridge over the break; `'step'` adds a faint
+   * flat dashed line at the average of the two edge values; `'fade'` is estela's
+   * fade-to-baseline at each gap edge. Shared with `<AreaChart>` — one concept.
+   * (The `'dashed'` / `'step'` connector faintness is the theme's
+   * `gap.connectorOpacity`.)
    */
   gaps?: GapMode;
   /**
@@ -81,6 +87,10 @@ export function LineChart<S extends SeriesSchema>({
   // Series identity for the readout (the `as` role, else the column name).
   const label = semantic ?? column;
   const curveFactory = resolveCurve(curve);
+  // Faintness of the inferred dashed connectors (dashed / step) — theme-level,
+  // falling back to the shared default so a theme without it still renders faint.
+  const gapConnectorOpacity =
+    container.theme.gap?.connectorOpacity ?? DEFAULT_GAP_CONNECTOR_OPACITY;
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
@@ -108,12 +118,32 @@ export function LineChart<S extends SeriesSchema>({
             : [];
         },
         draw: (ctx, xScale, yScale) =>
-          drawLine(ctx, cs, xScale, yScale, style, curveFactory, gaps),
+          drawLine(
+            ctx,
+            cs,
+            xScale,
+            yScale,
+            style,
+            curveFactory,
+            gaps,
+            gapConnectorOpacity,
+          ),
       },
       axisId: axis,
       index,
     }),
-    [cs, series, column, style, label, curveFactory, gaps, axis, index],
+    [
+      cs,
+      series,
+      column,
+      style,
+      label,
+      curveFactory,
+      gaps,
+      gapConnectorOpacity,
+      axis,
+      index,
+    ],
   );
   // A stable per-instance slot (see useSlotKey) keeps this layer's z-position
   // fixed: a series or style change updates the slot in place rather than

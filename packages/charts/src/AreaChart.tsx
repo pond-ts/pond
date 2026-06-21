@@ -3,7 +3,11 @@ import type { SeriesSchema, TimeSeries } from 'pond-ts';
 import { fromTimeSeries } from './data.js';
 import { areaExtent, drawArea } from './area.js';
 import { resolveCurve, type Curve } from './curve.js';
-import { DEFAULT_GAP_MODE, type GapMode } from './gaps.js';
+import {
+  DEFAULT_GAP_MODE,
+  DEFAULT_GAP_CONNECTOR_OPACITY,
+  type GapMode,
+} from './gaps.js';
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
 import { useSlotKey } from './use-slot-key.js';
 
@@ -55,9 +59,10 @@ export interface AreaChartProps<S extends SeriesSchema> {
    * the gap, leaving a hole (the honest default). `'none'` fills + bridges
    * straight across. For `'dashed'` / `'step'` / `'fade'` the **fill stays
    * broken** and only the **outline** gets the inferred connector across the gap
-   * — dashed, a dashed step down to the baseline, or estela's fade-to-baseline.
-   * The step / fade drop to this area's own `baseline` (the fill floor). Shared
-   * with `<LineChart>` / `<BandChart>` — one concept.
+   * — a faint dashed straight bridge, a faint flat dashed line at the average of
+   * the edge values, or estela's fade-to-baseline (which drops to this area's own
+   * `baseline`, the fill floor). Shared with `<LineChart>` — one concept. (The
+   * `'dashed'` / `'step'` connector faintness is the theme's `gap.connectorOpacity`.)
    */
   gaps?: GapMode;
   /**
@@ -124,6 +129,10 @@ export function AreaChart<S extends SeriesSchema>({
   // Series identity for the readout (the `as` role, else the column name).
   const label = semantic ?? column;
   const curveFactory = resolveCurve(curve);
+  // Faintness of the inferred dashed connectors (dashed / step) — theme-level,
+  // falling back to the shared default so a theme without it still renders faint.
+  const gapConnectorOpacity =
+    container.theme.gap?.connectorOpacity ?? DEFAULT_GAP_CONNECTOR_OPACITY;
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
@@ -165,6 +174,7 @@ export function AreaChart<S extends SeriesSchema>({
             baseline ?? domainFloor(yScale),
             curveFactory,
             gaps,
+            gapConnectorOpacity,
           ),
       },
       axisId: axis,
@@ -179,6 +189,7 @@ export function AreaChart<S extends SeriesSchema>({
       baseline,
       curveFactory,
       gaps,
+      gapConnectorOpacity,
       axis,
       index,
     ],

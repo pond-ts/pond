@@ -291,22 +291,25 @@ best-effort.
     `area.ts`). **Decisions:** `none` = linear interpolation of _interior_ gaps
     (`bridgeGaps`) so fill+line bridge with real path ops, robust to
     leading/trailing gaps (which stay broken) — chosen over `.defined(()=>true)`
-    which emits `lineTo(NaN)` and mis-handles a leading gap. `step` =
-    **sample-and-hold** (hold the last-good value across the gap, then a vertical
-    correction up/down to the resumed value) — reads as "the value held until
-    measurement resumed", how a held/last-known signal behaves through a dropout;
-    needs no baseline. For **area the fill stays honest**: only `none` fills
-    across; `dashed`/`step`/`fade` keep the fill broken and add the connector to
-    the outline. `fade` replicates estela's `es-drop` `<linearGradient>` as a
-    per-edge vertical canvas `createLinearGradient` (opaque at line → transparent
-    at baseline); estela uses one `objectBoundingBox` gradient for the whole path,
-    we need one per drop (canvas gradients are user-space) — same visual. Only
-    `fade` drops to a baseline (line: axis floor; area: its own fill floor).
-    **Bands deliberately have no gap mode** (pjm17971 follow-up): a filled
-    envelope's break wants its own treatment (sharp edge vs. blurred), still to be
-    designed — a band always breaks honestly for now. (The follow-up also
-    redefined `step` away from #260's initial down-across-up-to-baseline shape,
-    and folded #260's two L2 doc nits.) Stories: `GapModes.stories.tsx` (5 modes
+    which emits `lineTo(NaN)` and mis-handles a leading gap. `step` = a **flat
+    dashed line at the average** of the two edge values (a horizontal `- - -`, no
+    vertical) — a neutral "value sat around here" estimate, flatter than
+    `dashed`'s straight diagonal. `dashed` + `step` are the **inferred dashed
+    connectors**, drawn **faint** via the new theme token `gap.connectorOpacity`
+    (default `0.5`, per-theme so a dark ground can tune it) — an inferred bridge
+    reads as secondary to measured data. For **area the fill stays honest**: only
+    `none` fills across; `dashed`/`step`/`fade` keep the fill broken and add the
+    connector to the outline. `fade` replicates estela's `es-drop`
+    `<linearGradient>` as a per-edge vertical canvas `createLinearGradient`
+    (opaque at line → transparent at baseline); estela uses one
+    `objectBoundingBox` gradient for the whole path, we need one per drop (canvas
+    gradients are user-space) — same visual. Only `fade` drops to a baseline
+    (line: axis floor; area: its own fill floor). **Bands deliberately have no gap
+    mode** (pjm17971): a filled envelope's break wants its own treatment (sharp
+    edge vs. blurred), still to be designed — a band always breaks honestly for
+    now. (`step` was iterated twice post-#260: down-across-up-to-baseline →
+    sample-and-hold → flat-at-average; #260's two L2 doc nits were folded in
+    along the way.) Stories: `GapModes.stories.tsx` (5 modes
     stacked × line/area, estelaTheme) + `Area.stories.tsx` `TrafficAreas` (esnet
     "Into Site"/"Out of site", the static part — no brush). Unit tests
     (recording-mock draw-call asserts) + 2 GapModes e2e + 1 area-traffic e2e
