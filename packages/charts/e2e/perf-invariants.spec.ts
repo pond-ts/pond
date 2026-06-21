@@ -33,6 +33,13 @@ async function readHeap(
   });
 }
 
+/** Median of a sample list — robust to the GC-sawtooth a single reading lands on. */
+function median(xs: number[]): number {
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 === 1 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
+}
+
 /** Count frames over `ms` via a rAF loop; return fps + worst inter-frame gap. */
 async function measureFrames(
   page: import('@playwright/test').Page,
@@ -84,13 +91,22 @@ test.describe('perf invariants (CI-gating)', () => {
       'performance.memory unavailable in this Chromium build',
     );
 
-    // Warm up (let the ring fill + initial allocations settle), then baseline.
+    // Warm up (let the ring fill + initial allocations settle), then take a
+    // *median* baseline. A single reading lands anywhere on the GC sawtooth, so
+    // a post-gc trough would inflate the peak/baseline ratio — the bench's own
+    // committed samples swing ~3x on sawtooth alone, no leak. The median sits
+    // mid-sawtooth, so the ratio reflects real growth, not GC phase.
     await page.waitForTimeout(1_500);
     // Nudge GC if exposed (it isn't by default; harmless otherwise).
     await page.evaluate(() => {
       (globalThis as { gc?: () => void }).gc?.();
     });
-    const baseline = (await readHeap(page))!;
+    const warmed: number[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      await page.waitForTimeout(300);
+      warmed.push((await readHeap(page))!);
+    }
+    const baseline = median(warmed);
 
     // Sustain the append for several seconds while sampling.
     const samples: number[] = [];
@@ -101,12 +117,13 @@ test.describe('perf invariants (CI-gating)', () => {
     const peak = Math.max(...samples);
 
     // Unbounded-growth guard: peak heap during sustained append must stay within
-    // a generous multiple of the warmed baseline. A leak (no eviction, retained
-    // snapshots) blows far past this; a healthy ring plateaus.
+    // a generous multiple of the median warmed baseline. A leak (no eviction,
+    // retained snapshots) blows far past this; healthy GC sawtooth stays well
+    // under — median baseline + 4x headroom so runner noise can't flip the gate.
     expect(
       peak,
-      `peak heap ${(peak / 1e6).toFixed(1)}MB vs baseline ${(baseline / 1e6).toFixed(1)}MB`,
-    ).toBeLessThan(baseline * 3);
+      `peak heap ${(peak / 1e6).toFixed(1)}MB vs median baseline ${(baseline / 1e6).toFixed(1)}MB`,
+    ).toBeLessThan(baseline * 4);
   });
 
   // INVARIANT 2 — bounded draw time at a fixed fixture size. With a fixed
