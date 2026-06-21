@@ -41,12 +41,6 @@ const DRAG_SLOP = 4;
  *  doesn't overflow the right edge. */
 const LABEL_FLIP_FRACTION = 0.85;
 
-/** Compact value formatting for the scrub readout — ≤2 decimals, no trailing
- *  zeros. (Per-axis formatting is a separate axis-backlog item.) */
-function formatValue(v: number): string {
-  return String(Math.round(v * 100) / 100);
-}
-
 export interface LayersProps {
   children?: ReactNode;
 }
@@ -87,7 +81,7 @@ export function Layers({ children }: LayersProps) {
 
   const background = container.theme.background;
   const { grid: gridColor, gridDash } = container.theme.axis;
-  const { layers, yScales, defaultAxisId } = row;
+  const { layers, yScales, formats, defaultAxisId } = row;
   // x geometry is shared and lives on the container (uniform across rows).
   const { xScale, plotWidth } = container;
   const draw = useCallback(
@@ -141,16 +135,27 @@ export function Layers({ children }: LayersProps) {
     // mode shows neither (the off-chart readout fans in separately on the container).
     if (cursorTime === null || (!parts.dots && parts.chip === 'none'))
       return [];
-    const out: { px: number; py: number; value: number; color: string }[] = [];
+    const out: {
+      px: number;
+      py: number;
+      value: number;
+      color: string;
+      format: (v: number) => string;
+    }[] = [];
     for (const entry of layers) {
-      const yScale = yScales.get(entry.axisId ?? defaultAxisId);
+      const axisId = entry.axisId ?? defaultAxisId;
+      const yScale = yScales.get(axisId);
       if (yScale === undefined) continue;
+      // The chip uses this layer's axis formatter, so a readout value reads
+      // exactly as the axis labels it.
+      const fmt = formats.get(axisId) ?? String;
       for (const s of entry.layer.sampleAt(cursorTime)) {
         out.push({
           px: xScale(s.x),
           py: yScale(s.value),
           value: s.value,
           color: s.color,
+          format: fmt,
         });
       }
     }
@@ -159,6 +164,7 @@ export function Layers({ children }: LayersProps) {
     cursorTime,
     layers,
     yScales,
+    formats,
     xScale,
     defaultAxisId,
     parts.dots,
@@ -376,7 +382,7 @@ export function Layers({ children }: LayersProps) {
                   color: s.color,
                 }}
               >
-                {formatValue(s.value)}
+                {s.format(s.value)}
               </div>
             );
           })}
@@ -396,7 +402,7 @@ export function Layers({ children }: LayersProps) {
                   color: s.color,
                 }}
               >
-                {formatValue(s.value)}
+                {s.format(s.value)}
               </div>
             );
           })}

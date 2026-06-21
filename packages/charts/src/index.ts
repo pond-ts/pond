@@ -28,6 +28,7 @@ export { Layers } from './Layers.js';
 export type { LayersProps } from './Layers.js';
 export { YAxis } from './YAxis.js';
 export type { YAxisProps } from './YAxis.js';
+export type { AxisFormat } from './format.js';
 export { LineChart } from './LineChart.js';
 export type { LineChartProps } from './LineChart.js';
 export { BandChart } from './BandChart.js';
