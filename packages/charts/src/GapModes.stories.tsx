@@ -18,11 +18,15 @@ const TIME_RANGE: readonly [number, number] = [BASE, BASE + (N - 1) * STEP];
 /** The five gap modes, in the order the stories stack them top→bottom. */
 const MODES: readonly GapMode[] = ['none', 'empty', 'dashed', 'step', 'fade'];
 
-/** A sine value column with a deliberate coast (gap) from index 20–27. */
+/**
+ * A sine value column with a deliberate coast (gap) at indices 14–19 — placed on
+ * a **falling slope** (last-good ≈ 67, next-good ≈ 24) so the `step` mode's
+ * hold-then-correct shape is visibly distinct from a straight `dashed` bridge.
+ */
 function sineWithGap() {
   const rows: Array<[number, number | undefined]> = [];
   for (let i = 0; i < N; i += 1) {
-    const inGap = i >= 20 && i < 28;
+    const inGap = i >= 14 && i < 20;
     rows.push([BASE + i * STEP, inGap ? undefined : 50 + 34 * Math.sin(i / 5)]);
   }
   return new TimeSeries({
@@ -46,14 +50,14 @@ type Story = StoryObj;
 /**
  * The shared gap-rendering modes on a **line**, stacked top→bottom in the order
  * `none, empty, dashed, step, fade`, all on `estelaTheme`. Each row is the same
- * sine with the same coast (indices 20–27); only `gaps` differs — so the five
- * renderings of one gap sit directly comparable:
+ * sine with the same coast (indices 14–19, on a falling slope); only `gaps`
+ * differs — so the five renderings of one gap sit directly comparable:
  *
  * - `none` bridges straight across (interpolated).
  * - `empty` (default) leaves a clean break.
- * - `dashed` breaks, then dashes across the hole.
+ * - `dashed` breaks, then dashes straight across the hole (last-good → next-good).
  * - `step` breaks, then a dashed step holds the last value across and corrects
- *   up / down to the resumed value (sample-and-hold).
+ *   up / down to the resumed value (sample-and-hold) — an L, not a diagonal.
  * - `fade` is estela's fade-to-baseline at each gap edge.
  */
 export const Line: Story = {
