@@ -6,7 +6,7 @@ import { story, waitForCanvasPaint } from './support.js';
  * controlled `trackerPosition`), so the test drives a deterministic pointer to
  * 12:30 — the same x the stories used to pin — before snapshotting. Each story
  * sets a different `cursor` mode; the snapshot of `#storybook-root` captures the
- * mode's marks (the line / dots on the overlay canvas + any chips in the DOM).
+ * mode's marks (the line / dots / staff on the SVG overlay + the chips in the DOM).
  *
  * The uncontrolled / animated stories (`OutsideReadout`, `Playground/LiveSine`)
  * are panel- and time-driven, so they're intentionally not baselined.
@@ -45,8 +45,13 @@ test.describe('Interactions', () => {
         box.x + (box.width * 30) / 59,
         box.y + box.height / 2,
       );
-      // The overlay (2nd canvas) is transparent until the crosshair paints.
-      await waitForCanvasPaint(page.locator('canvas').nth(1));
+      // Wait for a cursor SVG mark to attach. The line-mode cursor is a
+      // zero-width vertical <line>, so Playwright's default 'visible' gate
+      // (needs a non-empty box) never passes — wait for 'attached' instead.
+      await page
+        .locator('svg line, svg circle')
+        .first()
+        .waitFor({ state: 'attached' });
       await expect(page.locator('#storybook-root')).toHaveScreenshot(file);
       expect(
         errors,
@@ -66,8 +71,12 @@ test.describe('Interactions', () => {
       if (m.type() === 'error') errors.push(m.text());
     });
     await page.goto(story('interactions--controlled-cursor'));
-    // The overlay (2nd canvas) paints the crosshair from the controlled position.
-    await waitForCanvasPaint(page.locator('canvas').nth(1));
+    // The cursor's SVG marks render from the controlled position (zero-width
+    // line ⇒ gate on 'attached', not the default 'visible').
+    await page
+      .locator('svg line, svg circle')
+      .first()
+      .waitFor({ state: 'attached' });
     expect(
       errors,
       'no console/page errors rendering the controlled tracker',

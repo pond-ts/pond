@@ -147,3 +147,40 @@ describe('axis placement by side', () => {
     expect(canvas.compareDocumentPosition(rightLabel) & FOLLOWING).toBeTruthy(); // right axis follows the canvas
   });
 });
+
+/**
+ * The cursor renders as a DOM/SVG overlay (no second canvas): an SVG holds the
+ * dots + flag staffs, the value flag is a DOM chip. A controlled `trackerPosition`
+ * drives it without a pointer. (Also a no-throw guard — the tracker reads
+ * `sampleAt`, the path that once crashed on a detached `Event.get`.)
+ */
+describe('cursor overlay (flag, DOM/SVG)', () => {
+  it('renders the SVG dot + staff and the DOM value flag at a controlled cursor', () => {
+    const { container, getByText } = render(
+      <ChartContainer
+        timeRange={[0, 4]}
+        width={300}
+        cursor="flag"
+        trackerPosition={2}
+      >
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={10} />
+          <Layers>
+            {/* value 5 at t=2 — not a tick of [0,10] (0,2,4,6,8,10), so the chip
+                text is unambiguous. */}
+            <LineChart series={mk([1, 3, 5, 7, 9])} column="v" axis="a" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    // SVG marks (no cursor canvas): a dot + a staff for the single series.
+    expect(
+      container.querySelectorAll('svg circle').length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      container.querySelectorAll('svg line').length,
+    ).toBeGreaterThanOrEqual(1);
+    // The value flag (DOM chip) reads the sampled value at t=2.
+    expect(getByText('5')).toBeTruthy();
+  });
+});

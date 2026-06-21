@@ -16,7 +16,7 @@ import {
 } from 'react';
 import { Canvas } from './Canvas.js';
 import { drawGrid } from './grid.js';
-import { cursorParts, drawCrosshair, drawTrackerDot } from './tracker.js';
+import { cursorParts } from './tracker.js';
 import { resolveSelection } from './select.js';
 import { panRange, zoomRange } from './viewport.js';
 import {
@@ -105,12 +105,12 @@ export function Layers({ children }: LayersProps) {
     [layers, yScales, xScale, defaultAxisId, background, gridColor, gridDash],
   );
 
-  // Interaction overlay: a crosshair at the shared cursor pixel, on a second
-  // canvas above the data so hovering never repaints the data layers (the data
-  // canvas's `draw` doesn't depend on the cursor). Reading the container's
-  // cursorX — set by whichever row the pointer is over — syncs the cursor across
-  // every row for free. cursorX is a *pixel*, so it stays put while a live window
-  // slides; the time + values under it derive from the current xScale.
+  // Interaction overlay: the cursor marks live on a DOM/SVG overlay above the
+  // data, so hovering never repaints the data canvas (whose `draw` doesn't depend
+  // on the cursor). Reading the container's cursorX — set by whichever row the
+  // pointer is over — syncs the cursor across every row for free. cursorX is a
+  // *pixel*, so it stays put while a live window slides; the time + values under
+  // it derive from the current xScale.
   const { cursorX, cursorTime: showCursorTime, formatTime } = container;
   // Cursor mode: the row's override, else the container default. One mode per
   // row (the synced vertical line is shared across rows); each layer renders the
@@ -118,9 +118,9 @@ export function Layers({ children }: LayersProps) {
   const parts = cursorParts(row.cursor ?? container.cursor);
   const cursorColor = container.theme.cursor ?? container.theme.axis.label;
   // Only read a time when the cursor is within the plot. An out-of-bounds
-  // controlled trackerPosition hides the crosshair (overlay guard below), so the
-  // dots + chips must hide too — gating cursorTime makes trackerSamples empty,
-  // which drives both the canvas dots and the DOM chip branches.
+  // controlled trackerPosition hides the cursor, so the dots + chips hide too —
+  // gating cursorTime makes trackerSamples empty, which drives both the SVG marks
+  // and the DOM chip branches.
   const cursorTime =
     cursorX !== null && cursorX >= 0 && cursorX <= plotWidth
       ? +xScale.invert(cursorX)
@@ -170,21 +170,6 @@ export function Layers({ children }: LayersProps) {
     parts.dots,
     parts.chip,
   ]);
-
-  const overlayDraw = useCallback(
-    (ctx: CanvasRenderingContext2D, w: number, h: number) => {
-      if (cursorX === null || cursorX < 0 || cursorX > w) return;
-      // The synced vertical line in `line` mode; per-series dots in the
-      // dot-based modes (point / inline / flag).
-      if (parts.line) drawCrosshair(ctx, cursorX, h, cursorColor);
-      if (parts.dots) {
-        for (const s of trackerSamples) {
-          drawTrackerDot(ctx, s.px, s.py, s.color, background);
-        }
-      }
-    },
-    [cursorX, cursorColor, trackerSamples, background, parts.line, parts.dots],
-  );
 
   // Pan/zoom + tracker share the plot's event surface. Container fields are read
   // through a ref so the handlers + the (once-attached) wheel listener always see
@@ -308,10 +293,10 @@ export function Layers({ children }: LayersProps) {
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
-  // Readout value chips for the inline / flag cursor modes (DOM, above the
-  // canvas). 'inline' chips sit beside each dot; 'flag' chips stack at the top
-  // (the point-anchored staffed flag lands in a later phase). The line / point /
-  // none modes draw no chips — surface values off-chart via onTrackerChanged.
+  // Cursor presentation is a DOM/SVG overlay (no cursor canvas): an SVG holds the
+  // line / dots / flag staffs; these value chips (DOM, crisp text) sit beside each
+  // dot ('inline', clamped within the row) or stack at the top of the flag staff
+  // ('flag'). line / point / none draw no chips — surface values off-chart.
   const flagLineHeight = container.theme.font.size + 5;
   const chipStyle: CSSProperties = {
     position: 'absolute',
@@ -331,6 +316,11 @@ export function Layers({ children }: LayersProps) {
   // x, top of the row; for `flag` it sits above the value chips (which shift down).
   const showTime =
     showCursorTime && cursorTime !== null && (parts.line || parts.dots);
+  // Flag stacking geometry: chips stack from `flagBase` (below the time chip when
+  // shown); each staff rises from its dot up to `stackBottom` (the stack's foot).
+  const flagTop = 2;
+  const flagBase = flagTop + (showTime ? flagLineHeight : 0);
+  const stackBottom = flagBase + trackerSamples.length * flagLineHeight;
 
   // Inject each draw layer's JSX position so it registers its declaration order
   // (z-stack: lower index at the back), independent of mount timing.
@@ -360,24 +350,71 @@ export function Layers({ children }: LayersProps) {
         onClick={handleClick}
       >
         <Canvas width={plotWidth} height={row.height} draw={draw} />
-        <Canvas
+        {/* Cursor overlay (SVG, above the data canvas): the synced line, the
+            per-series dots, and the flag staffs — all crisp + positioned in plot
+            space, no second canvas. Value chips are DOM divs below. */}
+        <svg
           width={plotWidth}
           height={row.height}
-          draw={overlayDraw}
           style={{
             position: 'absolute',
             top: 0,
             left: 0,
             pointerEvents: 'none',
           }}
-        />
+        >
+          {parts.line &&
+            cursorX !== null &&
+            cursorX >= 0 &&
+            cursorX <= plotWidth && (
+              <line
+                x1={Math.round(cursorX)}
+                y1={0}
+                x2={Math.round(cursorX)}
+                y2={row.height}
+                stroke={cursorColor}
+                strokeWidth={1}
+                shapeRendering="crispEdges"
+              />
+            )}
+          {/* Flag staffs: a faint spine from each dot up to the flag stack's foot
+              (skipped when the dot sits inside the stack). Same nearest-x staffs
+              merge into one spine. */}
+          {parts.chip === 'flag' &&
+            trackerSamples.map((s, i) =>
+              s.py > stackBottom ? (
+                <line
+                  key={`staff-${i}`}
+                  x1={s.px}
+                  y1={stackBottom}
+                  x2={s.px}
+                  y2={s.py}
+                  stroke={cursorColor}
+                  strokeWidth={1}
+                  opacity={0.5}
+                />
+              ) : null,
+            )}
+          {parts.dots &&
+            trackerSamples.map((s, i) => (
+              <circle
+                key={`dot-${i}`}
+                cx={s.px}
+                cy={s.py}
+                r={3}
+                fill={s.color}
+                stroke={background}
+                strokeWidth={background ? 1 : 0}
+              />
+            ))}
+        </svg>
         {/* Cursor-time chip atop the readout (opt-in); the `!== null` checks gate
             to an in-bounds, active cursor and narrow the types. */}
         {showTime && cursorX !== null && cursorTime !== null && (
           <div
             style={{
               ...chipStyle,
-              top: '2px',
+              top: `${flagTop}px`,
               left:
                 cursorX > plotWidth * LABEL_FLIP_FRACTION
                   ? undefined
@@ -396,12 +433,19 @@ export function Layers({ children }: LayersProps) {
           trackerSamples.map((s, i) => {
             // Flip the chip left of its dot near the right edge so it stays in-plot.
             const flip = s.px > plotWidth * LABEL_FLIP_FRACTION;
+            // Clamp within the row so a chip near the top/bottom isn't clipped by
+            // (or spilling into) the neighbouring row. Chip-vs-chip de-overlap is
+            // a later refinement; this keeps each chip inside its own row.
+            const top = Math.max(
+              flagLineHeight / 2,
+              Math.min(row.height - flagLineHeight / 2, s.py),
+            );
             return (
               <div
                 key={i}
                 style={{
                   ...chipStyle,
-                  top: `${s.py}px`,
+                  top: `${top}px`,
                   transform: 'translateY(-50%)',
                   left: flip ? undefined : `${s.px + 8}px`,
                   right: flip ? `${plotWidth - s.px + 8}px` : undefined,
@@ -422,7 +466,7 @@ export function Layers({ children }: LayersProps) {
                 key={i}
                 style={{
                   ...chipStyle,
-                  top: `${2 + (showTime ? flagLineHeight : 0) + i * flagLineHeight}px`,
+                  top: `${flagBase + i * flagLineHeight}px`,
                   left: flip ? undefined : `${cursorX + 4}px`,
                   right: flip ? `${plotWidth - cursorX + 4}px` : undefined,
                   color: s.color,

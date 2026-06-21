@@ -1,9 +1,9 @@
 import { expect, test } from '@playwright/test';
 import { story, waitForCanvasPaint } from './support.js';
 
-// `.first()` is the data canvas — since M4 each plot also has a (transparent,
-// not-hovering) tracker-overlay canvas on top, so a bare `canvas` locator would
-// match two and fail strict mode.
+// `.first()` is the data canvas. The cursor overlay is now SVG (not a second
+// canvas), so a bare `canvas` locator already matches just the one — `.first()`
+// stays as a defensive anchor.
 test.describe('LineChart', () => {
   // The end-to-end proof: a pond TimeSeries flows through fromTimeSeries →
   // ChartContainer/ChartRow → LineChart → canvas. The gap (coast) must read as
