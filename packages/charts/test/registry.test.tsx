@@ -184,3 +184,47 @@ describe('cursor overlay (flag, DOM/SVG)', () => {
     expect(getByText('5')).toBeTruthy();
   });
 });
+
+/**
+ * The cursor-time chip is shared across rows (one cursor, one time), so it
+ * renders **once — atop the first (topmost) row** — not repeated per row. A
+ * sentinel `timeFormat` fn makes the assertion timezone-independent. (Pins the
+ * mount-order `registerRow` → `firstRowKey` → `isFirstRow` path.)
+ */
+describe('cursor-time renders on the first row only', () => {
+  it('shows the time chip once across two rows, with a flag on each', () => {
+    const { getByText, getAllByText } = render(
+      <ChartContainer
+        timeRange={[0, 4]}
+        width={300}
+        cursor="flag"
+        cursorTime
+        timeFormat={() => 'TIME'}
+        trackerPosition={2}
+        // No time axis, so the sentinel 'TIME' comes only from the cursor chip
+        // (the formatter is shared with the axis ticks by design — #269).
+        timeAxis={false}
+      >
+        <ChartRow height={100}>
+          {/* value 3 at t=2 — not a tick of [0,10] (0,2,4,6,8,10). */}
+          <YAxis id="a" min={0} max={10} />
+          <Layers>
+            <LineChart series={mk([1, 2, 3, 4, 5])} column="v" axis="a" />
+          </Layers>
+        </ChartRow>
+        <ChartRow height={100}>
+          {/* value 7 at t=2 — not a tick of [0,20] (0,5,10,15,20) or [0,10]. */}
+          <YAxis id="b" min={0} max={20} />
+          <Layers>
+            <LineChart series={mk([5, 6, 7, 8, 9])} column="v" axis="b" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    // Both rows draw a value flag at t=2 — so both have an active cursor...
+    expect(getByText('3')).toBeTruthy();
+    expect(getByText('7')).toBeTruthy();
+    // ...but the shared time chip renders exactly once (the first row).
+    expect(getAllByText('TIME')).toHaveLength(1);
+  });
+});
