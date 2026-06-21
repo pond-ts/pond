@@ -143,6 +143,10 @@ export function Layers({ children }: LayersProps) {
       format: (v: number) => string;
     }[] = [];
     for (const entry of layers) {
+      // A layer with a consolidated flag (BoxPlot) renders that, not per-sample
+      // dots/chips — skip it here (its values still fan to the off-chart readout
+      // via sampleAt on the container).
+      if (entry.layer.cursorFlag) continue;
       const axisId = entry.axisId ?? defaultAxisId;
       const yScale = yScales.get(axisId);
       if (yScale === undefined) continue;
@@ -170,6 +174,37 @@ export function Layers({ children }: LayersProps) {
     parts.dots,
     parts.chip,
   ]);
+
+  // Consolidated multi-value flags (BoxPlot) — one flag per such layer, only in
+  // `flag` mode: all the box's values on one chip, anchored at its top-centre
+  // (`px`, `topPy`). Rendered as one staff + one multi-line chip (vs the
+  // per-sample dots/chips above), the values each coloured to their box piece.
+  const trackerFlags = useMemo(() => {
+    if (cursorTime === null || parts.chip !== 'flag') return [];
+    const out: {
+      px: number;
+      topPy: number;
+      lines: { text: string; color: string }[];
+    }[] = [];
+    for (const entry of layers) {
+      const flagOf = entry.layer.cursorFlag;
+      if (flagOf === undefined) continue;
+      const axisId = entry.axisId ?? defaultAxisId;
+      const yScale = yScales.get(axisId);
+      if (yScale === undefined) continue;
+      const fmt = formats.get(axisId) ?? String;
+      // `cursorFlag` is an arrow (captures bx/style, no `this`), so a detached
+      // call is safe — and avoids re-reading the optional method.
+      const f = flagOf(cursorTime);
+      if (f === null) continue;
+      out.push({
+        px: xScale(f.x),
+        topPy: yScale(f.topValue),
+        lines: f.lines.map((l) => ({ text: fmt(l.value), color: l.color })),
+      });
+    }
+    return out;
+  }, [cursorTime, layers, yScales, formats, xScale, defaultAxisId, parts.chip]);
 
   // Pan/zoom + tracker share the plot's event surface. Container fields are read
   // through a ref so the handlers + the (once-attached) wheel listener always see
@@ -425,6 +460,26 @@ export function Layers({ children }: LayersProps) {
                 />
               ) : null,
             )}
+          {/* Box flags: one staff per consolidated-flag layer, from the mark's
+              top-centre up to its multi-line chip (skipped when the top sits
+              inside the chip — a tall box). */}
+          {parts.chip === 'flag' &&
+            trackerFlags.map((f, i) => {
+              // One horizontal row of values → a single-line chip.
+              const flagBottom = flagBase + flagLineHeight;
+              return f.topPy > flagBottom ? (
+                <line
+                  key={`boxstaff-${i}`}
+                  x1={f.px}
+                  y1={flagBottom}
+                  x2={f.px}
+                  y2={f.topPy}
+                  stroke={cursorColor}
+                  strokeWidth={1}
+                  opacity={0.5}
+                />
+              ) : null;
+            })}
           {parts.dots &&
             trackerSamples.map((s, i) => (
               <circle
@@ -505,6 +560,32 @@ export function Layers({ children }: LayersProps) {
                 }}
               >
                 {s.format(s.value)}
+              </div>
+            );
+          })}
+        {/* Box flag: one chip listing all the box's values, each coloured to its
+            piece, anchored at the box's centre x (atop its staff). */}
+        {parts.chip === 'flag' &&
+          trackerFlags.map((f, i) => {
+            const flip = f.px > plotWidth * LABEL_FLIP_FRACTION;
+            return (
+              <div
+                key={`boxflag-${i}`}
+                style={{
+                  ...chipStyle,
+                  top: `${flagBase}px`,
+                  left: flip ? undefined : `${f.px + 4}px`,
+                  right: flip ? `${plotWidth - f.px + 4}px` : undefined,
+                  display: 'flex',
+                  flexDirection: 'row',
+                  gap: '6px',
+                }}
+              >
+                {f.lines.map((l, j) => (
+                  <span key={j} style={{ color: l.color }}>
+                    {l.text}
+                  </span>
+                ))}
               </div>
             );
           })}

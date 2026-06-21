@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boxExtent, drawBox } from '../src/box.js';
+import { boxExtent, boxIndexAtTime, drawBox } from '../src/box.js';
 import { recordingContext } from './canvas-mock.js';
 import type { BoxSeries } from '../src/data.js';
 
@@ -27,6 +27,39 @@ const bx = (
   q3: Float64Array.from(q.q3),
   upper: Float64Array.from(q.upper),
   length: x.length,
+});
+
+describe('boxIndexAtTime', () => {
+  // Three contiguous boxes spanning [0,10], [10,20], [20,30].
+  const cs = bx(
+    [0, 10, 20],
+    {
+      lower: [1, 1, 1],
+      q1: [2, 2, 2],
+      median: [3, 3, 3],
+      q3: [4, 4, 4],
+      upper: [5, 5, 5],
+    },
+    [10, 20, 30],
+  );
+
+  it('returns the box whose span contains the time', () => {
+    expect(boxIndexAtTime(cs, 5)).toBe(0);
+    expect(boxIndexAtTime(cs, 15)).toBe(1);
+    expect(boxIndexAtTime(cs, 25)).toBe(2);
+  });
+
+  it('stays on the same box past its midpoint (not nearest-by-begin)', () => {
+    // 18 is in the right half of box 1 ([10,20]); nearest-by-begin would flip to
+    // box 2. Containment keeps it on box 1.
+    expect(boxIndexAtTime(cs, 18)).toBe(1);
+  });
+
+  it('returns the left box at a shared edge, and -1 outside every box', () => {
+    expect(boxIndexAtTime(cs, 10)).toBe(0);
+    expect(boxIndexAtTime(cs, -1)).toBe(-1);
+    expect(boxIndexAtTime(cs, 31)).toBe(-1);
+  });
 });
 
 const identity = (v: number) => v;

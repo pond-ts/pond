@@ -6,6 +6,7 @@ import { ChartContainer } from '../src/ChartContainer.js';
 import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
 import { LineChart } from '../src/LineChart.js';
+import { BoxPlot } from '../src/BoxPlot.js';
 import { YAxis } from '../src/YAxis.js';
 import { RowContext } from '../src/context.js';
 
@@ -226,5 +227,65 @@ describe('cursor-time renders on the first row only', () => {
     expect(getByText('7')).toBeTruthy();
     // ...but the shared time chip renders exactly once (the first row).
     expect(getAllByText('TIME')).toHaveLength(1);
+  });
+});
+
+/**
+ * The box cursor's `flag` is a **consolidated** flag — all five quantiles on one
+ * chip at the box's top-centre (`RowLayer.cursorFlag`), each value coloured to
+ * its piece, with a single staff. Unlike the per-sample flag (a chip per series),
+ * the box draws no per-quantile dots.
+ */
+describe('box cursor — consolidated flag (all values, one chip)', () => {
+  const boxSeries = new TimeSeries({
+    name: 'b',
+    schema: [
+      { name: 'timeRange', kind: 'timeRange' },
+      { name: 'lo', kind: 'number' },
+      { name: 'q1', kind: 'number' },
+      { name: 'med', kind: 'number' },
+      { name: 'q3', kind: 'number' },
+      { name: 'hi', kind: 'number' },
+    ] as const,
+    rows: [
+      // box 0 spans [0,10] — quantiles chosen to miss the [0,100] axis ticks.
+      [[0, 10], 11, 22, 33, 37, 44],
+      [[10, 20], 1, 2, 3, 4, 5],
+    ] as never,
+  });
+
+  it('renders one multi-line flag at a controlled cursor, no per-quantile dots', () => {
+    const { container, getByText } = render(
+      <ChartContainer
+        timeRange={[0, 20]}
+        width={300}
+        cursor="flag"
+        trackerPosition={5} // inside box 0 ([0,10])
+      >
+        <ChartRow height={200}>
+          <YAxis id="a" min={0} max={100} />
+          <Layers>
+            <BoxPlot
+              series={boxSeries}
+              lower="lo"
+              q1="q1"
+              median="med"
+              q3="q3"
+              upper="hi"
+              axis="a"
+            />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    // All five of box 0's values on one flag (box 1's values don't appear).
+    for (const v of ['11', '22', '33', '37', '44']) {
+      expect(getByText(v)).toBeTruthy();
+    }
+    // A staff (SVG line) rises to the flag; the box draws no per-quantile dots.
+    expect(
+      container.querySelectorAll('svg line').length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(container.querySelectorAll('svg circle').length).toBe(0);
   });
 });

@@ -140,6 +140,42 @@ export const Percentiles: Story = {
   },
 };
 
+/**
+ * **`cursor='flag'` — the box readout.** Hover a box: a single flag rises from
+ * its top-centre listing **all five values** (low / q1 / median / q3 / high),
+ * each coloured to its box piece. Unlike line/bar, the box flag is one
+ * consolidated chip (no per-quantile dots), with one staff.
+ */
+export const CursorFlag: Story = {
+  render: () => {
+    const q = percentileBuckets();
+    return (
+      <ChartContainer
+        timeRange={rangeOf(q)}
+        width={620}
+        theme={estelaTheme}
+        cursor="flag"
+      >
+        <ChartRow height={260}>
+          <YAxis id="ms" label="ms" />
+          <Layers>
+            <BoxPlot
+              series={q}
+              lower="p5"
+              q1="p25"
+              median="p50"
+              q3="p75"
+              upper="p95"
+              as="latency"
+              gap={14}
+            />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
 /** A box series that breaks at a missing bucket — the gap box must not draw. */
 export const WithGap: Story = {
   render: () => {
