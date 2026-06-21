@@ -11,20 +11,20 @@ for the layering.
 **Authorship:** developed across multiple contributors. Each section below
 carries inline attribution; this list is the index for cold readers.
 
-| Section                                             | Contributor                               |
-| --------------------------------------------------- | ----------------------------------------- |
-| Origin friction note + canvas implementation        | gRPC experiment agent (Claude)            |
-| Strategic frame + scope discipline                  | pjm17971                                  |
-| Original draft consolidation                        | pond-ts library agent (Claude)            |
-| Codex architectural review                          | Codex                                     |
-| Library agent response (architecture amendment)     | pond-ts library agent (Claude)            |
-| Alignment with core columnar substrate (2026-05-11) | pond-ts library agent (Claude) + pjm17971 |
-| Performance bench, M4 decimation, positioning (2026-06-20) | pond-ts library agent (Claude) |
-| Performance — dashboard use-case review (2026-06-20) | dashboard agent (Claude) |
-| Performance — library response + synthesis (2026-06-20) | pond-ts library agent (Claude) + pjm17971 |
-| Performance — Q2 resolution + review close (2026-06-20) | dashboard agent (Claude) |
-| Performance — estela use-case review (2026-06-20) | estela agent (Claude) |
-| Performance — library response to estela (2026-06-20) | pond-ts library agent (Claude) |
+| Section                                                    | Contributor                               |
+| ---------------------------------------------------------- | ----------------------------------------- |
+| Origin friction note + canvas implementation               | gRPC experiment agent (Claude)            |
+| Strategic frame + scope discipline                         | pjm17971                                  |
+| Original draft consolidation                               | pond-ts library agent (Claude)            |
+| Codex architectural review                                 | Codex                                     |
+| Library agent response (architecture amendment)            | pond-ts library agent (Claude)            |
+| Alignment with core columnar substrate (2026-05-11)        | pond-ts library agent (Claude) + pjm17971 |
+| Performance bench, M4 decimation, positioning (2026-06-20) | pond-ts library agent (Claude)            |
+| Performance — dashboard use-case review (2026-06-20)       | dashboard agent (Claude)                  |
+| Performance — library response + synthesis (2026-06-20)    | pond-ts library agent (Claude) + pjm17971 |
+| Performance — Q2 resolution + review close (2026-06-20)    | dashboard agent (Claude)                  |
+| Performance — estela use-case review (2026-06-20)          | estela agent (Claude)                     |
+| Performance — library response to estela (2026-06-20)      | pond-ts library agent (Claude)            |
 
 **Audience:** future pond-ts contributors implementing the chart-package
 extraction; consumer-side dashboard authors deciding whether to wait for
@@ -833,7 +833,7 @@ SVG-first package modeled on estela, or the canvas engine this RFC describes?
 
 - SVG is a dead end for the firehose / dashboard consumers — the cliff is real
   and structural, not a tuning problem.
-- estela not pulling on canvas as hard *today* doesn't mean it won't. One
+- estela not pulling on canvas as hard _today_ doesn't mean it won't. One
   canvas engine that also owns interactions gives us a chart that works for
   **both** regimes; an SVG branch would be a fork we'd have to abandon.
 - More work up front (interactions on canvas are harder than SVG's
@@ -847,7 +847,7 @@ section above. It changes three things about the v1 scope:
    That promotes several items the response section had as v1.1/later into v1
    must-haves: **dual y-axis** (left single-select group channel + right HR),
    the **two-tone variance underlay** (p5/p95 outer + p25/p75 inner over a
-   *fixed value-window*, from `rollingByColumn` percentiles + the `{at}` grid —
+   _fixed value-window_, from `rollingByColumn` percentiles + the `{at}` grid —
    both shipped in v0.30.0 for exactly this), **gap-aware smooth**
    (`smooth missing:'skip'`, also v0.30.0), a **pace axis** (sec/distance
    inversion), **scrub** readout, and the **zoom-stable spread** property
@@ -855,7 +855,7 @@ section above. It changes three things about the v1 scope:
 
 2. **A theme system is now first-class** — the RFC predates this requirement.
    estela's fixed role palette (primary foam-white / HR coral / elevation teal)
-   becomes *one theme*, not hardcoded colours in the draw layers. A `ChartTheme`
+   becomes _one theme_, not hardcoded colours in the draw layers. A `ChartTheme`
    (line role colours, band fill opacities, axis tint, gridline style,
    typography) is threaded through `ChartContainer` context with a
    `defaultTheme`; estela ships as `estelaTheme`. This is what makes the engine
@@ -868,8 +868,9 @@ Nothing else in the architecture changes: the hard layers, the typed-array
 store, the chunked Path2D cache, the `ChartDataSource` adapters, and the
 `useSyncExternalStore`-for-meta / rAF-for-draws split all stand as written
 above. The dual-axis and theme requirements thread through `ChartRow` (Y-domain
-+ axis config per side) and `ChartContainer` (theme context) respectively, which
-the layered design already accommodates.
+
+- axis config per side) and `ChartContainer` (theme context) respectively, which
+  the layered design already accommodates.
 
 **Home:** `packages/charts` in this monorepo, `"private": true` until M5 parity
 so the unified release workflow doesn't publish a half-built package; flipped
@@ -972,7 +973,7 @@ store → viewport/decimator → canvas renderer`):
   (the line enters/exits each pixel column correctly). Driven by the
   `DecimationHint` already specced — `line: 'minmax'`, `band:` paired
   `(min lower, max upper)` so the envelope never inverts, `scatter:
-  preserveSparse`.
+preserveSparse`.
 - **Viewport culling (independent win).** Bisect the columnar x-array to the
   visible range (+1 point each side) before drawing — pan/zoom on a large series
   stops walking off-screen points. Do this even if M4 slips.
@@ -1026,8 +1027,10 @@ knows its actual workload. Specifically:
 ### Out of scope / non-goals
 
 Maintained SciChart dependency or head-to-head harness (the validation is a
-disposable one-off). Brush / range-select (M4.3, skipped — no drivers). Chasing
-dense-scatter WebGL parity. Over-claiming: report where canvas loses, numbers
+disposable one-off). Transient brush-to-zoom (still no driver). Chasing
+dense-scatter WebGL parity. _(Persistent **range editing** — the esnet
+traffic driver that arrived after this section was written — is now its own
+track: see `range-editing.md`. M4.3 is un-skipped for that, not for brush.)_ Over-claiming: report where canvas loses, numbers
 are directional, no cherry-picked sizes.
 
 ### Dashboard use-case review (dashboard agent)
@@ -1223,7 +1226,7 @@ band / M4-scale, both ceilings.** estela doesn't contradict the dashboard — it
   over time _or_ distance), per-km geo splits, and estela's distance profile**: a
   triple-signal (charts + geo + estela), the same pattern as F-geo-1's
   `fromTrustedColumns`. The Q2 resolution updates to `bin(axisColumn, plot_width,
-  reducers)` over the visible slice — `axisColumn` defaults to the key, can be
+reducers)` over the visible slice — `axisColumn` defaults to the key, can be
   cumulative distance.
 - **Adopt (the substantive parity gate): the band reducer must be statistical.**
   `minMaxFirstLast` is the **line** decimator; the **band** decimator needs the

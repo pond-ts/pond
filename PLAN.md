@@ -190,7 +190,7 @@ best-effort.
 - **M3 — `BandChart` + variance underlay.** ✅ Built 2026-06-18 (branch
   `feat/charts-m3-band`). The variance band as **composed** primitives — two
   single-band `<BandChart lower upper>` (gap-aware filled envelope) + a
-  `<LineChart>` centerline in the z-stack, *not* a bundled outer/inner/center
+  `<LineChart>` centerline in the z-stack, _not_ a bundled outer/inner/center
   prop (pjm17971's call, weighed against RTC's `aggregation`). Slices: M3.1 band
   spine + theme band tokens; M3.2 real `rolling` percentile pipeline (the chart
   consumes pond-computed columns); M3.3 draw primitives on **d3-shape**
@@ -210,7 +210,7 @@ best-effort.
   `feat/charts-multi-axis-layout`, #244). **Per-slot gutters**: each side is N
   axis-column slots indexed from the plot outward (slot 0 nearest the plot); the
   container reserves each slot's max width across rows, and a row aligns its axis
-  *toward the plot* within its slot and pads the outer slots it lacks
+  _toward the plot_ within its slot and pads the outer slots it lacks
   (generalizes M2's single block, which couldn't column-align multi-axis rows).
   Plus `rowGap` and `timeAxis={false}` on `<ChartContainer>`; different per-row
   heights confirmed. `slots.ts` holds the pure `maxSlotWidths` rule; single-axis
@@ -259,8 +259,8 @@ best-effort.
   - **Tracker-crash hotfix** (#248). #246's runtime-string value read detached
     `Event.get` from its receiver (`this` lost → `this.#data` threw), crashing
     any tracker on render — missed by L2, Codex, and the e2e (the package is
-    `private`, so no consumer was hit). Fixed by casting the *event* not the
-    *method*; `interactions.spec` now fails on any console/page error (the
+    `private`, so no consumer was hit). Fixed by casting the _event_ not the
+    _method_; `interactions.spec` now fails on any console/page error (the
     regression test that would have caught it).
   - **Chart-type wave ✅** (2026-06-20, #257 — built as #252 interaction
     groundwork, #253 scatter, #254 box, #255 bar [#251 area earlier]; the types
@@ -289,7 +289,7 @@ best-effort.
     the three (not line-only): `src/gaps.ts` holds the `GapMode` type + the O(N)
     `collectGapEdges` walk + the bridge/step/fade drawers + the shared `withAlpha`
     (lifted out of `area.ts`). **Decisions:** `none` = linear interpolation of
-    *interior* gaps (`bridgeGaps`) so fill+line bridge with real path ops, robust
+    _interior_ gaps (`bridgeGaps`) so fill+line bridge with real path ops, robust
     to leading/trailing gaps (which stay broken) — chosen over `.defined(()=>true)`
     which emits `lineTo(NaN)` and mis-handles a leading gap. `step` direction =
     **down-across-up** (drop to the baseline, across, rise), matching estela's
@@ -302,18 +302,23 @@ best-effort.
     we need one per drop (canvas gradients are user-space) — same visual. step/fade
     drop to the area's own baseline; the band has none, so to the axis floor.
     Stories: `GapModes.stories.tsx` (5 modes stacked × line/area/band, estelaTheme)
-    + `Area.stories.tsx` `TrafficAreas` (esnet "Into Site"/"Out of site", the
-    static part — no brush). +51 unit tests (recording-mock draw-call asserts) +
-    3 GapModes e2e + 1 area-traffic e2e baseline. O(N) per layer (band walks 2×,
-    one per edge); no perf script (straightforward per-segment draw).
+    - `Area.stories.tsx` `TrafficAreas` (esnet "Into Site"/"Out of site", the
+      static part — no brush). +51 unit tests (recording-mock draw-call asserts) +
+      3 GapModes e2e + 1 area-traffic e2e baseline. O(N) per layer (band walks 2×,
+      one per edge); no perf script (straightforward per-segment draw).
   - **Remaining → the decimator (next).** Bench-ordered: viewport culling + M4
     pixel-bucket decimation **per-layer, first** (they hit the failing metric);
     Path2D cache (M4.4) **second**. Chart-side `bin(axisColumn, nBuckets,
-    reducerSet)` per the charts RFC perf section + its two-lens review — reducer
+reducerSet)` per the charts RFC perf section + its two-lens review — reducer
     math + monotonic-column bucketing in pond (unifies with geo F-geo-2),
     `plot_width` + visible slice in the chart; **statistical bands an M5-parity
-    gate**. **M4.3 brush skipped** (no drivers). One-time competitive head-to-head
-    (SciChart trial + AG Charts + uPlot) stays optional.
+    gate**. **M4.3 range editing** = its own design track (RFC
+    `docs/rfcs/range-editing.md`, [#261](https://github.com/pjm17971/pond-ts/pull/261)):
+    persistent editable time-ranges + per-range fan-in stats (`rangeStat` layer
+    contract, consumer-rendered table, opt-in exclusive `rangeEdit` mode) — the
+    esnet-traffic driver that un-skips the slot; transient brush-to-zoom still
+    skipped (no driver). One-time competitive head-to-head (SciChart trial + AG
+    Charts + uPlot) stays optional.
 - **M5 — estela parity.** Faithful `DataChart` reproduction on real activity
   data; prove no-regressions; hand the production swap to the estela agent; flip
   `private:false` + first publish.
@@ -327,6 +332,7 @@ landed as `nearest`, see below.)
 **`@pond-ts/fit` data points (from estela#76 review, `docs/notes/pond-fit-review.md`).**
 The fitness-library work surfaced the same core needs as charts — pulling these
 forward when they next gate:
+
 - **Validity-aware bulk read — now a SECOND consumer (priority).** Both the
   fitness lib (`numberColumn`) and charts (`readNumericColumn`) hand-roll
   "`toFloat64Array` with missing → `NaN`." Land a **bundle-safe, validity-aware
