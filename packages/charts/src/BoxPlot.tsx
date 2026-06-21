@@ -134,8 +134,9 @@ export function BoxPlot<S extends SeriesSchema>({
         },
         cursorFlag: (time) => {
           // The in-chart `flag`: all five values on **one** flag at the box's
-          // top-centre. The staff rises from `upper` (the mark's top); the lines
-          // run high→low, each coloured to its box piece. All-or-nothing — a gap
+          // top-centre. The staff rises from `upper` (the mark's top); the values
+          // run high→low across one horizontal row (Layers renders them
+          // left→right), each coloured to its box piece. All-or-nothing — a gap
           // box (any quantile non-finite, not drawn) shows no flag.
           if (bx.length === 0) return null;
           const i = boxIndexAtTime(bx, time);

@@ -201,7 +201,8 @@ export interface CursorFlagLine {
  * A consolidated multi-value flag for a {@link RowLayer.cursorFlag} layer (the
  * BoxPlot): several values on **one** flag, anchored to `(x, topValue)` — the
  * mark's centre time and the value its staff rises from (the box top). The lines
- * render top→bottom, each in its own colour (matched to its box piece).
+ * render left→right in one horizontal row, each in its own colour (matched to its
+ * box piece).
  */
 export interface CursorFlag {
   readonly x: number;
