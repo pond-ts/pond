@@ -414,7 +414,7 @@ export function Layers({ children }: LayersProps) {
           <div
             style={{
               ...chipStyle,
-              top: '2px',
+              top: `${flagTop}px`,
               left:
                 cursorX > plotWidth * LABEL_FLIP_FRACTION
                   ? undefined
