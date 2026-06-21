@@ -135,6 +135,30 @@ export const PointCursor: Story = {
 };
 
 /**
+ * **Axis format → the readout matches.** `<YAxis format=".0%">` labels the ticks
+ * as percentages; the `inline` cursor uses the *same* formatter, so a hovered
+ * value reads e.g. `62%` exactly as the axis does. `format` takes a d3 specifier
+ * string or a `(value) => string` function.
+ */
+export const FormattedAxis: Story = {
+  render: () => (
+    <ChartContainer
+      timeRange={TIME_RANGE}
+      width={560}
+      theme={estelaTheme}
+      cursor="inline"
+    >
+      <ChartRow height={200}>
+        <YAxis id="r" label="ratio" min={0} max={1} format=".0%" />
+        <Layers>
+          <LineChart series={demo(0, 0.4, 0.5)} column="v" as="foam" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
  * **The preferred surface: readout *outside* the chart.** The default
  * `cursor='line'` (line only, no in-chart values); `onTrackerChanged` feeds a
  * panel above the chart. Hover — the panel updates with the time + each series'

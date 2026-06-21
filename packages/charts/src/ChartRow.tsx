@@ -12,6 +12,7 @@ import {
 } from 'react';
 import { scaleLinear, type ScaleLinear } from 'd3-scale';
 import { resolveYDomain } from './domain.js';
+import { resolveAxisFormat } from './format.js';
 import { placeAxisSlots, type SlotAxis } from './slots.js';
 import {
   ContainerContext,
@@ -25,6 +26,10 @@ import {
 
 /** Sentinel id for the implicit axis a row gets when no `<YAxis>` is declared. */
 const IMPLICIT_AXIS_ID = '__default__';
+
+/** Axis tick count for the per-axis formatter — matches `<YAxis>`'s tick count
+ *  so the readout formatter is calibrated exactly as the labels are. */
+const AXIS_TICK_COUNT = 5;
 
 export interface ChartRowProps {
   /** Row height in CSS pixels. */
@@ -125,6 +130,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
               width: 0,
               min: undefined,
               max: undefined,
+              format: undefined,
               index: 0,
             },
           ],
@@ -194,11 +200,23 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
     return map;
   }, [effectiveAxes, layerList, height, defaultAxisId]);
 
+  // A value formatter per axis (its `format` resolved against its scale) — shared
+  // by the axis tick labels and the cursor readout so a value reads the same.
+  const formats = useMemo(() => {
+    const map = new Map<string, (value: number) => string>();
+    for (const ax of effectiveAxes) {
+      const sc = yScales.get(ax.id);
+      if (sc) map.set(ax.id, resolveAxisFormat(sc, AXIS_TICK_COUNT, ax.format));
+    }
+    return map;
+  }, [effectiveAxes, yScales]);
+
   const frame = useMemo<RowFrame>(
     () => ({
       height,
       cursor,
       yScales,
+      formats,
       defaultAxisId,
       axisSlots,
       registerAxis,
@@ -211,6 +229,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
       height,
       cursor,
       yScales,
+      formats,
       defaultAxisId,
       axisSlots,
       registerAxis,

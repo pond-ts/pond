@@ -1,6 +1,7 @@
 import { createContext } from 'react';
 import type { ScaleLinear, ScaleTime } from 'd3-scale';
 import type { ChartTheme } from './theme.js';
+import type { AxisFormat } from './format.js';
 
 /**
  * The frame a {@link ChartContainer} provides to its rows and the time axis.
@@ -222,6 +223,9 @@ export interface AxisSpec {
   /** Explicit domain bounds, or `undefined` to auto-fit linked layers. */
   readonly min: number | undefined;
   readonly max: number | undefined;
+  /** Value formatting for the tick labels + the cursor readout ({@link AxisFormat}),
+   *  or `undefined` for the scale's d3 default. */
+  readonly format: AxisFormat | undefined;
   /**
    * Declaration position among the row's children, injected by `ChartRow`. The
    * row sorts axes by this, so the **first declared** axis is the default
@@ -240,6 +244,10 @@ export interface AxisSpec {
 export interface RowFrame {
   readonly height: number;
   readonly yScales: ReadonlyMap<string, ScaleLinear<number, number>>;
+  /** Value formatter per axis id (resolved from the axis's {@link AxisSpec.format}
+   *  against its scale) — used by both the tick labels and the cursor readout, so
+   *  a value reads identically in both. */
+  readonly formats: ReadonlyMap<string, (value: number) => string>;
   /** This row's cursor-mode override, or `undefined` to inherit the container's
    *  default ({@link ContainerFrame.cursor}). */
   readonly cursor: CursorMode | undefined;
