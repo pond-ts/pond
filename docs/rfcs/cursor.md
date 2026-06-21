@@ -82,28 +82,37 @@ candlestick-like).
 
 ## Proposed API
 
-A **per-layer `cursor` prop**, typed to each chart type's supported modes:
+A **container-level `cursor` prop** sets the default for all rows, with an
+optional **per-row override** (`<ChartRow cursor>`). It is **not per-layer**:
+within a multi-layer row, mixing cursor types per layer doesn't make sense (a
+band + line should share one cursor), so the mode lives at the row level and
+every layer in the row renders it.
 
 ```ts
-// shared vocabulary; each layer's prop is a typed subset
 type CursorMode = 'none' | 'line' | 'point' | 'inline' | 'flag';
 
-LineChart  / AreaChart : cursor?: 'none' | 'line' | 'point' | 'inline' | 'flag'
-BarChart               : cursor?: 'none' | 'line' | 'flag'
-BoxPlot                : cursor?: 'none' | 'line' | 'flag'
-ScatterChart           : cursor?: 'none' | 'line' | 'inline' | 'flag'
+ChartContainer : cursor?: CursorMode; // default for all rows
+ChartRow       : cursor?: CursorMode; // override for this row
 ```
 
-Each layer renders its own at-cursor presentation, so the **type-specific
-geometry lives in the layer** (line flag anchors to the point, bar flag to the
-bar's top-centre with the tall-bar dot fallback, box flag to the box top with
-all-values, scatter flag to the dot). This mirrors how `sampleAt` / `hitTest` /
-`rangeStat` already hang off the layer contract.
+The **vertical line is a single synced line spanning all rows** — natural,
+since `cursor` is container-level and `cursorX` is already shared. A per-row
+override lets one row differ (e.g. a `flag` row above a `line` row).
 
-This **supersedes the container-level `readout` prop** — presentation moves
-from one chart-wide mode to per-layer, because the spec's modes and geometry
-are per-chart-type. (Unpublished package; the `readout` removal breaks no
-external caller.)
+Each layer renders the resolved mode in its **type-specific** way — the
+geometry lives in the layer (line flag anchors to the data point, bar flag to
+the bar's top-centre with the tall-bar dot fallback, box flag to the box top
+with all-values, scatter flag to the dot), mirroring how `sampleAt` /
+`hitTest` / `rangeStat` hang off the layer contract. A mode a chart type
+doesn't support falls back sensibly (a `BarChart` under `inline`/`point` → just
+the line; per-type fallbacks fixed when each phase lands). The supported sets
+from the spec — line/area: all; bar: line/flag/none; box: line/flag/none;
+scatter: line/inline/flag — are a **rendering** concern, not per-prop typing
+(the row carries one `CursorMode`).
+
+This **supersedes the container-level `readout` prop** (the old
+`none|flag|inline`): presentation is now the richer `cursor` mode. (Unpublished
+package; the `readout` removal breaks no external caller.)
 
 **Formatting (the cross-cutting wins) is resolved centrally:** the readout
 value text uses the layer's **axis format** (the `<YAxis format>` the layer
@@ -112,26 +121,14 @@ to the layer via the row/container frame, so the same number that labels the
 axis labels the readout. A container-level **`cursorTime?: boolean`** toggles
 the time line atop each readout.
 
-### The crosshair-line question (the one decision to confirm)
+### Crosshair-line: resolved — container default + per-row override
 
-The vertical line is **one line per cursor position, optionally spanning
-rows** — it can't be purely per-layer or you'd draw N of them. Two ways to
-reconcile with a per-layer `cursor` enum:
-
-1. **(Recommended)** `cursor: 'line'` on a layer means "no per-series mark;
-   contribute the shared crosshair." The row draws **one** crosshair when any
-   of its layers is in `'line'` mode; because `cursorX` is shared, the line
-   reads as continuous/synced when every row uses `'line'`. Mixed rows show the
-   line only in `'line'` rows — acceptable, and matches the per-chart-type
-   framing of the spec.
-2. **(Alternative)** Split it: a container-level `crosshair?: boolean` (the
-   synced line across _all_ rows, RTC-style) **independent** of the per-layer
-   `cursor` (which then only ever means `none|point|inline|flag`). Cleaner
-   separation, but `'line'` stops being a per-chart "cursor type" — it becomes
-   `crosshair=true` + `cursor='none'`, which diverges from how the spec is
-   written.
-
-I lean (1) — it keeps the spec's mental model intact. Flagging for your call.
+_(Decided with pjm17971, 2026-06-21.)_ The cursor is enabled at the
+**container** level and all rows get the **single synced line** by default; a
+**per-row `cursor`** overrides it. Not per-layer — within a multi-layer row,
+mixing cursor types doesn't make sense, so the mode is per-row. This takes the
+clean parts of both options originally posed (one synced line; one mode per
+row), and supersedes the earlier per-layer proposal.
 
 ## Flag geometry (shared rules)
 
@@ -165,25 +162,25 @@ but it's an independent change.
 
 ## Open decisions
 
-1. **Crosshair-line API** — option (1) vs (2) above. _(Lead: 1.)_
-2. **Inline overflow** — the top-row inline-covered-by-next-row edge. Options:
+1. ~~**Crosshair-line API**~~ — **Resolved:** container `cursor` default + per-row
+   override, single synced line (above). Not per-layer.
+2. ~~**`cursor` vs keeping `readout`**~~ — **Resolved:** `cursor` (container +
+   per-row) supersedes `readout`.
+3. **Inline overflow** — the top-row inline-covered-by-next-row edge. Options:
    clamp the chip within the row box, render the overlay/chips in a single
    chart-level layer above all rows (so they can overhang), or clip to the row.
-   Leaning **clamp within the row** (simplest, predictable) — confirm.
-3. **`cursor` vs keeping `readout`** — proposal removes `readout` for per-layer
-   `cursor`. Confirm the migration (vs a container default + per-layer
-   override).
+   Leaning **clamp within the row** (simplest, predictable) — confirm at phase 2.
 4. **Where the flag/inline render** — today the chips are **DOM** divs and the
    line/dots are **canvas**. The staffed flag (staff on canvas, chip in DOM?)
    needs the two to register against the same geometry. Likely: staff + dot on
-   the overlay canvas, chip in DOM positioned at the flag — confirm that split
-   is acceptable, or move chips onto the canvas.
+   the overlay canvas, chip in DOM positioned at the flag — confirm at phase 2,
+   or move chips onto the canvas.
 
 ## Phasing
 
-1. **Model + formatting** — the per-layer `cursor` prop + the typed unions; the
-   crosshair-line decision; **axis-matched formatting** + the `cursorTime`
-   option (these two are wins independent of the new modes). Migrate `readout`.
+1. **Model + formatting** — the container + per-row `cursor` prop (one
+   `CursorMode`); the single synced line; **axis-matched formatting** + the
+   `cursorTime` option (wins independent of the new modes). Migrate `readout`.
 2. **Line / area** — all four modes incl. the staffed flag (point-anchored,
    below-row-top) + inline-overflow handling.
 3. **Bar** — line / flag (top-centre staff + tall-bar dot fallback) / none;
