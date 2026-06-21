@@ -30,11 +30,13 @@ function demo(phase = 0, amp = 40, mid = 50) {
 }
 
 /**
- * M4 interaction stories — the cursor tracker. The crosshair lives on a per-row
+ * M4 interaction stories — the cursor tracker. The cursor lives on a per-row
  * overlay canvas above the data; the hovered time + every series' value live on
  * `ChartContainer`, so the cursor syncs across rows and the values can be
- * surfaced *outside* the chart. The in-chart value display is opt-in
- * (`readout='none' | 'flag' | 'inline'`); the default keeps values out of the plot.
+ * surfaced *outside* the chart. Presentation is the **`cursor` mode**
+ * (`'line' | 'point' | 'inline' | 'flag' | 'none'`) — set on the container
+ * (default `'line'`) or per-row. The point-anchored staffed flag lands in a
+ * later phase; for now `'flag'` stacks chips at the top.
  */
 const meta = {
   title: 'Interactions',
@@ -65,11 +67,11 @@ function Rows() {
 }
 
 /**
- * **Cross-row cursor sync (default `readout='none'`).** Hover the plot — the
- * crosshair + per-series dots sync across both rows (shared x), but no value text
- * sits over the data. Surface the values outside via `onTrackerChanged` (see
- * `OutsideReadout`). (Apps can also drive the cursor with `trackerPosition` — an
- * external time slider, a video playhead — but hovering is the common case.)
+ * **Cross-row cursor sync (default `cursor='line'`).** Hover the plot — the
+ * synced vertical line spans both rows (shared x), no marks over the data.
+ * Surface the values outside via `onTrackerChanged` (see `OutsideReadout`).
+ * (Apps can also drive the cursor with `trackerPosition` — an external time
+ * slider, a video playhead — but hovering is the common case.)
  */
 export const CursorSync: Story = {
   render: () => (
@@ -80,8 +82,9 @@ export const CursorSync: Story = {
 };
 
 /**
- * **`readout='flag'`.** Hover the plot — value chips stack at the top of the
- * crosshair, in-chart but kept to the top edge, out of the data's way.
+ * **`cursor='flag'`.** Hover the plot — value chips stack at the top, in-chart
+ * but kept to the top edge, out of the data's way. (The point-anchored staff
+ * lands in a later phase.)
  */
 export const FlagReadout: Story = {
   render: () => (
@@ -89,7 +92,7 @@ export const FlagReadout: Story = {
       timeRange={TIME_RANGE}
       width={560}
       theme={estelaTheme}
-      readout="flag"
+      cursor="flag"
     >
       <Rows />
     </ChartContainer>
@@ -97,9 +100,9 @@ export const FlagReadout: Story = {
 };
 
 /**
- * **`readout='inline'`.** Hover the plot — a value chip sits beside each dot at
- * the point's height. Most direct, but it sits over the data — the "chart ick"
- * the others avoid.
+ * **`cursor='inline'`.** Hover the plot — dots + a value chip beside each at the
+ * point's height. Most direct, but it sits over the data — the "chart ick" the
+ * others avoid.
  */
 export const InlineReadout: Story = {
   render: () => (
@@ -107,7 +110,7 @@ export const InlineReadout: Story = {
       timeRange={TIME_RANGE}
       width={560}
       theme={estelaTheme}
-      readout="inline"
+      cursor="inline"
     >
       <Rows />
     </ChartContainer>
@@ -115,9 +118,27 @@ export const InlineReadout: Story = {
 };
 
 /**
- * **The preferred surface: readout *outside* the chart.** No in-chart values
- * (`readout='none'`); `onTrackerChanged` feeds a panel above the chart. Hover the
- * plot — the panel updates with the time + each series' value, color-matched.
+ * **`cursor='point'`.** Hover the plot — a dot rides each series at the cursor,
+ * no line and no text. Pair with an off-chart readout for the values.
+ */
+export const PointCursor: Story = {
+  render: () => (
+    <ChartContainer
+      timeRange={TIME_RANGE}
+      width={560}
+      theme={estelaTheme}
+      cursor="point"
+    >
+      <Rows />
+    </ChartContainer>
+  ),
+};
+
+/**
+ * **The preferred surface: readout *outside* the chart.** The default
+ * `cursor='line'` (line only, no in-chart values); `onTrackerChanged` feeds a
+ * panel above the chart. Hover — the panel updates with the time + each series'
+ * value, color-matched.
  */
 function OutsideReadoutDemo() {
   const [info, setInfo] = useState<TrackerInfo | null>(null);
@@ -168,9 +189,9 @@ export const OutsideReadout: Story = {
 /**
  * **Controlled cursor (`trackerPosition`).** The other half of the tracker API:
  * the app owns the cursor. Here a slider drives it — the way an external time
- * control or a video playhead would — moving the synced crosshair + dots across
- * both rows with no pointer involved. (The readout stories above drive the same
- * crosshair from hover.)
+ * control or a video playhead would — moving the synced cursor across both rows
+ * with no pointer involved. (The mode stories above drive the same cursor from
+ * hover.)
  */
 function ControlledCursorDemo() {
   const [t, setT] = useState(BASE + 30 * STEP);

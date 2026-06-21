@@ -5,6 +5,38 @@
  * like {@link drawLine} / {@link drawBand}.
  */
 
+import type { CursorMode } from './context.js';
+
+/** Default cursor mode — the synced vertical line (cursor enabled on the
+ *  container by default; pair with an off-chart readout via `onTrackerChanged`). */
+export const DEFAULT_CURSOR_MODE: CursorMode = 'line';
+
+/**
+ * Decompose a {@link CursorMode} into what it draws: the shared vertical line,
+ * the per-series dots, and which value chip (if any). The modes are exclusive
+ * presets — `line` is line-only, `point` / `inline` / `flag` are dot-based with
+ * no line, `none` draws nothing. (The `flag` chip is the stacked-at-top form for
+ * now; the point-anchored staffed flag lands in a later phase.)
+ */
+export function cursorParts(mode: CursorMode): {
+  readonly line: boolean;
+  readonly dots: boolean;
+  readonly chip: 'none' | 'inline' | 'flag';
+} {
+  switch (mode) {
+    case 'line':
+      return { line: true, dots: false, chip: 'none' };
+    case 'point':
+      return { line: false, dots: true, chip: 'none' };
+    case 'inline':
+      return { line: false, dots: true, chip: 'inline' };
+    case 'flag':
+      return { line: false, dots: true, chip: 'flag' };
+    case 'none':
+      return { line: false, dots: false, chip: 'none' };
+  }
+}
+
 /**
  * The crosshair's plot-pixel x from the tracker inputs. A controlled
  * `trackerPosition` (epoch ms) maps through `xScale`, so a pinned time rides with

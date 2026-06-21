@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  cursorParts,
+  DEFAULT_CURSOR_MODE,
   drawCrosshair,
   drawTrackerDot,
   resolveCursorX,
@@ -82,5 +84,46 @@ describe('resolveCursorX', () => {
 
   it('hides on a controlled null', () => {
     expect(resolveCursorX(null, 42, xScale)).toBeNull();
+  });
+});
+
+describe('cursorParts', () => {
+  it('line — the synced line only, no dots or chip', () => {
+    expect(cursorParts('line')).toEqual({
+      line: true,
+      dots: false,
+      chip: 'none',
+    });
+  });
+  it('point — dots only, no line or chip', () => {
+    expect(cursorParts('point')).toEqual({
+      line: false,
+      dots: true,
+      chip: 'none',
+    });
+  });
+  it('inline — dots + an inline chip, no line', () => {
+    expect(cursorParts('inline')).toEqual({
+      line: false,
+      dots: true,
+      chip: 'inline',
+    });
+  });
+  it('flag — dots + a flag chip, no line', () => {
+    expect(cursorParts('flag')).toEqual({
+      line: false,
+      dots: true,
+      chip: 'flag',
+    });
+  });
+  it('none — nothing', () => {
+    expect(cursorParts('none')).toEqual({
+      line: false,
+      dots: false,
+      chip: 'none',
+    });
+  });
+  it('defaults to line', () => {
+    expect(DEFAULT_CURSOR_MODE).toBe('line');
   });
 });

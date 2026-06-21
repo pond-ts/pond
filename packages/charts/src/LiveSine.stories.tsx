@@ -8,7 +8,7 @@ import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import { estelaTheme, type ChartTheme } from './theme.js';
-import type { ReadoutMode, TrackerInfo } from './context.js';
+import type { CursorMode, TrackerInfo } from './context.js';
 
 const schema = [
   { name: 'time', kind: 'time' },
@@ -78,8 +78,8 @@ interface LiveSineArgs {
   midline: number;
   pushMs: number;
   windowSize: number;
-  /** Tooltip method: in-chart `flag`/`inline`, `none`, or a panel `outside`. */
-  readout: ReadoutMode | 'outside';
+  /** Cursor method: in-chart `line`/`point`/`inline`/`flag`, or a panel `outside`. */
+  cursor: CursorMode | 'outside';
   theme: 'estela' | 'light';
 }
 
@@ -96,11 +96,11 @@ function LiveSineMonitor({
   midline,
   pushMs,
   windowSize,
-  readout,
+  cursor,
   theme: themeName,
 }: LiveSineArgs) {
   const theme = themeName === 'light' ? lightTheme : estelaTheme;
-  const outside = readout === 'outside';
+  const outside = cursor === 'outside';
   const [info, setInfo] = useState<TrackerInfo | null>(null);
 
   // A fresh series per parameter set, so changing any control restarts the feed
@@ -175,7 +175,7 @@ function LiveSineMonitor({
         timeRange={timeRange}
         width={620}
         theme={theme}
-        readout={outside ? 'none' : readout}
+        cursor={outside ? 'line' : cursor}
         {...(outside ? { onTrackerChanged: setInfo } : {})}
       >
         <ChartRow height={280}>
@@ -204,7 +204,7 @@ const meta = {
     midline: 50,
     pushMs: 16,
     windowSize: 240,
-    readout: 'none',
+    cursor: 'line',
     theme: 'estela',
   },
   argTypes: {
@@ -222,11 +222,11 @@ const meta = {
       control: { type: 'range', min: 60, max: 600, step: 20 },
       description: 'Points retained (the visible window width).',
     },
-    readout: {
+    cursor: {
       control: 'inline-radio',
-      options: ['none', 'flag', 'inline', 'outside'],
+      options: ['line', 'point', 'inline', 'flag', 'outside'],
       description:
-        'Tooltip method — in-chart flag/inline, off, or a panel outside.',
+        'Cursor method — in-chart line/point/inline/flag, or a panel outside.',
     },
     theme: { control: 'inline-radio', options: ['estela', 'light'] },
   },

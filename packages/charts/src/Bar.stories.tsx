@@ -108,8 +108,8 @@ export const Diverging: Story = {
 };
 
 /**
- * **Hover + select.** Hover the plot — the crosshair + a dot ride the nearest
- * bar's value (the bar joins the tracker readout, `readout='flag'`). Click a bar
+ * **Hover + select.** Hover the plot — a dot rides the nearest bar's value (the
+ * bar joins the tracker, `cursor='flag'`). Click a bar
  * — it highlights (brighter fill + outline) and the panel above shows the
  * selection; click empty space to clear. The highlight matches the clicked bar's
  * key **and** this series' label, so selection is unambiguous.
@@ -144,7 +144,7 @@ function HoverSelectDemo() {
         timeRange={TIME_RANGE}
         width={640}
         theme={estelaTheme}
-        readout="flag"
+        cursor="flag"
         onSelect={setSel}
       >
         <ChartRow height={240}>

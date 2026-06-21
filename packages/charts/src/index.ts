@@ -76,9 +76,9 @@ export type {
 } from './theme.js';
 
 // Public interaction types — the callback params for the tracker + selection
-// (`onTrackerChanged`, `onSelect`) and the `readout` mode.
+// (`onTrackerChanged`, `onSelect`) and the `cursor` mode.
 export type {
-  ReadoutMode,
+  CursorMode,
   TrackerInfo,
   TrackerSample,
   SelectInfo,

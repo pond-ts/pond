@@ -58,8 +58,9 @@ export interface ContainerFrame {
    * the presence of a *callback*.
    */
   select(hit: SelectInfo | null): void;
-  /** In-chart readout presentation (the crosshair + dots always show on hover). */
-  readonly readout: ReadoutMode;
+  /** The default in-chart cursor presentation for all rows ({@link CursorMode});
+   *  a row may override it via its own `cursor`. */
+  readonly cursor: CursorMode;
   /**
    * Register a draw layer as a tracker source so the container can fan in every
    * series' value at the cursor for `onTrackerChanged`. Keyed by the layer's
@@ -180,10 +181,19 @@ export interface TrackerInfo {
   readonly values: readonly TrackerSample[];
 }
 
-/** In-chart readout presentation (the value text; the crosshair + dots always
- *  show on hover). `none` keeps values out of the plot — surface them outside via
- *  {@link onTrackerChanged}. */
-export type ReadoutMode = 'none' | 'flag' | 'inline';
+/**
+ * The in-chart cursor presentation for a row (the synced vertical line is shared
+ * across rows). Exclusive modes — pick one:
+ *
+ * - `none` — no in-chart cursor.
+ * - `line` — the synced vertical line only, no per-series marks (pair with an
+ *   off-chart readout via {@link onTrackerChanged}).
+ * - `point` — a dot on each series at the cursor, no line.
+ * - `inline` — dots + a value chip beside each.
+ * - `flag` — dots + value flags (a staffed flag from each point; the staff
+ *   geometry lands in a later phase — for now flags stack at the top).
+ */
+export type CursorMode = 'none' | 'line' | 'point' | 'inline' | 'flag';
 
 /** A registered layer plus the axis id it draws against. */
 export interface LayerEntry {
@@ -230,6 +240,9 @@ export interface AxisSpec {
 export interface RowFrame {
   readonly height: number;
   readonly yScales: ReadonlyMap<string, ScaleLinear<number, number>>;
+  /** This row's cursor-mode override, or `undefined` to inherit the container's
+   *  default ({@link ContainerFrame.cursor}). */
+  readonly cursor: CursorMode | undefined;
   /** The axis a layer uses when it names none (the first declared, or implicit). */
   readonly defaultAxisId: string;
   /**
