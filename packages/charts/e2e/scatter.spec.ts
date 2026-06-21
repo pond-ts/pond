@@ -25,10 +25,9 @@ test.describe('ScatterChart', () => {
   }
 
   // Hover drives the tracker (sampleAt → value read). Drive a deterministic
-  // pointer to mid-plot and snapshot the cursor (SVG overlay; the default
-  // `line` mode until scatter gets its own cursor in a later phase) — and guard
-  // against a throwing render (the detached-method class of bug that crashed the
-  // tracker silently).
+  // pointer to mid-plot and snapshot the cursor (SVG overlay; the Encoded story
+  // sets no `cursor`, so the default `line` mode) — and guard against a throwing
+  // render (the detached-method class of bug that crashed the tracker silently).
   test('hover drives the tracker without error', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', (e) => errors.push(e.message));
@@ -56,6 +55,33 @@ test.describe('ScatterChart', () => {
       'scatter-hover-snap.png',
     );
     expect(errors, 'no console/page errors while hovering').toEqual([]);
+  });
+
+  // The flag cursor on scatter: hover and snapshot the point-anchored flag (a
+  // value chip near the top + a staff down to a marker on the nearest point).
+  // The scatter cursor rides the generic point-anchored flag; gates on an SVG mark.
+  test('renders the flag cursor on the nearest point', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    page.on('console', (m) => {
+      if (m.type() === 'error') errors.push(m.text());
+    });
+    await page.goto(story('charts-scatterchart--cursor-flag'));
+    const canvas = page.locator('canvas').first();
+    await waitForCanvasPaint(canvas);
+    const box = await canvas.boundingBox();
+    if (box === null) throw new Error('no canvas bounding box');
+    await page.mouse.move(box.x + box.width * 0.45, box.y + box.height * 0.5);
+    await page
+      .locator('svg circle, svg line')
+      .first()
+      .waitFor({ state: 'attached' });
+    await expect(page.locator('#storybook-root')).toHaveScreenshot(
+      'scatter-cursor-flag.png',
+    );
+    expect(errors, 'no console/page errors while hovering the flag').toEqual(
+      [],
+    );
   });
 
   // Click selection: the ControlledSelect story wires onSelect → a panel. Click a

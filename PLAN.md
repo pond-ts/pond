@@ -358,9 +358,17 @@ best-effort.
     horizontal-row chip** (each coloured to its piece, median brighter) + one staff
     at the box top-centre, via a new optional `RowLayer.cursorFlag(time)` hook (a
     box has five values, so the per-sample cursor doesn't fit); same containment +
-    centre-anchor as the bar. **Remaining (per `docs/rfcs/cursor.md`):** phase 5
-    scatter (line / inline-2D / flag); **box whisker styles** (feather / solid / T)
-    — RFC-flagged "separate from cursor", naming TBD with pjm17971.
+    centre-anchor as the bar. **Phase 5 — scatter (#276):** the scatter cursor
+    already worked through the generic path (`sampleAt` → nearest point, so
+    line / flag / inline render point-anchored); landed a `CursorFlag` story +
+    baseline confirming it, no source change. **Cursor phases 1–5 complete.**
+    **Deferred polish (need a design call, not guessed):** scatter `inline`
+    **2D-nearest** (the cursor is x-synced; a nearest-in-(x,y) readout needs the
+    pointer's y — a cursor-model change); scatter flag staff from the **dot's top**
+    for large encoded marks; the "‹ VAL" callout. **Separate from the cursor: box
+    whisker styles** (feather / solid / T) — naming/semantics TBD with pjm17971;
+    not built. Chip-vs-chip de-overlap (inline, and box+line in one row) also still
+    open.
   - **Remaining → the decimator (next).** Bench-ordered: viewport culling + M4
     pixel-bucket decimation **per-layer, first** (they hit the failing metric);
     Path2D cache (M4.4) **second**. Chart-side `bin(axisColumn, nBuckets,
