@@ -3,6 +3,7 @@ import type { SeriesSchema, TimeSeries } from 'pond-ts';
 import { bandFromTimeSeries } from './data.js';
 import { bandExtent, drawBand } from './band.js';
 import { resolveCurve, type Curve } from './curve.js';
+import { DEFAULT_GAP_MODE, type GapMode } from './gaps.js';
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
 import { useSlotKey } from './use-slot-key.js';
 
@@ -35,6 +36,17 @@ export interface BandChartProps<S extends SeriesSchema> {
    */
   curve?: Curve;
   /**
+   * How a **gap** (a sample with either edge NaN) is rendered (a
+   * {@link GapMode}). **Omitted ⇒ `'empty'`**: the envelope breaks at the gap,
+   * leaving a hole (the honest default). `'none'` fills straight across. For
+   * `'dashed'` / `'step'` / `'fade'` the **fill stays broken** and an inferred
+   * connector is drawn across the gap on **both** edges — dashed, a dashed step
+   * to the axis floor, or estela's fade-to-baseline. (The band has no own
+   * baseline, so step / fade drop to the axis floor.) Shared with `<LineChart>`
+   * / `<AreaChart>` — one concept.
+   */
+  gaps?: GapMode;
+  /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
    */
@@ -65,6 +77,7 @@ export function BandChart<S extends SeriesSchema>({
   as: semantic,
   axis,
   curve,
+  gaps = DEFAULT_GAP_MODE,
   index = 0,
 }: BandChartProps<S>) {
   const container = useContext(ContainerContext);
@@ -122,12 +135,12 @@ export function BandChart<S extends SeriesSchema>({
           ];
         },
         draw: (ctx, xScale, yScale) =>
-          drawBand(ctx, bs, xScale, yScale, style, curveFactory),
+          drawBand(ctx, bs, xScale, yScale, style, curveFactory, gaps),
       },
       axisId: axis,
       index,
     }),
-    [bs, series, lower, upper, style, curveFactory, axis, index],
+    [bs, series, lower, upper, style, curveFactory, gaps, axis, index],
   );
   // Stable per-instance slot (see useSlotKey): keeps this band's z-position +
   // identity across prop updates; the injected index drives the sort.

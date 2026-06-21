@@ -61,6 +61,9 @@ export type { RadiusEncoding, ColorEncoding } from './encoding.js';
 
 export type { Curve } from './curve.js';
 
+// Shared gap-rendering mode for the gap-aware draw layers (line / area / band).
+export type { GapMode } from './gaps.js';
+
 export { defaultTheme, estelaTheme } from './theme.js';
 export type {
   ChartTheme,
