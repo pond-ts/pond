@@ -24,11 +24,12 @@ test.describe('ScatterChart', () => {
     });
   }
 
-  // Hover snaps the tracker to the nearest point (sampleAt). Drive a
-  // deterministic pointer to mid-plot and snapshot the crosshair + snapped dot
-  // (overlay canvas) — and guard against a throwing render (the detached-method
-  // class of bug that crashed the tracker silently).
-  test('hover snaps the tracker to the nearest point', async ({ page }) => {
+  // Hover drives the tracker (sampleAt → value read). Drive a deterministic
+  // pointer to mid-plot and snapshot the cursor (SVG overlay; the default
+  // `line` mode until scatter gets its own cursor in a later phase) — and guard
+  // against a throwing render (the detached-method class of bug that crashed the
+  // tracker silently).
+  test('hover drives the tracker without error', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', (e) => errors.push(e.message));
     page.on('console', (m) => {
@@ -45,8 +46,8 @@ test.describe('ScatterChart', () => {
       box.x + (box.width * 24) / 47,
       box.y + box.height / 2,
     );
-    // The overlay (2nd canvas) is transparent until the crosshair + dot paint.
-    await waitForCanvasPaint(page.locator('canvas').nth(1));
+    // Wait for the cursor's SVG marks to render after the hover.
+    await page.locator('svg line, svg circle').first().waitFor();
     await expect(page.locator('#storybook-root')).toHaveScreenshot(
       'scatter-hover-snap.png',
     );

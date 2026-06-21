@@ -1,8 +1,8 @@
 /**
- * Interaction-overlay primitives + geometry — the crosshair/dot draws (on a
- * row's overlay canvas, above the data and below the DOM readout) plus the pure
- * cursor-resolution helper. All pure, so the geometry is unit-tested directly
- * like {@link drawLine} / {@link drawBand}.
+ * Cursor geometry helpers — pure functions deciding *what* the cursor draws
+ * ({@link cursorParts}) and *where* it sits ({@link resolveCursorX}). The marks
+ * themselves render as an SVG overlay in `Layers` (no cursor canvas); these
+ * helpers stay pure, so they're unit-tested directly.
  */
 
 import type { CursorMode } from './context.js';
@@ -15,8 +15,8 @@ export const DEFAULT_CURSOR_MODE: CursorMode = 'line';
  * Decompose a {@link CursorMode} into what it draws: the shared vertical line,
  * the per-series dots, and which value chip (if any). The modes are exclusive
  * presets — `line` is line-only, `point` / `inline` / `flag` are dot-based with
- * no line, `none` draws nothing. (The `flag` chip is the stacked-at-top form for
- * now; the point-anchored staffed flag lands in a later phase.)
+ * no line, `none` draws nothing. `flag` raises a staff from each point to a
+ * value flag stacked near the top of the row (drawn in `Layers`).
  */
 export function cursorParts(mode: CursorMode): {
   readonly line: boolean;
