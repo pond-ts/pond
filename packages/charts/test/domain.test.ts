@@ -2,13 +2,25 @@ import { describe, expect, it } from 'vitest';
 import { resolveYDomain } from '../src/domain.js';
 
 describe('resolveYDomain', () => {
-  it('auto-fits both bounds to the union of layer extents', () => {
+  it('auto-fits both bounds to the union of extents, rounded out for headroom', () => {
+    // .nice() rounds [5, 30] out to [4, 30] — covers the data with headroom + a
+    // round lower bound, so peaks/whiskers don't sit on the plot edge.
     expect(
       resolveYDomain(undefined, undefined, [
         [10, 30],
         [5, 20],
       ]),
-    ).toEqual([5, 30]);
+    ).toEqual([4, 30]);
+  });
+
+  it('leaves an explicit domain exact — never nice (even non-round bounds)', () => {
+    expect(resolveYDomain(3, 97, [[10, 20]])).toEqual([3, 97]);
+  });
+
+  it('does not nice the auto side when one bound is explicit', () => {
+    // min explicit ⇒ the caller controls the axis; the auto max stays the raw
+    // data extent (83), not rounded to 85/90.
+    expect(resolveYDomain(0, undefined, [[10, 83]])).toEqual([0, 83]);
   });
 
   it('returns [0, 1] when there is no finite data', () => {
