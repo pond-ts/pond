@@ -40,3 +40,35 @@ export function resolveAxisFormat(
     ? scale.tickFormat(count, format)
     : scale.tickFormat(count);
 }
+
+/** The slice of a d3 **time** scale {@link resolveTimeFormat} needs. A d3
+ *  `ScaleTime` satisfies it; its formatter takes a `Date`. */
+interface TimeTickable {
+  tickFormat(count?: number, specifier?: string): (date: Date) => string;
+}
+
+/**
+ * The time analog of {@link resolveAxisFormat} — resolve an {@link AxisFormat}
+ * (here the string is a d3 [time specifier](https://github.com/d3/d3-time-format#locale_format),
+ * e.g. `'%H:%M'`) to an `(epochMs) => string` formatter against a d3 `scaleTime`,
+ * so the cursor-time readout matches the time-axis ticks:
+ *
+ * - a **function** → used as-is (called with epoch ms);
+ * - a **specifier string** → `scale.tickFormat(count, specifier)` (one format for
+ *   every value), wrapped to take epoch ms;
+ * - **`undefined`** → `scale.tickFormat()` — d3's **multi-scale** time format (the
+ *   time axis's default; no `count` so it matches `<TimeAxis>` exactly).
+ *
+ * The cursor time is epoch ms, so the resolved formatter wraps the d3 `Date`
+ * formatter in `new Date(ms)`.
+ */
+export function resolveTimeFormat(
+  scale: TimeTickable,
+  count: number,
+  format: AxisFormat | undefined,
+): (epochMs: number) => string {
+  if (typeof format === 'function') return format;
+  const tf =
+    format !== undefined ? scale.tickFormat(count, format) : scale.tickFormat();
+  return (ms) => tf(new Date(ms));
+}

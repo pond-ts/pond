@@ -211,6 +211,27 @@ export const Formats: Story = {
 };
 
 /**
+ * **Cursor time (`cursorTime`).** Hover — the cursor's time shows atop the
+ * readout, formatted to match the time axis. Here `timeFormat='%I:%M %p'` (reads
+ * `12:30 PM`); omit it for d3's multi-scale default. Works with any readout mode
+ * (shown with `flag`).
+ */
+export const CursorTime: Story = {
+  render: () => (
+    <ChartContainer
+      timeRange={TIME_RANGE}
+      width={560}
+      theme={estelaTheme}
+      cursor="flag"
+      cursorTime
+      timeFormat="%I:%M %p"
+    >
+      <Rows />
+    </ChartContainer>
+  ),
+};
+
+/**
  * **The preferred surface: readout *outside* the chart.** The default
  * `cursor='line'` (line only, no in-chart values); `onTrackerChanged` feeds a
  * panel above the chart. Hover — the panel updates with the time + each series'

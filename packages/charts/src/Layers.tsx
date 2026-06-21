@@ -111,7 +111,7 @@ export function Layers({ children }: LayersProps) {
   // cursorX — set by whichever row the pointer is over — syncs the cursor across
   // every row for free. cursorX is a *pixel*, so it stays put while a live window
   // slides; the time + values under it derive from the current xScale.
-  const { cursorX } = container;
+  const { cursorX, cursorTime: showCursorTime, formatTime } = container;
   // Cursor mode: the row's override, else the container default. One mode per
   // row (the synced vertical line is shared across rows); each layer renders the
   // mode in its own way. `parts` decomposes it into {line, dots, chip}.
@@ -326,6 +326,11 @@ export function Layers({ children }: LayersProps) {
     pointerEvents: 'none',
     lineHeight: 1.5,
   };
+  // Show the cursor's time atop the readout (opt-in via `cursorTime`), whenever
+  // the cursor is active (any mode that draws marks). A single chip at the cursor
+  // x, top of the row; for `flag` it sits above the value chips (which shift down).
+  const showTime =
+    showCursorTime && cursorTime !== null && (parts.line || parts.dots);
 
   // Inject each draw layer's JSX position so it registers its declaration order
   // (z-stack: lower index at the back), independent of mount timing.
@@ -366,6 +371,27 @@ export function Layers({ children }: LayersProps) {
             pointerEvents: 'none',
           }}
         />
+        {/* Cursor-time chip atop the readout (opt-in); the `!== null` checks gate
+            to an in-bounds, active cursor and narrow the types. */}
+        {showTime && cursorX !== null && cursorTime !== null && (
+          <div
+            style={{
+              ...chipStyle,
+              top: '2px',
+              left:
+                cursorX > plotWidth * LABEL_FLIP_FRACTION
+                  ? undefined
+                  : `${cursorX + 4}px`,
+              right:
+                cursorX > plotWidth * LABEL_FLIP_FRACTION
+                  ? `${plotWidth - cursorX + 4}px`
+                  : undefined,
+              color: cursorColor,
+            }}
+          >
+            {formatTime(cursorTime)}
+          </div>
+        )}
         {parts.chip === 'inline' &&
           trackerSamples.map((s, i) => {
             // Flip the chip left of its dot near the right edge so it stays in-plot.
@@ -396,7 +422,7 @@ export function Layers({ children }: LayersProps) {
                 key={i}
                 style={{
                   ...chipStyle,
-                  top: `${2 + i * flagLineHeight}px`,
+                  top: `${2 + (showTime ? flagLineHeight : 0) + i * flagLineHeight}px`,
                   left: flip ? undefined : `${cursorX + 4}px`,
                   right: flip ? `${plotWidth - cursorX + 4}px` : undefined,
                   color: s.color,
