@@ -35,8 +35,8 @@ function demo(phase = 0, amp = 40, mid = 50) {
  * `ChartContainer`, so the cursor syncs across rows and the values can be
  * surfaced *outside* the chart. Presentation is the **`cursor` mode**
  * (`'line' | 'point' | 'inline' | 'flag' | 'none'`) — set on the container
- * (default `'line'`) or per-row. The point-anchored staffed flag lands in a
- * later phase; for now `'flag'` stacks chips at the top.
+ * (default `'line'`) or per-row. `'flag'` raises a staff from each data point to
+ * a value flag stacked near the top.
  */
 const meta = {
   title: 'Interactions',
@@ -82,9 +82,8 @@ export const CursorSync: Story = {
 };
 
 /**
- * **`cursor='flag'`.** Hover the plot — value chips stack at the top, in-chart
- * but kept to the top edge, out of the data's way. (The point-anchored staff
- * lands in a later phase.)
+ * **`cursor='flag'`.** Hover the plot — a staff rises from each data point to a
+ * value flag stacked near the top, kept out of the data's way.
  */
 export const FlagReadout: Story = {
   render: () => (
