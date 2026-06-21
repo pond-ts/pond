@@ -102,6 +102,15 @@ export interface ChartTheme {
    * background if unset.
    */
   readonly chip?: { readonly background: string };
+  /**
+   * Styling for the **inferred dashed gap connectors** — the `dashed` and `step`
+   * gap modes ({@link GapMode}). Drawn fainter than the solid line (via
+   * `connectorOpacity`, 0–1, applied over the layer's colour) so an *inferred*
+   * bridge across a gap reads as secondary to measured data. Per-theme, so a
+   * dark ground can tune the faintness independently. Falls back to `0.5` if
+   * unset. (The `fade` mode has its own gradient and isn't governed by this.)
+   */
+  readonly gap?: { readonly connectorOpacity: number };
 }
 
 /** A resolved line style: stroke colour + width (px). */
@@ -296,6 +305,7 @@ export const defaultTheme: ChartTheme = {
   },
   cursor: '#64748b',
   chip: { background: '#ffffff' },
+  gap: { connectorOpacity: 0.5 },
 };
 
 /**
@@ -417,4 +427,5 @@ export const estelaTheme: ChartTheme = {
   },
   cursor: '#7FE2D2', // --es-reef (bright tracker on the dark ground)
   chip: { background: '#0B4E58' }, // --es-deep (panel behind readout text)
+  gap: { connectorOpacity: 0.5 },
 };
