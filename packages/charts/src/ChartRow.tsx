@@ -14,6 +14,7 @@ import { scaleLinear, type ScaleLinear } from 'd3-scale';
 import { resolveYDomain } from './domain.js';
 import { resolveAxisFormat } from './format.js';
 import { placeAxisSlots, type SlotAxis } from './slots.js';
+import { YAxis } from './YAxis.js';
 import {
   ContainerContext,
   RowContext,
@@ -249,6 +250,26 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
       : child,
   );
 
+  // Place axes by their `side`, not by JSX author position — so a `side="right"`
+  // axis always renders right of the plot (and a left axis left), **consistent
+  // with the side-based gutter reservation above**. (Author position only
+  // injects the index, which still drives slot order within a side + the
+  // default-axis pick.) This makes `side` the single source of truth for both
+  // placement *and* reserved space; mis-authoring can no longer desync them
+  // (the bug: a right axis authored before `<Layers>` rendered left while its
+  // gutter was reserved right). Non-axis children (`<Layers>`) stay in the middle.
+  const leftAxisEls: ReactNode[] = [];
+  const plotEls: ReactNode[] = [];
+  const rightAxisEls: ReactNode[] = [];
+  for (const child of indexedChildren ?? []) {
+    if (isValidElement(child) && child.type === YAxis) {
+      const side = (child.props as { side?: 'left' | 'right' }).side ?? 'left';
+      (side === 'right' ? rightAxisEls : leftAxisEls).push(child);
+    } else {
+      plotEls.push(child);
+    }
+  }
+
   return (
     <RowContext.Provider value={frame}>
       <div
@@ -260,7 +281,9 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
         }}
       >
         {leftPad > 0 && <div style={{ flex: `0 0 ${leftPad}px` }} />}
-        {indexedChildren}
+        {leftAxisEls}
+        {plotEls}
+        {rightAxisEls}
         {rightPad > 0 && <div style={{ flex: `0 0 ${rightPad}px` }} />}
       </div>
     </RowContext.Provider>
