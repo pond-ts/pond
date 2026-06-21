@@ -90,6 +90,38 @@ export const Encoded: Story = {
 };
 
 /**
+ * **`cursor='flag'` — the point readout.** Hover: a flag rises from the nearest
+ * point to a value chip near the top (the scatter flag is point-anchored, like
+ * line/area). A per-point 2D-nearest `inline` readout and a staff from the dot's
+ * top for large encoded marks are later refinements.
+ */
+export const CursorFlag: Story = {
+  render: () => {
+    const t = trades();
+    return (
+      <ChartContainer
+        timeRange={TIME_RANGE}
+        width={620}
+        theme={estelaTheme}
+        cursor="flag"
+      >
+        <ChartRow height={300}>
+          <YAxis id="price" label="price" />
+          <Layers>
+            <ScatterChart
+              series={t}
+              column="price"
+              radius={{ column: 'volume', range: [3, 16] }}
+              color={{ column: 'change', range: ['#E0B36A', '#15B3A6'] }}
+            />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
  * **Per-point labels.** The same scatter with `label="tag"` — the sparse `tag`
  * column annotates three called-out points (`open` / `peak` / `close`), drawn in
  * the theme's label colour just right of each mark. (Labels are for a handful of
