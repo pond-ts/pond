@@ -365,10 +365,16 @@ best-effort.
     **Deferred polish (need a design call, not guessed):** scatter `inline`
     **2D-nearest** (the cursor is x-synced; a nearest-in-(x,y) readout needs the
     pointer's y — a cursor-model change); scatter flag staff from the **dot's top**
-    for large encoded marks; the "‹ VAL" callout. **Separate from the cursor: box
-    whisker styles** (feather / solid / T) — naming/semantics TBD with pjm17971;
-    not built. Chip-vs-chip de-overlap (inline, and box+line in one row) also still
-    open.
+    for large encoded marks; the "‹ VAL" callout. Chip-vs-chip de-overlap (inline,
+    and box+line in one row) also still open.
+  - **Box whisker styles ✅ (separate from the cursor).** `<BoxPlot shape>` —
+    **`whisker`** (default, unchanged) / **`solid`** (the candlestick look: a light
+    outer bar over `lower→upper` + a darker inner `q1→q3` box, no stems — same hue
+    at rising opacity, so on the dark theme the inner reads _brighter_, not darker)
+    / **`none`** (the `q1→q3` box only). Median centre line independently optional
+    (`showMedian`, default `true`). A prop (structural variant); colours stay
+    theme-driven (`solid` reuses `fill` at two opacities). pjm17971 corrected the
+    set from the RFC's `feather`/`solid`/`T` → `whisker`/`solid`/`none`.
   - **Remaining → the decimator (next).** Bench-ordered: viewport culling + M4
     pixel-bucket decimation **per-layer, first** (they hit the failing metric);
     Path2D cache (M4.4) **second**. Chart-side `bin(axisColumn, nBuckets,
