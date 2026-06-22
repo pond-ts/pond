@@ -60,6 +60,46 @@ as first-class documented outputs and a chart display-grid hook already in the
 API. The only layer still asserting "x is time" is the chart. **That asymmetry
 — not a missing feature — is what this RFC is really about.**
 
+### 2a. One precision, from estela's friction report: the axis has a _head_
+
+The "shipped" claim glosses one upstream step: a monotonic axis column has to be
+**produced**. `cumDist`, `cumGain` are not in the raw stream — they're a running
+fold over per-sample deltas, and `byColumn('cumDist', …)` can't run until one
+exists. estela's friction report files exactly this as **"the one big ask"**:
+generalize `cumulative` (already a running fold, but it locks accumulator =
+output value = output column, `number`-only) into a typed-accumulator **`scan`**
+— the classic `mapAccumL`, `step: (acc: A, value, i) => [next: A, output:
+number]`, with `cumulative` kept as the scalar sugar. The motivating case,
+hysteresis elevation gain, carries `(ref, gain)` but emits only `gain` — which a
+`number`-that-is-the-output can't express.
+
+So the **full** value-axis pipeline is:
+
+> **`scan` (build the monotonic axis) → `byColumn` / `rollingByColumn` (reduce
+> over it) → chart (plot over it) + the decimator (`bin` over it).**
+
+The reduce-over-the-axis half shipped (`byColumn` / `rollingByColumn`); the
+**axis-construction head, `scan`, is specified-but-unbuilt** — estela has the
+full spec (signature, semantics inherited from `cumulative`, worked example, a
+correctness case). The honest statement is therefore not "fully shipped" but:
+_the value axis belongs, and the analytics has built all of it bar one named,
+already-designed primitive at the head._ `scan` is the likely lead of the next
+wave (§10) and lands as its own core change, not inside this chart RFC.
+
+This _strengthens_ the elegance bar rather than weakening it. The report
+explicitly **rejects a domain `split()` operator** ("too sport-specific — it'd
+be pond's first domain operator") in favour of **`split = scan + byColumn`**:
+materialize the carried state into a column with `scan`, then segment it
+statelessly with `byColumn` (the bucket reducers stay pure and order-free; all
+order-dependence is isolated in the scan). And the migration is a **correctness**
+fix, not merely ergonomic — the hand-rolled carryover loop has a
+multi-boundary-collapse bug on gappy data (a tunnel / auto-pause step ≥ the
+interval collapses several km into one mislabeled split), which `byColumn`'s
+floor-binning is immune to by construction (the sample-less middle is an honest
+empty bin). Composition of general primitives over a domain operator,
+self-correcting on real data — that is the bar a value axis has to clear, head
+to tail, and it clears it.
+
 ## 3. Why it generalizes cleanly: ordering vs calendar
 
 The reason the value axis fits rather than fights is worth stating precisely,
@@ -248,6 +288,13 @@ ages badly. Let the evidence accumulate; the chart doesn't block on it.
   data adapter.
 - **Splits/laps + range-editing `#261`** — value-interval marks + editable
   ranges on a distance axis.
+- **`scan`** (generalized `cumulative`) — the axis-construction _head_ (§2a);
+  estela's "one big ask" (`split = scan + byColumn`). Lands as its own core
+  change; this RFC's splits / profile cases depend on it.
+- **`runs` / `segmentsInRange`** — estela's third scan-family signal: RLE of a
+  predicate over a value column → `[startMeters, endMeters]` segments (HR / power
+  zones, "every stretch in Tempo"). Another producer of value-interval records,
+  i.e. the _same_ interval marks the chart already renders for splits/laps.
 
 The value axis is the keystone several pending threads already lean on.
 
@@ -268,6 +315,11 @@ The value axis is the keystone several pending threads already lean on.
 
 ## 10. Tentative phasing (friction-driven — not a roadmap to march)
 
+0. **`scan`** (core, **likely lead of the wave**) — generalize `cumulative` into
+   the typed-accumulator fold (§2a). The axis-construction head and estela's
+   specified "one big ask"; a prerequisite for the splits / profile chart cases,
+   and independently valuable (it also fixes the multi-boundary-collapse
+   correctness bug). Lands as its own core change, ahead of the chart work below.
 1. **Chart x-geometry generalization** — `ScaleTime` → monotonic value scale;
    an x-axis spec (axis column + domain + formatter, default = time key); the
    value-formatting `XAxis`; the `fromValueBins` adapter for `byColumn` records.
@@ -290,6 +342,11 @@ The value axis is the keystone several pending threads already lean on.
   / library]_
 - **Value-step `Sequence`** — needed, or does `byColumn({ width })` cover it?
   _[core]_
+- **`scan` name + shape (§2a)** — is `scan` right (the `reduce`/`scan` pair +
+  Rust `Iterator::scan` precedent), or does the columnar "table scan" reading
+  argue for `accumulate` / `runningFold`? Single- vs multi-output (`[A, number]`
+  vs `[A, Record<Name, number>]`) for v1; `cumulative` stays as the scalar sugar
+  either way. _[core]_
 - **One-axis-per-container** — acceptable for estela's dashboards? _[estela]_
 - **Naming** — "value axis" (matches `byColumn`'s `value-axis` vocabulary) vs
   "domain" vs "monotonic axis."

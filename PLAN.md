@@ -389,7 +389,14 @@ reducerSet)` per the charts RFC perf section + its two-lens review — reducer
     shipped in **core** — `byColumn` / `rollingByColumn` are the value-axis
     analogues of `aggregate` / `rolling` (monotonic-validated; per-km splits,
     elevation-vs-distance profiles, HR/power zones as documented use cases) — so
-    the **chart is the laggard**, not a missing concept. Data model settled by
+    the **chart is the laggard**, not a missing concept. Sharpened by estela's
+    friction report (`~/Code/estela/docs/pond-friction.md`): the full pipeline is
+    `scan → byColumn`/`rollingByColumn → chart` — the reduce-over-axis half
+    shipped, but the **axis-construction head `scan`** (generalize `cumulative`
+    into a typed-accumulator `mapAccumL`; `split = scan + byColumn`; estela's "one
+    big ask", also a multi-boundary-collapse correctness fix) is
+    specified-but-unbuilt and is the **likely lead of the next wave** (its own
+    core change, not in the chart RFC's scope). Data model settled by
     core's grain: the chart consumes value-interval **records** (`{start,end,…}`,
     `byColumn` output → interval marks) / a series-against-a-named-column, **not**
     a re-keyed `TimeSeries`. The chart's x-spec plumbing (x = a monotonic column,
