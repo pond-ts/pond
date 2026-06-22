@@ -383,6 +383,23 @@ reducerSet)` per the charts RFC perf section + its two-lens review — reducer
     `plot_width` + visible slice in the chart; **statistical bands an M5-parity
     gate**. **M4.3 brush skipped** (no drivers). One-time competitive head-to-head
     (SciChart trial + AG Charts + uPlot) stays optional.
+  - **Value-axis RFC (`docs/rfcs/value-axis.md`) — drafted, red-team pending
+    (NOT a commitment).** Non-time x (distance / splits / laps) **and** the perf
+    decimator framed as _one_ generalization. Thesis: the value axis already
+    shipped in **core** — `byColumn` / `rollingByColumn` are the value-axis
+    analogues of `aggregate` / `rolling` (monotonic-validated; per-km splits,
+    elevation-vs-distance profiles, HR/power zones as documented use cases) — so
+    the **chart is the laggard**, not a missing concept. Data model settled by
+    core's grain: the chart consumes value-interval **records** (`{start,end,…}`,
+    `byColumn` output → interval marks) / a series-against-a-named-column, **not**
+    a re-keyed `TimeSeries`. The chart's x-spec plumbing (x = a monotonic column,
+    time = default) is the decimator's prerequisite → build together. Splits/laps
+    = `byColumn` intervals as marks → un-parks range-editing **#261** (editable
+    ranges on a value axis = lap editing). Open, **deferred until earned**:
+    operator-surface consolidation (a unifying `Axis` abstraction vs the
+    `aggregate`/`byColumn` twins, which may be principled — key-as-index +
+    `TimeSeries` out vs column-as-data + records out). Awaiting estela / geo /
+    core red-team.
 - **M5 — estela parity.** Faithful `DataChart` reproduction on real activity
   data; prove no-regressions; hand the production swap to the estela agent; flip
   `private:false` + first publish.
