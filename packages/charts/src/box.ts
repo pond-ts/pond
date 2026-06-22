@@ -49,9 +49,9 @@ export function boxIndexAtTime(box: BoxSeries, time: number): number {
 /**
  * How a box renders its spread (pjm17971): **`whisker`** (today's thin stems +
  * end-caps), **`solid`** (the candlestick look — a light outer bar over the full
- * `lower→upper` range with a darker inner `q1→q3` box, no stems), or **`none`**
- * (the `q1→q3` box only, no spread marks). The median line is drawn separately
- * and is always optional (`showMedian`).
+ * `lower→upper` range with a more-prominent inner `q1→q3` box, no stems), or
+ * **`none`** (the `q1→q3` box only, no spread marks). The median line is drawn
+ * separately and is always optional (`showMedian`).
  */
 export type BoxShape = 'whisker' | 'solid' | 'none';
 
@@ -63,9 +63,9 @@ export type BoxShape = 'whisker' | 'solid' | 'none';
  *
  * - **`whisker`** (default) — the graded `q1→q3` box fill + outline, two whisker
  *   stems with end-caps out to `lower`/`upper`.
- * - **`solid`** — a light outer bar over `lower→upper` (the spread) with a darker
- *   inner `q1→q3` box (the two fills are the same hue at rising opacity), no
- *   stems/outline.
+ * - **`solid`** — a light outer bar over `lower→upper` (the spread) with a
+ *   more-prominent inner `q1→q3` box (the same fill at rising opacity — so it
+ *   reads darker on a light ground, brighter on a dark one), no stems/outline.
  * - **`none`** — the `q1→q3` box fill + outline only, no spread marks.
  *
  * Then, if `showMedian`, the median line across the box on top. Fills are
@@ -106,8 +106,9 @@ export function drawBox(
 
     if (shape === 'solid') {
       // Candlestick: a light outer bar over the full lower→upper spread, then a
-      // darker inner q1→q3 box on top (same hue, rising opacity — the inner reads
-      // darker where the two overlap). No stems, no outline.
+      // more-prominent inner q1→q3 box on top (same fill at rising opacity, so the
+      // inner reads darker on a light ground / brighter on a dark one). No stems,
+      // no outline.
       ctx.save();
       ctx.fillStyle = style.fill;
       ctx.globalAlpha = style.fillOpacity;
