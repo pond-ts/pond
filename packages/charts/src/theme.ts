@@ -270,8 +270,8 @@ export const defaultTheme: ChartTheme = {
       strokeWidth: 1.5,
       median: '#1e3a8a',
       medianWidth: 2,
-      whisker: '#2563eb',
-      whiskerWidth: 1.5,
+      whisker: '#aabee9',
+      whiskerWidth: 1,
     },
   },
   bar: {
@@ -392,7 +392,7 @@ export const estelaTheme: ChartTheme = {
       strokeWidth: 1.5,
       median: '#F1FBF9', // --es-foam
       medianWidth: 2,
-      whisker: '#7FE2D2', // --es-reef
+      whisker: '#a4e4d9', // --es-reef
       whiskerWidth: 1.5,
     },
   },
