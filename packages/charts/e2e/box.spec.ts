@@ -8,6 +8,7 @@ import { story, waitForCanvasPaint } from './support.js';
  */
 const cases: ReadonlyArray<readonly [id: string, file: string]> = [
   ['charts-boxplot--percentiles', 'box-percentiles.png'],
+  ['charts-boxplot--solid', 'box-solid.png'],
   ['charts-boxplot--with-gap', 'box-with-gap.png'],
   ['charts-boxplot--themed', 'box-themed.png'],
 ];

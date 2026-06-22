@@ -145,13 +145,17 @@ row), and supersedes the earlier per-layer proposal.
 - **Box flag:** one flag listing all values (q1/median/q3/low/high), each line
   coloured to its box piece.
 
-## Box whisker styles (separate from cursor)
+## Box whisker styles (separate from cursor) — SHIPPED
 
-A `BoxStyle` rendering option: **`feather`** (current thin whiskers),
-**`solid`** (RTC candlestick bars — light outer range bar + dark inner box),
-**`T`** (whisker stems with T-caps). Theme- or prop-driven; default keeps
-today's look. Tracked here because it surfaced alongside the box cursor spec,
-but it's an independent change.
+A `<BoxPlot shape>` rendering option (pjm17971): **`whisker`** (default — today's
+thin stems + caps), **`solid`** (the candlestick look — a light outer bar over
+the full lower→upper range with a darker inner q1→q3 box, no stems), or
+**`none`** (the q1→q3 box only). The median centre line is independently optional
+(`showMedian`, default `true`). Default keeps today's look. Tracked here because
+it surfaced alongside the box cursor spec, but it's an independent change.
+(Originally drafted as `feather`/`solid`/`T`; pjm17971 corrected the set to
+`whisker`/`solid`/`none`.) Shipped as a prop on `<BoxPlot>`; colours stay
+theme-driven (`solid` reuses `fill` at two opacities).
 
 ## Bar hover-highlight + story rename (separate)
 

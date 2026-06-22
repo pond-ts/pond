@@ -47,16 +47,29 @@ export function boxIndexAtTime(box: BoxSeries, time: number): number {
 }
 
 /**
- * Draw a discrete box-and-whisker per key of `box`, mapping data→pixels through
+ * How a box renders its spread (pjm17971): **`whisker`** (today's thin stems +
+ * end-caps), **`solid`** (the candlestick look — a light outer bar over the full
+ * `lower→upper` range with a darker inner `q1→q3` box, no stems), or **`none`**
+ * (the `q1→q3` box only, no spread marks). The median line is drawn separately
+ * and is always optional (`showMedian`).
+ */
+export type BoxShape = 'whisker' | 'solid' | 'none';
+
+/**
+ * Draw a discrete box per key of `box`, mapping data→pixels through
  * `xScale`/`yScale`. The bar-chart analog of {@link drawBand}: each key gets its
- * own box (q1→q3 rect), a median line, and whiskers out to lower/upper — drawn
- * over its interval x-span (`barSpanPx`, inset by `gapPx` so adjacent boxes
- * breathe).
+ * own mark over its interval x-span (`barSpanPx`, inset by `gapPx` so adjacent
+ * boxes breathe), in the chosen {@link BoxShape}:
  *
- * Per key, in z-order back-to-front: the graded box fill, the box outline, the
- * two whisker stems with end-caps, then the median line on top. The box fill's
- * `globalAlpha` (carrying `fillOpacity`) is bracketed by `save`/`restore` so it
- * doesn't leak into the strokes or later layers.
+ * - **`whisker`** (default) — the graded `q1→q3` box fill + outline, two whisker
+ *   stems with end-caps out to `lower`/`upper`.
+ * - **`solid`** — a light outer bar over `lower→upper` (the spread) with a darker
+ *   inner `q1→q3` box (the two fills are the same hue at rising opacity), no
+ *   stems/outline.
+ * - **`none`** — the `q1→q3` box fill + outline only, no spread marks.
+ *
+ * Then, if `showMedian`, the median line across the box on top. Fills are
+ * bracketed by `save`/`restore` so their `globalAlpha` doesn't leak.
  *
  * **Gap-aware**: a key with any quantile non-finite is skipped entirely (no
  * partial box) — the same contract as a band gap.
@@ -72,6 +85,8 @@ export function drawBox(
   style: BoxStyle,
   gapPx = 0,
   minWidthPx = 1,
+  shape: BoxShape = 'whisker',
+  showMedian = true,
 ): void {
   for (let i = 0; i < box.length; i += 1) {
     if (!isFiniteBox(box, i)) continue;
@@ -89,43 +104,57 @@ export function drawBox(
     const yQ3 = yScale(box.q3[i]!);
     const yUpper = yScale(box.upper[i]!);
 
-    // The box fill (q1→q3), graded by fillOpacity — bracketed so the alpha
-    // doesn't bleed into the strokes below.
-    ctx.save();
-    ctx.fillStyle = style.fill;
-    ctx.globalAlpha = style.fillOpacity;
-    ctx.fillRect(x0, yQ3, x1 - x0, yQ1 - yQ3);
-    ctx.restore();
+    if (shape === 'solid') {
+      // Candlestick: a light outer bar over the full lower→upper spread, then a
+      // darker inner q1→q3 box on top (same hue, rising opacity — the inner reads
+      // darker where the two overlap). No stems, no outline.
+      ctx.save();
+      ctx.fillStyle = style.fill;
+      ctx.globalAlpha = style.fillOpacity;
+      ctx.fillRect(x0, yUpper, x1 - x0, yLower - yUpper);
+      ctx.globalAlpha = Math.min(1, style.fillOpacity * 2);
+      ctx.fillRect(x0, yQ3, x1 - x0, yQ1 - yQ3);
+      ctx.restore();
+    } else {
+      // `whisker` / `none`: the graded q1→q3 box fill + outline.
+      ctx.save();
+      ctx.fillStyle = style.fill;
+      ctx.globalAlpha = style.fillOpacity;
+      ctx.fillRect(x0, yQ3, x1 - x0, yQ1 - yQ3);
+      ctx.restore();
+      ctx.strokeStyle = style.stroke;
+      ctx.lineWidth = style.strokeWidth;
+      ctx.strokeRect(x0, yQ3, x1 - x0, yQ1 - yQ3);
 
-    // The box outline (q1→q3), at full alpha.
-    ctx.strokeStyle = style.stroke;
-    ctx.lineWidth = style.strokeWidth;
-    ctx.strokeRect(x0, yQ3, x1 - x0, yQ1 - yQ3);
+      if (shape === 'whisker') {
+        // Whiskers: a stem from each box edge to the whisker end, with a cap.
+        const capHalf = ((x1 - x0) * WHISKER_CAP_FRACTION) / 2;
+        ctx.strokeStyle = style.whisker;
+        ctx.lineWidth = style.whiskerWidth;
+        ctx.beginPath();
+        // Upper: stem q3 → upper, cap at upper.
+        ctx.moveTo(mid, yQ3);
+        ctx.lineTo(mid, yUpper);
+        ctx.moveTo(mid - capHalf, yUpper);
+        ctx.lineTo(mid + capHalf, yUpper);
+        // Lower: stem q1 → lower, cap at lower.
+        ctx.moveTo(mid, yQ1);
+        ctx.lineTo(mid, yLower);
+        ctx.moveTo(mid - capHalf, yLower);
+        ctx.lineTo(mid + capHalf, yLower);
+        ctx.stroke();
+      }
+    }
 
-    // Whiskers: a stem from each box edge to the whisker end, with a cap.
-    const capHalf = ((x1 - x0) * WHISKER_CAP_FRACTION) / 2;
-    ctx.strokeStyle = style.whisker;
-    ctx.lineWidth = style.whiskerWidth;
-    ctx.beginPath();
-    // Upper: stem q3 → upper, cap at upper.
-    ctx.moveTo(mid, yQ3);
-    ctx.lineTo(mid, yUpper);
-    ctx.moveTo(mid - capHalf, yUpper);
-    ctx.lineTo(mid + capHalf, yUpper);
-    // Lower: stem q1 → lower, cap at lower.
-    ctx.moveTo(mid, yQ1);
-    ctx.lineTo(mid, yLower);
-    ctx.moveTo(mid - capHalf, yLower);
-    ctx.lineTo(mid + capHalf, yLower);
-    ctx.stroke();
-
-    // The median line across the box, on top.
-    ctx.strokeStyle = style.median;
-    ctx.lineWidth = style.medianWidth;
-    ctx.beginPath();
-    ctx.moveTo(x0, yMedian);
-    ctx.lineTo(x1, yMedian);
-    ctx.stroke();
+    // The median line across the box, on top — always optional.
+    if (showMedian) {
+      ctx.strokeStyle = style.median;
+      ctx.lineWidth = style.medianWidth;
+      ctx.beginPath();
+      ctx.moveTo(x0, yMedian);
+      ctx.lineTo(x1, yMedian);
+      ctx.stroke();
+    }
   }
 }
 

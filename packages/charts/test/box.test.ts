@@ -296,4 +296,40 @@ describe('drawBox', () => {
     expect(rect?.args[0]).toBeCloseTo(9.5);
     expect(rect?.args[2]).toBeCloseTo(1);
   });
+
+  it("shape='solid' draws two nested fills, no outline, no whisker stems", () => {
+    const { ctx, calls } = recordingContext();
+    const flipY = (v: number) => 100 - v;
+    drawBox(ctx, oneBox(), identity, flipY, style, 0, 1, 'solid');
+    // Outer bar (lower→upper) + inner box (q1→q3) = two fillRects.
+    const fills = calls.filter((c) => c.name === 'fillRect');
+    expect(fills).toHaveLength(2);
+    // Outer spans upper(95)→lower(99): fillRect(10, 95, 20, 4).
+    expect(fills[0]?.args).toEqual([10, 95, 20, 4]);
+    // Inner spans q3(96)→q1(98): fillRect(10, 96, 20, 2).
+    expect(fills[1]?.args).toEqual([10, 96, 20, 2]);
+    // No outline, and no whisker stems/caps (only the median's single moveTo).
+    expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(0);
+    expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(1);
+  });
+
+  it("shape='none' draws the box + outline but no whiskers", () => {
+    const { ctx, calls } = recordingContext();
+    drawBox(ctx, oneBox(), identity, identity, style, 0, 1, 'none');
+    expect(calls.filter((c) => c.name === 'fillRect')).toHaveLength(1);
+    expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(1);
+    // No whisker stems/caps — only the median's single moveTo remains.
+    expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(1);
+  });
+
+  it('showMedian=false omits the median line', () => {
+    const { ctx, calls } = recordingContext();
+    drawBox(ctx, oneBox(), identity, identity, style, 0, 1, 'whisker', false);
+    // Whiskers draw (4 moveTo: 2 stems + 2 caps); the median's 5th moveTo is gone.
+    expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(4);
+    // The median colour is never set.
+    expect(calls.some((c) => c.type === 'set' && c.args[0] === '#456')).toBe(
+      false,
+    );
+  });
 });

@@ -1,7 +1,13 @@
 import { useContext, useEffect, useMemo } from 'react';
 import type { SeriesSchema, TimeSeries } from 'pond-ts';
 import { boxFromTimeSeries } from './data.js';
-import { boxExtent, boxIndexAtTime, drawBox, isFiniteBox } from './box.js';
+import {
+  boxExtent,
+  boxIndexAtTime,
+  drawBox,
+  isFiniteBox,
+  type BoxShape,
+} from './box.js';
 import {
   ContainerContext,
   LayersContext,
@@ -45,6 +51,16 @@ export interface BoxPlotProps<S extends SeriesSchema> {
    */
   gap?: number;
   /**
+   * How each box renders its spread — `'whisker'` (default; thin stems + caps),
+   * `'solid'` (the candlestick look: a light outer bar over the full range with a
+   * darker inner q1→q3 box, no stems), or `'none'` (the q1→q3 box only, no spread
+   * marks). See {@link BoxShape}.
+   */
+  shape?: BoxShape;
+  /** Draw the median (centre) line across each box. Always optional; default
+   *  `true`. (The `median` prop above names the *column*; this toggles the line.) */
+  showMedian?: boolean;
+  /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
    */
@@ -87,6 +103,8 @@ export function BoxPlot<S extends SeriesSchema>({
   as: semantic,
   axis,
   gap = 0,
+  shape = 'whisker',
+  showMedian = true,
   index = 0,
 }: BoxPlotProps<S>) {
   const container = useContext(ContainerContext);
@@ -154,12 +172,36 @@ export function BoxPlot<S extends SeriesSchema>({
           };
         },
         draw: (ctx, xScale, yScale) =>
-          drawBox(ctx, bx, xScale, yScale, style, gap, MIN_BOX_WIDTH_PX),
+          drawBox(
+            ctx,
+            bx,
+            xScale,
+            yScale,
+            style,
+            gap,
+            MIN_BOX_WIDTH_PX,
+            shape,
+            showMedian,
+          ),
       },
       axisId: axis,
       index,
     }),
-    [bx, series, lower, q1, median, q3, upper, style, gap, axis, index],
+    [
+      bx,
+      series,
+      lower,
+      q1,
+      median,
+      q3,
+      upper,
+      style,
+      gap,
+      shape,
+      showMedian,
+      axis,
+      index,
+    ],
   );
   // Stable per-instance slot (see useSlotKey): keeps this box's z-position +
   // identity across prop updates; the injected index drives the sort.

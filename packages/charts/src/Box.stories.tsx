@@ -176,6 +176,39 @@ export const CursorFlag: Story = {
   },
 };
 
+/**
+ * **`shape='solid'` — the candlestick look** (pjm17971's alternative style). A
+ * light outer bar spans the full `p5→p95` range; a darker inner box is `p25→p75`
+ * (same hue, rising opacity). No thin whiskers. The median (centre) line is
+ * optional — off here for the simplified read (`showMedian={false}`).
+ */
+export const Solid: Story = {
+  render: () => {
+    const q = percentileBuckets();
+    return (
+      <ChartContainer timeRange={rangeOf(q)} width={620} theme={estelaTheme}>
+        <ChartRow height={260}>
+          <YAxis id="ms" label="ms" />
+          <Layers>
+            <BoxPlot
+              series={q}
+              lower="p5"
+              q1="p25"
+              median="p50"
+              q3="p75"
+              upper="p95"
+              as="latency"
+              gap={14}
+              shape="solid"
+              showMedian={false}
+            />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
 /** A box series that breaks at a missing bucket — the gap box must not draw. */
 export const WithGap: Story = {
   render: () => {
