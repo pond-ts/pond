@@ -243,8 +243,11 @@ describe('TimeSeries.scan', () => {
       // order-dependence; byColumn's reducer stays pure.
       type GainAcc = { ref: number | null; gain: number };
       const T = 3;
-      const cumDist = [0, 400, 900, 1500, 2100, 2600];
-      const ele = [100, 110, 108, 130, 125, 145];
+      // Steady +10 climb so cumGain rises every step; bins 1 and 2 are
+      // multi-row with a per-bin `first` ≠ the series-global first (0), so the
+      // last−first reducer proves byColumn bins per-value, not series-global.
+      const cumDist = [0, 400, 900, 1200, 1700, 2200, 2700];
+      const ele = [100, 110, 120, 130, 140, 150, 160];
       const track = new TimeSeries({
         name: 'track',
         schema: [
@@ -278,17 +281,20 @@ describe('TimeSeries.scan', () => {
           },
         },
       );
-      // cumGain = [0,10,10,30,30,50]; cumDist floor-bins by /1000:
-      // bin [0,1000):   rows 0,1,2 (cumGain 0,10,10) → 10 − 0  = 10
-      // bin [1000,2000): row 3     (cumGain 30)       → 30 − 30 = 0
-      // bin [2000,3000): rows 4,5  (cumGain 30,50)    → 50 − 30 = 20
+      // cumGain = [0,10,20,30,40,50,60]; cumDist floor-bins by /1000:
+      // bin [0,1000):    rows 0,1,2 (cumGain 0,10,20)  → 20 − 0  = 20
+      // bin [1000,2000): rows 3,4   (cumGain 30,40)    → 40 − 30 = 10
+      // bin [2000,3000): rows 5,6   (cumGain 50,60)    → 60 − 50 = 10
+      // bins 1 & 2 would be 40 and 60 if the reducer saw the series-global
+      // first (0) — the local 10s prove the carry crosses bins but the split
+      // delta is per-bin. The scan owns the order-dependence; byColumn is pure.
       expect(splits.length).toBe(3);
       expect(splits[0]!.start).toBe(0);
-      expect(splits[0]!.gain).toBe(10);
+      expect(splits[0]!.gain).toBe(20);
       expect(splits[1]!.start).toBe(1000);
-      expect(splits[1]!.gain).toBe(0);
+      expect(splits[1]!.gain).toBe(10);
       expect(splits[2]!.start).toBe(2000);
-      expect(splits[2]!.gain).toBe(20);
+      expect(splits[2]!.gain).toBe(10);
     });
   });
 });
