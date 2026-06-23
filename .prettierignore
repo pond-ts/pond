@@ -3,3 +3,12 @@ node_modules
 dist
 coverage
 package-lock.json
+
+# Docusaurus docs site build output & generated API docs (mirrors website/.gitignore).
+# Prettier does not read nested .gitignore files, so these must be listed here for
+# the root format scripts to skip them.
+website/build
+website/.docusaurus
+website/.cache-loader
+website/static/generated-api
+website/static/api

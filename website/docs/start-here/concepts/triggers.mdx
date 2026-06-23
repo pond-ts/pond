@@ -4,19 +4,19 @@ sidebar_position: 6
 
 # Triggers
 
-A **trigger** describes *when* a live aggregation emits a snapshot.
+A **trigger** describes _when_ a live aggregation emits a snapshot.
 Pond's live operators (`live.rolling`, `live.aggregate`) maintain
 window state continuously; the trigger controls when downstream
 subscribers see a new event.
 
 Three trigger flavours, each with a clear use case:
 
-| Trigger              | Fires                                          | Use case                                    |
-| -------------------- | ---------------------------------------------- | ------------------------------------------- |
-| `Trigger.event()`    | Once per source event                          | Default; per-tick UI, debugging streams     |
-| `Trigger.every(d)`   | Once per epoch-aligned boundary crossing       | Backend reporting, dashboards               |
-| `Trigger.clock(seq)` | Same as `every`, with a custom `Sequence`      | Anchored boundaries, shared across operators |
-| `Trigger.count(n)`   | Once per `n` source events                     | Hot streams where time-boundaries lag       |
+| Trigger              | Fires                                     | Use case                                     |
+| -------------------- | ----------------------------------------- | -------------------------------------------- |
+| `Trigger.event()`    | Once per source event                     | Default; per-tick UI, debugging streams      |
+| `Trigger.every(d)`   | Once per epoch-aligned boundary crossing  | Backend reporting, dashboards                |
+| `Trigger.clock(seq)` | Same as `every`, with a custom `Sequence` | Anchored boundaries, shared across operators |
+| `Trigger.count(n)`   | Once per `n` source events                | Hot streams where time-boundaries lag        |
 
 All three are **data-driven** — the library does not run a
 `setInterval` or any wall-clock timer. A trigger advances only when
@@ -33,7 +33,7 @@ import { Trigger } from 'pond-ts';
 const rolling = live.rolling('1m', { cpu: 'avg' });
 // equivalent to: { trigger: Trigger.event() }
 
-rolling.on('event', e => {
+rolling.on('event', (e) => {
   // fires once per live.push call
 });
 ```
@@ -53,7 +53,7 @@ const rolling = live.rolling(
   { trigger: Trigger.every('30s') },
 );
 
-rolling.on('event', e => {
+rolling.on('event', (e) => {
   // fires when a source event crosses an epoch-aligned 30s boundary
   // e.begin() === <boundary timestamp> (0, 30000, 60000, ...)
 });
@@ -91,7 +91,7 @@ const rolling = live.rolling(
   { trigger: Trigger.count(1000) },
 );
 
-rolling.on('event', e => {
+rolling.on('event', (e) => {
   // fires every 1000 source events
   // e.begin() === <triggering event's timestamp>
 });
@@ -142,11 +142,11 @@ second subscription, no manual coordination.
 Both clock and count triggers compose with `partitionBy`, but with
 different semantics:
 
-| Trigger × partition mode  | Behaviour                                                              |
-| ------------------------- | ---------------------------------------------------------------------- |
-| `partitionBy(c).rolling(...)` (no trigger) | Per-partition rolling, each fires per source event independently |
+| Trigger × partition mode                                      | Behaviour                                                                                      |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `partitionBy(c).rolling(...)` (no trigger)                    | Per-partition rolling, each fires per source event independently                               |
 | `partitionBy(c).rolling(...,  { trigger: Trigger.every(d) })` | **Synchronised** — every known partition emits one row per boundary, all sharing the same `ts` |
-| `partitionBy(c).rolling(...,  { trigger: Trigger.count(n) })` | Per-partition count — each partition fires after its own Nth event |
+| `partitionBy(c).rolling(...,  { trigger: Trigger.count(n) })` | Per-partition count — each partition fires after its own Nth event                             |
 
 The synchronised form is what dashboards reach for: at each
 boundary tick, every host emits its current rolling-window snapshot

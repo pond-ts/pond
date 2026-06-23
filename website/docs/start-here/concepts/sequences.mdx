@@ -8,7 +8,7 @@ A `Sequence` defines a **grid over the timeline** — a set of equally
 or calendar-spaced boundaries that `aggregate`, `align`, and clock
 triggers consume to bucket or sample events.
 
-A sequence is a *grid definition*, not a finite bucket list. By
+A sequence is a _grid definition_, not a finite bucket list. By
 default it extends infinitely in both directions, anchored at the
 Unix epoch. Operators that consume a sequence either intersect it
 with the data (`aggregate(seq, mapping)`) or with an explicit range
@@ -26,9 +26,9 @@ Equally-spaced boundaries every `duration` milliseconds.
 ```ts
 import { Sequence } from 'pond-ts';
 
-const minutely  = Sequence.every('1m');
-const second    = Sequence.every('1s');
-const tick      = Sequence.every('200ms');
+const minutely = Sequence.every('1m');
+const second = Sequence.every('1s');
+const tick = Sequence.every('200ms');
 ```
 
 `duration` accepts the standard duration string format
@@ -56,9 +56,9 @@ align across operators.
 ### Convenience aliases
 
 ```ts
-Sequence.hourly();                  // = Sequence.every('1h')
+Sequence.hourly(); // = Sequence.every('1h')
 Sequence.hourly({ anchor: 1800_000 });
-Sequence.daily();                   // = Sequence.every('1d')
+Sequence.daily(); // = Sequence.every('1d')
 Sequence.daily({ anchor: 5 * 3600_000 }); // anchor at 05:00 UTC
 ```
 
@@ -75,8 +75,8 @@ boundaries matter — daily reports, monthly aggregates, weekday-vs-
 weekend rollups.
 
 ```ts
-Sequence.calendar('day',   { timeZone: 'America/New_York' });
-Sequence.calendar('week',  { timeZone: 'Europe/Madrid', weekStartsOn: 1 });
+Sequence.calendar('day', { timeZone: 'America/New_York' });
+Sequence.calendar('week', { timeZone: 'Europe/Madrid', weekStartsOn: 1 });
 Sequence.calendar('month', { timeZone: 'UTC' });
 ```
 
@@ -87,12 +87,12 @@ on DST transition days, where it's 23 or 25. The library uses the
 
 ### When calendar vs fixed-step matters
 
-| Use calendar when…                            | Use fixed-step when…                           |
-| --------------------------------------------- | ---------------------------------------------- |
-| Bucket means a calendar day / month / etc.    | Bucket means N seconds / minutes / hours       |
-| DST and varying month lengths matter          | DST and month variation are noise              |
-| Reports align to local working hours          | Sampling cadence is independent of wall clock  |
-| Cross-region comparisons need same wall hour  | Cross-region comparisons need same elapsed time|
+| Use calendar when…                           | Use fixed-step when…                            |
+| -------------------------------------------- | ----------------------------------------------- |
+| Bucket means a calendar day / month / etc.   | Bucket means N seconds / minutes / hours        |
+| DST and varying month lengths matter         | DST and month variation are noise               |
+| Reports align to local working hours         | Sampling cadence is independent of wall clock   |
+| Cross-region comparisons need same wall hour | Cross-region comparisons need same elapsed time |
 
 Calendar sequences are **rejected by some operators** that require
 constant-step boundaries — notably clock-triggered live rolling
@@ -129,10 +129,26 @@ import { BoundedSequence, Interval } from 'pond-ts';
 
 const parse = Date.parse;
 const quarters = new BoundedSequence([
-  new Interval({ value: 'Q1', start: parse('2025-01-01'), end: parse('2025-04-01') }),
-  new Interval({ value: 'Q2', start: parse('2025-04-01'), end: parse('2025-07-01') }),
-  new Interval({ value: 'Q3', start: parse('2025-07-01'), end: parse('2025-10-01') }),
-  new Interval({ value: 'Q4', start: parse('2025-10-01'), end: parse('2026-01-01') }),
+  new Interval({
+    value: 'Q1',
+    start: parse('2025-01-01'),
+    end: parse('2025-04-01'),
+  }),
+  new Interval({
+    value: 'Q2',
+    start: parse('2025-04-01'),
+    end: parse('2025-07-01'),
+  }),
+  new Interval({
+    value: 'Q3',
+    start: parse('2025-07-01'),
+    end: parse('2025-10-01'),
+  }),
+  new Interval({
+    value: 'Q4',
+    start: parse('2025-10-01'),
+    end: parse('2026-01-01'),
+  }),
 ]);
 ```
 
@@ -148,7 +164,7 @@ bucket.
 
 Every sequence — fixed-step, calendar, or bounded — produces
 **half-open `[begin, end)`** bucket extents. An event whose key
-timestamp equals a boundary lands in the *later* bucket, not the
+timestamp equals a boundary lands in the _later_ bucket, not the
 earlier one.
 
 ```ts

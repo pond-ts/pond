@@ -15,11 +15,11 @@ that says how the event sits on the timeline.
 TimeRange as an unlabeled extent, Interval as an extent that picks
 up its identity from the sequence that produced it](/img/concepts-temporal-keys.png)
 
-| Key         | Shape on the timeline              | Use when                                                  |
-| ----------- | ---------------------------------- | --------------------------------------------------------- |
-| `Time`      | One instant                        | The event is a point measurement                          |
-| `TimeRange` | An unlabeled span between two ts   | The event covers a duration but has no bucket identity    |
-| `Interval`  | A labeled span (carries an index)  | The event is a bucket produced by `aggregate` or `align`  |
+| Key         | Shape on the timeline             | Use when                                                 |
+| ----------- | --------------------------------- | -------------------------------------------------------- |
+| `Time`      | One instant                       | The event is a point measurement                         |
+| `TimeRange` | An unlabeled span between two ts  | The event covers a duration but has no bucket identity   |
+| `Interval`  | A labeled span (carries an index) | The event is a bucket produced by `aggregate` or `align` |
 
 ## `Time`
 
@@ -53,7 +53,7 @@ import { TimeRange } from 'pond-ts';
 
 new TimeRange({
   start: Date.parse('2025-01-01T00:02:00Z'),
-  end:   Date.parse('2025-01-01T00:04:00Z'),
+  end: Date.parse('2025-01-01T00:04:00Z'),
 });
 ```
 
@@ -77,7 +77,7 @@ import { Interval } from 'pond-ts';
 new Interval({
   value: 1735689600000,
   start: 1735689600000,
-  end:   1735689660000,
+  end: 1735689660000,
 });
 ```
 
@@ -103,9 +103,9 @@ You declare the key kind in the schema's first column:
 
 ```ts
 const schema = [
-  { name: 'time',     kind: 'time' },      // Time-keyed events
+  { name: 'time', kind: 'time' }, // Time-keyed events
   { name: 'duration', kind: 'timeRange' }, // TimeRange-keyed events
-  { name: 'bucket',   kind: 'interval' },  // Interval-keyed events
+  { name: 'bucket', kind: 'interval' }, // Interval-keyed events
   // ...value columns
 ] as const;
 ```
@@ -124,8 +124,8 @@ constructs the right key shape from the cell value:
 All three key shapes share the same minimal interface:
 
 ```ts
-key.begin();  // number — the earliest instant in the key's extent
-key.end();    // number — the latest instant in the key's extent
+key.begin(); // number — the earliest instant in the key's extent
+key.end(); // number — the latest instant in the key's extent
 key.toJSON(); // serialise to the schema-typed JSON form
 ```
 

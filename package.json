@@ -18,8 +18,8 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces --if-present",
-    "format": "prettier --write \"packages/*/{src,test}/**/*.{ts,tsx}\"",
-    "format:check": "prettier --check \"packages/*/{src,test}/**/*.{ts,tsx}\"",
+    "format": "prettier --write \"packages/*/{src,test}/**/*.{ts,tsx}\" \"website/**/*.{md,mdx,ts,tsx,js,jsx,json,css}\"",
+    "format:check": "prettier --check \"packages/*/{src,test}/**/*.{ts,tsx}\" \"website/**/*.{md,mdx,ts,tsx,js,jsx,json,css}\"",
     "verify": "npm run format:check && npm run build && npm test"
   },
   "devDependencies": {
