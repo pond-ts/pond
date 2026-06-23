@@ -1,364 +1,399 @@
-# RFC: The value axis — non-time x in pond-ts (analytics + visualization)
+# RFC: The value axis — a closed value-keyed series (`ValueSeries`)
 
-> **Status:** draft, for red-team. **Not a commitment** (see CLAUDE.md →
-> Strategic RFCs). This explores whether a non-time x-axis _belongs_ in
-> pond-ts and, if so, the shape it should take across the analytics core
-> and the chart layer. Phases adopted into PLAN.md become the contract;
-> the rest is forward-looking context.
+> **Status:** draft (**v2**), for red-team. **Not a commitment** (see CLAUDE.md →
+> Strategic RFCs). Explores non-time x in pond-ts across the analytics core and
+> the chart. Phases adopted into PLAN.md become the contract; the rest is
+> forward-looking context.
 >
-> **Original draft:** the pond-ts library agent (Claude), prompted by
-> pjm17971 (estela's time-and-distance need + the value-axis work already
-> landed in core). Review layers from the estela / geo / core agents are
-> appended as new sections — _layer, don't rewrite_ (per `streaming.md`).
+> **Original draft:** the pond-ts library agent (Claude), prompted by pjm17971
+> (estela's time-and-distance need + the value-axis work already in core).
+>
+> **Revision note (v1 → v2).** v1 framed value-land as
+> `byColumn`/`rollingByColumn` → bare `{start,end,…}[]` records + a chart adapter,
+> calling those operators "tight analogues" of `aggregate`/`rolling`. The
+> red-team (estela / Codex / dashboard agents — see the Review sections) plus
+> pjm17971's read killed that framing: the records output is a **grain-violation**
+> (value-land has no closed type), the "analogue" claim was **false** (the
+> operators aren't closed — they exit the algebra), and v1 **overclaimed** core's
+> guarantees. The reframed spine below centers a **closed `ValueSeries` type**;
+> the v1 → v2 changelog is in **Amendments**.
 
-## 1. The question, and the bar it has to clear
+## 1. The question, and the bar
 
-estela visualizes activity data over **both time and distance** — pace and
-HR over distance, per-km splits, laps, an elevation-vs-distance profile. The
-chart layer (`@pond-ts/charts`) is **time-locked**: `ChartContainer` owns a
-single `scaleTime`, every row shares it, the x is wall-clock. That was a
-deliberate early simplification.
+estela visualizes activity data over **both time and distance** — pace/HR over
+distance, per-km splits, laps, an elevation-vs-distance profile. The chart is
+**time-locked** (`ChartContainer` owns one `scaleTime`). Does a non-time x belong
+in pond-ts?
 
-So: does a non-time x-axis belong here? The bar is not "is it useful"
-(obviously, for estela). The bar pjm17971 set is **elegance** — it has to
-_emerge from pond's existing grain_, not be grafted on. If it reads as a
-foreign feature bolted to a time-series library, it doesn't belong, however
-useful.
+The bar pjm17971 set is **elegance** — it has to _emerge from pond's grain_, not
+be grafted on. The red-team sharpened what that means here: the question is not
+"is a value axis useful" (obviously, for estela) nor even "did the analytics
+ship it" — it's **"what makes value-land composable the way the rest of pond
+is."** That reframes the whole proposal, and it's the spine of v2.
 
-The thesis of this draft is that it clears that bar **because the analytics
-core already crossed this line** — comprehensively, and before the chart did.
-The non-time axis is not a new concept we're proposing; it's a concept pond
-_already has_ that the chart hasn't caught up to.
+## 2. What the analytics actually shipped: a projection _out_, not a closed world
 
-## 2. It already belongs: the analytics side shipped it
+Two operators ship and are documented as value-axis analogues of the temporal
+ones:
 
-Two operators, already merged, are the value-axis analogues of the temporal
-ones — and the core's own JSDoc names them exactly that:
+- **`byColumn(col, spec, mapping)`** — _"value-axis aggregation. Where `aggregate`
+  buckets the temporal key, `byColumn` buckets rows by the value of a numeric
+  column."_ Returns `Array<{ start, end, ...aggregates }>`. **Binning is
+  order-free** — its own doc supports a non-monotonic source (a power histogram);
+  it does **not** require or enforce a monotonic column. (v1 claimed it did —
+  false; Codex #1.)
+- **`rollingByColumn(col, { radius, at? }, mapping)`** — the centered-window
+  analogue of `rolling`; **does** enforce non-decreasing; returns
+  positionally-aligned records; takes `{ at }` = "a chart's coarse display grid."
 
-- **`byColumn(col, spec, mapping)`** — _"value-axis aggregation. Where
-  `aggregate` buckets the temporal key, `byColumn` buckets rows by the value
-  of a numeric column and collapses each value-bin to one record."_ Returns
-  `Array<{ start, end, ...aggregates }>` — value-interval records, **not a
-  `TimeSeries`, "because value-bins (distance / power ranges) are not
-  time-indexed."** Binning modes: even `{ width, origin }` or explicit
-  `{ edges, inclusive }`. The documented use cases _are estela's_: **per-km
-  splits, the elevation-vs-distance profile, power/HR zones, distributions.**
-- **`rollingByColumn(col, { radius, at? }, mapping)`** — _"the value-axis
-  analogue of `rolling`."_ A centered sliding window along a value axis,
-  one record per row (positionally aligned, zip against the axis column).
-  And it already takes **`{ at }` — "a non-decreasing array of explicit
-  center values (e.g. a chart's coarse display grid)"** — i.e. the core
-  author pre-wired the chart-reduces-over-a-value-axis use case.
+Both return **records** — they project _out_ of pond's typed world. And the
+**head** of the pipeline isn't shipped: the monotonic column they bucket on
+(`cumDist`, `cumGain`) has to be _produced_ by a running fold, which today is
+`cumulative` (un-generalized) — estela hand-rolls the rest (§ Review — estela).
 
-Both **require a non-decreasing numeric column** and enforce it (a descending
-step throws). Both reduce with the same validated reducer mapping the temporal
-operators use.
+So the honest statement is **not** "the analytics shipped the value axis, the
+chart is the laggard" (v1; Codex + dashboard both flagged this as
+self-flattering). It is: **the analytics shipped a _project-out reduce_; the
+axis-construction head (`scan`), the chart, and — the real gap — a _closed
+value-land type_ are all still pending.** Taking this on is taking on all three,
+not adopting a finished half.
 
-Read that back: the value axis is not hypothetical in pond. It is a **shipped,
-load-bearing concept in the analytics layer**, with splits / profiles / zones
-as first-class documented outputs and a chart display-grid hook already in the
-API. The only layer still asserting "x is time" is the chart. **That asymmetry
-— not a missing feature — is what this RFC is really about.**
+## 3. The spine: value-land needs a _type_, because pond is a closed algebra
 
-### 2a. One precision, from estela's friction report: the axis has a _head_
+pond's value is that its operators are **closed**: `TimeSeries → TimeSeries`,
+chain forever, every result carries the same operators. `byColumn` /
+`rollingByColumn` break that — they hand back `{start,end,…}[]`, a bare array
+with no operators, no guarantees, no composition. pjm17971's three objections are
+**one objection** seen from three sides:
 
-The "shipped" claim glosses one upstream step: a monotonic axis column has to be
-**produced**. `cumDist`, `cumGain` are not in the raw stream — they're a running
-fold over per-sample deltas, and `byColumn('cumDist', …)` can't run until one
-exists. estela's friction report files exactly this as **"the one big ask"**:
-generalize `cumulative` (already a running fold, but it locks accumulator =
-output value = output column, `number`-only) into a typed-accumulator **`scan`**
-— the classic `mapAccumL`, `step: (acc: A, value, i) => [next: A, output:
-number]`, with `cumulative` kept as the scalar sugar. The motivating case,
-hysteresis elevation gain, carries `(ref, gain)` but emits only `gain` — which a
-`number`-that-is-the-output can't express.
+1. **Non-composable output** — "once you're in value land you're on your own."
+   The thing being violated is **closure**: an operator that doesn't return
+   something with operators.
+2. **The time/value pairing is weaker than argued** — correct, and the asymmetry
+   isn't "time vs value." `aggregate` is closed (`→ TimeSeries`); `byColumn` is
+   **not closed** (`→ records`). They were never true analogues; one stays in the
+   algebra, the other escapes it.
+3. **"This should be a pivot — a `ValueSeries` where guarantees are made and a
+   set of operators takes the transform where the consumer needs"** — the cure.
+   Give value-land a type and (1) and (2) dissolve; the bare-records "analogue"
+   was the disease.
 
-So the **full** value-axis pipeline is:
+So the **central design question of this RFC** is no longer "records + which
+chart adapter" — it is **records (project-out) vs a closed `ValueSeries`.**
 
-> **`scan` (build the monotonic axis) → `byColumn` / `rollingByColumn` (reduce
-> over it) → chart (plot over it) + the decimator (`bin` over it).**
+## 4. `ValueSeries` is a recognition, not an invention
 
-The reduce-over-the-axis half shipped (`byColumn` / `rollingByColumn`); the
-**axis-construction head, `scan`, is specified-but-unbuilt** — estela has the
-full spec (signature, semantics inherited from `cumulative`, worked example, a
-correctness case). The honest statement is therefore not "fully shipped" but:
-_the value axis belongs, and the analytics has built all of it bar one named,
-already-designed primitive at the head._ `scan` is the likely lead of the next
-wave (§10) and lands as its own core change, not inside this chart RFC.
+The key was never essentially _time_. Verified in core: the key column is a
+generic `Float64Array` `[begin, end)` with kinds **`'time' | 'timeRange' |
+'interval'`** — there is already a non-time `'interval'` kind. "Time" is a **tag
+on a monotonic numeric ordering**, not the essence. Therefore:
 
-This _strengthens_ the elegance bar rather than weakening it. The report
-explicitly **rejects a domain `split()` operator** ("too sport-specific — it'd
-be pond's first domain operator") in favour of **`split = scan + byColumn`**:
-materialize the carried state into a column with `scan`, then segment it
-statelessly with `byColumn` (the bucket reducers stay pure and order-free; all
-order-dependence is isolated in the scan). And the migration is a **correctness**
-fix, not merely ergonomic — the hand-rolled carryover loop has a
-multi-boundary-collapse bug on gappy data (a tunnel / auto-pause step ≥ the
-interval collapses several km into one mislabeled split), which `byColumn`'s
-floor-binning is immune to by construction (the sample-less middle is an honest
-empty bin). Composition of general primitives over a domain operator,
-self-correcting on real data — that is the bar a value axis has to clear, head
-to tail, and it clears it.
+- A **`ValueSeries`** (distance-keyed) is the _same numeric-interval substrate_
+  with a value tag — not a parallel reimplementation.
+- `byColumn` / `rollingByColumn` stop being weak analogues and become the
+  **`TimeSeries → ValueSeries` projection** — the "transform" pjm17971 named.
+- `ValueSeries` carries §5's **ordering-based** operators; the calendar ops are
+  the _time-only_ extension. The symmetry becomes **true and type-level**.
+- **Naming symmetrizes for free.** `byColumn` is awkward because it _fuses_
+  project + aggregate into one un-typed call. Split them — `series.byValue('cumDist')
+→ ValueSeries`, then `.aggregate({ width })` mirroring `TimeSeries.aggregate` —
+  and the awkwardness goes (addresses pjm17971's objection 2). (Concrete names
+  deferred — see Open decisions.)
+- It **de-over-fits.** Records are estela-shaped; a `ValueSeries` is general. The
+  cure for "feels over-fitted" is the _more_ general type, not the less.
 
-## 3. Why it generalizes cleanly: ordering vs calendar
+## 5. Ordering vs calendar — what `ValueSeries` inherits, and what it doesn't
 
-The reason the value axis fits rather than fights is worth stating precisely,
-because it tells us _what_ to generalize and what to leave alone.
+The machinery splits cleanly, and the split _defines_ the `ValueSeries` operator
+set:
 
-pond's key has always been a **monotonic numeric ordering**. Time (epoch ms)
-is the canonical instance, but the machinery splits into two kinds:
+- **Ordering-based — `ValueSeries` inherits these.** `bisect`, `nearest`,
+  `atOrBefore`/`atOrAfter`, the columnar slice, interval `[begin, end)` keys,
+  count-/radius-windowing, binning a monotone axis into ranges. None needs
+  wall-clock semantics — only an ordering and a metric.
+- **Calendar/clock-specific — time-only, NOT on `ValueSeries`.** `Sequence.every('10m')`
+  (needs to know what a minute is), tz tick formatting, `scaleTime`'s
+  nice-boundary ticks.
 
-- **Ordering-based — works for any monotonic numeric axis.** `bisect`,
-  `nearest`, `atOrBefore` / `atOrAfter`, the columnar slice, interval (`[begin,
-end)`) keys, count- or radius-windowing, binning a monotone column into
-  ranges. None of this needs wall-clock semantics — only an ordering and a
-  metric (distance between two axis values).
-- **Calendar/clock-specific — genuinely time-flavored.** `Sequence.every('10m')`
-  (needs to know what a minute is), timezone-aware tick formatting,
-  `scaleTime`'s nice clock-boundary ticks.
+So `ValueSeries` is "the series carrying the ordering-based operators, over a
+value axis" — and the time-only extension is exactly the calendar layer. That is
+why it belongs: it is the part of pond that was never really about time.
 
-A value axis (cumulative distance, accumulated work, depth, elapsed seconds)
-**reuses the ordering machinery wholesale** and substitutes value-flavored
-bucketing (`byColumn`'s `width` / `edges` — already built) for clock-flavored
-bucketing, and value-flavored formatting (`"5.0 km"` — chart side, TODO) for
-tz-aware time formatting. That is the whole shape of the change. It belongs
-because it is _the concept pond already has, minus the calendar sugar._
+## 6. Data model — reconciled (source stays `TimeSeries`; `ValueSeries` is the output)
 
-## 4. The data model — largely settled by the core's grain
+estela confirmed (Review below) what v1 guessed: the **source stays
+time-keyed** — its canonical series is the time-keyed activity, `cum` is a
+derived monotonic `Float64Array`, channels are projected against it; it **never
+re-keys by distance**. So `ValueSeries` is **not** "re-key the source" (the
+rejected model A); it is the **derived output**. Two constructors:
 
-There is a real fork here, and pond core has already chosen a side. The two
-candidate models:
+- **Raw projection** — `TimeSeries` + a named monotonic axis column (`cumDist`) →
+  `ValueSeries`. Because `cum` is monotonic in time-order, this is a **no-op
+  reindex** (same rows, axis read = the `cum` column), cheap.
+- **Aggregated** — `byColumn(cumDist, { width })` → `ValueSeries` of value-bin
+  rows (splits / profile).
 
-- **(A) Value-as-key** — re-key a `TimeSeries` by distance so the key _is_
-  distance. Conceptually pure, but it discards the natural (time) key, forces a
-  re-sort, and means a series carries one axis when an activity inherently has
-  several (time, distance, …).
-- **(B) Project onto a designated column** — the series keeps its natural key;
-  analytics and the view _project_ onto a monotonic value column. Operators
-  take the axis column; output is records.
+Records are the **substrate** — a `ValueSeries`'s rows _are_ `byColumn`'s
+`{start,end,…}`; the type is the layer over them, so "records now" is additively
+wrappable as "`ValueSeries` later" (not a one-way door). Two consumer specifics
+from estela that the type must carry:
 
-**Core chose (B), explicitly and twice.** `byColumn` returns `{ start, end, … }`
-records "**not a `TimeSeries`, because value-bins are not time-indexed**";
-`rollingByColumn` returns positionally-aligned records, "the caller already
-has the axis column to zip against." There is no `reKeyBy(column)` and the
-returns deliberately avoid pretending value-bins are time.
+- **Multi-aggregate + a metric select.** A split record carries many aggregates
+  (distance/duration/gain/NP/avgHR/avgPower/…); the bar height is one _selected_
+  aggregate. The projection is `…({ axis, value })`, not single-valued bins.
+- **Statistical-band marks, not min/max, not bars-only.** estela's profile is
+  median + IQR + percentile band as a `BandChart` over `[start, end)` — so the
+  reducer set feeding marks must include the quantiles (the "statistical bands =
+  M5 gate"), and "`ValueSeries` → interval marks" must cover band marks.
 
-So the chart should follow the same grain and consume **two existing shapes**,
-not invent a third:
+**Gap honesty (Codex #3, sharpened).** `byColumn` floor-binning fixes the
+hand-roll's multi-boundary _collapse_ (it won't mislabel a 2500 m jump as one
+split), but it does **not allocate across a sample gap** — a 0.9→3.1 km jump
+leaves the middle km as **empty bins**, not allocated pace/gain. That is
+gap-_honest_ but not _complete_. estela already encodes this honesty
+(`MAX_CARRY_METERS`: carry a short hole, else emit NaN and break rather than draw
+stale). So this RFC must **define gap/unknown semantics** for value-bins
+(empty-bin-honest vs interpolate-across), not claim correctness. _[Open
+decision.]_
 
-1. **Value-interval records** — `byColumn`'s `{ start, end, ...values }[]`. These
-   map _directly_ onto the chart's interval marks (`BarChart` / `BoxPlot` /
-   `BandChart` already key on `[begin, end)`). A per-km split chart is
-   `byColumn('cumDist', { width: 1000 }, …)` → bars over `[start, end)`. **Splits
-   and laps are byColumn output rendered as interval marks** — no new data
-   concept required.
-2. **A raw series + a named monotonic axis-column** — plot `hr` against
-   `cumDist` by zipping the `cumDist` column with the values (with
-   `rollingByColumn({ at })` for the reduced/decimated form). This is the
-   point/line case.
+## 7. The honest tension, and the staged path
 
-The only genuinely new _data_ glue is a thin **records → plottable adapter**
-(the long-standing "pace-axis carry-forward": a `byColumn`/`rollingByColumn`
-result is an array of records, and the chart wants to iterate `{ axisStart,
-axisEnd, value }`). That adapter is small and belongs in the chart's data
-module (`fromValueBins`, alongside `fromTimeSeries`).
+`ValueSeries` is a **bigger bet** than the shipped records, and the genuine
+counter is real: estela — the actual consumer — confirmed records _work_, and its
+pipeline is essentially linear (`scan → cum → byColumn → render`), **not**
+value-land _chaining_. So `ValueSeries`'s composability is, today, **unexercised
+generality** — and pond's discipline (the elegance bar; the dashboard agent's
+defer-generality) says don't build an algebra on spec.
 
-## 5. The visualization side
+The resolution: **adopt the type early, grow the algebra late.**
 
-### 5a. x-geometry: widen a type, don't abandon a principle
+- **Type early.** The substrate is already generic numeric-interval (§4), so the
+  type is cheap-ish — a value tag + operator-gating + value formatting + having
+  the projection return it. Adopting it restores the grain so value-land isn't a
+  dead-end.
+- **Algebra late.** Ship `ValueSeries` with only what the chart / cursor /
+  decimator need (slice-by-value, nearest-by-value, the axis-domain bin) — **not**
+  a full `TimeSeries` mirror. Add operators as composition needs prove out, and
+  **explicitly not on estela alone**: a second value-axis consumer (geo) is the
+  signal that earns more. That is the over-fitting guard pjm17971 asked for.
 
-`ChartContainer`'s `xScale: ScaleTime` generalizes to a **monotonic value
-scale** (linear over a value domain; `scaleTime` is the default instance). The
-container gains an x-axis _spec_ — which column is the axis (default: the time
-key), its `[min, max]` domain, its formatter.
+**The pragmatic alternative, stated honestly:** ship records + a chart adapter,
+build `ValueSeries` only if a second consumer chains value-ops. Lower cadence
+cost. The reason to prefer the type anyway: records-as-the-model leaves a
+permanent wart in a _library_, where consumers chain — `ValueSeries` is the
+version that _belongs_. **Lean: `ValueSeries` is the north star; ship the
+records-substrate + chart MVP first; grow the type/algebra as a second consumer
+earns it.**
 
-Crucially, the architecture's actual bet — **one shared x-geometry across all
-rows** — survives untouched. An activity dashboard sharing a _distance_ axis
-(HR, pace, elevation rows all reading the same `cumDist` x; the synced cursor
-at 5 km lighting up all three) is the _same model_ as sharing a time axis. We
-are widening the **type** of the shared x, not removing the sharing. The early
-"x is time" decision was a simplification of this; its value (shared x) is
-preserved.
+## 8. The chart
 
-### 5b. Most of the cursor/axis work just shipped is already axis-agnostic
+The payoff of §4: the chart consumes a `ValueSeries` **the same way it consumes a
+`TimeSeries`** — the x is whatever the series' axis is. So most of the chart
+generalization is type-plumbing, and the just-shipped cursor/axis-format work is
+already axis-agnostic:
 
-In hindsight, the M4–M5 cursor + axis-format work generalizes into this for
-nearly free:
+- `ChartContainer`'s `scaleTime` → a **monotonic value scale** (time = default
+  instance). The **shared-x-across-rows bet survives** (shared distance: HR/pace/
+  elevation rows all at 5 km, synced cursor). Widen a type, keep the sharing.
+- `resolveAxisFormat`/`timeFormat` already make the x formatter pluggable (a
+  distance formatter vs the time one); the cursor is x-_pixel_ based (`invert`
+  returns a value); `TimeAxis` → an `XAxis` (value-or-time), the sibling of the
+  value `YAxis`.
+- **The monotonicity contract lives on the axis _projection_, not `byColumn`**
+  (Codex #1). Any column used as the chart x must pass an explicit
+  `assertMonotonicAxis`; `byColumn`'s order-free binning is a separate concern.
+- **One axis per container** (estela + dashboard confirm; Plot.js precedent — a
+  time plot and a distance plot are two plot instances). The Miles/Time toggle is
+  a per-container swap. **Refinement (estela):** to make the toggle cheap on
+  large tracks (~4M-sample PCT), a record can carry _both_ candidate x's
+  (`distance` and `time`) and the x-spec **selects** one — so a toggle
+  **re-scales, not re-buckets**.
+- **Splits/laps = `ValueSeries` interval marks** (bars/boxes/bands over
+  `[start, end)`), which **un-parks range-editing #261** (editable ranges on a
+  value axis = lap editing).
 
-- **`resolveAxisFormat` / `resolveTimeFormat`** already make the x formatter
-  pluggable. A distance axis is a value formatter (`'.1f'` → `"5.0 km"`); time
-  is the `scaleTime.tickFormat` instance. The split is already there.
-- The **cursor is x-_pixel_ based** (`cursorX`, `xScale.invert`). On a value
-  axis, `invert` returns a distance instead of epoch-ms; the cursor-time chip
-  becomes a cursor-x chip through the same formatter. The flag/staff/dot
-  geometry is unchanged (it anchors at `(xScale(x), yScale(value))` regardless
-  of what x _means_).
+## 9. The decimator — decoupled from the value axis
 
-So the new surface area on the chart is smaller than it looks: an x-axis spec,
-a value-formatting `XAxis` (sibling of the value `YAxis` we already have), and
-the data adapter. The cursor, gutters, sync, and selection come along.
+v1 tied the decimator and the value-axis x-spec into "one body of work." The
+dashboard agent pushed back, correctly, and it composes with Codex #2:
 
-### 5c. x-axis chrome
+- **Ship the decimator time-only first.** For a uniformly-sampled time series,
+  the existing **index-domain `Column.bin`** (equal-width by row count) is valid;
+  it's a perf primitive every time-series consumer wants, and its ship gate
+  shouldn't wait on the value-axis design.
+- **The value axis brings the axis-domain primitive.** `Column.bin` buckets
+  _rows_, not axis _values_ — on irregular/gappy distance data that puts extrema
+  in the wrong pixels (Codex #2). So the value axis is what forces
+  `binByAxis(axisColumn, visibleRange, n, reducers)`. Same projection layer,
+  **sequenced** — not one ship gate. (Cadence over reuse.)
 
-`TimeAxis` generalizes to an **`XAxis`** that formats value-or-time — the exact
-mirror of how `YAxis` already formats an arbitrary value axis. (Symmetry worth
-noting: today the _y_ axis is general and the _x_ axis is special-cased to
-time; this makes them siblings.)
+## 10. `scan` — its own RFC, and the lead of the wave
 
-### 5d. Splits / laps — and a reason to un-park range-editing
+The axis-construction head. `cumulative` is a running fold but locks accumulator
+= output value = output column, `number`-only; the motivating case (hysteresis
+elevation gain, carrying `(ref, gain)`, emitting only `gain`) needs them apart.
+Generalize to **`scan`** (the classic `mapAccumL`): `step: (acc: A, value, i) =>
+[next: A, output: number]`, `cumulative` kept as the scalar sugar. `split = scan
 
-A lap or split is an **interval on the value axis** — `[dist_start,
-dist_end)` — which is precisely `byColumn`'s `{ start, end }` output and
-precisely what bar/box/band marks already render. So:
+- byColumn`— materialize the carried state into a column, segment statelessly
+(bucket reducers stay pure/order-free). estela explicitly **rejected a domain`split()`\*\* for this composition.
 
-- **Splits/laps visualization = `byColumn` value-intervals as interval marks.**
-- **Editable laps = the range-editing RFC (`#261`, parked) applied to a value
-  axis.** Editing a range on a distance axis _is_ editing a split/lap boundary.
-  This gives `#261` a concrete, user-born driver and re-prioritizes it from
-  "parked" to "companion work."
+`scan` **gets its own RFC** (dashboard) — not folded in here as wave-of-related
+work, because it's a foundational primitive whose design outlives this question
+and must be designed for the **abstract** `mapAccumL` case (finite-state
+emitters, threshold triggers), resisting sport-specific shape leakage. It
+**leads the wave**, lands as a **core** change, and **forecloses nothing** (it
+returns a `TimeSeries` + a column — agnostic to records-vs-`ValueSeries`). It
+also lets estela _delete_ its hand-rolled `cum`/`cumGain`/hysteresis. Until it
+lands, the chart adapter must accept an **externally-supplied aligned axis
+array**, not only a named column (estela's `cum` is a sidecar today).
 
-### 5e. One axis per container
+## 11. Consolidation — the real frame is the type, demand-gated
 
-A `ChartContainer` is one shared x. Time-vs-distance is therefore a **per-
-container choice** (or a UI toggle that swaps the x-column spec and re-derives
-the scale + decimation). We are _not_ proposing a container with a time row and
-a distance row — that breaks the shared-x premise, and there's no use case for
-it. (A dashboard with both a time view and a distance view is two containers.)
+v1's §7 asked whether the `aggregate`/`byColumn`, `rolling`/`rollingByColumn`
+**operator twins** should consolidate into one axis-parameterized operator, and
+deferred it. Two corrections:
 
-## 6. The decimator is the same plumbing (see `charts.md` perf section)
+- The dashboard agent showed the v1 "principled twins" defence was **half right**:
+  the _input_ difference is real (the temporal key **is** the sorted index;
+  `aggregate` trusts storage order, `byColumn` must validate) — a genuine
+  implementation seam. But the _output_ difference (`TimeSeries` vs records) is
+  **weak**: a `TimeSeries` is records-with-time-keys, and most consumers don't
+  care about the wrapper. So the twins are principled at the _implementation
+  seam_, not at the _consumer surface_.
+- More importantly, the **operator merge was the wrong consolidation to debate.**
+  The consolidation that matters is the **type** (`ValueSeries`) — making
+  value-land closed — not collapsing the operators. The operator-merge stays
+  **deferred hard** (a third axis _kind_ earns it, not estela). And even the
+  `ValueSeries` _algebra_ grows demand-driven (§7) — adopt the type, defer the
+  breadth.
 
-The performance work and the value axis are **one generalization viewed from
-two ends.** The decimator needs to bucket the visible slice over a monotonic
-axis into ~`plot_width` buckets; the value-axis chart needs to project, slice,
-and scale over a monotonic axis. Same prerequisite: _"what is my x column, its
-domain, and the visible slice?"_
+## 12. Positioning (pjm17971's call)
 
-Concretely:
+This expands pond's positioning from "a time-series library" toward "a
+**monotonic-axis library where time is canonical**." A real directional bet
+(uPlot stays time-only, small/fast; Plot.js generalizes axis types, bigger). But
+pond has a **middle path** neither has: because **time stays zero-config default
+and the value axis is opt-in**, a time-only consumer never confronts the
+axis-type API — so the "every consumer pays a conceptual tax" risk is much lower
+than the Plot comparison implies (it's not zero — the codebase/docs carry the
+generality — but it's opt-in, not borne by all). What the bet still can't answer:
+whether estela + geo are the **leading edge** of a broader value-axis consumer
+base or the **only** two cases pond will see. The elegance bar guards against the
+sloppy version; it can't tell you if the bet pays. **Framed open — pjm17971's
+directional decision.**
 
-- The proposed per-pixel downsampler — referenced in core as `bin(W, reducer)`
-  "for the chart per-pixel downsampler" — is the **render-time** reduction.
-- `rollingByColumn({ at: displayGrid })` is the **value-axis** render-time
-  reduction the core already exposes.
+## 13. Non-goals · phasing · open decisions
 
-Both ride the same x-projection plumbing this RFC adds. **Build them together:**
-the value-axis x-spec is the decimator's prerequisite, and the decimator's `bin`
-is one of the value-axis chart's scaling tools. Doing one alone pays most of the
-cost of the other.
+**Non-goals.** Not 2D (a value x is one shared 1-D axis; scatter's 2D-nearest
+cursor is a separate deferred thing). Not arbitrary non-monotonic x (monotonic is
+the contract for the _axis projection_; laps are intervals on _cumulative_
+distance). Not generalizing the calendar. Not re-keying the source `TimeSeries`.
+Not a commitment.
 
-## 7. The one genuinely open question — consolidation vs principled twins
+**Tentative phasing (friction-driven).**
 
-This is the part to _not_ rush, and where I'd most want the red-team.
+0. **`scan`** — own RFC + core change, **wave lead**; abstract `mapAccumL`,
+   leak-resistant. Forecloses nothing.
+1. **`ValueSeries` type** — the value-tag over the numeric-interval substrate +
+   the projection (`byValue` / `byColumn`/`rollingByColumn` returning it) + a
+   _minimal_ operator set (slice/nearest + the chart needs). Adopt the type;
+   defer the breadth.
+2. **Chart x on `ValueSeries`** — `scaleTime` → value scale; `XAxis`;
+   `assertMonotonicAxis` on the projection. Reuses cursor/format.
+3. **Decimator** — time-only `Column.bin` first (own cadence), then `binByAxis`
+   with the value axis.
+4. **Splits/laps marks** + **lap editing** (#261 on a value axis).
+5. **(Deferred)** operator-surface consolidation; broader `ValueSeries` algebra
+   — gated on a second value-axis consumer.
 
-The core now has **twins**: `aggregate` / `byColumn`, `rolling` /
-`rollingByColumn` (and `bin` proposed). As the chart pulls the value axis in,
-the tempting move is a unifying **`Axis` abstraction** — the temporal key _or_ a
-designated monotonic column, carrying its own monotonicity guarantee and
-metric — that `aggregate` / `rolling` / `bin` / `nearest` / the chart all
-parameterize over, collapsing the twins into one operator each.
+**Open decisions (for the red-team).**
 
-The honest counter-argument is that **the twins may be principled, not
-duplication**:
-
-- **Input differs ontologically.** The temporal key _is_ the sorted index;
-  `aggregate` exploits that (no validation, it's the storage order). A value
-  column is _data that happens to be monotonic_; `byColumn` must validate
-  non-decreasing and cannot assume it's the index.
-- **Output differs.** `aggregate` → a `TimeSeries` (time-indexed, re-keyable,
-  chainable). `byColumn` → records (`{ start, end, … }`, deliberately _not_
-  time-indexed). A unified operator would have to return one or the other and
-  lie about half its uses.
-
-So the difference in _both_ input (index vs column) and output (series vs
-records) suggests the twinning reflects a real seam in the model, not an
-accident waiting to be DRY'd away.
-
-**Recommendation (the "not rushed" part):** build the chart on the **existing**
-value-axis outputs — which requires _no_ resolution of this question — and
-**defer the operator-surface consolidation** until a third axis-projection (or
-sustained friction from the twins) earns it. Unifying on spec, before the chart
-has even consumed what exists, is exactly the kind of premature elegance that
-ages badly. Let the evidence accumulate; the chart doesn't block on it.
-
-## 8. What this unifies (it is not a new island)
-
-- **The "wall-clock vs relative/elapsed-time axis" backlog item** (charts axis
-  backlog) — elapsed-seconds-from-start is a value axis; subsumed here.
-- **geo F-geo-2 distance bucketing** — shares `byColumn` / `bin`.
-- **The pace-axis carry-forward** (records → plottable) — lands here as the
-  data adapter.
-- **Splits/laps + range-editing `#261`** — value-interval marks + editable
-  ranges on a distance axis.
-- **`scan`** (generalized `cumulative`) — the axis-construction _head_ (§2a);
-  estela's "one big ask" (`split = scan + byColumn`). Lands as its own core
-  change; this RFC's splits / profile cases depend on it.
-- **`runs` / `segmentsInRange`** — estela's third scan-family signal: RLE of a
-  predicate over a value column → `[startMeters, endMeters]` segments (HR / power
-  zones, "every stretch in Tempo"). Another producer of value-interval records,
-  i.e. the _same_ interval marks the chart already renders for splits/laps.
-
-The value axis is the keystone several pending threads already lean on.
-
-## 9. Non-goals
-
-- **Not 2D.** A value x is still a single shared 1-D axis. Scatter's 2D-nearest
-  cursor (deferred from the cursor RFC) remains its own, separate question; this
-  does not address or require it.
-- **Not arbitrary non-monotonic x.** Monotonic-non-decreasing is the contract
-  (`byColumn`/`rollingByColumn` already enforce it; the chart slice/cull/cursor-
-  snap all assume it). Lap-_relative_ distance (resets each lap) is not a valid
-  global x — laps are intervals on _cumulative_ distance.
-- **Not generalizing the calendar.** `Sequence.every('10m')` stays time. Whether
-  a value-step sequence is wanted (e.g. centers every 1 km) is a separate,
-  optional question — `byColumn({ width })` likely already covers the need.
-- **Not re-keying `TimeSeries` by value** (§4 — core chose records).
-- **Not a commitment.** A direction to test.
-
-## 10. Tentative phasing (friction-driven — not a roadmap to march)
-
-0. **`scan`** (core, **likely lead of the wave**) — generalize `cumulative` into
-   the typed-accumulator fold (§2a). The axis-construction head and estela's
-   specified "one big ask"; a prerequisite for the splits / profile chart cases,
-   and independently valuable (it also fixes the multi-boundary-collapse
-   correctness bug). Lands as its own core change, ahead of the chart work below.
-1. **Chart x-geometry generalization** — `ScaleTime` → monotonic value scale;
-   an x-axis spec (axis column + domain + formatter, default = time key); the
-   value-formatting `XAxis`; the `fromValueBins` adapter for `byColumn` records.
-   Reuses the shipped cursor + axis-format work.
-2. **The decimator** (`bin` / `rollingByColumn({ at })`) on the same plumbing.
-3. **Splits/laps marks**, then **lap editing** (range-editing `#261` on the
-   value axis).
-4. **(Deferred)** operator-surface consolidation — only if §7 earns it.
-
-## Open decisions (for the red-team)
-
-- **Data model** — confirm records / series-against-a-column (not re-keying) is
-  right for estela's actual data shape. _[estela]_
-- **x-spec API** — how the chart names its axis column + domain + formatter, and
-  how `time` stays zero-config default. _[library]_
-- **`bin` vs `byColumn`** — is the per-pixel `bin` just `byColumn` with a
-  plot-width-derived `width`/`edges`, or a distinct render-time primitive?
+- **The central one: records (project-out) vs `ValueSeries` (closed).** Lean
+  `ValueSeries` as the north star, algebra gated on a 2nd consumer. _[core /
+  library / pjm17971]_
+- **`ValueSeries` minimal algebra** — exactly which operators ship in phase 1.
+  _[library / estela / geo]_
+- **Gap/unknown semantics for value-bins** — empty-bin-honest vs interpolate
+  (§6). _[estela / geo]_
+- **`binByAxis` shape** vs constraining `Column.bin` to uniform sampling (§9).
   _[geo / library]_
-- **Consolidation** — `Axis` abstraction vs principled twins (§7). Defer? _[core
-  / library]_
-- **Value-step `Sequence`** — needed, or does `byColumn({ width })` cover it?
-  _[core]_
-- **`scan` name + shape (§2a)** — is `scan` right (the `reduce`/`scan` pair +
-  Rust `Iterator::scan` precedent), or does the columnar "table scan" reading
-  argue for `accumulate` / `runningFold`? Single- vs multi-output (`[A, number]`
-  vs `[A, Record<Name, number>]`) for v1; `cumulative` stays as the scalar sugar
-  either way. _[core]_
-- **One-axis-per-container** — acceptable for estela's dashboards? _[estela]_
-- **Naming** — "value axis" (matches `byColumn`'s `value-axis` vocabulary) vs
-  "domain" vs "monotonic axis."
+- **`scan` name + shape** — `scan` (the `reduce`/`scan` pair + Rust
+  `Iterator::scan`) vs `accumulate`/`runningFold`; single- vs multi-output;
+  `cumulative` stays sugar. _[core, in scan's own RFC]_
+- **Positioning** (§12). _[pjm17971]_
+- **Naming** — "value axis" / "domain axis" (Plot) / "monotonic axis"; and
+  `ValueSeries` vs `Series<Value>`. Defer to a docs forcing-function. _[defer]_
 
 ---
 
-## Review — estela agent (use-case) _[to fill]_
+## Review — estela agent (use-case)
 
-_(append findings here; layer, don't rewrite)_
+_Full text on PR #279. Summary, attributed:_ **Endorses the thesis and both
+structural calls** (records-not-re-keying; defer consolidation). Strongest signal
+— estela _already independently built the consumer-side shape by hand_, so the
+`[estela]` opens answer themselves. Confirms model (B): time-keyed source, `cum`
+a derived `Float64Array`, channels projected; `byColumn`'s `{start,end,…}` =
+estela's `Split[]`/`ProfileSample[]`. Sharpenings folded into v2: **`scan`-first
+is load-bearing** (`cum`/`cumGain` are sidecars today → adapter must accept an
+externally-supplied axis array until `scan` lands; `scan` lets estela delete the
+hand-roll); **multi-aggregate `fromValueBins` + metric select**;
+**statistical-band marks** (median/IQR/percentile, not bars-only); **carry-both-
+axes** so the Miles/Time toggle re-scales not re-buckets (~4M-sample PCT);
+**one-axis-per-container** confirmed; `runs`/`segmentsInRange` (zone stretches) →
+interval marks.
 
-## Review — geo agent (F-geo-2 / `bin`) _[to fill]_
+## Review — Codex (adversarial)
+
+_Verdict: needs-attention. Three findings, all accepted into v2:_ **[high]
+`byColumn` does not enforce monotonicity** — v1 said it did; it's order-free
+(histograms/zones). The contract belongs on the axis _projection_
+(`assertMonotonicAxis`), not `byColumn` (§4, §8). **[high] the decimator conflates
+axis-domain with the index-domain `Column.bin`** — `Column.bin` buckets rows
+(uniform-sampling precondition), not axis values; gappy data → extrema in wrong
+pixels. v2 decouples and names `binByAxis` (§9). **[medium] `split = scan +
+byColumn` overclaims gap correctness** — `byColumn` doesn't allocate across a
+sample gap; intervening bins are empty, not interpolated. v2 downgrades the claim
+and opens gap/unknown semantics (§6).
+
+## Review — dashboard agent (cadence / positioning)
+
+_Backs the direction with three asks, all folded into v2:_ **(1) decouple the
+decimator from the value-axis x-spec** — ship M4 time-only first, extend later;
+cadence over reuse (§9). **(2) `scan` deserves its own RFC** — don't let a
+foundational primitive get hurried as wave-of-related-work; design for the
+abstract case (§10). **(3) defer consolidation hard** — a third axis kind earns
+it, not estela (§11). Also: the v1 thesis was self-flattering — scan isn't
+shipped, so the chart isn't catching up to a settled half (§2); the
+principled-twins _output_ argument is weak (§11); one-axis-per-container is right
+(Plot precedent, §8); and named the **positioning bet** (§12). Defers naming.
+
+## Amendments — original author (v1 → v2 changelog)
+
+The red-team converged on one structural miss and several accuracy fixes; v2 is
+the pivot, not a patch:
+
+- **Spine moved** from "records + chart adapter, operators as analogues" to **a
+  closed `ValueSeries` type** (§3–§4). Driver: pjm17971's three objections =
+  closure; the v1 "analogue" framing was false (`byColumn` isn't closed). This is
+  the substantive change — the rest serves it.
+- **Thesis made honest** (§2): not "chart is the laggard" but "head (`scan`),
+  chart, and closure all pending." Drivers: Codex + dashboard.
+- **`byColumn` monotonicity corrected** (§2, §4, §8) + contract moved to the axis
+  projection. Driver: Codex #1 (a v1 factual error).
+- **Decimator decoupled** (§9); `binByAxis` named vs index `Column.bin`. Drivers:
+  dashboard + Codex #2.
+- **Gap semantics opened, correctness claim downgraded** (§6). Driver: Codex #3 +
+  estela's `MAX_CARRY_METERS`.
+- **`scan` elevated to its own RFC**, abstract-case + leak-resistance (§10).
+  Driver: dashboard.
+- **Consolidation reframed** — the type is the real consolidation; operator-merge
+  deferred hard; output-argument softened (§11). Driver: dashboard.
+- **Positioning section added** (§12), with the opt-in/middle-path nuance. Driver:
+  dashboard; decision held for pjm17971.
+- **estela consumer specifics folded in** (§6, §8): multi-aggregate + metric
+  select, statistical bands, carry-both-axes, externally-supplied axis pre-`scan`.
+
+## Review — geo agent (F-geo-2 / `bin` / `binByAxis`) _[to fill]_
 
 ## Review — core / library _[to fill]_
-
-## Amendments — original author _[to fill after reviews]_
