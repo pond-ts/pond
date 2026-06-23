@@ -171,4 +171,34 @@ describe('TimeSeries.byValue → ValueSeries', () => {
       vs.byColumn;
     });
   });
+
+  describe('edge cases — empty and single-row source', () => {
+    it('projects an empty source to an empty ValueSeries', () => {
+      const empty = new TimeSeries({ name: 'e', schema, rows: [] }).byValue(
+        'cumDist',
+      );
+      expect(empty.length).toBe(0);
+      expect(Array.from(empty.axisValues())).toEqual([]);
+      expect(empty.nearestIndex(0)).toBe(-1);
+      expect(empty.sliceByValue(0, 100).length).toBe(0);
+    });
+
+    it('projects a single-row source', () => {
+      const one = new TimeSeries({
+        name: '1',
+        schema,
+        rows: [[0, 500, 130, 110]],
+      }).byValue('cumDist');
+      expect(one.length).toBe(1);
+      expect(one.axisAt(0)).toBe(500);
+      expect(one.column('hr')?.read(0)).toBe(130);
+      // nearestIndex always lands on the only row, regardless of side
+      expect(one.nearestIndex(-100)).toBe(0);
+      expect(one.nearestIndex(500)).toBe(0);
+      expect(one.nearestIndex(9999)).toBe(0);
+      // sliceByValue includes / excludes the lone row by its axis value
+      expect(one.sliceByValue(0, 600).length).toBe(1);
+      expect(one.sliceByValue(600, 700).length).toBe(0);
+    });
+  });
 });
