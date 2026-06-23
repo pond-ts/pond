@@ -22,6 +22,24 @@ type-level changes; patch bumps are strictly additive.
 [0.19.0]: https://github.com/pjm17971/pond-ts/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
 
+## [Unreleased]
+
+### Added
+
+- **`scan(source, step, init, options?)` — typed-accumulator running fold.** The
+  general form of `cumulative` (the classic `mapAccumL`): the accumulator `A`
+  (any value, seeded from `init`) is **decoupled** from the numeric `output` and
+  the output column. `step(acc, value, i)` returns `[nextAcc, output]`. With no
+  `options.output` the source column is **replaced** in place (as `cumulative`
+  does); with `options.output` a **new** column is appended and the source is
+  left intact. Missing-cell carry, stored-`NaN`, and multi-entity semantics are
+  inherited from `cumulative` (scope per entity with
+  `partitionBy(col).scan(...).collect()`). Column-native, O(N + C), no event
+  materialization. Enables `split = scan + byColumn` — materialize cross-bin
+  state (e.g. hysteresis elevation gain) into a column, then segment it with
+  `byColumn`'s pure, order-free reducers. (estela F-geo-2-splits; value-axis
+  RFC wave lead.)
+
 ## [0.30.0] — 2026-06-17
 
 ### Added

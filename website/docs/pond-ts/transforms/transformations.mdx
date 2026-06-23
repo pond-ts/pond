@@ -22,7 +22,7 @@ Two flavors:
   on individual events.
 - **Per-event-with-tiny-state** — look at the previous event (or a
   small accumulator) to compute each output. `diff`, `rate`,
-  `pctChange`, `cumulative`, `shift`.
+  `pctChange`, `cumulative`, `scan`, `shift`.
 
 Coming from pandas: this section covers `.assign()`, `.rename()`,
 `[cols]`, `.where()` (≈ filter), `.diff()`, `.pct_change()`,
@@ -174,6 +174,57 @@ const product = series.cumulative({ factor: (acc, v) => acc * v });
 When a source value is `undefined`, the accumulator carries forward
 its previous value — no NaN propagation.
 
+### `scan(source, step, init, options?)` — typed-accumulator running fold \{#scan\}
+
+`scan` is the general form of `cumulative` — the classic `mapAccumL`.
+`cumulative` locks three things together (the accumulator **is** the
+output **is** a `number`, written in place); `scan` decouples them:
+the accumulator `A` can be any value, the numeric `output` is separate,
+and you choose whether to replace the source or append a new column.
+
+```ts
+// running sum — the cumulative special case, replacing in place:
+series.scan('work', (acc, v) => [acc + v, acc + v], 0);
+//   ≡ series.cumulative({ work: 'sum' })
+
+// typed accumulator into a NEW column: hysteresis elevation gain
+// carries (ref, gain) but emits only the gain.
+const T = 3; // ±3 m deadband
+const withGain = track.scan<'cumGain', { ref: number | null; gain: number }>(
+  'ele',
+  (acc, ele) => {
+    if (acc.ref === null) return [{ ref: ele, gain: 0 }, 0];
+    const d = ele - acc.ref;
+    if (d >= T) return [{ ref: ele, gain: acc.gain + d }, acc.gain + d];
+    if (d <= -T) return [{ ref: ele, gain: acc.gain }, acc.gain];
+    return [acc, acc.gain]; // within deadband — carry
+  },
+  { ref: null, gain: 0 },
+  { output: 'cumGain' },
+);
+```
+
+`step(acc, value, i)` returns `[nextAcc, output]`. The accumulator `A`
+is inferred from `init`. With no `options.output` the source column is
+**replaced** (widened to optional `number`, as `cumulative` does); with
+`options.output` a **new** column of that name is appended and the
+source is left intact (the name must not already exist).
+
+Missing cells inherit `cumulative`'s behavior exactly: a missing /
+undefined source cell does not call `step` — the accumulator is held
+and the row re-emits the last output (so it holds flat across a gap),
+`undefined` only until the first defined value. A stored `NaN` is a
+defined number and is passed to `step`. On a multi-entity series the
+accumulator interleaves across entities; scope it with
+`series.partitionBy(col).scan(...).collect()`.
+
+**`split = scan + byColumn`.** The reason `scan` exists: it isolates the
+order-dependent state into a column so value-axis aggregation
+([`byColumn`](./aggregation#bycolumn)) can stay pure and order-free.
+Materialize the carried state with `scan`, then segment statelessly —
+e.g. per-kilometre split gain is `last − first` of the scanned `cumGain`
+in each distance bin.
+
 ### `tail(duration)` — keep the trailing window
 
 `tail` is technically a temporal selection rather than a per-event
@@ -218,6 +269,7 @@ number of events.
 | `rate(cols)`          | Same schema; delta-per-second column       |
 | `pctChange(cols)`     | Same schema; relative-change column        |
 | `cumulative(spec)`    | Same schema; running aggregate column      |
+| `scan(src, …)`        | Replace source, or append output column    |
 | `tail(duration)`      | Same schema; trailing temporal slice       |
 | `shift(cols, n)`      | Same schema; column values shifted         |
 | `Event.set(field, v)` | Single field on one event                  |

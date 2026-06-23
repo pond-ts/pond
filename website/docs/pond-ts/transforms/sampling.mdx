@@ -150,7 +150,7 @@ for `{ reservoir: { size: K } }`) — bounded, predictable per-partition
 state. For 80 hosts × `K=100` reservoir, that's 8000 events of state.
 
 This is the same multi-entity consideration that applies to `rolling`,
-`aggregate`, `fill`, `diff`, `rate`, `cumulative`, and `pctChange` —
+`aggregate`, `fill`, `diff`, `rate`, `cumulative`, `scan`, and `pctChange` —
 see [Cleaning data → Multi-entity series](./cleaning#multi-entity-series--see-partitionby)
 for the broader pattern.
 

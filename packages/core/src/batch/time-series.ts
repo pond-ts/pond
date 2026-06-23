@@ -77,6 +77,7 @@ import {
   cumulativeOp,
   type CumulativeReducer,
 } from './operators/cumulative.js';
+import { scanOp, type ScanStep } from './operators/scan.js';
 import { diffRateOp, type DiffRateMode } from './operators/diff-rate.js';
 import { fillOp, type ResolvedFillSpec } from './operators/fill.js';
 import { mapOp, type ColumnMapper } from './operators/map.js';
@@ -2694,6 +2695,91 @@ export class TimeSeries<S extends SeriesSchema> {
       this.#store.store,
       this.schema,
       spec as unknown as Readonly<Record<string, CumulativeReducer>>,
+    );
+    return TimeSeries.#fromTrustedStore(
+      this.name,
+      schema,
+      store as unknown as ColumnarStore<ColumnSchema>,
+    );
+  }
+
+  /**
+   * Example:
+   * ```ts
+   * // running sum — the cumulative special case, replacing in place:
+   * series.scan('work', (acc, v) => [acc + v, acc + v], 0);
+   *
+   * // typed accumulator into a NEW column (hysteresis elevation gain):
+   * track.scan<'cumGain', { ref: number | null; gain: number }>(
+   *   'ele',
+   *   (acc, ele) => {
+   *     if (acc.ref === null) return [{ ref: ele, gain: 0 }, 0];
+   *     const d = ele - acc.ref;
+   *     if (d >= 3) return [{ ref: ele, gain: acc.gain + d }, acc.gain + d];
+   *     if (d <= -3) return [{ ref: ele, gain: acc.gain }, acc.gain];
+   *     return [acc, acc.gain]; // within deadband — carry
+   *   },
+   *   { ref: null, gain: 0 },
+   *   { output: 'cumGain' },
+   * );
+   * ```
+   *
+   * **Typed-accumulator running fold** (the classic `mapAccumL`) over a numeric
+   * column. `step(acc, value, i)` returns `[nextAcc, output]`; the accumulator
+   * `A` (inferred from `init`) is **decoupled** from the numeric `output` — the
+   * generalization {@link TimeSeries.cumulative} can't express, since there the
+   * accumulator *is* the output *is* a `number`. `cumulative` is the scalar
+   * special case: `series.cumulative({ x: 'sum' })` is
+   * `series.scan('x', (a, v) => [a + v, a + v], 0)`.
+   *
+   * With no `options.output` the source column is **replaced** in place (widened
+   * to optional `number`, as `cumulative` does). With `options.output` a **new**
+   * column of that name is appended and the source is left intact (as
+   * {@link TimeSeries.withColumn} does); the name must not already exist.
+   *
+   * **Missing cells carry:** a missing / undefined source cell does not call
+   * `step` — the accumulator is held and the row re-emits the last output (so it
+   * holds flat across a gap), `undefined` only until the first defined value. A
+   * stored `NaN` is a defined number and is passed to `step`; the step author
+   * owns output finiteness (this is the trusted-compute path, not the validated
+   * `withColumn` intake).
+   *
+   * **Multi-entity series:** the accumulator threads across all rows in storage
+   * order, so it interleaves across entities — `host-A`'s next row folds on top
+   * of `host-B`'s. Use `series.partitionBy(col).scan(...).collect()` to scope
+   * per entity. See {@link TimeSeries.partitionBy}.
+   */
+  scan<const Source extends NumericColumnNameForSchema<S>, A>(
+    source: Source,
+    step: ScanStep<A>,
+    init: A,
+  ): TimeSeries<DiffSchema<S, Source>>;
+  scan<
+    const Source extends NumericColumnNameForSchema<S>,
+    const Name extends string,
+    A,
+  >(
+    source: Source,
+    step: ScanStep<A>,
+    init: A,
+    options: { output: Name },
+  ): TimeSeries<AppendColumn<S, Name, 'number'>>;
+  scan(
+    source: string,
+    step: (acc: any, value: number, index: number) => readonly [any, number],
+    init: any,
+    options?: { output?: string },
+  ): any {
+    // Column-native: the typed-accumulator fold runs straight off the store's
+    // source column in the extracted `scanOp` — no `this.events`
+    // materialization. The method is a thin delegate.
+    const { store, schema } = scanOp<S, SeriesSchema, any>(
+      this.#store.store,
+      this.schema,
+      source,
+      step,
+      init,
+      options?.output,
     );
     return TimeSeries.#fromTrustedStore(
       this.name,
