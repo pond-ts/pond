@@ -2,19 +2,41 @@ import {
   ColumnarStore,
   type Column,
   type ColumnSchema,
+  Float64Column,
   ValueKeyColumn,
 } from '../../columnar/index.js';
 
 /**
- * Reads the `axis` column into a `Float64Array`, asserting it is a valid value
- * axis: **every cell defined + finite + non-decreasing**. Throws otherwise.
+ * Validates that the `axis` column is a usable value axis — **every cell
+ * defined + finite + non-decreasing** — and returns the `Float64Array` to key
+ * on. Throws otherwise.
  *
- * This is the monotonicity contract for `byValue` — it lives on the
- * *projection*, not on `ValueKeyColumn` or `byColumn` (Codex review #1): an
- * order-free value-bin aggregation has no monotonic precondition, but promoting
- * a column to the *index* of a series does. A missing/non-finite cell can't be
- * placed in the ordering, so (unlike a value column, where a gap is fine) the
- * axis must be dense.
+ * This is the monotonicity contract for `byValue`: it lives on the *projection*,
+ * not on `ValueKeyColumn` or `byColumn` (Codex review #1). An order-free
+ * value-bin aggregation has no monotonic precondition, but promoting a column to
+ * the *index* of a series does — and a missing/non-finite cell can't be placed
+ * in the ordering, so (unlike a value column, where a gap is fine) the axis must
+ * be dense.
+ *
+ * **Zero-copy fast path (Lever 1).** A packed {@link Float64Column} (every batch
+ * value column is one) already holds a contiguous backing buffer. Once the scan
+ * has proven `[0, n)` is dense + finite, that buffer *is* the key data, so we
+ * hand back a `subarray(0, n)` view rather than allocating and copying a fresh
+ * array — the source axis column and the new key then share it read-only (the
+ * same zero-copy contract as a slice). `_values.length` can exceed the logical
+ * length (capacity-grown columns), hence the `subarray`. A chunked column has no
+ * single contiguous buffer, so it falls back to materializing one.
+ *
+ * Trade-off of the reuse: the returned `subarray` view retains the source
+ * column's whole `ArrayBuffer` (including any capacity slack on a grown
+ * column), where the old copy released it. Negligible for batch (`_values`
+ * is sized to the column) and for a single live projection; only worth
+ * revisiting if a path holds many such views at once.
+ *
+ * The validation read-loop is unavoidable here (it enforces dense + finite +
+ * sorted). A future `{ assumeSorted }` fast path could skip it for a
+ * caller-guaranteed axis (e.g. a `scan`-produced cumulative distance); that's a
+ * trusted-construction seam, deferred until a re-projection hot path earns it.
  */
 function assertMonotonicAxis(
   store: ColumnarStore<ColumnSchema>,
@@ -25,7 +47,6 @@ function assertMonotonicAxis(
     throw new RangeError(`byValue: unknown column '${axis}'`);
   }
   const n = store.length;
-  const out = new Float64Array(n);
   let prev = -Infinity;
   for (let i = 0; i < n; i += 1) {
     const v = col.read(i);
@@ -40,8 +61,17 @@ function assertMonotonicAxis(
         `byValue: axis '${axis}' must be non-decreasing; row ${i} (${v}) < previous (${prev})`,
       );
     }
-    out[i] = v;
     prev = v;
+  }
+
+  // Validation passed → `[0, n)` is dense + finite. Reuse the packed backing
+  // buffer zero-copy; materialize only for a (rare) chunked axis column.
+  if (col instanceof Float64Column) {
+    return col._values.subarray(0, n);
+  }
+  const out = new Float64Array(n);
+  for (let i = 0; i < n; i += 1) {
+    out[i] = col.read(i) as number;
   }
   return out;
 }
@@ -65,7 +95,9 @@ export function byValueOp(
   axis: string,
 ): { store: ColumnarStore<ColumnSchema>; schema: ColumnSchema } {
   const values = assertMonotonicAxis(store, axis);
-  const keyCol = new ValueKeyColumn(values, store.length);
+  // `fromValidatedSubarray`, not `new ValueKeyColumn` — `assertMonotonicAxis`
+  // already proved finiteness, so skip the constructor's redundant finite scan.
+  const keyCol = ValueKeyColumn.fromValidatedSubarray(values, store.length);
 
   // Drop the axis column from the value columns (it becomes the key).
   const newColumns = new Map<string, Column>(store.columns);
