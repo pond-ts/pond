@@ -27,6 +27,12 @@ import {
  * length (capacity-grown columns), hence the `subarray`. A chunked column has no
  * single contiguous buffer, so it falls back to materializing one.
  *
+ * Trade-off of the reuse: the returned `subarray` view retains the source
+ * column's whole `ArrayBuffer` (including any capacity slack on a grown
+ * column), where the old copy released it. Negligible for batch (`_values`
+ * is sized to the column) and for a single live projection; only worth
+ * revisiting if a path holds many such views at once.
+ *
  * The validation read-loop is unavoidable here (it enforces dense + finite +
  * sorted). A future `{ assumeSorted }` fast path could skip it for a
  * caller-guaranteed axis (e.g. a `scan`-produced cumulative distance); that's a
