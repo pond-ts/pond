@@ -88,11 +88,15 @@ export interface ContainerFrame {
   registerTrackerSource(key: symbol, source: TrackerSource): void;
   unregisterTrackerSource(key: symbol): void;
   /**
-   * Shared time→pixel scale, range `[0, plotWidth]`. A d3 `scaleTime` so ticks
-   * land on wall-clock boundaries; the domain is the container's `timeRange`
-   * (epoch ms, which `scaleTime` coerces).
+   * Shared x→pixel scale, range `[0, plotWidth]`. A d3 `scaleTime` (default) so
+   * ticks land on wall-clock boundaries, or a `scaleLinear` when the container's
+   * `xScaleType` is `'linear'` (a **value axis** — distance, cumulative work).
+   * The domain is the container's `timeRange`. Both scales are callable
+   * (`value → px`) and expose `invert`/`ticks`/`tickFormat`; consumers use only
+   * that shared surface (the cursor coerces `invert` via `+`, `<TimeAxis>` keys
+   * ticks via `+d`), so either kind drops in.
    */
-  readonly xScale: ScaleTime<number, number>;
+  readonly xScale: ScaleTime<number, number> | ScaleLinear<number, number>;
   /** Pan/zoom enabled — the plot drag-pans and wheel-zooms the shared time range. */
   readonly panZoom: boolean;
   /** Minimum visible duration (ms) — the zoom-in floor. */

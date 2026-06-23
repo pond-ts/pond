@@ -32,4 +32,18 @@ test.describe('LineChart', () => {
     await waitForCanvasPaint(canvas);
     await expect(canvas).toHaveScreenshot('linechart-gap-aware-smooth.png');
   });
+
+  // The value axis (Phase 2): a ValueSeries (HR over cumulative distance) flows
+  // through fromValueSeries → a linear x scale. Snapshot #storybook-root, not the
+  // bare canvas, so the distance-formatted x-axis labels (0, 1,000, … — the
+  // value-axis proof, vs wall-clock time) are captured alongside the line.
+  test('renders a ValueSeries against a distance (value) x axis', async ({
+    page,
+  }) => {
+    await page.goto(story('charts-linechart--value-axis-distance'));
+    await waitForCanvasPaint(page.locator('canvas').first());
+    await expect(page.locator('#storybook-root')).toHaveScreenshot(
+      'linechart-value-axis-distance.png',
+    );
+  });
 });

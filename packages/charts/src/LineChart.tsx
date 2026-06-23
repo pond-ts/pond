@@ -1,6 +1,7 @@
 import { useContext, useEffect, useMemo } from 'react';
-import type { SeriesSchema, TimeSeries } from 'pond-ts';
-import { fromTimeSeries } from './data.js';
+import { ValueSeries } from 'pond-ts';
+import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
+import { fromTimeSeries, fromValueSeries } from './data.js';
 import { drawLine, yExtent } from './line.js';
 import { resolveCurve, type Curve } from './curve.js';
 import {
@@ -11,9 +12,17 @@ import {
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
 import { useSlotKey } from './use-slot-key.js';
 
-export interface LineChartProps<S extends SeriesSchema> {
-  /** The source series. Its key column supplies the time axis. */
-  series: TimeSeries<S>;
+export interface LineChartProps<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> {
+  /**
+   * The source series. A `TimeSeries` plots against the time axis; a
+   * `ValueSeries` (`series.byValue('cumDist')`) plots against its value axis —
+   * pair it with `<ChartContainer xScaleType="linear">`. Either way the key /
+   * axis column supplies x and `column` supplies y.
+   */
+  series: TimeSeries<S> | ValueSeries<VS>;
   /** Name of the numeric value column to plot. */
   column: string;
   /**
@@ -61,7 +70,10 @@ export interface LineChartProps<S extends SeriesSchema> {
  * (scaling against its `axis`), and renders nothing to the DOM — the row draws
  * it. The line breaks at gaps rather than spanning them.
  */
-export function LineChart<S extends SeriesSchema>({
+export function LineChart<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+>({
   series,
   column,
   as: semantic,
@@ -69,7 +81,7 @@ export function LineChart<S extends SeriesSchema>({
   curve,
   gaps = DEFAULT_GAP_MODE,
   index = 0,
-}: LineChartProps<S>) {
+}: LineChartProps<S, VS>) {
   const container = useContext(ContainerContext);
   if (container === null) {
     throw new Error('<LineChart> must be rendered inside a <ChartContainer>');
@@ -79,7 +91,13 @@ export function LineChart<S extends SeriesSchema>({
     throw new Error('<LineChart> must be rendered inside a <Layers>');
   }
 
-  const cs = useMemo(() => fromTimeSeries(series, column), [series, column]);
+  const cs = useMemo(
+    () =>
+      series instanceof ValueSeries
+        ? fromValueSeries(series, column)
+        : fromTimeSeries(series, column),
+    [series, column],
+  );
   // Styling: semantic identifier → theme style. The single styling channel.
   const { line } = container.theme;
   const style =
@@ -95,17 +113,22 @@ export function LineChart<S extends SeriesSchema>({
     () => ({
       layer: {
         yExtent: () => yExtent(cs),
-        sampleAt: (time) => {
-          // No readout past the data (tracker policy — core's nearest() clamps
-          // to an endpoint outside the span); bounds from the columnar time axis.
-          if (
-            cs.length === 0 ||
-            time < cs.x[0]! ||
-            time > cs.x[cs.length - 1]!
-          ) {
+        sampleAt: (x) => {
+          // No readout past the data (tracker policy — nearest clamps to an
+          // endpoint outside the span); bounds from the columnar x axis.
+          if (cs.length === 0 || x < cs.x[0]! || x > cs.x[cs.length - 1]!) {
             return [];
           }
-          const e = series.nearest(time);
+          if (series instanceof ValueSeries) {
+            // Value axis: bisect the axis for the nearest row, read y from `cs`.
+            const i = series.nearestIndex(x);
+            if (i < 0) return [];
+            const v = cs.y[i]!;
+            return Number.isFinite(v)
+              ? [{ x: cs.x[i]!, value: v, color: style.color, label }]
+              : [];
+          }
+          const e = series.nearest(x);
           if (e === undefined) return [];
           // get() wants a literal key; column is a runtime string. Cast the
           // *event* (not the method — that would detach `this`) to a

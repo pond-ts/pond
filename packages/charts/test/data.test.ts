@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { TimeSeries } from 'pond-ts';
-import { barsFromTimeSeries, fromTimeSeries } from '../src/data.js';
+import {
+  barsFromTimeSeries,
+  fromTimeSeries,
+  fromValueSeries,
+} from '../src/data.js';
 
 const numeric = () =>
   new TimeSeries({
@@ -185,5 +189,75 @@ describe('barsFromTimeSeries', () => {
       rows: [[['a', 0, 1000], 10]],
     });
     expect(() => barsFromTimeSeries(s, 'nope')).toThrow(/unknown column/);
+  });
+});
+
+describe('fromValueSeries', () => {
+  // A short ride re-keyed onto cumulative distance: x is distance, not time.
+  const ride = () =>
+    new TimeSeries({
+      name: 'ride',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'cumDist', kind: 'number' },
+        { name: 'hr', kind: 'number' },
+      ] as const,
+      rows: [
+        [0, 0, 120],
+        [1000, 500, 130],
+        [2000, 1200, 140],
+      ],
+    });
+
+  it('uses the value axis as x and a channel as y (equal-length Float64Arrays)', () => {
+    const cs = fromValueSeries(ride().byValue('cumDist'), 'hr');
+    expect(cs.x).toBeInstanceOf(Float64Array);
+    expect(cs.y).toBeInstanceOf(Float64Array);
+    // x is cumulative distance (the axis), NOT time
+    expect(Array.from(cs.x)).toEqual([0, 500, 1200]);
+    expect(Array.from(cs.y)).toEqual([120, 130, 140]);
+    expect(cs.length).toBe(3);
+    expect(cs.x.length).toBe(cs.y.length);
+  });
+
+  it('represents missing channel values as NaN (the gap signal)', () => {
+    const s = new TimeSeries({
+      name: 'ride',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'cumDist', kind: 'number' },
+        { name: 'hr', kind: 'number', required: false },
+      ] as const,
+      rows: [
+        [0, 0, 120],
+        [1000, 500, undefined],
+        [2000, 1200, 140],
+      ] as never,
+    });
+    const cs = fromValueSeries(s.byValue('cumDist'), 'hr');
+    expect(cs.y[0]).toBe(120);
+    expect(Number.isNaN(cs.y[1]!)).toBe(true);
+    expect(cs.y[2]).toBe(140);
+  });
+
+  it('throws on an unknown column', () => {
+    expect(() => fromValueSeries(ride().byValue('cumDist'), 'nope')).toThrow(
+      /unknown column/,
+    );
+  });
+
+  it('throws on a non-numeric column', () => {
+    const s = new TimeSeries({
+      name: 'ride',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'cumDist', kind: 'number' },
+        { name: 'label', kind: 'string' },
+      ] as const,
+      rows: [[0, 0, 'a']],
+    });
+    expect(() => fromValueSeries(s.byValue('cumDist'), 'label')).toThrow(
+      /must be numeric/,
+    );
   });
 });

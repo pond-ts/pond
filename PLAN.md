@@ -414,8 +414,17 @@ step, init, {output?})` — the typed-accumulator `mapAccumL` generalizing
     Axis>>` carrying ordering-based ops (`axisValues`/`axisAt`/`column`/
     `nearestIndex`/`sliceByValue`), calendar ops type-impossible (disjoint
     `ValueSeriesSchema`). Wraps the `ColumnarStore` directly (not `SeriesStore`).
-    O(N+C) projection / O(log N) bisect / O(log N+C) zero-copy slice. **Next in
-    the wave: chart x-on-`ValueSeries` → estela friction cycle.** **Decimator
+    O(N+C) projection / O(log N) bisect / O(log N+C) zero-copy slice; byValue
+    reuses the packed axis buffer zero-copy (#283). **Phase 2 — chart
+    x-on-`ValueSeries` IN PROGRESS** (`@pond-ts/charts`): `ChartContainer` gains
+    `xScaleType: 'time' | 'linear'` (default time) → a `scaleLinear` value axis;
+    `xScale` widens to `ScaleTime | ScaleLinear` (rippled to no consumer — draw
+    layers already take `(v)=>number`); `fromValueSeries` adapter; `LineChart`
+    accepts `TimeSeries | ValueSeries` (instanceof-branched adapter + cursor
+    sampleAt). Additive — existing time charts bit-identical. Verified in-browser
+    (HR-over-distance, x ticks render as metres). Public-API renames
+    (`timeRange`→`xDomain`, `TimeAxis`→`XAxis`) deferred to pjm17971. **Next:
+    more chart types on the value axis + estela friction cycle.** **Decimator
     DECOUPLED** (dashboard): ship time-only (index `Column.bin`) first; the value
     axis brings axis-domain `binByAxis` (Codex: `Column.bin` is index-domain,
     wrong for gappy data). `byColumn` is **order-free** (Codex: v1 wrongly said it
