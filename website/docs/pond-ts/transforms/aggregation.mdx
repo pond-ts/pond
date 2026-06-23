@@ -235,9 +235,13 @@ empty bins included, so a histogram or profile has no gaps:
 
 ```ts
 // Power distribution: seconds spent in each 25 W band.
-ride.byColumn('watts', { width: 25 }, {
-  secs: { from: 'watts', using: 'count' },
-});
+ride.byColumn(
+  'watts',
+  { width: 25 },
+  {
+    secs: { from: 'watts', using: 'count' },
+  },
+);
 // → [{ start: 0, end: 25, secs: 3 }, { start: 25, end: 50, secs: 0 }, ...]
 ```
 
@@ -261,9 +265,13 @@ one record per bin, in order. Use them for named zones:
 
 ```ts
 // Time in each power zone (FTP-relative edges).
-ride.byColumn('watts', { edges: [0, 150, 250, 350, 500] }, {
-  secs: { from: 'watts', using: 'count' },
-});
+ride.byColumn(
+  'watts',
+  { edges: [0, 150, 250, 350, 500] },
+  {
+    secs: { from: 'watts', using: 'count' },
+  },
+);
 // → one record per [0,150), [150,250), [250,350), [350,500)
 ```
 
@@ -282,6 +290,41 @@ and that row is dropped.
 - `start` and `end` are reserved output names (they carry the bin
   range), and a non-finite or wrong-kind reducer result throws —
   the same write-time guard `aggregate` enforces.
+
+## `byValue` → `ValueSeries` \{#byvalue\}
+
+`byColumn` _aggregates_ over a value axis (one record per bin).
+`byValue` is the other half: it **projects** a `TimeSeries` onto a
+value axis without aggregating, returning a `ValueSeries` — the
+value-keyed counterpart of `TimeSeries`, whose key is a monotonic
+non-time axis (distance, cumulative work, …) instead of time.
+
+```ts
+// Re-key a ride onto cumulative distance. cumDist becomes the axis;
+// it's dropped from the value columns (it's now the key).
+const byDistance = ride.byValue('cumDist');
+
+byDistance.axisName; // 'cumDist'
+byDistance.axisValues(); // Float64Array of the distance at each row
+byDistance.column('hr'); // a value column, read with .read(i) / .values()
+byDistance.nearestIndex(5000); // row nearest 5 km (binary search — the cursor)
+byDistance.sliceByValue(5000, 10000); // the 5–10 km sub-series (zero-copy cull)
+```
+
+The axis must be **defined, finite, and non-decreasing at every
+row** — it becomes the index, so (unlike a value column) it can't
+have gaps; `byValue` throws otherwise. This monotonicity contract
+lives on the _projection_, not on `byColumn` (whose order-free
+binning has no such precondition).
+
+A `ValueSeries` carries the **ordering-based** operators
+(`axisValues`, `axisAt`, `column`, `nearestIndex`, `sliceByValue`) —
+the part of the series algebra that was never really about time. The
+calendar/clock operators (`Sequence.every`, time-grid `aggregate`)
+are deliberately absent: a value axis has no wall-clock semantics,
+and the type makes them unavailable. Reach for `byValue` to plot or
+cursor a channel against distance; reach for `byColumn` to roll it up
+into splits or a histogram.
 
 ## `arrayAggregate` \{#arrayaggregate\}
 
@@ -340,14 +383,14 @@ that does and doesn't propagate further down the pipeline.
 
 ## Method comparison
 
-| Method                         | Returns                                              |
-| ------------------------------ | ---------------------------------------------------- |
-| `aggregate(seq, mapping)`      | `TimeSeries<S>` — one row per bucket                 |
-| `reduce(col, reducer)`         | Wide `ColumnValue \| undefined`                      |
-| `reduce(mapping)`              | `Record<key, narrowed>`                              |
+| Method                         | Returns                                                    |
+| ------------------------------ | ---------------------------------------------------------- |
+| `aggregate(seq, mapping)`      | `TimeSeries<S>` — one row per bucket                       |
+| `reduce(col, reducer)`         | Wide `ColumnValue \| undefined`                            |
+| `reduce(mapping)`              | `Record<key, narrowed>`                                    |
 | `byColumn(col, binning, m)`    | `Array<{ start, end, ...aggregates }>` — one per value-bin |
-| `arrayAggregate(col, reducer)` | `TimeSeries<S>` — one cell reduced per event         |
-| `LiveAggregation(src, seq, m)` | Stream of closed buckets + provisional bucket events |
+| `arrayAggregate(col, reducer)` | `TimeSeries<S>` — one cell reduced per event               |
+| `LiveAggregation(src, seq, m)` | Stream of closed buckets + provisional bucket events       |
 
 For `groupBy` and `pivotByGroup` see [Reshaping](./reshape) — those
 are partition / long-to-wide ops, not collapses.

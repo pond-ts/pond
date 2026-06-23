@@ -67,6 +67,7 @@ import type {
   ValueColumnKindForName,
   ValueColumnNameForSchema,
   ValueColumnsForSchema,
+  ValueKeyedSchema,
 } from '../schema/index.js';
 import {
   isAggregateOutputSpec,
@@ -78,6 +79,8 @@ import {
   type CumulativeReducer,
 } from './operators/cumulative.js';
 import { scanOp, type ScanStep } from './operators/scan.js';
+import { byValueOp } from './operators/by-value.js';
+import { ValueSeries } from './value-series.js';
 import { diffRateOp, type DiffRateMode } from './operators/diff-rate.js';
 import { fillOp, type ResolvedFillSpec } from './operators/fill.js';
 import { mapOp, type ColumnMapper } from './operators/map.js';
@@ -2119,6 +2122,43 @@ export class TimeSeries<S extends SeriesSchema> {
       result[col.output] = applyAggregateReducer(col.reducer, values);
     }
     return result;
+  }
+
+  /**
+   * Example: `track.byValue('cumDist')`.
+   *
+   * **The raw `TimeSeries → ValueSeries` projection** (RFC `value-axis.md` §6):
+   * re-key the series onto a monotonic numeric **value axis** (distance,
+   * cumulative work, …), returning a {@link ValueSeries} that carries the
+   * ordering-based operators (axis read, nearest-by-value, slice-by-value) over
+   * that axis instead of time.
+   *
+   * `axis` must be **defined, finite, and non-decreasing at every row** — it
+   * becomes the index, so (unlike a value column) it cannot have gaps; an
+   * `assertMonotonicAxis` check throws otherwise. This monotonicity contract
+   * lives on the *projection*, not on {@link TimeSeries.byColumn} (whose
+   * order-free binning has no such precondition). The re-key is a no-op reindex
+   * (the rows already sit in axis order) and the axis column is **dropped from
+   * the value columns** (it is now the key); the other columns are shared
+   * zero-copy.
+   *
+   * `byValue` is the projection; `byColumn` is value-axis *aggregation* — pair
+   * them via {@link TimeSeries.scan} for stateful splits
+   * (`split = scan + byColumn`).
+   */
+  byValue<const Axis extends NumericColumnNameForSchema<S>>(
+    axis: Axis,
+  ): ValueSeries<ValueKeyedSchema<S, Axis>> {
+    const { store, schema } = byValueOp(
+      this.#store.store as unknown as ColumnarStore<ColumnSchema>,
+      this.schema as unknown as ColumnSchema,
+      axis,
+    );
+    return ValueSeries.fromTrustedStore(
+      this.name,
+      schema as unknown as ValueKeyedSchema<S, Axis>,
+      store,
+    );
   }
 
   /**

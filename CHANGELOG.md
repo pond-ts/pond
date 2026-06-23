@@ -26,6 +26,18 @@ type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`ValueSeries` + `TimeSeries.byValue(axis)` — the value axis as a closed
+  type.** `byValue` re-keys a series onto a monotonic non-time **value axis**
+  (distance, cumulative work, …), returning a `ValueSeries` — the value-keyed
+  counterpart of `TimeSeries`. It carries the ordering-based operators
+  (`axisValues`, `axisAt`, `column`, `nearestIndex`, `sliceByValue`); the
+  calendar/clock operators are deliberately absent — a value axis has no
+  wall-clock semantics, and the disjoint `ValueSeriesSchema` makes them
+  type-impossible. The axis must be **defined, finite, and non-decreasing at
+  every row** (it becomes the index); it is dropped from the value columns (it
+  is now the key) and the rest reshare zero-copy. Substrate: a new `'value'`
+  `KeyKind` + `ValueKeyColumn`. Projection is O(N + C); `nearestIndex` is
+  O(log N); `sliceByValue` is O(log N + C) zero-copy. (value-axis RFC Phase 1.)
 - **`scan(source, step, init, options?)` — typed-accumulator running fold.** The
   general form of `cumulative` (the classic `mapAccumL`): the accumulator `A`
   (any value, seeded from `init`) is **decoupled** from the numeric `output` and

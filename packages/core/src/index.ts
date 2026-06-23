@@ -27,6 +27,7 @@ export { Time } from './core/time.js';
 export { TimeRange, toTimeRange } from './core/time-range.js';
 export { Sequence } from './sequence/sequence.js';
 export { TimeSeries, type KeyLike } from './batch/time-series.js';
+export { ValueSeries } from './batch/value-series.js';
 export { top } from './reducers/index.js';
 export { ValidationError } from './core/errors.js';
 
@@ -102,6 +103,7 @@ export {
   IntervalKeyColumn,
   TimeKeyColumn,
   TimeRangeKeyColumn,
+  ValueKeyColumn,
 } from './columnar/key-column.js';
 export { type ValidityBitmap } from './columnar/validity.js';
 export type {
@@ -180,6 +182,11 @@ export type {
   ValueColumnsForSchema,
   ValueColumn,
   ValueForKind,
+  ValueFirstColumn,
+  ValueKeyedSchema,
+  ValueSeriesColumnName,
+  ValueSeriesSchema,
+  ValueSeriesValueColumns,
 } from './schema/index.js';
 export type {
   CalendarOptions,
