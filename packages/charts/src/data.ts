@@ -1,4 +1,10 @@
-import type { SeriesSchema, TimeSeries } from 'pond-ts';
+import type {
+  SeriesSchema,
+  TimeSeries,
+  ValueSeries,
+  ValueSeriesColumnName,
+  ValueSeriesSchema,
+} from 'pond-ts';
 
 /**
  * A chart-ready columnar view of a series: parallel typed arrays for the time
@@ -165,6 +171,44 @@ export function fromTimeSeries<S extends SeriesSchema>(
     y: readNumericColumn(series, column),
     length: series.length,
   };
+}
+
+/**
+ * Build a {@link ChartSeries} from a pond `ValueSeries` — the value-axis sibling
+ * of {@link fromTimeSeries}. The x axis is the series' monotonic value axis
+ * (`axisValues()`, e.g. cumulative distance) instead of time; `column` names a
+ * numeric value channel (HR, pace, …). The resulting `ChartSeries` is identical
+ * in shape — the chart draws it exactly as it draws a time series, only the x
+ * scale differs (a value scale rather than `scaleTime`).
+ *
+ * `x` is the axis key buffer zero-copy (immutable by contract — do not mutate);
+ * `y` is the channel materialized to a `Float64Array`, missing cells as `NaN`
+ * (the gap signal, same `Number.isFinite` contract as {@link fromTimeSeries}).
+ *
+ * @throws RangeError if `column` does not exist.
+ * @throws TypeError if `column` is not a numeric column.
+ */
+export function fromValueSeries<VS extends ValueSeriesSchema>(
+  series: ValueSeries<VS>,
+  column: string,
+): ChartSeries {
+  const col = series.column(column as ValueSeriesColumnName<VS>);
+  if (col === undefined) {
+    throw new RangeError(`unknown column '${column}'`);
+  }
+  if (col.kind !== 'number') {
+    throw new TypeError(
+      `column '${column}' must be numeric (got '${col.kind}')`,
+    );
+  }
+  const length = series.length;
+  const y = new Float64Array(length);
+  for (let i = 0; i < length; i += 1) {
+    const v = col.read(i);
+    y[i] = v === undefined ? NaN : (v as number);
+  }
+  // axisValues() is the key buffer already trimmed to length (zero-copy).
+  return { x: series.axisValues(), y, length };
 }
 
 /**

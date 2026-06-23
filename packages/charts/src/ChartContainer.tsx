@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { scaleTime } from 'd3-scale';
+import { scaleLinear, scaleTime } from 'd3-scale';
 import {
   ContainerContext,
   type ContainerFrame,
@@ -19,7 +19,11 @@ import {
 } from './context.js';
 import { maxSlotWidths, sum } from './slots.js';
 import { resolveCursorX, DEFAULT_CURSOR_MODE } from './tracker.js';
-import { resolveTimeFormat, type AxisFormat } from './format.js';
+import {
+  resolveAxisFormat,
+  resolveTimeFormat,
+  type AxisFormat,
+} from './format.js';
 import { TimeAxis } from './TimeAxis.js';
 import { defaultTheme, type ChartTheme } from './theme.js';
 
@@ -101,6 +105,16 @@ export interface ChartContainerProps {
    * format** (`12 PM`, `12:10`, …).
    */
   timeFormat?: AxisFormat;
+  /**
+   * The kind of shared x scale. **Default `'time'`** — a d3 `scaleTime` whose
+   * ticks land on wall-clock boundaries (the zero-config time chart). `'linear'`
+   * makes the x a **value axis** (a d3 `scaleLinear`) for plotting against a
+   * monotonic non-time axis — distance, cumulative work — typically fed by a
+   * `ValueSeries` (`series.byValue('cumDist')`). `timeRange` is then the value
+   * domain `[min, max]` and `timeFormat` a numeric formatter (e.g. `',.0f'`).
+   * One axis per container (RFC `value-axis.md` §8).
+   */
+  xScaleType?: 'time' | 'linear';
   /** Visual theme for all rows; defaults to {@link defaultTheme}. */
   theme?: ChartTheme;
   children?: ReactNode;
@@ -130,6 +144,7 @@ export function ChartContainer({
   cursor = DEFAULT_CURSOR_MODE,
   cursorTime = false,
   timeFormat,
+  xScaleType = 'time',
   theme,
   children,
 }: ChartContainerProps) {
@@ -273,18 +288,27 @@ export function ChartContainer({
   const rightGutter = sum(rightSlots);
   const plotWidth = Math.max(0, width - leftGutter - rightGutter);
 
-  const xScale = useMemo(
-    () => scaleTime().domain([t0, t1]).range([0, plotWidth]),
-    [t0, t1, plotWidth],
-  );
-
-  // The time formatter shared by <TimeAxis> + the cursor-time readout (so a tick
-  // and the cursor time read identically), resolved from `timeFormat` against the
-  // shared time scale.
-  const formatTime = useMemo(
-    () => resolveTimeFormat(xScale, TIME_TICK_COUNT, timeFormat),
-    [xScale, timeFormat],
-  );
+  // The shared x scale + the formatter for its ticks / cursor readout, built
+  // together so each branch keeps its concrete scale type (no casts): a value
+  // axis is a `scaleLinear` formatted by `resolveAxisFormat`, time is a
+  // `scaleTime` formatted by d3's multi-scale `resolveTimeFormat`. `formatTime`
+  // is the one formatter <TimeAxis> + the cursor readout share, so a tick and
+  // the cursor read identically. (The `formatTime` name predates the value axis
+  // — for `xScaleType: 'linear'` it formats the value, not a time.)
+  const { xScale, formatTime } = useMemo(() => {
+    if (xScaleType === 'linear') {
+      const s = scaleLinear().domain([t0, t1]).range([0, plotWidth]);
+      return {
+        xScale: s,
+        formatTime: resolveAxisFormat(s, TIME_TICK_COUNT, timeFormat),
+      };
+    }
+    const s = scaleTime().domain([t0, t1]).range([0, plotWidth]);
+    return {
+      xScale: s,
+      formatTime: resolveTimeFormat(s, TIME_TICK_COUNT, timeFormat),
+    };
+  }, [xScaleType, t0, t1, plotWidth, timeFormat]);
 
   // The crosshair pixel (see resolveCursorX). A stored hoverX is a *plot* pixel;
   // if plotWidth changes mid-hover (a gutter reserving, or a width change) it's

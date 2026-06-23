@@ -44,6 +44,30 @@ function flat() {
   });
 }
 
+/**
+ * A ride re-keyed onto **cumulative distance** (metres) via `byValue` — HR is
+ * then plotted against distance, not time. Drives the value-axis path
+ * (`<ChartContainer xScaleType="linear">`). `cumDist` rises ~80 m/step
+ * (strictly increasing, so it's a valid monotonic axis).
+ */
+function rideByDistance() {
+  const rows: Array<[number, number, number]> = [];
+  let cum = 0;
+  for (let i = 0; i < N; i += 1) {
+    cum += 80 + 40 * Math.sin(i / 7);
+    rows.push([BASE + i * STEP, cum, 130 + 30 * Math.sin(i / 9)]);
+  }
+  return new TimeSeries({
+    name: 'ride',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'cumDist', kind: 'number' },
+      { name: 'hr', kind: 'number' },
+    ] as const,
+    rows,
+  }).byValue('cumDist');
+}
+
 const meta = {
   title: 'Charts/LineChart',
   parameters: { layout: 'centered' },
@@ -51,6 +75,32 @@ const meta = {
 
 export default meta;
 type Story = StoryObj;
+
+/**
+ * **Value axis** — HR plotted against cumulative distance (metres), not time.
+ * The same `<LineChart>` consuming a `ValueSeries`; the container uses a linear
+ * x scale (`xScaleType="linear"`) and a numeric tick format.
+ */
+export const ValueAxisDistance: Story = {
+  render: () => {
+    const series = rideByDistance();
+    const maxDist = series.axisAt(series.length - 1);
+    return (
+      <ChartContainer
+        xScaleType="linear"
+        timeRange={[0, maxDist]}
+        timeFormat=",.0f"
+        width={480}
+      >
+        <ChartRow height={200}>
+          <Layers>
+            <LineChart series={series} column="hr" as="heartrate" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
 
 /** Line with a gap — the coast must read as a break, not a drop to zero. */
 export const WithGap: Story = {
