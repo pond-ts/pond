@@ -406,9 +406,16 @@ reducerSet)` per the charts RFC perf section + its two-lens review — reducer
 step, init, {output?})` — the typed-accumulator `mapAccumL` generalizing
     `cumulative` (decouples accumulator / output / output-column); replace or
     append; `cumulative` semantics inherited; `partitionBy().scan().collect()`;
-    `split = scan + byColumn`. **Next in the wave: `ValueSeries` type → chart
-    x-on-`ValueSeries` → estela friction cycle.** `scan` forecloses nothing
-    (returns a `TimeSeries`). **Decimator
+    `split = scan + byColumn`. **Phase 1 `ValueSeries` + `byValue` SHIPPED**
+    (pjm17971 chose extend-`KeyKind` over a wrapper / defer): new `'value'`
+    `KeyKind` + `ValueKeyColumn` substrate; `TimeSeries.byValue(axis)` =
+    `assertMonotonicAxis` (defined+finite+non-decreasing) + re-key onto the axis
+    column + drop it from values → a closed `ValueSeries<ValueKeyedSchema<S,
+    Axis>>` carrying ordering-based ops (`axisValues`/`axisAt`/`column`/
+    `nearestIndex`/`sliceByValue`), calendar ops type-impossible (disjoint
+    `ValueSeriesSchema`). Wraps the `ColumnarStore` directly (not `SeriesStore`).
+    O(N+C) projection / O(log N) bisect / O(log N+C) zero-copy slice. **Next in
+    the wave: chart x-on-`ValueSeries` → estela friction cycle.** **Decimator
     DECOUPLED** (dashboard): ship time-only (index `Column.bin`) first; the value
     axis brings axis-domain `binByAxis` (Codex: `Column.bin` is index-domain,
     wrong for gappy data). `byColumn` is **order-free** (Codex: v1 wrongly said it

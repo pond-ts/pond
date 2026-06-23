@@ -225,3 +225,55 @@ export type IntervalKeyedSchema<S extends SeriesSchema> = RekeySchema<
   S,
   ColumnDef<'interval', 'interval'>
 >;
+
+// ---------------------------------------------------------------------------
+// Value-axis schemas (ValueSeries). Disjoint from SeriesSchema: the key is a
+// `'value'`-kind column whose name is the *axis* (e.g. `cumDist`), not a
+// time literal. The disjointness is what makes the calendar operators
+// type-impossible on a ValueSeries.
+// ---------------------------------------------------------------------------
+
+/** The first column of a `ValueSeries` — a `'value'` key with an arbitrary axis name. */
+export type ValueFirstColumn = ColumnDef<string, 'value'>;
+
+/** A value-axis-keyed schema: a `'value'` key (arbitrary name) + value columns. */
+export type ValueSeriesSchema = readonly [ValueFirstColumn, ...ValueColumn[]];
+
+/** Drops the column named `Target` from a value-column tuple. Mirrors {@link ReplaceColumnKind}. */
+export type ExcludeColumnByName<
+  Columns extends readonly ValueColumn[],
+  Target extends string,
+> = Columns extends readonly [infer Head, ...infer Tail]
+  ? Head extends ValueColumn
+    ? Tail extends readonly ValueColumn[]
+      ? Head['name'] extends Target
+        ? ExcludeColumnByName<Tail, Target>
+        : [Head, ...ExcludeColumnByName<Tail, Target>]
+      : []
+    : []
+  : [];
+
+/**
+ * The schema produced by `TimeSeries.byValue(Axis)`: the named axis column
+ * becomes the `'value'` key, and is removed from the value columns (the key
+ * takes its name, so leaving it as a value column would duplicate the name).
+ */
+export type ValueKeyedSchema<
+  S extends SeriesSchema,
+  Axis extends string,
+> = readonly [
+  ColumnDef<Axis, 'value'>,
+  ...ExcludeColumnByName<ValueColumnsForSchema<S>, Axis>,
+];
+
+/** The value columns of a `ValueSeriesSchema` (everything after the axis key). */
+export type ValueSeriesValueColumns<VS extends ValueSeriesSchema> =
+  VS extends readonly [ValueFirstColumn, ...infer Rest]
+    ? Rest extends readonly ValueColumn[]
+      ? Rest
+      : never
+    : never;
+
+/** Union of value-column names on a `ValueSeriesSchema` (for `ValueSeries.column`). */
+export type ValueSeriesColumnName<VS extends ValueSeriesSchema> =
+  ValueSeriesValueColumns<VS>[number]['name'];

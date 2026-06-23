@@ -13,6 +13,7 @@ export type {
   ArrayValue,
   ColumnDef,
   ColumnValue,
+  ExcludeColumnByName,
   FirstColKind,
   FirstColumn,
   IntervalKeyedSchema,
@@ -34,7 +35,12 @@ export type {
   ValueColumnKindForName,
   ValueColumnNameForSchema,
   ValueColumnsForSchema,
+  ValueFirstColumn,
   ValueForKind,
+  ValueKeyedSchema,
+  ValueSeriesColumnName,
+  ValueSeriesSchema,
+  ValueSeriesValueColumns,
 } from './series.js';
 export type {
   EventDataForSchema,

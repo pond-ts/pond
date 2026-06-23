@@ -381,19 +381,29 @@ function materializeKey(keys: KeyColumn, i: number): EventKey {
   if (keys.kind === 'timeRange') {
     return new TimeRange({ start: keys.beginAt(i), end: keys.endAt(i) });
   }
-  // interval
-  const ikeys = keys as IntervalKeyColumn;
-  const label = ikeys.labelAt(i);
-  if (label === undefined) {
-    throw new Error(
-      `SeriesStore.keyAt: row ${i} has no interval label (this should have been caught at IntervalKeyColumn construction)`,
-    );
+  if (keys.kind === 'interval') {
+    const ikeys = keys as IntervalKeyColumn;
+    const label = ikeys.labelAt(i);
+    if (label === undefined) {
+      throw new Error(
+        `SeriesStore.keyAt: row ${i} has no interval label (this should have been caught at IntervalKeyColumn construction)`,
+      );
+    }
+    return new Interval({
+      value: label,
+      start: keys.beginAt(i),
+      end: keys.endAt(i),
+    });
   }
-  return new Interval({
-    value: label,
-    start: keys.beginAt(i),
-    end: keys.endAt(i),
-  });
+  // A `'value'` key (ValueSeries) has no EventKey representation — a ValueSeries
+  // wraps the ColumnarStore directly and never routes through SeriesStore. Fail
+  // loudly rather than silently mistreat a value key as an interval (which would
+  // call the non-existent `labelAt`). Unreachable today; a guard against a
+  // future path that wraps a value-keyed store in a SeriesStore.
+  throw new TypeError(
+    `SeriesStore.keyAt: key kind '${keys.kind}' has no EventKey representation ` +
+      `(value-keyed stores are accessed via ValueSeries, not SeriesStore)`,
+  );
 }
 
 function buildRowData(store: ColumnarStore, i: number): SeriesRowData {

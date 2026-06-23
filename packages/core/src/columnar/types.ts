@@ -14,8 +14,14 @@
 /** Value-column kinds — the four scalar storage shapes. */
 export type ColumnKind = 'number' | 'boolean' | 'string' | 'array';
 
-/** Key-column kinds — the three temporal axis shapes. */
-export type KeyKind = 'time' | 'timeRange' | 'interval';
+/**
+ * Key-column kinds. `'time'` / `'timeRange'` / `'interval'` are the temporal
+ * axis shapes; `'value'` is a non-time **value axis** (distance, cumulative
+ * work, …) — the substrate of a `ValueSeries`. The value tag is what gates the
+ * calendar/clock operators (`Sequence.every`, tz formatting) off a value-keyed
+ * series; the underlying buffer is the same finite `Float64Array`.
+ */
+export type KeyKind = 'time' | 'timeRange' | 'interval' | 'value';
 
 /**
  * Any column kind — value or key. `ColumnDef`'s `kind` field is

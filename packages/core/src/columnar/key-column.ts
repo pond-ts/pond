@@ -36,7 +36,11 @@ import { StringColumn } from './string-column.js';
 import { validateColumnLength } from './validity.js';
 
 /** The framework's key-column discriminated union. */
-export type KeyColumn = TimeKeyColumn | TimeRangeKeyColumn | IntervalKeyColumn;
+export type KeyColumn =
+  | TimeKeyColumn
+  | TimeRangeKeyColumn
+  | IntervalKeyColumn
+  | ValueKeyColumn;
 
 /**
  * Shared eager validation that every active timestamp slot is a
@@ -67,7 +71,7 @@ function assertFiniteTimestamps(
  * indexed buffer access; the framework knows nothing about
  * `EventKey` / `Time` / `TimeRange` / `Interval`.
  */
-interface KeyColumnBase<K extends 'time' | 'timeRange' | 'interval'> {
+interface KeyColumnBase<K extends 'time' | 'timeRange' | 'interval' | 'value'> {
   readonly kind: K;
   /** Row count. */
   readonly length: number;
@@ -201,6 +205,101 @@ export class TimeKeyColumn implements KeyColumnBase<'time'> {
       out[i] = idx >= 0 && idx < this.length ? this.begin[idx]! : 0;
     }
     return new TimeKeyColumn(out, outLength);
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* ValueKeyColumn — single-buffer point key on a non-time value axis.         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Point key on a **value axis** (distance, cumulative work, …) rather than
+ * time — the substrate of a `ValueSeries`. Structurally identical to
+ * {@link TimeKeyColumn} (single `Float64Array`, `end === begin`); only the
+ * `kind` tag differs, which is what gates the calendar/clock operators
+ * (`Sequence.every`, tz tick formatting) off a value-keyed series.
+ *
+ * The buffer carries finite axis values, not epoch milliseconds. **Ordering
+ * (non-decreasing) is NOT enforced here** — the monotonicity contract lives on
+ * the `byValue` projection (`assertMonotonicAxis`), so the column stays a dumb
+ * indexed buffer (matching how the time columns don't self-validate sort
+ * order). Finiteness *is* enforced: a `NaN` / `Infinity` axis value would break
+ * bisection and range logic.
+ */
+export class ValueKeyColumn implements KeyColumnBase<'value'> {
+  readonly kind = 'value' as const;
+  readonly length: number;
+  readonly begin: Float64Array;
+  /** For a point value key, `end === begin` (same buffer) — a zero-width axis position. */
+  readonly end: Float64Array;
+
+  constructor(begin: Float64Array, length: number) {
+    validateColumnLength(length, 'ValueKeyColumn');
+    if (length > begin.length) {
+      throw new RangeError(
+        `ValueKeyColumn buffer underflow: length ${length} exceeds begin.length ${begin.length}`,
+      );
+    }
+    assertFiniteTimestamps(begin, length, 'ValueKeyColumn', 'begin');
+    this.length = length;
+    this.begin = begin;
+    this.end = begin;
+  }
+
+  beginAt(i: number): number {
+    if (i < 0 || i >= this.length) {
+      throw new RangeError(
+        `ValueKeyColumn.beginAt out of range: ${i} not in [0, ${this.length})`,
+      );
+    }
+    return this.begin[i]!;
+  }
+
+  endAt(i: number): number {
+    return this.beginAt(i);
+  }
+
+  /** Zero-copy index-range view. Mirrors {@link TimeKeyColumn.sliceByRange}. */
+  sliceByRange(start: number, end: number): ValueKeyColumn {
+    const lo = Math.max(0, start);
+    const hi = Math.min(this.length, end);
+    if (hi <= lo) {
+      return ValueKeyColumn.fromValidatedSubarray(new Float64Array(0), 0);
+    }
+    return ValueKeyColumn.fromValidatedSubarray(
+      this.begin.subarray(lo, hi),
+      hi - lo,
+    );
+  }
+
+  /**
+   * @internal Trusted-buffer factory for slice paths; skips the per-row
+   * finiteness scan. Mirrors {@link TimeKeyColumn.fromValidatedSubarray}.
+   */
+  static fromValidatedSubarray(
+    begin: Float64Array,
+    length: number,
+  ): ValueKeyColumn {
+    validateColumnLength(length, 'ValueKeyColumn.fromValidatedSubarray');
+    if (length > begin.length) {
+      throw new RangeError(
+        `ValueKeyColumn.fromValidatedSubarray buffer underflow: length ${length} exceeds begin.length ${begin.length}`,
+      );
+    }
+    const c: ValueKeyColumn = Object.create(ValueKeyColumn.prototype);
+    Object.assign(c, { kind: 'value' as const, length, begin, end: begin });
+    return c;
+  }
+
+  /** Gathers rows by index. See {@link TimeKeyColumn.sliceByIndices}. */
+  sliceByIndices(indices: Int32Array): ValueKeyColumn {
+    const outLength = indices.length;
+    const out = new Float64Array(outLength);
+    for (let i = 0; i < outLength; i += 1) {
+      const idx = indices[i]!;
+      out[i] = idx >= 0 && idx < this.length ? this.begin[idx]! : 0;
+    }
+    return new ValueKeyColumn(out, outLength);
   }
 }
 
@@ -618,6 +717,23 @@ export function timeKeyColumnFromArray(
     begin[i] = timestamps[i]!;
   }
   return new TimeKeyColumn(begin, length);
+}
+
+/**
+ * Builds a {@link ValueKeyColumn} from an array of axis values. The values
+ * must be finite; ordering (non-decreasing) is the `byValue` projection's
+ * contract, not this factory's.
+ */
+export function valueKeyColumnFromArray(
+  values: ReadonlyArray<number>,
+): ValueKeyColumn {
+  const length = values.length;
+  validateColumnLength(length, 'ValueKeyColumn');
+  const begin = new Float64Array(length);
+  for (let i = 0; i < length; i += 1) {
+    begin[i] = values[i]!;
+  }
+  return new ValueKeyColumn(begin, length);
 }
 
 /**

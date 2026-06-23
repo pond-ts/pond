@@ -99,8 +99,10 @@ export {
   IntervalKeyColumn,
   TimeKeyColumn,
   TimeRangeKeyColumn,
+  ValueKeyColumn,
   timeKeyColumnFromArray,
   timeRangeKeyColumnFromPairs,
+  valueKeyColumnFromArray,
 } from './key-column.js';
 
 export { type FromTrustedStoreOptions, ColumnarStore } from './store.js';

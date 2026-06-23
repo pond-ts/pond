@@ -39,6 +39,7 @@ import {
   IntervalKeyColumn,
   TimeKeyColumn,
   TimeRangeKeyColumn,
+  ValueKeyColumn,
   type KeyColumn,
 } from './key-column.js';
 import { ColumnarStore } from './store.js';
@@ -474,6 +475,9 @@ function sliceKeyColumnByIndices(
   if (keys instanceof IntervalKeyColumn) {
     return keys.sliceByIndices(indices);
   }
+  if (keys instanceof ValueKeyColumn) {
+    return keys.sliceByIndices(indices);
+  }
   // Defensive fallback — exhaustiveness check.
   throw new TypeError(
     `withRowSelection: unrecognized KeyColumn kind '${(keys as { kind: string }).kind}'`,
@@ -500,6 +504,9 @@ function sliceKeyColumnByRange(
     return keys.sliceByRange(start, end);
   }
   if (keys instanceof IntervalKeyColumn) {
+    return keys.sliceByRange(start, end);
+  }
+  if (keys instanceof ValueKeyColumn) {
     return keys.sliceByRange(start, end);
   }
   // Defensive fallback — exhaustiveness check.
