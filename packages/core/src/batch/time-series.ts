@@ -2148,7 +2148,14 @@ export class TimeSeries<S extends SeriesSchema> {
    */
   byValue<const Axis extends NumericColumnNameForSchema<S>>(
     axis: Axis,
-  ): ValueSeries<ValueKeyedSchema<S, Axis>> {
+  ): Axis extends Axis ? ValueSeries<ValueKeyedSchema<S, Axis>> : never {
+    // The return type is **distributive** over `Axis` (`Axis extends Axis ?`):
+    // for a literal axis it is just `ValueSeries<ValueKeyedSchema<S, Axis>>`,
+    // but for a union axis (e.g. a generic wrapper's `'cumDist' | 'hr'`) it
+    // becomes the discriminated union `ValueSeries<…cumDist> | ValueSeries<…hr>`
+    // — each branch drops only its own axis, so narrowing on `axisName` recovers
+    // the right `column()` names. Without distribution, `ValueKeyedSchema` would
+    // drop *every* union member from the value columns.
     const { store, schema } = byValueOp(
       this.#store.store as unknown as ColumnarStore<ColumnSchema>,
       this.schema as unknown as ColumnSchema,
@@ -2158,7 +2165,9 @@ export class TimeSeries<S extends SeriesSchema> {
       this.name,
       schema as unknown as ValueKeyedSchema<S, Axis>,
       store,
-    );
+    ) as unknown as Axis extends Axis
+      ? ValueSeries<ValueKeyedSchema<S, Axis>>
+      : never;
   }
 
   /**

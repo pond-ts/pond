@@ -156,21 +156,9 @@ describe('TimeSeries.byValue → ValueSeries', () => {
     });
   });
 
-  describe('type-level surface', () => {
-    it('gates calendar/aggregate ops off ValueSeries, and types column names', () => {
-      const vs = makeTrack().byValue('cumDist');
-      // valid value-column name
-      expect(vs.column('hr')).toBeDefined();
-      // @ts-expect-error — 'cumDist' is the axis (key), not a value column
-      vs.column('cumDist');
-      // @ts-expect-error — not a column
-      vs.column('nope');
-      // @ts-expect-error — calendar/aggregate ops do not exist on ValueSeries
-      vs.aggregate;
-      // @ts-expect-error — byColumn is a TimeSeries op, not on ValueSeries
-      vs.byColumn;
-    });
-  });
+  // Type-level surface (column-name typing, calendar-op gating, union-axis
+  // distribution) is verified in test-d/value-series.test-d.ts — the CI
+  // `test:type` target type-checks src + test-d, not test/.
 
   describe('edge cases — empty and single-row source', () => {
     it('projects an empty source to an empty ValueSeries', () => {
