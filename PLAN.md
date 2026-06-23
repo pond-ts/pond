@@ -383,6 +383,37 @@ reducerSet)` per the charts RFC perf section + its two-lens review — reducer
     `plot_width` + visible slice in the chart; **statistical bands an M5-parity
     gate**. **M4.3 brush skipped** (no drivers). One-time competitive head-to-head
     (SciChart trial + AG Charts + uPlot) stays optional.
+  - **Value-axis RFC (`docs/rfcs/value-axis.md`, PR #279) — v2 draft, red-team
+    in progress (NOT a commitment).** Non-time x (distance / splits / laps).
+    **Spine (v2, after the estela + Codex + dashboard red-team + pjm17971):
+    value-land needs a _closed `ValueSeries` type_, not bare records.** pond is a
+    closed algebra (`TimeSeries → TimeSeries`); `byColumn`/`rollingByColumn` ship
+    but return `{start,end,…}[]` — they project _out_ of it (so they're not "tight
+    analogues" of `aggregate`/`rolling` — not closed). The key is already generic
+    numeric-interval (`'time' | 'timeRange' | 'interval'`), so `ValueSeries` is a
+    **recognition** (time is a tag) and `byColumn`/`rollingByColumn` are the
+    **`TimeSeries → ValueSeries` projection**; it carries the ordering-based
+    operators, calendar ops stay time-only. Honest thesis (v1 was
+    self-flattering): the analytics shipped a _project-out reduce_ — the head
+    (`scan`), the chart, AND the closure are **all** pending (not "chart is the
+    laggard"). **Central question: records vs a closed `ValueSeries`** — lean
+    `ValueSeries` as the north star; **adopt the type early, grow the algebra
+    late, gated on a 2nd value-axis consumer (geo), NOT estela-alone**
+    (over-fitting guard — estela's pipeline is linear / records suffice today).
+    Source stays time-keyed (estela's model B, confirmed — **not** re-keying);
+    `ValueSeries` is the derived output (records are its rows → additively
+    wrappable). **`scan` leads the wave** — its own RFC + core change, abstract
+    `mapAccumL`, forecloses nothing (returns a `TimeSeries`). **Decimator
+    DECOUPLED** (dashboard): ship time-only (index `Column.bin`) first; the value
+    axis brings axis-domain `binByAxis` (Codex: `Column.bin` is index-domain,
+    wrong for gappy data). `byColumn` is **order-free** (Codex: v1 wrongly said it
+    enforces monotonic) — the monotonicity contract lives on the axis
+    **projection** (`assertMonotonicAxis`). Splits/laps = `ValueSeries` interval
+    marks → un-parks range-editing **#261**. Operator-surface consolidation
+    deferred hard; the **type** is the real consolidation. Positioning bet
+    (time-series → monotonic-axis lib; opt-in/time-default = a middle path) =
+    pjm17971's call. estela / Codex / dashboard reviews layered in the RFC;
+    geo / core pending. estela friction: `~/Code/estela/docs/pond-friction.md`.
 - **M5 — estela parity.** Faithful `DataChart` reproduction on real activity
   data; prove no-regressions; hand the production swap to the estela agent; flip
   `private:false` + first publish.
