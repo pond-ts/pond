@@ -245,6 +245,15 @@ A **monotonic** source (cumulative distance, work) yields contiguous
 ranges — splits, an elevation-vs-distance profile. A **non-monotonic**
 source (instantaneous power) yields a histogram. Same call, both shapes.
 
+`byColumn`'s reducers are **pure and order-free** — each bin is reduced
+independently. When a metric carries state _across_ bins (hysteresis
+elevation gain, where a climb spanning several kilometres accumulates),
+materialize that state into a column first with
+[`scan`](./transformations#scan), then segment it here:
+`split = scan + byColumn`. The gain per split is then just
+`last − first` of the scanned cumulative-gain column in each bin, and
+the reducer stays pure.
+
 ### Explicit bins — `{ edges }`
 
 Ascending `edges` `[e₀, …, eₙ]` give `n` bins, bin `i` = `[eᵢ, eᵢ₊₁)` —

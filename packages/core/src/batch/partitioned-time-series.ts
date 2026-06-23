@@ -8,6 +8,7 @@ import type {
   AggregateMap,
   AggregateSchema,
   AlignSchema,
+  AppendColumn,
   BaselineSchema,
   DedupeKeep,
   DiffSchema,
@@ -25,6 +26,7 @@ import type {
   SmoothSchema,
   ValidatedAggregateMap,
 } from '../schema/index.js';
+import type { ScanStep } from './operators/scan.js';
 
 type SequenceLike = Sequence | BoundedSequence;
 type AlignMethod = 'hold' | 'linear';
@@ -732,6 +734,35 @@ export class PartitionedTimeSeries<
     return this.rewrap(
       PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>
         g.cumulative(spec),
+      ),
+    );
+  }
+
+  /** Per-partition `scan`. See {@link TimeSeries.scan}. */
+  scan<const Source extends NumericColumnNameForSchema<S>, A>(
+    source: Source,
+    step: ScanStep<A>,
+    init: A,
+  ): PartitionedTimeSeries<DiffSchema<S, Source>, K>;
+  scan<
+    const Source extends NumericColumnNameForSchema<S>,
+    const Name extends string,
+    A,
+  >(
+    source: Source,
+    step: ScanStep<A>,
+    init: A,
+    options: { output: Name },
+  ): PartitionedTimeSeries<AppendColumn<S, Name, 'number'>, K>;
+  scan(
+    source: string,
+    step: (acc: any, value: number, index: number) => readonly [any, number],
+    init: any,
+    options?: { output?: string },
+  ): any {
+    return this.rewrap(
+      PartitionedTimeSeries.applyToSource(this.source, this.by, (g) =>
+        (g as any).scan(source, step, init, options),
       ),
     );
   }

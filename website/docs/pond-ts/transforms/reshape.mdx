@@ -319,7 +319,7 @@ per host). Reach for [`pivotByGroup`](#pivotbygroup) when you want
 that scopes stateful transforms to within each partition. Most
 pond-ts stateful operators (`fill`, `align`, `rolling`, `smooth`,
 `baseline`, `outliers`, `diff`, `rate`, `pctChange`, `cumulative`,
-`shift`, `aggregate`) read from neighboring events when computing
+`scan`, `shift`, `aggregate`) read from neighboring events when computing
 each output. When a series interleaves multiple entities (host,
 region, device, …), those neighbors silently cross entity boundaries:
 

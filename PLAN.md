@@ -383,8 +383,8 @@ reducerSet)` per the charts RFC perf section + its two-lens review — reducer
     `plot_width` + visible slice in the chart; **statistical bands an M5-parity
     gate**. **M4.3 brush skipped** (no drivers). One-time competitive head-to-head
     (SciChart trial + AG Charts + uPlot) stays optional.
-  - **Value-axis RFC (`docs/rfcs/value-axis.md`, PR #279) — v2 draft, red-team
-    in progress (NOT a commitment).** Non-time x (distance / splits / laps).
+  - **Value-axis RFC (`docs/rfcs/value-axis.md`, PR #279 — merged `f141443`) —
+    ADOPTED; wave building.** Non-time x (distance / splits / laps).
     **Spine (v2, after the estela + Codex + dashboard red-team + pjm17971):
     value-land needs a _closed `ValueSeries` type_, not bare records.** pond is a
     closed algebra (`TimeSeries → TimeSeries`); `byColumn`/`rollingByColumn` ship
@@ -402,8 +402,13 @@ reducerSet)` per the charts RFC perf section + its two-lens review — reducer
     (over-fitting guard — estela's pipeline is linear / records suffice today).
     Source stays time-keyed (estela's model B, confirmed — **not** re-keying);
     `ValueSeries` is the derived output (records are its rows → additively
-    wrappable). **`scan` leads the wave** — its own RFC + core change, abstract
-    `mapAccumL`, forecloses nothing (returns a `TimeSeries`). **Decimator
+    wrappable). **`scan` SHIPPED — the wave lead.** `TimeSeries.scan(source,
+step, init, {output?})` — the typed-accumulator `mapAccumL` generalizing
+    `cumulative` (decouples accumulator / output / output-column); replace or
+    append; `cumulative` semantics inherited; `partitionBy().scan().collect()`;
+    `split = scan + byColumn`. **Next in the wave: `ValueSeries` type → chart
+    x-on-`ValueSeries` → estela friction cycle.** `scan` forecloses nothing
+    (returns a `TimeSeries`). **Decimator
     DECOUPLED** (dashboard): ship time-only (index `Column.bin`) first; the value
     axis brings axis-domain `binByAxis` (Codex: `Column.bin` is index-domain,
     wrong for gappy data). `byColumn` is **order-free** (Codex: v1 wrongly said it
