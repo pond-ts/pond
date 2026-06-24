@@ -187,11 +187,7 @@ const timings = new LiveSeries({ name: 'timings', schema });
 // emits at the same 30 s boundary, all sharing the same ts.
 const ticks = timings
   .partitionBy('endpoint')
-  .rolling(
-    '1m',
-    { latency: 'p95' },
-    { trigger: Trigger.every('30s') },
-  );
+  .rolling('1m', { latency: 'p95' }, { trigger: Trigger.every('30s') });
 
 // Each tick: one event per known endpoint, all sharing the same ts.
 // Schema: [time, endpoint, latency]

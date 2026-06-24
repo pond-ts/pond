@@ -30,15 +30,15 @@ or Interval) on the left, schema-typed data on the right](/img/concepts-events.p
 import { Event, Time } from 'pond-ts';
 
 const e = new Event(new Time(1735689600000), {
-  cpu:  0.42,
+  cpu: 0.42,
   host: 'api-1',
 });
 
-e.key();        // Time | TimeRange | Interval — see Temporal keys
-e.begin();      // number — earliest instant in the key's extent
-e.end();        // number — latest instant
-e.get('cpu');   // 0.42 — typed via the schema
-e.data();       // { cpu, host } — full payload
+e.key(); // Time | TimeRange | Interval — see Temporal keys
+e.begin(); // number — earliest instant in the key's extent
+e.end(); // number — latest instant
+e.get('cpu'); // 0.42 — typed via the schema
+e.data(); // { cpu, host } — full payload
 ```
 
 Events are immutable. `event.set('cpu', 0.5)` returns a new event;
@@ -67,16 +67,16 @@ const cpu = new TimeSeries({
   name: 'cpu',
   schema,
   rows: [
-    [0,    0.42, 'api-1'],
+    [0, 0.42, 'api-1'],
     [1000, 0.51, 'api-1'],
     [2000, 0.38, 'api-2'],
   ],
 });
 
-cpu.length;             // 3
+cpu.length; // 3
 cpu.first()?.get('cpu'); // 0.42
-cpu.tail('1m');         // new TimeSeries with the trailing 1m of events
-cpu.aggregate(seq, m);  // new TimeSeries, bucketed
+cpu.tail('1m'); // new TimeSeries with the trailing 1m of events
+cpu.aggregate(seq, m); // new TimeSeries, bucketed
 ```
 
 Every transform returns a new `TimeSeries` — no in-place mutation.
@@ -106,10 +106,10 @@ const live = new LiveSeries({
 });
 
 live.push([Date.now(), 0.42, 'api-1']);
-live.length;             // 1
+live.length; // 1
 live.last()?.get('cpu'); // 0.42
 
-live.on('event', e => console.log('arrived:', e.get('cpu')));
+live.on('event', (e) => console.log('arrived:', e.get('cpu')));
 ```
 
 The same operator surface is available — `live.rolling('1m', ...)`,
@@ -145,11 +145,11 @@ moderate reordering. See [Late data](./late-data) for the trade-offs.
 
 ## Composition rules
 
-| Source             | Operator returns                       | Mutation model                        |
-| ------------------ | -------------------------------------- | ------------------------------------- |
-| `TimeSeries<S>`    | New `TimeSeries<S'>`                   | Source unchanged; chain freely        |
-| `LiveSeries<S>`    | `LiveView<S'>` or accumulator type     | Source unchanged; subscribers attach  |
-| Accumulator        | New `LiveView` / accumulator           | Same — accumulator-of-accumulator     |
+| Source          | Operator returns                   | Mutation model                       |
+| --------------- | ---------------------------------- | ------------------------------------ |
+| `TimeSeries<S>` | New `TimeSeries<S'>`               | Source unchanged; chain freely       |
+| `LiveSeries<S>` | `LiveView<S'>` or accumulator type | Source unchanged; subscribers attach |
+| Accumulator     | New `LiveView` / accumulator       | Same — accumulator-of-accumulator    |
 
 Both sides are append-only-from-the-source's-perspective. A
 `TimeSeries` is fully complete when constructed; a `LiveSeries`

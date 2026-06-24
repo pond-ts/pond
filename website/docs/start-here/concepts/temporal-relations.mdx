@@ -6,7 +6,7 @@ sidebar_position: 4
 
 How an event's temporal key relates to a query range determines
 which selection operator you reach for. Pond names three distinct
-relations — *within*, *overlapping*, *trim* — to force the choice
+relations — _within_, _overlapping_, _trim_ — to force the choice
 explicit. Picking the wrong one is silent data corruption; picking
 the right one is the difference between a chart that shows clean
 edges and one that leaks data past the visible range.
@@ -16,11 +16,11 @@ edges and one that leaks data past the visible range.
 Given a query `range = [start, end)` and an event with key extent
 `[event.begin(), event.end())`:
 
-| Relation        | Condition                                                       | Behaviour on straddling events                |
-| --------------- | --------------------------------------------------------------- | --------------------------------------------- |
-| **within**      | `event.begin() ≥ range.start` AND `event.end() ≤ range.end`     | Drop events whose extent crosses a boundary   |
-| **overlapping** | `event.begin() < range.end` AND `event.end() > range.start`     | Keep straddling events with original extents  |
-| **trim**        | Same as overlapping, then **clip** the event's extent to `range` | Keep straddling events with clipped extents   |
+| Relation        | Condition                                                        | Behaviour on straddling events               |
+| --------------- | ---------------------------------------------------------------- | -------------------------------------------- |
+| **within**      | `event.begin() ≥ range.start` AND `event.end() ≤ range.end`      | Drop events whose extent crosses a boundary  |
+| **overlapping** | `event.begin() < range.end` AND `event.end() > range.start`      | Keep straddling events with original extents |
+| **trim**        | Same as overlapping, then **clip** the event's extent to `range` | Keep straddling events with clipped extents  |
 
 ![Five test events (a–e) against a query range from 02:00 to 05:00:
 within keeps b and d; overlapping keeps b, c, d, e; trim keeps b
@@ -32,21 +32,21 @@ import { TimeRange } from 'pond-ts';
 
 const range = new TimeRange({
   start: Date.parse('2025-01-01T00:02:00Z'),
-  end:   Date.parse('2025-01-01T00:05:00Z'),
+  end: Date.parse('2025-01-01T00:05:00Z'),
 });
 
-cpu.within(range);      // keep events fully contained
+cpu.within(range); // keep events fully contained
 cpu.overlapping(range); // keep events that intersect
-cpu.trim(range);        // intersect and clip key extents
+cpu.trim(range); // intersect and clip key extents
 ```
 
 ### When to use which
 
-| Use **within** when…                       | Use **overlapping** when…                    | Use **trim** when…                           |
-| ------------------------------------------ | -------------------------------------------- | -------------------------------------------- |
-| Running analytics over a closed window     | Counting "any activity in window" presence   | Rendering a chart limited to a visible range |
-| Sums / averages must not double-count      | Straddling events are "in" the conceptual set | Straddling event extents must not leak past edges |
-| Bucket integrity matters more than coverage | Coverage matters more than exactness        | Output is visualized, not aggregated         |
+| Use **within** when…                        | Use **overlapping** when…                     | Use **trim** when…                                |
+| ------------------------------------------- | --------------------------------------------- | ------------------------------------------------- |
+| Running analytics over a closed window      | Counting "any activity in window" presence    | Rendering a chart limited to a visible range      |
+| Sums / averages must not double-count       | Straddling events are "in" the conceptual set | Straddling event extents must not leak past edges |
+| Bucket integrity matters more than coverage | Coverage matters more than exactness          | Output is visualized, not aggregated              |
 
 ### Trim and value semantics
 
@@ -82,13 +82,13 @@ preserve the event grid (no clipping, no aggregation), just narrow it
 positionally:
 
 ```ts
-cpu.first();           // first event by key order
-cpu.last();            // last event by key order
-cpu.at(0);             // event at index 0
-cpu.at(-1);            // last event (negative index from end)
-cpu.head(10);          // first 10 events
-cpu.tail(10);          // last 10 events
-cpu.tail('1m');        // events whose begin > lastEvent.begin - 60s
+cpu.first(); // first event by key order
+cpu.last(); // last event by key order
+cpu.at(0); // event at index 0
+cpu.at(-1); // last event (negative index from end)
+cpu.head(10); // first 10 events
+cpu.tail(10); // last 10 events
+cpu.tail('1m'); // events whose begin > lastEvent.begin - 60s
 ```
 
 `tail` is the temporal counterpart to `Array.slice(-n)`: it accepts
@@ -97,14 +97,14 @@ when the question is "what happened in the last N seconds."
 
 ## Pointwise vs range-relations
 
-| Operation                         | Type             | Preserves event keys? | Returns                  |
-| --------------------------------- | ---------------- | --------------------- | ------------------------ |
-| `first` / `last` / `at` / `at(-1)` | Pointwise        | Yes                   | One event or `undefined` |
-| `head(n)` / `tail(n)`             | Pointwise (count) | Yes                   | New series, `n` events   |
-| `tail(duration)`                  | Pointwise (time) | Yes                   | New series                |
-| `within(range)`                   | Range relation   | Yes                   | New series                |
-| `overlapping(range)`              | Range relation   | Yes                   | New series                |
-| `trim(range)`                     | Range relation   | **No** (clips extents) | New series                |
+| Operation                          | Type              | Preserves event keys?  | Returns                  |
+| ---------------------------------- | ----------------- | ---------------------- | ------------------------ |
+| `first` / `last` / `at` / `at(-1)` | Pointwise         | Yes                    | One event or `undefined` |
+| `head(n)` / `tail(n)`              | Pointwise (count) | Yes                    | New series, `n` events   |
+| `tail(duration)`                   | Pointwise (time)  | Yes                    | New series               |
+| `within(range)`                    | Range relation    | Yes                    | New series               |
+| `overlapping(range)`               | Range relation    | Yes                    | New series               |
+| `trim(range)`                      | Range relation    | **No** (clips extents) | New series               |
 
 Pointwise selections never modify event keys. Range relations except
 `trim` also preserve keys. Only `trim` produces new events with new

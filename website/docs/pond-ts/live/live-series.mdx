@@ -35,13 +35,13 @@ windowed/grouped aggregation inside a pipeline, and
 `Collection` / `TimeSeries` for event containers. `LiveSeries` is the
 pond-ts in-process push target and retained live source.
 
-| PondJS                                         | pond-ts                                        |
-| ---------------------------------------------- | ---------------------------------------------- |
-| `Stream` + `Pipeline().from(stream)`           | `LiveSeries.push(...)` and live subscriptions  |
-| `Pipeline().windowBy(...).aggregate(...)`      | `live.aggregate(...)` → `LiveAggregation`      |
-| pipeline processors and output callbacks       | method chain on `LiveSeries` / `LiveView`      |
-| `Collection` / `TimeSeries` event containers   | `TimeSeries`; `live.toTimeSeries()` snapshots  |
-| source- or pipeline-managed history            | `retention: { maxEvents / maxAge }` on source  |
+| PondJS                                       | pond-ts                                       |
+| -------------------------------------------- | --------------------------------------------- |
+| `Stream` + `Pipeline().from(stream)`         | `LiveSeries.push(...)` and live subscriptions |
+| `Pipeline().windowBy(...).aggregate(...)`    | `live.aggregate(...)` → `LiveAggregation`     |
+| pipeline processors and output callbacks     | method chain on `LiveSeries` / `LiveView`     |
+| `Collection` / `TimeSeries` event containers | `TimeSeries`; `live.toTimeSeries()` snapshots |
+| source- or pipeline-managed history          | `retention: { maxEvents / maxAge }` on source |
 
 ## Creating a LiveSeries
 
