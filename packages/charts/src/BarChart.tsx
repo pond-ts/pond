@@ -142,6 +142,9 @@ export function BarChart<S extends SeriesSchema>({
     () => ({
       layer: {
         yExtent: () => barExtent(bs),
+        xKind: 'time',
+        xExtent: () =>
+          bs.length === 0 ? null : [bs.begin[0]!, bs.end[bs.length - 1]!],
         sampleAt: (time) => {
           // The flag belongs to the bar **under the cursor** — the bar whose
           // span `[begin, end]` contains `time` (barIndexAtTime), NOT

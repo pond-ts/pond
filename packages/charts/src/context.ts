@@ -89,14 +89,22 @@ export interface ContainerFrame {
   unregisterTrackerSource(key: symbol): void;
   /**
    * Shared x→pixel scale, range `[0, plotWidth]`. A d3 `scaleTime` (default) so
-   * ticks land on wall-clock boundaries, or a `scaleLinear` when the container's
-   * `xScaleType` is `'linear'` (a **value axis** — distance, cumulative work).
-   * The domain is the container's `timeRange`. Both scales are callable
+   * ticks land on wall-clock boundaries, or a `scaleLinear` when the data is
+   * value-keyed (a **value axis** — distance, cumulative work; see {@link xKind}).
+   * The domain is the container's resolved `range` (auto-fit if omitted). Both
+   * scales are callable
    * (`value → px`) and expose `invert`/`ticks`/`tickFormat`; consumers use only
    * that shared surface (the cursor coerces `invert` via `+`, `<TimeAxis>` keys
    * ticks via `+d`), so either kind drops in.
    */
   readonly xScale: ScaleTime<number, number> | ScaleLinear<number, number>;
+  /**
+   * The resolved kind of the shared x scale — `'time'` (a `scaleTime`) or
+   * `'value'` (a `scaleLinear`), inferred from the layers' data. `<XAxis>` reads
+   * it to pick its default tick formatter (a time format vs a number format),
+   * and the cursor readout to format the x position.
+   */
+  readonly xKind: 'time' | 'value';
   /** Pan/zoom enabled — the plot drag-pans and wheel-zooms the shared time range. */
   readonly panZoom: boolean;
   /** Minimum visible duration (ms) — the zoom-in floor. */
@@ -144,6 +152,19 @@ export const ContainerContext = createContext<ContainerFrame | null>(null);
 export interface RowLayer {
   /** This layer's finite-value `[min, max]`, or `null` if it has none. */
   yExtent(): [number, number] | null;
+  /**
+   * The **kind of x axis** this layer's data lives on — `'time'` for a
+   * `TimeSeries`, `'value'` for a `ValueSeries`. The container infers the one
+   * shared x scale from its layers (all must agree — a mix is an error), so the
+   * axis kind never needs declaring. See {@link ContainerFrame.xScale}.
+   */
+  readonly xKind: 'time' | 'value';
+  /**
+   * This layer's `[min, max]` along the **x** axis (the key / value-axis extent),
+   * or `null` if empty. The container unions these to auto-fit the shared x
+   * domain when no explicit `range` is given.
+   */
+  xExtent(): readonly [number, number] | null;
   /**
    * The layer's value(s) at `time` — the nearest sample — for the scrub tracker:
    * one for a line, two (lower/upper) for a band, empty at a gap. Each carries
@@ -214,10 +235,17 @@ export interface CursorFlag {
   readonly lines: readonly CursorFlagLine[];
 }
 
-/** A source of tracker samples — a draw layer, registered with the container so
- *  it can fan in every series' value at the cursor for {@link onTrackerChanged}. */
+/**
+ * A source of tracker samples — a draw layer, registered with the container so
+ * it can fan in every series' value at the cursor for {@link onTrackerChanged}.
+ * Also carries the layer's x-axis {@link RowLayer.xKind} + {@link RowLayer.xExtent}
+ * so the container can infer the shared x scale's kind + auto-fit its domain
+ * (the source registry is the container's only handle on its layers).
+ */
 export interface TrackerSource {
   sampleAt(time: number): readonly TrackerSample[];
+  readonly xKind: 'time' | 'value';
+  xExtent(): readonly [number, number] | null;
 }
 
 /**

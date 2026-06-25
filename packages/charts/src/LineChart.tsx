@@ -18,9 +18,9 @@ export interface LineChartProps<
 > {
   /**
    * The source series. A `TimeSeries` plots against the time axis; a
-   * `ValueSeries` (`series.byValue('cumDist')`) plots against its value axis —
-   * pair it with `<ChartContainer xScaleType="linear">`. Either way the key /
-   * axis column supplies x and `column` supplies y.
+   * `ValueSeries` (`series.byValue('cumDist')`) against its value axis — the
+   * container infers which from the data, no axis-type prop. Either way the key
+   * / axis column supplies x and `column` supplies y.
    */
   series: TimeSeries<S> | ValueSeries<VS>;
   /** Name of the numeric value column to plot. */
@@ -113,6 +113,11 @@ export function LineChart<
     () => ({
       layer: {
         yExtent: () => yExtent(cs),
+        // The container infers the shared x scale's kind + auto-fit domain from
+        // its layers: a ValueSeries plots on a value axis, a TimeSeries on time.
+        xKind: series instanceof ValueSeries ? 'value' : 'time',
+        xExtent: () =>
+          cs.length === 0 ? null : [cs.x[0]!, cs.x[cs.length - 1]!],
         sampleAt: (x) => {
           // No readout past the data (tracker policy — nearest clamps to an
           // endpoint outside the span); bounds from the columnar x axis.

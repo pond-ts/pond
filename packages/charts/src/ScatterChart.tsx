@@ -176,6 +176,9 @@ export function ScatterChart<S extends SeriesSchema>({
     () => ({
       layer: {
         yExtent: () => scatterExtent(cs),
+        xKind: 'time',
+        xExtent: () =>
+          cs.length === 0 ? null : [cs.x[0]!, cs.x[cs.length - 1]!],
         sampleAt: (time) => {
           // No readout past the data (tracker policy — the dot snaps to a drawn
           // mark, never extrapolates past the span); bounds from the time axis.

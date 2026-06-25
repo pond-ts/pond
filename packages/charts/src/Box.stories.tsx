@@ -119,7 +119,7 @@ export const Percentiles: Story = {
   render: () => {
     const q = percentileBuckets();
     return (
-      <ChartContainer timeRange={rangeOf(q)} width={620} theme={estelaTheme}>
+      <ChartContainer range={rangeOf(q)} width={620} theme={estelaTheme}>
         <ChartRow height={260}>
           <YAxis id="ms" label="ms" />
           <Layers>
@@ -151,7 +151,7 @@ export const CursorFlag: Story = {
     const q = percentileBuckets();
     return (
       <ChartContainer
-        timeRange={rangeOf(q)}
+        range={rangeOf(q)}
         width={620}
         theme={estelaTheme}
         cursor="flag"
@@ -186,7 +186,7 @@ export const Solid: Story = {
   render: () => {
     const q = percentileBuckets();
     return (
-      <ChartContainer timeRange={rangeOf(q)} width={620} theme={estelaTheme}>
+      <ChartContainer range={rangeOf(q)} width={620} theme={estelaTheme}>
         <ChartRow height={260}>
           <YAxis id="ms" label="ms" />
           <Layers>
@@ -214,7 +214,7 @@ export const WithGap: Story = {
   render: () => {
     const g = bucketsWithGap();
     return (
-      <ChartContainer timeRange={rangeOf(g)} width={520}>
+      <ChartContainer range={rangeOf(g)} width={520}>
         <ChartRow height={220}>
           <YAxis id="v" label="v" min={0} max={80} />
           <Layers>
@@ -240,7 +240,7 @@ export const Themed: Story = {
   render: () => {
     const q = percentileBuckets();
     return (
-      <ChartContainer timeRange={rangeOf(q)} width={620} theme={defaultTheme}>
+      <ChartContainer range={rangeOf(q)} width={620} theme={defaultTheme}>
         <ChartRow height={260}>
           <YAxis id="ms" label="ms" />
           <Layers>

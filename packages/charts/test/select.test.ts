@@ -17,6 +17,8 @@ function layer(
 ): LayerEntry {
   return {
     layer: {
+      xKind: 'time',
+      xExtent: () => null,
       yExtent: () => null,
       sampleAt: () => [],
       draw: noop,

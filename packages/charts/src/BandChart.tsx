@@ -89,6 +89,9 @@ export function BandChart<S extends SeriesSchema>({
     () => ({
       layer: {
         yExtent: () => bandExtent(bs),
+        xKind: 'time',
+        xExtent: () =>
+          bs.length === 0 ? null : [bs.x[0]!, bs.x[bs.length - 1]!],
         sampleAt: (time) => {
           // No readout past the data (tracker policy — nearest() clamps); bounds
           // from the columnar time axis.

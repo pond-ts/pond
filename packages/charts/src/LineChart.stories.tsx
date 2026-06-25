@@ -4,6 +4,7 @@ import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
+import { XAxis } from './XAxis.js';
 import type { ChartTheme } from './theme.js';
 
 const N = 60;
@@ -46,9 +47,9 @@ function flat() {
 
 /**
  * A ride re-keyed onto **cumulative distance** (metres) via `byValue` — HR is
- * then plotted against distance, not time. Drives the value-axis path
- * (`<ChartContainer xScaleType="linear">`). `cumDist` rises ~80 m/step
- * (strictly increasing, so it's a valid monotonic axis).
+ * then plotted against distance, not time. Drives the value-axis path — the
+ * chart infers a value x straight from the `ValueSeries`. `cumDist` rises
+ * ~80 m/step (strictly increasing, so it's a valid monotonic axis).
  */
 function rideByDistance() {
   const rows: Array<[number, number, number]> = [];
@@ -78,18 +79,39 @@ type Story = StoryObj;
 
 /**
  * **Value axis** — HR plotted against cumulative distance (metres), not time.
- * The same `<LineChart>` consuming a `ValueSeries`; the container uses a linear
- * x scale (`xScaleType="linear"`) and a numeric tick format.
+ * The same `<LineChart>` consuming a `ValueSeries`; the chart **infers** a value
+ * (linear) x straight from the data — no axis-type prop — and **auto-fits** the
+ * domain (no `range`), so the call site carries neither. Numeric tick format.
  */
 export const ValueAxisDistance: Story = {
+  render: () => (
+    <ChartContainer timeFormat=",.0f" width={480}>
+      <ChartRow height={200}>
+        <Layers>
+          <LineChart series={rideByDistance()} column="hr" as="heartrate" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
+ * **Value axis + flag cursor.** HR over distance with a hover-driven
+ * `cursor="flag"` — move the pointer and the staff rides the nearest data
+ * point, the flag reading its HR; `cursorTime` shows the x position (e.g.
+ * `1,200`) atop the staff. Proves the cursor / flag readout follows the pointer
+ * on a value axis (`sampleAt` bisects the distance axis), not just time.
+ */
+export const ValueAxisFlag: Story = {
   render: () => {
     const series = rideByDistance();
     const maxDist = series.axisAt(series.length - 1);
     return (
       <ChartContainer
-        xScaleType="linear"
-        timeRange={[0, maxDist]}
+        range={[0, maxDist]}
         timeFormat=",.0f"
+        cursor="flag"
+        cursorTime
         width={480}
       >
         <ChartRow height={200}>
@@ -102,12 +124,35 @@ export const ValueAxisDistance: Story = {
   },
 };
 
+/**
+ * **Explicit `<XAxis>` with a label.** Instead of the container's auto-axis,
+ * an `<XAxis label="Distance (m)" format=",.0f" />` is declared as a child
+ * (with `showAxis={false}` to suppress the auto one) — the placeable, labelled
+ * sibling of `<YAxis>`. The kind is still inferred from the `ValueSeries`.
+ */
+export const ValueAxisLabeled: Story = {
+  render: () => {
+    const series = rideByDistance();
+    const maxDist = series.axisAt(series.length - 1);
+    return (
+      <ChartContainer range={[0, maxDist]} showAxis={false} width={480}>
+        <ChartRow height={200}>
+          <Layers>
+            <LineChart series={series} column="hr" as="heartrate" />
+          </Layers>
+        </ChartRow>
+        <XAxis label="Distance (m)" format=",.0f" />
+      </ChartContainer>
+    );
+  },
+};
+
 /** Line with a gap — the coast must read as a break, not a drop to zero. */
 export const WithGap: Story = {
   render: () => {
     const series = sineWithGap();
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={480}>
+      <ChartContainer range={TIME_RANGE} width={480}>
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="v" />
@@ -123,7 +168,7 @@ export const Flat: Story = {
   render: () => {
     const series = flat();
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={480}>
+      <ChartContainer range={TIME_RANGE} width={480}>
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="v" as="context" />
@@ -192,7 +237,7 @@ export const Themed: Story = {
   render: () => {
     const series = sineWithGap();
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={480} theme={darkTheme}>
+      <ChartContainer range={TIME_RANGE} width={480} theme={darkTheme}>
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="v" />
@@ -267,7 +312,7 @@ export const SemanticFoam: Story = {
   render: () => {
     const series = sineWithGap();
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={480} theme={foamTheme}>
+      <ChartContainer range={TIME_RANGE} width={480} theme={foamTheme}>
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="v" as="foam" />
@@ -316,7 +361,7 @@ export const GapAwareSmooth: Story = {
       output: 'vSmooth',
     });
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={520} theme={foamTheme}>
+      <ChartContainer range={TIME_RANGE} width={520} theme={foamTheme}>
         <ChartRow height={220}>
           <Layers>
             <LineChart series={sm} column="v" />

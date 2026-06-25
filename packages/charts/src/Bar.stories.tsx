@@ -73,7 +73,7 @@ export const Buckets: Story = {
   render: () => {
     const v = hourlyVolume();
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={640} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={640} theme={estelaTheme}>
         <ChartRow height={240}>
           <YAxis id="count" label="req" min={0} />
           <Layers>
@@ -95,7 +95,7 @@ export const Diverging: Story = {
   render: () => {
     const f = netFlow();
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={640} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={640} theme={estelaTheme}>
         <ChartRow height={240}>
           <YAxis id="flow" label="net" />
           <Layers>
@@ -143,7 +143,7 @@ function HoverSelectDemo() {
         )}
       </div>
       <ChartContainer
-        timeRange={TIME_RANGE}
+        range={TIME_RANGE}
         width={640}
         theme={estelaTheme}
         cursor="flag"
@@ -184,7 +184,7 @@ export const ControlledSelection: Story = {
     };
     return (
       <ChartContainer
-        timeRange={TIME_RANGE}
+        range={TIME_RANGE}
         width={640}
         theme={estelaTheme}
         selected={pinned}

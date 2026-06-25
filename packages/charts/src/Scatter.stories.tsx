@@ -72,7 +72,7 @@ export const Encoded: Story = {
   render: () => {
     const t = trades();
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={620} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={620} theme={estelaTheme}>
         <ChartRow height={300}>
           <YAxis id="price" label="price" />
           <Layers>
@@ -100,7 +100,7 @@ export const CursorFlag: Story = {
     const t = trades();
     return (
       <ChartContainer
-        timeRange={TIME_RANGE}
+        range={TIME_RANGE}
         width={620}
         theme={estelaTheme}
         cursor="flag"
@@ -131,7 +131,7 @@ export const Labelled: Story = {
   render: () => {
     const t = trades();
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={620} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={620} theme={estelaTheme}>
         <ChartRow height={300}>
           <YAxis id="price" label="price" />
           <Layers>
@@ -159,7 +159,7 @@ export const OverLine: Story = {
   render: () => {
     const t = trades();
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={620} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={620} theme={estelaTheme}>
         <ChartRow height={260}>
           <YAxis id="price" label="price" />
           <Layers>
@@ -203,7 +203,7 @@ function ControlledSelectDemo() {
         )}
       </div>
       <ChartContainer
-        timeRange={TIME_RANGE}
+        range={TIME_RANGE}
         width={620}
         selected={sel}
         onSelect={setSel}
