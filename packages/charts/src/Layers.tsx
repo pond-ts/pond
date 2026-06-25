@@ -374,11 +374,12 @@ export function Layers({ children }: LayersProps) {
     cursorTime !== null &&
     (parts.line || parts.dots) &&
     row.isFirstRow;
-  // Flag stacking geometry: chips stack from `flagBase` (below the time chip when
-  // shown); each staff rises from its dot up to `stackBottom` (the stack's foot).
+  // Flag geometry: each value flies as a flag from the top of its own staff — the
+  // chip's top sits at `flagBase` (just below the time chip when shown) and the
+  // staff drops from there to the dot. (Chips share that top and spread by x, so
+  // near-coincident flags can overlap — a de-overlap heuristic is a follow-up.)
   const flagTop = 2;
   const flagBase = flagTop + (showTime ? flagLineHeight : 0);
-  const stackBottom = flagBase + trackerSamples.length * flagLineHeight;
   // The cursor-time chip caps the readout. In `flag` mode it tops the flag stack,
   // so anchor it to the stack's x (the nearest sample's point) so time + flag +
   // staff + dot read as one column; otherwise it labels the cursor line at cursorX.
@@ -448,16 +449,15 @@ export function Layers({ children }: LayersProps) {
                 shapeRendering="crispEdges"
               />
             )}
-          {/* Flag staffs: a faint spine from each dot up to the flag stack's foot
-              (skipped when the dot sits inside the stack). Same nearest-x staffs
-              merge into one spine. */}
+          {/* Flag staffs: a faint pole from the flag's top (`flagBase`) down to
+              each dot (skipped when the dot is above that top). */}
           {parts.chip === 'flag' &&
             trackerSamples.map((s, i) =>
-              s.py > stackBottom ? (
+              s.py > flagBase ? (
                 <line
                   key={`staff-${i}`}
                   x1={s.px}
-                  y1={stackBottom}
+                  y1={flagBase}
                   x2={s.px}
                   y2={s.py}
                   stroke={cursorColor}
@@ -466,26 +466,24 @@ export function Layers({ children }: LayersProps) {
                 />
               ) : null,
             )}
-          {/* Box flags: one staff per consolidated-flag layer, from the mark's
-              top-centre up to its multi-line chip (skipped when the top sits
-              inside the chip — a tall box). */}
+          {/* Box flags: one staff per consolidated-flag layer, from the flag's
+              top (`flagBase`) down to the mark's top-centre (skipped when the
+              mark top is above the flag). */}
           {parts.chip === 'flag' &&
-            trackerFlags.map((f, i) => {
-              // One horizontal row of values → a single-line chip.
-              const flagBottom = flagBase + flagLineHeight;
-              return f.topPy > flagBottom ? (
+            trackerFlags.map((f, i) =>
+              f.topPy > flagBase ? (
                 <line
                   key={`boxstaff-${i}`}
                   x1={f.px}
-                  y1={flagBottom}
+                  y1={flagBase}
                   x2={f.px}
                   y2={f.topPy}
                   stroke={cursorColor}
                   strokeWidth={1}
                   opacity={0.5}
                 />
-              ) : null;
-            })}
+              ) : null,
+            )}
           {parts.dots &&
             trackerSamples.map((s, i) => (
               <circle
@@ -550,18 +548,18 @@ export function Layers({ children }: LayersProps) {
         {parts.chip === 'flag' &&
           cursorX !== null &&
           trackerSamples.map((s, i) => {
-            // Each flag caps its own staff — anchored to the data point's x
-            // (`s.px`), riding the point with the dot + staff, not the cursor.
-            // Flip left near the right edge so it stays in-plot.
+            // The flag flies from the top of its staff — chip top aligned to the
+            // staff top (`flagBase`), attached to the pole at the point's x
+            // (`s.px`). Flip left near the right edge so it stays in-plot.
             const flip = s.px > plotWidth * LABEL_FLIP_FRACTION;
             return (
               <div
                 key={i}
                 style={{
                   ...chipStyle,
-                  top: `${flagBase + i * flagLineHeight}px`,
-                  left: flip ? undefined : `${s.px + 4}px`,
-                  right: flip ? `${plotWidth - s.px + 4}px` : undefined,
+                  top: `${flagBase}px`,
+                  left: flip ? undefined : `${s.px}px`,
+                  right: flip ? `${plotWidth - s.px}px` : undefined,
                   color: s.color,
                 }}
               >
@@ -580,8 +578,8 @@ export function Layers({ children }: LayersProps) {
                 style={{
                   ...chipStyle,
                   top: `${flagBase}px`,
-                  left: flip ? undefined : `${f.px + 4}px`,
-                  right: flip ? `${plotWidth - f.px + 4}px` : undefined,
+                  left: flip ? undefined : `${f.px}px`,
+                  right: flip ? `${plotWidth - f.px}px` : undefined,
                   display: 'flex',
                   flexDirection: 'row',
                   gap: '6px',

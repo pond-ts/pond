@@ -11,11 +11,15 @@ import type { ChartTheme } from './theme.js';
  *
  * They are children of `<Layers>` (so they share the plot's coordinate space) and
  * paint a pointer-inert SVG overlay above the data canvas + below the cursor —
- * pan/zoom keeps the surface. **Luminosity encodes attention:** a mark sits at
- * `rest`, brightens to `hover` as the pointer nears it (Region / Marker, via the
- * shared cursor x), and to `selected` (with drag handles) when its `selected` prop
- * is set. Live select + drag-to-edit is a later phase (an explicit edit *mode*,
- * since the surface already owns pan/zoom); here `selected` is a controlled input.
+ * pan/zoom keeps the surface. Each label is a **flag**: the chip attaches to the
+ * side of the mark's vertical line, its top aligned to the line's top (the same
+ * shape as the cursor's value flag).
+ *
+ * **Luminosity encodes attention:** a mark sits at `rest`, lifting to `selected`
+ * (with drag handles) when its `selected` prop is set. Hover + live select +
+ * drag-to-edit are a later phase — an explicit edit *mode*, where hovering a mark
+ * changes the cursor; they're one interaction, deferred together. For now
+ * `selected` is a controlled input.
  */
 
 /** Fallback when a theme defines no `annotation` token — a neutral turquoise. */
@@ -27,13 +31,19 @@ const DEFAULT_ANNOTATION: NonNullable<ChartTheme['annotation']> = {
   selected: 1,
 };
 
-/** Pointer proximity (px) within which a Marker / Region brightens to `hover`. */
-const HOVER_PX = 6;
 /** Selection-handle pill geometry (px). */
 const HANDLE_W = 6;
 const HANDLE_H = 18;
+/** Flag-chip top offsets (px from the row top): a Region edge runs to the top, a
+ *  Marker label sits a little lower so it clears the top edge. */
+const REGION_FLAG_TOP = 2;
+const MARKER_FLAG_TOP = 5;
+/** Past this fraction of the plot a flag chip flips left of its line to stay in. */
+const FLAG_FLIP = 0.85;
 
-type AnnotationState = 'rest' | 'hover' | 'selected';
+/** Phase 1 drives only rest + selected; `hover` (the theme's third level) lands
+ *  with the edit mode. */
+type AnnotationState = 'rest' | 'selected';
 
 /** The full-plot overlay each annotation paints into — above the data canvas,
  *  below the cursor, inert to the pointer (pan/zoom owns the surface). */
@@ -56,6 +66,14 @@ function useAnnotationFrame(name: string) {
   }
   const ann = container.theme.annotation ?? DEFAULT_ANNOTATION;
   return { container, row, ann };
+}
+
+/** Position a flag chip attached to a vertical line at plot-x `x`: to the right
+ *  of the line, flipping to the left near the right edge so it stays in-plot. */
+function flagX(x: number, plotWidth: number): CSSProperties {
+  return x > plotWidth * FLAG_FLIP
+    ? { right: `${plotWidth - x}px` }
+    : { left: `${x}px` };
 }
 
 /** A label chip in the annotation register — turquoise text + outline, positioned
@@ -101,8 +119,8 @@ export interface MarkerProps {
   at: number;
   /** Chip label; omit to auto-label with the shared x formatter (the axis's). */
   label?: string;
-  /** Controlled selection — brightens + shows end handles. Live select/edit is a
-   *  later phase; this is the input for now. */
+  /** Controlled selection — brightens + shows a single centre handle (the line
+   *  moves as a whole). Live select/edit is a later phase; this is the input now. */
   selected?: boolean;
 }
 
@@ -111,13 +129,7 @@ export function Marker({ at, label, selected = false }: MarkerProps) {
   const { container, row, ann } = useAnnotationFrame('Marker');
   const x = container.xScale(at);
   const h = row.height;
-  const cx = container.cursorX;
-  const hovering = cx !== null && Math.abs(cx - x) <= HOVER_PX;
-  const state: AnnotationState = selected
-    ? 'selected'
-    : hovering
-      ? 'hover'
-      : 'rest';
+  const state: AnnotationState = selected ? 'selected' : 'rest';
   const text = label ?? container.formatTime(at);
   return (
     <>
@@ -132,31 +144,26 @@ export function Marker({ at, label, selected = false }: MarkerProps) {
           opacity={ann[state]}
           shapeRendering="crispEdges"
         />
+        {/* One handle, centred — a marker moves as a whole (two ends would read
+            as independently draggable, and collide with the top label). */}
         {selected && (
-          <>
-            <rect
-              x={x - HANDLE_W / 2}
-              y={0}
-              width={HANDLE_W}
-              height={14}
-              rx={3}
-              fill={ann.color}
-            />
-            <rect
-              x={x - HANDLE_W / 2}
-              y={h - 14}
-              width={HANDLE_W}
-              height={14}
-              rx={3}
-              fill={ann.color}
-            />
-          </>
+          <rect
+            x={x - HANDLE_W / 2}
+            y={h / 2 - HANDLE_H / 2}
+            width={HANDLE_W}
+            height={HANDLE_H}
+            rx={3}
+            fill={ann.color}
+          />
         )}
       </svg>
       <Chip
         theme={container.theme}
         color={ann.color}
-        style={{ top: '2px', left: `${x + 4}px` }}
+        style={{
+          top: `${MARKER_FLAG_TOP}px`,
+          ...flagX(x, container.plotWidth),
+        }}
       >
         {text}
       </Chip>
@@ -175,7 +182,9 @@ export interface BaselineProps {
   selected?: boolean;
 }
 
-/** A horizontal line at a y value, scaled against one row axis (RTC's `Baseline`). */
+/** A horizontal line at a y value, scaled against one row axis (RTC's `Baseline`).
+ *  Its label anchors at the left, at the line's height (a horizontal line has no
+ *  vertical staff to fly a flag from). */
 export function Baseline({
   value,
   axis,
@@ -225,28 +234,24 @@ export interface RegionProps {
   to: number;
   /** Chip label; omit to auto-label `from–to` with the shared x formatter. */
   label?: string;
-  /** Controlled selection — brightens + shows edge handles. */
+  /** Controlled selection — brightens + shows edge handles (each edge drags
+   *  independently to resize the span). */
   selected?: boolean;
 }
 
-/** A shaded span over an x range — a lap, a zone, a selected interval. */
+/** A shaded span over an x range — a lap, a zone, a selected interval. Its label
+ *  flies as a flag off the left edge. */
 export function Region({ from, to, label, selected = false }: RegionProps) {
   const { container, row, ann } = useAnnotationFrame('Region');
   const xa = container.xScale(from);
   const xb = container.xScale(to);
   const left = Math.min(xa, xb);
   const right = Math.max(xa, xb);
-  const w = right - left;
+  const spanW = right - left;
   const h = row.height;
-  const cx = container.cursorX;
-  const hovering = cx !== null && cx >= left && cx <= right;
-  const state: AnnotationState = selected
-    ? 'selected'
-    : hovering
-      ? 'hover'
-      : 'rest';
-  // The fill stays subtle so the data reads through; it lifts a touch with attention.
-  const fillOpacity = ann.fillOpacity * (selected ? 1.6 : hovering ? 1.3 : 1);
+  const state: AnnotationState = selected ? 'selected' : 'rest';
+  // The fill stays subtle so the data reads through; it lifts a touch when selected.
+  const fillOpacity = ann.fillOpacity * (selected ? 1.6 : 1);
   const text =
     label ?? `${container.formatTime(from)}–${container.formatTime(to)}`;
   const edge = (atX: number) => (
@@ -277,7 +282,7 @@ export function Region({ from, to, label, selected = false }: RegionProps) {
         <rect
           x={left}
           y={0}
-          width={w}
+          width={spanW}
           height={h}
           fill={ann.color}
           opacity={fillOpacity}
@@ -295,9 +300,8 @@ export function Region({ from, to, label, selected = false }: RegionProps) {
         theme={container.theme}
         color={ann.color}
         style={{
-          top: '2px',
-          left: `${(left + right) / 2}px`,
-          transform: 'translateX(-50%)',
+          top: `${REGION_FLAG_TOP}px`,
+          ...flagX(left, container.plotWidth),
         }}
       >
         {text}
