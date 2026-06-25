@@ -126,7 +126,7 @@ function StaticRender({ size, scenario }: StaticArgs) {
 
   return (
     <ChartContainer
-      timeRange={range}
+      range={range}
       width={WIDTH}
       theme={estelaTheme}
       panZoom
@@ -239,7 +239,7 @@ function LiveLine({ windowSize, pushMs, batch }: Omit<LiveArgs, 'scenario'>) {
   if (!snapshot || timeRange === null) return null;
   return (
     <ChartContainer
-      timeRange={timeRange}
+      range={timeRange}
       width={WIDTH}
       theme={estelaTheme}
       cursor="none"
@@ -283,7 +283,7 @@ function LiveThree({ windowSize, pushMs, batch }: Omit<LiveArgs, 'scenario'>) {
   if (!snapshot || timeRange === null) return null;
   return (
     <ChartContainer
-      timeRange={timeRange}
+      range={timeRange}
       width={WIDTH}
       theme={estelaTheme}
       cursor="none"
