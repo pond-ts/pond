@@ -34,10 +34,9 @@ const DEFAULT_ANNOTATION: NonNullable<ChartTheme['annotation']> = {
 /** Selection-handle pill geometry (px). */
 const HANDLE_W = 6;
 const HANDLE_H = 18;
-/** Flag-chip top offsets (px from the row top): a Region edge runs to the top, a
- *  Marker label sits a little lower so it clears the top edge. */
-const REGION_FLAG_TOP = 2;
-const MARKER_FLAG_TOP = 5;
+/** Flag-chip top offset (px from the row top) — a few px down so it clears the
+ *  edge. Region + Marker share it so their labels align across a chart. */
+const FLAG_TOP = 2;
 /** Past this fraction of the plot a flag chip flips left of its line to stay in. */
 const FLAG_FLIP = 0.85;
 
@@ -76,8 +75,9 @@ function flagX(x: number, plotWidth: number): CSSProperties {
     : { left: `${x}px` };
 }
 
-/** A label chip in the annotation register — turquoise text + outline, positioned
- *  by the caller's `style` (top/left/right/transform). */
+/** A label chip — the same shape as the cursor's value flag (chip background +
+ *  faint grid border), but with text in the annotation register. Positioned by the
+ *  caller's `style` (top/left/right/transform). */
 function Chip({
   theme,
   color,
@@ -93,8 +93,8 @@ function Chip({
     <div
       style={{
         position: 'absolute',
-        background: theme.chip?.background ?? theme.background,
-        border: `1px solid ${color}`,
+        background: theme.chip?.background,
+        border: `1px solid ${theme.axis.grid}`,
         borderRadius: '3px',
         padding: '0 4px',
         fontFamily: theme.font.family,
@@ -161,7 +161,7 @@ export function Marker({ at, label, selected = false }: MarkerProps) {
         theme={container.theme}
         color={ann.color}
         style={{
-          top: `${MARKER_FLAG_TOP}px`,
+          top: `${FLAG_TOP}px`,
           ...flagX(x, container.plotWidth),
         }}
       >
@@ -300,7 +300,7 @@ export function Region({ from, to, label, selected = false }: RegionProps) {
         theme={container.theme}
         color={ann.color}
         style={{
-          top: `${REGION_FLAG_TOP}px`,
+          top: `${FLAG_TOP}px`,
           ...flagX(left, container.plotWidth),
         }}
       >
