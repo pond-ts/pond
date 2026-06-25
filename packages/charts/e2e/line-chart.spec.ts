@@ -46,4 +46,18 @@ test.describe('LineChart', () => {
       'linechart-value-axis-distance.png',
     );
   });
+
+  // The placeable <XAxis> (Phase 2b): an explicit `<XAxis label="Distance (m)"
+  // format=",.0f" />` child replaces the auto axis (showAxis={false}). Snapshot
+  // #storybook-root to capture the new render paths the auto axis never exercises
+  // — the centred axis label strip and the custom numeric tick format.
+  test('renders an explicit labelled <XAxis> on a value series', async ({
+    page,
+  }) => {
+    await page.goto(story('charts-linechart--value-axis-labeled'));
+    await waitForCanvasPaint(page.locator('canvas').first());
+    await expect(page.locator('#storybook-root')).toHaveScreenshot(
+      'linechart-value-axis-labeled.png',
+    );
+  });
 });
