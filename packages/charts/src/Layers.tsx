@@ -19,7 +19,7 @@ import { drawGrid } from './grid.js';
 import { cursorParts } from './tracker.js';
 import { resolveSelection } from './select.js';
 import { panRange, zoomRange } from './viewport.js';
-import { flagChipStyle } from './chip.js';
+import { flagChipStyle, flagChipX } from './chip.js';
 import {
   ContainerContext,
   LayersContext,
@@ -538,52 +538,43 @@ export function Layers({ children }: LayersProps) {
           })}
         {parts.chip === 'flag' &&
           cursorX !== null &&
-          trackerSamples.map((s, i) => {
-            // The flag flies from the top of its staff — chip top aligned to the
-            // staff top (`flagBase`), attached to the pole at the point's x
-            // (`s.px`). Flip left near the right edge so it stays in-plot.
-            const flip = s.px > plotWidth * LABEL_FLIP_FRACTION;
-            return (
-              <div
-                key={i}
-                style={{
-                  ...chipStyle,
-                  top: `${flagBase}px`,
-                  left: flip ? undefined : `${s.px}px`,
-                  right: flip ? `${plotWidth - s.px}px` : undefined,
-                  color: s.color,
-                }}
-              >
-                {s.format(s.value)}
-              </div>
-            );
-          })}
+          trackerSamples.map((s, i) => (
+            // The flag flies from the top of its staff — chip top at the staff top
+            // (`flagBase`), beside the pole at the point's x (shared `flagChipX`).
+            <div
+              key={i}
+              style={{
+                ...chipStyle,
+                top: `${flagBase}px`,
+                ...flagChipX(s.px, plotWidth),
+                color: s.color,
+              }}
+            >
+              {s.format(s.value)}
+            </div>
+          ))}
         {/* Box flag: one chip listing all the box's values, each coloured to its
             piece, anchored at the box's centre x (atop its staff). */}
         {parts.chip === 'flag' &&
-          trackerFlags.map((f, i) => {
-            const flip = f.px > plotWidth * LABEL_FLIP_FRACTION;
-            return (
-              <div
-                key={`boxflag-${i}`}
-                style={{
-                  ...chipStyle,
-                  top: `${flagBase}px`,
-                  left: flip ? undefined : `${f.px}px`,
-                  right: flip ? `${plotWidth - f.px}px` : undefined,
-                  display: 'flex',
-                  flexDirection: 'row',
-                  gap: '6px',
-                }}
-              >
-                {f.lines.map((l, j) => (
-                  <span key={j} style={{ color: l.color }}>
-                    {l.text}
-                  </span>
-                ))}
-              </div>
-            );
-          })}
+          trackerFlags.map((f, i) => (
+            <div
+              key={`boxflag-${i}`}
+              style={{
+                ...chipStyle,
+                top: `${flagBase}px`,
+                ...flagChipX(f.px, plotWidth),
+                display: 'flex',
+                flexDirection: 'row',
+                gap: '6px',
+              }}
+            >
+              {f.lines.map((l, j) => (
+                <span key={j} style={{ color: l.color }}>
+                  {l.text}
+                </span>
+              ))}
+            </div>
+          ))}
       </div>
     </LayersContext.Provider>
   );

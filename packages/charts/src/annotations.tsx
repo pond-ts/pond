@@ -1,7 +1,7 @@
 import { useContext, type CSSProperties, type ReactNode } from 'react';
 import { ContainerContext, RowContext } from './context.js';
 import type { ChartTheme } from './theme.js';
-import { flagChipStyle } from './chip.js';
+import { flagChipStyle, flagChipX } from './chip.js';
 
 /**
  * User-authored **annotations** — marks you place *on* a chart, in a register
@@ -38,11 +38,6 @@ const HANDLE_H = 18;
 /** Flag-chip top offset (px from the row top) — a few px down so it clears the
  *  edge. Region + Marker share it so their labels align across a chart. */
 const FLAG_TOP = 2;
-/** Past this fraction of the plot a flag chip flips left of its line to stay in. */
-const FLAG_FLIP = 0.85;
-/** Gap (px) between a flag chip and its line, so the chip floats beside the pole
- *  instead of covering (dimming) the prominent vertical line. */
-const FLAG_GAP = 4;
 
 /** Phase 1 drives only rest + selected; `hover` (the theme's third level) lands
  *  with the edit mode. */
@@ -69,14 +64,6 @@ function useAnnotationFrame(name: string) {
   }
   const ann = container.theme.annotation ?? DEFAULT_ANNOTATION;
   return { container, row, ann };
-}
-
-/** Position a flag chip attached to a vertical line at plot-x `x`: to the right
- *  of the line, flipping to the left near the right edge so it stays in-plot. */
-function flagX(x: number, plotWidth: number): CSSProperties {
-  return x > plotWidth * FLAG_FLIP
-    ? { right: `${plotWidth - x + FLAG_GAP}px` }
-    : { left: `${x + FLAG_GAP}px` };
 }
 
 /** A label chip — the cursor value flag's shape (shared {@link flagChipStyle}:
@@ -148,7 +135,7 @@ export function Marker({ at, label, selected = false }: MarkerProps) {
         color={ann.color}
         style={{
           top: `${FLAG_TOP}px`,
-          ...flagX(x, container.plotWidth),
+          ...flagChipX(x, container.plotWidth),
         }}
       >
         {text}
@@ -287,7 +274,7 @@ export function Region({ from, to, label, selected = false }: RegionProps) {
         color={ann.color}
         style={{
           top: `${FLAG_TOP}px`,
-          ...flagX(left, container.plotWidth),
+          ...flagChipX(left, container.plotWidth),
         }}
       >
         {text}
