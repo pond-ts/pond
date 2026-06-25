@@ -212,6 +212,26 @@ export function ChartContainer({
     });
   }, []);
 
+  // The shared x scale's kind, **inferred from the registered layers**: a
+  // ValueSeries row plots on a value axis, a TimeSeries on time. A container
+  // has one shared x (the synced cursor's whole point), so the rows must agree
+  // — a mix is a hard error. Until a layer registers (the two-pass: register →
+  // re-resolve → rescale), fall back to the legacy `xScaleType` prop.
+  const resolvedKind: 'time' | 'value' = useMemo(() => {
+    let kind: 'time' | 'value' | undefined;
+    for (const s of sources.values()) {
+      if (kind === undefined) kind = s.xKind;
+      else if (kind !== s.xKind) {
+        throw new Error(
+          `ChartContainer: rows mix x-axis kinds ('${kind}' and '${s.xKind}'). ` +
+            `A container has one shared x axis — every row must plot the same ` +
+            `kind (all time-keyed, or all value-keyed).`,
+        );
+      }
+    }
+    return kind ?? (xScaleType === 'linear' ? 'value' : 'time');
+  }, [sources, xScaleType]);
+
   const onTrackerRef = useRef(onTrackerChanged);
   onTrackerRef.current = onTrackerChanged;
 
@@ -296,7 +316,7 @@ export function ChartContainer({
   // the cursor read identically. (The `formatTime` name predates the value axis
   // — for `xScaleType: 'linear'` it formats the value, not a time.)
   const { xScale, formatTime } = useMemo(() => {
-    if (xScaleType === 'linear') {
+    if (resolvedKind === 'value') {
       const s = scaleLinear().domain([t0, t1]).range([0, plotWidth]);
       return {
         xScale: s,
@@ -308,7 +328,7 @@ export function ChartContainer({
       xScale: s,
       formatTime: resolveTimeFormat(s, TIME_TICK_COUNT, timeFormat),
     };
-  }, [xScaleType, t0, t1, plotWidth, timeFormat]);
+  }, [resolvedKind, t0, t1, plotWidth, timeFormat]);
 
   // The crosshair pixel (see resolveCursorX). A stored hoverX is a *plot* pixel;
   // if plotWidth changes mid-hover (a gutter reserving, or a width change) it's
@@ -361,6 +381,7 @@ export function ChartContainer({
       registerTrackerSource,
       unregisterTrackerSource,
       xScale,
+      xKind: resolvedKind,
       panZoom,
       minDuration,
       applyRange,
@@ -390,6 +411,7 @@ export function ChartContainer({
       registerTrackerSource,
       unregisterTrackerSource,
       xScale,
+      resolvedKind,
       panZoom,
       minDuration,
       applyRange,

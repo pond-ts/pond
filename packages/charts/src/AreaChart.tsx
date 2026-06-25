@@ -137,6 +137,9 @@ export function AreaChart<S extends SeriesSchema>({
     () => ({
       layer: {
         yExtent: () => areaExtent(cs, baseline),
+        xKind: 'time',
+        xExtent: () =>
+          cs.length === 0 ? null : [cs.x[0]!, cs.x[cs.length - 1]!],
         sampleAt: (time) => {
           // No readout past the data (tracker policy — core's nearest() clamps
           // to an endpoint outside the span); bounds from the columnar time axis.

@@ -113,6 +113,11 @@ export function LineChart<
     () => ({
       layer: {
         yExtent: () => yExtent(cs),
+        // The container infers the shared x scale's kind + auto-fit domain from
+        // its layers: a ValueSeries plots on a value axis, a TimeSeries on time.
+        xKind: series instanceof ValueSeries ? 'value' : 'time',
+        xExtent: () =>
+          cs.length === 0 ? null : [cs.x[0]!, cs.x[cs.length - 1]!],
         sampleAt: (x) => {
           // No readout past the data (tracker policy — nearest clamps to an
           // endpoint outside the span); bounds from the columnar x axis.

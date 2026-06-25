@@ -46,9 +46,9 @@ function flat() {
 
 /**
  * A ride re-keyed onto **cumulative distance** (metres) via `byValue` — HR is
- * then plotted against distance, not time. Drives the value-axis path
- * (`<ChartContainer xScaleType="linear">`). `cumDist` rises ~80 m/step
- * (strictly increasing, so it's a valid monotonic axis).
+ * then plotted against distance, not time. Drives the value-axis path — the
+ * chart infers a value x straight from the `ValueSeries`. `cumDist` rises
+ * ~80 m/step (strictly increasing, so it's a valid monotonic axis).
  */
 function rideByDistance() {
   const rows: Array<[number, number, number]> = [];
@@ -78,18 +78,43 @@ type Story = StoryObj;
 
 /**
  * **Value axis** — HR plotted against cumulative distance (metres), not time.
- * The same `<LineChart>` consuming a `ValueSeries`; the container uses a linear
- * x scale (`xScaleType="linear"`) and a numeric tick format.
+ * The same `<LineChart>` consuming a `ValueSeries`; the chart **infers** a value
+ * (linear) x straight from the data — no axis-type prop — with a numeric tick
+ * format.
  */
 export const ValueAxisDistance: Story = {
   render: () => {
     const series = rideByDistance();
     const maxDist = series.axisAt(series.length - 1);
     return (
+      <ChartContainer timeRange={[0, maxDist]} timeFormat=",.0f" width={480}>
+        <ChartRow height={200}>
+          <Layers>
+            <LineChart series={series} column="hr" as="heartrate" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **Value axis + flag cursor.** HR over distance with a hover-driven
+ * `cursor="flag"` — move the pointer and the staff rides the nearest data
+ * point, the flag reading its HR; `cursorTime` shows the x position (e.g.
+ * `1,200`) atop the staff. Proves the cursor / flag readout follows the pointer
+ * on a value axis (`sampleAt` bisects the distance axis), not just time.
+ */
+export const ValueAxisFlag: Story = {
+  render: () => {
+    const series = rideByDistance();
+    const maxDist = series.axisAt(series.length - 1);
+    return (
       <ChartContainer
-        xScaleType="linear"
         timeRange={[0, maxDist]}
         timeFormat=",.0f"
+        cursor="flag"
+        cursorTime
         width={480}
       >
         <ChartRow height={200}>

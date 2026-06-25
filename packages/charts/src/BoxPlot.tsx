@@ -128,6 +128,9 @@ export function BoxPlot<S extends SeriesSchema>({
     () => ({
       layer: {
         yExtent: () => boxExtent(bx),
+        xKind: 'time',
+        xExtent: () =>
+          bx.length === 0 ? null : [bx.x[0]!, bx.xEnd[bx.length - 1]!],
         sampleAt: (time) => {
           // The readout reads the box **under the cursor** (boxIndexAtTime — span
           // containment, not nearest-by-begin which flips past a wide box's
