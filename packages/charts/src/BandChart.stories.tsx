@@ -88,7 +88,7 @@ export const TwoTone: Story = {
   render: () => {
     const v = variance();
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={560} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={560} theme={estelaTheme}>
         <ChartRow height={240}>
           <YAxis id="v" label="v" min={0} max={100} />
           <Layers>
@@ -107,7 +107,7 @@ export const WithGap: Story = {
   render: () => {
     const g = bandWithGap();
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={480}>
+      <ChartContainer range={TIME_RANGE} width={480}>
         <ChartRow height={200}>
           <YAxis id="v" label="v" min={0} max={100} />
           <Layers>
@@ -138,7 +138,7 @@ export const SanFranciscoTemperature: Story = {
     const begins = sf.keyColumn().begin;
     const timeRange: [number, number] = [begins[0]!, begins[sf.length - 1]!];
     return (
-      <ChartContainer timeRange={timeRange} width={720} theme={d3BandTheme}>
+      <ChartContainer range={timeRange} width={720} theme={d3BandTheme}>
         <ChartRow height={240}>
           <YAxis id="degF" label="°F" />
           <Layers>
@@ -194,7 +194,7 @@ export const RollingPercentiles: Story = {
     const begins = b.keyColumn().begin;
     const timeRange: [number, number] = [begins[0]!, begins[b.length - 1]!];
     return (
-      <ChartContainer timeRange={timeRange} width={560} theme={estelaTheme}>
+      <ChartContainer range={timeRange} width={560} theme={estelaTheme}>
         <ChartRow height={240}>
           <YAxis id="v" label="v" />
           <Layers>

@@ -89,9 +89,10 @@ export interface ContainerFrame {
   unregisterTrackerSource(key: symbol): void;
   /**
    * Shared x→pixel scale, range `[0, plotWidth]`. A d3 `scaleTime` (default) so
-   * ticks land on wall-clock boundaries, or a `scaleLinear` when the container's
-   * `xScaleType` is `'linear'` (a **value axis** — distance, cumulative work).
-   * The domain is the container's `timeRange`. Both scales are callable
+   * ticks land on wall-clock boundaries, or a `scaleLinear` when the data is
+   * value-keyed (a **value axis** — distance, cumulative work; see {@link xKind}).
+   * The domain is the container's resolved `range` (auto-fit if omitted). Both
+   * scales are callable
    * (`value → px`) and expose `invert`/`ticks`/`tickFormat`; consumers use only
    * that shared surface (the cursor coerces `invert` via `+`, `<TimeAxis>` keys
    * ticks via `+d`), so either kind drops in.

@@ -110,7 +110,7 @@ export const Elevation: Story = {
   render: () => {
     const e = elevation();
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={560} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={560} theme={estelaTheme}>
         <ChartRow height={240}>
           <YAxis id="m" label="m" />
           <Layers>
@@ -134,7 +134,7 @@ export const AboveBelowAxis: Story = {
   render: () => {
     const t = traffic();
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={560} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={560} theme={estelaTheme}>
         <ChartRow height={240}>
           <YAxis id="mbps" label="Mb/s" />
           <Layers>
@@ -158,7 +158,7 @@ export const TrafficAreas: Story = {
   render: () => {
     const t = siteTraffic();
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={640} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={640} theme={estelaTheme}>
         <ChartRow height={260}>
           <YAxis id="bps" label="Gbps" />
           <Layers>

@@ -52,7 +52,7 @@ describe('registry order stability', () => {
   it('keeps the default axis stable when the first axis updates', () => {
     const spy = vi.fn();
     const tree = (aMin: number) => (
-      <ChartContainer timeRange={[0, 3]} width={300}>
+      <ChartContainer range={[0, 3]} width={300}>
         <ChartRow height={100}>
           <YAxis id="a" min={aMin} max={100} />
           <YAxis id="b" min={0} max={10} />
@@ -72,7 +72,7 @@ describe('registry order stability', () => {
     const spy = vi.fn();
     const seriesB = mk([1, 2, 3]); // stable across rerenders
     const tree = (seriesA: ReturnType<typeof mk>) => (
-      <ChartContainer timeRange={[0, 3]} width={300}>
+      <ChartContainer range={[0, 3]} width={300}>
         <ChartRow height={100}>
           <YAxis id="a" />
           <YAxis id="b" side="right" />
@@ -98,7 +98,7 @@ describe('registry order stability', () => {
     const sM = mk([4, 5, 6]);
     const sB = mk([7, 8, 9]);
     const tree = (showMiddle: boolean) => (
-      <ChartContainer timeRange={[0, 3]} width={300}>
+      <ChartContainer range={[0, 3]} width={300}>
         <ChartRow height={100}>
           <Layers>
             <LineChart series={sA} column="v" axis="a" />
@@ -129,7 +129,7 @@ describe('axis placement by side', () => {
 
   it('renders a side="right" axis after the plot even when authored before <Layers>', () => {
     const { container, getByText } = render(
-      <ChartContainer timeRange={[0, 3]} width={400}>
+      <ChartContainer range={[0, 3]} width={400}>
         <ChartRow height={100}>
           <YAxis id="L" label="left-axis" min={0} max={10} />
           {/* authored BEFORE <Layers>, but side="right" must win */}
@@ -159,7 +159,7 @@ describe('cursor overlay (flag, DOM/SVG)', () => {
   it('renders the SVG dot + staff and the DOM value flag at a controlled cursor', () => {
     const { container, getByText } = render(
       <ChartContainer
-        timeRange={[0, 4]}
+        range={[0, 4]}
         width={300}
         cursor="flag"
         trackerPosition={2}
@@ -196,7 +196,7 @@ describe('cursor-time renders on the first row only', () => {
   it('shows the time chip once across two rows, with a flag on each', () => {
     const { getByText, getAllByText } = render(
       <ChartContainer
-        timeRange={[0, 4]}
+        range={[0, 4]}
         width={300}
         cursor="flag"
         cursorTime
@@ -204,7 +204,7 @@ describe('cursor-time renders on the first row only', () => {
         trackerPosition={2}
         // No time axis, so the sentinel 'TIME' comes only from the cursor chip
         // (the formatter is shared with the axis ticks by design — #269).
-        timeAxis={false}
+        showAxis={false}
       >
         <ChartRow height={100}>
           {/* value 3 at t=2 — not a tick of [0,10] (0,2,4,6,8,10). */}
@@ -257,7 +257,7 @@ describe('box cursor — consolidated flag (all values, one chip)', () => {
   it('renders one multi-line flag at a controlled cursor, no per-quantile dots', () => {
     const { container, getByText } = render(
       <ChartContainer
-        timeRange={[0, 20]}
+        range={[0, 20]}
         width={300}
         cursor="flag"
         trackerPosition={5} // inside box 0 ([0,10])

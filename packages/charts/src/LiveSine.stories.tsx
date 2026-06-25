@@ -172,7 +172,7 @@ function LiveSineMonitor({
         </div>
       )}
       <ChartContainer
-        timeRange={timeRange}
+        range={timeRange}
         width={620}
         theme={theme}
         cursor={outside ? 'line' : cursor}

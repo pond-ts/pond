@@ -108,7 +108,7 @@ export const ValueAxisFlag: Story = {
     const maxDist = series.axisAt(series.length - 1);
     return (
       <ChartContainer
-        timeRange={[0, maxDist]}
+        range={[0, maxDist]}
         timeFormat=",.0f"
         cursor="flag"
         cursorTime
@@ -127,7 +127,7 @@ export const ValueAxisFlag: Story = {
 /**
  * **Explicit `<XAxis>` with a label.** Instead of the container's auto-axis,
  * an `<XAxis label="Distance (m)" format=",.0f" />` is declared as a child
- * (with `timeAxis={false}` to suppress the auto one) — the placeable, labelled
+ * (with `showAxis={false}` to suppress the auto one) — the placeable, labelled
  * sibling of `<YAxis>`. The kind is still inferred from the `ValueSeries`.
  */
 export const ValueAxisLabeled: Story = {
@@ -135,7 +135,7 @@ export const ValueAxisLabeled: Story = {
     const series = rideByDistance();
     const maxDist = series.axisAt(series.length - 1);
     return (
-      <ChartContainer timeRange={[0, maxDist]} timeAxis={false} width={480}>
+      <ChartContainer range={[0, maxDist]} showAxis={false} width={480}>
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="hr" as="heartrate" />
@@ -152,7 +152,7 @@ export const WithGap: Story = {
   render: () => {
     const series = sineWithGap();
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={480}>
+      <ChartContainer range={TIME_RANGE} width={480}>
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="v" />
@@ -168,7 +168,7 @@ export const Flat: Story = {
   render: () => {
     const series = flat();
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={480}>
+      <ChartContainer range={TIME_RANGE} width={480}>
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="v" as="context" />
@@ -237,7 +237,7 @@ export const Themed: Story = {
   render: () => {
     const series = sineWithGap();
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={480} theme={darkTheme}>
+      <ChartContainer range={TIME_RANGE} width={480} theme={darkTheme}>
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="v" />
@@ -312,7 +312,7 @@ export const SemanticFoam: Story = {
   render: () => {
     const series = sineWithGap();
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={480} theme={foamTheme}>
+      <ChartContainer range={TIME_RANGE} width={480} theme={foamTheme}>
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="v" as="foam" />
@@ -361,7 +361,7 @@ export const GapAwareSmooth: Story = {
       output: 'vSmooth',
     });
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={520} theme={foamTheme}>
+      <ChartContainer range={TIME_RANGE} width={520} theme={foamTheme}>
         <ChartRow height={220}>
           <Layers>
             <LineChart series={sm} column="v" />

@@ -75,7 +75,7 @@ function Rows() {
  */
 export const CursorSync: Story = {
   render: () => (
-    <ChartContainer timeRange={TIME_RANGE} width={560} theme={estelaTheme}>
+    <ChartContainer range={TIME_RANGE} width={560} theme={estelaTheme}>
       <Rows />
     </ChartContainer>
   ),
@@ -88,7 +88,7 @@ export const CursorSync: Story = {
 export const FlagReadout: Story = {
   render: () => (
     <ChartContainer
-      timeRange={TIME_RANGE}
+      range={TIME_RANGE}
       width={560}
       theme={estelaTheme}
       cursor="flag"
@@ -106,7 +106,7 @@ export const FlagReadout: Story = {
 export const InlineReadout: Story = {
   render: () => (
     <ChartContainer
-      timeRange={TIME_RANGE}
+      range={TIME_RANGE}
       width={560}
       theme={estelaTheme}
       cursor="inline"
@@ -123,7 +123,7 @@ export const InlineReadout: Story = {
 export const PointCursor: Story = {
   render: () => (
     <ChartContainer
-      timeRange={TIME_RANGE}
+      range={TIME_RANGE}
       width={560}
       theme={estelaTheme}
       cursor="point"
@@ -144,7 +144,7 @@ export const PointCursor: Story = {
 export const Formats: Story = {
   render: () => (
     <ChartContainer
-      timeRange={TIME_RANGE}
+      range={TIME_RANGE}
       width={560}
       theme={estelaTheme}
       cursor="inline"
@@ -218,7 +218,7 @@ export const Formats: Story = {
 export const CursorTime: Story = {
   render: () => (
     <ChartContainer
-      timeRange={TIME_RANGE}
+      range={TIME_RANGE}
       width={560}
       theme={estelaTheme}
       cursor="flag"
@@ -267,7 +267,7 @@ function OutsideReadoutDemo() {
         )}
       </div>
       <ChartContainer
-        timeRange={TIME_RANGE}
+        range={TIME_RANGE}
         width={560}
         theme={estelaTheme}
         onTrackerChanged={setInfo}
@@ -303,7 +303,7 @@ function ControlledCursorDemo() {
         style={{ display: 'block', width: '560px', marginBottom: '8px' }}
       />
       <ChartContainer
-        timeRange={TIME_RANGE}
+        range={TIME_RANGE}
         width={560}
         theme={estelaTheme}
         trackerPosition={t}
@@ -327,7 +327,7 @@ export const ControlledCursor: Story = {
 export const PanZoom: Story = {
   render: () => (
     <ChartContainer
-      timeRange={TIME_RANGE}
+      range={TIME_RANGE}
       width={560}
       theme={estelaTheme}
       panZoom

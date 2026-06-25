@@ -48,7 +48,7 @@ export const SingleRow: Story = {
   render: () => {
     const series = demo();
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={520}>
+      <ChartContainer range={TIME_RANGE} width={520}>
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="v" />
@@ -68,7 +68,7 @@ export const LeftAxis: Story = {
   render: () => {
     const series = demo();
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={520}>
+      <ChartContainer range={TIME_RANGE} width={520}>
         <ChartRow height={200}>
           <YAxis id="value" label="v" />
           <Layers>
@@ -92,7 +92,7 @@ export const DualAxis: Story = {
     const temp = demo(0, 8, 20); // ~12–28
     const humidity = demo(2, 28, 58); // ~30–86
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={560}>
+      <ChartContainer range={TIME_RANGE} width={560}>
         <ChartRow height={220}>
           <YAxis id="temp" label="°C" />
           <Layers>
@@ -124,7 +124,7 @@ export const SameSeriesTwoAxes: Story = {
   render: () => {
     const series = demo(0, 10, 12); // one series, values ~2–22
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={560}>
+      <ChartContainer range={TIME_RANGE} width={560}>
         <ChartRow height={240}>
           <YAxis id="zoomed" label="0–25" min={0} max={25} />
           <Layers>
@@ -144,7 +144,7 @@ export const SameSeriesTwoAxes: Story = {
  */
 export const MultiRow: Story = {
   render: () => (
-    <ChartContainer timeRange={TIME_RANGE} width={520}>
+    <ChartContainer range={TIME_RANGE} width={520}>
       <ChartRow height={120}>
         <YAxis id="a" label="v" />
         <Layers>
@@ -175,7 +175,7 @@ export const MultiRow: Story = {
  */
 export const VaryingGutters: Story = {
   render: () => (
-    <ChartContainer timeRange={TIME_RANGE} width={520}>
+    <ChartContainer range={TIME_RANGE} width={520}>
       <ChartRow height={130}>
         <YAxis id="withAxis" label="v" />
         <Layers>
@@ -204,7 +204,7 @@ export const EstelaShaped: Story = {
     const power = demo(0, 60, 220); // ~160–280 W
     const hr = demo(0.8, 22, 150); // ~128–172 bpm
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={560} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={560} theme={estelaTheme}>
         <ChartRow height={220}>
           <YAxis id="power" label="W" />
           <Layers>
@@ -228,7 +228,7 @@ export const TwoLeftAxes: Story = {
     const power = demo(0, 60, 220);
     const hr = demo(0.8, 22, 150);
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={560}>
+      <ChartContainer range={TIME_RANGE} width={560}>
         <ChartRow height={220}>
           <YAxis id="watts" label="W" width={64} />
           <YAxis id="bpm" label="bpm" width={44} />
@@ -252,7 +252,7 @@ export const TwoLeftAxes: Story = {
  */
 export const PerSlotAlignment: Story = {
   render: () => (
-    <ChartContainer timeRange={TIME_RANGE} width={560}>
+    <ChartContainer range={TIME_RANGE} width={560}>
       <ChartRow height={130}>
         <YAxis id="wide" label="wide" width={80} />
         <Layers>
@@ -289,7 +289,7 @@ export const MultiAxisBothSides: Story = {
     const cadence = demo(1.2, 18, 85);
     const temp = demo(2, 8, 20);
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={620} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={620} theme={estelaTheme}>
         <ChartRow height={240}>
           <YAxis id="watts" label="W" width={60} />
           <YAxis id="bpm" label="bpm" width={44} />
@@ -313,7 +313,7 @@ export const MultiAxisBothSides: Story = {
  */
 export const RowGap: Story = {
   render: () => (
-    <ChartContainer timeRange={TIME_RANGE} width={520} rowGap={24}>
+    <ChartContainer range={TIME_RANGE} width={520} rowGap={24}>
       <ChartRow height={110}>
         <YAxis id="a" label="v" />
         <Layers>
@@ -343,7 +343,7 @@ export const RowGap: Story = {
  */
 export const DifferentHeights: Story = {
   render: () => (
-    <ChartContainer timeRange={TIME_RANGE} width={520}>
+    <ChartContainer range={TIME_RANGE} width={520}>
       <ChartRow height={80}>
         <YAxis id="a" label="v" />
         <Layers>
@@ -367,13 +367,13 @@ export const DifferentHeights: Story = {
 };
 
 /**
- * `timeAxis={false}` drops the shared x axis — for a compact, sparkline-style
+ * `showAxis={false}` drops the shared x axis — for a compact, sparkline-style
  * chart, or when the time context comes from elsewhere. The rows keep their
  * heights; the ~22px axis strip is simply omitted.
  */
 export const NoTimeAxis: Story = {
   render: () => (
-    <ChartContainer timeRange={TIME_RANGE} width={520} timeAxis={false}>
+    <ChartContainer range={TIME_RANGE} width={520} showAxis={false}>
       <ChartRow height={140}>
         <YAxis id="a" label="v" />
         <Layers>

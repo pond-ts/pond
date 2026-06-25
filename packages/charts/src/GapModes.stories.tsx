@@ -66,7 +66,7 @@ export const Line: Story = {
   render: () => {
     const s = sineWithGap();
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={520} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={520} theme={estelaTheme}>
         {MODES.map((mode) => (
           <ChartRow key={mode} height={90}>
             <YAxis id="v" label={mode} min={0} max={100} />
@@ -90,7 +90,7 @@ export const Area: Story = {
   render: () => {
     const s = sineWithGap();
     return (
-      <ChartContainer timeRange={TIME_RANGE} width={520} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={520} theme={estelaTheme}>
         {MODES.map((mode) => (
           <ChartRow key={mode} height={90}>
             <YAxis id="v" label={mode} min={0} max={100} />

@@ -18,9 +18,9 @@ export interface LineChartProps<
 > {
   /**
    * The source series. A `TimeSeries` plots against the time axis; a
-   * `ValueSeries` (`series.byValue('cumDist')`) plots against its value axis —
-   * pair it with `<ChartContainer xScaleType="linear">`. Either way the key /
-   * axis column supplies x and `column` supplies y.
+   * `ValueSeries` (`series.byValue('cumDist')`) against its value axis — the
+   * container infers which from the data, no axis-type prop. Either way the key
+   * / axis column supplies x and `column` supplies y.
    */
   series: TimeSeries<S> | ValueSeries<VS>;
   /** Name of the numeric value column to plot. */
