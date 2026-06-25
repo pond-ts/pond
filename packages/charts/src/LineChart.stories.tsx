@@ -4,6 +4,7 @@ import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
+import { XAxis } from './XAxis.js';
 import type { ChartTheme } from './theme.js';
 
 const N = 60;
@@ -122,6 +123,29 @@ export const ValueAxisFlag: Story = {
             <LineChart series={series} column="hr" as="heartrate" />
           </Layers>
         </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **Explicit `<XAxis>` with a label.** Instead of the container's auto-axis,
+ * an `<XAxis label="Distance (m)" format=",.0f" />` is declared as a child
+ * (with `timeAxis={false}` to suppress the auto one) — the placeable, labelled
+ * sibling of `<YAxis>`. The kind is still inferred from the `ValueSeries`.
+ */
+export const ValueAxisLabeled: Story = {
+  render: () => {
+    const series = rideByDistance();
+    const maxDist = series.axisAt(series.length - 1);
+    return (
+      <ChartContainer timeRange={[0, maxDist]} timeAxis={false} width={480}>
+        <ChartRow height={200}>
+          <Layers>
+            <LineChart series={series} column="hr" as="heartrate" />
+          </Layers>
+        </ChartRow>
+        <XAxis label="Distance (m)" format=",.0f" />
       </ChartContainer>
     );
   },
