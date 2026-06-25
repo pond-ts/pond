@@ -416,15 +416,25 @@ step, init, {output?})` — the typed-accumulator `mapAccumL` generalizing
     `ValueSeriesSchema`). Wraps the `ColumnarStore` directly (not `SeriesStore`).
     O(N+C) projection / O(log N) bisect / O(log N+C) zero-copy slice; byValue
     reuses the packed axis buffer zero-copy (#283). **Phase 2 — chart
-    x-on-`ValueSeries` IN PROGRESS** (`@pond-ts/charts`): `ChartContainer` gains
-    `xScaleType: 'time' | 'linear'` (default time) → a `scaleLinear` value axis;
-    `xScale` widens to `ScaleTime | ScaleLinear` (rippled to no consumer — draw
-    layers already take `(v)=>number`); `fromValueSeries` adapter; `LineChart`
-    accepts `TimeSeries | ValueSeries` (instanceof-branched adapter + cursor
-    sampleAt). Additive — existing time charts bit-identical. Verified in-browser
-    (HR-over-distance, x ticks render as metres). Public-API renames
-    (`timeRange`→`xDomain`, `TimeAxis`→`XAxis`) deferred to pjm17971. **Next:
-    more chart types on the value axis + estela friction cycle.** **Decimator
+    x-on-`ValueSeries` SHIPPED** (#284, `@pond-ts/charts`): additive
+    `xScaleType: 'time' | 'linear'` → a `scaleLinear` value axis; `xScale` widened
+    to `ScaleTime | ScaleLinear` (rippled to no consumer — draw layers already take
+    `(v)=>number`); `fromValueSeries` adapter; `LineChart` accepts
+    `TimeSeries | ValueSeries` (instanceof-branched adapter + cursor sampleAt).
+    **Phase 2b — `<XAxis>` chart-API refactor SHIPPED** (#286, `381e2a8`): the x
+    axis is now a first-class, placeable, kind-inferred concept. `<XAxis>` =
+    placeable axis renderer (`format`/`label`/`side`/`height`/custom `ticks` — the
+    lap-markers lever), x-sibling of `<YAxis>`; `<TimeAxis>` is a thin preset over
+    it. The x **kind is inferred from the data** (each layer reports `xKind` +
+    `xExtent()`; `TimeSeries`→time, `ValueSeries`→value; a container mixing the two
+    is a hard error). `range?: [number,number] | TimeRange` is the shared domain
+    (auto-fits when omitted; kind never taken from `range`). **Breaking** (unshipped):
+    `timeRange`→`range`, `xScaleType`→gone (inferred), `timeAxis`→`showAxis`.
+    **Deferred** to a "finish the value-axis naming" follow-up: `timeFormat` (needs
+    an `<XAxis format>`→cursor-readout coupling), `onTimeRangeChange`, and the
+    internal `ContainerFrame.timeRange` field. **Next: more chart types
+    (Bar/Band/Box/Area/Scatter) on the value axis + the naming follow-up + estela
+    friction cycle.** **Decimator
     DECOUPLED** (dashboard): ship time-only (index `Column.bin`) first; the value
     axis brings axis-domain `binByAxis` (Codex: `Column.bin` is index-domain,
     wrong for gappy data). `byColumn` is **order-free** (Codex: v1 wrongly said it
