@@ -45,6 +45,11 @@ export type { BoxPlotProps } from './BoxPlot.js';
 export { BarChart } from './BarChart.js';
 export type { BarChartProps } from './BarChart.js';
 
+// Annotations — user-authored marks in the turquoise register (distinct from the
+// data): a shaded span, a horizontal value line, a vertical x line.
+export { Region, Baseline, Marker } from './annotations.js';
+export type { RegionProps, BaselineProps, MarkerProps } from './annotations.js';
+
 export {
   fromTimeSeries,
   bandFromTimeSeries,

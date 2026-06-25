@@ -415,6 +415,12 @@ export function Layers({ children }: LayersProps) {
         onClick={handleClick}
       >
         <Canvas width={plotWidth} height={row.height} draw={draw} />
+        {/* Annotation overlays — <Region>/<Baseline>/<Marker> — paint here, above
+            the data canvas and below the cursor. Draw layers (LineChart, …)
+            co-located here render null (they paint via the canvas `draw`); both
+            register through LayersContext. Inside the plot div so annotations
+            share its 0..plotWidth × 0..height coordinate space. */}
+        {indexedChildren}
         {/* Cursor overlay (SVG, above the data canvas): the synced line, the
             per-series dots, and the flag staffs — all crisp + positioned in plot
             space, no second canvas. Value chips are DOM divs below. */}
@@ -590,7 +596,6 @@ export function Layers({ children }: LayersProps) {
             );
           })}
       </div>
-      {indexedChildren}
     </LayersContext.Provider>
   );
 }

@@ -111,6 +111,23 @@ export interface ChartTheme {
    * unset. (The `fade` mode has its own gradient and isn't governed by this.)
    */
   readonly gap?: { readonly connectorOpacity: number };
+  /**
+   * The **annotation register** — the styling for *user-authored* marks
+   * (`<Region>` / `<Baseline>` / `<Marker>`), deliberately a distinct hue from
+   * the data's `line`/`area`/… so a mark you place never reads as data (the
+   * "data stays foam, marks are turquoise" rule). `color` is the shared register
+   * hue (lines, region edges + fill, handles, label text); the region fill draws
+   * at `fillOpacity`. **Luminosity encodes attention:** a mark draws at `rest`
+   * opacity, brightening to `hover`, then `selected` (the editable state, which
+   * also shows drag handles). Falls back to a built-in turquoise if unset.
+   */
+  readonly annotation?: {
+    readonly color: string;
+    readonly fillOpacity: number;
+    readonly rest: number;
+    readonly hover: number;
+    readonly selected: number;
+  };
 }
 
 /** A resolved line style: stroke colour + width (px). */
@@ -306,6 +323,14 @@ export const defaultTheme: ChartTheme = {
   cursor: '#64748b',
   chip: { background: '#ffffff' },
   gap: { connectorOpacity: 0.5 },
+  // Teal marks register — distinct from the blue data, reads on the light ground.
+  annotation: {
+    color: '#0d9488',
+    fillOpacity: 0.1,
+    rest: 0.6,
+    hover: 0.82,
+    selected: 1,
+  },
 };
 
 /**
@@ -428,4 +453,13 @@ export const estelaTheme: ChartTheme = {
   cursor: '#7FE2D2', // --es-reef (bright tracker on the dark ground)
   chip: { background: '#0B4E58' }, // --es-deep (panel behind readout text)
   gap: { connectorOpacity: 0.5 },
+  // Marks register: --es-reef, estela's bright attention turquoise (the same hue
+  // as the cursor / selected highlight) — distinct from the foam (white) data.
+  annotation: {
+    color: '#7FE2D2', // --es-reef
+    fillOpacity: 0.1,
+    rest: 0.55,
+    hover: 0.8,
+    selected: 1,
+  },
 };
