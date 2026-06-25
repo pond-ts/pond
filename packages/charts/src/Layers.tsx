@@ -19,6 +19,7 @@ import { drawGrid } from './grid.js';
 import { cursorParts } from './tracker.js';
 import { resolveSelection } from './select.js';
 import { panRange, zoomRange } from './viewport.js';
+import { flagChipStyle } from './chip.js';
 import {
   ContainerContext,
   LayersContext,
@@ -350,19 +351,9 @@ export function Layers({ children }: LayersProps) {
   // dot ('inline', clamped within the row) or stack at the top of the flag staff
   // ('flag'). line / point / none draw no chips — surface values off-chart.
   const flagLineHeight = container.theme.font.size + 5;
-  const chipStyle: CSSProperties = {
-    position: 'absolute',
-    background: container.theme.chip?.background,
-    border: `1px solid ${gridColor}`,
-    borderRadius: '3px',
-    padding: '0 4px',
-    fontFamily: container.theme.font.family,
-    fontSize: `${container.theme.font.size}px`,
-    fontVariantNumeric: 'tabular-nums',
-    whiteSpace: 'nowrap',
-    pointerEvents: 'none',
-    lineHeight: 1.5,
-  };
+  // Cursor chips share the annotation label look (filled, no outline) — one
+  // source of truth so a flag and a placed label read as the same object.
+  const chipStyle = flagChipStyle(container.theme);
   // Show the cursor's time atop the readout (opt-in via `cursorTime`), whenever
   // the cursor is active (any mode that draws marks). A single chip at the cursor
   // x, top of the row; for `flag` it sits above the value chips (which shift down).

@@ -1,6 +1,7 @@
 import { useContext, type CSSProperties, type ReactNode } from 'react';
 import { ContainerContext, RowContext } from './context.js';
 import type { ChartTheme } from './theme.js';
+import { flagChipStyle } from './chip.js';
 
 /**
  * User-authored **annotations** — marks you place *on* a chart, in a register
@@ -39,6 +40,9 @@ const HANDLE_H = 18;
 const FLAG_TOP = 2;
 /** Past this fraction of the plot a flag chip flips left of its line to stay in. */
 const FLAG_FLIP = 0.85;
+/** Gap (px) between a flag chip and its line, so the chip floats beside the pole
+ *  instead of covering (dimming) the prominent vertical line. */
+const FLAG_GAP = 4;
 
 /** Phase 1 drives only rest + selected; `hover` (the theme's third level) lands
  *  with the edit mode. */
@@ -71,12 +75,12 @@ function useAnnotationFrame(name: string) {
  *  of the line, flipping to the left near the right edge so it stays in-plot. */
 function flagX(x: number, plotWidth: number): CSSProperties {
   return x > plotWidth * FLAG_FLIP
-    ? { right: `${plotWidth - x}px` }
-    : { left: `${x}px` };
+    ? { right: `${plotWidth - x + FLAG_GAP}px` }
+    : { left: `${x + FLAG_GAP}px` };
 }
 
-/** A label chip — the same shape as the cursor's value flag (chip background +
- *  faint grid border), but with text in the annotation register. Positioned by the
+/** A label chip — the cursor value flag's shape (shared {@link flagChipStyle}:
+ *  filled, no outline) with text in the annotation register. Positioned by the
  *  caller's `style` (top/left/right/transform). */
 function Chip({
   theme,
@@ -90,25 +94,7 @@ function Chip({
   children: ReactNode;
 }) {
   return (
-    <div
-      style={{
-        position: 'absolute',
-        background: theme.chip?.background,
-        border: `1px solid ${theme.axis.grid}`,
-        borderRadius: '3px',
-        padding: '0 4px',
-        fontFamily: theme.font.family,
-        fontSize: `${theme.font.size}px`,
-        fontVariantNumeric: 'tabular-nums',
-        whiteSpace: 'nowrap',
-        pointerEvents: 'none',
-        lineHeight: 1.5,
-        color,
-        ...style,
-      }}
-    >
-      {children}
-    </div>
+    <div style={{ ...flagChipStyle(theme), color, ...style }}>{children}</div>
   );
 }
 
