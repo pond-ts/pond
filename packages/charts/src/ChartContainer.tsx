@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { scaleLinear, scaleTime } from 'd3-scale';
+import type { TimeRange } from 'pond-ts';
 import {
   ContainerContext,
   type ContainerFrame,
@@ -31,9 +32,34 @@ import { defaultTheme, type ChartTheme } from './theme.js';
  *  calibrated as the time-axis labels are. */
 const TIME_TICK_COUNT = 5;
 
+/**
+ * Normalize the `range` prop — a `[begin, end]` tuple or a `TimeRange` — to a
+ * plain `[number, number]`, or `undefined` when omitted (→ auto-fit). The
+ * `'begin' in range` check distinguishes the `TimeRange` from the tuple (a
+ * tuple has no `begin` key).
+ */
+function normalizeRange(
+  range: readonly [number, number] | TimeRange | undefined,
+): readonly [number, number] | undefined {
+  if (range === undefined) return undefined;
+  return 'begin' in range ? [range.begin(), range.end()] : [range[0], range[1]];
+}
+
 export interface ChartContainerProps {
-  /** Time domain `[start, end]` in epoch ms — the shared x-axis for all rows. */
-  timeRange: readonly [number, number];
+  /**
+   * The shared x **domain** `[begin, end]` — a tuple, or a `TimeRange`
+   * (`series.timeRange()`). Units follow the data: epoch-ms for a time axis,
+   * the value units (distance, …) for a value axis. **Omit to auto-fit** to the
+   * rows' extents. The axis *kind* is never taken from here — it's inferred from
+   * the data — so a tuple stays a time domain on a time chart.
+   */
+  range?: readonly [number, number] | TimeRange;
+  /**
+   * @deprecated Legacy alias for {@link range} (epoch-ms tuple). Prefer `range`,
+   * which also accepts a `TimeRange` and auto-fits when omitted. Retained during
+   * the value-axis migration; `range` wins if both are set.
+   */
+  timeRange?: readonly [number, number];
   /** Total width in CSS pixels (plot + axis gutters). */
   width: number;
   /** Vertical space between rows in CSS pixels (not under the time axis). Default 0. */
@@ -130,6 +156,7 @@ export interface ChartContainerProps {
  * (`<YAxis>`).
  */
 export function ChartContainer({
+  range,
   timeRange,
   width,
   rowGap = 0,
@@ -148,28 +175,34 @@ export function ChartContainer({
   theme,
   children,
 }: ChartContainerProps) {
+  // The explicit base domain: `range` (preferred, tuple or TimeRange) else the
+  // legacy `timeRange`. `undefined` ⇒ auto-fit (resolved from the layers below).
+  // Pan/zoom seeds from it; `seed` is the placeholder when auto-fitting.
+  const explicitDomain = normalizeRange(range) ?? timeRange;
+  const seed: readonly [number, number] = explicitDomain ?? [0, 1];
+
   // View range: pan/zoom moves it. Controlled (onTimeRangeChange) reads the prop
   // and routes gestures back through the callback; uncontrolled holds it
-  // internally. With panZoom off, the prop is used directly — so a static or live
+  // internally. With panZoom off, the seed is used directly — so a static or live
   // (sliding-prop) chart tracks the prop as before.
   const [internalRange, setInternalRange] = useState<[number, number]>([
-    timeRange[0],
-    timeRange[1],
+    seed[0],
+    seed[1],
   ]);
   const uncontrolled = panZoom && onTimeRangeChange === undefined;
   // While the internal view isn't in use (not uncontrolled), keep it synced to
   // the prop — so *entering* uncontrolled pan/zoom (toggling panZoom on, or a
   // controlled→uncontrolled switch) starts from the current range, not the
-  // mount-time one. While uncontrolled, leave it alone so a timeRange change
+  // mount-time one. While uncontrolled, leave it alone so a range change
   // can't fight the user's pan. (Adjusting state during render — React re-renders
   // before commit, no extra paint; the guard makes it converge in one step.)
   if (
     !uncontrolled &&
-    (internalRange[0] !== timeRange[0] || internalRange[1] !== timeRange[1])
+    (internalRange[0] !== seed[0] || internalRange[1] !== seed[1])
   ) {
-    setInternalRange([timeRange[0], timeRange[1]]);
+    setInternalRange([seed[0], seed[1]]);
   }
-  const view = uncontrolled ? internalRange : timeRange;
+  const view = uncontrolled ? internalRange : seed;
   const t0 = view[0];
   const t1 = view[1];
 
@@ -231,6 +264,22 @@ export function ChartContainer({
     }
     return kind ?? (xScaleType === 'linear' ? 'value' : 'time');
   }, [sources, xScaleType]);
+
+  // Auto-fit extent — the union of the layers' x extents — used as the domain
+  // when no explicit `range`/`timeRange` is given. (Same source registry as the
+  // kind; the two-pass register→resolve applies.)
+  const autoExtent = useMemo((): readonly [number, number] | null => {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const s of sources.values()) {
+      const e = s.xExtent();
+      if (e) {
+        if (e[0] < lo) lo = e[0];
+        if (e[1] > hi) hi = e[1];
+      }
+    }
+    return lo <= hi ? [lo, hi] : null;
+  }, [sources]);
 
   const onTrackerRef = useRef(onTrackerChanged);
   onTrackerRef.current = onTrackerChanged;
@@ -308,6 +357,12 @@ export function ChartContainer({
   const rightGutter = sum(rightSlots);
   const plotWidth = Math.max(0, width - leftGutter - rightGutter);
 
+  // The resolved x domain: while panning an explicit domain it's the live view
+  // (t0/t1); otherwise the auto-fit extent (→ [0, 1] before any layer registers,
+  // the two-pass settle). This is what the scale + cursor + axis read.
+  const [d0, d1] =
+    explicitDomain !== undefined ? [t0, t1] : (autoExtent ?? [0, 1]);
+
   // The shared x scale + the formatter for its ticks / cursor readout, built
   // together so each branch keeps its concrete scale type (no casts): a value
   // axis is a `scaleLinear` formatted by `resolveAxisFormat`, time is a
@@ -317,18 +372,18 @@ export function ChartContainer({
   // — for `xScaleType: 'linear'` it formats the value, not a time.)
   const { xScale, formatTime } = useMemo(() => {
     if (resolvedKind === 'value') {
-      const s = scaleLinear().domain([t0, t1]).range([0, plotWidth]);
+      const s = scaleLinear().domain([d0, d1]).range([0, plotWidth]);
       return {
         xScale: s,
         formatTime: resolveAxisFormat(s, TIME_TICK_COUNT, timeFormat),
       };
     }
-    const s = scaleTime().domain([t0, t1]).range([0, plotWidth]);
+    const s = scaleTime().domain([d0, d1]).range([0, plotWidth]);
     return {
       xScale: s,
       formatTime: resolveTimeFormat(s, TIME_TICK_COUNT, timeFormat),
     };
-  }, [resolvedKind, t0, t1, plotWidth, timeFormat]);
+  }, [resolvedKind, d0, d1, plotWidth, timeFormat]);
 
   // The crosshair pixel (see resolveCursorX). A stored hoverX is a *plot* pixel;
   // if plotWidth changes mid-hover (a gutter reserving, or a width change) it's
@@ -360,7 +415,7 @@ export function ChartContainer({
 
   const frame = useMemo<ContainerFrame>(
     () => ({
-      timeRange: [t0, t1],
+      timeRange: [d0, d1],
       width,
       theme: theme ?? defaultTheme,
       plotWidth,
@@ -390,8 +445,8 @@ export function ChartContainer({
       firstRowKey,
     }),
     [
-      t0,
-      t1,
+      d0,
+      d1,
       width,
       theme,
       plotWidth,

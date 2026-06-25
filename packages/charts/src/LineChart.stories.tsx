@@ -80,23 +80,19 @@ type Story = StoryObj;
 /**
  * **Value axis** — HR plotted against cumulative distance (metres), not time.
  * The same `<LineChart>` consuming a `ValueSeries`; the chart **infers** a value
- * (linear) x straight from the data — no axis-type prop — with a numeric tick
- * format.
+ * (linear) x straight from the data — no axis-type prop — and **auto-fits** the
+ * domain (no `range`), so the call site carries neither. Numeric tick format.
  */
 export const ValueAxisDistance: Story = {
-  render: () => {
-    const series = rideByDistance();
-    const maxDist = series.axisAt(series.length - 1);
-    return (
-      <ChartContainer timeRange={[0, maxDist]} timeFormat=",.0f" width={480}>
-        <ChartRow height={200}>
-          <Layers>
-            <LineChart series={series} column="hr" as="heartrate" />
-          </Layers>
-        </ChartRow>
-      </ChartContainer>
-    );
-  },
+  render: () => (
+    <ChartContainer timeFormat=",.0f" width={480}>
+      <ChartRow height={200}>
+        <Layers>
+          <LineChart series={rideByDistance()} column="hr" as="heartrate" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
 };
 
 /**
