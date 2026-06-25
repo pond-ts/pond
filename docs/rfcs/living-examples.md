@@ -6,7 +6,7 @@
 > show output, and rendered (as data or a chart) from that verified output.
 > Phases adopted into PLAN.md become the contract; the rest is forward-looking.
 >
-> **Original draft:** the pond-ts library agent (Claude), prompted by pjm17971
+> **Original draft:** the pond-ts docs agent (Claude), prompted by pjm17971
 > ("an MDX plugin that 1) shows the example, 2) tests it really works, 3) shows
 > the output, maybe as a chart"). The reframe below — _decompose the three asks,
 > they have wildly different cost_ — came out of that design exchange; pjm17971
