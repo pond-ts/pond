@@ -450,13 +450,32 @@ bucketed results, never raw float equality or full series (§7). Splits teach as
 **table**. Volunteered as the Phase-2 use case. _Reviewer confidence: high; the
 estela analysis examples are the easy deterministic case to prove Layer 2 on._
 
-## Review — website / docs-infra _[to fill — load-bearing unknown still open]_
+## Review — website / docs-infra
 
-The Docusaurus-3.10 × Twoslash viability and the not-a-workspace type-resolution are
-the **Phase-0 gates** and weren't covered by a dedicated docs-infra pass; Codex and
-library spoke to them, but an independent docs-infra review (preset vs Expressive
-Code vs rehype transformer; the include-by-region choice; the workspace-resolution
-mechanism) is the most valuable remaining input before Phase 1 commits.
+_Full text on PR #285. Summary, attributed:_ Verified every tooling claim against
+current npm/GitHub rather than the RFC's optimism, and corrected three. **[high] the
+Twoslash path the RFC names is largely dead** — `docusaurus-preset-shiki-twoslash` is
+abandoned (last published 2023, monorepo archived, predates Docusaurus 3), and
+Expressive Code is Starlight/Astro-only with no real Docusaurus support. The one
+viable route is a **hand-wired `@shikijs/rehype` + `@shikijs/twoslash@4` rehype
+transformer** via `docs.beforeDefaultRehypePlugins` (proven on Docusaurus 3.7+/React
+19), with a build-OOM risk that forces `explicitTrigger` (twoslash only on opt-in
+blocks — aligns with §3's opt-in stance). Crucially, **that reference proves Shiki
+_highlighting_, not Twoslash _type-checking_** — so `tangle → tsc` is not the fallback
+but the **workhorse** (validates §3's split, harder). **[medium] the Prism→Shiki swap
+is bigger than "mitigated"** — a site-wide `MDXComponents` `Code`/`Pre` swizzle plus
+re-adding the copy-button / meta-highlight affordances. **[confirmations]**
+type-resolution = **`file:` deps** for `pond-ts`/`@pond-ts/charts` in
+`website/package.json` (covers both the type-check vfs _and_ the Phase-3 chart
+import — the charts agent's "one problem"); `remark-code-import` is **line-range only,
+not named regions**, so the drift-proof pairing is whole-file-per-snippet.
+_Reviewer confidence: high on the verified tooling facts; medium on the swizzle-effort
+estimate (only a Phase-0 smoke test settles it)._
+
+_Reconciliation into §3 / Phase 0 — the dead-preset → rehype-transformer path, the
+larger swap cost, `file:` deps, whole-file snippets — is **pending**, coupled to
+pjm17971's open call: are Twoslash's inline resolved-types worth the bespoke rehype +
+site-wide swizzle, or is `tangle → tsc` + Prism the whole of Layer 1?_
 
 ## Amendments — pond-ts docs agent (v1 → v2 changelog)
 
@@ -488,3 +507,341 @@ pulled-forward interactive tier:
   Driver: charts.
 - **Cost reframed** "moderate-but-bounded"; fragment-block census as the Phase-0
   sizing of Phase 1 (§3). Driver: library.
+
+---
+
+## Appendix A — Per-method visualization survey
+
+_Produced by a 12-agent survey (one per API family) that read the source for `TimeSeries` / `LiveSeries` / `ValueSeries`, then synthesized; full per-method verdicts live in the PR #285 workflow record. — pond-ts docs agent_
+
+This is the operator-by-operator map behind §5–§6: every public method of
+`TimeSeries`, `LiveSeries`, and `ValueSeries` — read from the source
+(`packages/core/src/batch/time-series.ts`, `live/live-series.ts`,
+`batch/value-series.ts`), not from the docs — assigned the **cheapest render tier
+that actually teaches it**. The tier vocabulary is the §5 ladder plus its honest
+floor: **table** (values are the lesson) · **bar** (categorical proportion) ·
+**line** (shape over an axis) · **interactive** (the §6 hero tier — _playing_ is the
+only thing that teaches) · **—** (no render earns its cost; a sentence or a code
+block is the honest medium). Read each family's table as "if this operator gets an
+`<ExampleOutput>` at all, here's the form and why" — it is the input to the §3
+output-debt fill (which examples to render) and the §6 rationing (which few get a
+widget).
+
+**Headline counts.** 118 unique public methods surveyed (a handful appear in two
+families — e.g. `materialize` buckets _and_ cleans, `concat` reshapes _and_
+constructs — counted once, at their strongest verdict). The distribution is
+lopsided toward **table** exactly as §2 predicts — most operators are reshapes whose
+_values_ are the lesson, not curves:
+
+| Tier | TimeSeries | LiveSeries | ValueSeries | **Total** |
+| --- | --: | --: | --: | --: |
+| **interactive** | 11 | 4 | 1 | **16** |
+| **line** | 9 | 7 | 0 | **16** |
+| **bar** | 0 | 0 | 0 | **0** |
+| **table** | 37 | 8 | 2 | **47** |
+| **—** (none) | 19 | 20 | 0 | **39** |
+| **surveyed** | 76 | 39 | 3 | **118** |
+
+Two numbers carry weight for the RFC. **`bar` came up zero** as a method's _primary_
+tier — the §5 bar case (zone distributions) is real but it is a _byColumn-output
+view_, not a distinct operator, so bar earns its first-class slot from one flagship
+shape, not from breadth (consistent with §5's "bar is a UX aid on the splits
+table"). And **39 methods are honest `—`** — a third of the surface is I/O,
+scalar accessors, and boolean predicates that no chart improves; the survey's job is
+as much to _stop_ us rendering those as to greenlight the rest.
+
+### The interactive hero shortlist
+
+This is the concrete candidate list for the **Phase 4a open decision** ("Explorable
+widgets for windowing / aggregation / rolling / alignment — rationed to the hero
+few"). 15 methods cleared `interactive` + **high** teaching value. But the count to
+budget against is **smaller than 15**, because of two collapses the survey makes
+explicit:
+
+- The three key-lookup operators **`atOrBefore` / `atOrAfter` / `nearest`** are
+  _one concept_ (where does a query key land in sorted keys?) and want **one shared
+  "key-lookup" explorable** — drag a marker, watch all three pins diverge in the
+  gaps and fall off the ends. Do not build three.
+- **`aggregate` and `rolling` recur** on both `TimeSeries` and `LiveSeries`. The
+  windowing widget is the same shape; the live variant adds a moving "now" and
+  eviction. Budget them as **two builds, not four**.
+
+Net: roughly **9 distinct widgets** cover all 15 high-value hits. Ranked by
+teaching-return-per-build:
+
+| Rank | Operator(s) | The control the reader drags | Why _playing_ is the only thing that teaches |
+| --: | --- | --- | --- |
+| 1 | **`aggregate`** (TS) | bucket-width slider + reducer toggle | The canonical "sweep the window" — count-vs-resolution tradeoff and how a reducer collapses a bucket are felt only by widening it live; half-open membership snaps an on-boundary event into the right bucket as you cross it. **The §6 archetype.** |
+| 2 | **`rolling`** (TS + Live) | window-width slider + alignment 3-way + `minSamples` gate | "Wider = flatter; trailing _lags_ the peak, centered _sits_ on it" is the single hardest thing to read from prose; the warmup gate blanking the left edge only makes sense in motion. |
+| 3 | **`smooth`** (TS) | method toggle (ema/movingAverage/loess) swapping its parameter slider + `missing` bridge/skip | Smoothing-parameter _feel_ (alpha, span, window) is unlearnable statically; flipping `bridge`↔`skip` over a deliberate gap is the clearest possible teach of a behavior invisible in a frozen frame. |
+| 4 | **`align`** (TS) | grid-size × method (hold/linear) × sample-anchor | Three orthogonal knobs: hold's flat plateaus vs linear's ramps, and empty edge buckets, are laborious in a table and obvious the instant you toggle. The cleaning-family designated hero. |
+| 5 | **`window`** (Live) | window-width slider, count⇄duration mode | The essence is _dynamic eviction against a moving now_ — events scroll off the trailing edge as time advances; a static frame cannot show "leaving the band," which is the whole idea of a live window. |
+| 6 | **`byColumn`** (TS) | bin-width slider + even-width⇄explicit-edges toggle | The value-axis leap (re-key off time) _plus_ the histogram-vs-profile duality, contiguous empty bins, and floor-inclusive bin-0 rule — all only legible by sweeping width. The value-axis twin of `aggregate`. |
+| 7 | **`join`** (TS) | segmented control: inner/left/right/outer (+ onConflict) | Join is a relational _truth-table_, not one output — rows vanish under inner and blanks fill under outer on the _same_ fixture. Provenance-colored cells teach the `required:false` widening in the same widget. |
+| 8 | **key-lookup: `atOrBefore`/`atOrAfter`/`nearest`** (TS) — **one widget** | a query marker dragged along the key axis | Watching three pins diverge in the gaps and `nearest` flip at the gap-midpoint (then _clamp_ at the ends while the other two go `undefined`) is the only way the directional-bounds contract becomes intuitive. One build, three operators. |
+| 9 | **`stats`** (Live) | scripted stream + "inject late event" button | The cumulative-counter narrative — ingested climbs monotonically while `length` plateaus at the retention cap and `rejected` ticks on a late arrival — only teaches when the counters _move_. The dashboard-observability core. |
+
+**Honorable mention, ranked just below the line:**
+
+- **`tail`** (TS) — drag a duration handle, watch the kept set recompute; teaches the
+  two non-obvious axes (anchored to the _last event's_ begin, strictly-greater
+  boundary) that a static figure under-sells. The strongest play _outside_ the
+  windowing cluster.
+- **`overlapping`** (TS) — the drag-the-range band that animates the existing
+  `temporal-relations.mdx` figure; one widget covers four selectors
+  (within/overlapping/containedBy/trim) by recoloring/clipping bars as an edge
+  crosses a straddling event. High value, but it _amortizes_ across a family rather
+  than teaching one operator, so it reads as a family explainer.
+- **`push`** (Live) — the "what _is_ a LiveSeries" opener: a step/play control feeds a
+  scripted stream and the sparkline accretes one point per tick. Cheapest possible
+  widget; its value is the _first-contact_ mental model, not depth.
+- **`nearestIndex`** (ValueSeries) — the value-axis cursor primitive; drag a cursor,
+  watch it snap to the nearest row, with the midpoint snap-flip, end-clamp, and
+  empty→`-1` all emerging from play. Doubles as the live foundation a docs page
+  reuses to illustrate `sliceByValue`.
+
+> **Verdict conflict, flagged honestly.** `LiveSeries.stats` was surveyed twice and
+> the two passes split — **table** (a checkpoint counter snapshot) in the
+> ingest family, **interactive** (a live moving dashboard) in the transforms family.
+> Both are defensible: the _inter-counter invariants_ (ingested ≥ length,
+> evicted + length ≤ ingested) pin cleanly in a static table, while the _accrual over
+> time_ wants motion. Resolution for Phase 4a: ship the **table** first (cheap,
+> covers the invariants), promote to the widget only if the dashboard guide needs a
+> live counter — `stats` is the one shortlist entry that is genuinely _optional_ as a
+> widget.
+
+### TimeSeries
+
+**Bucketing & aggregation**
+
+| Method | Tier | Teaching | One-line viz |
+| --- | --- | --- | --- |
+| `aggregate` | interactive | high | Raw dots + aggregated step line + bucket bands; **bucket-width slider** + reducer toggle re-buckets live. The family hero. |
+| `byColumn` | interactive | high | Histogram-vs-profile by data shape; **bin-width slider** + even/edges toggle; the value-axis re-key leap. |
+| `materialize` | table | high | Side-by-side irregular source → grid rows; empty buckets render an explicit `undefined`; `select` toggle changes the winner. |
+| `pivotByGroup` | table | high | The definitive long→wide before/after; one row per timestamp, `${group}_${col}` columns, `undefined` holes the lesson. |
+| `reduce` | table | medium | Two-column table of output-key → reduced scalar; "the whole series = one bucket." Scalar form needs no figure. |
+| `groupBy` | table | medium | Nested table: distinct key values fan out into N labelled sub-tables, event order preserved. |
+| `arrayAggregate` | table | medium | Per-event array → scalar before/after; output _kind_ shifts with the reducer (numeric→number, unique→array). |
+
+**Windowed & running**
+
+| Method | Tier | Teaching | One-line viz |
+| --- | --- | --- | --- |
+| `rolling` | interactive | high | Raw dots + bold smoothing line; **window-width slider** + alignment 3-way + `minSamples` gate. The window-size hero. |
+| `smooth` | interactive | high | Method toggle swaps the active parameter slider (alpha/window/span); `missing` bridge⇄skip over a gap. Second window-size hero. |
+| `cumulative` | line | high | Raw per-event vs monotone running total; `max`/`min` as a ratchet staircase; small-multiple of the four built-ins. |
+| `diff` | line | high | Two stacked panels: level (top) vs signed per-event delta (bottom); flat→zero, dip→negative, leading `undefined`. |
+| `rate` | line | high | Like `diff` but ÷ elapsed seconds — **uneven gaps** make the normalization visible (same +6 reads 3/s then 2/s). |
+| `scan` | table | high | 5-column fold table exposing the hidden accumulator (acc-before/after/output); deadband "carry" rows are the lesson. |
+| `rollingByColumn` | line | medium | x = a monotonic value column (distance), not time; raw scatter + windowed band; one window's ±radius bracketed. |
+| `pctChange` | line | medium | Signed-% panel vs raw level; equal absolute moves render as unequal % (+10% on 100 vs +1% on 1000). |
+| `shift` | line | medium | Original vs shifted copy offset by _event count_ (not time); `undefined` at the vacated edge; +1/−1 small-multiples. |
+
+**Alignment, resampling & cleaning**
+
+| Method | Tier | Teaching | One-line viz |
+| --- | --- | --- | --- |
+| `align` | interactive | high | Irregular dots + grid-snapped line; **grid-size × method × anchor** — hold plateaus vs linear ramps live. Family hero. |
+| `materialize` | table | high | Three tables, one per `select` mode; same bucket picks different source events; empty bucket = `undefined` row. |
+| `fill` | line | high | Gappy dots + four small-multiples (hold/bfill/linear/zero) painting different _shapes_ into the same hole; `maxGap` cap. |
+| `outliers` | line | high | Source line + rolling ±σ band + flagged dots _outside_ it; teaches deviation-from-_local_-baseline, not absolute threshold. |
+| `dedupe` | table | high | Before/after with duplicate-key rows banded; one resolved table per `keep` policy (first/last/max/drop/error). |
+| `sample` | line | medium | Dense source + sampled dots; stride's regular comb _aliases_ a periodic signal, reservoir preserves the envelope. |
+
+**Range relations & temporal selection**
+
+| Method | Tier | Teaching | One-line viz |
+| --- | --- | --- | --- |
+| `overlapping` | interactive | high | **Drag-the-range hero** for the whole family: a band + radio (within/overlapping/containedBy/trim) recolors/clips bars live. |
+| `within` | table | high | Source vs `within(range)` output; only fully-contained events survive (5→2); half-open boundary rule in the caption. |
+| `trim` | table | high | The only key-_mutating_ op; before/after begin/end + duration column; the clipped event **keeps its value** (gotcha). |
+| `containedBy` | table | medium | Equivalence table vs `within` ({b,d} identical); folds into the hero's radio toggle, no separate widget. |
+| `after` | table | medium | Combined with `before`: on-boundary event kept by _neither_ (both strict) — they are **not** a partition. |
+| `before` | table | medium | Shares the `after` table; strict `end < limit` cut; TimeRange aside shows it tests `end()` not `begin()`. |
+
+**Positional selection & lookup**
+
+| Method | Tier | Teaching | One-line viz |
+| --- | --- | --- | --- |
+| `tail` | interactive | high | Drag a duration handle; kept set recomputes — teaches the last-event anchor + strictly-greater boundary together. |
+| `atOrBefore` | interactive | high | **Shared "key-lookup" hero** (with the two below): drag a marker, three pins diverge in the gaps and at the ends. |
+| `nearest` | interactive | high | Same hero; rounds to the closer neighbor (tie→earlier) and _clamps_ at the ends — the pin flips at the gap-midpoint. |
+| `atOrAfter` | interactive | medium | Same hero, the at-or-right pin; `at(bisect(key))`, `undefined` past the last event. No standalone widget. |
+| `at` | table | medium | Index gutter + highlighted `at(2)`; chips show `at(-1)` from-end, `at(1.5)`→undefined, `at(9)`→undefined. |
+| `slice` | table | medium | Two stacked tables, kept span boxed; `Array.prototype.slice` contract (half-open, negative, clamp) as variant chips. |
+| `bisect` | table | medium | Key-axis + probe→insertion-index table; the shared primitive under the atOrBefore/atOrAfter/nearest trio. |
+| `find` | table | low | First match highlighted, trailing rows greyed (early-stop); barely beats an inline value. |
+
+**Grid-preserving transforms & reshape**
+
+| Method | Tier | Teaching | One-line viz |
+| --- | --- | --- | --- |
+| `map` | table | high | Before/after rows; keys unchanged, schema one column wider; anchors the whole per-event mental model. |
+| `mapColumns` | table | high | Before/after on one column with a **missing cell** (stays missing) and a **NaN** (mapper runs) — the carry rule made visible. |
+| `collapse` | table | high | Three panels: source, default (columns _replaced_ by `total`), `{append:true}` (originals kept) — the branch newcomers trip on. |
+| `concat` | table | high | Two color-tagged inputs → merged re-sorted result; a tied key keeps input order (A before B) — the stable-sort guarantee. |
+| `select` | table | medium | Wide→narrow table, dropped columns struck through; key always survives; type-narrowing noted in prose (runtime half only). |
+| `withColumn` | table | medium | A derived `Float64Array` "side-channel" slotting in as a real column; length-match + non-finite-throws guardrails. |
+| `rename` | table | low | Header-only diff (`cpu`→`usage`), data rows faint/unchanged (zero-copy relabel); near the `—` boundary. |
+
+**Array-column & key-type ops**
+
+| Method | Tier | Teaching | One-line viz |
+| --- | --- | --- | --- |
+| `arrayAggregate` | table | high | Array cell → scalar per row; output kind by reducer; replace-in-place vs `{as}` append shown side by side. |
+| `arrayExplode` | table | high | 1-row→N-rows fan-out with **duplicated keys**; empty/undefined array row vanishes; replace vs append reshape differently. |
+| `asTime` | table | high | TimeRange→Time with three anchor columns (begin/center/end); overlapping fixture shows the non-monotonic **throw**. |
+| `asTimeRange` | table | medium | Time→TimeRange; an instant becomes a zero-width `[t,t]`; values untouched. |
+| `asInterval` | table | medium | Rekey + per-row label via `(range,index)=>label` callback; one-kind-throughout throw flagged. |
+| `arrayContains` | table | medium | Kept/dropped table, chips for the array, needle highlighted; `undefined` arrays dropped. |
+| `arrayContainsAll` | table | medium | Per-needle checklist (AND); paired beside `arrayContainsAny` on identical data; `[]`→keep-all-defined edge. |
+| `arrayContainsAny` | table | medium | The OR half of the pair; any one match keeps the row; `[]`→empty-series edge (the inverse). |
+
+**Join**
+
+| Method | Tier | Teaching | One-line viz |
+| --- | --- | --- | --- |
+| `join` | interactive | high | Two partial-overlap sources + result; **inner/left/right/outer** segmented control; provenance-colored cells, em-dash blanks. |
+| `joinMany` | table | high | Three narrow sources → one wide table; outer-default blanks where a source lacked a timestamp; delegates to `join` (no 2nd widget). |
+
+**Construction, output & meta** — overwhelmingly `—` (see roll-up); the round-trip
+exports earn a table:
+
+| Method | Tier | Teaching | One-line viz |
+| --- | --- | --- | --- |
+| `toRows` | table | medium | Raw input vs normalized output (Date→Time, null→undefined); positional tuples, index headers. |
+| `toPoints` | table | medium | Flat `{ts, ...}` rows — **the documented bridge to Recharts/Plot/visx**; `ts = event.begin()`, missing→gap. Pair with `fromPoints`. |
+| `fromPoints` | table | medium | Inverse of `toPoints`; flat points → typed rows, missing key→undefined; the right half of the round-trip pair. |
+| `concat` (static) | table | medium | UNION ALL: two inputs color-coded, re-sorted, stable tie-break (A before B) at a shared key. |
+| `toObjects` | table | low | Schema-keyed object rows verbatim; the object-vs-tuple distinction readers check against `toRows`. |
+| `rows` (getter) | table | low | Identical to `toRows()`; cross-reference, don't render separately. |
+
+### LiveSeries
+
+**Ingest & subscription**
+
+| Method | Tier | Teaching | One-line viz |
+| --- | --- | --- | --- |
+| `push` | interactive | high | **Step/Play hero**: a scripted stream accretes one sparkline point per tick — the "what _is_ live" opener. Deterministic by script, not clock. |
+| `stats` | interactive | high | Live counter dashboard + "inject late event"; ingested climbs while `length` plateaus, `rejected` ticks. _(Also surveyed as table — see conflict note.)_ |
+| `on` | table | high | Firing-log timeline: every row fires one `event` (in order) **before** `batch`, `evict` last — the ordering contract subscribers misread. |
+| `pushMany` | table | medium | Input array → buffer after one call; teaches the array-in shape (no spread, large-batch safe) vs `push`. |
+| `pushJson` | table | medium | Wire JSON → typed buffer; null→undefined, ISO-string→Time; the `parse.timeZone` disambiguation. |
+| `clear` | — | low | State reset observable via the `evict` channel; a one-line prose note, not a picture. |
+| `eventRate` | — | low | A single derived scalar (length ÷ span-seconds); plotting a constant teaches nothing. |
+| `graceWindowMs` | — | low | Read-only config echo (`Infinity` when unset); pure metadata. |
+
+**Transforms, snapshot & lookups**
+
+| Method | Tier | Teaching | One-line viz |
+| --- | --- | --- | --- |
+| `window` | interactive | high | **Live-eviction hero**: events scroll off a moving band; width slider + count⇄duration mode. Can't be shown in a static frame. |
+| `rolling` | interactive | high | Live raw dots + recomputing reducer line; width slider + `minSamples` gap + trigger cadence; fused multi-window overlay. |
+| `fill` | line | high | hold vs zero step lines over a gap — **and the marquee live⇄batch contrast**: bfill/linear _throw_ (need future values); `{limit}` reopens the gap. |
+| `aggregate` | line | medium | Raw dots + bucket bands + emitted step; a bucket **emits on boundary-cross** (data-driven, not wall-clock); late-within-grace lands in an open bucket. |
+| `reduce` | line | medium | A single evolving value + shaded retention band; window is _implicit_ (= retention) vs `rolling`'s explicit — eviction pulls the value back. |
+| `cumulative` | line | medium | Raw vs monotone running scan; on an evicting source the accumulator does **not** decrease (scan over arrivals, not the retained set). |
+| `diff` | line | medium | Raw + per-event delta; **first event = undefined** (no prior yet) or dropped — the live-streaming signature; 2-row inset. |
+| `rate` | line | medium | Per-second line; **irregular spacing** makes the dt-divisor visible; same-timestamp→undefined guard. |
+| `pctChange` | line | medium | Fractional-change line on a % axis; prev=0→undefined guard; 3-row inset ties curve to arithmetic. |
+| `partitionBy` | table | medium | Fan-out lane diagram: one mixed stream → N keyed sub-buffers; sub-series **inherit** ordering/grace/retention; the multi-entity warning. |
+| `filter` | table | medium | Source vs filtered **live view** (re-runs on every push, mirrors eviction); dropped rows greyed; membership is the lesson. |
+| `map` | table | medium | Before/after values + the sharp-edge callout: map does **not** re-sort, so a key-rewriting fn breaks `bisect`/`atOrBefore`. |
+| `pushMany` | table | medium | Observer-log table: per-row `event` firings then one `batch` — the fan-out ordering + commit-granularity the JSDoc labors over. |
+| `pushJson` | table | medium | Wire→buffer cell-by-cell (null→undefined, string→Time); the compile-time safety over `push(row as never)`. |
+| `on` | table | medium | Shares the firing-log widget with the ingest-family `on`; the subscription side of the same ordering story. |
+| `sample` | table | medium | Kept/dropped stride timeline + the **multi-entity bias trap**: round-robin hosts + stride 2 keeps only A,C. |
+| `select` | table | low | Column-highlight projection; key retained implicitly; mirrors batch `select`. |
+
+`push` (no return), `clear`, `toTimeSeries`/`toRows`/`toObjects`/`toJSON`/`fromJSON`,
+and the positional/boolean accessors
+(`at`/`first`/`last`/`length`/`find`/`some`/`every`/`includesKey`/`bisect`/`atOrBefore`/`atOrAfter`/`timeRange`/`eventRate`)
+are all `—` in this family — see the roll-up.
+
+### ValueSeries
+
+| Method | Tier | Teaching | One-line viz |
+| --- | --- | --- | --- |
+| `byValue` (on `TimeSeries`) | table | high | The family's before/after hero: the chosen column **moves** from a value column to the key and is **dropped** from values; rows byte-identical; a `throws` chip for the non-decreasing precondition. |
+| `nearestIndex` | interactive | high | **Value-axis cursor hero**: drag a query value, marker snaps to nearest row; midpoint snap-flip, end-clamp, empty→`-1` all emerge from play. |
+| `sliceByValue` | table | medium | Half-open `[lo,hi)` taught by contrast: `[400,1300)` keeps 1200 but `[500,1200)` excludes it; `lo≥hi`→empty. |
+| `axisValues` | table | low | One-row strip of axis coordinates; anchors "what the axis is" under the `byValue` table; zero-copy caveat in prose. |
+
+`axisAt`, `axisName`, `column`, and `length` on `ValueSeries` are `—` (scalar reads /
+opaque handle) — see the roll-up.
+
+### Visualization does not apply (the honest `—`)
+
+39 methods earn no render. They fall into three clean buckets — and the survey's
+discipline is to keep them as prose + code, never force a figure:
+
+**I/O & serialization** — _shape is text; a code block beats any tier._
+`constructor`, `fromJSON`, `fromEvents`, `toJSON`, `toArray` (TS);
+`toTimeSeries`, `toRows`, `toObjects`, `toJSON`, `fromJSON` (Live). The teachable
+facts (null→undefined parsing, timestamps-as-numbers, `parse.timeZone`, the trust
+contract of `fromEvents`) are _parsing rules and caveats_, shown best in a runnable
+snippet. (`toRows`/`toPoints`/`toObjects`/`fromPoints` are the exceptions that _do_
+render — they are reshape round-trips where the output shape is the lesson.)
+
+**Scalar & handle accessors** — _one number or an opaque object; nothing to plot._
+`length`, `timeRange`, `firstColumnKind`, `events`, `column`, `keyColumn` (TS);
+`length`, `eventRate`, `graceWindowMs`, `timeRange` (Live); `axisAt`, `axisName`,
+`column`, `length` (ValueSeries). `column`/`keyColumn` return typed-array _handles_ —
+a code + type story (the schema-narrowed return, the read-only-buffer caveat), and
+the column's own reductions belong to a separate Column survey, not to the accessor.
+`first`/`last`/`at`/`find` on `LiveSeries` collapse here too: single-row reads whose
+only live framing ("the buffer is the working set," `at(-1) === last()`) is a caption
+on a table other widgets already draw.
+
+**Boolean predicates** — _the answer is one word._ `overlaps`, `contains`,
+`intersection`, `some`, `every`, `includesKey` (TS — note `every` was a seed-list
+near-miss: it is the boolean universal-quantifier, _not_ `Sequence.every('1m')`, the
+grid factory); `some`, `every`, `includesKey`, `bisect`, `atOrBefore`, `atOrAfter`
+(Live). The series-vs-range predicates (`overlaps`/`contains`/`intersection`) collapse
+the whole series to its `timeRange()` and return a boolean or a single interval —
+their only teaching need is _disambiguation_ from the per-event selectors
+(`overlapping`/`containedBy`), which is one sentence.
+
+### Patterns & gaps
+
+**The windowing idiom recurs three times and wants one shared widget shell.**
+`aggregate` (fixed grid), `rolling` (sliding window), and `align` (resampling grid)
+are the same interaction — _raw series faintly behind, a recomputing output line on
+top, a width/grid control the reader drags_ — and `byColumn`, `smooth`, and the live
+`window`/`rolling` are the same shell with a different axis or a moving "now." A
+single `<WindowExplorer>` skeleton (control state → live pond → chart, §6) amortizes
+across the entire interactive top of the list. This is the strongest argument that
+Phase 4a is **~9 builds, not 16** — and that the first build (`aggregate`) de-risks
+the rest.
+
+**The before/after table is the workhorse, and it has two recurring sub-forms.**
+Most `table` verdicts are one of: (a) the **reshape pair** — wide↔narrow, long↔wide,
+1↔N rows — where the lesson is the _shape_ (`pivotByGroup`, `select`, `collapse`,
+`arrayExplode`, `map`); or (b) the **policy small-multiple** — the same call under
+each discrete mode laid side by side (`materialize` select-modes, `dedupe` keep-modes,
+`fill` strategies, the array-set AND/OR pair). Both are static by nature — the modes
+are a finite menu, not a continuum, so they are small-multiples, _not_ sliders. A
+shared `<ExampleOutput as="table">` with an optional "modes" prop covers nearly all
+of them.
+
+**The honest `undefined` cell is a load-bearing visual primitive.** A surprising
+number of high-value table verdicts hinge on rendering missing data _visibly_ —
+`materialize`'s empty buckets, `pivotByGroup`'s holes, `join`'s outer blanks,
+`mapColumns`' missing-vs-NaN, `diff`/`rate`'s leading `undefined`. A line chart
+_swallows_ exactly these rows; the table is chosen precisely because it can show the
+hole. `<ExampleOutput>` must render `undefined`/missing as a distinct, deliberate cell
+(em-dash, not blank) — this is a concrete component requirement the survey surfaces.
+
+**Where no tier felt fully right.** Three honest tensions:
+
+- **`stats`** (Live) split table/interactive across two passes — the invariants are
+  static, the accrual is temporal. Resolved by shipping the table and treating the
+  widget as optional (above).
+- **`bar` has no native operator.** Its §5 first-class slot rests entirely on
+  `byColumn`-as-zone-distribution — a _view_ of one operator's output, not a method
+  whose primary tier is bar. The survey confirms bar is correctly first-class _and_
+  correctly narrow: budget exactly one bar example (zone distribution), not a family.
+- **`rename`** sits on the table/`—` boundary — it changes _nothing_ but a column
+  label. It earns a minimal header-diff table only to keep it visually grouped with
+  the `select`/`withColumn` schema-reshape trio; alone it would be a sentence.
