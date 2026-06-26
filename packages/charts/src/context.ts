@@ -165,6 +165,10 @@ export interface ContainerFrame {
    *  mark, disarms ({@link creating} → `null`), and selects it. `undefined` ⇒
    *  creation is a no-op (the gesture still previews but commits nothing). */
   readonly onCreate: ((spec: CreateSpec) => void) | undefined;
+  /** Fired when a mark is clicked (reports its `id`) or the plot is clicked empty
+   *  (`null`) — the consumer updates its selection. A double-click on a region
+   *  fires it too (the shortcut into a focused edit). */
+  readonly onSelectAnnotation: ((id: string | null) => void) | undefined;
 }
 
 /** The kind of an annotation, and of a creation tool. */
@@ -186,7 +190,11 @@ export type CreateSpec =
 export interface AnnotationSpec {
   /** The mark's per-instance slot key — its identity in the registry. */
   readonly key: symbol;
-  readonly kind: 'region' | 'marker' | 'baseline';
+  /** The consumer's stable id (its `id` prop), if any — what a click /
+   *  double-click reports via {@link ContainerFrame.onSelectAnnotation}, so the
+   *  consumer knows which mark to select. */
+  readonly id: string | undefined;
+  readonly kind: AnnotationKind;
   /** The row it lives on (its `<ChartRow>`'s key), so a row skips its own marks
    *  when drawing guides. */
   readonly rowKey: symbol;

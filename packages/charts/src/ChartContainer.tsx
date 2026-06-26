@@ -146,6 +146,12 @@ export interface ChartContainerProps {
   /** Fired when a create gesture completes (on release). See {@link CreateSpec}. */
   onCreate?: (spec: CreateSpec) => void;
   /**
+   * Fired when an annotation is clicked (its `id`), the plot is clicked empty
+   * (`null`), or a region is double-clicked (the shortcut into edit). The consumer
+   * holds the selected id and sets each mark's `selected={id === sel}`.
+   */
+  onSelectAnnotation?: (id: string | null) => void;
+  /**
    * Snap mode (the toolbar's "Snap"). **Default `true`.** When on, created +
    * dragged marks snap to the nearest data sample (clean values) and to other
    * marks' guidelines (alignment); off = free placement.
@@ -189,6 +195,7 @@ export function ChartContainer({
   editAnnotations = false,
   creating = null,
   onCreate,
+  onSelectAnnotation,
   snap = true,
   timeFormat,
   theme,
@@ -479,6 +486,7 @@ export function ChartContainer({
       creating,
       snap,
       onCreate,
+      onSelectAnnotation,
       formatTime,
       registerTrackerSource,
       unregisterTrackerSource,
@@ -516,6 +524,7 @@ export function ChartContainer({
       creating,
       snap,
       onCreate,
+      onSelectAnnotation,
       formatTime,
       registerTrackerSource,
       unregisterTrackerSource,

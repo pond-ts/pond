@@ -209,6 +209,83 @@ export const Editable: Story = {
 };
 
 /**
+ * **Live selection.** In edit mode, click a mark to select it — it reports its
+ * `id` through `onSelectAnnotation`, brightens, and keeps its handles out (where
+ * `Selectable` drove that from a control, this is the real click). Click empty
+ * canvas to deselect. **Double-click** a region's span (even outside edit mode)
+ * selects it — the shortcut into region editing. Markers and baselines always win
+ * over a region they sit on.
+ */
+export const Select: Story = {
+  render: () => {
+    const [edit, setEdit] = useState(true);
+    const [selectedId, setSelectedId] = useState<string | null>('region');
+    const [markerAt, setMarkerAt] = useState(BASE + 28 * STEP);
+    const [region, setRegion] = useState({
+      from: BASE + 15 * STEP,
+      to: BASE + 35 * STEP,
+    });
+    const [threshold, setThreshold] = useState(225);
+    return (
+      <div>
+        <button
+          type="button"
+          onClick={() => setEdit((v) => !v)}
+          style={{
+            marginBottom: 10,
+            padding: '4px 10px',
+            borderRadius: 6,
+            border: `1px solid ${edit ? '#7FE2D2' : '#2c4a4a'}`,
+            background: edit ? '#0B4E58' : 'transparent',
+            color: '#a9d6cf',
+            font: '12px ui-monospace, monospace',
+            cursor: 'pointer',
+          }}
+        >
+          ✎ Edit {edit ? 'on' : 'off'}
+        </button>
+        <ChartContainer
+          range={INTERVAL}
+          width={680}
+          theme={estelaTheme}
+          editAnnotations={edit}
+          onSelectAnnotation={setSelectedId}
+        >
+          <ChartRow height={280}>
+            <YAxis id="power" label="W" min={0} max={300} />
+            <Layers>
+              <LineChart series={power()} column="watts" as="foam" />
+              <Region
+                id="region"
+                from={region.from}
+                to={region.to}
+                label="interval"
+                selected={selectedId === 'region'}
+                onChange={setRegion}
+              />
+              <Baseline
+                id="baseline"
+                value={threshold}
+                label={`${Math.round(threshold)} W`}
+                selected={selectedId === 'baseline'}
+                onChange={setThreshold}
+              />
+              <Marker
+                id="marker"
+                at={markerAt}
+                label="5:28"
+                selected={selectedId === 'marker'}
+                onChange={setMarkerAt}
+              />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>
+      </div>
+    );
+  },
+};
+
+/**
  * **Multi-row guides.** A `<Marker>` / `<Region>` lives on *one* row (the power
  * row), but the container throws each mark's x across the **other** row as a faint
  * dashed guide — so you can read how the interval / marker line up against the HR
@@ -278,6 +355,7 @@ export const Create: Story = {
   render: () => {
     const [tool, setTool] = useState<CreateSpec['kind'] | null>(null);
     const [snap, setSnap] = useState(true);
+    const [selectedId, setSelectedId] = useState<string | null>(null);
     const [marks, setMarks] = useState<Array<{ id: number } & CreateSpec>>([]);
     const nextId = useRef(0);
     const replace = (id: number, next: { id: number } & CreateSpec) =>
@@ -328,8 +406,11 @@ export const Create: Story = {
           editAnnotations
           creating={tool}
           snap={snap}
+          onSelectAnnotation={setSelectedId}
           onCreate={(spec) => {
-            setMarks((ms) => [...ms, { id: nextId.current++, ...spec }]);
+            const id = nextId.current++;
+            setMarks((ms) => [...ms, { id, ...spec }]);
+            setSelectedId(String(id)); // creation also selects
             setTool(null); // spring-loaded — disarm after one
           }}
         >
@@ -341,7 +422,9 @@ export const Create: Story = {
                 m.kind === 'marker' ? (
                   <Marker
                     key={m.id}
+                    id={String(m.id)}
                     at={m.at}
+                    selected={selectedId === String(m.id)}
                     onChange={(at) =>
                       replace(m.id, { id: m.id, kind: 'marker', at })
                     }
@@ -349,8 +432,10 @@ export const Create: Story = {
                 ) : m.kind === 'region' ? (
                   <Region
                     key={m.id}
+                    id={String(m.id)}
                     from={m.from}
                     to={m.to}
+                    selected={selectedId === String(m.id)}
                     onChange={(next) =>
                       replace(m.id, { id: m.id, kind: 'region', ...next })
                     }
@@ -358,8 +443,10 @@ export const Create: Story = {
                 ) : (
                   <Baseline
                     key={m.id}
+                    id={String(m.id)}
                     value={m.value}
                     axis={m.axis}
+                    selected={selectedId === String(m.id)}
                     onChange={(value) =>
                       replace(m.id, {
                         id: m.id,

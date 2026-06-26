@@ -96,6 +96,7 @@ function useAnnotationFrame(name: string) {
 function useRegisterAnnotation(
   container: ContainerFrame,
   key: symbol,
+  id: string | undefined,
   rowKey: symbol,
   kind: AnnotationSpec['kind'],
   xs: readonly number[],
@@ -104,8 +105,8 @@ function useRegisterAnnotation(
   const { registerAnnotation, unregisterAnnotation } = container;
   useEffect(() => () => unregisterAnnotation(key), [unregisterAnnotation, key]);
   useEffect(() => {
-    registerAnnotation(key, { key, kind, rowKey, xs, selected });
-  }, [registerAnnotation, key, kind, rowKey, xs, selected]);
+    registerAnnotation(key, { key, id, kind, rowKey, xs, selected });
+  }, [registerAnnotation, key, id, kind, rowKey, xs, selected]);
 }
 
 /** Pixel radius within which a drag snaps to a guideline (another mark's x). */
@@ -197,6 +198,7 @@ function DragArea({
   h,
   cursor,
   onHover,
+  onSelect,
   onDragStart,
   onDrag,
 }: {
@@ -206,10 +208,16 @@ function DragArea({
   h: number;
   cursor: string;
   onHover: (hovering: boolean) => void;
+  /** A click (press + release without a real drag) selects the mark. */
+  onSelect?: (() => void) | undefined;
   onDragStart?: (px: number, py: number) => void;
   onDrag: (px: number, py: number) => void;
 }) {
   const dragging = useRef(false);
+  // Tracks whether this press became a drag (moved past a few px) — a click that
+  // didn't drag selects instead of edits.
+  const moved = useRef(false);
+  const downAt = useRef<[number, number] | null>(null);
   const at = (e: ReactPointerEvent): [number, number] => {
     const svg = (e.currentTarget as SVGElement).ownerSVGElement;
     if (svg === null) return [0, 0];
@@ -231,7 +239,9 @@ function DragArea({
       onPointerDown={(e) => {
         e.stopPropagation(); // claim the gesture — don't let the plot start a pan
         dragging.current = true;
+        moved.current = false;
         const [px, py] = at(e);
+        downAt.current = [px, py];
         onDragStart?.(px, py);
         try {
           e.currentTarget.setPointerCapture(e.pointerId);
@@ -243,6 +253,10 @@ function DragArea({
         if (!dragging.current) return;
         e.stopPropagation();
         const [px, py] = at(e);
+        const d = downAt.current;
+        if (d !== null && Math.hypot(px - d[0], py - d[1]) > 3) {
+          moved.current = true;
+        }
         onDrag(px, py);
       }}
       onPointerUp={(e) => {
@@ -256,6 +270,12 @@ function DragArea({
         dragging.current = false;
         onHover(false);
       }}
+      // A click that didn't drag selects the mark; stop it either way so a mark
+      // click never bubbles to the plot's deselect.
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!moved.current) onSelect?.();
+      }}
     />
   );
 }
@@ -267,6 +287,9 @@ export interface MarkerProps {
   at: number;
   /** Chip label; omit to auto-label with the shared x formatter (the axis's). */
   label?: string;
+  /** Stable consumer id — a click reports it via the container's
+   *  `onSelectAnnotation`, so the consumer can track which mark is selected. */
+  id?: string;
   /** Controlled selection — brightens; shows the handle outside edit mode. */
   selected?: boolean;
   /** Make the marker **editable** (in edit mode): dragging its line reports the
@@ -275,7 +298,13 @@ export interface MarkerProps {
 }
 
 /** A vertical line at an x position (a time, a distance, a lap boundary). */
-export function Marker({ at, label, selected = false, onChange }: MarkerProps) {
+export function Marker({
+  at,
+  label,
+  id,
+  selected = false,
+  onChange,
+}: MarkerProps) {
   const { container, row, ann } = useAnnotationFrame('Marker');
   const selfKey = useSlotKey();
   const [hovering, setHovering] = useState(false);
@@ -284,7 +313,17 @@ export function Marker({ at, label, selected = false, onChange }: MarkerProps) {
     container.creating === null &&
     onChange !== undefined;
   const xs = useMemo(() => [at], [at]);
-  useRegisterAnnotation(container, selfKey, row.rowKey, 'marker', xs, selected);
+  useRegisterAnnotation(
+    container,
+    selfKey,
+    id,
+    row.rowKey,
+    'marker',
+    xs,
+    selected,
+  );
+  const select =
+    id !== undefined ? () => container.onSelectAnnotation?.(id) : undefined;
   const x = container.xScale(at);
   const h = row.height;
   const state: AnnotationState = hovering
@@ -324,6 +363,7 @@ export function Marker({ at, label, selected = false, onChange }: MarkerProps) {
             h={h}
             cursor="ew-resize"
             onHover={setHovering}
+            onSelect={select}
             onDrag={(px) =>
               onChange?.(
                 snapToGuides(container, selfKey, px) ??
@@ -354,6 +394,8 @@ export interface BaselineProps {
   axis?: string;
   /** Chip label; omit to format `value` with that axis's formatter. */
   label?: string;
+  /** Stable consumer id — a click reports it via `onSelectAnnotation`. */
+  id?: string;
   /** Controlled selection — brightens; shows the handle outside edit mode. */
   selected?: boolean;
   /** Make the baseline **editable** (in edit mode): dragging it vertically reports
@@ -367,6 +409,7 @@ export function Baseline({
   value,
   axis,
   label,
+  id,
   selected = false,
   onChange,
 }: BaselineProps) {
@@ -384,11 +427,14 @@ export function Baseline({
   useRegisterAnnotation(
     container,
     selfKey,
+    id,
     row.rowKey,
     'baseline',
     xs,
     selected,
   );
+  const select =
+    id !== undefined ? () => container.onSelectAnnotation?.(id) : undefined;
   const axisId = axis ?? row.defaultAxisId;
   const yScale = row.yScales.get(axisId);
   // The axis may not have resolved yet (a layer mounts before its <YAxis>); skip
@@ -436,6 +482,7 @@ export function Baseline({
             h={2 * HIT_PAD}
             cursor="ns-resize"
             onHover={setHovering}
+            onSelect={select}
             onDrag={(_px, py) => onChange?.(yScale.invert(py))}
           />
         )}
@@ -458,6 +505,9 @@ export interface RegionProps {
   to: number;
   /** Chip label; omit to auto-label `from–to` with the shared x formatter. */
   label?: string;
+  /** Stable consumer id — a click (or double-click outside edit) reports it via
+   *  `onSelectAnnotation`. */
+  id?: string;
   /** Controlled selection — brightens; shows edge handles outside edit mode. */
   selected?: boolean;
   /** Make the region **editable** (in edit mode): drag the body to move it (both
@@ -471,6 +521,7 @@ export function Region({
   from,
   to,
   label,
+  id,
   selected = false,
   onChange,
 }: RegionProps) {
@@ -482,7 +533,17 @@ export function Region({
     container.creating === null &&
     onChange !== undefined;
   const xs = useMemo(() => [from, to], [from, to]);
-  useRegisterAnnotation(container, selfKey, row.rowKey, 'region', xs, selected);
+  useRegisterAnnotation(
+    container,
+    selfKey,
+    id,
+    row.rowKey,
+    'region',
+    xs,
+    selected,
+  );
+  const select =
+    id !== undefined ? () => container.onSelectAnnotation?.(id) : undefined;
   const xa = container.xScale(from);
   const xb = container.xScale(to);
   const left = Math.min(xa, xb);
@@ -561,6 +622,7 @@ export function Region({
               h={h}
               cursor="grab"
               onHover={setHovering}
+              onSelect={select}
               onDragStart={(px) => {
                 dragRef.current = { from, to, startPx: px };
               }}
@@ -604,6 +666,7 @@ export function Region({
               h={h}
               cursor="ew-resize"
               onHover={setHovering}
+              onSelect={select}
               onDrag={(px) =>
                 onChange?.({
                   from:
@@ -620,6 +683,7 @@ export function Region({
               h={h}
               cursor="ew-resize"
               onHover={setHovering}
+              onSelect={select}
               onDrag={(px) =>
                 onChange?.({
                   from,
