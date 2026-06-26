@@ -20,15 +20,18 @@ import { flagChipStyle, flagChipX } from './chip.js';
  * They are children of `<Layers>` (so they share the plot's coordinate space) and
  * paint an SVG overlay above the data canvas + below the cursor. Each label is a
  * **flag** (the cursor value flag's shape). **Luminosity encodes attention:** a
- * mark sits at `rest`, lifts to `hover` while you grab its handle, and shows
- * `selected`.
+ * mark sits at `rest`, lifts to `hover`, and shows `selected`.
  *
- * **Editing.** Pass `onChange` to make a mark **editable**: a drag handle appears,
- * dragging it reports the new position (controlled — wire it back to the position
- * prop), and hovering it lifts the mark + shows the resize cursor. The handle
- * **claims the gesture** (pointer capture + `stopPropagation`), so grabbing it
- * never starts a pan while a drag elsewhere on the plot still pans. (Click-to-
- * select with the rest dimmed, and a global exclusive edit mode, remain deferred.)
+ * **Editing.** Give a mark an `onChange` *and* put the container in
+ * {@link ContainerFrame.editAnnotations | edit mode} (`<ChartContainer
+ * editAnnotations>`): the data cursor steps aside, hovering the mark highlights it
+ * + reveals its handles, and dragging edits it (controlled — wire `onChange` back
+ * to the position prop). A `<Region>` body drags to **move** (hand cursor); its
+ * edges **resize** (`ew-resize`). Each interactive area **claims the gesture**
+ * (pointer capture + `stopPropagation`), so grabbing a mark never starts a pan.
+ * Outside edit mode the overlay is pointer-inert and `selected` shows static
+ * handles. (Multi-row guide lines, cross-region z-order, and snap-to-guidelines
+ * are the next step — they need the container to know every annotation.)
  */
 
 /** Fallback when a theme defines no `annotation` token — a neutral turquoise. */
@@ -40,18 +43,21 @@ const DEFAULT_ANNOTATION: NonNullable<ChartTheme['annotation']> = {
   selected: 1,
 };
 
-/** Selection-handle pill geometry (px) — long axis vs short axis. */
+/** Handle-pill geometry (px) — long axis vs short axis. */
 const HANDLE_LONG = 18;
 const HANDLE_SHORT = 6;
-/** Flag-chip top offset (px from the row top) — a few px down so it clears the
- *  edge. Region + Marker share it so their labels align across a chart. */
+/** How wide a line's invisible grab area is, each side (px). */
+const HIT_PAD = 5;
+/** How wide a region edge's resize grab area is (px) — sits over the body. */
+const EDGE_GRAB = 8;
+/** Flag-chip top offset (px from the row top) — shared so labels align. */
 const FLAG_TOP = 2;
 
 type AnnotationState = 'rest' | 'hover' | 'selected';
 
 /** The full-plot overlay each annotation paints into — above the data canvas,
- *  below the cursor. Inert to the pointer by default (pan/zoom owns the surface);
- *  an editable handle opts back in to `pointerEvents: auto` for itself only. */
+ *  below the cursor. Inert to the pointer by default; an edit-mode hit area opts
+ *  back in to `pointerEvents: auto` for itself only. */
 const overlayStyle: CSSProperties = {
   position: 'absolute',
   top: 0,
@@ -74,8 +80,7 @@ function useAnnotationFrame(name: string) {
 }
 
 /** A label chip — the cursor value flag's shape (shared {@link flagChipStyle}:
- *  filled, no outline) with text in the annotation register. Positioned by the
- *  caller's `style` (top/left/right/transform). */
+ *  filled, no outline) with text in the annotation register. */
 function Chip({
   theme,
   color,
@@ -92,41 +97,20 @@ function Chip({
   );
 }
 
-/**
- * An interactive selection handle: a filled pill that reports the pointer's
- * **plot-pixel** position via `onDrag` while dragged (the annotation inverts it to
- * an axis value and fires its `onChange`). It **claims the gesture** —
- * `stopPropagation` + pointer capture on pointerdown — so grabbing a handle never
- * starts a pan, while a drag anywhere else on the plot still pans. Hovering it
- * lifts the annotation (`onHover`) and shows the resize `cursor`. Rendered inside
- * the otherwise-inert overlay SVG; only this rect opts back in to pointer events.
- */
-function DragHandle({
+/** A non-interactive handle pill, shown on hover (edit mode) / when selected. */
+function Pill({
   cx,
   cy,
   w,
   h,
   color,
-  cursor,
-  onHover,
-  onDrag,
 }: {
   cx: number;
   cy: number;
   w: number;
   h: number;
   color: string;
-  cursor: string;
-  onHover: (hovering: boolean) => void;
-  onDrag: (px: number, py: number) => void;
 }) {
-  const dragging = useRef(false);
-  const fire = (e: ReactPointerEvent) => {
-    const svg = (e.currentTarget as SVGElement).ownerSVGElement;
-    if (svg === null) return;
-    const r = svg.getBoundingClientRect();
-    onDrag(e.clientX - r.left, e.clientY - r.top);
-  };
   return (
     <rect
       x={cx - w / 2}
@@ -135,6 +119,51 @@ function DragHandle({
       height={h}
       rx={3}
       fill={color}
+      style={{ pointerEvents: 'none' }}
+    />
+  );
+}
+
+/**
+ * A transparent hit rect that drives an edit interaction: it reports the pointer's
+ * **plot-pixel** position on press (`onDragStart`) and each move (`onDrag`),
+ * **claims the gesture** (`stopPropagation` + guarded pointer capture) so it never
+ * starts a pan, and toggles the annotation's hover (`onHover`). Rendered only in
+ * edit mode; the rest of the overlay stays pointer-inert.
+ */
+function DragArea({
+  x,
+  y,
+  w,
+  h,
+  cursor,
+  onHover,
+  onDragStart,
+  onDrag,
+}: {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  cursor: string;
+  onHover: (hovering: boolean) => void;
+  onDragStart?: (px: number, py: number) => void;
+  onDrag: (px: number, py: number) => void;
+}) {
+  const dragging = useRef(false);
+  const at = (e: ReactPointerEvent): [number, number] => {
+    const svg = (e.currentTarget as SVGElement).ownerSVGElement;
+    if (svg === null) return [0, 0];
+    const r = svg.getBoundingClientRect();
+    return [e.clientX - r.left, e.clientY - r.top];
+  };
+  return (
+    <rect
+      x={x}
+      y={y}
+      width={Math.max(w, 1)}
+      height={Math.max(h, 1)}
+      fill="transparent"
       style={{ pointerEvents: 'auto', cursor }}
       onPointerEnter={() => onHover(true)}
       onPointerLeave={() => {
@@ -143,23 +172,28 @@ function DragHandle({
       onPointerDown={(e) => {
         e.stopPropagation(); // claim the gesture — don't let the plot start a pan
         dragging.current = true;
-        // Capture so the drag continues outside the handle; guard for synthetic /
-        // already-released pointers (same as the pan surface).
+        const [px, py] = at(e);
+        onDragStart?.(px, py);
         try {
           e.currentTarget.setPointerCapture(e.pointerId);
         } catch {
-          /* ignore */
+          /* ignore (synthetic / already-released pointer) */
         }
       }}
       onPointerMove={(e) => {
         if (!dragging.current) return;
         e.stopPropagation();
-        fire(e);
+        const [px, py] = at(e);
+        onDrag(px, py);
       }}
       onPointerUp={(e) => {
         if (!dragging.current) return;
         e.stopPropagation();
-        e.currentTarget.releasePointerCapture(e.pointerId);
+        try {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
         dragging.current = false;
         onHover(false);
       }}
@@ -174,10 +208,10 @@ export interface MarkerProps {
   at: number;
   /** Chip label; omit to auto-label with the shared x formatter (the axis's). */
   label?: string;
-  /** Controlled selection — brightens + shows the centre handle. */
+  /** Controlled selection — brightens; shows the handle outside edit mode. */
   selected?: boolean;
-  /** Make the marker **editable**: a centre handle appears and dragging it reports
-   *  the new `at` (controlled — wire it back to `at`). The whole line moves. */
+  /** Make the marker **editable** (in edit mode): dragging its line reports the
+   *  new `at` (controlled — wire it back to `at`). The whole line moves. */
   onChange?: (at: number) => void;
 }
 
@@ -185,7 +219,7 @@ export interface MarkerProps {
 export function Marker({ at, label, selected = false, onChange }: MarkerProps) {
   const { container, row, ann } = useAnnotationFrame('Marker');
   const [hovering, setHovering] = useState(false);
-  const editable = onChange !== undefined;
+  const editing = container.editAnnotations && onChange !== undefined;
   const x = container.xScale(at);
   const h = row.height;
   const state: AnnotationState = hovering
@@ -193,6 +227,7 @@ export function Marker({ at, label, selected = false, onChange }: MarkerProps) {
     : selected
       ? 'selected'
       : 'rest';
+  const showHandle = editing ? hovering : selected;
   const text = label ?? container.formatTime(at);
   return (
     <>
@@ -207,29 +242,26 @@ export function Marker({ at, label, selected = false, onChange }: MarkerProps) {
           opacity={ann[state]}
           shapeRendering="crispEdges"
         />
-        {/* One handle, centred — a marker moves as a whole (two ends would read
-            as independently draggable, and collide with the top label). */}
-        {editable ? (
-          <DragHandle
+        {showHandle && (
+          <Pill
             cx={x}
             cy={h / 2}
             w={HANDLE_SHORT}
             h={HANDLE_LONG}
             color={ann.color}
+          />
+        )}
+        {editing && (
+          <DragArea
+            x={x - HIT_PAD}
+            y={0}
+            w={2 * HIT_PAD}
+            h={h}
             cursor="ew-resize"
             onHover={setHovering}
             onDrag={(px) => onChange?.(+container.xScale.invert(px))}
           />
-        ) : selected ? (
-          <rect
-            x={x - HANDLE_SHORT / 2}
-            y={h / 2 - HANDLE_LONG / 2}
-            width={HANDLE_SHORT}
-            height={HANDLE_LONG}
-            rx={3}
-            fill={ann.color}
-          />
-        ) : null}
+        )}
       </svg>
       <Chip
         theme={container.theme}
@@ -252,16 +284,15 @@ export interface BaselineProps {
   axis?: string;
   /** Chip label; omit to format `value` with that axis's formatter. */
   label?: string;
-  /** Controlled selection — brightens + shows the handle. */
+  /** Controlled selection — brightens; shows the handle outside edit mode. */
   selected?: boolean;
-  /** Make the baseline **editable**: a handle appears and dragging it (vertically)
-   *  reports the new `value` (controlled — wire it back to `value`). */
+  /** Make the baseline **editable** (in edit mode): dragging it vertically reports
+   *  the new `value` (controlled — wire it back to `value`). */
   onChange?: (value: number) => void;
 }
 
 /** A horizontal line at a y value, scaled against one row axis (RTC's `Baseline`).
- *  Its label anchors at the left, at the line's height (a horizontal line has no
- *  vertical staff to fly a flag from). */
+ *  Its label anchors at the left, at the line's height. */
 export function Baseline({
   value,
   axis,
@@ -271,7 +302,7 @@ export function Baseline({
 }: BaselineProps) {
   const { container, row, ann } = useAnnotationFrame('Baseline');
   const [hovering, setHovering] = useState(false);
-  const editable = onChange !== undefined;
+  const editing = container.editAnnotations && onChange !== undefined;
   const axisId = axis ?? row.defaultAxisId;
   const yScale = row.yScales.get(axisId);
   // The axis may not have resolved yet (a layer mounts before its <YAxis>); skip
@@ -284,10 +315,10 @@ export function Baseline({
     : selected
       ? 'selected'
       : 'rest';
+  const showHandle = editing ? hovering : selected;
   const fmt = row.formats.get(axisId);
   const text = label ?? (fmt ? fmt(value) : String(value));
-  // Grab handle near the right end (clears the left-anchored label), horizontal
-  // pill since the drag is vertical.
+  // Handle pill near the right end (clears the left-anchored label).
   const handleX = w - 14;
   return (
     <>
@@ -302,27 +333,26 @@ export function Baseline({
           opacity={ann[state]}
           shapeRendering="crispEdges"
         />
-        {editable ? (
-          <DragHandle
+        {showHandle && (
+          <Pill
             cx={handleX}
             cy={y}
             w={HANDLE_LONG}
             h={HANDLE_SHORT}
             color={ann.color}
+          />
+        )}
+        {editing && (
+          <DragArea
+            x={0}
+            y={y - HIT_PAD}
+            w={w}
+            h={2 * HIT_PAD}
             cursor="ns-resize"
             onHover={setHovering}
             onDrag={(_px, py) => onChange?.(yScale.invert(py))}
           />
-        ) : selected ? (
-          <rect
-            x={handleX - HANDLE_LONG / 2}
-            y={y - HANDLE_SHORT / 2}
-            width={HANDLE_LONG}
-            height={HANDLE_SHORT}
-            rx={3}
-            fill={ann.color}
-          />
-        ) : null}
+        )}
       </svg>
       <Chip
         theme={container.theme}
@@ -342,10 +372,10 @@ export interface RegionProps {
   to: number;
   /** Chip label; omit to auto-label `from–to` with the shared x formatter. */
   label?: string;
-  /** Controlled selection — brightens + shows edge handles. */
+  /** Controlled selection — brightens; shows edge handles outside edit mode. */
   selected?: boolean;
-  /** Make the region **editable**: each edge gets a handle that drags
-   *  independently, reporting the new `{ from, to }` (controlled). */
+  /** Make the region **editable** (in edit mode): drag the body to move it (both
+   *  edges shift), drag an edge to resize. Reports the new `{ from, to }`. */
   onChange?: (next: { from: number; to: number }) => void;
 }
 
@@ -360,7 +390,7 @@ export function Region({
 }: RegionProps) {
   const { container, row, ann } = useAnnotationFrame('Region');
   const [hovering, setHovering] = useState(false);
-  const editable = onChange !== undefined;
+  const editing = container.editAnnotations && onChange !== undefined;
   const xa = container.xScale(from);
   const xb = container.xScale(to);
   const left = Math.min(xa, xb);
@@ -371,14 +401,16 @@ export function Region({
     : selected
       ? 'selected'
       : 'rest';
+  const showHandles = editing ? hovering : selected;
   // The fill stays subtle so the data reads through; it lifts with attention.
   const fillOpacity =
     ann.fillOpacity *
     (state === 'selected' ? 1.6 : state === 'hover' ? 1.3 : 1);
   const text =
     label ?? `${container.formatTime(from)}–${container.formatTime(to)}`;
-  // Edges + handles sit at the actual from/to positions (not sorted), so the
-  // from-handle always drives `from` even if the user drags it past `to`.
+  // Body move-drag tracks the previous pointer x to apply an incremental delta to
+  // both edges (so the region follows the pointer, keeping the grab offset).
+  const lastPx = useRef(0);
   const edge = (atX: number) => (
     <line
       x1={atX}
@@ -404,26 +436,62 @@ export function Region({
         />
         {edge(xa)}
         {edge(xb)}
-        {editable ? (
+        {showHandles && (
           <>
-            <DragHandle
+            <Pill
               cx={xa}
               cy={h / 2}
               w={HANDLE_SHORT}
               h={HANDLE_LONG}
               color={ann.color}
+            />
+            <Pill
+              cx={xb}
+              cy={h / 2}
+              w={HANDLE_SHORT}
+              h={HANDLE_LONG}
+              color={ann.color}
+            />
+          </>
+        )}
+        {editing && (
+          <>
+            {/* Body (move both edges) — rendered first, under the edge areas. */}
+            <DragArea
+              x={left}
+              y={0}
+              w={spanW}
+              h={h}
+              cursor="grab"
+              onHover={setHovering}
+              onDragStart={(px) => {
+                lastPx.current = px;
+              }}
+              onDrag={(px) => {
+                const d =
+                  +container.xScale.invert(px) -
+                  +container.xScale.invert(lastPx.current);
+                lastPx.current = px;
+                onChange?.({ from: from + d, to: to + d });
+              }}
+            />
+            {/* Edges (resize) — on top, so a grab near an edge resizes it. */}
+            <DragArea
+              x={xa - EDGE_GRAB / 2}
+              y={0}
+              w={EDGE_GRAB}
+              h={h}
               cursor="ew-resize"
               onHover={setHovering}
               onDrag={(px) =>
                 onChange?.({ from: +container.xScale.invert(px), to })
               }
             />
-            <DragHandle
-              cx={xb}
-              cy={h / 2}
-              w={HANDLE_SHORT}
-              h={HANDLE_LONG}
-              color={ann.color}
+            <DragArea
+              x={xb - EDGE_GRAB / 2}
+              y={0}
+              w={EDGE_GRAB}
+              h={h}
               cursor="ew-resize"
               onHover={setHovering}
               onDrag={(px) =>
@@ -431,26 +499,7 @@ export function Region({
               }
             />
           </>
-        ) : selected ? (
-          <>
-            <rect
-              x={xa - HANDLE_SHORT / 2}
-              y={h / 2 - HANDLE_LONG / 2}
-              width={HANDLE_SHORT}
-              height={HANDLE_LONG}
-              rx={3}
-              fill={ann.color}
-            />
-            <rect
-              x={xb - HANDLE_SHORT / 2}
-              y={h / 2 - HANDLE_LONG / 2}
-              width={HANDLE_SHORT}
-              height={HANDLE_LONG}
-              rx={3}
-              fill={ann.color}
-            />
-          </>
-        ) : null}
+        )}
       </svg>
       <Chip
         theme={container.theme}

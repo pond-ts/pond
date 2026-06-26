@@ -125,6 +125,14 @@ export interface ChartContainerProps {
    */
   cursorTime?: boolean;
   /**
+   * Enter **annotation-edit mode**: suppresses the data cursor and makes editable
+   * annotations (those given an `onChange`) interactive — hovering one reveals its
+   * handles + highlights it, and dragging edits it. **Default `false`.** Pairs
+   * with each annotation's `onChange` (where the edit goes); this is the mode that
+   * turns the affordances on and gets the cursor out of the way.
+   */
+  editAnnotations?: boolean;
+  /**
    * Time-axis value formatting — a d3 time specifier string (e.g. `'%H:%M'`) or a
    * `(epochMs) => string` function ({@link AxisFormat}); applies to both the time
    * axis labels and the cursor-time readout. **Omitted ⇒ d3's multi-scale time
@@ -159,6 +167,7 @@ export function ChartContainer({
   minDuration = 1,
   cursor = DEFAULT_CURSOR_MODE,
   cursorTime = false,
+  editAnnotations = false,
   timeFormat,
   theme,
   children,
@@ -420,6 +429,7 @@ export function ChartContainer({
       setHovered,
       cursor,
       cursorTime,
+      editAnnotations,
       formatTime,
       registerTrackerSource,
       unregisterTrackerSource,
@@ -450,6 +460,7 @@ export function ChartContainer({
       setHovered,
       cursor,
       cursorTime,
+      editAnnotations,
       formatTime,
       registerTrackerSource,
       unregisterTrackerSource,

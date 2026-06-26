@@ -116,7 +116,11 @@ export function Layers({ children }: LayersProps) {
   // Cursor mode: the row's override, else the container default. One mode per
   // row (the synced vertical line is shared across rows); each layer renders the
   // mode in its own way. `parts` decomposes it into {line, dots, chip}.
-  const parts = cursorParts(row.cursor ?? container.cursor);
+  // Annotation-edit mode suppresses the data cursor — the marks get the surface
+  // (hover/drag), and a crosshair would just be noise while you're editing.
+  const parts = container.editAnnotations
+    ? cursorParts('none')
+    : cursorParts(row.cursor ?? container.cursor);
   const cursorColor = container.theme.cursor ?? container.theme.axis.label;
   // Only read a time when the cursor is within the plot. An out-of-bounds
   // controlled trackerPosition hides the cursor, so the dots + chips hide too —
@@ -395,7 +399,9 @@ export function Layers({ children }: LayersProps) {
           position: 'relative',
           width: `${plotWidth}px`,
           height: `${row.height}px`,
-          cursor: 'crosshair',
+          // Edit mode: a plain cursor on the plot (the annotations supply their
+          // own grab/resize cursors); crosshair only when the data cursor is live.
+          cursor: container.editAnnotations ? 'default' : 'crosshair',
           // Let pan/zoom own touch gestures (no native scroll) when enabled.
           touchAction: container.panZoom ? 'none' : 'auto',
         }}

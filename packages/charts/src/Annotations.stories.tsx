@@ -162,7 +162,12 @@ export const Editable: Story = {
     });
     const [threshold, setThreshold] = useState(225);
     return (
-      <ChartContainer range={INTERVAL} width={680} theme={estelaTheme}>
+      <ChartContainer
+        range={INTERVAL}
+        width={680}
+        theme={estelaTheme}
+        editAnnotations
+      >
         <ChartRow height={280}>
           <YAxis id="power" label="W" min={0} max={300} />
           <Layers>

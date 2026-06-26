@@ -77,6 +77,13 @@ export interface ContainerFrame {
   /** Show the cursor's time atop the in-chart readout (when a row's cursor draws
    *  one), formatted by {@link formatTime} to match the time axis. */
   readonly cursorTime: boolean;
+  /**
+   * Whether the chart is in **annotation-edit mode** — suppresses the data cursor
+   * and makes editable annotations interactive (hovering reveals their handles +
+   * highlights them, dragging edits them). Set by the container's
+   * `editAnnotations` prop; annotations read it to switch from inert to interactive.
+   */
+  readonly editAnnotations: boolean;
   /** Format an epoch-ms instant the same way the time axis labels its ticks —
    *  shared by `<TimeAxis>` and the cursor-time readout. */
   readonly formatTime: (epochMs: number) => string;
