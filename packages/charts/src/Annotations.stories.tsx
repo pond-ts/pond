@@ -36,6 +36,22 @@ function power() {
   });
 }
 
+/** A heart-rate trace over the same interval — a second row to show guides on. */
+function hr() {
+  const rows: Array<[number, number]> = [];
+  for (let i = 0; i < N; i += 1) {
+    rows.push([BASE + i * STEP, 140 + 30 * Math.sin(i / 4)]);
+  }
+  return new TimeSeries({
+    name: 'hr',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'bpm', kind: 'number' },
+    ] as const,
+    rows,
+  });
+}
+
 /** HR re-keyed onto cumulative distance (metres) — drives the value-axis variant. */
 function rideByDistance() {
   const rows: Array<[number, number, number]> = [];
@@ -184,6 +200,52 @@ export const Editable: Story = {
               onChange={setThreshold}
             />
             <Marker at={markerAt} onChange={setMarkerAt} />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **Multi-row guides.** A `<Marker>` / `<Region>` lives on *one* row (the power
+ * row), but the container throws each mark's x across the **other** row as a faint
+ * dashed guide — so you can read how the interval / marker line up against the HR
+ * trace and the shared x axis. Edit the power-row marks (drag) and the guides on
+ * the HR row track them. (Guides come from the registry — a row draws the *other*
+ * rows' mark positions, never its own.)
+ */
+export const MultiRow: Story = {
+  render: () => {
+    const [markerAt, setMarkerAt] = useState(BASE + 24 * STEP);
+    const [region, setRegion] = useState({
+      from: BASE + 8 * STEP,
+      to: BASE + 18 * STEP,
+    });
+    return (
+      <ChartContainer
+        range={INTERVAL}
+        width={680}
+        theme={estelaTheme}
+        editAnnotations
+      >
+        <ChartRow height={170}>
+          <YAxis id="power" label="W" min={0} max={300} />
+          <Layers>
+            <LineChart series={power()} column="watts" as="foam" />
+            <Region
+              from={region.from}
+              to={region.to}
+              label="interval"
+              onChange={setRegion}
+            />
+            <Marker at={markerAt} onChange={setMarkerAt} />
+          </Layers>
+        </ChartRow>
+        <ChartRow height={170}>
+          <YAxis id="hr" label="bpm" min={80} max={200} />
+          <Layers>
+            <LineChart series={hr()} column="bpm" as="hr" />
           </Layers>
         </ChartRow>
       </ChartContainer>

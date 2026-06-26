@@ -11,6 +11,7 @@ import { scaleLinear, scaleTime } from 'd3-scale';
 import type { TimeRange } from 'pond-ts';
 import {
   ContainerContext,
+  type AnnotationSpec,
   type ContainerFrame,
   type GutterReq,
   type CursorMode,
@@ -242,6 +243,30 @@ export function ChartContainer({
     });
   }, []);
 
+  // Annotations register here so the container can do what a mark can't in
+  // isolation: draw its guide line across other rows, order regions, serve snap
+  // targets. Keyed by per-instance slot key (same discipline as the sources).
+  const [annotationMap, setAnnotationMap] = useState<
+    ReadonlyMap<symbol, AnnotationSpec>
+  >(() => new Map());
+  const registerAnnotation = useCallback(
+    (key: symbol, spec: AnnotationSpec) =>
+      setAnnotationMap((m) => new Map(m).set(key, spec)),
+    [],
+  );
+  const unregisterAnnotation = useCallback((key: symbol) => {
+    setAnnotationMap((m) => {
+      if (!m.has(key)) return m;
+      const next = new Map(m);
+      next.delete(key);
+      return next;
+    });
+  }, []);
+  const annotations = useMemo(
+    () => Array.from(annotationMap.values()),
+    [annotationMap],
+  );
+
   // The shared x scale's kind, **inferred from the registered layers**: a
   // ValueSeries row plots on a value axis, a TimeSeries on time. A container
   // has one shared x (the synced cursor's whole point), so the rows must agree
@@ -433,6 +458,9 @@ export function ChartContainer({
       formatTime,
       registerTrackerSource,
       unregisterTrackerSource,
+      registerAnnotation,
+      unregisterAnnotation,
+      annotations,
       xScale,
       xKind: resolvedKind,
       panZoom,
@@ -464,6 +492,9 @@ export function ChartContainer({
       formatTime,
       registerTrackerSource,
       unregisterTrackerSource,
+      registerAnnotation,
+      unregisterAnnotation,
+      annotations,
       xScale,
       resolvedKind,
       panZoom,

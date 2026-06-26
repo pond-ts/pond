@@ -383,6 +383,16 @@ export function Layers({ children }: LayersProps) {
       ? trackerSamples[0]!.px
       : cursorX;
 
+  // Cross-row guide lines: the x-positions of annotations on the OTHER rows
+  // (markers + region edges), so a mark on one row reads against this row's data +
+  // the shared x axis. A mark's own row skips itself; baselines cast no vertical
+  // guide (empty `xs`). Faint + dashed so they read as reference, not data.
+  const guideXs = container.annotations
+    .filter((a) => a.rowKey !== row.rowKey)
+    .flatMap((a) => a.xs)
+    .map((xv) => xScale(xv));
+  const guideColor = container.theme.annotation?.color ?? gridColor;
+
   // Inject each draw layer's JSX position so it registers its declaration order
   // (z-stack: lower index at the back), independent of mount timing.
   const indexedChildren = Children.map(children, (child, index) =>
@@ -413,6 +423,35 @@ export function Layers({ children }: LayersProps) {
         onClick={handleClick}
       >
         <Canvas width={plotWidth} height={row.height} draw={draw} />
+        {/* Cross-row guides: faint dashed lines at the other rows' mark
+            x-positions, below this row's own annotations + the cursor. */}
+        {guideXs.length > 0 && (
+          <svg
+            width={plotWidth}
+            height={row.height}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              pointerEvents: 'none',
+            }}
+          >
+            {guideXs.map((gx, i) => (
+              <line
+                key={i}
+                x1={gx}
+                y1={0}
+                x2={gx}
+                y2={row.height}
+                stroke={guideColor}
+                strokeWidth={1}
+                opacity={0.22}
+                strokeDasharray="2 3"
+                shapeRendering="crispEdges"
+              />
+            ))}
+          </svg>
+        )}
         {/* Annotation overlays — <Region>/<Baseline>/<Marker> — paint here, above
             the data canvas and below the cursor. Draw layers (LineChart, …)
             co-located here render null (they paint via the canvas `draw`); both

@@ -136,6 +136,39 @@ export interface ContainerFrame {
   registerRow(key: symbol): () => void;
   /** The first (topmost) row's key, or `null` before any row has registered. */
   readonly firstRowKey: symbol | null;
+  /**
+   * Register an annotation (`<Region>`/`<Marker>`/`<Baseline>`) so the container
+   * can coordinate what a mark can't do in isolation: draw each mark's **guide
+   * line** across the *other* rows, resolve cross-region z-order, and serve
+   * **snap targets** to a drag. Keyed by the mark's per-instance slot key;
+   * unregister on unmount.
+   */
+  registerAnnotation(key: symbol, spec: AnnotationSpec): void;
+  unregisterAnnotation(key: symbol): void;
+  /** Every registered annotation — read by each row to draw the *other* rows'
+   *  guides, and by a drag to find snap targets. */
+  readonly annotations: readonly AnnotationSpec[];
+}
+
+/**
+ * A registered annotation as the container sees it — enough to draw its guide
+ * line on other rows, order it against other marks, and offer it as a snap target.
+ */
+export interface AnnotationSpec {
+  /** The mark's per-instance slot key — its identity in the registry. */
+  readonly key: symbol;
+  readonly kind: 'region' | 'marker' | 'baseline';
+  /** The row it lives on (its `<ChartRow>`'s key), so a row skips its own marks
+   *  when drawing guides. */
+  readonly rowKey: symbol;
+  /**
+   * Its vertical-guide x-position(s) in **axis units** (the shared x): a marker's
+   * `[at]`, a region's `[from, to]`. Empty for a baseline — a horizontal line
+   * casts no vertical guide.
+   */
+  readonly xs: readonly number[];
+  /** Whether it's selected — for cross-region z-order (selected → front). */
+  readonly selected: boolean;
 }
 
 /**
@@ -351,6 +384,9 @@ export interface RowFrame {
   /** Whether this is the first (topmost) row — the shared cursor-time chip shows
    *  here only, not repeated on every row. Derived from {@link ContainerFrame.firstRowKey}. */
   readonly isFirstRow: boolean;
+  /** This row's per-instance key — annotations register it so the container can
+   *  draw a mark's guide on the *other* rows (a row skips its own marks). */
+  readonly rowKey: symbol;
   /** The axis a layer uses when it names none (the first declared, or implicit). */
   readonly defaultAxisId: string;
   /**

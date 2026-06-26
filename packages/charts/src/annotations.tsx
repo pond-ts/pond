@@ -1,14 +1,22 @@
 import {
   useContext,
+  useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
-import { ContainerContext, RowContext } from './context.js';
+import {
+  ContainerContext,
+  RowContext,
+  type AnnotationSpec,
+  type ContainerFrame,
+} from './context.js';
 import type { ChartTheme } from './theme.js';
 import { flagChipStyle, flagChipX } from './chip.js';
+import { useSlotKey } from './use-slot-key.js';
 
 /**
  * User-authored **annotations** — marks you place *on* a chart, in a register
@@ -77,6 +85,25 @@ function useAnnotationFrame(name: string) {
   }
   const ann = container.theme.annotation ?? DEFAULT_ANNOTATION;
   return { container, row, ann };
+}
+
+/** Register this annotation with the container (so it can draw the mark's guide on
+ *  other rows, order regions, and serve snap targets), keyed by a stable
+ *  per-instance slot key; unregister on unmount. `xs` should be memoised by the
+ *  caller so the effect only re-runs when the position actually moves. */
+function useRegisterAnnotation(
+  container: ContainerFrame,
+  rowKey: symbol,
+  kind: AnnotationSpec['kind'],
+  xs: readonly number[],
+  selected: boolean,
+) {
+  const key = useSlotKey();
+  const { registerAnnotation, unregisterAnnotation } = container;
+  useEffect(() => () => unregisterAnnotation(key), [unregisterAnnotation, key]);
+  useEffect(() => {
+    registerAnnotation(key, { key, kind, rowKey, xs, selected });
+  }, [registerAnnotation, key, kind, rowKey, xs, selected]);
 }
 
 /** A label chip — the cursor value flag's shape (shared {@link flagChipStyle}:
@@ -220,6 +247,8 @@ export function Marker({ at, label, selected = false, onChange }: MarkerProps) {
   const { container, row, ann } = useAnnotationFrame('Marker');
   const [hovering, setHovering] = useState(false);
   const editing = container.editAnnotations && onChange !== undefined;
+  const xs = useMemo(() => [at], [at]);
+  useRegisterAnnotation(container, row.rowKey, 'marker', xs, selected);
   const x = container.xScale(at);
   const h = row.height;
   const state: AnnotationState = hovering
@@ -303,6 +332,10 @@ export function Baseline({
   const { container, row, ann } = useAnnotationFrame('Baseline');
   const [hovering, setHovering] = useState(false);
   const editing = container.editAnnotations && onChange !== undefined;
+  // A horizontal line casts no vertical guide — register with no xs (still
+  // tracked for ordering / future use).
+  const xs = useMemo<number[]>(() => [], []);
+  useRegisterAnnotation(container, row.rowKey, 'baseline', xs, selected);
   const axisId = axis ?? row.defaultAxisId;
   const yScale = row.yScales.get(axisId);
   // The axis may not have resolved yet (a layer mounts before its <YAxis>); skip
@@ -391,6 +424,8 @@ export function Region({
   const { container, row, ann } = useAnnotationFrame('Region');
   const [hovering, setHovering] = useState(false);
   const editing = container.editAnnotations && onChange !== undefined;
+  const xs = useMemo(() => [from, to], [from, to]);
+  useRegisterAnnotation(container, row.rowKey, 'region', xs, selected);
   const xa = container.xScale(from);
   const xb = container.xScale(to);
   const left = Math.min(xa, xb);
