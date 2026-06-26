@@ -222,6 +222,11 @@ export const MultiRow: Story = {
       from: BASE + 8 * STEP,
       to: BASE + 18 * STEP,
     });
+    const [hrMarkerAt, setHrMarkerAt] = useState(BASE + 14 * STEP);
+    const [hrRegion, setHrRegion] = useState({
+      from: BASE + 28 * STEP,
+      to: BASE + 36 * STEP,
+    });
     return (
       <ChartContainer
         range={INTERVAL}
@@ -246,6 +251,13 @@ export const MultiRow: Story = {
           <YAxis id="hr" label="bpm" min={80} max={200} />
           <Layers>
             <LineChart series={hr()} column="bpm" as="hr" />
+            <Region
+              from={hrRegion.from}
+              to={hrRegion.to}
+              label="zone"
+              onChange={setHrRegion}
+            />
+            <Marker at={hrMarkerAt} onChange={setHrMarkerAt} />
           </Layers>
         </ChartRow>
       </ChartContainer>
