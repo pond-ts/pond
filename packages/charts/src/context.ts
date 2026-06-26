@@ -169,6 +169,10 @@ export interface ContainerFrame {
    *  (`null`) — the consumer updates its selection. A double-click on a region
    *  fires it too (the shortcut into a focused edit). */
   readonly onSelectAnnotation: ((id: string | null) => void) | undefined;
+  /** Fired when the pointer enters a mark (reports its `id`) or leaves it (`null`),
+   *  so the consumer can mirror hover out-of-band (e.g. a legend row). Pairs with a
+   *  mark's controlled `hovered` prop to sync hover both ways. Works in any mode. */
+  readonly onHoverAnnotation: ((id: string | null) => void) | undefined;
 }
 
 /** The kind of an annotation, and of a creation tool. */

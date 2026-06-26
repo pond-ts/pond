@@ -161,6 +161,25 @@ function useRegisterAnnotation(
   }, [registerAnnotation, key, id, kind, rowKey, xs, selected, selectable]);
 }
 
+/** A mark's hover state, synced both ways with the consumer. The effective hover
+ *  is the local pointer hover **OR** the controlled `hovered` prop (so a legend row
+ *  can light the mark remotely); `reportHover` mirrors local pointer enter/leave out
+ *  to {@link ContainerFrame.onHoverAnnotation} by `id` (so the mark can light the
+ *  legend). A mark with no `id` keeps its hover purely local. */
+function useAnnotationHover(
+  container: ContainerFrame,
+  id: string | undefined,
+  hovered: boolean | undefined,
+) {
+  const [selfHover, setSelfHover] = useState(false);
+  const hovering = selfHover || hovered === true;
+  const reportHover = (h: boolean) => {
+    setSelfHover(h);
+    if (id !== undefined) container.onHoverAnnotation?.(h ? id : null);
+  };
+  return { hovering, reportHover };
+}
+
 /** Pixel radius within which a drag snaps to a guideline (another mark's x). */
 const SNAP_PX = 6;
 
@@ -358,6 +377,9 @@ export interface MarkerProps {
    *  `false` it's inert background context — drawn at the back (level 3) always,
    *  no hover, no select, no edit. */
   selectable?: boolean;
+  /** Controlled hover (OR'd with pointer hover) — lets a legend row light the mark
+   *  remotely. Pair with the container's `onHoverAnnotation` to sync both ways. */
+  hovered?: boolean;
   /** Make the marker **editable** (in edit mode): dragging its line reports the
    *  new `at` (controlled — wire it back to `at`). The whole line moves. */
   onChange?: (at: number) => void;
@@ -370,11 +392,12 @@ export function Marker({
   id,
   selected = false,
   selectable = true,
+  hovered,
   onChange,
 }: MarkerProps) {
   const { container, row, ann } = useAnnotationFrame('Marker');
   const selfKey = useSlotKey();
-  const [hovering, setHovering] = useState(false);
+  const { hovering, reportHover } = useAnnotationHover(container, id, hovered);
   const editing =
     container.editAnnotations &&
     container.creating === null &&
@@ -430,7 +453,7 @@ export function Marker({
             h={h}
             cursor={editing ? 'ew-resize' : 'inherit'}
             editing={editing}
-            onHover={setHovering}
+            onHover={reportHover}
             onSelect={select}
             onDrag={(px) =>
               onChange?.(
@@ -470,6 +493,9 @@ export interface BaselineProps {
   /** Whether the baseline responds to hover + selection (default `true`). When
    *  `false` it's inert background context — drawn at the back (level 3) always. */
   selectable?: boolean;
+  /** Controlled hover (OR'd with pointer hover) — lets a legend row light the mark
+   *  remotely. Pair with the container's `onHoverAnnotation` to sync both ways. */
+  hovered?: boolean;
   /** Make the baseline **editable** (in edit mode): dragging it vertically reports
    *  the new `value` (controlled — wire it back to `value`). */
   onChange?: (value: number) => void;
@@ -484,11 +510,12 @@ export function Baseline({
   id,
   selected = false,
   selectable = true,
+  hovered,
   onChange,
 }: BaselineProps) {
   const { container, row, ann } = useAnnotationFrame('Baseline');
   const selfKey = useSlotKey();
-  const [hovering, setHovering] = useState(false);
+  const { hovering, reportHover } = useAnnotationHover(container, id, hovered);
   const editing =
     container.editAnnotations &&
     container.creating === null &&
@@ -555,7 +582,7 @@ export function Baseline({
             h={2 * HIT_PAD}
             cursor={editing ? 'ns-resize' : 'inherit'}
             editing={editing}
-            onHover={setHovering}
+            onHover={reportHover}
             onSelect={select}
             onDrag={(_px, py) => onChange?.(yScale.invert(py))}
           />
@@ -590,6 +617,9 @@ export interface RegionProps {
    *  `false` it's inert background context — drawn at the back (level 3) always,
    *  and the double-click hit-test skips it. */
   selectable?: boolean;
+  /** Controlled hover (OR'd with pointer hover) — lets a legend row light the mark
+   *  remotely. Pair with the container's `onHoverAnnotation` to sync both ways. */
+  hovered?: boolean;
   /** Make the region **editable** (in edit mode): drag the body to move it (both
    *  edges shift), drag an edge to resize. Reports the new `{ from, to }`. */
   onChange?: (next: { from: number; to: number }) => void;
@@ -604,11 +634,12 @@ export function Region({
   id,
   selected = false,
   selectable = true,
+  hovered,
   onChange,
 }: RegionProps) {
   const { container, row, ann } = useAnnotationFrame('Region');
   const selfKey = useSlotKey();
-  const [hovering, setHovering] = useState(false);
+  const { hovering, reportHover } = useAnnotationHover(container, id, hovered);
   const editing =
     container.editAnnotations &&
     container.creating === null &&
@@ -706,7 +737,7 @@ export function Region({
               h={h}
               cursor={editing ? 'grab' : 'inherit'}
               editing={editing}
-              onHover={setHovering}
+              onHover={reportHover}
               onSelect={select}
               onDragStart={(px) => {
                 dragRef.current = { from, to, startPx: px };
@@ -753,7 +784,7 @@ export function Region({
                   h={h}
                   cursor="ew-resize"
                   editing={editing}
-                  onHover={setHovering}
+                  onHover={reportHover}
                   onSelect={select}
                   onDrag={(px) =>
                     onChange?.({
@@ -771,7 +802,7 @@ export function Region({
                   h={h}
                   cursor="ew-resize"
                   editing={editing}
-                  onHover={setHovering}
+                  onHover={reportHover}
                   onSelect={select}
                   onDrag={(px) =>
                     onChange?.({

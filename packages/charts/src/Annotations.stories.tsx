@@ -210,26 +210,33 @@ export const Editable: Story = {
 };
 
 /**
- * **Live selection + depth.** Brightness is depth: a resting mark sits at the
- * **back** (level 3), **hover** brings it mid (level 2), **selected** brings it
- * **forward** (level 1). Edit mode raises everything — the lines come fully forward
- * while a region body stays one step back, so its edges read as the grabbable
- * thing. Click a mark (edit mode) to select it (reports its `id` via
- * `onSelectAnnotation`); click empty canvas to deselect; **double-click** a
- * region's span — even with edit off — selects it. The **floor** baseline is
- * `selectable={false}`: inert context, pinned at the back, no hover or selection.
- * Toggle edit to compare the two ramps.
+ * **Live selection + depth + a synced legend.** Brightness is depth: a resting mark
+ * sits at the **back** (level 3), **hover** brings it mid (level 2), **selected**
+ * brings it **forward** (level 1). Edit mode raises everything — lines fully forward,
+ * a region body one step back. The **legend** under the chart lists each mark and
+ * stays in sync **both ways**: hover a row to light its mark (and hovering the mark
+ * lights the row, via `onHoverAnnotation` + the mark's `hovered` prop); click a row
+ * to select it. That's how you select **any** mark — marker, baseline, region —
+ * **outside edit mode**, not just by double-clicking a region's span. The **floor**
+ * baseline is `selectable={false}`: inert context at the back, shown disabled in the
+ * legend. Toggle edit to compare.
  */
 export const Select: Story = {
   render: () => {
     const [edit, setEdit] = useState(true);
     const [selectedId, setSelectedId] = useState<string | null>(null);
+    const [hoveredId, setHoveredId] = useState<string | null>(null);
     const [markerAt, setMarkerAt] = useState(BASE + 28 * STEP);
     const [region, setRegion] = useState({
       from: BASE + 15 * STEP,
       to: BASE + 35 * STEP,
     });
     const [threshold, setThreshold] = useState(225);
+    const legend = [
+      { id: 'region', label: 'interval' },
+      { id: 'baseline', label: 'threshold' },
+      { id: 'marker', label: '5:28' },
+    ];
     return (
       <div>
         <button
@@ -254,6 +261,7 @@ export const Select: Story = {
           theme={estelaTheme}
           editAnnotations={edit}
           onSelectAnnotation={setSelectedId}
+          onHoverAnnotation={setHoveredId}
         >
           <ChartRow height={280}>
             <YAxis id="power" label="W" min={0} max={300} />
@@ -267,6 +275,7 @@ export const Select: Story = {
                 to={region.to}
                 label="interval"
                 selected={selectedId === 'region'}
+                hovered={hoveredId === 'region'}
                 onChange={setRegion}
               />
               <Baseline
@@ -274,6 +283,7 @@ export const Select: Story = {
                 value={threshold}
                 label={`${Math.round(threshold)} W`}
                 selected={selectedId === 'baseline'}
+                hovered={hoveredId === 'baseline'}
                 onChange={setThreshold}
               />
               <Marker
@@ -281,11 +291,78 @@ export const Select: Story = {
                 at={markerAt}
                 label="5:28"
                 selected={selectedId === 'marker'}
+                hovered={hoveredId === 'marker'}
                 onChange={setMarkerAt}
               />
             </Layers>
           </ChartRow>
         </ChartContainer>
+        {/* Legend — one row per mark, synced both ways with the chart. Clicking a
+            row selects in *any* mode; the swatch opacity mirrors the depth ramp. */}
+        <div
+          style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}
+        >
+          {legend.map(({ id, label }) => {
+            const sel = selectedId === id;
+            const hov = hoveredId === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                onMouseEnter={() => setHoveredId(id)}
+                onMouseLeave={() => setHoveredId(null)}
+                onClick={() => setSelectedId(sel ? null : id)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '3px 9px',
+                  borderRadius: 6,
+                  border: `1px solid ${sel ? '#7FE2D2' : hov ? '#3c6a6a' : '#233a3a'}`,
+                  background: sel ? '#0B4E58' : hov ? '#0a3940' : 'transparent',
+                  color: '#a9d6cf',
+                  font: '12px ui-monospace, monospace',
+                  cursor: 'pointer',
+                }}
+              >
+                <span
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: 2,
+                    background: '#7FE2D2',
+                    opacity: sel ? 1 : hov ? 0.7 : 0.4,
+                  }}
+                />
+                {label}
+              </button>
+            );
+          })}
+          <span
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '3px 9px',
+              borderRadius: 6,
+              border: '1px dashed #233a3a',
+              color: '#5c7676',
+              font: '12px ui-monospace, monospace',
+            }}
+            title="selectable={false} — inert context"
+          >
+            <span
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: 2,
+                background: '#7FE2D2',
+                opacity: 0.4,
+              }}
+            />
+            floor (fixed)
+          </span>
+        </div>
       </div>
     );
   },

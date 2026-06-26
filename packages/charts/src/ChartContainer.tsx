@@ -152,6 +152,12 @@ export interface ChartContainerProps {
    */
   onSelectAnnotation?: (id: string | null) => void;
   /**
+   * Fired when the pointer enters an annotation (its `id`) or leaves it (`null`).
+   * Mirror it to a controlled `hovered` prop on each mark to sync hover both ways
+   * (e.g. a legend row ↔ the mark). Fires in any mode.
+   */
+  onHoverAnnotation?: (id: string | null) => void;
+  /**
    * Snap mode (the toolbar's "Snap"). **Default `true`.** When on, created +
    * dragged marks snap to the nearest data sample (clean values) and to other
    * marks' guidelines (alignment); off = free placement.
@@ -196,6 +202,7 @@ export function ChartContainer({
   creating = null,
   onCreate,
   onSelectAnnotation,
+  onHoverAnnotation,
   snap = true,
   timeFormat,
   theme,
@@ -487,6 +494,7 @@ export function ChartContainer({
       snap,
       onCreate,
       onSelectAnnotation,
+      onHoverAnnotation,
       formatTime,
       registerTrackerSource,
       unregisterTrackerSource,
@@ -525,6 +533,7 @@ export function ChartContainer({
       snap,
       onCreate,
       onSelectAnnotation,
+      onHoverAnnotation,
       formatTime,
       registerTrackerSource,
       unregisterTrackerSource,
