@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { TimeSeries } from 'pond-ts';
+import type { CreateSpec } from './context.js';
 import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
@@ -261,6 +262,119 @@ export const MultiRow: Story = {
           </Layers>
         </ChartRow>
       </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **Creating annotations.** The library owns the *gesture*; the consumer owns the
+ * toolbar + state (the buttons here stand in for the network-traffic example's).
+ * Arm a tool, then on the plot: click or drag places a `Marker`/`Baseline`;
+ * press-drag-release draws a `Region`. A preview tracks the pointer (with the
+ * cross-row guide on other rows). On release the mark is added and the tool
+ * disarms — spring-loaded back to idle, where the fresh mark is editable.
+ */
+export const Create: Story = {
+  render: () => {
+    const [tool, setTool] = useState<CreateSpec['kind'] | null>(null);
+    const [snap, setSnap] = useState(true);
+    const [marks, setMarks] = useState<Array<{ id: number } & CreateSpec>>([]);
+    const nextId = useRef(0);
+    const replace = (id: number, next: { id: number } & CreateSpec) =>
+      setMarks((ms) => ms.map((m) => (m.id === id ? next : m)));
+    const toolBtn = (k: CreateSpec['kind'], label: string) => (
+      <button
+        type="button"
+        onClick={() => setTool((t) => (t === k ? null : k))}
+        style={{
+          padding: '4px 10px',
+          borderRadius: 6,
+          border: `1px solid ${tool === k ? '#7FE2D2' : '#2c4a4a'}`,
+          background: tool === k ? '#0B4E58' : 'transparent',
+          color: '#a9d6cf',
+          font: '12px ui-monospace, monospace',
+          cursor: 'pointer',
+        }}
+      >
+        {label}
+      </button>
+    );
+    return (
+      <div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+          {toolBtn('baseline', 'Baseline')}
+          {toolBtn('marker', 'Marker')}
+          {toolBtn('region', 'Region')}
+          <button
+            type="button"
+            onClick={() => setSnap((s) => !s)}
+            style={{
+              padding: '4px 10px',
+              borderRadius: 6,
+              border: '1px solid #2c4a4a',
+              background: snap ? '#0B4E58' : 'transparent',
+              color: '#a9d6cf',
+              font: '12px ui-monospace, monospace',
+              cursor: 'pointer',
+            }}
+          >
+            Snap {snap ? '✓' : '✗'}
+          </button>
+        </div>
+        <ChartContainer
+          range={INTERVAL}
+          width={680}
+          theme={estelaTheme}
+          editAnnotations
+          creating={tool}
+          snap={snap}
+          onCreate={(spec) => {
+            setMarks((ms) => [...ms, { id: nextId.current++, ...spec }]);
+            setTool(null); // spring-loaded — disarm after one
+          }}
+        >
+          <ChartRow height={280}>
+            <YAxis id="power" label="W" min={0} max={300} />
+            <Layers>
+              <LineChart series={power()} column="watts" as="foam" />
+              {marks.map((m) =>
+                m.kind === 'marker' ? (
+                  <Marker
+                    key={m.id}
+                    at={m.at}
+                    onChange={(at) =>
+                      replace(m.id, { id: m.id, kind: 'marker', at })
+                    }
+                  />
+                ) : m.kind === 'region' ? (
+                  <Region
+                    key={m.id}
+                    from={m.from}
+                    to={m.to}
+                    onChange={(next) =>
+                      replace(m.id, { id: m.id, kind: 'region', ...next })
+                    }
+                  />
+                ) : (
+                  <Baseline
+                    key={m.id}
+                    value={m.value}
+                    axis={m.axis}
+                    onChange={(value) =>
+                      replace(m.id, {
+                        id: m.id,
+                        kind: 'baseline',
+                        value,
+                        axis: m.axis,
+                      })
+                    }
+                  />
+                ),
+              )}
+            </Layers>
+          </ChartRow>
+        </ChartContainer>
+      </div>
     );
   },
 };

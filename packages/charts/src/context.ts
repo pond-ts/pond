@@ -148,7 +148,36 @@ export interface ContainerFrame {
   /** Every registered annotation — read by each row to draw the *other* rows'
    *  guides, and by a drag to find snap targets. */
   readonly annotations: readonly AnnotationSpec[];
+  /**
+   * The armed creation tool, or `null` (idle). Set by the consumer's toolbar;
+   * when non-null the plot captures a **create gesture** (draw a new mark) instead
+   * of panning, and fires {@link onCreate} on release. While armed, existing
+   * marks' edit handles stand down so the draw owns the surface.
+   */
+  readonly creating: AnnotationKind | null;
+  /**
+   * Snap mode — the toolbar's "Snap". When on, created + dragged marks snap to the
+   * nearest **data sample** (so values read clean — `5:12`, not `5:11:47`) and to
+   * other marks' **guidelines** (alignment). One mode, both behaviours.
+   */
+  readonly snap: boolean;
+  /** Fired when a create gesture completes (on release). The consumer adds the
+   *  mark, disarms ({@link creating} → `null`), and selects it. `undefined` ⇒
+   *  creation is a no-op (the gesture still previews but commits nothing). */
+  readonly onCreate: ((spec: CreateSpec) => void) | undefined;
 }
+
+/** The kind of an annotation, and of a creation tool. */
+export type AnnotationKind = 'region' | 'marker' | 'baseline';
+
+/** What a completed create gesture reports to {@link ContainerFrame.onCreate} —
+ *  the new mark's kind + position in axis units (+ the y-axis id for a baseline).
+ *  (Which row a mark lands on is the consumer's call for now; multi-row routing is
+ *  a follow-up.) */
+export type CreateSpec =
+  | { readonly kind: 'marker'; readonly at: number }
+  | { readonly kind: 'baseline'; readonly value: number; readonly axis: string }
+  | { readonly kind: 'region'; readonly from: number; readonly to: number };
 
 /**
  * A registered annotation as the container sees it — enough to draw its guide

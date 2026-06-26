@@ -11,8 +11,10 @@ import { scaleLinear, scaleTime } from 'd3-scale';
 import type { TimeRange } from 'pond-ts';
 import {
   ContainerContext,
+  type AnnotationKind,
   type AnnotationSpec,
   type ContainerFrame,
+  type CreateSpec,
   type GutterReq,
   type CursorMode,
   type SelectInfo,
@@ -134,6 +136,22 @@ export interface ChartContainerProps {
    */
   editAnnotations?: boolean;
   /**
+   * The armed annotation **creation tool** (the consumer's toolbar sets it), or
+   * `null`/omitted for idle. When set, the plot captures a create gesture — a
+   * preview tracks the pointer, and on release {@link onCreate} fires. The consumer
+   * then adds the mark, disarms (back to `null`), and selects it (spring-loaded);
+   * keep it set to place several. Requires {@link editAnnotations}.
+   */
+  creating?: AnnotationKind | null;
+  /** Fired when a create gesture completes (on release). See {@link CreateSpec}. */
+  onCreate?: (spec: CreateSpec) => void;
+  /**
+   * Snap mode (the toolbar's "Snap"). **Default `true`.** When on, created +
+   * dragged marks snap to the nearest data sample (clean values) and to other
+   * marks' guidelines (alignment); off = free placement.
+   */
+  snap?: boolean;
+  /**
    * Time-axis value formatting — a d3 time specifier string (e.g. `'%H:%M'`) or a
    * `(epochMs) => string` function ({@link AxisFormat}); applies to both the time
    * axis labels and the cursor-time readout. **Omitted ⇒ d3's multi-scale time
@@ -169,6 +187,9 @@ export function ChartContainer({
   cursor = DEFAULT_CURSOR_MODE,
   cursorTime = false,
   editAnnotations = false,
+  creating = null,
+  onCreate,
+  snap = true,
   timeFormat,
   theme,
   children,
@@ -455,6 +476,9 @@ export function ChartContainer({
       cursor,
       cursorTime,
       editAnnotations,
+      creating,
+      snap,
+      onCreate,
       formatTime,
       registerTrackerSource,
       unregisterTrackerSource,
@@ -489,6 +513,9 @@ export function ChartContainer({
       cursor,
       cursorTime,
       editAnnotations,
+      creating,
+      snap,
+      onCreate,
       formatTime,
       registerTrackerSource,
       unregisterTrackerSource,

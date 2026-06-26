@@ -279,7 +279,10 @@ export function Marker({ at, label, selected = false, onChange }: MarkerProps) {
   const { container, row, ann } = useAnnotationFrame('Marker');
   const selfKey = useSlotKey();
   const [hovering, setHovering] = useState(false);
-  const editing = container.editAnnotations && onChange !== undefined;
+  const editing =
+    container.editAnnotations &&
+    container.creating === null &&
+    onChange !== undefined;
   const xs = useMemo(() => [at], [at]);
   useRegisterAnnotation(container, selfKey, row.rowKey, 'marker', xs, selected);
   const x = container.xScale(at);
@@ -370,7 +373,10 @@ export function Baseline({
   const { container, row, ann } = useAnnotationFrame('Baseline');
   const selfKey = useSlotKey();
   const [hovering, setHovering] = useState(false);
-  const editing = container.editAnnotations && onChange !== undefined;
+  const editing =
+    container.editAnnotations &&
+    container.creating === null &&
+    onChange !== undefined;
   // A horizontal line casts no vertical guide — register with no xs (still
   // tracked for ordering / future use). No snap target either (the guidelines are
   // vertical; a baseline drags vertically).
@@ -471,7 +477,10 @@ export function Region({
   const { container, row, ann } = useAnnotationFrame('Region');
   const selfKey = useSlotKey();
   const [hovering, setHovering] = useState(false);
-  const editing = container.editAnnotations && onChange !== undefined;
+  const editing =
+    container.editAnnotations &&
+    container.creating === null &&
+    onChange !== undefined;
   const xs = useMemo(() => [from, to], [from, to]);
   useRegisterAnnotation(container, selfKey, row.rowKey, 'region', xs, selected);
   const xa = container.xScale(from);

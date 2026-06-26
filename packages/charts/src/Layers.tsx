@@ -8,6 +8,7 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -233,11 +234,34 @@ export function Layers({ children }: LayersProps) {
   });
   // Pointer-down position, to tell a click (select) from the tail of a drag/pan.
   const clickStartRef = useRef<{ x: number; y: number } | null>(null);
+  // Create gesture (when a tool is armed): `createPt` is the live pointer driving
+  // the preview on the hovered row; `drawFrom` is a region's fixed start edge (px)
+  // once pressed. `drawFromRef` mirrors it for the stable up-handler to read.
+  const [createPt, setCreatePt] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+  const [drawFrom, setDrawFrom] = useState<number | null>(null);
+  const drawFromRef = useRef<number | null>(null);
 
   const handlePointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       clickStartRef.current = { x: e.clientX, y: e.clientY };
       const c = containerRef.current;
+      if (c.creating !== null) {
+        // Armed: a region presses to fix its start edge; a line just tracks until
+        // release. Capture so the draw can continue outside the plot.
+        if (c.creating === 'region') {
+          const px = e.clientX - e.currentTarget.getBoundingClientRect().left;
+          drawFromRef.current = px;
+          setDrawFrom(px);
+        }
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
       if (!c.panZoom) return;
       const r = c.timeRange;
       dragRef.current = { startX: e.clientX, startRange: [r[0], r[1]] };
@@ -257,6 +281,13 @@ export function Layers({ children }: LayersProps) {
   const handlePointerMove = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       const c = containerRef.current;
+      if (c.creating !== null) {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const px = Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left));
+        setCreatePt({ x: px, y: e.clientY - rect.top });
+        c.setHoverX(px); // share the preview x so other rows draw a guide there
+        return;
+      }
       const drag = dragRef.current;
       if (drag) {
         // Pan from the start range by the total drag — right → earlier (−dt).
@@ -292,6 +323,45 @@ export function Layers({ children }: LayersProps) {
 
   const handlePointerUp = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
+      const c = containerRef.current;
+      if (c.creating !== null) {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const px = Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left));
+        const py = e.clientY - rect.top;
+        if (c.creating === 'marker') {
+          c.onCreate?.({ kind: 'marker', at: +c.xScale.invert(px) });
+        } else if (c.creating === 'baseline') {
+          const r = rowRef.current;
+          const ys = r.yScales.get(r.defaultAxisId);
+          if (ys) {
+            c.onCreate?.({
+              kind: 'baseline',
+              value: ys.invert(py),
+              axis: r.defaultAxisId,
+            });
+          }
+        } else if (c.creating === 'region') {
+          const fromPx = drawFromRef.current;
+          // Need a real drag — a click (no span) creates nothing.
+          if (fromPx !== null && Math.abs(px - fromPx) > DRAG_SLOP) {
+            const a = +c.xScale.invert(fromPx);
+            const b = +c.xScale.invert(px);
+            c.onCreate?.({
+              kind: 'region',
+              from: Math.min(a, b),
+              to: Math.max(a, b),
+            });
+          }
+        }
+        drawFromRef.current = null;
+        setDrawFrom(null);
+        try {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
       if (dragRef.current) {
         dragRef.current = null;
         try {
@@ -305,12 +375,21 @@ export function Layers({ children }: LayersProps) {
   );
   const handlePointerLeave = useCallback(() => {
     const c = containerRef.current;
+    if (c.creating !== null) {
+      // Leaving mid-arm cancels the preview (and an in-progress region draw).
+      setCreatePt(null);
+      drawFromRef.current = null;
+      setDrawFrom(null);
+      c.setHoverX(null);
+      return;
+    }
     c.setHoverX(null);
     c.setHovered(null);
   }, []);
   // Click selection: ignore the click that ends a drag/pan (moved past a few px),
   // else hit-test the row's layers top-down and select — or clear on a miss.
   const handleClick = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
+    if (containerRef.current.creating !== null) return; // the draw owns the click
     const start = clickStartRef.current;
     if (
       start &&
@@ -393,6 +472,93 @@ export function Layers({ children }: LayersProps) {
     .map((xv) => xScale(xv));
   const guideColor = container.theme.annotation?.color ?? gridColor;
 
+  // Create preview: while a tool is armed, the hovered row (the one with
+  // `createPt`) shows a cursor-style line tracking the pointer — vertical for
+  // marker/region, horizontal for baseline, a span once a region is being dragged.
+  // The OTHER rows show the faint guide at the shared preview x (markers/regions).
+  const creating = container.creating;
+  let createPreview: ReactNode = null;
+  if (creating !== null && createPt !== null) {
+    if (creating === 'baseline') {
+      createPreview = (
+        <line
+          x1={0}
+          y1={createPt.y}
+          x2={plotWidth}
+          y2={createPt.y}
+          stroke={guideColor}
+          strokeWidth={1}
+          opacity={0.85}
+          shapeRendering="crispEdges"
+        />
+      );
+    } else if (drawFrom !== null) {
+      const l = Math.min(drawFrom, createPt.x);
+      const w = Math.abs(createPt.x - drawFrom);
+      createPreview = (
+        <>
+          <rect
+            x={l}
+            y={0}
+            width={w}
+            height={row.height}
+            fill={guideColor}
+            opacity={0.12}
+          />
+          <line
+            x1={drawFrom}
+            y1={0}
+            x2={drawFrom}
+            y2={row.height}
+            stroke={guideColor}
+            strokeWidth={1}
+            opacity={0.85}
+            strokeDasharray="3 2"
+            shapeRendering="crispEdges"
+          />
+          <line
+            x1={createPt.x}
+            y1={0}
+            x2={createPt.x}
+            y2={row.height}
+            stroke={guideColor}
+            strokeWidth={1}
+            opacity={0.85}
+            shapeRendering="crispEdges"
+          />
+        </>
+      );
+    } else {
+      createPreview = (
+        <line
+          x1={createPt.x}
+          y1={0}
+          x2={createPt.x}
+          y2={row.height}
+          stroke={guideColor}
+          strokeWidth={1}
+          opacity={0.85}
+          shapeRendering="crispEdges"
+        />
+      );
+    }
+  } else if (creating !== null && creating !== 'baseline' && cursorX !== null) {
+    // Another row — the faint preview guide at the shared pointer x.
+    createPreview = (
+      <line
+        x1={cursorX}
+        y1={0}
+        x2={cursorX}
+        y2={row.height}
+        stroke={guideColor}
+        strokeWidth={1}
+        opacity={0.22}
+        strokeDasharray="2 3"
+        shapeRendering="crispEdges"
+      />
+    );
+  }
+
   // Inject each draw layer's JSX position so it registers its declaration order
   // (z-stack: lower index at the back), independent of mount timing.
   const indexedChildren = Children.map(children, (child, index) =>
@@ -412,6 +578,11 @@ export function Layers({ children }: LayersProps) {
           // Edit mode: a plain cursor on the plot (the annotations supply their
           // own grab/resize cursors); crosshair only when the data cursor is live.
           cursor: container.editAnnotations ? 'default' : 'crosshair',
+          // The turquoise edit border — the "you're in Edit" signal. Inset shadow
+          // so it doesn't shift layout the way a real border would.
+          boxShadow: container.editAnnotations
+            ? `inset 0 0 0 1px ${guideColor}`
+            : undefined,
           // Let pan/zoom own touch gestures (no native scroll) when enabled.
           touchAction: container.panZoom ? 'none' : 'auto',
         }}
@@ -450,6 +621,21 @@ export function Layers({ children }: LayersProps) {
                 shapeRendering="crispEdges"
               />
             ))}
+          </svg>
+        )}
+        {/* Create preview — the armed tool's line/region tracking the pointer. */}
+        {createPreview !== null && (
+          <svg
+            width={plotWidth}
+            height={row.height}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              pointerEvents: 'none',
+            }}
+          >
+            {createPreview}
           </svg>
         )}
         {/* Annotation overlays — <Region>/<Baseline>/<Marker> — paint here, above
