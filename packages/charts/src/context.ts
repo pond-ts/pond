@@ -148,6 +148,10 @@ export interface ContainerFrame {
   /** Every registered annotation — read by each row to draw the *other* rows'
    *  guides, and by a drag to find snap targets. */
   readonly annotations: readonly AnnotationSpec[];
+  /** Vertical lane (0 = top) for each top-flag label, by slot key — overlapping
+   *  marker/region labels stack into lower lanes instead of colliding. A key absent
+   *  from the map (or mapping to 0) sits in the top lane. */
+  readonly labelLanes: ReadonlyMap<symbol, number>;
   /**
    * The armed creation tool, or `null` (idle). Set by the consumer's toolbar;
    * when non-null the plot captures a **create gesture** (draw a new mark) instead
@@ -215,9 +219,16 @@ export interface AnnotationSpec {
   readonly xs: readonly number[];
   /** Whether it's currently selected (controlled by the consumer). */
   readonly selected: boolean;
+  /** Whether it's in single-annotation edit (the double-click target). The plot
+   *  suppresses the data cursor while any mark is editing, as it does in global
+   *  edit mode. */
+  readonly editing: boolean;
   /** Whether it accepts hover + selection. A non-selectable region is skipped by
    *  the double-click hit-test (it's inert background context). */
   readonly selectable: boolean;
+  /** The mark's resolved label text — used to pack overlapping top-flag labels
+   *  (markers + regions) into stacked vertical lanes. */
+  readonly label: string;
 }
 
 /**

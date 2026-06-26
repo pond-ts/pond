@@ -117,9 +117,12 @@ export function Layers({ children }: LayersProps) {
   // Cursor mode: the row's override, else the container default. One mode per
   // row (the synced vertical line is shared across rows); each layer renders the
   // mode in its own way. `parts` decomposes it into {line, dots, chip}.
-  // Annotation-edit mode suppresses the data cursor — the marks get the surface
-  // (hover/drag), and a crosshair would just be noise while you're editing.
-  const parts = container.editAnnotations
+  // Editing suppresses the data cursor — the marks get the surface (hover/drag),
+  // and a crosshair would just be noise. True in global edit mode *and* while a
+  // single annotation is being edited (the double-click target).
+  const editingActive =
+    container.editAnnotations || container.annotations.some((a) => a.editing);
+  const parts = editingActive
     ? cursorParts('none')
     : cursorParts(row.cursor ?? container.cursor);
   const cursorColor = container.theme.cursor ?? container.theme.axis.label;
@@ -585,10 +588,11 @@ export function Layers({ children }: LayersProps) {
           width: `${plotWidth}px`,
           height: `${row.height}px`,
           // Edit mode: a plain cursor on the plot (the annotations supply their
-          // own grab/resize cursors); crosshair only when the data cursor is live.
-          cursor: container.editAnnotations ? 'default' : 'crosshair',
-          // The turquoise edit border — the "you're in Edit" signal. Inset shadow
-          // so it doesn't shift layout the way a real border would.
+          // own grab/resize cursors); crosshair only when the data cursor is live
+          // (suppressed in single-annotation edit too, not just global edit).
+          cursor: editingActive ? 'default' : 'crosshair',
+          // The turquoise edit border — the "you're in *global* Edit" signal (not
+          // single-annotation edit). Inset shadow so it doesn't shift layout.
           boxShadow: container.editAnnotations
             ? `inset 0 0 0 1px ${guideColor}`
             : undefined,

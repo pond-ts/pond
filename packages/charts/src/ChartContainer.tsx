@@ -22,6 +22,7 @@ import {
   type TrackerSource,
 } from './context.js';
 import { maxSlotWidths, sum } from './slots.js';
+import { computeLabelLanes } from './annotations.js';
 import { resolveCursorX, DEFAULT_CURSOR_MODE } from './tracker.js';
 import {
   resolveAxisFormat,
@@ -477,6 +478,13 @@ export function ChartContainer({
     cb({ time, values });
   }, [cursorX, xScale, sources, plotWidth]);
 
+  // Pack overlapping top-flag labels (markers + regions) into stacked lanes so
+  // close-in-x labels don't collide; chips read their lane back off the frame.
+  const labelLanes = useMemo(
+    () => computeLabelLanes(annotations, (v) => xScale(v)),
+    [annotations, xScale],
+  );
+
   const frame = useMemo<ContainerFrame>(
     () => ({
       timeRange: [d0, d1],
@@ -509,6 +517,7 @@ export function ChartContainer({
       registerAnnotation,
       unregisterAnnotation,
       annotations,
+      labelLanes,
       xScale,
       xKind: resolvedKind,
       panZoom,
@@ -549,6 +558,7 @@ export function ChartContainer({
       registerAnnotation,
       unregisterAnnotation,
       annotations,
+      labelLanes,
       xScale,
       resolvedKind,
       panZoom,

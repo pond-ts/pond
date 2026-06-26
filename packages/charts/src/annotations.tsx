@@ -153,6 +153,8 @@ function useRegisterAnnotation(
   xs: readonly number[],
   selected: boolean,
   selectable: boolean,
+  editing: boolean,
+  label: string,
 ) {
   const { registerAnnotation, unregisterAnnotation } = container;
   useEffect(() => () => unregisterAnnotation(key), [unregisterAnnotation, key]);
@@ -165,8 +167,69 @@ function useRegisterAnnotation(
       xs,
       selected,
       selectable,
+      editing,
+      label,
     });
-  }, [registerAnnotation, key, id, kind, rowKey, xs, selected, selectable]);
+  }, [
+    registerAnnotation,
+    key,
+    id,
+    kind,
+    rowKey,
+    xs,
+    selected,
+    selectable,
+    editing,
+    label,
+  ]);
+}
+
+/** Vertical px between stacked label lanes. */
+const LANE_H = 22;
+/** Rough chip-width model for overlap detection (monospace-ish: chars × width +
+ *  padding) and the min px gap kept between two labels sharing a lane. */
+const LABEL_CHAR_W = 7;
+const LABEL_PAD = 16;
+const LANE_GAP = 6;
+
+/**
+ * Greedy left→right lane packing for the **top-flag** labels (markers + regions): a
+ * label that would overlap the one to its left drops to the next free lane below,
+ * so close-in-x labels stack instead of colliding (and a dragged label slides under
+ * its neighbour). Returns slot-key → lane (0 = top). Baselines, whose labels anchor
+ * at the left at their own y, don't participate.
+ */
+export function computeLabelLanes(
+  annotations: readonly AnnotationSpec[],
+  toPixel: (axisX: number) => number,
+): Map<symbol, number> {
+  const flags = annotations
+    .filter(
+      (a) =>
+        (a.kind === 'marker' || a.kind === 'region') &&
+        a.label.length > 0 &&
+        a.xs.length > 0,
+    )
+    .map((a) => {
+      const ax = a.kind === 'region' ? Math.min(a.xs[0]!, a.xs[1]!) : a.xs[0]!;
+      return {
+        key: a.key,
+        left: toPixel(ax),
+        width: a.label.length * LABEL_CHAR_W + LABEL_PAD,
+      };
+    })
+    .sort((p, q) => p.left - q.left);
+  const laneEnds: number[] = []; // right-px of the last label placed in each lane
+  const lanes = new Map<symbol, number>();
+  for (const f of flags) {
+    let lane = 0;
+    while (lane < laneEnds.length && laneEnds[lane]! + LANE_GAP > f.left) {
+      lane += 1;
+    }
+    laneEnds[lane] = f.left + f.width;
+    lanes.set(f.key, lane);
+  }
+  return lanes;
 }
 
 /** A mark's hover state, synced both ways with the consumer. The effective hover
@@ -428,6 +491,7 @@ export function Marker({
     container.creating === null &&
     onChange !== undefined;
   const xs = useMemo(() => [at], [at]);
+  const text = label ?? container.formatTime(at);
   useRegisterAnnotation(
     container,
     selfKey,
@@ -437,6 +501,8 @@ export function Marker({
     xs,
     selected,
     selectable,
+    editing,
+    text,
   );
   // No select/edit while a create tool is armed — the chart is in draw mode then.
   const select =
@@ -454,7 +520,7 @@ export function Marker({
     lineLevel(selectable, editable, hovering, selected),
   );
   const showHandle = editable && (editing || hovering);
-  const text = label ?? container.formatTime(at);
+  const lane = container.labelLanes.get(selfKey) ?? 0;
   return (
     <>
       <svg width={container.plotWidth} height={h} style={overlayStyle}>
@@ -501,7 +567,7 @@ export function Marker({
         theme={container.theme}
         color={ann.color}
         style={{
-          top: `${FLAG_TOP}px`,
+          top: `${FLAG_TOP + lane * LANE_H}px`,
           ...flagChipX(x, container.plotWidth),
         }}
       >
@@ -575,6 +641,8 @@ export function Baseline({
     xs,
     selected,
     selectable,
+    editing,
+    label ?? '', // baselines don't lane-pack (label anchors at their y, not the top)
   );
   // No select/edit while a create tool is armed — the chart is in draw mode then.
   const select =
@@ -704,6 +772,8 @@ export function Region({
     container.creating === null &&
     onChange !== undefined;
   const xs = useMemo(() => [from, to], [from, to]);
+  const text =
+    label ?? `${container.formatTime(from)}–${container.formatTime(to)}`;
   useRegisterAnnotation(
     container,
     selfKey,
@@ -713,6 +783,8 @@ export function Region({
     xs,
     selected,
     selectable,
+    editing,
+    text,
   );
   // No select/edit while a create tool is armed — the chart is in draw mode then.
   const select =
@@ -738,8 +810,7 @@ export function Region({
     ann.fillOpacity *
     rampAt(FILL_MULT, bodyLevel(selectable, editable, hovering, selected));
   const showHandles = editable && (editing || hovering);
-  const text =
-    label ?? `${container.formatTime(from)}–${container.formatTime(to)}`;
+  const lane = container.labelLanes.get(selfKey) ?? 0;
   // Body move-drag: capture the start position + pointer on press, then move by
   // the TOTAL delta from there, so the *raw* position accumulates from a fixed
   // origin. Snap is applied only to the output — never fed back into this
@@ -891,7 +962,7 @@ export function Region({
         theme={container.theme}
         color={ann.color}
         style={{
-          top: `${FLAG_TOP}px`,
+          top: `${FLAG_TOP + lane * LANE_H}px`,
           ...flagChipX(left, container.plotWidth),
         }}
       >
