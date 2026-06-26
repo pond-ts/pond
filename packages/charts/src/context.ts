@@ -173,6 +173,11 @@ export interface ContainerFrame {
    *  so the consumer can mirror hover out-of-band (e.g. a legend row). Pairs with a
    *  mark's controlled `hovered` prop to sync hover both ways. Works in any mode. */
   readonly onHoverAnnotation: ((id: string | null) => void) | undefined;
+  /** Fired when a mark is **double-clicked** — the request to edit just that one.
+   *  The consumer flips it into single-annotation edit (sets its `editing` prop),
+   *  while the rest stay static. Distinct from {@link onSelectAnnotation} (single
+   *  click = inspect-select). Works in any mode. */
+  readonly onEditAnnotation: ((id: string) => void) | undefined;
 }
 
 /** The kind of an annotation, and of a creation tool. */

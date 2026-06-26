@@ -210,22 +210,28 @@ export const Editable: Story = {
 };
 
 /**
- * **Live selection + depth + a synced legend.** Brightness is depth: a resting mark
- * sits at the **back** (level 3), **hover** brings it mid (level 2), **selected**
- * brings it **forward** (level 1). Edit mode raises everything — lines fully forward,
- * a region body one step back. The **legend** under the chart lists each mark and
- * stays in sync **both ways**: hover a row to light its mark (and hovering the mark
- * lights the row, via `onHoverAnnotation` + the mark's `hovered` prop); click a row
- * to select it. That's how you select **any** mark — marker, baseline, region —
- * **outside edit mode**, not just by double-clicking a region's span. The **floor**
- * baseline is `selectable={false}`: inert context at the back, shown disabled in the
- * legend. Toggle edit to compare.
+ * **The three interaction workflows, end to end.** Brightness is depth (back = level
+ * 3 → forward = level 1); the **legend** under the chart mirrors every mark both ways
+ * (hover ↔ hover, click to act).
+ *
+ * 1. **Inspect (no edit).** Single-click a mark — on the chart or in the legend — to
+ *    **select** it (level 1); an external panel would show its data. Click another to
+ *    move the selection; click empty space to clear.
+ * 2. **Edit one (double-click).** Double-click a mark → **single-annotation edit**:
+ *    its handles stay out and you drag its bounds/position, while every *other* mark
+ *    stays static. The strip below stands in for an edit form; **Done** — or an empty
+ *    chart click — exits.
+ * 3. **Edit mode (bulk).** Toggle **Edit** → every mark is editable (handles on
+ *    hover); spring-loaded create tools live in the **Create** story.
+ *
+ * The `floor` baseline is `selectable={false}` — inert context, no hover/select/edit.
  */
 export const Select: Story = {
   render: () => {
     const [edit, setEdit] = useState(true);
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [hoveredId, setHoveredId] = useState<string | null>(null);
+    const [editingId, setEditingId] = useState<string | null>(null);
     const [markerAt, setMarkerAt] = useState(BASE + 28 * STEP);
     const [region, setRegion] = useState({
       from: BASE + 15 * STEP,
@@ -260,8 +266,15 @@ export const Select: Story = {
           width={680}
           theme={estelaTheme}
           editAnnotations={edit}
-          onSelectAnnotation={setSelectedId}
+          onSelectAnnotation={(id) => {
+            setSelectedId(id);
+            if (id === null) setEditingId(null); // empty click exits single-edit
+          }}
           onHoverAnnotation={setHoveredId}
+          onEditAnnotation={(id) => {
+            setEditingId(id); // double-click → edit just this one…
+            setSelectedId(id); // …and it reads as selected
+          }}
         >
           <ChartRow height={280}>
             <YAxis id="power" label="W" min={0} max={300} />
@@ -276,6 +289,7 @@ export const Select: Story = {
                 label="interval"
                 selected={selectedId === 'region'}
                 hovered={hoveredId === 'region'}
+                editing={editingId === 'region'}
                 onChange={setRegion}
               />
               <Baseline
@@ -284,6 +298,7 @@ export const Select: Story = {
                 label={`${Math.round(threshold)} W`}
                 selected={selectedId === 'baseline'}
                 hovered={hoveredId === 'baseline'}
+                editing={editingId === 'baseline'}
                 onChange={setThreshold}
               />
               <Marker
@@ -292,6 +307,7 @@ export const Select: Story = {
                 label="5:28"
                 selected={selectedId === 'marker'}
                 hovered={hoveredId === 'marker'}
+                editing={editingId === 'marker'}
                 onChange={setMarkerAt}
               />
             </Layers>
@@ -305,13 +321,22 @@ export const Select: Story = {
           {legend.map(({ id, label }) => {
             const sel = selectedId === id;
             const hov = hoveredId === id;
+            const ed = editingId === id;
             return (
               <button
                 key={id}
                 type="button"
                 onMouseEnter={() => setHoveredId(id)}
                 onMouseLeave={() => setHoveredId(null)}
-                onClick={() => setSelectedId(sel ? null : id)}
+                // single-click = inspect-select (exits any edit); double-click = edit
+                onClick={() => {
+                  setEditingId(null);
+                  setSelectedId(sel ? null : id);
+                }}
+                onDoubleClick={() => {
+                  setEditingId(id);
+                  setSelectedId(id);
+                }}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -334,7 +359,7 @@ export const Select: Story = {
                     opacity: sel ? 1 : hov ? 0.7 : 0.4,
                   }}
                 />
-                {label}
+                {ed ? `✎ ${label}` : label}
               </button>
             );
           })}
@@ -363,6 +388,49 @@ export const Select: Story = {
             floor (fixed)
           </span>
         </div>
+        {/* Stand-in for the external edit form (Workflow 2). Appears only while a
+            mark is in single-annotation edit; "Done" exits (as an empty chart click
+            would). In a real app this is where you'd edit the mark's data. */}
+        {editingId !== null && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              marginTop: 8,
+              padding: '6px 10px',
+              borderRadius: 6,
+              border: '1px solid #7FE2D2',
+              background: '#0a2a2e',
+              color: '#a9d6cf',
+              font: '12px ui-monospace, monospace',
+            }}
+          >
+            <span>
+              ✎ Editing{' '}
+              <b style={{ color: '#7FE2D2' }}>
+                {legend.find((l) => l.id === editingId)?.label ?? editingId}
+              </b>{' '}
+              — drag its handles on the chart (other marks are locked).
+            </span>
+            <button
+              type="button"
+              onClick={() => setEditingId(null)}
+              style={{
+                marginLeft: 'auto',
+                padding: '3px 12px',
+                borderRadius: 6,
+                border: '1px solid #7FE2D2',
+                background: '#0B4E58',
+                color: '#d6f5ef',
+                font: '12px ui-monospace, monospace',
+                cursor: 'pointer',
+              }}
+            >
+              Done
+            </button>
+          </div>
+        )}
       </div>
     );
   },

@@ -397,9 +397,12 @@ export function Layers({ children }: LayersProps) {
     )
       return;
     const c = containerRef.current;
-    if (c.editAnnotations) {
-      // A click that reached the plot (no mark's DragArea claimed it) is an empty
-      // click — deselect. Marks stop their own clicks (and select) in DragArea.
+    // A click that reached the plot (no mark's DragArea claimed it) is an empty
+    // click. Deselect / exit edit when the consumer is tracking annotations — in
+    // global edit mode, or whenever a mark is currently active (a selected mark, or
+    // the single-edit target, which also reads as selected). Marks stop their own
+    // clicks in DragArea, so this only fires on true empty space.
+    if (c.editAnnotations || c.annotations.some((a) => a.selected)) {
       c.onSelectAnnotation?.(null);
       return;
     }
@@ -414,32 +417,6 @@ export function Layers({ children }: LayersProps) {
     );
     c.select(hit);
   }, []);
-
-  // Double-click a region (anywhere — even outside edit mode) to select it: the
-  // shortcut into a focused edit. Hit-tests the registry's region spans by x.
-  const handleDoubleClick = useCallback(
-    (e: ReactMouseEvent<HTMLDivElement>) => {
-      const c = containerRef.current;
-      const px = e.clientX - e.currentTarget.getBoundingClientRect().left;
-      for (const a of c.annotations) {
-        if (
-          a.kind !== 'region' ||
-          a.id === undefined ||
-          !a.selectable ||
-          a.xs.length < 2
-        ) {
-          continue;
-        }
-        const x1 = c.xScale(Math.min(a.xs[0]!, a.xs[1]!));
-        const x2 = c.xScale(Math.max(a.xs[0]!, a.xs[1]!));
-        if (px >= x1 && px <= x2) {
-          c.onSelectAnnotation?.(a.id);
-          return;
-        }
-      }
-    },
-    [],
-  );
 
   // Wheel-zoom — a native non-passive listener so `preventDefault` works (React's
   // onWheel is passive). Attached once; no-ops (and lets the page scroll) when
@@ -624,7 +601,6 @@ export function Layers({ children }: LayersProps) {
         onPointerCancel={handlePointerUp}
         onPointerLeave={handlePointerLeave}
         onClick={handleClick}
-        onDoubleClick={handleDoubleClick}
       >
         <Canvas width={plotWidth} height={row.height} draw={draw} />
         {/* Cross-row guides: faint dashed lines at the other rows' mark

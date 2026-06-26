@@ -158,6 +158,12 @@ export interface ChartContainerProps {
    */
   onHoverAnnotation?: (id: string | null) => void;
   /**
+   * Fired when a mark is **double-clicked** — the request to edit just that one
+   * (set its `editing` prop in response). Single click selects (inspect); double
+   * click edits. Works in any mode.
+   */
+  onEditAnnotation?: (id: string) => void;
+  /**
    * Snap mode (the toolbar's "Snap"). **Default `true`.** When on, created +
    * dragged marks snap to the nearest data sample (clean values) and to other
    * marks' guidelines (alignment); off = free placement.
@@ -203,6 +209,7 @@ export function ChartContainer({
   onCreate,
   onSelectAnnotation,
   onHoverAnnotation,
+  onEditAnnotation,
   snap = true,
   timeFormat,
   theme,
@@ -495,6 +502,7 @@ export function ChartContainer({
       onCreate,
       onSelectAnnotation,
       onHoverAnnotation,
+      onEditAnnotation,
       formatTime,
       registerTrackerSource,
       unregisterTrackerSource,
@@ -534,6 +542,7 @@ export function ChartContainer({
       onCreate,
       onSelectAnnotation,
       onHoverAnnotation,
+      onEditAnnotation,
       formatTime,
       registerTrackerSource,
       unregisterTrackerSource,

@@ -27,21 +27,29 @@ import { useSlotKey } from './use-slot-key.js';
  *
  * They are children of `<Layers>` (so they share the plot's coordinate space) and
  * paint an SVG overlay above the data canvas + below the cursor. Each label is a
- * **flag** (the cursor value flag's shape). **Luminosity encodes attention:** a
- * mark sits at `rest`, lifts to `hover`, and shows `selected`.
+ * **flag** (the cursor value flag's shape). **Brightness encodes depth** — a mark
+ * draws at one of three {@link ChartTheme.annotation | depth} levels (forward =
+ * brightest); `selectable={false}` pins it at the back as inert context.
  *
- * **Editing.** Give a mark an `onChange` *and* put the container in
- * {@link ContainerFrame.editAnnotations | edit mode} (`<ChartContainer
- * editAnnotations>`): the data cursor steps aside, hovering the mark highlights it
- * + reveals its handles, and dragging edits it (controlled — wire `onChange` back
- * to the position prop). A `<Region>` body drags to **move** (hand cursor); its
- * edges **resize** (`ew-resize`). Each interactive area **claims the gesture**
- * (pointer capture + `stopPropagation`), so grabbing a mark never starts a pan.
- * Outside edit mode the overlay is pointer-inert and `selected` shows static
- * handles. Marks register with the container ({@link ContainerFrame.annotations}),
- * which draws each mark's **guide** across the other rows and lets a drag
- * **snap** to other marks' x-positions. (Cross-region z-order on select is the
- * remaining edit-mode piece.)
+ * **Three interaction modes** (all controlled — the consumer holds the ids):
+ * - **Inspect-select** (any mode): a single click selects a mark
+ *   ({@link ContainerFrame.onSelectAnnotation}); `hovered`/`onHoverAnnotation` sync
+ *   hover both ways (e.g. with a legend); both come **forward** (selected = level 1,
+ *   hover = level 2).
+ * - **Single-annotation edit** (any mode): a double-click requests edit of just that
+ *   mark ({@link ContainerFrame.onEditAnnotation}); the consumer sets its `editing`
+ *   prop → it gains always-on handles and becomes draggable while the rest stay
+ *   static. An empty plot click exits (fires `onSelectAnnotation(null)`).
+ * - **Global edit** ({@link ContainerFrame.editAnnotations}): the data cursor steps
+ *   aside and *every* mark with an `onChange` is editable, handles on hover; armed
+ *   {@link ContainerFrame.creating | create tools} draw new marks.
+ *
+ * Editing is controlled: a `<Region>` body drags to **move**, its edges **resize**;
+ * a `<Marker>`/`<Baseline>` drags whole — each reports via `onChange`. An edit hit
+ * area **claims the gesture** (pointer capture + `stopPropagation`) so a drag never
+ * starts a pan. Marks register with the container
+ * ({@link ContainerFrame.annotations}), which draws each mark's **guide** across the
+ * other rows and lets a drag **snap** to other marks' x-positions.
  */
 
 /** Fallback when a theme defines no `annotation` token — a neutral turquoise. */
@@ -257,13 +265,14 @@ function Pill({
 
 /**
  * A transparent hit rect over a selectable mark. It **always** reports hover
- * (`onHover`) — that's how a mark brightens to level 2 even with edit off. Only
- * when `editing` does it become an edit surface: it then **claims the gesture**
- * (`stopPropagation` + guarded pointer capture) so a drag never starts a pan,
- * reports the pointer's **plot-pixel** position on press (`onDragStart`) and each
- * move (`onDrag`), and selects on a click that didn't drag. With edit off it stays
- * passive — press / move / click all bubble, so pan, the data cursor, and the
- * plot's double-click-to-select read straight through it.
+ * (`onHover`, → level 2 even with edit off), and a **single click that didn't drag
+ * selects** the mark (`onSelect`) in *any* mode — the inspect-select — while a
+ * **double-click edits** it (`onEdit` — the consumer flips it into single-annotation
+ * edit). Both clicks `stopPropagation` so they never reach the plot's data-select /
+ * deselect. Only when `editable` does it claim the drag gesture (`stopPropagation` +
+ * guarded pointer capture, so a drag never starts a pan) and report the pointer's
+ * **plot-pixel** position on press (`onDragStart`) / move (`onDrag`). With editing
+ * off, press / move bubble so a pan reads straight through.
  */
 function DragArea({
   x,
@@ -271,9 +280,10 @@ function DragArea({
   w,
   h,
   cursor,
-  editing,
+  editable,
   onHover,
   onSelect,
+  onEdit,
   onDragStart,
   onDrag,
 }: {
@@ -282,18 +292,21 @@ function DragArea({
   w: number;
   h: number;
   cursor: string;
-  /** Whether this rect is an active edit surface (claims gesture + drags +
-   *  selects). When false it only tracks hover and lets everything else bubble. */
-  editing: boolean;
+  /** Whether this rect is an active **edit** surface (claims the drag gesture).
+   *  Select (click) + edit (double-click) fire regardless; this gates dragging. */
+  editable: boolean;
   onHover: (hovering: boolean) => void;
-  /** A click (press + release without a real drag) selects the mark (edit only). */
+  /** A click (press + release without a real drag) selects the mark — any mode. */
   onSelect?: (() => void) | undefined;
+  /** A double-click requests single-annotation edit of this mark — any mode. */
+  onEdit?: (() => void) | undefined;
   onDragStart?: (px: number, py: number) => void;
   onDrag: (px: number, py: number) => void;
 }) {
   const dragging = useRef(false);
   // Tracks whether this press became a drag (moved past a few px) — a click that
-  // didn't drag selects instead of edits.
+  // didn't drag selects instead of edits. Tracked in *both* modes so a pan-drag
+  // started on the mark (edit off) doesn't fire a spurious select on release.
   const moved = useRef(false);
   const downAt = useRef<[number, number] | null>(null);
   const at = (e: ReactPointerEvent): [number, number] => {
@@ -315,13 +328,13 @@ function DragArea({
         if (!dragging.current) onHover(false);
       }}
       onPointerDown={(e) => {
-        if (!editing) return; // edit off: let it bubble (pan / cursor read through)
+        const p = at(e);
+        moved.current = false;
+        downAt.current = p; // tracked in both modes for the click/drag guard
+        if (!editable) return; // edit off: let it bubble (pan reads through)
         e.stopPropagation(); // claim the gesture — don't let the plot start a pan
         dragging.current = true;
-        moved.current = false;
-        const [px, py] = at(e);
-        downAt.current = [px, py];
-        onDragStart?.(px, py);
+        onDragStart?.(p[0], p[1]);
         try {
           e.currentTarget.setPointerCapture(e.pointerId);
         } catch {
@@ -329,13 +342,13 @@ function DragArea({
         }
       }}
       onPointerMove={(e) => {
-        if (!editing || !dragging.current) return;
-        e.stopPropagation();
         const [px, py] = at(e);
         const d = downAt.current;
         if (d !== null && Math.hypot(px - d[0], py - d[1]) > 3) {
           moved.current = true;
         }
+        if (!editable || !dragging.current) return;
+        e.stopPropagation();
         onDrag(px, py);
       }}
       onPointerUp={(e) => {
@@ -349,12 +362,15 @@ function DragArea({
         dragging.current = false;
         onHover(false);
       }}
-      // A click that didn't drag selects the mark; stop it so it never bubbles to
-      // the plot's deselect. Edit off: do nothing (selection is double-click).
+      // Click (no drag) selects; double-click edits. Stop both so a mark click
+      // never reaches the plot's data-select / deselect.
       onClick={(e) => {
-        if (!editing) return;
         e.stopPropagation();
         if (!moved.current) onSelect?.();
+      }}
+      onDoubleClick={(e) => {
+        e.stopPropagation();
+        onEdit?.();
       }}
     />
   );
@@ -380,6 +396,12 @@ export interface MarkerProps {
   /** Controlled hover (OR'd with pointer hover) — lets a legend row light the mark
    *  remotely. Pair with the container's `onHoverAnnotation` to sync both ways. */
   hovered?: boolean;
+  /** When `true`, this mark is in **single-annotation edit** (the double-click
+   *  target): handles stay out, it's draggable, and it reads as level 1 — while
+   *  other marks stay static. Independent of the container's global
+   *  `editAnnotations`. Pair with `onEditAnnotation` (the consumer holds an
+   *  `editingId` and sets `editing={editingId === id}`). */
+  editing?: boolean;
   /** Make the marker **editable** (in edit mode): dragging its line reports the
    *  new `at` (controlled — wire it back to `at`). The whole line moves. */
   onChange?: (at: number) => void;
@@ -393,13 +415,16 @@ export function Marker({
   selected = false,
   selectable = true,
   hovered,
+  editing = false,
   onChange,
 }: MarkerProps) {
   const { container, row, ann } = useAnnotationFrame('Marker');
   const selfKey = useSlotKey();
   const { hovering, reportHover } = useAnnotationHover(container, id, hovered);
-  const editing =
-    container.editAnnotations &&
+  // Draggable right now: global edit mode OR this mark's single-edit flag, and no
+  // tool armed, and it has an onChange to report to.
+  const editable =
+    (container.editAnnotations || editing) &&
     container.creating === null &&
     onChange !== undefined;
   const xs = useMemo(() => [at], [at]);
@@ -413,15 +438,22 @@ export function Marker({
     selected,
     selectable,
   );
+  // No select/edit while a create tool is armed — the chart is in draw mode then.
   const select =
-    id !== undefined ? () => container.onSelectAnnotation?.(id) : undefined;
+    id !== undefined && container.creating === null
+      ? () => container.onSelectAnnotation?.(id)
+      : undefined;
+  const edit =
+    id !== undefined && container.creating === null
+      ? () => container.onEditAnnotation?.(id)
+      : undefined;
   const x = container.xScale(at);
   const h = row.height;
   const opacity = rampAt(
     ann.depth,
-    lineLevel(selectable, editing, hovering, selected),
+    lineLevel(selectable, editable, hovering, selected),
   );
-  const showHandle = editing && hovering;
+  const showHandle = editable && (editing || hovering);
   const text = label ?? container.formatTime(at);
   return (
     <>
@@ -452,9 +484,10 @@ export function Marker({
             w={2 * HIT_PAD}
             h={h}
             cursor={editing ? 'ew-resize' : 'inherit'}
-            editing={editing}
+            editable={editable}
             onHover={reportHover}
             onSelect={select}
+            onEdit={edit}
             onDrag={(px) =>
               onChange?.(
                 snapToGuides(container, selfKey, px) ??
@@ -496,6 +529,12 @@ export interface BaselineProps {
   /** Controlled hover (OR'd with pointer hover) — lets a legend row light the mark
    *  remotely. Pair with the container's `onHoverAnnotation` to sync both ways. */
   hovered?: boolean;
+  /** When `true`, this mark is in **single-annotation edit** (the double-click
+   *  target): handles stay out, it's draggable, and it reads as level 1 — while
+   *  other marks stay static. Independent of the container's global
+   *  `editAnnotations`. Pair with `onEditAnnotation` (the consumer holds an
+   *  `editingId` and sets `editing={editingId === id}`). */
+  editing?: boolean;
   /** Make the baseline **editable** (in edit mode): dragging it vertically reports
    *  the new `value` (controlled — wire it back to `value`). */
   onChange?: (value: number) => void;
@@ -511,13 +550,16 @@ export function Baseline({
   selected = false,
   selectable = true,
   hovered,
+  editing = false,
   onChange,
 }: BaselineProps) {
   const { container, row, ann } = useAnnotationFrame('Baseline');
   const selfKey = useSlotKey();
   const { hovering, reportHover } = useAnnotationHover(container, id, hovered);
-  const editing =
-    container.editAnnotations &&
+  // Draggable right now: global edit mode OR this mark's single-edit flag, and no
+  // tool armed, and it has an onChange to report to.
+  const editable =
+    (container.editAnnotations || editing) &&
     container.creating === null &&
     onChange !== undefined;
   // A horizontal line casts no vertical guide — register with no xs (still
@@ -534,8 +576,15 @@ export function Baseline({
     selected,
     selectable,
   );
+  // No select/edit while a create tool is armed — the chart is in draw mode then.
   const select =
-    id !== undefined ? () => container.onSelectAnnotation?.(id) : undefined;
+    id !== undefined && container.creating === null
+      ? () => container.onSelectAnnotation?.(id)
+      : undefined;
+  const edit =
+    id !== undefined && container.creating === null
+      ? () => container.onEditAnnotation?.(id)
+      : undefined;
   const axisId = axis ?? row.defaultAxisId;
   const yScale = row.yScales.get(axisId);
   // The axis may not have resolved yet (a layer mounts before its <YAxis>); skip
@@ -545,9 +594,9 @@ export function Baseline({
   const w = container.plotWidth;
   const opacity = rampAt(
     ann.depth,
-    lineLevel(selectable, editing, hovering, selected),
+    lineLevel(selectable, editable, hovering, selected),
   );
-  const showHandle = editing && hovering;
+  const showHandle = editable && (editing || hovering);
   const fmt = row.formats.get(axisId);
   const text = label ?? (fmt ? fmt(value) : String(value));
   // Handle pill near the right end (clears the left-anchored label).
@@ -581,9 +630,10 @@ export function Baseline({
             w={w}
             h={2 * HIT_PAD}
             cursor={editing ? 'ns-resize' : 'inherit'}
-            editing={editing}
+            editable={editable}
             onHover={reportHover}
             onSelect={select}
+            onEdit={edit}
             onDrag={(_px, py) => onChange?.(yScale.invert(py))}
           />
         )}
@@ -620,6 +670,12 @@ export interface RegionProps {
   /** Controlled hover (OR'd with pointer hover) — lets a legend row light the mark
    *  remotely. Pair with the container's `onHoverAnnotation` to sync both ways. */
   hovered?: boolean;
+  /** When `true`, this mark is in **single-annotation edit** (the double-click
+   *  target): handles stay out, it's draggable, and it reads as level 1 — while
+   *  other marks stay static. Independent of the container's global
+   *  `editAnnotations`. Pair with `onEditAnnotation` (the consumer holds an
+   *  `editingId` and sets `editing={editingId === id}`). */
+  editing?: boolean;
   /** Make the region **editable** (in edit mode): drag the body to move it (both
    *  edges shift), drag an edge to resize. Reports the new `{ from, to }`. */
   onChange?: (next: { from: number; to: number }) => void;
@@ -635,13 +691,16 @@ export function Region({
   selected = false,
   selectable = true,
   hovered,
+  editing = false,
   onChange,
 }: RegionProps) {
   const { container, row, ann } = useAnnotationFrame('Region');
   const selfKey = useSlotKey();
   const { hovering, reportHover } = useAnnotationHover(container, id, hovered);
-  const editing =
-    container.editAnnotations &&
+  // Draggable right now: global edit mode OR this mark's single-edit flag, and no
+  // tool armed, and it has an onChange to report to.
+  const editable =
+    (container.editAnnotations || editing) &&
     container.creating === null &&
     onChange !== undefined;
   const xs = useMemo(() => [from, to], [from, to]);
@@ -655,8 +714,15 @@ export function Region({
     selected,
     selectable,
   );
+  // No select/edit while a create tool is armed — the chart is in draw mode then.
   const select =
-    id !== undefined ? () => container.onSelectAnnotation?.(id) : undefined;
+    id !== undefined && container.creating === null
+      ? () => container.onSelectAnnotation?.(id)
+      : undefined;
+  const edit =
+    id !== undefined && container.creating === null
+      ? () => container.onEditAnnotation?.(id)
+      : undefined;
   const xa = container.xScale(from);
   const xb = container.xScale(to);
   const left = Math.min(xa, xb);
@@ -666,12 +732,12 @@ export function Region({
   // back (so the edges read as the grabbable thing). Both jump to level 1 selected.
   const edgeOpacity = rampAt(
     ann.depth,
-    lineLevel(selectable, editing, hovering, selected),
+    lineLevel(selectable, editable, hovering, selected),
   );
   const fillOpacity =
     ann.fillOpacity *
-    rampAt(FILL_MULT, bodyLevel(selectable, editing, hovering, selected));
-  const showHandles = editing && hovering;
+    rampAt(FILL_MULT, bodyLevel(selectable, editable, hovering, selected));
+  const showHandles = editable && (editing || hovering);
   const text =
     label ?? `${container.formatTime(from)}–${container.formatTime(to)}`;
   // Body move-drag: capture the start position + pointer on press, then move by
@@ -736,9 +802,10 @@ export function Region({
               w={spanW}
               h={h}
               cursor={editing ? 'grab' : 'inherit'}
-              editing={editing}
+              editable={editable}
               onHover={reportHover}
               onSelect={select}
+              onEdit={edit}
               onDragStart={(px) => {
                 dragRef.current = { from, to, startPx: px };
               }}
@@ -774,7 +841,7 @@ export function Region({
                 onChange?.({ from: nf, to: nt });
               }}
             />
-            {editing && (
+            {editable && (
               <>
                 {/* Edges (resize) — on top, so a grab near an edge resizes it. */}
                 <DragArea
@@ -783,9 +850,10 @@ export function Region({
                   w={EDGE_GRAB}
                   h={h}
                   cursor="ew-resize"
-                  editing={editing}
+                  editable={editable}
                   onHover={reportHover}
                   onSelect={select}
+                  onEdit={edit}
                   onDrag={(px) =>
                     onChange?.({
                       from:
@@ -801,9 +869,10 @@ export function Region({
                   w={EDGE_GRAB}
                   h={h}
                   cursor="ew-resize"
-                  editing={editing}
+                  editable={editable}
                   onHover={reportHover}
                   onSelect={select}
+                  onEdit={edit}
                   onDrag={(px) =>
                     onChange?.({
                       from,
