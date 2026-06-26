@@ -290,7 +290,8 @@ export interface MarkerProps {
   /** Stable consumer id — a click reports it via the container's
    *  `onSelectAnnotation`, so the consumer can track which mark is selected. */
   id?: string;
-  /** Controlled selection — brightens; shows the handle outside edit mode. */
+  /** Controlled selection — brightens (luminosity = attention). Handles are an
+   *  edit-mode hover affordance, not a selection cue. */
   selected?: boolean;
   /** Make the marker **editable** (in edit mode): dragging its line reports the
    *  new `at` (controlled — wire it back to `at`). The whole line moves. */
@@ -331,7 +332,7 @@ export function Marker({
     : selected
       ? 'selected'
       : 'rest';
-  const showHandle = editing ? hovering : selected;
+  const showHandle = editing && hovering;
   const text = label ?? container.formatTime(at);
   return (
     <>
@@ -396,7 +397,8 @@ export interface BaselineProps {
   label?: string;
   /** Stable consumer id — a click reports it via `onSelectAnnotation`. */
   id?: string;
-  /** Controlled selection — brightens; shows the handle outside edit mode. */
+  /** Controlled selection — brightens (luminosity = attention). Handles are an
+   *  edit-mode hover affordance, not a selection cue. */
   selected?: boolean;
   /** Make the baseline **editable** (in edit mode): dragging it vertically reports
    *  the new `value` (controlled — wire it back to `value`). */
@@ -447,7 +449,7 @@ export function Baseline({
     : selected
       ? 'selected'
       : 'rest';
-  const showHandle = editing ? hovering : selected;
+  const showHandle = editing && hovering;
   const fmt = row.formats.get(axisId);
   const text = label ?? (fmt ? fmt(value) : String(value));
   // Handle pill near the right end (clears the left-anchored label).
@@ -508,7 +510,8 @@ export interface RegionProps {
   /** Stable consumer id — a click (or double-click outside edit) reports it via
    *  `onSelectAnnotation`. */
   id?: string;
-  /** Controlled selection — brightens; shows edge handles outside edit mode. */
+  /** Controlled selection — brightens (luminosity = attention). Edge handles are
+   *  an edit-mode hover affordance, not a selection cue. */
   selected?: boolean;
   /** Make the region **editable** (in edit mode): drag the body to move it (both
    *  edges shift), drag an edge to resize. Reports the new `{ from, to }`. */
@@ -554,7 +557,7 @@ export function Region({
     : selected
       ? 'selected'
       : 'rest';
-  const showHandles = editing ? hovering : selected;
+  const showHandles = editing && hovering;
   // The fill stays subtle so the data reads through; it lifts with attention.
   const fillOpacity =
     ann.fillOpacity *

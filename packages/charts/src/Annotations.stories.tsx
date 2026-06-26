@@ -82,10 +82,11 @@ type Story = StoryObj;
 
 /**
  * **In context** — the data stays **foam** (white), the marks you place are
- * **turquoise**: a selected `<Region>` (5:15–5:35, with edge handles), a
+ * **turquoise**: a selected `<Region>` (5:15–5:35, the brightest of the three), a
  * `<Baseline>` at 225 W, and a `<Marker>` at 5:28. They render above the data,
- * inert to the pointer (pan/zoom keeps the surface). Move the pointer over the
- * region / marker to see it brighten — luminosity = attention.
+ * inert to the pointer (pan/zoom keeps the surface). Selection reads purely as
+ * **luminosity** (= attention); hover and grab-handles are edit-mode affordances
+ * (see **Editable** / **Select**).
  */
 export const InContext: Story = {
   render: () => (
@@ -134,9 +135,9 @@ export const ValueAxis: Story = {
 
 /**
  * **Selection state** — toggle `selected` to flip a region between `rest` (calm,
- * the data reads through) and `selected` (brighter, edge handles out). Live
- * select + drag-to-edit is a later phase (an explicit edit mode); here it's a
- * controlled input.
+ * the data reads through) and `selected` (brighter). Selection is pure luminosity;
+ * grab-handles belong to edit mode (see **Editable** / **Select**). Here it's a
+ * controlled input — live click-to-select + drag-to-edit are the **Select** story.
  */
 export const Selectable: Story = {
   args: { selected: true },
