@@ -48,9 +48,7 @@ import { useSlotKey } from './use-slot-key.js';
 const DEFAULT_ANNOTATION: NonNullable<ChartTheme['annotation']> = {
   color: '#14b8a6',
   fillOpacity: 0.1,
-  rest: 0.6,
-  hover: 0.82,
-  selected: 1,
+  depth: [1, 0.7, 0.4],
 };
 
 /** Handle-pill geometry (px) — long axis vs short axis. */
@@ -63,7 +61,52 @@ const EDGE_GRAB = 8;
 /** Flag-chip top offset (px from the row top) — shared so labels align. */
 const FLAG_TOP = 2;
 
-type AnnotationState = 'rest' | 'hover' | 'selected';
+/** Depth level (1 = forward/brightest … 3 = back/dimmest) → an index into the
+ *  theme's `depth` ramp. Brighter reads as more forward, i.e. more attention.
+ *
+ *  A mark's LINES (marker/baseline line, region edges) and a region's BODY fill
+ *  can sit at different levels: in edit mode the lines come fully forward (level
+ *  1) while a region body stays one step back (level 2), so the edges read as the
+ *  grabbable thing. A non-`selectable` mark is inert background context — always
+ *  level 3, ignoring hover + selection. */
+function lineLevel(
+  selectable: boolean,
+  editing: boolean,
+  hovering: boolean,
+  selected: boolean,
+): 1 | 2 | 3 {
+  if (!selectable) return 3;
+  if (selected) return 1;
+  if (editing) return 1; // edit mode brings the structural lines forward
+  if (hovering) return 2;
+  return 3;
+}
+
+/** Region body-fill level — like {@link lineLevel} but one step back in edit mode. */
+function bodyLevel(
+  selectable: boolean,
+  editing: boolean,
+  hovering: boolean,
+  selected: boolean,
+): 1 | 2 | 3 {
+  if (!selectable) return 3;
+  if (selected) return 1;
+  if (editing || hovering) return 2;
+  return 3;
+}
+
+/** Region body-fill opacity multiplier by depth level (the fill is subtle so the
+ *  data reads through; it lifts as the region comes forward). */
+const FILL_MULT = [1.6, 1.3, 1] as const;
+
+/** Pick the value for a depth level (1–3) from a three-stop ramp. Indexes by a
+ *  literal so the lookup is total (no out-of-range `undefined`). */
+function rampAt(
+  ramp: readonly [number, number, number],
+  level: 1 | 2 | 3,
+): number {
+  return level === 1 ? ramp[0] : level === 2 ? ramp[1] : ramp[2];
+}
 
 /** The full-plot overlay each annotation paints into — above the data canvas,
  *  below the cursor. Inert to the pointer by default; an edit-mode hit area opts
@@ -101,12 +144,21 @@ function useRegisterAnnotation(
   kind: AnnotationSpec['kind'],
   xs: readonly number[],
   selected: boolean,
+  selectable: boolean,
 ) {
   const { registerAnnotation, unregisterAnnotation } = container;
   useEffect(() => () => unregisterAnnotation(key), [unregisterAnnotation, key]);
   useEffect(() => {
-    registerAnnotation(key, { key, id, kind, rowKey, xs, selected });
-  }, [registerAnnotation, key, id, kind, rowKey, xs, selected]);
+    registerAnnotation(key, {
+      key,
+      id,
+      kind,
+      rowKey,
+      xs,
+      selected,
+      selectable,
+    });
+  }, [registerAnnotation, key, id, kind, rowKey, xs, selected, selectable]);
 }
 
 /** Pixel radius within which a drag snaps to a guideline (another mark's x). */
@@ -185,11 +237,14 @@ function Pill({
 }
 
 /**
- * A transparent hit rect that drives an edit interaction: it reports the pointer's
- * **plot-pixel** position on press (`onDragStart`) and each move (`onDrag`),
- * **claims the gesture** (`stopPropagation` + guarded pointer capture) so it never
- * starts a pan, and toggles the annotation's hover (`onHover`). Rendered only in
- * edit mode; the rest of the overlay stays pointer-inert.
+ * A transparent hit rect over a selectable mark. It **always** reports hover
+ * (`onHover`) — that's how a mark brightens to level 2 even with edit off. Only
+ * when `editing` does it become an edit surface: it then **claims the gesture**
+ * (`stopPropagation` + guarded pointer capture) so a drag never starts a pan,
+ * reports the pointer's **plot-pixel** position on press (`onDragStart`) and each
+ * move (`onDrag`), and selects on a click that didn't drag. With edit off it stays
+ * passive — press / move / click all bubble, so pan, the data cursor, and the
+ * plot's double-click-to-select read straight through it.
  */
 function DragArea({
   x,
@@ -197,6 +252,7 @@ function DragArea({
   w,
   h,
   cursor,
+  editing,
   onHover,
   onSelect,
   onDragStart,
@@ -207,8 +263,11 @@ function DragArea({
   w: number;
   h: number;
   cursor: string;
+  /** Whether this rect is an active edit surface (claims gesture + drags +
+   *  selects). When false it only tracks hover and lets everything else bubble. */
+  editing: boolean;
   onHover: (hovering: boolean) => void;
-  /** A click (press + release without a real drag) selects the mark. */
+  /** A click (press + release without a real drag) selects the mark (edit only). */
   onSelect?: (() => void) | undefined;
   onDragStart?: (px: number, py: number) => void;
   onDrag: (px: number, py: number) => void;
@@ -237,6 +296,7 @@ function DragArea({
         if (!dragging.current) onHover(false);
       }}
       onPointerDown={(e) => {
+        if (!editing) return; // edit off: let it bubble (pan / cursor read through)
         e.stopPropagation(); // claim the gesture — don't let the plot start a pan
         dragging.current = true;
         moved.current = false;
@@ -250,7 +310,7 @@ function DragArea({
         }
       }}
       onPointerMove={(e) => {
-        if (!dragging.current) return;
+        if (!editing || !dragging.current) return;
         e.stopPropagation();
         const [px, py] = at(e);
         const d = downAt.current;
@@ -270,9 +330,10 @@ function DragArea({
         dragging.current = false;
         onHover(false);
       }}
-      // A click that didn't drag selects the mark; stop it either way so a mark
-      // click never bubbles to the plot's deselect.
+      // A click that didn't drag selects the mark; stop it so it never bubbles to
+      // the plot's deselect. Edit off: do nothing (selection is double-click).
       onClick={(e) => {
+        if (!editing) return;
         e.stopPropagation();
         if (!moved.current) onSelect?.();
       }}
@@ -290,9 +351,13 @@ export interface MarkerProps {
   /** Stable consumer id — a click reports it via the container's
    *  `onSelectAnnotation`, so the consumer can track which mark is selected. */
   id?: string;
-  /** Controlled selection — brightens (luminosity = attention). Handles are an
-   *  edit-mode hover affordance, not a selection cue. */
+  /** Controlled selection — brightens to the front (level 1). Handles are an
+   *  edit-mode hover affordance, not a selection cue. Ignored if not `selectable`. */
   selected?: boolean;
+  /** Whether the mark responds to hover + selection (default `true`). When
+   *  `false` it's inert background context — drawn at the back (level 3) always,
+   *  no hover, no select, no edit. */
+  selectable?: boolean;
   /** Make the marker **editable** (in edit mode): dragging its line reports the
    *  new `at` (controlled — wire it back to `at`). The whole line moves. */
   onChange?: (at: number) => void;
@@ -304,6 +369,7 @@ export function Marker({
   label,
   id,
   selected = false,
+  selectable = true,
   onChange,
 }: MarkerProps) {
   const { container, row, ann } = useAnnotationFrame('Marker');
@@ -322,16 +388,16 @@ export function Marker({
     'marker',
     xs,
     selected,
+    selectable,
   );
   const select =
     id !== undefined ? () => container.onSelectAnnotation?.(id) : undefined;
   const x = container.xScale(at);
   const h = row.height;
-  const state: AnnotationState = hovering
-    ? 'hover'
-    : selected
-      ? 'selected'
-      : 'rest';
+  const opacity = rampAt(
+    ann.depth,
+    lineLevel(selectable, editing, hovering, selected),
+  );
   const showHandle = editing && hovering;
   const text = label ?? container.formatTime(at);
   return (
@@ -344,7 +410,7 @@ export function Marker({
           y2={h}
           stroke={ann.color}
           strokeWidth={1}
-          opacity={ann[state]}
+          opacity={opacity}
           shapeRendering="crispEdges"
         />
         {showHandle && (
@@ -356,13 +422,14 @@ export function Marker({
             color={ann.color}
           />
         )}
-        {editing && (
+        {selectable && (
           <DragArea
             x={x - HIT_PAD}
             y={0}
             w={2 * HIT_PAD}
             h={h}
-            cursor="ew-resize"
+            cursor={editing ? 'ew-resize' : 'inherit'}
+            editing={editing}
             onHover={setHovering}
             onSelect={select}
             onDrag={(px) =>
@@ -397,9 +464,12 @@ export interface BaselineProps {
   label?: string;
   /** Stable consumer id — a click reports it via `onSelectAnnotation`. */
   id?: string;
-  /** Controlled selection — brightens (luminosity = attention). Handles are an
-   *  edit-mode hover affordance, not a selection cue. */
+  /** Controlled selection — brightens to the front (level 1). Handles are an
+   *  edit-mode hover affordance, not a selection cue. Ignored if not `selectable`. */
   selected?: boolean;
+  /** Whether the baseline responds to hover + selection (default `true`). When
+   *  `false` it's inert background context — drawn at the back (level 3) always. */
+  selectable?: boolean;
   /** Make the baseline **editable** (in edit mode): dragging it vertically reports
    *  the new `value` (controlled — wire it back to `value`). */
   onChange?: (value: number) => void;
@@ -413,6 +483,7 @@ export function Baseline({
   label,
   id,
   selected = false,
+  selectable = true,
   onChange,
 }: BaselineProps) {
   const { container, row, ann } = useAnnotationFrame('Baseline');
@@ -434,6 +505,7 @@ export function Baseline({
     'baseline',
     xs,
     selected,
+    selectable,
   );
   const select =
     id !== undefined ? () => container.onSelectAnnotation?.(id) : undefined;
@@ -444,11 +516,10 @@ export function Baseline({
   if (yScale === undefined) return null;
   const y = yScale(value);
   const w = container.plotWidth;
-  const state: AnnotationState = hovering
-    ? 'hover'
-    : selected
-      ? 'selected'
-      : 'rest';
+  const opacity = rampAt(
+    ann.depth,
+    lineLevel(selectable, editing, hovering, selected),
+  );
   const showHandle = editing && hovering;
   const fmt = row.formats.get(axisId);
   const text = label ?? (fmt ? fmt(value) : String(value));
@@ -464,7 +535,7 @@ export function Baseline({
           y2={y}
           stroke={ann.color}
           strokeWidth={1}
-          opacity={ann[state]}
+          opacity={opacity}
           shapeRendering="crispEdges"
         />
         {showHandle && (
@@ -476,13 +547,14 @@ export function Baseline({
             color={ann.color}
           />
         )}
-        {editing && (
+        {selectable && (
           <DragArea
             x={0}
             y={y - HIT_PAD}
             w={w}
             h={2 * HIT_PAD}
-            cursor="ns-resize"
+            cursor={editing ? 'ns-resize' : 'inherit'}
+            editing={editing}
             onHover={setHovering}
             onSelect={select}
             onDrag={(_px, py) => onChange?.(yScale.invert(py))}
@@ -510,9 +582,14 @@ export interface RegionProps {
   /** Stable consumer id — a click (or double-click outside edit) reports it via
    *  `onSelectAnnotation`. */
   id?: string;
-  /** Controlled selection — brightens (luminosity = attention). Edge handles are
-   *  an edit-mode hover affordance, not a selection cue. */
+  /** Controlled selection — brightens to the front (level 1; the body too). Edge
+   *  handles are an edit-mode hover affordance, not a selection cue. Ignored if not
+   *  `selectable`. */
   selected?: boolean;
+  /** Whether the region responds to hover + selection (default `true`). When
+   *  `false` it's inert background context — drawn at the back (level 3) always,
+   *  and the double-click hit-test skips it. */
+  selectable?: boolean;
   /** Make the region **editable** (in edit mode): drag the body to move it (both
    *  edges shift), drag an edge to resize. Reports the new `{ from, to }`. */
   onChange?: (next: { from: number; to: number }) => void;
@@ -526,6 +603,7 @@ export function Region({
   label,
   id,
   selected = false,
+  selectable = true,
   onChange,
 }: RegionProps) {
   const { container, row, ann } = useAnnotationFrame('Region');
@@ -544,6 +622,7 @@ export function Region({
     'region',
     xs,
     selected,
+    selectable,
   );
   const select =
     id !== undefined ? () => container.onSelectAnnotation?.(id) : undefined;
@@ -552,16 +631,16 @@ export function Region({
   const left = Math.min(xa, xb);
   const spanW = Math.abs(xb - xa);
   const h = row.height;
-  const state: AnnotationState = hovering
-    ? 'hover'
-    : selected
-      ? 'selected'
-      : 'rest';
-  const showHandles = editing && hovering;
-  // The fill stays subtle so the data reads through; it lifts with attention.
+  // The edges (lines) come fully forward in edit mode; the body fill sits one step
+  // back (so the edges read as the grabbable thing). Both jump to level 1 selected.
+  const edgeOpacity = rampAt(
+    ann.depth,
+    lineLevel(selectable, editing, hovering, selected),
+  );
   const fillOpacity =
     ann.fillOpacity *
-    (state === 'selected' ? 1.6 : state === 'hover' ? 1.3 : 1);
+    rampAt(FILL_MULT, bodyLevel(selectable, editing, hovering, selected));
+  const showHandles = editing && hovering;
   const text =
     label ?? `${container.formatTime(from)}–${container.formatTime(to)}`;
   // Body move-drag: capture the start position + pointer on press, then move by
@@ -580,7 +659,7 @@ export function Region({
       y2={h}
       stroke={ann.color}
       strokeWidth={1}
-      opacity={ann[state]}
+      opacity={edgeOpacity}
       shapeRendering="crispEdges"
     />
   );
@@ -615,15 +694,18 @@ export function Region({
             />
           </>
         )}
-        {editing && (
+        {selectable && (
           <>
-            {/* Body (move both edges) — rendered first, under the edge areas. */}
+            {/* Body — present for any selectable region: tracks hover (level 2)
+                even with edit off; in edit mode it also move-drags (both edges
+                shift) + click-selects. Rendered first, under the edge areas. */}
             <DragArea
               x={left}
               y={0}
               w={spanW}
               h={h}
-              cursor="grab"
+              cursor={editing ? 'grab' : 'inherit'}
+              editing={editing}
               onHover={setHovering}
               onSelect={select}
               onDragStart={(px) => {
@@ -661,41 +743,47 @@ export function Region({
                 onChange?.({ from: nf, to: nt });
               }}
             />
-            {/* Edges (resize) — on top, so a grab near an edge resizes it. */}
-            <DragArea
-              x={xa - EDGE_GRAB / 2}
-              y={0}
-              w={EDGE_GRAB}
-              h={h}
-              cursor="ew-resize"
-              onHover={setHovering}
-              onSelect={select}
-              onDrag={(px) =>
-                onChange?.({
-                  from:
-                    snapToGuides(container, selfKey, px) ??
-                    +container.xScale.invert(px),
-                  to,
-                })
-              }
-            />
-            <DragArea
-              x={xb - EDGE_GRAB / 2}
-              y={0}
-              w={EDGE_GRAB}
-              h={h}
-              cursor="ew-resize"
-              onHover={setHovering}
-              onSelect={select}
-              onDrag={(px) =>
-                onChange?.({
-                  from,
-                  to:
-                    snapToGuides(container, selfKey, px) ??
-                    +container.xScale.invert(px),
-                })
-              }
-            />
+            {editing && (
+              <>
+                {/* Edges (resize) — on top, so a grab near an edge resizes it. */}
+                <DragArea
+                  x={xa - EDGE_GRAB / 2}
+                  y={0}
+                  w={EDGE_GRAB}
+                  h={h}
+                  cursor="ew-resize"
+                  editing={editing}
+                  onHover={setHovering}
+                  onSelect={select}
+                  onDrag={(px) =>
+                    onChange?.({
+                      from:
+                        snapToGuides(container, selfKey, px) ??
+                        +container.xScale.invert(px),
+                      to,
+                    })
+                  }
+                />
+                <DragArea
+                  x={xb - EDGE_GRAB / 2}
+                  y={0}
+                  w={EDGE_GRAB}
+                  h={h}
+                  cursor="ew-resize"
+                  editing={editing}
+                  onHover={setHovering}
+                  onSelect={select}
+                  onDrag={(px) =>
+                    onChange?.({
+                      from,
+                      to:
+                        snapToGuides(container, selfKey, px) ??
+                        +container.xScale.invert(px),
+                    })
+                  }
+                />
+              </>
+            )}
           </>
         )}
       </svg>

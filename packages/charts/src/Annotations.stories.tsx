@@ -82,11 +82,11 @@ type Story = StoryObj;
 
 /**
  * **In context** — the data stays **foam** (white), the marks you place are
- * **turquoise**: a selected `<Region>` (5:15–5:35, the brightest of the three), a
- * `<Baseline>` at 225 W, and a `<Marker>` at 5:28. They render above the data,
- * inert to the pointer (pan/zoom keeps the surface). Selection reads purely as
- * **luminosity** (= attention); hover and grab-handles are edit-mode affordances
- * (see **Editable** / **Select**).
+ * **turquoise**: a selected `<Region>` (5:15–5:35, forward at level 1), a
+ * `<Baseline>` at 225 W, and a `<Marker>` at 5:28, both resting at the back (level
+ * 3). **Brightness is depth** — hover a mark to bring it mid (level 2). They paint
+ * above the data but let pan/zoom read through. Grab-handles are an edit-mode
+ * affordance (see **Editable** / **Select**).
  */
 export const InContext: Story = {
   render: () => (
@@ -210,17 +210,20 @@ export const Editable: Story = {
 };
 
 /**
- * **Live selection.** In edit mode, click a mark to select it — it reports its
- * `id` through `onSelectAnnotation`, brightens, and keeps its handles out (where
- * `Selectable` drove that from a control, this is the real click). Click empty
- * canvas to deselect. **Double-click** a region's span (even outside edit mode)
- * selects it — the shortcut into region editing. Markers and baselines always win
- * over a region they sit on.
+ * **Live selection + depth.** Brightness is depth: a resting mark sits at the
+ * **back** (level 3), **hover** brings it mid (level 2), **selected** brings it
+ * **forward** (level 1). Edit mode raises everything — the lines come fully forward
+ * while a region body stays one step back, so its edges read as the grabbable
+ * thing. Click a mark (edit mode) to select it (reports its `id` via
+ * `onSelectAnnotation`); click empty canvas to deselect; **double-click** a
+ * region's span — even with edit off — selects it. The **floor** baseline is
+ * `selectable={false}`: inert context, pinned at the back, no hover or selection.
+ * Toggle edit to compare the two ramps.
  */
 export const Select: Story = {
   render: () => {
     const [edit, setEdit] = useState(true);
-    const [selectedId, setSelectedId] = useState<string | null>('region');
+    const [selectedId, setSelectedId] = useState<string | null>(null);
     const [markerAt, setMarkerAt] = useState(BASE + 28 * STEP);
     const [region, setRegion] = useState({
       from: BASE + 15 * STEP,
@@ -256,6 +259,8 @@ export const Select: Story = {
             <YAxis id="power" label="W" min={0} max={300} />
             <Layers>
               <LineChart series={power()} column="watts" as="foam" />
+              {/* Inert context — pinned at the back (level 3), no hover/select. */}
+              <Baseline value={100} label="floor" selectable={false} />
               <Region
                 id="region"
                 from={region.from}

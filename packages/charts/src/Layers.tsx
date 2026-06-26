@@ -422,7 +422,12 @@ export function Layers({ children }: LayersProps) {
       const c = containerRef.current;
       const px = e.clientX - e.currentTarget.getBoundingClientRect().left;
       for (const a of c.annotations) {
-        if (a.kind !== 'region' || a.id === undefined || a.xs.length < 2) {
+        if (
+          a.kind !== 'region' ||
+          a.id === undefined ||
+          !a.selectable ||
+          a.xs.length < 2
+        ) {
           continue;
         }
         const x1 = c.xScale(Math.min(a.xs[0]!, a.xs[1]!));

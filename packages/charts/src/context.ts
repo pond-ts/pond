@@ -204,8 +204,11 @@ export interface AnnotationSpec {
    * casts no vertical guide.
    */
   readonly xs: readonly number[];
-  /** Whether it's selected — for cross-region z-order (selected → front). */
+  /** Whether it's currently selected (controlled by the consumer). */
   readonly selected: boolean;
+  /** Whether it accepts hover + selection. A non-selectable region is skipped by
+   *  the double-click hit-test (it's inert background context). */
+  readonly selectable: boolean;
 }
 
 /**

@@ -117,16 +117,17 @@ export interface ChartTheme {
    * the data's `line`/`area`/… so a mark you place never reads as data (the
    * "data stays foam, marks are turquoise" rule). `color` is the shared register
    * hue (lines, region edges + fill, handles, label text); the region fill draws
-   * at `fillOpacity`. **Luminosity encodes attention:** a mark draws at `rest`
-   * opacity, brightening to `hover`, then `selected` (the editable state, which
-   * also shows drag handles). Falls back to a built-in turquoise if unset.
+   * at `fillOpacity`. **Luminosity encodes depth** — brighter reads as forward,
+   * dimmer as further back. `depth` is the three-level ramp: `[0]` = level 1
+   * (forward / brightest — a selected mark, or an edit-mode line), `[1]` = level 2
+   * (mid — a hovered mark, or an edit-mode region body), `[2]` = level 3 (back —
+   * the resting, backgrounded state). Cross-row guides draw fainter still (a
+   * notional level 4, set in `Layers`). Falls back to a built-in turquoise.
    */
   readonly annotation?: {
     readonly color: string;
     readonly fillOpacity: number;
-    readonly rest: number;
-    readonly hover: number;
-    readonly selected: number;
+    readonly depth: readonly [number, number, number];
   };
 }
 
@@ -327,9 +328,7 @@ export const defaultTheme: ChartTheme = {
   annotation: {
     color: '#0d9488',
     fillOpacity: 0.1,
-    rest: 0.6,
-    hover: 0.82,
-    selected: 1,
+    depth: [1, 0.7, 0.4],
   },
 };
 
@@ -458,8 +457,6 @@ export const estelaTheme: ChartTheme = {
   annotation: {
     color: '#7FE2D2', // --es-reef
     fillOpacity: 0.1,
-    rest: 0.55,
-    hover: 0.8,
-    selected: 1,
+    depth: [1, 0.7, 0.4],
   },
 };
