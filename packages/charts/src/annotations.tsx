@@ -38,8 +38,10 @@ import { useSlotKey } from './use-slot-key.js';
  * edges **resize** (`ew-resize`). Each interactive area **claims the gesture**
  * (pointer capture + `stopPropagation`), so grabbing a mark never starts a pan.
  * Outside edit mode the overlay is pointer-inert and `selected` shows static
- * handles. (Multi-row guide lines, cross-region z-order, and snap-to-guidelines
- * are the next step — they need the container to know every annotation.)
+ * handles. Marks register with the container ({@link ContainerFrame.annotations}),
+ * which draws each mark's **guide** across the other rows and lets a drag
+ * **snap** to other marks' x-positions. (Cross-region z-order on select is the
+ * remaining edit-mode piece.)
  */
 
 /** Fallback when a theme defines no `annotation` token — a neutral turquoise. */
@@ -88,22 +90,52 @@ function useAnnotationFrame(name: string) {
 }
 
 /** Register this annotation with the container (so it can draw the mark's guide on
- *  other rows, order regions, and serve snap targets), keyed by a stable
+ *  other rows, order regions, and serve snap targets), keyed by the caller's stable
  *  per-instance slot key; unregister on unmount. `xs` should be memoised by the
  *  caller so the effect only re-runs when the position actually moves. */
 function useRegisterAnnotation(
   container: ContainerFrame,
+  key: symbol,
   rowKey: symbol,
   kind: AnnotationSpec['kind'],
   xs: readonly number[],
   selected: boolean,
 ) {
-  const key = useSlotKey();
   const { registerAnnotation, unregisterAnnotation } = container;
   useEffect(() => () => unregisterAnnotation(key), [unregisterAnnotation, key]);
   useEffect(() => {
     registerAnnotation(key, { key, kind, rowKey, xs, selected });
   }, [registerAnnotation, key, kind, rowKey, xs, selected]);
+}
+
+/** Pixel radius within which a drag snaps to a guideline (another mark's x). */
+const SNAP_PX = 6;
+
+/**
+ * Snap a dragged plot-pixel `px` to the nearest **guideline** — another
+ * annotation's x — within {@link SNAP_PX}. Returns that guideline's **axis** value
+ * to snap to, or `null` if none is near (the caller keeps the raw position).
+ * Excludes the dragging mark's own `key`, and reads the same registry the guides
+ * draw from, so a drag visibly clicks onto the lines you can see.
+ */
+function snapToGuides(
+  container: ContainerFrame,
+  selfKey: symbol,
+  px: number,
+): number | null {
+  let best: number | null = null;
+  let bestDist = SNAP_PX;
+  for (const a of container.annotations) {
+    if (a.key === selfKey) continue;
+    for (const tx of a.xs) {
+      const d = Math.abs(container.xScale(tx) - px);
+      if (d < bestDist) {
+        bestDist = d;
+        best = tx;
+      }
+    }
+  }
+  return best;
 }
 
 /** A label chip — the cursor value flag's shape (shared {@link flagChipStyle}:
@@ -245,10 +277,11 @@ export interface MarkerProps {
 /** A vertical line at an x position (a time, a distance, a lap boundary). */
 export function Marker({ at, label, selected = false, onChange }: MarkerProps) {
   const { container, row, ann } = useAnnotationFrame('Marker');
+  const selfKey = useSlotKey();
   const [hovering, setHovering] = useState(false);
   const editing = container.editAnnotations && onChange !== undefined;
   const xs = useMemo(() => [at], [at]);
-  useRegisterAnnotation(container, row.rowKey, 'marker', xs, selected);
+  useRegisterAnnotation(container, selfKey, row.rowKey, 'marker', xs, selected);
   const x = container.xScale(at);
   const h = row.height;
   const state: AnnotationState = hovering
@@ -288,7 +321,12 @@ export function Marker({ at, label, selected = false, onChange }: MarkerProps) {
             h={h}
             cursor="ew-resize"
             onHover={setHovering}
-            onDrag={(px) => onChange?.(+container.xScale.invert(px))}
+            onDrag={(px) =>
+              onChange?.(
+                snapToGuides(container, selfKey, px) ??
+                  +container.xScale.invert(px),
+              )
+            }
           />
         )}
       </svg>
@@ -330,12 +368,21 @@ export function Baseline({
   onChange,
 }: BaselineProps) {
   const { container, row, ann } = useAnnotationFrame('Baseline');
+  const selfKey = useSlotKey();
   const [hovering, setHovering] = useState(false);
   const editing = container.editAnnotations && onChange !== undefined;
   // A horizontal line casts no vertical guide — register with no xs (still
-  // tracked for ordering / future use).
+  // tracked for ordering / future use). No snap target either (the guidelines are
+  // vertical; a baseline drags vertically).
   const xs = useMemo<number[]>(() => [], []);
-  useRegisterAnnotation(container, row.rowKey, 'baseline', xs, selected);
+  useRegisterAnnotation(
+    container,
+    selfKey,
+    row.rowKey,
+    'baseline',
+    xs,
+    selected,
+  );
   const axisId = axis ?? row.defaultAxisId;
   const yScale = row.yScales.get(axisId);
   // The axis may not have resolved yet (a layer mounts before its <YAxis>); skip
@@ -422,10 +469,11 @@ export function Region({
   onChange,
 }: RegionProps) {
   const { container, row, ann } = useAnnotationFrame('Region');
+  const selfKey = useSlotKey();
   const [hovering, setHovering] = useState(false);
   const editing = container.editAnnotations && onChange !== undefined;
   const xs = useMemo(() => [from, to], [from, to]);
-  useRegisterAnnotation(container, row.rowKey, 'region', xs, selected);
+  useRegisterAnnotation(container, selfKey, row.rowKey, 'region', xs, selected);
   const xa = container.xScale(from);
   const xb = container.xScale(to);
   const left = Math.min(xa, xb);
@@ -507,7 +555,27 @@ export function Region({
                   +container.xScale.invert(px) -
                   +container.xScale.invert(lastPx.current);
                 lastPx.current = px;
-                onChange?.({ from: from + d, to: to + d });
+                let nf = from + d;
+                let nt = to + d;
+                // Snap whichever edge lands near a guideline, keeping the width.
+                const sf = snapToGuides(
+                  container,
+                  selfKey,
+                  container.xScale(nf),
+                );
+                const st = snapToGuides(
+                  container,
+                  selfKey,
+                  container.xScale(nt),
+                );
+                if (sf !== null) {
+                  nt += sf - nf;
+                  nf = sf;
+                } else if (st !== null) {
+                  nf += st - nt;
+                  nt = st;
+                }
+                onChange?.({ from: nf, to: nt });
               }}
             />
             {/* Edges (resize) — on top, so a grab near an edge resizes it. */}
@@ -519,7 +587,12 @@ export function Region({
               cursor="ew-resize"
               onHover={setHovering}
               onDrag={(px) =>
-                onChange?.({ from: +container.xScale.invert(px), to })
+                onChange?.({
+                  from:
+                    snapToGuides(container, selfKey, px) ??
+                    +container.xScale.invert(px),
+                  to,
+                })
               }
             />
             <DragArea
@@ -530,7 +603,12 @@ export function Region({
               cursor="ew-resize"
               onHover={setHovering}
               onDrag={(px) =>
-                onChange?.({ from, to: +container.xScale.invert(px) })
+                onChange?.({
+                  from,
+                  to:
+                    snapToGuides(container, selfKey, px) ??
+                    +container.xScale.invert(px),
+                })
               }
             />
           </>
