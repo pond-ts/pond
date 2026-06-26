@@ -1,4 +1,11 @@
-import { useContext, type CSSProperties, type ReactNode } from 'react';
+import {
+  useContext,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from 'react';
 import { ContainerContext, RowContext } from './context.js';
 import type { ChartTheme } from './theme.js';
 import { flagChipStyle, flagChipX } from './chip.js';
@@ -11,16 +18,17 @@ import { flagChipStyle, flagChipX } from './chip.js';
  * never reads as data ("the data stays foam; the marks you place are turquoise").
  *
  * They are children of `<Layers>` (so they share the plot's coordinate space) and
- * paint a pointer-inert SVG overlay above the data canvas + below the cursor —
- * pan/zoom keeps the surface. Each label is a **flag**: the chip attaches to the
- * side of the mark's vertical line, its top aligned to the line's top (the same
- * shape as the cursor's value flag).
+ * paint an SVG overlay above the data canvas + below the cursor. Each label is a
+ * **flag** (the cursor value flag's shape). **Luminosity encodes attention:** a
+ * mark sits at `rest`, lifts to `hover` while you grab its handle, and shows
+ * `selected`.
  *
- * **Luminosity encodes attention:** a mark sits at `rest`, lifting to `selected`
- * (with drag handles) when its `selected` prop is set. Hover + live select +
- * drag-to-edit are a later phase — an explicit edit *mode*, where hovering a mark
- * changes the cursor; they're one interaction, deferred together. For now
- * `selected` is a controlled input.
+ * **Editing.** Pass `onChange` to make a mark **editable**: a drag handle appears,
+ * dragging it reports the new position (controlled — wire it back to the position
+ * prop), and hovering it lifts the mark + shows the resize cursor. The handle
+ * **claims the gesture** (pointer capture + `stopPropagation`), so grabbing it
+ * never starts a pan while a drag elsewhere on the plot still pans. (Click-to-
+ * select with the rest dimmed, and a global exclusive edit mode, remain deferred.)
  */
 
 /** Fallback when a theme defines no `annotation` token — a neutral turquoise. */
@@ -32,19 +40,18 @@ const DEFAULT_ANNOTATION: NonNullable<ChartTheme['annotation']> = {
   selected: 1,
 };
 
-/** Selection-handle pill geometry (px). */
-const HANDLE_W = 6;
-const HANDLE_H = 18;
+/** Selection-handle pill geometry (px) — long axis vs short axis. */
+const HANDLE_LONG = 18;
+const HANDLE_SHORT = 6;
 /** Flag-chip top offset (px from the row top) — a few px down so it clears the
  *  edge. Region + Marker share it so their labels align across a chart. */
 const FLAG_TOP = 2;
 
-/** Phase 1 drives only rest + selected; `hover` (the theme's third level) lands
- *  with the edit mode. */
-type AnnotationState = 'rest' | 'selected';
+type AnnotationState = 'rest' | 'hover' | 'selected';
 
 /** The full-plot overlay each annotation paints into — above the data canvas,
- *  below the cursor, inert to the pointer (pan/zoom owns the surface). */
+ *  below the cursor. Inert to the pointer by default (pan/zoom owns the surface);
+ *  an editable handle opts back in to `pointerEvents: auto` for itself only. */
 const overlayStyle: CSSProperties = {
   position: 'absolute',
   top: 0,
@@ -85,6 +92,81 @@ function Chip({
   );
 }
 
+/**
+ * An interactive selection handle: a filled pill that reports the pointer's
+ * **plot-pixel** position via `onDrag` while dragged (the annotation inverts it to
+ * an axis value and fires its `onChange`). It **claims the gesture** —
+ * `stopPropagation` + pointer capture on pointerdown — so grabbing a handle never
+ * starts a pan, while a drag anywhere else on the plot still pans. Hovering it
+ * lifts the annotation (`onHover`) and shows the resize `cursor`. Rendered inside
+ * the otherwise-inert overlay SVG; only this rect opts back in to pointer events.
+ */
+function DragHandle({
+  cx,
+  cy,
+  w,
+  h,
+  color,
+  cursor,
+  onHover,
+  onDrag,
+}: {
+  cx: number;
+  cy: number;
+  w: number;
+  h: number;
+  color: string;
+  cursor: string;
+  onHover: (hovering: boolean) => void;
+  onDrag: (px: number, py: number) => void;
+}) {
+  const dragging = useRef(false);
+  const fire = (e: ReactPointerEvent) => {
+    const svg = (e.currentTarget as SVGElement).ownerSVGElement;
+    if (svg === null) return;
+    const r = svg.getBoundingClientRect();
+    onDrag(e.clientX - r.left, e.clientY - r.top);
+  };
+  return (
+    <rect
+      x={cx - w / 2}
+      y={cy - h / 2}
+      width={w}
+      height={h}
+      rx={3}
+      fill={color}
+      style={{ pointerEvents: 'auto', cursor }}
+      onPointerEnter={() => onHover(true)}
+      onPointerLeave={() => {
+        if (!dragging.current) onHover(false);
+      }}
+      onPointerDown={(e) => {
+        e.stopPropagation(); // claim the gesture — don't let the plot start a pan
+        dragging.current = true;
+        // Capture so the drag continues outside the handle; guard for synthetic /
+        // already-released pointers (same as the pan surface).
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+      }}
+      onPointerMove={(e) => {
+        if (!dragging.current) return;
+        e.stopPropagation();
+        fire(e);
+      }}
+      onPointerUp={(e) => {
+        if (!dragging.current) return;
+        e.stopPropagation();
+        e.currentTarget.releasePointerCapture(e.pointerId);
+        dragging.current = false;
+        onHover(false);
+      }}
+    />
+  );
+}
+
 export interface MarkerProps {
   /** x position in axis units — epoch ms on a time axis, the value on a value
    *  axis. (The generalisation of the mockup's "time line": a mark at an x, time
@@ -92,17 +174,25 @@ export interface MarkerProps {
   at: number;
   /** Chip label; omit to auto-label with the shared x formatter (the axis's). */
   label?: string;
-  /** Controlled selection — brightens + shows a single centre handle (the line
-   *  moves as a whole). Live select/edit is a later phase; this is the input now. */
+  /** Controlled selection — brightens + shows the centre handle. */
   selected?: boolean;
+  /** Make the marker **editable**: a centre handle appears and dragging it reports
+   *  the new `at` (controlled — wire it back to `at`). The whole line moves. */
+  onChange?: (at: number) => void;
 }
 
 /** A vertical line at an x position (a time, a distance, a lap boundary). */
-export function Marker({ at, label, selected = false }: MarkerProps) {
+export function Marker({ at, label, selected = false, onChange }: MarkerProps) {
   const { container, row, ann } = useAnnotationFrame('Marker');
+  const [hovering, setHovering] = useState(false);
+  const editable = onChange !== undefined;
   const x = container.xScale(at);
   const h = row.height;
-  const state: AnnotationState = selected ? 'selected' : 'rest';
+  const state: AnnotationState = hovering
+    ? 'hover'
+    : selected
+      ? 'selected'
+      : 'rest';
   const text = label ?? container.formatTime(at);
   return (
     <>
@@ -119,16 +209,27 @@ export function Marker({ at, label, selected = false }: MarkerProps) {
         />
         {/* One handle, centred — a marker moves as a whole (two ends would read
             as independently draggable, and collide with the top label). */}
-        {selected && (
+        {editable ? (
+          <DragHandle
+            cx={x}
+            cy={h / 2}
+            w={HANDLE_SHORT}
+            h={HANDLE_LONG}
+            color={ann.color}
+            cursor="ew-resize"
+            onHover={setHovering}
+            onDrag={(px) => onChange?.(+container.xScale.invert(px))}
+          />
+        ) : selected ? (
           <rect
-            x={x - HANDLE_W / 2}
-            y={h / 2 - HANDLE_H / 2}
-            width={HANDLE_W}
-            height={HANDLE_H}
+            x={x - HANDLE_SHORT / 2}
+            y={h / 2 - HANDLE_LONG / 2}
+            width={HANDLE_SHORT}
+            height={HANDLE_LONG}
             rx={3}
             fill={ann.color}
           />
-        )}
+        ) : null}
       </svg>
       <Chip
         theme={container.theme}
@@ -151,8 +252,11 @@ export interface BaselineProps {
   axis?: string;
   /** Chip label; omit to format `value` with that axis's formatter. */
   label?: string;
-  /** Controlled selection — brightens. */
+  /** Controlled selection — brightens + shows the handle. */
   selected?: boolean;
+  /** Make the baseline **editable**: a handle appears and dragging it (vertically)
+   *  reports the new `value` (controlled — wire it back to `value`). */
+  onChange?: (value: number) => void;
 }
 
 /** A horizontal line at a y value, scaled against one row axis (RTC's `Baseline`).
@@ -163,8 +267,11 @@ export function Baseline({
   axis,
   label,
   selected = false,
+  onChange,
 }: BaselineProps) {
   const { container, row, ann } = useAnnotationFrame('Baseline');
+  const [hovering, setHovering] = useState(false);
+  const editable = onChange !== undefined;
   const axisId = axis ?? row.defaultAxisId;
   const yScale = row.yScales.get(axisId);
   // The axis may not have resolved yet (a layer mounts before its <YAxis>); skip
@@ -172,9 +279,16 @@ export function Baseline({
   if (yScale === undefined) return null;
   const y = yScale(value);
   const w = container.plotWidth;
-  const state: AnnotationState = selected ? 'selected' : 'rest';
+  const state: AnnotationState = hovering
+    ? 'hover'
+    : selected
+      ? 'selected'
+      : 'rest';
   const fmt = row.formats.get(axisId);
   const text = label ?? (fmt ? fmt(value) : String(value));
+  // Grab handle near the right end (clears the left-anchored label), horizontal
+  // pill since the drag is vertical.
+  const handleX = w - 14;
   return (
     <>
       <svg width={w} height={row.height} style={overlayStyle}>
@@ -188,6 +302,27 @@ export function Baseline({
           opacity={ann[state]}
           shapeRendering="crispEdges"
         />
+        {editable ? (
+          <DragHandle
+            cx={handleX}
+            cy={y}
+            w={HANDLE_LONG}
+            h={HANDLE_SHORT}
+            color={ann.color}
+            cursor="ns-resize"
+            onHover={setHovering}
+            onDrag={(_px, py) => onChange?.(yScale.invert(py))}
+          />
+        ) : selected ? (
+          <rect
+            x={handleX - HANDLE_LONG / 2}
+            y={y - HANDLE_SHORT / 2}
+            width={HANDLE_LONG}
+            height={HANDLE_SHORT}
+            rx={3}
+            fill={ann.color}
+          />
+        ) : null}
       </svg>
       <Chip
         theme={container.theme}
@@ -207,26 +342,43 @@ export interface RegionProps {
   to: number;
   /** Chip label; omit to auto-label `from–to` with the shared x formatter. */
   label?: string;
-  /** Controlled selection — brightens + shows edge handles (each edge drags
-   *  independently to resize the span). */
+  /** Controlled selection — brightens + shows edge handles. */
   selected?: boolean;
+  /** Make the region **editable**: each edge gets a handle that drags
+   *  independently, reporting the new `{ from, to }` (controlled). */
+  onChange?: (next: { from: number; to: number }) => void;
 }
 
 /** A shaded span over an x range — a lap, a zone, a selected interval. Its label
  *  flies as a flag off the left edge. */
-export function Region({ from, to, label, selected = false }: RegionProps) {
+export function Region({
+  from,
+  to,
+  label,
+  selected = false,
+  onChange,
+}: RegionProps) {
   const { container, row, ann } = useAnnotationFrame('Region');
+  const [hovering, setHovering] = useState(false);
+  const editable = onChange !== undefined;
   const xa = container.xScale(from);
   const xb = container.xScale(to);
   const left = Math.min(xa, xb);
-  const right = Math.max(xa, xb);
-  const spanW = right - left;
+  const spanW = Math.abs(xb - xa);
   const h = row.height;
-  const state: AnnotationState = selected ? 'selected' : 'rest';
-  // The fill stays subtle so the data reads through; it lifts a touch when selected.
-  const fillOpacity = ann.fillOpacity * (selected ? 1.6 : 1);
+  const state: AnnotationState = hovering
+    ? 'hover'
+    : selected
+      ? 'selected'
+      : 'rest';
+  // The fill stays subtle so the data reads through; it lifts with attention.
+  const fillOpacity =
+    ann.fillOpacity *
+    (state === 'selected' ? 1.6 : state === 'hover' ? 1.3 : 1);
   const text =
     label ?? `${container.formatTime(from)}–${container.formatTime(to)}`;
+  // Edges + handles sit at the actual from/to positions (not sorted), so the
+  // from-handle always drives `from` even if the user drags it past `to`.
   const edge = (atX: number) => (
     <line
       x1={atX}
@@ -237,16 +389,6 @@ export function Region({ from, to, label, selected = false }: RegionProps) {
       strokeWidth={1}
       opacity={ann[state]}
       shapeRendering="crispEdges"
-    />
-  );
-  const handle = (atX: number) => (
-    <rect
-      x={atX - HANDLE_W / 2}
-      y={h / 2 - HANDLE_H / 2}
-      width={HANDLE_W}
-      height={HANDLE_H}
-      rx={3}
-      fill={ann.color}
     />
   );
   return (
@@ -260,14 +402,55 @@ export function Region({ from, to, label, selected = false }: RegionProps) {
           fill={ann.color}
           opacity={fillOpacity}
         />
-        {edge(left)}
-        {edge(right)}
-        {selected && (
+        {edge(xa)}
+        {edge(xb)}
+        {editable ? (
           <>
-            {handle(left)}
-            {handle(right)}
+            <DragHandle
+              cx={xa}
+              cy={h / 2}
+              w={HANDLE_SHORT}
+              h={HANDLE_LONG}
+              color={ann.color}
+              cursor="ew-resize"
+              onHover={setHovering}
+              onDrag={(px) =>
+                onChange?.({ from: +container.xScale.invert(px), to })
+              }
+            />
+            <DragHandle
+              cx={xb}
+              cy={h / 2}
+              w={HANDLE_SHORT}
+              h={HANDLE_LONG}
+              color={ann.color}
+              cursor="ew-resize"
+              onHover={setHovering}
+              onDrag={(px) =>
+                onChange?.({ from, to: +container.xScale.invert(px) })
+              }
+            />
           </>
-        )}
+        ) : selected ? (
+          <>
+            <rect
+              x={xa - HANDLE_SHORT / 2}
+              y={h / 2 - HANDLE_LONG / 2}
+              width={HANDLE_SHORT}
+              height={HANDLE_LONG}
+              rx={3}
+              fill={ann.color}
+            />
+            <rect
+              x={xb - HANDLE_SHORT / 2}
+              y={h / 2 - HANDLE_LONG / 2}
+              width={HANDLE_SHORT}
+              height={HANDLE_LONG}
+              rx={3}
+              fill={ann.color}
+            />
+          </>
+        ) : null}
       </svg>
       <Chip
         theme={container.theme}

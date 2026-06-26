@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { TimeSeries } from 'pond-ts';
 import { ChartContainer } from './ChartContainer.js';
@@ -137,6 +138,47 @@ export const Selectable: Story = {
               label="interval"
               selected={selected}
             />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **Editable (Phase 2).** Pass `onChange` and a mark becomes draggable — grab a
+ * handle and it follows the pointer, reporting the new position (controlled, held
+ * in `useState` here). The `<Marker>` moves whole; the `<Region>`'s edges resize
+ * independently; the `<Baseline>` drags vertically (its label tracks the value).
+ * Grabbing a handle **claims the gesture**, so it never starts a pan; hover a
+ * handle to see the resize cursor + the mark lift.
+ */
+export const Editable: Story = {
+  render: () => {
+    const [markerAt, setMarkerAt] = useState(BASE + 28 * STEP);
+    const [region, setRegion] = useState({
+      from: BASE + 14 * STEP,
+      to: BASE + 33 * STEP,
+    });
+    const [threshold, setThreshold] = useState(225);
+    return (
+      <ChartContainer range={INTERVAL} width={680} theme={estelaTheme}>
+        <ChartRow height={280}>
+          <YAxis id="power" label="W" min={0} max={300} />
+          <Layers>
+            <LineChart series={power()} column="watts" as="foam" />
+            <Region
+              from={region.from}
+              to={region.to}
+              label="interval"
+              onChange={setRegion}
+            />
+            <Baseline
+              value={threshold}
+              label={`${Math.round(threshold)} W`}
+              onChange={setThreshold}
+            />
+            <Marker at={markerAt} onChange={setMarkerAt} />
           </Layers>
         </ChartRow>
       </ChartContainer>
