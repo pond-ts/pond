@@ -491,9 +491,14 @@ export function Region({
     (state === 'selected' ? 1.6 : state === 'hover' ? 1.3 : 1);
   const text =
     label ?? `${container.formatTime(from)}–${container.formatTime(to)}`;
-  // Body move-drag tracks the previous pointer x to apply an incremental delta to
-  // both edges (so the region follows the pointer, keeping the grab offset).
-  const lastPx = useRef(0);
+  // Body move-drag: capture the start position + pointer on press, then move by
+  // the TOTAL delta from there, so the *raw* position accumulates from a fixed
+  // origin. Snap is applied only to the output — never fed back into this
+  // accumulator — so once you drag past SNAP_PX the region releases cleanly
+  // instead of re-snapping on every small move.
+  const dragRef = useRef<{ from: number; to: number; startPx: number } | null>(
+    null,
+  );
   const edge = (atX: number) => (
     <line
       x1={atX}
@@ -548,16 +553,20 @@ export function Region({
               cursor="grab"
               onHover={setHovering}
               onDragStart={(px) => {
-                lastPx.current = px;
+                dragRef.current = { from, to, startPx: px };
               }}
               onDrag={(px) => {
-                const d =
+                const s = dragRef.current;
+                if (s === null) return;
+                // Raw position = start + TOTAL pointer delta (snap-independent),
+                // so dragging past SNAP_PX escapes a snapped edge.
+                const delta =
                   +container.xScale.invert(px) -
-                  +container.xScale.invert(lastPx.current);
-                lastPx.current = px;
-                let nf = from + d;
-                let nt = to + d;
-                // Snap whichever edge lands near a guideline, keeping the width.
+                  +container.xScale.invert(s.startPx);
+                let nf = s.from + delta;
+                let nt = s.to + delta;
+                // Snap whichever edge lands near a guideline, keeping the width —
+                // output only, so the raw drift above can pull free of it.
                 const sf = snapToGuides(
                   container,
                   selfKey,
