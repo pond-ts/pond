@@ -445,6 +445,25 @@ step, init, {output?})` — the typed-accumulator `mapAccumL` generalizing
     (time-series → monotonic-axis lib; opt-in/time-default = a middle path) =
     pjm17971's call. estela / Codex / dashboard reviews layered in the RFC;
     geo / core pending. estela friction: `~/Code/estela/docs/pond-friction.md`.
+  - **Annotations wave — BUILT as a spike, NOT yet PR'd (branch
+    `feat/charts-annotations`, ~19 wip commits, no PR; pjm17971 gates the
+    formalize).** User-authored marks in a turquoise register distinct from the
+    foam data: `<Region>` / `<Baseline>` / `<Marker>` as `<Layers>` children, an
+    SVG overlay above the data canvas. Complete: creation (arm a tool → draw
+    gesture → `onCreate`), selection (`onSelectAnnotation` — click-select /
+    empty-click deselect / double-click region), a **depth model** (brightness =
+    depth, 3 levels + guides; `theme.annotation.depth`), `selectable` bool,
+    **hover observable+controllable** (`onHoverAnnotation` + `hovered`), and the
+    **three interaction modes** (W1 single-click inspect-select / W2 double-click
+    single-annotation-edit via `onEditAnnotation` + `editing` / W3 global
+    `editAnnotations` bulk + spring-loaded create tools), cursor suppressed while
+    editing, label lane-packing for overlapping flags. Dogfooded by the
+    network-traffic example (the charts-experiment repo). **z-order on select was
+    DROPPED** (would need splitting the shared grid/data canvas — not worth it).
+    Un-parks range-editing **#261**. **To formalize (pjm17971's go):** a
+    **cursor-flag PR** ("flag flies from a pole" — re-bases the flag e2e
+    baselines) AHEAD of the **annotations PR**, plus a short
+    `docs/rfcs/annotations.md`.
 - **M5 — estela parity.** Faithful `DataChart` reproduction on real activity
   data; prove no-regressions; hand the production swap to the estela agent; flip
   `private:false` + first publish.
@@ -617,8 +636,12 @@ coordinated v0.9.x wave.
 Built a full webapp at
 [`pjm17971/pond-ts-dashboard`](https://github.com/pjm17971/pond-ts-dashboard).
 The dashboard agent stays involved as the React/charting domain
-expert and reviews PRs touching that surface. Will inform
-`@pond-ts/charts` when that package extracts.
+expert and reviews PRs touching that surface. **`@pond-ts/charts` has now
+extracted (M0–M4.2 + chart types + value-axis), so the next move is dashboard
+ADOPTION** — swap our charts in for its hand-rolled canvas charts and report the
+gaps + any perf slips vs its own. That comparison is the honest test of whether
+the package earns its place (and one of the inputs that should drive the chart
+roadmap).
 
 - **Drove:** v0.11.0 `LivePartitionedSeries` (named explicitly as the
   "obvious next step" in round-2 feedback), `useCurrent` reference
@@ -762,14 +785,26 @@ line chart scaling 100k → 1M → 10M; (2) multi-column overlay;
   (derived transforms) if windowing / slicing surfaces gaps.
 - **Stack:** Vite + React + TypeScript + raw Canvas (no chart
   library — pond-ts friction in foreground).
-- **Status:** Initial scaffold committed. M1 (single-column line
-  chart) pending. Runs in parallel with step 3 in pond-ts main.
+- **Status (updated 2026-06-28):** M1 + M2 shipped (single-column line chart
+  100k→10M; multi-column overlay — substrate access validated, 60 fps at N=10M;
+  M3/M5 chunked/heatmap deferred). The repo has since **pivoted from raw-canvas
+  validation to being the first `@pond-ts/charts` _package_ consumer**: a
+  network-traffic dashboard exercising the annotation API end-to-end (toolbar +
+  synced legend + inspector + all three interaction modes;
+  `friction-notes/annotations-consumer.md`, which drove the `AnnotationKind` /
+  `CreateSpec` barrel export). No longer paused — it's now the charts-adoption +
+  friction dogfood.
 
 ### Webapp telemetry (ongoing; drove v0.11.8)
 
 Codex agent. Frontend telemetry-stats reporting (collect latency
 events, sample percentiles to a backend every 30 s, display live in
 React). Real production code in a trading-platform app.
+
+**Status (2026-06-28): shipping to PRODUCTION the week of 2026-06-29** — pond's
+first production deployment with live user data (rolling stats on real front-end
+performance telemetry). The validation that the live rolling-stats path holds up
+under real load + messy real-world telemetry.
 
 - **Drove:** v0.11.8 `rolling.sample(sequence)` (later subsumed by
   v0.12.0 triggers). The first design attempt was an
@@ -804,6 +839,24 @@ surface (zero core changes — the geo-RFC thesis held; of a 4.2 ms M1 pipeline,
   profile / polyline; +0.2% distance vs Strava, exact elapsed.
 - **M2 (power):** a power-meter FIT — NP / FTP zones / mean-maximal curve /
   work / TSS; **exact** zone split + work vs Strava.
+
+**`@pond-ts/fit` LANDED on main 2026-06-28.** The library extracted from estela's
+proven copy into its canonical home: **#288** (`a73456a`) the base package
+(quantities, canonical activity series, geo/power/zones/profile/summary, Activity/
+Section façade; 143 tests), then **#290** (`d2f60a6`) `Profile` + `usingProfile()` →
+`ProfiledActivity`/`ProfiledSection` (façade-first slice 1, + an RFC at
+`packages/fit/docs/rfc-facade-first.md`). **#289** (namespace-curation: drop the four
+blanket `export *`, single curated flat barrel) is the in-flight follow-up.
+**Still sequenced:** (1) the façade-first follow-ups (quantity `.format()` —
+in progress; a `Track` object; `windowChannels` as a method; the units-preference
+home) → demote the operator surface; (2) **estela's own adoption is NOT done** —
+estela still consumes its local copy and **has not adopted the shipped value-axis
+primitives** (`scan` / `byValue`); `geo.segmentsInRange` etc. are still hand-rolled
+(`split = scan + byColumn` is the available-but-unadopted path); (3) publish, then
+estela swaps to the npm package (adopting **both** `@pond-ts/fit` + `@pond-ts/charts`)
+and deletes its local copy. **Docs gap:** the website docs lag the value-series wave
+(`scan`/`ValueSeries`/`byValue`) — status currently only legible from the code (see
+Documentation backlog).
 
 Docs: [`docs/rfcs/fit.md`](docs/rfcs/fit.md),
 [`docs/rfcs/geo.md`](docs/rfcs/geo.md) §10–§13 (use-case feedback + library
@@ -858,6 +911,36 @@ ruling), estela's `docs/pond-friction.md`.
     cycle.
 - **Data point against opening the kind system:** a packed geo column earned
   nothing on perf at GPS scale (reinforces `geo.md` §7).
+
+### `@pond-ts/financial` (exploratory; sponsored; kicking off ~week of 2026-06-29)
+
+A **commercially-sponsored** track building a financial / market-analytics
+domain library over core, exposed to high-performance charting. **Earliest
+stage — pre-RFC, not a committed phase.** It lives in the experiments roster
+(not the library phases) precisely so this record stays honest; the RFC→PLAN
+discipline applies — only work actually adopted becomes a commitment, and the
+RFC is deferred until the build earns it.
+
+- **Shape:** a **toolkit of analytics operators** over core (volatility,
+  returns, OHLC roll-ups, …), deliberately distinct in API shape from
+  `@pond-ts/fit`'s façade — each domain package's surface stands on its own,
+  no precedent carried over. Batch first; real-time is a later horizon leaning
+  on the same live layer the gRPC + webapp-telemetry tracks stress.
+- **Substrate is largely already in place.** The value-axis wave (`scan`,
+  `byValue` / `ValueSeries`, `byColumn` / `rollingByColumn`, chart x-on-value)
+  shipped for the estela/charts work and hands the financial analytics their
+  non-time-axis substrate close to free. The likely _new_ core sibling is an
+  RLE / segmentation primitive (`runs` / segment-by-predicate) — the same gap
+  fit hand-rolls — rather than net-new value-axis work.
+- **Known charts gap it surfaces: candlestick / OHLC marks.** `@pond-ts/charts`
+  has no OHLC bar / candlestick chart type yet; this is the first real consumer
+  that needs one. A candidate chart-roadmap item, driven by adoption (consistent
+  with "let the consumers write the roadmap").
+- **Agent structure:** likely a **dedicated agent for the financial core +
+  operator toolkit**, so the pond-ts library + charts agent stays focused on the
+  library itself. The build starts in a sandbox repo and productionizes into the
+  sponsor's private monorepo — **no sponsor-specific code or naming lands in this
+  public repo** (this entry is itself genericized to that rule).
 
 ---
 
@@ -6216,6 +6299,22 @@ dashboard, gRPC pipeline, webapp telemetry). Each is small in
 isolation; worth landing as a single MDX pass rather than dribbling
 in piecemeal so readers benefit from a coherent "production
 deployment" / "observability" surface in one place.
+
+- **⚠️ HIGHEST PRIORITY — the value-axis wave is shipped but
+  under-documented.** `scan` (#280), `ValueSeries` + `byValue`
+  (#282/#283), and the chart `<XAxis>` x-on-value support
+  (#284/#286) all landed in core, but the docs don't yet reflect
+  them — a reader can't discover the value-axis story (distance /
+  splits / laps x-axes, `split = scan + byColumn`, cumulative via
+  `scan`) without reading source. This is different in kind from
+  the experiment-derived items below: it's a **shipped public
+  feature that the docs don't surface**, not a recipe gap. Concrete
+  symptom (2026-06-28): when checking whether `@pond-ts/fit` had
+  adopted the wave, the docs were no help — the determination
+  required reading `time-series.ts`. Venue: update the core
+  operator reference + a dedicated "value-axis charts" how-to /
+  concept page; cross-link the RFC (#279). Land before the next
+  release so the npm version's docs match its surface.
 
 - **`pushMany` is the throughput-critical primitive** — call this
   out explicitly in `live-series.mdx`'s push section. Apps forwarding
