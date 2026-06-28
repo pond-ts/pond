@@ -3,11 +3,13 @@
 All notable changes to this project are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-`pond-ts` and `@pond-ts/react` release together under a single `v*` tag, so this
-file covers both packages. Pre-1.0: minor bumps may include new features and
-type-level changes; patch bumps are strictly additive.
+The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`, and
+`@pond-ts/fit` — release together under a single `v*` tag, so this file covers
+them all. Pre-1.0: minor bumps may include new features and type-level changes;
+patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.30.0...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.31.0...HEAD
+[0.31.0]: https://github.com/pjm17971/pond-ts/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/pjm17971/pond-ts/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/pjm17971/pond-ts/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/pjm17971/pond-ts/compare/v0.27.0...v0.28.0
@@ -22,9 +24,14 @@ type-level changes; patch bumps are strictly additive.
 [0.19.0]: https://github.com/pjm17971/pond-ts/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
 
-## [Unreleased]
+## [0.31.0] — 2026-06-28
 
-### Added
+First published release of **`@pond-ts/charts`** and **`@pond-ts/fit`** (both were
+previously `private`). All four packages — `pond-ts`, `@pond-ts/react`,
+`@pond-ts/charts`, `@pond-ts/fit` — now release together, lock-step, under one
+`v*` tag.
+
+### Added — `pond-ts` (core)
 
 - **`ValueSeries` + `TimeSeries.byValue(axis)` — the value axis as a closed
   type.** `byValue` re-keys a series onto a monotonic non-time **value axis**
@@ -51,6 +58,29 @@ type-level changes; patch bumps are strictly additive.
   state (e.g. hysteresis elevation gain) into a column, then segment it with
   `byColumn`'s pure, order-free reducers. (estela F-geo-2-splits; value-axis
   RFC wave lead.)
+
+### Added — `@pond-ts/charts` (initial release)
+
+- **First public release.** A React charting layer over pond-ts — a canvas data
+  plane with SVG interactive overlays. `ChartContainer` / `ChartRow` / `Layers`
+  composition; `LineChart`, `AreaChart`, `BarChart`, `Scatter`, `BoxPlot`;
+  `TimeAxis` / `YAxis` / `XAxis` (time **and** value x-axes); the cursor system
+  (staffed flag, per-row cursor modes); shared gap-rendering modes; and the
+  estela theme. Peer-depends on `pond-ts`, `@pond-ts/react`, and React 18/19.
+
+### Added — `@pond-ts/fit` (initial release)
+
+- **First public release.** A fitness / activity domain library over pond-ts — the
+  `Activity` / `Section` façade, unit-safe quantities (`Distance` / `Speed` /
+  `Power` / … with `.format()`), geo / power / zones analytics, `Profile` +
+  `usingProfile()` → `ProfiledActivity` / `ProfiledSection`, and the `Track`
+  value object. Façade-first: one curated flat barrel, with the functional
+  operator surface kept internal. Peer-depends on `pond-ts`.
+
+### Changed
+
+- **All `@pond-ts/*` peer / dependency ranges widened to `^0.31.0`** for the
+  lock-step release.
 
 ## [0.30.0] — 2026-06-17
 
