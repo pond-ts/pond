@@ -1,7 +1,12 @@
 # RFC: façade-first `@pond-ts/fit` surface
 
-**Status:** in progress — slice 1 (the `Profile` / `usingProfile` foundation) lands
-with this RFC; the rest is sequenced below.
+**Status:** release-prep. Slice 1 (`Profile` / `usingProfile`) merged in #290; this
+consolidated PR adds the remaining **additive** façade homes (quantity formatting,
+`Track`, `Activity.windowChannels`) and the **barrel curation** (dropping the four
+blanket operator namespaces) — i.e. everything pre-release that's safe without an
+estela migration. The operator **demotion** + the no-abbreviation **rename** +
+the **estela migration** are deliberately deferred until after the first npm push
+(see the sequence below).
 **Supersedes** the [`api.md`](./api.md) tenet that the functional operator core is
 public ("drop to the functional layer or stay fluent — both first-class"). This
 RFC makes the **façade the surface** and demotes the operators to internal. That
@@ -29,7 +34,7 @@ first npm publish.
 | `Activity`, `Section` | `computeActivitySummary`, `prepareActivity`, `summaryFromPrepared`, `buildTrackFromStreams`, `windowChannels` → façade methods |
 | **`Profile`** | `hydrateProfile`, `profileAsOf`, `hrZonesFrom`, `paceZonesFrom`, `powerZonesFrom` → `Profile` internals |
 | **`ProfiledActivity`**, **`ProfiledSection`** | `computePower`, `powerBestEfforts`, `zoneDistributionByValue`, `hrZoneDistribution`, `paceZoneDistribution` → profiled-view methods |
-| `Track` *(planned)* for bare-`GeoPoint[]` ops | `polylineCumulative`, `interpolateAtDistance`, `polylineSlice`, `boundsOf`, `bestEffortsByDistance`, `segmentsInRange` → `Track` / façade |
+| `Track` for bare-`GeoPoint[]` ops | `polylineCumulative`, `interpolateAtDistance`, `polylineSlice`, `boundsOf`, `bestEffortsByDistance`, `segmentsInRange` → `Track` / façade |
 | **Result types** the façade returns (`ActivitySummary`, `Sample`, `SectionMetrics`, `Split`, `Segment`, `DistanceEffort`, `PowerSummary`, `PowerCurvePoint`, `PowerEffort`, `PowerZone`, `PowerBin`, `ZoneTime`, `ProfilePoint`/`ProfileSample`, `TrackSeries`/`TrackColumns`/`TrackPoint`) | — (hide the verbs, keep the nouns the façade returns) |
 | Construction/data contract: `GeoPoint`, `ActivityStreams`, `ActivityMeta`, `Lap`, `ImportedActivity`, `ActivitySource` | `UnitPreferences`, `DistanceUnit`/…, `convert*`, `*UnitLabel`, `DEFAULT_UNITS` → estela (app concern) or a `Units` namespace |
 
@@ -88,14 +93,30 @@ internal anyway, so the public bite is small.
 The functional layer can only be hidden once the façade covers what estela reads
 from it today. To build first:
 
-1. **Quantity formatting** — `Duration.format()`, `Pace.format(unit)`, etc., so
-   `formatDuration`/`formatPace` and the bare unit converters can retreat.
-2. **`Track`** — a value object over a bare `GeoPoint[]` (`cumulative` / `slice` /
-   `interpolateAt` / `bounds`) for polylines with no activity behind them.
-3. **`windowChannels` as a method** — `activity.range(...).channels()` (or
-   `activity.windowChannels(...)`) for chart-zoom rebucketing.
-4. **Decide the unit-preference system's home** — move `convert*` / `*UnitLabel` /
-   `UnitPreferences` / `DEFAULT_UNITS` to estela, or behind a `Units` namespace.
+1. ✅ **Quantity formatting (slice 2, done).** Every quantity now renders itself:
+   `Distance` / `Elevation` / `Speed` gained `.in(unit)` (dynamic-unit numeric)
+   and `.format(unit, decimals?)` (labelled string); `Power` / `HeartRate` /
+   `Cadence` gained `.format(decimals?)`; `Duration.format()` / `Pace.format(unit)`
+   already existed. They reuse `units.ts` internally (one source of truth), so the
+   bare `metersToFeet` / `formatDuration` / `formatPace` and most `convert* +
+   *UnitLabel` call sites collapse to `quantity.format(unit)` on migration.
+   **Residual** (not absorbed — genuinely app-level): the unit *preference* system
+   — `UnitPreferences`, `DEFAULT_UNITS`, the standalone `*UnitLabel` helpers (for
+   axis ticks that label once and format many values). That moves to estela (or a
+   separate `DisplayPreferences`/`Units` object) in the demotion step — **not**
+   onto `Profile`, which is performance parameters resolved as-of the activity
+   date, a different axis from a display preference.
+2. ✅ **`Track` (slice 3, done).** A value object over a bare `GeoPoint[]` for the
+   GPS-only case (a stored route, a map overlay — no activity behind it):
+   `Track.of(points)` → `.distance()` / `.bounds()` / `.pointAt(Distance)` /
+   `.slice(from, to, { domainTotal? })` / `.cumulativeMeters()`, wrapping the geo
+   polyline ops (`polylineCumulative` / `interpolateAtDistance` / `polylineSlice` /
+   `boundsOf`). For a track WITH time/channels, `Activity` remains the home.
+3. ✅ **`windowChannels` as a method (slice 4, done).** `activity.windowChannels({
+   startMeters, endMeters, … })` → `ChannelProfile[]` — the chart-zoom rebucketing
+   path, finer than the whole-activity profile. Delegates to the functional
+   `windowChannels` (verified by a parity test). The drop-in for estela's
+   `windowChannels(prepared, …)` call site.
 
 ## estela migration (not free — sequenced)
 
@@ -124,18 +145,32 @@ functional helpers it uses today: `convertDistance` (6 files), `formatDuration`
   the new Asset model (`assetFromImported`, which backfills listed metrics via
   `computeActivitySummary`).
 
-## What slice 1 (this PR) delivers
+## What's shipped (the release-prep surface)
+
+Merged in #290:
 
 - `Profile` (`profile/index.ts`) — `asOf` (history-aware) + `of` (history-less,
   for a bare FTP/weight fallback) + `ftpWatts` / `weightKg` / `heartRateZones` /
-  `paceZones` / `powerZones`. The Coggan power-zone scheme moved
-  here as `powerZonesFrom` (its canonical home alongside `hrZonesFrom` /
-  `paceZonesFrom`); `power.powerZoneDef` now delegates to it (dedup).
+  `paceZones` / `powerZones`. The Coggan power-zone scheme moved here as
+  `powerZonesFrom` (alongside `hrZonesFrom` / `paceZonesFrom`); `power.powerZoneDef`
+  delegates to it.
 - `Activity.usingProfile(profile)` → `ProfiledActivity`, with `ProfiledSection`
   turtles through `splits` / `range` / `laps`.
-- Barrel: `Profile`, `ProfiledActivity`, `ProfiledSection` added. Nothing removed.
-- Tests: `test/profiled.test.ts` (10) — power/IF, the three `by…Zone()`, W/kg,
-  turtles, and the full-range-vs-whole-activity parity check.
 
-Everything else in the target surface (demotion, rename, the new façade homes,
-the estela migration) is **out of scope here** and tracked above.
+This consolidated PR (the remaining additive homes + the curation):
+
+- **Quantity formatting** — `.in(unit)` + `.format(unit?, decimals?)` across the
+  quantities (slice 2).
+- **`Track`** — the position-only sibling of `Activity` over a bare `GeoPoint[]`
+  (slice 3).
+- **`Activity.windowChannels(opts)`** — the chart-zoom rebucketing home (slice 4).
+- **Barrel curation** — dropped the four blanket `export * as geo/power/zones/
+  profile` namespaces; the deliberate flat named exports remain. New barrel
+  additions: `Profile`, `ProfiledActivity`, `ProfiledSection`, `Track`,
+  `powerZonesFrom`. The operators stay flat-exported (their **demotion** to a
+  sub-path is the post-migration step).
+- Tests: `profiled` (12), `quantities` (+4), `track` (6), `activity-window` (2)
+  — 167 fit tests green.
+
+Out of scope here (post-npm-push): operator demotion, the no-abbreviation rename,
+and the estela migration — all tracked in the sequence above.

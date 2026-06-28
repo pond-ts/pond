@@ -27,6 +27,33 @@ describe('Elevation', () => {
   });
 });
 
+describe('formatting (.in / .format — the display edge)', () => {
+  it('Distance: dynamic-unit value + labelled string', () => {
+    const d = Distance.km(42.195); // marathon
+    expect(d.in('km')).toBeCloseTo(42.195, 6);
+    expect(d.in('mi')).toBeCloseTo(26.2188, 3);
+    expect(d.format('km')).toBe('42.20 km');
+    expect(d.format('mi', 1)).toBe('26.2 mi');
+  });
+  it('Elevation: feet default 0 decimals', () => {
+    const e = Elevation.meters(304.8);
+    expect(e.in('ft')).toBeCloseTo(1000, 6);
+    expect(e.format('ft')).toBe('1000 ft');
+    expect(e.format('m', 1)).toBe('304.8 m');
+  });
+  it('Speed: mph / km/h with label', () => {
+    const s = Speed.metersPerSecond(10);
+    expect(s.in('metric')).toBeCloseTo(36, 6);
+    expect(s.format('metric')).toBe('36.0 km/h');
+    expect(s.format('imperial')).toBe('22.4 mph');
+  });
+  it('Power / HeartRate / Cadence: single-unit strings', () => {
+    expect(Power.watts(291.4).format()).toBe('291 W');
+    expect(HeartRate.bpm(152).format()).toBe('152 bpm');
+    expect(Cadence.rpm(90).format()).toBe('90 rpm');
+  });
+});
+
 describe('Duration', () => {
   it('round-trips + formats h:mm:ss / m:ss', () => {
     expect(Duration.minutes(90).seconds).toBe(5400);
