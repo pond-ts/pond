@@ -43,7 +43,14 @@ export {
 export { Activity, Section } from './activity/index.js';
 export type { Sample, SectionMetrics } from './activity/index.js';
 
-export * as geo from './geo/index.js';
+// Curated flat surface — the four operator modules (geo / power / zones /
+// profile) are NOT re-exported as blanket `export * as <module>` namespaces.
+// Those published each module's entire internal surface (readColumns, raw
+// schemas, friction-probe helpers) by accident and had no shipping consumer.
+// The named exports below are the deliberate public API. Quantities, the
+// Activity/Section façade, and the units helpers are kept by intent — the
+// library's headline surface plus the façade's return-type closure — not
+// because any single consumer imports them today.
 export {
   polylineCumulative,
   interpolateAtDistance,
@@ -53,7 +60,6 @@ export {
   segmentsInRange,
 } from './geo/index.js';
 export type { Segment } from './geo/index.js';
-export * as power from './power/index.js';
 export { computePower, powerBestEfforts } from './power/index.js';
 export type {
   PowerBin,
@@ -63,7 +69,6 @@ export type {
   PowerEffort,
 } from './power/index.js';
 
-export * as profile from './profile/index.js';
 export {
   hydrateProfile,
   profileAsOf,
@@ -80,7 +85,6 @@ export type {
   HydratedProfile,
 } from './profile/index.js';
 
-export * as zones from './zones/index.js';
 export {
   zoneDistributionByValue,
   hrZoneDistribution,
