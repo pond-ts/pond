@@ -1,6 +1,6 @@
 {
   "name": "@pond-ts/fit",
-  "version": "0.31.0",
+  "version": "0.31.1",
   "private": false,
   "description": "Fitness & activity domain library on pond-ts — quantities, canonical activity series, and analytics (geo, power, zones, splits)",
   "license": "MIT",

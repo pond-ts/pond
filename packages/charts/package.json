@@ -1,6 +1,6 @@
 {
   "name": "@pond-ts/charts",
-  "version": "0.31.0",
+  "version": "0.31.1",
   "private": false,
   "description": "Canvas-rendered, streaming-first time-series charts for pond-ts",
   "license": "MIT",
