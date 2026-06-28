@@ -14,6 +14,14 @@ import {
   METERS_PER_FOOT,
   formatDuration,
   formatPace,
+  convertDistance,
+  convertElevation,
+  convertSpeed,
+  distanceUnitLabel,
+  elevationUnitLabel,
+  speedUnitLabel,
+  type DistanceUnit,
+  type ElevationUnit,
   type SpeedPaceUnit,
 } from './units.js';
 
@@ -35,6 +43,15 @@ export class Distance {
   get miles(): number {
     return this.meters / METERS_PER_MILE;
   }
+  /** Numeric value in the chosen unit — the dynamic-unit peer of `.km` / `.miles`
+   *  (for when the unit is a runtime preference). */
+  in(unit: DistanceUnit): number {
+    return convertDistance(this.meters, unit);
+  }
+  /** Display string with unit label, e.g. `"12.34 mi"`. */
+  format(unit: DistanceUnit, decimals = 2): string {
+    return `${this.in(unit).toFixed(decimals)} ${distanceUnitLabel(unit)}`;
+  }
 }
 
 /** A climb/altitude — canonical metres, shown in feet or metres (a separate type
@@ -49,6 +66,14 @@ export class Elevation {
   }
   get feet(): number {
     return this.meters / METERS_PER_FOOT;
+  }
+  /** Numeric value in the chosen unit (dynamic-unit peer of `.feet` / `.meters`). */
+  in(unit: ElevationUnit): number {
+    return convertElevation(this.meters, unit);
+  }
+  /** Display string with unit label, e.g. `"1200 ft"`. */
+  format(unit: ElevationUnit, decimals = 0): string {
+    return `${this.in(unit).toFixed(decimals)} ${elevationUnitLabel(unit)}`;
   }
 }
 
@@ -106,6 +131,14 @@ export class Speed {
   asMinsPerKm(): string {
     return this.pace().format('metric');
   }
+  /** Numeric value in the chosen unit — mph (imperial) or km/h (metric). */
+  in(unit: SpeedPaceUnit): number {
+    return convertSpeed(this.metersPerSecond, unit);
+  }
+  /** Display string with unit label, e.g. `"15.2 mph"` / `"24.5 km/h"`. */
+  format(unit: SpeedPaceUnit, decimals = 1): string {
+    return `${this.in(unit).toFixed(decimals)} ${speedUnitLabel(unit)}`;
+  }
 }
 
 /** A pace — canonical seconds per kilometre. The inverse view is {@link Speed}. */
@@ -142,6 +175,10 @@ export class Power {
   perKg(weightKg: number): number {
     return weightKg > 0 ? this.watts / weightKg : NaN;
   }
+  /** Display string, e.g. `"291 W"`. */
+  format(decimals = 0): string {
+    return `${this.watts.toFixed(decimals)} W`;
+  }
 }
 
 /** Heart rate — canonical beats/minute. */
@@ -150,6 +187,10 @@ export class HeartRate {
   static bpm(b: number): HeartRate {
     return new HeartRate(b);
   }
+  /** Display string, e.g. `"152 bpm"`. */
+  format(decimals = 0): string {
+    return `${this.bpm.toFixed(decimals)} bpm`;
+  }
 }
 
 /** Cadence — canonical revolutions/minute (pedal strokes, run steps/min, …). */
@@ -157,5 +198,9 @@ export class Cadence {
   private constructor(readonly rpm: number) {}
   static rpm(r: number): Cadence {
     return new Cadence(r);
+  }
+  /** Display string, e.g. `"90 rpm"`. */
+  format(decimals = 0): string {
+    return `${this.rpm.toFixed(decimals)} rpm`;
   }
 }

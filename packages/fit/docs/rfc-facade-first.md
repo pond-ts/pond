@@ -29,7 +29,7 @@ first npm publish.
 | `Activity`, `Section` | `computeActivitySummary`, `prepareActivity`, `summaryFromPrepared`, `buildTrackFromStreams`, `windowChannels` → façade methods |
 | **`Profile`** | `hydrateProfile`, `profileAsOf`, `hrZonesFrom`, `paceZonesFrom`, `powerZonesFrom` → `Profile` internals |
 | **`ProfiledActivity`**, **`ProfiledSection`** | `computePower`, `powerBestEfforts`, `zoneDistributionByValue`, `hrZoneDistribution`, `paceZoneDistribution` → profiled-view methods |
-| `Track` *(planned)* for bare-`GeoPoint[]` ops | `polylineCumulative`, `interpolateAtDistance`, `polylineSlice`, `boundsOf`, `bestEffortsByDistance`, `segmentsInRange` → `Track` / façade |
+| `Track` for bare-`GeoPoint[]` ops | `polylineCumulative`, `interpolateAtDistance`, `polylineSlice`, `boundsOf`, `bestEffortsByDistance`, `segmentsInRange` → `Track` / façade |
 | **Result types** the façade returns (`ActivitySummary`, `Sample`, `SectionMetrics`, `Split`, `Segment`, `DistanceEffort`, `PowerSummary`, `PowerCurvePoint`, `PowerEffort`, `PowerZone`, `PowerBin`, `ZoneTime`, `ProfilePoint`/`ProfileSample`, `TrackSeries`/`TrackColumns`/`TrackPoint`) | — (hide the verbs, keep the nouns the façade returns) |
 | Construction/data contract: `GeoPoint`, `ActivityStreams`, `ActivityMeta`, `Lap`, `ImportedActivity`, `ActivitySource` | `UnitPreferences`, `DistanceUnit`/…, `convert*`, `*UnitLabel`, `DEFAULT_UNITS` → estela (app concern) or a `Units` namespace |
 
@@ -88,14 +88,27 @@ internal anyway, so the public bite is small.
 The functional layer can only be hidden once the façade covers what estela reads
 from it today. To build first:
 
-1. **Quantity formatting** — `Duration.format()`, `Pace.format(unit)`, etc., so
-   `formatDuration`/`formatPace` and the bare unit converters can retreat.
-2. **`Track`** — a value object over a bare `GeoPoint[]` (`cumulative` / `slice` /
-   `interpolateAt` / `bounds`) for polylines with no activity behind them.
+1. ✅ **Quantity formatting (slice 2, done).** Every quantity now renders itself:
+   `Distance` / `Elevation` / `Speed` gained `.in(unit)` (dynamic-unit numeric)
+   and `.format(unit, decimals?)` (labelled string); `Power` / `HeartRate` /
+   `Cadence` gained `.format(decimals?)`; `Duration.format()` / `Pace.format(unit)`
+   already existed. They reuse `units.ts` internally (one source of truth), so the
+   bare `metersToFeet` / `formatDuration` / `formatPace` and most `convert* +
+   *UnitLabel` call sites collapse to `quantity.format(unit)` on migration.
+   **Residual** (not absorbed — genuinely app-level): the unit *preference* system
+   — `UnitPreferences`, `DEFAULT_UNITS`, the standalone `*UnitLabel` helpers (for
+   axis ticks that label once and format many values). That moves to estela (or a
+   separate `DisplayPreferences`/`Units` object) in the demotion step — **not**
+   onto `Profile`, which is performance parameters resolved as-of the activity
+   date, a different axis from a display preference.
+2. ✅ **`Track` (slice 3, done).** A value object over a bare `GeoPoint[]` for the
+   GPS-only case (a stored route, a map overlay — no activity behind it):
+   `Track.of(points)` → `.distance()` / `.bounds()` / `.pointAt(Distance)` /
+   `.slice(from, to, { domainTotal? })` / `.cumulativeMeters()`, wrapping the geo
+   polyline ops (`polylineCumulative` / `interpolateAtDistance` / `polylineSlice` /
+   `boundsOf`). For a track WITH time/channels, `Activity` remains the home.
 3. **`windowChannels` as a method** — `activity.range(...).channels()` (or
    `activity.windowChannels(...)`) for chart-zoom rebucketing.
-4. **Decide the unit-preference system's home** — move `convert*` / `*UnitLabel` /
-   `UnitPreferences` / `DEFAULT_UNITS` to estela, or behind a `Units` namespace.
 
 ## estela migration (not free — sequenced)
 
