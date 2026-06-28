@@ -33,16 +33,18 @@ import {
   normalizedPower,
   averagePower,
   maxPower,
+  zoneDistribution,
   type PowerSummary,
   type PowerCurvePoint,
   type PowerEffort,
+  type PowerZone,
 } from '../power/index.js';
 import {
   hrZoneDistribution,
   paceZoneDistribution,
   type ZoneTime,
 } from '../zones/index.js';
-import type { ZoneDef } from '../profile/index.js';
+import { Profile, type ZoneDef } from '../profile/index.js';
 import {
   Distance,
   Elevation,
@@ -412,6 +414,15 @@ export class Activity {
     return paceZoneDistribution(this.prep.cols.timeSec, this.prep.speed, def);
   }
 
+  /** Bind an athlete {@link Profile} for the analytics that need FTP / body
+   *  weight / zone definitions — power summary, time-in-zone, W/kg. Returns a
+   *  {@link ProfiledActivity} whose slices (`splits` / `range` / `laps`) stay
+   *  bound to the same profile (turtles all the way down). The bare `Activity`
+   *  keeps only the profile-agnostic methods. */
+  usingProfile(profile: Profile): ProfiledActivity {
+    return new ProfiledActivity(this, profile);
+  }
+
   /** Channel values interpolated at one elapsed instant — the scrub / annotation
    *  anchor sample. Linear between the bracketing samples. */
   at(t: Duration): Sample {
@@ -573,4 +584,221 @@ function sectionFromLap(
     avgSpeedMps: lap.avgSpeedMps,
     maxSpeedMps: lap.maxSpeedMps,
   };
+}
+
+// ── Profile-bound view ──────────────────────────────────────────────────────
+
+/**
+ * An {@link Activity} bound to an athlete {@link Profile} — the home for the
+ * analytics that need FTP / body weight / zone definitions. Obtained via
+ * `activity.usingProfile(bob)`. Its slices (`splits` / `range` / `laps`) return
+ * {@link ProfiledSection}s carrying the same profile, so the binding flows all
+ * the way down. The bare {@link Activity} keeps only the profile-agnostic
+ * methods, so a missing FTP / weight is a type-level absence, not a runtime
+ * `undefined`.
+ */
+export class ProfiledActivity {
+  constructor(
+    private readonly activity: Activity,
+    private readonly profile: Profile,
+  ) {}
+
+  /** Full power summary (NP, IF, TSS, distribution, zones, curve) at the
+   *  profile's FTP. `undefined` when no power was recorded or no FTP is known. */
+  power(): PowerSummary | undefined {
+    const ftp = this.profile.ftpWatts;
+    return ftp == null ? undefined : this.activity.power(ftp);
+  }
+
+  /** Time in each Coggan power zone (FTP-relative); `[]` with no power or no FTP. */
+  byPowerZone(): PowerZone[] {
+    const ftp = this.profile.ftpWatts;
+    if (ftp == null) return [];
+    const prep = this.activity.prepared();
+    const watts = clean(prep.cols.power);
+    return watts ? zoneDistribution(prep.cols.timeSec, watts, ftp) : [];
+  }
+
+  /** Time in each heart-rate zone; `[]` with no HR or no HR zones on the profile. */
+  byHeartRateZone(): ZoneTime[] {
+    const zones = this.profile.heartRateZones;
+    return zones ? this.activity.hrZones(zones) : [];
+  }
+
+  /** Time in each pace zone; `[]` with no time axis or no pace zones on the profile. */
+  byPaceZone(): ZoneTime[] {
+    const zones = this.profile.paceZones;
+    return zones ? this.activity.paceZones(zones) : [];
+  }
+
+  /** Power best efforts (+ W/kg from the profile's body weight); `[]` with no power. */
+  bestEfforts(durations?: number[]): PowerEffort[] {
+    const opts: { weightKg?: number; durations?: number[] } = {};
+    if (this.profile.weightKg != null) opts.weightKg = this.profile.weightKg;
+    if (durations) opts.durations = durations;
+    return this.activity.bestEfforts(opts);
+  }
+
+  /** Even-distance splits as profile-bound sections. */
+  splits(interval: Distance): ProfiledSection[] {
+    return this.activity
+      .splits(interval)
+      .map((s) => new ProfiledSection(this.activity, s, this.profile));
+  }
+
+  /** Device-recorded laps as profile-bound sections (empty if none recorded). */
+  laps(): ProfiledSection[] {
+    return this.activity
+      .laps()
+      .map((s) => new ProfiledSection(this.activity, s, this.profile));
+  }
+
+  /** An arbitrary `[from, to]` slice as a profile-bound section. */
+  range(from: Duration, to: Duration, label = 'Range'): ProfiledSection {
+    return new ProfiledSection(
+      this.activity,
+      this.activity.range(from, to, label),
+      this.profile,
+    );
+  }
+}
+
+/** Column slices over a section's elapsed window — `timeSec` raw, value channels
+ *  NaN-cleaned (absent → field omitted). */
+interface SectionWindow {
+  timeSec: Float64Array;
+  watts?: Float64Array;
+  heartRate?: Float64Array;
+  speed?: Float64Array;
+}
+
+/**
+ * A {@link Section} bound to a {@link Profile} — adds the FTP / weight / zone
+ * analytics over the section's own window. Profile-agnostic metrics delegate to
+ * the underlying section; the zone / power methods recompute over the section's
+ * `[fromSeconds, toSeconds]` slice of the parent activity.
+ */
+export class ProfiledSection {
+  private _window?: SectionWindow;
+
+  constructor(
+    private readonly activity: Activity,
+    private readonly section: Section,
+    private readonly profile: Profile,
+  ) {}
+
+  /** The underlying profile-agnostic section. */
+  get unprofiled(): Section {
+    return this.section;
+  }
+
+  // ── profile-agnostic — delegate to the underlying section ──
+  get label(): string {
+    return this.section.label;
+  }
+  get fromSeconds(): number {
+    return this.section.fromSeconds;
+  }
+  get toSeconds(): number {
+    return this.section.toSeconds;
+  }
+  get startMeters(): number {
+    return this.section.startMeters;
+  }
+  get endMeters(): number {
+    return this.section.endMeters;
+  }
+  distance(): Distance {
+    return this.section.distance();
+  }
+  duration(): Duration {
+    return this.section.duration();
+  }
+  movingTime(): Duration {
+    return this.section.movingTime();
+  }
+  elevationGain(): Elevation {
+    return this.section.elevationGain();
+  }
+  elevationLoss(): Elevation | undefined {
+    return this.section.elevationLoss();
+  }
+  normalizedPower(): Power | undefined {
+    return this.section.normalizedPower();
+  }
+  avgPower(): Power | undefined {
+    return this.section.avgPower();
+  }
+  maxPower(): Power | undefined {
+    return this.section.maxPower();
+  }
+  avgHeartRate(): HeartRate | undefined {
+    return this.section.avgHeartRate();
+  }
+  maxHeartRate(): HeartRate | undefined {
+    return this.section.maxHeartRate();
+  }
+  avgCadence(): Cadence | undefined {
+    return this.section.avgCadence();
+  }
+  avgSpeed(): Speed | undefined {
+    return this.section.avgSpeed();
+  }
+  maxSpeed(): Speed | undefined {
+    return this.section.maxSpeed();
+  }
+  pace(): Pace | undefined {
+    return this.section.pace();
+  }
+
+  // ── profile-dependent — recomputed over this section's window ──
+  /** Power summary over the section's window; `undefined` with no power / no FTP. */
+  power(): PowerSummary | undefined {
+    const ftp = this.profile.ftpWatts;
+    const w = this.window();
+    return ftp != null && w.watts
+      ? computePower(w.timeSec, w.watts, ftp, this.toSeconds - this.fromSeconds)
+      : undefined;
+  }
+  /** Time in each power zone over the section's window; `[]` with no power / FTP. */
+  byPowerZone(): PowerZone[] {
+    const ftp = this.profile.ftpWatts;
+    const w = this.window();
+    return ftp != null && w.watts
+      ? zoneDistribution(w.timeSec, w.watts, ftp)
+      : [];
+  }
+  /** Time in each HR zone over the section's window; `[]` with no HR / HR zones. */
+  byHeartRateZone(): ZoneTime[] {
+    const zones = this.profile.heartRateZones;
+    const w = this.window();
+    return zones && w.heartRate
+      ? hrZoneDistribution(w.timeSec, w.heartRate, zones)
+      : [];
+  }
+  /** Time in each pace zone over the section's window; `[]` with no time / pace zones. */
+  byPaceZone(): ZoneTime[] {
+    const zones = this.profile.paceZones;
+    const w = this.window();
+    return zones && w.speed
+      ? paceZoneDistribution(w.timeSec, w.speed, zones)
+      : [];
+  }
+
+  /** Slice the parent columns to `[fromSeconds, toSeconds]`, computed once. */
+  private window(): SectionWindow {
+    if (this._window) return this._window;
+    const prep = this.activity.prepared();
+    const a = indexAtElapsed(prep.timeRel, this.fromSeconds);
+    const b = indexAtElapsed(prep.timeRel, this.toSeconds);
+    const lo = Math.min(a, b);
+    const end = Math.max(a, b) + 1;
+    const w: SectionWindow = { timeSec: prep.cols.timeSec.slice(lo, end) };
+    const watts = clean(prep.cols.power)?.slice(lo, end);
+    if (watts) w.watts = watts;
+    const hr = clean(prep.cols.hr)?.slice(lo, end);
+    if (hr) w.heartRate = hr;
+    if (prep.hasTime) w.speed = prep.speed.slice(lo, end);
+    return (this._window = w);
+  }
 }

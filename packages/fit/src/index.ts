@@ -40,7 +40,12 @@ export {
   HeartRate,
   Cadence,
 } from './quantities.js';
-export { Activity, Section } from './activity/index.js';
+export {
+  Activity,
+  Section,
+  ProfiledActivity,
+  ProfiledSection,
+} from './activity/index.js';
 export type { Sample, SectionMetrics } from './activity/index.js';
 
 export * as geo from './geo/index.js';
@@ -65,10 +70,12 @@ export type {
 
 export * as profile from './profile/index.js';
 export {
+  Profile,
   hydrateProfile,
   profileAsOf,
   hrZonesFrom,
   paceZonesFrom,
+  powerZonesFrom,
 } from './profile/index.js';
 export type {
   AthleteProfileJson,

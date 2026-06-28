@@ -116,6 +116,28 @@ export function paceZonesFrom(fiveKSeconds: number): ZoneDef {
   return { edges: [0, ...speedEdges, SENTINEL], labels: PACE_ZONE_LABELS };
 }
 
+/** Power zones (7), Z1→Z7 (Coggan), as fractions of FTP. Z7 is open-ended. */
+const POWER_ZONE_LABELS = [
+  'Recovery',
+  'Endurance',
+  'Tempo',
+  'Threshold',
+  'VO2Max',
+  'Anaerobic',
+  'Neuromuscular',
+];
+const POWER_ZONE_FRACTIONS = [0.55, 0.75, 0.9, 1.05, 1.2, 1.5]; // of FTP, Z1/Z2 … Z6/Z7
+
+/** The 7 Coggan power zones as a watt-axis {@link ZoneDef}, FTP-relative. The
+ *  canonical home for the scheme (HR + pace zone builders live here too); the
+ *  power module's `powerZoneDef` delegates to this. */
+export function powerZonesFrom(ftp: number): ZoneDef {
+  return {
+    edges: [0, ...POWER_ZONE_FRACTIONS.map((f) => f * ftp), SENTINEL],
+    labels: POWER_ZONE_LABELS,
+  };
+}
+
 // ── Resolution (pond atOrBefore) ────────────────────────────────────────────
 
 /** A hydrated, date-keyed view of one series, answering "value as of date D". */
@@ -210,4 +232,53 @@ export function profileAsOf(
   if (pace && typeof pace.fiveKSeconds === 'number')
     resolved.paceZones = paceZonesFrom(pace.fiveKSeconds);
   return resolved;
+}
+
+// ── Profile (the value object passed into the analytics) ─────────────────────
+
+/**
+ * An athlete's settings resolved to a single activity date — the value object
+ * an {@link import('../activity/index.js').Activity} is read against via
+ * `activity.usingProfile(bob)`. Wraps the as-of resolution ({@link profileAsOf})
+ * and exposes the zone *ranges* (the per-channel {@link ZoneDef}s); the
+ * per-activity *data* (time-in-zone) is the profiled activity's `by…Zone()`.
+ *
+ * Immutable; carries only athlete data, never an activity's evidence — so one
+ * `Profile` is reused across every activity on its date.
+ */
+export class Profile {
+  private constructor(
+    private readonly resolved: ResolvedProfile,
+    /** The activity date this profile was resolved as-of (ISO 8601, UTC). */
+    readonly asOfDate: string,
+  ) {}
+
+  /** Resolve the athlete's stored profile to the values in force on the
+   *  activity's date — the values used for FTP-relative power, W/kg, and zones. */
+  static asOf(json: AthleteProfileJson, activityDateUtc: string): Profile {
+    return new Profile(profileAsOf(json, activityDateUtc), activityDateUtc);
+  }
+
+  /** Functional Threshold Power (watts) in force on the date, if recorded. */
+  get ftpWatts(): number | undefined {
+    return this.resolved.ftpWatts;
+  }
+  /** Body weight (kg) in force on the date, if recorded — drives W/kg. */
+  get weightKg(): number | undefined {
+    return this.resolved.weightKg;
+  }
+  /** Heart-rate zone ranges (bpm axis), if an HR basis is recorded. */
+  get heartRateZones(): ZoneDef | undefined {
+    return this.resolved.hrZones;
+  }
+  /** Pace zone ranges (speed axis, m/s; Z1 slowest), if a threshold is recorded. */
+  get paceZones(): ZoneDef | undefined {
+    return this.resolved.paceZones;
+  }
+  /** Power zone ranges (watt axis, Coggan), derived from FTP if recorded. */
+  get powerZones(): ZoneDef | undefined {
+    return this.resolved.ftpWatts == null
+      ? undefined
+      : powerZonesFrom(this.resolved.ftpWatts);
+  }
 }
