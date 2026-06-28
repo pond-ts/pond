@@ -1,7 +1,12 @@
 # RFC: façade-first `@pond-ts/fit` surface
 
-**Status:** in progress — slice 1 (the `Profile` / `usingProfile` foundation) lands
-with this RFC; the rest is sequenced below.
+**Status:** release-prep. Slice 1 (`Profile` / `usingProfile`) merged in #290; this
+consolidated PR adds the remaining **additive** façade homes (quantity formatting,
+`Track`, `Activity.windowChannels`) and the **barrel curation** (dropping the four
+blanket operator namespaces) — i.e. everything pre-release that's safe without an
+estela migration. The operator **demotion** + the no-abbreviation **rename** +
+the **estela migration** are deliberately deferred until after the first npm push
+(see the sequence below).
 **Supersedes** the [`api.md`](./api.md) tenet that the functional operator core is
 public ("drop to the functional layer or stay fluent — both first-class"). This
 RFC makes the **façade the surface** and demotes the operators to internal. That
@@ -107,8 +112,11 @@ from it today. To build first:
    `.slice(from, to, { domainTotal? })` / `.cumulativeMeters()`, wrapping the geo
    polyline ops (`polylineCumulative` / `interpolateAtDistance` / `polylineSlice` /
    `boundsOf`). For a track WITH time/channels, `Activity` remains the home.
-3. **`windowChannels` as a method** — `activity.range(...).channels()` (or
-   `activity.windowChannels(...)`) for chart-zoom rebucketing.
+3. ✅ **`windowChannels` as a method (slice 4, done).** `activity.windowChannels({
+   startMeters, endMeters, … })` → `ChannelProfile[]` — the chart-zoom rebucketing
+   path, finer than the whole-activity profile. Delegates to the functional
+   `windowChannels` (verified by a parity test). The drop-in for estela's
+   `windowChannels(prepared, …)` call site.
 
 ## estela migration (not free — sequenced)
 
@@ -137,18 +145,32 @@ functional helpers it uses today: `convertDistance` (6 files), `formatDuration`
   the new Asset model (`assetFromImported`, which backfills listed metrics via
   `computeActivitySummary`).
 
-## What slice 1 (this PR) delivers
+## What's shipped (the release-prep surface)
+
+Merged in #290:
 
 - `Profile` (`profile/index.ts`) — `asOf` (history-aware) + `of` (history-less,
   for a bare FTP/weight fallback) + `ftpWatts` / `weightKg` / `heartRateZones` /
-  `paceZones` / `powerZones`. The Coggan power-zone scheme moved
-  here as `powerZonesFrom` (its canonical home alongside `hrZonesFrom` /
-  `paceZonesFrom`); `power.powerZoneDef` now delegates to it (dedup).
+  `paceZones` / `powerZones`. The Coggan power-zone scheme moved here as
+  `powerZonesFrom` (alongside `hrZonesFrom` / `paceZonesFrom`); `power.powerZoneDef`
+  delegates to it.
 - `Activity.usingProfile(profile)` → `ProfiledActivity`, with `ProfiledSection`
   turtles through `splits` / `range` / `laps`.
-- Barrel: `Profile`, `ProfiledActivity`, `ProfiledSection` added. Nothing removed.
-- Tests: `test/profiled.test.ts` (10) — power/IF, the three `by…Zone()`, W/kg,
-  turtles, and the full-range-vs-whole-activity parity check.
 
-Everything else in the target surface (demotion, rename, the new façade homes,
-the estela migration) is **out of scope here** and tracked above.
+This consolidated PR (the remaining additive homes + the curation):
+
+- **Quantity formatting** — `.in(unit)` + `.format(unit?, decimals?)` across the
+  quantities (slice 2).
+- **`Track`** — the position-only sibling of `Activity` over a bare `GeoPoint[]`
+  (slice 3).
+- **`Activity.windowChannels(opts)`** — the chart-zoom rebucketing home (slice 4).
+- **Barrel curation** — dropped the four blanket `export * as geo/power/zones/
+  profile` namespaces; the deliberate flat named exports remain. New barrel
+  additions: `Profile`, `ProfiledActivity`, `ProfiledSection`, `Track`,
+  `powerZonesFrom`. The operators stay flat-exported (their **demotion** to a
+  sub-path is the post-migration step).
+- Tests: `profiled` (12), `quantities` (+4), `track` (6), `activity-window` (2)
+  — 167 fit tests green.
+
+Out of scope here (post-npm-push): operator demotion, the no-abbreviation rename,
+and the estela migration — all tracked in the sequence above.

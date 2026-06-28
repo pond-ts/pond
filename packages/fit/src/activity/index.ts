@@ -22,9 +22,12 @@ import type { Split, TrackSeries, DistanceEffort } from '../geo/index.js';
 import {
   prepareActivity,
   summaryFromPrepared,
+  windowChannels,
   type PreparedActivity,
   type ActivitySummary,
   type ActivitySummaryOptions,
+  type WindowChannelOptions,
+  type ChannelProfile,
 } from '../summary/index.js';
 import {
   computePower,
@@ -313,6 +316,13 @@ export class Activity {
       return (this._summary ??= summaryFromPrepared(this.prep));
     }
     return summaryFromPrepared(this.prep, options);
+  }
+
+  /** Channels re-bucketed over a distance window `[startMeters, endMeters]` — the
+   *  chart-zoom resolution path, finer than the whole-activity profile from
+   *  {@link summary}. The façade home for the functional `windowChannels`. */
+  windowChannels(options: WindowChannelOptions): ChannelProfile[] {
+    return windowChannels(this.prep, options);
   }
 
   /** Total moving / elapsed / distance, quantity-typed. */
