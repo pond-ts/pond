@@ -47,7 +47,6 @@ export {
   ProfiledSection,
 } from './activity/index.js';
 export type { Sample, SectionMetrics } from './activity/index.js';
-export { Track } from './track/index.js';
 
 export * as geo from './geo/index.js';
 export {
