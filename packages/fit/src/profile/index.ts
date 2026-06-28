@@ -249,14 +249,27 @@ export function profileAsOf(
 export class Profile {
   private constructor(
     private readonly resolved: ResolvedProfile,
-    /** The activity date this profile was resolved as-of (ISO 8601, UTC). */
-    readonly asOfDate: string,
+    /** The activity date this profile was resolved as-of (ISO 8601, UTC);
+     *  `undefined` for a history-less profile from {@link of}. */
+    readonly asOfDate?: string,
   ) {}
 
   /** Resolve the athlete's stored profile to the values in force on the
    *  activity's date — the values used for FTP-relative power, W/kg, and zones. */
   static asOf(json: AthleteProfileJson, activityDateUtc: string): Profile {
     return new Profile(profileAsOf(json, activityDateUtc), activityDateUtc);
+  }
+
+  /** A profile from explicit settings with **no effective-dated history** — the
+   *  "I just have an FTP / weight" case (demos, fixtures, a fallback prop, or a
+   *  settings form with nothing recorded yet). For history-aware resolution use
+   *  {@link asOf}. Power zones derive from `ftpWatts`; HR / pace zones are absent
+   *  (they need a basis, which a bare settings object doesn't carry). */
+  static of(settings: { ftpWatts?: number; weightKg?: number }): Profile {
+    const resolved: ResolvedProfile = {};
+    if (settings.ftpWatts != null) resolved.ftpWatts = settings.ftpWatts;
+    if (settings.weightKg != null) resolved.weightKg = settings.weightKg;
+    return new Profile(resolved);
   }
 
   /** Functional Threshold Power (watts) in force on the date, if recorded. */

@@ -109,12 +109,26 @@ functional helpers it uses today: `convertDistance` (6 files), `formatDuration`
 2. Build the façade homes above.
 3. Migrate estela onto the façade + `Profile`.
 4. Demote the operators from the barrel; apply the no-abbreviation rename.
+   **Demote ≠ delete:** the operators retreat to a `@pond-ts/fit/operators`
+   sub-path export, still reachable for power users, the finance sibling, and
+   estela's own edge cases — the headline is the façade, but the functional core
+   stays accessible (the real value behind the old "both first-class" tenet).
 5. Publish; swap estela to the npm package and delete its local copy.
+
+### Confirmed façade replacements (for the migration)
+
+- **`computeActivitySummary(imported)` → `Activity.fromStreams(imported).summary()`** —
+  verified **deeply equal** for both empty and non-empty activities (the
+  empty-streams guard in `computeActivitySummary` produces the same result the
+  prepared path does). This is the home for estela's existing 5 call sites **and**
+  the new Asset model (`assetFromImported`, which backfills listed metrics via
+  `computeActivitySummary`).
 
 ## What slice 1 (this PR) delivers
 
-- `Profile` (`profile/index.ts`) — `asOf` + `ftpWatts` / `weightKg` /
-  `heartRateZones` / `paceZones` / `powerZones`. The Coggan power-zone scheme moved
+- `Profile` (`profile/index.ts`) — `asOf` (history-aware) + `of` (history-less,
+  for a bare FTP/weight fallback) + `ftpWatts` / `weightKg` / `heartRateZones` /
+  `paceZones` / `powerZones`. The Coggan power-zone scheme moved
   here as `powerZonesFrom` (its canonical home alongside `hrZonesFrom` /
   `paceZonesFrom`); `power.powerZoneDef` now delegates to it (dedup).
 - `Activity.usingProfile(profile)` → `ProfiledActivity`, with `ProfiledSection`

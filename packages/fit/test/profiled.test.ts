@@ -66,6 +66,21 @@ describe('Profile', () => {
     expect(pz.edges[3]).toBeCloseTo(225, 6); // 0.90 × 250
   });
 
+  it('of() builds a history-less profile from explicit settings', () => {
+    const bob = Profile.of({ ftpWatts: 250, weightKg: 70 });
+    expect(bob.ftpWatts).toBe(250);
+    expect(bob.weightKg).toBe(70);
+    expect(bob.asOfDate).toBeUndefined();
+    expect(bob.powerZones!.edges[3]).toBeCloseTo(225, 6); // derived from FTP
+    expect(bob.heartRateZones).toBeUndefined(); // no basis without history
+  });
+
+  it('of() with just an FTP drives the profiled power summary', () => {
+    const act = Activity.fromStreams(steadyRide(120, 200, 150));
+    const p = act.usingProfile(Profile.of({ ftpWatts: 250 })).power()!;
+    expect(p.intensityFactor).toBeCloseTo(0.8, 2);
+  });
+
   it('powerZones is undefined without an FTP', () => {
     const noFtp = Profile.asOf(
       { weightKg: [{ at: '2026-01-01', value: 70 }] },
