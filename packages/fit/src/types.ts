@@ -3,8 +3,8 @@
  *
  * Units are SI throughout (meters, seconds) — the same units the Strava API
  * returns. Conversion to miles/feet happens at the display edge (see
- * `units.ts`); the model never stores imperial. (The ridgetrail proof of
- * concept stored miles/feet and paid for it in conversion bugs.)
+ * `units.ts`); the model never stores imperial. (An earlier design stored
+ * miles/feet and paid for it in conversion bugs.)
  */
 
 /** A geographic point as [latitude, longitude]. Matches Leaflet + tracks.json. */
@@ -38,7 +38,7 @@ export interface ActivityStreams {
  * separately (a track is large; metadata is small and listed often).
  */
 export interface ActivityMeta {
-  /** Stable Estela id, `${source}:${externalId}` — never a raw provider id. */
+  /** Stable activity id, `${source}:${externalId}` — never a raw provider id. */
   id: string;
   source: ActivitySource;
   /** The id this activity has in its source system (e.g. the Strava id). */
@@ -58,7 +58,7 @@ export interface ActivityMeta {
 
 /**
  * A recorded lap — a segment the device marked (auto-lap by distance/time, or
- * a button press), as opposed to the evenly-spaced splits Estela *computes*.
+ * a button press), as opposed to the evenly-spaced splits this library *computes*.
  * Recorded laps are the rider's own structure (intervals, climbs, rest stops),
  * so they're carried through as first-class evidence. SI throughout; optional
  * fields are present only when the source recorded them.
