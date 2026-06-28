@@ -8,8 +8,9 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`, and
 them all. Pre-1.0: minor bumps may include new features and type-level changes;
 patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.31.0...HEAD
-[0.31.0]: https://github.com/pjm17971/pond-ts/compare/v0.30.0...v0.31.0
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.31.1...HEAD
+[0.31.1]: https://github.com/pjm17971/pond-ts/compare/v0.30.0...v0.31.1
+[0.31.0]: https://github.com/pjm17971/pond-ts/compare/v0.30.0...3c4e8bd
 [0.30.0]: https://github.com/pjm17971/pond-ts/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/pjm17971/pond-ts/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/pjm17971/pond-ts/compare/v0.27.0...v0.28.0
@@ -23,6 +24,15 @@ patch bumps are strictly additive.
 [0.20.0]: https://github.com/pjm17971/pond-ts/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/pjm17971/pond-ts/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
+
+## [0.31.1] — 2026-06-28
+
+### Fixed
+
+- **`@pond-ts/charts` and `@pond-ts/fit` now ship their own README** on npm.
+  0.31.0 inadvertently published the `pond-ts` core README on every package
+  (each `prepack` copied the repo-root README); charts and fit now carry their
+  own. No code or API changes.
 
 ## [0.31.0] — 2026-06-28
 
