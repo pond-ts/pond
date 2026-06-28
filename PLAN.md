@@ -845,14 +845,20 @@ proven copy into its canonical home: **#288** (`a73456a`) the base package
 (quantities, canonical activity series, geo/power/zones/profile/summary, Activity/
 Section façade; 143 tests), then **#290** (`d2f60a6`) `Profile` + `usingProfile()` →
 `ProfiledActivity`/`ProfiledSection` (façade-first slice 1, + an RFC at
-`packages/fit/docs/rfc-facade-first.md`). The follow-up work then **consolidated into one in-flight PR — #293**
-(`feat/fit-release-prep`, OPEN): quantity `.format()` (slice 2), a `Track` value
-object (slice 3), `windowChannels` as a method, and barrel curation (drop the four
-blanket `export *` for a single curated flat barrel). The standalone slice PRs
-(#289 barrel, #291 slice 2, #292 slice 3) were **closed in favour of that single
-release-prep PR**. **Still sequenced after #293:** (1) the units-preference home +
-any remaining façade demotion of the operator surface; (2) **estela's own adoption
-is NOT done** —
+`packages/fit/docs/rfc-facade-first.md`), then **#293** (`2d0f815`, **MERGED
+2026-06-28**) the release-prep consolidation: quantity `.format()` (slice 2), a `Track`
+value object (slice 3), `windowChannels` as a method, and barrel curation (drop the
+four blanket `export *` for a single curated flat barrel — demoting the operator
+surface to the Activity / Section / Track / Profile façade). The standalone slice PRs
+(#289 barrel, #291 slice 2, #292 slice 3) were **closed in favour of #293**.
+**Publish-time flag (from the #293 review):** the curation left a few geo analytics
+with no public path — neither barrel nor façade — `simplify`, `elevationProfile`,
+`profileByDistance`, `rollingSpread` (the last likely superseded by core
+`rollingByColumn`); fine while `private` / unpublished, but the export list earns a
+deliberate pass at first publish (power analytics stay reachable via `PowerSummary` +
+the façade — verified, not affected). **Still sequenced:** (1) the units-preference
+home + any remaining façade demotion of the operator surface; (2) **estela's own
+adoption is NOT done** —
 estela still consumes its local copy and **has not adopted the shipped value-axis
 primitives** (`scan` / `byValue`); `geo.segmentsInRange` etc. are still hand-rolled
 (`split = scan + byColumn` is the available-but-unadopted path); (3) publish, then
