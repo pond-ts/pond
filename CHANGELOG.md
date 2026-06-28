@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`, and
 them all. Pre-1.0: minor bumps may include new features and type-level changes;
 patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.31.1...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.31.2...HEAD
+[0.31.2]: https://github.com/pjm17971/pond-ts/compare/v0.31.1...v0.31.2
 [0.31.1]: https://github.com/pjm17971/pond-ts/compare/v0.30.0...v0.31.1
 [0.31.0]: https://github.com/pjm17971/pond-ts/compare/v0.30.0...3c4e8bd
 [0.30.0]: https://github.com/pjm17971/pond-ts/compare/v0.29.0...v0.30.0
@@ -24,6 +25,21 @@ patch bumps are strictly additive.
 [0.20.0]: https://github.com/pjm17971/pond-ts/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/pjm17971/pond-ts/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
+
+## [0.31.2] — 2026-06-29
+
+### Fixed
+
+- **`pond-ts` column methods survive consumer tree-shaking.** The column-API
+  methods (`hasMissing`, `at`, `min`, `slice`, …) are mounted onto the column
+  prototypes by a side-effect module (`dist/column.js`); the previous
+  `sideEffects: ["./dist/column.js"]` per-file glob was dropped by some bundlers
+  (notably Rollup production builds under pnpm), so
+  `series.column('x').hasMissing()` could throw in production. `pond-ts` now
+  declares `sideEffects: true`, matching the other `@pond-ts` packages — robust
+  regardless of bundler or symlink layout, at the cost of whole-package
+  tree-shaking (the column prototype augmentation makes that unsafe anyway).
+  (estela#98.)
 
 ## [0.31.1] — 2026-06-28
 
