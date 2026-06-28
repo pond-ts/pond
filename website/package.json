@@ -3,7 +3,8 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "build:api": "npm run build:api:core && npm run build:api:react",
+    "build:api": "npm run build:api:core && npm run build:api:react && npm run build:api:fit",
+    "build:api:fit": "typedoc --options typedoc.fit.json",
     "build:api:core": "typedoc --options typedoc.core.json",
     "build:api:react": "typedoc --options typedoc.react.json",
     "docusaurus": "docusaurus",

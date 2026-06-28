@@ -1,0 +1,46 @@
+{
+  "name": "@pond-ts/fit",
+  "version": "0.30.0",
+  "private": true,
+  "description": "Fitness & activity domain library on pond-ts — quantities, canonical activity series, and analytics (geo, power, zones, splits)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pjm17971/pond-ts.git",
+    "directory": "packages/fit"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/cjs-fallback.cjs"
+    }
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
+    "prepack": "cp ../../README.md ./README.md && cp ../../LICENSE ./LICENSE && cp ../../CHANGELOG.md ./CHANGELOG.md && npm run build && cp cjs-fallback.cjs dist/cjs-fallback.cjs && find dist -name '*.map' -delete",
+    "test": "npm run test:type && npm run test:runtime",
+    "test:type": "tsc -p tsconfig.types.json",
+    "test:runtime": "vitest run",
+    "verify": "npm run format:check && npm run build && npm test"
+  },
+  "peerDependencies": {
+    "pond-ts": "^0.30.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}
