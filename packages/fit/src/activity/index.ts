@@ -1,6 +1,6 @@
 /**
  * The `Activity` / `Section` façade — the ergonomic object model of the fitness
- * library (see docs/fit/api.md). A thin, memoizing skin over the functional
+ * library. A thin, memoizing skin over the functional
  * operator core: `prepareActivity` (the canonical pond series + derived columns),
  * `summaryFromPrepared`, the geo splitters, and the power/zone analytics. Every
  * method delegates to a tested pure operator and hands back {@link quantities}

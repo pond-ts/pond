@@ -2,9 +2,9 @@
  * Time-in-zone over a **value axis** — the engine behind the power, heart-rate,
  * and pace zone distributions. Each is "how long did this channel spend in each
  * band," i.e. bucket the per-sample value by the zone edges and sum each
- * sample's duration. That's pond `byColumn` over the value column (F-geo-2, the
- * value-axis aggregator) summing a gap-clamped `dt` weight — the same shape the
- * power distribution uses, generalized so HR and pace share one tested core.
+ * sample's duration. That's pond `byColumn` over the value column, summing a
+ * gap-clamped `dt` weight — the same shape the power distribution uses,
+ * generalized so HR and pace share one tested core.
  */
 import { TimeSeries } from 'pond-ts';
 import type { ZoneDef } from '../profile/index.js';

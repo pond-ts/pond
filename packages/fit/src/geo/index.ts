@@ -6,24 +6,24 @@
  *
  * Built strictly on pond's PUBLIC surface: two `number` columns for lat/lng,
  * `column(name).toFloat64Array()` for zero-copy reads, and column reductions.
- * Where pond's public API can't express something cleanly we work around it in
- * here and record the pain in docs/pond-friction.md (the friction is
- * the deliverable). The two live ones, already confirmed:
- *   - F-geo-1: there is no public "attach a computed Float64Array as a column",
- *     so derived columns require a row-rebuild. We avoid it by computing over
- *     the raw typed arrays instead and only returning scalars / plain arrays.
- *   - F-geo-2: pond aggregates over a *temporal* Sequence, but splits and the
- *     elevation profile want a *distance* axis. We hand-roll the distance
- *     bucketing below — see `splitsByDistance` / `elevationProfile`.
+ * Two places reach past what pond expresses directly today:
+ *   - Scalar / plain-array results are computed over the raw typed arrays rather
+ *     than attached back as derived columns — a deliberate choice (no row
+ *     rebuild). Where a derived column IS wanted, pond's `withColumn` covers it.
+ *   - Distance-axis aggregation: value-axis histograms (zones / distribution)
+ *     are pond-native via `byColumn`, but per-interval *splits* (many metrics
+ *     per distance bucket) and contiguous-run segmentation still walk the arrays
+ *     — candidate pond primitives (a multi-metric value-axis aggregate; a
+ *     `scan` / run-length family). See `splitsByDistance` / `segmentsInRange`.
  */
 import { TimeSeries } from 'pond-ts';
 
 /**
  * The canonical activity schema: time key + lat/lng, with every other per-sample
  * channel optional (present iff the source recorded it). This is the single
- * source the compute layer reads — the "consume the series directly" seam (see
- * docs/fit/api.md): power/cadence/temp live IN the series alongside ele/hr,
- * not as orphaned parallel arrays.
+ * source the compute layer reads — the "consume the series directly" seam:
+ * power/cadence/temp live IN the series alongside ele/hr, not as orphaned
+ * parallel arrays.
  */
 export const TRACK_SCHEMA = [
   { name: 'time', kind: 'time' },
@@ -46,7 +46,6 @@ export type TrackSeries = TimeSeries<typeof TRACK_SCHEMA>;
  * constructor accepts `undefined` for `required: false` columns and records it in
  * the validity bitmap (lossless); as of pond 0.29 `RowForSchema` honors
  * `required: false` so the row type admits it too. It rejects `null` and `NaN`.
- * See docs/pond-friction.md.
  */
 export type TrackPoint = [
   timeMs: number,
@@ -411,9 +410,8 @@ export function polylineSlice(
 }
 
 /**
- * Bounds via pond's column reductions — the clean, pond-native path (contrast
- * with the friction ones). Kept to exercise the public column API and to show
- * what pond *does* make easy.
+ * Bounding box via pond's column min/max reductions — the pond-native path,
+ * over the public column API.
  */
 export function boundsViaPond(
   track: TrackSeries,
@@ -523,12 +521,13 @@ export interface SplitExtras {
 }
 
 /**
- * Per-interval splits over the DISTANCE axis (per-km, per-mile). This is
- * **F-geo-2**: pond's `aggregate(Sequence, …)` buckets over the temporal key,
- * but a split is a bucket over *cumulative distance* — a derived, monotonic,
- * non-key column. Pond has no public "aggregate over an arbitrary monotonic
- * column", so we walk the arrays by hand here. The note in docs/pond-friction.md
- * proposes what the pond-native primitive could look like.
+ * Per-interval splits over the DISTANCE axis (per-km, per-mile). A split is a
+ * bucket over *cumulative distance* (a derived, monotonic, non-key column) that
+ * carries MANY metrics per bucket — time, elevation gain/loss, NP, and avg/max
+ * of arbitrary extra channels. `byColumn` bins a single reducer over a value
+ * column; this multi-metric-per-bucket shape isn't a single `byColumn` call, so
+ * it walks the arrays here. A multi-metric value-axis aggregate is a candidate
+ * pond primitive.
  */
 export function splitsByDistance(
   step: Float64Array,
@@ -723,9 +722,9 @@ export interface ProfilePoint {
 }
 
 /**
- * The elevation-vs-distance profile, resampled onto an even distance grid (also
- * **F-geo-2** — distance-domain, not time). We average elevation within each
- * distance bucket. Used for the profile chart and as the downsample for drawing.
+ * The elevation-vs-distance profile, resampled onto an even distance grid
+ * (distance-domain, not time). We average elevation within each distance bucket.
+ * Used for the profile chart and as the downsample for drawing.
  */
 export function elevationProfile(
   cumDist: Float64Array,
@@ -778,8 +777,8 @@ const MAX_CARRY_METERS = 1000;
  * `bandLo`/`bandHi` are the central-90% **percentiles** (not raw min/max), so
  * a single anomalous sample can't set the band or the chart scale. `NaN`
  * (missing) samples are skipped; the last bucket carries forward so the line
- * stays continuous. F-geo-2 again: distance-domain bucketing of an arbitrary
- * value array (the `byColumn` primitive proposed to pond).
+ * stays continuous. Distance-domain bucketing of a value array — like the
+ * `byColumn` histograms, but emitting a median + percentile band per bucket.
  */
 export function profileByDistance(
   cumDist: Float64Array,
@@ -830,16 +829,15 @@ const PROFILE_SCHEMA = [
   { name: 'time', kind: 'time' },
   { name: 'dist', kind: 'number' },
   // optional so a missing/NaN sample can ride as `undefined` (validity bitmap);
-  // pond's reducer non-finite policy then skips it. See F-geo-row-optional.
+  // pond's reducer non-finite policy then skips it.
   { name: 'val', kind: 'number', required: false },
 ] as const;
 
 /**
  * Distance-domain bucketing of an arbitrary value column — the line + band — via
- * pond's `byColumn` (the value-axis aggregator that landed for exactly this
- * friction, F-geo-2). Per bin: `value` is the **median**, `bandLo/bandHi` the
- * central-90% percentiles (`p5/p95`), `innerLo/innerHi` the IQR (`p25/p75`) —
- * all pond reducers, same linear-interpolated method we used by hand. We then
+ * pond's `byColumn` value-axis aggregator. Per bin: `value` is the **median**,
+ * `bandLo/bandHi` the central-90% percentiles (`p5/p95`), `innerLo/innerHi` the
+ * IQR (`p25/p75`) — all pond reducers (linear-interpolated percentiles). We then
  * scatter the bins onto a FIXED `0..nBuckets-1` grid and **carry forward** across
  * empty bins (NaN before the first occupied), preserving the prior continuity
  * semantics. The final-boundary sample (`dist === total`) is clamped into the
@@ -951,8 +949,8 @@ export interface Spread {
  * whole thing: the raw samples are the rows, and `at` evaluates the ±radius
  * window + the four percentiles at each chart-grid center directly (one record
  * per center) — no interleave, no read-back bookkeeping. `cum` and `distances`
- * must both ascend (rollingByColumn enforces it). The `{ at }` option landed
- * for exactly this friction (F-rolling-by-row, resolved in 0.30).
+ * must both ascend (rollingByColumn enforces it). The `{ at }` option (added in
+ * pond 0.30) evaluates the window at each grid center directly.
  */
 export function rollingSpread(
   cumDist: Float64Array,
@@ -1017,10 +1015,11 @@ export interface DistanceEffort {
  * any window covering at least that distance. The distance-axis analogue of the
  * power curve — a two-pointer over cumulative distance keeps the window just ≥
  * the target while minimising elapsed time, O(n) per distance. Times are clamped
- * non-decreasing across the (ascending) distance list. Hand-rolled: a fastest
- * rolling window over a derived monotonic axis + a multi-window sweep — the
- * `rollingSpread` / `F-power-curve` friction family (see docs/pond-friction.md).
- * `hr` (optional) yields the mean heart rate over each fastest window.
+ * non-decreasing across the (ascending) distance list. Walks the arrays: it's a
+ * fastest-window search over a derived monotonic axis swept across many target
+ * distances — beyond pond's single-window `rolling` (a multi-window sweep is a
+ * candidate pond primitive). `hr` (optional) yields the mean heart rate over each
+ * fastest window.
  * Precondition: `distances` must be ascending — the `> total` early-exit and the
  * non-decreasing-time clamp both rely on it (`BEST_EFFORT_DISTANCES` is).
  */
@@ -1090,9 +1089,9 @@ export function bestEffortsByDistance(
  * spans [cum at its first in-range sample, cum at its last]; a lone sample is a
  * zero-length segment at its point.
  *
- * Hand-rolled run-length encoding of a predicate over a value column: pond has
- * no contiguous-run / RLE-by-predicate primitive — it's the scan/segmentation
- * family (see docs/pond-friction.md, F-geo-2-splits / the proposed `scan`).
+ * Run-length encoding of a predicate over a value column. pond has no
+ * contiguous-run / RLE-by-predicate primitive yet — a `scan` / segmentation
+ * family is a candidate pond primitive; until then this walks the arrays.
  */
 export function segmentsInRange(
   cumDist: Float64Array,

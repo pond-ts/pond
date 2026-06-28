@@ -1,6 +1,6 @@
 /**
  * Fitness quantity types — the ergonomic, unit-safe value layer of the activity
- * domain (the seed of `@pond-ts/fit`'s quantities; see docs/fit/api.md).
+ * domain.
  *
  * Each is an immutable value object holding ONE canonical SI number, with
  * unit-named constructors in / accessors out — so a function returns a `Speed`

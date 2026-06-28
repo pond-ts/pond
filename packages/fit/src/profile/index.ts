@@ -6,10 +6,9 @@
  *
  * Modeled as pond `TimeSeries` keyed by the effective date and resolved with
  * `series.atOrBefore(activityDate)` — the value in force on the day of the
- * activity. This is a deliberate pond use-case probe: irregular, step-function
- * config series + an as-of query (see docs/pond-friction.md). The JSON shape is
- * what lives in the vault (`profile/athlete.json`); {@link hydrateProfile} lifts
- * it into the series, {@link profileAsOf} resolves a date.
+ * activity. A natural pond fit: an irregular, step-function config series with an
+ * as-of query. {@link hydrateProfile} lifts the persisted profile JSON into the
+ * series, {@link profileAsOf} resolves a date.
  */
 import { TimeSeries, Time } from 'pond-ts';
 

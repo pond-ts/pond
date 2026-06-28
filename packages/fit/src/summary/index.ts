@@ -378,7 +378,7 @@ export function buildTrackFromStreams(
   // Missing/non-finite → `undefined` (NOT 0, a valid reading). pond rejects
   // null/NaN but accepts undefined for required:false columns and records it in
   // the validity bitmap, so the gap stays a gap — lossless; readColumns reads it
-  // back as NaN. See docs/pond-friction.md (F-geo-row-optional).
+  // back as NaN.
   const cell = (a: number[] | undefined, i: number): number | undefined => {
     const v = a?.[i];
     return v != null && Number.isFinite(v) ? v : undefined;

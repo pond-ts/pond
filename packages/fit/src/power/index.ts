@@ -1,17 +1,14 @@
 /**
  * Power analytics for a ride with a real power meter — normalized power, the
  * power distribution + FTP zones, the mean-maximal power curve, work, and
- * training load. M2 of the @pond-ts/geo experiment (pond docs/rfcs/geo.md).
- *
- * What this exercises on pond, and the friction it surfaces:
- *   - **Normalized power** is a 30 s rolling mean → pond's `rolling` (the one
- *     genuine pond-native fit here; see `normalizedPower`).
- *   - **Power distribution / zones** bucket over the *power value* axis, not
- *     time. This is F-geo-2 generalized beyond distance: pond's aggregate
- *     buckets over the temporal key, so value-axis histograms are hand-rolled.
- *   - **The power curve** is a rolling-*mean*-then-*max* over MANY window sizes
- *     — a sweep pond's single-window `rolling` doesn't express in one pass.
- * See docs/pond-friction.md.
+ * training load. How each maps onto pond:
+ *   - **Normalized power** is a 30 s rolling mean → pond's `rolling` (see
+ *     `normalizedPower`).
+ *   - **Power distribution / zones** bucket over the *power value* axis (not
+ *     time) → pond's `byColumn` over the watts column (see `zones`).
+ *   - **The power curve** is a rolling-*mean*-then-*max* swept over MANY window
+ *     sizes — pond's `rolling` is single-window, so the sweep is done here. A
+ *     multi-window rolling primitive is a candidate pond enhancement.
  */
 import { TimeSeries } from 'pond-ts';
 import { intervals } from '../intervals.js';
@@ -128,9 +125,9 @@ export interface PowerBin {
 
 /**
  * Time spent in each `binWatts`-wide power bucket — a histogram over the POWER
- * value axis. Now pond-native: `byColumn` buckets rows by the watts value and
- * sums each bin's per-sample seconds (F-geo-2, the value-axis aggregator). We
- * emit bins from 0 up to the highest occupied (the old grid: low-power bins that
+ * value axis. Pond-native: `byColumn` buckets rows by the watts value and sums
+ * each bin's per-sample seconds. We emit bins from 0 up to the highest occupied
+ * (the old grid: low-power bins that
  * happen to be empty still appear as 0 s). Sub-zero samples clamp to bin 0.
  */
 export function powerDistribution(
