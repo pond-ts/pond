@@ -13,7 +13,7 @@
 import { TimeSeries } from 'pond-ts';
 import { intervals } from '../intervals.js';
 import { zoneDistributionByValue } from '../zones/index.js';
-import type { ZoneDef } from '../profile/index.js';
+import { powerZonesFrom, type ZoneDef } from '../profile/index.js';
 
 const POWER_SCHEMA = [
   { name: 'time', kind: 'time' },
@@ -173,18 +173,6 @@ export interface PowerZone {
   fraction: number;
 }
 
-const ZONE_LABELS = [
-  'Recovery',
-  'Endurance',
-  'Tempo',
-  'Threshold',
-  'VO2Max',
-  'Anaerobic',
-  'Neuromuscular',
-];
-/** Coggan zone upper bounds as fractions of FTP (Z7 is open-ended). */
-const ZONE_FRACTIONS = [0.55, 0.75, 0.9, 1.05, 1.2, 1.5];
-
 /**
  * Time in each of the 7 Coggan power zones for the given FTP. Like
  * {@link powerDistribution} this is value-axis bucketing — here with
@@ -209,12 +197,11 @@ export function zoneDistribution(
   }));
 }
 
-/** The 7 Coggan power zones as a watt-axis {@link ZoneDef} (FTP-relative). */
+/** The 7 Coggan power zones as a watt-axis {@link ZoneDef} (FTP-relative).
+ *  Delegates to {@link powerZonesFrom} — the scheme's canonical home is the
+ *  profile module, alongside the HR + pace zone builders. */
 export function powerZoneDef(ftp: number): ZoneDef {
-  return {
-    edges: [0, ...ZONE_FRACTIONS.map((f) => f * ftp), 1e9],
-    labels: ZONE_LABELS,
-  };
+  return powerZonesFrom(ftp);
 }
 
 /** A point on the mean-maximal power curve. */
