@@ -90,6 +90,18 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: '@pond-ts/fit',
+      link: { type: 'doc', id: 'fit/fit-index' },
+      items: [
+        {
+          type: 'link',
+          label: 'API reference (fit)',
+          href: 'pathname:///generated-api/fit/',
+        },
+      ],
+    },
+    {
+      type: 'category',
       label: 'How-to guides',
       link: { type: 'doc', id: 'how-to-guides/how-to-guides-index' },
       items: [

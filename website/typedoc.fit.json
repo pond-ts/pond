@@ -1,0 +1,15 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["../packages/fit/src/index.ts"],
+  "tsconfig": "../packages/fit/tsconfig.json",
+  "out": "static/generated-api/fit",
+  "name": "@pond-ts/fit API Reference",
+  "readme": "none",
+  "cleanOutputDir": true,
+  "excludePrivate": true,
+  "excludeProtected": true,
+  "lightHighlightTheme": "github-light",
+  "darkHighlightTheme": "github-light",
+  "customCss": "typedoc/custom.css",
+  "customJs": "typedoc/custom.js"
+}

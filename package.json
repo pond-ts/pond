@@ -10,7 +10,8 @@
   "workspaces": [
     "packages/core",
     "packages/react",
-    "packages/charts"
+    "packages/charts",
+    "packages/fit"
   ],
   "engines": {
     "node": ">=18"

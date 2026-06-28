@@ -1,0 +1,78 @@
+---
+id: fit-index
+title: '@pond-ts/fit'
+sidebar_position: 1
+---
+
+# @pond-ts/fit
+
+A **fitness / activity domain library** on pond-ts. The name reads _fitness_
+(with the happy bonus that it parses `.fit` files); it is **not** a FIT-_format_
+parser — file parsing is just one input. Its job is "Strava as an API": free,
+ergonomic tools to work with **your own** activity data — parse it, analyze it,
+slice it, convert units — with a fluent object model over pond's generic
+`TimeSeries`.
+
+**Install** — `npm install pond-ts @pond-ts/fit`. Peer-depends on `pond-ts`.
+
+```ts
+import { Activity, Distance, Duration } from '@pond-ts/fit';
+
+const activity = Activity.fromStreams(imported); // .fromFit / .fromGpx land with ingest
+
+activity.meta.sportType; // "Ride"
+activity.distance().miles; // Distance — .miles / .km / .meters
+activity.movingTime().format(); // "7:00:54"
+
+const splits = activity.splits(Distance.miles(1)); // Section[]
+splits[3].normalizedPower()?.watts; // 291
+splits[3].avgSpeed()?.pace().asMinsPerMile(); // "10:31/mi"
+
+const window = activity.range(Duration.minutes(20), Duration.minutes(40));
+window.elevationGain().feet;
+
+activity.power(ftp); // PowerSummary | undefined (no power recorded)
+activity.bestEfforts({ weightKg }); // PowerEffort[] (+ W/kg)
+activity.at(Duration.minutes(20)); // interpolated channel Sample
+```
+
+## The stack (three layers)
+
+```
+pond-ts            generic TimeSeries + operators (rolling, byColumn, fill, validity)
+  └─ @pond-ts/fit  the FITNESS domain:
+        • quantity types     Distance, Duration, Speed/Pace, Power, HeartRate, Cadence, Elevation
+        • canonical series   the activity TimeSeries schema (one SI-normalized column vocabulary)
+        • operators (pure)   geo (track/splits/profiles/best-efforts), power (NP/curve/zones), zones
+        • Activity / Section a thin ERGONOMIC façade over the operators + quantities
+```
+
+**The OO façade is a thin skin over a functional core.** `activity.powerCurve()`
+delegates to a pure `powerCurve(series, …)`; `section.normalizedPower()` to
+`normalizedPower(series)`. Logic lives in composable, tested functions;
+`Activity`/`Section` add ergonomics + memoization. Drop to the functional layer
+(`activity.timeSeries()`) or stay fluent — both first-class.
+
+## Design tenets
+
+- **Profile-agnostic.** Anything needing FTP / body weight / zone definitions
+  takes them as **arguments** (the caller resolves them from the athlete
+  profile as-of the activity date). `Activity` wraps only the activity's own
+  evidence.
+- **Gap-honest.** Sustained coasts/dropouts break the line (NaN), never
+  interpolate across a hole; missing channels are absent, not zero.
+- **Ingest membrane.** Messy formats in (Strava exports, `.fit`/`.gpx`/`.tcx`,
+  dropped samples, `-1`/`255` sentinels, unit quirks), **one clean canonical
+  activity** out — wrangled once, here, at ingest.
+
+## Where to start
+
+- [**API reference**](pathname:///generated-api/fit/) — the generated full-width
+  reference: every quantity, `Activity`/`Section`, and the `geo` / `power` /
+  `zones` / `profile` / `summary` operator surfaces.
+
+:::note
+This package is young — the docs here are an introduction plus the generated
+type reference. Guides (quantities, the canonical series, the operator core)
+follow as the API settles.
+:::
