@@ -915,35 +915,35 @@ ruling), estela's `docs/pond-friction.md`.
 - **Data point against opening the kind system:** a packed geo column earned
   nothing on perf at GPS scale (reinforces `geo.md` §7).
 
-### `@pond-ts/financial` (exploratory; sponsored; kicking off ~week of 2026-06-29)
+### Tidal (financial charts; drives `@pond-ts/financial`; kicking off ~week of 2026-06-29)
 
-A **commercially-sponsored** track building a financial / market-analytics
-domain library over core, exposed to high-performance charting. **Earliest
-stage — pre-RFC, not a committed phase.** It lives in the experiments roster
-(not the library phases) precisely so this record stays honest; the RFC→PLAN
-discipline applies — only work actually adopted becomes a commitment, and the
-RFC is deferred until the build earns it.
+A charts use-case experiment — the financial counterpart of estela. Where estela
+drives `@pond-ts/fit` and adopts `@pond-ts/charts` for activity data, **Tidal** is a
+financial-charts consumer that drives **`@pond-ts/financial`** (the market-analytics
+sibling of `@pond-ts/fit`) and adopts `@pond-ts/charts`. A **dedicated Tidal agent**
+runs it, the same way the estela agent runs estela (and drove `@pond-ts/fit`).
+**It's just a charts use case for now** — earliest stage, pre-RFC, not a committed
+library phase; the RFC→PLAN discipline applies (only adopted work becomes a
+commitment).
 
-- **Shape:** a **toolkit of analytics operators** over core (volatility,
-  returns, OHLC roll-ups, …), deliberately distinct in API shape from
-  `@pond-ts/fit`'s façade — each domain package's surface stands on its own,
-  no precedent carried over. Batch first; real-time is a later horizon leaning
-  on the same live layer the gRPC + webapp-telemetry tracks stress.
-- **Substrate is largely already in place.** The value-axis wave (`scan`,
-  `byValue` / `ValueSeries`, `byColumn` / `rollingByColumn`, chart x-on-value)
-  shipped for the estela/charts work and hands the financial analytics their
-  non-time-axis substrate close to free. The likely _new_ core sibling is an
-  RLE / segmentation primitive (`runs` / segment-by-predicate) — the same gap
-  fit hand-rolls — rather than net-new value-axis work.
-- **Known charts gap it surfaces: candlestick / OHLC marks.** `@pond-ts/charts`
-  has no OHLC bar / candlestick chart type yet; this is the first real consumer
-  that needs one. A candidate chart-roadmap item, driven by adoption (consistent
-  with "let the consumers write the roadmap").
-- **Agent structure:** likely a **dedicated agent for the financial core +
-  operator toolkit**, so the pond-ts library + charts agent stays focused on the
-  library itself. The build starts in a sandbox repo and productionizes into the
-  sponsor's private monorepo — **no sponsor-specific code or naming lands in this
-  public repo** (this entry is itself genericized to that rule).
+- **`@pond-ts/financial` shape:** a **toolkit of analytics operators** over core
+  (volatility, returns, OHLC roll-ups, …), deliberately distinct in API shape from
+  `@pond-ts/fit`'s façade — each domain package's surface stands on its own, no
+  precedent carried over. Batch first; real-time is a later horizon leaning on the
+  same live layer the gRPC + webapp-telemetry tracks stress.
+- **Substrate is largely already in place.** The value-axis wave (`scan`, `byValue`
+  / `ValueSeries`, `byColumn` / `rollingByColumn`, chart x-on-value) shipped for the
+  estela / charts work and hands the financial analytics their non-time-axis
+  substrate close to free. The likely _new_ core sibling is an RLE / segmentation
+  primitive (`runs` / segment-by-predicate) — the same gap fit hand-rolls — rather
+  than net-new value-axis work.
+- **Charts gaps it surfaces (candidate roadmap items, driven by adoption):**
+  (1) **candlestick / OHLC marks** — `@pond-ts/charts` has none yet; Tidal is the
+  first consumer that needs one, likely a fill-out of the existing `BoxPlot`.
+  (2) a **trading-calendar x-axis** that skips weekends / non-trading days (and
+  overnight gaps for intraday bars) — a non-wall-clock x adjacent to the value-axis
+  machinery, so the very first axis requirement already pushes past a naive
+  continuous `TimeAxis`.
 
 ---
 
