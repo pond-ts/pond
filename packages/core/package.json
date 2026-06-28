@@ -1,6 +1,6 @@
 {
   "name": "pond-ts",
-  "version": "0.31.1",
+  "version": "0.31.2",
   "description": "TypeScript-first time series primitives",
   "license": "MIT",
   "repository": {
@@ -11,9 +11,7 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "sideEffects": [
-    "./dist/column.js"
-  ],
+  "sideEffects": true,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

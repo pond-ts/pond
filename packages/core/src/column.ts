@@ -25,6 +25,13 @@
  * Augmenting the existing class in-place — runtime _and_ at the
  * type level — keeps the substrate untouched and ships the
  * methods on every existing construction site.
+ *
+ * **Packaging — do not narrow `sideEffects`.** The barrel imports this
+ * module only for its side effect, so `packages/core/package.json` must
+ * keep `sideEffects: true`. The earlier per-file glob
+ * (`["./dist/column.js"]`) was silently dropped by some bundlers under
+ * pnpm + Rollup production builds, tree-shaking this module away so
+ * `series.column('x').hasMissing()` threw at runtime (v0.31.2; estela#98).
  */
 
 import {
