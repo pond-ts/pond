@@ -81,7 +81,7 @@ export function Layers({ children }: LayersProps) {
 
   const background = container.theme.background;
   const { grid: gridColor, gridDash } = container.theme.axis;
-  const { layers, yScales, formats, defaultAxisId } = row;
+  const { layers, yScales, formats, defaultAxisId, tickValues } = row;
   // x geometry is shared and lives on the container (uniform across rows).
   const { xScale, plotWidth } = container;
   const draw = useCallback(
@@ -93,8 +93,13 @@ export function Layers({ children }: LayersProps) {
       // Gridlines behind the data, from the same ticks the axes label: vertical
       // from the shared time scale, horizontal from the row's default y-axis.
       const gridY = yScales.get(defaultAxisId);
+      // Explicit `<YAxis ticks>` drive the gridlines too, so they align with the
+      // axis labels; otherwise d3 auto-picks (the default).
+      const explicitY = tickValues.get(defaultAxisId);
       const xTicks = xScale.ticks(GRID_TICKS).map((d) => xScale(d));
-      const yTicks = gridY ? gridY.ticks(GRID_TICKS).map((t) => gridY(t)) : [];
+      const yTicks = gridY
+        ? (explicitY ?? gridY.ticks(GRID_TICKS)).map((t) => gridY(t))
+        : [];
       drawGrid(ctx, xTicks, yTicks, w, h, gridColor, gridDash);
       for (const entry of layers) {
         const yScale = yScales.get(entry.axisId ?? defaultAxisId);
@@ -102,7 +107,16 @@ export function Layers({ children }: LayersProps) {
         entry.layer.draw(ctx, xScale, yScale);
       }
     },
-    [layers, yScales, xScale, defaultAxisId, background, gridColor, gridDash],
+    [
+      layers,
+      yScales,
+      xScale,
+      defaultAxisId,
+      tickValues,
+      background,
+      gridColor,
+      gridDash,
+    ],
   );
 
   // Interaction overlay: the cursor marks live on a DOM/SVG overlay above the

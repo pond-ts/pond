@@ -26,6 +26,15 @@ export interface YAxisProps {
    * (e.g. `',.2f'`) when you want finer readout precision. See {@link AxisFormat}.
    */
   format?: AxisFormat;
+  /**
+   * Explicit ticks — `{ at, label }` in axis-value units — instead of the
+   * scale's automatic ticks, driving BOTH the labels and the row's gridlines so
+   * the two align. The y-axis counterpart of `<XAxis ticks>` (same shape): the
+   * lever for a non-uniform axis like pace, where the caller chooses round-pace
+   * positions and their own `m:ss` labels (`{ at: -300, label: '5:00' }`). `at`
+   * values outside the domain are clipped by the scale. Pass `[]` to draw none.
+   */
+  ticks?: ReadonlyArray<{ readonly at: number; readonly label: string }>;
   /** Gutter width in CSS pixels (default 50). */
   width?: number;
   /**
@@ -53,6 +62,7 @@ export function YAxis({
   min,
   max,
   format,
+  ticks,
   width = DEFAULT_WIDTH,
   index = 0,
 }: YAxisProps) {
@@ -66,8 +76,17 @@ export function YAxis({
   }
 
   const spec = useMemo<AxisSpec>(
-    () => ({ id, side, width, min, max, format, index }),
-    [id, side, width, min, max, format, index],
+    () => ({
+      id,
+      side,
+      width,
+      min,
+      max,
+      format,
+      tickValues: ticks?.map((t) => t.at),
+      index,
+    }),
+    [id, side, width, min, max, format, ticks, index],
   );
   // A stable per-instance slot (see useSlotKey) keeps this axis in a fixed
   // registry position, so a min/max/side change updates in place rather than
@@ -84,10 +103,17 @@ export function YAxis({
 
   const { theme } = container;
   const yScale = row.yScales.get(id);
-  const ticks = yScale ? yScale.ticks(TICK_COUNT) : [];
   // Same formatter the readout uses (resolved per axis on the row), so a tick and
   // a cursor value read identically.
   const fmt = yScale ? resolveAxisFormat(yScale, TICK_COUNT, format) : String;
+  // Explicit `{ at, label }` ticks render verbatim (each label at its `at`),
+  // overriding the auto-picked d3 ticks; otherwise label the scale's ticks via `fmt`.
+  const tickList: readonly { value: number; label: string }[] = ticks
+    ? ticks.map((t) => ({ value: t.at, label: t.label }))
+    : (yScale ? yScale.ticks(TICK_COUNT) : []).map((t) => ({
+        value: t,
+        label: fmt(t),
+      }));
 
   // The row reserves a slot per axis column (the widest in that column across
   // rows). Size the box to the slot and align this axis's own (narrower)
@@ -116,18 +142,18 @@ export function YAxis({
         }}
       >
         {yScale &&
-          ticks.map((t) => (
+          tickList.map(({ value, label }) => (
             <div
-              key={t}
+              key={value}
               style={{
                 position: 'absolute',
-                top: `${yScale(t)}px`,
+                top: `${yScale(value)}px`,
                 [side === 'left' ? 'right' : 'left']: '4px',
                 transform: 'translateY(-50%)',
                 whiteSpace: 'nowrap',
               }}
             >
-              {fmt(t)}
+              {label}
             </div>
           ))}
         {/* The axis label, rotated to a thin vertical strip at the outer edge +
