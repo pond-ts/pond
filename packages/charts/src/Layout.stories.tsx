@@ -409,11 +409,11 @@ export const ExplicitTicks: Story = {
 };
 
 /**
- * **A pace axis** — the motivating case for `{ value, label }` ticks. A run is
+ * **A pace axis** — the motivating case for `{ at, label }` ticks. A run is
  * plotted in PACE space: y is **negated sec/km**, so faster sits higher
  * (estela's `DataChart` convention). Auto ticks can't help — the axis wants
  * round-pace positions (4:00, 4:30, …) with `m:ss` labels, which don't fall on
- * the scale's "nice" numbers. Explicit `{ value, label }` ticks place each label
+ * the scale's "nice" numbers. Explicit `{ at, label }` ticks place each label
  * at the negated-sec/km value it sits at. (estela `paceTicks`; the feature that
  * unblocks the `DataChart` → charts port.)
  */

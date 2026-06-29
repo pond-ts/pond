@@ -32,7 +32,10 @@ export interface YAxisProps {
    * the two align. The y-axis counterpart of `<XAxis ticks>` (same shape): the
    * lever for a non-uniform axis like pace, where the caller chooses round-pace
    * positions and their own `m:ss` labels (`{ at: -300, label: '5:00' }`). `at`
-   * values outside the domain are clipped by the scale. Pass `[]` to draw none.
+   * values outside `[min, max]` extrapolate off-plot (the scale does not clamp).
+   * Pass `[]` to draw none. For a live / animating chart, **memoize the array** —
+   * an inline `ticks={[…]}` is a fresh reference each render and re-registers the
+   * axis (like `format`; harmless for a static chart).
    */
   ticks?: ReadonlyArray<{ readonly at: number; readonly label: string }>;
   /** Gutter width in CSS pixels (default 50). */
