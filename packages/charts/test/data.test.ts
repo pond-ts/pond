@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TimeSeries } from 'pond-ts';
 import {
+  bandFromValueSeries,
   barsFromTimeSeries,
   fromTimeSeries,
   fromValueSeries,
@@ -259,5 +260,82 @@ describe('fromValueSeries', () => {
     expect(() => fromValueSeries(s.byValue('cumDist'), 'label')).toThrow(
       /must be numeric/,
     );
+  });
+});
+
+describe('bandFromValueSeries', () => {
+  // A short ride re-keyed onto cumulative distance, carrying a p25/p75 envelope:
+  // x is distance, lower/upper are the two edges (cf. bandFromTimeSeries).
+  const ride = () =>
+    new TimeSeries({
+      name: 'ride',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'cumDist', kind: 'number' },
+        { name: 'p25', kind: 'number', required: false },
+        { name: 'p75', kind: 'number', required: false },
+      ] as const,
+      rows: [
+        [0, 0, 118, 124],
+        [1000, 500, 128, 134],
+        [2000, 1200, 138, 144],
+      ] as never,
+    });
+
+  it('uses the value axis as x and lower/upper as the two edges', () => {
+    const bs = bandFromValueSeries(ride().byValue('cumDist'), 'p25', 'p75');
+    expect(bs.x).toBeInstanceOf(Float64Array);
+    expect(bs.lower).toBeInstanceOf(Float64Array);
+    expect(bs.upper).toBeInstanceOf(Float64Array);
+    // x is cumulative distance (the axis), NOT time
+    expect(Array.from(bs.x)).toEqual([0, 500, 1200]);
+    expect(Array.from(bs.lower)).toEqual([118, 128, 138]);
+    expect(Array.from(bs.upper)).toEqual([124, 134, 144]);
+    expect(bs.length).toBe(3);
+    expect(bs.lower.length).toBe(bs.upper.length);
+  });
+
+  it('represents a missing edge as NaN (the gap signal, either edge)', () => {
+    const s = new TimeSeries({
+      name: 'ride',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'cumDist', kind: 'number' },
+        { name: 'p25', kind: 'number', required: false },
+        { name: 'p75', kind: 'number', required: false },
+      ] as const,
+      rows: [
+        [0, 0, 118, 124],
+        [1000, 500, undefined, 134],
+        [2000, 1200, 138, undefined],
+      ] as never,
+    });
+    const bs = bandFromValueSeries(s.byValue('cumDist'), 'p25', 'p75');
+    expect(Number.isNaN(bs.lower[1]!)).toBe(true);
+    expect(Number.isNaN(bs.upper[2]!)).toBe(true);
+    expect(bs.lower[0]).toBe(118);
+    expect(bs.upper[1]).toBe(134);
+  });
+
+  it('throws on an unknown edge column', () => {
+    expect(() =>
+      bandFromValueSeries(ride().byValue('cumDist'), 'p25', 'nope'),
+    ).toThrow(/unknown column/);
+  });
+
+  it('throws on a non-numeric edge column', () => {
+    const s = new TimeSeries({
+      name: 'ride',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'cumDist', kind: 'number' },
+        { name: 'p25', kind: 'number' },
+        { name: 'label', kind: 'string' },
+      ] as const,
+      rows: [[0, 0, 118, 'a']],
+    });
+    expect(() =>
+      bandFromValueSeries(s.byValue('cumDist'), 'p25', 'label'),
+    ).toThrow(/must be numeric/);
   });
 });
