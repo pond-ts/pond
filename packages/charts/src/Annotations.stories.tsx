@@ -164,6 +164,40 @@ export const Selectable: Story = {
 };
 
 /**
+ * **Inert highlight bands — no label.** A background zone you *don't* want
+ * labelled: `<Region selectable={false} label={false}>` paints a faint band
+ * (pinned at the back, level 3 — no hover/select/edit) with **no chip**. This is
+ * estela's `highlightRanges` (effort/climb zones behind the trace). Omitting
+ * `label` would auto-label the raw span (`5:06–5:12`, ugly on a value axis);
+ * `label={false}` says "no label" in one read (`label=""` works too).
+ */
+export const Highlight: Story = {
+  render: () => (
+    <ChartContainer range={INTERVAL} width={680} theme={estelaTheme}>
+      <ChartRow height={260}>
+        <YAxis id="power" label="W" min={0} max={300} />
+        <Layers>
+          {/* Inert, unlabelled background zones — drawn behind the data line. */}
+          <Region
+            from={BASE + 6 * STEP}
+            to={BASE + 12 * STEP}
+            label={false}
+            selectable={false}
+          />
+          <Region
+            from={BASE + 22 * STEP}
+            to={BASE + 30 * STEP}
+            label={false}
+            selectable={false}
+          />
+          <LineChart series={power()} column="watts" as="foam" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
  * **Editable (Phase 2).** Pass `onChange` and a mark becomes draggable — grab a
  * handle and it follows the pointer, reporting the new position (controlled, held
  * in `useState` here). The `<Marker>` moves whole; the `<Region>`'s edges resize

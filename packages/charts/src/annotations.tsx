@@ -447,8 +447,11 @@ export interface MarkerProps {
    *  axis. (The generalisation of the mockup's "time line": a mark at an x, time
    *  or value.) */
   at: number;
-  /** Chip label; omit to auto-label with the shared x formatter (the axis's). */
-  label?: string;
+  /** Chip label. Omit to auto-label with the shared x formatter (the axis's);
+   *  pass `false` (or `''`) to render **no label chip** — for an inert background
+   *  mark you don't want labelled (where the auto-label would just show a raw
+   *  axis value). */
+  label?: string | false;
   /** Stable consumer id — a click reports it via the container's
    *  `onSelectAnnotation`, so the consumer can track which mark is selected. */
   id?: string;
@@ -494,7 +497,8 @@ export function Marker({
     container.creating === null &&
     onChange !== undefined;
   const xs = useMemo(() => [at], [at]);
-  const text = label ?? container.formatTime(at);
+  // `label === false` (or '') ⇒ no chip; omitted ⇒ auto-label off the x formatter.
+  const text = label === false ? '' : (label ?? container.formatTime(at));
   useRegisterAnnotation(
     container,
     selfKey,
@@ -566,16 +570,18 @@ export function Marker({
           />
         )}
       </svg>
-      <Chip
-        theme={container.theme}
-        color={ann.color}
-        style={{
-          top: `${FLAG_TOP + lane * LANE_H}px`,
-          ...flagChipX(x, container.plotWidth),
-        }}
-      >
-        {text}
-      </Chip>
+      {text && (
+        <Chip
+          theme={container.theme}
+          color={ann.color}
+          style={{
+            top: `${FLAG_TOP + lane * LANE_H}px`,
+            ...flagChipX(x, container.plotWidth),
+          }}
+        >
+          {text}
+        </Chip>
+      )}
     </>
   );
 }
@@ -585,8 +591,9 @@ export interface BaselineProps {
   value: number;
   /** Which `<YAxis>` (by id) to measure against; omit for the row's default axis. */
   axis?: string;
-  /** Chip label; omit to format `value` with that axis's formatter. */
-  label?: string;
+  /** Chip label. Omit to format `value` with that axis's formatter; pass `false`
+   *  (or `''`) to render **no label chip**. */
+  label?: string | false;
   /** Stable consumer id — a click reports it via `onSelectAnnotation`. */
   id?: string;
   /** Controlled selection — brightens to the front (level 1). Handles are an
@@ -645,7 +652,10 @@ export function Baseline({
     selected,
     selectable,
     editing,
-    label ?? '', // baselines don't lane-pack (label anchors at their y, not the top)
+    // Baselines don't lane-pack (the label anchors at their y, not the top), so
+    // this registered string is unused by `computeLabelLanes` — `|| ''` just
+    // keeps it a string for `false`/'' (which mean "no label").
+    label || '',
   );
   // No select/edit while a create tool is armed — the chart is in draw mode then.
   const select =
@@ -669,7 +679,9 @@ export function Baseline({
   );
   const showHandle = editable && (editing || hovering);
   const fmt = row.formats.get(axisId);
-  const text = label ?? (fmt ? fmt(value) : String(value));
+  // `label === false` (or '') ⇒ no chip; omitted ⇒ format `value` off the axis.
+  const text =
+    label === false ? '' : (label ?? (fmt ? fmt(value) : String(value)));
   // Handle pill near the right end (clears the left-anchored label).
   const handleX = w - 14;
   return (
@@ -709,13 +721,15 @@ export function Baseline({
           />
         )}
       </svg>
-      <Chip
-        theme={container.theme}
-        color={ann.color}
-        style={{ top: `${y}px`, left: '2px', transform: 'translateY(-50%)' }}
-      >
-        {text}
-      </Chip>
+      {text && (
+        <Chip
+          theme={container.theme}
+          color={ann.color}
+          style={{ top: `${y}px`, left: '2px', transform: 'translateY(-50%)' }}
+        >
+          {text}
+        </Chip>
+      )}
     </>
   );
 }
@@ -725,8 +739,11 @@ export interface RegionProps {
   from: number;
   /** End x in axis units. */
   to: number;
-  /** Chip label; omit to auto-label `from–to` with the shared x formatter. */
-  label?: string;
+  /** Chip label. Omit to auto-label `from–to` with the shared x formatter; pass
+   *  `false` (or `''`) to render **no label chip** — e.g. an inert
+   *  `selectable={false}` highlight band, where the auto-label would just show
+   *  raw axis values. */
+  label?: string | false;
   /** Stable consumer id — a click (or double-click outside edit) reports it via
    *  `onSelectAnnotation`. */
   id?: string;
@@ -775,8 +792,11 @@ export function Region({
     container.creating === null &&
     onChange !== undefined;
   const xs = useMemo(() => [from, to], [from, to]);
+  // `label === false` (or '') ⇒ no chip; omitted ⇒ auto-label the `from–to` span.
   const text =
-    label ?? `${container.formatTime(from)}–${container.formatTime(to)}`;
+    label === false
+      ? ''
+      : (label ?? `${container.formatTime(from)}–${container.formatTime(to)}`);
   useRegisterAnnotation(
     container,
     selfKey,
@@ -961,16 +981,18 @@ export function Region({
           </>
         )}
       </svg>
-      <Chip
-        theme={container.theme}
-        color={ann.color}
-        style={{
-          top: `${FLAG_TOP + lane * LANE_H}px`,
-          ...flagChipX(left, container.plotWidth),
-        }}
-      >
-        {text}
-      </Chip>
+      {text && (
+        <Chip
+          theme={container.theme}
+          color={ann.color}
+          style={{
+            top: `${FLAG_TOP + lane * LANE_H}px`,
+            ...flagChipX(left, container.plotWidth),
+          }}
+        >
+          {text}
+        </Chip>
+      )}
     </>
   );
 }

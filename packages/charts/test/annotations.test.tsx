@@ -1,0 +1,144 @@
+import type { ReactNode } from 'react';
+import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, render, within } from '@testing-library/react';
+import { TimeSeries } from 'pond-ts';
+import { ChartContainer } from '../src/ChartContainer.js';
+import { ChartRow } from '../src/ChartRow.js';
+import { Layers } from '../src/Layers.js';
+import { LineChart } from '../src/LineChart.js';
+import { YAxis } from '../src/YAxis.js';
+import {
+  Region,
+  Marker,
+  Baseline,
+  computeLabelLanes,
+} from '../src/annotations.js';
+import type { AnnotationSpec } from '../src/context.js';
+
+afterEach(cleanup);
+
+const series = new TimeSeries({
+  name: 't',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'v', kind: 'number' },
+  ] as const,
+  rows: [
+    [0, 1],
+    [1, 5],
+    [2, 9],
+    [3, 4],
+    [4, 7],
+  ] as [number, number][],
+});
+
+/** The en dash the region auto-label joins its bounds with (`from–to`). */
+const EN = '–';
+
+/**
+ * Render one annotation in a minimal time-axis container and report whether a
+ * chip with `text` is present. `showAxis={false}` drops the time axis and
+ * `timeFormat={() => 'X'}` makes every x format to the sentinel `'X'`, so the
+ * *only* `'X'` on screen is a mark's auto-label — never an axis tick. The y axis
+ * is `[0,100]` (ticks 0,10,…,100), so a baseline value of 37 auto-labels to a
+ * `'37'` no tick collides with.
+ *
+ * The query is scoped to *this* render's `container` (and the tree is unmounted
+ * after) so successive calls in one test don't see each other's chips — RTL's
+ * top-level queries are bound to `document.body`, which accumulates renders.
+ */
+function hasChip(child: ReactNode, text: string): boolean {
+  const { container, unmount } = render(
+    <ChartContainer
+      range={[0, 4]}
+      width={300}
+      showAxis={false}
+      timeFormat={() => 'X'}
+    >
+      <ChartRow height={120}>
+        <YAxis id="a" min={0} max={100} />
+        <Layers>
+          <LineChart series={series} column="v" axis="a" />
+          {child}
+        </Layers>
+      </ChartRow>
+    </ChartContainer>,
+  );
+  const found = within(container).queryByText(text) !== null;
+  unmount();
+  return found;
+}
+
+/**
+ * `label={false}` (and `label=""`) suppress the chip entirely — the label-less
+ * mode for inert background marks (estela's `highlightRanges`) — while omitting
+ * `label` still auto-labels off the axis, and a real string still renders.
+ */
+describe('annotation label opt-out (label={false} / "")', () => {
+  it('Region: omit → auto-label span; false / "" → no chip; string → chip', () => {
+    expect(hasChip(<Region from={1} to={3} />, `X${EN}X`)).toBe(true);
+    expect(hasChip(<Region from={1} to={3} label={false} />, `X${EN}X`)).toBe(
+      false,
+    );
+    expect(hasChip(<Region from={1} to={3} label="" />, `X${EN}X`)).toBe(false);
+    expect(hasChip(<Region from={1} to={3} label="zone" />, 'zone')).toBe(true);
+  });
+
+  it('Marker: omit → auto-label; false / "" → no chip; string → chip', () => {
+    expect(hasChip(<Marker at={2} />, 'X')).toBe(true);
+    expect(hasChip(<Marker at={2} label={false} />, 'X')).toBe(false);
+    expect(hasChip(<Marker at={2} label="" />, 'X')).toBe(false);
+    expect(hasChip(<Marker at={2} label="lap 3" />, 'lap 3')).toBe(true);
+  });
+
+  it('Baseline: omit → auto-label value; false / "" → no chip; string → chip', () => {
+    expect(hasChip(<Baseline value={37} />, '37')).toBe(true);
+    expect(hasChip(<Baseline value={37} label={false} />, '37')).toBe(false);
+    expect(hasChip(<Baseline value={37} label="" />, '37')).toBe(false);
+    expect(
+      hasChip(<Baseline value={37} label="threshold" />, 'threshold'),
+    ).toBe(true);
+  });
+});
+
+/** Build an `AnnotationSpec` with sensible defaults for the lane-packing test. */
+function spec(
+  over: Partial<AnnotationSpec> & Pick<AnnotationSpec, 'label'>,
+): AnnotationSpec {
+  return {
+    key: Symbol('ann'),
+    id: undefined,
+    kind: 'marker',
+    rowKey: Symbol('row'),
+    xs: [1],
+    selected: false,
+    editing: false,
+    selectable: true,
+    ...over,
+  };
+}
+
+/**
+ * `computeLabelLanes` already filters on `label.length > 0`, so a label-less mark
+ * (the `label={false}`/`''` case, registered as `''`) claims no lane — it can't
+ * push a labelled neighbour down a lane it doesn't occupy.
+ */
+describe('computeLabelLanes — empty labels claim no lane', () => {
+  it('skips empty-label marks entirely', () => {
+    const lanes = computeLabelLanes(
+      [spec({ label: '' }), spec({ kind: 'region', xs: [2, 3], label: '' })],
+      (x) => x * 10,
+    );
+    expect(lanes.size).toBe(0);
+  });
+
+  it('still packs overlapping labelled marks into stacked lanes', () => {
+    // Two labelled markers at the same x overlap → the second drops to lane 1.
+    const lanes = computeLabelLanes(
+      [spec({ label: 'one' }), spec({ label: 'two' })],
+      (x) => x * 10,
+    );
+    expect(lanes.size).toBe(2);
+    expect([...lanes.values()].sort()).toEqual([0, 1]);
+  });
+});
