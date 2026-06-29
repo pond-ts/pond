@@ -165,9 +165,10 @@ export interface ChartContainerProps {
    */
   onEditAnnotation?: (id: string) => void;
   /**
-   * Snap mode (the toolbar's "Snap"). **Default `true`.** When on, created +
-   * dragged marks snap to the nearest data sample (clean values) and to other
-   * marks' guidelines (alignment); off = free placement.
+   * Snap mode (the toolbar's "Snap"). **Default `true`.** When on, a dragged
+   * mark snaps to other marks' **guidelines** (their x-positions, within a few
+   * px) so spans align; off = free placement. (Snapping to the nearest data
+   * sample is not implemented — guideline alignment only.)
    */
   snap?: boolean;
   /**

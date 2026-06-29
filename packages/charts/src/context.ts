@@ -160,9 +160,10 @@ export interface ContainerFrame {
    */
   readonly creating: AnnotationKind | null;
   /**
-   * Snap mode — the toolbar's "Snap". When on, created + dragged marks snap to the
-   * nearest **data sample** (so values read clean — `5:12`, not `5:11:47`) and to
-   * other marks' **guidelines** (alignment). One mode, both behaviours.
+   * Snap mode — the toolbar's "Snap". When on, a dragged mark snaps to other
+   * marks' **guidelines** (their x-positions) so spans align; off = free
+   * placement. Read by {@link snapToGuides}. (Data-sample snapping — landing on a
+   * clean `5:12` rather than `5:11:47` — is a future extension, not yet wired.)
    */
   readonly snap: boolean;
   /** Fired when a create gesture completes (on release). The consumer adds the

@@ -266,6 +266,9 @@ function snapToGuides(
   selfKey: symbol,
   px: number,
 ): number | null {
+  // The container's snap toggle gates guideline snapping — off ⇒ the drag keeps
+  // its raw position (no clicking onto neighbours).
+  if (!container.snap) return null;
   let best: number | null = null;
   let bestDist = SNAP_PX;
   for (const a of container.annotations) {
