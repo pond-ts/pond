@@ -12,7 +12,10 @@ import {
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
 import { useSlotKey } from './use-slot-key.js';
 
-export interface AreaChartProps<S extends SeriesSchema, VS extends ValueSeriesSchema> {
+export interface AreaChartProps<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> {
   /**
    * The source series. A `TimeSeries` fills against the time axis; a
    * `ValueSeries` (`series.byValue('dist')`) against its value axis — the

@@ -8,8 +8,8 @@ import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
 import { useSlotKey } from './use-slot-key.js';
 
 export interface BandChartProps<
-  S extends SeriesSchema,
-  VS extends ValueSeriesSchema,
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
 > {
   /**
    * The source series. A `TimeSeries` fills the envelope against the time axis;
