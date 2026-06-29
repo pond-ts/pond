@@ -111,6 +111,24 @@ export interface ChartTheme {
    * unset. (The `fade` mode has its own gradient and isn't governed by this.)
    */
   readonly gap?: { readonly connectorOpacity: number };
+  /**
+   * The **annotation register** — the styling for *user-authored* marks
+   * (`<Region>` / `<Baseline>` / `<Marker>`), deliberately a distinct hue from
+   * the data's `line`/`area`/… so a mark you place never reads as data (the
+   * "data stays foam, marks are turquoise" rule). `color` is the shared register
+   * hue (lines, region edges + fill, handles, label text); the region fill draws
+   * at `fillOpacity`. **Luminosity encodes depth** — brighter reads as forward,
+   * dimmer as further back. `depth` is the three-level ramp: `[0]` = level 1
+   * (forward / brightest — a selected mark, or an edit-mode line), `[1]` = level 2
+   * (mid — a hovered mark, or an edit-mode region body), `[2]` = level 3 (back —
+   * the resting, backgrounded state). Cross-row guides draw fainter still (a
+   * notional level 4, set in `Layers`). Falls back to a built-in turquoise.
+   */
+  readonly annotation?: {
+    readonly color: string;
+    readonly fillOpacity: number;
+    readonly depth: readonly [number, number, number];
+  };
 }
 
 /** A resolved line style: stroke colour + width (px). */
@@ -306,6 +324,12 @@ export const defaultTheme: ChartTheme = {
   cursor: '#64748b',
   chip: { background: '#ffffff' },
   gap: { connectorOpacity: 0.5 },
+  // Teal marks register — distinct from the blue data, reads on the light ground.
+  annotation: {
+    color: '#0d9488',
+    fillOpacity: 0.1,
+    depth: [1, 0.7, 0.4],
+  },
 };
 
 /**
@@ -428,4 +452,11 @@ export const estelaTheme: ChartTheme = {
   cursor: '#7FE2D2', // --es-reef (bright tracker on the dark ground)
   chip: { background: '#0B4E58' }, // --es-deep (panel behind readout text)
   gap: { connectorOpacity: 0.5 },
+  // Marks register: --es-reef, estela's bright attention turquoise (the same hue
+  // as the cursor / selected highlight) — distinct from the foam (white) data.
+  annotation: {
+    color: '#7FE2D2', // --es-reef
+    fillOpacity: 0.1,
+    depth: [1, 0.7, 0.4],
+  },
 };

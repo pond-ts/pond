@@ -77,6 +77,13 @@ export interface ContainerFrame {
   /** Show the cursor's time atop the in-chart readout (when a row's cursor draws
    *  one), formatted by {@link formatTime} to match the time axis. */
   readonly cursorTime: boolean;
+  /**
+   * Whether the chart is in **annotation-edit mode** — suppresses the data cursor
+   * and makes editable annotations interactive (hovering reveals their handles +
+   * highlights them, dragging edits them). Set by the container's
+   * `editAnnotations` prop; annotations read it to switch from inert to interactive.
+   */
+  readonly editAnnotations: boolean;
   /** Format an epoch-ms instant the same way the time axis labels its ticks —
    *  shared by `<TimeAxis>` and the cursor-time readout. */
   readonly formatTime: (epochMs: number) => string;
@@ -129,6 +136,99 @@ export interface ContainerFrame {
   registerRow(key: symbol): () => void;
   /** The first (topmost) row's key, or `null` before any row has registered. */
   readonly firstRowKey: symbol | null;
+  /**
+   * Register an annotation (`<Region>`/`<Marker>`/`<Baseline>`) so the container
+   * can coordinate what a mark can't do in isolation: draw each mark's **guide
+   * line** across the *other* rows, resolve cross-region z-order, and serve
+   * **snap targets** to a drag. Keyed by the mark's per-instance slot key;
+   * unregister on unmount.
+   */
+  registerAnnotation(key: symbol, spec: AnnotationSpec): void;
+  unregisterAnnotation(key: symbol): void;
+  /** Every registered annotation — read by each row to draw the *other* rows'
+   *  guides, and by a drag to find snap targets. */
+  readonly annotations: readonly AnnotationSpec[];
+  /** Vertical lane (0 = top) for each top-flag label, by slot key — overlapping
+   *  marker/region labels stack into lower lanes instead of colliding. A key absent
+   *  from the map (or mapping to 0) sits in the top lane. */
+  readonly labelLanes: ReadonlyMap<symbol, number>;
+  /**
+   * The armed creation tool, or `null` (idle). Set by the consumer's toolbar;
+   * when non-null the plot captures a **create gesture** (draw a new mark) instead
+   * of panning, and fires {@link onCreate} on release. While armed, existing
+   * marks' edit handles stand down so the draw owns the surface.
+   */
+  readonly creating: AnnotationKind | null;
+  /**
+   * Snap mode — the toolbar's "Snap". When on, created + dragged marks snap to the
+   * nearest **data sample** (so values read clean — `5:12`, not `5:11:47`) and to
+   * other marks' **guidelines** (alignment). One mode, both behaviours.
+   */
+  readonly snap: boolean;
+  /** Fired when a create gesture completes (on release). The consumer adds the
+   *  mark, disarms ({@link creating} → `null`), and selects it. `undefined` ⇒
+   *  creation is a no-op (the gesture still previews but commits nothing). */
+  readonly onCreate: ((spec: CreateSpec) => void) | undefined;
+  /** Fired when a mark is clicked (reports its `id`) or the plot is clicked empty
+   *  (`null`) — the consumer updates its selection. A double-click on a region
+   *  fires it too (the shortcut into a focused edit). */
+  readonly onSelectAnnotation: ((id: string | null) => void) | undefined;
+  /** Fired when the pointer enters a mark (reports its `id`) or leaves it (`null`),
+   *  so the consumer can mirror hover out-of-band (e.g. a legend row). Pairs with a
+   *  mark's controlled `hovered` prop to sync hover both ways. Works in any mode. */
+  readonly onHoverAnnotation: ((id: string | null) => void) | undefined;
+  /** Fired when a mark is **double-clicked** — the request to edit just that one.
+   *  The consumer flips it into single-annotation edit (sets its `editing` prop),
+   *  while the rest stay static. Distinct from {@link onSelectAnnotation} (single
+   *  click = inspect-select). Works in any mode. */
+  readonly onEditAnnotation: ((id: string) => void) | undefined;
+}
+
+/** The kind of an annotation, and of a creation tool. */
+export type AnnotationKind = 'region' | 'marker' | 'baseline';
+
+/** What a completed create gesture reports to {@link ContainerFrame.onCreate} —
+ *  the new mark's kind + position in axis units (+ the y-axis id for a baseline).
+ *  (Which row a mark lands on is the consumer's call for now; multi-row routing is
+ *  a follow-up.) */
+export type CreateSpec =
+  | { readonly kind: 'marker'; readonly at: number }
+  | { readonly kind: 'baseline'; readonly value: number; readonly axis: string }
+  | { readonly kind: 'region'; readonly from: number; readonly to: number };
+
+/**
+ * A registered annotation as the container sees it — enough to draw its guide
+ * line on other rows, order it against other marks, and offer it as a snap target.
+ */
+export interface AnnotationSpec {
+  /** The mark's per-instance slot key — its identity in the registry. */
+  readonly key: symbol;
+  /** The consumer's stable id (its `id` prop), if any — what a click /
+   *  double-click reports via {@link ContainerFrame.onSelectAnnotation}, so the
+   *  consumer knows which mark to select. */
+  readonly id: string | undefined;
+  readonly kind: AnnotationKind;
+  /** The row it lives on (its `<ChartRow>`'s key), so a row skips its own marks
+   *  when drawing guides. */
+  readonly rowKey: symbol;
+  /**
+   * Its vertical-guide x-position(s) in **axis units** (the shared x): a marker's
+   * `[at]`, a region's `[from, to]`. Empty for a baseline — a horizontal line
+   * casts no vertical guide.
+   */
+  readonly xs: readonly number[];
+  /** Whether it's currently selected (controlled by the consumer). */
+  readonly selected: boolean;
+  /** Whether it's in single-annotation edit (the double-click target). The plot
+   *  suppresses the data cursor while any mark is editing, as it does in global
+   *  edit mode. */
+  readonly editing: boolean;
+  /** Whether it accepts hover + selection. A non-selectable region is skipped by
+   *  the double-click hit-test (it's inert background context). */
+  readonly selectable: boolean;
+  /** The mark's resolved label text — used to pack overlapping top-flag labels
+   *  (markers + regions) into stacked vertical lanes. */
+  readonly label: string;
 }
 
 /**
@@ -351,6 +451,9 @@ export interface RowFrame {
   /** Whether this is the first (topmost) row — the shared cursor-time chip shows
    *  here only, not repeated on every row. Derived from {@link ContainerFrame.firstRowKey}. */
   readonly isFirstRow: boolean;
+  /** This row's per-instance key — annotations register it so the container can
+   *  draw a mark's guide on the *other* rows (a row skips its own marks). */
+  readonly rowKey: symbol;
   /** The axis a layer uses when it names none (the first declared, or implicit). */
   readonly defaultAxisId: string;
   /**

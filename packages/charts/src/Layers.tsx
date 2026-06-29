@@ -8,6 +8,7 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -19,6 +20,7 @@ import { drawGrid } from './grid.js';
 import { cursorParts } from './tracker.js';
 import { resolveSelection } from './select.js';
 import { panRange, zoomRange } from './viewport.js';
+import { flagChipStyle, flagChipX } from './chip.js';
 import {
   ContainerContext,
   LayersContext,
@@ -129,7 +131,14 @@ export function Layers({ children }: LayersProps) {
   // Cursor mode: the row's override, else the container default. One mode per
   // row (the synced vertical line is shared across rows); each layer renders the
   // mode in its own way. `parts` decomposes it into {line, dots, chip}.
-  const parts = cursorParts(row.cursor ?? container.cursor);
+  // Editing suppresses the data cursor — the marks get the surface (hover/drag),
+  // and a crosshair would just be noise. True in global edit mode *and* while a
+  // single annotation is being edited (the double-click target).
+  const editingActive =
+    container.editAnnotations || container.annotations.some((a) => a.editing);
+  const parts = editingActive
+    ? cursorParts('none')
+    : cursorParts(row.cursor ?? container.cursor);
   const cursorColor = container.theme.cursor ?? container.theme.axis.label;
   // Only read a time when the cursor is within the plot. An out-of-bounds
   // controlled trackerPosition hides the cursor, so the dots + chips hide too —
@@ -242,11 +251,34 @@ export function Layers({ children }: LayersProps) {
   });
   // Pointer-down position, to tell a click (select) from the tail of a drag/pan.
   const clickStartRef = useRef<{ x: number; y: number } | null>(null);
+  // Create gesture (when a tool is armed): `createPt` is the live pointer driving
+  // the preview on the hovered row; `drawFrom` is a region's fixed start edge (px)
+  // once pressed. `drawFromRef` mirrors it for the stable up-handler to read.
+  const [createPt, setCreatePt] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+  const [drawFrom, setDrawFrom] = useState<number | null>(null);
+  const drawFromRef = useRef<number | null>(null);
 
   const handlePointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       clickStartRef.current = { x: e.clientX, y: e.clientY };
       const c = containerRef.current;
+      if (c.creating !== null) {
+        // Armed: a region presses to fix its start edge; a line just tracks until
+        // release. Capture so the draw can continue outside the plot.
+        if (c.creating === 'region') {
+          const px = e.clientX - e.currentTarget.getBoundingClientRect().left;
+          drawFromRef.current = px;
+          setDrawFrom(px);
+        }
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
       if (!c.panZoom) return;
       const r = c.timeRange;
       dragRef.current = { startX: e.clientX, startRange: [r[0], r[1]] };
@@ -266,6 +298,13 @@ export function Layers({ children }: LayersProps) {
   const handlePointerMove = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       const c = containerRef.current;
+      if (c.creating !== null) {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const px = Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left));
+        setCreatePt({ x: px, y: e.clientY - rect.top });
+        c.setHoverX(px); // share the preview x so other rows draw a guide there
+        return;
+      }
       const drag = dragRef.current;
       if (drag) {
         // Pan from the start range by the total drag — right → earlier (−dt).
@@ -301,6 +340,45 @@ export function Layers({ children }: LayersProps) {
 
   const handlePointerUp = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
+      const c = containerRef.current;
+      if (c.creating !== null) {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const px = Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left));
+        const py = e.clientY - rect.top;
+        if (c.creating === 'marker') {
+          c.onCreate?.({ kind: 'marker', at: +c.xScale.invert(px) });
+        } else if (c.creating === 'baseline') {
+          const r = rowRef.current;
+          const ys = r.yScales.get(r.defaultAxisId);
+          if (ys) {
+            c.onCreate?.({
+              kind: 'baseline',
+              value: ys.invert(py),
+              axis: r.defaultAxisId,
+            });
+          }
+        } else if (c.creating === 'region') {
+          const fromPx = drawFromRef.current;
+          // Need a real drag — a click (no span) creates nothing.
+          if (fromPx !== null && Math.abs(px - fromPx) > DRAG_SLOP) {
+            const a = +c.xScale.invert(fromPx);
+            const b = +c.xScale.invert(px);
+            c.onCreate?.({
+              kind: 'region',
+              from: Math.min(a, b),
+              to: Math.max(a, b),
+            });
+          }
+        }
+        drawFromRef.current = null;
+        setDrawFrom(null);
+        try {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
       if (dragRef.current) {
         dragRef.current = null;
         try {
@@ -314,12 +392,21 @@ export function Layers({ children }: LayersProps) {
   );
   const handlePointerLeave = useCallback(() => {
     const c = containerRef.current;
+    if (c.creating !== null) {
+      // Leaving mid-arm cancels the preview (and an in-progress region draw).
+      setCreatePt(null);
+      drawFromRef.current = null;
+      setDrawFrom(null);
+      c.setHoverX(null);
+      return;
+    }
     c.setHoverX(null);
     c.setHovered(null);
   }, []);
   // Click selection: ignore the click that ends a drag/pan (moved past a few px),
   // else hit-test the row's layers top-down and select — or clear on a miss.
   const handleClick = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
+    if (containerRef.current.creating !== null) return; // the draw owns the click
     const start = clickStartRef.current;
     if (
       start &&
@@ -327,6 +414,15 @@ export function Layers({ children }: LayersProps) {
     )
       return;
     const c = containerRef.current;
+    // A click that reached the plot (no mark's DragArea claimed it) is an empty
+    // click. Deselect / exit edit when the consumer is tracking annotations — in
+    // global edit mode, or whenever a mark is currently active (a selected mark, or
+    // the single-edit target, which also reads as selected). Marks stop their own
+    // clicks in DragArea, so this only fires on true empty space.
+    if (c.editAnnotations || c.annotations.some((a) => a.selected)) {
+      c.onSelectAnnotation?.(null);
+      return;
+    }
     const r = rowRef.current;
     const rect = e.currentTarget.getBoundingClientRect();
     const hit = resolveSelection(
@@ -364,19 +460,9 @@ export function Layers({ children }: LayersProps) {
   // dot ('inline', clamped within the row) or stack at the top of the flag staff
   // ('flag'). line / point / none draw no chips — surface values off-chart.
   const flagLineHeight = container.theme.font.size + 5;
-  const chipStyle: CSSProperties = {
-    position: 'absolute',
-    background: container.theme.chip?.background,
-    border: `1px solid ${gridColor}`,
-    borderRadius: '3px',
-    padding: '0 4px',
-    fontFamily: container.theme.font.family,
-    fontSize: `${container.theme.font.size}px`,
-    fontVariantNumeric: 'tabular-nums',
-    whiteSpace: 'nowrap',
-    pointerEvents: 'none',
-    lineHeight: 1.5,
-  };
+  // Cursor chips share the annotation label look (filled, no outline) — one
+  // source of truth so a flag and a placed label read as the same object.
+  const chipStyle = flagChipStyle(container.theme);
   // Show the cursor's time atop the readout (opt-in via `cursorTime`), whenever
   // the cursor is active (any mode that draws marks). A single chip at the cursor
   // x, top of the row; for `flag` it sits above the value chips (which shift down).
@@ -388,11 +474,12 @@ export function Layers({ children }: LayersProps) {
     cursorTime !== null &&
     (parts.line || parts.dots) &&
     row.isFirstRow;
-  // Flag stacking geometry: chips stack from `flagBase` (below the time chip when
-  // shown); each staff rises from its dot up to `stackBottom` (the stack's foot).
+  // Flag geometry: each value flies as a flag from the top of its own staff — the
+  // chip's top sits at `flagBase` (just below the time chip when shown) and the
+  // staff drops from there to the dot. (Chips share that top and spread by x, so
+  // near-coincident flags can overlap — a de-overlap heuristic is a follow-up.)
   const flagTop = 2;
   const flagBase = flagTop + (showTime ? flagLineHeight : 0);
-  const stackBottom = flagBase + trackerSamples.length * flagLineHeight;
   // The cursor-time chip caps the readout. In `flag` mode it tops the flag stack,
   // so anchor it to the stack's x (the nearest sample's point) so time + flag +
   // staff + dot read as one column; otherwise it labels the cursor line at cursorX.
@@ -400,6 +487,103 @@ export function Layers({ children }: LayersProps) {
     parts.chip === 'flag' && trackerSamples.length > 0
       ? trackerSamples[0]!.px
       : cursorX;
+
+  // Cross-row guide lines: the x-positions of annotations on the OTHER rows
+  // (markers + region edges), so a mark on one row reads against this row's data +
+  // the shared x axis. A mark's own row skips itself; baselines cast no vertical
+  // guide (empty `xs`). Faint + dashed so they read as reference, not data.
+  const guideXs = container.annotations
+    .filter((a) => a.rowKey !== row.rowKey)
+    .flatMap((a) => a.xs)
+    .map((xv) => xScale(xv));
+  const guideColor = container.theme.annotation?.color ?? gridColor;
+
+  // Create preview: while a tool is armed, the hovered row (the one with
+  // `createPt`) shows a cursor-style line tracking the pointer — vertical for
+  // marker/region, horizontal for baseline, a span once a region is being dragged.
+  // The OTHER rows show the faint guide at the shared preview x (markers/regions).
+  const creating = container.creating;
+  let createPreview: ReactNode = null;
+  if (creating !== null && createPt !== null) {
+    if (creating === 'baseline') {
+      createPreview = (
+        <line
+          x1={0}
+          y1={createPt.y}
+          x2={plotWidth}
+          y2={createPt.y}
+          stroke={guideColor}
+          strokeWidth={1}
+          opacity={0.85}
+          shapeRendering="crispEdges"
+        />
+      );
+    } else if (drawFrom !== null) {
+      const l = Math.min(drawFrom, createPt.x);
+      const w = Math.abs(createPt.x - drawFrom);
+      createPreview = (
+        <>
+          <rect
+            x={l}
+            y={0}
+            width={w}
+            height={row.height}
+            fill={guideColor}
+            opacity={0.12}
+          />
+          <line
+            x1={drawFrom}
+            y1={0}
+            x2={drawFrom}
+            y2={row.height}
+            stroke={guideColor}
+            strokeWidth={1}
+            opacity={0.85}
+            strokeDasharray="3 2"
+            shapeRendering="crispEdges"
+          />
+          <line
+            x1={createPt.x}
+            y1={0}
+            x2={createPt.x}
+            y2={row.height}
+            stroke={guideColor}
+            strokeWidth={1}
+            opacity={0.85}
+            shapeRendering="crispEdges"
+          />
+        </>
+      );
+    } else {
+      createPreview = (
+        <line
+          x1={createPt.x}
+          y1={0}
+          x2={createPt.x}
+          y2={row.height}
+          stroke={guideColor}
+          strokeWidth={1}
+          opacity={0.85}
+          shapeRendering="crispEdges"
+        />
+      );
+    }
+  } else if (creating !== null && creating !== 'baseline' && cursorX !== null) {
+    // Another row — the faint preview guide at the shared pointer x.
+    createPreview = (
+      <line
+        x1={cursorX}
+        y1={0}
+        x2={cursorX}
+        y2={row.height}
+        stroke={guideColor}
+        strokeWidth={1}
+        opacity={0.22}
+        strokeDasharray="2 3"
+        shapeRendering="crispEdges"
+      />
+    );
+  }
 
   // Inject each draw layer's JSX position so it registers its declaration order
   // (z-stack: lower index at the back), independent of mount timing.
@@ -417,7 +601,15 @@ export function Layers({ children }: LayersProps) {
           position: 'relative',
           width: `${plotWidth}px`,
           height: `${row.height}px`,
-          cursor: 'crosshair',
+          // Edit mode: a plain cursor on the plot (the annotations supply their
+          // own grab/resize cursors); crosshair only when the data cursor is live
+          // (suppressed in single-annotation edit too, not just global edit).
+          cursor: editingActive ? 'default' : 'crosshair',
+          // The turquoise edit border — the "you're in *global* Edit" signal (not
+          // single-annotation edit). Inset shadow so it doesn't shift layout.
+          boxShadow: container.editAnnotations
+            ? `inset 0 0 0 1px ${guideColor}`
+            : undefined,
           // Let pan/zoom own touch gestures (no native scroll) when enabled.
           touchAction: container.panZoom ? 'none' : 'auto',
         }}
@@ -429,6 +621,56 @@ export function Layers({ children }: LayersProps) {
         onClick={handleClick}
       >
         <Canvas width={plotWidth} height={row.height} draw={draw} />
+        {/* Cross-row guides: faint dashed lines at the other rows' mark
+            x-positions, below this row's own annotations + the cursor. */}
+        {guideXs.length > 0 && (
+          <svg
+            width={plotWidth}
+            height={row.height}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              pointerEvents: 'none',
+            }}
+          >
+            {guideXs.map((gx, i) => (
+              <line
+                key={i}
+                x1={gx}
+                y1={0}
+                x2={gx}
+                y2={row.height}
+                stroke={guideColor}
+                strokeWidth={1}
+                opacity={0.22}
+                strokeDasharray="2 3"
+                shapeRendering="crispEdges"
+              />
+            ))}
+          </svg>
+        )}
+        {/* Create preview — the armed tool's line/region tracking the pointer. */}
+        {createPreview !== null && (
+          <svg
+            width={plotWidth}
+            height={row.height}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              pointerEvents: 'none',
+            }}
+          >
+            {createPreview}
+          </svg>
+        )}
+        {/* Annotation overlays — <Region>/<Baseline>/<Marker> — paint here, above
+            the data canvas and below the cursor. Draw layers (LineChart, …)
+            co-located here render null (they paint via the canvas `draw`); both
+            register through LayersContext. Inside the plot div so annotations
+            share its 0..plotWidth × 0..height coordinate space. */}
+        {indexedChildren}
         {/* Cursor overlay (SVG, above the data canvas): the synced line, the
             per-series dots, and the flag staffs — all crisp + positioned in plot
             space, no second canvas. Value chips are DOM divs below. */}
@@ -456,16 +698,15 @@ export function Layers({ children }: LayersProps) {
                 shapeRendering="crispEdges"
               />
             )}
-          {/* Flag staffs: a faint spine from each dot up to the flag stack's foot
-              (skipped when the dot sits inside the stack). Same nearest-x staffs
-              merge into one spine. */}
+          {/* Flag staffs: a faint pole from the flag's top (`flagBase`) down to
+              each dot (skipped when the dot is above that top). */}
           {parts.chip === 'flag' &&
             trackerSamples.map((s, i) =>
-              s.py > stackBottom ? (
+              s.py > flagBase ? (
                 <line
                   key={`staff-${i}`}
                   x1={s.px}
-                  y1={stackBottom}
+                  y1={flagBase}
                   x2={s.px}
                   y2={s.py}
                   stroke={cursorColor}
@@ -474,26 +715,24 @@ export function Layers({ children }: LayersProps) {
                 />
               ) : null,
             )}
-          {/* Box flags: one staff per consolidated-flag layer, from the mark's
-              top-centre up to its multi-line chip (skipped when the top sits
-              inside the chip — a tall box). */}
+          {/* Box flags: one staff per consolidated-flag layer, from the flag's
+              top (`flagBase`) down to the mark's top-centre (skipped when the
+              mark top is above the flag). */}
           {parts.chip === 'flag' &&
-            trackerFlags.map((f, i) => {
-              // One horizontal row of values → a single-line chip.
-              const flagBottom = flagBase + flagLineHeight;
-              return f.topPy > flagBottom ? (
+            trackerFlags.map((f, i) =>
+              f.topPy > flagBase ? (
                 <line
                   key={`boxstaff-${i}`}
                   x1={f.px}
-                  y1={flagBottom}
+                  y1={flagBase}
                   x2={f.px}
                   y2={f.topPy}
                   stroke={cursorColor}
                   strokeWidth={1}
                   opacity={0.5}
                 />
-              ) : null;
-            })}
+              ) : null,
+            )}
           {parts.dots &&
             trackerSamples.map((s, i) => (
               <circle
@@ -557,54 +796,44 @@ export function Layers({ children }: LayersProps) {
           })}
         {parts.chip === 'flag' &&
           cursorX !== null &&
-          trackerSamples.map((s, i) => {
-            // Each flag caps its own staff — anchored to the data point's x
-            // (`s.px`), riding the point with the dot + staff, not the cursor.
-            // Flip left near the right edge so it stays in-plot.
-            const flip = s.px > plotWidth * LABEL_FLIP_FRACTION;
-            return (
-              <div
-                key={i}
-                style={{
-                  ...chipStyle,
-                  top: `${flagBase + i * flagLineHeight}px`,
-                  left: flip ? undefined : `${s.px + 4}px`,
-                  right: flip ? `${plotWidth - s.px + 4}px` : undefined,
-                  color: s.color,
-                }}
-              >
-                {s.format(s.value)}
-              </div>
-            );
-          })}
+          trackerSamples.map((s, i) => (
+            // The flag flies from the top of its staff — chip top at the staff top
+            // (`flagBase`), beside the pole at the point's x (shared `flagChipX`).
+            <div
+              key={i}
+              style={{
+                ...chipStyle,
+                top: `${flagBase}px`,
+                ...flagChipX(s.px, plotWidth),
+                color: s.color,
+              }}
+            >
+              {s.format(s.value)}
+            </div>
+          ))}
         {/* Box flag: one chip listing all the box's values, each coloured to its
             piece, anchored at the box's centre x (atop its staff). */}
         {parts.chip === 'flag' &&
-          trackerFlags.map((f, i) => {
-            const flip = f.px > plotWidth * LABEL_FLIP_FRACTION;
-            return (
-              <div
-                key={`boxflag-${i}`}
-                style={{
-                  ...chipStyle,
-                  top: `${flagBase}px`,
-                  left: flip ? undefined : `${f.px + 4}px`,
-                  right: flip ? `${plotWidth - f.px + 4}px` : undefined,
-                  display: 'flex',
-                  flexDirection: 'row',
-                  gap: '6px',
-                }}
-              >
-                {f.lines.map((l, j) => (
-                  <span key={j} style={{ color: l.color }}>
-                    {l.text}
-                  </span>
-                ))}
-              </div>
-            );
-          })}
+          trackerFlags.map((f, i) => (
+            <div
+              key={`boxflag-${i}`}
+              style={{
+                ...chipStyle,
+                top: `${flagBase}px`,
+                ...flagChipX(f.px, plotWidth),
+                display: 'flex',
+                flexDirection: 'row',
+                gap: '6px',
+              }}
+            >
+              {f.lines.map((l, j) => (
+                <span key={j} style={{ color: l.color }}>
+                  {l.text}
+                </span>
+              ))}
+            </div>
+          ))}
       </div>
-      {indexedChildren}
     </LayersContext.Provider>
   );
 }
