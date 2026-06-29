@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`, and
 them all. Pre-1.0: minor bumps may include new features and type-level changes;
 patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.31.2...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.32.0...HEAD
+[0.32.0]: https://github.com/pjm17971/pond-ts/compare/v0.31.2...v0.32.0
 [0.31.2]: https://github.com/pjm17971/pond-ts/compare/v0.31.1...v0.31.2
 [0.31.1]: https://github.com/pjm17971/pond-ts/compare/v0.30.0...v0.31.1
 [0.31.0]: https://github.com/pjm17971/pond-ts/compare/v0.30.0...3c4e8bd
@@ -25,6 +26,43 @@ patch bumps are strictly additive.
 [0.20.0]: https://github.com/pjm17971/pond-ts/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/pjm17971/pond-ts/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
+
+## [0.32.0] — 2026-06-29
+
+A `@pond-ts/charts` release: value-axis support across the fill/bar layers, plus
+explicit y-axis ticks and the annotation primitives. `pond-ts`,
+`@pond-ts/react`, and `@pond-ts/fit` are unchanged this cycle — republished in
+lock-step at the same version.
+
+### Added
+
+- **Charts — explicit y-axis ticks.** `<YAxis ticks={[{ at, label }]}>` places
+  ticks (and their gridlines) at chosen values with custom labels, mirroring
+  `<XAxis ticks>`; `ticks={[]}` draws none. (#303)
+- **Charts — value-axis (`ValueSeries`) support for `<AreaChart>`,
+  `<BandChart>`, and `<BarChart>`.** Each now accepts a `ValueSeries`
+  (`series.byValue('dist')`) and plots against its monotonic value axis
+  (distance, cumulative work, …), not just time — joining `<LineChart>`, which
+  already did. The container infers the x-axis kind from the data, so there is
+  no axis-type prop. `BarChart` derives each bar's span from neighbour spacing
+  on a point-keyed value axis (the splits/laps case). (#304, #307)
+- **Charts — annotations: `<Region>`, `<Marker>`, `<Baseline>`.** User-authored
+  marks in a distinct register — a shaded x-span, a vertical x line, and a
+  horizontal value line — with flag labels, a three-level depth ramp, and opt-in
+  interaction modes (inspect-select, single-edit, drag-resize, create-tool
+  gestures) coordinated by the container (cross-row guide lines,
+  snap-to-guideline, z-order). Adds `ChartContainer` annotation props
+  (`creating` / `editAnnotations` / `onCreate` / `onSelectAnnotation` /
+  `onHoverAnnotation` / `onEditAnnotation` / `snap`) and a `ChartTheme.annotation`
+  depth theme. (#306)
+
+### Changed
+
+- **Charts — the fill/bar layer `series` prop widens (additive).**
+  `AreaChartProps` / `BandChartProps` / `BarChartProps` now accept
+  `TimeSeries | ValueSeries`; the new second generic defaults, so existing
+  one-type-argument uses (`AreaChartProps<S>`, `<AreaChart<S>>`) compile
+  unchanged. (#304, #307)
 
 ## [0.31.2] — 2026-06-29
 
