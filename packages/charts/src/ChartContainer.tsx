@@ -11,7 +11,10 @@ import { scaleLinear, scaleTime } from 'd3-scale';
 import type { TimeRange } from 'pond-ts';
 import {
   ContainerContext,
+  type AnnotationKind,
+  type AnnotationSpec,
   type ContainerFrame,
+  type CreateSpec,
   type GutterReq,
   type CursorMode,
   type SelectInfo,
@@ -19,6 +22,7 @@ import {
   type TrackerSource,
 } from './context.js';
 import { maxSlotWidths, sum } from './slots.js';
+import { computeLabelLanes } from './annotations.js';
 import { resolveCursorX, DEFAULT_CURSOR_MODE } from './tracker.js';
 import {
   resolveAxisFormat,
@@ -125,6 +129,49 @@ export interface ChartContainerProps {
    */
   cursorTime?: boolean;
   /**
+   * Enter **annotation-edit mode**: suppresses the data cursor and makes editable
+   * annotations (those given an `onChange`) interactive — hovering one reveals its
+   * handles + highlights it, and dragging edits it. **Default `false`.** Pairs
+   * with each annotation's `onChange` (where the edit goes); this is the mode that
+   * turns the affordances on and gets the cursor out of the way.
+   */
+  editAnnotations?: boolean;
+  /**
+   * The armed annotation **creation tool** (the consumer's toolbar sets it), or
+   * `null`/omitted for idle. When set, the plot captures a create gesture — a
+   * preview tracks the pointer, and on release {@link onCreate} fires. The consumer
+   * then adds the mark, disarms (back to `null`), and selects it (spring-loaded);
+   * keep it set to place several. Requires {@link editAnnotations}.
+   */
+  creating?: AnnotationKind | null;
+  /** Fired when a create gesture completes (on release). See {@link CreateSpec}. */
+  onCreate?: (spec: CreateSpec) => void;
+  /**
+   * Fired when an annotation is clicked (its `id`), the plot is clicked empty
+   * (`null`), or a region is double-clicked (the shortcut into edit). The consumer
+   * holds the selected id and sets each mark's `selected={id === sel}`.
+   */
+  onSelectAnnotation?: (id: string | null) => void;
+  /**
+   * Fired when the pointer enters an annotation (its `id`) or leaves it (`null`).
+   * Mirror it to a controlled `hovered` prop on each mark to sync hover both ways
+   * (e.g. a legend row ↔ the mark). Fires in any mode.
+   */
+  onHoverAnnotation?: (id: string | null) => void;
+  /**
+   * Fired when a mark is **double-clicked** — the request to edit just that one
+   * (set its `editing` prop in response). Single click selects (inspect); double
+   * click edits. Works in any mode.
+   */
+  onEditAnnotation?: (id: string) => void;
+  /**
+   * Snap mode (the toolbar's "Snap"). **Default `true`.** When on, a dragged
+   * mark snaps to other marks' **guidelines** (their x-positions, within a few
+   * px) so spans align; off = free placement. (Snapping to the nearest data
+   * sample is not implemented — guideline alignment only.)
+   */
+  snap?: boolean;
+  /**
    * Time-axis value formatting — a d3 time specifier string (e.g. `'%H:%M'`) or a
    * `(epochMs) => string` function ({@link AxisFormat}); applies to both the time
    * axis labels and the cursor-time readout. **Omitted ⇒ d3's multi-scale time
@@ -159,6 +206,13 @@ export function ChartContainer({
   minDuration = 1,
   cursor = DEFAULT_CURSOR_MODE,
   cursorTime = false,
+  editAnnotations = false,
+  creating = null,
+  onCreate,
+  onSelectAnnotation,
+  onHoverAnnotation,
+  onEditAnnotation,
+  snap = true,
   timeFormat,
   theme,
   children,
@@ -232,6 +286,30 @@ export function ChartContainer({
       return next;
     });
   }, []);
+
+  // Annotations register here so the container can do what a mark can't in
+  // isolation: draw its guide line across other rows, order regions, serve snap
+  // targets. Keyed by per-instance slot key (same discipline as the sources).
+  const [annotationMap, setAnnotationMap] = useState<
+    ReadonlyMap<symbol, AnnotationSpec>
+  >(() => new Map());
+  const registerAnnotation = useCallback(
+    (key: symbol, spec: AnnotationSpec) =>
+      setAnnotationMap((m) => new Map(m).set(key, spec)),
+    [],
+  );
+  const unregisterAnnotation = useCallback((key: symbol) => {
+    setAnnotationMap((m) => {
+      if (!m.has(key)) return m;
+      const next = new Map(m);
+      next.delete(key);
+      return next;
+    });
+  }, []);
+  const annotations = useMemo(
+    () => Array.from(annotationMap.values()),
+    [annotationMap],
+  );
 
   // The shared x scale's kind, **inferred from the registered layers**: a
   // ValueSeries row plots on a value axis, a TimeSeries on time. A container
@@ -401,6 +479,13 @@ export function ChartContainer({
     cb({ time, values });
   }, [cursorX, xScale, sources, plotWidth]);
 
+  // Pack overlapping top-flag labels (markers + regions) into stacked lanes so
+  // close-in-x labels don't collide; chips read their lane back off the frame.
+  const labelLanes = useMemo(
+    () => computeLabelLanes(annotations, (v) => xScale(v)),
+    [annotations, xScale],
+  );
+
   const frame = useMemo<ContainerFrame>(
     () => ({
       timeRange: [d0, d1],
@@ -420,9 +505,20 @@ export function ChartContainer({
       setHovered,
       cursor,
       cursorTime,
+      editAnnotations,
+      creating,
+      snap,
+      onCreate,
+      onSelectAnnotation,
+      onHoverAnnotation,
+      onEditAnnotation,
       formatTime,
       registerTrackerSource,
       unregisterTrackerSource,
+      registerAnnotation,
+      unregisterAnnotation,
+      annotations,
+      labelLanes,
       xScale,
       xKind: resolvedKind,
       panZoom,
@@ -450,9 +546,20 @@ export function ChartContainer({
       setHovered,
       cursor,
       cursorTime,
+      editAnnotations,
+      creating,
+      snap,
+      onCreate,
+      onSelectAnnotation,
+      onHoverAnnotation,
+      onEditAnnotation,
       formatTime,
       registerTrackerSource,
       unregisterTrackerSource,
+      registerAnnotation,
+      unregisterAnnotation,
+      annotations,
+      labelLanes,
       xScale,
       resolvedKind,
       panZoom,
