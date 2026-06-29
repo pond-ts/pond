@@ -372,3 +372,45 @@ export function barsFromTimeSeries<S extends SeriesSchema>(
   }
   return { begin, end, y, length: n };
 }
+
+/**
+ * Build a {@link BarSeries} from a pond `ValueSeries` — the value-axis sibling
+ * of {@link barsFromTimeSeries}. A `ValueSeries` is **point-keyed** on its value
+ * axis (one axis value per row, no per-row span), so — exactly like the
+ * point-keyed `time` case of {@link barsFromTimeSeries} — each bar is centred on
+ * its axis value and synthesises a span from **neighbour spacing**: it reaches
+ * halfway to each neighbour (a Voronoi cell on the value axis). The first / last
+ * bars mirror their single adjacent gap; a lone point (length 1) keeps zero
+ * width and falls back to the renderer's `minWidth`.
+ *
+ * For evenly-spaced contiguous keys (e.g. uniform splits centred on their
+ * midpoints) the cell boundaries land exactly on the segment boundaries; for
+ * unevenly-spaced keys a boundary sits at the midpoint between adjacent centres
+ * (a slight drift from a true segment edge — fine for the bar look; key an
+ * interval/timeRange `TimeSeries` instead if exact edges matter).
+ *
+ * @throws RangeError if `column` does not exist.
+ * @throws TypeError if `column` is not a numeric column.
+ */
+export function barsFromValueSeries<VS extends ValueSeriesSchema>(
+  series: ValueSeries<VS>,
+  column: string,
+): BarSeries {
+  const y = readValueColumn(series, column);
+  const n = series.length;
+  // axisValues() is the monotonic key buffer (zero-copy) — must not be mutated,
+  // so synthesise the spans into fresh buffers.
+  const ax = series.axisValues();
+  const begin = new Float64Array(n);
+  const end = new Float64Array(n);
+  for (let i = 0; i < n; i += 1) {
+    const x = ax[i]!;
+    // Half-gap to the previous neighbour (mirror the next gap at the left edge).
+    const prevGap = i > 0 ? x - ax[i - 1]! : i + 1 < n ? ax[i + 1]! - x : 0;
+    // Half-gap to the next neighbour (mirror the previous gap at the right edge).
+    const nextGap = i + 1 < n ? ax[i + 1]! - x : i > 0 ? x - ax[i - 1]! : 0;
+    begin[i] = x - prevGap / 2;
+    end[i] = x + nextGap / 2;
+  }
+  return { begin, end, y, length: n };
+}

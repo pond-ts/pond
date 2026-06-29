@@ -1,6 +1,7 @@
 import { useContext, useEffect, useMemo } from 'react';
-import type { SeriesSchema, TimeSeries } from 'pond-ts';
-import { barsFromTimeSeries } from './data.js';
+import { ValueSeries } from 'pond-ts';
+import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
+import { barsFromTimeSeries, barsFromValueSeries } from './data.js';
 import {
   barAt,
   barExtent,
@@ -16,14 +17,21 @@ import {
 } from './context.js';
 import { useSlotKey } from './use-slot-key.js';
 
-export interface BarChartProps<S extends SeriesSchema> {
+export interface BarChartProps<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> {
   /**
-   * The source series. **Interval / timeRange-keyed** is the primary form — each
-   * event's key `[begin, end]` is a bar's x-span. A **point-keyed** (`time`)
-   * series is supported too: each bar's width is derived from neighbour spacing
-   * (see {@link barsFromTimeSeries}).
+   * The source series. **Interval / timeRange-keyed** `TimeSeries` is the primary
+   * form — each event's key `[begin, end]` is a bar's x-span. A **point-keyed**
+   * (`time`) series is supported too: each bar's width is derived from neighbour
+   * spacing (see {@link barsFromTimeSeries}). A **`ValueSeries`**
+   * (`series.byValue('dist')`) bars against its value axis — also point-keyed, so
+   * the same neighbour-spacing span applies (see {@link barsFromValueSeries}); the
+   * container infers the x-kind from the data, no axis-type prop (mirrors the
+   * other layers).
    */
-  series: TimeSeries<S>;
+  series: TimeSeries<S> | ValueSeries<VS>;
   /** Name of the numeric value column for the bar height. */
   column: string;
   /**
@@ -76,9 +84,10 @@ export interface BarChartProps<S extends SeriesSchema> {
  * readout reads the same bar you click, even across a wide bucket (they differ
  * only by the `gap` inset, where the pixel rect is narrower than the span).
  *
- * **Distance domain is deferred** — v1 bars scale on the shared **time** xScale
- * only. estela's distance-domain (records over a monotonic value axis) needs
- * value-axis support that isn't built yet (charts RFC perf section).
+ * **Value axis** — bars also scale on a value axis when fed a `ValueSeries`
+ * (`series.byValue('dist')`): estela's distance-domain splits/laps, one bar per
+ * segment over a monotonic axis. A `ValueSeries` is point-keyed, so the span is
+ * neighbour-derived like a point `TimeSeries` (see {@link barsFromValueSeries}).
  *
  * ```tsx
  * <Layers>
@@ -86,14 +95,17 @@ export interface BarChartProps<S extends SeriesSchema> {
  * </Layers>
  * ```
  */
-export function BarChart<S extends SeriesSchema>({
+export function BarChart<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+>({
   series,
   column,
   as: semantic,
   axis,
   gap,
   index = 0,
-}: BarChartProps<S>) {
+}: BarChartProps<S, VS>) {
   const container = useContext(ContainerContext);
   if (container === null) {
     throw new Error('<BarChart> must be rendered inside a <ChartContainer>');
@@ -104,7 +116,10 @@ export function BarChart<S extends SeriesSchema>({
   }
 
   const bs = useMemo(
-    () => barsFromTimeSeries(series, column),
+    () =>
+      series instanceof ValueSeries
+        ? barsFromValueSeries(series, column)
+        : barsFromTimeSeries(series, column),
     [series, column],
   );
   // Styling: semantic identifier → theme bar style. The single styling channel.
@@ -142,7 +157,9 @@ export function BarChart<S extends SeriesSchema>({
     () => ({
       layer: {
         yExtent: () => barExtent(bs),
-        xKind: 'time',
+        // The container infers the shared x scale's kind from its layers — a
+        // ValueSeries bars on a value axis, a TimeSeries on time.
+        xKind: series instanceof ValueSeries ? 'value' : 'time',
         xExtent: () =>
           bs.length === 0 ? null : [bs.begin[0]!, bs.end[bs.length - 1]!],
         sampleAt: (time) => {
