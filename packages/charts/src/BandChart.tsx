@@ -1,14 +1,24 @@
 import { useContext, useEffect, useMemo } from 'react';
-import type { SeriesSchema, TimeSeries } from 'pond-ts';
-import { bandFromTimeSeries } from './data.js';
+import { ValueSeries } from 'pond-ts';
+import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
+import { bandFromTimeSeries, bandFromValueSeries } from './data.js';
 import { bandExtent, drawBand } from './band.js';
 import { resolveCurve, type Curve } from './curve.js';
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
 import { useSlotKey } from './use-slot-key.js';
 
-export interface BandChartProps<S extends SeriesSchema> {
-  /** The source series. Its key column supplies the time axis. */
-  series: TimeSeries<S>;
+export interface BandChartProps<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> {
+  /**
+   * The source series. A `TimeSeries` fills the envelope against the time axis;
+   * a `ValueSeries` (`series.byValue('dist')`) against its value axis — the
+   * container infers which from the data, no axis-type prop (mirrors
+   * `<LineChart>` / `<AreaChart>`). Either way `lower`/`upper` name the numeric
+   * edge columns.
+   */
+  series: TimeSeries<S> | ValueSeries<VS>;
   /** Name of the numeric column for the band's lower edge (e.g. `p25`). */
   lower: string;
   /** Name of the numeric column for the band's upper edge (e.g. `p75`). */
@@ -58,7 +68,10 @@ export interface BandChartProps<S extends SeriesSchema> {
  * </Layers>
  * ```
  */
-export function BandChart<S extends SeriesSchema>({
+export function BandChart<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+>({
   series,
   lower,
   upper,
@@ -66,7 +79,7 @@ export function BandChart<S extends SeriesSchema>({
   axis,
   curve,
   index = 0,
-}: BandChartProps<S>) {
+}: BandChartProps<S, VS>) {
   const container = useContext(ContainerContext);
   if (container === null) {
     throw new Error('<BandChart> must be rendered inside a <ChartContainer>');
@@ -77,7 +90,10 @@ export function BandChart<S extends SeriesSchema>({
   }
 
   const bs = useMemo(
-    () => bandFromTimeSeries(series, lower, upper),
+    () =>
+      series instanceof ValueSeries
+        ? bandFromValueSeries(series, lower, upper)
+        : bandFromTimeSeries(series, lower, upper),
     [series, lower, upper],
   );
   // Styling: semantic identifier → theme band style. The single styling channel.
@@ -89,20 +105,31 @@ export function BandChart<S extends SeriesSchema>({
     () => ({
       layer: {
         yExtent: () => bandExtent(bs),
-        xKind: 'time',
+        // The container infers the shared x scale's kind from its layers — a
+        // ValueSeries plots on a value axis, a TimeSeries on time.
+        xKind: series instanceof ValueSeries ? 'value' : 'time',
         xExtent: () =>
           bs.length === 0 ? null : [bs.x[0]!, bs.x[bs.length - 1]!],
-        sampleAt: (time) => {
-          // No readout past the data (tracker policy — nearest() clamps); bounds
-          // from the columnar time axis.
-          if (
-            bs.length === 0 ||
-            time < bs.x[0]! ||
-            time > bs.x[bs.length - 1]!
-          ) {
+        sampleAt: (x) => {
+          // No readout past the data (tracker policy — nearest clamps); bounds
+          // from the columnar x axis.
+          if (bs.length === 0 || x < bs.x[0]! || x > bs.x[bs.length - 1]!) {
             return [];
           }
-          const e = series.nearest(time);
+          if (series instanceof ValueSeries) {
+            // Value axis: bisect the axis for the nearest row, read both edges
+            // from `bs`. A gap on either edge yields no readout (like the fill).
+            const i = series.nearestIndex(x);
+            if (i < 0) return [];
+            const lo = bs.lower[i]!;
+            const hi = bs.upper[i]!;
+            if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [];
+            return [
+              { x: bs.x[i]!, value: lo, color: style.fill, label: lower },
+              { x: bs.x[i]!, value: hi, color: style.fill, label: upper },
+            ];
+          }
+          const e = series.nearest(x);
           if (e === undefined) return [];
           // get() wants a literal key; lower/upper are runtime strings. Cast the
           // *event* (not the method — detaching `this` breaks `get`).

@@ -122,6 +122,37 @@ function readNumericColumn<S extends SeriesSchema>(
   return out;
 }
 
+/**
+ * Read a numeric column from a `ValueSeries` into a `Float64Array`, missing
+ * cells as `NaN` — the value-axis sibling of {@link readNumericColumn}, sharing
+ * its per-element `read(i)` rationale (the bulk reader is tree-shaken away in
+ * bundled browser builds).
+ *
+ * @throws RangeError if `column` does not exist.
+ * @throws TypeError if `column` is not a numeric column.
+ */
+function readValueColumn<VS extends ValueSeriesSchema>(
+  series: ValueSeries<VS>,
+  column: string,
+): Float64Array {
+  const col = series.column(column as ValueSeriesColumnName<VS>);
+  if (col === undefined) {
+    throw new RangeError(`unknown column '${column}'`);
+  }
+  if (col.kind !== 'number') {
+    throw new TypeError(
+      `column '${column}' must be numeric (got '${col.kind}')`,
+    );
+  }
+  const length = series.length;
+  const out = new Float64Array(length);
+  for (let i = 0; i < length; i += 1) {
+    const v = col.read(i);
+    out[i] = v === undefined ? NaN : (v as number);
+  }
+  return out;
+}
+
 /** The key column's `begin` buffer aligned to the logical length (zero-copy). */
 function timeAxis<S extends SeriesSchema>(series: TimeSeries<S>): Float64Array {
   // `begin` may carry trailing capacity beyond the logical length; subarray so
@@ -192,23 +223,12 @@ export function fromValueSeries<VS extends ValueSeriesSchema>(
   series: ValueSeries<VS>,
   column: string,
 ): ChartSeries {
-  const col = series.column(column as ValueSeriesColumnName<VS>);
-  if (col === undefined) {
-    throw new RangeError(`unknown column '${column}'`);
-  }
-  if (col.kind !== 'number') {
-    throw new TypeError(
-      `column '${column}' must be numeric (got '${col.kind}')`,
-    );
-  }
-  const length = series.length;
-  const y = new Float64Array(length);
-  for (let i = 0; i < length; i += 1) {
-    const v = col.read(i);
-    y[i] = v === undefined ? NaN : (v as number);
-  }
   // axisValues() is the key buffer already trimmed to length (zero-copy).
-  return { x: series.axisValues(), y, length };
+  return {
+    x: series.axisValues(),
+    y: readValueColumn(series, column),
+    length: series.length,
+  };
 }
 
 /**
@@ -229,6 +249,32 @@ export function bandFromTimeSeries<S extends SeriesSchema>(
     x: timeAxis(series),
     lower: readNumericColumn(series, lower),
     upper: readNumericColumn(series, upper),
+    length: series.length,
+  };
+}
+
+/**
+ * Build a {@link BandSeries} from a pond `ValueSeries` — the value-axis sibling
+ * of {@link bandFromTimeSeries}. The x axis is the series' monotonic value axis
+ * (`axisValues()`, e.g. cumulative distance) instead of time; `lower`/`upper`
+ * name the two numeric edge columns (typically `rollingByColumn` percentiles).
+ * The resulting `BandSeries` is identical in shape — the chart draws it exactly
+ * as a time band, only the x scale differs (a value scale rather than
+ * `scaleTime`). A sample with either edge missing reads as a gap in the fill
+ * (same contract as {@link bandFromTimeSeries}).
+ *
+ * @throws RangeError if `lower` or `upper` does not exist.
+ * @throws TypeError if `lower` or `upper` is not a numeric column.
+ */
+export function bandFromValueSeries<VS extends ValueSeriesSchema>(
+  series: ValueSeries<VS>,
+  lower: string,
+  upper: string,
+): BandSeries {
+  return {
+    x: series.axisValues(),
+    lower: readValueColumn(series, lower),
+    upper: readValueColumn(series, upper),
     length: series.length,
   };
 }

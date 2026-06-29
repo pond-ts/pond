@@ -1,6 +1,7 @@
 import { useContext, useEffect, useMemo } from 'react';
-import type { SeriesSchema, TimeSeries } from 'pond-ts';
-import { fromTimeSeries } from './data.js';
+import { ValueSeries } from 'pond-ts';
+import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
+import { fromTimeSeries, fromValueSeries } from './data.js';
 import { areaExtent, drawArea } from './area.js';
 import { resolveCurve, type Curve } from './curve.js';
 import {
@@ -11,9 +12,17 @@ import {
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
 import { useSlotKey } from './use-slot-key.js';
 
-export interface AreaChartProps<S extends SeriesSchema> {
-  /** The source series. Its key column supplies the time axis. */
-  series: TimeSeries<S>;
+export interface AreaChartProps<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> {
+  /**
+   * The source series. A `TimeSeries` fills against the time axis; a
+   * `ValueSeries` (`series.byValue('dist')`) against its value axis — the
+   * container infers which from the data, no axis-type prop (mirrors
+   * `<LineChart>`). Either way `column` names the numeric value to fill from.
+   */
+  series: TimeSeries<S> | ValueSeries<VS>;
   /** Name of the numeric value column to fill from. */
   column: string;
   /**
@@ -102,7 +111,10 @@ function domainFloor(yScale: (value: number) => number): number {
  * </Layers>
  * ```
  */
-export function AreaChart<S extends SeriesSchema>({
+export function AreaChart<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+>({
   series,
   column,
   as: semantic,
@@ -111,7 +123,7 @@ export function AreaChart<S extends SeriesSchema>({
   curve,
   gaps = DEFAULT_GAP_MODE,
   index = 0,
-}: AreaChartProps<S>) {
+}: AreaChartProps<S, VS>) {
   const container = useContext(ContainerContext);
   if (container === null) {
     throw new Error('<AreaChart> must be rendered inside a <ChartContainer>');
@@ -121,7 +133,13 @@ export function AreaChart<S extends SeriesSchema>({
     throw new Error('<AreaChart> must be rendered inside a <Layers>');
   }
 
-  const cs = useMemo(() => fromTimeSeries(series, column), [series, column]);
+  const cs = useMemo(
+    () =>
+      series instanceof ValueSeries
+        ? fromValueSeries(series, column)
+        : fromTimeSeries(series, column),
+    [series, column],
+  );
   // Styling: semantic identifier → theme area style. The single styling channel.
   const { area } = container.theme;
   const style =
@@ -137,20 +155,27 @@ export function AreaChart<S extends SeriesSchema>({
     () => ({
       layer: {
         yExtent: () => areaExtent(cs, baseline),
-        xKind: 'time',
+        // The container infers the shared x scale's kind from its layers — a
+        // ValueSeries plots on a value axis, a TimeSeries on time.
+        xKind: series instanceof ValueSeries ? 'value' : 'time',
         xExtent: () =>
           cs.length === 0 ? null : [cs.x[0]!, cs.x[cs.length - 1]!],
-        sampleAt: (time) => {
-          // No readout past the data (tracker policy — core's nearest() clamps
-          // to an endpoint outside the span); bounds from the columnar time axis.
-          if (
-            cs.length === 0 ||
-            time < cs.x[0]! ||
-            time > cs.x[cs.length - 1]!
-          ) {
+        sampleAt: (x) => {
+          // No readout past the data (tracker policy — nearest clamps to an
+          // endpoint outside the span); bounds from the columnar x axis.
+          if (cs.length === 0 || x < cs.x[0]! || x > cs.x[cs.length - 1]!) {
             return [];
           }
-          const e = series.nearest(time);
+          if (series instanceof ValueSeries) {
+            // Value axis: bisect the axis for the nearest row, read y from `cs`.
+            const i = series.nearestIndex(x);
+            if (i < 0) return [];
+            const v = cs.y[i]!;
+            return Number.isFinite(v)
+              ? [{ x: cs.x[i]!, value: v, color: style.color, label }]
+              : [];
+          }
+          const e = series.nearest(x);
           if (e === undefined) return [];
           // get() wants a literal key; column is a runtime string. Cast the
           // *event* (not the method — that would detach `this`) to a
