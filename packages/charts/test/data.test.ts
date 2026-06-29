@@ -3,6 +3,7 @@ import { TimeSeries } from 'pond-ts';
 import {
   bandFromValueSeries,
   barsFromTimeSeries,
+  barsFromValueSeries,
   fromTimeSeries,
   fromValueSeries,
 } from '../src/data.js';
@@ -337,5 +338,88 @@ describe('bandFromValueSeries', () => {
     expect(() =>
       bandFromValueSeries(s.byValue('cumDist'), 'p25', 'label'),
     ).toThrow(/must be numeric/);
+  });
+});
+
+describe('barsFromValueSeries', () => {
+  // Segments keyed onto the value axis (e.g. split centres on cumulative
+  // distance): point-keyed, so the bar span is neighbour-derived (Voronoi cell).
+  const segs = (cumDist: number[]) =>
+    new TimeSeries({
+      name: 'splits',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'cumDist', kind: 'number' },
+        { name: 'mean', kind: 'number', required: false },
+      ] as const,
+      rows: cumDist.map((d, i) => [i * 1000, d, 10 + i]) as never,
+    }).byValue('cumDist');
+
+  it('derives a contiguous neighbour-spacing span on the value axis', () => {
+    const bs = barsFromValueSeries(segs([0, 1000, 2000]), 'mean');
+    expect(bs.length).toBe(3);
+    // each bar reaches halfway to each neighbour; ends mirror the lone gap
+    expect(Array.from(bs.begin)).toEqual([-500, 500, 1500]);
+    expect(Array.from(bs.end)).toEqual([500, 1500, 2500]);
+    // contiguous: end[i] === begin[i+1]
+    expect(bs.end[0]).toBe(bs.begin[1]);
+    expect(bs.end[1]).toBe(bs.begin[2]);
+    expect(Array.from(bs.y)).toEqual([10, 11, 12]);
+  });
+
+  it('handles irregular spacing (half-gap each side, still contiguous)', () => {
+    const bs = barsFromValueSeries(segs([0, 1000, 3000]), 'mean');
+    expect(Array.from(bs.begin)).toEqual([-500, 500, 2000]);
+    expect(Array.from(bs.end)).toEqual([500, 2000, 4000]);
+    expect(bs.end[1]).toBe(bs.begin[2]); // still tiles
+  });
+
+  it('gives a lone point zero width (falls back to renderer minWidth)', () => {
+    const bs = barsFromValueSeries(segs([500]), 'mean');
+    expect(bs.length).toBe(1);
+    expect(bs.begin[0]).toBe(500);
+    expect(bs.end[0]).toBe(500);
+  });
+
+  it('represents a missing value as NaN (the gap signal — no bar)', () => {
+    const s = new TimeSeries({
+      name: 'splits',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'cumDist', kind: 'number' },
+        { name: 'mean', kind: 'number', required: false },
+      ] as const,
+      rows: [
+        [0, 0, 10],
+        [1000, 1000, undefined],
+        [2000, 2000, 12],
+      ] as never,
+    }).byValue('cumDist');
+    const bs = barsFromValueSeries(s, 'mean');
+    expect(bs.y[0]).toBe(10);
+    expect(Number.isNaN(bs.y[1]!)).toBe(true);
+    expect(bs.y[2]).toBe(12);
+    // a gap value still gets a span (the renderer skips the bar, not the slot)
+    expect(bs.begin[1]).toBe(500);
+    expect(bs.end[1]).toBe(1500);
+  });
+
+  it('throws on an unknown column', () => {
+    expect(() => barsFromValueSeries(segs([0, 1000]), 'nope')).toThrow(
+      /unknown column/,
+    );
+  });
+
+  it('throws on a non-numeric column', () => {
+    const s = new TimeSeries({
+      name: 'splits',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'cumDist', kind: 'number' },
+        { name: 'label', kind: 'string' },
+      ] as const,
+      rows: [[0, 0, 'a']],
+    }).byValue('cumDist');
+    expect(() => barsFromValueSeries(s, 'label')).toThrow(/must be numeric/);
   });
 });
