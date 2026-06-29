@@ -140,6 +140,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
               min: undefined,
               max: undefined,
               format: undefined,
+              tickValues: undefined,
               index: 0,
             },
           ],
@@ -220,6 +221,17 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
     return map;
   }, [effectiveAxes, yScales]);
 
+  // Explicit tick values per axis (axes that set `<YAxis ticks>`) — so Layers
+  // draws the row's gridlines at the same positions the axis labels, instead of
+  // d3's auto-picked ticks.
+  const tickValues = useMemo(() => {
+    const map = new Map<string, readonly number[]>();
+    for (const ax of effectiveAxes) {
+      if (ax.tickValues) map.set(ax.id, ax.tickValues);
+    }
+    return map;
+  }, [effectiveAxes]);
+
   const frame = useMemo<RowFrame>(
     () => ({
       height,
@@ -227,6 +239,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
       isFirstRow,
       yScales,
       formats,
+      tickValues,
       defaultAxisId,
       axisSlots,
       registerAxis,
@@ -241,6 +254,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
       isFirstRow,
       yScales,
       formats,
+      tickValues,
       defaultAxisId,
       axisSlots,
       registerAxis,

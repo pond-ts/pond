@@ -316,6 +316,9 @@ export interface AxisSpec {
   /** Value formatting for the tick labels + the cursor readout ({@link AxisFormat}),
    *  or `undefined` for the scale's d3 default. */
   readonly format: AxisFormat | undefined;
+  /** Explicit tick values (from `<YAxis ticks>`), driving BOTH the axis labels
+   *  and the row's gridlines so they align; `undefined` auto-picks from the scale. */
+  readonly tickValues: readonly number[] | undefined;
   /**
    * Declaration position among the row's children, injected by `ChartRow`. The
    * row sorts axes by this, so the **first declared** axis is the default
@@ -338,6 +341,10 @@ export interface RowFrame {
    *  against its scale) — used by both the tick labels and the cursor readout, so
    *  a value reads identically in both. */
   readonly formats: ReadonlyMap<string, (value: number) => string>;
+  /** Explicit tick values per axis id (from {@link AxisSpec.tickValues}), for axes
+   *  that set `<YAxis ticks>` — so `Layers` draws gridlines at the same positions
+   *  the axis labels. Absent id ⇒ that axis auto-picks. */
+  readonly tickValues: ReadonlyMap<string, readonly number[]>;
   /** This row's cursor-mode override, or `undefined` to inherit the container's
    *  default ({@link ContainerFrame.cursor}). */
   readonly cursor: CursorMode | undefined;

@@ -383,3 +383,71 @@ export const NoTimeAxis: Story = {
     </ChartContainer>
   ),
 };
+
+/**
+ * **Explicit ticks at chosen values.** `ticks={[{ at, label }]}` overrides d3's
+ * auto-picked ticks with chosen positions (a coarse 0/25/50/75/100) — labels and
+ * gridlines aligned. Same `{ at, label }` shape as `<XAxis ticks>`.
+ */
+export const ExplicitTicks: Story = {
+  render: () => (
+    <ChartContainer range={TIME_RANGE} width={520}>
+      <ChartRow height={200}>
+        <YAxis
+          id="value"
+          label="v"
+          min={0}
+          max={100}
+          ticks={[0, 25, 50, 75, 100].map((at) => ({ at, label: String(at) }))}
+        />
+        <Layers>
+          <LineChart series={demo()} column="v" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
+ * **A pace axis** — the motivating case for `{ at, label }` ticks. A run is
+ * plotted in PACE space: y is **negated sec/km**, so faster sits higher
+ * (estela's `DataChart` convention). Auto ticks can't help — the axis wants
+ * round-pace positions (4:00, 4:30, …) with `m:ss` labels, which don't fall on
+ * the scale's "nice" numbers. Explicit `{ at, label }` ticks place each label
+ * at the negated-sec/km value it sits at. (estela `paceTicks`; the feature that
+ * unblocks the `DataChart` → charts port.)
+ */
+export const PaceAxisTicks: Story = {
+  render: () => {
+    const rows: Array<[number, number]> = [];
+    for (let i = 0; i < N; i += 1) {
+      const secPerKm = 300 + 45 * Math.sin(i / 6); // ~4:15–5:45 /km
+      rows.push([BASE + i * STEP, -secPerKm]); // negate → faster (fewer sec) is higher
+    }
+    const run = new TimeSeries({
+      name: 'run',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'pace', kind: 'number' },
+      ] as const,
+      rows,
+    });
+    const mmss = (secKm: number) =>
+      `${Math.floor(secKm / 60)}:${String(secKm % 60).padStart(2, '0')}`;
+    // round paces 4:00…6:00, each at the negated-sec/km value it plots at
+    const ticks = [240, 270, 300, 330, 360].map((secKm) => ({
+      at: -secKm,
+      label: mmss(secKm),
+    }));
+    return (
+      <ChartContainer range={TIME_RANGE} width={560} theme={estelaTheme}>
+        <ChartRow height={220}>
+          <YAxis id="pace" label="/km" min={-360} max={-240} ticks={ticks} />
+          <Layers>
+            <LineChart series={run} column="pace" as="speed" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
