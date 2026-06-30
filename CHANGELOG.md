@@ -34,6 +34,24 @@ patch bumps are strictly additive.
 [0.19.0]: https://github.com/pjm17971/pond-ts/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
 
+## [Unreleased]
+
+### Fixed
+
+- **Charts — click-to-select an annotation now works while `panZoom` is on.** A
+  _selectable but non-editable_ `<Region>` / `<Marker>` (one with no `onChange`)
+  lets its press bubble to the plot so a drag can pan _through_ it. The plot
+  captured the pointer on press to start the pan, and the browser then retargeted
+  the resulting `click` onto the plot (Pointer Events spec: a captured pointer's
+  compatibility mouse events fire on the capture target) — silently dropping the
+  mark's `onSelectAnnotation`. The plot now **defers** its pan pointer-capture
+  until the pointer actually moves past the drag slop, so a click (no drag) leaves
+  the pointer on the mark and its select fires, while a press-drag still pans
+  through and the tracker still hides once the pan commits. Resolves the
+  browser-dependent finding deferred from #308; adds
+  `e2e/annotations-panzoom.spec.ts`, the first real-pointer-event behavior e2e for
+  the annotation layer. (#309)
+
 ## [0.38.0] — 2026-07-03
 
 A `@pond-ts/charts` release: **axis-edge value indicators + the crosshair

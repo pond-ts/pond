@@ -697,3 +697,76 @@ export const Create: Story = {
     );
   },
 };
+
+/**
+ * **Pan + select on a non-editable mark (regression guard).** `panZoom` on, with
+ * **selectable but non-editable** marks (a `<Region>` / `<Marker>` with *no*
+ * `onChange`). Two gestures must both keep working on the *same* mark:
+ *
+ * - a **single click** (no drag) still *selects* it (`onSelectAnnotation` → the
+ *   `selected:` readout), even though the plot owns pan/zoom and captures the
+ *   pointer on press;
+ * - a **press-drag** still *pans* the view (the mark is non-editable, so the
+ *   gesture reads straight through to the plot → the `panned:` readout).
+ *
+ * This pins the deferred Codex P1 from
+ * [#308](https://github.com/pjm17971/pond-ts/pull/308): a non-editable mark's
+ * press bubbles to the plot, which calls `setPointerCapture` to start a pan —
+ * click-retargeting after capture must not swallow the select. The render is
+ * identical whether or not the select fires, so this is verified by
+ * `e2e/annotations-panzoom.spec.ts` (real pointer events), not a screenshot.
+ * Toggle the `panZoom` control to compare against the plain click-select path.
+ */
+export const PanZoomSelect: Story = {
+  args: { panZoom: true },
+  argTypes: { panZoom: { control: 'boolean' } },
+  render: (args) => {
+    const panZoom = (args as { panZoom?: boolean }).panZoom ?? true;
+    const [selectedId, setSelectedId] = useState<string | null>(null);
+    const [range, setRange] = useState<[number, number]>([
+      INTERVAL[0],
+      INTERVAL[1],
+    ]);
+    const panned = range[0] !== INTERVAL[0] || range[1] !== INTERVAL[1];
+    return (
+      <div>
+        <div
+          style={{
+            display: 'flex',
+            gap: 16,
+            marginBottom: 8,
+            font: '12px ui-monospace, monospace',
+            color: '#a9d6cf',
+          }}
+        >
+          <span data-testid="panzoom">panZoom: {panZoom ? 'on' : 'off'}</span>
+          <span data-testid="selected">selected: {selectedId ?? 'none'}</span>
+          <span data-testid="panned">panned: {panned ? 'yes' : 'no'}</span>
+        </div>
+        <ChartContainer
+          range={range}
+          width={680}
+          theme={estelaTheme}
+          panZoom={panZoom}
+          onTimeRangeChange={setRange}
+          onSelectAnnotation={setSelectedId}
+        >
+          <ChartRow height={260}>
+            <YAxis id="power" label="W" min={0} max={300} />
+            <Layers>
+              <LineChart series={power()} column="watts" as="foam" />
+              {/* Selectable but NOT editable (no onChange) — the repro mark. */}
+              <Region
+                id="region"
+                from={BASE + 14 * STEP}
+                to={BASE + 24 * STEP}
+                label="zone"
+              />
+              <Marker id="marker" at={BASE + 32 * STEP} label="mark" />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>
+      </div>
+    );
+  },
+};

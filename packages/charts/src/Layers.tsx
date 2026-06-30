@@ -248,6 +248,10 @@ export function Layers({ children }: LayersProps) {
   const dragRef = useRef<{
     startX: number;
     startRange: [number, number];
+    // Whether the pan has committed (moved past the slop) and so claimed the
+    // pointer. Deferred from press → first real move so a click doesn't capture;
+    // see handlePointerDown / handlePointerMove.
+    captured: boolean;
   } | null>(null);
   // Row read through a ref so the click handler hit-tests the latest layers +
   // y-scales without re-subscribing (same after-commit discipline as containerRef).
@@ -287,17 +291,23 @@ export function Layers({ children }: LayersProps) {
       }
       if (!c.panZoom) return;
       const r = c.timeRange;
-      dragRef.current = { startX: e.clientX, startRange: [r[0], r[1]] };
-      c.setHoverX(null); // hide the tracker while panning
-      c.setHoverY(null, null);
-      c.setHovered(null); // and drop any hover-highlight
-      // Capture so the pan continues outside the plot; an enhancement, not
-      // critical — guard the throw for synthetic / already-released pointers.
-      try {
-        e.currentTarget.setPointerCapture(e.pointerId);
-      } catch {
-        /* ignore */
-      }
+      // Arm a potential pan: record the anchor, but DON'T capture the pointer or
+      // hide the tracker yet. Capturing on press retargets the eventual `click`
+      // to the plot (Pointer Events spec: a captured pointer's compatibility
+      // mouse events fire on the capture target) — which silently swallows a
+      // click-select on a *selectable but non-editable* mark, whose press bubbles
+      // up to here (its DragArea deliberately lets a non-edit press through so a
+      // pan can read past it). The pan commits — capture + hide tracker — only
+      // once the pointer moves past the slop (handlePointerMove); a press that
+      // stays put is a click, and leaving the pointer on the mark lets its
+      // onClick fire. Pan-through (drag starting on a non-editable mark) is
+      // unaffected: the first move past the slop still reaches this handler and
+      // captures then.
+      dragRef.current = {
+        startX: e.clientX,
+        startRange: [r[0], r[1]],
+        captured: false,
+      };
     },
     [],
   );
@@ -319,6 +329,22 @@ export function Layers({ children }: LayersProps) {
         // Don't pan until past the slop, so a click's 1–4px jitter neither moves
         // the view nor shifts the scale the click then hit-tests against.
         if (Math.abs(dx) <= DRAG_SLOP) return;
+        // First move past the slop ⇒ this is a real pan, not a click. Commit it
+        // now (deferred from press, see handlePointerDown): hide the tracker and
+        // claim the pointer so the pan keeps tracking outside the plot. Capturing
+        // here — after the click/select decision is already moot — is what keeps a
+        // tap-select on a non-editable mark working while a drag still pans.
+        if (!drag.captured) {
+          drag.captured = true;
+          c.setHoverX(null); // hide the tracker while panning
+          c.setHoverY(null, null);
+          c.setHovered(null); // and drop any hover-highlight
+          try {
+            e.currentTarget.setPointerCapture(e.pointerId);
+          } catch {
+            /* ignore (synthetic / already-released pointer) */
+          }
+        }
         const span = drag.startRange[1] - drag.startRange[0];
         const dt = c.plotWidth > 0 ? -dx * (span / c.plotWidth) : 0;
         c.applyRange(panRange(drag.startRange, dt));
@@ -404,12 +430,17 @@ export function Layers({ children }: LayersProps) {
         }
         return;
       }
-      if (dragRef.current) {
+      const drag = dragRef.current;
+      if (drag) {
         dragRef.current = null;
-        try {
-          e.currentTarget.releasePointerCapture(e.pointerId);
-        } catch {
-          /* ignore */
+        // Only release if the pan actually committed + captured (a click never
+        // captured, so there's nothing to release).
+        if (drag.captured) {
+          try {
+            e.currentTarget.releasePointerCapture(e.pointerId);
+          } catch {
+            /* ignore */
+          }
         }
       }
     },
