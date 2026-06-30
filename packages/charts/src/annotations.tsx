@@ -284,6 +284,21 @@ function snapToGuides(
   return best;
 }
 
+/**
+ * Order two region bounds so `from ≤ to`. A region **edge resize** pivots around
+ * the *opposite* (fixed) edge: the dragged value `v` and the pivot are ordered
+ * here, so dragging an edge past the pivot never emits an inverted span — instead
+ * the edges meet (zero width) and a continued drag **re-opens the region the other
+ * way** (the grabbed handle becomes the far edge). The pivot is captured at
+ * drag-start (a ref) so it stays fixed even as the emitted bounds swap on cross.
+ */
+export function orderRegion(
+  v: number,
+  pivot: number,
+): { from: number; to: number } {
+  return v <= pivot ? { from: v, to: pivot } : { from: pivot, to: v };
+}
+
 /** A label chip — the cursor value flag's shape (shared {@link flagChipStyle}:
  *  filled, no outline) with text in the annotation register. */
 function Chip({
@@ -428,6 +443,18 @@ function DragArea({
         dragging.current = false;
         onHover(false);
       }}
+      // A system gesture takeover fires pointercancel, not pointerup — clear the
+      // same drag/hover state so the mark doesn't stay stuck "grabbed".
+      onPointerCancel={(e) => {
+        if (!dragging.current) return;
+        try {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        dragging.current = false;
+        onHover(false);
+      }}
       // Click (no drag) selects; double-click edits. Stop both so a mark click
       // never reaches the plot's data-select / deselect.
       onClick={(e) => {
@@ -447,8 +474,11 @@ export interface MarkerProps {
    *  axis. (The generalisation of the mockup's "time line": a mark at an x, time
    *  or value.) */
   at: number;
-  /** Chip label; omit to auto-label with the shared x formatter (the axis's). */
-  label?: string;
+  /** Chip label. Omit to auto-label with the shared x formatter (the axis's);
+   *  pass `false` (or `''`) to render **no label chip** — for an inert background
+   *  mark you don't want labelled (where the auto-label would just show a raw
+   *  axis value). */
+  label?: string | false;
   /** Stable consumer id — a click reports it via the container's
    *  `onSelectAnnotation`, so the consumer can track which mark is selected. */
   id?: string;
@@ -494,7 +524,8 @@ export function Marker({
     container.creating === null &&
     onChange !== undefined;
   const xs = useMemo(() => [at], [at]);
-  const text = label ?? container.formatTime(at);
+  // `label === false` (or '') ⇒ no chip; omitted ⇒ auto-label off the x formatter.
+  const text = label === false ? '' : (label ?? container.formatTime(at));
   useRegisterAnnotation(
     container,
     selfKey,
@@ -566,16 +597,18 @@ export function Marker({
           />
         )}
       </svg>
-      <Chip
-        theme={container.theme}
-        color={ann.color}
-        style={{
-          top: `${FLAG_TOP + lane * LANE_H}px`,
-          ...flagChipX(x, container.plotWidth),
-        }}
-      >
-        {text}
-      </Chip>
+      {text && (
+        <Chip
+          theme={container.theme}
+          color={ann.color}
+          style={{
+            top: `${FLAG_TOP + lane * LANE_H}px`,
+            ...flagChipX(x, container.plotWidth),
+          }}
+        >
+          {text}
+        </Chip>
+      )}
     </>
   );
 }
@@ -585,8 +618,9 @@ export interface BaselineProps {
   value: number;
   /** Which `<YAxis>` (by id) to measure against; omit for the row's default axis. */
   axis?: string;
-  /** Chip label; omit to format `value` with that axis's formatter. */
-  label?: string;
+  /** Chip label. Omit to format `value` with that axis's formatter; pass `false`
+   *  (or `''`) to render **no label chip**. */
+  label?: string | false;
   /** Stable consumer id — a click reports it via `onSelectAnnotation`. */
   id?: string;
   /** Controlled selection — brightens to the front (level 1). Handles are an
@@ -645,7 +679,10 @@ export function Baseline({
     selected,
     selectable,
     editing,
-    label ?? '', // baselines don't lane-pack (label anchors at their y, not the top)
+    // Baselines don't lane-pack (the label anchors at their y, not the top), so
+    // this registered string is unused by `computeLabelLanes` — `|| ''` just
+    // keeps it a string for `false`/'' (which mean "no label").
+    label || '',
   );
   // No select/edit while a create tool is armed — the chart is in draw mode then.
   const select =
@@ -669,7 +706,9 @@ export function Baseline({
   );
   const showHandle = editable && (editing || hovering);
   const fmt = row.formats.get(axisId);
-  const text = label ?? (fmt ? fmt(value) : String(value));
+  // `label === false` (or '') ⇒ no chip; omitted ⇒ format `value` off the axis.
+  const text =
+    label === false ? '' : (label ?? (fmt ? fmt(value) : String(value)));
   // Handle pill near the right end (clears the left-anchored label).
   const handleX = w - 14;
   return (
@@ -709,13 +748,15 @@ export function Baseline({
           />
         )}
       </svg>
-      <Chip
-        theme={container.theme}
-        color={ann.color}
-        style={{ top: `${y}px`, left: '2px', transform: 'translateY(-50%)' }}
-      >
-        {text}
-      </Chip>
+      {text && (
+        <Chip
+          theme={container.theme}
+          color={ann.color}
+          style={{ top: `${y}px`, left: '2px', transform: 'translateY(-50%)' }}
+        >
+          {text}
+        </Chip>
+      )}
     </>
   );
 }
@@ -725,8 +766,11 @@ export interface RegionProps {
   from: number;
   /** End x in axis units. */
   to: number;
-  /** Chip label; omit to auto-label `from–to` with the shared x formatter. */
-  label?: string;
+  /** Chip label. Omit to auto-label `from–to` with the shared x formatter; pass
+   *  `false` (or `''`) to render **no label chip** — e.g. an inert
+   *  `selectable={false}` highlight band, where the auto-label would just show
+   *  raw axis values. */
+  label?: string | false;
   /** Stable consumer id — a click (or double-click outside edit) reports it via
    *  `onSelectAnnotation`. */
   id?: string;
@@ -775,8 +819,11 @@ export function Region({
     container.creating === null &&
     onChange !== undefined;
   const xs = useMemo(() => [from, to], [from, to]);
+  // `label === false` (or '') ⇒ no chip; omitted ⇒ auto-label the `from–to` span.
   const text =
-    label ?? `${container.formatTime(from)}–${container.formatTime(to)}`;
+    label === false
+      ? ''
+      : (label ?? `${container.formatTime(from)}–${container.formatTime(to)}`);
   useRegisterAnnotation(
     container,
     selfKey,
@@ -822,6 +869,10 @@ export function Region({
   const dragRef = useRef<{ from: number; to: number; startPx: number } | null>(
     null,
   );
+  // Edge resize pivots around the OPPOSITE edge, captured on press so it stays put
+  // even after the dragged edge crosses it — {@link orderRegion} then re-opens the
+  // region the other way instead of dead-ending at zero width.
+  const edgeRef = useRef<number | null>(null);
   const edge = (atX: number) => (
     <line
       x1={atX}
@@ -917,7 +968,10 @@ export function Region({
             />
             {editable && (
               <>
-                {/* Edges (resize) — on top, so a grab near an edge resizes it. */}
+                {/* Edges (resize) — on top, so a grab near an edge resizes it.
+                    Each pivots around the OTHER edge (captured on press), so a
+                    drag past it re-opens the region the other way rather than
+                    inverting — see {@link orderRegion}. */}
                 <DragArea
                   x={xa - EDGE_GRAB / 2}
                   y={0}
@@ -928,13 +982,17 @@ export function Region({
                   onHover={reportHover}
                   onSelect={select}
                   onEdit={edit}
+                  onDragStart={() => {
+                    edgeRef.current = to; // the fixed pivot = the far edge
+                  }}
                   onDrag={(px) =>
-                    onChange?.({
-                      from:
+                    onChange?.(
+                      orderRegion(
                         snapToGuides(container, selfKey, px) ??
-                        +container.xScale.invert(px),
-                      to,
-                    })
+                          +container.xScale.invert(px),
+                        edgeRef.current ?? to,
+                      ),
+                    )
                   }
                 />
                 <DragArea
@@ -947,13 +1005,17 @@ export function Region({
                   onHover={reportHover}
                   onSelect={select}
                   onEdit={edit}
+                  onDragStart={() => {
+                    edgeRef.current = from; // the fixed pivot = the near edge
+                  }}
                   onDrag={(px) =>
-                    onChange?.({
-                      from,
-                      to:
+                    onChange?.(
+                      orderRegion(
                         snapToGuides(container, selfKey, px) ??
-                        +container.xScale.invert(px),
-                    })
+                          +container.xScale.invert(px),
+                        edgeRef.current ?? from,
+                      ),
+                    )
                   }
                 />
               </>
@@ -961,16 +1023,18 @@ export function Region({
           </>
         )}
       </svg>
-      <Chip
-        theme={container.theme}
-        color={ann.color}
-        style={{
-          top: `${FLAG_TOP + lane * LANE_H}px`,
-          ...flagChipX(left, container.plotWidth),
-        }}
-      >
-        {text}
-      </Chip>
+      {text && (
+        <Chip
+          theme={container.theme}
+          color={ann.color}
+          style={{
+            top: `${FLAG_TOP + lane * LANE_H}px`,
+            ...flagChipX(left, container.plotWidth),
+          }}
+        >
+          {text}
+        </Chip>
+      )}
     </>
   );
 }

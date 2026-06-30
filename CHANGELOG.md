@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`, and
 them all. Pre-1.0: minor bumps may include new features and type-level changes;
 patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.32.0...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.33.0...HEAD
+[0.33.0]: https://github.com/pjm17971/pond-ts/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/pjm17971/pond-ts/compare/v0.31.2...v0.32.0
 [0.31.2]: https://github.com/pjm17971/pond-ts/compare/v0.31.1...v0.31.2
 [0.31.1]: https://github.com/pjm17971/pond-ts/compare/v0.30.0...v0.31.1
@@ -26,6 +27,41 @@ patch bumps are strictly additive.
 [0.20.0]: https://github.com/pjm17971/pond-ts/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/pjm17971/pond-ts/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
+
+## [0.33.0] — 2026-06-30
+
+A `@pond-ts/charts` release: a label opt-out for annotations plus interaction
+fixes from an adversarial review of the #306 annotation system. `pond-ts`,
+`@pond-ts/react`, and `@pond-ts/fit` carry no code changes — republished in
+lock-step (their `pond-ts` / `@pond-ts/react` peer ranges widen to `^0.33.0`).
+
+### Added
+
+- **Charts — annotation label opt-out.** `<Region>`, `<Marker>`, and
+  `<Baseline>` accept `label={false}` (or `label=""`) to render **no label
+  chip** — for an inert background mark (e.g. a `selectable={false}` highlight
+  band) where the auto-label would only show a raw axis value. Omitting `label`
+  still auto-labels; a string still renders it. `label` widens to
+  `string | false`. New `Highlight` story + Linux e2e baselines for the
+  `Annotations` stories. (#308)
+
+### Changed
+
+- **Charts — `<Region>` / `<Marker>` / `<Baseline>` with `label=""` now render
+  no chip** (previously an empty, zero-width chip). The label-less path; pass a
+  non-empty string for a visible label. (#308)
+
+### Fixed
+
+- **Charts — annotation edge-resize no longer inverts.** Dragging a `<Region>`
+  edge past the opposite one previously reported `{ from > to }`; it now pivots
+  around the fixed opposite edge, so the reported span stays ordered and a drag
+  either way re-opens the region instead of dead-ending at zero width. (#308)
+- **Charts — annotation drag releases on `pointercancel`.** A system gesture
+  takeover (which fires `pointercancel`, not `pointerup`) no longer leaves a mark
+  stuck mid-drag. (#308)
+- **Charts — single-annotation edit exits on an empty-plot click** even when the
+  mark is `editing` but not `selected`. (#308)
 
 ## [0.32.0] — 2026-06-29
 
