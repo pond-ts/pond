@@ -110,4 +110,32 @@ test.describe('Annotations · panZoom + select', () => {
     await drag(page, EMPTY_FRAC);
     await expect(page.getByTestId('panned')).toHaveText('panned: yes');
   });
+
+  // Lifecycle guard for the deferred-capture fix: an *uncommitted* potential-pan
+  // (press, never moved past the slop) released OUTSIDE the plot gets no
+  // `pointerup` on the plot — capture is deferred, so nothing pins the gesture
+  // here. The armed `dragRef` must not survive to fire a phantom pan on a later
+  // button-less hover move back into the plot.
+  test('a press released OUTSIDE the plot leaves no phantom pan on hover re-entry', async ({
+    page,
+  }) => {
+    await page.goto(story(STORY));
+    const canvas = page.locator('canvas').first();
+    await waitForCanvasPaint(canvas);
+    const box = await canvas.boundingBox();
+    if (box === null) throw new Error('no canvas bounding box');
+    const x0 = box.x + box.width * 0.5;
+    const yMid = box.y + box.height / 2;
+    // Press in the plot, then exit straight UP (dx stays 0 ⇒ never passes the pan
+    // slop ⇒ capture is never claimed) and release ABOVE the plot.
+    await page.mouse.move(x0, yMid);
+    await page.mouse.down();
+    await page.mouse.move(x0, box.y - 60, { steps: 12 }); // out the top, dx≈0
+    await page.mouse.up(); // released outside the plot — no pointerup reaches it
+    // Hover back in at a far x (no button). A stale dragRef would read dx ≫ slop
+    // here and fire a phantom pan; the button-less move must instead just hover.
+    await page.mouse.move(x0 - box.width * 0.3, yMid, { steps: 12 });
+    await expect(page.getByTestId('panned')).toHaveText('panned: no');
+    await expect(page.getByTestId('selected')).toHaveText('selected: none');
+  });
 });

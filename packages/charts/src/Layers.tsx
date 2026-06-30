@@ -322,6 +322,15 @@ export function Layers({ children }: LayersProps) {
         c.setHoverX(px); // share the preview x so other rows draw a guide there
         return;
       }
+      // A pan is only live while a button is held. A move with no buttons means
+      // the press already ended without us seeing the pointerup — which the
+      // deferred-capture path allows: an uncommitted (sub-slop) potential-pan
+      // released *outside* the plot never captured, so its pointerup fires
+      // off-plot and never reaches handlePointerUp. Drop the stale dragRef here
+      // (and fall through to hover) so it can't fire a phantom pan on re-entry.
+      // A genuine pan-in-progress always has buttons !== 0, so this never cuts
+      // one short — including the press-leave-then-return-still-holding case.
+      if (dragRef.current && e.buttons === 0) dragRef.current = null;
       const drag = dragRef.current;
       if (drag) {
         // Pan from the start range by the total drag — right → earlier (−dt).
