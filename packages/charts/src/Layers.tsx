@@ -416,10 +416,14 @@ export function Layers({ children }: LayersProps) {
     const c = containerRef.current;
     // A click that reached the plot (no mark's DragArea claimed it) is an empty
     // click. Deselect / exit edit when the consumer is tracking annotations — in
-    // global edit mode, or whenever a mark is currently active (a selected mark, or
-    // the single-edit target, which also reads as selected). Marks stop their own
-    // clicks in DragArea, so this only fires on true empty space.
-    if (c.editAnnotations || c.annotations.some((a) => a.selected)) {
+    // global edit mode, or whenever a mark is currently active: selected, OR the
+    // single-edit target (`editing`). Checking `editing` too means a consumer that
+    // sets `editing` without also setting `selected` still gets the exit signal.
+    // Marks stop their own clicks in DragArea, so this only fires on true empty space.
+    if (
+      c.editAnnotations ||
+      c.annotations.some((a) => a.selected || a.editing)
+    ) {
       c.onSelectAnnotation?.(null);
       return;
     }

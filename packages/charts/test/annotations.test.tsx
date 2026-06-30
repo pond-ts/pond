@@ -12,6 +12,7 @@ import {
   Marker,
   Baseline,
   computeLabelLanes,
+  orderRegion,
 } from '../src/annotations.js';
 import type { AnnotationSpec } from '../src/context.js';
 
@@ -140,5 +141,20 @@ describe('computeLabelLanes — empty labels claim no lane', () => {
     );
     expect(lanes.size).toBe(2);
     expect([...lanes.values()].sort()).toEqual([0, 1]);
+  });
+});
+
+/**
+ * Region edge resize pivots around the fixed opposite edge ({@link orderRegion}),
+ * so it never emits an inverted `{ from > to }` (the Codex-found P0). Dragging the
+ * edge *past* the pivot collapses to zero width then re-opens the region the other
+ * way — a drag either direction resizes.
+ */
+describe('orderRegion — edge resize never inverts (pivot clamp)', () => {
+  it('orders the dragged value against the pivot on either side', () => {
+    expect(orderRegion(15, 20)).toEqual({ from: 15, to: 20 }); // dragged toward pivot
+    expect(orderRegion(20, 20)).toEqual({ from: 20, to: 20 }); // edges meet, zero width
+    expect(orderRegion(25, 20)).toEqual({ from: 20, to: 25 }); // crossed past → re-opens
+    expect(orderRegion(5, 20)).toEqual({ from: 5, to: 20 }); // dragged the other way
   });
 });

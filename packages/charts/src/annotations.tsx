@@ -284,6 +284,21 @@ function snapToGuides(
   return best;
 }
 
+/**
+ * Order two region bounds so `from ≤ to`. A region **edge resize** pivots around
+ * the *opposite* (fixed) edge: the dragged value `v` and the pivot are ordered
+ * here, so dragging an edge past the pivot never emits an inverted span — instead
+ * the edges meet (zero width) and a continued drag **re-opens the region the other
+ * way** (the grabbed handle becomes the far edge). The pivot is captured at
+ * drag-start (a ref) so it stays fixed even as the emitted bounds swap on cross.
+ */
+export function orderRegion(
+  v: number,
+  pivot: number,
+): { from: number; to: number } {
+  return v <= pivot ? { from: v, to: pivot } : { from: pivot, to: v };
+}
+
 /** A label chip — the cursor value flag's shape (shared {@link flagChipStyle}:
  *  filled, no outline) with text in the annotation register. */
 function Chip({
@@ -420,6 +435,18 @@ function DragArea({
       onPointerUp={(e) => {
         if (!dragging.current) return;
         e.stopPropagation();
+        try {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        dragging.current = false;
+        onHover(false);
+      }}
+      // A system gesture takeover fires pointercancel, not pointerup — clear the
+      // same drag/hover state so the mark doesn't stay stuck "grabbed".
+      onPointerCancel={(e) => {
+        if (!dragging.current) return;
         try {
           e.currentTarget.releasePointerCapture(e.pointerId);
         } catch {
@@ -842,6 +869,10 @@ export function Region({
   const dragRef = useRef<{ from: number; to: number; startPx: number } | null>(
     null,
   );
+  // Edge resize pivots around the OPPOSITE edge, captured on press so it stays put
+  // even after the dragged edge crosses it — {@link orderRegion} then re-opens the
+  // region the other way instead of dead-ending at zero width.
+  const edgeRef = useRef<number | null>(null);
   const edge = (atX: number) => (
     <line
       x1={atX}
@@ -937,7 +968,10 @@ export function Region({
             />
             {editable && (
               <>
-                {/* Edges (resize) — on top, so a grab near an edge resizes it. */}
+                {/* Edges (resize) — on top, so a grab near an edge resizes it.
+                    Each pivots around the OTHER edge (captured on press), so a
+                    drag past it re-opens the region the other way rather than
+                    inverting — see {@link orderRegion}. */}
                 <DragArea
                   x={xa - EDGE_GRAB / 2}
                   y={0}
@@ -948,13 +982,17 @@ export function Region({
                   onHover={reportHover}
                   onSelect={select}
                   onEdit={edit}
+                  onDragStart={() => {
+                    edgeRef.current = to; // the fixed pivot = the far edge
+                  }}
                   onDrag={(px) =>
-                    onChange?.({
-                      from:
+                    onChange?.(
+                      orderRegion(
                         snapToGuides(container, selfKey, px) ??
-                        +container.xScale.invert(px),
-                      to,
-                    })
+                          +container.xScale.invert(px),
+                        edgeRef.current ?? to,
+                      ),
+                    )
                   }
                 />
                 <DragArea
@@ -967,13 +1005,17 @@ export function Region({
                   onHover={reportHover}
                   onSelect={select}
                   onEdit={edit}
+                  onDragStart={() => {
+                    edgeRef.current = from; // the fixed pivot = the near edge
+                  }}
                   onDrag={(px) =>
-                    onChange?.({
-                      from,
-                      to:
+                    onChange?.(
+                      orderRegion(
                         snapToGuides(container, selfKey, px) ??
-                        +container.xScale.invert(px),
-                    })
+                          +container.xScale.invert(px),
+                        edgeRef.current ?? from,
+                      ),
+                    )
                   }
                 />
               </>
