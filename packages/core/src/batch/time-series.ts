@@ -869,14 +869,22 @@ export class TimeSeries<S extends SeriesSchema> {
    * `number[]` (e.g. `JSON.parse` of a columnar wire payload) **or** a
    * `Float64Array` (e.g. protobuf packed doubles / fixed-point after descale) —
    * one polymorphic door, so the wire format only changes the *decoder*, not the
-   * ingest. A `null` / non-finite value cell is a gap (missing), same contract as
-   * `fromJSON`'s `null`.
+   * ingest. A value cell is a gap (missing) iff it's `null`/`undefined` or
+   * non-finite (`NaN`/`Infinity`) — identical rule regardless of which array
+   * type supplied it. Note this is looser than `fromJSON`, which *rejects* a
+   * non-finite provided number outright rather than treating it as a gap.
    *
    * Skips the row-tuple materialization + per-row intake a columnar caller
    * otherwise pays (transpose → `fromJSON`): each column packs directly, the key
    * column is built from the first schema column, and the store is assembled via
    * trusted construction (`ColumnarStore.fromTrustedStore` still validates kind +
    * aligned length).
+   *
+   * **`Float64Array` inputs are adopted, not copied** (zero-copy — the point of
+   * the fast path): the resulting series' columns alias the caller's buffers.
+   * Mutating an adopted buffer after construction mutates the series. Pass a
+   * fresh buffer (e.g. straight off a decode) if this matters; `number[]`
+   * columns are always copied.
    *
    * **v1 scope:** a `time`-kind key + `number` value columns (the market-data /
    * chart wire case). Other key kinds (`interval` / `timeRange`) and non-numeric
@@ -956,20 +964,27 @@ export class TimeSeries<S extends SeriesSchema> {
           `fromColumns: column '${def.name}' length ${raw.length} does not match key length ${count}`,
         );
       }
-      // Float64Array → adopt directly (validity from finite cells) — the fast
-      // path a protobuf / fixed-point decoder hits. number[] → the missing-aware
-      // builder.
-      if (raw instanceof Float64Array) {
-        const validity = validityFromPredicate(count, (j) =>
-          Number.isFinite(raw[j]!),
-        );
-        columnMap.set(
-          def.name,
-          new Float64Column(raw, count, validity, validity === undefined),
-        );
-      } else {
-        columnMap.set(def.name, float64ColumnFromArray(raw));
-      }
+      // Normalize to a Float64Array either way — adopt if already typed (the
+      // fast path a protobuf / fixed-point decoder hits, zero-copy), else
+      // convert (`null`/`undefined` -> `NaN`) — then apply ONE validity rule
+      // to both: a cell is a gap iff it's non-finite. This must be identical
+      // regardless of input type: an earlier version used `float64ColumnFromArray`
+      // for the `number[]` branch, which treats a `NaN` *value* (as opposed to
+      // `null`) as defined-but-non-finite rather than missing, diverging from
+      // the `Float64Array` branch's `Number.isFinite` gap signal — the same
+      // wire value would silently mean different things depending on which
+      // array type decoded it.
+      const values =
+        raw instanceof Float64Array
+          ? raw
+          : Float64Array.from(raw, (v) => (v == null ? NaN : v));
+      const validity = validityFromPredicate(count, (j) =>
+        Number.isFinite(values[j]!),
+      );
+      columnMap.set(
+        def.name,
+        new Float64Column(values, count, validity, validity === undefined),
+      );
     }
 
     const store = ColumnarStore.fromTrustedStore(

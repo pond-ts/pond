@@ -166,6 +166,47 @@ describe('TimeSeries.fromColumns', () => {
     expect(ts.length).toBe(3);
   });
 
+  it('treats NaN as a gap identically for number[] and Float64Array value columns', () => {
+    const viaArray = TimeSeries.fromColumns({
+      name: 't',
+      schema: SCHEMA,
+      columns: {
+        time: [1000, 2000, 3000],
+        open: [10, 20, 30],
+        close: [1, NaN, 3],
+      },
+    });
+    const viaTyped = TimeSeries.fromColumns({
+      name: 't',
+      schema: SCHEMA,
+      columns: {
+        time: Float64Array.from([1000, 2000, 3000]),
+        open: Float64Array.from([10, 20, 30]),
+        close: Float64Array.from([1, NaN, 3]),
+      },
+    });
+    // NaN is a gap either way — not a stored-but-non-finite value.
+    expect(viaArray.at(1)?.data().close).toBeUndefined();
+    expect(viaTyped.at(1)?.data().close).toBeUndefined();
+  });
+
+  it('adopts (does not copy) Float64Array columns — pre-read mutation is visible', () => {
+    const buf = Float64Array.from([1000, 2000, 3000]);
+    const ts = TimeSeries.fromColumns({
+      name: 't',
+      schema: SCHEMA,
+      columns: {
+        time: buf,
+        open: Float64Array.from([10, 20, 30]),
+        close: Float64Array.from([1, 2, 3]),
+      },
+    });
+    // Mutate before any read of row 0 (the row-level eventCache memoizes on
+    // first access, which would otherwise mask the aliasing this test proves).
+    buf[0] = 500;
+    expect(ts.at(0)?.begin()).toBe(500);
+  });
+
   it('throws on a non-finite timestamp key', () => {
     expect(() =>
       TimeSeries.fromColumns({
