@@ -922,11 +922,21 @@ export class TimeSeries<S extends SeriesSchema> {
         `fromColumns: missing key column '${keyDef.name}'`,
       );
     }
-    // epoch-ms buffer; TimeKeyColumn asserts all finite.
-    const begin =
-      keyRaw instanceof Float64Array
-        ? keyRaw
-        : Float64Array.from(keyRaw, (v) => (v == null ? NaN : Number(v)));
+    // epoch-ms buffer; TimeKeyColumn asserts all finite. A manual loop, not
+    // `Float64Array.from(arr, mapFn)`: supplying a map function forces V8's
+    // generic iterable-protocol path even for a plain array, ~15-20x slower
+    // than a preallocated-buffer copy at 100k-element scale — measured, not
+    // theoretical (see the pond-columnar-ingest spike's ingest regression).
+    let begin: Float64Array;
+    if (keyRaw instanceof Float64Array) {
+      begin = keyRaw;
+    } else {
+      begin = new Float64Array(keyRaw.length);
+      for (let j = 0; j < keyRaw.length; j += 1) {
+        const v = keyRaw[j];
+        begin[j] = v == null ? NaN : Number(v);
+      }
+    }
     const count = begin.length;
     // Throws on any non-finite timestamp.
     const keys = new TimeKeyColumn(begin, count);
@@ -974,10 +984,18 @@ export class TimeSeries<S extends SeriesSchema> {
       // the `Float64Array` branch's `Number.isFinite` gap signal — the same
       // wire value would silently mean different things depending on which
       // array type decoded it.
-      const values =
-        raw instanceof Float64Array
-          ? raw
-          : Float64Array.from(raw, (v) => (v == null ? NaN : v));
+      // Manual loop, not `Float64Array.from(arr, mapFn)` — see the key-column
+      // comment above; the cost applies identically here.
+      let values: Float64Array;
+      if (raw instanceof Float64Array) {
+        values = raw;
+      } else {
+        values = new Float64Array(count);
+        for (let j = 0; j < count; j += 1) {
+          const v = raw[j];
+          values[j] = v == null ? NaN : v;
+        }
+      }
       const validity = validityFromPredicate(count, (j) =>
         Number.isFinite(values[j]!),
       );
