@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`, and
 them all. Pre-1.0: minor bumps may include new features and type-level changes;
 patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.34.0...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.34.1...HEAD
+[0.34.1]: https://github.com/pjm17971/pond-ts/compare/v0.34.0...v0.34.1
 [0.34.0]: https://github.com/pjm17971/pond-ts/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/pjm17971/pond-ts/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/pjm17971/pond-ts/compare/v0.31.2...v0.32.0
@@ -28,6 +29,29 @@ patch bumps are strictly additive.
 [0.20.0]: https://github.com/pjm17971/pond-ts/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/pjm17971/pond-ts/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
+
+## [0.34.1] — 2026-07-01
+
+A `pond-ts` core patch: fixes a performance regression introduced in 0.34.0.
+`@pond-ts/react`, `@pond-ts/charts`, and `@pond-ts/fit` carry no code
+changes — republished in lock-step; their `^0.34.0` peer ranges already
+admit this patch.
+
+### Fixed
+
+- **`TimeSeries.fromColumns` — `number[]` column conversion was ~7-18x
+  slower than intended.** The `null`/`NaN`-gap parity fix in 0.34.0
+  converted `number[]` columns via `Float64Array.from(raw, mapFn)`.
+  Supplying a map function forces V8's generic iterable-protocol path even
+  for a plain array, dramatically slower than a manual loop into a
+  preallocated buffer at 100k-element scale. Found while pointing the
+  `pond-columnar-ingest` wire-format spike at the real published package
+  instead of a local build. Fixed with a manual `for` loop in both the
+  key-column and value-column conversion paths — no behavior change, same
+  gap semantics, all 12 `fromColumns` tests unchanged and green. Added
+  `scripts/perf-from-columns.mjs` as the durable regression benchmark.
+  Measured: 100k × 7 cols, `number[]` columns, dense — 21.5ms → 2.9ms.
+  (#311)
 
 ## [0.34.0] — 2026-07-01
 

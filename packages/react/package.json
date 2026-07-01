@@ -1,6 +1,6 @@
 {
   "name": "@pond-ts/react",
-  "version": "0.34.0",
+  "version": "0.34.1",
   "description": "React hooks for pond-ts live time series",
   "license": "MIT",
   "repository": {
