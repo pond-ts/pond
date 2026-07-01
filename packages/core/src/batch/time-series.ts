@@ -127,6 +127,7 @@ import {
   TimeRangeKeyColumn,
   float64ColumnFromArray,
   stringColumnFromArray,
+  validityFromPredicate,
   withColumnAppended,
   withColumnsRenamed,
   withColumnsSelected,
@@ -134,6 +135,7 @@ import {
   withRowRange,
   withRowSelection,
 } from '../columnar/index.js';
+import { ValidationError } from '../core/errors.js';
 import type { KeyColumnForSchema, PublicColumnForKind } from '../column.js';
 import { SeriesStore } from '../live/series-store.js';
 import { validateAndNormalize } from './validate.js';
@@ -855,6 +857,146 @@ export class TimeSeries<S extends SeriesSchema> {
       rows: parseJsonRows(input.schema, input.rows, input.parse),
       sort: input.sort ?? false,
     });
+  }
+
+  /**
+   * Example: `TimeSeries.fromColumns({ name, schema, columns })`.
+   *
+   * The **columnar** ingress — the struct-of-arrays counterpart to
+   * {@link TimeSeries.fromJSON} (which takes row tuples). Each entry in
+   * `columns` is one column's values, keyed by schema column name and aligned by
+   * index; every column must have the same length. Values may be a plain
+   * `number[]` (e.g. `JSON.parse` of a columnar wire payload) **or** a
+   * `Float64Array` (e.g. protobuf packed doubles / fixed-point after descale) —
+   * one polymorphic door, so the wire format only changes the *decoder*, not the
+   * ingest. A value cell is a gap (missing) iff it's `null`/`undefined` or
+   * non-finite (`NaN`/`Infinity`) — identical rule regardless of which array
+   * type supplied it. Note this is looser than `fromJSON`, which *rejects* a
+   * non-finite provided number outright rather than treating it as a gap.
+   *
+   * Skips the row-tuple materialization + per-row intake a columnar caller
+   * otherwise pays (transpose → `fromJSON`): each column packs directly, the key
+   * column is built from the first schema column, and the store is assembled via
+   * trusted construction (`ColumnarStore.fromTrustedStore` still validates kind +
+   * aligned length).
+   *
+   * **`Float64Array` inputs are adopted, not copied** (zero-copy — the point of
+   * the fast path): the resulting series' columns alias the caller's buffers.
+   * Mutating an adopted buffer after construction mutates the series. Pass a
+   * fresh buffer (e.g. straight off a decode) if this matters; `number[]`
+   * columns are always copied.
+   *
+   * **v1 scope:** a `time`-kind key + `number` value columns (the market-data /
+   * chart wire case). Other key kinds (`interval` / `timeRange`) and non-numeric
+   * value columns throw for now — extend as consumers need.
+   *
+   * @throws ValidationError on a missing column, a length mismatch, an
+   *   unsupported kind, a non-finite timestamp key, or an out-of-order
+   *   (decreasing) timestamp — keys must be non-decreasing, same as `fromJSON`.
+   */
+  static fromColumns<S extends SeriesSchema>(input: {
+    name: string;
+    schema: S;
+    columns: Record<
+      string,
+      ReadonlyArray<number | null | undefined> | Float64Array
+    >;
+  }): TimeSeries<S> {
+    const { name, schema, columns } = input;
+
+    // Key column (schema[0]). v1: point-in-time (`time`) keys only.
+    const keyDef = schema[0];
+    if (keyDef === undefined) {
+      throw new ValidationError(
+        'fromColumns: schema must have at least a key column',
+      );
+    }
+    if (keyDef.kind !== 'time') {
+      throw new ValidationError(
+        `fromColumns: v1 supports a 'time' key; schema[0] '${keyDef.name}' is '${keyDef.kind}'`,
+      );
+    }
+    const keyRaw = columns[keyDef.name];
+    if (keyRaw === undefined) {
+      throw new ValidationError(
+        `fromColumns: missing key column '${keyDef.name}'`,
+      );
+    }
+    // epoch-ms buffer; TimeKeyColumn asserts all finite.
+    const begin =
+      keyRaw instanceof Float64Array
+        ? keyRaw
+        : Float64Array.from(keyRaw, (v) => (v == null ? NaN : Number(v)));
+    const count = begin.length;
+    // Throws on any non-finite timestamp.
+    const keys = new TimeKeyColumn(begin, count);
+    // Enforce the non-decreasing-key invariant that `fromJSON`'s
+    // `validateAndNormalize` guarantees. Trusted construction skips row
+    // materialization + kind re-validation, but NOT this correctness contract:
+    // bisect-based operators (crop, `atTime`, range queries) rely on it, so an
+    // unsorted columnar input must fail loudly here rather than build a silently
+    // broken series. One O(N) scan over already-finite values — negligible next
+    // to decode.
+    for (let j = 1; j < count; j += 1) {
+      if (begin[j]! < begin[j - 1]!) {
+        throw new ValidationError(
+          `fromColumns: key column '${keyDef.name}' is out of order at index ${j} ` +
+            `(${begin[j]} < ${begin[j - 1]}) — timestamps must be non-decreasing; pre-sort the columns`,
+        );
+      }
+    }
+
+    // Value columns — packed directly (missing-aware) from the arrays.
+    const columnMap = new Map<string, ColumnarColumn>();
+    for (let i = 1; i < schema.length; i += 1) {
+      const def = schema[i]!;
+      if (def.kind !== 'number') {
+        throw new ValidationError(
+          `fromColumns: v1 supports 'number' value columns; column '${def.name}' is '${def.kind}'`,
+        );
+      }
+      const raw = columns[def.name];
+      if (raw === undefined) {
+        throw new ValidationError(`fromColumns: missing column '${def.name}'`);
+      }
+      if (raw.length !== count) {
+        throw new ValidationError(
+          `fromColumns: column '${def.name}' length ${raw.length} does not match key length ${count}`,
+        );
+      }
+      // Normalize to a Float64Array either way — adopt if already typed (the
+      // fast path a protobuf / fixed-point decoder hits, zero-copy), else
+      // convert (`null`/`undefined` -> `NaN`) — then apply ONE validity rule
+      // to both: a cell is a gap iff it's non-finite. This must be identical
+      // regardless of input type: an earlier version used `float64ColumnFromArray`
+      // for the `number[]` branch, which treats a `NaN` *value* (as opposed to
+      // `null`) as defined-but-non-finite rather than missing, diverging from
+      // the `Float64Array` branch's `Number.isFinite` gap signal — the same
+      // wire value would silently mean different things depending on which
+      // array type decoded it.
+      const values =
+        raw instanceof Float64Array
+          ? raw
+          : Float64Array.from(raw, (v) => (v == null ? NaN : v));
+      const validity = validityFromPredicate(count, (j) =>
+        Number.isFinite(values[j]!),
+      );
+      columnMap.set(
+        def.name,
+        new Float64Column(values, count, validity, validity === undefined),
+      );
+    }
+
+    const store = ColumnarStore.fromTrustedStore(
+      schema as unknown as ColumnSchema,
+      keys,
+      columnMap,
+    );
+    return TimeSeries.#fromTrustedStore(
+      name,
+      schema,
+      store as unknown as ColumnarStore<ColumnSchema>,
+    );
   }
 
   /**

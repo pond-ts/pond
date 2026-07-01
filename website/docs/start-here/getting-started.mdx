@@ -42,6 +42,14 @@ console.log(event.get('cpu'));
 console.log(event.data().host);
 ```
 
+:::tip[Receiving columnar or binary data?]
+The row-tuple shape above is the default and the right one for most
+sources. If your data instead arrives struct-of-arrays — a bulk columnar
+JSON payload, protobuf packed doubles, or any decoder that already hands
+you typed arrays — `TimeSeries.fromColumns` skips the row round-trip
+entirely. See [Creating series → Columnar ingest](./creating#columnar-ingest).
+:::
+
 ## What happens during construction?
 
 Pond validates and normalizes input rows against the supplied schema.
