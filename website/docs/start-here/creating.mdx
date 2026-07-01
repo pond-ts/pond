@@ -107,6 +107,8 @@ timestamp-parsing rules, and the one genuinely tricky corner
   strings.
 - [**`toJSON`**](#tojson) — array and object row formats.
 - [**Round-trip fidelity**](#round-trip-fidelity) — what's preserved.
+- [**Columnar ingest**](#columnar-ingest) — `fromColumns`, the
+  struct-of-arrays door for bulk/binary wire formats.
 - [**Calendar-aware sequences**](#calendar-aware-sequences) — the
   timezone-sensitive sibling to `Sequence.every`.
 - [**Pitfalls**](#pitfalls).
@@ -365,6 +367,121 @@ If the two ends of a round-trip share the same `schema` tuple (as
 the round-trip at the type level. If one end imports a different
 schema, the narrowing is only as good as what both ends import.
 
+## Columnar ingest
+
+`fromJSON` takes row tuples — the natural shape for a REST endpoint and
+the right default. But some sources hand you data **struct-of-arrays**
+already: a bulk columnar JSON payload (`{ time: [...], open: [...], ... }`),
+a protobuf message with `repeated double` fields (a packed column decodes
+straight to a `Float64Array`), or a fixed-point wire format you've already
+descaled into typed arrays. Reshaping those back into rows just to hand
+them to `fromJSON` costs a transpose pass you don't need.
+
+`TimeSeries.fromColumns` is the columnar counterpart to `fromJSON` — it
+takes column-shaped input directly:
+
+```ts
+import { TimeSeries } from 'pond-ts';
+
+const schema = [
+  { name: 'time', kind: 'time' },
+  { name: 'open', kind: 'number' },
+  { name: 'close', kind: 'number' },
+] as const;
+
+const bars = TimeSeries.fromColumns({
+  name: 'AAPL',
+  schema,
+  columns: {
+    time: [1735689600000, 1735689660000, 1735689720000],
+    open: [193.1, 193.4, 193.2],
+    close: [193.4, 193.2, 193.6],
+  },
+});
+```
+
+Each entry in `columns` is one column's values, aligned by index; every
+column must be the same length as the key column. That's the same shape
+`JSON.parse` gives you for a columnar wire payload — no transpose needed.
+
+### `Float64Array` columns
+
+Each column can also be a `Float64Array` instead of a plain array — the
+shape a binary decoder (protobuf packed doubles, a fixed-point decoder
+after descaling) hands back directly:
+
+```ts
+const bars = TimeSeries.fromColumns({
+  name: 'AAPL',
+  schema,
+  columns: {
+    time: Float64Array.from([1735689600000, 1735689660000, 1735689720000]),
+    open: Float64Array.from([193.1, 193.4, 193.2]),
+    close: Float64Array.from([193.4, 193.2, 193.6]),
+  },
+});
+```
+
+This is the fast path: a `Float64Array` column is **adopted directly**,
+not copied — no re-materialization, no per-row intake. It's also why
+`fromColumns` is one function that takes either shape rather than two
+separate ones: a plain-array caller and a typed-array caller both want the
+same ingest, just with a different (adopt vs. copy) cost underneath.
+
+:::warning[Adopted, not copied]
+Because a `Float64Array` column is adopted by reference, mutating the
+source buffer after construction mutates the series. Hand `fromColumns` a
+buffer you're done writing to — freshly decoded output is the common case
+and is naturally safe. `number[]` columns are always copied, so this only
+applies to the typed-array path.
+:::
+
+### Missing values and ordering
+
+A `null`/`undefined` cell (plain-array columns) or a non-finite cell
+(`NaN`, `Infinity` — either input type) is a gap, identically across both
+input shapes:
+
+```ts
+TimeSeries.fromColumns({
+  name: 'AAPL',
+  schema,
+  columns: {
+    time: [1735689600000, 1735689660000],
+    open: [193.1, 193.4],
+    close: [193.4, null], // gap
+  },
+});
+```
+
+This is looser than `fromJSON`, which rejects a non-finite _provided_
+number outright rather than treating it as a gap.
+
+Columns must be in **non-decreasing key order**, same invariant as
+`fromJSON` — an out-of-order key throws, naming the offending index. Unlike
+`fromJSON`, there's no `sort: true` escape hatch yet; pre-sort columnar
+input before calling `fromColumns`.
+
+### Scope
+
+`fromColumns` currently supports a `time`-kind key column and `number`
+value columns — the market-data / chart wire-format case that motivated
+it. Other key kinds (`interval`, `timerange`) and non-numeric value
+columns throw for now.
+
+:::tip[Why this matters for interactive charts]
+The real cost this solves isn't raw parse speed — it's _when_ the parse
+happens. Decoding a hefty series (hundreds of thousands of points)
+synchronously on the main thread can stall an animating or panning chart
+for a visible frame. Because `fromColumns` accepts `Float64Array`s
+directly, a decoder can run in a **Web Worker** and `postMessage` the
+resulting typed arrays back as **transferable objects** (zero-copy) —
+`fromColumns` then adopts them on the main thread for a fraction of a
+millisecond per column, instead of a multi-frame freeze. A plain
+`number[]` can't transfer this way (it structured-clones), so this
+pattern specifically wants the columnar + typed-array path.
+:::
+
 ## Calendar-aware sequences
 
 For timezone-sensitive bucketing, `Sequence.every(duration)` is
@@ -474,6 +591,8 @@ Library isn't trying to guess remaps.
 
 ## See also
 
+- [Columnar ingest](#columnar-ingest) — `fromColumns` for struct-of-arrays
+  / typed-array wire formats.
 - [Concepts → Series](./concepts/series)
   — `TimeSeries` vs `LiveSeries`, schema shape, mental model.
 - [Array columns](../pond-ts/advanced/arrays) — array cells
