@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`, and
 them all. Pre-1.0: minor bumps may include new features and type-level changes;
 patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.33.0...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.34.0...HEAD
+[0.34.0]: https://github.com/pjm17971/pond-ts/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/pjm17971/pond-ts/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/pjm17971/pond-ts/compare/v0.31.2...v0.32.0
 [0.31.2]: https://github.com/pjm17971/pond-ts/compare/v0.31.1...v0.31.2
@@ -27,6 +28,40 @@ patch bumps are strictly additive.
 [0.20.0]: https://github.com/pjm17971/pond-ts/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/pjm17971/pond-ts/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
+
+## [0.34.0] — 2026-07-01
+
+A `pond-ts` core release: the columnar/typed-array ingress driven by the
+Tidal wire-format spike. `@pond-ts/react`, `@pond-ts/charts`, and
+`@pond-ts/fit` carry no code changes — republished in lock-step (their
+`pond-ts` / `@pond-ts/react` peer ranges widen to `^0.34.0`).
+
+### Added
+
+- **`TimeSeries.fromColumns`** — the columnar (struct-of-arrays) ingress,
+  the counterpart to `fromJSON`'s row-tuple shape. Accepts either a plain
+  `number[]` or a `Float64Array` per column — one polymorphic door, so a
+  wire format only changes the *decoder*, not the ingest. `Float64Array`
+  columns are adopted directly (zero-copy); `number[]` columns are copied.
+  A `null`/`undefined` cell or a non-finite value (`NaN`/`Infinity`) is a
+  gap, identically across both input shapes. Enforces the same
+  non-decreasing key-order invariant as `fromJSON`. v1 scope: a `time`-kind
+  key and `number` value columns. (#310)
+
+  Measured against a wire-format spike (`tidal-app/pond-columnar-ingest`):
+  `fromColumns` collapses the ingest step that every non-rows path
+  previously paid (transpose → `fromJSON`) — 100k-point protobuf ingest
+  27.7ms → 2.8ms; JSON-columnar 27.0ms → 5.2ms. In a browser, decoding
+  off-main in a Web Worker and transferring the resulting `Float64Array`s
+  back keeps `fromColumns`'s adopt path on the main thread to ~9ms,
+  dropping a 500k-point ingest's worst animation-frame stall from ~50ms to
+  ~9ms.
+
+- **Docs** — a "Columnar ingest" section on the
+  [Creating series](https://pjm17971.github.io/pond-ts/docs/start-here/creating#columnar-ingest)
+  page covering both input shapes, the adopt-vs-copy/aliasing distinction,
+  missing-value and ordering semantics, and why this matters for
+  interactive charts; a pointer from Getting Started.
 
 ## [0.33.0] — 2026-06-30
 
