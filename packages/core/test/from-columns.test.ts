@@ -1,0 +1,119 @@
+import { describe, expect, it } from 'vitest';
+import { TimeSeries } from '../src/index.js';
+
+const SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'open', kind: 'number' },
+  { name: 'close', kind: 'number', required: false },
+] as const;
+
+describe('TimeSeries.fromColumns', () => {
+  it('builds a series from number[] columns (JSON-columnar path)', () => {
+    const ts = TimeSeries.fromColumns({
+      name: 't',
+      schema: SCHEMA,
+      columns: {
+        time: [1000, 2000, 3000],
+        open: [10, 20, 30],
+        close: [1.5, null, 3.5],
+      },
+    });
+    expect(ts.length).toBe(3);
+    expect(ts.firstColumnKind).toBe('time');
+    expect(ts.at(0)?.begin()).toBe(1000);
+    expect(ts.at(2)?.begin()).toBe(3000);
+    expect(ts.at(0)?.data().open).toBe(10);
+    expect(ts.at(2)?.data().close).toBe(3.5);
+    // the `null` cell is a gap
+    expect(ts.at(1)?.data().close).toBeUndefined();
+  });
+
+  it('adopts Float64Array columns (protobuf / fixed-point path), NaN = gap', () => {
+    const ts = TimeSeries.fromColumns({
+      name: 't',
+      schema: SCHEMA,
+      columns: {
+        time: Float64Array.from([1000, 2000, 3000]),
+        open: Float64Array.from([10, 20, 30]),
+        close: Float64Array.from([1.5, NaN, 3.5]),
+      },
+    });
+    expect(ts.length).toBe(3);
+    expect(ts.at(1)?.data().open).toBe(20);
+    expect(ts.at(1)?.data().close).toBeUndefined(); // NaN → missing
+    expect(ts.at(2)?.data().close).toBe(3.5);
+  });
+
+  it('matches the row-tuple constructor for the same data', () => {
+    const cols = TimeSeries.fromColumns({
+      name: 't',
+      schema: SCHEMA,
+      columns: {
+        time: [1000, 2000, 3000],
+        open: [10, 20, 30],
+        close: [1.5, null, 3.5],
+      },
+    });
+    const rows = new TimeSeries({
+      name: 't',
+      schema: SCHEMA,
+      rows: [
+        [1000, 10, 1.5],
+        [2000, 20, undefined], // raw row constructor uses `undefined` for missing
+        [3000, 30, 3.5],
+      ] as never,
+    });
+    expect(cols.length).toBe(rows.length);
+    for (let i = 0; i < rows.length; i++) {
+      expect(cols.at(i)?.begin()).toBe(rows.at(i)?.begin());
+      expect(cols.at(i)?.data().open).toBe(rows.at(i)?.data().open);
+      expect(cols.at(i)?.data().close).toBe(rows.at(i)?.data().close);
+    }
+  });
+
+  it('throws on a missing column', () => {
+    expect(() =>
+      TimeSeries.fromColumns({
+        name: 't',
+        schema: SCHEMA,
+        columns: { time: [1000, 2000], open: [10, 20] }, // no `close`
+      }),
+    ).toThrow(/close/);
+  });
+
+  it('throws on a length mismatch', () => {
+    expect(() =>
+      TimeSeries.fromColumns({
+        name: 't',
+        schema: SCHEMA,
+        columns: { time: [1000, 2000], open: [10], close: [1.5, 2.5] },
+      }),
+    ).toThrow(/length/);
+  });
+
+  it('throws on a non-time key (v1 scope)', () => {
+    expect(() =>
+      TimeSeries.fromColumns({
+        name: 't',
+        schema: [
+          { name: 'k', kind: 'number' },
+          { name: 'v', kind: 'number' },
+        ] as const,
+        columns: { k: [1, 2], v: [10, 20] },
+      }),
+    ).toThrow(/time/);
+  });
+
+  it('throws on a non-number value column (v1 scope)', () => {
+    expect(() =>
+      TimeSeries.fromColumns({
+        name: 't',
+        schema: [
+          { name: 'time', kind: 'time' },
+          { name: 'label', kind: 'string' },
+        ] as const,
+        columns: { time: [1000, 2000], label: ['a', 'b'] as never },
+      }),
+    ).toThrow(/number/);
+  });
+});

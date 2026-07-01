@@ -127,6 +127,7 @@ import {
   TimeRangeKeyColumn,
   float64ColumnFromArray,
   stringColumnFromArray,
+  validityFromPredicate,
   withColumnAppended,
   withColumnsRenamed,
   withColumnsSelected,
@@ -134,6 +135,7 @@ import {
   withRowRange,
   withRowSelection,
 } from '../columnar/index.js';
+import { ValidationError } from '../core/errors.js';
 import type { KeyColumnForSchema, PublicColumnForKind } from '../column.js';
 import { SeriesStore } from '../live/series-store.js';
 import { validateAndNormalize } from './validate.js';
@@ -855,6 +857,114 @@ export class TimeSeries<S extends SeriesSchema> {
       rows: parseJsonRows(input.schema, input.rows, input.parse),
       sort: input.sort ?? false,
     });
+  }
+
+  /**
+   * Example: `TimeSeries.fromColumns({ name, schema, columns })`.
+   *
+   * The **columnar** ingress — the struct-of-arrays counterpart to
+   * {@link TimeSeries.fromJSON} (which takes row tuples). Each entry in
+   * `columns` is one column's values, keyed by schema column name and aligned by
+   * index; every column must have the same length. Values may be a plain
+   * `number[]` (e.g. `JSON.parse` of a columnar wire payload) **or** a
+   * `Float64Array` (e.g. protobuf packed doubles / fixed-point after descale) —
+   * one polymorphic door, so the wire format only changes the *decoder*, not the
+   * ingest. A `null` / non-finite value cell is a gap (missing), same contract as
+   * `fromJSON`'s `null`.
+   *
+   * Skips the row-tuple materialization + per-row intake a columnar caller
+   * otherwise pays (transpose → `fromJSON`): each column packs directly, the key
+   * column is built from the first schema column, and the store is assembled via
+   * trusted construction (`ColumnarStore.fromTrustedStore` still validates kind +
+   * aligned length).
+   *
+   * **v1 scope:** a `time`-kind key + `number` value columns (the market-data /
+   * chart wire case). Other key kinds (`interval` / `timeRange`) and non-numeric
+   * value columns throw for now — extend as consumers need.
+   *
+   * @throws ValidationError on a missing column, a length mismatch, an
+   *   unsupported kind, or a non-finite timestamp key.
+   */
+  static fromColumns<S extends SeriesSchema>(input: {
+    name: string;
+    schema: S;
+    columns: Record<
+      string,
+      ReadonlyArray<number | null | undefined> | Float64Array
+    >;
+  }): TimeSeries<S> {
+    const { name, schema, columns } = input;
+
+    // Key column (schema[0]). v1: point-in-time (`time`) keys only.
+    const keyDef = schema[0];
+    if (keyDef === undefined) {
+      throw new ValidationError(
+        'fromColumns: schema must have at least a key column',
+      );
+    }
+    if (keyDef.kind !== 'time') {
+      throw new ValidationError(
+        `fromColumns: v1 supports a 'time' key; schema[0] '${keyDef.name}' is '${keyDef.kind}'`,
+      );
+    }
+    const keyRaw = columns[keyDef.name];
+    if (keyRaw === undefined) {
+      throw new ValidationError(
+        `fromColumns: missing key column '${keyDef.name}'`,
+      );
+    }
+    // epoch-ms buffer; TimeKeyColumn asserts all finite.
+    const begin =
+      keyRaw instanceof Float64Array
+        ? keyRaw
+        : Float64Array.from(keyRaw, (v) => (v == null ? NaN : Number(v)));
+    const count = begin.length;
+    const keys = new TimeKeyColumn(begin, count);
+
+    // Value columns — packed directly (missing-aware) from the arrays.
+    const columnMap = new Map<string, ColumnarColumn>();
+    for (let i = 1; i < schema.length; i += 1) {
+      const def = schema[i]!;
+      if (def.kind !== 'number') {
+        throw new ValidationError(
+          `fromColumns: v1 supports 'number' value columns; column '${def.name}' is '${def.kind}'`,
+        );
+      }
+      const raw = columns[def.name];
+      if (raw === undefined) {
+        throw new ValidationError(`fromColumns: missing column '${def.name}'`);
+      }
+      if (raw.length !== count) {
+        throw new ValidationError(
+          `fromColumns: column '${def.name}' length ${raw.length} does not match key length ${count}`,
+        );
+      }
+      // Float64Array → adopt directly (validity from finite cells) — the fast
+      // path a protobuf / fixed-point decoder hits. number[] → the missing-aware
+      // builder.
+      if (raw instanceof Float64Array) {
+        const validity = validityFromPredicate(count, (j) =>
+          Number.isFinite(raw[j]!),
+        );
+        columnMap.set(
+          def.name,
+          new Float64Column(raw, count, validity, validity === undefined),
+        );
+      } else {
+        columnMap.set(def.name, float64ColumnFromArray(raw));
+      }
+    }
+
+    const store = ColumnarStore.fromTrustedStore(
+      schema as unknown as ColumnSchema,
+      keys,
+      columnMap,
+    );
+    return TimeSeries.#fromTrustedStore(
+      name,
+      schema,
+      store as unknown as ColumnarStore<ColumnSchema>,
+    );
   }
 
   /**
