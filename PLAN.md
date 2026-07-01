@@ -504,6 +504,87 @@ on the cursor time), per the chosen closest-existing semantics. Friction noted:
 cast (same shape as the column-API read in `data.ts`) — a candidate for a
 runtime-string value accessor on `Event`/`TimeSeries` later.
 
+**Wire format + columnar ingress — the end-to-end data path (Tidal-driven, 2026-06-30).**
+Consolidates two carry-forwards above — **`fromTrustedColumns`** (the public
+column-native constructor) and **`TimeSeries` (de)serialization / columnar
+rehydrate** ("mechanism TBD") — into one committed story, now that Tidal +
+`@pond-ts/financial` supply the driving consumer (a market-data endpoint feeding
+charts at the ~70-100k-point client-side budget; SpiderRock's binary WS feed
+later). The shape of the pipe, end to end — **simple rows in, columnar in the
+middle, columnar out:**
+
+- **Ingest stays simple at the easy end.** `TimeSeries.fromJSON({name, schema,
+rows})` — positional row tuples, epoch-ms keys, `null` = gap — is the canonical,
+  zero-transform door and stays the default; a plain REST endpoint emits exactly
+  what `toJSON()` emits (round-trips by construction). The simple case must not
+  pay for the fast case.
+- **Columnar store in the middle** — already true (the internal `ColumnarStore` /
+  `SeriesStore` the `select`-family reshapes via the private `#fromTrustedStore`).
+- **Columnar-friendly hand-off to charts** — already true (`fromTimeSeries` /
+  `fromValueSeries` read the columnar buffers directly: zero-copy `x`, materialized
+  `y`; no per-event path).
+- **The gap = a columnar INGRESS for high-volume feeds.** Land **`TimeSeries.fromColumns({name, schema, columns})`** — the public, _validated_ front door over
+  the existing column-native machinery: accepts struct-of-arrays (JS `number[]` OR
+  typed arrays), validates length/kind per column, fills `Float64Array`s
+  (`null`/`NaN` = gap, pond's native signal), builds the key column, installs the
+  store — **no per-row materialization, no re-validation pass.** This _is_ the
+  columnar rehydrate the (de)serialization carry-forward wanted. (pond task #19.)
+
+**Wire-format contract (design settled; full examples in the Tidal data-contract note):**
+
+- **JSON columnar (struct-of-arrays)** — `{name, count, schema, columns:{time:[…],
+open:[…], …}}`; epoch-ms number keys, `null` = gap, every column length `count`.
+  Compact + gzip-friendly (homogeneous arrays compress well). Lands via
+  `fromColumns`; the simple `fromJSON` row form stays for the easy/debuggable case.
+- **Protobuf columnar** — `repeated double` **packed** fields _are_ columns (a packed
+  blob ≈ a `Float64Array` on the wire). A generic `Series{name, count, repeated
+Column}` with a `oneof` typed payload per column. Gaps = `NaN` in doubles (no
+  validity bitmap needed); the **time/key column delta-encoded** (zigzag varint —
+  the one column that meaningfully compresses). On LE machines a packed-double blob
+  views straight as a `Float64Array` → `fromColumns` with **zero `JSON.parse`** —
+  the path that matters for the binary WS feed + "load the archive once" scale. A
+  `SeriesUpdate{from_index, repeated Column appended}` is the streaming/append
+  extension onto `LiveSeries` (whose `toJSON` already narrows for the networked
+  snapshot path).
+
+**Calls:** JSON-rows = REST/dev default · JSON-columnar = the bulk endpoint ·
+protobuf-columnar = the binary/streaming feed — **all land through the one
+`fromColumns` / `fromJSON` door**, so the data model is single and only the decode
+differs.
+
+**Measured (spike, `tidal-app/pond-columnar-ingest`, 2026-07-01 — this is the
+durable record of the sizing/ingest decisions):** 100k × 7 OHLCV cols, Node,
+median-of-7.
+
+- **Size surprised us: protobuf-`double` is the _worst_ size choice for
+  fixed-decimal data** — 8-byte doubles beat short decimal text only at high
+  precision, and their near-random mantissas don't gzip, so proto-double _worsens_
+  with precision (gzip 1594→4083 KB across 2→8 decimals) while JSON-columnar (the
+  smallest general choice, 1292 KB gzip) compresses well. **The real size win is
+  fixed-point scaled-int varints** (prices ×10^d as zigzag varints, time
+  delta-encoded): ~half the bytes (1014 KB gzip / 2661 KB raw @ 2dp) — but pays it
+  back in decode CPU (descale + undelta + Long→number ≈ 33ms). Size ↔ CPU,
+  quantified. The _encoding_ (fixed-point vs double vs text) dominates the _format_
+  (protobuf vs JSON) for size.
+- **`fromColumns` is the lever, confirmed.** Until it landed, every non-rows path
+  paid a transpose→`fromJSON` tax (~28ms ingest) that dominated total time.
+  `fromColumns` adopts the decoded `Float64Array`s directly: **ingest 27.7→2.8ms
+  (protobuf), total 37→12ms**; JSON-columnar's `number[]` costs one bulk
+  `Float64Array.from` (5.2ms) — the adopt-vs-copy gap that justifies the _one
+  polymorphic door_ (typed-array adopt · `number[]` copy) rather than two.
+- **The jank finding (browser, the reason this matters):** a 500k-pt ingest on the
+  main thread freezes a rAF animation for a ~50ms frame; decoding in a **Web Worker**
+  and transferring the `Float64Array`s back (→ `fromColumns` adopt, ~9ms on main)
+  drops the worst frame to 9.2ms — smooth. **The columnar wire + `fromColumns` is
+  what makes off-main ingest both _possible_ (typed arrays transfer zero-copy; JSON
+  `number[]` can't) and _cheap_ (adopt, not re-materialize).** This is the payoff for
+  charts: a hefty series lands mid-pan as a blip, not a multi-frame freeze.
+
+So: protobuf earns its keep on **off-main parse-speed + zero-copy transfer + a
+typed/evolvable schema + stream framing** (not raw size); fixed-point is the size
+tool when a constrained link makes the decode CPU worth it; JSON-columnar is the
+good-enough-no-schema middle. Exactly the menu a market-data feed needs.
+
 ---
 
 ## Active experiments

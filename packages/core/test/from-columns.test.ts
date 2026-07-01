@@ -116,4 +116,67 @@ describe('TimeSeries.fromColumns', () => {
       }),
     ).toThrow(/number/);
   });
+
+  it('throws on out-of-order timestamps (non-decreasing invariant, like fromJSON)', () => {
+    const badTime = {
+      time: [1000, 3000, 2000],
+      open: [10, 20, 30],
+      close: [1, 2, 3],
+    };
+    // number[] path
+    expect(() =>
+      TimeSeries.fromColumns({ name: 't', schema: SCHEMA, columns: badTime }),
+    ).toThrow(/out of order/);
+    // Float64Array path — same guard
+    expect(() =>
+      TimeSeries.fromColumns({
+        name: 't',
+        schema: SCHEMA,
+        columns: {
+          time: Float64Array.from([1000, 3000, 2000]),
+          open: Float64Array.from([10, 20, 30]),
+          close: Float64Array.from([1, 2, 3]),
+        },
+      }),
+    ).toThrow(/out of order/);
+    // parity: the same unsorted data via fromJSON also rejects
+    expect(() =>
+      TimeSeries.fromJSON({
+        name: 't',
+        schema: SCHEMA,
+        rows: [
+          [1000, 10, 1],
+          [3000, 20, 2],
+          [2000, 30, 3],
+        ] as never,
+      }),
+    ).toThrow(/out of order/);
+  });
+
+  it('allows equal (non-decreasing, not strictly increasing) timestamps', () => {
+    const ts = TimeSeries.fromColumns({
+      name: 't',
+      schema: SCHEMA,
+      columns: {
+        time: [1000, 1000, 2000],
+        open: [10, 11, 20],
+        close: [1, 1, 2],
+      },
+    });
+    expect(ts.length).toBe(3);
+  });
+
+  it('throws on a non-finite timestamp key', () => {
+    expect(() =>
+      TimeSeries.fromColumns({
+        name: 't',
+        schema: SCHEMA,
+        columns: {
+          time: Float64Array.from([1000, NaN, 3000]),
+          open: Float64Array.from([10, 20, 30]),
+          close: Float64Array.from([1, 2, 3]),
+        },
+      }),
+    ).toThrow();
+  });
 });

@@ -883,7 +883,8 @@ export class TimeSeries<S extends SeriesSchema> {
    * value columns throw for now — extend as consumers need.
    *
    * @throws ValidationError on a missing column, a length mismatch, an
-   *   unsupported kind, or a non-finite timestamp key.
+   *   unsupported kind, a non-finite timestamp key, or an out-of-order
+   *   (decreasing) timestamp — keys must be non-decreasing, same as `fromJSON`.
    */
   static fromColumns<S extends SeriesSchema>(input: {
     name: string;
@@ -919,7 +920,23 @@ export class TimeSeries<S extends SeriesSchema> {
         ? keyRaw
         : Float64Array.from(keyRaw, (v) => (v == null ? NaN : Number(v)));
     const count = begin.length;
+    // Throws on any non-finite timestamp.
     const keys = new TimeKeyColumn(begin, count);
+    // Enforce the non-decreasing-key invariant that `fromJSON`'s
+    // `validateAndNormalize` guarantees. Trusted construction skips row
+    // materialization + kind re-validation, but NOT this correctness contract:
+    // bisect-based operators (crop, `atTime`, range queries) rely on it, so an
+    // unsorted columnar input must fail loudly here rather than build a silently
+    // broken series. One O(N) scan over already-finite values — negligible next
+    // to decode.
+    for (let j = 1; j < count; j += 1) {
+      if (begin[j]! < begin[j - 1]!) {
+        throw new ValidationError(
+          `fromColumns: key column '${keyDef.name}' is out of order at index ${j} ` +
+            `(${begin[j]} < ${begin[j - 1]}) — timestamps must be non-decreasing; pre-sort the columns`,
+        );
+      }
+    }
 
     // Value columns — packed directly (missing-aware) from the arrays.
     const columnMap = new Map<string, ColumnarColumn>();
