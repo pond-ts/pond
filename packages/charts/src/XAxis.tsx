@@ -41,6 +41,16 @@ export interface XAxisProps {
    * their cumulative-distance positions (`{ at: lap.endMeters, label: 'Lap 3' }`).
    */
   ticks?: ReadonlyArray<{ readonly at: number; readonly label: string }>;
+  /**
+   * Horizontal placement of each tick label relative to its tick.
+   * - **`'center'` (default)** — every label centred on its tick.
+   * - `'auto'` — centred, but the first label left-anchors and the last
+   *   right-anchors so the edge labels stay inside the plot (the old default).
+   * - `'right'` — the label sits to the **right** of an extended tick that
+   *   drops from the axis line (label beside the tick, not under it) — useful
+   *   for dense or wide labels that would collide when centred.
+   */
+  align?: 'auto' | 'center' | 'right';
 }
 
 /**
@@ -59,6 +69,7 @@ export function XAxis({
   side = 'bottom',
   height,
   ticks: customTicks,
+  align = 'center',
 }: XAxisProps = {}) {
   const container = useContext(ContainerContext);
   if (container === null) {
@@ -110,13 +121,23 @@ export function XAxis({
       }}
     >
       {placed.map((t, i) => {
-        // End-align the edge labels so they stay within [0, plotWidth].
+        const isFirst = i === 0;
+        const isLast = i === placed.length - 1;
+        // `center`: every label centred on its tick. `auto`: centred, but the
+        // edge labels end-align so they stay within [0, plotWidth]. `right`:
+        // label left-anchored just past an extended tick (beside, not under).
         const labelTransform =
-          i === 0
+          align === 'right'
             ? 'none'
-            : i === placed.length - 1
-              ? 'translateX(-100%)'
-              : 'translateX(-50%)';
+            : align === 'auto' && isFirst
+              ? 'none'
+              : align === 'auto' && isLast
+                ? 'translateX(-100%)'
+                : 'translateX(-50%)';
+        // `right` drops a longer tick alongside the label; others keep the 4px stub.
+        const tickHeight = align === 'right' ? theme.font.size + 4 : 4;
+        const labelLeft = align === 'right' ? t.x + 4 : t.x;
+        const labelOffset = align === 'right' ? 2 : 6;
         return (
           <Fragment key={`${t.x}-${i}`}>
             <div
@@ -125,15 +146,15 @@ export function XAxis({
                 left: `${t.x}px`,
                 [onTop ? 'bottom' : 'top']: 0,
                 width: '1px',
-                height: '4px',
+                height: `${tickHeight}px`,
                 background: theme.axis.grid,
               }}
             />
             <div
               style={{
                 position: 'absolute',
-                left: `${t.x}px`,
-                [onTop ? 'bottom' : 'top']: '6px',
+                left: `${labelLeft}px`,
+                [onTop ? 'bottom' : 'top']: `${labelOffset}px`,
                 transform: labelTransform,
                 whiteSpace: 'nowrap',
               }}
@@ -151,7 +172,10 @@ export function XAxis({
             width: '100%',
             textAlign: 'center',
             [onTop ? 'top' : 'bottom']: 0,
-            opacity: 0.7,
+            // Themeable axis-title text (shared with the rotated y-axis title).
+            fontSize: `${theme.axis.title?.size ?? theme.font.size + 1}px`,
+            color: theme.axis.title?.color ?? theme.axis.label,
+            opacity: theme.axis.title?.opacity ?? 0.85,
             whiteSpace: 'nowrap',
           }}
         >

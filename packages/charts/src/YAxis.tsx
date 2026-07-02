@@ -169,12 +169,15 @@ export function YAxis({
             [side === 'left' ? 'left' : 'right']: '1px',
             top: 0,
             bottom: 0,
-            width: `${theme.font.size + 2}px`,
+            // A touch larger than the tick labels so the rotated strip reads;
+            // fully themeable via `theme.axis.title`.
+            width: `${(theme.axis.title?.size ?? theme.font.size + 1) + 3}px`,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontSize: `${theme.font.size - 1}px`,
-            opacity: 0.7,
+            fontSize: `${theme.axis.title?.size ?? theme.font.size + 1}px`,
+            color: theme.axis.title?.color ?? theme.axis.label,
+            opacity: theme.axis.title?.opacity ?? 0.85,
             pointerEvents: 'none',
           }}
         >

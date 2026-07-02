@@ -88,6 +88,17 @@ export interface ChartTheme {
     readonly grid: string;
     /** Gridline dash pattern (px on/off pairs); `[]` for solid. */
     readonly gridDash: readonly number[];
+    /**
+     * Typography for the axis **title** — the rotated y-axis unit strip and the
+     * x-axis label (distinct from the per-tick `label` colour above). Omit a
+     * field to fall back: `color` → `label`, `size` → `font.size + 1` (a touch
+     * larger than the ticks so the rotated strip reads), `opacity` → `0.85`.
+     */
+    readonly title?: {
+      readonly color?: string;
+      readonly size?: number;
+      readonly opacity?: number;
+    };
   };
   /** Label / tick typography. One source for axes + chrome. */
   readonly font: {

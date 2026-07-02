@@ -6,6 +6,7 @@ import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
+import { defaultTheme } from './theme.js';
 
 /**
  * Axis behaviours, one per story, so we can eyeball each in isolation — the
@@ -198,6 +199,74 @@ export const XAxisTop: Story = {
       <XAxis side="top" label="Time" />
       <ChartRow height={180}>
         <YAxis id="pct" format=".0%" />
+        <Layers>
+          <LineChart series={demo()} column="pct" axis="pct" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+function AlignExample({ align }: { align: 'auto' | 'center' | 'right' }) {
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div
+        style={{
+          font: '12px ui-monospace, monospace',
+          color: '#64748b',
+          marginBottom: 4,
+        }}
+      >
+        align="{align}"
+      </div>
+      <ChartContainer range={RANGE} width={W} showAxis={false}>
+        <ChartRow height={120}>
+          <YAxis id="pct" format=".0%" />
+          <Layers>
+            <LineChart series={demo()} column="pct" axis="pct" />
+          </Layers>
+        </ChartRow>
+        <XAxis align={align} />
+      </ChartContainer>
+    </div>
+  );
+}
+
+/**
+ * **X-axis tick-label alignment.** `center` (the default) centres every label
+ * on its tick; `auto` centres but end-anchors the first/last so they stay in
+ * bounds; `right` drops a longer tick and sets the label to its right (for
+ * dense / wide labels).
+ */
+export const XTickAlignment: Story = {
+  render: () => (
+    <div>
+      <AlignExample align="center" />
+      <AlignExample align="auto" />
+      <AlignExample align="right" />
+    </div>
+  ),
+};
+
+/**
+ * **Themeable axis title.** `theme.axis.title` overrides the rotated y-axis
+ * title (and the x-axis label) typography — here a larger, coloured title.
+ */
+export const ThemedTitle: Story = {
+  render: () => (
+    <ChartContainer
+      range={RANGE}
+      width={W}
+      theme={{
+        ...defaultTheme,
+        axis: {
+          ...defaultTheme.axis,
+          title: { color: '#2563eb', size: 14, opacity: 1 },
+        },
+      }}
+    >
+      <ChartRow height={200}>
+        <YAxis id="pct" label="Implied volatility" format=".0%" />
         <Layers>
           <LineChart series={demo()} column="pct" axis="pct" />
         </Layers>
