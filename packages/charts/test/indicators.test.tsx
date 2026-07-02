@@ -132,28 +132,49 @@ describe('YAxisIndicator', () => {
     ).toBe(false);
   });
 
-  it('side="left" hugs the left edge, side="right" the right', () => {
-    const chip = (child: ReactNode) => {
-      const { container, unmount } = renderInd(child);
-      const el = Array.from(container.querySelectorAll('div')).find(
-        (d) =>
-          d.style.position === 'absolute' && d.style.borderRadius === '3px',
-      ) as HTMLElement | undefined;
-      const style = {
-        left: el?.style.left ?? '',
-        right: el?.style.right ?? '',
-      };
-      unmount();
-      return style;
+  const chipPos = (child: ReactNode) => {
+    const { container, unmount } = renderInd(child);
+    const el = Array.from(container.querySelectorAll('div')).find(
+      (d) => d.style.position === 'absolute' && d.style.borderRadius === '3px',
+    ) as HTMLElement | undefined;
+    const pos = {
+      left: el?.style.left ?? '',
+      right: el?.style.right ?? '',
+      zIndex: el?.style.zIndex ?? '',
     };
-    expect(chip(<YAxisIndicator value={37} axis="a" side="left" />)).toEqual({
-      left: '0px',
+    unmount();
+    return pos;
+  };
+
+  it('placement="inside" hugs the plot edge (side-anchored, no z-lift)', () => {
+    expect(
+      chipPos(
+        <YAxisIndicator value={37} axis="a" side="left" placement="inside" />,
+      ),
+    ).toEqual({ left: '0px', right: '', zIndex: '' });
+    expect(
+      chipPos(
+        <YAxisIndicator value={37} axis="a" side="right" placement="inside" />,
+      ),
+    ).toEqual({ left: '', right: '0px', zIndex: '' });
+  });
+
+  it('placement="axis" (default) anchors at the plot edge and lifts over the gutter', () => {
+    // renderInd: one left YAxis width 50 in a width-300 container ⇒ plotWidth 250.
+    expect(
+      chipPos(<YAxisIndicator value={37} axis="a" side="right" />),
+    ).toEqual({
+      left: '250px',
       right: '',
+      zIndex: '3',
     });
-    expect(chip(<YAxisIndicator value={37} axis="a" side="right" />)).toEqual({
-      left: '',
-      right: '0px',
-    });
+    expect(chipPos(<YAxisIndicator value={37} axis="a" side="left" />)).toEqual(
+      {
+        left: '',
+        right: '250px',
+        zIndex: '3',
+      },
+    );
   });
 });
 

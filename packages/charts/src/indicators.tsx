@@ -111,6 +111,14 @@ export interface YAxisIndicatorProps {
    * "price line"). Default `false`.
    */
   line?: boolean;
+  /**
+   * Where the pill sits relative to the axis:
+   * - **`'axis'` (default)** — over the axis gutter on `side`, covering the tick
+   *   at that value (the ChartIQ live-tag look). Needs a `<YAxis>` on that side
+   *   to have reserved a gutter; with none, it degenerates to the plot edge.
+   * - `'inside'` — just inside the plot's `side` edge, clear of the axis chrome.
+   */
+  placement?: 'axis' | 'inside';
 }
 
 /**
@@ -141,6 +149,7 @@ export function YAxisIndicator({
   color,
   format,
   line = false,
+  placement = 'axis',
 }: YAxisIndicatorProps) {
   const container = useContext(ContainerContext);
   if (container === null) {
@@ -183,6 +192,18 @@ export function YAxisIndicator({
   const half = theme.font.size / 2 + 1;
   const top = Math.max(half, Math.min(row.height - half, rawY));
 
+  // `'axis'` sits the pill over the gutter on `side`: anchor its inner edge at
+  // the plot boundary and let it overflow outward across the reserved gutter
+  // (the plot div doesn't clip). `zIndex` lifts it above the sibling axis column
+  // (rendered later in the row), so it covers the tick behind it. `'inside'`
+  // hugs the plot's own `side` edge, clear of the axis.
+  const horizontal: CSSProperties =
+    placement === 'axis'
+      ? side === 'right'
+        ? { left: `${container.plotWidth}px`, zIndex: 3 }
+        : { right: `${container.plotWidth}px`, zIndex: 3 }
+      : { [side === 'right' ? 'right' : 'left']: '0px' };
+
   return (
     <>
       {line && (
@@ -209,7 +230,7 @@ export function YAxisIndicator({
           ...flagChipStyle(theme),
           color: resolvedColor,
           top: `${top}px`,
-          [side === 'right' ? 'right' : 'left']: '0px',
+          ...horizontal,
           transform: 'translateY(-50%)',
         }}
       >

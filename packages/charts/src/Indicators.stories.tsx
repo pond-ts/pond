@@ -44,8 +44,9 @@ type Story = StoryObj;
 
 const W = 620;
 
-/** A static value pill (declarative `value` prop) on the right edge, with the
- *  dashed guide line. */
+/** A static value pill (declarative `value` prop), default `placement="axis"`
+ *  so the pill sits **on the axis gutter** (covering the tick at 207.40) — the
+ *  ChartIQ live-tag look — with the dashed guide line across the plot. */
 export const StaticValue: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
@@ -57,6 +58,30 @@ export const StaticValue: Story = {
             axis="usd"
             color="#4a90e2"
             format=",.2f"
+            line
+          />
+        </Layers>
+        <YAxis id="usd" side="right" format=",.0f" />
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/** `placement="inside"` — the pill hugs the plot's inner edge, clear of the axis
+ *  chrome (the ticks stay fully visible). The alternative to the default
+ *  on-axis placement. */
+export const InsidePlacement: Story = {
+  render: () => (
+    <ChartContainer range={RANGE} width={W}>
+      <ChartRow height={220}>
+        <Layers>
+          <LineChart series={priceSeries()} column="price" axis="usd" />
+          <YAxisIndicator
+            value={207.4}
+            axis="usd"
+            color="#4a90e2"
+            format=",.2f"
+            placement="inside"
             line
           />
         </Layers>
