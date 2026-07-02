@@ -15,7 +15,7 @@ import {
   type ContainerFrame,
 } from './context.js';
 import type { ChartTheme } from './theme.js';
-import { flagChipStyle, flagChipX } from './chip.js';
+import { flagChipStyle, flagChipX, axisPillX } from './chip.js';
 import { useSlotKey } from './use-slot-key.js';
 
 /**
@@ -155,6 +155,7 @@ function useRegisterAnnotation(
   selectable: boolean,
   editing: boolean,
   label: string,
+  indicator: boolean,
 ) {
   const { registerAnnotation, unregisterAnnotation } = container;
   useEffect(() => () => unregisterAnnotation(key), [unregisterAnnotation, key]);
@@ -169,6 +170,7 @@ function useRegisterAnnotation(
       selectable,
       editing,
       label,
+      indicator,
     });
   }, [
     registerAnnotation,
@@ -181,6 +183,7 @@ function useRegisterAnnotation(
     selectable,
     editing,
     label,
+    indicator,
   ]);
 }
 
@@ -501,6 +504,12 @@ export interface MarkerProps {
   /** Make the marker **editable** (in edit mode): dragging its line reports the
    *  new `at` (controlled — wire it back to `at`). The whole line moves. */
   onChange?: (at: number) => void;
+  /** Also pin this marker to the **x-axis** as an on-axis pill (drawn by
+   *  `<XAxis>` at `at`, in the annotation colour) — the axis-edge counterpart of
+   *  the near-line chip. Default `false`. The pill shows the custom `label` if
+   *  one is set, else the formatted `at` value; `label={false}` gives the axis
+   *  pill (showing the value) alone, with no in-plot chip. */
+  indicator?: boolean;
 }
 
 /** A vertical line at an x position (a time, a distance, a lap boundary). */
@@ -513,6 +522,7 @@ export function Marker({
   hovered,
   editing = false,
   onChange,
+  indicator = false,
 }: MarkerProps) {
   const { container, row, ann } = useAnnotationFrame('Marker');
   const selfKey = useSlotKey();
@@ -537,6 +547,7 @@ export function Marker({
     selectable,
     editing,
     text,
+    indicator,
   );
   // No select/edit while a create tool is armed — the chart is in draw mode then.
   const select =
@@ -641,6 +652,12 @@ export interface BaselineProps {
   /** Make the baseline **editable** (in edit mode): dragging it vertically reports
    *  the new `value` (controlled — wire it back to `value`). */
   onChange?: (value: number) => void;
+  /** Also pin this baseline to its **y-axis** as an on-axis pill (in the
+   *  annotation colour) — the axis-edge counterpart of the near-line chip.
+   *  Default `false`. The pill shows the custom `label` if one is set, else the
+   *  formatted `value`; `label={false}` gives the axis pill (showing the value)
+   *  alone, with no in-plot chip. */
+  indicator?: boolean;
 }
 
 /** A horizontal line at a y value, scaled against one row axis (RTC's `Baseline`).
@@ -655,6 +672,7 @@ export function Baseline({
   hovered,
   editing = false,
   onChange,
+  indicator = false,
 }: BaselineProps) {
   const { container, row, ann } = useAnnotationFrame('Baseline');
   const selfKey = useSlotKey();
@@ -683,6 +701,7 @@ export function Baseline({
     // this registered string is unused by `computeLabelLanes` — `|| ''` just
     // keeps it a string for `false`/'' (which mean "no label").
     label || '',
+    indicator,
   );
   // No select/edit while a create tool is armed — the chart is in draw mode then.
   const select =
@@ -757,6 +776,32 @@ export function Baseline({
           {text}
         </Chip>
       )}
+      {/* The axis-edge value pill (opt-in): the value pinned to this baseline's
+          y-axis (on the gutter, over the tick), independent of the near-line
+          chip. Clamped inside the row like the y-tick labels (F-charts-6). */}
+      {indicator &&
+        (() => {
+          const half = container.theme.font.size / 2 + 1;
+          return (
+            <div
+              style={{
+                ...flagChipStyle(container.theme),
+                color: ann.color,
+                top: `${Math.max(half, Math.min(row.height - half, y))}px`,
+                transform: 'translateY(-50%)',
+                ...axisPillX(row.axisSides.get(axisId) ?? 'left', w),
+              }}
+            >
+              {/* Echo a custom label if set, else the formatted value (also the
+                  `label={false}` axis-pill-only case). */}
+              {typeof label === 'string' && label !== ''
+                ? label
+                : fmt
+                  ? fmt(value)
+                  : String(value)}
+            </div>
+          );
+        })()}
     </>
   );
 }
@@ -835,6 +880,7 @@ export function Region({
     selectable,
     editing,
     text,
+    false, // regions have no axis-edge indicator
   );
   // No select/edit while a create tool is armed — the chart is in draw mode then.
   const select =
