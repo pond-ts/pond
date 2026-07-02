@@ -1,6 +1,6 @@
 import { useContext, useSyncExternalStore, type CSSProperties } from 'react';
 import { ContainerContext, RowContext } from './context.js';
-import { axisPillStyle, axisPillX } from './chip.js';
+import { axisPillStyle, axisPillX, pointerStyle } from './chip.js';
 import { resolveAxisFormat, type AxisFormat } from './format.js';
 
 /**
@@ -99,33 +99,27 @@ export interface YAxisIndicatorProps {
    */
   color?: string;
   /**
-   * Label formatting: a d3 format specifier (e.g. `',.2f'`, `'.1%'`) or a
+   * Value formatting: a d3 format specifier (e.g. `',.2f'`, `'.1%'`) or a
    * `(value) => string`. Omit to use the linked axis's own formatter, so the pill
    * reads exactly like a tick. Pass a specifier for finer precision than the
    * tick-calibrated default (a live price usually wants `',.2f'`, not the
-   * coarser tick rounding). See {@link AxisFormat}. Ignored when {@link label}
-   * is set.
+   * coarser tick rounding). See {@link AxisFormat}.
+   *
+   * An indicator **always shows the axis value** — there is no label override. A
+   * name/annotation belongs on a `<Baseline label>`'s near-line chip, not on the
+   * axis pill (an axis pill reads like a tick).
    */
   format?: AxisFormat;
-  /**
-   * Static text to show **instead of** the formatted value — a name/annotation
-   * like `VWAP` or `resistance` (the pill still positions at `value`/`source`).
-   * Omit for the formatted value (the usual live-tag case).
-   */
-  label?: string;
   /**
    * Draw a thin dashed guide line from the pill across the plot (the ChartIQ
    * "price line"). Default `false`.
    */
   line?: boolean;
   /**
-   * Where the pill sits relative to the axis:
-   * - **`'axis'` (default)** — over the axis gutter on `side`, covering the tick
-   *   at that value (the ChartIQ live-tag look). Needs a `<YAxis>` on that side
-   *   to have reserved a gutter; with none, it degenerates to the plot edge.
-   * - `'inside'` — just inside the plot's `side` edge, clear of the axis chrome.
+   * Add a small triangle on the pill's plot-facing edge, pointing **into** the
+   * plot at the value (a callout tab). Default `false`.
    */
-  placement?: 'axis' | 'inside';
+  pointer?: boolean;
 }
 
 /**
@@ -155,9 +149,8 @@ export function YAxisIndicator({
   side = 'right',
   color,
   format,
-  label,
   line = false,
-  placement = 'axis',
+  pointer = false,
 }: YAxisIndicatorProps) {
   const container = useContext(ContainerContext);
   if (container === null) {
@@ -192,24 +185,15 @@ export function YAxisIndicator({
   const fmt = format
     ? resolveAxisFormat(yScale, TICK_COUNT, format)
     : row.formats.get(axisId);
-  // A static `label` overrides the value text; otherwise the formatted value.
-  const text = label ?? (fmt ? fmt(v) : String(v));
+  // An indicator always shows the axis value (no label override — a name belongs
+  // on a Baseline's near-line chip, not the axis pill).
+  const text = fmt ? fmt(v) : String(v);
 
   const rawY = yScale(v);
   // Clamp the pill's centre so an off-scale value keeps it inside the row rather
   // than half-overflowing the edge (matches the y-tick clamp, F-charts-6).
   const half = theme.font.size / 2 + 1;
   const top = Math.max(half, Math.min(row.height - half, rawY));
-
-  // `'axis'` sits the pill over the gutter on `side`: anchor its inner edge at
-  // the plot boundary and let it overflow outward across the reserved gutter
-  // (the plot div doesn't clip). `zIndex` lifts it above the sibling axis column
-  // (rendered later in the row), so it covers the tick behind it. `'inside'`
-  // hugs the plot's own `side` edge, clear of the axis.
-  const horizontal: CSSProperties =
-    placement === 'axis'
-      ? axisPillX(side, container.plotWidth)
-      : { [side === 'right' ? 'right' : 'left']: '0px' };
 
   return (
     <>
@@ -232,14 +216,19 @@ export function YAxisIndicator({
           />
         </svg>
       )}
+      {/* The pill sits over the gutter on `side`: its inner edge anchored at the
+          plot boundary, overflowing outward across the reserved gutter (the plot
+          div doesn't clip); `zIndex` lifts it above the sibling axis column so it
+          covers the tick behind it. An indicator is always on the axis. */}
       <div
         style={{
           ...axisPillStyle(theme, resolvedColor),
           top: `${top}px`,
-          ...horizontal,
+          ...axisPillX(side, container.plotWidth),
           transform: 'translateY(-50%)',
         }}
       >
+        {pointer && <span style={pointerStyle(side, resolvedColor)} />}
         {text}
       </div>
     </>

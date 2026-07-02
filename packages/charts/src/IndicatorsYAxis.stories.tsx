@@ -12,9 +12,10 @@ import { priceSeries, RANGE } from './story-data.fixture.js';
  * `<YAxisIndicator>` — a value pill pinned to a y-axis edge (the ChartIQ /
  * Yahoo-Finance live price tag). The value is **decoupled from the series' last
  * point**: a static `value`, or a `createLiveValue` `source` that updates the
- * pill at high frequency **without re-rendering the chart**. These stories fan
- * out one prop / combination at a time: `placement`, `side`, `format`, `line`,
- * `color`, a live `source`, and multiple simultaneous tags.
+ * pill at high frequency **without re-rendering the chart**. It always shows the
+ * axis value (no label — a name belongs on a Baseline's near-line chip). These
+ * stories fan out one prop / combination at a time: `side`, `format`, `line`,
+ * `pointer`, `color`, a live `source`, and multiple simultaneous tags.
  */
 const W = 620;
 
@@ -47,32 +48,9 @@ export const StaticValue: Story = {
   ),
 };
 
-/** **Labelled** — `label` shows static text (e.g. `VWAP`) instead of the
- *  formatted value; the pill still positions at `value`. For naming a level
- *  rather than reading a live number. */
-export const Labelled: Story = {
-  render: () => (
-    <ChartContainer range={RANGE} width={W}>
-      <ChartRow height={220}>
-        <Layers>
-          <LineChart series={priceSeries()} column="price" axis="usd" />
-          <YAxisIndicator
-            value={185}
-            axis="usd"
-            color="#8957e5"
-            label="VWAP"
-            line
-          />
-        </Layers>
-        <YAxis id="usd" side="right" format=",.0f" />
-      </ChartRow>
-    </ChartContainer>
-  ),
-};
-
-/** **placement="axis" (default)** — the pill sits over the axis gutter, its
- *  centre lined up with the value on the scale, covering the tick behind it. */
-export const AxisPlacement: Story = {
+/** **Pointer** — `pointer` adds a small triangle on the pill's plot-facing edge,
+ *  pointing into the plot at the value (a callout tab). */
+export const Pointer: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
       <ChartRow height={220}>
@@ -83,29 +61,7 @@ export const AxisPlacement: Story = {
             axis="usd"
             color="#4a90e2"
             format=",.2f"
-            placement="axis"
-          />
-        </Layers>
-        <YAxis id="usd" side="right" format=",.0f" />
-      </ChartRow>
-    </ChartContainer>
-  ),
-};
-
-/** **placement="inside"** — the pill hugs the plot's inner edge, clear of the
- *  axis chrome (the ticks stay fully visible). */
-export const InsidePlacement: Story = {
-  render: () => (
-    <ChartContainer range={RANGE} width={W}>
-      <ChartRow height={220}>
-        <Layers>
-          <LineChart series={priceSeries()} column="price" axis="usd" />
-          <YAxisIndicator
-            value={207.4}
-            axis="usd"
-            color="#4a90e2"
-            format=",.2f"
-            placement="inside"
+            pointer
             line
           />
         </Layers>

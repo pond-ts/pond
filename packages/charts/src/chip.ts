@@ -17,7 +17,9 @@ export function flagChipStyle(theme: ChartTheme): CSSProperties {
   return {
     position: 'absolute',
     background: theme.chip?.background,
-    borderRadius: '3px',
+    // Square corners — a flag is a filled panel behind the number, not a pill
+    // (the rounded pill is reserved for axis indicators, see `axisPillStyle`).
+    borderRadius: '0',
     padding: '0 4px',
     fontFamily: theme.font.family,
     fontSize: `${theme.font.size}px`,
@@ -75,6 +77,31 @@ export function axisPillStyle(theme: ChartTheme, color: string): CSSProperties {
     fontVariantNumeric: 'tabular-nums',
     whiteSpace: 'nowrap',
     pointerEvents: 'none',
+  };
+}
+
+/**
+ * A small triangle on an axis pill's **plot-facing edge**, pointing into the
+ * plot at the value (the callout tab). For a `right`-side pill (extending right
+ * across the gutter) it sits on the pill's left edge pointing left; for a `left`
+ * pill, the mirror. Render as an absolutely-positioned child of the pill (the
+ * pill is itself absolute, so it's the containing block); colour matches the pill.
+ */
+export function pointerStyle(
+  side: 'left' | 'right',
+  color: string,
+): CSSProperties {
+  return {
+    position: 'absolute',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    width: 0,
+    height: 0,
+    borderTop: '4px solid transparent',
+    borderBottom: '4px solid transparent',
+    ...(side === 'right'
+      ? { left: '-5px', borderRight: `5px solid ${color}` }
+      : { right: '-5px', borderLeft: `5px solid ${color}` }),
   };
 }
 

@@ -125,16 +125,6 @@ describe('YAxisIndicator', () => {
     expect(pillText(<YAxisIndicator source={lv} axis="a" />, '63')).toBe(true);
   });
 
-  it('a `label` shows static text instead of the value (still positioned at value)', () => {
-    expect(
-      pillText(<YAxisIndicator value={37} axis="a" label="VWAP" />, 'VWAP'),
-    ).toBe(true);
-    // the value text is suppressed
-    expect(
-      pillText(<YAxisIndicator value={37} axis="a" label="VWAP" />, '37'),
-    ).toBe(false);
-  });
-
   it('renders a solid pill: background = color, auto-contrast text', () => {
     const { container, unmount } = renderInd(
       <YAxisIndicator value={37} axis="a" color="#4a90e2" />,
@@ -187,21 +177,9 @@ describe('YAxisIndicator', () => {
     return pos;
   };
 
-  it('placement="inside" hugs the plot edge (side-anchored, no z-lift)', () => {
-    expect(
-      chipPos(
-        <YAxisIndicator value={37} axis="a" side="left" placement="inside" />,
-      ),
-    ).toEqual({ left: '0px', right: '', zIndex: '' });
-    expect(
-      chipPos(
-        <YAxisIndicator value={37} axis="a" side="right" placement="inside" />,
-      ),
-    ).toEqual({ left: '', right: '0px', zIndex: '' });
-  });
-
-  it('placement="axis" (default) anchors at the plot edge and lifts over the gutter', () => {
+  it('is always on-axis: anchors at the plot edge and lifts over the gutter', () => {
     // renderInd: one left YAxis width 50 in a width-300 container ⇒ plotWidth 250.
+    // (Indicators are always on the axis — there is no `inside` placement.)
     expect(
       chipPos(<YAxisIndicator value={37} axis="a" side="right" />),
     ).toEqual({
@@ -490,8 +468,10 @@ describe('annotation indicators', () => {
     expect(chips(container).length).toBe(0);
   });
 
-  it('the axis pill echoes a custom label, else the formatted value', () => {
-    const withLabel = render(
+  it('the axis pill always shows the formatted value, never the custom label', () => {
+    // An indicator reads like a tick: even with a custom `label` (the in-plot
+    // chip), the x-axis pill shows the formatted time (sentinel `VAL`).
+    const { container } = render(
       <ChartContainer range={[0, 4]} width={300} timeFormat={() => 'VAL'}>
         <ChartRow height={120}>
           <YAxis id="a" min={0} max={100} />
@@ -502,30 +482,10 @@ describe('annotation indicators', () => {
         </ChartRow>
       </ChartContainer>,
     );
-    // Custom label wins over the value formatter.
-    const labelled = chips(withLabel.container).find((d) =>
+    const pill = chips(container).find((d) =>
       (d.style.transform ?? '').includes('X'),
     );
-    expect(labelled?.textContent).toBe('Lap 3');
-    withLabel.unmount();
-
-    // Omitted label ⇒ the formatted value (the sentinel timeFormat).
-    const noLabel = render(
-      <ChartContainer range={[0, 4]} width={300} timeFormat={() => 'VAL'}>
-        <ChartRow height={120}>
-          <YAxis id="a" min={0} max={100} />
-          <Layers>
-            <LineChart series={series} column="v" axis="a" />
-            <Marker at={2} indicator />
-          </Layers>
-        </ChartRow>
-      </ChartContainer>,
-    );
-    const valued = chips(noLabel.container).find((d) =>
-      (d.style.transform ?? '').includes('X'),
-    );
-    expect(valued?.textContent).toBe('VAL');
-    noLabel.unmount();
+    expect(pill?.textContent).toBe('VAL'); // the value, not "Lap 3"
   });
 
   it('an off-plot marker draws no x-axis pill', () => {

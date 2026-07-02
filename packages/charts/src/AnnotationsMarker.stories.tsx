@@ -88,8 +88,9 @@ export const IndicatorOnly: Story = {
   ),
 };
 
-/** **Indicator echoes a custom label** — with a `label`, the x-axis pill shows
- *  the label ("open"), not the time. */
+/** **Indicator + label** — the near-line chip shows the custom label ("open");
+ *  the x-axis pill still shows the **time**. An indicator is always the axis
+ *  coordinate — the label never moves to the axis. */
 export const IndicatorWithLabel: Story = {
   render: () => (
     <Chart>
@@ -123,18 +124,6 @@ export const Multiple: Story = {
       <Marker at={at(20)} label="A" />
       <Marker at={at(45)} label="B" />
       <Marker at={at(70)} label="C" />
-    </Chart>
-  ),
-};
-
-/** **Off-plot** — an `at` outside the container's `range`: the line, chip, and
- *  (if set) axis-edge indicator pill are all off-screen, so nothing renders. A
- *  marker just past the visible window (rather than one still in range) makes
- *  the filtering obvious — this chart shows only the price line. */
-export const OffPlot: Story = {
-  render: () => (
-    <Chart>
-      <Marker at={RANGE[1] + 10 * STEP} label="future" indicator />
     </Chart>
   ),
 };
