@@ -87,6 +87,14 @@ export type {
   BarStyle,
 } from './theme.js';
 
+// CSS-custom-property → ChartTheme bridge: build a theme from a design system's
+// tokens (`cssVarTheme`), and a hook that re-resolves it on a `data-theme`
+// toggle so a canvas chart follows dark/light (`useChartTheme`).
+export { cssVarTheme } from './css-theme.js';
+export type { ChartThemeOverrides, VarReader } from './css-theme.js';
+export { useChartTheme } from './useChartTheme.js';
+export type { UseChartThemeOptions } from './useChartTheme.js';
+
 // Public interaction types — the callback params for the tracker + selection
 // (`onTrackerChanged`, `onSelect`) and the `cursor` mode.
 export type {
