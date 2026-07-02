@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`, and
 them all. Pre-1.0: minor bumps may include new features and type-level changes;
 patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.36.0...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.37.0...HEAD
+[0.37.0]: https://github.com/pjm17971/pond-ts/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/pjm17971/pond-ts/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/pjm17971/pond-ts/compare/v0.34.1...v0.35.0
 [0.34.1]: https://github.com/pjm17971/pond-ts/compare/v0.34.0...v0.34.1
@@ -31,6 +32,38 @@ patch bumps are strictly additive.
 [0.20.0]: https://github.com/pjm17971/pond-ts/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/pjm17971/pond-ts/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
+
+## [0.37.0] — 2026-07-02
+
+A `@pond-ts/charts` release: the axis wave — label, tick, and domain controls
+driven by the Tidal terminal's friction. `pond-ts`, `@pond-ts/react`, and
+`@pond-ts/fit` carry no code changes — republished in lock-step (peer ranges
+widen to `^0.37.0`).
+
+### Added
+
+- **Charts — axis title typography (`theme.axis.title`).** The rotated y-axis
+  title now renders a touch larger than the ticks by default and is fully
+  themeable (`{ color, size, opacity }`, shared with the x-axis label). (#318)
+- **Charts — `YAxis labelPlacement`.** `'rotated'` (default) or `'top'` — a
+  horizontal title above the axis, aligned to the axis line, in a reserved
+  header band that clears the top tick. (#318, #320)
+- **Charts — `XAxis align`.** `'center'` (**new default**), `'auto'` (previous
+  behaviour: centred but first/last end-anchored), or `'right'` (label beside an
+  extended tick). (#318)
+- **Charts — `YAxis pad`.** Fractional headroom added to each side of the
+  resolved domain (`0` default) — lifts a tight domain off the plot edges
+  without hand-computing bounds. (#319)
+- **Charts — `YAxis boundaryLabels`.** `false` drops the top & bottom tick
+  numbers (gridlines stay) for stacked layouts where the edge labels crowd. (#319)
+- **Charts — new `Charts/Axes` Storybook gallery** covering the above. (#318)
+
+### Changed
+
+- **Charts — domain-extreme y-tick labels now clamp inside the row** instead of
+  half-overflowing the top/bottom edge (resolves Tidal friction F-charts-6). (#319)
+- **Charts — `XAxis` tick-label default is now `'center'`** (was the
+  end-anchored `'auto'`). Pass `align="auto"` for the old behaviour. (#318)
 
 ## [0.36.0] — 2026-07-02
 
