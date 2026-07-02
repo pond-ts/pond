@@ -15,6 +15,15 @@ export interface YAxisProps {
   side?: 'left' | 'right';
   /** Display label / unit (e.g. `bpm`); defaults to `id`. */
   label?: string;
+  /**
+   * How the axis title (`label`) is drawn:
+   * - **`'rotated'` (default)** — a thin vertical strip down the outer edge
+   *   (the standard y-axis convention; fits long labels in a narrow gutter).
+   * - `'top'` — horizontal, at the top of the axis, aligned to its side. Reads
+   *   better for short unit labels; keep it terse and pair it with a domain
+   *   that has headroom (auto-fit / padded) so it doesn't crowd the top tick.
+   */
+  labelPlacement?: 'rotated' | 'top';
   /** Explicit domain bounds; omit to auto-fit the charts linked to this axis. */
   min?: number;
   max?: number;
@@ -67,6 +76,7 @@ export function YAxis({
   format,
   ticks,
   width = DEFAULT_WIDTH,
+  labelPlacement = 'rotated',
   index = 0,
 }: YAxisProps) {
   const container = useContext(ContainerContext);
@@ -159,37 +169,54 @@ export function YAxis({
               {label}
             </div>
           ))}
-        {/* The axis label, rotated to a thin vertical strip at the outer edge +
-            centred down the axis (the standard y-axis convention) — so it doesn't
-            collide with the tick labels (which sit flush toward the plot) in a
-            narrow gutter. Left axes read bottom→top, right axes top→bottom. */}
-        <div
-          style={{
-            position: 'absolute',
-            [side === 'left' ? 'left' : 'right']: '1px',
-            top: 0,
-            bottom: 0,
-            // A touch larger than the tick labels so the rotated strip reads;
-            // fully themeable via `theme.axis.title`.
-            width: `${(theme.axis.title?.size ?? theme.font.size + 1) + 3}px`,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: `${theme.axis.title?.size ?? theme.font.size + 1}px`,
-            color: theme.axis.title?.color ?? theme.axis.label,
-            opacity: theme.axis.title?.opacity ?? 0.85,
-            pointerEvents: 'none',
-          }}
-        >
-          <span
+        {/* The axis title. Typography is themeable + a touch larger than the
+            ticks (see `theme.axis.title`). `'top'` draws it horizontally at the
+            top of the axis, aligned to its side (terse unit labels); `'rotated'`
+            (default) is the thin vertical strip down the outer edge — the
+            standard y-axis convention, fits long labels in a narrow gutter.
+            Left axes read bottom→top, right axes top→bottom. */}
+        {labelPlacement === 'top' ? (
+          <div
             style={{
+              position: 'absolute',
+              top: 0,
+              [side === 'left' ? 'left' : 'right']: '2px',
+              fontSize: `${theme.axis.title?.size ?? theme.font.size + 1}px`,
+              color: theme.axis.title?.color ?? theme.axis.label,
+              opacity: theme.axis.title?.opacity ?? 0.85,
               whiteSpace: 'nowrap',
-              transform: `rotate(${side === 'left' ? -90 : 90}deg)`,
+              pointerEvents: 'none',
             }}
           >
             {label ?? id}
-          </span>
-        </div>
+          </div>
+        ) : (
+          <div
+            style={{
+              position: 'absolute',
+              [side === 'left' ? 'left' : 'right']: '1px',
+              top: 0,
+              bottom: 0,
+              width: `${(theme.axis.title?.size ?? theme.font.size + 1) + 3}px`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: `${theme.axis.title?.size ?? theme.font.size + 1}px`,
+              color: theme.axis.title?.color ?? theme.axis.label,
+              opacity: theme.axis.title?.opacity ?? 0.85,
+              pointerEvents: 'none',
+            }}
+          >
+            <span
+              style={{
+                whiteSpace: 'nowrap',
+                transform: `rotate(${side === 'left' ? -90 : 90}deg)`,
+              }}
+            >
+              {label ?? id}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );

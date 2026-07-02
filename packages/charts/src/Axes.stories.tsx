@@ -249,6 +249,38 @@ export const XTickAlignment: Story = {
 };
 
 /**
+ * **Horizontal axis title** (`labelPlacement="top"`) — the label drawn
+ * horizontally at the top of the axis, aligned to its side, instead of the
+ * rotated strip. Best for short unit labels; pairs with an auto-fit / padded
+ * domain so it has headroom above the top tick.
+ */
+export const HorizontalLabel: Story = {
+  render: () => (
+    <ChartContainer range={RANGE} width={W}>
+      <ChartRow height={200}>
+        <YAxis id="pct" label="IV %" labelPlacement="top" format=".0%" />
+        <YAxis
+          id="price"
+          side="right"
+          label="USD"
+          labelPlacement="top"
+          format="$,.0f"
+        />
+        <Layers>
+          <LineChart series={demo()} column="pct" as="pct" axis="pct" />
+          <LineChart
+            series={demo()}
+            column="price"
+            as="secondary"
+            axis="price"
+          />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
  * **Themeable axis title.** `theme.axis.title` overrides the rotated y-axis
  * title (and the x-axis label) typography — here a larger, coloured title.
  */
