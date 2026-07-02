@@ -16,8 +16,28 @@ import { scaleLinear } from 'd3-scale';
  * can otherwise invert it (e.g. `min=5` with no data would naively give
  * `[5, 1]`). Two explicit bounds are returned as-is (an inverted explicit domain
  * is a deliberate axis flip; we don't second-guess it).
+ *
+ * `pad` (fractional, default `0`) expands the resolved domain outward by
+ * `pad × span` on each side — headroom without hand-computing bounds, useful to
+ * lift a tight **explicit** domain off the plot edges. Applied last, to whatever
+ * domain was resolved (explicit or auto); `0` is a no-op.
  */
 export function resolveYDomain(
+  min: number | undefined,
+  max: number | undefined,
+  extents: Iterable<readonly [number, number] | null>,
+  pad = 0,
+): [number, number] {
+  const result = resolveBase(min, max, extents);
+  if (pad) {
+    const [lo, hi] = result;
+    const p = pad * (hi - lo);
+    return [lo - p, hi + p];
+  }
+  return result;
+}
+
+function resolveBase(
   min: number | undefined,
   max: number | undefined,
   extents: Iterable<readonly [number, number] | null>,

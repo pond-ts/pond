@@ -159,8 +159,9 @@ export const ExplicitTicks: Story = {
 /**
  * **Domain: auto-fit vs explicit.** Left auto-fits (d3 `.nice()` — round ticks
  * + headroom, so data doesn't touch the edge). Right is an explicit exact
- * `[min, max]` clamped tight to the data — note the top/bottom tick labels
- * (`0.263`, `0.137`) sitting flush at the row edge (the F-charts-6 overflow).
+ * `[min, max]` clamped tight to the data — its top/bottom labels (`0.263`,
+ * `0.137`) sit **just inside** the row edge (clamped, not overflowing — the
+ * F-charts-6 fix), rather than half-bleeding past it.
  */
 export const DomainAutoVsExplicit: Story = {
   render: () => (
@@ -171,6 +172,63 @@ export const DomainAutoVsExplicit: Story = {
         <Layers>
           <LineChart series={demo()} column="pct" as="pct" axis="auto" />
           <LineChart series={demo()} column="pct" as="secondary" axis="tight" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
+ * **Padded domain** (`pad`). Both axes use the same tight explicit
+ * `[0.137, 0.263]`; the right adds `pad={0.15}` — 15% headroom each side, so
+ * the line lifts off the edges without hand-computing rounder bounds.
+ */
+export const PaddedDomain: Story = {
+  render: () => (
+    <ChartContainer range={RANGE} width={W}>
+      <ChartRow height={200}>
+        <YAxis id="tight" side="left" min={0.137} max={0.263} format=".3f" />
+        <YAxis
+          id="padded"
+          side="right"
+          min={0.137}
+          max={0.263}
+          pad={0.15}
+          format=".3f"
+        />
+        <Layers>
+          <LineChart series={demo()} column="pct" as="pct" axis="tight" />
+          <LineChart
+            series={demo()}
+            column="pct"
+            as="secondary"
+            axis="padded"
+          />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
+ * **Suppress boundary labels** (`boundaryLabels={false}`). The right axis drops
+ * the top & bottom numbers (the gridlines stay) — for stacked layouts where the
+ * edge labels crowd the seam and you'd rather omit them than keep them.
+ */
+export const SuppressBoundaryLabels: Story = {
+  render: () => (
+    <ChartContainer range={RANGE} width={W}>
+      <ChartRow height={200}>
+        <YAxis id="all" side="left" format=".0%" />
+        <YAxis id="trimmed" side="right" boundaryLabels={false} format=".0%" />
+        <Layers>
+          <LineChart series={demo()} column="pct" as="pct" axis="all" />
+          <LineChart
+            series={demo()}
+            column="pct"
+            as="secondary"
+            axis="trimmed"
+          />
         </Layers>
       </ChartRow>
     </ChartContainer>

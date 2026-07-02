@@ -139,6 +139,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
               width: 0,
               min: undefined,
               max: undefined,
+              pad: 0,
               format: undefined,
               tickValues: undefined,
               index: 0,
@@ -204,7 +205,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
               .filter((entry) => (entry.axisId ?? defaultAxisId) === ax.id)
               .map((entry) => entry.layer.yExtent())
           : [];
-      const [lo, hi] = resolveYDomain(ax.min, ax.max, extents);
+      const [lo, hi] = resolveYDomain(ax.min, ax.max, extents, ax.pad);
       map.set(ax.id, scaleLinear().domain([lo, hi]).range([height, 0]));
     }
     return map;

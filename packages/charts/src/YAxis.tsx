@@ -28,6 +28,13 @@ export interface YAxisProps {
   min?: number;
   max?: number;
   /**
+   * Fractional headroom added to each side of the resolved domain — `0` (the
+   * default) means none. Lifts a tight domain off the plot edges without
+   * hand-computing bounds (e.g. `pad={0.05}` adds 5% of the span top & bottom).
+   * Applies to an explicit `[min, max]` or an auto-fit domain.
+   */
+  pad?: number;
+  /**
    * Value formatting for the tick labels (and the cursor readout, which matches):
    * a d3 format specifier string (e.g. `'.0%'`, `',.2f'`) or a `(value) => string`
    * function. Omit for the scale's d3 default — which is calibrated to the tick
@@ -47,6 +54,14 @@ export interface YAxisProps {
    * axis (like `format`; harmless for a static chart).
    */
   ticks?: ReadonlyArray<{ readonly at: number; readonly label: string }>;
+  /**
+   * Render the tick labels at the domain extremes (the top & bottom ticks)?
+   * **Default `true`.** `false` drops just those two numbers — the gridlines
+   * stay — for when the min/max labels crowd a stacked row's edges and you'd
+   * rather omit them than keep them. (Extreme labels are otherwise clamped to
+   * stay inside the row, never overflowing the edge.)
+   */
+  boundaryLabels?: boolean;
   /** Gutter width in CSS pixels (default 50). */
   width?: number;
   /**
@@ -75,6 +90,8 @@ export function YAxis({
   max,
   format,
   ticks,
+  pad = 0,
+  boundaryLabels = true,
   width = DEFAULT_WIDTH,
   labelPlacement = 'rotated',
   index = 0,
@@ -95,11 +112,12 @@ export function YAxis({
       width,
       min,
       max,
+      pad,
       format,
       tickValues: ticks?.map((t) => t.at),
       index,
     }),
-    [id, side, width, min, max, format, ticks, index],
+    [id, side, width, min, max, pad, format, ticks, index],
   );
   // A stable per-instance slot (see useSlotKey) keeps this axis in a fixed
   // registry position, so a min/max/side change updates in place rather than
@@ -155,20 +173,34 @@ export function YAxis({
         }}
       >
         {yScale &&
-          tickList.map(({ value, label }) => (
-            <div
-              key={value}
-              style={{
-                position: 'absolute',
-                top: `${yScale(value)}px`,
-                [side === 'left' ? 'right' : 'left']: '4px',
-                transform: 'translateY(-50%)',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {label}
-            </div>
-          ))}
+          tickList.map(({ value, label }, i) => {
+            // Drop just the top & bottom labels when boundary labels are off
+            // (gridlines are drawn separately, so they stay).
+            if (!boundaryLabels && (i === 0 || i === tickList.length - 1))
+              return null;
+            // Clamp the label's centre so a domain-extreme label stays inside
+            // the row instead of half-overflowing the top/bottom edge (and
+            // colliding across a splitter in a stacked layout) — F-charts-6.
+            const half = theme.font.size / 2 + 1;
+            const top = Math.max(
+              half,
+              Math.min(row.height - half, yScale(value)),
+            );
+            return (
+              <div
+                key={value}
+                style={{
+                  position: 'absolute',
+                  top: `${top}px`,
+                  [side === 'left' ? 'right' : 'left']: '4px',
+                  transform: 'translateY(-50%)',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {label}
+              </div>
+            );
+          })}
         {/* The axis title. Typography is themeable + a touch larger than the
             ticks (see `theme.axis.title`). `'top'` draws it horizontally at the
             top of the axis, aligned to its side (terse unit labels); `'rotated'`
