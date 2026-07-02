@@ -15,7 +15,7 @@ import {
   type ContainerFrame,
 } from './context.js';
 import type { ChartTheme } from './theme.js';
-import { flagChipStyle, flagChipX, axisPillX } from './chip.js';
+import { flagChipStyle, flagChipX, axisPillX, axisPillStyle } from './chip.js';
 import { useSlotKey } from './use-slot-key.js';
 
 /**
@@ -785,8 +785,7 @@ export function Baseline({
           return (
             <div
               style={{
-                ...flagChipStyle(container.theme),
-                color: ann.color,
+                ...axisPillStyle(container.theme, ann.color),
                 top: `${Math.max(half, Math.min(row.height - half, y))}px`,
                 transform: 'translateY(-50%)',
                 ...axisPillX(row.axisSides.get(axisId) ?? 'left', w),

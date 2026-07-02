@@ -1,7 +1,7 @@
 import { Fragment, useContext } from 'react';
 import type { ScaleLinear, ScaleTime } from 'd3-scale';
 import { ContainerContext } from './context.js';
-import { flagChipStyle } from './chip.js';
+import { axisPillStyle } from './chip.js';
 import {
   resolveAxisFormat,
   resolveTimeFormat,
@@ -138,6 +138,9 @@ export function XAxis({
 
   const stripHeight = height ?? TICK_STRIP + (label ? LABEL_STRIP : 0);
   const onTop = side === 'top';
+  // Axis pills (marker / crosshair) sit at the same offset as the tick labels so
+  // they line up with their tick-label neighbours (matches `labelOffset` below).
+  const pillOffset = align === 'right' ? 2 : 6;
 
   return (
     <div
@@ -219,11 +222,10 @@ export function XAxis({
         <div
           key={t.id}
           style={{
-            ...flagChipStyle(theme),
+            ...axisPillStyle(theme, annotationColor),
             left: `${t.x}px`,
             transform: 'translateX(-50%)',
-            [onTop ? 'bottom' : 'top']: '2px',
-            color: annotationColor,
+            [onTop ? 'bottom' : 'top']: `${pillOffset}px`,
             zIndex: 2,
           }}
         >
@@ -233,11 +235,10 @@ export function XAxis({
       {showCursorTag && (
         <div
           style={{
-            ...flagChipStyle(theme),
+            ...axisPillStyle(theme, cursorColor),
             left: `${cursorX}px`,
             transform: 'translateX(-50%)',
-            [onTop ? 'bottom' : 'top']: '2px',
-            color: cursorColor,
+            [onTop ? 'bottom' : 'top']: `${pillOffset}px`,
             zIndex: 3,
           }}
         >

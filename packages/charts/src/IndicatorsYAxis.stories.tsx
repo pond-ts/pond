@@ -47,6 +47,29 @@ export const StaticValue: Story = {
   ),
 };
 
+/** **Labelled** — `label` shows static text (e.g. `VWAP`) instead of the
+ *  formatted value; the pill still positions at `value`. For naming a level
+ *  rather than reading a live number. */
+export const Labelled: Story = {
+  render: () => (
+    <ChartContainer range={RANGE} width={W}>
+      <ChartRow height={220}>
+        <Layers>
+          <LineChart series={priceSeries()} column="price" axis="usd" />
+          <YAxisIndicator
+            value={185}
+            axis="usd"
+            color="#8957e5"
+            label="VWAP"
+            line
+          />
+        </Layers>
+        <YAxis id="usd" side="right" format=",.0f" />
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
 /** **placement="axis" (default)** — the pill sits over the axis gutter, its
  *  centre lined up with the value on the scale, covering the tick behind it. */
 export const AxisPlacement: Story = {

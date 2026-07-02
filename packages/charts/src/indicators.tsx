@@ -1,6 +1,6 @@
 import { useContext, useSyncExternalStore, type CSSProperties } from 'react';
 import { ContainerContext, RowContext } from './context.js';
-import { flagChipStyle, axisPillX } from './chip.js';
+import { axisPillStyle, axisPillX } from './chip.js';
 import { resolveAxisFormat, type AxisFormat } from './format.js';
 
 /**
@@ -103,9 +103,16 @@ export interface YAxisIndicatorProps {
    * `(value) => string`. Omit to use the linked axis's own formatter, so the pill
    * reads exactly like a tick. Pass a specifier for finer precision than the
    * tick-calibrated default (a live price usually wants `',.2f'`, not the
-   * coarser tick rounding). See {@link AxisFormat}.
+   * coarser tick rounding). See {@link AxisFormat}. Ignored when {@link label}
+   * is set.
    */
   format?: AxisFormat;
+  /**
+   * Static text to show **instead of** the formatted value — a name/annotation
+   * like `VWAP` or `resistance` (the pill still positions at `value`/`source`).
+   * Omit for the formatted value (the usual live-tag case).
+   */
+  label?: string;
   /**
    * Draw a thin dashed guide line from the pill across the plot (the ChartIQ
    * "price line"). Default `false`.
@@ -124,7 +131,7 @@ export interface YAxisIndicatorProps {
 /**
  * A **value pill pinned to a y-axis edge** — the ChartIQ / Yahoo-Finance live
  * price tag. Positions at `yScale(value)` on the linked axis and renders a chip
- * (the shared {@link flagChipStyle} look) at the plot's `side` edge, optionally
+ * (the solid {@link axisPillStyle} pill) at the plot's `side` edge, optionally
  * with a dashed guide line across the plot.
  *
  * Render it as a child of `<Layers>` (alongside the chart layers), so it shares
@@ -148,6 +155,7 @@ export function YAxisIndicator({
   side = 'right',
   color,
   format,
+  label,
   line = false,
   placement = 'axis',
 }: YAxisIndicatorProps) {
@@ -184,7 +192,8 @@ export function YAxisIndicator({
   const fmt = format
     ? resolveAxisFormat(yScale, TICK_COUNT, format)
     : row.formats.get(axisId);
-  const text = fmt ? fmt(v) : String(v);
+  // A static `label` overrides the value text; otherwise the formatted value.
+  const text = label ?? (fmt ? fmt(v) : String(v));
 
   const rawY = yScale(v);
   // Clamp the pill's centre so an off-scale value keeps it inside the row rather
@@ -225,8 +234,7 @@ export function YAxisIndicator({
       )}
       <div
         style={{
-          ...flagChipStyle(theme),
-          color: resolvedColor,
+          ...axisPillStyle(theme, resolvedColor),
           top: `${top}px`,
           ...horizontal,
           transform: 'translateY(-50%)',

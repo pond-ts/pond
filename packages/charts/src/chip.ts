@@ -29,6 +29,56 @@ export function flagChipStyle(theme: ChartTheme): CSSProperties {
 }
 
 /**
+ * Pick a readable text colour (near-black or white) for text drawn **on top of**
+ * `bg`, by its sRGB relative luminance. Handles `#rgb`/`#rrggbb` (the theme
+ * palette); any other CSS colour falls back to white. So a saturated blue/red/
+ * teal pill gets white text, a pale turquoise pill gets dark text.
+ */
+export function contrastText(bg: string): string {
+  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(bg.trim());
+  const raw = m?.[1];
+  if (raw === undefined) return '#ffffff';
+  const h =
+    raw.length === 3
+      ? raw
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : raw;
+  const r = parseInt(h.slice(0, 2), 16) / 255;
+  const g = parseInt(h.slice(2, 4), 16) / 255;
+  const b = parseInt(h.slice(4, 6), 16) / 255;
+  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return lum > 0.6 ? '#0b1220' : '#ffffff';
+}
+
+/**
+ * The **axis indicator pill** look — a *solid* filled tag in `color` with
+ * auto-contrast text (the ChartIQ / Yahoo price-tag). Distinct from
+ * {@link flagChipStyle} (a light in-plot value chip): an on-axis indicator reads
+ * as a saturated pill covering the tick, not a floating readout. Note: it does
+ * **not** set `lineHeight` — it inherits `normal`, matching a bare tick label, so
+ * a pill anchored at the same offset lines up with its tick-label neighbours (a
+ * forced lineHeight would shift the text off the tick baseline). Shared by
+ * {@link YAxisIndicator}, the crosshair axis pills, and the Baseline/Marker
+ * `indicator` pills.
+ */
+export function axisPillStyle(theme: ChartTheme, color: string): CSSProperties {
+  return {
+    position: 'absolute',
+    background: color,
+    color: contrastText(color),
+    borderRadius: '3px',
+    padding: '0 4px',
+    fontFamily: theme.font.family,
+    fontSize: `${theme.font.size}px`,
+    fontVariantNumeric: 'tabular-nums',
+    whiteSpace: 'nowrap',
+    pointerEvents: 'none',
+  };
+}
+
+/**
  * CSS placing a value pill **on the axis gutter** at `side`: anchor its inner
  * edge at the plot boundary (`plotWidth`) and let it overflow outward across the
  * reserved gutter (the plot div doesn't clip), lifted with `zIndex` above the

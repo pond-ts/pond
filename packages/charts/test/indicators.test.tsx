@@ -10,6 +10,7 @@ import { YAxis } from '../src/YAxis.js';
 import { Baseline, Marker } from '../src/annotations.js';
 import { XAxis } from '../src/XAxis.js';
 import { YAxisIndicator, createLiveValue } from '../src/indicators.js';
+import { contrastText } from '../src/chip.js';
 
 afterEach(cleanup);
 
@@ -93,6 +94,20 @@ describe('createLiveValue', () => {
   });
 });
 
+describe('contrastText', () => {
+  it('picks white on saturated hues, dark on pale ones', () => {
+    expect(contrastText('#4a90e2')).toBe('#ffffff'); // blue
+    expect(contrastText('#e5534b')).toBe('#ffffff'); // red
+    expect(contrastText('#0d9488')).toBe('#ffffff'); // teal
+    expect(contrastText('#7FE2D2')).toBe('#0b1220'); // pale turquoise → dark
+    expect(contrastText('#ffffff')).toBe('#0b1220'); // white → dark
+  });
+
+  it('falls back to white for a non-hex colour', () => {
+    expect(contrastText('rebeccapurple')).toBe('#ffffff');
+  });
+});
+
 describe('YAxisIndicator', () => {
   it('renders a pill labelled with the static value (axis formatter)', () => {
     // Axis [0,100], value 37 → the axis default formats it to "37".
@@ -108,6 +123,30 @@ describe('YAxisIndicator', () => {
   it('reads from a LiveValue source', () => {
     const lv = createLiveValue(63);
     expect(pillText(<YAxisIndicator source={lv} axis="a" />, '63')).toBe(true);
+  });
+
+  it('a `label` shows static text instead of the value (still positioned at value)', () => {
+    expect(
+      pillText(<YAxisIndicator value={37} axis="a" label="VWAP" />, 'VWAP'),
+    ).toBe(true);
+    // the value text is suppressed
+    expect(
+      pillText(<YAxisIndicator value={37} axis="a" label="VWAP" />, '37'),
+    ).toBe(false);
+  });
+
+  it('renders a solid pill: background = color, auto-contrast text', () => {
+    const { container, unmount } = renderInd(
+      <YAxisIndicator value={37} axis="a" color="#4a90e2" />,
+    );
+    const pill = Array.from(container.querySelectorAll('div')).find(
+      (d) => d.style.borderRadius === '3px' && d.textContent === '37',
+    ) as HTMLElement;
+    // solid colour fill (not the theme chip background) + white text on the
+    // saturated blue (luminance < 0.6).
+    expect(pill.style.background).toBe('#4a90e2');
+    expect(pill.style.color).toBe('#ffffff');
+    unmount();
   });
 
   it('renders nothing when no value and no source is given', () => {
