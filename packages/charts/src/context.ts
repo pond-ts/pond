@@ -416,6 +416,8 @@ export interface AxisSpec {
   readonly max: number | undefined;
   /** Fractional headroom added to each side of the resolved domain (`0` = none). */
   readonly pad: number;
+  /** Title placement; `'top'` makes the row reserve a header band above the plot. */
+  readonly labelPlacement: 'rotated' | 'top';
   /** Value formatting for the tick labels + the cursor readout ({@link AxisFormat}),
    *  or `undefined` for the scale's d3 default. */
   readonly format: AxisFormat | undefined;

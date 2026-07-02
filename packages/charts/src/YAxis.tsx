@@ -113,11 +113,12 @@ export function YAxis({
       min,
       max,
       pad,
+      labelPlacement,
       format,
       tickValues: ticks?.map((t) => t.at),
       index,
     }),
-    [id, side, width, min, max, pad, format, ticks, index],
+    [id, side, width, min, max, pad, labelPlacement, format, ticks, index],
   );
   // A stable per-instance slot (see useSlotKey) keeps this axis in a fixed
   // registry position, so a min/max/side change updates in place rather than
@@ -212,7 +213,9 @@ export function YAxis({
             style={{
               position: 'absolute',
               top: 0,
-              [side === 'left' ? 'left' : 'right']: '2px',
+              // Align to the axis line (the plot-facing edge), matching the tick
+              // labels' alignment, rather than floating at the outer gutter edge.
+              [side === 'left' ? 'right' : 'left']: '4px',
               fontSize: `${theme.axis.title?.size ?? theme.font.size + 1}px`,
               color: theme.axis.title?.color ?? theme.axis.label,
               opacity: theme.axis.title?.opacity ?? 0.85,
