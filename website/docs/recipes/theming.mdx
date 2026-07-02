@@ -1,0 +1,214 @@
+---
+sidebar_position: 45
+---
+
+# Theming charts
+
+How `@pond-ts/charts` is styled: one typed theme object, semantic identifiers
+that map a series to a style, and — for apps with a design system — a bridge
+from CSS custom properties that follows a dark/light toggle.
+
+## One styling channel
+
+A chart's entire appearance comes from a single `ChartTheme` object passed to
+`ChartContainer`. There are **no per-component colour / width props** — a
+`<LineChart>` doesn't take a `color`. That's deliberate: a second styling
+channel (props _and_ theme) is what bred the styling bugs in
+react-timeseries-charts, where the two fought. Here the theme is the one place
+style lives.
+
+```tsx
+import {
+  ChartContainer,
+  ChartRow,
+  Layers,
+  LineChart,
+  defaultTheme,
+} from '@pond-ts/charts';
+
+<ChartContainer width={640} theme={defaultTheme}>
+  <ChartRow height={220}>
+    <Layers>
+      <LineChart series={series} column="price" />
+    </Layers>
+  </ChartRow>
+</ChartContainer>;
+```
+
+Omit `theme` and you get `defaultTheme`. To restyle, hand it a different theme —
+never a prop on the mark.
+
+## Semantic identifiers: `as`
+
+A mark's `as` names _what the series is_ (its role / identity); the theme maps
+that identifier to a concrete style. A line resolves `theme.line[as] ?? theme.line.default`.
+
+```tsx
+<Layers>
+  <LineChart series={s} column="actual" as="actual" />
+  <LineChart series={s} column="budget" as="budget" />
+</Layers>
+```
+
+```ts
+const theme = {
+  ...defaultTheme,
+  line: {
+    ...defaultTheme.line,
+    actual: { color: '#2563eb', width: 1.5 },
+    budget: { color: '#e8836b', width: 1.5 },
+  },
+};
+```
+
+The discipline is **a handful of roles, not a hue per channel** — map many
+identifiers onto a few shared styles rather than inventing a colour per series.
+`as` picks the _style_; the separate `axis` prop picks _which `YAxis` scale_ a
+mark draws against — two different concerns.
+
+## A custom theme
+
+Spread `defaultTheme` and override the slots you care about — `line`, `band`,
+`area`, `scatter`, `box`, `bar`, `axis`, `font`, `cursor`, `annotation`. A dark
+theme is just different values:
+
+```ts
+import { defaultTheme, type ChartTheme } from '@pond-ts/charts';
+
+const darkTheme: ChartTheme = {
+  ...defaultTheme,
+  background: '#0f172a',
+  line: {
+    ...defaultTheme.line,
+    default: { color: '#93c5fd', width: 1.5 },
+  },
+  axis: { label: '#94a3b8', grid: '#1e293b', gridDash: [2, 2] },
+  cursor: '#94a3b8',
+};
+```
+
+Ship your own theme with your app — `@pond-ts/charts` provides `defaultTheme` as
+a neutral base plus the `ChartTheme` type; per-brand themes live in your code,
+not the library.
+
+## Per-series line style: `dash`
+
+A `LineStyle` is `{ color, width, dash? }`. The optional `dash` is a px on/off
+pattern — the idiom for setting a **modeled** series apart from an observed one
+(e.g. a GARCH vol estimate dashed under the solid realized line):
+
+```ts
+line: {
+  ...defaultTheme.line,
+  realized: { color: '#8b5cf6', width: 1.3 },              // solid — observed
+  garch:    { color: '#d63d8a', width: 1.3, dash: [6, 4] }, // dashed — modeled
+  forecast: { color: '#5eb5a6', width: 1.3, dash: [2, 3] }, // dotted
+}
+```
+
+`dash` on the series is distinct from a `<LineChart gaps="dashed">` — that
+dashes a faint _bridge over missing data_, whereas `dash` dashes the whole line
+as its style. See the `Charts/LineChart → LineStyles` Storybook story.
+
+## Binding to a design system: `cssVarTheme`
+
+If your app themes from CSS custom properties (`--brand-*` tokens, a
+`data-theme` dark/light toggle), you don't want to hand-mirror hex into a
+`ChartTheme`. `cssVarTheme` reads the tokens off the DOM and overlays them on a
+base theme — you name only the slots you drive from CSS; everything else falls
+through to the base.
+
+```ts
+import { cssVarTheme, defaultTheme } from '@pond-ts/charts';
+
+const theme = cssVarTheme(defaultTheme, (v) => ({
+  background: v('--surface'),
+  line: {
+    default: { color: v('--brand-primary') },
+    secondary: { color: v('--brand-secondary') },
+  },
+  axis: { label: v('--text-muted'), grid: v('--hairline') },
+  cursor: v('--text-muted'),
+  font: { family: v('--font-mono') },
+}));
+```
+
+`v(name, fallback?)` reads the computed custom property. An **unresolved var
+returns `undefined`, which keeps the base value** — a missing token never blanks
+a colour. The result is still the one typed `ChartTheme`: this _generates_ that
+channel from CSS, it doesn't add a second one. With no DOM (SSR, an
+Offscreen/worker render) every read returns its fallback, so the call is safe
+and yields the base theme.
+
+`cssVarTheme` reads the DOM once when you call it — don't call it per frame
+(`getComputedStyle` is a layout read). For a chart that should _follow_ a live
+toggle, use the hook.
+
+## Following a dark/light toggle: `useChartTheme`
+
+`useChartTheme` wraps `cssVarTheme` and **re-resolves whenever the theme toggle
+flips** — a `MutationObserver` watches the root's `data-theme` / `class`, so the
+canvas tracks dark/light with the rest of the page:
+
+```tsx
+import { useChartTheme, defaultTheme, ChartContainer } from '@pond-ts/charts';
+
+function PriceChart({ series }) {
+  const theme = useChartTheme(defaultTheme, (v) => ({
+    background: v('--surface'),
+    line: { default: { color: v('--brand-primary') } },
+    axis: { label: v('--text-muted'), grid: v('--hairline') },
+    cursor: v('--text-muted'),
+  }));
+
+  return (
+    <ChartContainer width={640} theme={theme}>
+      {/* rows … */}
+    </ChartContainer>
+  );
+}
+```
+
+No `mode` prop threaded through, no hand-ordered "set the attribute, then read
+it" dance. When the resolved theme changes the hook returns a **new theme
+reference**, which is the repaint signal — `ChartContainer` redraws when handed
+a new `theme`. A watched mutation that _doesn't_ change the resolved values
+(e.g. an unrelated `class` toggle for a modal) returns the same reference, so it
+doesn't repaint.
+
+Resolution runs on mount and on watched-attribute changes only — never per
+frame — so the `getComputedStyle` cost stays negligible. `base` and `resolve`
+are read fresh each resolve, so inline literals are fine (no memoizing needed).
+
+**Options.** `useChartTheme(base, resolve, { target, attributes })`:
+
+- `target` — the element whose tokens are read and whose attributes are
+  watched. Default `document.documentElement` (`<html>`); pass a scoped element
+  to theme one subtree.
+- `attributes` — which attribute changes trigger a re-resolve. Default
+  `['data-theme', 'class']` (covers a `data-theme` switch and Tailwind-style
+  `class="dark"`).
+
+## The repaint contract
+
+However you build it, the rule is the same: **a new `theme` reference repaints;
+the same reference doesn't.** `useChartTheme` handles this for you (new ref only
+on a real change). If you compute a theme yourself, memoize it so an unchanged
+theme keeps a stable reference and doesn't force redraws.
+
+## Notes
+
+- **Non-DOM rendering.** The CSS-var path is an opt-in DOM adapter over the
+  typed `ChartTheme`, which stays the core contract — so a future
+  OffscreenCanvas / worker renderer (no `getComputedStyle`) still themes via a
+  plain `ChartTheme`.
+- **Bring your own theme object.** Build on `defaultTheme` (the neutral base) +
+  the `ChartTheme` type; keep per-brand themes in your app (or your design
+  system's package), assembled from your tokens via `cssVarTheme`.
+
+## See also
+
+- [Resizable multi-panel layout](./resizable-panels) — a full chart layout the
+  theme applies to.
+- `Charts/Theming → CssVars` and `Charts/LineChart → LineStyles` Storybook
+  stories — the live dark/light toggle and the dash patterns.
