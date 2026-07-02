@@ -1,6 +1,6 @@
 {
   "name": "@pond-ts/charts",
-  "version": "0.34.1",
+  "version": "0.35.0",
   "private": false,
   "description": "Canvas-rendered, streaming-first time-series charts for pond-ts",
   "license": "MIT",
@@ -38,8 +38,8 @@
     "perf": "PERF_BENCH=1 playwright test perf.spec.ts --workers=1"
   },
   "peerDependencies": {
-    "@pond-ts/react": "^0.34.0",
-    "pond-ts": "^0.34.0",
+    "@pond-ts/react": "^0.35.0",
+    "pond-ts": "^0.35.0",
     "react": "^18.0.0 || ^19.0.0"
   },
   "devDependencies": {
