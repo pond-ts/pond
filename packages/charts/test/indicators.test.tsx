@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, within } from '@testing-library/react';
+import { act, cleanup, render, within } from '@testing-library/react';
 import { TimeSeries } from 'pond-ts';
 import { ChartContainer } from '../src/ChartContainer.js';
 import { ChartRow } from '../src/ChartRow.js';
@@ -119,5 +119,84 @@ describe('YAxisIndicator', () => {
 
   it('renders exactly one pill for a finite value', () => {
     expect(pillCount(<YAxisIndicator value={37} axis="a" />)).toBe(1);
+  });
+
+  it('source takes precedence over value when both are given', () => {
+    const lv = createLiveValue(63);
+    // value=37 present, but source (63) wins.
+    expect(
+      pillText(<YAxisIndicator value={37} source={lv} axis="a" />, '63'),
+    ).toBe(true);
+    expect(
+      pillText(<YAxisIndicator value={37} source={lv} axis="a" />, '37'),
+    ).toBe(false);
+  });
+
+  it('side="left" hugs the left edge, side="right" the right', () => {
+    const chip = (child: ReactNode) => {
+      const { container, unmount } = renderInd(child);
+      const el = Array.from(container.querySelectorAll('div')).find(
+        (d) =>
+          d.style.position === 'absolute' && d.style.borderRadius === '3px',
+      ) as HTMLElement | undefined;
+      const style = {
+        left: el?.style.left ?? '',
+        right: el?.style.right ?? '',
+      };
+      unmount();
+      return style;
+    };
+    expect(chip(<YAxisIndicator value={37} axis="a" side="left" />)).toEqual({
+      left: '0px',
+      right: '',
+    });
+    expect(chip(<YAxisIndicator value={37} axis="a" side="right" />)).toEqual({
+      left: '',
+      right: '0px',
+    });
+  });
+});
+
+/**
+ * The load-bearing guarantee: a `source.set()` re-renders **only the subscribed
+ * pill**, never the chart tree. A `RenderProbe` sibling counts chart-subtree
+ * renders; after mount, a `set()` moves the pill (text changes) while the probe's
+ * count stays flat — proving no ancestor re-render path. (StrictMode would
+ * inflate the absolute count, but the delta across `set()` is what's asserted, so
+ * it holds regardless.)
+ */
+describe('YAxisIndicator isolation', () => {
+  it('a source update repaints only the pill, not the chart subtree', () => {
+    const lv = createLiveValue(37);
+    let chartRenders = 0;
+    function RenderProbe() {
+      chartRenders += 1;
+      return null;
+    }
+    const { container } = render(
+      <ChartContainer range={[0, 4]} width={300} showAxis={false}>
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={100} />
+          <Layers>
+            <LineChart series={series} column="v" axis="a" />
+            <RenderProbe />
+            <YAxisIndicator source={lv} axis="a" format=",.0f" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+
+    expect(within(container).queryByText('37')).not.toBeNull();
+    const rendersAfterMount = chartRenders;
+
+    act(() => {
+      lv.set(63);
+    });
+
+    // The pill moved…
+    expect(within(container).queryByText('63')).not.toBeNull();
+    expect(within(container).queryByText('37')).toBeNull();
+    // …but the chart subtree did not re-render.
+    expect(chartRenders).toBe(rendersAfterMount);
   });
 });
