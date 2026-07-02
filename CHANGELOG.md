@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`, and
 them all. Pre-1.0: minor bumps may include new features and type-level changes;
 patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.37.0...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.38.0...HEAD
+[0.38.0]: https://github.com/pjm17971/pond-ts/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/pjm17971/pond-ts/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/pjm17971/pond-ts/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/pjm17971/pond-ts/compare/v0.34.1...v0.35.0
@@ -32,6 +33,49 @@ patch bumps are strictly additive.
 [0.20.0]: https://github.com/pjm17971/pond-ts/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/pjm17971/pond-ts/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
+
+## [0.38.0] — 2026-07-03
+
+A `@pond-ts/charts` release: **axis-edge value indicators + the crosshair
+cursor** — the ChartIQ / Yahoo-Finance price-tag family, driven by the Tidal
+terminal. `pond-ts`, `@pond-ts/react`, and `@pond-ts/fit` carry no code changes —
+republished in lock-step (peer ranges widen to `^0.38.0`).
+
+### Added
+
+- `@pond-ts/charts`: **`<YAxisIndicator>` + `createLiveValue`** — a value pill
+  pinned to a y-axis edge, decoupled from the series' last point. A `LiveValue`
+  `source` updates it at high frequency **without re-rendering the chart** (only
+  the subscribed pill repaints). Props: `value` / `source`, `axis`, `side`,
+  `color`, `format`, `line` (dashed guide), `pointer` (callout triangle).
+- `@pond-ts/charts`: **`cursor="crosshair"`** `CursorMode` — a synced vertical
+  line + per-series dots, each series' value pinned to its y-axis and the hovered
+  time pinned to the x-axis.
+- `@pond-ts/charts`: **`indicator`** opt-in on `<Baseline>` (a y-axis value pill)
+  and `<Marker>` (an x-axis time pill, with a connector down to the mark).
+- `@pond-ts/charts`: `<Baseline labelSide>` (`left` / `right`) + `labelPosition`
+  (`center` on the line / `above` it) for the near-line label chip.
+- `@pond-ts/charts`: `<Region edges>` (default `true`; `false` = shaded fill with
+  no side outlines).
+- `@pond-ts/charts`: `axisPillStyle`, `contrastText`, `pointerStyle` chip helpers
+  are exported.
+
+### Changed
+
+- `@pond-ts/charts`: axis indicator pills are **solid** (colour fill +
+  auto-contrast text), aligned to the tick-label row, and **always show the axis
+  coordinate** — never a custom label (a label stays the in-plot chip).
+- `@pond-ts/charts`: cursor flag / inline chips now have **square corners**; the
+  cursor **time** atop a flag stack renders as plain text (no chip background).
+- `@pond-ts/charts`: Storybook reorganized into a feature-axis reference tree with
+  systematic per-prop coverage (dev-only; stories are excluded from the package).
+
+### Fixed
+
+- `@pond-ts/charts`: the crosshair x-axis pill used the container's time formatter
+  (showing a raw number on a value axis) — it now uses the axis's own resolved
+  formatter, matching the ticks. The crosshair also no longer double-renders the
+  time (a stray per-row chip alongside the x-axis pill).
 
 ## [0.37.0] — 2026-07-02
 
@@ -110,7 +154,7 @@ lock-step (their `pond-ts` / `@pond-ts/react` peer ranges widen to `^0.35.0`).
   (`[6, 4]` dashed, `[2, 3]` ≈ dotted; omit or `[]` = solid) applied to the
   series stroke. Lets a theme set a **modeled / forecast** line (e.g. GARCH
   vol) apart from an observed one at a glance. Distinct from a `GapMode`'s
-  inferred gap-bridge dashing (which marks *missing data*, not the whole
+  inferred gap-bridge dashing (which marks _missing data_, not the whole
   line). Additive: existing themes are unaffected; a solid line never touches
   `setLineDash`. New `Charts/LineChart → LineStyles` story. (#313)
 
@@ -149,7 +193,7 @@ Tidal wire-format spike. `@pond-ts/react`, `@pond-ts/charts`, and
 - **`TimeSeries.fromColumns`** — the columnar (struct-of-arrays) ingress,
   the counterpart to `fromJSON`'s row-tuple shape. Accepts either a plain
   `number[]` or a `Float64Array` per column — one polymorphic door, so a
-  wire format only changes the *decoder*, not the ingest. `Float64Array`
+  wire format only changes the _decoder_, not the ingest. `Float64Array`
   columns are adopted directly (zero-copy); `number[]` columns are copied.
   A `null`/`undefined` cell or a non-finite value (`NaN`/`Infinity`) is a
   gap, identically across both input shapes. Enforces the same
