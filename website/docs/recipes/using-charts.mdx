@@ -1,0 +1,73 @@
+---
+sidebar_position: 44
+---
+
+# Using @pond-ts/charts
+
+Install notes and the two integration gotchas worth knowing before you wire
+`@pond-ts/charts` into an app.
+
+## Install
+
+```sh
+npm install @pond-ts/charts pond-ts react react-dom
+```
+
+`@pond-ts/charts` peer-depends on `pond-ts`, `@pond-ts/react`, and `react` — a
+chart consumes a pond `TimeSeries`, so both packages live alongside it. They
+release together under one version, so keep their ranges in step (`^0.36.0`
+with `^0.36.0`).
+
+## Storybook: turn off `react-docgen`
+
+If you Storybook a component that imports `@pond-ts/charts` (with the default
+`@storybook/react-vite` setup), the build crashes:
+
+```
+[storybook:react-docgen-plugin] Argument must be Identifier, Literal,
+QualifiedTypeIdentifier or TSQualifiedName. Received 'PrivateName'
+```
+
+`react-docgen` walks the whole module graph and chokes on a `#private` class
+field in pond-ts's compiled JS (pulled in transitively via charts → pond-ts).
+Disable docgen in `.storybook/main.ts`:
+
+```ts
+export default {
+  // …
+  typescript: { reactDocgen: false },
+};
+```
+
+Stories and `argTypes` controls still work — you only lose auto-extracted prop
+tables. (Switching the parser to `'react-docgen-typescript'` did **not** dodge
+the crash in current Storybook versions.) This is a `react-docgen` limitation,
+not a chart-config knob; the flag is the fix until it's addressed upstream.
+
+## The repaint contract
+
+Charts redraw when handed a **new `theme` reference** (and, of course, new
+data). The same reference doesn't repaint — so if you compute a theme yourself,
+memoize it, and if you build one from CSS tokens, let `useChartTheme` manage the
+reference (it returns a new one only when the resolved theme actually changed).
+Full detail in [Theming charts](./theming).
+
+## Co-developing against unreleased charts
+
+Depend on the **published** package by default (`@pond-ts/charts@^0.36.0`) so a
+clean CI runner resolves it from the registry like any other dependency. A
+`link:`/`file:` to a sibling checkout works locally but **dangles on CI** (the
+runner only checks out your repo, so the symlink target is missing and
+typecheck fails).
+
+To co-develop against a local, unreleased build without breaking CI, keep the
+committed manifest pointing at the registry version and add a **local-only**
+override that isn't committed — e.g. a gitignored `pnpm-workspace.yaml`
+overrides entry, or a `.pnpmfile.cjs` that repoints `@pond-ts/charts` at your
+local checkout only when it exists. The committed lockfile stays
+CI-resolvable; your machine picks up the local build.
+
+## See also
+
+- [Theming charts](./theming) — the `ChartTheme` model and the CSS-token bridge.
+- [Resizable multi-panel layout](./resizable-panels) — a full chart layout.
