@@ -209,6 +209,36 @@ From within `packages/core/`:
 
 Run `npx prettier --write .` before committing. Unformatted code will fail review.
 
+## Storybook stories: systematic feature coverage
+
+Stories must give **systematic coverage of a feature's states — not just a few
+reference examples.** For each feature, fan out **one story per meaningful prop,
+prop-combination, or mode**, so a reader (and a reviewer walking the stories in
+order) sees _every_ knob, not only the handful a use-case demo happens to touch.
+
+Why this earns its keep: `@pond-ts/charts` stories were once organized only by
+**scenario** (`InContext` / `Editable` / `Create` / …), which answers "how would
+I build X" but **buries individual capabilities** — a knob with no dedicated
+story is a knob nobody discovers or reviews. Reorganizing into a **feature-axis
+tree** (per-primitive / per-mode groups) with a methodical prop fan-out (charts
+PRs #325 → #326) immediately surfaced a dozen-plus real bugs that spot-check
+examples had hidden for waves. The systematic walk _is_ a review technique.
+
+Guidelines:
+
+- **Feature-axis, then fan out.** Group stories by the thing (`Annotations/
+Baseline`, `Cursors/Crosshair`, `Indicators/Y Axis`), and within each, a story
+  per prop/state (`Default`, `CustomLabel`, `NoLabel`, `Indicator`, `Selected`,
+  `DualAxis`, …). Name the story for the state it shows.
+- **Keep scenario/use-case stories too** — they're the "how would I build X"
+  demos _and_ the e2e visual-regression anchors. The fan-out is **additional**,
+  not a replacement (park scenario stories under a `.../Scenarios` group).
+- **The deeper "explore every knob" walkthrough** belongs in the docs site's
+  interactive examples (see `docs/rfcs/` living-examples); Storybook is the
+  systematic reference + regression net.
+
+Applies to any package with stories; `@pond-ts/charts` is the worked example.
+
 ## Performance check for new operators on large data
 
 When adding a new operator (or making a non-trivial impl change to
