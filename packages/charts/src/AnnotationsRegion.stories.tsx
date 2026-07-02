@@ -96,3 +96,14 @@ export const Multiple: Story = {
     </Chart>
   ),
 };
+
+/** **Narrow vs wide** — a few-minute blip next to a span covering most of the
+ *  window; the fill and edges hold up at both extremes. */
+export const NarrowAndWide: Story = {
+  render: () => (
+    <Chart>
+      <Region from={at(10)} to={at(13)} label="blip" />
+      <Region from={at(20)} to={at(85)} label="wide" selectable={false} />
+    </Chart>
+  ),
+};

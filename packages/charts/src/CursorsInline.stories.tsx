@@ -7,6 +7,7 @@ import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import {
   twoSeries,
+  hrSeries,
   twoColorTheme,
   BASE,
   STEP,
@@ -16,8 +17,12 @@ import {
 /**
  * `cursor="inline"` — a dot on each series with its value chip **beside the dot**
  * (in place, not stacked at the top). These stories fan out: single vs multiple
- * series, the `cursorTime` chip, and the right-edge flip (a chip near the right
- * edge flips to the dot's left so it stays in-plot). Pinned via `trackerPosition`.
+ * series, the `cursorTime` chip, the right-edge flip (`LABEL_FLIP_FRACTION` in
+ * `Layers.tsx` — past 85% of the plot width a chip flips to the dot's *left*),
+ * the per-row top/bottom clamp (a chip near the row edge is nudged back inside
+ * rather than clipped), and multi-row (the cursor is shared; each row clamps
+ * independently). Pinned via a controlled `trackerPosition` for a static shot —
+ * no hover needed.
  */
 const W = 560;
 const s = twoSeries();
@@ -92,5 +97,53 @@ export const RightEdgeFlip: Story = {
       <LineChart series={s} column="fast" as="fast" axis="usd" />
       <LineChart series={s} column="slow" as="slow" axis="usd" />
     </Chart>
+  ),
+};
+
+/** **Near-top clamp** — pinned at the series' peak (its dot sits at the very top
+ *  of the plot); the chip is nudged down to stay inside the row instead of being
+ *  clipped above it. */
+export const NearTopClamp: Story = {
+  render: () => (
+    <Chart pin={BASE + 16 * STEP}>
+      <LineChart series={s} column="fast" as="fast" axis="usd" />
+    </Chart>
+  ),
+};
+
+/** **Near-bottom clamp** — pinned at the series' trough (its dot sits at the very
+ *  bottom of the plot); the chip is nudged up to stay inside the row. */
+export const NearBottomClamp: Story = {
+  render: () => (
+    <Chart pin={BASE + 45 * STEP}>
+      <LineChart series={s} column="fast" as="fast" axis="usd" />
+    </Chart>
+  ),
+};
+
+/** **Multi-row** — the cursor is shared across rows (one x); each row places and
+ *  clamps its own chip independently. */
+export const MultiRow: Story = {
+  render: () => (
+    <ChartContainer
+      range={RANGE}
+      width={W}
+      cursor="inline"
+      trackerPosition={BASE + 45 * STEP}
+      theme={twoColorTheme}
+    >
+      <ChartRow height={150}>
+        <Layers>
+          <LineChart series={s} column="fast" as="fast" axis="usd" />
+        </Layers>
+        <YAxis id="usd" side="right" format=",.0f" />
+      </ChartRow>
+      <ChartRow height={150}>
+        <Layers>
+          <LineChart series={hrSeries()} column="bpm" axis="bpm" />
+        </Layers>
+        <YAxis id="bpm" side="right" format=",.0f" />
+      </ChartRow>
+    </ChartContainer>
   ),
 };

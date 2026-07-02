@@ -18,6 +18,8 @@ const W = 560;
 const H = 220;
 const at = (i: number) => BASE + i * STEP;
 
+/** One price row with a right-hand USD axis. The container's default bottom time
+ *  axis draws a marker's `indicator` pill; children are the annotation(s). */
 function Chart({ children }: { children: ReactNode }) {
   return (
     <ChartContainer range={RANGE} width={W}>
@@ -121,6 +123,18 @@ export const Multiple: Story = {
       <Marker at={at(20)} label="A" />
       <Marker at={at(45)} label="B" />
       <Marker at={at(70)} label="C" />
+    </Chart>
+  ),
+};
+
+/** **Off-plot** — an `at` outside the container's `range`: the line, chip, and
+ *  (if set) axis-edge indicator pill are all off-screen, so nothing renders. A
+ *  marker just past the visible window (rather than one still in range) makes
+ *  the filtering obvious — this chart shows only the price line. */
+export const OffPlot: Story = {
+  render: () => (
+    <Chart>
+      <Marker at={RANGE[1] + 10 * STEP} label="future" indicator />
     </Chart>
   ),
 };

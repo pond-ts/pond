@@ -11,25 +11,44 @@ import {
   twoColorTheme,
   BASE,
   STEP,
+  N,
   RANGE,
 } from './story-data.fixture.js';
 
 /**
  * `cursor="flag"` — a dot on each series at the cursor, each value flying as a
  * **flag** on a staff stacked near the top of the row. These stories fan out:
- * single vs multiple series, the `cursorTime` time chip, and multi-row. The
- * cursor is pinned with a controlled `trackerPosition` for a static shot.
+ * single vs multiple series, the `cursorTime` time chip (caps the stack),
+ * multi-row (one shared cursor, the time chip shows once), and a near-right-edge
+ * pin (the flag flips left of its staff so it stays in-plot). The cursor is
+ * pinned with a controlled `trackerPosition` for a static shot — no hover.
  */
 const W = 560;
-const PIN = BASE + 45 * STEP;
 const s = twoSeries();
 
-function Row({ children }: { children: ReactNode }) {
+function Chart({
+  pin,
+  cursorTime,
+  children,
+}: {
+  pin: number;
+  cursorTime?: boolean;
+  children: ReactNode;
+}) {
   return (
-    <ChartRow height={220}>
-      <Layers>{children}</Layers>
-      <YAxis id="usd" side="right" format=",.0f" />
-    </ChartRow>
+    <ChartContainer
+      range={RANGE}
+      width={W}
+      cursor="flag"
+      cursorTime={cursorTime ?? false}
+      trackerPosition={pin}
+      theme={twoColorTheme}
+    >
+      <ChartRow height={220}>
+        <Layers>{children}</Layers>
+        <YAxis id="usd" side="right" format=",.0f" />
+      </ChartRow>
+    </ChartContainer>
   );
 }
 
@@ -40,62 +59,37 @@ const meta = {
 export default meta;
 type Story = StoryObj;
 
-/** **Single series** — one dot, one flag. */
+/** **Single series** — one dot, one flag on its staff. */
 export const SingleSeries: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      cursor="flag"
-      trackerPosition={PIN}
-      theme={twoColorTheme}
-    >
-      <Row>
-        <LineChart series={s} column="fast" as="fast" axis="usd" />
-      </Row>
-    </ChartContainer>
+    <Chart pin={BASE + 45 * STEP}>
+      <LineChart series={s} column="fast" as="fast" axis="usd" />
+    </Chart>
   ),
 };
 
-/** **Multiple series** — a flag per series, stacked at the top. */
+/** **Multiple series** — a flag per series, stacked at the top of the row. */
 export const MultipleSeries: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      cursor="flag"
-      trackerPosition={PIN}
-      theme={twoColorTheme}
-    >
-      <Row>
-        <LineChart series={s} column="fast" as="fast" axis="usd" />
-        <LineChart series={s} column="slow" as="slow" axis="usd" />
-      </Row>
-    </ChartContainer>
+    <Chart pin={BASE + 45 * STEP}>
+      <LineChart series={s} column="fast" as="fast" axis="usd" />
+      <LineChart series={s} column="slow" as="slow" axis="usd" />
+    </Chart>
   ),
 };
 
 /** **With time** — `cursorTime` caps the flag stack with the cursor's time. */
 export const WithTime: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      cursor="flag"
-      cursorTime
-      trackerPosition={PIN}
-      theme={twoColorTheme}
-    >
-      <Row>
-        <LineChart series={s} column="fast" as="fast" axis="usd" />
-        <LineChart series={s} column="slow" as="slow" axis="usd" />
-      </Row>
-    </ChartContainer>
+    <Chart pin={BASE + 45 * STEP} cursorTime>
+      <LineChart series={s} column="fast" as="fast" axis="usd" />
+      <LineChart series={s} column="slow" as="slow" axis="usd" />
+    </Chart>
   ),
 };
 
-/** **Multi-row** — the cursor is shared across rows (one x); the time chip shows
- *  once, atop the first row. */
+/** **Multi-row** — the cursor is shared across rows (one x); the time chip
+ *  shows once, atop the first row, not repeated on the second. */
 export const MultiRow: Story = {
   render: () => (
     <ChartContainer
@@ -103,7 +97,7 @@ export const MultiRow: Story = {
       width={W}
       cursor="flag"
       cursorTime
-      trackerPosition={PIN}
+      trackerPosition={BASE + 45 * STEP}
       theme={twoColorTheme}
     >
       <ChartRow height={150}>
@@ -119,5 +113,16 @@ export const MultiRow: Story = {
         <YAxis id="bpm" side="right" format=",.0f" />
       </ChartRow>
     </ChartContainer>
+  ),
+};
+
+/** **Near-right-edge pin** — close to the plot's right edge the flags (and the
+ *  time chip) flip to the left of their staffs so they stay in-plot. */
+export const NearRightEdge: Story = {
+  render: () => (
+    <Chart pin={BASE + (N - 3) * STEP} cursorTime>
+      <LineChart series={s} column="fast" as="fast" axis="usd" />
+      <LineChart series={s} column="slow" as="slow" axis="usd" />
+    </Chart>
   ),
 };

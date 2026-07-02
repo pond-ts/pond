@@ -145,3 +145,20 @@ export const DualAxis: Story = {
     </ChartContainer>
   ),
 };
+
+/** **Domain extreme** — a baseline `value` at (past) the axis's `max`: the
+ *  `indicator` pill clamps inside the row (like the y-tick labels), instead of
+ *  overflowing above the plot. */
+export const DomainExtreme: Story = {
+  render: () => (
+    <ChartContainer range={RANGE} width={W}>
+      <ChartRow height={H}>
+        <Layers>
+          <LineChart series={priceSeries()} column="price" axis="usd" />
+          <Baseline value={220} axis="usd" label="ceiling" indicator />
+        </Layers>
+        <YAxis id="usd" side="right" min={150} max={220} format=",.0f" />
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
