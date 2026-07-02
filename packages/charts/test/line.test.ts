@@ -142,6 +142,39 @@ describe('drawLine', () => {
     ).toEqual([2.5]);
   });
 
+  it('leaves the stroke solid — never touches setLineDash — for a style without a dash', () => {
+    const { ctx, calls } = recordingContext();
+    drawLine(ctx, cs([0, 1, 2], [5, 6, 7]), identity, identity, style);
+    expect(calls.some((c) => c.name === 'setLineDash')).toBe(false);
+  });
+
+  it('dashes the stroke with the style pattern, then resets to solid', () => {
+    const { ctx, calls } = recordingContext();
+    drawLine(ctx, cs([0, 1, 2], [5, 6, 7]), identity, identity, {
+      color: '#000',
+      width: 1,
+      dash: [6, 4],
+    });
+    const dashCalls = calls.filter((c) => c.name === 'setLineDash');
+    // set the pattern for the stroke, then reset to [] so it can't leak on.
+    expect(dashCalls.map((c) => c.args)).toEqual([[[6, 4]], [[]]]);
+    // the pattern is applied before the stroke, the reset after it.
+    const order = calls
+      .filter((c) => c.name === 'setLineDash' || c.name === 'stroke')
+      .map((c) => c.name);
+    expect(order).toEqual(['setLineDash', 'stroke', 'setLineDash']);
+  });
+
+  it('does not treat an empty dash array as a dash (stays solid)', () => {
+    const { ctx, calls } = recordingContext();
+    drawLine(ctx, cs([0, 1], [1, 2]), identity, identity, {
+      color: '#000',
+      width: 1,
+      dash: [],
+    });
+    expect(calls.some((c) => c.name === 'setLineDash')).toBe(false);
+  });
+
   it('draws a curved path (bezier ops) when given a non-linear curve', () => {
     const { ctx, calls } = recordingContext();
     drawLine(

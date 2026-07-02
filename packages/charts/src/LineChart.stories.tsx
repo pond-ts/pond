@@ -5,6 +5,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { XAxis } from './XAxis.js';
+import { defaultTheme } from './theme.js';
 import type { ChartTheme } from './theme.js';
 
 const N = 60;
@@ -316,6 +317,61 @@ export const SemanticFoam: Story = {
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="v" as="foam" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/** Three offset signals — observed / model / forecast — to show the dash
+ *  patterns side by side without the lines overlapping. */
+function trio() {
+  const rows: Array<[number, number, number, number]> = [];
+  for (let i = 0; i < N; i += 1) {
+    const base = 50 + 30 * Math.sin(i / 6);
+    rows.push([BASE + i * STEP, base + 18, base, base - 18]);
+  }
+  return new TimeSeries({
+    name: 'trio',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'observed', kind: 'number' },
+      { name: 'model', kind: 'number' },
+      { name: 'forecast', kind: 'number' },
+    ] as const,
+    rows,
+  });
+}
+
+/**
+ * Per-series **dash patterns** (`LineStyle.dash`). `observed` is solid, `model`
+ * dashed (`[6, 4]`), `forecast` dotted (`[2, 3]`) — the idiom for setting a
+ * *modeled* / forecast line apart from an observed one. Dash is a theme concern
+ * like colour and width: the call site only tags each line's identity via `as`,
+ * and the theme maps that to a style. Distinct from a `GapMode`'s inferred
+ * gap-bridge dashing (which marks missing data, not the whole line).
+ */
+const dashTheme: ChartTheme = {
+  ...defaultTheme,
+  line: {
+    ...defaultTheme.line,
+    observed: { color: '#2563eb', width: 1.5 },
+    model: { color: '#d63d8a', width: 1.5, dash: [6, 4] },
+    forecast: { color: '#5eb5a6', width: 1.5, dash: [2, 3] },
+  },
+};
+
+export const LineStyles: Story = {
+  render: () => {
+    const series = trio();
+    return (
+      <ChartContainer range={TIME_RANGE} width={480} theme={dashTheme}>
+        <ChartRow height={220}>
+          <Layers>
+            <LineChart series={series} column="observed" as="observed" />
+            <LineChart series={series} column="model" as="model" />
+            <LineChart series={series} column="forecast" as="forecast" />
           </Layers>
         </ChartRow>
       </ChartContainer>

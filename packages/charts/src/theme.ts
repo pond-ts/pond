@@ -135,6 +135,15 @@ export interface ChartTheme {
 export interface LineStyle {
   readonly color: string;
   readonly width: number;
+  /**
+   * Optional dash pattern — px on/off lengths (`[6, 4]` = 6 on, 4 off; `[2, 3]`
+   * ≈ dotted). Omit or `[]` for a solid stroke. This is the *series'* own style
+   * — distinct from a {@link GapMode}'s inferred faint gap-bridge dashing (that
+   * marks missing data; this marks the whole line). Use it to set a **modeled**
+   * series (a forecast / smoothed estimate, e.g. GARCH vol) apart from an
+   * observed one at a glance.
+   */
+  readonly dash?: readonly number[];
 }
 
 /** A resolved band style: fill colour + opacity (0–1) for the variance envelope. */
