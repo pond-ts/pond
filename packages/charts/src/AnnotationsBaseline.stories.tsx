@@ -68,6 +68,31 @@ export const NoLabel: Story = {
   ),
 };
 
+/** **Label side** — `labelSide="right"` anchors the near-line chip to the right
+ *  edge instead of the default left. */
+export const LabelRight: Story = {
+  render: () => (
+    <Chart>
+      <Baseline value={200} axis="usd" label="resistance" labelSide="right" />
+    </Chart>
+  ),
+};
+
+/** **Label position** — `labelPosition="above"` sits the chip on top of the line
+ *  (vs the default `center`, which rides on it). */
+export const LabelAbove: Story = {
+  render: () => (
+    <Chart>
+      <Baseline
+        value={200}
+        axis="usd"
+        label="resistance"
+        labelPosition="above"
+      />
+    </Chart>
+  ),
+};
+
 /** **Indicator** — `indicator` also pins the value to the y-axis as an on-axis
  *  pill (the ChartIQ price-tag look), alongside the near-line chip. */
 export const Indicator: Story = {

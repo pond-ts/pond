@@ -66,6 +66,16 @@ export const NoLabel: Story = {
   ),
 };
 
+/** **No outlines** — `edges={false}` drops the vertical side lines, leaving just
+ *  the shaded fill — a soft highlight band. */
+export const NoOutlines: Story = {
+  render: () => (
+    <Chart>
+      <Region from={at(30)} to={at(55)} label="soft" edges={false} />
+    </Chart>
+  ),
+};
+
 /** **Selected** — a selected region brightens to the front (level 1); its edges
  *  read as the grabbable thing in edit mode. */
 export const Selected: Story = {
