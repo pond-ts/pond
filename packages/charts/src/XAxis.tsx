@@ -43,7 +43,10 @@ export interface XAxisProps {
   ticks?: ReadonlyArray<{ readonly at: number; readonly label: string }>;
   /**
    * Horizontal placement of each tick label relative to its tick.
-   * - **`'center'` (default)** — every label centred on its tick.
+   * - **`'center'` (default)** — every label centred on its tick. Note the
+   *   first/last labels can then extend past the plot edges (the strip doesn't
+   *   clip), so a wide first label may reach into the left y-axis gutter; use
+   *   `'auto'` if that crowds.
    * - `'auto'` — centred, but the first label left-anchors and the last
    *   right-anchors so the edge labels stay inside the plot (the old default).
    * - `'right'` — the label sits to the **right** of an extended tick that
