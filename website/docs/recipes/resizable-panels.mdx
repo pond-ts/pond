@@ -1,0 +1,194 @@
+---
+sidebar_position: 40
+---
+
+# Resizable multi-panel layout
+
+A full-height chart split into two stacked panels — a large top panel over a
+smaller bottom one — with a **draggable divider** between them, where the
+**extra vertical space flows to the top panel**. The canonical financial shape:
+a price chart on top, an indicator panel (RSI, volume, a vol model) below.
+
+It's built entirely on `@pond-ts/charts` primitives — **no library-specific
+layout API**. The mirror of this (slack to the _bottom_ panel) ships as the
+`Layouts/Multi-Panel → ResizableFill` Storybook story.
+
+## Why no special support is needed
+
+Three properties of `ChartContainer` make the splitter a plain consumer concern:
+
+1. It renders its `children` inside a `flex-direction: column` box — it does
+   **not** inspect or clone children by type.
+2. `ChartRow` **self-registers through React context** (not by the container
+   scanning its child array), so a non-row element dropped between rows is
+   simply ignored by the gutter/scale machinery.
+3. `ChartRow`'s `height` is a controllable prop, and each row re-derives its
+   y-scales from it — so a live height change repaints with no explicit
+   invalidate.
+
+So you drop a splitter `<div>` _between_ the two `ChartRow` elements and drive
+the two `height` props from state. That's the whole trick.
+
+## The recipe
+
+```tsx
+import { useLayoutEffect, useRef, useState } from 'react';
+import type { SeriesSchema, TimeSeries } from 'pond-ts';
+import {
+  ChartContainer,
+  ChartRow,
+  Layers,
+  LineChart,
+  YAxis,
+  type ChartTheme,
+} from '@pond-ts/charts';
+
+const AXIS_H = 22; // TimeAxis strip the container reserves below the rows (see notes)
+const SPLITTER_H = 7;
+const MIN_TOP = 140;
+const MIN_BOTTOM = 80;
+
+/**
+ * Measure the available box. The first read is synchronous
+ * (`getBoundingClientRect`) so it doesn't depend on `ResizeObserver`'s initial
+ * callback firing — its timing isn't guaranteed, and relying on it can leave a
+ * chart that never mounts. RO then keeps the size live on resize.
+ */
+function useMeasuredSize<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      const width = Math.round(r.width);
+      const height = Math.round(r.height);
+      setSize((p) =>
+        p.width === width && p.height === height ? p : { width, height },
+      );
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, size] as const;
+}
+
+export function PriceWithIndicator({
+  series,
+  theme,
+}: {
+  series: TimeSeries<SeriesSchema>;
+  theme?: ChartTheme;
+}) {
+  const [boxRef, { width, height }] = useMeasuredSize<HTMLDivElement>();
+
+  // The BOTTOM height is the source of truth (the user drags it); the TOP is
+  // the remainder — so slack always flows to the top panel.
+  const [bottomH, setBottomH] = useState(160);
+  const plot = Math.max(0, height - AXIS_H - SPLITTER_H);
+  const bottom = Math.min(
+    Math.max(bottomH, MIN_BOTTOM),
+    Math.max(MIN_BOTTOM, plot - MIN_TOP),
+  );
+  const top = Math.max(MIN_TOP, plot - bottom);
+
+  const dragY = useRef(0);
+  const dragging = useRef(false);
+
+  // Fill the parent: this box is height:100%, so it needs an ancestor with a
+  // defined height (or be a `flex: 1; min-height: 0` child of a column).
+  return (
+    <div ref={boxRef} style={{ height: '100%', minHeight: 0, minWidth: 0 }}>
+      {width > 0 && height > 0 && (
+        <ChartContainer width={width} theme={theme}>
+          <ChartRow height={top}>
+            <YAxis id="price" side="right" format="$,.2f" />
+            <Layers>
+              <LineChart
+                series={series}
+                column="price"
+                as="price"
+                axis="price"
+              />
+            </Layers>
+          </ChartRow>
+
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize panels"
+            style={{
+              height: SPLITTER_H,
+              cursor: 'row-resize',
+              touchAction: 'none',
+            }}
+            onPointerDown={(e) => {
+              dragging.current = true;
+              dragY.current = e.clientY;
+              e.currentTarget.setPointerCapture(e.pointerId);
+            }}
+            onPointerMove={(e) => {
+              if (!dragging.current) return;
+              const dy = e.clientY - dragY.current;
+              dragY.current = e.clientY;
+              // drag DOWN (dy > 0) grows the top, shrinks the bottom
+              if (dy) setBottomH((h) => h - dy);
+            }}
+            onPointerUp={(e) => {
+              dragging.current = false;
+              e.currentTarget.releasePointerCapture(e.pointerId);
+            }}
+          />
+
+          <ChartRow height={bottom}>
+            <YAxis id="rsi" side="right" format=".0f" />
+            <Layers>
+              <LineChart series={series} column="rsi" as="rsi" axis="rsi" />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>
+      )}
+    </div>
+  );
+}
+```
+
+## How the sizing works
+
+- `plot` = available height minus the reserved time-axis strip and the splitter.
+- `bottom` = the dragged value, **clamped** so neither panel collapses
+  (`[MIN_BOTTOM, plot − MIN_TOP]`).
+- `top = plot − bottom` → **the top is the remainder.** Grow the window and
+  `plot` grows while `bottom` holds, so all the slack lands in the top panel.
+
+To send slack to the _bottom_ instead, make the **top** the state value and
+compute `bottom = plot − top` — that's exactly the `ResizableFill` story.
+
+## Notes and gotchas
+
+All consumer-side — none needs a library change:
+
+- **`AXIS_H = 22` is a reserved-strip constant.** It's the `TimeAxis` tick strip
+  the container places below the rows; the fill math needs it today. If you
+  render the axis with a label or hide it (`showAxis={false}`), adjust. A
+  container-level `height` / fill mode would remove this bookkeeping.
+- **Seed the size synchronously.** Read `getBoundingClientRect` in a layout
+  effect, not solely from the `ResizeObserver` callback — RO's _initial_ fire
+  isn't guaranteed, and a size stuck at `0` leaves the chart gated out.
+- **Clamp both panels.** A row height of `0` produces a degenerate y-scale;
+  keep a per-panel floor.
+- **Pointer capture + `touchAction: 'none'`.** Capture on `pointerdown` so the
+  drag keeps tracking when the cursor leaves the thin handle; `touchAction: none`
+  stops touch scrolling from stealing the gesture.
+- **Full height needs a defined ancestor height.** `height: 100%` only fills if
+  the parent chain has a height (or make the box a `flex: 1; min-height: 0`
+  child of a flex column).
+
+## See also
+
+- [Charting](../pond-ts/advanced/charting) — the chart layer overview.
+- The `Layouts/Multi-Panel → ResizableFill` Storybook story — the slack-to-bottom
+  mirror, browser-verified.
