@@ -140,21 +140,36 @@ export const ValueAxis: Story = {
  * controlled input — live click-to-select + drag-to-edit are the **Select** story.
  */
 export const Selectable: Story = {
-  args: { selected: true },
-  argTypes: { selected: { control: 'boolean' } },
-  render: (args) => {
-    const selected = (args as { selected?: boolean }).selected ?? false;
+  render: () => {
+    // Controlled selection: a click reports the mark's id via
+    // `onSelectAnnotation`; the consumer holds it and passes `selected` back.
+    // Click a region to select it (brightens to level 1); click the other to
+    // switch; click empty plot to clear.
+    const [sel, setSel] = useState<string | null>('interval');
     return (
-      <ChartContainer range={INTERVAL} width={680} theme={estelaTheme}>
+      <ChartContainer
+        range={INTERVAL}
+        width={680}
+        theme={estelaTheme}
+        onSelectAnnotation={setSel}
+      >
         <ChartRow height={260}>
           <YAxis id="power" label="W" min={0} max={300} />
           <Layers>
             <LineChart series={power()} column="watts" as="foam" />
             <Region
-              from={BASE + 15 * STEP}
-              to={BASE + 35 * STEP}
+              id="interval"
+              from={BASE + 8 * STEP}
+              to={BASE + 18 * STEP}
               label="interval"
-              selected={selected}
+              selected={sel === 'interval'}
+            />
+            <Region
+              id="rest"
+              from={BASE + 24 * STEP}
+              to={BASE + 34 * STEP}
+              label="rest"
+              selected={sel === 'rest'}
             />
           </Layers>
         </ChartRow>
@@ -164,14 +179,46 @@ export const Selectable: Story = {
 };
 
 /**
- * **Inert highlight bands — no label.** A background zone you *don't* want
- * labelled: `<Region selectable={false} label={false}>` paints a faint band
- * (pinned at the back, level 3 — no hover/select/edit) with **no chip**. This is
- * estela's `highlightRanges` (effort/climb zones behind the trace). Omitting
- * `label` would auto-label the raw span (`5:06–5:12`, ugly on a value axis);
- * `label={false}` says "no label" in one read (`label=""` works too).
+ * **Hover to highlight.** A selectable mark brightens on pointer hover (depth
+ * level 2) — no wiring needed, the hover is tracked from the pointer. Move over
+ * either region to see it lift from the back; move off and it settles. (Pair with
+ * the container's `onHoverAnnotation` + a mark's `hovered` prop to drive the same
+ * highlight remotely, e.g. from a legend row.)
  */
 export const Highlight: Story = {
+  render: () => (
+    <ChartContainer range={INTERVAL} width={680} theme={estelaTheme}>
+      <ChartRow height={260}>
+        <YAxis id="power" label="W" min={0} max={300} />
+        <Layers>
+          <LineChart series={power()} column="watts" as="foam" />
+          <Region
+            id="a"
+            from={BASE + 8 * STEP}
+            to={BASE + 18 * STEP}
+            label="hover me"
+          />
+          <Region
+            id="b"
+            from={BASE + 24 * STEP}
+            to={BASE + 34 * STEP}
+            label="or me"
+          />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
+ * **Inert background bands — no label.** A background zone you *don't* want
+ * labelled or interactive: `<Region selectable={false} label={false}>` paints a
+ * faint band (pinned at the back, level 3 — no hover/select/edit) with **no
+ * chip**. This is estela's `highlightRanges` (effort/climb zones behind the
+ * trace). Omitting `label` would auto-label the raw span (`5:06–5:12`, ugly on a
+ * value axis); `label={false}` says "no label" in one read (`label=""` too).
+ */
+export const BackgroundZones: Story = {
   render: () => (
     <ChartContainer range={INTERVAL} width={680} theme={estelaTheme}>
       <ChartRow height={260}>
@@ -552,9 +599,9 @@ export const Create: Story = {
         style={{
           padding: '4px 10px',
           borderRadius: 6,
-          border: `1px solid ${tool === k ? '#7FE2D2' : '#2c4a4a'}`,
-          background: tool === k ? '#0B4E58' : 'transparent',
-          color: '#a9d6cf',
+          border: `1px solid ${tool === k ? '#0B4E58' : '#9cd0c7'}`,
+          background: tool === k ? '#0B4E58' : '#ffffff',
+          color: tool === k ? '#e8f7f4' : '#0B4E58',
           font: '12px ui-monospace, monospace',
           cursor: 'pointer',
         }}
@@ -574,9 +621,9 @@ export const Create: Story = {
             style={{
               padding: '4px 10px',
               borderRadius: 6,
-              border: '1px solid #2c4a4a',
-              background: snap ? '#0B4E58' : 'transparent',
-              color: '#a9d6cf',
+              border: `1px solid ${snap ? '#0B4E58' : '#9cd0c7'}`,
+              background: snap ? '#0B4E58' : '#ffffff',
+              color: snap ? '#e8f7f4' : '#0B4E58',
               font: '12px ui-monospace, monospace',
               cursor: 'pointer',
             }}

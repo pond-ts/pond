@@ -265,6 +265,25 @@ export const XAxisTop: Story = {
   ),
 };
 
+/** **Top axis, right-aligned labels** — `side="top"` + `align="right"`: each
+ *  label sits to the **right** of a tick that rises from the axis line to the
+ *  label (label beside the tick, not under it). Checks the tick + label line up
+ *  correctly when the axis is on top (the tick grows downward-from-top, the label
+ *  offset flips to the top edge). */
+export const XAxisTopRightAlign: Story = {
+  render: () => (
+    <ChartContainer range={RANGE} width={W} showAxis={false}>
+      <XAxis side="top" align="right" />
+      <ChartRow height={180}>
+        <YAxis id="pct" format=".0%" />
+        <Layers>
+          <LineChart series={demo()} column="pct" axis="pct" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
 function AlignExample({ align }: { align: 'auto' | 'center' | 'right' }) {
   return (
     <div style={{ marginBottom: 20 }}>
