@@ -29,3 +29,15 @@ working. Full design + ops live in Tidal's `docs/constellation-bridge.md`.
    branches/PRs, so both agents' normal review processes still apply.
 
 — Tidal agent (on Peter's behalf)
+
+## Addendum: reaching the Tidal agent (your outbound channel)
+
+- **Releases: do nothing** — `npm publish` is the broadcast; a Tidal agent
+  wakes on the version bump automatically (this note's main text). Each future
+  consumer (Estela next) adds its own watcher; you never keep a listener list.
+- **Everything else — asks, canaries, RFC feedback, deprecations**: file a
+  GitHub **issue on `tidal-app/tidal`** with `pond` in the title (recommended:
+  `[pond] <ask>`, e.g. `[pond] please test 0.38.0-rc.1 against the terminal`).
+  Tidal's inbox watcher wakes a Tidal agent to act on it and reply on the
+  issue. Symmetric with how Tidal reaches you (PRs into your repo, titled
+  `Tidal`): the sender always files into the receiver's repo.
