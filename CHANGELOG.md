@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`, and
 them all. Pre-1.0: minor bumps may include new features and type-level changes;
 patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.35.0...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.36.0...HEAD
+[0.36.0]: https://github.com/pjm17971/pond-ts/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/pjm17971/pond-ts/compare/v0.34.1...v0.35.0
 [0.34.1]: https://github.com/pjm17971/pond-ts/compare/v0.34.0...v0.34.1
 [0.34.0]: https://github.com/pjm17971/pond-ts/compare/v0.33.0...v0.34.0
@@ -30,6 +31,38 @@ patch bumps are strictly additive.
 [0.20.0]: https://github.com/pjm17971/pond-ts/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/pjm17971/pond-ts/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
+
+## [0.36.0] — 2026-07-02
+
+A `@pond-ts/charts` release: a CSS-custom-property → theme bridge so a canvas
+chart can follow a design system's tokens and dark/light toggle. `pond-ts`,
+`@pond-ts/react`, and `@pond-ts/fit` carry no code changes — republished in
+lock-step (their `pond-ts` / `@pond-ts/react` peer ranges widen to `^0.36.0`).
+
+### Added
+
+- **Charts — `cssVarTheme(base, resolve, opts?)`.** Builds a `ChartTheme` by
+  overlaying CSS custom properties onto a base theme: a typed `resolve`
+  receives a `readVar` and returns only the slots to override. An unresolved
+  var keeps the base value (a missing token never blanks a colour). DOM-only by
+  design; safe under SSR / worker (returns the base + any literal fallbacks).
+  The typed `ChartTheme` stays the single styling channel — this generates it
+  from CSS rather than adding a second one. (#315)
+- **Charts — `useChartTheme(base, resolve, opts?)`.** Wraps `cssVarTheme` and
+  re-resolves on a `data-theme` / `class` change (a `MutationObserver` on the
+  root, configurable via `{ target, attributes }`), so a chart follows
+  dark/light with the page — no `mode` prop threaded through. Returns a new
+  theme reference only when the resolved theme actually changed (the repaint
+  signal `ChartContainer` keys on), so an unrelated attribute toggle doesn't
+  repaint. Lives in `@pond-ts/charts` (not `@pond-ts/react`) to keep the
+  package graph acyclic. (#315)
+- **Docs — charts recipes.** [Theming charts](https://pjm17971.github.io/pond-ts/docs/recipes/theming)
+  (the `ChartTheme` model, semantic identifiers, per-series dash, the CSS-var
+  bridge), [Using @pond-ts/charts](https://pjm17971.github.io/pond-ts/docs/recipes/using-charts)
+  (install, the Storybook `react-docgen` gotcha, the repaint contract,
+  in-dev consumption), and
+  [Resizable multi-panel layout](https://pjm17971.github.io/pond-ts/docs/recipes/resizable-panels).
+  (#314, #315, #316)
 
 ## [0.35.0] — 2026-07-02
 
