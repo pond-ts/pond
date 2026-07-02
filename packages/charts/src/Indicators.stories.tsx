@@ -244,6 +244,38 @@ export const Crosshair: Story = {
   },
 };
 
+/** Crosshair across **two stacked rows** sharing the time axis, `cursorTime` on.
+ *  The time shows once — on the shared x-axis pill at the bottom — not repeated
+ *  as a per-row chip on each row. `trackerPosition` pins it for a static shot. */
+export const MultiRowCrosshair: Story = {
+  render: () => {
+    const s = twoSeries();
+    return (
+      <ChartContainer
+        range={RANGE}
+        width={W}
+        cursor="crosshair"
+        cursorTime
+        trackerPosition={BASE + 40 * STEP}
+        theme={twoColorTheme}
+      >
+        <ChartRow height={160}>
+          <Layers>
+            <LineChart series={s} column="fast" as="fast" axis="a" />
+          </Layers>
+          <YAxis id="a" side="right" format=",.0f" />
+        </ChartRow>
+        <ChartRow height={160}>
+          <Layers>
+            <LineChart series={s} column="slow" as="slow" axis="b" />
+          </Layers>
+          <YAxis id="b" side="right" format=",.0f" />
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
 /** `<Baseline indicator>` pins its value to the y-axis; `<Marker indicator>`
  *  pins its time to the x-axis — both as on-axis pills in the annotation colour
  *  (here with `label={false}` so only the axis pill shows, no in-plot chip). */

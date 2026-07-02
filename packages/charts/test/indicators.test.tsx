@@ -8,6 +8,7 @@ import { Layers } from '../src/Layers.js';
 import { LineChart } from '../src/LineChart.js';
 import { YAxis } from '../src/YAxis.js';
 import { Baseline, Marker } from '../src/annotations.js';
+import { XAxis } from '../src/XAxis.js';
 import { YAxisIndicator, createLiveValue } from '../src/indicators.js';
 
 afterEach(cleanup);
@@ -329,6 +330,66 @@ describe("cursor='crosshair'", () => {
     expect(lPill?.style.left).toBe('');
     expect(rPill?.style.left).not.toBe('');
     expect(rPill?.style.right).toBe('');
+  });
+
+  const chipsIn = (c: HTMLElement) =>
+    Array.from(c.querySelectorAll('div')).filter(
+      (d) => d.style.position === 'absolute' && d.style.borderRadius === '3px',
+    );
+
+  it('does not also draw a per-row time chip — the time lives only on the x-axis pill', () => {
+    // Regression: `cursorTime` + crosshair once double-showed the time — a
+    // per-row flag chip atop the row *and* the x-axis pill. The per-row chip
+    // (flag/line modes' readout) must be suppressed for crosshair.
+    const { container } = render(
+      <ChartContainer
+        range={[0, 4]}
+        width={300}
+        cursor="crosshair"
+        cursorTime
+        trackerPosition={2}
+        timeFormat={() => 'TT'}
+      >
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={100} side="right" />
+          <Layers>
+            <LineChart series={series} column="v" axis="a" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const timeChips = chipsIn(container).filter((d) => d.textContent === 'TT');
+    // Exactly one — the x-axis pill (a `translateX` chip), no per-row chip.
+    expect(timeChips.length).toBe(1);
+    expect(timeChips[0]!.style.transform).toContain('X');
+  });
+
+  it('the x-axis pill uses the axis format, not the container time formatter', () => {
+    // Regression: the crosshair x-pill hardcoded the container `formatTime`, so a
+    // value axis (or a custom `<XAxis format>`) showed the wrong text (e.g. a raw
+    // number). It must use the same resolved formatter as the ticks.
+    const { container } = render(
+      <ChartContainer
+        range={[0, 4]}
+        width={300}
+        cursor="crosshair"
+        trackerPosition={2}
+        timeFormat={() => 'CONTAINER'}
+        showAxis={false}
+      >
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={100} side="right" />
+          <Layers>
+            <LineChart series={series} column="v" axis="a" />
+          </Layers>
+        </ChartRow>
+        <XAxis format={() => 'AXISFMT'} />
+      </ChartContainer>,
+    );
+    const xPill = chipsIn(container).find((d) =>
+      (d.style.transform ?? '').includes('X'),
+    );
+    expect(xPill?.textContent).toBe('AXISFMT');
   });
 });
 
