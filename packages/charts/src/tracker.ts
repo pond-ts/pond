@@ -33,9 +33,10 @@ export function cursorParts(mode: CursorMode): {
     case 'flag':
       return { line: false, dots: true, chip: 'flag' };
     case 'crosshair':
-      // Vertical line + per-series dots, values pinned to the axes (y pills in
-      // `Layers`, the x-time pill on `<XAxis>`).
-      return { line: true, dots: true, chip: 'axis' };
+      // A single reticle (not per-series): `Layers` draws the dashed vertical +
+      // full-width horizontal lines, the centre dot, and one value pill itself
+      // (so no generic line/dots here); the x-time pill is on `<XAxis>`.
+      return { line: false, dots: false, chip: 'axis' };
     case 'none':
       return { line: false, dots: false, chip: 'none' };
   }

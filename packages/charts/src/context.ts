@@ -42,6 +42,22 @@ export interface ContainerFrame {
   /** Set the hovered plot-pixel x; a row's event surface calls this on pointer move. */
   setHoverX(x: number | null): void;
   /**
+   * The hovered plot-pixel **y** and the row it's in — for the free-form
+   * crosshair's horizontal line + value readout (which are row-specific, unlike
+   * the shared vertical `cursorX`). `null` when not hovering a plot. Hover-driven
+   * only (no controlled equivalent).
+   */
+  readonly cursorY: number | null;
+  readonly cursorRowKey: symbol | null;
+  /** Set the hovered plot-pixel y + its row; the event surface calls this on move. */
+  setHoverY(y: number | null, rowKey: symbol | null): void;
+  /**
+   * `cursor="crosshair"` **y** snapping. **Default `true`** — the reticle centres
+   * on the nearest data point's value. `false` — the y follows the pointer freely
+   * (`yScale.invert`). The x always snaps to the data grid either way.
+   */
+  readonly crosshairSnap: boolean;
+  /**
    * The selected mark, or `null`. Shared across rows (single selection). A layer
    * highlights the mark matching **both** the key (epoch ms) and the series
    * (`label`) — so two series sharing a timestamp don't both light up. A

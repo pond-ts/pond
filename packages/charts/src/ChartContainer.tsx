@@ -129,6 +129,16 @@ export interface ChartContainerProps {
    */
   cursorTime?: boolean;
   /**
+   * `cursor="crosshair"` reticle **y** snapping. **Default `true`** — the
+   * crosshair centres on the nearest **data point** (the horizontal line snaps to
+   * that sample's value). `false` — the horizontal line + centre follow the
+   * pointer **y** freely, the value read as `yScale.invert(pointerY)`. Either way
+   * the vertical line snaps its **x** to the data grid (so the time readout is
+   * clean), and both draw a full-height dashed vertical + full-width dashed
+   * horizontal line.
+   */
+  crosshairSnap?: boolean;
+  /**
    * Enter **annotation-edit mode**: suppresses the data cursor and makes editable
    * annotations (those given an `onChange`) interactive — hovering one reveals its
    * handles + highlights it, and dragging edits it. **Default `false`.** Pairs
@@ -206,6 +216,7 @@ export function ChartContainer({
   minDuration = 1,
   cursor = DEFAULT_CURSOR_MODE,
   cursorTime = false,
+  crosshairSnap = true,
   editAnnotations = false,
   creating = null,
   onCreate,
@@ -265,6 +276,17 @@ export function ChartContainer({
   // still cursor stays put while a live window slides under it; a controlled
   // `trackerPosition` resolves to a pixel below.
   const [hoverX, setHoverX] = useState<number | null>(null);
+  // The free-form crosshair also needs the pointer's y + which row (row-specific,
+  // unlike the shared x). One state object so a move updates both atomically.
+  const [hoverPoint, setHoverPoint] = useState<{
+    y: number;
+    rowKey: symbol;
+  } | null>(null);
+  const setHoverY = useCallback(
+    (y: number | null, rowKey: symbol | null) =>
+      setHoverPoint(y === null || rowKey === null ? null : { y, rowKey }),
+    [],
+  );
 
   // Draw layers register as tracker sources; on hover we fan in their values at
   // the cursor and hand them out via onTrackerChanged (held in a ref so an
@@ -499,6 +521,10 @@ export function ChartContainer({
       rowGap,
       cursorX,
       setHoverX,
+      cursorY: hoverPoint?.y ?? null,
+      cursorRowKey: hoverPoint?.rowKey ?? null,
+      setHoverY,
+      crosshairSnap,
       selected: selectedValue,
       select,
       hovered,
@@ -540,6 +566,9 @@ export function ChartContainer({
       rightGutter,
       rowGap,
       cursorX,
+      hoverPoint,
+      setHoverY,
+      crosshairSnap,
       selectedValue,
       select,
       hovered,

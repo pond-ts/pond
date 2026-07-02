@@ -51,10 +51,12 @@ describe('cursorParts', () => {
       chip: 'flag',
     });
   });
-  it('crosshair — line + dots + on-axis value pills', () => {
+  it('crosshair — a single reticle drawn by Layers (no generic line/dots)', () => {
+    // Layers draws the dashed vertical + full-width horizontal + centre dot + one
+    // value pill itself, so cursorParts asks for no generic line/dots here.
     expect(cursorParts('crosshair')).toEqual({
-      line: true,
-      dots: true,
+      line: false,
+      dots: false,
       chip: 'axis',
     });
   });

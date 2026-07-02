@@ -246,17 +246,33 @@ export function XAxis({
         </Fragment>
       ))}
       {showCursorTag && (
-        <div
-          style={{
-            ...axisPillStyle(theme, cursorColor),
-            left: `${cursorX}px`,
-            transform: 'translateX(-50%)',
-            [onTop ? 'bottom' : 'top']: `${pillOffset}px`,
-            zIndex: 3,
-          }}
-        >
-          {fmt(+xScale.invert(cursorX!))}
-        </div>
+        <Fragment>
+          {/* Connector bridging the crosshair's vertical line (ending at the
+              plot's bottom edge = this strip's plot-facing edge) to its time
+              pill, so the two read as one. */}
+          <div
+            style={{
+              position: 'absolute',
+              left: `${cursorX}px`,
+              [onTop ? 'bottom' : 'top']: 0,
+              width: '1px',
+              height: `${pillOffset}px`,
+              background: cursorColor,
+              zIndex: 3,
+            }}
+          />
+          <div
+            style={{
+              ...axisPillStyle(theme, cursorColor),
+              left: `${cursorX}px`,
+              transform: 'translateX(-50%)',
+              [onTop ? 'bottom' : 'top']: `${pillOffset}px`,
+              zIndex: 3,
+            }}
+          >
+            {fmt(+xScale.invert(cursorX!))}
+          </div>
+        </Fragment>
       )}
     </div>
   );
