@@ -19,7 +19,11 @@ const cases: ReadonlyArray<readonly [id: string, file: string]> = [
   ['charts-annotations-scenarios--in-context', 'annotations-in-context.png'],
   ['charts-annotations-scenarios--value-axis', 'annotations-value-axis.png'],
   ['charts-annotations-scenarios--selectable', 'annotations-selectable.png'],
-  ['charts-annotations-scenarios--highlight', 'annotations-highlight.png'], // label-less inert bands
+  ['charts-annotations-scenarios--highlight', 'annotations-highlight.png'], // hover-to-highlight regions
+  [
+    'charts-annotations-scenarios--background-zones',
+    'annotations-background-zones.png',
+  ], // label-less inert bands
   ['charts-annotations-scenarios--editable', 'annotations-editable.png'],
   ['charts-annotations-scenarios--select', 'annotations-select.png'],
   ['charts-annotations-scenarios--multi-row', 'annotations-multi-row.png'],

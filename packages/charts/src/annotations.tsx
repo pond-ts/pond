@@ -15,7 +15,7 @@ import {
   type ContainerFrame,
 } from './context.js';
 import type { ChartTheme } from './theme.js';
-import { flagChipStyle, flagChipX, axisPillX } from './chip.js';
+import { flagChipStyle, flagChipX, axisPillX, axisPillStyle } from './chip.js';
 import { useSlotKey } from './use-slot-key.js';
 
 /**
@@ -504,11 +504,12 @@ export interface MarkerProps {
   /** Make the marker **editable** (in edit mode): dragging its line reports the
    *  new `at` (controlled — wire it back to `at`). The whole line moves. */
   onChange?: (at: number) => void;
-  /** Also pin this marker to the **x-axis** as an on-axis pill (drawn by
-   *  `<XAxis>` at `at`, in the annotation colour) — the axis-edge counterpart of
-   *  the near-line chip. Default `false`. The pill shows the custom `label` if
-   *  one is set, else the formatted `at` value; `label={false}` gives the axis
-   *  pill (showing the value) alone, with no in-plot chip. */
+  /** Also pin this marker's **time** to the **x-axis** as an on-axis pill (drawn
+   *  by `<XAxis>` at `at`, in the annotation colour) — the axis-edge counterpart
+   *  of the near-line chip. Default `false`. The pill always shows the formatted
+   *  `at` (the axis coordinate), never the custom `label` (which stays the
+   *  near-line chip) — an indicator reads like a tick. A connector links the
+   *  marker line to its pill. */
   indicator?: boolean;
 }
 
@@ -632,6 +633,11 @@ export interface BaselineProps {
   /** Chip label. Omit to format `value` with that axis's formatter; pass `false`
    *  (or `''`) to render **no label chip**. */
   label?: string | false;
+  /** Which side of the chart the near-line label chip sits. **Default `left`.** */
+  labelSide?: 'left' | 'right';
+  /** Where the label chip sits relative to the line: **`center`** (default) rides
+   *  on the line, vertically centred; `above` sits just on top of it. */
+  labelPosition?: 'center' | 'above';
   /** Stable consumer id — a click reports it via `onSelectAnnotation`. */
   id?: string;
   /** Controlled selection — brightens to the front (level 1). Handles are an
@@ -652,11 +658,11 @@ export interface BaselineProps {
   /** Make the baseline **editable** (in edit mode): dragging it vertically reports
    *  the new `value` (controlled — wire it back to `value`). */
   onChange?: (value: number) => void;
-  /** Also pin this baseline to its **y-axis** as an on-axis pill (in the
-   *  annotation colour) — the axis-edge counterpart of the near-line chip.
-   *  Default `false`. The pill shows the custom `label` if one is set, else the
-   *  formatted `value`; `label={false}` gives the axis pill (showing the value)
-   *  alone, with no in-plot chip. */
+  /** Also pin this baseline's **value** to its **y-axis** as an on-axis pill (in
+   *  the annotation colour) — the axis-edge counterpart of the near-line chip.
+   *  Default `false`. The pill always shows the formatted `value` (the axis
+   *  coordinate), never the custom `label` (which stays the near-line chip) — an
+   *  indicator reads like a tick. */
   indicator?: boolean;
 }
 
@@ -666,6 +672,8 @@ export function Baseline({
   value,
   axis,
   label,
+  labelSide = 'left',
+  labelPosition = 'center',
   id,
   selected = false,
   selectable = true,
@@ -771,34 +779,37 @@ export function Baseline({
         <Chip
           theme={container.theme}
           color={ann.color}
-          style={{ top: `${y}px`, left: '2px', transform: 'translateY(-50%)' }}
+          style={{
+            top: `${y}px`,
+            [labelSide === 'right' ? 'right' : 'left']: '2px',
+            // `center` rides on the line; `above` sits its bottom edge on the line.
+            transform:
+              labelPosition === 'above'
+                ? 'translateY(-100%)'
+                : 'translateY(-50%)',
+          }}
         >
           {text}
         </Chip>
       )}
-      {/* The axis-edge value pill (opt-in): the value pinned to this baseline's
-          y-axis (on the gutter, over the tick), independent of the near-line
-          chip. Clamped inside the row like the y-tick labels (F-charts-6). */}
+      {/* The axis-edge value pill (opt-in): the baseline's **value** pinned to
+          its y-axis (on the gutter, over the tick), independent of the near-line
+          chip. An indicator always shows the axis coordinate (the formatted
+          value), never the custom `label` (that stays the near-line chip).
+          Clamped inside the row like the y-tick labels (F-charts-6). */}
       {indicator &&
         (() => {
           const half = container.theme.font.size / 2 + 1;
           return (
             <div
               style={{
-                ...flagChipStyle(container.theme),
-                color: ann.color,
+                ...axisPillStyle(container.theme, ann.color),
                 top: `${Math.max(half, Math.min(row.height - half, y))}px`,
                 transform: 'translateY(-50%)',
                 ...axisPillX(row.axisSides.get(axisId) ?? 'left', w),
               }}
             >
-              {/* Echo a custom label if set, else the formatted value (also the
-                  `label={false}` axis-pill-only case). */}
-              {typeof label === 'string' && label !== ''
-                ? label
-                : fmt
-                  ? fmt(value)
-                  : String(value)}
+              {fmt ? fmt(value) : String(value)}
             </div>
           );
         })()}
@@ -839,6 +850,10 @@ export interface RegionProps {
   /** Make the region **editable** (in edit mode): drag the body to move it (both
    *  edges shift), drag an edge to resize. Reports the new `{ from, to }`. */
   onChange?: (next: { from: number; to: number }) => void;
+  /** Draw the vertical **side outlines** at `from`/`to`. **Default `true`.**
+   *  `false` shades the span with no edge lines (fill only) — a soft highlight
+   *  band. Edit-mode resizing still works (the grab areas are invisible). */
+  edges?: boolean;
 }
 
 /** A shaded span over an x range — a lap, a zone, a selected interval. Its label
@@ -853,6 +868,7 @@ export function Region({
   hovered,
   editing = false,
   onChange,
+  edges = true,
 }: RegionProps) {
   const { container, row, ann } = useAnnotationFrame('Region');
   const selfKey = useSlotKey();
@@ -942,8 +958,8 @@ export function Region({
           fill={ann.color}
           opacity={fillOpacity}
         />
-        {edge(xa)}
-        {edge(xb)}
+        {edges && edge(xa)}
+        {edges && edge(xb)}
         {showHandles && (
           <>
             <Pill

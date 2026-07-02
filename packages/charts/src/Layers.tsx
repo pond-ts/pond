@@ -20,7 +20,7 @@ import { drawGrid } from './grid.js';
 import { cursorParts } from './tracker.js';
 import { resolveSelection } from './select.js';
 import { panRange, zoomRange } from './viewport.js';
-import { flagChipStyle, flagChipX, axisPillX } from './chip.js';
+import { flagChipStyle, flagChipX, axisPillX, axisPillStyle } from './chip.js';
 import {
   ContainerContext,
   LayersContext,
@@ -777,12 +777,16 @@ export function Layers({ children }: LayersProps) {
               />
             ))}
         </svg>
-        {/* Cursor-time chip atop the readout (opt-in); the `!== null` checks gate
-            to an in-bounds, active cursor and narrow the types. */}
+        {/* Cursor time atop the readout (opt-in); the `!== null` checks gate to
+            an in-bounds, active cursor and narrow the types. The time is **plain
+            text, no chip background** — only the value flags below it are filled
+            panels. */}
         {showTime && timeX !== null && cursorTime !== null && (
           <div
             style={{
               ...chipStyle,
+              background: 'transparent',
+              padding: 0,
               top: `${flagTop}px`,
               left:
                 timeX > plotWidth * LABEL_FLIP_FRACTION
@@ -838,11 +842,10 @@ export function Layers({ children }: LayersProps) {
               <div
                 key={`ytag-${i}`}
                 style={{
-                  ...chipStyle,
+                  ...axisPillStyle(container.theme, s.color),
                   top: `${top}px`,
                   transform: 'translateY(-50%)',
                   ...axisPillX(s.side, plotWidth),
-                  color: s.color,
                 }}
               >
                 {s.format(s.value)}

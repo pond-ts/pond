@@ -159,3 +159,72 @@ describe('orderRegion — edge resize never inverts (pivot clamp)', () => {
     expect(orderRegion(5, 20)).toEqual({ from: 5, to: 20 }); // dragged the other way
   });
 });
+
+/** Render one annotation in the minimal container and return its `container`. */
+function renderAnn(child: ReactNode) {
+  return render(
+    <ChartContainer range={[0, 4]} width={300} showAxis={false}>
+      <ChartRow height={120}>
+        <YAxis id="a" min={0} max={100} />
+        <Layers>
+          <LineChart series={series} column="v" axis="a" />
+          {child}
+        </Layers>
+      </ChartRow>
+    </ChartContainer>,
+  );
+}
+
+describe('Baseline label placement', () => {
+  const chip = (child: ReactNode) => {
+    const { container, unmount } = renderAnn(child);
+    const el = within(container).queryByText('lvl') as HTMLElement | null;
+    const style = el
+      ? {
+          left: el.style.left,
+          right: el.style.right,
+          transform: el.style.transform,
+        }
+      : null;
+    unmount();
+    return style;
+  };
+
+  it('labelSide right/left anchors the chip to that edge', () => {
+    expect(
+      chip(<Baseline value={50} axis="a" label="lvl" labelSide="right" />),
+    ).toEqual({
+      left: '',
+      right: '2px',
+      transform: 'translateY(-50%)',
+    });
+    expect(chip(<Baseline value={50} axis="a" label="lvl" />)).toEqual({
+      left: '2px',
+      right: '',
+      transform: 'translateY(-50%)',
+    });
+  });
+
+  it('labelPosition="above" sits the chip on top of the line (-100%)', () => {
+    expect(
+      chip(<Baseline value={50} axis="a" label="lvl" labelPosition="above" />)
+        ?.transform,
+    ).toBe('translateY(-100%)');
+  });
+});
+
+describe('Region edges', () => {
+  const edgeCount = (child: ReactNode) => {
+    const { container, unmount } = renderAnn(child);
+    const n = container.querySelectorAll('svg line').length;
+    unmount();
+    return n;
+  };
+
+  it('draws two side outlines by default, none with edges={false}', () => {
+    expect(edgeCount(<Region from={1} to={3} label={false} />)).toBe(2);
+    expect(
+      edgeCount(<Region from={1} to={3} label={false} edges={false} />),
+    ).toBe(0);
+  });
+});

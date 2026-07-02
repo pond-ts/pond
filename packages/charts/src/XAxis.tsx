@@ -1,7 +1,7 @@
 import { Fragment, useContext } from 'react';
 import type { ScaleLinear, ScaleTime } from 'd3-scale';
 import { ContainerContext } from './context.js';
-import { flagChipStyle } from './chip.js';
+import { axisPillStyle } from './chip.js';
 import {
   resolveAxisFormat,
   resolveTimeFormat,
@@ -115,17 +115,15 @@ export function XAxis({
           );
 
   // Marker annotations that opted into an axis indicator (`<Marker indicator>`)
-  // pin their value to this shared x-axis — a pill at `at`, in the annotation
-  // colour, reading like a tick. Skipped when off-plot.
+  // pin their **time** to this shared x-axis — a pill at `at`, in the annotation
+  // colour, reading like a tick. An indicator always shows the axis coordinate
+  // (the formatted `at`), never the marker's custom label (that stays the in-plot
+  // chip). Skipped when off-plot.
   const markerTags = container.annotations
     .filter((a) => a.indicator && a.kind === 'marker' && a.xs[0] !== undefined)
     .map((a) => {
       const at = a.xs[0]!;
-      // Echo a custom label if the marker set one; otherwise the formatted
-      // value (also what an omitted label registered). `label===''` is the
-      // `label={false}` case — axis pill only, so show the value.
-      const text = a.label !== '' ? a.label : fmt(at);
-      return { id: a.id ?? `marker-at-${at}`, x: xScale(at), text };
+      return { id: a.id ?? `marker-at-${at}`, x: xScale(at), text: fmt(at) };
     })
     .filter((t) => t.x >= 0 && t.x <= plotWidth);
 
@@ -138,6 +136,9 @@ export function XAxis({
 
   const stripHeight = height ?? TICK_STRIP + (label ? LABEL_STRIP : 0);
   const onTop = side === 'top';
+  // Axis pills (marker / crosshair) sit at the same offset as the tick labels so
+  // they line up with their tick-label neighbours (matches `labelOffset` below).
+  const pillOffset = align === 'right' ? 2 : 6;
 
   return (
     <div
@@ -216,28 +217,41 @@ export function XAxis({
         </div>
       )}
       {markerTags.map((t) => (
-        <div
-          key={t.id}
-          style={{
-            ...flagChipStyle(theme),
-            left: `${t.x}px`,
-            transform: 'translateX(-50%)',
-            [onTop ? 'bottom' : 'top']: '2px',
-            color: annotationColor,
-            zIndex: 2,
-          }}
-        >
-          {t.text}
-        </div>
+        <Fragment key={t.id}>
+          {/* Connector bridging the marker line (which ends at the plot's bottom
+              edge = this strip's plot-facing edge) down to its pill, so the two
+              read as one. */}
+          <div
+            style={{
+              position: 'absolute',
+              left: `${t.x}px`,
+              [onTop ? 'bottom' : 'top']: 0,
+              width: '1px',
+              height: `${pillOffset}px`,
+              background: annotationColor,
+              zIndex: 2,
+            }}
+          />
+          <div
+            style={{
+              ...axisPillStyle(theme, annotationColor),
+              left: `${t.x}px`,
+              transform: 'translateX(-50%)',
+              [onTop ? 'bottom' : 'top']: `${pillOffset}px`,
+              zIndex: 2,
+            }}
+          >
+            {t.text}
+          </div>
+        </Fragment>
       ))}
       {showCursorTag && (
         <div
           style={{
-            ...flagChipStyle(theme),
+            ...axisPillStyle(theme, cursorColor),
             left: `${cursorX}px`,
             transform: 'translateX(-50%)',
-            [onTop ? 'bottom' : 'top']: '2px',
-            color: cursorColor,
+            [onTop ? 'bottom' : 'top']: `${pillOffset}px`,
             zIndex: 3,
           }}
         >
