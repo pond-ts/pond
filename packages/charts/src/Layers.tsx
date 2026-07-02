@@ -777,12 +777,16 @@ export function Layers({ children }: LayersProps) {
               />
             ))}
         </svg>
-        {/* Cursor-time chip atop the readout (opt-in); the `!== null` checks gate
-            to an in-bounds, active cursor and narrow the types. */}
+        {/* Cursor time atop the readout (opt-in); the `!== null` checks gate to
+            an in-bounds, active cursor and narrow the types. The time is **plain
+            text, no chip background** — only the value flags below it are filled
+            panels. */}
         {showTime && timeX !== null && cursorTime !== null && (
           <div
             style={{
               ...chipStyle,
+              background: 'transparent',
+              padding: 0,
               top: `${flagTop}px`,
               left:
                 timeX > plotWidth * LABEL_FLIP_FRACTION
