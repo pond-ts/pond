@@ -21,7 +21,7 @@ export const DEFAULT_CURSOR_MODE: CursorMode = 'line';
 export function cursorParts(mode: CursorMode): {
   readonly line: boolean;
   readonly dots: boolean;
-  readonly chip: 'none' | 'inline' | 'flag';
+  readonly chip: 'none' | 'inline' | 'flag' | 'axis';
 } {
   switch (mode) {
     case 'line':
@@ -32,6 +32,10 @@ export function cursorParts(mode: CursorMode): {
       return { line: false, dots: true, chip: 'inline' };
     case 'flag':
       return { line: false, dots: true, chip: 'flag' };
+    case 'crosshair':
+      // Vertical line + per-series dots, values pinned to the axes (y pills in
+      // `Layers`, the x-time pill on `<XAxis>`).
+      return { line: true, dots: true, chip: 'axis' };
     case 'none':
       return { line: false, dots: false, chip: 'none' };
   }

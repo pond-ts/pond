@@ -221,3 +221,40 @@ describe('YAxisIndicator isolation', () => {
     expect(chartRenders).toBe(rendersAfterMount);
   });
 });
+
+/**
+ * The crosshair CursorMode pins each series' value to its y-axis (an on-axis
+ * pill). Driven by a controlled `trackerPosition` (a time) so the cursor is
+ * deterministic — no fragile pointer-event / layout simulation.
+ */
+describe("cursor='crosshair'", () => {
+  const crosshairAt = (mode: 'crosshair' | 'line') =>
+    render(
+      <ChartContainer
+        range={[0, 4]}
+        width={300}
+        cursor={mode}
+        trackerPosition={2}
+        showAxis={false}
+      >
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={100} side="right" />
+          <Layers>
+            <LineChart series={series} column="v" axis="a" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+
+  it('pins the series value at the cursor to the y-axis', () => {
+    // series at t=2 ⇒ v=9; axis [0,100] has no "9" tick, so the pill is the
+    // only "9" on screen.
+    const { container } = crosshairAt('crosshair');
+    expect(within(container).queryByText('9')).not.toBeNull();
+  });
+
+  it("'line' mode draws no value pill (control)", () => {
+    const { container } = crosshairAt('line');
+    expect(within(container).queryByText('9')).toBeNull();
+  });
+});

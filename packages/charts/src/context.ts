@@ -384,8 +384,18 @@ export interface TrackerInfo {
  * - `inline` — dots + a value chip beside each.
  * - `flag` — dots + value flags (a staffed flag from each point; the staff
  *   geometry lands in a later phase — for now flags stack at the top).
+ * - `crosshair` — the synced vertical line + a dot on each series, with each
+ *   series' value pinned to its y-axis edge (an on-axis pill) and the cursor
+ *   time pinned to the x-axis. The ChartIQ / trading-terminal readout. Values
+ *   snap to the series (the axis pills read like ticks), not the raw mouse Y.
  */
-export type CursorMode = 'none' | 'line' | 'point' | 'inline' | 'flag';
+export type CursorMode =
+  | 'none'
+  | 'line'
+  | 'point'
+  | 'inline'
+  | 'flag'
+  | 'crosshair';
 
 /** A registered layer plus the axis id it draws against. */
 export interface LayerEntry {
@@ -450,6 +460,9 @@ export interface RowFrame {
    *  that set `<YAxis ticks>` — so `Layers` draws gridlines at the same positions
    *  the axis labels. Absent id ⇒ that axis auto-picks. */
   readonly tickValues: ReadonlyMap<string, readonly number[]>;
+  /** The side each axis sits on, keyed by id — so an axis-edge overlay (the
+   *  crosshair value pills) hugs the correct gutter. */
+  readonly axisSides: ReadonlyMap<string, 'left' | 'right'>;
   /** This row's cursor-mode override, or `undefined` to inherit the container's
    *  default ({@link ContainerFrame.cursor}). */
   readonly cursor: CursorMode | undefined;
