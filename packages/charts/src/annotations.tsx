@@ -504,10 +504,11 @@ export interface MarkerProps {
   /** Make the marker **editable** (in edit mode): dragging its line reports the
    *  new `at` (controlled — wire it back to `at`). The whole line moves. */
   onChange?: (at: number) => void;
-  /** Also pin this marker's value to the **x-axis** as an on-axis pill (drawn by
+  /** Also pin this marker to the **x-axis** as an on-axis pill (drawn by
    *  `<XAxis>` at `at`, in the annotation colour) — the axis-edge counterpart of
-   *  the near-line chip. Default `false`. Independent of `label` (which controls
-   *  the in-plot chip); set `label={false}` for the axis pill alone. */
+   *  the near-line chip. Default `false`. The pill shows the custom `label` if
+   *  one is set, else the formatted `at` value; `label={false}` gives the axis
+   *  pill (showing the value) alone, with no in-plot chip. */
   indicator?: boolean;
 }
 
@@ -651,10 +652,11 @@ export interface BaselineProps {
   /** Make the baseline **editable** (in edit mode): dragging it vertically reports
    *  the new `value` (controlled — wire it back to `value`). */
   onChange?: (value: number) => void;
-  /** Also pin this baseline's value to its **y-axis** as an on-axis pill (in the
+  /** Also pin this baseline to its **y-axis** as an on-axis pill (in the
    *  annotation colour) — the axis-edge counterpart of the near-line chip.
-   *  Default `false`. Independent of `label` (the in-line chip); set
-   *  `label={false}` for the axis pill alone. */
+   *  Default `false`. The pill shows the custom `label` if one is set, else the
+   *  formatted `value`; `label={false}` gives the axis pill (showing the value)
+   *  alone, with no in-plot chip. */
   indicator?: boolean;
 }
 
@@ -790,7 +792,13 @@ export function Baseline({
                 ...axisPillX(row.axisSides.get(axisId) ?? 'left', w),
               }}
             >
-              {fmt ? fmt(value) : String(value)}
+              {/* Echo a custom label if set, else the formatted value (also the
+                  `label={false}` axis-pill-only case). */}
+              {typeof label === 'string' && label !== ''
+                ? label
+                : fmt
+                  ? fmt(value)
+                  : String(value)}
             </div>
           );
         })()}

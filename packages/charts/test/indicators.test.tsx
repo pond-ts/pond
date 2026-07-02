@@ -389,4 +389,58 @@ describe('annotation indicators', () => {
     );
     expect(chips(container).length).toBe(0);
   });
+
+  it('the axis pill echoes a custom label, else the formatted value', () => {
+    const withLabel = render(
+      <ChartContainer range={[0, 4]} width={300} timeFormat={() => 'VAL'}>
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={100} />
+          <Layers>
+            <LineChart series={series} column="v" axis="a" />
+            <Marker at={2} label="Lap 3" indicator />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    // Custom label wins over the value formatter.
+    const labelled = chips(withLabel.container).find((d) =>
+      (d.style.transform ?? '').includes('X'),
+    );
+    expect(labelled?.textContent).toBe('Lap 3');
+    withLabel.unmount();
+
+    // Omitted label ⇒ the formatted value (the sentinel timeFormat).
+    const noLabel = render(
+      <ChartContainer range={[0, 4]} width={300} timeFormat={() => 'VAL'}>
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={100} />
+          <Layers>
+            <LineChart series={series} column="v" axis="a" />
+            <Marker at={2} indicator />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const valued = chips(noLabel.container).find((d) =>
+      (d.style.transform ?? '').includes('X'),
+    );
+    expect(valued?.textContent).toBe('VAL');
+    noLabel.unmount();
+  });
+
+  it('an off-plot marker draws no x-axis pill', () => {
+    const { container } = render(
+      <ChartContainer range={[0, 4]} width={300} timeFormat={() => 'M!'}>
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={100} />
+          <Layers>
+            <LineChart series={series} column="v" axis="a" />
+            {/* at=99 is far past the [0,4] range ⇒ x > plotWidth ⇒ filtered out */}
+            <Marker at={99} indicator label={false} />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    expect(chips(container).length).toBe(0);
+  });
 });

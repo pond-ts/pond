@@ -93,18 +93,7 @@ export function XAxis({
     cursorX <= plotWidth;
   const cursorColor = theme.cursor ?? theme.axis.label;
 
-  // Marker annotations that opted into an axis indicator (`<Marker indicator>`)
-  // pin their value to this shared x-axis — a pill at `at`, in the annotation
-  // colour, reading like a tick. Skipped when off-plot.
   const annotationColor = theme.annotation?.color ?? '#0d9488';
-  const markerTags = container.annotations
-    .filter((a) => a.indicator && a.kind === 'marker' && a.xs[0] !== undefined)
-    .map((a, i) => ({
-      id: a.id ?? `marker-${i}`,
-      at: a.xs[0]!,
-      x: xScale(a.xs[0]!),
-    }))
-    .filter((t) => t.x >= 0 && t.x <= plotWidth);
 
   // Tick formatter: an explicit `format` is resolved against the axis kind
   // (a time specifier through the time scale, a number specifier through the
@@ -124,6 +113,21 @@ export function XAxis({
             TICK_COUNT,
             format,
           );
+
+  // Marker annotations that opted into an axis indicator (`<Marker indicator>`)
+  // pin their value to this shared x-axis — a pill at `at`, in the annotation
+  // colour, reading like a tick. Skipped when off-plot.
+  const markerTags = container.annotations
+    .filter((a) => a.indicator && a.kind === 'marker' && a.xs[0] !== undefined)
+    .map((a) => {
+      const at = a.xs[0]!;
+      // Echo a custom label if the marker set one; otherwise the formatted
+      // value (also what an omitted label registered). `label===''` is the
+      // `label={false}` case — axis pill only, so show the value.
+      const text = a.label !== '' ? a.label : fmt(at);
+      return { id: a.id ?? `marker-at-${at}`, x: xScale(at), text };
+    })
+    .filter((t) => t.x >= 0 && t.x <= plotWidth);
 
   const placed: PlacedTick[] = customTicks
     ? customTicks.map((t) => ({ x: xScale(t.at), label: t.label }))
@@ -223,7 +227,7 @@ export function XAxis({
             zIndex: 2,
           }}
         >
-          {fmt(t.at)}
+          {t.text}
         </div>
       ))}
       {showCursorTag && (
