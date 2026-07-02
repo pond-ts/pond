@@ -7,6 +7,7 @@ import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
 import { LineChart } from '../src/LineChart.js';
 import { YAxis } from '../src/YAxis.js';
+import { Baseline, Marker } from '../src/annotations.js';
 import { YAxisIndicator, createLiveValue } from '../src/indicators.js';
 
 afterEach(cleanup);
@@ -328,5 +329,64 @@ describe("cursor='crosshair'", () => {
     expect(lPill?.style.left).toBe('');
     expect(rPill?.style.left).not.toBe('');
     expect(rPill?.style.right).toBe('');
+  });
+});
+
+/** Item 3: an `indicator` opt-in on Baseline (y-axis pill) and Marker (x-axis
+ *  pill), reusing the same on-axis placement. */
+describe('annotation indicators', () => {
+  const chips = (c: HTMLElement) =>
+    Array.from(c.querySelectorAll('div')).filter(
+      (d) => d.style.position === 'absolute' && d.style.borderRadius === '3px',
+    );
+
+  it('Baseline indicator draws an on-axis y-pill; without it, none', () => {
+    // label={false} suppresses the near-line chip, so the only chip is the pill.
+    const withInd = renderInd(
+      <Baseline value={37} axis="a" indicator label={false} />,
+    );
+    const pill = chips(withInd.container).find((d) => d.textContent === '37');
+    expect(pill).toBeDefined();
+    expect(pill!.style.zIndex).toBe('3'); // on-axis (lifted over the gutter)
+    withInd.unmount();
+
+    const without = renderInd(<Baseline value={37} axis="a" label={false} />);
+    expect(chips(without.container).length).toBe(0);
+    without.unmount();
+  });
+
+  it('Marker indicator draws an x-axis pill on <XAxis>', () => {
+    // Sentinel timeFormat ⇒ deterministic text; the x-pill is the chip with a
+    // translateX transform (showAxis default true renders the time axis).
+    const { container } = render(
+      <ChartContainer range={[0, 4]} width={300} timeFormat={() => 'M!'}>
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={100} />
+          <Layers>
+            <LineChart series={series} column="v" axis="a" />
+            <Marker at={2} indicator label={false} />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const xPill = chips(container).find((d) =>
+      (d.style.transform ?? '').includes('X'),
+    );
+    expect(xPill?.textContent).toBe('M!');
+  });
+
+  it('Marker without indicator draws no x-axis pill', () => {
+    const { container } = render(
+      <ChartContainer range={[0, 4]} width={300} timeFormat={() => 'M!'}>
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={100} />
+          <Layers>
+            <LineChart series={series} column="v" axis="a" />
+            <Marker at={2} label={false} />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    expect(chips(container).length).toBe(0);
   });
 });

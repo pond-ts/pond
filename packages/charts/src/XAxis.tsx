@@ -93,6 +93,19 @@ export function XAxis({
     cursorX <= plotWidth;
   const cursorColor = theme.cursor ?? theme.axis.label;
 
+  // Marker annotations that opted into an axis indicator (`<Marker indicator>`)
+  // pin their value to this shared x-axis — a pill at `at`, in the annotation
+  // colour, reading like a tick. Skipped when off-plot.
+  const annotationColor = theme.annotation?.color ?? '#0d9488';
+  const markerTags = container.annotations
+    .filter((a) => a.indicator && a.kind === 'marker' && a.xs[0] !== undefined)
+    .map((a, i) => ({
+      id: a.id ?? `marker-${i}`,
+      at: a.xs[0]!,
+      x: xScale(a.xs[0]!),
+    }))
+    .filter((t) => t.x >= 0 && t.x <= plotWidth);
+
   // Tick formatter: an explicit `format` is resolved against the axis kind
   // (a time specifier through the time scale, a number specifier through the
   // value scale); otherwise the container's shared formatter — the one the
@@ -198,6 +211,21 @@ export function XAxis({
           {label}
         </div>
       )}
+      {markerTags.map((t) => (
+        <div
+          key={t.id}
+          style={{
+            ...flagChipStyle(theme),
+            left: `${t.x}px`,
+            transform: 'translateX(-50%)',
+            [onTop ? 'bottom' : 'top']: '2px',
+            color: annotationColor,
+            zIndex: 2,
+          }}
+        >
+          {fmt(t.at)}
+        </div>
+      ))}
       {showCursorTag && (
         <div
           style={{

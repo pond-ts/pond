@@ -115,6 +115,7 @@ function spec(
     selected: false,
     editing: false,
     selectable: true,
+    indicator: false,
     ...over,
   };
 }

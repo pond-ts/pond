@@ -230,6 +230,10 @@ export interface AnnotationSpec {
   /** The mark's resolved label text — used to pack overlapping top-flag labels
    *  (markers + regions) into stacked vertical lanes. */
   readonly label: string;
+  /** Whether this mark shows its value as an **axis-edge pill** — a marker on the
+   *  shared x-axis (drawn by `<XAxis>` at its `at`), a baseline on its y-axis
+   *  (drawn in place). Regions never set it. */
+  readonly indicator: boolean;
 }
 
 /**

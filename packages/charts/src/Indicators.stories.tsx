@@ -6,6 +6,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
+import { Baseline, Marker } from './annotations.js';
 import { defaultTheme } from './theme.js';
 import { YAxisIndicator, createLiveValue } from './indicators.js';
 
@@ -241,4 +242,22 @@ export const Crosshair: Story = {
       </ChartContainer>
     );
   },
+};
+
+/** `<Baseline indicator>` pins its value to the y-axis; `<Marker indicator>`
+ *  pins its time to the x-axis — both as on-axis pills in the annotation colour
+ *  (here with `label={false}` so only the axis pill shows, no in-plot chip). */
+export const AnnotationIndicators: Story = {
+  render: () => (
+    <ChartContainer range={RANGE} width={W}>
+      <ChartRow height={220}>
+        <Layers>
+          <LineChart series={priceSeries()} column="price" axis="usd" />
+          <Baseline value={200} axis="usd" indicator label={false} />
+          <Marker at={BASE + 45 * STEP} indicator label={false} />
+        </Layers>
+        <YAxis id="usd" side="right" format=",.0f" />
+      </ChartRow>
+    </ChartContainer>
+  ),
 };
