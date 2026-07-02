@@ -479,10 +479,14 @@ export function Layers({ children }: LayersProps) {
   // The time is shared across rows (one cursor, one time), so it shows **once**,
   // atop the first row — not repeated per row. (Gating it here also drops the
   // top-of-stack space reservation on the other rows, see `flagBase`.)
+  // Crosshair (`chip: 'axis'`) is excluded: it pins the time to the shared x-axis
+  // pill (`<XAxis>`), so a per-row chip here would double it (and land wrong on a
+  // stacked row).
   const showTime =
     showCursorTime &&
     cursorTime !== null &&
     (parts.line || parts.dots) &&
+    parts.chip !== 'axis' &&
     row.isFirstRow;
   // Flag geometry: each value flies as a flag from the top of its own staff — the
   // chip's top sits at `flagBase` (just below the time chip when shown) and the

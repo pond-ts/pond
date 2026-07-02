@@ -241,7 +241,7 @@ export function XAxis({
             zIndex: 3,
           }}
         >
-          {formatTime(+xScale.invert(cursorX!))}
+          {fmt(+xScale.invert(cursorX!))}
         </div>
       )}
     </div>
