@@ -74,7 +74,9 @@ export function cssVarTheme(
 /**
  * Deep-merge `partial` over `base`: recurse into plain objects, replace at
  * leaves and arrays, and **skip `undefined`** in `partial` (so an unresolved
- * var keeps the base value). Returns a fresh object — never mutates `base`.
+ * var keeps the base value). Never mutates `base`; each merged object level is
+ * freshly spread, and untouched subtrees are shared by reference (safe — a
+ * `ChartTheme` is read-only).
  */
 function deepMerge(base: unknown, partial: unknown): unknown {
   if (partial === undefined) return base;
@@ -92,6 +94,9 @@ function deepMerge(base: unknown, partial: unknown): unknown {
   }
   const out: Record<string, unknown> = { ...(base as Record<string, unknown>) };
   for (const key of Object.keys(partial as Record<string, unknown>)) {
+    // Never let a resolver's key rewrite the prototype chain.
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype')
+      continue;
     const pv = (partial as Record<string, unknown>)[key];
     if (pv === undefined) continue;
     out[key] = deepMerge((base as Record<string, unknown>)[key], pv);

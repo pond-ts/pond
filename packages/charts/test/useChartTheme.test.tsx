@@ -57,4 +57,22 @@ describe('useChartTheme', () => {
     // a new reference — the repaint signal ChartContainer keys on
     expect(result.current).not.toBe(first);
   });
+
+  it('keeps the same reference when a watched mutation does not change the resolved theme', async () => {
+    stubThemedVars();
+    document.documentElement.setAttribute('data-theme', 'light');
+    const { result } = renderHook(() => useChartTheme(defaultTheme, map));
+    const first = result.current;
+
+    // A watched attribute (class) changes, but --accent still resolves to LIGHT
+    // → no new theme, so no repaint.
+    act(() => {
+      document.documentElement.setAttribute('class', 'scroll-locked');
+    });
+    // give the observer a tick to fire
+    await new Promise((r) => setTimeout(r, 0));
+    expect(result.current).toBe(first);
+
+    document.documentElement.removeAttribute('class');
+  });
 });
