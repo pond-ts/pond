@@ -52,6 +52,10 @@ export type { RegionProps, BaselineProps, MarkerProps } from './annotations.js';
 // The vocabulary a consumer's create toolbar needs: the armed-tool kind and the
 // shape `onCreate` reports (`<ChartContainer creating={kind} onCreate={…}>`).
 export type { AnnotationKind, CreateSpec } from './context.js';
+// Axis indicators — a value pill pinned to an axis edge (the ChartIQ live tag).
+// `createLiveValue` is the high-frequency, isolated-repaint update path.
+export { YAxisIndicator, createLiveValue } from './indicators.js';
+export type { YAxisIndicatorProps, LiveValue } from './indicators.js';
 
 export {
   fromTimeSeries,
