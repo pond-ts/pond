@@ -221,3 +221,112 @@ describe('YAxisIndicator isolation', () => {
     expect(chartRenders).toBe(rendersAfterMount);
   });
 });
+
+/**
+ * The crosshair CursorMode pins each series' value to its y-axis (an on-axis
+ * pill). Driven by a controlled `trackerPosition` (a time) so the cursor is
+ * deterministic — no fragile pointer-event / layout simulation.
+ */
+describe("cursor='crosshair'", () => {
+  const crosshairAt = (mode: 'crosshair' | 'line') =>
+    render(
+      <ChartContainer
+        range={[0, 4]}
+        width={300}
+        cursor={mode}
+        trackerPosition={2}
+        showAxis={false}
+      >
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={100} side="right" />
+          <Layers>
+            <LineChart series={series} column="v" axis="a" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+
+  it('pins the series value at the cursor to the y-axis', () => {
+    // series at t=2 ⇒ v=9; axis [0,100] has no "9" tick, so the pill is the
+    // only "9" on screen.
+    const { container } = crosshairAt('crosshair');
+    expect(within(container).queryByText('9')).not.toBeNull();
+  });
+
+  it("'line' mode draws no value pill (control)", () => {
+    const { container } = crosshairAt('line');
+    expect(within(container).queryByText('9')).toBeNull();
+  });
+
+  it('renders the x-axis time pill (with <XAxis> present)', () => {
+    // A sentinel timeFormat so the x-pill text is deterministic; the x-pill is
+    // the chip with a `translateX` transform (y-pills use `translateY`).
+    const { container } = render(
+      <ChartContainer
+        range={[0, 4]}
+        width={300}
+        cursor="crosshair"
+        trackerPosition={2}
+        timeFormat={() => 'T!'}
+      >
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={100} side="right" />
+          <Layers>
+            <LineChart series={series} column="v" axis="a" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const chips = Array.from(container.querySelectorAll('div')).filter(
+      (d) => d.style.position === 'absolute' && d.style.borderRadius === '3px',
+    );
+    const xPill = chips.find((d) => (d.style.transform ?? '').includes('X'));
+    expect(xPill?.textContent).toBe('T!');
+  });
+
+  it('places each series value pill on its own axis side (dual axis)', () => {
+    const two = new TimeSeries({
+      name: 'two',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'l', kind: 'number' },
+        { name: 'r', kind: 'number' },
+      ] as const,
+      rows: [
+        [0, 10, 80],
+        [2, 30, 60],
+        [4, 20, 90],
+      ] as [number, number, number][],
+    });
+    const { container } = render(
+      <ChartContainer
+        range={[0, 4]}
+        width={300}
+        cursor="crosshair"
+        trackerPosition={2}
+        showAxis={false}
+      >
+        <ChartRow height={120}>
+          <YAxis id="L" min={0} max={100} side="left" />
+          <Layers>
+            <LineChart series={two} column="l" axis="L" />
+            <LineChart series={two} column="r" axis="R" />
+          </Layers>
+          <YAxis id="R" min={0} max={100} side="right" />
+        </ChartRow>
+      </ChartContainer>,
+    );
+    // Left-axis series (l=30) pill hugs the left edge (`right:` set); right-axis
+    // series (r=60) pill hugs the right edge (`left:` set).
+    const chipFor = (text: string) =>
+      Array.from(container.querySelectorAll('div')).find(
+        (d) => d.style.borderRadius === '3px' && d.textContent === text,
+      ) as HTMLElement | undefined;
+    const lPill = chipFor('30');
+    const rPill = chipFor('60');
+    expect(lPill?.style.right).not.toBe('');
+    expect(lPill?.style.left).toBe('');
+    expect(rPill?.style.left).not.toBe('');
+    expect(rPill?.style.right).toBe('');
+  });
+});

@@ -20,7 +20,7 @@ import { drawGrid } from './grid.js';
 import { cursorParts } from './tracker.js';
 import { resolveSelection } from './select.js';
 import { panRange, zoomRange } from './viewport.js';
-import { flagChipStyle, flagChipX } from './chip.js';
+import { flagChipStyle, flagChipX, axisPillX } from './chip.js';
 import {
   ContainerContext,
   LayersContext,
@@ -83,7 +83,8 @@ export function Layers({ children }: LayersProps) {
 
   const background = container.theme.background;
   const { grid: gridColor, gridDash } = container.theme.axis;
-  const { layers, yScales, formats, defaultAxisId, tickValues } = row;
+  const { layers, yScales, formats, defaultAxisId, tickValues, axisSides } =
+    row;
   // x geometry is shared and lives on the container (uniform across rows).
   const { xScale, plotWidth } = container;
   const draw = useCallback(
@@ -164,6 +165,7 @@ export function Layers({ children }: LayersProps) {
       value: number;
       color: string;
       format: (v: number) => string;
+      side: 'left' | 'right';
     }[] = [];
     for (const entry of layers) {
       // A layer with a consolidated flag (BoxPlot) renders that, not per-sample
@@ -176,6 +178,8 @@ export function Layers({ children }: LayersProps) {
       // The chip uses this layer's axis formatter, so a readout value reads
       // exactly as the axis labels it.
       const fmt = formats.get(axisId) ?? String;
+      // Which gutter the crosshair value pill hugs (the axis's own side).
+      const side = axisSides.get(axisId) ?? 'left';
       for (const s of entry.layer.sampleAt(cursorTime)) {
         out.push({
           px: xScale(s.x),
@@ -183,6 +187,7 @@ export function Layers({ children }: LayersProps) {
           value: s.value,
           color: s.color,
           format: fmt,
+          side,
         });
       }
     }
@@ -192,6 +197,7 @@ export function Layers({ children }: LayersProps) {
     layers,
     yScales,
     formats,
+    axisSides,
     xScale,
     defaultAxisId,
     parts.dots,
@@ -737,6 +743,23 @@ export function Layers({ children }: LayersProps) {
                 />
               ) : null,
             )}
+          {/* Crosshair: a faint dashed connector from each dot to its axis
+              edge (the pole for the on-axis value pill). */}
+          {parts.chip === 'axis' &&
+            trackerSamples.map((s, i) => (
+              <line
+                key={`hconn-${i}`}
+                x1={s.side === 'right' ? Math.round(s.px) : 0}
+                y1={Math.round(s.py)}
+                x2={s.side === 'right' ? plotWidth : Math.round(s.px)}
+                y2={Math.round(s.py)}
+                stroke={s.color}
+                strokeWidth={1}
+                opacity={0.4}
+                strokeDasharray="3 3"
+                shapeRendering="crispEdges"
+              />
+            ))}
           {parts.dots &&
             trackerSamples.map((s, i) => (
               <circle
@@ -791,6 +814,30 @@ export function Layers({ children }: LayersProps) {
                   transform: 'translateY(-50%)',
                   left: flip ? undefined : `${s.px + 8}px`,
                   right: flip ? `${plotWidth - s.px + 8}px` : undefined,
+                  color: s.color,
+                }}
+              >
+                {s.format(s.value)}
+              </div>
+            );
+          })}
+        {/* Crosshair value pills: each series value pinned to its axis gutter
+            (on-axis, `zIndex` over the sibling axis column — the same placement
+            as YAxisIndicator's default), clamped inside the row. */}
+        {parts.chip === 'axis' &&
+          trackerSamples.map((s, i) => {
+            const top = Math.max(
+              flagLineHeight / 2,
+              Math.min(row.height - flagLineHeight / 2, s.py),
+            );
+            return (
+              <div
+                key={`ytag-${i}`}
+                style={{
+                  ...chipStyle,
+                  top: `${top}px`,
+                  transform: 'translateY(-50%)',
+                  ...axisPillX(s.side, plotWidth),
                   color: s.color,
                 }}
               >

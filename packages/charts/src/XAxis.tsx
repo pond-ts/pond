@@ -1,6 +1,7 @@
 import { Fragment, useContext } from 'react';
 import type { ScaleLinear, ScaleTime } from 'd3-scale';
 import { ContainerContext } from './context.js';
+import { flagChipStyle } from './chip.js';
 import {
   resolveAxisFormat,
   resolveTimeFormat,
@@ -79,6 +80,18 @@ export function XAxis({
     throw new Error('<XAxis> must be rendered inside a <ChartContainer>');
   }
   const { xScale, plotWidth, leftGutter, theme, formatTime, xKind } = container;
+
+  // The crosshair's x-time pill: when the container cursor is `'crosshair'` and a
+  // cursor is live in-bounds, pin the hovered time to this axis (covering the
+  // tick behind it), matching the on-axis y value pills the rows draw. Gated on
+  // the container default, so a per-row `cursor` override doesn't reach here.
+  const cursorX = container.cursorX;
+  const showCursorTag =
+    container.cursor === 'crosshair' &&
+    cursorX !== null &&
+    cursorX >= 0 &&
+    cursorX <= plotWidth;
+  const cursorColor = theme.cursor ?? theme.axis.label;
 
   // Tick formatter: an explicit `format` is resolved against the axis kind
   // (a time specifier through the time scale, a number specifier through the
@@ -183,6 +196,20 @@ export function XAxis({
           }}
         >
           {label}
+        </div>
+      )}
+      {showCursorTag && (
+        <div
+          style={{
+            ...flagChipStyle(theme),
+            left: `${cursorX}px`,
+            transform: 'translateX(-50%)',
+            [onTop ? 'bottom' : 'top']: '2px',
+            color: cursorColor,
+            zIndex: 3,
+          }}
+        >
+          {formatTime(+xScale.invert(cursorX!))}
         </div>
       )}
     </div>

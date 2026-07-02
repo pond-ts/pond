@@ -6,6 +6,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
+import { defaultTheme } from './theme.js';
 import { YAxisIndicator, createLiveValue } from './indicators.js';
 
 /**
@@ -183,5 +184,61 @@ export const DualLiveTags: Story = {
       );
     }
     return <Pair />;
+  },
+};
+
+/** Two series with a fast + slow line, for the crosshair. */
+function twoSeries() {
+  const rows: Array<[number, number, number]> = [];
+  for (let i = 0; i < N; i += 1) {
+    rows.push([
+      BASE + i * STEP,
+      185 + 30 * Math.sin(i / 10),
+      190 + 18 * Math.sin(i / 6 + 1),
+    ]);
+  }
+  return new TimeSeries({
+    name: 'pair',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'fast', kind: 'number' },
+      { name: 'slow', kind: 'number' },
+    ] as const,
+    rows,
+  });
+}
+
+/** `cursor="crosshair"` — hover the plot: the synced vertical line + a dot on
+ *  each series, each series' value pinned to the y-axis (an on-axis pill in the
+ *  series colour) and the hovered time pinned to the x-axis. The trading-terminal
+ *  readout. */
+const twoColorTheme = {
+  ...defaultTheme,
+  line: {
+    ...defaultTheme.line,
+    fast: { ...defaultTheme.line.default, color: '#4a90e2' },
+    slow: { ...defaultTheme.line.default, color: '#e5534b' },
+  },
+};
+
+export const Crosshair: Story = {
+  render: () => {
+    const s = twoSeries();
+    return (
+      <ChartContainer
+        range={RANGE}
+        width={W}
+        cursor="crosshair"
+        theme={twoColorTheme}
+      >
+        <ChartRow height={240}>
+          <Layers>
+            <LineChart series={s} column="fast" as="fast" axis="usd" />
+            <LineChart series={s} column="slow" as="slow" axis="usd" />
+          </Layers>
+          <YAxis id="usd" side="right" format=",.0f" />
+        </ChartRow>
+      </ChartContainer>
+    );
   },
 };

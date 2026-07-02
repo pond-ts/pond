@@ -249,6 +249,14 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
     return map;
   }, [effectiveAxes]);
 
+  // Which side each axis sits on — so an axis-edge overlay (the crosshair's
+  // value pills) hugs the correct gutter without re-deriving from the specs.
+  const axisSides = useMemo(() => {
+    const map = new Map<string, 'left' | 'right'>();
+    for (const ax of effectiveAxes) map.set(ax.id, ax.side);
+    return map;
+  }, [effectiveAxes]);
+
   const frame = useMemo<RowFrame>(
     () => ({
       height,
@@ -258,6 +266,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
       yScales,
       formats,
       tickValues,
+      axisSides,
       defaultAxisId,
       axisSlots,
       registerAxis,
@@ -274,6 +283,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
       yScales,
       formats,
       tickValues,
+      axisSides,
       defaultAxisId,
       axisSlots,
       registerAxis,

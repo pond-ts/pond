@@ -51,6 +51,13 @@ describe('cursorParts', () => {
       chip: 'flag',
     });
   });
+  it('crosshair — line + dots + on-axis value pills', () => {
+    expect(cursorParts('crosshair')).toEqual({
+      line: true,
+      dots: true,
+      chip: 'axis',
+    });
+  });
   it('none — nothing', () => {
     expect(cursorParts('none')).toEqual({
       line: false,
