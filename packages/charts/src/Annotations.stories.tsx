@@ -73,7 +73,7 @@ function rideByDistance() {
 }
 
 const meta = {
-  title: 'Charts/Annotations',
+  title: 'Charts/Annotations/Scenarios',
   parameters: { layout: 'centered' },
 } satisfies Meta;
 

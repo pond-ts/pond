@@ -16,14 +16,14 @@ import { story, waitForCanvasPaint } from './support.js';
  * the tracker without a large enough pixel diff to fail on its own).
  */
 const cases: ReadonlyArray<readonly [id: string, file: string]> = [
-  ['charts-annotations--in-context', 'annotations-in-context.png'],
-  ['charts-annotations--value-axis', 'annotations-value-axis.png'],
-  ['charts-annotations--selectable', 'annotations-selectable.png'],
-  ['charts-annotations--highlight', 'annotations-highlight.png'], // label-less inert bands
-  ['charts-annotations--editable', 'annotations-editable.png'],
-  ['charts-annotations--select', 'annotations-select.png'],
-  ['charts-annotations--multi-row', 'annotations-multi-row.png'],
-  ['charts-annotations--create', 'annotations-create.png'],
+  ['charts-annotations-scenarios--in-context', 'annotations-in-context.png'],
+  ['charts-annotations-scenarios--value-axis', 'annotations-value-axis.png'],
+  ['charts-annotations-scenarios--selectable', 'annotations-selectable.png'],
+  ['charts-annotations-scenarios--highlight', 'annotations-highlight.png'], // label-less inert bands
+  ['charts-annotations-scenarios--editable', 'annotations-editable.png'],
+  ['charts-annotations-scenarios--select', 'annotations-select.png'],
+  ['charts-annotations-scenarios--multi-row', 'annotations-multi-row.png'],
+  ['charts-annotations-scenarios--create', 'annotations-create.png'],
 ];
 
 test.describe('Annotations', () => {
