@@ -1,6 +1,6 @@
 import { useContext, useSyncExternalStore, type CSSProperties } from 'react';
 import { ContainerContext, RowContext } from './context.js';
-import { flagChipStyle } from './chip.js';
+import { flagChipStyle, axisPillX } from './chip.js';
 import { resolveAxisFormat, type AxisFormat } from './format.js';
 
 /**
@@ -199,9 +199,7 @@ export function YAxisIndicator({
   // hugs the plot's own `side` edge, clear of the axis.
   const horizontal: CSSProperties =
     placement === 'axis'
-      ? side === 'right'
-        ? { left: `${container.plotWidth}px`, zIndex: 3 }
-        : { right: `${container.plotWidth}px`, zIndex: 3 }
+      ? axisPillX(side, container.plotWidth)
       : { [side === 'right' ? 'right' : 'left']: '0px' };
 
   return (

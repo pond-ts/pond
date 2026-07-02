@@ -20,7 +20,7 @@ import { drawGrid } from './grid.js';
 import { cursorParts } from './tracker.js';
 import { resolveSelection } from './select.js';
 import { panRange, zoomRange } from './viewport.js';
-import { flagChipStyle, flagChipX } from './chip.js';
+import { flagChipStyle, flagChipX, axisPillX } from './chip.js';
 import {
   ContainerContext,
   LayersContext,
@@ -837,10 +837,7 @@ export function Layers({ children }: LayersProps) {
                   ...chipStyle,
                   top: `${top}px`,
                   transform: 'translateY(-50%)',
-                  ...(s.side === 'right'
-                    ? { left: `${plotWidth}px` }
-                    : { right: `${plotWidth}px` }),
-                  zIndex: 3,
+                  ...axisPillX(s.side, plotWidth),
                   color: s.color,
                 }}
               >

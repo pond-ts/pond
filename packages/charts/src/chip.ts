@@ -28,6 +28,23 @@ export function flagChipStyle(theme: ChartTheme): CSSProperties {
   };
 }
 
+/**
+ * CSS placing a value pill **on the axis gutter** at `side`: anchor its inner
+ * edge at the plot boundary (`plotWidth`) and let it overflow outward across the
+ * reserved gutter (the plot div doesn't clip), lifted with `zIndex` above the
+ * sibling axis column (rendered later in the row) so it covers the tick behind
+ * it. Shared by {@link YAxisIndicator}'s `placement='axis'` and the crosshair
+ * cursor's per-series value pills, so both sit identically on the axis.
+ */
+export function axisPillX(
+  side: 'left' | 'right',
+  plotWidth: number,
+): CSSProperties {
+  return side === 'right'
+    ? { left: `${plotWidth}px`, zIndex: 3 }
+    : { right: `${plotWidth}px`, zIndex: 3 };
+}
+
 /** Gap (px) between a flag chip and its pole — the cursor staff or an annotation's
  *  line — so the chip floats just beside the pole rather than sitting on it. */
 const FLAG_GAP = 4;
