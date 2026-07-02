@@ -142,6 +142,60 @@ describe('drawLine', () => {
     ).toEqual([2.5]);
   });
 
+  it('leaves the stroke solid — never touches setLineDash — for a style without a dash', () => {
+    const { ctx, calls } = recordingContext();
+    drawLine(ctx, cs([0, 1, 2], [5, 6, 7]), identity, identity, style);
+    expect(calls.some((c) => c.name === 'setLineDash')).toBe(false);
+  });
+
+  it('dashes the stroke with the style pattern, then resets to solid', () => {
+    const { ctx, calls } = recordingContext();
+    drawLine(ctx, cs([0, 1, 2], [5, 6, 7]), identity, identity, {
+      color: '#000',
+      width: 1,
+      dash: [6, 4],
+    });
+    const dashCalls = calls.filter((c) => c.name === 'setLineDash');
+    // set the pattern for the stroke, then reset to [] so it can't leak on.
+    expect(dashCalls.map((c) => c.args)).toEqual([[[6, 4]], [[]]]);
+    // the pattern is applied before the stroke, the reset after it.
+    const order = calls
+      .filter((c) => c.name === 'setLineDash' || c.name === 'stroke')
+      .map((c) => c.name);
+    expect(order).toEqual(['setLineDash', 'stroke', 'setLineDash']);
+  });
+
+  it('does not treat an empty dash array as a dash (stays solid)', () => {
+    const { ctx, calls } = recordingContext();
+    drawLine(ctx, cs([0, 1], [1, 2]), identity, identity, {
+      color: '#000',
+      width: 1,
+      dash: [],
+    });
+    expect(calls.some((c) => c.name === 'setLineDash')).toBe(false);
+  });
+
+  it('resets the series dash before the gap-bridge overlay runs (dash + gaps:dashed)', () => {
+    const { ctx, calls } = recordingContext();
+    // A dashed series style AND an inferred dashed gap bridge over an interior
+    // gap — the exact interaction the post-stroke reset guards. The series dash
+    // ([6,4]) must be reset ([]) *before* the bridge sets its own dash ([4,4]),
+    // so the two dashings don't bleed together and nothing leaks past the layer.
+    drawLine(
+      ctx,
+      cs([0, 1, 2, 3], [5, 6, NaN, 8]),
+      identity,
+      flipScale(),
+      { color: '#000', width: 1, dash: [6, 4] },
+      resolveCurve('linear'),
+      'dashed',
+    );
+    const dashSeq = calls
+      .filter((c) => c.name === 'setLineDash')
+      .map((c) => c.args[0]);
+    expect(dashSeq).toEqual([[6, 4], [], [4, 4]]);
+  });
+
   it('draws a curved path (bezier ops) when given a non-linear curve', () => {
     const { ctx, calls } = recordingContext();
     drawLine(

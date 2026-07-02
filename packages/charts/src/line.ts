@@ -93,7 +93,18 @@ export function drawLine(
   gen(ys);
   ctx.strokeStyle = style.color;
   ctx.lineWidth = style.width;
-  ctx.stroke();
+  // Per-series dash (a modeled/forecast line reads dashed). Applied only when
+  // set — a solid line never touches `setLineDash` — then reset to solid right
+  // after the stroke so it can't leak into the gap-bridge overlay below (which
+  // sets its own dash) or the next layer drawn on this context.
+  const dash = style.dash;
+  if (dash && dash.length > 0) {
+    ctx.setLineDash(dash.slice());
+    ctx.stroke();
+    ctx.setLineDash([]);
+  } else {
+    ctx.stroke();
+  }
 
   // Overlay bridges for the inferred-gap modes. `dashed` / `step` are faint
   // dashed connectors (gapConnectorOpacity); only `fade` drops to the axis floor.
