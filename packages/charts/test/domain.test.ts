@@ -59,4 +59,16 @@ describe('resolveYDomain', () => {
     // max-only, data below the max: lo fits the data, max honoured.
     expect(resolveYDomain(undefined, 5, [[1, 3]])).toEqual([1, 5]);
   });
+
+  it('pads the resolved domain outward by pad × span on each side', () => {
+    // explicit [0, 100], pad 0.1 → 10 of headroom each side
+    expect(resolveYDomain(0, 100, [], 0.1)).toEqual([-10, 110]);
+    // partial/auto domains are padded too (auto-fit [10,80] → ±7 at pad 0.1)
+    expect(resolveYDomain(0, undefined, [[10, 80]], 0.1)).toEqual([-8, 88]);
+  });
+
+  it('treats pad 0 (the default) as a no-op', () => {
+    expect(resolveYDomain(0, 100, [], 0)).toEqual([0, 100]);
+    expect(resolveYDomain(0, 100, [])).toEqual([0, 100]);
+  });
 });
