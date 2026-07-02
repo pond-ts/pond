@@ -33,6 +33,11 @@ const IMPLICIT_AXIS_ID = '__default__';
  *  so the readout formatter is calibrated exactly as the labels are. */
 const AXIS_TICK_COUNT = 5;
 
+/** Vertical band (px) reserved above the plot for a `labelPlacement="top"` axis
+ *  title, so it clears the top tick + plotted data. Sized for the default title
+ *  (~`font.size + 1`); a much larger themed title may want more room. */
+const TOP_LABEL_HEADER = 16;
+
 export interface ChartRowProps {
   /** Row height in CSS pixels. */
   height: number;
@@ -140,6 +145,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
               min: undefined,
               max: undefined,
               pad: 0,
+              labelPlacement: 'rotated',
               format: undefined,
               tickValues: undefined,
               index: 0,
@@ -193,6 +199,12 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
     [leftAxes, rightAxes, containerLeftSlots, containerRightSlots],
   );
 
+  // Header band reserved at the top of the plot when any axis draws a `'top'`
+  // title — the scale range then starts below it (see below).
+  const topHeader = effectiveAxes.some((ax) => ax.labelPlacement === 'top')
+    ? TOP_LABEL_HEADER
+    : 0;
+
   // One y-scale per axis. A layer counts toward an axis when its (late-resolved)
   // axis id matches; `resolveYDomain` handles the auto-fit + empty/flat/inverted
   // edges. yExtent() is O(points), so only walk the layers when a bound auto-fits.
@@ -206,10 +218,14 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
               .map((entry) => entry.layer.yExtent())
           : [];
       const [lo, hi] = resolveYDomain(ax.min, ax.max, extents, ax.pad);
-      map.set(ax.id, scaleLinear().domain([lo, hi]).range([height, 0]));
+      // Reserve a header band at the top when any axis draws a `'top'` title,
+      // so the title clears the top tick + plot (the whole row shifts down
+      // uniformly, keeping stacked axes aligned). No top titles ⇒ range top 0,
+      // so nothing changes for existing charts.
+      map.set(ax.id, scaleLinear().domain([lo, hi]).range([height, topHeader]));
     }
     return map;
-  }, [effectiveAxes, layerList, height, defaultAxisId]);
+  }, [effectiveAxes, layerList, height, defaultAxisId, topHeader]);
 
   // A value formatter per axis (its `format` resolved against its scale) — shared
   // by the axis tick labels and the cursor readout so a value reads the same.
