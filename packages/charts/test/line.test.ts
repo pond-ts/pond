@@ -175,6 +175,27 @@ describe('drawLine', () => {
     expect(calls.some((c) => c.name === 'setLineDash')).toBe(false);
   });
 
+  it('resets the series dash before the gap-bridge overlay runs (dash + gaps:dashed)', () => {
+    const { ctx, calls } = recordingContext();
+    // A dashed series style AND an inferred dashed gap bridge over an interior
+    // gap — the exact interaction the post-stroke reset guards. The series dash
+    // ([6,4]) must be reset ([]) *before* the bridge sets its own dash ([4,4]),
+    // so the two dashings don't bleed together and nothing leaks past the layer.
+    drawLine(
+      ctx,
+      cs([0, 1, 2, 3], [5, 6, NaN, 8]),
+      identity,
+      flipScale(),
+      { color: '#000', width: 1, dash: [6, 4] },
+      resolveCurve('linear'),
+      'dashed',
+    );
+    const dashSeq = calls
+      .filter((c) => c.name === 'setLineDash')
+      .map((c) => c.args[0]);
+    expect(dashSeq).toEqual([[6, 4], [], [4, 4]]);
+  });
+
   it('draws a curved path (bezier ops) when given a non-linear curve', () => {
     const { ctx, calls } = recordingContext();
     drawLine(
