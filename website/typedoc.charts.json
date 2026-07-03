@@ -1,0 +1,15 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["../packages/charts/src/index.ts"],
+  "tsconfig": "../packages/charts/tsconfig.json",
+  "out": "static/generated-api/charts",
+  "name": "@pond-ts/charts API Reference",
+  "readme": "none",
+  "cleanOutputDir": true,
+  "excludePrivate": true,
+  "excludeProtected": true,
+  "lightHighlightTheme": "github-light",
+  "darkHighlightTheme": "github-light",
+  "customCss": "typedoc/custom.css",
+  "customJs": "typedoc/custom.js"
+}

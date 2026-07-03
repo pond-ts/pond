@@ -102,6 +102,18 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: '@pond-ts/charts',
+      link: { type: 'doc', id: 'charts/charts-index' },
+      items: [
+        {
+          type: 'link',
+          label: 'API reference (charts)',
+          href: 'pathname:///generated-api/charts/',
+        },
+      ],
+    },
+    {
+      type: 'category',
       label: 'How-to guides',
       link: { type: 'doc', id: 'how-to-guides/how-to-guides-index' },
       items: [
