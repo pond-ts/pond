@@ -596,12 +596,15 @@ export function Marker({
   );
   const showHandle = editable && (editing || hovering);
   const lane = container.labelLanes.get(selfKey) ?? 0;
+  // The staff (vertical line) hangs from the top of its flag — so a flag stacked
+  // into a lower lane doesn't leave line poking above it. No label ⇒ full height.
+  const staffTop = text ? FLAG_TOP + lane * LANE_H : 0;
   return (
     <>
       <svg width={container.plotWidth} height={h} style={overlayStyle}>
         <line
           x1={x}
-          y1={0}
+          y1={staffTop}
           x2={x}
           y2={h}
           stroke={ann.color}
