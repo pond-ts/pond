@@ -445,9 +445,9 @@ Axis>>` carrying ordering-based ops (`axisValues`/`axisAt`/`column`/
     (time-series → monotonic-axis lib; opt-in/time-default = a middle path) =
     pjm17971's call. estela / Codex / dashboard reviews layered in the RFC;
     geo / core pending. estela friction: `~/Code/estela/docs/pond-friction.md`.
-  - **Annotations wave — BUILT as a spike, NOT yet PR'd (branch
-    `feat/charts-annotations`, ~19 wip commits, no PR; pjm17971 gates the
-    formalize).** User-authored marks in a turquoise register distinct from the
+  - **Annotations wave — SHIPPED (#306 system + #308 label opt-out / Codex
+    interaction fixes; the `feat/charts-annotations` spike formalized into
+    PRs).** User-authored marks in a turquoise register distinct from the
     foam data: `<Region>` / `<Baseline>` / `<Marker>` as `<Layers>` children, an
     SVG overlay above the data canvas. Complete: creation (arm a tool → draw
     gesture → `onCreate`), selection (`onSelectAnnotation` — click-select /
@@ -464,6 +464,18 @@ Axis>>` carrying ordering-based ops (`axisValues`/`axisAt`/`column`/
     **cursor-flag PR** ("flag flies from a pole" — re-bases the flag e2e
     baselines) AHEAD of the **annotations PR**, plus a short
     `docs/rfcs/annotations.md`.
+  - **panZoom click-select follow-up — RESOLVED (#309).** The one finding the
+    #308 Codex pass deferred as browser-dependent — a _selectable but
+    non-editable_ mark's click-select dropped when `panZoom` is on — **reproduces
+    in Chromium**: the plot's press-time `setPointerCapture` (to start a pan)
+    makes the browser retarget the `click` off the mark, so `onSelectAnnotation`
+    never fires. Fixed by **deferring the pan-capture to the first pointer move
+    past the drag slop** — a click never captures (its select fires), a drag still
+    captures + pans through a non-editable mark. Adds
+    `e2e/annotations-panzoom.spec.ts`, the **first real-pointer-event behavior
+    e2e** for annotations (the harness gap the #308 review explicitly named —
+    until now drag/select was only pinned by pure-function unit tests + static
+    visual baselines).
 - **M5 — estela parity.** Faithful `DataChart` reproduction on real activity
   data; prove no-regressions; hand the production swap to the estela agent; flip
   `private:false` + first publish.
