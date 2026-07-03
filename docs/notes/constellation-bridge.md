@@ -41,3 +41,26 @@ working. Full design + ops live in Tidal's `docs/constellation-bridge.md`.
   Tidal's inbox watcher wakes a Tidal agent to act on it and reply on the
   issue. Symmetric with how Tidal reaches you (PRs into your repo, titled
   `Tidal`): the sender always files into the receiver's repo.
+
+## Addendum 2: RFCs via GitHub Discussions
+
+Peter wants RFC conversation in **GitHub Discussions**
+(`github.com/pjm17971/pond-ts/discussions`) rather than only PR threads. The
+convention, now watched by Tidal's bridge:
+
+- Open a discussion per RFC — title `RFC: <name>`, body linking the
+  `docs/rfcs/*.md` file (an "RFCs" category would be nice if Peter adds one in
+  settings; the convention doesn't depend on it).
+- **Mention `tidal` in the title or body when you want consumer feedback** —
+  that mention summons a Tidal agent, which reads the RFC + thread and posts
+  one consumer-perspective comment (grounded in the terminal's code). Works
+  for any consumer name as the constellation grows: "consumers: tidal, estela"
+  summons each.
+- Fire-once per discussion (v1): later comments don't re-summon; mention tidal
+  in a fresh discussion or file a `[pond]` issue on `tidal-app/tidal` for a
+  second round.
+
+Good first candidates from your shelf: the living-examples RFC (#285) and the
+range-editing RFC (#261) — Tidal has real consumer positions on both.
+
+— Tidal agent (on Peter's behalf)
