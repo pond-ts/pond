@@ -1,0 +1,121 @@
+---
+id: charts-index
+title: '@pond-ts/charts'
+sidebar_position: 1
+---
+
+# @pond-ts/charts
+
+**Canvas-rendered, streaming-first time-series charts** for pond-ts, with a
+[react-timeseries-charts](https://software.es.net/react-timeseries-charts/)-style
+declarative layout. A chart consumes a pond `TimeSeries` directly: you compose a
+container, rows, and draw layers as React components, and the canvas renderer
+does the drawing.
+
+**Install** — `npm install @pond-ts/charts pond-ts @pond-ts/react react react-dom`.
+Peer-depends on `pond-ts`, `@pond-ts/react`, and `react`; the pond packages
+release together, so keep their ranges in step. See
+[Using @pond-ts/charts](../recipes/using-charts) for the two integration
+gotchas (Storybook `react-docgen`, the repaint contract).
+
+```tsx
+import {
+  ChartContainer,
+  ChartRow,
+  Layers,
+  LineChart,
+  YAxis,
+} from '@pond-ts/charts';
+
+<ChartContainer range={timeRange} width={560}>
+  <ChartRow height={220}>
+    <Layers>
+      <LineChart series={cpuSeries} column="cpu" axis="pct" />
+    </Layers>
+    <YAxis id="pct" side="right" format=".0%" />
+  </ChartRow>
+</ChartContainer>;
+```
+
+## The layout model
+
+Charts are composed, not configured — the same nesting react-timeseries-charts
+users will recognise:
+
+- **`<ChartContainer>`** — owns the shared x axis (time or value, inferred from
+  the data), the view `range`, overall `width`, `theme`, and cursor mode.
+- **`<ChartRow>`** — one stacked plot band with its own y axis / height. A
+  container holds one or more rows sharing the x axis.
+- **`<Layers>`** — the mandatory z-stack inside a row; children draw
+  back-to-front in declaration order.
+- **`<YAxis>` / `<XAxis>` / `<TimeAxis>`** — placeable axes. `id` links a draw
+  layer's `axis` to a scale; `side` places it; `format` (a d3 specifier or a
+  function) formats ticks _and_ the matching cursor readout.
+
+## The minimal API set
+
+The primitives you compose a chart from. The
+[**generated API reference**](pathname:///generated-api/charts/) has every prop,
+type, and default; this is the map.
+
+### Layout & axes
+
+| Export           | What it is                                                     |
+| ---------------- | -------------------------------------------------------------- |
+| `ChartContainer` | Root: shared x axis, `range`, `width`, `theme`, cursor.        |
+| `ChartRow`       | A stacked plot band with its own y axis and height.            |
+| `Layers`         | The z-stack boundary inside a row.                             |
+| `YAxis`          | A y axis: `id`, `side`, auto-fit or explicit domain, `format`. |
+| `XAxis`          | A placeable x axis (time or value), custom `ticks`.            |
+| `TimeAxis`       | A thin `<XAxis>` preset for the time axis.                     |
+| `Canvas`         | The low-level DPR-aware canvas primitive rows draw on.         |
+
+### Draw layers
+
+| Export         | What it draws                                      |
+| -------------- | -------------------------------------------------- |
+| `LineChart`    | A gap-aware line.                                  |
+| `AreaChart`    | A filled area.                                     |
+| `BandChart`    | A filled `lower`/`upper` envelope (variance band). |
+| `ScatterChart` | Points, with data-driven radius / colour encoding. |
+| `BarChart`     | Bars.                                              |
+| `BoxPlot`      | Box-and-whisker / candlestick (`shape`).           |
+
+Every draw layer takes a pond `series` + a `column`, an `as` **style**
+identifier (theme lookup), and an `axis` **scale** id — style and scale are
+separate channels by design (no per-component colour/width props).
+
+### Annotations & indicators
+
+| Export            | What it is                                               |
+| ----------------- | -------------------------------------------------------- |
+| `Region`          | A shaded x-range (turquoise annotation register).        |
+| `Baseline`        | A horizontal value line, optional axis-pill `indicator`. |
+| `Marker`          | A vertical x line, optional axis-pill `indicator`.       |
+| `YAxisIndicator`  | A live value pill pinned to a y-axis edge.               |
+| `createLiveValue` | High-frequency pill updates with an isolated repaint.    |
+
+### Data adapters & theming
+
+| Export                                                                            | What it is                                                               |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `fromTimeSeries`, `bandFromTimeSeries`, `boxFromTimeSeries`, `barsFromTimeSeries` | Adapters shaping a `TimeSeries` for the matching layer.                  |
+| `defaultTheme`                                                                    | The neutral built-in `ChartTheme`.                                       |
+| `cssVarTheme`, `useChartTheme`                                                    | Build a theme from CSS custom properties and follow a dark/light toggle. |
+
+## Where to start
+
+- [**API reference**](pathname:///generated-api/charts/) — the generated,
+  full-width reference: every component, prop, and type.
+- [Using @pond-ts/charts](../recipes/using-charts) — install notes and
+  integration gotchas.
+- [Theming charts](../recipes/theming) — the `ChartTheme` model and the
+  CSS-token bridge.
+- [Resizable multi-panel layout](../recipes/resizable-panels) — a full chart
+  layout worked end to end.
+
+:::note
+The docs here are an introduction plus the generated type reference. Detailed
+examples and guides (per-layer walkthroughs, the cursor system, annotations)
+follow as the API settles.
+:::
