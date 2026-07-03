@@ -1043,6 +1043,16 @@ commitment).
   a GitHub issue on `tidal-app/tidal` titled `[pond] <ask>`. Neither watcher touches
   a live checkout; both sides' normal review processes still apply. Full contract:
   [docs/notes/constellation-bridge.md](docs/notes/constellation-bridge.md) (pond#327).
+  **Outbound (RFC feedback via Discussions — pond#332):** open a GitHub Discussion
+  per RFC (title `RFC: <name>`, body linking `docs/rfcs/*.md`) and mention `tidal`
+  in the title/body to summon a one-shot consumer-perspective comment from a Tidal
+  agent (grounded in the terminal's code); generalizes to `consumers: tidal, estela`
+  as more consumers get watchers. Fire-once per discussion; a fresh discussion or a
+  `[pond]` issue drives a second round. Discussions is enabled on the repo, so this
+  works today. **Queued (not auto-fired):** open discussions for the living-examples
+  RFC (#285) and the range-editing RFC (#261) — Tidal has real consumer positions on
+  both. Left as a deliberate act rather than fired inside an autonomous triage run,
+  since summoning a consumer spends budget on the other side of the bridge.
 
 ---
 
