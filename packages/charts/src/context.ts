@@ -169,6 +169,15 @@ export interface ContainerFrame {
    *  from the map (or mapping to 0) sits in the top lane. */
   readonly labelLanes: ReadonlyMap<symbol, number>;
   /**
+   * The annotation currently being **dragged** (its slot key), or `null`. Set on
+   * drag-start, cleared on release. The lane packers (label lanes + x-axis pill
+   * lanes) exclude it so the *static* marks don't reshuffle as the dragged one
+   * crosses them — only the mark under the pointer moves; it settles on release.
+   */
+  readonly draggingKey: symbol | null;
+  /** Mark/clear the actively-dragged annotation; a mark's drag calls this. */
+  setDragging(key: symbol | null): void;
+  /**
    * The armed creation tool, or `null` (idle). Set by the consumer's toolbar;
    * when non-null the plot captures a **create gesture** (draw a new mark) instead
    * of panning, and fires {@link onCreate} on release. While armed, existing

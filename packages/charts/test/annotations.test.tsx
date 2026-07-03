@@ -134,14 +134,45 @@ describe('computeLabelLanes — empty labels claim no lane', () => {
     expect(lanes.size).toBe(0);
   });
 
-  it('still packs overlapping labelled marks into stacked lanes', () => {
-    // Two labelled markers at the same x overlap → the second drops to lane 1.
+  it('stacks overlapping labelled marks in the SAME row into lanes', () => {
+    // Two labelled markers at the same x, same row → the second drops to lane 1.
+    const row = Symbol('row');
     const lanes = computeLabelLanes(
-      [spec({ label: 'one' }), spec({ label: 'two' })],
+      [
+        spec({ label: 'one', rowKey: row }),
+        spec({ label: 'two', rowKey: row }),
+      ],
       (x) => x * 10,
     );
     expect(lanes.size).toBe(2);
     expect([...lanes.values()].sort()).toEqual([0, 1]);
+  });
+
+  it('does NOT stack labels in DIFFERENT rows (per-row spaces)', () => {
+    // Same x but different rows → each sits in its own row's top space (lane 0);
+    // a bottom-row label isn't "in the way" of a top-row one.
+    const lanes = computeLabelLanes(
+      [spec({ label: 'top' }), spec({ label: 'bottom' })],
+      (x) => x * 10,
+    );
+    expect([...lanes.values()]).toEqual([0, 0]);
+  });
+
+  it('excludes the dragged mark from packing (pinned to lane 0)', () => {
+    // The dragged mark stays at lane 0 and doesn't push the static one down.
+    const row = Symbol('row');
+    const dragged = Symbol('dragged');
+    const lanes = computeLabelLanes(
+      [
+        spec({ label: 'static', rowKey: row }),
+        spec({ label: 'dragged', rowKey: row, key: dragged }),
+      ],
+      (x) => x * 10,
+      dragged,
+    );
+    // Both at lane 0 — the dragged one is excluded, the static one keeps lane 0.
+    expect(lanes.get(dragged)).toBe(0);
+    expect([...lanes.values()]).toEqual([0, 0]);
   });
 });
 
