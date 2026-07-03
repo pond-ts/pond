@@ -289,6 +289,7 @@ export function Layers({ children }: LayersProps) {
       const r = c.timeRange;
       dragRef.current = { startX: e.clientX, startRange: [r[0], r[1]] };
       c.setHoverX(null); // hide the tracker while panning
+      c.setHoverY(null, null);
       c.setHovered(null); // and drop any hover-highlight
       // Capture so the pan continues outside the plot; an enhancement, not
       // critical — guard the throw for synthetic / already-released pointers.
@@ -324,20 +325,38 @@ export function Layers({ children }: LayersProps) {
         return; // tracker suppressed during a pan
       }
       const rect = e.currentTarget.getBoundingClientRect();
-      const px = Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left));
+      const r = rowRef.current;
+      const rawX = Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left));
+      const py = Math.max(0, Math.min(r.height, e.clientY - rect.top));
+      // Crosshair with `crosshairSnap` (default): snap the shared vertical line to
+      // the nearest sample's x, so the reticle centres on a real data point (and
+      // stays aligned across rows on a shared grid). Free mode keeps the raw x.
+      // Crosshair always snaps the shared vertical line (and so the x-time pill)
+      // to the nearest sample's x — the reticle rides the data grid on x, giving a
+      // clean time readout (a raw pointer time formats to unreadable sub-second
+      // precision). `crosshairSnap` only governs the *y* (snap to the value vs a
+      // free horizontal line at the pointer). This is ChartIQ's model.
+      let px = rawX;
+      if ((r.cursor ?? c.cursor) === 'crosshair') {
+        const t = +c.xScale.invert(rawX);
+        for (const entry of r.layers) {
+          if (entry.layer.cursorFlag) continue;
+          const s = entry.layer.sampleAt(t)[0];
+          if (s !== undefined) {
+            px = c.xScale(s.x);
+            break;
+          }
+        }
+      }
       c.setHoverX(px);
+      c.setHoverY(py, r.rowKey);
       // Hover-highlight: hit-test the row's selectable layers (Bar) under the
       // pointer and set the hovered mark. Deduped in the container, so the data
       // canvas repaints only on a mark transition — not every move (the move just
       // slides the SVG cursor). A row with no selectable layer (line/area/band)
-      // resolves to null → a no-op.
-      const r = rowRef.current;
-      const hit = resolveSelection(
-        r.layers,
-        px,
-        e.clientY - rect.top,
-        c.xScale,
-        (axisId) => r.yScales.get(axisId ?? r.defaultAxisId),
+      // resolves to null → a no-op. Uses the raw pointer, not the snapped x.
+      const hit = resolveSelection(r.layers, rawX, py, c.xScale, (axisId) =>
+        r.yScales.get(axisId ?? r.defaultAxisId),
       );
       c.setHovered(hit);
     },
@@ -404,9 +423,11 @@ export function Layers({ children }: LayersProps) {
       drawFromRef.current = null;
       setDrawFrom(null);
       c.setHoverX(null);
+      c.setHoverY(null, null);
       return;
     }
     c.setHoverX(null);
+    c.setHoverY(null, null);
     c.setHovered(null);
   }, []);
   // Click selection: ignore the click that ends a drag/pan (moved past a few px),
@@ -501,6 +522,54 @@ export function Layers({ children }: LayersProps) {
     parts.chip === 'flag' && trackerSamples.length > 0
       ? trackerSamples[0]!.px
       : cursorX;
+
+  // Crosshair reticle (`chip: 'axis'`): a single centre for THIS row — the
+  // horizontal line + centre dot + value pill anchor to `center.py` (the vertical
+  // line is the shared `cursorX`, drawn in every row). Snap: the sample nearest
+  // the pointer y in the hovered row (or the first sample when nothing's hovered,
+  // e.g. a pinned demo — so every row shows a reticle then). Free: the raw pointer
+  // y in the hovered row, its value via `yScale.invert`. `null` ⇒ vertical only.
+  const cursorInBounds =
+    cursorX !== null && cursorX >= 0 && cursorX <= plotWidth;
+  const reticle: {
+    py: number;
+    value: number;
+    format: (v: number) => string;
+    side: 'left' | 'right';
+  } | null = (() => {
+    if (parts.chip !== 'axis' || !cursorInBounds) return null;
+    const hoveredRow = container.cursorRowKey === row.rowKey;
+    const cy = container.cursorY;
+    if (container.crosshairSnap) {
+      if (trackerSamples.length === 0) return null;
+      const pick =
+        hoveredRow && cy !== null
+          ? trackerSamples.reduce((a, b) =>
+              Math.abs(b.py - cy) < Math.abs(a.py - cy) ? b : a,
+            )
+          : container.cursorRowKey === null
+            ? trackerSamples[0]!
+            : null;
+      return pick
+        ? {
+            py: pick.py,
+            value: pick.value,
+            format: pick.format,
+            side: pick.side,
+          }
+        : null;
+    }
+    // Free reticle — the raw pointer y in the hovered row.
+    if (!hoveredRow || cy === null) return null;
+    const ys = yScales.get(defaultAxisId);
+    if (ys === undefined) return null;
+    return {
+      py: cy,
+      value: ys.invert(cy),
+      format: formats.get(defaultAxisId) ?? String,
+      side: axisSides.get(defaultAxisId) ?? 'left',
+    };
+  })();
 
   // Cross-row guide lines: the x-positions of annotations on the OTHER rows
   // (markers + region edges), so a mark on one row reads against this row's data +
@@ -747,23 +816,48 @@ export function Layers({ children }: LayersProps) {
                 />
               ) : null,
             )}
-          {/* Crosshair: a faint dashed connector from each dot to its axis
-              edge (the pole for the on-axis value pill). */}
+          {/* Crosshair reticle: a full-height dashed vertical line (the shared
+              cursor x, in every row) + — in the row with a centre — a full-width
+              dashed horizontal line and a centre dot at the value. */}
           {parts.chip === 'axis' &&
-            trackerSamples.map((s, i) => (
-              <line
-                key={`hconn-${i}`}
-                x1={s.side === 'right' ? Math.round(s.px) : 0}
-                y1={Math.round(s.py)}
-                x2={s.side === 'right' ? plotWidth : Math.round(s.px)}
-                y2={Math.round(s.py)}
-                stroke={s.color}
-                strokeWidth={1}
-                opacity={0.4}
-                strokeDasharray="3 3"
-                shapeRendering="crispEdges"
-              />
-            ))}
+            cursorX !== null &&
+            cursorX >= 0 &&
+            cursorX <= plotWidth && (
+              <>
+                <line
+                  x1={Math.round(cursorX)}
+                  y1={0}
+                  x2={Math.round(cursorX)}
+                  y2={row.height}
+                  stroke={cursorColor}
+                  strokeWidth={1}
+                  strokeDasharray="3 3"
+                  shapeRendering="crispEdges"
+                />
+                {reticle && (
+                  <>
+                    <line
+                      x1={0}
+                      y1={Math.round(reticle.py)}
+                      x2={plotWidth}
+                      y2={Math.round(reticle.py)}
+                      stroke={cursorColor}
+                      strokeWidth={1}
+                      strokeDasharray="3 3"
+                      shapeRendering="crispEdges"
+                    />
+                    <circle
+                      cx={cursorX}
+                      cy={reticle.py}
+                      r={3}
+                      fill={cursorColor}
+                      stroke={background}
+                      strokeWidth={background ? 1 : 0}
+                    />
+                  </>
+                )}
+              </>
+            )}
           {parts.dots &&
             trackerSamples.map((s, i) => (
               <circle
@@ -829,29 +923,24 @@ export function Layers({ children }: LayersProps) {
               </div>
             );
           })}
-        {/* Crosshair value pills: each series value pinned to its axis gutter
-            (on-axis, `zIndex` over the sibling axis column — the same placement
-            as YAxisIndicator's default), clamped inside the row. */}
-        {parts.chip === 'axis' &&
-          trackerSamples.map((s, i) => {
-            const top = Math.max(
-              flagLineHeight / 2,
-              Math.min(row.height - flagLineHeight / 2, s.py),
-            );
-            return (
-              <div
-                key={`ytag-${i}`}
-                style={{
-                  ...axisPillStyle(container.theme, s.color),
-                  top: `${top}px`,
-                  transform: 'translateY(-50%)',
-                  ...axisPillX(s.side, plotWidth),
-                }}
-              >
-                {s.format(s.value)}
-              </div>
-            );
-          })}
+        {/* Crosshair value pill: the reticle's centre value, on the axis gutter
+            (`zIndex` over the sibling axis column — the same placement as
+            YAxisIndicator's default), clamped inside the row. */}
+        {reticle && (
+          <div
+            style={{
+              ...axisPillStyle(container.theme, cursorColor),
+              top: `${Math.max(
+                flagLineHeight / 2,
+                Math.min(row.height - flagLineHeight / 2, reticle.py),
+              )}px`,
+              transform: 'translateY(-50%)',
+              ...axisPillX(reticle.side, plotWidth),
+            }}
+          >
+            {reticle.format(reticle.value)}
+          </div>
+        )}
         {parts.chip === 'flag' &&
           cursorX !== null &&
           trackerSamples.map((s, i) => (

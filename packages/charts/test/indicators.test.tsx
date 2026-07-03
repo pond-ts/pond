@@ -303,7 +303,10 @@ describe("cursor='crosshair'", () => {
     expect(xPill?.textContent).toBe('T!');
   });
 
-  it('places each series value pill on its own axis side (dual axis)', () => {
+  it('is a single reticle — one value pill, on the primary axis side (snap)', () => {
+    // The crosshair is one reticle, not per-series. Pinned (no hover), snap
+    // default → the reticle centres on the first layer's sample; a single value
+    // pill on that axis's side (here 'l'=30 on the left axis L).
     const two = new TimeSeries({
       name: 'two',
       schema: [
@@ -335,18 +338,15 @@ describe("cursor='crosshair'", () => {
         </ChartRow>
       </ChartContainer>,
     );
-    // Left-axis series (l=30) pill hugs the left edge (`right:` set); right-axis
-    // series (r=60) pill hugs the right edge (`left:` set).
-    const chipFor = (text: string) =>
-      Array.from(container.querySelectorAll('div')).find(
-        (d) => d.style.borderRadius === '3px' && d.textContent === text,
-      ) as HTMLElement | undefined;
-    const lPill = chipFor('30');
-    const rPill = chipFor('60');
-    expect(lPill?.style.right).not.toBe('');
-    expect(lPill?.style.left).toBe('');
-    expect(rPill?.style.left).not.toBe('');
-    expect(rPill?.style.right).toBe('');
+    const pills = Array.from(container.querySelectorAll('div')).filter(
+      (d) => d.style.borderRadius === '3px' && d.style.transform.includes('Y'),
+    );
+    // Exactly one y-value pill (the reticle), not two per-series pills.
+    expect(pills).toHaveLength(1);
+    // It's the first series (l=30), hugging the left axis edge (`right:` set).
+    expect(pills[0]!.textContent).toBe('30');
+    expect(pills[0]!.style.right).not.toBe('');
+    expect(pills[0]!.style.left).toBe('');
   });
 
   const chipsIn = (c: HTMLElement) =>
