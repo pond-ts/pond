@@ -411,7 +411,7 @@ step, init, {output?})` — the typed-accumulator `mapAccumL` generalizing
     `KeyKind` + `ValueKeyColumn` substrate; `TimeSeries.byValue(axis)` =
     `assertMonotonicAxis` (defined+finite+non-decreasing) + re-key onto the axis
     column + drop it from values → a closed `ValueSeries<ValueKeyedSchema<S,
-    Axis>>` carrying ordering-based ops (`axisValues`/`axisAt`/`column`/
+Axis>>` carrying ordering-based ops (`axisValues`/`axisAt`/`column`/
     `nearestIndex`/`sliceByValue`), calendar ops type-impossible (disjoint
     `ValueSeriesSchema`). Wraps the `ColumnarStore` directly (not `SeriesStore`).
     O(N+C) projection / O(log N) bisect / O(log N+C) zero-copy slice; byValue
@@ -1031,6 +1031,18 @@ commitment).
   overnight gaps for intraday bars) — a non-wall-clock x adjacent to the value-axis
   machinery, so the very first axis requirement already pushes past a naive
   continuous `TimeAxis`.
+- **Cross-repo coordination — the constellation bridge (live since 2026-07-03).**
+  Handoffs between this repo and Tidal are automated; Peter no longer hand-relays
+  them. **Inbound:** a Tidal→pond PR with `Tidal` in the title wakes a headless,
+  budget-capped pond-agent session (disposable worktree of `~/Code/pond`) to triage
+  it per the normal process — read, respond on the PR, merge acceptable notes, fold
+  into PLAN, implement or queue. **Outbound (release signal):** an `@pond-ts/charts`
+  npm publish auto-wakes a Tidal agent that reads the CHANGELOG and PRs the adoption
+  — so keep CHANGELOG entries wave-shaped, they're a machine-read payload now.
+  **Outbound (everything else — asks, canaries, RFC feedback, deprecations):** file
+  a GitHub issue on `tidal-app/tidal` titled `[pond] <ask>`. Neither watcher touches
+  a live checkout; both sides' normal review processes still apply. Full contract:
+  [docs/notes/constellation-bridge.md](docs/notes/constellation-bridge.md) (pond#327).
 
 ---
 
@@ -3582,8 +3594,7 @@ retention`). Currently Path B (own deque); same API, perf
 
      ```ts
      type DurationString =
-       | `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`
-       | 'buffer';
+       `${number}${'ms' | 's' | 'm' | 'h' | 'd'}` | 'buffer';
 
      type FusedMapping<S extends SeriesSchema> = Readonly<
        Record<DurationString, FusedMappingValue<S>>
@@ -5550,7 +5561,7 @@ getColumn, buckets, columns)` in `batch/aggregate-columns.ts`
      with the generic Column shape and surface per-kind reductions
      as additive. Pending; awaits experiment friction.
    - **8g — (Deferred) `series.binByTime(name, W, range,
-     reducer)` on TimeSeries.** Time-aware variant for irregular-
+reducer)` on TimeSeries.** Time-aware variant for irregular-
      sample charts. Composable today as
      `series.within(t0, t1).aggregate(every((t1-t0)/W), { col:
 reducer }).column(col).values`; the dedicated shortcut lands
