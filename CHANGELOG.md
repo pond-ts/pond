@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`, and
 them all. Pre-1.0: minor bumps may include new features and type-level changes;
 patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.38.0...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.39.0...HEAD
+[0.39.0]: https://github.com/pjm17971/pond-ts/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/pjm17971/pond-ts/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/pjm17971/pond-ts/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/pjm17971/pond-ts/compare/v0.35.0...v0.36.0
@@ -51,6 +52,43 @@ patch bumps are strictly additive.
   browser-dependent finding deferred from #308; adds
   `e2e/annotations-panzoom.spec.ts`, the first real-pointer-event behavior e2e for
   the annotation layer. (#309)
+
+## [0.39.0] — 2026-07-03
+
+A `@pond-ts/charts` release: the **crosshair reticle + annotation-layout** wave,
+driven by the Tidal terminal. `pond-ts`, `@pond-ts/react`, and `@pond-ts/fit`
+carry no code changes — republished in lock-step (peer ranges widen to `^0.39.0`).
+
+### Added
+
+- `@pond-ts/charts`: **`<ChartContainer crosshairSnap>`** (default `true`) — the
+  `cursor="crosshair"` reticle centres on the nearest data point; `false` gives a
+  **free** reticle whose horizontal line + value follow the pointer y
+  (`yScale.invert`), while the vertical line still snaps its x to the data grid
+  for a clean time readout.
+- `@pond-ts/charts`: **coincident marker labels merge** — labelled `<Marker>`s at
+  the same x fold into one chip (`"a, b, c"`) instead of stacking; their x-axis
+  indicator pills dedup to one.
+- `@pond-ts/charts`: **x-axis indicator pills lane-stack** when they'd overlap
+  (each connector lengthens to its lane).
+
+### Changed
+
+- `@pond-ts/charts`: **`cursor="crosshair"` is now a single reticle** — a
+  full-height dashed vertical + full-width dashed horizontal line + a centre dot +
+  one value pill, with the time pill connected to the vertical line. (Was
+  per-series dots + on-axis pills; the per-series readout stays on `flag` /
+  `inline`.)
+- `@pond-ts/charts`: top-flag **labels pack per row** — a label only contends with
+  labels in its own row's top space (a bottom-row label no longer dodges a
+  top-row one at the same x). A dragged mark is excluded from the pack, so static
+  marks hold their lanes as it crosses them (no phantom lane swaps). A marker's
+  staff now hangs from the top of its (stacked) flag.
+
+### Fixed
+
+- `@pond-ts/charts`: the crosshair x-axis pill and marker pills read the axis's
+  own formatter (a value-axis / off-boundary time no longer shows a raw number).
 
 ## [0.38.0] — 2026-07-03
 
