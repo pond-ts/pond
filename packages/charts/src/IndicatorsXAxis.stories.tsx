@@ -25,8 +25,7 @@ import {
  *    (pinned here via the controlled `trackerPosition` for a static shot).
  * Both pills share one `<XAxis>` per container (not per row), so a marker
  * living inside any one row's `<Layers>` still surfaces on the shared axis —
- * and multiple marker pills get no auto-dedup layout: they just sit at their
- * own x, so pick `at`s with enough separation to stay legible.
+ * and overlapping marker pills **stack into lanes** (they share the one strip).
  * (The y-axis counterpart is the standalone `<YAxisIndicator>`, under
  * **Indicators/Y Axis**.)
  */
@@ -90,9 +89,8 @@ export const MarkerPillLabelled: Story = {
   ),
 };
 
-/** **Multiple marker pills** — each `<Marker indicator>` is independent, with
- *  no shared lane-packing (unlike the in-plot chips): three pills, three
- *  labels, placed far enough apart on the x to stay legible. */
+/** **Multiple marker pills** — three `<Marker indicator>`s spread across the x;
+ *  far enough apart that each pill sits in the base lane. */
 export const MultipleMarkerPills: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
@@ -102,6 +100,25 @@ export const MultipleMarkerPills: Story = {
           <Marker at={at(10)} indicator label="open" />
           <Marker at={at(45)} indicator label="high" />
           <Marker at={at(80)} indicator label="close" />
+        </Layers>
+        <YAxis id="usd" side="right" format=",.0f" />
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/** **Stacked pills** — markers close in time overlap on the shared strip, so the
+ *  pills **stack into lanes** (each connector lengthens to its lane) instead of
+ *  colliding. */
+export const StackedPills: Story = {
+  render: () => (
+    <ChartContainer range={RANGE} width={W}>
+      <ChartRow height={220}>
+        <Layers>
+          <LineChart series={priceSeries()} column="price" axis="usd" />
+          <Marker at={at(44)} indicator label={false} />
+          <Marker at={at(46)} indicator label={false} />
+          <Marker at={at(48)} indicator label={false} />
         </Layers>
         <YAxis id="usd" side="right" format=",.0f" />
       </ChartRow>

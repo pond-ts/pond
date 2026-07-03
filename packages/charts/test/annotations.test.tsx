@@ -134,14 +134,61 @@ describe('computeLabelLanes — empty labels claim no lane', () => {
     expect(lanes.size).toBe(0);
   });
 
-  it('still packs overlapping labelled marks into stacked lanes', () => {
-    // Two labelled markers at the same x overlap → the second drops to lane 1.
+  it('MERGES coincident markers (same x, same row) into one chip', () => {
+    // Two labelled markers at the *same* x, same row → one merged chip on the
+    // representative (the first), the other folded in (label: null); both lane 0.
+    const row = Symbol('row');
+    const a = Symbol('a');
+    const b = Symbol('b');
     const lanes = computeLabelLanes(
-      [spec({ label: 'one' }), spec({ label: 'two' })],
+      [
+        spec({ label: 'z1', rowKey: row, key: a, xs: [1] }),
+        spec({ label: 'z2', rowKey: row, key: b, xs: [1] }),
+      ],
       (x) => x * 10,
     );
-    expect(lanes.size).toBe(2);
-    expect([...lanes.values()].sort()).toEqual([0, 1]);
+    expect(lanes.get(a)).toEqual({ lane: 0, label: 'z1, z2' });
+    expect(lanes.get(b)).toEqual({ lane: 0, label: null });
+  });
+
+  it('stacks overlapping marks at DIFFERENT x in the same row', () => {
+    // Close but not coincident (x 1 vs 2 → 10px vs 20px, labels ~37px wide) →
+    // they overlap but don't merge, so the second drops to lane 1.
+    const row = Symbol('row');
+    const lanes = computeLabelLanes(
+      [
+        spec({ label: 'one', rowKey: row, xs: [1] }),
+        spec({ label: 'two', rowKey: row, xs: [2] }),
+      ],
+      (x) => x * 10,
+    );
+    expect([...lanes.values()].map((p) => p.lane).sort()).toEqual([0, 1]);
+  });
+
+  it('does NOT stack labels in DIFFERENT rows (per-row spaces)', () => {
+    // Same x but different rows → each in its own row's top space (lane 0).
+    const lanes = computeLabelLanes(
+      [spec({ label: 'top' }), spec({ label: 'bottom' })],
+      (x) => x * 10,
+    );
+    expect([...lanes.values()].map((p) => p.lane)).toEqual([0, 0]);
+  });
+
+  it('excludes the dragged mark from packing (pinned to lane 0, own label)', () => {
+    // Different x so they'd otherwise stack; the dragged one is excluded so the
+    // static one keeps lane 0, and the dragged shows its own label at lane 0.
+    const row = Symbol('row');
+    const dragged = Symbol('dragged');
+    const lanes = computeLabelLanes(
+      [
+        spec({ label: 'static', rowKey: row, xs: [1] }),
+        spec({ label: 'dragged', rowKey: row, key: dragged, xs: [2] }),
+      ],
+      (x) => x * 10,
+      dragged,
+    );
+    expect(lanes.get(dragged)).toEqual({ lane: 0, label: 'dragged' });
+    expect([...lanes.values()].map((p) => p.lane)).toEqual([0, 0]);
   });
 });
 

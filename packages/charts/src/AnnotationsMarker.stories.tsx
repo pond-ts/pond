@@ -127,3 +127,16 @@ export const Multiple: Story = {
     </Chart>
   ),
 };
+
+/** **Coincident** — three markers at the **same x** (e.g. dragged together) fold
+ *  their labels into **one** chip (`open, high, close`) on a single line, not a
+ *  three-deep stack; their lines collapse to one. */
+export const Coincident: Story = {
+  render: () => (
+    <Chart>
+      <Marker at={at(45)} label="open" />
+      <Marker at={at(45)} label="high" />
+      <Marker at={at(45)} label="close" />
+    </Chart>
+  ),
+};

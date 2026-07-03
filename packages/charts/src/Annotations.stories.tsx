@@ -576,6 +576,70 @@ export const MultiRow: Story = {
 };
 
 /**
+ * **Multiple markers across multiple rows.** Each marker carries a near-line
+ * `label` **and** an `indicator` (its time on the shared x-axis). Three things to
+ * see: (1) close markers *within a row* stack their labels into lanes; (2) the two
+ * markers at the **same x on different rows** (`lap 1` / `z1`) do **not** stack —
+ * each label sits in its own row's top space (per-row packing); (3) all the
+ * indicator pills share the one bottom x-axis, so the coincident times stack into
+ * lanes there. `editAnnotations` on — drag one across another and the static
+ * marks hold their lanes (only the dragged one moves).
+ */
+export const MultiRowMarkers: Story = {
+  render: () => {
+    const [p, setP] = useState([10, 12, 32].map((i) => BASE + i * STEP));
+    const [h, setH] = useState([10, 13, 36].map((i) => BASE + i * STEP));
+    const set = (
+      arr: number[],
+      i: number,
+      v: number,
+      s: (a: number[]) => void,
+    ) => s(arr.map((x, j) => (j === i ? v : x)));
+    const pLabels = ['lap 1', 'lap 2', 'finish'];
+    const hLabels = ['z1', 'z2', 'max'];
+    return (
+      <ChartContainer
+        range={INTERVAL}
+        width={680}
+        theme={estelaTheme}
+        editAnnotations
+      >
+        <ChartRow height={170}>
+          <YAxis id="power" label="W" min={0} max={300} />
+          <Layers>
+            <LineChart series={power()} column="watts" as="foam" />
+            {p.map((at, i) => (
+              <Marker
+                key={i}
+                at={at}
+                label={pLabels[i]!}
+                indicator
+                onChange={(v) => set(p, i, v, setP)}
+              />
+            ))}
+          </Layers>
+        </ChartRow>
+        <ChartRow height={170}>
+          <YAxis id="hr" label="bpm" min={80} max={200} />
+          <Layers>
+            <LineChart series={hr()} column="bpm" as="hr" />
+            {h.map((at, i) => (
+              <Marker
+                key={i}
+                at={at}
+                label={hLabels[i]!}
+                indicator
+                onChange={(v) => set(h, i, v, setH)}
+              />
+            ))}
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
  * **Creating annotations.** The library owns the *gesture*; the consumer owns the
  * toolbar + state (the buttons here stand in for the network-traffic example's).
  * Arm a tool, then on the plot: click or drag places a `Marker`/`Baseline`;

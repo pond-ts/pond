@@ -13,6 +13,7 @@ import {
   RowContext,
   type AnnotationSpec,
   type ContainerFrame,
+  type LabelPlacement,
 } from './context.js';
 import type { ChartTheme } from './theme.js';
 import { flagChipStyle, flagChipX, axisPillX, axisPillStyle } from './chip.js';
@@ -195,44 +196,105 @@ const LABEL_CHAR_W = 7;
 const LABEL_PAD = 16;
 const LANE_GAP = 6;
 
+/** Rough chip width (px) for the overlap model. */
+const labelWidth = (text: string) => text.length * LABEL_CHAR_W + LABEL_PAD;
+
 /**
- * Greedy left→right lane packing for the **top-flag** labels (markers + regions): a
- * label that would overlap the one to its left drops to the next free lane below,
- * so close-in-x labels stack instead of colliding (and a dragged label slides under
- * its neighbour). Returns slot-key → lane (0 = top). Baselines, whose labels anchor
- * at the left at their own y, don't participate.
+ * Lane placement for the **top-flag** labels (markers + regions). Returns, per
+ * slot key, its {@link LabelPlacement}. Baselines (label anchored at their own y)
+ * don't participate.
+ *
+ * Three behaviours:
+ * - **Per row** — labels only contend within their own row's top space (a
+ *   bottom-row label at the same x as a top-row one isn't "in the way").
+ * - **Coincident markers merge** — labelled markers at the *same x* (e.g. dragged
+ *   together, snapped onto one line) fold into a **single** chip (`"z1, z2, max"`)
+ *   on one lane, rather than stacking three deep. The first is the representative
+ *   (its `label` is the joined text); the rest map to `label: null`.
+ * - **Greedy stacking** — non-coincident labels that would still overlap drop to
+ *   the next free lane. The `draggingKey` is excluded (pinned to lane 0, its own
+ *   label) so the static labels hold their lanes as it crosses them.
  */
 export function computeLabelLanes(
   annotations: readonly AnnotationSpec[],
   toPixel: (axisX: number) => number,
-): Map<symbol, number> {
-  const flags = annotations
-    .filter(
-      (a) =>
-        (a.kind === 'marker' || a.kind === 'region') &&
-        a.label.length > 0 &&
-        a.xs.length > 0,
+  draggingKey?: symbol | null,
+): Map<symbol, LabelPlacement> {
+  const out = new Map<symbol, LabelPlacement>();
+  const byRow = new Map<symbol, AnnotationSpec[]>();
+  for (const a of annotations) {
+    if (
+      (a.kind !== 'marker' && a.kind !== 'region') ||
+      a.label.length === 0 ||
+      a.xs.length === 0
     )
-    .map((a) => {
-      const ax = a.kind === 'region' ? Math.min(a.xs[0]!, a.xs[1]!) : a.xs[0]!;
-      return {
-        key: a.key,
-        left: toPixel(ax),
-        width: a.label.length * LABEL_CHAR_W + LABEL_PAD,
-      };
-    })
-    .sort((p, q) => p.left - q.left);
-  const laneEnds: number[] = []; // right-px of the last label placed in each lane
-  const lanes = new Map<symbol, number>();
-  for (const f of flags) {
-    let lane = 0;
-    while (lane < laneEnds.length && laneEnds[lane]! + LANE_GAP > f.left) {
-      lane += 1;
-    }
-    laneEnds[lane] = f.left + f.width;
-    lanes.set(f.key, lane);
+      continue;
+    const arr = byRow.get(a.rowKey);
+    if (arr) arr.push(a);
+    else byRow.set(a.rowKey, [a]);
   }
-  return lanes;
+  for (const specs of byRow.values()) {
+    // A flag is one chip to place: a region, the dragged marker (both stand
+    // alone), or a group of coincident markers merged into one.
+    type Flag = {
+      rep: symbol;
+      members: symbol[];
+      left: number;
+      width: number;
+      label: string;
+    };
+    const flags: Flag[] = [];
+    const markerGroups = new Map<number, AnnotationSpec[]>();
+    for (const a of specs) {
+      if (a.kind === 'marker' && a.key !== draggingKey) {
+        const g = markerGroups.get(a.xs[0]!);
+        if (g) g.push(a);
+        else markerGroups.set(a.xs[0]!, [a]);
+      } else {
+        const ax =
+          a.kind === 'region' ? Math.min(a.xs[0]!, a.xs[1]!) : a.xs[0]!;
+        flags.push({
+          rep: a.key,
+          members: [a.key],
+          left: toPixel(ax),
+          width: labelWidth(a.label),
+          label: a.label,
+        });
+      }
+    }
+    for (const [x, group] of markerGroups) {
+      const label = group.map((g) => g.label).join(', ');
+      flags.push({
+        rep: group[0]!.key,
+        members: group.map((g) => g.key),
+        left: toPixel(x),
+        width: labelWidth(label),
+        label,
+      });
+    }
+    const assign = (f: Flag, lane: number) => {
+      out.set(f.rep, { lane, label: f.label });
+      for (const m of f.members)
+        if (m !== f.rep) out.set(m, { lane, label: null });
+    };
+    // Greedy-pack the static flags; the dragged one is pinned to lane 0.
+    const dragged = flags.filter(
+      (f) => f.members.length === 1 && f.members[0] === draggingKey,
+    );
+    flags
+      .filter((f) => !dragged.includes(f))
+      .sort((p, q) => p.left - q.left)
+      .reduce((laneEnds: number[], f) => {
+        let lane = 0;
+        while (lane < laneEnds.length && laneEnds[lane]! + LANE_GAP > f.left)
+          lane += 1;
+        laneEnds[lane] = f.left + f.width;
+        assign(f, lane);
+        return laneEnds;
+      }, []);
+    for (const f of dragged) assign(f, 0);
+  }
+  return out;
 }
 
 /** A mark's hover state, synced both ways with the consumer. The effective hover
@@ -370,6 +432,7 @@ function DragArea({
   onEdit,
   onDragStart,
   onDrag,
+  onDragActive,
 }: {
   x: number;
   y: number;
@@ -386,6 +449,9 @@ function DragArea({
   onEdit?: (() => void) | undefined;
   onDragStart?: (px: number, py: number) => void;
   onDrag: (px: number, py: number) => void;
+  /** Called `true` when a drag begins (press on an editable surface), `false` on
+   *  release/cancel — so the container can exclude this mark from lane packing. */
+  onDragActive?: (active: boolean) => void;
 }) {
   const dragging = useRef(false);
   // Tracks whether this press became a drag (moved past a few px) — a click that
@@ -418,6 +484,7 @@ function DragArea({
         if (!editable) return; // edit off: let it bubble (pan reads through)
         e.stopPropagation(); // claim the gesture — don't let the plot start a pan
         dragging.current = true;
+        onDragActive?.(true);
         onDragStart?.(p[0], p[1]);
         try {
           e.currentTarget.setPointerCapture(e.pointerId);
@@ -444,12 +511,14 @@ function DragArea({
           /* ignore */
         }
         dragging.current = false;
+        onDragActive?.(false);
         onHover(false);
       }}
       // A system gesture takeover fires pointercancel, not pointerup — clear the
       // same drag/hover state so the mark doesn't stay stuck "grabbed".
       onPointerCancel={(e) => {
         if (!dragging.current) return;
+        onDragActive?.(false);
         try {
           e.currentTarget.releasePointerCapture(e.pointerId);
         } catch {
@@ -566,13 +635,21 @@ export function Marker({
     lineLevel(selectable, editable, hovering, selected),
   );
   const showHandle = editable && (editing || hovering);
-  const lane = container.labelLanes.get(selfKey) ?? 0;
+  // Placement decides the lane + the chip text: `chipLabel` is this marker's own
+  // label, the merged `"a, b"` when coincident markers fold together, or `null`
+  // for a folded-in member (its chip is subsumed by the representative's).
+  const placement = container.labelLanes.get(selfKey);
+  const lane = placement?.lane ?? 0;
+  const chipLabel = placement?.label ?? null;
+  // The staff (vertical line) hangs from the top of its flag — so a flag stacked
+  // into a lower lane doesn't leave line poking above it. No label ⇒ full height.
+  const staffTop = text ? FLAG_TOP + lane * LANE_H : 0;
   return (
     <>
       <svg width={container.plotWidth} height={h} style={overlayStyle}>
         <line
           x1={x}
-          y1={0}
+          y1={staffTop}
           x2={x}
           y2={h}
           stroke={ann.color}
@@ -600,6 +677,7 @@ export function Marker({
             onHover={reportHover}
             onSelect={select}
             onEdit={edit}
+            onDragActive={(a) => container.setDragging(a ? selfKey : null)}
             onDrag={(px) =>
               onChange?.(
                 snapToGuides(container, selfKey, px) ??
@@ -609,7 +687,7 @@ export function Marker({
           />
         )}
       </svg>
-      {text && (
+      {chipLabel && (
         <Chip
           theme={container.theme}
           color={ann.color}
@@ -618,7 +696,7 @@ export function Marker({
             ...flagChipX(x, container.plotWidth),
           }}
         >
-          {text}
+          {chipLabel}
         </Chip>
       )}
     </>
@@ -771,6 +849,7 @@ export function Baseline({
             onHover={reportHover}
             onSelect={select}
             onEdit={edit}
+            onDragActive={(a) => container.setDragging(a ? selfKey : null)}
             onDrag={(_px, py) => onChange?.(yScale.invert(py))}
           />
         )}
@@ -922,7 +1001,7 @@ export function Region({
     ann.fillOpacity *
     rampAt(FILL_MULT, bodyLevel(selectable, editable, hovering, selected));
   const showHandles = editable && (editing || hovering);
-  const lane = container.labelLanes.get(selfKey) ?? 0;
+  const lane = container.labelLanes.get(selfKey)?.lane ?? 0;
   // Body move-drag: capture the start position + pointer on press, then move by
   // the TOTAL delta from there, so the *raw* position accumulates from a fixed
   // origin. Snap is applied only to the output — never fed back into this
@@ -993,6 +1072,7 @@ export function Region({
               onHover={reportHover}
               onSelect={select}
               onEdit={edit}
+              onDragActive={(a) => container.setDragging(a ? selfKey : null)}
               onDragStart={(px) => {
                 dragRef.current = { from, to, startPx: px };
               }}
@@ -1044,6 +1124,9 @@ export function Region({
                   onHover={reportHover}
                   onSelect={select}
                   onEdit={edit}
+                  onDragActive={(a) =>
+                    container.setDragging(a ? selfKey : null)
+                  }
                   onDragStart={() => {
                     edgeRef.current = to; // the fixed pivot = the far edge
                   }}
@@ -1067,6 +1150,9 @@ export function Region({
                   onHover={reportHover}
                   onSelect={select}
                   onEdit={edit}
+                  onDragActive={(a) =>
+                    container.setDragging(a ? selfKey : null)
+                  }
                   onDragStart={() => {
                     edgeRef.current = from; // the fixed pivot = the near edge
                   }}

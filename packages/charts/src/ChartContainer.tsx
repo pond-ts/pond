@@ -287,6 +287,9 @@ export function ChartContainer({
       setHoverPoint(y === null || rowKey === null ? null : { y, rowKey }),
     [],
   );
+  // The actively-dragged annotation — excluded from the lane packers so static
+  // marks hold their lanes while it crosses them (see ContainerFrame.draggingKey).
+  const [draggingKey, setDragging] = useState<symbol | null>(null);
 
   // Draw layers register as tracker sources; on hover we fan in their values at
   // the cursor and hand them out via onTrackerChanged (held in a ref so an
@@ -504,8 +507,8 @@ export function ChartContainer({
   // Pack overlapping top-flag labels (markers + regions) into stacked lanes so
   // close-in-x labels don't collide; chips read their lane back off the frame.
   const labelLanes = useMemo(
-    () => computeLabelLanes(annotations, (v) => xScale(v)),
-    [annotations, xScale],
+    () => computeLabelLanes(annotations, (v) => xScale(v), draggingKey),
+    [annotations, xScale, draggingKey],
   );
 
   const frame = useMemo<ContainerFrame>(
@@ -525,6 +528,8 @@ export function ChartContainer({
       cursorRowKey: hoverPoint?.rowKey ?? null,
       setHoverY,
       crosshairSnap,
+      draggingKey,
+      setDragging,
       selected: selectedValue,
       select,
       hovered,
@@ -569,6 +574,8 @@ export function ChartContainer({
       hoverPoint,
       setHoverY,
       crosshairSnap,
+      draggingKey,
+      setDragging,
       selectedValue,
       select,
       hovered,

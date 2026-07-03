@@ -119,13 +119,47 @@ export function XAxis({
   // colour, reading like a tick. An indicator always shows the axis coordinate
   // (the formatted `at`), never the marker's custom label (that stays the in-plot
   // chip). Skipped when off-plot.
+  // Coincident indicator markers (same `at`) show the same time, so one pill
+  // stands for the group — dedup by `at` (the first wins), then place.
+  const seenAt = new Set<number>();
   const markerTags = container.annotations
     .filter((a) => a.indicator && a.kind === 'marker' && a.xs[0] !== undefined)
+    .filter((a) => {
+      const at = a.xs[0]!;
+      if (seenAt.has(at)) return false;
+      seenAt.add(at);
+      return true;
+    })
     .map((a) => {
       const at = a.xs[0]!;
-      return { id: a.id ?? `marker-at-${at}`, x: xScale(at), text: fmt(at) };
+      return {
+        key: a.key,
+        id: a.id ?? `marker-at-${at}`,
+        x: xScale(at),
+        text: fmt(at),
+      };
     })
     .filter((t) => t.x >= 0 && t.x <= plotWidth);
+
+  // Stack overlapping marker pills into lanes — they all share this one strip.
+  // Greedy left→right; the dragged mark (`draggingKey`) is pinned to lane 0 so the
+  // static pills hold their lanes as it crosses them (no reshuffle mid-drag).
+  const pillWidth = (text: string) => text.length * theme.font.size * 0.62 + 10;
+  const pillLaneEnds: number[] = [];
+  const markerLanes = new Map<string, number>();
+  for (const t of [...markerTags].sort((p, q) => p.x - q.x)) {
+    if (t.key === container.draggingKey) {
+      markerLanes.set(t.id, 0);
+      continue;
+    }
+    const left = t.x - pillWidth(t.text) / 2;
+    let lane = 0;
+    while (lane < pillLaneEnds.length && pillLaneEnds[lane]! + 4 > left)
+      lane += 1;
+    pillLaneEnds[lane] = left + pillWidth(t.text);
+    markerLanes.set(t.id, lane);
+  }
+  const maxPillLane = Math.max(0, pillLaneEnds.length - 1);
 
   const placed: PlacedTick[] = customTicks
     ? customTicks.map((t) => ({ x: xScale(t.at), label: t.label }))
@@ -134,11 +168,15 @@ export function XAxis({
         label: fmt(+d),
       }));
 
-  const stripHeight = height ?? TICK_STRIP + (label ? LABEL_STRIP : 0);
   const onTop = side === 'top';
   // Axis pills (marker / crosshair) sit at the same offset as the tick labels so
   // they line up with their tick-label neighbours (matches `labelOffset` below).
   const pillOffset = align === 'right' ? 2 : 6;
+  // Per-lane vertical step for stacked pills; grow the strip to fit the stack.
+  const PILL_LANE_H = theme.font.size + 6;
+  const stripHeight =
+    (height ?? TICK_STRIP + (label ? LABEL_STRIP : 0)) +
+    maxPillLane * PILL_LANE_H;
 
   return (
     <div
@@ -216,35 +254,40 @@ export function XAxis({
           {label}
         </div>
       )}
-      {markerTags.map((t) => (
-        <Fragment key={t.id}>
-          {/* Connector bridging the marker line (which ends at the plot's bottom
-              edge = this strip's plot-facing edge) down to its pill, so the two
-              read as one. */}
-          <div
-            style={{
-              position: 'absolute',
-              left: `${t.x}px`,
-              [onTop ? 'bottom' : 'top']: 0,
-              width: '1px',
-              height: `${pillOffset}px`,
-              background: annotationColor,
-              zIndex: 2,
-            }}
-          />
-          <div
-            style={{
-              ...axisPillStyle(theme, annotationColor),
-              left: `${t.x}px`,
-              transform: 'translateX(-50%)',
-              [onTop ? 'bottom' : 'top']: `${pillOffset}px`,
-              zIndex: 2,
-            }}
-          >
-            {t.text}
-          </div>
-        </Fragment>
-      ))}
+      {markerTags.map((t) => {
+        // The pill's lane: stacked below the base row when it would overlap a
+        // neighbour; the connector lengthens to reach it.
+        const laneY = pillOffset + (markerLanes.get(t.id) ?? 0) * PILL_LANE_H;
+        return (
+          <Fragment key={t.id}>
+            {/* Connector bridging the marker line (which ends at the plot's
+                bottom edge = this strip's plot-facing edge) down to its pill, so
+                the two read as one. */}
+            <div
+              style={{
+                position: 'absolute',
+                left: `${t.x}px`,
+                [onTop ? 'bottom' : 'top']: 0,
+                width: '1px',
+                height: `${laneY}px`,
+                background: annotationColor,
+                zIndex: 2,
+              }}
+            />
+            <div
+              style={{
+                ...axisPillStyle(theme, annotationColor),
+                left: `${t.x}px`,
+                transform: 'translateX(-50%)',
+                [onTop ? 'bottom' : 'top']: `${laneY}px`,
+                zIndex: 2,
+              }}
+            >
+              {t.text}
+            </div>
+          </Fragment>
+        );
+      })}
       {showCursorTag && (
         <Fragment>
           {/* Connector bridging the crosshair's vertical line (ending at the
