@@ -119,8 +119,17 @@ export function XAxis({
   // colour, reading like a tick. An indicator always shows the axis coordinate
   // (the formatted `at`), never the marker's custom label (that stays the in-plot
   // chip). Skipped when off-plot.
+  // Coincident indicator markers (same `at`) show the same time, so one pill
+  // stands for the group — dedup by `at` (the first wins), then place.
+  const seenAt = new Set<number>();
   const markerTags = container.annotations
     .filter((a) => a.indicator && a.kind === 'marker' && a.xs[0] !== undefined)
+    .filter((a) => {
+      const at = a.xs[0]!;
+      if (seenAt.has(at)) return false;
+      seenAt.add(at);
+      return true;
+    })
     .map((a) => {
       const at = a.xs[0]!;
       return {

@@ -13,6 +13,7 @@ import {
   RowContext,
   type AnnotationSpec,
   type ContainerFrame,
+  type LabelPlacement,
 } from './context.js';
 import type { ChartTheme } from './theme.js';
 import { flagChipStyle, flagChipX, axisPillX, axisPillStyle } from './chip.js';
@@ -195,30 +196,32 @@ const LABEL_CHAR_W = 7;
 const LABEL_PAD = 16;
 const LANE_GAP = 6;
 
+/** Rough chip width (px) for the overlap model. */
+const labelWidth = (text: string) => text.length * LABEL_CHAR_W + LABEL_PAD;
+
 /**
- * Greedy left→right lane packing for the **top-flag** labels (markers + regions): a
- * label that would overlap the one to its left drops to the next free lane below,
- * so close-in-x labels stack instead of colliding. Returns slot-key → lane (0 =
- * top). Baselines, whose labels anchor at the left at their own y, don't participate.
+ * Lane placement for the **top-flag** labels (markers + regions). Returns, per
+ * slot key, its {@link LabelPlacement}. Baselines (label anchored at their own y)
+ * don't participate.
  *
- * **Packed per row** — each row's labels sit in that row's own top space, so a
- * label only competes with labels *in the same row* (a bottom-row label at the
- * same x as a top-row one isn't "in the way"). The optional `draggingKey` is
- * excluded from packing (pinned to lane 0): the static labels' x's don't move
- * during a drag, so their lanes stay put — only the dragged label slides, and a
- * final repack settles it on release (no phantom lane swaps as it crosses).
+ * Three behaviours:
+ * - **Per row** — labels only contend within their own row's top space (a
+ *   bottom-row label at the same x as a top-row one isn't "in the way").
+ * - **Coincident markers merge** — labelled markers at the *same x* (e.g. dragged
+ *   together, snapped onto one line) fold into a **single** chip (`"z1, z2, max"`)
+ *   on one lane, rather than stacking three deep. The first is the representative
+ *   (its `label` is the joined text); the rest map to `label: null`.
+ * - **Greedy stacking** — non-coincident labels that would still overlap drop to
+ *   the next free lane. The `draggingKey` is excluded (pinned to lane 0, its own
+ *   label) so the static labels hold their lanes as it crosses them.
  */
 export function computeLabelLanes(
   annotations: readonly AnnotationSpec[],
   toPixel: (axisX: number) => number,
   draggingKey?: symbol | null,
-): Map<symbol, number> {
-  const lanes = new Map<symbol, number>();
-  // Group the flag labels by row; only same-row labels contend for lanes.
-  const byRow = new Map<
-    symbol,
-    { key: symbol; left: number; width: number }[]
-  >();
+): Map<symbol, LabelPlacement> {
+  const out = new Map<symbol, LabelPlacement>();
+  const byRow = new Map<symbol, AnnotationSpec[]>();
   for (const a of annotations) {
     if (
       (a.kind !== 'marker' && a.kind !== 'region') ||
@@ -226,35 +229,72 @@ export function computeLabelLanes(
       a.xs.length === 0
     )
       continue;
-    // The dragged label is excluded from the pack (kept at lane 0) so it never
-    // reshuffles the static ones as it crosses them.
-    if (a.key === draggingKey) {
-      lanes.set(a.key, 0);
-      continue;
-    }
-    const ax = a.kind === 'region' ? Math.min(a.xs[0]!, a.xs[1]!) : a.xs[0]!;
-    const flag = {
-      key: a.key,
-      left: toPixel(ax),
-      width: a.label.length * LABEL_CHAR_W + LABEL_PAD,
-    };
     const arr = byRow.get(a.rowKey);
-    if (arr) arr.push(flag);
-    else byRow.set(a.rowKey, [flag]);
+    if (arr) arr.push(a);
+    else byRow.set(a.rowKey, [a]);
   }
-  for (const flags of byRow.values()) {
-    flags.sort((p, q) => p.left - q.left);
-    const laneEnds: number[] = []; // right-px of the last label placed in each lane
-    for (const f of flags) {
-      let lane = 0;
-      while (lane < laneEnds.length && laneEnds[lane]! + LANE_GAP > f.left) {
-        lane += 1;
+  for (const specs of byRow.values()) {
+    // A flag is one chip to place: a region, the dragged marker (both stand
+    // alone), or a group of coincident markers merged into one.
+    type Flag = {
+      rep: symbol;
+      members: symbol[];
+      left: number;
+      width: number;
+      label: string;
+    };
+    const flags: Flag[] = [];
+    const markerGroups = new Map<number, AnnotationSpec[]>();
+    for (const a of specs) {
+      if (a.kind === 'marker' && a.key !== draggingKey) {
+        const g = markerGroups.get(a.xs[0]!);
+        if (g) g.push(a);
+        else markerGroups.set(a.xs[0]!, [a]);
+      } else {
+        const ax =
+          a.kind === 'region' ? Math.min(a.xs[0]!, a.xs[1]!) : a.xs[0]!;
+        flags.push({
+          rep: a.key,
+          members: [a.key],
+          left: toPixel(ax),
+          width: labelWidth(a.label),
+          label: a.label,
+        });
       }
-      laneEnds[lane] = f.left + f.width;
-      lanes.set(f.key, lane);
     }
+    for (const [x, group] of markerGroups) {
+      const label = group.map((g) => g.label).join(', ');
+      flags.push({
+        rep: group[0]!.key,
+        members: group.map((g) => g.key),
+        left: toPixel(x),
+        width: labelWidth(label),
+        label,
+      });
+    }
+    const assign = (f: Flag, lane: number) => {
+      out.set(f.rep, { lane, label: f.label });
+      for (const m of f.members)
+        if (m !== f.rep) out.set(m, { lane, label: null });
+    };
+    // Greedy-pack the static flags; the dragged one is pinned to lane 0.
+    const dragged = flags.filter(
+      (f) => f.members.length === 1 && f.members[0] === draggingKey,
+    );
+    flags
+      .filter((f) => !dragged.includes(f))
+      .sort((p, q) => p.left - q.left)
+      .reduce((laneEnds: number[], f) => {
+        let lane = 0;
+        while (lane < laneEnds.length && laneEnds[lane]! + LANE_GAP > f.left)
+          lane += 1;
+        laneEnds[lane] = f.left + f.width;
+        assign(f, lane);
+        return laneEnds;
+      }, []);
+    for (const f of dragged) assign(f, 0);
   }
-  return lanes;
+  return out;
 }
 
 /** A mark's hover state, synced both ways with the consumer. The effective hover
@@ -595,7 +635,12 @@ export function Marker({
     lineLevel(selectable, editable, hovering, selected),
   );
   const showHandle = editable && (editing || hovering);
-  const lane = container.labelLanes.get(selfKey) ?? 0;
+  // Placement decides the lane + the chip text: `chipLabel` is this marker's own
+  // label, the merged `"a, b"` when coincident markers fold together, or `null`
+  // for a folded-in member (its chip is subsumed by the representative's).
+  const placement = container.labelLanes.get(selfKey);
+  const lane = placement?.lane ?? 0;
+  const chipLabel = placement?.label ?? null;
   // The staff (vertical line) hangs from the top of its flag — so a flag stacked
   // into a lower lane doesn't leave line poking above it. No label ⇒ full height.
   const staffTop = text ? FLAG_TOP + lane * LANE_H : 0;
@@ -642,7 +687,7 @@ export function Marker({
           />
         )}
       </svg>
-      {text && (
+      {chipLabel && (
         <Chip
           theme={container.theme}
           color={ann.color}
@@ -651,7 +696,7 @@ export function Marker({
             ...flagChipX(x, container.plotWidth),
           }}
         >
-          {text}
+          {chipLabel}
         </Chip>
       )}
     </>
@@ -956,7 +1001,7 @@ export function Region({
     ann.fillOpacity *
     rampAt(FILL_MULT, bodyLevel(selectable, editable, hovering, selected));
   const showHandles = editable && (editing || hovering);
-  const lane = container.labelLanes.get(selfKey) ?? 0;
+  const lane = container.labelLanes.get(selfKey)?.lane ?? 0;
   // Body move-drag: capture the start position + pointer on press, then move by
   // the TOTAL delta from there, so the *raw* position accumulates from a fixed
   // origin. Snap is applied only to the output — never fed back into this

@@ -13,6 +13,15 @@ import type { AxisFormat } from './format.js';
  * time→pixel `xScale` follow. Y scales stay per-row (row-local data), on the
  * {@link RowFrame}.
  */
+/** Where a top-flag label sits: its lane (0 = top; overlapping labels stack
+ *  down) and the chip text to render — the merged label for the representative of
+ *  a coincident-marker group, `null` for the members folded into it, else the
+ *  mark's own label. Computed by `computeLabelLanes`. */
+export interface LabelPlacement {
+  readonly lane: number;
+  readonly label: string | null;
+}
+
 export interface ContainerFrame {
   readonly timeRange: readonly [number, number];
   readonly width: number;
@@ -164,10 +173,11 @@ export interface ContainerFrame {
   /** Every registered annotation — read by each row to draw the *other* rows'
    *  guides, and by a drag to find snap targets. */
   readonly annotations: readonly AnnotationSpec[];
-  /** Vertical lane (0 = top) for each top-flag label, by slot key — overlapping
-   *  marker/region labels stack into lower lanes instead of colliding. A key absent
-   *  from the map (or mapping to 0) sits in the top lane. */
-  readonly labelLanes: ReadonlyMap<symbol, number>;
+  /** Per-key top-flag {@link LabelPlacement} — the lane (0 = top; overlapping
+   *  labels stack down) + the chip text (merged for the representative of a
+   *  coincident-marker group, `null` for the folded-in members). A key absent
+   *  from the map sits at lane 0 with its own label. */
+  readonly labelLanes: ReadonlyMap<symbol, LabelPlacement>;
   /**
    * The annotation currently being **dragged** (its slot key), or `null`. Set on
    * drag-start, cleared on release. The lane packers (label lanes + x-axis pill
