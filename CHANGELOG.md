@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`, and
 them all. Pre-1.0: minor bumps may include new features and type-level changes;
 patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.39.0...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.40.0...HEAD
+[0.40.0]: https://github.com/pjm17971/pond-ts/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/pjm17971/pond-ts/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/pjm17971/pond-ts/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/pjm17971/pond-ts/compare/v0.36.0...v0.37.0
@@ -37,21 +38,34 @@ patch bumps are strictly additive.
 
 ## [Unreleased]
 
+## [0.40.0] — 2026-07-05
+
+A **core + charts** release from the estela `DataChart`-port friction wave.
+`@pond-ts/react` and `@pond-ts/fit` carry no code changes — republished in
+lock-step (peer ranges widen to `^0.40.0`).
+
+### Added
+
+- `pond-ts`: **`TimeSeries.fromColumns({ sort })`** — an opt-in `sort?: boolean`
+  (default `false`) that stable-sorts a columnar payload by key before
+  construction, the columnar counterpart of `fromJSON`'s `sort`. The default path
+  is unchanged: a decreasing key still throws (a backwards key on the trusted fast
+  door is a corruption signal, not silently accepted), and the `Float64Array`
+  zero-copy adoption is preserved when `sort` is unset. (#344)
+- `@pond-ts/charts`: **controlled bar hover** — `<ChartContainer hovered
+onHover>`, the transient-hover analog of the existing `selected` / `onSelect`
+  pair, keyed by the same `SelectInfo`. Pin a lit `<BarChart>` bar from a legend
+  or list row (`hovered`), or mirror a bar-originated hover out-of-band
+  (`onHover`); omit both for today's uncontrolled behavior. (#343)
+
 ### Fixed
 
-- **Charts — click-to-select an annotation now works while `panZoom` is on.** A
-  _selectable but non-editable_ `<Region>` / `<Marker>` (one with no `onChange`)
-  lets its press bubble to the plot so a drag can pan _through_ it. The plot
-  captured the pointer on press to start the pan, and the browser then retargeted
-  the resulting `click` onto the plot (Pointer Events spec: a captured pointer's
-  compatibility mouse events fire on the capture target) — silently dropping the
-  mark's `onSelectAnnotation`. The plot now **defers** its pan pointer-capture
-  until the pointer actually moves past the drag slop, so a click (no drag) leaves
-  the pointer on the mark and its select fires, while a press-drag still pans
-  through and the tracker still hides once the pan commits. Resolves the
-  browser-dependent finding deferred from #308; adds
-  `e2e/annotations-panzoom.spec.ts`, the first real-pointer-event behavior e2e for
-  the annotation layer. (#309)
+- `@pond-ts/charts`: **axis and layer registration are value-equality-guarded** —
+  a fresh-but-value-equal `ticks` / `format` / `byValue()`-projected `series`
+  reference no longer re-registers the axis/layer, fixing a "Maximum update depth
+  exceeded" loop on frequently re-rendering (scrub-driven) charts. The layer and
+  axis docs gain a memoize note for `format` / `series` (an inline `format`
+  closure still must be hoisted — a closure can't be value-compared). (#342)
 
 ## [0.39.0] — 2026-07-03
 
@@ -89,6 +103,19 @@ carry no code changes — republished in lock-step (peer ranges widen to `^0.39.
 
 - `@pond-ts/charts`: the crosshair x-axis pill and marker pills read the axis's
   own formatter (a value-axis / off-boundary time no longer shows a raw number).
+- **Charts — click-to-select an annotation now works while `panZoom` is on.** A
+  _selectable but non-editable_ `<Region>` / `<Marker>` (one with no `onChange`)
+  lets its press bubble to the plot so a drag can pan _through_ it. The plot
+  captured the pointer on press to start the pan, and the browser then retargeted
+  the resulting `click` onto the plot (Pointer Events spec: a captured pointer's
+  compatibility mouse events fire on the capture target) — silently dropping the
+  mark's `onSelectAnnotation`. The plot now **defers** its pan pointer-capture
+  until the pointer actually moves past the drag slop, so a click (no drag) leaves
+  the pointer on the mark and its select fires, while a press-drag still pans
+  through and the tracker still hides once the pan commits. Resolves the
+  browser-dependent finding deferred from #308; adds
+  `e2e/annotations-panzoom.spec.ts`, the first real-pointer-event behavior e2e for
+  the annotation layer. (#309)
 
 ## [0.38.0] — 2026-07-03
 
