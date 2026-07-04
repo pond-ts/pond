@@ -100,5 +100,10 @@ describe('controlled bar hover (hovered / onHover)', () => {
     act(() => get().setHovered(hitA));
     expect(onHover).toHaveBeenCalledWith(hitA);
     expect(get().hovered).toEqual(hitB); // still the pinned prop
+
+    // Dedup holds in controlled mode too (via lastHoverRef, since there's no
+    // internal state to diff against): the same mark again is a no-op.
+    act(() => get().setHovered({ ...hitA }));
+    expect(onHover).toHaveBeenCalledTimes(1);
   });
 });

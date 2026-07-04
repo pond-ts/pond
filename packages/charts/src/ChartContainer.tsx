@@ -120,6 +120,12 @@ export interface ChartContainerProps {
    * transition, not on every pointer move. Wire it to mirror hover out-of-band
    * (e.g. a list row ↔ the bar), pairing with {@link hovered} to sync both ways.
    * (The annotation counterpart is {@link onHoverAnnotation}.)
+   *
+   * **Dedup key:** by the mark's `key` + `label` only (not `value`/`color`). So on
+   * a live chart where a bar's value changes while the cursor stays on it, this
+   * won't re-fire — read the current value from your series, not the last
+   * `onHover` payload. (Matches the internal hover-highlight, which repaints on
+   * key transitions.)
    */
   onHover?: (hit: SelectInfo | null) => void;
   /**
