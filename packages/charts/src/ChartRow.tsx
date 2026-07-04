@@ -59,8 +59,10 @@ function axisSpecEqual(a: AxisSpec, b: AxisSpec): boolean {
     a.id === b.id &&
     a.side === b.side &&
     a.width === b.width &&
-    a.min === b.min &&
-    a.max === b.max &&
+    // Object.is (not ===) so a degenerate NaN bound compares equal to itself and
+    // doesn't re-register every render.
+    Object.is(a.min, b.min) &&
+    Object.is(a.max, b.max) &&
     a.pad === b.pad &&
     a.labelPlacement === b.labelPlacement &&
     a.index === b.index &&
@@ -70,15 +72,18 @@ function axisSpecEqual(a: AxisSpec, b: AxisSpec): boolean {
 }
 
 /**
- * Value-equality for two {@link LayerEntry}s. The `layer` is an opaque bag of
- * closures that each draw layer rebuilds via `useMemo`, so its **reference** is
- * already stable while the layer's own inputs are — comparing it by identity
- * (plus `axisId`/`index`) is the cheap correct guard here. It collapses a
- * re-register that carries the same layer object, but *cannot* see through a
- * fresh `series` projection (`byValue()` mints a new one each call, rebuilding
- * the memo → a new `layer`); that case is a consumer-side memoize (see the
- * `series` note on the draw-layer components), not something the setter can
- * value-compare.
+ * Value-equality for two {@link LayerEntry}s — **defensive, not load-bearing.**
+ * The axis guard (`axisSpecEqual`) is what breaks the update-depth loop; this is
+ * belt-and-suspenders for the layer setter. Note that under the current draw-layer
+ * structure it *won't* actually fire: every layer builds `layer` inside the same
+ * `useMemo` as `entry`, so the register effect only runs when `entry` is fresh —
+ * and a fresh `entry` always carries a fresh `layer`, so `a.layer === b.layer` is
+ * never true when the guard runs (it falls through to a normal register). It would
+ * only bite if a future layer memoized `layer` separately from `entry` (or the
+ * `Layers` registry ref changed under a stable entry). A fresh `series` projection
+ * (`byValue()` mints one each call) rebuilds the memo → a new `layer` and
+ * legitimately re-registers; that's a consumer-side memoize (see the `series` note
+ * on the draw-layer components), not something the setter can value-compare.
  */
 function layerEntryEqual(a: LayerEntry, b: LayerEntry): boolean {
   return a.layer === b.layer && a.axisId === b.axisId && a.index === b.index;
