@@ -120,6 +120,76 @@ describe('registry order stability', () => {
 });
 
 /**
+ * The registration value-equality guard (F-charts-axis-reregister): a `<YAxis>`
+ * / draw layer re-fires its register effect whenever its memoized spec yields a
+ * fresh object — which an inline `ticks={[]}` / `format` or a re-rendered parent
+ * does every render. The setters must **no-op when the spec is value-equal** to
+ * the stored one, so registration can't spin `register → setState → re-render →
+ * register` into a "Maximum update depth exceeded" loop on a scrub-heavy chart.
+ * We observe the guard through the row's derived `yScales` / `layers`: a no-op'd
+ * register preserves the registry map identity, so those memos keep the same
+ * reference across a value-equal re-render.
+ */
+describe('registration value-equality guard', () => {
+  function FrameProbe({
+    spy,
+  }: {
+    spy: (frame: { yScales: unknown; layers: unknown }) => void;
+  }) {
+    const row = useContext(RowContext);
+    if (row) spy({ yScales: row.yScales, layers: row.layers });
+    return null;
+  }
+
+  it('does not re-register an axis when a fresh but value-equal ticks/format is passed', () => {
+    const spy = vi.fn();
+    const seriesA = mk([1, 2, 3]); // stable ref across rerenders
+    // Fresh `ticks={[]}` array + inline string `format` each render — both
+    // value-equal, the common live-chart footgun.
+    const tree = () => (
+      <ChartContainer range={[0, 3]} width={300}>
+        <ChartRow height={100}>
+          <YAxis id="a" min={0} max={10} format=".0f" ticks={[]} />
+          <Layers>
+            <LineChart series={seriesA} column="v" axis="a" />
+          </Layers>
+          <FrameProbe spy={spy} />
+        </ChartRow>
+      </ChartContainer>
+    );
+    const { rerender } = render(tree());
+    const before = last(spy) as { yScales: unknown; layers: unknown };
+    rerender(tree()); // fresh [] + fresh element props, value-equal
+    const after = last(spy) as { yScales: unknown; layers: unknown };
+    // The guard no-op'd both setters, so the derived scale/layer maps kept
+    // identity — no registry churn from the value-equal re-render.
+    expect(after.yScales).toBe(before.yScales);
+    expect(after.layers).toBe(before.layers);
+  });
+
+  it('DOES re-register when tick contents genuinely change', () => {
+    const spy = vi.fn();
+    const seriesA = mk([1, 2, 3]);
+    const tree = (ticks: { at: number; label: string }[]) => (
+      <ChartContainer range={[0, 3]} width={300}>
+        <ChartRow height={100}>
+          <YAxis id="a" min={0} max={10} ticks={ticks} />
+          <Layers>
+            <LineChart series={seriesA} column="v" axis="a" />
+          </Layers>
+          <FrameProbe spy={spy} />
+        </ChartRow>
+      </ChartContainer>
+    );
+    const { rerender } = render(tree([{ at: 2, label: '2' }]));
+    const before = last(spy) as { yScales: unknown };
+    rerender(tree([{ at: 5, label: '5' }])); // different tick position
+    const after = last(spy) as { yScales: unknown };
+    expect(after.yScales).not.toBe(before.yScales); // the real change registered
+  });
+});
+
+/**
  * Placement follows `side`, not JSX author order — so a `side="right"` axis
  * renders right of the plot even when authored before `<Layers>`, keeping the
  * DOM position consistent with the side-based gutter reservation.

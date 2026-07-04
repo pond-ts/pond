@@ -30,6 +30,10 @@ export interface BarChartProps<
    * the same neighbour-spacing span applies (see {@link barsFromValueSeries}); the
    * container infers the x-kind from the data, no axis-type prop (mirrors the
    * other layers).
+   *
+   * **Live charts:** `series.byValue(…)` mints a *fresh* projection each call, so
+   * an inline `series={s.byValue('dist')}` re-registers this layer every render —
+   * on a frequently re-rendering chart, memoize the projection (`useMemo`).
    */
   series: TimeSeries<S> | ValueSeries<VS>;
   /** Name of the numeric value column for the bar height. */

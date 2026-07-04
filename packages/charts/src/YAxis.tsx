@@ -40,6 +40,12 @@ export interface YAxisProps {
    * function. Omit for the scale's d3 default — which is calibrated to the tick
    * step, so a between-ticks readout rounds to tick precision; pass a specifier
    * (e.g. `',.2f'`) when you want finer readout precision. See {@link AxisFormat}.
+   *
+   * **Live charts:** a string specifier is value-compared, so an inline
+   * `format='.0%'` is safe every render. An inline `format={(v) => …}` **function**
+   * is a fresh reference each render — the one axis prop a structural guard can't
+   * value-compare — so on a frequently re-rendering (e.g. scrub-driven) chart,
+   * hoist it or wrap it in `useCallback`, or it re-registers the axis each frame.
    */
   format?: AxisFormat;
   /**
@@ -49,9 +55,10 @@ export interface YAxisProps {
    * lever for a non-uniform axis like pace, where the caller chooses round-pace
    * positions and their own `m:ss` labels (`{ at: -300, label: '5:00' }`). `at`
    * values outside `[min, max]` extrapolate off-plot (the scale does not clamp).
-   * Pass `[]` to draw none. For a live / animating chart, **memoize the array** —
-   * an inline `ticks={[…]}` is a fresh reference each render and re-registers the
-   * axis (like `format`; harmless for a static chart).
+   * Pass `[]` to draw none. The array is **value-compared on registration**, so an
+   * inline `ticks={[…]}` (or `ticks={[]}`) with unchanged contents no longer
+   * re-registers the axis — only genuinely changed tick positions do. (An inline
+   * `format` *function* still needs hoisting; see `format`.)
    */
   ticks?: ReadonlyArray<{ readonly at: number; readonly label: string }>;
   /**

@@ -29,6 +29,66 @@ import {
 /** Sentinel id for the implicit axis a row gets when no `<YAxis>` is declared. */
 const IMPLICIT_AXIS_ID = '__default__';
 
+/** Element-wise compare of two optional number arrays (an axis's tick values) —
+ *  so a *fresh* `ticks={[…]}` array whose contents are unchanged doesn't count as
+ *  a new spec (see {@link axisSpecEqual}). */
+function numberArraysEqual(
+  a: readonly number[] | undefined,
+  b: readonly number[] | undefined,
+): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1)
+    if (!Object.is(a[i], b[i])) return false;
+  return true;
+}
+
+/**
+ * Value-equality for two {@link AxisSpec}s — the registration guard's compare
+ * (see `registerAxis`). Every field is a plain value except `format`, which may
+ * be a `(value) => string` closure: those are compared by **reference**
+ * (`Object.is`), so a stable/hoisted formatter (or a string specifier) is equal
+ * across renders but a *fresh inline function* is not — the one case a structural
+ * guard provably can't collapse, hence the `<YAxis format>` memoize note. A
+ * fresh-but-value-equal `ticks` array (the common live-chart footgun) compares
+ * equal element-wise and no-ops.
+ */
+function axisSpecEqual(a: AxisSpec, b: AxisSpec): boolean {
+  return (
+    a.id === b.id &&
+    a.side === b.side &&
+    a.width === b.width &&
+    // Object.is (not ===) so a degenerate NaN bound compares equal to itself and
+    // doesn't re-register every render.
+    Object.is(a.min, b.min) &&
+    Object.is(a.max, b.max) &&
+    a.pad === b.pad &&
+    a.labelPlacement === b.labelPlacement &&
+    a.index === b.index &&
+    Object.is(a.format, b.format) &&
+    numberArraysEqual(a.tickValues, b.tickValues)
+  );
+}
+
+/**
+ * Value-equality for two {@link LayerEntry}s — **defensive, not load-bearing.**
+ * The axis guard (`axisSpecEqual`) is what breaks the update-depth loop; this is
+ * belt-and-suspenders for the layer setter. Note that under the current draw-layer
+ * structure it *won't* actually fire: every layer builds `layer` inside the same
+ * `useMemo` as `entry`, so the register effect only runs when `entry` is fresh —
+ * and a fresh `entry` always carries a fresh `layer`, so `a.layer === b.layer` is
+ * never true when the guard runs (it falls through to a normal register). It would
+ * only bite if a future layer memoized `layer` separately from `entry` (or the
+ * `Layers` registry ref changed under a stable entry). A fresh `series` projection
+ * (`byValue()` mints one each call) rebuilds the memo → a new `layer` and
+ * legitimately re-registers; that's a consumer-side memoize (see the `series` note
+ * on the draw-layer components), not something the setter can value-compare.
+ */
+function layerEntryEqual(a: LayerEntry, b: LayerEntry): boolean {
+  return a.layer === b.layer && a.axisId === b.axisId && a.index === b.index;
+}
+
 /** Axis tick count for the per-axis formatter — matches `<YAxis>`'s tick count
  *  so the readout formatter is calibrated exactly as the labels are. */
 const AXIS_TICK_COUNT = 5;
@@ -90,8 +150,18 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
     () => new Map(),
   );
 
+  // Registration is idempotent under value-equality: a `<YAxis>` re-fires its
+  // register effect whenever its `spec` memo yields a fresh object — which an
+  // inline `ticks={[]}` / `format` or a re-rendered parent does every render. If
+  // the spec is *value*-equal to the stored one, skip the `setState` entirely so
+  // it can't spin `register → setState → re-render → register` into React's
+  // "Maximum update depth exceeded" on a scrub-heavy chart (F-charts-axis-reregister).
   const registerAxis = useCallback((key: symbol, spec: AxisSpec) => {
-    setAxes((m) => new Map(m).set(key, spec));
+    setAxes((m) => {
+      const prev = m.get(key);
+      if (prev !== undefined && axisSpecEqual(prev, spec)) return m;
+      return new Map(m).set(key, spec);
+    });
   }, []);
   const unregisterAxis = useCallback((key: symbol) => {
     setAxes((m) => {
@@ -101,8 +171,16 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
       return next;
     });
   }, []);
+  // Same value-equality guard as `registerAxis`: a re-register carrying the same
+  // `layer` object (stable while the draw layer's inputs are) + `axisId`/`index`
+  // no-ops rather than churning state. (A fresh `series` projection rebuilds the
+  // layer and legitimately re-registers — see `layerEntryEqual`.)
   const registerLayer = useCallback((key: symbol, entry: LayerEntry) => {
-    setLayers((m) => new Map(m).set(key, entry));
+    setLayers((m) => {
+      const prev = m.get(key);
+      if (prev !== undefined && layerEntryEqual(prev, entry)) return m;
+      return new Map(m).set(key, entry);
+    });
   }, []);
   const unregisterLayer = useCallback((key: symbol) => {
     setLayers((m) => {

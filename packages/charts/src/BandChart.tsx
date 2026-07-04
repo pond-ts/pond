@@ -17,6 +17,10 @@ export interface BandChartProps<
    * container infers which from the data, no axis-type prop (mirrors
    * `<LineChart>` / `<AreaChart>`). Either way `lower`/`upper` name the numeric
    * edge columns.
+   *
+   * **Live charts:** `series.byValue(…)` mints a *fresh* projection each call, so
+   * an inline `series={s.byValue('dist')}` re-registers this layer every render —
+   * on a frequently re-rendering chart, memoize the projection (`useMemo`).
    */
   series: TimeSeries<S> | ValueSeries<VS>;
   /** Name of the numeric column for the band's lower edge (e.g. `p25`). */

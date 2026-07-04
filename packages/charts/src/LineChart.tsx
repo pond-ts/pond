@@ -21,6 +21,11 @@ export interface LineChartProps<
    * `ValueSeries` (`series.byValue('cumDist')`) against its value axis — the
    * container infers which from the data, no axis-type prop. Either way the key
    * / axis column supplies x and `column` supplies y.
+   *
+   * **Live charts:** `series.byValue(…)` mints a *fresh* projection each call, so
+   * passing `series={s.byValue('dist')}` inline re-registers this layer every
+   * render — on a frequently re-rendering (e.g. scrub-driven) chart, memoize the
+   * projection (`useMemo`) so the layer isn't rebuilt each frame.
    */
   series: TimeSeries<S> | ValueSeries<VS>;
   /** Name of the numeric value column to plot. */
