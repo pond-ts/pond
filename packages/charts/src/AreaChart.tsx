@@ -21,6 +21,10 @@ export interface AreaChartProps<
    * `ValueSeries` (`series.byValue('dist')`) against its value axis — the
    * container infers which from the data, no axis-type prop (mirrors
    * `<LineChart>`). Either way `column` names the numeric value to fill from.
+   *
+   * **Live charts:** `series.byValue(…)` mints a *fresh* projection each call, so
+   * an inline `series={s.byValue('dist')}` re-registers this layer every render —
+   * on a frequently re-rendering chart, memoize the projection (`useMemo`).
    */
   series: TimeSeries<S> | ValueSeries<VS>;
   /** Name of the numeric value column to fill from. */
