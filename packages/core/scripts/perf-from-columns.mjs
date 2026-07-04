@@ -11,9 +11,13 @@ const schema = Object.freeze([
   { name: 'vwap', kind: 'number' },
 ]);
 
-function makeColumns(length, { typed, sparse = false } = {}) {
+function makeColumns(length, { typed, sparse = false, shuffled = false } = {}) {
   const time = new Float64Array(length);
-  for (let i = 0; i < length; i += 1) time[i] = i * 1_000;
+  // `shuffled` builds a descending key so `sort: true` does a full reorder
+  // (worst case for the permutation + copy); otherwise ascending (the fast path).
+  for (let i = 0; i < length; i += 1) {
+    time[i] = (shuffled ? length - 1 - i : i) * 1_000;
+  }
 
   const valueNames = ['open', 'high', 'low', 'close', 'volume', 'vwap'];
   const columns = { time };
@@ -43,14 +47,14 @@ function median(values) {
     : sorted[mid];
 }
 
-function benchmark(name, columns, repeats = 7) {
+function benchmark(name, columns, { sort = false, repeats = 7 } = {}) {
   // warmup
-  TimeSeries.fromColumns({ name: 'w', schema, columns });
+  TimeSeries.fromColumns({ name: 'w', schema, columns, sort });
 
   const samples = [];
   for (let run = 0; run < repeats; run += 1) {
     const start = performance.now();
-    const series = TimeSeries.fromColumns({ name, schema, columns });
+    const series = TimeSeries.fromColumns({ name, schema, columns, sort });
     const end = performance.now();
     if (series.length !== columns.time.length) {
       throw new Error(`unexpected length for ${name}`);
@@ -89,6 +93,18 @@ const results = [
   benchmark(
     'number[] columns, per-element floor (1k x 7 cols)',
     makeColumns(1_000, { typed: false }),
+  ),
+  // sort: true — the opt-in reorder path. Descending input so the sort does a
+  // full O(n log n) permutation + a per-column copy (no zero-copy adoption).
+  benchmark(
+    'number[] columns, sort: true, descending (100k x 7 cols)',
+    makeColumns(LENGTH, { typed: false, shuffled: true }),
+    { sort: true },
+  ),
+  benchmark(
+    'Float64Array columns, sort: true, descending — copy path (100k x 7 cols)',
+    makeColumns(LENGTH, { typed: true, shuffled: true }),
+    { sort: true },
   ),
 ];
 

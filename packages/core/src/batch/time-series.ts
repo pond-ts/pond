@@ -884,7 +884,19 @@ export class TimeSeries<S extends SeriesSchema> {
    * the fast path): the resulting series' columns alias the caller's buffers.
    * Mutating an adopted buffer after construction mutates the series. Pass a
    * fresh buffer (e.g. straight off a decode) if this matters; `number[]`
-   * columns are always copied.
+   * columns are always copied. (**`sort` disables the adoption** — a reorder
+   * needs its own buffers, so every column is copied when sorting.)
+   *
+   * **Ordering.** Keys must be **non-decreasing** — bisect-based operators (crop,
+   * `atTime`, range queries) rely on it — so an out-of-order columnar input
+   * throws by default (a backwards key on the *trusted* fast door is a corruption
+   * signal, not something to silently accept). Pass **`sort: true`** to sort the
+   * rows by key before construction instead — the columnar analog of
+   * {@link TimeSeries.fromJSON}'s `sort`, paying `O(n log n)` + a copy only when
+   * asked. The sort is **stable**, so rows sharing a key keep their input order.
+   * (To flatten a genuine backwards blip to a plateau — a different, lossy choice
+   * — clamp the key column yourself before ingest; the library won't mutate data
+   * for you.)
    *
    * **v1 scope:** a `time`-kind key + `number` value columns (the market-data /
    * chart wire case). Other key kinds (`interval` / `timeRange`) and non-numeric
@@ -892,7 +904,8 @@ export class TimeSeries<S extends SeriesSchema> {
    *
    * @throws ValidationError on a missing column, a length mismatch, an
    *   unsupported kind, a non-finite timestamp key, or an out-of-order
-   *   (decreasing) timestamp — keys must be non-decreasing, same as `fromJSON`.
+   *   (decreasing) timestamp when `sort` is not set — keys must be non-decreasing,
+   *   same as `fromJSON`.
    */
   static fromColumns<S extends SeriesSchema>(input: {
     name: string;
@@ -901,8 +914,15 @@ export class TimeSeries<S extends SeriesSchema> {
       string,
       ReadonlyArray<number | null | undefined> | Float64Array
     >;
+    /**
+     * Sort the rows by key before construction (off by default), for a columnar
+     * payload whose rows aren't guaranteed ordered — the counterpart of
+     * `fromJSON`'s `sort`. Stable; disables the `Float64Array` zero-copy adoption
+     * (columns are reordered into fresh buffers).
+     */
+    sort?: boolean;
   }): TimeSeries<S> {
-    const { name, schema, columns } = input;
+    const { name, schema, columns, sort = false } = input;
 
     // Key column (schema[0]). v1: point-in-time (`time`) keys only.
     const keyDef = schema[0];
@@ -927,17 +947,37 @@ export class TimeSeries<S extends SeriesSchema> {
     // generic iterable-protocol path even for a plain array, ~15-20x slower
     // than a preallocated-buffer copy at 100k-element scale — measured, not
     // theoretical (see the pond-columnar-ingest spike's ingest regression).
-    let begin: Float64Array;
+    let rawBegin: Float64Array;
     if (keyRaw instanceof Float64Array) {
-      begin = keyRaw;
+      rawBegin = keyRaw;
     } else {
-      begin = new Float64Array(keyRaw.length);
+      rawBegin = new Float64Array(keyRaw.length);
       for (let j = 0; j < keyRaw.length; j += 1) {
         const v = keyRaw[j];
-        begin[j] = v == null ? NaN : Number(v);
+        rawBegin[j] = v == null ? NaN : Number(v);
       }
     }
-    const count = begin.length;
+    const count = rawBegin.length;
+
+    // `sort: true` — reorder every column by ascending key before construction.
+    // Compute the row permutation once (a stable sort of the index array; V8's
+    // Array.sort is stable, so equal keys keep input order, matching fromJSON's
+    // stable intake), then remap the key + each value column through it below.
+    // `order` stays null on the (default) trusted fast path, so no allocation /
+    // copy is paid unless asked. A non-finite key is left for `TimeKeyColumn` to
+    // reject — sorting can't make it valid.
+    let begin: Float64Array;
+    let order: Uint32Array | null = null;
+    if (sort) {
+      const idx = Array.from({ length: count }, (_, i) => i);
+      idx.sort((a, b) => rawBegin[a]! - rawBegin[b]!);
+      order = Uint32Array.from(idx);
+      begin = new Float64Array(count);
+      for (let j = 0; j < count; j += 1) begin[j] = rawBegin[order[j]!]!;
+    } else {
+      begin = rawBegin;
+    }
+
     // Throws on any non-finite timestamp.
     const keys = new TimeKeyColumn(begin, count);
     // Enforce the non-decreasing-key invariant that `fromJSON`'s
@@ -946,12 +986,14 @@ export class TimeSeries<S extends SeriesSchema> {
     // bisect-based operators (crop, `atTime`, range queries) rely on it, so an
     // unsorted columnar input must fail loudly here rather than build a silently
     // broken series. One O(N) scan over already-finite values — negligible next
-    // to decode.
+    // to decode. (When `sort` is set the keys are now non-decreasing, so this is
+    // a cheap post-condition check rather than a rejection.)
     for (let j = 1; j < count; j += 1) {
       if (begin[j]! < begin[j - 1]!) {
         throw new ValidationError(
           `fromColumns: key column '${keyDef.name}' is out of order at index ${j} ` +
-            `(${begin[j]} < ${begin[j - 1]}) — timestamps must be non-decreasing; pre-sort the columns`,
+            `(${begin[j]} < ${begin[j - 1]}) — timestamps must be non-decreasing; ` +
+            `pass { sort: true } or pre-sort the columns`,
         );
       }
     }
@@ -987,7 +1029,20 @@ export class TimeSeries<S extends SeriesSchema> {
       // Manual loop, not `Float64Array.from(arr, mapFn)` — see the key-column
       // comment above; the cost applies identically here.
       let values: Float64Array;
-      if (raw instanceof Float64Array) {
+      if (order !== null) {
+        // Sorting: reorder into a fresh buffer through the key permutation (no
+        // zero-copy adoption — the rows are being moved). Same missing rule
+        // (`null`/`undefined` → NaN) applied while remapping.
+        values = new Float64Array(count);
+        if (raw instanceof Float64Array) {
+          for (let j = 0; j < count; j += 1) values[j] = raw[order[j]!]!;
+        } else {
+          for (let j = 0; j < count; j += 1) {
+            const v = raw[order[j]!];
+            values[j] = v == null ? NaN : v;
+          }
+        }
+      } else if (raw instanceof Float64Array) {
         values = raw;
       } else {
         values = new Float64Array(count);
