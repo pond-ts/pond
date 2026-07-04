@@ -220,4 +220,126 @@ describe('TimeSeries.fromColumns', () => {
       }),
     ).toThrow();
   });
+
+  describe('sort: true', () => {
+    it('sorts out-of-order rows by key, carrying every column along', () => {
+      const ts = TimeSeries.fromColumns({
+        name: 't',
+        schema: SCHEMA,
+        sort: true,
+        columns: {
+          time: [3000, 1000, 2000],
+          open: [30, 10, 20],
+          close: [3, 1, null],
+        },
+      });
+      expect(ts.length).toBe(3);
+      // keys ascending...
+      expect(ts.at(0)?.begin()).toBe(1000);
+      expect(ts.at(1)?.begin()).toBe(2000);
+      expect(ts.at(2)?.begin()).toBe(3000);
+      // ...and each value row moved with its key.
+      expect(ts.at(0)?.data().open).toBe(10);
+      expect(ts.at(1)?.data().open).toBe(20);
+      expect(ts.at(2)?.data().open).toBe(30);
+      // the `null` (row keyed 2000) stays a gap after the reorder
+      expect(ts.at(1)?.data().close).toBeUndefined();
+      expect(ts.at(0)?.data().close).toBe(1);
+    });
+
+    it('sorts Float64Array columns too (NaN gap preserved through the reorder)', () => {
+      const ts = TimeSeries.fromColumns({
+        name: 't',
+        schema: SCHEMA,
+        sort: true,
+        columns: {
+          time: Float64Array.from([3000, 1000, 2000]),
+          open: Float64Array.from([30, 10, 20]),
+          close: Float64Array.from([3, 1, NaN]),
+        },
+      });
+      expect([ts.at(0)?.begin(), ts.at(1)?.begin(), ts.at(2)?.begin()]).toEqual(
+        [1000, 2000, 3000],
+      );
+      expect(ts.at(2)?.data().open).toBe(30);
+      expect(ts.at(1)?.data().close).toBeUndefined(); // NaN row (keyed 2000)
+    });
+
+    it('is stable — rows sharing a key keep input order', () => {
+      const ts = TimeSeries.fromColumns({
+        name: 't',
+        schema: SCHEMA,
+        sort: true,
+        columns: {
+          time: [2000, 1000, 1000],
+          open: [99, 11, 12], // the two 1000-keyed rows: 11 then 12
+          close: [9, 1, 2],
+        },
+      });
+      expect(ts.at(0)?.data().open).toBe(11); // first-in of the tie
+      expect(ts.at(1)?.data().open).toBe(12); // second-in of the tie
+      expect(ts.at(2)?.data().open).toBe(99);
+    });
+
+    it('matches fromJSON({ sort: true }) for the same unsorted data', () => {
+      const unsorted = {
+        time: [3000, 1000, 2000],
+        open: [30, 10, 20],
+        close: [3, 1, 2],
+      };
+      const cols = TimeSeries.fromColumns({
+        name: 't',
+        schema: SCHEMA,
+        sort: true,
+        columns: unsorted,
+      });
+      const rows = TimeSeries.fromJSON({
+        name: 't',
+        schema: SCHEMA,
+        sort: true,
+        rows: [
+          [3000, 30, 3],
+          [1000, 10, 1],
+          [2000, 20, 2],
+        ] as never,
+      });
+      expect(cols.toJSON()).toEqual(rows.toJSON());
+    });
+
+    it('does not adopt buffers when sorting (columns are copied, not aliased)', () => {
+      const buf = Float64Array.from([2000, 1000]);
+      const open = Float64Array.from([20, 10]);
+      const ts = TimeSeries.fromColumns({
+        name: 't',
+        schema: [
+          { name: 'time', kind: 'time' },
+          { name: 'open', kind: 'number' },
+        ] as const,
+        sort: true,
+        columns: { time: buf, open },
+      });
+      // Mutating the source buffer after construction must NOT change the series
+      // (the sort path copied into fresh buffers).
+      buf[0] = 500;
+      open[0] = 999;
+      expect(ts.at(0)?.begin()).toBe(1000); // sorted, and unaffected by the mutation
+      expect(ts.at(1)?.begin()).toBe(2000);
+      expect(ts.at(1)?.data().open).toBe(20);
+    });
+
+    it('still rejects a non-finite key even with sort', () => {
+      expect(() =>
+        TimeSeries.fromColumns({
+          name: 't',
+          schema: SCHEMA,
+          sort: true,
+          columns: {
+            time: [2000, NaN, 1000],
+            open: [20, 15, 10],
+            close: [2, 1.5, 1],
+          },
+        }),
+      ).toThrow();
+    });
+  });
 });
