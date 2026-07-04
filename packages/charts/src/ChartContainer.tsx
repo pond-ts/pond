@@ -104,6 +104,25 @@ export interface ChartContainerProps {
    */
   onSelect?: (hit: SelectInfo | null) => void;
   /**
+   * Controlled hover-highlight — the transiently lit mark (echo the `onHover` arg
+   * back), or `null`. **Omitted ⇒ uncontrolled** (the pointer over a selectable
+   * layer manages it internally). The hover analog of {@link selected}: pass it to
+   * **pin** a lit mark from outside the chart (e.g. hovering a legend / list row
+   * lights the matching {@link BarChart} bar). Only layers with a hover-highlight
+   * (currently `BarChart`) render it; keyed by the same {@link SelectInfo} identity
+   * as selection.
+   */
+  hovered?: SelectInfo | null;
+  /**
+   * Fires when the pointer enters a selectable layer's mark (the hit mark) or
+   * leaves every mark (`null`) — the hover analog of {@link onSelect}. Notification
+   * only (works controlled or uncontrolled), and **deduped**: it fires on a mark
+   * transition, not on every pointer move. Wire it to mirror hover out-of-band
+   * (e.g. a list row ↔ the bar), pairing with {@link hovered} to sync both ways.
+   * (The annotation counterpart is {@link onHoverAnnotation}.)
+   */
+  onHover?: (hit: SelectInfo | null) => void;
+  /**
    * Enable pan/zoom: drag the plot to pan the time range, wheel to zoom around
    * the cursor. **Default off** — so it doesn't capture drag/scroll unless asked.
    */
@@ -211,6 +230,8 @@ export function ChartContainer({
   onTrackerChanged,
   selected,
   onSelect,
+  hovered,
+  onHover,
   panZoom = false,
   onTimeRangeChange,
   minDuration = 1,
@@ -401,20 +422,37 @@ export function ChartContainer({
   }, []);
 
   // Hover-highlight: the transient mark under the pointer (distinct from the
-  // committed selection). Deduped by key+label so the data canvas repaints only
-  // when the hovered mark changes — not on every pointer move (the move itself
-  // just slides the SVG cursor, which never touches the data canvas).
-  const [hovered, setHoveredState] = useState<SelectInfo | null>(null);
+  // committed selection). Controlled (`hovered` prop) or uncontrolled (internal),
+  // mirroring selection; `onHover` notifies in both modes. Deduped by key+label
+  // so it fires — and the data canvas repaints — only when the hovered mark
+  // changes, not on every pointer move (the move itself just slides the SVG
+  // cursor, which never touches the data canvas).
+  const [internalHovered, setInternalHovered] = useState<SelectInfo | null>(
+    null,
+  );
+  const controlledHover = hovered !== undefined;
+  const hoveredValue = controlledHover ? (hovered ?? null) : internalHovered;
+  const onHoverRef = useRef(onHover);
+  const controlledHoverRef = useRef(controlledHover);
+  // The last mark we reported — so the callback dedups across pointer moves even
+  // in controlled mode, where there's no internal state to compare against.
+  const lastHoverRef = useRef<SelectInfo | null>(null);
+  useLayoutEffect(() => {
+    onHoverRef.current = onHover;
+    controlledHoverRef.current = controlledHover;
+  });
   const setHovered = useCallback((hit: SelectInfo | null) => {
-    setHoveredState((prev) =>
+    const prev = lastHoverRef.current;
+    const same =
       prev === hit ||
       (prev !== null &&
         hit !== null &&
         prev.key === hit.key &&
-        prev.label === hit.label)
-        ? prev
-        : hit,
-    );
+        prev.label === hit.label);
+    if (same) return;
+    lastHoverRef.current = hit;
+    onHoverRef.current?.(hit);
+    if (!controlledHoverRef.current) setInternalHovered(hit);
   }, []);
 
   // Rows report their per-slot gutter widths; we reserve each slot's max.
@@ -532,7 +570,7 @@ export function ChartContainer({
       setDragging,
       selected: selectedValue,
       select,
-      hovered,
+      hovered: hoveredValue,
       setHovered,
       cursor,
       cursorTime,
@@ -578,7 +616,7 @@ export function ChartContainer({
       setDragging,
       selectedValue,
       select,
-      hovered,
+      hoveredValue,
       setHovered,
       cursor,
       cursorTime,

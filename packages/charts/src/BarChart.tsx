@@ -84,6 +84,12 @@ export interface BarChartProps<
  * readout reads the same bar you click, even across a wide bucket (they differ
  * only by the `gap` inset, where the pixel rect is narrower than the span).
  *
+ * Both channels are also **controllable from outside** the chart via the
+ * container: `selected`/`onSelect` (committed) and `hovered`/`onHover` (transient)
+ * — pass either to pin the lit/selected bar from a legend or list row, and read
+ * the callback to mirror a bar-originated hover/click out-of-band. Symmetric pair,
+ * keyed by the same {@link SelectInfo} identity.
+ *
  * **Value axis** — bars also scale on a value axis when fed a `ValueSeries`
  * (`series.byValue('dist')`): estela's distance-domain splits/laps, one bar per
  * segment over a monotonic axis. A `ValueSeries` is point-keyed, so the span is
