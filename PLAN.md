@@ -537,8 +537,12 @@ Axis>>` carrying ordering-based ops (`axisValues`/`axisAt`/`column`/
 'replace' | 'add'`** (add = accumulate/toggle; empty-click clears), the
     compare _pairing_ + primary/compare styling stay consumer-side (library owns
     only {set, mode, dim}), and **focus/dim is promoted from Phase 3 to core**.
-    Widens the shipped `selected` prop (#343) `SelectInfo | null` → `readonly
-SelectInfo[]` — a breaking public change (human-approval gate at build). And
+    Widens the shipped `selected` prop (#252) `SelectInfo | null` → `readonly
+SelectInfo[]` — a breaking public change to a **published, multi-consumer**
+    prop (estela's bar layer + Tidal both read the selection surface), so it takes
+    the **human-approval gate** at build, and the one-release `SelectInfo → [it]`
+    shim is treated as **required**. **Still an RFC, not adopted** — nothing built
+    pre-red-team (same posture as the v1 draft). And
     [`docs/rfcs/financial-charts.md`](docs/rfcs/financial-charts.md) — a first-class
     `<Candlestick>` (OHLC-named props, draws-only, point-**or**-interval keyed so raw
     daily OHLCV skips `aggregate`), `variant: candle|bar|hollow` (fork 2 → **bundle**,

@@ -5,7 +5,7 @@
 > driving consumer). **Not a commitment** (see CLAUDE.md → Strategic RFCs) — the
 > phases adopted into PLAN.md become the contract, the rest is forward-looking
 > context. Grounded in the shipped selection surface (`selected`/`onSelect`,
-> #343) and verified against the current `select.ts` / `Layers.tsx` behaviour._
+> #252) and verified against the current `select.ts` / `Layers.tsx` behaviour._
 >
 > **Revision note (2026-07-05, same day).** The v1 draft below asserted **single**
 > selection ("Not multi-select", §4). pjm17971 overturned that within the hour:
@@ -217,7 +217,7 @@ selectable ones (A1.6)?
 
 - **`selected?: SelectInfo | null` → `selected?: readonly SelectInfo[]`** (empty
   array = none; insertion-ordered). This **widens the shipped `selected` prop**
-  (#343) — a **breaking public change**, so it takes the human-approval gate when
+  (#252) — a **breaking public change**, so it takes the human-approval gate when
   implemented. Because the prop is one day old and only estela's bar layer reads
   it, I lean **widen it now** rather than add a parallel `selection` prop and
   carry two; a one-release `selected: SelectInfo` → `[it]` shim covers stragglers.
@@ -228,6 +228,25 @@ selectable ones (A1.6)?
 - **`selectionMode?: 'replace' | 'add'`** (default `'replace'`).
 - **`hovered` stays singular** — hover is inherently one mark under the pointer;
   only committed selection is a set.
+
+> **Correction note — blast radius (pond-ts library agent, 2026-07-05).** Two
+> facts in the first bullet above are off, and both cut _against_ "just widen it,
+> it's too new to matter":
+>
+> - **Citation.** `selected`/`onSelect` shipped in **#252** (shared interaction
+>   groundwork, chart-type wave), not #343 — #343 added the transient
+>   `hovered`/`onHover` _hover_ analog (`F-charts-bar-interaction`; see PLAN's own
+>   record). Fixed inline above and in the header.
+> - **Age / readership.** The prop is **not one day old**: #252 landed ~2 weeks
+>   ago and has been **public on npm since v0.31.x** (~1 week). And it isn't read
+>   by "only estela's bar layer" — **Tidal reads the selection surface too** (its
+>   compare mode is the very forcing case for this amendment). So the widen is a
+>   real breaking change to a published, multi-consumer prop.
+>
+> This doesn't sink "widen in place" (still likely correct — the surface is young
+> and the shim is cheap), but the human-approval gate (A1.6 Q10) must weigh the
+> **actual** blast radius, and the one-release `SelectInfo → [it]` shim reads as
+> **required**, not optional.
 
 ### A1.5 Snap-follows-selection, generalized
 
