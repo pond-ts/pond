@@ -530,9 +530,15 @@ Axis>>` carrying ordering-based ops (`axisValues`/`axisAt`/`column`/
     Tidal Discussions before adoption):**
     [`docs/rfcs/selection.md`](docs/rfcs/selection.md) — click-select any series
     (closest-point-within-threshold `hitTest` on continuous layers) + the one new
-    coupling, **snap-follows-selection** (cursor restricts to the selected series);
-    single container-level selection + empty-click deselect already shipped, so the
-    RFC is only those two. And
+    coupling, **snap-follows-selection**. **Amendment 1 (same day): multi-select.**
+    The v1 single-selection framing was overturned within the hour by Tidal's
+    **compare mode** (chip-select picks a primary + compare series as a _group_ and
+    dims the rest): selection is now an **ordered set** + a **`selectionMode:
+'replace' | 'add'`** (add = accumulate/toggle; empty-click clears), the
+    compare _pairing_ + primary/compare styling stay consumer-side (library owns
+    only {set, mode, dim}), and **focus/dim is promoted from Phase 3 to core**.
+    Widens the shipped `selected` prop (#343) `SelectInfo | null` → `readonly
+SelectInfo[]` — a breaking public change (human-approval gate at build). And
     [`docs/rfcs/financial-charts.md`](docs/rfcs/financial-charts.md) — a first-class
     `<Candlestick>` (OHLC-named props, draws-only, point-**or**-interval keyed so raw
     daily OHLCV skips `aggregate`), `variant: candle|bar|hollow` (fork 2 → **bundle**,
@@ -3696,8 +3702,7 @@ retention`). Currently Path B (own deque); same API, perf
 
      ```ts
      type DurationString =
-       | `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`
-       | 'buffer';
+       `${number}${'ms' | 's' | 'm' | 'h' | 'd'}` | 'buffer';
 
      type FusedMapping<S extends SeriesSchema> = Readonly<
        Record<DurationString, FusedMappingValue<S>>
