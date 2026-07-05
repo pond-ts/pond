@@ -545,8 +545,12 @@ Axis>>` carrying ordering-based ops (`axisValues`/`axisAt`/`column`/
     `selected` widen `SelectInfo | null → readonly SelectInfo[]` **accepted**
     (pjm17971); blast radius smaller than #350 said — **Tidal reads none** of the
     selection surface, **estela's bar is the sole reader**, shim for estela only;
-    breaking public change → human-approval gate at build. Open sub-decision: `id`
-    required vs optional-default-to-`as ?? column` (Q11). **Still an RFC, not
+    breaking public change → human-approval gate at build. **A3 (Q11 resolved):
+    series `id` is optional and _gates interactivity_** — a layer with an `id` is
+    selectable/hoverable (id = the stable identity for selection/hover/snap/dim,
+    and it survives live data updates where a sample `key` goes stale); a layer
+    without one is display-only. Drops the implicit `as ?? column` selection
+    identity — a deliberate break so identity is explicit. **Still an RFC, not
     adopted.** And
     [`docs/rfcs/financial-charts.md`](docs/rfcs/financial-charts.md) — a first-class
     `<Candlestick>` (OHLC-named props, draws-only, point-**or**-interval keyed so raw

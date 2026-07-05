@@ -19,8 +19,13 @@
 > `snapToClosest | snapToClosestSelected` prop); selection identity is a series
 > **`id`** distinct from `as`; dim is **theme-referenced state**, not a core
 > auto-dim; and compare does **not** drive multi-select (it's consumer-side paired
-> rendering). Multi-select stays, re-motivated as "pin several to read." Reading
-> order: v1 → A1 → **A2 is current**.
+> rendering). Multi-select stays, re-motivated as "pin several to read."
+>
+> **Amendment 3 (2026-07-06).** Resolves A2's open sub-decision (Q11): the series
+> **`id` is optional and gates interactivity** — a layer with an `id` is
+> selectable/hoverable, one without is display-only. A deliberate breaking change
+> (drops the implicit `as ?? column` selection identity). Reading order: v1 → A1 →
+> A2 → **A3 is current**.
 
 ## 1. The question, and the bar
 
@@ -409,4 +414,51 @@ Open-question resolutions from the red-team:
   turns a whole panel into a select target). No consumer stake yet (both are
   all-line today).
 - **Q11 (new):** `id` required vs optional-default — the one open sub-decision
-  from A2.2.
+  from A2.2. **Resolved in Amendment 3** — optional, and it _gates interactivity_.
+
+## Amendment 3 (2026-07-06) — resolving Q11: `id` is optional and gates interactivity
+
+> _pond-ts library agent (Claude), from pjm17971's decision on Q11. A deliberate
+> breaking change: make series identity **explicit** for anything stateful, rather
+> than silently derived from `as`/`column`._
+
+**`id?: string` is optional** on layers (`LineChart` / `BandChart` / `BarChart` /
+`Candlestick` / …) and is the **stable series identity** for every stateful or
+interactive surface: **selection, hover, snap-to-selected, and the theme-referenced
+dim state** (A2.3). Pure **display** (the all-series readout, legend labels) does
+**not** need it — it keeps falling back to `as ?? column`.
+
+**No `id` ⇒ not interactive (the rule that makes "optional" coherent).** A layer
+without an `id` **cannot be selected or hovered** — `onSelect` / `onHover` never
+fire for it, and it can't be controlled-selected (a controlled handle needs a
+stable id to echo, and controlled selection is impossible without one). It still
+renders and still contributes to the all-series **readout**. A click on a no-id
+layer reads as empty space (i.e. deselect). So the presence of `id` _is_ the
+per-layer opt-in to interactivity — self-documenting at the call site.
+
+**Why optional beats required.** It scopes the (real) breaking change to exactly
+the interactive charts and leaves the many selection-free charts untouched —
+"the default is not needing an `id`" (pjm17971). Required would force a name onto
+every `<LineChart>` in existence for no benefit.
+
+**The intentional break.** Today `Bar`/`Scatter` selection uses an _implicit_
+`as ?? column` identity; that silent derivation **goes away**. A selectable layer
+must carry an explicit `id`. estela's bar adds one line; the payoff is that "is
+this series selectable, and by what identity" is legible instead of inferred
+(pjm17971: "a real breaking change to make behaviour clear going forward").
+
+**`SelectInfo` gains `id`.** `{ id, key, value, color, label }` — `id` is the
+series identity (the selection / dedup / controlled-echo key); `key`/`value`
+demote to click **provenance** (the nearest sample); `label` stays display
+(`as ?? column ?? id`). A chip drives a whole-series selection with `{ id }`;
+equality keys on `id`, never on `begin`.
+
+**Bonus for live charts (the sleeper win).** Because `id` is stable and a sample
+`key` is not, a selection **survives a streaming data update** — the selected
+series stays selected across a refresh, where a sample-keyed selection would go
+stale the moment new bars arrive. Directly relevant to Tidal's live terminal.
+
+**Dev-warn.** If a container wires `selected` / `onSelect` but **no** layer
+carries an `id`, warn: selection is requested but nothing is selectable.
+
+_Resolves Q11._
