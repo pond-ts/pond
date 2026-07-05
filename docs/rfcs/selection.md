@@ -6,6 +6,12 @@
 > phases adopted into PLAN.md become the contract, the rest is forward-looking
 > context. Grounded in the shipped selection surface (`selected`/`onSelect`,
 > #343) and verified against the current `select.ts` / `Layers.tsx` behaviour._
+>
+> **Revision note (2026-07-05, same day).** The v1 draft below asserted **single**
+> selection ("Not multi-select", §4). pjm17971 overturned that within the hour:
+> Tidal's **compare mode** selects a _group_ (a primary series + its compare
+> series) from one gesture and dims the rest — selection must be a **set**, with a
+> **mode**. See **Amendment 1**; §4's single-select bullet is superseded there.
 
 ## 1. The question, and the bar
 
@@ -108,8 +114,10 @@ works regardless of _how_ the selection was made.
 
 ## 4. Consistency / what this is NOT
 
-- **Not multi-select.** One `selected` at the container. If Tidal later needs
-  multi, that's a separate RFC — don't speculatively widen `SelectInfo` to a set.
+- **~~Not multi-select.~~ Superseded by Amendment 1.** _(v1 said: one `selected`
+  at the container; if Tidal later needs multi, a separate RFC. "Later" was ~1
+  hour — Tidal's compare mode needs multi now, so the model is a set + a mode.
+  Kept visible per the RFC convention; see Amendment 1.)_
 - **No new vocabulary.** Reuses `selected`/`onSelect`/`SelectInfo` and the
   existing `resolveSelection` walk. The only additions are per-layer `hitTest`
   implementations and one branch in the snap loop.
@@ -148,3 +156,98 @@ works regardless of _how_ the selection was made.
    series the right default, or should it be opt-in (`snapFollowsSelection`)? The
    Tidal interaction wants it on; a multi-series dashboard might want the cursor
    to keep reading all series even with one selected.
+
+## Amendment 1 (2026-07-05) — multi-selection + a selection mode (Tidal compare)
+
+> _pjm17971, ~1 hour after the v1 draft. Retracts the single-selection framing
+> (§4) and the "widen to a set" caution — the driving use case needs a set now._
+
+**The forcing case.** Tidal has a **compare mode**. With compare on, selecting a
+series **chip** selects _two_ series at once — the **primary** (drawn solid) and
+its **compare** series (drawn dashed) — and **dims every other series**. So a
+single user gesture yields a multi-member selection, and non-selected series must
+visibly recede. Single `SelectInfo | null` can't express either half.
+
+### A1.1 The model — a set + a mode
+
+Selection becomes an **ordered set** of `SelectInfo`, driven by a **mode** that
+governs what a direct select does:
+
+- **`replace`** (default — the v1 single-select feel): selecting a series clears
+  the set and selects just it.
+- **`add`** (accumulate / toggle): selecting a series **adds** it; selecting an
+  **already-selected** series **removes** it (toggle off).
+- **Empty-area click clears the whole set** — in both modes (generalizes the
+  existing deselect-on-empty).
+
+`selectionMode: 'replace' | 'add'` is a **container prop**, defaulting to
+`'replace'` so a chart with no mode set behaves exactly as v1 described. Tidal
+flips it to `'add'` while compare is on. (A consumer that prefers the OS idiom can
+wire a modifier — ⌘/Ctrl-click ⇒ add — by toggling the prop; the library doesn't
+hard-code a modifier. See open question A1.6.)
+
+### A1.2 Where the compare _pairing_ lives — consumer, not library
+
+The library's primitive is deliberately just **{ set, mode, dim }**. It does
+**not** learn about "compare pairs" or a "primary vs compare" distinction:
+
+- **Grouped select (chip → 2 series)** is the **consumer** driving the controlled
+  set. Tidal's chip handler sets `selected` to `[primary, compare]` in one update;
+  the library stores and renders it. The library's `replace`/`add`/`toggle`
+  semantics apply to **direct chart clicks** (one series at a time); grouped
+  selection is expressed through the controlled prop, so the two never fight.
+- **Primary-vs-compare styling (solid vs dashed)** is **consumer styling** of an
+  **ordered** set (insertion order; the primary is simply first). The library
+  holds order, not a "primary" flag — nothing in snap or hit-test needs one.
+
+This keeps the library general (any consumer gets multi-select + dim) while Tidal
+composes "compare" on top without the library growing a domain concept.
+
+### A1.3 Focus / dim — promoted from Phase 3 to core
+
+v1 parked focus/dim as a maybe. Compare **requires** it, and because the library
+owns the canvas, dim must be a **library** capability, not consumer restyling:
+when the selection set is **non-empty**, non-selected selectable layers render at
+a theme **`focus.dimOpacity`** (selected layers draw normally). Dim keys off the
+set being non-empty regardless of _how_ it was set (chip or click). Open
+questions: does dim apply to _all_ non-selected layers or only same-axis /
+selectable ones (A1.6)?
+
+### A1.4 API migration
+
+- **`selected?: SelectInfo | null` → `selected?: readonly SelectInfo[]`** (empty
+  array = none; insertion-ordered). This **widens the shipped `selected` prop**
+  (#343) — a **breaking public change**, so it takes the human-approval gate when
+  implemented. Because the prop is one day old and only estela's bar layer reads
+  it, I lean **widen it now** rather than add a parallel `selection` prop and
+  carry two; a one-release `selected: SelectInfo` → `[it]` shim covers stragglers.
+- **`onSelect?: (selection: readonly SelectInfo[]) => void`** — reports the
+  **resulting set** (the library has already applied the mode + toggle for a chart
+  click), so a controlled consumer just stores it. (No need to also emit the raw
+  delta; the consumer diffs if it cares.)
+- **`selectionMode?: 'replace' | 'add'`** (default `'replace'`).
+- **`hovered` stays singular** — hover is inherently one mark under the pointer;
+  only committed selection is a set.
+
+### A1.5 Snap-follows-selection, generalized
+
+§3.2 generalizes cleanly: `snap target = the selected set (if non-empty) else the
+nearest layer`. The vertical snaps to the nearest sample **among selected
+series**, and the cursor shows a value pill **per selected series** (the same
+multi-pill fan `sampleAt` already supports). No "primary" needed — nearest-among-
+selected is unambiguous.
+
+### A1.6 New open questions
+
+7. **Mode surface.** Prop (`selectionMode`, proposed) vs a built-in modifier-key
+   (⌘/Ctrl-click ⇒ add) vs both. Tidal's is app-state (the compare toggle), which
+   argues prop; the modifier is a consumer wiring on top.
+8. **Dim scope.** Dim _all_ non-selected layers, or only selectable / same-axis
+   ones? (An axis-label or a context band probably shouldn't dim.) And is
+   `focus.dimOpacity` one global value or per-role?
+9. **Primary as a library concept?** Proposed **no** — ordered set, consumer
+   styles first-as-primary. Revisit only if snap or a future feature needs the
+   library to distinguish primary from compare.
+10. **`selected` migration.** Widen in place (breaking, proposed) vs a new
+    `selection: SelectInfo[]` prop with `selected` deprecated. The human-approval
+    gate on the public-type change decides.
