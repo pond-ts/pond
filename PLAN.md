@@ -522,6 +522,40 @@ Axis>>` carrying ordering-based ops (`axisValues`/`axisAt`/`column`/
       stable-ref + free dark toggle). **Reject:** `F-charts-band-tint` — per-channel
       bands are already a `as`-per-`<BandChart>` composition, not a gap (estela's own
       note agrees); struck.
+  - **Tidal financial-charts + selection intake (RFCs drafted 2026-07-05, pending
+    red-team).** A design batch from pjm17971 (Tidal-driven): a first-class
+    candlestick, a selection-model extension, and a cluster of BoxPlot/tracker
+    refinements. Sequenced **RFC-first for the two big ones, then a wave for the
+    rest** (pjm17971's call). **RFCs drafted (NOT commitments — red-team via the
+    Tidal Discussions before adoption):**
+    [`docs/rfcs/selection.md`](docs/rfcs/selection.md) — click-select any series
+    (closest-point-within-threshold `hitTest` on continuous layers) + the one new
+    coupling, **snap-follows-selection** (cursor restricts to the selected series);
+    single container-level selection + empty-click deselect already shipped, so the
+    RFC is only those two. And
+    [`docs/rfcs/financial-charts.md`](docs/rfcs/financial-charts.md) — a first-class
+    `<Candlestick>` (OHLC-named props, draws-only, point-**or**-interval keyed so raw
+    daily OHLCV skips `aggregate`), `variant: candle|bar|hollow` (fork 2 → **bundle**,
+    like BoxPlot's `shape`), `colorBy: direction|series`, a full O/H/L/C tracker
+    (fork 1 → **yes**, close keyed on `as` + opt-in 4 pills), and a `theme.candle`
+    slot **with the one amendment**: `defaultTheme.candle` ships a neutral
+    distinguishable up/down pair, NOT market green/red (Tidal supplies real
+    green/red via `cssVarTheme`) — preserves [[charts-no-consumer-themes]].
+    Supersedes `BoxPlot shape='solid'` for OHLC. **Then — the follow-on wave (the
+    stand-alone rest):** (a) **tracker-label-by-`as`** on Band/Box/Candle (friction
+    **F-charts-8 §3** — `sampleAt` hardcodes column names; prerequisite for the
+    candlestick legend merge, small); (b) **BoxPlot line-only / stem-without-caps
+    shape** ("just a line, no T off the box" — a new `shape` variant); (c)
+    **interval/OHLC marks join x-snap** (reconcile the `cursorFlag` exclusion so
+    "crosshairs grab box plots"); (d) **clamp-on-ingest** — reopens the #344
+    `clampNonDecreasing` **reject**: pjm17971 + Tidal's noisy time samples are a
+    real 2nd signal, and clamp (`t = t >= prevT ? t : prevT`, carry-forward a lone
+    backwards blip) is a distinct, sometimes-more-correct op than `sort` (reorder).
+    Adopt as an opt-in **`fromColumns({ onOutOfOrder: 'throw' | 'sort' | 'clamp' })`**
+    (default `throw`; fold the 4-hour-old `sort?: boolean` into the enum while it's
+    cheap, keep `sort:true` as a one-release alias). "Per-box red/green styling" is
+    **subsumed** by candlestick `colorBy: 'direction'` — not a separate per-datum
+    style hook (that cuts against "colour = series/theme role").
 - **M5 — estela parity.** Faithful `DataChart` reproduction on real activity
   data; prove no-regressions; hand the production swap to the estela agent; flip
   `private:false` + first publish.
@@ -3662,7 +3696,8 @@ retention`). Currently Path B (own deque); same API, perf
 
      ```ts
      type DurationString =
-       `${number}${'ms' | 's' | 'm' | 'h' | 'd'}` | 'buffer';
+       | `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`
+       | 'buffer';
 
      type FusedMapping<S extends SeriesSchema> = Readonly<
        Record<DurationString, FusedMappingValue<S>>
