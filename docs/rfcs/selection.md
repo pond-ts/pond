@@ -12,6 +12,15 @@
 > Tidal's **compare mode** selects a _group_ (a primary series + its compare
 > series) from one gesture and dims the rest — selection must be a **set**, with a
 > **mode**. See **Amendment 1**; §4's single-select bullet is superseded there.
+>
+> **Amendment 2 (2026-07-05).** The Tidal + Estela red-team ([Discussion
+> #352](https://github.com/pjm17971/pond-ts/discussions/352)) corrected A1: the
+> readout must always fan **all** series (snap is cursor-only, a
+> `snapToClosest | snapToClosestSelected` prop); selection identity is a series
+> **`id`** distinct from `as`; dim is **theme-referenced state**, not a core
+> auto-dim; and compare does **not** drive multi-select (it's consumer-side paired
+> rendering). Multi-select stays, re-motivated as "pin several to read." Reading
+> order: v1 → A1 → **A2 is current**.
 
 ## 1. The question, and the bar
 
@@ -205,6 +214,10 @@ composes "compare" on top without the library growing a domain concept.
 
 ### A1.3 Focus / dim — promoted from Phase 3 to core
 
+> **Superseded by A2.3** — the red-team showed a core auto-dim double-dims against
+> the consumers' theme channel and can't honour compare pairing. Dim becomes
+> theme-referenced selection _state_, not a core `dimOpacity`.
+
 v1 parked focus/dim as a maybe. Compare **requires** it, and because the library
 owns the canvas, dim must be a **library** capability, not consumer restyling:
 when the selection set is **non-empty**, non-selected selectable layers render at
@@ -250,6 +263,10 @@ selectable ones (A1.6)?
 
 ### A1.5 Snap-follows-selection, generalized
 
+> **Clarified by A2.1** — snap governs the **cursor's x-target** only (a
+> `snapToClosest | snapToClosestSelected` prop); the **readout always fans all
+> series**. "The reticle reads the selected series' value" is withdrawn.
+
 §3.2 generalizes cleanly: `snap target = the selected set (if non-empty) else the
 nearest layer`. The vertical snaps to the nearest sample **among selected
 series**, and the cursor shows a value pill **per selected series** (the same
@@ -270,3 +287,126 @@ selected is unambiguous.
 10. **`selected` migration.** Widen in place (breaking, proposed) vs a new
     `selection: SelectInfo[]` prop with `selected` deprecated. The human-approval
     gate on the public-type change decides.
+
+## Amendment 2 (2026-07-05) — red-team response + author decisions
+
+> _pond-ts library agent (Claude), responding to the Tidal + Estela consumer
+> red-teams on [Discussion #352](https://github.com/pjm17971/pond-ts/discussions/352)
+> and pjm17971's decisions on them. Both consumers grounded their feedback in
+> shipped code (Tidal's `VolTerminal`/`VolChart`, estela's bar layer). This
+> amendment **supersedes A1.3**, **clarifies A1.5**, and **corrects A1's
+> motivation**; A1 stays visible per the RFC convention._
+
+### A2.1 Cursor vs readout — split them (this is the crux)
+
+The red-team's load-bearing correction: **the readout and the cursor are two
+different things, and only the cursor may respect selection.**
+
+- **Readout is ALWAYS all series — a hard invariant.** `onTrackerChanged` fans a
+  value for **every visible series** at the cursor x, regardless of selection.
+  Both terminals' chips read every series at the cursor; narrowing the readout to
+  the selection would blank every other chip. A1.5's "the reticle reads the
+  selected series' value" is **withdrawn** as stated — snap must not touch the
+  readout fan.
+- **Cursor snap is a prop — selection as a focusing lever (pjm17971).** Two
+  modes: **`snapToClosest`** (default — the vertical x-snaps to the nearest of
+  **all** series) vs **`snapToClosestSelected`** (x-snaps to the nearest of the
+  **selected** series — the focusing lever). This makes snap-follows **opt-in and
+  named**, resolving Q6: default behaviour is unchanged, and a consumer opts into
+  selection-aware snapping. (Naming/prop shape — a `snapTo: 'closest' |
+'closestSelected'` enum, orthogonal to the existing `crosshairSnap` boolean
+  which governs the **y** reticle — is an impl detail to settle at build.)
+
+So: **snap chooses which series governs the vertical x; the readout still fans
+all series.** Both are satisfiable at once.
+
+### A2.2 Selection identity — a series `id`, distinct from `as` (accepted, with a caveat)
+
+Both consumers named the **highest-value item**: `SelectInfo` is a _sample_
+(`{ key, value, … }`) but selection is per-**series**. estela reconstructs a bar
+index by nearest-centre distance today and flagged it as too fragile; Tidal would
+have to _fabricate_ a `key`/`value` to drive a whole-series selection from a chip.
+**Accepted: selection identity is the series, not the sample** — `key`/`value`
+demote to click **provenance** (the nearest sample, informational); equality and
+dedup key on the series identity.
+
+**pjm17971's caveat, accepted:** the identity should **not** be assumed to be
+`as`. `as` is a **theme role** (`theme.line[as]`) and can legitimately repeat
+across series (two lines both `as="secondary"`) — so it's not a safe identity.
+Introduce an explicit **series `id`**, distinct from `as`, as the identity used by
+selection, hit-test, tracker keying, and dim. (Tidal happens to set `as={c.id}`,
+which is why option A "worked" for them — coincidence, not the general case.)
+
+**One sub-decision remains (A2.6-Q11):** is `id` **required** on every layer
+(pjm17971's lean — forces each series to be named) or **optional, defaulting to
+`as ?? column`** with a uniqueness contract (dev-warn on collision among
+selectable layers)? Required is the honest guarantee but breaks every existing
+chart; optional-default preserves `<LineChart series column="x" />`. Lean:
+optional-default, **required only where a layer opts into selection**.
+
+### A2.3 Dim — theme-referenced selection _state_, not a core auto-dim (pjm17971's model)
+
+A1.3 promoted dim to a core `focus.dimOpacity` keyed on "selection non-empty."
+**Withdrawn** — the red-team killed it on two counts (it double-dims against the
+consumers' own theme channel; and a library dim can't honour compare pairing,
+which A1.2 keeps consumer-side). pjm17971's clarified model threads the needle:
+
+- **The library never auto-dims.** Instead the **theme carries selection-state
+  styling** (a selected vs de-emphasised appearance per role), and the library
+  **references the theme by each layer's selection state** (in-set → selected
+  style, out-of-set → dimmed style), resolved by series `id`.
+- **The consumer themes their selection states once** — not a theme rebuild on
+  every selection change (Tidal's current `withAlpha` churn). Declaring how a
+  dimmed series looks lives in the theme, statically.
+- **Opt-in by construction:** a theme that defines no dimmed state dims nothing
+  (back-compat). Pairing stays consumer-controlled — the consumer decides
+  set membership (it can put a `__cmp` counterpart in the set so it tracks its
+  primary), so the library needs no pairing knowledge.
+
+This keeps styling on the theme channel (where both consumers already own it)
+while removing the per-selection-change rebuild — the actual ergonomic win.
+
+### A2.4 Multi-select — accepted, but honestly motivated (not compare)
+
+Tidal refuted A1's compare forcing-case against its shipped code: compare is
+**consumer-side paired rendering** (every series always draws a dashed `__cmp`,
+independent of selection) **+ single selection + consumer-side dim** — it puts no
+second member in a selection set. So **A1's "compare drives multi-select" is
+withdrawn.** The real driver Tidal named: **pin several arbitrary series to read
+together** (ATM + realized + a skew line, scrub, read all three) — genuinely
+`readonly SelectInfo[]` + `selectionMode: 'add'`. Multi-select is **retained**
+(pjm17971: "the null → [] is fine"; both consumers: mechanical, no objection),
+just re-motivated. The set model earns its place on pin-to-read, not compare.
+
+### A2.5 Blast radius — smaller than #350 said
+
+Tidal reads **none** of the charts selection surface (a grep for
+`SelectInfo`/`onSelect`/`hitTest`/`selected` at the chart boundary is empty) —
+which refutes even #350's "Tidal reads the selection surface." **estela's bar
+layer is the sole reader.** So `selected: SelectInfo | null → readonly
+SelectInfo[]` is **widen-in-place** with the `null → [it]` shim needed only for
+estela; Tidal migrates nothing. **Accepted (pjm17971).**
+
+### A2.6 Re-phasing + remaining questions
+
+The red-team separates the **non-breaking high-value wins** from the breaking set
+model — lead with the former:
+
+- **Phase 1 (non-breaking, both consumers want it):** series-`id` selection
+  identity (A2.2), `LineChart.hitTest` (threshold nearest-point), the all-series
+  readout invariant (A2.1), and the `snapToClosest | snapToClosestSelected` prop.
+- **Phase 2:** the `SelectInfo[]` widen + `selectionMode` (pin-to-read), and the
+  theme-referenced dim state (A2.3).
+
+Open-question resolutions from the red-team:
+
+- **Q1 (threshold):** **expose it** — vol curves run close and cross; consumers
+  tune the grab radius.
+- **Q2 (overlap tie-break):** for **lines, geometrically-nearest** (not
+  topmost-z) — the user clicks the curve their eye tracks; topmost-z stays for
+  overlapping **area** marks.
+- **Q3 (band/area target):** click **near-edge**, not anywhere-inside (the latter
+  turns a whole panel into a select target). No consumer stake yet (both are
+  all-line today).
+- **Q11 (new):** `id` required vs optional-default — the one open sub-decision
+  from A2.2.

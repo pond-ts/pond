@@ -530,19 +530,24 @@ Axis>>` carrying ordering-based ops (`axisValues`/`axisAt`/`column`/
     Tidal Discussions before adoption):**
     [`docs/rfcs/selection.md`](docs/rfcs/selection.md) — click-select any series
     (closest-point-within-threshold `hitTest` on continuous layers) + the one new
-    coupling, **snap-follows-selection**. **Amendment 1 (same day): multi-select.**
-    The v1 single-selection framing was overturned within the hour by Tidal's
-    **compare mode** (chip-select picks a primary + compare series as a _group_ and
-    dims the rest): selection is now an **ordered set** + a **`selectionMode:
-'replace' | 'add'`** (add = accumulate/toggle; empty-click clears), the
-    compare _pairing_ + primary/compare styling stay consumer-side (library owns
-    only {set, mode, dim}), and **focus/dim is promoted from Phase 3 to core**.
-    Widens the shipped `selected` prop (#252) `SelectInfo | null` → `readonly
-SelectInfo[]` — a breaking public change to a **published, multi-consumer**
-    prop (estela's bar layer + Tidal both read the selection surface), so it takes
-    the **human-approval gate** at build, and the one-release `SelectInfo → [it]`
-    shim is treated as **required**. **Still an RFC, not adopted** — nothing built
-    pre-red-team (same posture as the v1 draft). And
+    coupling, **snap-follows-selection**. **A1→A2 (same day): multi-select, then a
+    Tidal+Estela red-team ([Discussion #352](https://github.com/pjm17971/pond-ts/discussions/352))
+    corrected it.** Current model (A2): **readout ALWAYS fans all series** (hard
+    invariant); **cursor snap is a prop** — `snapToClosest` (default) vs
+    `snapToClosestSelected` (selection as a focusing lever); **selection identity =
+    a series `id` distinct from `as`** (a theme role can repeat — sample key/value
+    demote to click provenance; the highest-value fix, both consumers +1); **dim =
+    theme-referenced selection _state_** (consumer themes selected/dimmed once, the
+    library applies by set-membership — NOT a core auto-dim; A1.3's promote-to-core
+    withdrawn); **compare does NOT drive multi-select** (Tidal's compare = consumer
+    paired rendering + single selection + consumer dim — A1's forcing-case refuted),
+    so multi-select is retained but re-motivated as "pin several series to read."
+    `selected` widen `SelectInfo | null → readonly SelectInfo[]` **accepted**
+    (pjm17971); blast radius smaller than #350 said — **Tidal reads none** of the
+    selection surface, **estela's bar is the sole reader**, shim for estela only;
+    breaking public change → human-approval gate at build. Open sub-decision: `id`
+    required vs optional-default-to-`as ?? column` (Q11). **Still an RFC, not
+    adopted.** And
     [`docs/rfcs/financial-charts.md`](docs/rfcs/financial-charts.md) — a first-class
     `<Candlestick>` (OHLC-named props, draws-only, point-**or**-interval keyed so raw
     daily OHLCV skips `aggregate`), `variant: candle|bar|hollow` (fork 2 → **bundle**,
