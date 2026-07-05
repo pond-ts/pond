@@ -476,6 +476,52 @@ Axis>>` carrying ordering-based ops (`axisValues`/`axisAt`/`column`/
     e2e** for annotations (the harness gap the #308 review explicitly named —
     until now drag/select was only pinned by pure-function unit tests + static
     visual baselines).
+  - **estela DataChart-port friction wave — the 3 adopts SHIPPED 2026-07-04
+    (#342 / #343 / #344, merged).**
+    The `@estela/ui` `DataChart` was ported onto `@pond-ts/charts` (behind the
+    unchanged `DataChartProps`); seven port findings triaged against the real
+    source in
+    [`docs/notes/charts-friction-triage-2026-07.md`](docs/notes/charts-friction-triage-2026-07.md)
+    (all verified; estela log: `~/Code/estela/docs/pond-friction.md`). **Shipped
+    landings:** (1) **#342** `F-charts-axis-reregister` — `axisSpecEqual` /
+    `layerEntryEqual` value-equality guards in `registerAxis` / `registerLayer` +
+    the `format`/`series` memoize JSDoc; Layer-2 found the _layer_ guard is
+    unreachable-but-defensive (the nested `entry` memo already gates the layer
+    effect) — the **axis** guard is what breaks the loop. Merged at medium Layer-2
+    confidence (Codex pass offered, pjm17971 merged without). (2) **#343**
+    `F-charts-bar-interaction` — landed as `hovered` + `onHover` on
+    **`ChartContainer`** (not `onBarHover` on `BarChart` as first sketched), an
+    exact mirror of the shipped `selected`/`onSelect` pair keyed by `SelectInfo`;
+    dedup on `key`+`label` documented. (3) **#344** `F-charts-fromColumns-key-monotonic`
+    — opt-in `sort?: boolean` on `TimeSeries.fromColumns` (default still throws;
+    `clampNonDecreasing` rejected as lossy) + `perf-from-columns.mjs`. All three
+    strictly additive (0/2/1 new optional surface, existing `SelectInfo` reused).
+    **Triage detail (original adopt rationale):** (1) **`F-charts-axis-reregister`
+    (HIGH)** — a fresh
+    `ticks`/`format`/`series` ref re-registers the axis/layer (`YAxis.tsx:108-134`
+    / `LineChart.tsx:163-185` register on pure reference identity, no value
+    compare), cascading to "Maximum update depth exceeded" on the scrub-heavy
+    chart. Fix = **value-equality guard in `registerAxis`/`registerLayer`** (no-op
+    when the spec/entry is value-equal — covers arrays + `byValue()`-projected
+    series) **+ widen the memo warning** to `format` (on `YAxis`) and `series` (on
+    the layer docs), since an inline `format` closure can't be value-compared and
+    genuinely must be hoisted. (2) **`F-charts-bar-interaction` (MED)** — add the
+    hover half of the pair selection already has: controlled `hovered?: SelectInfo`
+    - `onBarHover?` on `BarChart`, keyed by the same `SelectInfo.key`, so a list
+      row can pin/receive the lit bar. (3) **`F-charts-fromColumns-key-monotonic`
+      (LOW-MED, core)** — add opt-in `sort?: boolean` to `TimeSeries.fromColumns`
+      (parity with `fromJSON`; keep the default throw — a backwards key on the
+      trusted path is a real signal; **reject** `clampNonDecreasing`, which lies
+      about data). Lands on the Tidal ingress surface (task #19). **Already tracked:**
+      `F-charts-width` (container needs explicit px width) = **PLAN #14** (responsive
+      sizing/fill) — estela is the 2nd consumer, bump priority, no new item.
+      **Defer (backlog, LOW):** `F-charts-area-gap-split` (a separate `outlineGaps`
+      — cuts against the deliberate "area fill stays honest" design; single time-axis
+      visual, estela degraded cleanly); `F-charts-theme-double-declare` (a vars-first
+      `cssVarTheme` mode — mostly estela-side per task #10, current shape buys the
+      stable-ref + free dark toggle). **Reject:** `F-charts-band-tint` — per-channel
+      bands are already a `as`-per-`<BandChart>` composition, not a gap (estela's own
+      note agrees); struck.
 - **M5 — estela parity.** Faithful `DataChart` reproduction on real activity
   data; prove no-regressions; hand the production swap to the estela agent; flip
   `private:false` + first publish.
