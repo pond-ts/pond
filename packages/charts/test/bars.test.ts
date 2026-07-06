@@ -182,7 +182,7 @@ describe('drawBars', () => {
     expect(fill?.args).toEqual([0, 60, 20, 40]);
   });
 
-  it('highlights + outlines the bar matching BOTH key and label', () => {
+  it('highlights + outlines the bar matching BOTH the series id and key', () => {
     const { ctx, calls } = recordingContext();
     drawBars(
       ctx,
@@ -192,8 +192,8 @@ describe('drawBars', () => {
       style,
       0,
       0,
-      'count',
-      { key: 1, label: 'count' }, // selects the second bar
+      'count', // this layer's series id
+      { key: 1, id: 'count' }, // selects the second bar of this series
       null,
     );
     // the highlighted bar fills with the highlight colour and gets a strokeRect.
@@ -203,7 +203,7 @@ describe('drawBars', () => {
     expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(1);
   });
 
-  it('does NOT highlight a key match with a different label (other series)', () => {
+  it('does NOT highlight a key match with a different series id (other series)', () => {
     const { ctx, calls } = recordingContext();
     drawBars(
       ctx,
@@ -214,8 +214,28 @@ describe('drawBars', () => {
       0,
       0,
       'count',
-      { key: 1, label: 'other' }, // same key, different series → no highlight
+      { key: 1, id: 'other' }, // same key, different series id → no highlight
       null,
+    );
+    expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(0);
+    expect(calls.some((c) => c.type === 'set' && c.args[0] === '#fff')).toBe(
+      false,
+    );
+  });
+
+  it('never highlights when the layer has no series id (display-only)', () => {
+    const { ctx, calls } = recordingContext();
+    drawBars(
+      ctx,
+      bars([0, 1], [1, 2], [10, 20]),
+      identity,
+      identity,
+      style,
+      0,
+      0,
+      undefined, // no id → not selectable
+      { key: 1, id: 'count' }, // a selection exists, but this layer can't match
+      { key: 1, id: 'count' },
     );
     expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(0);
     expect(calls.some((c) => c.type === 'set' && c.args[0] === '#fff')).toBe(
@@ -235,7 +255,7 @@ describe('drawBars', () => {
       0,
       'count',
       null, // nothing selected
-      { key: 1, label: 'count' }, // hover the second bar
+      { key: 1, id: 'count' }, // hover the second bar
     );
     // hovered bar fills with the highlight colour...
     expect(calls.some((c) => c.type === 'set' && c.args[0] === '#fff')).toBe(
@@ -256,8 +276,8 @@ describe('drawBars', () => {
       0,
       0,
       'count',
-      { key: 1, label: 'count' }, // selected...
-      { key: 1, label: 'count' }, // ...and hovered — the same bar
+      { key: 1, id: 'count' }, // selected...
+      { key: 1, id: 'count' }, // ...and hovered — the same bar
     );
     // highlight fill + the select outline (the select branch still draws it).
     expect(calls.some((c) => c.type === 'set' && c.args[0] === '#fff')).toBe(

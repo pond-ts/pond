@@ -39,6 +39,29 @@ patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **`@pond-ts/charts`:** selection now has a stable series identity. `SelectInfo`
+  carries an `id`, and `BarChart` / `ScatterChart` take an optional `id` prop —
+  the series identity used for selection + hover. An `id` **gates interactivity**:
+  a layer is selectable/hoverable only when given one (a layer with no `id`
+  renders and reads out but can't be selected). A dev-warning fires when
+  `selected`/`onSelect` is wired but no layer carries an `id`. First slice of the
+  selection RFC (`docs/rfcs/selection.md`, Amendments 2–3).
+
+### Changed
+
+- **BREAKING (`@pond-ts/charts`):** `SelectInfo` gained a required `id` field
+  (`{ id, key, value, color, label }`) — `id` is the selection identity, `key` /
+  `value` are now click provenance. Code that constructs a `SelectInfo` by hand
+  must add `id`, and selection equality/dedup now keys on `id`, not the sample
+  `begin`.
+- **BREAKING (`@pond-ts/charts`):** `BarChart` / `ScatterChart` selection now
+  requires an explicit `id` prop — the previous implicit `as ?? column` selection
+  identity is gone. A selectable bar/scatter layer must add `id` (e.g.
+  `<BarChart series={s} column="v" id="v" />`); without it the layer is
+  display-only.
+
 ## [0.41.0] — 2026-07-06
 
 ### Added

@@ -31,6 +31,17 @@ export interface ScatterChartProps<S extends SeriesSchema> {
    */
   as?: string;
   /**
+   * The **stable series identity** for selection + hover. **Optional, and it
+   * gates interactivity:** the scatter is selectable/hoverable only when given an
+   * `id` — omit it and the points render + read out but can't be clicked (a click
+   * on them reads as empty space ⇒ deselect). Distinct from `as` (a theme role
+   * that can repeat): `id` must be unique among the selectable layers, and it is
+   * the key the controlled `selected` echo, dedup, and (later) multi-select all
+   * match on — so a selection survives a data update where a sample `key` goes
+   * stale.
+   */
+  id?: string;
+  /**
    * Which `<YAxis>` (by its `id`) this scatter scales against — picks the
    * *scale*, where `as` picks the *style*. **Omitted ⇒ the row's default axis.**
    */
@@ -87,8 +98,9 @@ type FieldReader = { get(field: string): unknown };
  * (`sampleAt`), and that sample flows to the container's `onTrackerChanged` —
  * the nearest-point readout. Scatter reuses the shared tracker rather than
  * adding a separate `onNearest` channel, so a scatter reads out exactly like a
- * line. Click selection hit-tests each point's disc (`hitTest`); the selected
- * point (matching both its key and this series' label) gets a highlight ring.
+ * line. Click selection hit-tests each point's disc (`hitTest`) — **opt-in via
+ * `id`**; the selected point (matching the selection's series `id` and the sample
+ * `key`) gets a highlight ring. Without an `id` the scatter is display-only.
  *
  * ```tsx
  * <Layers>
@@ -105,6 +117,7 @@ export function ScatterChart<S extends SeriesSchema>({
   series,
   column,
   as: semantic,
+  id,
   axis,
   radius,
   color,
@@ -203,17 +216,25 @@ export function ScatterChart<S extends SeriesSchema>({
             },
           ];
         },
-        hitTest: (px, py, xScale, yScale) =>
-          hitTestScatter(
-            cs,
-            px,
-            py,
-            xScale,
-            yScale,
-            encoding,
-            keyAt,
-            seriesLabel,
-          ),
+        // `id` gates interactivity: only an id-bearing layer wires a hitTest, so
+        // a no-id scatter is display-only (a click on it resolves to empty space).
+        // Omit the key entirely when there's no id (exactOptionalPropertyTypes).
+        ...(id === undefined
+          ? {}
+          : {
+              hitTest: (px, py, xScale, yScale) =>
+                hitTestScatter(
+                  cs,
+                  px,
+                  py,
+                  xScale,
+                  yScale,
+                  encoding,
+                  keyAt,
+                  id,
+                  seriesLabel,
+                ),
+            }),
         draw: (ctx, xScale, yScale) =>
           drawScatter(
             ctx,
@@ -226,7 +247,7 @@ export function ScatterChart<S extends SeriesSchema>({
             labelAt,
             font,
             container.selected,
-            seriesLabel,
+            id,
           ),
       },
       axisId: axis,
@@ -238,6 +259,7 @@ export function ScatterChart<S extends SeriesSchema>({
       column,
       style,
       seriesLabel,
+      id,
       encoding,
       keyAt,
       labelAt,
@@ -265,6 +287,15 @@ export function ScatterChart<S extends SeriesSchema>({
   useEffect(() => {
     registerTrackerSource(slot, entry.layer);
   }, [registerTrackerSource, slot, entry.layer]);
+
+  // Advertise selectability (only when an `id` was given) so the container can
+  // warn if selection is wired but nothing is selectable.
+  const { registerSelectable, unregisterSelectable } = container;
+  useEffect(() => {
+    if (id === undefined) return;
+    registerSelectable(slot);
+    return () => unregisterSelectable(slot);
+  }, [registerSelectable, unregisterSelectable, slot, id]);
 
   return null;
 }

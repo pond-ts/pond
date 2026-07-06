@@ -96,7 +96,8 @@ export function barRect(
  * (inset by `gapPx`) from the resolved `baseline` to the value.
  *
  * A gap (non-finite value) is skipped — no bar, no zero-height sliver. A bar
- * matching the current `selection` (same `begin` **and** the layer's own `label`)
+ * matching the current `selection` (same sample `key` **and** the layer's own
+ * series `id` — `seriesId`; a no-id layer passes `undefined` and never matches)
  * draws in the style's `highlight` colour **and outlined**, so a click reads back
  * on the canvas; a bar matching `hovered` draws in `highlight` **without** the
  * outline (a lighter "this bar is live" on pointer-over); all others use the flat
@@ -114,9 +115,9 @@ export function drawBars(
   style: BarStyle,
   baseline: number,
   gapPx: number,
-  label: string,
-  selection: { key: number; label: string } | null,
-  hovered: { key: number; label: string } | null,
+  seriesId: string | undefined,
+  selection: { key: number; id: string } | null,
+  hovered: { key: number; id: string } | null,
 ): void {
   ctx.save();
   ctx.globalAlpha = style.opacity;
@@ -132,18 +133,20 @@ export function drawBars(
     );
     if (rect === null) continue;
     const [x0, x1, yTop, yBottom] = rect;
-    // Match by key (begin) **and** label, so two series sharing a timestamp don't
-    // both light up. Both the committed selection and the transient hover use the
-    // `highlight` fill; only the selection adds the outline, so hover reads as a
-    // lighter "this bar is live" and select as the committed pick.
+    // Match by the series `id` **and** the sample `key` (begin), so two series
+    // sharing a timestamp don't both light up (a no-id, non-selectable layer
+    // passes `seriesId === undefined` and never matches). Both the committed
+    // selection and the transient hover use the `highlight` fill; only the
+    // selection adds the outline, so hover reads as a lighter "this bar is live"
+    // and select as the committed pick.
     const selected =
       selection !== null &&
-      selection.key === cs.begin[i] &&
-      selection.label === label;
+      selection.id === seriesId &&
+      selection.key === cs.begin[i];
     const isHovered =
       hovered !== null &&
-      hovered.key === cs.begin[i] &&
-      hovered.label === label;
+      hovered.id === seriesId &&
+      hovered.key === cs.begin[i];
     ctx.fillStyle = selected || isHovered ? style.highlight : style.fill;
     ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
     if (selected) {

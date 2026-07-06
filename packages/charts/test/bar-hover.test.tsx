@@ -36,8 +36,8 @@ function Capture({ sink }: { sink: (f: ContainerFrame) => void }) {
   return null;
 }
 
-const hitA = { key: 0, value: 1, color: '#fff', label: 'v' };
-const hitB = { key: 1, value: 2, color: '#fff', label: 'v' };
+const hitA = { id: 'v', key: 0, value: 1, color: '#fff', label: 'v' };
+const hitB = { id: 'v', key: 1, value: 2, color: '#fff', label: 'v' };
 
 /**
  * The hover half of the selection pair (F-charts-bar-interaction): a controlled
@@ -74,18 +74,30 @@ describe('controlled bar hover (hovered / onHover)', () => {
     expect(get().hovered).toEqual(hitA); // internal state reflects it
   });
 
-  it('deduped: an unchanged mark (same key+label) does not re-fire onHover', () => {
+  it('deduped: an unchanged mark (same id+key) does not re-fire onHover', () => {
     const onHover = vi.fn();
     const { ui, get } = tree({ onHover });
     render(ui);
     act(() => get().setHovered(hitA));
-    act(() => get().setHovered({ ...hitA })); // fresh object, same key+label
+    act(() => get().setHovered({ ...hitA })); // fresh object, same id+key
     expect(onHover).toHaveBeenCalledTimes(1);
     act(() => get().setHovered(hitB)); // a genuine transition
     expect(onHover).toHaveBeenCalledTimes(2);
     act(() => get().setHovered(null)); // and clearing
     expect(onHover).toHaveBeenCalledTimes(3);
     expect(onHover).toHaveBeenLastCalledWith(null);
+  });
+
+  it('distinguishes series by id: same key, different id re-fires onHover', () => {
+    const onHover = vi.fn();
+    const { ui, get } = tree({ onHover });
+    render(ui);
+    // Two series can share a sample key (timestamp) but never a series `id`.
+    // The dedup keys on id + key, so hovering the other series at the same
+    // timestamp is a genuine transition, not a swallowed no-op.
+    act(() => get().setHovered(hitA)); // { id: 'v', key: 0 }
+    act(() => get().setHovered({ ...hitA, id: 'other' })); // same key, other series
+    expect(onHover).toHaveBeenCalledTimes(2);
   });
 
   it('controlled: the prop pins hovered; setHovered notifies but does not override', () => {

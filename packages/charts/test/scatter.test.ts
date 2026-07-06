@@ -163,6 +163,7 @@ describe('drawScatter', () => {
     const { ctx, calls } = recordingContext();
     const s = cs([0, 10, 20], [1, 2, 3]);
     const selected: SelectInfo = {
+      id: 'v',
       key: 10,
       value: 2,
       color: '#abc',
@@ -197,8 +198,9 @@ describe('drawScatter', () => {
   it('does NOT highlight when the selection is a different series', () => {
     const { ctx, calls } = recordingContext();
     const s = cs([0, 10], [1, 2]);
-    // same key, different label → not this series' selection.
+    // same key, different series id → not this series' selection.
     const selected: SelectInfo = {
+      id: 'other',
       key: 10,
       value: 2,
       color: '#abc',
@@ -277,25 +279,78 @@ describe('hitTestScatter', () => {
       identity,
       fixed(4),
       keyAt(s),
+      'pts',
       'v',
     );
     expect(hit).not.toBeNull();
-    expect(hit!.key).toBe(10);
+    expect(hit!.id).toBe('pts'); // series identity (from the layer's id)
+    expect(hit!.key).toBe(10); // click provenance (the sample begin)
     expect(hit!.value).toBe(0);
     expect(hit!.label).toBe('v');
     expect(hit!.color).toBe('#abc');
   });
 
+  it('returns the same series id for different samples (id is stable, key is not)', () => {
+    // The id is the series identity — independent of which sample was clicked.
+    // A consumer holding { id } re-matches the series across a data update, where
+    // a sample `key` (begin) would go stale.
+    const hitA = hitTestScatter(
+      s,
+      0,
+      0,
+      identity,
+      identity,
+      fixed(4),
+      keyAt(s),
+      'pts',
+      'v',
+    );
+    const hitC = hitTestScatter(
+      s,
+      20,
+      0,
+      identity,
+      identity,
+      fixed(4),
+      keyAt(s),
+      'pts',
+      'v',
+    );
+    expect(hitA!.id).toBe('pts');
+    expect(hitC!.id).toBe('pts'); // same series id...
+    expect(hitA!.key).not.toBe(hitC!.key); // ...different sample provenance
+  });
+
   it('misses when the click is outside every radius', () => {
     // click at (10, 5), r=4 → distance 5 > 4 → miss.
     expect(
-      hitTestScatter(s, 10, 5, identity, identity, fixed(4), keyAt(s), 'v'),
+      hitTestScatter(
+        s,
+        10,
+        5,
+        identity,
+        identity,
+        fixed(4),
+        keyAt(s),
+        'pts',
+        'v',
+      ),
     ).toBeNull();
   });
 
   it('hits exactly on the radius boundary (<=)', () => {
     expect(
-      hitTestScatter(s, 10, 4, identity, identity, fixed(4), keyAt(s), 'v'),
+      hitTestScatter(
+        s,
+        10,
+        4,
+        identity,
+        identity,
+        fixed(4),
+        keyAt(s),
+        'pts',
+        'v',
+      ),
     ).not.toBeNull();
   });
 
@@ -310,6 +365,7 @@ describe('hitTestScatter', () => {
       identity,
       fixed(4),
       keyAt(o),
+      'pts',
       'v',
     );
     // both share key 5, but value/colour come from the last index — assert it
@@ -322,11 +378,31 @@ describe('hitTestScatter', () => {
     const g = cs([0, 10], [NaN, 0]);
     // click over the gap's x — the gap point must not be hit.
     expect(
-      hitTestScatter(g, 0, 0, identity, identity, fixed(4), keyAt(g), 'v'),
+      hitTestScatter(
+        g,
+        0,
+        0,
+        identity,
+        identity,
+        fixed(4),
+        keyAt(g),
+        'pts',
+        'v',
+      ),
     ).toBeNull();
     // but the real point still hits.
     expect(
-      hitTestScatter(g, 10, 0, identity, identity, fixed(4), keyAt(g), 'v'),
+      hitTestScatter(
+        g,
+        10,
+        0,
+        identity,
+        identity,
+        fixed(4),
+        keyAt(g),
+        'pts',
+        'v',
+      ),
     ).not.toBeNull();
   });
 
@@ -340,6 +416,7 @@ describe('hitTestScatter', () => {
       (v) => 100 - v,
       fixed(4),
       keyAt(s),
+      'pts',
       'v',
     );
     expect(hit).not.toBeNull();
@@ -356,6 +433,7 @@ describe('hitTestScatter', () => {
         identity,
         fixed(4),
         keyAt(cs([], [])),
+        'pts',
         'v',
       ),
     ).toBeNull();

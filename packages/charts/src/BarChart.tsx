@@ -47,6 +47,17 @@ export interface BarChartProps<
    */
   as?: string;
   /**
+   * The **stable series identity** for selection + hover. **Optional, and it
+   * gates interactivity:** a bar layer is selectable/hoverable only when given an
+   * `id` — omit it and the bars render + read out but can't be clicked (a click
+   * on them reads as empty space ⇒ deselect). Distinct from `as` (a theme role
+   * that can repeat): `id` must be unique among the selectable layers, and it is
+   * the key the controlled `selected`/`hovered` echo, dedup, and (later)
+   * multi-select all match on — so a selection survives a data update where a
+   * sample `key` would go stale.
+   */
+  id?: string;
+  /**
    * Which `<YAxis>` (by its `id`) this bar scales against — picks the *scale*,
    * where `as` picks the *style* (separate concerns). **Omitted ⇒ the row's
    * default axis.**
@@ -78,10 +89,11 @@ export interface BarChartProps<
  * domain), or on the axis floor when an explicit `<YAxis min={…}>` sits above
  * zero (see {@link resolveBarBaseline}).
  *
- * **Interaction.** Hover joins the tracker (`sampleAt` → the value of the bar
- * **under the cursor**) and lights that bar (hover-highlight). Click selects the
- * hit bar (`hitTest`); the matching bar — same key **and** this series' `label`,
- * so two series sharing a timestamp don't both light up — draws highlighted
+ * **Interaction (opt-in via `id`).** Hover joins the tracker (`sampleAt` → the
+ * value of the bar **under the cursor**) and lights that bar (hover-highlight).
+ * Click selects the hit bar (`hitTest`); the matching bar — the selection's
+ * series `id` **and** the sample `key`, so two series sharing a timestamp don't
+ * both light up — draws highlighted
  * (outlined for the committed select, fill-only for the transient hover). Both
  * resolve by **containment**: the tracker by the bar's `[begin, end]` time span
  * (`barIndexAtTime`), the click by the bar's pixel rect (`barAt`) — so the
@@ -112,6 +124,7 @@ export function BarChart<
   series,
   column,
   as: semantic,
+  id,
   axis,
   gap,
   index = 0,
@@ -141,25 +154,26 @@ export function BarChart<
   const label = semantic ?? column;
   // The gap prop overrides the theme default; otherwise the style carries it.
   const gapPx = gap ?? style.gap;
-  // The current selection, narrowed to what the highlight match needs (key +
-  // label). Read here so a selection change re-registers the layer (in the deps)
-  // → the data canvas repaints with the highlight. Infrequent (a click).
+  // The current selection, narrowed to what the highlight match needs (the
+  // series `id` + the sample `key`). Read here so a selection change re-registers
+  // the layer (in the deps) → the data canvas repaints with the highlight.
+  // Infrequent (a click). `drawBars` matches this layer's own `id` against the
+  // selection's, so a no-id (non-selectable) layer never highlights.
   const selected = container.selected;
   const selection = useMemo(
-    () =>
-      selected === null ? null : { key: selected.key, label: selected.label },
+    () => (selected === null ? null : { key: selected.key, id: selected.id }),
     [selected],
   );
-  // The transient hover-highlight, narrowed to the match key (key + label) like
-  // the selection. Read here so a hover change re-registers the layer → the data
-  // canvas repaints with the lit bar. Deduped in the container, so this only
-  // fires on a bar transition (not every pointer move).
+  // The transient hover-highlight, narrowed like the selection (id + key). Read
+  // here so a hover change re-registers the layer → the data canvas repaints with
+  // the lit bar. Deduped in the container, so this only fires on a bar transition
+  // (not every pointer move).
   const hoveredMark = container.hovered;
   const hover = useMemo(
     () =>
       hoveredMark === null
         ? null
-        : { key: hoveredMark.key, label: hoveredMark.label },
+        : { key: hoveredMark.key, id: hoveredMark.id },
     [hoveredMark],
   );
 
@@ -200,25 +214,32 @@ export function BarChart<
             },
           ];
         },
-        hitTest: (px, py, xScale, yScale): SelectInfo | null => {
-          const baseline = resolveBarBaseline(yScale);
-          const hit = barAt(
-            bs,
-            px,
-            py,
-            xScale,
-            yScale,
-            baseline,
-            gapPx,
-            style.minWidth,
-          );
-          if (hit === null) return null;
-          const [, begin, value] = hit;
-          // key = the bar's begin (its stable identity); colour = the resolved
-          // fill; label = this series' identity (so the highlight targets the
-          // exact clicked series, not another sharing the timestamp).
-          return { key: begin, value, color: style.fill, label };
-        },
+        // `id` gates interactivity: only an id-bearing layer wires a hitTest, so
+        // a no-id layer is display-only (a click on it resolves to empty space).
+        // Omit the key entirely when there's no id (exactOptionalPropertyTypes).
+        ...(id === undefined
+          ? {}
+          : {
+              hitTest: (px, py, xScale, yScale): SelectInfo | null => {
+                const baseline = resolveBarBaseline(yScale);
+                const hit = barAt(
+                  bs,
+                  px,
+                  py,
+                  xScale,
+                  yScale,
+                  baseline,
+                  gapPx,
+                  style.minWidth,
+                );
+                if (hit === null) return null;
+                const [, begin, value] = hit;
+                // id = the series identity (the selection key); key = the bar's
+                // begin (click provenance); colour = the resolved fill; label =
+                // the display identity.
+                return { id, key: begin, value, color: style.fill, label };
+              },
+            }),
         draw: (ctx, xScale, yScale) =>
           drawBars(
             ctx,
@@ -228,7 +249,7 @@ export function BarChart<
             style,
             resolveBarBaseline(yScale),
             gapPx,
-            label,
+            id,
             selection,
             hover,
           ),
@@ -236,7 +257,19 @@ export function BarChart<
       axisId: axis,
       index,
     }),
-    [bs, series, column, style, label, gapPx, selection, hover, axis, index],
+    [
+      bs,
+      series,
+      column,
+      style,
+      label,
+      id,
+      gapPx,
+      selection,
+      hover,
+      axis,
+      index,
+    ],
   );
   // A stable per-instance slot (see useSlotKey) keeps this layer's z-position
   // fixed across series/style/selection updates (no jump to the front).
@@ -256,6 +289,15 @@ export function BarChart<
   useEffect(() => {
     registerTrackerSource(slot, entry.layer);
   }, [registerTrackerSource, slot, entry.layer]);
+
+  // Advertise selectability (only when an `id` was given) so the container can
+  // warn if selection is wired but nothing is selectable.
+  const { registerSelectable, unregisterSelectable } = container;
+  useEffect(() => {
+    if (id === undefined) return;
+    registerSelectable(slot);
+    return () => unregisterSelectable(slot);
+  }, [registerSelectable, unregisterSelectable, slot, id]);
 
   return null;
 }
