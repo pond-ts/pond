@@ -64,6 +64,33 @@ export interface BoxSeries {
 }
 
 /**
+ * A chart-ready view of an OHLC series ({@link Candlestick}): the candle's
+ * horizontal slot (`x` = left edge, `xEnd` = right edge) plus the four price
+ * channels per mark — `open`/`high`/`low`/`close`. The chart derives the body
+ * extents (`min`/`max` of open/close) itself at draw time; only the four raw
+ * columns are read here.
+ *
+ * A mark is drawn only where **all four** prices are finite; any one `NaN` is a
+ * gap (the candle draws nothing — same gap contract as {@link BoxSeries}).
+ *
+ * Unlike {@link BoxSeries} (interval-keyed only), the OHLC view supports **both**
+ * key shapes, like {@link BarSeries}: an **interval**-keyed series (an
+ * `aggregate` rollup — weekly/monthly bars) uses the key's own `[begin, end)` as
+ * the slot; a **point**-keyed series (raw daily OHLCV) derives the slot from
+ * neighbour spacing (see {@link ohlcFromTimeSeries}), so it feeds straight in
+ * with no `aggregate` pass.
+ */
+export interface OhlcSeries {
+  readonly x: Float64Array;
+  readonly xEnd: Float64Array;
+  readonly open: Float64Array;
+  readonly high: Float64Array;
+  readonly low: Float64Array;
+  readonly close: Float64Array;
+  readonly length: number;
+}
+
+/**
  * A chart-ready view of an interval-keyed series for bars: each mark spans
  * `[begin[i], end[i]]` (the key's range) with height `y[i]`. Unlike
  * {@link ChartSeries} (a single `x` point per row), a bar needs **both** key
@@ -183,6 +210,18 @@ export interface BoxColumns {
   readonly q3: string;
   /** Upper whisker end (e.g. `p95` / `max`). */
   readonly upper: string;
+}
+
+/** The four OHLC column names {@link ohlcFromTimeSeries} reads. */
+export interface OhlcColumns {
+  /** Opening price column. */
+  readonly open: string;
+  /** Session high column. */
+  readonly high: string;
+  /** Session low column. */
+  readonly low: string;
+  /** Closing price column. */
+  readonly close: string;
 }
 
 /**
@@ -306,6 +345,45 @@ export function boxFromTimeSeries<S extends SeriesSchema>(
 }
 
 /**
+ * Build an {@link OhlcSeries} from a pond `TimeSeries` — four numeric price
+ * columns (`open`/`high`/`low`/`close`) plus the candle's horizontal slot.
+ *
+ * **Key-shape aware, like {@link barsFromTimeSeries}.** An **interval /
+ * timeRange**-keyed series (an `aggregate` rollup — weekly / monthly bars) uses
+ * the key's own `[begin, end)` as the slot. A **point**-keyed (`time`) series —
+ * raw daily OHLCV — has `begin === end` (zero width), so the slot is derived from
+ * neighbour spacing (each candle centred on its timestamp, reaching halfway to
+ * each neighbour; see {@link neighbourSpans}). This is the ergonomic win over the
+ * interval-only {@link boxFromTimeSeries}: raw OHLC feeds straight in with no
+ * `aggregate` pass.
+ *
+ * A key with any of the four prices missing reads as a gap (the candle draws
+ * nothing). Detected by `keyColumn().kind === 'time'`.
+ *
+ * @throws RangeError if any price column does not exist.
+ * @throws TypeError if any price column is not a numeric column.
+ */
+export function ohlcFromTimeSeries<S extends SeriesSchema>(
+  series: TimeSeries<S>,
+  columns: OhlcColumns,
+): OhlcSeries {
+  const open = readNumericColumn(series, columns.open);
+  const high = readNumericColumn(series, columns.high);
+  const low = readNumericColumn(series, columns.low);
+  const close = readNumericColumn(series, columns.close);
+  const n = series.length;
+  if (series.keyColumn().kind !== 'time') {
+    // Interval / timeRange: the key's own endpoints are the candle slot.
+    const { begin, end } = keyBeginEnd(series);
+    return { x: begin, xEnd: end, open, high, low, close, length: n };
+  }
+  // Point key (begin === end): synthesize the slot from neighbour spacing so raw
+  // daily OHLCV renders as contiguous candles without a pre-key to intervals.
+  const { begin, end } = neighbourSpans(series.keyColumn().begin, n);
+  return { x: begin, xEnd: end, open, high, low, close, length: n };
+}
+
+/**
  * Per-row begin/end buffers for the key column, each aligned to the logical
  * length (zero-copy views). For an interval / timeRange key these are the key's
  * own endpoints; for a point (`time`) key `end === begin`, which
@@ -320,6 +398,34 @@ function keyBeginEnd<S extends SeriesSchema>(
   // so they line up with the value array. A `time` key's `end` aliases `begin`
   // (point-in-time), which the caller's point-key fallback replaces.
   return { begin: key.begin.subarray(0, n), end: key.end.subarray(0, n) };
+}
+
+/**
+ * Synthesize per-point `[begin, end]` spans from a monotonic axis buffer by
+ * **neighbour spacing**: each point is centred on its own value and reaches
+ * halfway to each neighbour (a Voronoi cell on the axis). The first / last points
+ * mirror their single adjacent gap so the end cells match their interior width; a
+ * lone point (length 1) keeps zero width (the renderer's `minWidth` floor takes
+ * over). Shared by the point-keyed `TimeSeries` bars, the `ValueSeries` bars, and
+ * the point-keyed OHLC reader. `axis` is a zero-copy key buffer (must not be
+ * mutated) — fresh output buffers are allocated.
+ */
+function neighbourSpans(
+  axis: Float64Array,
+  n: number,
+): { begin: Float64Array; end: Float64Array } {
+  const begin = new Float64Array(n);
+  const end = new Float64Array(n);
+  for (let i = 0; i < n; i += 1) {
+    const x = axis[i]!;
+    // Half-gap to the previous neighbour (mirror the next gap at the left edge).
+    const prevGap = i > 0 ? x - axis[i - 1]! : i + 1 < n ? axis[i + 1]! - x : 0;
+    // Half-gap to the next neighbour (mirror the previous gap at the right edge).
+    const nextGap = i + 1 < n ? axis[i + 1]! - x : i > 0 ? x - axis[i - 1]! : 0;
+    begin[i] = x - prevGap / 2;
+    end[i] = x + nextGap / 2;
+  }
+  return { begin, end };
 }
 
 /**
@@ -356,20 +462,8 @@ export function barsFromTimeSeries<S extends SeriesSchema>(
     return { begin, end, y, length: n };
   }
   // Point key (begin === end): synthesize a span from neighbour spacing so the
-  // bars have width. Copy into fresh buffers — the key's begin buffer is shared
-  // (zero-copy) and must not be mutated.
-  const src = series.keyColumn().begin;
-  const begin = new Float64Array(n);
-  const end = new Float64Array(n);
-  for (let i = 0; i < n; i += 1) {
-    const t = src[i]!;
-    // Half-gap to the previous point (mirror the next gap at the left edge).
-    const prevGap = i > 0 ? t - src[i - 1]! : i + 1 < n ? src[i + 1]! - t : 0;
-    // Half-gap to the next point (mirror the previous gap at the right edge).
-    const nextGap = i + 1 < n ? src[i + 1]! - t : i > 0 ? t - src[i - 1]! : 0;
-    begin[i] = t - prevGap / 2;
-    end[i] = t + nextGap / 2;
-  }
+  // bars have width (see neighbourSpans).
+  const { begin, end } = neighbourSpans(series.keyColumn().begin, n);
   return { begin, end, y, length: n };
 }
 
@@ -398,19 +492,8 @@ export function barsFromValueSeries<VS extends ValueSeriesSchema>(
 ): BarSeries {
   const y = readValueColumn(series, column);
   const n = series.length;
-  // axisValues() is the monotonic key buffer (zero-copy) — must not be mutated,
-  // so synthesise the spans into fresh buffers.
-  const ax = series.axisValues();
-  const begin = new Float64Array(n);
-  const end = new Float64Array(n);
-  for (let i = 0; i < n; i += 1) {
-    const x = ax[i]!;
-    // Half-gap to the previous neighbour (mirror the next gap at the left edge).
-    const prevGap = i > 0 ? x - ax[i - 1]! : i + 1 < n ? ax[i + 1]! - x : 0;
-    // Half-gap to the next neighbour (mirror the previous gap at the right edge).
-    const nextGap = i + 1 < n ? ax[i + 1]! - x : i > 0 ? x - ax[i - 1]! : 0;
-    begin[i] = x - prevGap / 2;
-    end[i] = x + nextGap / 2;
-  }
+  // axisValues() is the monotonic key buffer (zero-copy); neighbourSpans reads it
+  // and allocates fresh span buffers (never mutates the source).
+  const { begin, end } = neighbourSpans(series.axisValues(), n);
   return { begin, end, y, length: n };
 }

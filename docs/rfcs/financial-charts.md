@@ -185,3 +185,47 @@ pulls on it.
    composes? (Lean: consumer composes; the library shouldn't fuse panels.)
 4. **`bodyWidth`/`gap` interaction** with the neighbour-derived span on
    point-keyed series — what's the sensible default candle width vs the slot?
+
+## Amendment 1 — Phase 1 adopted + shipped
+
+> _Built by the pond-ts library agent (Claude), 2026-07-06, on
+> `feat/charts-candlestick`. Phase 1 (§8) is now in `@pond-ts/charts` and
+> recorded as a commitment in PLAN.md; this RFC stays as the "why". Handing the
+> component to Tidal to drive the next friction wave._
+
+**What shipped.** `<Candlestick>` (`src/Candlestick.tsx`) + geometry/draw
+(`src/ohlc.ts`) + the `OhlcSeries`/`ohlcFromTimeSeries` reader (`src/data.ts`) +
+the `theme.candle` slot (`CandleStyle`, neutral defaults on both in-repo themes).
+`variant: candle|bar|hollow`, `colorBy: direction|series`, `gap`, and `showOHLC`
+(the §9-Q2 opt-in four-pill readout — folded into Phase 1 since it's trivial and
+Tidal wants the full quote). Point-keyed raw OHLCV and interval-keyed rollups
+both feed in; the neighbour-spacing math is shared with `BarChart` via an
+extracted `neighbourSpans` helper. 28 unit tests over the geometry/draw; a
+feature-axis Storybook fan-out (per-variant, colour, doji, gap, keying, cursor,
+theme + a price/volume two-panel scenario).
+
+**Resolution of the §4 cursor gotcha (the one real design fork in the build).**
+The RFC framed the OHLC readout as a `BoxPlot`-style consolidated `cursorFlag`
+and warned that Candlestick "must not inherit BoxPlot's `cursorFlag` x-snap
+exclusion." The cleaner resolution the code takes: Candlestick implements **plain
+`sampleAt` (like `BandChart`), and does _not_ implement `cursorFlag` at all.**
+Both the crosshair x-snap (`Layers.tsx`) and the per-series y-pills key off
+"layer has no `cursorFlag`", so a candle joins **both** for free — the reticle
+lands on candles and each price shows as a value pill — with **zero changes to
+`context.ts`/`Layers.tsx`**. Consequence: follow-on wave item **(c)
+"interval/OHLC marks join x-snap"** is **moot for Candlestick** (it never opted
+out); (c) survives only as a `BoxPlot` concern. The default readout is the
+single `close` pill keyed on `as`; `showOHLC` fans all four.
+
+**Open questions, as resolved for Phase 1:** Q1 (doji) — **exact equality**, no
+config epsilon (a doji draws a 1px `neutral` body). Q2 (tracker richness) —
+**close-only default, `showOHLC` opt-in** (shipped). Q3 (volume) — **consumer
+composes** a separate `<BarChart>` row (the scenario story shows it); the library
+does not fuse panels. Q4 (`bodyWidth`) — **`0.8` of the slot** by default (the
+theme sets `0.7`); the wick sits at the slot centre, `gap` insets the slot.
+
+**Carried, not built:** selection/`hitTest` (rides the selection RFC, not this
+one) and the follow-on wave (tracker-label-by-`as` §F-charts-8, BoxPlot
+line-shape, clamp-on-ingest). **One breaking edge to flag at release:**
+`ChartTheme.candle` is a **required** slot — an external hand-built theme must
+add it (human-approval gate per CLAUDE.md, since it's a public-type widening).
