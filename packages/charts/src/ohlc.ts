@@ -10,15 +10,15 @@ import { barSpanPx } from './range.js';
  * - **`candle`** (default) — a filled `open→close` body with a `high–low` wick.
  * - **`bar`** — an OHLC tick bar: a `high–low` stem with a left tick at `open`
  *   and a right tick at `close`, no body.
- * - **`hollow`** — like `candle`, but a **rising** candle (close ≥ open) draws a
- *   *hollow* (outlined) body and a **falling** one a filled body.
+ * - **`hollow`** — like `candle`, but a **rising** candle (close > open) draws a
+ *   *hollow* (outlined) body and a **falling / doji** one a filled body.
  */
 export type CandleVariant = 'candle' | 'bar' | 'hollow';
 
 /**
  * What drives a candle's colour:
  *
- * - **`direction`** (default, market convention) — `rising` when close ≥ open,
+ * - **`direction`** (default, market convention) — `rising` when close > open,
  *   `falling` when close < open, `neutral` when equal (a doji).
  * - **`series`** — one colour off the `as` role (the style's `rising` pair),
  *   *no* green/red. Keeps "colour = series" when a candle sits beside coloured
@@ -84,7 +84,7 @@ export function isFiniteOhlc(ohlc: OhlcSeries, i: number): boolean {
 
 /**
  * Resolve the `{ body, wick }` colours for one candle from its `open`/`close`
- * and the {@link ColorBy} mode. `direction` picks `rising` (close ≥ open) /
+ * and the {@link ColorBy} mode. `direction` picks `rising` (close > open) /
  * `falling` (close < open) / `neutral` (equal — a doji, falling back to `rising`
  * when the style omits it); `series` always returns `rising` (one colour, no
  * up/down split). The single source of the colour decision, shared by
@@ -186,8 +186,10 @@ export function drawCandles(
       top -= (MIN_BODY_HEIGHT_PX - h) / 2;
       h = MIN_BODY_HEIGHT_PX;
     }
-    // `hollow`: a rising candle is outlined (hollow), a falling / doji one filled.
-    const hollow = variant === 'hollow' && close >= open;
+    // `hollow`: a rising candle is outlined (hollow), a falling / doji one filled
+    // — the same strict-`>` boundary resolveCandleStyle uses (equality → neutral),
+    // so a doji's fill and its colour agree.
+    const hollow = variant === 'hollow' && close > open;
     if (hollow) {
       ctx.strokeStyle = body;
       ctx.lineWidth = style.wickWidth;

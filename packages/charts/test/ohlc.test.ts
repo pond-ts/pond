@@ -305,6 +305,19 @@ describe('drawCandles — hollow variant', () => {
     expect(calls.filter((c) => c.name === 'fillRect')).toHaveLength(1);
     expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(0);
   });
+
+  it('fills a doji (open === close) — the strict-> boundary agrees with its neutral colour', () => {
+    const { ctx, calls } = recordingContext();
+    const doji = oh([10], { open: [3], high: [5], low: [1], close: [3] }, [30]);
+    drawCandles(ctx, doji, identity, flipY, style, 'hollow');
+    // equality is not "rising", so a doji is filled (not hollow) — matching
+    // resolveCandleStyle routing open === close to neutral.
+    expect(calls.filter((c) => c.name === 'fillRect')).toHaveLength(1);
+    expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(0);
+    expect(
+      calls.some((c) => c.name === 'fillStyle' && c.args[0] === '#888'),
+    ).toBe(true);
+  });
 });
 
 describe('ohlcFromTimeSeries', () => {

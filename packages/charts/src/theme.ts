@@ -224,7 +224,7 @@ export interface BoxStyle {
 /**
  * A resolved candlestick style ({@link Candlestick}). A candle is unreadable in
  * one colour — rising vs falling *must* differ to mean anything — so the style
- * is a **pair**: `rising` (close ≥ open) and `falling` (close < open), each a
+ * is a **pair**: `rising` (close > open) and `falling` (close < open), each a
  * `body` (the open→close rectangle / the OHLC bar) and a `wick` (the high–low
  * line / the bar's stem). `neutral` styles a **doji** (open === close); it falls
  * back to `rising` when unset. `bodyWidth` is the body's fraction of the candle
@@ -236,7 +236,7 @@ export interface BoxStyle {
  * coloured lines).
  */
 export interface CandleStyle {
-  /** Rising candle (close ≥ open) — body + wick colours. Also the single colour
+  /** Rising candle (close > open) — body + wick colours. Also the single colour
    *  under `colorBy='series'`. */
   readonly rising: { readonly body: string; readonly wick: string };
   /** Falling candle (close < open) — body + wick colours. */
