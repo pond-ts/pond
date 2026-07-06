@@ -44,6 +44,9 @@ export { BoxPlot } from './BoxPlot.js';
 export type { BoxPlotProps } from './BoxPlot.js';
 export { BarChart } from './BarChart.js';
 export type { BarChartProps } from './BarChart.js';
+export { Candlestick } from './Candlestick.js';
+export type { CandlestickProps } from './Candlestick.js';
+export type { CandleVariant, ColorBy } from './ohlc.js';
 
 // Annotations — user-authored marks in the turquoise register (distinct from the
 // data): a shaded span, a horizontal value line, a vertical x line.
@@ -62,6 +65,7 @@ export {
   bandFromTimeSeries,
   boxFromTimeSeries,
   barsFromTimeSeries,
+  ohlcFromTimeSeries,
 } from './data.js';
 export type {
   ChartSeries,
@@ -69,6 +73,8 @@ export type {
   BoxSeries,
   BoxColumns,
   BarSeries,
+  OhlcSeries,
+  OhlcColumns,
 } from './data.js';
 
 // Scatter's data-driven point encoding (radius / colour from columns via
@@ -88,6 +94,7 @@ export type {
   AreaStyle,
   ScatterStyle,
   BoxStyle,
+  CandleStyle,
   BarStyle,
 } from './theme.js';
 

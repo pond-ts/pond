@@ -38,6 +38,31 @@ patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **`@pond-ts/charts`: `<Candlestick>` — a first-class OHLC mark** (Phase 1 of
+  the financial-charts RFC, Tidal-driven). `open`/`high`/`low`/`close` props
+  default to the conventional names (`<Candlestick series={s} />` for a standard
+  OHLCV series); draws-only (body extents derived per-mark); **point- or
+  interval-keyed** so raw daily OHLCV feeds straight in (no `aggregate`), while a
+  weekly/monthly rollup is the identical call. `variant: 'candle' | 'bar' |
+'hollow'`, `colorBy: 'direction' | 'series'`, `gap`, and `showOHLC` (four-pill
+  O/H/L/C hover readout; default is a single `close` pill keyed on `as`).
+  Participates in the crosshair x-snap (unlike `BoxPlot`). Supersedes `BoxPlot
+shape='solid'` for OHLC data.
+- **`@pond-ts/charts`: `ohlcFromTimeSeries`** + the `OhlcSeries` / `OhlcColumns`
+  types — read four price columns into a chart-ready columnar view (exported
+  alongside the existing `*FromTimeSeries` builders).
+
+### Changed
+
+- **`@pond-ts/charts`: `ChartTheme` gains a required `candle` slot** (a
+  `CandleStyle`: `rising`/`falling`/`neutral` body+wick pairs, `bodyWidth`,
+  `wickWidth`). `defaultTheme` and `estelaTheme` ship neutral, **unbranded**
+  up/down pairs — market green/red is a `cssVarTheme` overlay, not a library
+  default. **Breaking (type-level):** a hand-built `ChartTheme` that doesn't
+  derive from a shipped theme must add a `candle` slot to compile.
+
 ## [0.40.0] — 2026-07-05
 
 A **core + charts** release from the estela `DataChart`-port friction wave.

@@ -56,6 +56,13 @@ const lightTheme: ChartTheme = {
       whiskerWidth: 1.5,
     },
   },
+  candle: {
+    default: {
+      rising: { body: '#111827', wick: '#374151' },
+      falling: { body: '#9ca3af', wick: '#4b5563' },
+      wickWidth: 1,
+    },
+  },
   bar: {
     default: {
       fill: '#111827',

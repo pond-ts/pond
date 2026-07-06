@@ -220,6 +220,13 @@ const darkTheme: ChartTheme = {
       whiskerWidth: 1.5,
     },
   },
+  candle: {
+    default: {
+      rising: { body: '#f59e0b', wick: '#b45309' },
+      falling: { body: '#64748b', wick: '#334155' },
+      wickWidth: 1,
+    },
+  },
   bar: {
     default: {
       fill: '#f59e0b',
@@ -293,6 +300,13 @@ const foamTheme: ChartTheme = {
       medianWidth: 2,
       whisker: '#64748b',
       whiskerWidth: 1.5,
+    },
+  },
+  candle: {
+    default: {
+      rising: { body: '#ffffff', wick: '#cbd5e1' },
+      falling: { body: '#64748b', wick: '#334155' },
+      wickWidth: 1,
     },
   },
   bar: {

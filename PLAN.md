@@ -575,6 +575,37 @@ Axis>>` carrying ordering-based ops (`axisValues`/`axisAt`/`column`/
     cheap, keep `sort:true` as a one-release alias). "Per-box red/green styling" is
     **subsumed** by candlestick `colorBy: 'direction'` — not a separate per-datum
     style hook (that cuts against "colour = series/theme role").
+  - **Candlestick — Phase 1 ADOPTED + shipped** (`feat/charts-candlestick`).
+    The RFC's Phase 1 is built and merged behind
+    [`docs/rfcs/financial-charts.md`](docs/rfcs/financial-charts.md): a
+    first-class `<Candlestick>` (`open`/`high`/`low`/`close` props defaulted to
+    the conventional names, so a standard series needs `<Candlestick series={s}
+/>`), draws-only (body extents derived per-mark, no consumer `withColumn`),
+    **point-or-interval keyed** (raw daily OHLCV feeds straight in via the new
+    `ohlcFromTimeSeries` neighbour-spacing path — shared with `barsFromTimeSeries`
+    through an extracted `neighbourSpans` helper; a weekly/monthly `aggregate`
+    rollup is the identical call), `variant: candle|bar|hollow`, `colorBy:
+direction|series`, `showOHLC` (Phase-2 four-pill readout, folded in early),
+    and a `theme.candle` slot with the amendment kept — `defaultTheme.candle` +
+    `estelaTheme.candle` ship neutral **unbranded** up/down pairs, market
+    green/red is a `cssVarTheme` overlay ([[charts-no-consumer-themes]]).
+    `drawCandles` + geometry live in `src/ohlc.ts` (28 unit tests). **Design
+    divergence from the RFC, locked here:** the RFC framed the OHLC readout as a
+    `BoxPlot`-style consolidated `cursorFlag`, and warned Candlestick "must not
+    inherit BoxPlot's cursorFlag x-snap exclusion." Resolution: Candlestick
+    implements **plain `sampleAt` (like `BandChart`), NOT `cursorFlag`** — so it
+    joins the crosshair x-snap and the per-series y-pills **for free** (both paths
+    key off "layer has no `cursorFlag`"), with **zero changes to
+    `context.ts`/`Layers.tsx`**. That makes follow-on item **(c) "interval/OHLC
+    marks join x-snap" moot for Candlestick** (it never opted out); (c) remains
+    only for `BoxPlot`. **Breaking type change → human-approval gate before
+    release:** `ChartTheme` gains a **required** `candle` slot (RFC-sanctioned,
+    consistent with `box`/`bar`); in-repo themes (`defaultTheme`/`estelaTheme` +
+    three inline story themes) are updated, but any **hand-built external
+    `ChartTheme`** (e.g. estela's, if it doesn't derive from a shipped theme)
+    stops compiling until it adds a `candle` slot. Not selectable yet (no
+    `hitTest`) — selection rides the separate selection RFC. Follow-on wave
+    (tracker-label-by-`as`, BoxPlot line-shape, clamp-on-ingest) still pending.
 - **M5 — estela parity.** Faithful `DataChart` reproduction on real activity
   data; prove no-regressions; hand the production swap to the estela agent; flip
   `private:false` + first publish.
@@ -3715,7 +3746,8 @@ retention`). Currently Path B (own deque); same API, perf
 
      ```ts
      type DurationString =
-       `${number}${'ms' | 's' | 'm' | 'h' | 'd'}` | 'buffer';
+       | `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`
+       | 'buffer';
 
      type FusedMapping<S extends SeriesSchema> = Readonly<
        Record<DurationString, FusedMappingValue<S>>

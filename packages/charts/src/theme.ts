@@ -74,6 +74,22 @@ export interface ChartTheme {
     readonly [semantic: string]: BoxStyle;
   };
   /**
+   * Map from a candle's semantic identifier to its style — a first-class OHLC
+   * mark ({@link Candlestick}), the financial sibling of the box. Unlike the
+   * other slots a {@link CandleStyle} carries a *pair* (`rising`/`falling`, plus
+   * an optional `neutral` doji): direction colouring is intrinsic to the mark, so
+   * one colour can't express it. `default` is the fallback; a chart tags each
+   * series with a role (`<Candlestick as="AAPL" />`) resolving `candle[semantic]
+   * ?? candle.default`. The default pair is **neutral / unbranded** (a
+   * distinguishable up/down, *not* market green/red) — a consumer supplies its
+   * own palette via `cssVarTheme`; the library owns the type + a renderable
+   * default, never a brand.
+   */
+  readonly candle: {
+    readonly default: CandleStyle;
+    readonly [semantic: string]: CandleStyle;
+  };
+  /**
    * Map from a bar's semantic identifier to its style — the fill, the
    * selected-bar highlight, and the slot gap / minimum width ({@link BarChart}).
    * `default` is the fallback; a bar resolves `bar[semantic] ?? bar.default`.
@@ -206,6 +222,34 @@ export interface BoxStyle {
 }
 
 /**
+ * A resolved candlestick style ({@link Candlestick}). A candle is unreadable in
+ * one colour — rising vs falling *must* differ to mean anything — so the style
+ * is a **pair**: `rising` (close > open) and `falling` (close < open), each a
+ * `body` (the open→close rectangle / the OHLC bar) and a `wick` (the high–low
+ * line / the bar's stem). `neutral` styles a **doji** (open === close); it falls
+ * back to `rising` when unset. `bodyWidth` is the body's fraction of the candle
+ * slot (0–1; the wick always sits at the slot centre) — omitted ⇒ `0.8`.
+ * `wickWidth` is the wick / bar stroke width in px.
+ *
+ * With `colorBy='series'` the direction split is bypassed and every candle draws
+ * in the `rising` colours (one colour = one series, for a candle sitting beside
+ * coloured lines).
+ */
+export interface CandleStyle {
+  /** Rising candle (close > open) — body + wick colours. Also the single colour
+   *  under `colorBy='series'`. */
+  readonly rising: { readonly body: string; readonly wick: string };
+  /** Falling candle (close < open) — body + wick colours. */
+  readonly falling: { readonly body: string; readonly wick: string };
+  /** Doji (open === close) — body + wick colours; falls back to `rising` if unset. */
+  readonly neutral?: { readonly body: string; readonly wick: string };
+  /** Body width as a fraction of the candle slot (0–1). Omitted ⇒ `0.8`. */
+  readonly bodyWidth?: number;
+  /** Wick / OHLC-bar stroke width in px. */
+  readonly wickWidth: number;
+}
+
+/**
  * A resolved area style: an outline stroke plus a graded fill. `color`/`width`
  * stroke the value line on top; `fill` is the gradient base colour, opaque
  * (scaled by `fillOpacity`, 0–1) at the line and grading to transparent at the
@@ -310,6 +354,18 @@ export const defaultTheme: ChartTheme = {
       medianWidth: 2,
       whisker: '#aabee9',
       whiskerWidth: 1,
+    },
+  },
+  candle: {
+    // Neutral / unbranded up-down pair — *not* market green/red (a consumer
+    // supplies that via cssVarTheme). Rising reuses the brand blue; falling the
+    // warm secondary accent — distinguishable at a glance on the light ground.
+    default: {
+      rising: { body: '#2563eb', wick: '#1e3a8a' },
+      falling: { body: '#e8836b', wick: '#b4442a' },
+      neutral: { body: '#94a3b8', wick: '#64748b' },
+      bodyWidth: 0.7,
+      wickWidth: 1,
     },
   },
   bar: {
@@ -438,6 +494,18 @@ export const estelaTheme: ChartTheme = {
       medianWidth: 2,
       whisker: '#a4e4d9', // --es-reef
       whiskerWidth: 1.5,
+    },
+  },
+  candle: {
+    // On the dark ground: brand teal rising, warm filament falling — the estela
+    // palette's own up/down, still *not* literal green/red (a financial consumer
+    // like Tidal overlays its market palette via cssVarTheme).
+    default: {
+      rising: { body: '#15B3A6', wick: '#0E7D74' }, // --es-estela
+      falling: { body: '#E0B36A', wick: '#B4863F' }, // --es-filament
+      neutral: { body: '#4E6B6B', wick: '#DBEAE8' }, // --es-slate / --es-mist
+      bodyWidth: 0.7,
+      wickWidth: 1.5,
     },
   },
   bar: {
