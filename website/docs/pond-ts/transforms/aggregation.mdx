@@ -65,6 +65,25 @@ The output is **interval-keyed**. To feed it into a transform that
 requires a time-keyed series (e.g. `pivotByGroup`, which throws at
 runtime on interval keys), rekey first with `.asTime({ at: 'begin' })`.
 
+:::tip Calendar-aligned buckets (weekly / monthly bars)
+`Sequence.every` gives **fixed-step** boundaries — `'1d'` is exactly
+86,400,000 ms, so it drifts across DST and can't express "one calendar
+month." For buckets that snap to local-calendar day / week / month in a
+chosen time zone — the common case for daily → weekly / monthly roll-ups
+(e.g. OHLC bars) — pass a
+[`Sequence.calendar(unit, { timeZone, weekStartsOn })`](../../start-here/concepts/sequences#sequencecalendarunit-options--calendar-aligned)
+to the same `aggregate` call:
+
+```ts
+// daily → weekly bars, Monday-started, New York calendar
+const weekly = daily.aggregate(
+  Sequence.calendar('week', { timeZone: 'America/New_York', weekStartsOn: 1 }),
+  { close: 'last', high: 'max', low: 'min', open: 'first' },
+);
+```
+
+:::
+
 ### Mapping shapes
 
 Two forms; mix them in one call:

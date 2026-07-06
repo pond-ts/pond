@@ -606,6 +606,36 @@ direction|series`, `showOHLC` (Phase-2 four-pill readout, folded in early),
     stops compiling until it adds a `candle` slot. Not selectable yet (no
     `hitTest`) — selection rides the separate selection RFC. Follow-on wave
     (tracker-label-by-`as`, BoxPlot line-shape, clamp-on-ingest) still pending.
+  - **Tidal integration retro — the loop closed (issue #358, 2026-07-06).**
+    Tidal adopted `<Candlestick>` (Tidal PRs #56/#62) and **deleted its entire
+    hand-rolled `BoxPlot` OHLC workaround** (`boxSeries` + `BOX_COLUMNS`
+    body-extent precompute + the two-overlay up/down-colour trick + a
+    column-name-tracker hack) — the Phase-1 component matched the proposed shape
+    almost exactly, no blockers. Three items triaged off the retro:
+    1. **`aggregate` → `Sequence.calendar` docs pointer** — DONE (docs-only, PR
+       `docs/aggregate-calendar-pointer`). The Tidal agent self-corrected the
+       "calendar weeks/months aren't expressible" note (they are, via
+       `Sequence.calendar('week'|'month', { timeZone, weekStartsOn })`), but the
+       friction was real: the `Aggregation` transform page used `Sequence.every`
+       throughout and never pointed at calendar buckets — the exact
+       weekly/monthly-bars entry point. Added a `:::tip` cross-link. (Note:
+       `sequences.mdx` and `creating.mdx` already cross-linked `daily`/`every` →
+       `calendar`; only the aggregate page was missing it.)
+    2. **`colorBy='series'` ergonomics** — QUEUED (charts DX). Today
+       `colorBy='series'` resolves to `style.rising`, so a single-colour candle
+       beside colour-coded lines forces the consumer to hand-build a full
+       `CandleStyle` with `rising===falling===neutral` (Tidal's
+       `candleStyleForColor` helper). Scope: let `colorBy='series'` take a
+       **scalar colour** (a `color`/`seriesColor` prop, or `theme.candle[as]`
+       accepting a bare string) so no synthetic up/down pair is needed. Additive
+       to a **published public component** — small design call (prop shape) +
+       human-approval gate before build; not an unattended change.
+    3. **Candlestick living-example (Candlestick + `Sequence.calendar`
+       roll-up)** — QUEUED (docs). A living-example pairing `<Candlestick>` with
+       a daily→weekly/monthly `Sequence.calendar` aggregate — the design landed,
+       this is the how-to that shows raw-point vs interval-keyed feeds off one
+       component and doubles as the discoverability fix item 1 points at.
+       Low-priority; rides the living-examples RFC (#285) vehicle.
 - **M5 — estela parity.** Faithful `DataChart` reproduction on real activity
   data; prove no-regressions; hand the production swap to the estela agent; flip
   `private:false` + first publish.
