@@ -375,14 +375,30 @@ best-effort.
     (`showMedian`, default `true`). A prop (structural variant); colours stay
     theme-driven (`solid` reuses `fill` at two opacities). pjm17971 corrected the
     set from the RFC's `feather`/`solid`/`T` → `whisker`/`solid`/`none`.
-  - **Remaining → the decimator (next).** Bench-ordered: viewport culling + M4
-    pixel-bucket decimation **per-layer, first** (they hit the failing metric);
-    Path2D cache (M4.4) **second**. Chart-side `bin(axisColumn, nBuckets,
-reducerSet)` per the charts RFC perf section + its two-lens review — reducer
-    math + monotonic-column bucketing in pond (unifies with geo F-geo-2),
-    `plot_width` + visible slice in the chart; **statistical bands an M5-parity
-    gate**. **M4.3 brush skipped** (no drivers). One-time competitive head-to-head
-    (SciChart trial + AG Charts + uPlot) stays optional.
+  - **Decimator — pond-side reducer math SHIPPED; chart-side building.**
+    Pre-build assessment + full execution plan:
+    [`docs/notes/charts-decimator-assessment-2026-07.md`](docs/notes/charts-decimator-assessment-2026-07.md)
+    (six corrections to the 2026-06 RFC plan: §2.1 key-domain from day one,
+    §2.2 gap-edge union, §2.3 interaction-reads-source invariant, §2.4 candle
+    hint + Tidal, §2.5 LTTB rescoped to opt-in, §2.6 device-pixel + auto-on;
+    the RFC perf section carries the amendment). **Phase 1 (pond) DONE:**
+    `Float64Column.bin(W, 'minMaxFirstLast')` — the four-channel M4 reducer
+    (#362, `fd8265a`); `Float64Column.binBy(key, edges, reducer)` — key-domain
+    bucketing so empty pixel columns surface as `NaN` on gappy data, the §2.1
+    fix (#363, `bd8e1cf`); both share one `reduceFloat64ByBounds` engine. OHLC
+    candlestick re-aggregation reuses `minMaxFirstLast` per column (Tidal
+    consumer). `binBy` is the machinery the value axis later exposes as
+    `binByAxis`. **Remaining → chart-side (Phases 2–5), bench-ordered:**
+    viewport culling **first** (#256 failing metric), then the per-layer
+    decimator stage (device-pixel edges + gap-edge union + interaction
+    invariant), then re-bench, then candlestick with Tidal; Path2D cache
+    (M4.4) only if the pan bench still misses. `plot_width` + visible slice
+    live in the chart; reducer math in pond (unifies with geo F-geo-2). **M4
+    is the auto-on default; LTTB an explicit opt-in** (§2.5 — one consumer's
+    anomaly-detection rejection was consumer-scoped, not global).
+    **Statistical bands an M5-parity gate**; **M4.3 brush skipped** (no
+    drivers); one-time competitive head-to-head (uPlot + published AG Charts /
+    klishevich; SciChart trial optional) stays optional.
   - **Value-axis RFC (`docs/rfcs/value-axis.md`, PR #279 — merged `f141443`) —
     ADOPTED; wave building.** Non-time x (distance / splits / laps).
     **Spine (v2, after the estela + Codex + dashboard red-team + pjm17971):
@@ -630,7 +646,7 @@ direction|series`, `showOHLC` (Phase-2 four-pill readout, folded in early),
     equality/dedup, the gates-interactivity rule, the dev-warn, and the A3 sleeper
     win (a series `id` is stable across samples where a `key` goes stale). **Still
     OUT of scope (Phase 2 / later, named in the PR):** the `SelectInfo | null →
-    readonly SelectInfo[]` widen + `selectionMode` (multi-select); `LineChart.hitTest`
+readonly SelectInfo[]` widen + `selectionMode` (multi-select); `LineChart.hitTest`
     threshold nearest-point; the `snapToClosest | snapToClosestSelected` prop;
     theme-referenced dim state.
 - **M5 — estela parity.** Faithful `DataChart` reproduction on real activity

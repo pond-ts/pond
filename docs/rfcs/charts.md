@@ -1199,6 +1199,78 @@ M4 decimator becomes `bin('minMaxFirstLast')` over the visible slice — reducer
 in pond, `plot_width` in the chart. A small, generally-useful addition to the `bin`
 reducer set (perf-checked when built), not a new `TimeSeries` method.
 
+### Pre-build reassessment + six corrections (pond-ts technical consultant, 2026-07-07)
+
+> _Everything above is the 2026-06 design, red-teamed before any code. This
+> section is the pre-**build** pass: the plan re-checked against the chart
+> surface as it actually shipped (five gap modes, the five-phase cursor model,
+> annotations, the value axis, candlestick — none of which existed when the
+> plan was written), plus what has now been built. Full assessment + the
+> five-PR execution plan:
+> [`docs/notes/charts-decimator-assessment-2026-07.md`](../notes/charts-decimator-assessment-2026-07.md).
+> The algorithm choice (M4 default), the reducer-math-in-pond seam, and the
+> culling-before-Path2D ordering all stand; the corrections are where the plan
+> met features it predated._
+
+The verdict: **sound where it was red-teamed, risk where it wasn't.** Six
+corrections, adopted:
+
+1. **Key-domain bucketing from day one, not index-domain (§2.1).** The plan's
+   "ship time-only on index-domain `bin` first" contradicts a shipped feature:
+   `bin`'s own precondition says equal-index bins match equal-pixel bins **only
+   for uniform samples**, but gap rendering is a first-class five-mode feature
+   and _time_ data is gappy. Index buckets smear across pixel columns and M4's
+   pixel-identity claim goes false for exactly the data the gap modes exist for
+   — with no perf excuse (same O(n) forward walk). **Correction:** decouple from
+   the _value axis_, not from key-domain bucketing. The M4 walk is key-domain
+   from day one; the same primitive later serves the value axis.
+
+2. **Gap-edge union + validity-aware buckets (§2.2).** A partially-missing
+   bucket is validity-blind under min/max/first/last (silently bridges a gap
+   `'empty'` mode promises to break); `dashed`/`step`/`fade` need gap-edge
+   values the decimated set drops. **Pin:** the decimator bins over the **union
+   of pixel edges and gap edges** (no bucket spans a gap edge), buckets are
+   validity-aware, all-missing → `NaN`.
+
+3. **Interaction-reads-source invariant (§2.3).** Cursor `sampleAt`, `hitTest`,
+   selection identity were built on full-resolution data. **Invariant to pin +
+   test:** interaction reads the source series, rendering reads the decimated
+   view — nothing user-facing may depend on `plot_width` or DPR. (Corollary:
+   bar/candle hover-highlight repaints reuse the frame's decimated arrays.)
+
+4. **Candle hint + Tidal coordination (§2.4).** OHLC re-aggregation **is**
+   `minMaxFirstLast` per column (open=first, high=max, low=min, close=last), so
+   the pond seam gets two day-one consumers, and `<Candlestick>` (#357) put a
+   named Tidal consumer inside the 10k–100k failing band. A decimated candle is
+   an _aggregate candle_ — a distinct render; add a candle hint before building,
+   coordinate financial-correctness semantics with Tidal.
+
+5. **LTTB rescoped from rejected to opt-in mode (§2.5).** The M4-over-LTTB
+   rejection was **one consumer's** verdict (the dashboard's anomaly workload,
+   where LTTB drops single-sample σ-band spikes) — right as the **default**, but
+   not a global ban on the ecosystem's most common downsampler. **M4 is the
+   default and the only auto-on mode; LTTB is an explicit per-layer opt-in** for
+   smooth continuous signals, lossy-by-design (its own visual baselines, not the
+   pixel-identity e2e), the anomaly caveat as its documented warning.
+
+6. **Device pixels + auto-on policy (§2.6).** Bucket by **device**-pixel width
+   (`plot_width × DPR`), not CSS pixels (2× DPR halves resolution, flat-tops
+   extremes). "No pre-decimation required" implies decimation is **automatic**
+   above a threshold (visible points > k · devicePlotWidth) with an opt-out —
+   not a prop nobody discovers. The M4 pixel-identity claim is directly testable
+   (decimated vs full-res pixel-diff) — that e2e is the regression net.
+
+**Built so far (Phase 1, pond-side reducer math — the whole point of the seam):**
+
+- `Float64Column.bin(W, 'minMaxFirstLast')` — the four-channel M4 reducer
+  (min/max + first/last for cross-seam continuity). PR #362 (`fd8265a`).
+- `Float64Column.binBy(key, edges, reducer)` — key-domain bucketing (§2.1), so
+  empty pixel columns over gappy data surface as `NaN`. Shares one
+  `reduceFloat64ByBounds` engine with `bin`. PR #363 (`bd8e1cf`).
+
+Remaining is chart-side (culling → decimator stage → re-bench → candlestick),
+tracked in the assessment note's execution plan and PLAN.md's decimator bullet.
+
 ### Estela use-case review (estela agent)
 
 > _Layered from the estela agent's review on PR #250 (2026-06-20). estela's
