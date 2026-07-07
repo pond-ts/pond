@@ -317,6 +317,24 @@ describe('Float64Column.bin — minMaxFirstLast', () => {
     expect(Array.from(out.hi)).toEqual([50, 90]);
   });
 
+  it('trailing-only defined cell: first === last === that cell', () => {
+    // A bin whose sole defined cell is at its very *end* — the
+    // mirror of the leading-invalid case. The validity path's
+    // skip-ahead must land on the last index and set first = last =
+    // lo = hi to it (no off-by-one dropping the final cell).
+    // bin 0 (idx 0-3): only idx 3 defined → all channels 40
+    // bin 1 (idx 4-7): only idx 7 defined → all channels 80
+    const c = f64(
+      [999, 999, 999, 40, 999, 999, 999, 80],
+      [false, false, false, true, false, false, false, true],
+    );
+    const out = c.bin(2, 'minMaxFirstLast');
+    expect(Array.from(out.first)).toEqual([40, 80]);
+    expect(Array.from(out.last)).toEqual([40, 80]);
+    expect(Array.from(out.lo)).toEqual([40, 80]);
+    expect(Array.from(out.hi)).toEqual([40, 80]);
+  });
+
   it('empty and all-invalid bins are NaN on all four channels', () => {
     // bins > length forces empty bins; an all-invalid bin too.
     const c = f64([10, 999, 999, 999], [true, false, false, false]);
