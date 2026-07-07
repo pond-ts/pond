@@ -103,21 +103,20 @@ describe('Float64Column.binBy — gappy data (the §2.1 win over bin)', () => {
     expect(hi[5]).toBe(10);
   });
 
-  it('contrast: index-domain bin smears the same two clusters together', () => {
-    // The exact reason binBy exists. bin(2, minMax) splits by index
-    // (3+3), so each bin mixes... actually here index split *happens*
-    // to separate them, so use bin(1) to show the smear: one index
-    // bucket over the whole thing collapses the gap entirely.
+  it('contrast: index-domain bin cannot surface the gap at any bucket count', () => {
+    // The exact reason binBy exists. Same data + key as the test
+    // above. Index `bin` never looks at the key axis, so no bucket
+    // count reveals the [2, 50] gap: at bins=6 it's per-cell (every
+    // sample its own bucket, no NaN), and any coarser count just
+    // merges adjacent *indices* — the two clusters, being adjacent in
+    // index order, never land in separate-with-a-hole buckets the way
+    // pixel-aligned edges put them. So the gap is invisible to `bin`;
+    // only `binBy` (asserted in the test above) surfaces it as NaN.
     const c = f64([5, 6, 7, 8, 9, 10]);
-    const key = [0, 1, 2, 50, 51, 52];
-    // Index bin with 6 buckets = per-cell: no NaN anywhere, the gap
-    // is invisible (every sample gets its own bucket regardless of
-    // where it sits on the key axis).
     const idx = c.bin(6, 'minMax');
     expect(Array.from(idx.lo)).toEqual([5, 6, 7, 8, 9, 10]);
-    // binBy with pixel-aligned edges surfaces the gap as NaN buckets
-    // (asserted in the test above) — the property index bin cannot
-    // express because it never looks at the key axis.
+    // No NaN anywhere — the gap left no trace.
+    expect(Array.from(idx.lo).some((v) => Number.isNaN(v))).toBe(false);
   });
 });
 
