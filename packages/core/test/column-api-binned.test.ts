@@ -244,6 +244,153 @@ describe('Float64Column.bin — validity-aware', () => {
   });
 });
 
+// ─── Fused minMaxFirstLast (the M4 reducer) ─────────────────────
+
+describe('Float64Column.bin — minMaxFirstLast', () => {
+  it('returns { lo, hi, first, last } four-channel', () => {
+    const c = f64([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    const out = c.bin(5, 'minMaxFirstLast');
+    expect(out.lo).toBeInstanceOf(Float64Array);
+    expect(out.hi).toBeInstanceOf(Float64Array);
+    expect(out.first).toBeInstanceOf(Float64Array);
+    expect(out.last).toBeInstanceOf(Float64Array);
+    expect(out.lo.length).toBe(5);
+    expect(out.first.length).toBe(5);
+    expect(out.last.length).toBe(5);
+  });
+
+  it('lo/hi match plain minMax; first/last are the bin edge values', () => {
+    // 10 values, 5 bins of 2. Monotone input, so within each bin
+    // first = min = lo and last = max = hi — but the point is that
+    // first/last track *position*, not extent (see the non-monotone
+    // case below).
+    const c = f64([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    const mm = c.bin(5, 'minMax');
+    const out = c.bin(5, 'minMaxFirstLast');
+    expect(Array.from(out.lo)).toEqual(Array.from(mm.lo));
+    expect(Array.from(out.hi)).toEqual(Array.from(mm.hi));
+    expect(Array.from(out.first)).toEqual([1, 3, 5, 7, 9]);
+    expect(Array.from(out.last)).toEqual([2, 4, 6, 8, 10]);
+  });
+
+  it('first/last are entry/exit by position, distinct from min/max', () => {
+    // Each 3-wide bin has its extremes in the interior so first/last
+    // differ from lo/hi — this is the continuity property M4 needs.
+    //   bin 0 [5, 1, 9]  → lo=1, hi=9, first=5, last=9
+    //   bin 1 [8, 2, 7]  → lo=2, hi=8, first=8, last=7
+    //   bin 2 [3, 10, 4] → lo=3, hi=10, first=3, last=4
+    const c = f64([5, 1, 9, 8, 2, 7, 3, 10, 4]);
+    const out = c.bin(3, 'minMaxFirstLast');
+    expect(Array.from(out.lo)).toEqual([1, 2, 3]);
+    expect(Array.from(out.hi)).toEqual([9, 8, 10]);
+    expect(Array.from(out.first)).toEqual([5, 8, 3]);
+    expect(Array.from(out.last)).toEqual([9, 7, 4]);
+  });
+
+  it('validity-aware: all four channels skip undefined cells', () => {
+    // 6 values, idx 1 and 4 invalid, bins of 2.
+    //   bin 0 [10, undef]     → defined [10]     → all channels 10
+    //   bin 1 [20, 30]        → lo=20 hi=30 first=20 last=30
+    //   bin 2 [undef, 40]     → defined [40]     → all channels 40
+    const c = f64(
+      [10, 999, 20, 30, 999, 40],
+      [true, false, true, true, false, true],
+    );
+    const out = c.bin(3, 'minMaxFirstLast');
+    expect(Array.from(out.lo)).toEqual([10, 20, 40]);
+    expect(Array.from(out.hi)).toEqual([10, 30, 40]);
+    expect(Array.from(out.first)).toEqual([10, 20, 40]);
+    expect(Array.from(out.last)).toEqual([10, 30, 40]);
+  });
+
+  it('leading-invalid bin: first is the first *defined* cell, not the raw start', () => {
+    // bin 0 (idx 0-3): only idx 3 defined → first=last=lo=hi=50
+    // bin 1 (idx 4-7): [60,70,80,90] → first=60 last=90 lo=60 hi=90
+    const c = f64(
+      [999, 999, 999, 50, 60, 70, 80, 90],
+      [false, false, false, true, true, true, true, true],
+    );
+    const out = c.bin(2, 'minMaxFirstLast');
+    expect(Array.from(out.first)).toEqual([50, 60]);
+    expect(Array.from(out.last)).toEqual([50, 90]);
+    expect(Array.from(out.lo)).toEqual([50, 60]);
+    expect(Array.from(out.hi)).toEqual([50, 90]);
+  });
+
+  it('trailing-only defined cell: first === last === that cell', () => {
+    // A bin whose sole defined cell is at its very *end* — the
+    // mirror of the leading-invalid case. The validity path's
+    // skip-ahead must land on the last index and set first = last =
+    // lo = hi to it (no off-by-one dropping the final cell).
+    // bin 0 (idx 0-3): only idx 3 defined → all channels 40
+    // bin 1 (idx 4-7): only idx 7 defined → all channels 80
+    const c = f64(
+      [999, 999, 999, 40, 999, 999, 999, 80],
+      [false, false, false, true, false, false, false, true],
+    );
+    const out = c.bin(2, 'minMaxFirstLast');
+    expect(Array.from(out.first)).toEqual([40, 80]);
+    expect(Array.from(out.last)).toEqual([40, 80]);
+    expect(Array.from(out.lo)).toEqual([40, 80]);
+    expect(Array.from(out.hi)).toEqual([40, 80]);
+  });
+
+  it('empty and all-invalid bins are NaN on all four channels', () => {
+    // bins > length forces empty bins; an all-invalid bin too.
+    const c = f64([10, 999, 999, 999], [true, false, false, false]);
+    const out = c.bin(2, 'minMaxFirstLast');
+    // bin 0 (idx 0-1): defined [10] → all channels 10
+    expect(out.lo[0]).toBe(10);
+    expect(out.first[0]).toBe(10);
+    expect(out.last[0]).toBe(10);
+    // bin 1 (idx 2-3): all invalid → NaN everywhere
+    expect(Number.isNaN(out.lo[1]!)).toBe(true);
+    expect(Number.isNaN(out.hi[1]!)).toBe(true);
+    expect(Number.isNaN(out.first[1]!)).toBe(true);
+    expect(Number.isNaN(out.last[1]!)).toBe(true);
+  });
+
+  it('non-finite values are skipped in the guarded path', () => {
+    // Infinity / NaN in a validity-free column trip the !allFinite
+    // guarded path; they must be excluded from all four channels
+    // exactly as minMax excludes them.
+    const c = f64([5, Infinity, 1, 9, NaN, 7]);
+    const out = c.bin(2, 'minMaxFirstLast');
+    const mm = c.bin(2, 'minMax');
+    // bin 0 [5, Inf, 1] → finite [5, 1] → lo=1 hi=5 first=5 last=1
+    // bin 1 [9, NaN, 7] → finite [9, 7] → lo=7 hi=9 first=9 last=7
+    expect(Array.from(out.lo)).toEqual(Array.from(mm.lo));
+    expect(Array.from(out.hi)).toEqual(Array.from(mm.hi));
+    expect(Array.from(out.first)).toEqual([5, 9]);
+    expect(Array.from(out.last)).toEqual([1, 7]);
+  });
+
+  it('bins=1 collapses to whole-column first/last', () => {
+    const c = f64([3, 1, 4, 1, 5, 9, 2, 6]);
+    const out = c.bin(1, 'minMaxFirstLast');
+    expect(out.lo[0]).toBe(1);
+    expect(out.hi[0]).toBe(9);
+    expect(out.first[0]).toBe(3);
+    expect(out.last[0]).toBe(6);
+  });
+
+  it('chunked variant matches packed', () => {
+    const chunks = [
+      [5, 1, 9],
+      [8, 2, 7],
+      [3, 10, 4],
+    ].map((c) => new Float64Column(Float64Array.from(c), c.length));
+    const chunked = new ChunkedFloat64Column(chunks);
+    const packed = materializeChunkedFloat64(chunked);
+    const c = chunked.bin(3, 'minMaxFirstLast');
+    const p = packed.bin(3, 'minMaxFirstLast');
+    expect(Array.from(c.lo)).toEqual(Array.from(p.lo));
+    expect(Array.from(c.hi)).toEqual(Array.from(p.hi));
+    expect(Array.from(c.first)).toEqual(Array.from(p.first));
+    expect(Array.from(c.last)).toEqual(Array.from(p.last));
+  });
+});
+
 // ─── Edge cases ─────────────────────────────────────────────────
 
 describe('Float64Column.bin — edge cases', () => {
