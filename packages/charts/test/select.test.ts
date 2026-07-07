@@ -5,8 +5,20 @@ import type { LayerEntry, SelectInfo } from '../src/context.js';
 const noop = () => {};
 const yScaleFor = () => (v: number) => v;
 
-const HIT_A: SelectInfo = { key: 1, value: 10, color: '#a', label: 'a' };
-const HIT_B: SelectInfo = { key: 2, value: 20, color: '#b', label: 'b' };
+const HIT_A: SelectInfo = {
+  id: 'a',
+  key: 1,
+  value: 10,
+  color: '#a',
+  label: 'a',
+};
+const HIT_B: SelectInfo = {
+  id: 'b',
+  key: 2,
+  value: 20,
+  color: '#b',
+  label: 'b',
+};
 
 /** A layer entry whose hitTest returns `hit` (omit hitTest entirely when
  *  `selectable` is false, like a line/band/area layer). */

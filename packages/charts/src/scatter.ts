@@ -114,8 +114,10 @@ export function scatterExtent(cs: ChartSeries): [number, number] | null {
  * @param labelAt optional per-point text label; `undefined` ⇒ no labels drawn.
  * @param font    `theme.font` (family + size) for label text.
  * @param selected the container's current selection (or `null`).
- * @param seriesLabel this layer's series identity (`as` ?? column) — the
- *                `label` half of the selection match.
+ * @param seriesId this layer's stable series identity (its `id` prop, or
+ *                `undefined` when the layer isn't selectable) — the series half
+ *                of the selection match. A point lights only when the selection's
+ *                `id` matches, keyed to the sample by its `key`.
  */
 export function drawScatter(
   ctx: CanvasRenderingContext2D,
@@ -128,12 +130,13 @@ export function drawScatter(
   labelAt: ((i: number) => string | undefined) | undefined,
   font: { readonly family: string; readonly size: number },
   selected: SelectInfo | null,
-  seriesLabel: string,
+  seriesId: string | undefined,
 ): void {
   ctx.save();
   // The selection only lights up a point of *this* series; resolve the key once.
+  // A no-id (non-selectable) layer passes `undefined` and never matches.
   const selectedKey =
-    selected !== null && selected.label === seriesLabel ? selected.key : null;
+    selected !== null && selected.id === seriesId ? selected.key : null;
   let selPx = 0;
   let selPy = 0;
   let selR = 0;
@@ -204,9 +207,9 @@ const LABEL_GAP = 4;
  *
  * A point's hit radius is its drawn radius (data-driven or base) — clicking the
  * visible disc selects it. Distance is compared squared (no `sqrt` in the loop).
- * Returns the point's {@link SelectInfo} with `key = keyAt(i)` (its event
- * `begin`), the encoded fill colour (so the readout swatch matches the mark),
- * and the series `label`.
+ * Returns the point's {@link SelectInfo} with the series `id` (the selection
+ * identity), `key = keyAt(i)` (its event `begin` — click provenance), the encoded
+ * fill colour (so the readout swatch matches the mark), and the display `label`.
  *
  * Pure: takes the same `xScale`/`yScale` the row hands to `draw`, so it
  * unit-tests without a DOM (mirrors the `sampleAt` / `resolveSelection` split).
@@ -219,6 +222,7 @@ export function hitTestScatter(
   yScale: Scale,
   encoding: ResolvedEncoding,
   keyAt: (i: number) => number,
+  id: string,
   seriesLabel: string,
 ): SelectInfo | null {
   for (let i = cs.length - 1; i >= 0; i -= 1) {
@@ -230,6 +234,7 @@ export function hitTestScatter(
     const dy = qy - py;
     if (dx * dx + dy * dy <= r * r) {
       return {
+        id,
         key: keyAt(i),
         value: cs.y[i]!,
         color: encoding.colorAt(i),

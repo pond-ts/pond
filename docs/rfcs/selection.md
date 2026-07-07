@@ -462,3 +462,29 @@ stale the moment new bars arrive. Directly relevant to Tidal's live terminal.
 carries an `id`, warn: selection is requested but nothing is selectable.
 
 _Resolves Q11._
+
+## Adopted — Phase 1a: series-`id` identity (2026-07-06)
+
+> _pond-ts library agent (Claude), via Harbor issue #360. The first slice of the
+> RFC crosses from draft to commitment. This records **what shipped**; the RFC
+> text above stays as the design context._
+
+The **series-`id` identity** slice (A2.2 + A3) is **built and in PLAN.md** behind
+the human-approval gate the RFC flagged for the public-type change. Shipped in
+`feat/charts-selection-id`:
+
+- **`SelectInfo` gains a required `id`** — `{ id, key, value, color, label }`.
+  `id` = series identity (selection / dedup / controlled-echo key); `key`/`value`
+  = click provenance; `label` = display. Equality keys on `id`, never on `begin`.
+- **`id?: string` on `BarChart` / `ScatterChart`**, wired through to `hitTest`,
+  and it **gates interactivity** (A3): no `id` ⇒ not selectable/hoverable, a click
+  reads as empty space. Highlight + hover dedup match the series `id`.
+- **Dev-warn** when selection is wired but no layer carries an `id`.
+- **The intentional break landed:** the implicit `as ?? column` Bar/Scatter
+  identity is gone; a selectable layer needs an explicit `id`. estela's bar is the
+  sole external reader (adds one line); Tidal reads none.
+
+**Still deferred (Phase 2 / later, unchanged from A2.6):** the `SelectInfo | null
+→ readonly SelectInfo[]` widen + `selectionMode` (multi-select); `LineChart.hitTest`
+threshold nearest-point; the `snapToClosest | snapToClosestSelected` prop; the
+theme-referenced dim state.

@@ -68,11 +68,11 @@ export interface ContainerFrame {
   readonly crosshairSnap: boolean;
   /**
    * The selected mark, or `null`. Shared across rows (single selection). A layer
-   * highlights the mark matching **both** the key (epoch ms) and the series
-   * (`label`) — so two series sharing a timestamp don't both light up. A
+   * highlights the mark matching the selection's series **`id`** and the clicked
+   * sample `key` (epoch ms) — the `id` picks the series (so two series sharing a
+   * timestamp don't both light up), the `key` picks the mark within it. A
    * controlled `selected` prop pins it; otherwise a click on a selectable layer
-   * sets it. The full {@link SelectInfo} (not just the key) is the identity so
-   * multi-series Bar/Scatter can target the exact clicked mark.
+   * (one with an `id`) sets it.
    */
   readonly selected: SelectInfo | null;
   /**
@@ -89,12 +89,13 @@ export interface ContainerFrame {
    * from the committed `selected`. A row's pointer-move surface hit-tests its
    * selectable layers and sets it; a layer that supports hover-highlight (Bar)
    * draws the matching mark lit (a lighter treatment than `selected`'s outline).
-   * Set-on-change (deduped by key+label) so the data canvas repaints only on a
-   * mark transition, not every pointer move.
+   * Set-on-change (deduped by the series `id` + sample `key`) so the data canvas
+   * repaints only on a mark transition, not every pointer move.
    */
   readonly hovered: SelectInfo | null;
   /** Set the hovered mark (or `null` to clear) from a pointer-move hit-test;
-   *  deduped, so an unchanged mark is a no-op (no repaint). */
+   *  deduped by series `id` + sample `key`, so an unchanged mark is a no-op
+   *  (no repaint). */
   setHovered(hit: SelectInfo | null): void;
   /** The default in-chart cursor presentation for all rows ({@link CursorMode});
    *  a row may override it via its own `cursor`. */
@@ -119,6 +120,14 @@ export interface ContainerFrame {
    */
   registerTrackerSource(key: symbol, source: TrackerSource): void;
   unregisterTrackerSource(key: symbol): void;
+  /**
+   * Register this layer as **selectable** — a layer calls this (keyed by its
+   * per-instance slot) only when it was given an `id`, so the container knows at
+   * least one series can be selected. Powers the dev-warn when `selected` /
+   * `onSelect` are wired but no layer carries an `id`. Unregister on unmount.
+   */
+  registerSelectable(key: symbol): void;
+  unregisterSelectable(key: symbol): void;
   /**
    * Shared x→pixel scale, range `[0, plotWidth]`. A d3 `scaleTime` (default) so
    * ticks land on wall-clock boundaries, or a `scaleLinear` when the data is
@@ -325,9 +334,12 @@ export interface RowLayer {
   /**
    * Hit-test plot-pixel `(px, py)` against this layer's marks for click
    * selection — the select-analog of {@link sampleAt}. Returns the hit mark or
-   * `null`. **Optional:** layers without discrete selectable marks (line, band,
-   * area) omit it; bar / box / scatter implement it. `xScale`/`yScale` map
-   * data→pixels (the row resolves the layer's axis scale, as for `draw`).
+   * `null`. **Optional, and gated on the layer's `id`:** a layer only wires
+   * `hitTest` when it was given an `id` (the series identity). Layers without an
+   * `id` — or without discrete selectable marks (line, band, area) — omit it,
+   * so they render + read out but never select/hover (a click on them resolves
+   * to empty space ⇒ deselect). `xScale`/`yScale` map data→pixels (the row
+   * resolves the layer's axis scale, as for `draw`).
    */
   hitTest?(
     px: number,
@@ -389,19 +401,30 @@ export interface TrackerSource {
 }
 
 /**
- * One selected mark — what {@link RowLayer.hitTest} returns and `onSelect`
- * reports. Mirrors {@link TrackerSample}: the mark's key (its stable identity,
- * for controlled selection + highlight matching), value, colour, and series
- * label.
+ * One selection — what {@link RowLayer.hitTest} returns and `onSelect` reports.
+ * Selection identity is the **series `id`**, not the sample: `key`/`value` are
+ * click **provenance** (the nearest sample under the pointer, informational);
+ * equality, dedup, and the controlled echo all key on `id`. Because `id` is a
+ * stable series identity — distinct from the `as` theme role, which can repeat —
+ * a selection survives a streaming data update where a sample `key` would go
+ * stale. Only layers that carry an `id` are selectable (see {@link RowLayer.hitTest}).
  */
 export interface SelectInfo {
-  /** The mark's key as epoch ms (its event's `begin`) — its stable identity. */
+  /**
+   * The **series identity** — the layer's `id` prop. The selection / dedup /
+   * controlled-echo key; stable across data updates (unlike {@link key}).
+   */
+  readonly id: string;
+  /**
+   * The clicked sample's key as epoch ms (its event's `begin`) — click
+   * **provenance**, informational. NOT the selection identity (that is {@link id}).
+   */
   readonly key: number;
-  /** The mark's value (the plotted column). */
+  /** The clicked sample's value (the plotted column) — provenance. */
   readonly value: number;
   /** The mark's resolved style colour. */
   readonly color: string;
-  /** Series identity (`as` ?? column) — labels the selection in a readout. */
+  /** Display label (`as` ?? column ?? id) — labels the selection in a readout. */
   readonly label: string;
 }
 

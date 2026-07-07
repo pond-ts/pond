@@ -214,6 +214,7 @@ function ControlledSelectDemo() {
             <ScatterChart
               series={t}
               column="price"
+              id="price"
               radius={{ column: 'volume', range: [3, 16] }}
             />
           </Layers>

@@ -152,7 +152,7 @@ function HoverSelectDemo() {
         <ChartRow height={240}>
           <YAxis id="count" label="req" min={0} />
           <Layers>
-            <BarChart series={v} column="count" gap={3} />
+            <BarChart series={v} column="count" id="count" gap={3} />
           </Layers>
         </ChartRow>
       </ChartContainer>
@@ -177,6 +177,7 @@ export const ControlledSelection: Story = {
     const key = BASE + 12 * HOUR;
     const value = v.nearest(key)!.get('count') as number;
     const pinned: SelectInfo = {
+      id: 'count',
       key,
       value,
       color: estelaTheme.bar.default.fill,
@@ -192,7 +193,7 @@ export const ControlledSelection: Story = {
         <ChartRow height={240}>
           <YAxis id="count" label="req" min={0} />
           <Layers>
-            <BarChart series={v} column="count" gap={3} />
+            <BarChart series={v} column="count" id="count" gap={3} />
           </Layers>
         </ChartRow>
       </ChartContainer>

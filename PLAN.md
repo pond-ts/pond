@@ -606,6 +606,33 @@ direction|series`, `showOHLC` (Phase-2 four-pill readout, folded in early),
     stops compiling until it adds a `candle` slot. Not selectable yet (no
     `hitTest`) — selection rides the separate selection RFC. Follow-on wave
     (tracker-label-by-`as`, BoxPlot line-shape, clamp-on-ingest) still pending.
+  - **Selection — Phase 1 (series-`id` identity) ADOPTED + built**
+    (`feat/charts-selection-id`, Harbor issue #360). The first slice of
+    [`docs/rfcs/selection.md`](docs/rfcs/selection.md) — **A2.2 + A3** — is built
+    behind the human-approval gate the RFC flagged for the public-type change
+    (SelectInfo widening + dropping the implicit Bar/Scatter identity). What
+    shipped: **`SelectInfo` gains `id`** (`{ id, key, value, color, label }`) —
+    `id` is the series identity (selection / dedup / controlled-echo key),
+    `key`/`value` demote to click **provenance**, `label` stays display; equality
+    keys on `id`, never on `begin`. **`id?: string` prop on `BarChart` /
+    `ScatterChart`** wired through to `hitTest`, and it **gates interactivity**: a
+    layer only wires `hitTest` when given an `id`, so a no-id layer renders + reads
+    out but can't be selected/hovered (a click on it resolves to empty space ⇒
+    deselect). Highlight + hover dedup now match the series `id` (was `as`/`label`,
+    a theme role that can repeat). Container **dev-warn** when `selected`/`onSelect`
+    is wired but no layer carries an `id` (via a ref-backed selectable registry,
+    read after child register effects settle). **Breaking (human-approval gate):**
+    (1) `SelectInfo` grew a **required** `id` — any code constructing one by hand
+    must add it; (2) Bar/Scatter selection now **requires an explicit `id`** — the
+    implicit `as ?? column` identity is gone. **estela's bar** is the sole external
+    reader (Tidal reads none) — it needs the one-line `id` on its selectable
+    `<BarChart>`; migration noted in CHANGELOG. Unit tests cover id-keyed
+    equality/dedup, the gates-interactivity rule, the dev-warn, and the A3 sleeper
+    win (a series `id` is stable across samples where a `key` goes stale). **Still
+    OUT of scope (Phase 2 / later, named in the PR):** the `SelectInfo | null →
+    readonly SelectInfo[]` widen + `selectionMode` (multi-select); `LineChart.hitTest`
+    threshold nearest-point; the `snapToClosest | snapToClosestSelected` prop;
+    theme-referenced dim state.
 - **M5 — estela parity.** Faithful `DataChart` reproduction on real activity
   data; prove no-regressions; hand the production swap to the estela agent; flip
   `private:false` + first publish.

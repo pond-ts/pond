@@ -92,15 +92,21 @@ export interface ChartContainerProps {
   /**
    * Controlled selection — the selected mark (echo the `onSelect` arg back), or
    * `null`. **Omitted ⇒ uncontrolled** (a click on a selectable layer manages it
-   * internally; pass `null` to force nothing selected). Selectable layers
-   * (`BarChart`, `BoxPlot`, `ScatterChart`) highlight the mark matching both its
-   * key and series — so two series sharing a timestamp don't both light up.
+   * internally; pass `null` to force nothing selected). A layer is **selectable
+   * only when it carries an `id`** (the stable series identity) — `BarChart` /
+   * `ScatterChart` highlight the mark matching the selection's `id` (the series)
+   * and its `key` (the sample), so two series sharing a timestamp don't both
+   * light up, and the selection survives a data update (it keys on the stable
+   * `id`, not the sample `key`). A layer with no `id` renders + reads out but
+   * can't be selected.
    */
   selected?: SelectInfo | null;
   /**
    * Fires when a selectable layer's mark is clicked, with the hit mark, or `null`
-   * when a click misses every mark (clears the selection). Notification only —
-   * works in both controlled and uncontrolled mode.
+   * when a click misses every mark (or hits a layer with no `id` — display-only,
+   * so it reads as empty space). Notification only — works in both controlled and
+   * uncontrolled mode. If this or `selected` is set but no layer has an `id`, a
+   * dev-warning notes that nothing is selectable.
    */
   onSelect?: (hit: SelectInfo | null) => void;
   /**
@@ -339,6 +345,30 @@ export function ChartContainer({
     });
   }, []);
 
+  // Selectable-layer registry: an id-bearing Bar/Scatter registers here (keyed
+  // by its slot) so the container knows whether *any* series is selectable. Only
+  // used to power the dev-warn below — selection resolution itself walks the
+  // rows' layers, not this set. Backed by a **ref** (the synchronous source of
+  // truth) mirrored to state: a child layer's register effect runs before this
+  // parent's dev-warn effect in the same commit, so the ref is already settled
+  // there (reading state would lag a render). State only triggers the re-check.
+  const selectableRef = useRef<ReadonlySet<symbol>>(new Set());
+  const [selectableKeys, setSelectableKeys] = useState<ReadonlySet<symbol>>(
+    selectableRef.current,
+  );
+  const registerSelectable = useCallback((key: symbol) => {
+    if (selectableRef.current.has(key)) return;
+    selectableRef.current = new Set(selectableRef.current).add(key);
+    setSelectableKeys(selectableRef.current);
+  }, []);
+  const unregisterSelectable = useCallback((key: symbol) => {
+    if (!selectableRef.current.has(key)) return;
+    const next = new Set(selectableRef.current);
+    next.delete(key);
+    selectableRef.current = next;
+    setSelectableKeys(next);
+  }, []);
+
   // Annotations register here so the container can do what a mark can't in
   // isolation: draw its guide line across other rows, order regions, serve snap
   // targets. Keyed by per-instance slot key (same discipline as the sources).
@@ -427,6 +457,28 @@ export function ChartContainer({
     if (!controlledSelectionRef.current) setInternalSelected(hit);
   }, []);
 
+  // Dev-warn: selection is wired (`selected` and/or `onSelect`) but no layer
+  // carries an `id`, so nothing is selectable — `id` gates interactivity, so a
+  // consumer who forgot it gets a silent no-op click without this nudge. Fires
+  // once per wired-but-empty transition (guarded by a ref); child layers
+  // register before this parent effect runs, so the set is settled here.
+  const selectionWired = controlledSelection || onSelect !== undefined;
+  const warnedNoSelectableRef = useRef(false);
+  useEffect(() => {
+    if (selectionWired && selectableRef.current.size === 0) {
+      if (!warnedNoSelectableRef.current) {
+        warnedNoSelectableRef.current = true;
+        console.warn(
+          '[pond-charts] `selected`/`onSelect` is set but no layer has an `id` — ' +
+            'nothing is selectable. Give a <BarChart>/<ScatterChart> an `id` to ' +
+            'make it interactive (an `id` gates selection + hover).',
+        );
+      }
+    } else {
+      warnedNoSelectableRef.current = false;
+    }
+  }, [selectionWired, selectableKeys]);
+
   // Hover-highlight: the transient mark under the pointer (distinct from the
   // committed selection). Controlled (`hovered` prop) or uncontrolled (internal),
   // mirroring selection; `onHover` notifies in both modes. Deduped by key+label
@@ -453,8 +505,8 @@ export function ChartContainer({
       prev === hit ||
       (prev !== null &&
         hit !== null &&
-        prev.key === hit.key &&
-        prev.label === hit.label);
+        prev.id === hit.id &&
+        prev.key === hit.key);
     if (same) return;
     lastHoverRef.current = hit;
     onHoverRef.current?.(hit);
@@ -590,6 +642,8 @@ export function ChartContainer({
       formatTime,
       registerTrackerSource,
       unregisterTrackerSource,
+      registerSelectable,
+      unregisterSelectable,
       registerAnnotation,
       unregisterAnnotation,
       annotations,
@@ -636,6 +690,8 @@ export function ChartContainer({
       formatTime,
       registerTrackerSource,
       unregisterTrackerSource,
+      registerSelectable,
+      unregisterSelectable,
       registerAnnotation,
       unregisterAnnotation,
       annotations,
