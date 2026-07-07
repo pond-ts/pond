@@ -100,7 +100,12 @@ export type PublicColumnForKind<
  * convention (e.g. `'p95'`, `'p99.9'`) where `q` is in `[0, 100]` —
  * runtime check enforces the range. The fused `'minMax'` is special:
  * it returns a two-channel `{ lo, hi }` rather than a single
- * `Float64Array`.
+ * `Float64Array`. The fused `'minMaxFirstLast'` extends that to four
+ * channels `{ lo, hi, first, last }` — the M4 downsampling reducer
+ * (Jugel et al., VLDB 2014): `first`/`last` are the first/last
+ * defined value in each bin, which keep a decimated polyline
+ * continuous across bin boundaries (the line enters at `first`,
+ * exits at `last`).
  */
 export type BinReducerName =
   | 'min'
@@ -111,7 +116,8 @@ export type BinReducerName =
   | 'median'
   | 'count'
   | `p${number}`
-  | 'minMax';
+  | 'minMax'
+  | 'minMaxFirstLast';
 
 /**
  * Output type for `Float64Column.bin(W, reducer)`. Narrows
@@ -125,6 +131,12 @@ export type BinReducerName =
  *   — stride-1 access per channel matches the canvas-2D inner draw
  *   loop's per-pixel `lo[px]` / `hi[px]` reads. Empty bins on both
  *   channels are `NaN`.
+ * - `'minMaxFirstLast'` produces the four-channel
+ *   `{ lo, hi, first, last }` (all `Float64Array(W)`) — the M4
+ *   reducer. `first`/`last` carry the bin's first/last defined
+ *   value so a decimated line stays continuous at bin seams. Empty
+ *   bins are `NaN` on all four channels (canvas-friendly: a `NaN`
+ *   vertex breaks the sub-path, the correct "no data here" visual).
  *
  * Generalized for future multi-point reducers (e.g. LTTB) — those
  * would land as their own output shape (e.g. `{ keys, values }`
@@ -132,7 +144,14 @@ export type BinReducerName =
  */
 export type BinOutput<R extends BinReducerName> = R extends 'minMax'
   ? { lo: Float64Array; hi: Float64Array }
-  : Float64Array;
+  : R extends 'minMaxFirstLast'
+    ? {
+        lo: Float64Array;
+        hi: Float64Array;
+        first: Float64Array;
+        last: Float64Array;
+      }
+    : Float64Array;
 
 /**
  * Public key-column class for a single first-column kind.
@@ -312,8 +331,9 @@ declare module './columnar/column.js' {
      * and §8 worked example.
      *
      * Returns a fresh `Float64Array(bins)` for scalar reducers,
-     * or `{ lo: Float64Array(bins); hi: Float64Array(bins) }` for
-     * `'minMax'`. An earlier revision exposed an optional
+     * `{ lo, hi }` for `'minMax'`, or the four-channel
+     * `{ lo, hi, first, last }` for `'minMaxFirstLast'` (the M4
+     * downsampling reducer). An earlier revision exposed an optional
      * `{ out }` parameter for buffer reuse; the
      * chart-experiment M2.3 measurement showed it contributed
      * nothing on top of the chart-side Y-from-bin-output
@@ -825,6 +845,132 @@ Float64Column.prototype.bin = function <R extends BinReducerName>(
       }
     }
     return { lo, hi } as BinOutput<R>;
+  }
+
+  // ─── Fused minMaxFirstLast — four-channel output (M4) ──────────
+  //
+  // The decimation reducer (Jugel et al., VLDB 2014). Extends the
+  // fused minMax with per-bin first/last, so a downsampled polyline
+  // enters each pixel column at `first` and leaves at `last` —
+  // keeping the line continuous across bin seams (min/max alone
+  // drop the entry/exit points and the line can jump). first/last
+  // track the same defined-and-finite cells as lo/hi, so all four
+  // channels agree on which cells count; an empty bin lands NaN on
+  // all four (the sub-path-break sentinel).
+  if (reducer === 'minMaxFirstLast') {
+    const lo = new Float64Array(bins);
+    const hi = new Float64Array(bins);
+    const first = new Float64Array(bins);
+    const last = new Float64Array(bins);
+    const values = this._values;
+    const validity = this.validity;
+
+    if (!this.allFinite) {
+      // Guarded path — skip undefined and non-finite (matches the
+      // minMax guarded path and the reducer non-finite policy,
+      // docs/notes/reducer-nan-policy.md).
+      for (let b = 0; b < bins; b += 1) {
+        const start = Math.floor((b * n) / bins);
+        const end = Math.floor(((b + 1) * n) / bins);
+        let loVal: number | undefined;
+        let hiVal = 0;
+        let firstVal = 0;
+        let lastVal = 0;
+        for (let i = start; i < end; i += 1) {
+          if (validity !== undefined && !validity.isDefined(i)) continue;
+          const x = values[i]!;
+          if (!Number.isFinite(x)) continue;
+          if (loVal === undefined) {
+            loVal = x;
+            hiVal = x;
+            firstVal = x;
+          } else {
+            if (x < loVal) loVal = x;
+            if (x > hiVal) hiVal = x;
+          }
+          lastVal = x;
+        }
+        if (loVal === undefined) {
+          lo[b] = NaN;
+          hi[b] = NaN;
+          first[b] = NaN;
+          last[b] = NaN;
+        } else {
+          lo[b] = loVal;
+          hi[b] = hiVal;
+          first[b] = firstVal;
+          last[b] = lastVal;
+        }
+      }
+      return { lo, hi, first, last } as BinOutput<R>;
+    }
+
+    if (validity === undefined) {
+      // All cells defined and finite: first/last are the bin's
+      // edge values by position, no scan needed to find them.
+      for (let b = 0; b < bins; b += 1) {
+        const start = Math.floor((b * n) / bins);
+        const end = Math.floor(((b + 1) * n) / bins);
+        if (end <= start) {
+          lo[b] = NaN;
+          hi[b] = NaN;
+          first[b] = NaN;
+          last[b] = NaN;
+          continue;
+        }
+        let loVal = values[start]!;
+        let hiVal = loVal;
+        for (let i = start + 1; i < end; i += 1) {
+          const x = values[i]!;
+          loVal = loVal <= x ? loVal : x;
+          hiVal = hiVal >= x ? hiVal : x;
+        }
+        lo[b] = loVal;
+        hi[b] = hiVal;
+        first[b] = values[start]!;
+        last[b] = values[end - 1]!;
+      }
+      return { lo, hi, first, last } as BinOutput<R>;
+    }
+
+    // Validity path (all defined values finite): first = first
+    // defined cell, last = last defined cell.
+    for (let b = 0; b < bins; b += 1) {
+      const start = Math.floor((b * n) / bins);
+      const end = Math.floor(((b + 1) * n) / bins);
+      if (end <= start) {
+        lo[b] = NaN;
+        hi[b] = NaN;
+        first[b] = NaN;
+        last[b] = NaN;
+        continue;
+      }
+      let i = start;
+      while (i < end && !validity.isDefined(i)) i += 1;
+      if (i >= end) {
+        lo[b] = NaN;
+        hi[b] = NaN;
+        first[b] = NaN;
+        last[b] = NaN;
+        continue;
+      }
+      const firstVal = values[i]!;
+      let loVal = firstVal;
+      let hiVal = firstVal;
+      let lastVal = firstVal;
+      for (i += 1; i < end; i += 1) {
+        if (!validity.isDefined(i)) continue;
+        const x = values[i]!;
+        loVal = loVal <= x ? loVal : x;
+        hiVal = hiVal >= x ? hiVal : x;
+        lastVal = x;
+      }
+      lo[b] = loVal;
+      hi[b] = hiVal;
+      first[b] = firstVal;
+      last[b] = lastVal;
+    }
+    return { lo, hi, first, last } as BinOutput<R>;
   }
 
   // ─── Scalar reducers ──────────────────────────────────────────

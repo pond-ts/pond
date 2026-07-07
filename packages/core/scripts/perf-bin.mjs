@@ -24,6 +24,7 @@
 
 import { performance } from 'node:perf_hooks';
 import { Float64Column } from '../dist/columnar/column.js';
+import { createValidityBitmap } from '../dist/columnar/index.js';
 // Side-effect import — installs bin / minMax / etc.
 import '../dist/column.js';
 
@@ -33,6 +34,20 @@ function makeColumn(length) {
     buf[i] = 50 + 35 * Math.sin(i / 5_000) + 10 * Math.sin(i / 137);
   }
   return new Float64Column(buf, length);
+}
+
+// Gappy variant — ~30% of cells missing, forcing the validity-aware
+// bin path (the M4 decimator's realistic case: time data with holes).
+function makeGappyColumn(length) {
+  const buf = new Float64Array(length);
+  const v = createValidityBitmap(length);
+  for (let i = 0; i < length; i += 1) {
+    buf[i] = 50 + 35 * Math.sin(i / 5_000) + 10 * Math.sin(i / 137);
+    // Deterministic ~30% drop pattern (no Math.random — reproducible).
+    if (i % 10 >= 7) continue;
+    v.set(i);
+  }
+  return new Float64Column(buf, length, v.freeze());
 }
 
 function median(values) {
@@ -65,6 +80,16 @@ const W = 1024;
   results.push(
     benchmark('chart-typical / N=1M W=1024 minMax', () => {
       col.bin(W, 'minMax');
+    }),
+  );
+  // The M4 reducer: minMax + per-bin first/last. Same single buffer
+  // walk as minMax, two extra channel writes (first once per bin,
+  // last on every counted cell). This row measures the incremental
+  // cost of the first/last channels over plain minMax — the delta
+  // is the price of continuity-preserving decimation.
+  results.push(
+    benchmark('chart-typical / N=1M W=1024 minMaxFirstLast', () => {
+      col.bin(W, 'minMaxFirstLast');
     }),
   );
   // Lower bound: a single .minMax() walks the same buffer once
@@ -100,6 +125,27 @@ const W = 1024;
   results.push(
     benchmark('fine-bins / N=100k W=1024 minMax', () => {
       col.bin(W, 'minMax');
+    }),
+  );
+  results.push(
+    benchmark('fine-bins / N=100k W=1024 minMaxFirstLast', () => {
+      col.bin(W, 'minMaxFirstLast');
+    }),
+  );
+}
+
+{
+  // Validity path — the M4 decimator over gappy (~30% missing) time
+  // data at the 10k–100k band the pan-FPS bench flagged (#256).
+  const col = makeGappyColumn(100_000);
+  results.push(
+    benchmark('gappy-30pct / N=100k W=1024 minMax', () => {
+      col.bin(W, 'minMax');
+    }),
+  );
+  results.push(
+    benchmark('gappy-30pct / N=100k W=1024 minMaxFirstLast', () => {
+      col.bin(W, 'minMaxFirstLast');
     }),
   );
 }
