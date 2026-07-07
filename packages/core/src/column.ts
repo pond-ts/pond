@@ -343,6 +343,21 @@ declare module './columnar/column.js' {
      * V8 nursery GC budget.
      */
     bin<R extends BinReducerName>(bins: number, reducer: R): BinOutput<R>;
+
+    /**
+     * Key-domain bucketed reduction — buckets by explicit sorted
+     * `edges` over a parallel monotonic `key`, rather than by equal
+     * index count. The M4 decimator's correct form for irregular /
+     * gappy data (a bin maps to a range of the key axis, not of
+     * indices). Same reducers and output shapes as `bin`. O(n + W).
+     * See the impl JSDoc for the merge-walk and edge/precondition
+     * semantics.
+     */
+    binBy<R extends BinReducerName>(
+      key: ArrayLike<number>,
+      edges: ArrayLike<number>,
+      reducer: R,
+    ): BinOutput<R>;
   }
 
   interface BooleanColumn {
@@ -432,6 +447,11 @@ declare module './columnar/chunked-column.js' {
      */
     toFloat64Array(): Float64Array;
     bin<R extends BinReducerName>(bins: number, reducer: R): BinOutput<R>;
+    binBy<R extends BinReducerName>(
+      key: ArrayLike<number>,
+      edges: ArrayLike<number>,
+      reducer: R,
+    ): BinOutput<R>;
   }
 
   interface ChunkedBooleanColumn {
@@ -729,46 +749,131 @@ Float64Column.prototype.bin = function <R extends BinReducerName>(
     );
   }
   const n = this.length;
+  // Equal-width **index** boundaries: bucket b spans the index range
+  // [bounds[b], bounds[b + 1]). `Math.floor((b * n) / bins)` is the
+  // same split the per-bin loops used inline before the boundary
+  // derivation was factored out (see `reduceFloat64ByBounds`).
+  const bounds = new Int32Array(bins + 1);
+  for (let b = 1; b < bins; b += 1) bounds[b] = Math.floor((b * n) / bins);
+  bounds[bins] = n;
+  return reduceFloat64ByBounds(this, bounds, reducer, 'bin');
+};
+
+/**
+ * Key-domain bucketed reduction — the M4 decimator's correct form
+ * for **irregular / gappy** data. Where `bin` splits by equal index
+ * count (right only for uniformly spaced samples — see its
+ * uniform-sampling precondition), `binBy` buckets by an explicit set
+ * of sorted `edges` over a parallel monotonic `key`, so a bin maps
+ * to a range of the **key axis** (pixel-time, or a value axis), not
+ * a range of indices. Chart use:
+ *
+ * ```ts
+ * // edges = W+1 device-pixel column boundaries in time, unioned
+ * // with any gap edges (so no bucket spans a gap).
+ * const { lo, hi, first, last } = valueCol.binBy(
+ *   timeKeys, edges, 'minMaxFirstLast',
+ * );
+ * ```
+ *
+ * Because `key` is non-decreasing, every key-interval maps to a
+ * **contiguous** index range, so `binBy` derives per-bucket index
+ * boundaries in one O(n + W) merge walk and then runs the exact same
+ * per-bucket reducer engine as `bin` — only the boundary derivation
+ * differs. Bucket `b` covers samples with `edges[b] <= key <
+ * edges[b + 1]`; the **final** upper edge is inclusive so a sample
+ * exactly at the max edge lands in the last bucket. An empty bucket
+ * (a gap with no samples) reduces to `NaN` — the canvas
+ * sub-path-break sentinel, same as `bin`'s empty bins.
+ *
+ * **Preconditions** (documented, not re-asserted per frame — this is
+ * a per-pixel hot path): `key` is non-decreasing and `key.length ===
+ * this.length`; `edges` is ascending. A non-ascending `edges` is
+ * caught (cheap, once per bucket); a non-monotonic `key` is the
+ * caller's responsibility (the chart adapter and `byValue` both
+ * guarantee it by construction).
+ *
+ * Reducers and output shapes are identical to `bin` (`'minMax'` →
+ * `{ lo, hi }`, `'minMaxFirstLast'` → `{ lo, hi, first, last }`,
+ * scalars → `Float64Array(W)`).
+ */
+Float64Column.prototype.binBy = function <R extends BinReducerName>(
+  key: ArrayLike<number>,
+  edges: ArrayLike<number>,
+  reducer: R,
+): BinOutput<R> {
+  const n = this.length;
+  if (key.length !== n) {
+    throw new RangeError(
+      `Float64Column.binBy: key length ${key.length} must equal column length ${n}`,
+    );
+  }
+  const W = edges.length - 1;
+  if (W < 1) {
+    throw new RangeError(
+      `Float64Column.binBy: edges must have at least 2 entries (1 bucket), got length ${edges.length}`,
+    );
+  }
+  // Merge-walk the monotonic key against the sorted edges → per-bucket
+  // index boundaries. `i` only moves forward (both key and edges
+  // ascend), so this is a single O(n + W) pass. bounds[b] = first
+  // index with key >= edges[b]; the final bound uses key > edges[W]
+  // so the max edge is inclusive.
+  const bounds = new Int32Array(W + 1);
+  let i = 0;
+  let prevEdge = edges[0]!;
+  for (let b = 0; b <= W; b += 1) {
+    const e = edges[b]!;
+    if (b > 0 && e < prevEdge) {
+      throw new RangeError(
+        `Float64Column.binBy: edges must be ascending; edges[${b}]=${e} < edges[${b - 1}]=${prevEdge}`,
+      );
+    }
+    prevEdge = e;
+    if (b < W) {
+      while (i < n && key[i]! < e) i += 1;
+    } else {
+      while (i < n && key[i]! <= e) i += 1;
+    }
+    bounds[b] = i;
+  }
+  return reduceFloat64ByBounds(this, bounds, reducer, 'binBy');
+};
+
+/**
+ * Shared per-bucket reduction engine behind `bin` and `binBy`. Given
+ * ascending index boundaries (`bounds[b]..bounds[b + 1]` is bucket
+ * b's index range) and a reducer, produces the per-bucket output.
+ * `bin` supplies equal-index boundaries; `binBy` supplies
+ * key-edge-derived boundaries — the reduction is identical either
+ * way. `method` names the caller for error messages.
+ *
+ * The three fused-`minMax*` paths hoist the validity / finiteness
+ * branch **outside** the bucket loop (it's the same for every
+ * bucket), which is why they're inlined here rather than dispatching
+ * through `sliceByRange().minMax()` per bucket.
+ */
+function reduceFloat64ByBounds<R extends BinReducerName>(
+  col: Float64Column,
+  bounds: Int32Array,
+  reducer: R,
+  method: string,
+): BinOutput<R> {
+  const W = bounds.length - 1;
+  const values = col._values;
+  const validity = col.validity;
 
   // ─── Fused minMax — two-channel output ─────────────────────────
-  //
-  // Special-cased because it's the chart's per-pixel hot path and
-  // its output shape ({lo, hi}) doesn't fit the scalar Float64Array
-  // mold. Each bin walks once, fuses both reductions, writes both
-  // channels — half the memory traffic of `[min(), max()]`.
-
   if (reducer === 'minMax') {
-    const lo = new Float64Array(bins);
-    const hi = new Float64Array(bins);
-
-    // Inlined per-bin walk over `this._values[start..end)` rather
-    // than `this.sliceByRange(start, end).minMax()` per bin. The
-    // sliced version allocated a Float64Column + Float64Array
-    // subarray view + optionally a validity-bitmap slice on every
-    // bin, then dispatched into the minMax method. Inlining
-    // hoists the validity branch (it's the same for every bin)
-    // and removes the per-bin construction overhead.
-    //
-    // Measured wins (`scripts/perf-bin.mjs`, median of 30 × 3
-    // runs): ~23% on fine-bins (N=100k, W=1024) where per-bin
-    // overhead is the biggest fraction of work; ~9% on chart-
-    // typical (N=1M, W=1024); within noise (~5%) on N=10M where
-    // the inner buffer walk dominates.
-    //
-    // The inner-loop math is byte-identical to
-    // `Float64Column.prototype.minMax` (same NaN parity, same
-    // empty handling) — just over a (start, end) slice of the
-    // underlying buffer.
-    const values = this._values;
-    const validity = this.validity;
-    if (!this.allFinite) {
-      // Guarded path: skip non-finite values (reducer non-finite policy —
-      // docs/notes/reducer-nan-policy.md), matching `minMax()` / the reducer
-      // min/max. A bin with no finite value (all-missing or all-non-finite)
-      // keeps the NaN empty-bin sentinel.
-      for (let b = 0; b < bins; b += 1) {
-        const start = Math.floor((b * n) / bins);
-        const end = Math.floor(((b + 1) * n) / bins);
+    const lo = new Float64Array(W);
+    const hi = new Float64Array(W);
+    if (!col.allFinite) {
+      // Guarded path: skip non-finite values (reducer non-finite
+      // policy — docs/notes/reducer-nan-policy.md). A bucket with no
+      // finite value keeps the NaN empty-bucket sentinel.
+      for (let b = 0; b < W; b += 1) {
+        const start = bounds[b]!;
+        const end = bounds[b + 1]!;
         let loVal: number | undefined;
         let hiVal: number | undefined;
         for (let i = start; i < end; i += 1) {
@@ -794,9 +899,9 @@ Float64Column.prototype.bin = function <R extends BinReducerName>(
       return { lo, hi } as BinOutput<R>;
     }
     if (validity === undefined) {
-      for (let b = 0; b < bins; b += 1) {
-        const start = Math.floor((b * n) / bins);
-        const end = Math.floor(((b + 1) * n) / bins);
+      for (let b = 0; b < W; b += 1) {
+        const start = bounds[b]!;
+        const end = bounds[b + 1]!;
         if (end <= start) {
           lo[b] = NaN;
           hi[b] = NaN;
@@ -813,12 +918,10 @@ Float64Column.prototype.bin = function <R extends BinReducerName>(
         hi[b] = hiVal;
       }
     } else {
-      // Validity path — use isDefined directly on the original
-      // bitmap with the original index. Avoids the per-bin
-      // validity-bitmap slice that sliceByRange would have done.
-      for (let b = 0; b < bins; b += 1) {
-        const start = Math.floor((b * n) / bins);
-        const end = Math.floor(((b + 1) * n) / bins);
+      // Validity path — isDefined directly on the original bitmap.
+      for (let b = 0; b < W; b += 1) {
+        const start = bounds[b]!;
+        const end = bounds[b + 1]!;
         if (end <= start) {
           lo[b] = NaN;
           hi[b] = NaN;
@@ -827,7 +930,6 @@ Float64Column.prototype.bin = function <R extends BinReducerName>(
         let i = start;
         while (i < end && !validity.isDefined(i)) i += 1;
         if (i >= end) {
-          // All cells in this bin are undefined.
           lo[b] = NaN;
           hi[b] = NaN;
           continue;
@@ -849,29 +951,21 @@ Float64Column.prototype.bin = function <R extends BinReducerName>(
 
   // ─── Fused minMaxFirstLast — four-channel output (M4) ──────────
   //
-  // The decimation reducer (Jugel et al., VLDB 2014). Extends the
-  // fused minMax with per-bin first/last, so a downsampled polyline
-  // enters each pixel column at `first` and leaves at `last` —
-  // keeping the line continuous across bin seams (min/max alone
-  // drop the entry/exit points and the line can jump). first/last
-  // track the same defined-and-finite cells as lo/hi, so all four
-  // channels agree on which cells count; an empty bin lands NaN on
-  // all four (the sub-path-break sentinel).
+  // Extends fused minMax with per-bucket first/last (first/last
+  // defined-and-finite value), so a downsampled polyline enters each
+  // bucket at `first` and leaves at `last` — continuous across bucket
+  // seams. All four channels agree on which cells count; an empty
+  // bucket is NaN on all four.
   if (reducer === 'minMaxFirstLast') {
-    const lo = new Float64Array(bins);
-    const hi = new Float64Array(bins);
-    const first = new Float64Array(bins);
-    const last = new Float64Array(bins);
-    const values = this._values;
-    const validity = this.validity;
+    const lo = new Float64Array(W);
+    const hi = new Float64Array(W);
+    const first = new Float64Array(W);
+    const last = new Float64Array(W);
 
-    if (!this.allFinite) {
-      // Guarded path — skip undefined and non-finite (matches the
-      // minMax guarded path and the reducer non-finite policy,
-      // docs/notes/reducer-nan-policy.md).
-      for (let b = 0; b < bins; b += 1) {
-        const start = Math.floor((b * n) / bins);
-        const end = Math.floor(((b + 1) * n) / bins);
+    if (!col.allFinite) {
+      for (let b = 0; b < W; b += 1) {
+        const start = bounds[b]!;
+        const end = bounds[b + 1]!;
         let loVal: number | undefined;
         let hiVal = 0;
         let firstVal = 0;
@@ -906,11 +1000,9 @@ Float64Column.prototype.bin = function <R extends BinReducerName>(
     }
 
     if (validity === undefined) {
-      // All cells defined and finite: first/last are the bin's
-      // edge values by position, no scan needed to find them.
-      for (let b = 0; b < bins; b += 1) {
-        const start = Math.floor((b * n) / bins);
-        const end = Math.floor(((b + 1) * n) / bins);
+      for (let b = 0; b < W; b += 1) {
+        const start = bounds[b]!;
+        const end = bounds[b + 1]!;
         if (end <= start) {
           lo[b] = NaN;
           hi[b] = NaN;
@@ -933,11 +1025,9 @@ Float64Column.prototype.bin = function <R extends BinReducerName>(
       return { lo, hi, first, last } as BinOutput<R>;
     }
 
-    // Validity path (all defined values finite): first = first
-    // defined cell, last = last defined cell.
-    for (let b = 0; b < bins; b += 1) {
-      const start = Math.floor((b * n) / bins);
-      const end = Math.floor(((b + 1) * n) / bins);
+    for (let b = 0; b < W; b += 1) {
+      const start = bounds[b]!;
+      const end = bounds[b + 1]!;
       if (end <= start) {
         lo[b] = NaN;
         hi[b] = NaN;
@@ -975,40 +1065,38 @@ Float64Column.prototype.bin = function <R extends BinReducerName>(
 
   // ─── Scalar reducers ──────────────────────────────────────────
   //
-  // Dispatch to the registered reducer's reduceColumn fast path
-  // (PR #153) once per bin. The 'mean' → 'avg' mapping mirrors
-  // the public Float64Column.mean() shim. Percentile-via-string
-  // ('p95', 'p99.9', etc.) routes through resolveReducer's
-  // parsePercentile.
-
+  // Dispatch to the registered reducer's reduceColumn fast path once
+  // per bucket. 'mean' → 'avg' mirrors the Float64Column.mean() shim;
+  // percentile-via-string ('p95', …) routes through resolveReducer.
   const internalName = reducer === 'mean' ? 'avg' : reducer;
   let reducerDef;
   try {
     reducerDef = resolveReducer(internalName);
   } catch {
-    throw new TypeError(`Float64Column.bin: unknown reducer '${reducer}'`);
+    throw new TypeError(
+      `Float64Column.${method}: unknown reducer '${reducer}'`,
+    );
   }
   if (reducerDef.reduceColumn === undefined) {
     throw new TypeError(
-      `Float64Column.bin: reducer '${reducer}' has no reduceColumn fast path`,
+      `Float64Column.${method}: reducer '${reducer}' has no reduceColumn fast path`,
     );
   }
 
-  const out = new Float64Array(bins);
-  for (let b = 0; b < bins; b += 1) {
-    const start = Math.floor((b * n) / bins);
-    const end = Math.floor(((b + 1) * n) / bins);
+  const out = new Float64Array(W);
+  for (let b = 0; b < W; b += 1) {
+    const start = bounds[b]!;
+    const end = bounds[b + 1]!;
     if (end <= start) {
-      // Preserve mathematical-empty for sum / count (both = 0);
-      // NaN for reducers whose empty is undefined.
+      // Mathematical-empty for sum / count (0); NaN otherwise.
       out[b] = reducer === 'sum' || reducer === 'count' ? 0 : NaN;
       continue;
     }
-    const result = reducerDef.reduceColumn(this.sliceByRange(start, end));
+    const result = reducerDef.reduceColumn(col.sliceByRange(start, end));
     out[b] = typeof result === 'number' ? result : NaN;
   }
   return out as BinOutput<R>;
-};
+}
 
 // ─── BooleanColumn runtime implementations ───────────────────────
 
@@ -1335,6 +1423,16 @@ ChunkedFloat64Column.prototype.bin = function <R extends BinReducerName>(
   // chunk boundaries (the common case after concatSorted of two
   // equal-sized chunks at a chart-friendly bin count).
   return materializeChunkedFloat64(this).bin(bins, reducer);
+};
+ChunkedFloat64Column.prototype.binBy = function <R extends BinReducerName>(
+  key: ArrayLike<number>,
+  edges: ArrayLike<number>,
+  reducer: R,
+): BinOutput<R> {
+  // v1: materialize then delegate, mirroring `bin`. The key array is
+  // parallel to the logical row order, so it needs no per-chunk
+  // remap — materialize preserves row order.
+  return materializeChunkedFloat64(this).binBy(key, edges, reducer);
 };
 
 // ─── ChunkedBooleanColumn runtime implementations ────────────────

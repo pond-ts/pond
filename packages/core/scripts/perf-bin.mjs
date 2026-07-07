@@ -50,6 +50,24 @@ function makeGappyColumn(length) {
   return new Float64Column(buf, length, v.freeze());
 }
 
+// A monotonic key axis parallel to a column of the given length —
+// the packed-time array a chart would hand to binBy. Uniform 1s grid.
+function makeKey(length) {
+  const key = new Float64Array(length);
+  for (let i = 0; i < length; i += 1) key[i] = i * 1000;
+  return key;
+}
+
+// W+1 evenly spaced pixel-column edges spanning the key range — the
+// device-pixel bucket boundaries binBy buckets against.
+function makeEdges(key, W) {
+  const lo = key[0];
+  const hi = key[key.length - 1];
+  const edges = new Float64Array(W + 1);
+  for (let b = 0; b <= W; b += 1) edges[b] = lo + ((hi - lo) * b) / W;
+  return edges;
+}
+
 function median(values) {
   const sorted = [...values].sort((a, b) => a - b);
   const m = Math.floor(sorted.length / 2);
@@ -162,6 +180,40 @@ const W = 1024;
       cols[1].bin(W, 'minMax');
       cols[2].bin(W, 'minMax');
     }),
+  );
+}
+
+// ─── binBy (key-domain / M4) vs bin (index-domain) ───────────────
+//
+// binBy adds an O(n + W) merge walk to derive per-bucket boundaries,
+// then runs the same shared reduction engine as bin. These rows
+// measure that the merge walk is cheap relative to the reduction —
+// binBy should track bin closely — and double as the refactor guard
+// (bin routed through the shared engine must not regress vs the
+// pre-refactor numbers in PR #362's commit message).
+{
+  const col = makeColumn(1_000_000);
+  const key = makeKey(1_000_000);
+  const edges = makeEdges(key, W);
+  results.push(
+    benchmark('binBy / N=1M W=1024 minMax', () => {
+      col.binBy(key, edges, 'minMax');
+    }),
+  );
+  results.push(
+    benchmark('binBy / N=1M W=1024 minMaxFirstLast', () => {
+      col.binBy(key, edges, 'minMaxFirstLast');
+    }),
+  );
+  // Same size through index-domain bin — the merge-walk overhead is
+  // the gap between this row and the two above.
+  results.push(
+    benchmark(
+      'bin / N=1M W=1024 minMaxFirstLast (index, refactor guard)',
+      () => {
+        col.bin(W, 'minMaxFirstLast');
+      },
+    ),
   );
 }
 
