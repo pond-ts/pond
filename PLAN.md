@@ -1210,12 +1210,43 @@ commitment).
   primitive (`runs` / segment-by-predicate) — the same gap fit hand-rolls — rather
   than net-new value-axis work.
 - **Charts gaps it surfaces (candidate roadmap items, driven by adoption):**
-  (1) **candlestick / OHLC marks** — `@pond-ts/charts` has none yet; Tidal is the
-  first consumer that needs one, likely a fill-out of the existing `BoxPlot`.
+  (1) **candlestick / OHLC marks** — ✅ SHIPPED (`<Candlestick>`, PR #357,
+  financial-charts RFC Phase 1).
   (2) a **trading-calendar x-axis** that skips weekends / non-trading days (and
   overnight gaps for intraday bars) — a non-wall-clock x adjacent to the value-axis
   machinery, so the very first axis requirement already pushes past a naive
-  continuous `TimeAxis`.
+  continuous `TimeAxis`. **Now an RFC + active build wave — see below.**
+
+#### Trading-calendar wave — ADOPTED (RFC `docs/rfcs/trading-calendar.md`)
+
+The disjoint-time-axis RFC (drafted #366, promoted to an RFC #368, red-teamed by
+Tidal + a Codex pass #370) is being built as a wave. **Phase 1 (the calendar
+engine — pure data, no charts) is a PLAN commitment; Phase 2 (charts
+`scaleTradingTime`) stays deferred, gated on Tidal sourcing real gappy historical
+data** (Amendment 2 recalibration: Tidal's fixture is gapless today, grain is
+daily, no adoption until real bars land). The design is validated — Tidal
+independently built the same `calendar.bars → BoundedSequence` seam.
+
+- **`@pond-ts/financial` BOOTSTRAPPED** — the package now exists (scaffolded off
+  `@pond-ts/fit`; peer-deps `pond-ts`; browser+Node, no React). First inhabitant
+  is the calendar engine; the indicator corpus
+  (`docs/notes/financial-indicators-assessment-2026-07.md`) follows on the same
+  substrate. **Not yet published** (new-package OIDC bootstrap is a later step —
+  see [[npm new-package publish bootstrap]] in the release notes).
+- **Phase 1 build (in flight):**
+  - ✅ **`DiscontinuityProvider`** — the d3fc-style 5-method axis primitive
+    (`clampUp`/`clampDown`/`distance`/`offset`/`copy`) + `identityDiscontinuity()`
+    - the bundled `weekendSkip()` reference provider (UTC weekends, closed-form
+      O(1) trading-ms math). Charts will consume this structurally in Phase 2.
+  - ⏳ session model + both construction paths (rules→schedule **and** explicit
+    schedule table — Tidal Ask 1); `sessions`/`bars(period, range) → BoundedSequence`
+    (the core seam, flows through `aggregate`/`materialize` unchanged);
+    `tagSessions(series)` session-id column (Tidal Ask 2, pulled to Phase 1).
+  - **Core asks kept independent + ahead:** G1 count-based `rolling` windows (the
+    top indicator-track ask; decouples the K1 family from the calendar).
+    `align`/`rolling` are NOT calendar-correct via `BoundedSequence` (they bridge
+    session gaps) — that's the `partitionBy(sessionId)` / G1 / span-hook set, not
+    the zero-edit seam.
 - **Cross-repo coordination — the constellation bridge (live since 2026-07-03).**
   Handoffs between this repo and Tidal are automated; Peter no longer hand-relays
   them. **Inbound:** a Tidal→pond PR with `Tidal` in the title wakes a headless,
