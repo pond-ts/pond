@@ -49,6 +49,103 @@ export function identityDiscontinuity(): DiscontinuityProvider {
   return self;
 }
 
+/** A half-open live (non-gap) interval `[start, end)` in epoch-ms. */
+export type LiveSegment = readonly [start: number, end: number];
+
+/**
+ * A provider whose live (non-excised) domain is an explicit, sorted,
+ * non-overlapping list of `[start, end)` segments — everything *between* the
+ * segments is a removed gap. This is the general engine behind a trading
+ * calendar's proportional axis: the segments are the tradeable spans (sessions
+ * minus intraday breaks), so closed time between sessions and inside a lunch
+ * break both collapse to nothing while time stays proportional *within* each
+ * span.
+ *
+ * All arithmetic is O(log n) via bisection over precomputed cumulative live-ms
+ * at each segment boundary — cheap enough to call per-tick / per-pixel.
+ *
+ * `clampUp` / `clampDown` snap a value that is not in a live span to the nearest
+ * live edge *in that direction*: `clampUp` to the next span's start (or the very
+ * first start, if before everything), `clampDown` to the previous span's end
+ * (or the very last end, if past everything). A value already inside a live span
+ * is returned unchanged; the direction with no target (up past the last span,
+ * down before the first) also returns the value unchanged.
+ */
+export function segmentDiscontinuity(
+  segments: readonly LiveSegment[],
+): DiscontinuityProvider {
+  const n = segments.length;
+  // Precompute cumulative live-ms at each segment start; cum[n] = total.
+  const cum = new Array<number>(n + 1);
+  cum[0] = 0;
+  for (let i = 0; i < n; i++) {
+    const seg = segments[i]!;
+    cum[i + 1] = cum[i]! + (seg[1] - seg[0]);
+  }
+  const total = cum[n]!;
+
+  /** Rightmost segment index whose start <= t, or -1. */
+  const segAtOrBefore = (t: number): number => {
+    let lo = 0;
+    let hi = n; // first index with start > t
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (segments[mid]![0] <= t) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo - 1;
+  };
+
+  /** Live (non-gap) ms from the first segment start to `t`, in `[0, total]`. */
+  const liveMs = (t: number): number => {
+    if (n === 0 || t <= segments[0]![0]) return 0;
+    if (t >= segments[n - 1]![1]) return total;
+    const i = segAtOrBefore(t); // >= 0 here
+    const seg = segments[i]!;
+    // Inside segment i → partial; in the gap after it → the boundary (cum[i+1]).
+    return t < seg[1] ? cum[i]! + (t - seg[0]) : cum[i + 1]!;
+  };
+
+  /** Inverse of {@link liveMs}: the epoch-ms instant at cumulative live `L`. */
+  const instantForLive = (L: number): number => {
+    if (n === 0) return 0;
+    if (L <= 0) return segments[0]![0];
+    if (L >= total) return segments[n - 1]![1];
+    // First segment whose cumulative end (cum[i+1]) is > L.
+    let lo = 0;
+    let hi = n;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (cum[mid + 1]! <= L) lo = mid + 1;
+      else hi = mid;
+    }
+    return segments[lo]![0] + (L - cum[lo]!);
+  };
+
+  const self: DiscontinuityProvider = {
+    clampUp: (t) => {
+      if (n === 0) return t;
+      if (t < segments[0]![0]) return segments[0]![0]; // before all → first start
+      const i = segAtOrBefore(t); // >= 0
+      if (t < segments[i]![1]) return t; // inside a segment
+      // In a gap after segment i: snap forward to the next start; past last → t.
+      return i + 1 < n ? segments[i + 1]![0] : t;
+    },
+    clampDown: (t) => {
+      if (n === 0) return t;
+      if (t >= segments[n - 1]![1]) return segments[n - 1]![1]; // past all → last end
+      const i = segAtOrBefore(t);
+      if (i < 0 || t < segments[i]![1]) return t; // before all, or inside a segment
+      // In a gap after segment i: snap back to that segment's end.
+      return segments[i]![1];
+    },
+    distance: (from, to) => liveMs(to) - liveMs(from),
+    offset: (value, amount) => instantForLive(liveMs(value) + amount),
+    copy: () => self,
+  };
+  return self;
+}
+
 const DAY_MS = 86_400_000;
 
 /**

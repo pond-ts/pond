@@ -1,7 +1,11 @@
-export type { DiscontinuityProvider } from './calendar/discontinuity.js';
+export type {
+  DiscontinuityProvider,
+  LiveSegment,
+} from './calendar/discontinuity.js';
 export {
   identityDiscontinuity,
   weekendSkip,
+  segmentDiscontinuity,
 } from './calendar/discontinuity.js';
 
 export type { Session, SessionBreak } from './calendar/session.js';

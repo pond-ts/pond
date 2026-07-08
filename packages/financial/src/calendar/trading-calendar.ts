@@ -7,6 +7,11 @@ import {
 } from 'pond-ts';
 import { normalizeSessions, type Session } from './session.js';
 import {
+  segmentDiscontinuity,
+  type DiscontinuityProvider,
+  type LiveSegment,
+} from './discontinuity.js';
+import {
   generateSessions,
   type DateRange,
   type SessionRules,
@@ -206,23 +211,10 @@ export class TradingCalendar {
     }
     const sessions = range ? this.sessionsInRange(range) : this.#sessions;
     const intervals: Interval[] = [];
-    for (const s of sessions) {
-      // Tradeable segments = [open, close) with the breaks removed.
-      let segStart = s.open;
-      const segments: Array<readonly [number, number]> = [];
-      if (s.breaks) {
-        for (const b of s.breaks) {
-          if (b.start > segStart) segments.push([segStart, b.start]);
-          segStart = b.end;
-        }
-      }
-      if (s.close > segStart) segments.push([segStart, s.close]);
-
-      for (const [a, b] of segments) {
-        for (let t = a; t < b; t += periodMs) {
-          const end = Math.min(t + periodMs, b);
-          intervals.push(new Interval({ value: t, start: t, end }));
-        }
+    for (const [a, b] of TradingCalendar.#liveSegments(sessions)) {
+      for (let t = a; t < b; t += periodMs) {
+        const end = Math.min(t + periodMs, b);
+        intervals.push(new Interval({ value: t, start: t, end }));
       }
     }
     return new BoundedSequence(intervals);
@@ -263,6 +255,41 @@ export class TradingCalendar {
     return series.withColumn(column, ids) as unknown as TimeSeries<
       TaggedSchema<S, Name>
     >;
+  }
+
+  /**
+   * A {@link DiscontinuityProvider} over this calendar's **tradeable spans** —
+   * each session's `[open, close)` with its intraday breaks removed. This is
+   * the **proportional** trading-time axis: closed time between sessions and
+   * inside a lunch break collapses to nothing, while time stays proportional
+   * *within* each span. A `@pond-ts/charts` trading-time scale consumes this
+   * (structurally — no package coupling) to map value → pixel with the gaps
+   * excised; a bar/candle chart then shows contiguous sessions with real
+   * intraday spacing.
+   *
+   * With `range`, only sessions overlapping `[start, end)` contribute segments.
+   * (The *uniform* / equal-bar-width metric is a separate, bar-grid-derived
+   * provider — it belongs with the chart's `spacing` choice, not here.)
+   */
+  discontinuities(range?: InstantRange): DiscontinuityProvider {
+    const sessions = range ? this.sessionsInRange(range) : this.#sessions;
+    return segmentDiscontinuity(TradingCalendar.#liveSegments(sessions));
+  }
+
+  /** Tradeable spans — each session's `[open, close)` with its breaks removed. */
+  static #liveSegments(sessions: readonly Session[]): LiveSegment[] {
+    const segments: LiveSegment[] = [];
+    for (const s of sessions) {
+      let segStart = s.open;
+      if (s.breaks) {
+        for (const b of s.breaks) {
+          if (b.start > segStart) segments.push([segStart, b.start]);
+          segStart = b.end;
+        }
+      }
+      if (s.close > segStart) segments.push([segStart, s.close]);
+    }
+    return segments;
   }
 
   /**
