@@ -35,3 +35,58 @@ export function zoomRange(
   const frac = span > 0 ? (pivot - range[0]) / span : 0.5;
   return [pivot - minDuration * frac, pivot + minDuration * (1 - frac)];
 }
+
+/**
+ * The slice of a discontinuity provider the trading-time viewport math needs —
+ * a structural subset of the charts `DiscontinuityProvider` (so `viewport.ts`
+ * stays free of any provider dependency).
+ */
+export interface ViewportDiscontinuity {
+  distance(from: number, to: number): number;
+  offset(value: number, amount: number): number;
+}
+
+/**
+ * Pan a range on a **trading-time** axis: shift both endpoints by the same
+ * amount of *trading* time, so the pan feels uniform on screen even across
+ * collapsed gaps (a raw-ms shift would jump at each weekend/holiday). `fraction`
+ * is the signed share of the plot width dragged — the caller passes `-dx/plotWidth`
+ * (drag right → reveal earlier data → negative).
+ */
+export function panRangeTrading(
+  range: TimeRange,
+  fraction: number,
+  provider: ViewportDiscontinuity,
+): [number, number] {
+  const span = provider.distance(range[0], range[1]);
+  const start = provider.offset(range[0], fraction * span);
+  // Rebuild the end from the (possibly boundary-clamped) start so the visible
+  // trading span is preserved — panning into the calendar's start edge stops
+  // rather than shrinking the window.
+  return [start, provider.offset(start, span)];
+}
+
+/**
+ * Zoom a **trading-time** range around `pivot` by `factor` (`< 1` in, `> 1` out),
+ * scaling the *trading* distance from the pivot to each endpoint so the pivot's
+ * on-screen position holds. Floors the visible trading time at `minLive`.
+ */
+export function zoomRangeTrading(
+  range: TimeRange,
+  pivot: number,
+  factor: number,
+  provider: ViewportDiscontinuity,
+  minLive = 1,
+): [number, number] {
+  const left = provider.distance(range[0], pivot); // trading-ms d0 → pivot (≥ 0)
+  const right = provider.distance(pivot, range[1]); // trading-ms pivot → d1 (≥ 0)
+  let nl = left * factor;
+  let nr = right * factor;
+  if (nl + nr < minLive) {
+    const total = left + right;
+    const frac = total > 0 ? left / total : 0.5;
+    nl = minLive * frac;
+    nr = minLive * (1 - frac);
+  }
+  return [provider.offset(pivot, -nl), provider.offset(pivot, nr)];
+}

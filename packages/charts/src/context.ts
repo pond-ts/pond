@@ -2,6 +2,10 @@ import { createContext } from 'react';
 import type { ScaleLinear, ScaleTime } from 'd3-scale';
 import type { ChartTheme } from './theme.js';
 import type { AxisFormat } from './format.js';
+import type {
+  TradingTimeScale,
+  DiscontinuityProvider,
+} from './tradingTimeScale.js';
 
 /**
  * The frame a {@link ChartContainer} provides to its rows and the time axis.
@@ -136,9 +140,23 @@ export interface ContainerFrame {
    * scales are callable
    * (`value → px`) and expose `invert`/`ticks`/`tickFormat`; consumers use only
    * that shared surface (the cursor coerces `invert` via `+`, `<TimeAxis>` keys
-   * ticks via `+d`), so either kind drops in.
+   * ticks via `+d`), so either kind drops in. A **`scaleTradingTime`** (when the
+   * container is given `discontinuities`) is the third kind — same callable /
+   * `invert` / `ticks` / `tickFormat` surface, but the mapping runs through
+   * trading time so closed-market gaps collapse (see {@link discontinuities}).
    */
-  readonly xScale: ScaleTime<number, number> | ScaleLinear<number, number>;
+  readonly xScale:
+    | ScaleTime<number, number>
+    | ScaleLinear<number, number>
+    | TradingTimeScale;
+  /**
+   * The discontinuity provider backing a **trading-time** x axis, if one was
+   * supplied to the container — closed-market time (weekends, holidays,
+   * overnight, lunch breaks) collapsed. `undefined` for a normal continuous
+   * time / value axis. Pan and zoom read it to move the view in *trading* time
+   * rather than raw wall-clock ms.
+   */
+  readonly discontinuities?: DiscontinuityProvider | undefined;
   /**
    * The resolved kind of the shared x scale — `'time'` (a `scaleTime`) or
    * `'value'` (a `scaleLinear`), inferred from the layers' data. `<XAxis>` reads

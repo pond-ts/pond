@@ -8,6 +8,10 @@ import {
   type ReactNode,
 } from 'react';
 import { scaleLinear, scaleTime } from 'd3-scale';
+import {
+  scaleTradingTime,
+  type DiscontinuityProvider,
+} from './tradingTimeScale.js';
 import type { TimeRange } from 'pond-ts';
 import {
   ContainerContext,
@@ -58,6 +62,17 @@ export interface ChartContainerProps {
    * the data — so a tuple stays a time domain on a time chart.
    */
   range?: readonly [number, number] | TimeRange;
+  /**
+   * A **trading-calendar** discontinuity provider — closed-market time
+   * (weekends, holidays, overnight, lunch breaks) collapsed. Supply it to turn
+   * the shared x axis into a **trading-time** axis: gaps disappear and time
+   * stays proportional within each session. A `@pond-ts/financial`
+   * `TradingCalendar.discontinuities()` satisfies this structurally (charts
+   * never imports that package). The low-level primitive; pass
+   * `calendar.discontinuities()` directly. Only affects a **time** axis (ignored
+   * on a value axis).
+   */
+  discontinuities?: DiscontinuityProvider;
   /** Total width in CSS pixels (plot + axis gutters). */
   width: number;
   /** Vertical space between rows in CSS pixels (not under the axis). Default 0. */
@@ -259,6 +274,7 @@ export function ChartContainer({
   snap = true,
   timeFormat,
   theme,
+  discontinuities,
   children,
 }: ChartContainerProps) {
   // The explicit base domain from `range` (a tuple or a TimeRange). `undefined`
@@ -565,12 +581,23 @@ export function ChartContainer({
         formatTime: resolveAxisFormat(s, TIME_TICK_COUNT, timeFormat),
       };
     }
+    if (discontinuities !== undefined) {
+      // Trading-time axis: closed-market gaps collapse, time proportional within
+      // sessions. Same tickFormat surface as scaleTime, so the readout is shared.
+      const s = scaleTradingTime(discontinuities)
+        .domain([d0, d1])
+        .range([0, plotWidth]);
+      return {
+        xScale: s,
+        formatTime: resolveTimeFormat(s, TIME_TICK_COUNT, timeFormat),
+      };
+    }
     const s = scaleTime().domain([d0, d1]).range([0, plotWidth]);
     return {
       xScale: s,
       formatTime: resolveTimeFormat(s, TIME_TICK_COUNT, timeFormat),
     };
-  }, [resolvedKind, d0, d1, plotWidth, timeFormat]);
+  }, [resolvedKind, d0, d1, plotWidth, timeFormat, discontinuities]);
 
   // The crosshair pixel (see resolveCursorX). A stored hoverX is a *plot* pixel;
   // if plotWidth changes mid-hover (a gutter reserving, or a width change) it's
@@ -650,6 +677,7 @@ export function ChartContainer({
       labelLanes,
       xScale,
       xKind: resolvedKind,
+      discontinuities,
       panZoom,
       minDuration,
       applyRange,
@@ -698,6 +726,7 @@ export function ChartContainer({
       labelLanes,
       xScale,
       resolvedKind,
+      discontinuities,
       panZoom,
       minDuration,
       applyRange,

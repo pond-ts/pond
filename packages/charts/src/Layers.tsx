@@ -19,7 +19,12 @@ import { Canvas } from './Canvas.js';
 import { drawGrid } from './grid.js';
 import { cursorParts } from './tracker.js';
 import { resolveSelection } from './select.js';
-import { panRange, zoomRange } from './viewport.js';
+import {
+  panRange,
+  zoomRange,
+  panRangeTrading,
+  zoomRangeTrading,
+} from './viewport.js';
 import { flagChipStyle, flagChipX, axisPillX, axisPillStyle } from './chip.js';
 import {
   ContainerContext,
@@ -99,7 +104,7 @@ export function Layers({ children }: LayersProps) {
       // Explicit `<YAxis ticks>` drive the gridlines too, so they align with the
       // axis labels; otherwise d3 auto-picks (the default).
       const explicitY = tickValues.get(defaultAxisId);
-      const xTicks = xScale.ticks(GRID_TICKS).map((d) => xScale(d));
+      const xTicks = xScale.ticks(GRID_TICKS).map((d) => xScale(+d));
       const yTicks = gridY
         ? (explicitY ?? gridY.ticks(GRID_TICKS)).map((t) => gridY(t))
         : [];
@@ -354,9 +359,18 @@ export function Layers({ children }: LayersProps) {
             /* ignore (synthetic / already-released pointer) */
           }
         }
-        const span = drag.startRange[1] - drag.startRange[0];
-        const dt = c.plotWidth > 0 ? -dx * (span / c.plotWidth) : 0;
-        c.applyRange(panRange(drag.startRange, dt));
+        if (c.discontinuities) {
+          // Trading-time axis: pan by an equal amount of *trading* time so the
+          // drag feels uniform across collapsed gaps (a raw-ms shift jumps).
+          const fraction = c.plotWidth > 0 ? -dx / c.plotWidth : 0;
+          c.applyRange(
+            panRangeTrading(drag.startRange, fraction, c.discontinuities),
+          );
+        } else {
+          const span = drag.startRange[1] - drag.startRange[0];
+          const dt = c.plotWidth > 0 ? -dx * (span / c.plotWidth) : 0;
+          c.applyRange(panRange(drag.startRange, dt));
+        }
         return; // tracker suppressed during a pan
       }
       const rect = e.currentTarget.getBoundingClientRect();
@@ -520,7 +534,17 @@ export function Layers({ children }: LayersProps) {
       const localX = Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left));
       const pivot = +c.xScale.invert(localX);
       const factor = Math.exp(e.deltaY * ZOOM_SENSITIVITY);
-      c.applyRange(zoomRange(c.timeRange, pivot, factor, c.minDuration));
+      c.applyRange(
+        c.discontinuities
+          ? zoomRangeTrading(
+              c.timeRange,
+              pivot,
+              factor,
+              c.discontinuities,
+              c.minDuration,
+            )
+          : zoomRange(c.timeRange, pivot, factor, c.minDuration),
+      );
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
