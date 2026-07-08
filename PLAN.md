@@ -1221,7 +1221,7 @@ commitment).
 
 The disjoint-time-axis RFC (drafted #366, promoted to an RFC #368, red-teamed by
 Tidal + a Codex pass #370) is being built as a wave. **Phase 1 (the calendar
-engine — pure data, no charts) is a PLAN commitment; Phase 2 (charts
+engine — pure data, no charts) is COMPLETE and a PLAN commitment; Phase 2 (charts
 `scaleTradingTime`) stays deferred, gated on Tidal sourcing real gappy historical
 data** (Amendment 2 recalibration: Tidal's fixture is gapless today, grain is
 daily, no adoption until real bars land). The design is validated — Tidal
@@ -1233,15 +1233,27 @@ independently built the same `calendar.bars → BoundedSequence` seam.
   (`docs/notes/financial-indicators-assessment-2026-07.md`) follows on the same
   substrate. **Not yet published** (new-package OIDC bootstrap is a later step —
   see [[npm new-package publish bootstrap]] in the release notes).
-- **Phase 1 build (in flight):**
-  - ✅ **`DiscontinuityProvider`** — the d3fc-style 5-method axis primitive
+- **`@pond-ts/financial` BOOTSTRAPPED** — see the bullet above.
+- **Phase 1 build — COMPLETE (PRs #371–#374, unreleased):**
+  - ✅ **`DiscontinuityProvider`** (#371) — the d3fc-style 5-method axis primitive
     (`clampUp`/`clampDown`/`distance`/`offset`/`copy`) + `identityDiscontinuity()`
     - the bundled `weekendSkip()` reference provider (UTC weekends, closed-form
       O(1) trading-ms math). Charts will consume this structurally in Phase 2.
-  - ⏳ session model + both construction paths (rules→schedule **and** explicit
-    schedule table — Tidal Ask 1); `sessions`/`bars(period, range) → BoundedSequence`
-    (the core seam, flows through `aggregate`/`materialize` unchanged);
-    `tagSessions(series)` session-id column (Tidal Ask 2, pulled to Phase 1).
+  - ✅ **Session model + both construction paths** (#372) — `Session`/`SessionBreak`
+    - `normalizeSessions`; `TradingCalendar.fromSessions` (explicit schedule, the
+      first-class path — Tidal Ask 1) and `.fromRules` (weekmask/holidays/half-days/
+      breaks, DST-correct via Temporal); query surface (`sessionOn`, `isTradingDay`,
+      `sessionContaining`, `isOpen`, `sessionsInRange`, `next`/`previousSession`).
+      Overnight sessions deferred (explicit-list only for now).
+  - ✅ **`sessionSequence`/`barSequence` → `BoundedSequence`** (#373) — the core
+    bucketing seam; force-close truncation + break-splitting; flows through
+    `aggregate`/`materialize` **with no core edits** (`BoundedSequence` IS
+    `SequenceLike`). The RFC's zero-core-edit claim, proven.
+  - ✅ **`tagSessions(series)`** (#374) — appends a numeric session-id column
+    (session `open` id; `undefined` in closed time), O(n+sessions) merge walk.
+    The `partitionBy('session')` stopgap (Tidal Ask 2, pulled to Phase 1) so
+    `fill`/`rolling` don't bridge closures — proven in-test (a hold-fill that
+    bridges the overnight gap plainly, but not when partitioned by session).
   - **Core asks kept independent + ahead:** G1 count-based `rolling` windows (the
     top indicator-track ask; decouples the K1 family from the calendar).
     `align`/`rolling` are NOT calendar-correct via `BoundedSequence` (they bridge
