@@ -622,6 +622,19 @@ direction|series`, `showOHLC` (Phase-2 four-pill readout, folded in early),
     stops compiling until it adds a `candle` slot. Not selectable yet (no
     `hitTest`) — selection rides the separate selection RFC. Follow-on wave
     (tracker-label-by-`as`, BoxPlot line-shape, clamp-on-ingest) still pending.
+    **`cssVarTheme` candle mapping (queued, from the Tidal adoption 2026-07-08,
+    their `F-charts-4`).** Tidal adopted `<Candlestick>` cleanly (tidal#56/#61,
+    reviewed on behalf of the library — usage idiomatic against the 0.41 API),
+    and confirmed one real gap: the `candle` slot is type-_required_, but a theme
+    built by spreading `defaultTheme`/`estelaTheme` still compiles and silently
+    renders the **neutral placeholder** pair (`theme.ts` `defaultTheme.candle`),
+    so the type break only bites hand-built themes. Worse, `cssVarTheme`
+    (`src/css-theme.ts`) has **no candle mapping** — a consumer wiring market
+    green/red from CSS vars must hand-populate `candle.default` (Tidal did, via
+    its own `readChartTheme`). Grow `cssVarTheme` a `candle` var mapping (rising/
+    falling/neutral body+wick) so the market palette is one declarative overlay,
+    consistent with how `line`/`area`/`bar` already read from vars. LOW — the
+    hand-roll works today; earns its keep when the next consumer adopts candles.
   - **Selection — Phase 1 (series-`id` identity) ADOPTED + built**
     (`feat/charts-selection-id`, Harbor issue #360). The first slice of
     [`docs/rfcs/selection.md`](docs/rfcs/selection.md) — **A2.2 + A3** — is built
@@ -3832,8 +3845,7 @@ retention`). Currently Path B (own deque); same API, perf
 
      ```ts
      type DurationString =
-       | `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`
-       | 'buffer';
+       `${number}${'ms' | 's' | 'm' | 'h' | 'd'}` | 'buffer';
 
      type FusedMapping<S extends SeriesSchema> = Readonly<
        Record<DurationString, FusedMappingValue<S>>
