@@ -26,7 +26,7 @@ export interface SessionRules {
   close: string;
   /** Trading days of week as ISO weekday numbers (1 = Monday … 7 = Sunday). Defaults to Monday–Friday `[1, 2, 3, 4, 5]`. */
   weekmask?: readonly number[];
-  /** Intraday breaks (e.g. a lunch), each local `"HH:MM"`, within `(open, close)`. */
+  /** Intraday breaks (e.g. a lunch), each local `"HH:MM"`, within `[open, close]`. */
   breaks?: readonly { start: string; end: string }[];
   /** Dates (`YYYY-MM-DD`) with no session — the market is closed. */
   holidays?: readonly string[];
@@ -116,10 +116,24 @@ export function generateSessions(
         'overnight sessions are not supported by rules — use an explicit session list.',
     );
   }
-  const breakMins = (rules.breaks ?? []).map((b) => ({
-    start: parseMinutes(b.start),
-    end: parseMinutes(b.end),
-  }));
+  const breakMins = (rules.breaks ?? [])
+    .map((b) => ({ start: parseMinutes(b.start), end: parseMinutes(b.end) }))
+    .sort((a, b) => a.start - b.start);
+  // Validate the rule-level breaks once (they repeat every day) so a direct
+  // generateSessions caller can't get a malformed list — not only the
+  // fromRules path, which re-validates via normalizeSessions.
+  let prevEnd = openMin;
+  for (const b of breakMins) {
+    if (b.end <= b.start) {
+      throw new RangeError('break end must be after start');
+    }
+    if (b.start < prevEnd || b.end > regularCloseMin) {
+      throw new RangeError(
+        'breaks must be within [open, close], sorted, and non-overlapping',
+      );
+    }
+    prevEnd = b.end;
+  }
 
   const start = toPlainDate(range.from, timeZone);
   const end = toPlainDate(range.to, timeZone);

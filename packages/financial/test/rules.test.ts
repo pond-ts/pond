@@ -43,6 +43,36 @@ describe('generateSessions', () => {
     expect(jul.close).toBe(Date.UTC(2021, 6, 1, 20, 0));
   });
 
+  it('resolves a spring-forward gap by shifting forward (compatible disambiguation)', () => {
+    // US springs forward 2021-03-14 02:00→03:00. A 02:30 wall time does not
+    // exist that day; "compatible" pushes it to 03:30 EDT = 07:30 UTC.
+    const out = generateSessions(
+      {
+        timeZone: 'America/New_York',
+        open: '02:30',
+        close: '05:00',
+        weekmask: [7],
+      },
+      { from: '2021-03-14', to: '2021-03-14' },
+    )[0]!;
+    expect(out.open).toBe(Date.UTC(2021, 2, 14, 7, 30));
+  });
+
+  it('resolves a fall-back fold to the earlier instant (compatible disambiguation)', () => {
+    // US falls back 2021-11-07 02:00→01:00; 01:30 occurs twice. "compatible"
+    // picks the earlier occurrence (still EDT, UTC-4) = 05:30 UTC.
+    const out = generateSessions(
+      {
+        timeZone: 'America/New_York',
+        open: '01:30',
+        close: '05:00',
+        weekmask: [7],
+      },
+      { from: '2021-11-07', to: '2021-11-07' },
+    )[0]!;
+    expect(out.open).toBe(Date.UTC(2021, 10, 7, 5, 30));
+  });
+
   it('omits holidays entirely', () => {
     // 2021-01-01 is a Friday holiday → absent.
     const out = generateSessions(NYSE, {
@@ -112,6 +142,31 @@ describe('generateSessions', () => {
       '2021-01-06', // Wed
       '2021-01-07', // Thu
     ]);
+  });
+
+  it('validates rule-level breaks directly (not only via the calendar path)', () => {
+    const base = { timeZone: 'UTC', open: '09:00', close: '17:00' } as const;
+    const range = { from: '2021-01-04', to: '2021-01-04' };
+    // Break outside [open, close].
+    expect(() =>
+      generateSessions(
+        { ...base, breaks: [{ start: '08:00', end: '09:30' }] },
+        range,
+      ),
+    ).toThrow(/within/);
+    // Overlapping / out-of-order breaks (sorted internally, then overlap caught).
+    expect(() =>
+      generateSessions(
+        {
+          ...base,
+          breaks: [
+            { start: '12:00', end: '13:00' },
+            { start: '12:30', end: '14:00' },
+          ],
+        },
+        range,
+      ),
+    ).toThrow(/non-overlapping|within/);
   });
 
   it('rejects overnight (close <= open) rules', () => {

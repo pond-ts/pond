@@ -131,23 +131,25 @@ export class TradingCalendar {
    * whose open precedes it); a `YYYY-MM-DD` `ref` compares by trading date.
    */
   previousSession(ref: number | string): Session | undefined {
-    let firstAtOrAfter: number;
-    if (typeof ref === 'number') {
-      // First index with open >= ref.
-      let lo = 0;
-      let hi = this.#opens.length;
-      while (lo < hi) {
-        const mid = (lo + hi) >>> 1;
-        if (this.#opens[mid]! < ref) lo = mid + 1;
-        else hi = mid;
-      }
-      firstAtOrAfter = lo;
-    } else {
-      firstAtOrAfter = this.#firstDateAtOrAfter(ref);
-    }
+    const firstAtOrAfter =
+      typeof ref === 'number'
+        ? this.#firstOpenAtOrAfter(ref)
+        : this.#firstDateAtOrAfter(ref);
     return firstAtOrAfter - 1 >= 0
       ? this.#sessions[firstAtOrAfter - 1]
       : undefined;
+  }
+
+  /** First index whose session `open` is `>= instant` (lower bound). */
+  #firstOpenAtOrAfter(instant: number): number {
+    let lo = 0;
+    let hi = this.#opens.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (this.#opens[mid]! < instant) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
   }
 
   /** First index whose session date is `> date` (ISO strings sort chronologically). */

@@ -24,7 +24,7 @@ export interface Session {
   readonly open: number;
   /** Session close, epoch-ms, exclusive. Always `> open`. */
   readonly close: number;
-  /** Optional intraday breaks, each `[start, end)` within `(open, close)`, sorted and non-overlapping. */
+  /** Optional intraday breaks, each `[start, end)` within `[open, close]`, sorted and non-overlapping. */
   readonly breaks?: readonly SessionBreak[];
 }
 
@@ -33,7 +33,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 /**
  * Validate and normalize a session list into the calendar's canonical form:
  * sorted by `open`, dates unique, each session well-formed (`open < close`,
- * breaks inside `(open, close)`, sorted, non-overlapping). Throws on any
+ * breaks inside `[open, close]`, sorted, non-overlapping). Throws on any
  * violation — a calendar must never be built from an inconsistent schedule.
  * Sessions must also be **non-overlapping** with each other (a later session's
  * `open` is `>=` the previous session's `close`).
@@ -69,7 +69,7 @@ export function normalizeSessions(input: Iterable<Session>): Session[] {
         }
         if (b.start < prevEnd || b.end > s.close) {
           throw new RangeError(
-            `session ${s.date}: breaks must be sorted, non-overlapping, and within (open, close)`,
+            `session ${s.date}: breaks must be sorted, non-overlapping, and within [open, close]`,
           );
         }
         prevEnd = b.end;
