@@ -45,6 +45,23 @@ describe('tagSessions', () => {
     ]);
   });
 
+  it('types the session column as number | undefined (closed time is undefined)', () => {
+    const series = new TimeSeries({
+      name: 'px',
+      schema,
+      rows: [[D0 + 10 * H, 2]],
+    });
+    const tagged = cal.tagSessions(series);
+    const e = tagged.at(0)!;
+    const id: number | undefined = e.get('session');
+    expect(id).toBe(MON_ID);
+    // The column must NOT type as a bare `number` — it holds undefined in
+    // closed time, so consuming it as number would crash at runtime.
+    // @ts-expect-error session may be undefined
+    const bad: number = e.get('session');
+    void bad;
+  });
+
   it('honors a custom column name', () => {
     const series = new TimeSeries({
       name: 'px',

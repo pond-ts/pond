@@ -20,15 +20,21 @@ export interface InstantRange {
 
 /**
  * The schema of a series after {@link TradingCalendar.tagSessions} appends its
- * numeric session-id column. Structurally identical to core's (unexported)
- * `AppendColumn<S, Name, 'number'>` — a schema already leads with its key
- * column, so `[...S, col]` is the same tuple — expressed with only the
- * exported `SeriesSchema` so it names cleanly in emitted declarations.
+ * session-id column. The column is an **optional** number (`required: false`)
+ * because it holds `undefined` for every event in closed time — so
+ * `.get(column)` types as `number | undefined`, forcing the consumer to handle
+ * the closed-time case rather than crashing on it. Expressed with only the
+ * exported `SeriesSchema` (a schema already leads with its key column, so
+ * `[...S, col]` is core's `AppendColumn` tuple) so it names cleanly in the
+ * emitted declarations.
  */
 export type TaggedSchema<
   S extends SeriesSchema,
   Name extends string,
-> = readonly [...S, { readonly name: Name; readonly kind: 'number' }];
+> = readonly [
+  ...S,
+  { readonly name: Name; readonly kind: 'number'; readonly required: false },
+];
 
 const DURATION_MS: Record<string, number> = {
   ms: 1,
