@@ -160,8 +160,8 @@ Tidal's _other_ first-order need (PLAN → Tidal §) is a **trading-calendar x-a
 that skips weekends / non-trading days and intraday overnight gaps — a
 non-wall-clock x adjacent to the value-axis machinery. It's a real financial-chart
 requirement but a **separate axis concern**, not part of the candle mark. Noted
-here so the financial-charts surface is legible as a whole; its own RFC when Tidal
-pulls on it.
+here so the financial-charts surface is legible as a whole. **Now its own RFC:
+`docs/rfcs/trading-calendar.md`** (drafted 2026-07-08).
 
 ## 8. Scope / phasing
 

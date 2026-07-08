@@ -1,24 +1,28 @@
-# Trading calendars & the disjoint time axis — industry survey × pond assessment
+# RFC: The trading calendar & the disjoint time axis
 
-> _Prepared 2026-07-08 by the Pond technical consultant agent (Claude)._
+> **Status:** draft, for red-team. **Not a commitment** (see CLAUDE.md →
+> Strategic RFCs). Explores market-calendar / disjoint-time-axis support —
+> off-hours, weekends, holidays, half-days, special closures — across pond
+> core, `@pond-ts/charts`, and `@pond-ts/financial`. This is the RFC that
+> `docs/rfcs/financial-charts.md` §7 parked and PLAN (Tidal §) names as the
+> second charts gap. Phases adopted into PLAN.md become the contract; the
+> rest is forward-looking context.
 >
-> **Question:** how should pond (core + `@pond-ts/charts`) support disjointed
-> time-axis data — market off-hours, weekends, holidays, half-days, and
-> special closures — and what are the financial industry's established
-> practices?
+> **Original draft:** the Pond technical consultant agent (Claude),
+> 2026-07-08, prompted by pjm17971. Grounded against verified pond source
+> (not docs alone) and an industry survey verified against live vendor
+> docs; Amendment 1 records pjm17971's decisions on the §7 open questions.
 >
 > **Substrate:** pond-ts v0.41.0 (`main` @ `3695093`), verified against
-> source this session (core time model + the charts x-scale surface), not
-> against docs alone. Industry claims verified against live vendor docs
-> 2026-07-08; URLs inline.
+> source this session — the core time model + the charts x-scale surface.
+> Industry claims verified against live vendor docs 2026-07-08; URLs
+> inline.
 >
-> **Status:** pre-RFC groundwork — the "trading-calendar axis" RFC that
-> `docs/rfcs/financial-charts.md` §7 parked and PLAN (Tidal §) names as the
-> second charts gap. Per the RFC→PLAN discipline this is forward-looking
-> context, not a commitment. Sibling notes: the indicator-corpus assessment
-> (`financial-indicators-assessment-2026-07.md`, whose **G1/G4** gaps this
-> note picks up) and the value-axis RFC (`docs/rfcs/value-axis.md`, whose
-> "time is a tag on a monotonic ordering" recognition this note leans on.)
+> **Siblings:** the indicator-corpus assessment
+> (`docs/notes/financial-indicators-assessment-2026-07.md`, whose
+> **G1/G4** gaps this RFC picks up) and the value-axis RFC
+> (`docs/rfcs/value-axis.md`, whose "time is a tag on a monotonic
+> ordering" recognition this RFC leans on).
 
 ---
 
