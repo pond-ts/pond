@@ -21,6 +21,7 @@ const sidebars: SidebarsConfig = {
             'start-here/concepts/triggers',
             'start-here/concepts/partitioning',
             'start-here/concepts/late-data',
+            'start-here/concepts/value-axis',
           ],
         },
         'start-here/creating',
