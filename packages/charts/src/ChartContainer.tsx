@@ -578,6 +578,12 @@ export function ChartContainer({
   // is the one formatter <TimeAxis> + the cursor readout share, so a tick and
   // the cursor read identically. (The `formatTime` name predates the value axis
   // — on a value axis it formats the value, not a time.)
+  // The trading-time provider only applies to a **time** axis — a value axis is
+  // always a plain `scaleLinear`. Gate it once here so the scale branch AND the
+  // frame (which pan/zoom read) agree: on a value axis the provider is dropped,
+  // so interactions use continuous value math, not trading-time math.
+  const xDiscontinuities =
+    resolvedKind === 'time' ? discontinuities : undefined;
   const { xScale, formatTime } = useMemo(() => {
     if (resolvedKind === 'value') {
       const s = scaleLinear().domain([d0, d1]).range([0, plotWidth]);
@@ -586,10 +592,10 @@ export function ChartContainer({
         formatTime: resolveAxisFormat(s, TIME_TICK_COUNT, timeFormat),
       };
     }
-    if (discontinuities !== undefined) {
+    if (xDiscontinuities !== undefined) {
       // Trading-time axis: closed-market gaps collapse, time proportional within
       // sessions. Same tickFormat surface as scaleTime, so the readout is shared.
-      const s = scaleTradingTime(discontinuities)
+      const s = scaleTradingTime(xDiscontinuities)
         .domain([d0, d1])
         .range([0, plotWidth]);
       return {
@@ -602,7 +608,7 @@ export function ChartContainer({
       xScale: s,
       formatTime: resolveTimeFormat(s, TIME_TICK_COUNT, timeFormat),
     };
-  }, [resolvedKind, d0, d1, plotWidth, timeFormat, discontinuities]);
+  }, [resolvedKind, d0, d1, plotWidth, timeFormat, xDiscontinuities]);
 
   // The crosshair pixel (see resolveCursorX). A stored hoverX is a *plot* pixel;
   // if plotWidth changes mid-hover (a gutter reserving, or a width change) it's
@@ -682,7 +688,7 @@ export function ChartContainer({
       labelLanes,
       xScale,
       xKind: resolvedKind,
-      discontinuities,
+      discontinuities: xDiscontinuities,
       panZoom,
       minDuration,
       applyRange,
@@ -731,7 +737,7 @@ export function ChartContainer({
       labelLanes,
       xScale,
       resolvedKind,
-      discontinuities,
+      xDiscontinuities,
       panZoom,
       minDuration,
       applyRange,

@@ -71,6 +71,17 @@ describe('panRangeTrading', () => {
     expect([lo, hi]).toEqual([70, 270]);
     expect(provider.distance(lo, hi)).toBe(100); // span preserved
   });
+
+  it('stops at the END edge preserving span (regression: Codex P1)', () => {
+    // Panning forward past the last session stops at [200,300] with the trading
+    // span (100) intact — no shrink/collapse as the right boundary is reached.
+    expect(panRangeTrading([50, 250], 0.8, provider)).toEqual([200, 300]);
+    expect(panRangeTrading([50, 250], 2, provider)).toEqual([200, 300]);
+  });
+
+  it('stops at the START edge preserving span', () => {
+    expect(panRangeTrading([50, 250], -0.8, provider)).toEqual([0, 200]);
+  });
 });
 
 describe('zoomRangeTrading', () => {
@@ -85,5 +96,22 @@ describe('zoomRangeTrading', () => {
     const [lo, hi] = zoomRangeTrading([0, 300], 100, 0.0001, provider, 20);
     // ~20 trading units visible, centred on the pivot's trading position.
     expect(provider.distance(lo, hi)).toBeCloseTo(20, 6);
+  });
+
+  it('honors the minLive floor at a calendar edge by redistributing (Codex P2)', () => {
+    // Pivot at the very start: the left half of the floor can't exist, so the
+    // whole floor goes right — span stays 20, not the clamped-away 10.
+    const [lo, hi] = zoomRangeTrading([0, 0], 0, 0.001, provider, 20);
+    expect(provider.distance(lo, hi)).toBeCloseTo(20, 6);
+  });
+
+  it('preserves the zoomed trading span when a side clamps at the edge', () => {
+    // Zoom out with the pivot near the start: the left side clamps at 0, its
+    // shortfall shifts to the right so the visible span is the full requested
+    // amount (pivot fraction drifts at the edge — inherent, documented).
+    const [lo, hi] = zoomRangeTrading([10, 60], 20, 3, provider);
+    const wantSpan =
+      provider.distance(10, 20) * 3 + provider.distance(20, 60) * 3;
+    expect(provider.distance(lo, hi)).toBeCloseTo(wantSpan, 6);
   });
 });

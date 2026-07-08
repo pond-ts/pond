@@ -59,11 +59,16 @@ export function panRangeTrading(
   provider: ViewportDiscontinuity,
 ): [number, number] {
   const span = provider.distance(range[0], range[1]);
-  const start = provider.offset(range[0], fraction * span);
-  // Rebuild the end from the (possibly boundary-clamped) start so the visible
-  // trading span is preserved — panning into the calendar's start edge stops
-  // rather than shrinking the window.
-  return [start, provider.offset(start, span)];
+  const shift = fraction * span;
+  // Anchor on the endpoint being pushed toward its boundary and rebuild the
+  // other from the preserved span, so panning into *either* calendar edge stops
+  // (the window holds its trading width) rather than shrinking or collapsing.
+  if (shift <= 0) {
+    const start = provider.offset(range[0], shift);
+    return [start, provider.offset(start, span)];
+  }
+  const end = provider.offset(range[1], shift);
+  return [provider.offset(end, -span), end];
 }
 
 /**
@@ -88,5 +93,16 @@ export function zoomRangeTrading(
     nl = minLive * frac;
     nr = minLive * (1 - frac);
   }
-  return [provider.offset(pivot, -nl), provider.offset(pivot, nr)];
+  let d0 = provider.offset(pivot, -nl);
+  let d1 = provider.offset(pivot, nr);
+  // If one side clamped at a calendar edge (couldn't extend as far as asked),
+  // give the shortfall to the other side so the visible trading span — and the
+  // `minLive` floor — is preserved. (The pivot's *fraction* can then drift at
+  // the edge: there is no trading time before the first / after the last session
+  // to hold it against.)
+  const shortLeft = nl - provider.distance(d0, pivot);
+  const shortRight = nr - provider.distance(pivot, d1);
+  if (shortLeft > 0) d1 = provider.offset(pivot, nr + shortLeft);
+  else if (shortRight > 0) d0 = provider.offset(pivot, -(nl + shortRight));
+  return [d0, d1];
 }

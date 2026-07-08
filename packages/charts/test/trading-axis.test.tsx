@@ -1,7 +1,12 @@
 import { useContext, useEffect } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render } from '@testing-library/react';
+import { TimeSeries } from 'pond-ts';
 import { ChartContainer } from '../src/ChartContainer.js';
+import { ChartRow } from '../src/ChartRow.js';
+import { Layers } from '../src/Layers.js';
+import { LineChart } from '../src/LineChart.js';
+import { YAxis } from '../src/YAxis.js';
 import { ContainerContext, type ContainerFrame } from '../src/context.js';
 import { type DiscontinuityProvider } from '../src/tradingTimeScale.js';
 
@@ -69,12 +74,37 @@ describe('ChartContainer discontinuities → trading-time axis', () => {
     expect(gapPx).toBeGreaterThan(50);
   });
 
-  it('ignores the provider on a value axis (documented)', () => {
-    // With no layers the kind defaults to 'time'; a value axis would come from
-    // value-keyed layers. Here we just assert the time-axis path is taken and
-    // the provider is honored — the value-axis guard is unit-covered by the
-    // scale branch returning before the discontinuities check.
-    const f = frameOf({ discontinuities: provider });
-    expect(f.xKind).toBe('time');
+  it('drops the provider on a value axis so pan/zoom stay continuous (Codex P1)', () => {
+    // A value-keyed (distance) row makes this a value axis; the trading provider
+    // must be gated off the frame so interactions use continuous value math.
+    const rideByDistance = new TimeSeries({
+      name: 'ride',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'cumDist', kind: 'number' },
+        { name: 'hr', kind: 'number' },
+      ] as const,
+      rows: [
+        [0, 0, 120],
+        [1000, 500, 130],
+        [2000, 1200, 140],
+      ],
+    }).byValue('cumDist');
+
+    let frame: ContainerFrame | null = null;
+    render(
+      <ChartContainer discontinuities={provider} width={320}>
+        <ChartRow height={100}>
+          <YAxis id="a" min={100} max={160} />
+          <Layers>
+            <LineChart series={rideByDistance} column="hr" axis="a" />
+          </Layers>
+          <Capture sink={(f) => (frame = f)} />
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const f = frame!;
+    expect(f.xKind).toBe('value');
+    expect(f.discontinuities).toBeUndefined(); // gated off on a value axis
   });
 });
