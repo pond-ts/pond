@@ -47,6 +47,11 @@ export type { BarChartProps } from './BarChart.js';
 export { Candlestick } from './Candlestick.js';
 export type { CandlestickProps } from './Candlestick.js';
 export type { CandleVariant, ColorBy } from './ohlc.js';
+export { scaleTradingTime } from './tradingTimeScale.js';
+export type {
+  TradingTimeScale,
+  DiscontinuityProvider,
+} from './tradingTimeScale.js';
 
 // Annotations — user-authored marks in the turquoise register (distinct from the
 // data): a shaded span, a horizontal value line, a vertical x line.
