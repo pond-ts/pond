@@ -536,7 +536,10 @@ export function Layers({ children }: LayersProps) {
       const factor = Math.exp(e.deltaY * ZOOM_SENSITIVITY);
       c.applyRange(
         c.discontinuities
-          ? zoomRangeTrading(
+          ? // minDuration is the zoom-in floor; on a trading-time axis it caps
+            // the minimum visible *trading* time (ms of open-market time) rather
+            // than wall-clock ms — the sensible meaning for this axis.
+            zoomRangeTrading(
               c.timeRange,
               pivot,
               factor,

@@ -71,6 +71,11 @@ export interface ChartContainerProps {
    * never imports that package). The low-level primitive; pass
    * `calendar.discontinuities()` directly. Only affects a **time** axis (ignored
    * on a value axis).
+   *
+   * **Pass a stable reference.** The scale (and container frame) rebuild when
+   * this prop's identity changes, so memoize it — `const disc = useMemo(() =>
+   * calendar.discontinuities(), [calendar])` — rather than calling
+   * `.discontinuities()` inline in JSX, which would rebuild every render.
    */
   discontinuities?: DiscontinuityProvider;
   /** Total width in CSS pixels (plot + axis gutters). */
