@@ -36,6 +36,9 @@
     "test:runtime": "vitest run",
     "verify": "npm run format:check && npm run build && npm test"
   },
+  "dependencies": {
+    "@js-temporal/polyfill": "^0.5.1"
+  },
   "peerDependencies": {
     "pond-ts": "^0.41.0"
   },
