@@ -1,0 +1,44 @@
+{
+  "notes": [
+    "This manifest points at real 5-minute OHLCV source files. The GitHub sandbox here could inspect the files, but direct raw downloads are blocked in this runtime; run the companion script locally to materialize CSV fixtures.",
+    "SPY files are Alpha Vantage-style JSON snapshots with metadata: Intraday (5min) OHLCV, symbol SPY, timezone US/Eastern.",
+    "The 2024-12-02 snapshot has Last Refreshed 2024-11-29 17:00:00, which captures the US post-Thanksgiving half-day plus after-hours tail. Filter to regular session to validate early close behavior."
+  ],
+  "us_spy_10_session_candidate": {
+    "symbol": "SPY",
+    "interval": "5min",
+    "timezone": "US/Eastern",
+    "source_repo": "imbue11235/stockhistory",
+    "ref": "6373dbe137d61aa2693a7a14ca980725eaa721d5",
+    "paths": [
+      "data/SPY/2025-04-08.json",
+      "data/SPY/2025-04-09.json",
+      "data/SPY/2025-04-10.json",
+      "data/SPY/2025-04-11.json",
+      "data/SPY/2025-04-14.json",
+      "data/SPY/2025-04-15.json",
+      "data/SPY/2025-04-16.json",
+      "data/SPY/2025-04-17.json",
+      "data/SPY/2025-04-18.json",
+      "data/SPY/2025-04-21.json"
+    ],
+    "raw_url_template": "https://raw.githubusercontent.com/imbue11235/stockhistory/6373dbe137d61aa2693a7a14ca980725eaa721d5/{path}",
+    "intended_fixture": "spy-10-sessions-5m.csv"
+  },
+  "us_spy_half_day_candidate": {
+    "symbol": "SPY",
+    "date": "2024-11-29",
+    "session": "US post-Thanksgiving early close",
+    "source_repo": "imbue11235/stockhistory",
+    "ref": "6373dbe137d61aa2693a7a14ca980725eaa721d5",
+    "path": "data/SPY/2024-12-02.json",
+    "raw_url": "https://raw.githubusercontent.com/imbue11235/stockhistory/6373dbe137d61aa2693a7a14ca980725eaa721d5/data/SPY/2024-12-02.json",
+    "intended_fixture": "spy-2024-11-29-halfday-5m.csv"
+  },
+  "lunch_break_market": {
+    "status": "not_fully_resolved",
+    "preferred_markets": ["HKEX", "TSE"],
+    "required_shape": "morning continuous session, explicit lunch gap, afternoon continuous session",
+    "note": "I found official/current session-shape evidence for HKEX, but did not find a clean redistributable 5-minute OHLCV GitHub fixture for HKEX/TSE in this pass."
+  }
+}
