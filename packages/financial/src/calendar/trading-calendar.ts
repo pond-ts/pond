@@ -1,4 +1,10 @@
-import { BoundedSequence, Interval, type DurationInput } from 'pond-ts';
+import {
+  BoundedSequence,
+  Interval,
+  TimeSeries,
+  type DurationInput,
+  type SeriesSchema,
+} from 'pond-ts';
 import { normalizeSessions, type Session } from './session.js';
 import {
   generateSessions,
@@ -11,6 +17,18 @@ export interface InstantRange {
   start: number;
   end: number;
 }
+
+/**
+ * The schema of a series after {@link TradingCalendar.tagSessions} appends its
+ * numeric session-id column. Structurally identical to core's (unexported)
+ * `AppendColumn<S, Name, 'number'>` — a schema already leads with its key
+ * column, so `[...S, col]` is the same tuple — expressed with only the
+ * exported `SeriesSchema` so it names cleanly in emitted declarations.
+ */
+export type TaggedSchema<
+  S extends SeriesSchema,
+  Name extends string,
+> = readonly [...S, { readonly name: Name; readonly kind: 'number' }];
 
 const DURATION_MS: Record<string, number> = {
   ms: 1,
@@ -202,6 +220,43 @@ export class TradingCalendar {
       }
     }
     return new BoundedSequence(intervals);
+  }
+
+  /**
+   * Append a **session-id column** to `series`: for each event, the `open`
+   * instant of the session that contains it, or `undefined` if the event falls
+   * in closed time (a gap between sessions, or outside the schedule). The id is
+   * numeric and stable per session — use it as a `partitionBy` key so
+   * stateful ops (`rolling`, `fill`, cumulative folds) **don't bridge across a
+   * session boundary** (the align/rolling stopgap of the trading-calendar RFC,
+   * Tidal Ask 2). Recover the session from an id via {@link sessionOn} /
+   * {@link sessionContaining}.
+   *
+   * Default column name `"session"` (override with `column`). Throws if a
+   * column of that name already exists (a fresh column is appended, per
+   * `withColumn`). O(n + sessions) — a single merge walk over the (sorted)
+   * events and sessions; materializes the events once to read their instants.
+   */
+  tagSessions<S extends SeriesSchema, const Name extends string = 'session'>(
+    series: TimeSeries<S>,
+    options: { column?: Name } = {},
+  ): TimeSeries<TaggedSchema<S, Name>> {
+    const column = (options.column ?? 'session') as Name;
+    const events = series.toArray();
+    const ids = new Array<number | undefined>(events.length);
+    const sessions = this.#sessions;
+    let c = 0;
+    for (let i = 0; i < events.length; i++) {
+      const t = events[i]!.begin();
+      // Events are ascending by begin and sessions by open, so the cursor only
+      // moves forward: skip sessions that already closed at or before t.
+      while (c < sessions.length && sessions[c]!.close <= t) c++;
+      const s = c < sessions.length ? sessions[c]! : undefined;
+      ids[i] = s !== undefined && t >= s.open ? s.open : undefined;
+    }
+    return series.withColumn(column, ids) as unknown as TimeSeries<
+      TaggedSchema<S, Name>
+    >;
   }
 
   /**
