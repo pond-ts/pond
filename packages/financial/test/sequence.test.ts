@@ -66,8 +66,30 @@ describe('barSequence', () => {
     // 3h bars: Monday = one [09,12) bar; Wednesday's lunch splits it into
     // [09,10) and [11,12) — 3 bars total.
     expect(cal.barSequence(3 * H).intervals().length).toBe(3);
-    expect(() => cal.barSequence(0)).toThrow(/> 0/);
-    expect(() => cal.barSequence('5x' as never)).toThrow(/invalid duration/);
+    expect(() => cal.barSequence(0)).toThrow();
+    expect(() => cal.barSequence(-5)).toThrow(/positive finite/);
+  });
+
+  it('matches core parseDuration grammar: integer literals + finite positive numbers only', () => {
+    expect(() => cal.barSequence('5x' as never)).toThrow(
+      /unsupported duration/,
+    );
+    expect(() => cal.barSequence('1.5m' as never)).toThrow(
+      /unsupported duration/,
+    );
+    expect(() => cal.barSequence(Infinity)).toThrow(/positive finite/);
+    expect(() => cal.barSequence(NaN)).toThrow(/positive finite/);
+  });
+
+  it('emits a single truncated bar when the period exceeds the session', () => {
+    // 1-day bars on 3-hour sessions → one bar per tradeable segment, each
+    // truncated to the segment. Monday: 1; Wednesday (lunch): 2.
+    const seq = cal.barSequence('1d');
+    expect(seq.intervals().map((i) => [i.begin(), i.end()])).toEqual([
+      [D0 + 9 * H, D0 + 12 * H],
+      [D2 + 9 * H, D2 + 10 * H],
+      [D2 + 11 * H, D2 + 12 * H],
+    ]);
   });
 });
 

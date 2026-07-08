@@ -20,11 +20,23 @@ const DURATION_MS: Record<string, number> = {
   d: 86_400_000,
 };
 
-/** Parse a pond {@link DurationInput} (`number` ms or `"5m"`-style literal) to milliseconds. */
+/**
+ * Parse a pond {@link DurationInput} (`number` ms or `"5m"`-style literal) to
+ * milliseconds. Grammar mirrors core's (unexported) `parseDuration` exactly —
+ * positive finite numbers, integer literals only — so this collapses to a
+ * re-use if core ever exports it.
+ */
 function durationToMs(input: DurationInput): number {
-  if (typeof input === 'number') return input;
-  const m = /^(\d+(?:\.\d+)?)(ms|s|m|h|d)$/.exec(input);
-  if (!m) throw new TypeError(`invalid duration: ${JSON.stringify(input)}`);
+  if (typeof input === 'number') {
+    if (!Number.isFinite(input) || input <= 0) {
+      throw new TypeError(
+        'duration must be a positive finite number of milliseconds',
+      );
+    }
+    return input;
+  }
+  const m = /^(\d+)(ms|s|m|h|d)$/.exec(input);
+  if (!m) throw new TypeError(`unsupported duration '${input}'`);
   return Number(m[1]) * DURATION_MS[m[2]!]!;
 }
 
