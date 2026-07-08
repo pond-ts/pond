@@ -1,7 +1,4 @@
-export type {
-  DiscontinuityProvider,
-  WeekendSkipOptions,
-} from './calendar/discontinuity.js';
+export type { DiscontinuityProvider } from './calendar/discontinuity.js';
 export {
   identityDiscontinuity,
   weekendSkip,

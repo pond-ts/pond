@@ -49,17 +49,6 @@ describe('identityDiscontinuity', () => {
   });
 });
 
-describe('weekendSkip — construction', () => {
-  it('rejects non Sat+Sun weekends', () => {
-    expect(() => weekendSkip({ weekend: [5, 6] })).toThrow(/Saturday\+Sunday/);
-    expect(() => weekendSkip({ weekend: [0, 1] })).toThrow();
-  });
-  it('accepts the explicit Sat+Sun pair and defaults to it', () => {
-    expect(() => weekendSkip()).not.toThrow();
-    expect(() => weekendSkip({ weekend: [6, 0] })).not.toThrow();
-  });
-});
-
 describe('weekendSkip — distance', () => {
   const wk = weekendSkip();
 
@@ -86,12 +75,24 @@ describe('weekendSkip — distance', () => {
     );
   });
 
-  it('matches a day-stepping brute force across a multi-week range', () => {
-    const start = Date.UTC(2020, 5, 1); // arbitrary start
-    for (let d = 0; d < 60; d++) {
-      const t = start + d * DAY + 37 * 60_000; // + a sub-day offset
+  it('matches a day-stepping brute force across a multi-week range, incl. pre-1970', () => {
+    // Span both sides of the epoch (negative day indices) and of the Monday
+    // anchor, at a sub-day offset that lands mid-morning on live days.
+    const start = Date.UTC(1969, 10, 3); // a pre-epoch Monday-ish start
+    for (let d = 0; d < 140; d++) {
+      const t = start + d * DAY + 37 * 60_000;
       // distance(a, b) === liveMs(b) - liveMs(a); brute-force both endpoints.
       expect(wk.distance(start, t)).toBe(bruteLiveMs(t) - bruteLiveMs(start));
+    }
+  });
+
+  it('offset is a right-inverse of distance across the same range (incl. pre-1970)', () => {
+    // For any live amount, offset(a, amount) must be an instant whose distance
+    // back to a is exactly amount — an independent exercise of instantForLiveMs.
+    const a = Date.UTC(1969, 11, 1); // pre-epoch weekday
+    for (let liveDays = -20; liveDays < 120; liveDays++) {
+      const amount = liveDays * DAY + 9 * 3_600_000 + 17 * 60_000;
+      expect(wk.distance(a, wk.offset(a, amount))).toBe(amount);
     }
   });
 

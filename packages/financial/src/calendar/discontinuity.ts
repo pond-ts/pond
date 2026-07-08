@@ -74,42 +74,21 @@ function weekdaysBefore(n: number): number {
   return fullWeeks * 5 + Math.min(rem, 5);
 }
 
-export interface WeekendSkipOptions {
-  /**
-   * Which days are the weekend, as day-of-week indices with **0 = Sunday** …
-   * **6 = Saturday** (matching `Date.getUTCDay`). Defaults to `[6, 0]`
-   * (Saturday + Sunday). Must be a contiguous pair for the closed-form math to
-   * hold; the reference provider does not model split or single-day weekends.
-   */
-  weekend?: readonly [number, number];
-}
-
 /**
- * The bundled **reference** discontinuity provider: UTC weekends removed from
- * the axis. This is demo / spike grade — it knows nothing about exchange
- * holidays, half-days, session hours, or non-UTC weekends. For real markets,
- * construct a provider from a session schedule (bring-your-own calendar data,
- * per the trading-calendar RFC); this exists to prove the interface, to seed
- * stories/tests, and to cover the "just drop the weekends" case.
+ * The bundled **reference** discontinuity provider: UTC weekends (all of
+ * Saturday and Sunday) removed from the axis. This is demo / spike grade — it
+ * knows nothing about exchange holidays, half-days, session hours, or non-UTC
+ * weekends. For real markets, construct a provider from a session schedule
+ * (bring-your-own calendar data, per the trading-calendar RFC); this exists to
+ * prove the interface, to seed stories/tests, and to cover the "just drop the
+ * weekends" case. It deliberately takes **no options** — anything beyond a
+ * plain Sat+Sun UTC weekend is a job for the calendar, not a knob here.
  *
- * Semantics: the removed gaps are `[Sat 00:00 UTC, Mon 00:00 UTC)` each week
- * (i.e. all of Saturday and Sunday). All arithmetic is closed-form O(1) — no
- * scan over the intervening weeks — so it is cheap to call per-tick / per-pixel.
+ * Semantics: the removed gaps are `[Sat 00:00 UTC, Mon 00:00 UTC)` each week.
+ * All arithmetic is closed-form O(1) — no scan over the intervening weeks — so
+ * it is cheap to call per-tick / per-pixel.
  */
-export function weekendSkip(
-  options: WeekendSkipOptions = {},
-): DiscontinuityProvider {
-  const weekend = options.weekend ?? [6, 0]; // Sat, Sun (getUTCDay convention)
-  const weekendSet = new Set(weekend);
-  if (weekendSet.size !== 2 || !weekendSet.has(6) || !weekendSet.has(0)) {
-    // The closed-form live-ms map is derived specifically for a Sat+Sun
-    // weekend. Reject anything else rather than silently miscomputing.
-    throw new RangeError(
-      'weekendSkip currently supports only the Saturday+Sunday weekend ([6, 0]); ' +
-        'for other market schedules build a provider from a session calendar.',
-    );
-  }
-
+export function weekendSkip(): DiscontinuityProvider {
   /** Day index relative to the Monday anchor (0 = the anchor Monday). */
   const dayIndexOf = (value: number): number =>
     Math.floor((value - MONDAY_ANCHOR_MS) / DAY_MS);
