@@ -30,6 +30,14 @@ export interface DiscontinuityProvider {
  * the non-degenerate baseline; a calendar-aware nice-tick generator can override
  * `.ticks` at the container level. `tickFormat` delegates to a d3 `scaleTime` so
  * the multi-scale time format is unchanged.
+ *
+ * **Out-of-domain behavior.** Within the calendar the scale extrapolates like a
+ * normal scale — a live instant *before* the domain start maps to a negative
+ * pixel (so off-plot marks are still culled). Instants outside the calendar
+ * entirely (before the first session / after the last) have no trading-time
+ * position and **clamp** to the near edge rather than extrapolating into
+ * meaningless space. In practice marks are always in-calendar, so this only
+ * affects data beyond the calendar's absolute extremes.
  */
 export interface TradingTimeScale {
   (value: number): number;
@@ -73,19 +81,22 @@ export function scaleTradingTime(
   scale.ticks = (count = 10): number[] => {
     const live = totalLive();
     if (live <= 0 || count < 1) return [domain[0]];
+    // Interior ticks, evenly spaced in trading time (→ evenly spaced in pixels).
+    // Endpoints are excluded so no tick sits exactly on the plot edge, matching
+    // how a d3 time axis places ticks inside the domain.
     const out: number[] = [];
-    for (let i = 0; i <= count; i++) {
+    for (let i = 1; i < count; i++) {
       out.push(provider.offset(domain[0], (i / count) * live));
     }
     return out;
   };
 
-  scale.tickFormat = (count = 10, specifier?: string) => {
-    base.domain(domain);
-    return specifier !== undefined
+  scale.tickFormat = (count = 10, specifier?: string) =>
+    // d3's multi-scale time format is domain-independent, so `base` needs no
+    // domain sync — it exists only to borrow d3's formatter.
+    specifier !== undefined
       ? base.tickFormat(count, specifier)
       : base.tickFormat(count);
-  };
 
   function domainFn(): [number, number];
   function domainFn(next: readonly [number, number]): TradingTimeScale;

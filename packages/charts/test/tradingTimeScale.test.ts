@@ -121,4 +121,28 @@ describe('scaleTradingTime', () => {
     const s = scaleTradingTime(provider).domain([S0, S0]).range([0, 1200]);
     expect(s(S0)).toBe(0);
   });
+
+  it('extrapolates within the calendar but clamps beyond its extremes', () => {
+    // Domain is the second session only; the first session is in-calendar but
+    // before the domain → negative pixel (extrapolated, so it gets culled).
+    const s = scaleTradingTime(provider)
+      .domain([S1, S1 + 6 * H])
+      .range([0, 600]);
+    expect(s(S1 - 100 * H)).toBeLessThan(0); // a live instant before the domain
+    // Beyond the calendar's absolute start there is no trading time → clamps.
+    expect(s(S0 - 50 * H)).toBe(s(S0)); // both pin to the same edge pixel
+  });
+
+  it('returns a single tick for count < 1', () => {
+    const s = scaleTradingTime(provider)
+      .domain([S0, S1 + 6 * H])
+      .range([0, 1200]);
+    expect(s.ticks(0)).toEqual([S0]);
+  });
+
+  it('ticks are interior — none sits exactly on the plot edge', () => {
+    const px = scale.ticks(6).map((t) => scale(t));
+    expect(Math.min(...px)).toBeGreaterThan(0);
+    expect(Math.max(...px)).toBeLessThan(1200);
+  });
 });
