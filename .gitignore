@@ -16,10 +16,12 @@ experiments/
 # README, LICENSE, CHANGELOG copied into each package by `prepack`
 # so the published npm tarball includes them. Sources of truth are
 # the repo-root files; the per-package copies are build artifacts.
-# Exception: @pond-ts/charts and @pond-ts/fit ship their OWN committed
-# README (their prepack does not copy the root one) — see the negations.
+# Exception: @pond-ts/charts, @pond-ts/fit, and @pond-ts/financial ship
+# their OWN committed README (their prepack does not copy the root one) —
+# see the negations.
 packages/*/README.md
 !packages/charts/README.md
 !packages/fit/README.md
+!packages/financial/README.md
 packages/*/LICENSE
 packages/*/CHANGELOG.md
