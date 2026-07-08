@@ -628,13 +628,19 @@ direction|series`, `showOHLC` (Phase-2 four-pill readout, folded in early),
     and confirmed one real gap: the `candle` slot is type-_required_, but a theme
     built by spreading `defaultTheme`/`estelaTheme` still compiles and silently
     renders the **neutral placeholder** pair (`theme.ts` `defaultTheme.candle`),
-    so the type break only bites hand-built themes. Worse, `cssVarTheme`
-    (`src/css-theme.ts`) has **no candle mapping** — a consumer wiring market
-    green/red from CSS vars must hand-populate `candle.default` (Tidal did, via
-    its own `readChartTheme`). Grow `cssVarTheme` a `candle` var mapping (rising/
-    falling/neutral body+wick) so the market palette is one declarative overlay,
-    consistent with how `line`/`area`/`bar` already read from vars. LOW — the
-    hand-roll works today; earns its keep when the next consumer adopts candles.
+    so the type break only bites hand-built themes. Second, `cssVarTheme`
+    (`src/css-theme.ts`) is a **generic** overlay (a `resolve` callback →
+    `DeepPartial<ChartTheme>`), so it already _accepts_ a `candle` override —
+    but there is no **worked candle branch**: the `CssVarTheme` story + docs
+    drive only `line`/`axis`/`cursor`/`background`, and there is no canonical
+    `--*-candle-*` var-name convention, so a consumer wiring market green/red
+    from CSS vars hand-rolls `candle.default` (Tidal did, via its own
+    `readChartTheme`). Deliverable when it lands: a candle branch in the
+    `CssVarTheme` story (rising/falling/neutral body+wick) + a doc'd var-name
+    convention, so the market palette is one declarative overlay like the
+    other slots — **not** new per-slot plumbing (the overlay is already
+    generic). LOW — the hand-roll works today; earns its keep when the next
+    consumer adopts candles.
   - **Selection — Phase 1 (series-`id` identity) ADOPTED + built**
     (`feat/charts-selection-id`, Harbor issue #360). The first slice of
     [`docs/rfcs/selection.md`](docs/rfcs/selection.md) — **A2.2 + A3** — is built
