@@ -1,3 +1,4 @@
+import { BoundedSequence, Interval, type DurationInput } from 'pond-ts';
 import { normalizeSessions, type Session } from './session.js';
 import {
   generateSessions,
@@ -9,6 +10,22 @@ import {
 export interface InstantRange {
   start: number;
   end: number;
+}
+
+const DURATION_MS: Record<string, number> = {
+  ms: 1,
+  s: 1000,
+  m: 60_000,
+  h: 3_600_000,
+  d: 86_400_000,
+};
+
+/** Parse a pond {@link DurationInput} (`number` ms or `"5m"`-style literal) to milliseconds. */
+function durationToMs(input: DurationInput): number {
+  if (typeof input === 'number') return input;
+  const m = /^(\d+(?:\.\d+)?)(ms|s|m|h|d)$/.exec(input);
+  if (!m) throw new TypeError(`invalid duration: ${JSON.stringify(input)}`);
+  return Number(m[1]) * DURATION_MS[m[2]!]!;
 }
 
 /**
@@ -109,6 +126,70 @@ export class TradingCalendar {
       if (s.close > start) out.push(s);
     }
     return out;
+  }
+
+  /**
+   * A {@link BoundedSequence} of one interval per session — `[open, close)`,
+   * labelled by trading date. This is the daily-bar bucketing grid: feed it
+   * straight to `TimeSeries.aggregate` / `.materialize` and every bucket is a
+   * real trading session, with no weekend/holiday buckets and no bucket
+   * spanning a market closure. Intraday breaks are *inside* the daily bar (a
+   * daily bar spans the lunch) — use {@link barSequence} to break at them.
+   *
+   * With `range`, only sessions overlapping `[start, end)` are included (full
+   * sessions — bars are not clipped to the range; crop the result if exact
+   * range edges are needed).
+   */
+  sessionSequence(range?: InstantRange): BoundedSequence {
+    const sessions = range ? this.sessionsInRange(range) : this.#sessions;
+    return new BoundedSequence(
+      sessions.map(
+        (s) => new Interval({ value: s.date, start: s.open, end: s.close }),
+      ),
+    );
+  }
+
+  /**
+   * A {@link BoundedSequence} of intraday `period`-width bars, session-aligned:
+   * bars never span a session boundary or an intraday break, and the final bar
+   * of each tradeable segment is **truncated at the close** (a 90-minute grid
+   * on a 6.5-hour session ends with a short bar). Labelled by bar-open instant.
+   * This mirrors `exchange_calendars.trading_index` / `pandas_market_calendars`
+   * bar-grid semantics, and — like {@link sessionSequence} — flows straight
+   * through `aggregate`/`materialize`.
+   *
+   * `period` is a pond {@link DurationInput} (`"5m"`, `"1h"`, or ms). With
+   * `range`, only sessions overlapping it contribute bars (full sessions).
+   */
+  barSequence(period: DurationInput, range?: InstantRange): BoundedSequence {
+    const periodMs = durationToMs(period);
+    if (!(periodMs > 0)) {
+      throw new RangeError(
+        `barSequence period must be > 0; got ${JSON.stringify(period)}`,
+      );
+    }
+    const sessions = range ? this.sessionsInRange(range) : this.#sessions;
+    const intervals: Interval[] = [];
+    for (const s of sessions) {
+      // Tradeable segments = [open, close) with the breaks removed.
+      let segStart = s.open;
+      const segments: Array<readonly [number, number]> = [];
+      if (s.breaks) {
+        for (const b of s.breaks) {
+          if (b.start > segStart) segments.push([segStart, b.start]);
+          segStart = b.end;
+        }
+      }
+      if (s.close > segStart) segments.push([segStart, s.close]);
+
+      for (const [a, b] of segments) {
+        for (let t = a; t < b; t += periodMs) {
+          const end = Math.min(t + periodMs, b);
+          intervals.push(new Interval({ value: t, start: t, end }));
+        }
+      }
+    }
+    return new BoundedSequence(intervals);
   }
 
   /**
