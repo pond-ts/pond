@@ -215,15 +215,26 @@ undefined source cell does not call `step` — the accumulator is held
 and the row re-emits the last output (so it holds flat across a gap),
 `undefined` only until the first defined value. A stored `NaN` is a
 defined number and is passed to `step`. On a multi-entity series the
-accumulator interleaves across entities; scope it with
-`series.partitionBy(col).scan(...).collect()`.
+accumulator interleaves across entities; scope it per entity with
+`partitionBy`, run `scan` inside each partition, and fan back in with
+`collect`:
+
+```ts
+// One running total per host, not a single interleaved accumulator.
+const perHost = series
+  .partitionBy('host')
+  .scan('requests', (acc, v) => [acc + v, acc + v], 0)
+  .collect();
+```
 
 **`split = scan + byColumn`.** The reason `scan` exists: it isolates the
 order-dependent state into a column so value-axis aggregation
 ([`byColumn`](./aggregation#bycolumn)) can stay pure and order-free.
 Materialize the carried state with `scan`, then segment statelessly —
 e.g. per-kilometre split gain is `last − first` of the scanned `cumGain`
-in each distance bin.
+in each distance bin. See
+[Value axis](../../start-here/concepts/value-axis) for the mental model
+behind this composition.
 
 ### `tail(duration)` — keep the trailing window
 

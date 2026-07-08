@@ -1,0 +1,164 @@
+---
+sidebar_position: 9
+---
+
+# Value axis
+
+Most of pond-ts keys events by **time**. But nothing in the series
+algebra is _really_ about time — the key is a numeric interval
+`[begin, end)`, and time is one **tag** on it. A **value axis** keys a
+series by a different monotonic number: cumulative distance, cumulative
+work, lap number, sample index — anything that only ever increases.
+
+Reach for a value axis when the natural x of your data is a _quantity_,
+not the wall clock:
+
+| Wall-clock time                        | Value axis                                    |
+| -------------------------------------- | --------------------------------------------- |
+| CPU over the last hour                 | Heart rate over kilometres ridden             |
+| Requests per minute                    | Power distribution across watt bands          |
+| Daily revenue                          | Elevation profile against cumulative distance |
+| "What was it at 14:05?"                | "What was it at the 40 km mark?"              |
+| Compare two days at the same wall hour | Compare two rides at the same _distance_      |
+
+The classic case is a bike ride or run: the interesting comparisons
+("splits", "this climb vs last week's") line up on **distance**, not on
+elapsed time, because pauses and pace differences smear the time axis.
+
+## Time is a tag
+
+A temporal key is a numeric interval with a `kind` discriminator —
+`'time'`, `'timeRange'`, `'interval'`. pond-ts adds one more kind,
+`'value'`, and with it a value-keyed series:
+
+- **`TimeSeries`** — key kind is temporal; carries the calendar/clock
+  operators (`Sequence.every`, `aggregate` on a time grid, time-zone
+  math).
+- **`ValueSeries`** — key kind is `'value'`; carries the
+  **ordering-based** operators (nearest-neighbour lookup, slice by
+  value, per-row axis access) — the part of the algebra that was never
+  about time in the first place.
+
+Both wrap the same columnar storage. The difference is which operators
+the type makes available: a `ValueSeries` has no wall-clock semantics,
+so the calendar operators are deliberately **type-impossible** on it —
+`byDistance.aggregate(Sequence.every('1m'), …)` does not type-check,
+because a "minute" is meaningless on a distance axis.
+
+## `byValue` — the projection into value-land
+
+`series.byValue(axis)` re-keys a `TimeSeries` onto one of its numeric
+columns and returns a closed `ValueSeries`:
+
+```ts
+// Re-key a ride onto cumulative distance. `cumDist` becomes the axis
+// and is dropped from the value columns — it's now the key.
+const byDistance = ride.byValue('cumDist');
+
+byDistance.axisName; // 'cumDist'
+byDistance.axisValues(); // Float64Array — distance at each row
+byDistance.axisAt(3); // the axis value of row 3
+byDistance.column('hr'); // a value column: read with .read(i) / .values()
+byDistance.nearestIndex(40_000); // row nearest the 40 km mark (binary search)
+byDistance.sliceByValue(40_000, 60_000); // the 40–60 km sub-series (zero-copy)
+```
+
+The axis column must be **defined, finite, and non-decreasing at every
+row** — it's becoming the index, so (unlike an ordinary value column) it
+can't have gaps or reversals. `byValue` validates this and throws
+otherwise. This monotonicity contract lives on the _projection_, not on
+the source series.
+
+The usual way to build a monotonic axis is
+[`scan`](../../pond-ts/transforms/transformations#scan) — a running fold
+that turns per-sample deltas (distance-between-fixes, work-per-tick)
+into a cumulative column you can key on.
+
+## Closed vs projected-out: `byValue` vs `byColumn`
+
+pond-ts is a **closed algebra** — a `TimeSeries` transform returns a
+`TimeSeries`, so you can keep chaining. `byValue` extends that closure
+sideways: `TimeSeries → ValueSeries`, and a `ValueSeries` is itself a
+series you can slice and read. This is a **projection**, not a dead end.
+
+The value-axis _aggregators_ — [`byColumn`](../../pond-ts/transforms/aggregation#bycolumn)
+and `rollingByColumn` — are different. They bin a numeric column and
+return a plain **array of bin records** (`{ start, end, ...aggregates }`),
+not a series:
+
+```ts
+// byValue: project onto the axis — stays in the algebra.
+const byDistance = ride.byValue('cumDist'); // → ValueSeries
+
+// byColumn: aggregate over the axis — projects OUT to records.
+const splits = ride.byColumn(
+  'cumDist',
+  { width: 1000 },
+  { gain: { from: 'ele', using: 'sum' } },
+); // → [{ start: 0, end: 1000, gain: 12.4 }, …]
+```
+
+A value-bin (a per-kilometre split, a watt band) isn't itself keyed by
+anything you'd chain further, so these operators deliberately leave the
+algebra and hand back records — the same way `reduce` returns a plain
+record. The split:
+
+- **`byValue`** when you want to _keep_ the full-resolution channel but
+  read or plot it against a value instead of time (cursor a chart at
+  "40 km", slice out a segment).
+- **`byColumn` / `rollingByColumn`** when you want to _collapse_ the
+  channel into per-bin rollups (splits, a histogram, time-in-zone,
+  a rolling profile).
+
+## `split = scan + byColumn`
+
+Value-axis aggregation reducers are **pure and order-free** — each bin
+is reduced independently. When a metric carries state _across_ bins
+(hysteresis elevation gain, where a climb spanning several kilometres
+accumulates), don't reach for a stateful reducer. Materialize the
+carried state into a column with [`scan`](../../pond-ts/transforms/transformations#scan)
+first, then segment it statelessly with `byColumn`:
+
+```ts
+const splits = ride
+  .scan<'cumGain', { ref: number | null; gain: number }>(
+    'ele',
+    (acc, ele) => {
+      /* hysteresis deadband — see the scan reference */
+    },
+    { ref: null, gain: 0 },
+    { output: 'cumGain' },
+  )
+  .byColumn(
+    'cumDist',
+    { width: 1000 },
+    { gain: { from: 'cumGain', using: 'last' } },
+  );
+// per-km gain is then `last − first` of cumGain in each bin.
+```
+
+`scan` isolates the order-dependent state; `byColumn` stays pure. This
+composition is why pond-ts has no domain-specific `split()` operator.
+
+## Non-goals
+
+- **Not 2D.** A value axis replaces the x key; it doesn't give you a
+  scatter plot's 2D-nearest cursor.
+- **Not arbitrary non-monotonic x.** The axis must be non-decreasing.
+  Laps and splits are intervals on _cumulative_ distance, which is
+  monotonic by construction; instantaneous speed is not an axis.
+- **No calendar on a value axis.** `Sequence.every`, time-zone math,
+  and grid `aggregate` stay time-only — by type, not by convention.
+
+## Where this shows up
+
+- **Building the axis** — [`scan`](../../pond-ts/transforms/transformations#scan)
+  turns per-sample deltas into a cumulative, monotonic column.
+- **Projecting** — [`byValue`](../../pond-ts/transforms/aggregation#byvalue)
+  re-keys a `TimeSeries` onto that column, returning a `ValueSeries`.
+- **Aggregating** — [`byColumn`](../../pond-ts/transforms/aggregation#bycolumn)
+  and `rollingByColumn` bin the axis into split / histogram / profile
+  records.
+- **Plotting** — `@pond-ts/charts` accepts a `ValueSeries` on a linear
+  x scale, with a synced value cursor. See the
+  [charts docs](../../charts/index.mdx).
