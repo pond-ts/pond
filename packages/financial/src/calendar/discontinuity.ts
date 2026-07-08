@@ -21,9 +21,9 @@
  * - {@link DiscontinuityProvider.copy} clones the provider.
  */
 export interface DiscontinuityProvider {
-  /** If `value` lies inside a removed gap, return the gap's *end* (the first live instant `>= value`); otherwise return `value` unchanged. */
+  /** If `value` lies inside a removed gap, snap it up to the next live instant; a value already live is returned unchanged. Behavior for a value outside the provider's whole domain is implementation-defined — `identityDiscontinuity` leaves it; a bounded provider (`segmentDiscontinuity`) may snap to its first live edge. */
   clampUp(value: number): number;
-  /** If `value` lies inside a removed gap, return the gap's *start* (the last live instant `<= value`); otherwise return `value` unchanged. */
+  /** If `value` lies inside a removed gap, snap it down to the previous live instant; a value already live is returned unchanged. Out-of-domain behavior is implementation-defined (see {@link clampUp}). */
   clampDown(value: number): number;
   /** Live (non-gap) domain distance from `from` to `to`. Signed: negative when `to < from`. Gap time between the two is not counted. */
   distance(from: number, to: number): number;
@@ -72,8 +72,11 @@ export type LiveSegment = readonly [start: number, end: number];
  * down before the first) also returns the value unchanged.
  */
 export function segmentDiscontinuity(
-  segments: readonly LiveSegment[],
+  input: readonly LiveSegment[],
 ): DiscontinuityProvider {
+  // Drop zero/negative-length spans at the boundary so every segment is a real
+  // live span (the calendar never emits these, but the entry point is public).
+  const segments = input.filter((s) => s[1] > s[0]);
   const n = segments.length;
   // Precompute cumulative live-ms at each segment start; cum[n] = total.
   const cum = new Array<number>(n + 1);

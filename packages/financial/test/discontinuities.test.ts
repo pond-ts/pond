@@ -57,6 +57,45 @@ describe('segmentDiscontinuity', () => {
     expect(e.distance(0, 100)).toBe(0);
     expect(e.clampUp(50)).toBe(50);
   });
+
+  it('treats a segment’s exclusive end consistently (half-open)', () => {
+    // 100 is the exclusive end of span0 — a gap point, not live.
+    expect(p.clampUp(100)).toBe(200); // gap → next start
+    expect(p.clampDown(100)).toBe(100); // already the prev span end
+    expect(p.distance(0, 100)).toBe(100); // full span0 length
+    // Offsetting a full span from its start lands on the NEXT live instant:
+    // span0's exclusive end shares its live-ms (100) with span1's start, and
+    // the inverse resolves up to the live edge (200), not the gap point (100).
+    expect(p.offset(0, p.distance(0, 100))).toBe(200);
+  });
+
+  it('adjacent (touching) segments stay continuously live', () => {
+    const t = segmentDiscontinuity([
+      [0, 100],
+      [100, 200],
+    ]);
+    expect(t.distance(0, 200)).toBe(200); // no gap between them
+    expect(t.clampUp(100)).toBe(100); // the shared boundary is live
+    expect(t.clampDown(100)).toBe(100);
+  });
+
+  it('a single segment behaves like an offset identity within it', () => {
+    const s = segmentDiscontinuity([[1000, 2000]]);
+    expect(s.distance(1200, 1700)).toBe(500);
+    expect(s.offset(1200, 500)).toBe(1700);
+    expect(s.clampUp(500)).toBe(1000); // before → start
+    expect(s.clampDown(5000)).toBe(2000); // after → end
+  });
+
+  it('drops zero/negative-length segments at the boundary', () => {
+    const z = segmentDiscontinuity([
+      [0, 100],
+      [150, 150], // zero-length — ignored
+      [200, 300],
+    ]);
+    expect(z.distance(0, 300)).toBe(200); // same as without the empty span
+    expect(z.clampUp(150)).toBe(200); // the empty span is not a live target
+  });
 });
 
 const H = 3_600_000;
