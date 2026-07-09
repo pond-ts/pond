@@ -636,6 +636,15 @@ TimeSeries`. Ingest-time normalization (timestamp parsing, missing-
   (v0.11 PR 1).** Documented as append-only fan-in instead. May be
   revisited if real usage hits the divergence.
 
+- **Dense tabular / heatmap grids in `@pond-ts/charts`.** A heatmap
+  table (rows × columns of coloured cells, sortable, sticky headers)
+  is a DOM-table concern, not a canvas-plot concern — the SPARC
+  consumer correctly built its bucket heatmaps as HTML tables, and we
+  record that as the right call (Harbor issue #395, item 14, triaged
+  2026-07-09). Charts owns time/value/(future categorical) x-axis
+  plots; a 2-D coloured grid is a different rendering model with no
+  shared axis machinery.
+
 - **Two-phase commit at the `LiveSeries` level.** Partition view
   errors throw post-source-commit. Documented; could be addressed by
   `LiveSeries`-architecture changes (validate-then-commit-then-

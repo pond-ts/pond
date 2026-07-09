@@ -668,6 +668,107 @@ direction|series`, `showOHLC` (Phase-2 four-pill readout, folded in early),
 readonly SelectInfo[]` widen + `selectionMode` (multi-select); `LineChart.hitTest`
     threshold nearest-point; the `snapToClosest | snapToClosestSelected` prop;
     theme-referenced dim state.
+  - **SPARC summary-charts friction wave — inferred-consumer report, triaged
+    2026-07-09 (Harbor issue #395, web-platform agent).** SPARC (`web-platform`
+    `packages/sparc`) shipped ~2,000 lines of bespoke chart code — four
+    categorical summary charts (stacked bar, time-of-day histogram, diverging
+    threshold bars, count) + scenario PnL curves — over live wholesale-replaced
+    aggregate rows, WITHOUT engaging `@pond-ts/charts` 0.41.0. The report is
+    _inferred_ (the consumer did not adopt-then-file; these are gaps that, closed,
+    would have made the library the shorter path). 14 items triaged; dispositions
+    below. **Common thread: SPARC's charts are _categorical_ (ticker / account /
+    notice-type), and pond's x-axis is monotonic-only by design** (value-axis RFC
+    §Non-goals: "not arbitrary non-monotonic x"). The categorical asks (2, 3, and
+    the cyclic half of 7) push exactly that deliberate boundary → they earn an RFC,
+    not a silent PLAN fold.
+    - **→ RFC — item 2 (categorical x-axis / band scale) + item 3 (stacked +
+      signed-stacked bars).** A THIRD x-kind (`category`/ordinal) beside
+      `time`/`value`, with band width/padding (fixed-pitch bars), a label
+      thin/truncate/rotate policy, and stack encoding (`columns[]`/`stackBy`,
+      signed positive-up/negative-down, per-segment `SelectInfo` identity, legend
+      metadata). This is the value-axis RFC's stated non-goal being reopened by a
+      real driver — new RFC (or a categorical-axis phase appended to
+      `docs/rfcs/value-axis.md`). The two co-arrive (all four SPARC charts are
+      categorical + two are stacked) so design them together.
+    - **→ RFC — item 1 (snapshot-replace source).** Keyed aggregate rows (20–1,500)
+      wholesale-REPLACED per tick with reference-stable semantics the react hooks
+      understand — distinct from `LiveSeries`'s append/event model and from the
+      queued snapshot/append primitives. Cross-layer (live source + `@pond-ts/react`
+      hook + charts "repaint only changed marks"), and it intersects the
+      LiveSeries-columnar-vs-rows decision — RFC-scale, not a bounded patch. Its
+      acceptance criterion (1,500 rows @ 5 Hz re-render only changed marks) also
+      defines the K-Hz replace path that item 11's perf envelope must measure.
+    - **→ RFC — item 12 (keyboard + aria on marks).** Genuine unaddressed gap
+      (no a11y anywhere in charts today). Canvas has no DOM marks to focus, so this
+      needs a real design — roving-tabindex focus model on an overlay + aria-live
+      readout + `role`/labels — and it couples to selection/cursor. RFC, not a
+      quick add. Correct framing from the reporter: fix it once in the library.
+    - **→ PLAN (already tracked) — item 4 (controlled multi-selection).** This IS
+      selection RFC **Phase 2**, explicitly queued above ("`SelectInfo | null →
+      readonly SelectInfo[]` widen + `selectionMode`"). SPARC is a 2nd driver →
+      confirms Phase 2, bump. **Reconcile terminology:** multi-select keys on the
+      series **`id`** (A3, shipped Phase 1), NOT the sample `key` the report's
+      `selectedKeys: string[]` implies; ctrl-click = `selectionMode: 'add'`; dim =
+      theme-referenced selection state (A2, already the model). Breaking public-type
+      widen → human-approval gate.
+    - **→ PLAN (already tracked) — item 9 (symlog/log `<YAxis>` scale).** Exactly
+      the axis-backlog "d3 scale variety — log/pow/sqrt" item. SPARC drives symlog
+      specifically (PnL curves) → pull in as an additive `<YAxis scale>` prop.
+    - **→ PLAN (already tracked) — item 8a (container autosize).** = **PLAN #14**
+      responsive `width="auto"` / `useParentSize`; SPARC is now the **3rd** consumer
+      (estela, Tidal, SPARC) hand-rolling ResizeObserver → bump priority. **New →
+      PLAN — item 8b (`<Legend>` + `<EmptyState>` slot components):** 3 consumers
+      duplicate ~100 lines of legend/no-data chrome each — genuine repeated-chrome
+      signal, scoped DOM components (charts already threads legend metadata via
+      context).
+    - **→ PLAN (new, scoped) — item 5 (brush).** Reopens **M4.3 brush**, which was
+      SKIPPED 2026-06-20 for "no drivers" — SPARC is the driver. `onBrushEnd([x0,x1])`
+      in domain units; the `Region` annotation (already built) renders the active
+      window — a brush → external store → `Region` round-trip is the acceptance
+      shape. No raw pointer listeners in consumer code.
+    - **→ PLAN (new, scoped) — item 6 (threshold colour encoding).** Extends the
+      **already-signed-off** scatter data-driven colour exception (`color={{column,
+      range}}`, `ScatterChart`) to a stepped `{column, thresholds: number[], as:
+      string[]}` mapping bands to **theme tokens** (not raw colours, no callback) —
+      so it stays inside the single-styling-channel rule (theme-restylable). Risk-band
+      colouring (grey → 1× → 2× → 4×). Scoped, additive.
+    - **→ PLAN (partly shipped) — item 7 (binning helpers + minutes-of-day axis).**
+      Core already ships `Float64Column.bin(W)` + `binBy(key, edges, reducer)`
+      (#362); `binByWidth` ≈ `binBy` with width-derived edges. **New:**
+      `binClockAligned(candidates, targetMaxBins)` (1/2/5/10/15/30/60-min candidates
+      vs a bin budget) — a calendar-aware helper, candidate for `@pond-ts/financial`
+      (trading-calendar precedent: calendar-aware code lives there, never in core).
+      The **minutes-of-day (0–1440, cyclic) axis + formatter** is small and distinct
+      from `scaleTradingTime` (no calendar discontinuities — a plain cyclic linear
+      axis) → an `<XAxis>` formatter. Scoped.
+    - **→ PLAN (docs deliverable) — item 11 (published performance budget).** The
+      tested "N points × M layers × K Hz replace" envelope, consumer-facing — pairs
+      with item 1 (defines the replace path) and feeds the friction-model's honest
+      bench/analysis output. Not new capability, a documented number.
+    - **→ PLAN (low-pri, sequenced) — item 13 (reference acceptance example).**
+      Rebuild one SPARC chart (the diverging threshold bars) as a storybook fixture
+      + how-to for the "filter-linked categorical summary chart" consumer class.
+      **Depends on items 2/3/4 landing** (the capabilities must exist first); rides
+      living-examples #285.
+    - **REJECT-as-library-export / → PLAN docs recipe — item 10 (MUI theme
+      adapter).** Shipping `muiToChartTheme(palette)` inside `@pond-ts/charts` bakes
+      a framework brand into the neutral library — the exact
+      [[charts-no-consumer-themes]] principle that moved `estelaTheme` OUT (pond
+      task #10). The generic `cssVarTheme` already bridges the CSS-var path; a MUI
+      `palette` → `ChartTheme` map is a ~15-line consumer adapter → a documented
+      recipe (or a `@pond-ts/react` example), not lib API.
+    - **ACCEPT (record non-goal) — item 14 (heatmap tables).** SPARC's bucket
+      heatmaps were correctly built as sortable sticky-header HTML tables, not
+      charts. **Explicit non-goal for `@pond-ts/charts`:** dense tabular/heatmap
+      grids are a DOM-table concern, not a canvas-plot concern — recorded here and
+      in the ARCHITECTURE decision log.
+
+    **Nothing built in this triage pass** — every actionable item touches the
+    _published_ public API (new x-kind, `<YAxis scale>`, `selected` widen, brush
+    callback, threshold encoding, `<Legend>`) → human-approval gate before build,
+    and the two biggest (categorical axis, snapshot-replace) + a11y are RFC-scale.
+    Issue left OPEN awaiting Peter's acceptance of these dispositions per the
+    Harbor report protocol.
 - **M5 — estela parity.** Faithful `DataChart` reproduction on real activity
   data; prove no-regressions; hand the production swap to the estela agent; flip
   `private:false` + first publish.
