@@ -158,6 +158,42 @@ describe('ChartContainer discontinuities → trading-time axis', () => {
     expect(called).toBe(false); // calendar sugar not consulted
   });
 
+  it('drops the calendar-derived provider on a value axis', () => {
+    // Same gate as the low-level prop, on the merged provider — a value-keyed
+    // row must not become a trading-time axis via the calendar sugar either.
+    const calendar: TradingCalendarLike = {
+      discontinuities: () => provider,
+    };
+    const rideByDistance = new TimeSeries({
+      name: 'ride',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'cumDist', kind: 'number' },
+        { name: 'hr', kind: 'number' },
+      ] as const,
+      rows: [
+        [0, 0, 120],
+        [1000, 500, 130],
+      ],
+    }).byValue('cumDist');
+
+    let frame: ContainerFrame | null = null;
+    render(
+      <ChartContainer calendar={calendar} width={320}>
+        <ChartRow height={100}>
+          <YAxis id="a" min={100} max={160} />
+          <Layers>
+            <LineChart series={rideByDistance} column="hr" axis="a" />
+          </Layers>
+          <Capture sink={(f) => (frame = f)} />
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const f = frame!;
+    expect(f.xKind).toBe('value');
+    expect(f.discontinuities).toBeUndefined(); // gated off
+  });
+
   it('draws a session divider at each boundary (strokes the divider color)', () => {
     const schema = [
       { name: 'time', kind: 'time' },

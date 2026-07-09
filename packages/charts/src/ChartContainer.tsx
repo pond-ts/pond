@@ -612,16 +612,19 @@ export function ChartContainer({
   // otherwise derive it from the high-level `calendar` sugar at the chosen
   // `spacing`. Memoized on `(calendar, spacing)` so a stable calendar yields a
   // stable provider (the scale + frame only rebuild when it actually changes) —
-  // pan/zoom read the same provider identity as the low-level path would.
+  // pan/zoom read the same provider identity as the low-level path would. Gated
+  // on a time axis so a value-axis chart never calls `calendar.discontinuities`.
   const calendarProvider = useMemo(
     () =>
-      discontinuities === undefined && calendar !== undefined
+      resolvedKind === 'time' &&
+      discontinuities === undefined &&
+      calendar !== undefined
         ? calendar.discontinuities(spacing ? { spacing } : undefined)
         : undefined,
-    [discontinuities, calendar, spacing],
+    [resolvedKind, discontinuities, calendar, spacing],
   );
-  const provider = discontinuities ?? calendarProvider;
-  const xDiscontinuities = resolvedKind === 'time' ? provider : undefined;
+  const xDiscontinuities =
+    resolvedKind === 'time' ? (discontinuities ?? calendarProvider) : undefined;
   const { xScale, formatTime } = useMemo(() => {
     if (resolvedKind === 'value') {
       const s = scaleLinear().domain([d0, d1]).range([0, plotWidth]);
