@@ -113,6 +113,40 @@ describe('segmentDiscontinuity', () => {
   });
 });
 
+describe('segmentDiscontinuity — uniform spacing', () => {
+  // A wide span [0,100) and a narrow one [200,220) — 5× the width difference.
+  const segs: LiveSegment[] = [
+    [0, 100],
+    [200, 220],
+  ];
+  const u = segmentDiscontinuity(segs, { spacing: 'uniform' });
+
+  it('gives each segment one unit of distance regardless of width', () => {
+    expect(u.distance(0, 100)).toBe(1); // the wide span
+    expect(u.distance(200, 220)).toBe(1); // the narrow span — equal
+    expect(u.distance(0, 220)).toBe(2); // total
+  });
+
+  it('interpolates by time-fraction within a segment', () => {
+    expect(u.distance(0, 50)).toBeCloseTo(0.5, 12); // halfway through the wide span
+    expect(u.distance(200, 210)).toBeCloseTo(0.5, 12); // halfway through the narrow span
+  });
+
+  it('offset inverts distance across the collapsed gap', () => {
+    expect(u.offset(0, 1)).toBe(200); // one unit → the second segment's start
+    expect(u.offset(0, 1.5)).toBe(210); // +0.5 into the 20-wide narrow span
+  });
+
+  it('clampUp/clampDown and boundaries match the proportional provider', () => {
+    const p = segmentDiscontinuity(segs);
+    for (const t of [-10, 50, 150, 210, 300]) {
+      expect(u.clampUp(t)).toBe(p.clampUp(t));
+      expect(u.clampDown(t)).toBe(p.clampDown(t));
+    }
+    expect(u.boundaries!(-10, 300)).toEqual(p.boundaries!(-10, 300));
+  });
+});
+
 const H = 3_600_000;
 const D0 = Date.UTC(2021, 0, 4); // Mon
 const D2 = Date.UTC(2021, 0, 6); // Wed (Tue is a gap)
@@ -206,5 +240,106 @@ describe('discontinuities boundaries — with an intraday break', () => {
     const b = cal.discontinuities().boundaries!(D0 + 9 * H, D2 + 12 * H);
     // Wed open (overnight gap) + Wed 11:00 (lunch re-open).
     expect(b).toEqual([D2 + 9 * H, D2 + 11 * H]);
+  });
+});
+
+describe('TradingCalendar.discontinuities — uniform spacing', () => {
+  const M = Date.UTC(2021, 0, 4); // Mon — a 6h full day
+  const T = Date.UTC(2021, 0, 5); // Tue — a 3h half day
+  const cal = TradingCalendar.fromSessions([
+    { date: '2021-01-04', open: M + 9 * H, close: M + 15 * H },
+    { date: '2021-01-05', open: T + 9 * H, close: T + 12 * H },
+  ]);
+  const prop = cal.discontinuities();
+  const uni = cal.discontinuities({ spacing: 'uniform' });
+
+  it('each session is one equal unit regardless of duration', () => {
+    // Proportional: the 6h full day is twice the 3h half day.
+    expect(prop.distance(M + 9 * H, M + 15 * H)).toBe(6 * H);
+    expect(prop.distance(T + 9 * H, T + 12 * H)).toBe(3 * H);
+    // Uniform: both sessions span exactly one unit; the whole calendar is 2.
+    expect(uni.distance(M + 9 * H, M + 15 * H)).toBe(1);
+    expect(uni.distance(T + 9 * H, T + 12 * H)).toBe(1);
+    expect(uni.distance(M + 9 * H, T + 12 * H)).toBe(2);
+  });
+
+  it('interpolates linearly within a session', () => {
+    // Halfway through the 6h session (in time) → 0.5 units; a quarter → 0.25.
+    expect(uni.distance(M + 9 * H, M + 12 * H)).toBeCloseTo(0.5, 9);
+    expect(uni.distance(M + 9 * H, M + 10.5 * H)).toBeCloseTo(0.25, 9);
+  });
+
+  it('offset is the inverse of distance', () => {
+    // Advance 1.5 units from the first open → the boundary (1.0) is Tuesday's
+    // open, +0.5 into the 3h half day = Tue 10:30.
+    expect(uni.offset(M + 9 * H, 1.5)).toBe(T + 10.5 * H);
+  });
+
+  it('the collapsed overnight gap is zero-width under either metric', () => {
+    expect(uni.distance(M + 15 * H, T + 9 * H)).toBe(0);
+  });
+
+  it('boundaries are the same session opens as the proportional metric', () => {
+    const range = { from: M + 9 * H, to: T + 12 * H };
+    expect(uni.boundaries!(range.from, range.to)).toEqual([T + 9 * H]);
+    expect(prop.boundaries!(range.from, range.to)).toEqual([T + 9 * H]);
+  });
+
+  it('with a period, each session-aligned bar is one unit (incl. a truncated stub)', () => {
+    const c = TradingCalendar.fromSessions([
+      { date: '2021-01-04', open: M + 9 * H, close: M + 12 * H + 30 * 60_000 },
+    ]);
+    const u = c.discontinuities({ spacing: 'uniform', period: '1h' });
+    // Bars [9,10] [10,11] [11,12] and a 30m stub [12,12:30] → 4 units total.
+    expect(u.distance(M + 9 * H, M + 12 * H + 30 * 60_000)).toBe(4);
+    expect(u.distance(M + 9 * H, M + 10 * H)).toBe(1); // the first bar
+    // A truncated final bar is still a full unit despite being half as long.
+    expect(u.distance(M + 12 * H, M + 12 * H + 30 * 60_000)).toBe(1);
+  });
+
+  it('period-uniform bars are break-split, so a lunch re-open is a boundary', () => {
+    const c = TradingCalendar.fromSessions([
+      {
+        date: '2021-01-04',
+        open: M + 9 * H,
+        close: M + 12 * H,
+        breaks: [{ start: M + 10 * H, end: M + 11 * H }],
+      },
+    ]);
+    const u = c.discontinuities({ spacing: 'uniform', period: '30m' });
+    // Tradeable spans [9,10] and [11,12] → the 11:00 re-open is the collapse point.
+    expect(u.boundaries!(M + 9 * H, M + 12 * H)).toEqual([M + 11 * H]);
+    // Two 30m bars each side → 4 units, the lunch collapsed.
+    expect(u.distance(M + 9 * H, M + 12 * H)).toBe(4);
+  });
+
+  it('session-uniform (no period) treats a session as one slot — no break divider', () => {
+    // The variant where uniform and proportional legitimately diverge on
+    // boundaries: proportional splits on the lunch break, session-uniform does
+    // not (a daily slot spans the lunch), so only the overnight open is a
+    // divider. Two sessions, the second with a lunch break.
+    const c = TradingCalendar.fromSessions([
+      { date: '2021-01-04', open: M + 9 * H, close: M + 12 * H },
+      {
+        date: '2021-01-05',
+        open: T + 9 * H,
+        close: T + 12 * H,
+        breaks: [{ start: T + 10 * H, end: T + 11 * H }],
+      },
+    ]);
+    const from = M + 9 * H;
+    const to = T + 12 * H;
+    // Proportional: overnight open (Tue) + the lunch re-open are both dividers.
+    expect(c.discontinuities().boundaries!(from, to)).toEqual([
+      T + 9 * H,
+      T + 11 * H,
+    ]);
+    // Session-uniform: only the overnight open — the lunch is inside the slot.
+    expect(
+      c.discontinuities({ spacing: 'uniform' }).boundaries!(from, to),
+    ).toEqual([T + 9 * H]);
+    // And each session is one unit even though the second contains a break.
+    const u = c.discontinuities({ spacing: 'uniform' });
+    expect(u.distance(from, to)).toBe(2);
   });
 });
