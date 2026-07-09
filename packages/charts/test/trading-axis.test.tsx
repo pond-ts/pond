@@ -9,7 +9,10 @@ import { LineChart } from '../src/LineChart.js';
 import { YAxis } from '../src/YAxis.js';
 import { defaultTheme } from '../src/theme.js';
 import { ContainerContext, type ContainerFrame } from '../src/context.js';
-import { type DiscontinuityProvider } from '../src/tradingTimeScale.js';
+import {
+  type DiscontinuityProvider,
+  type TradingCalendarLike,
+} from '../src/tradingTimeScale.js';
 import { stubCanvasContext } from './canvas-mock.js';
 
 afterEach(cleanup);
@@ -110,6 +113,49 @@ describe('ChartContainer discontinuities → trading-time axis', () => {
     const f = frame!;
     expect(f.xKind).toBe('value');
     expect(f.discontinuities).toBeUndefined(); // gated off on a value axis
+  });
+
+  it('derives the provider from the calendar sugar prop', () => {
+    const calls: Array<{ spacing?: string } | undefined> = [];
+    const calendar: TradingCalendarLike = {
+      discontinuities: (options) => {
+        calls.push(options);
+        return provider;
+      },
+    };
+    const f = frameOf({ calendar });
+    // The container called calendar.discontinuities() once and used its result.
+    expect(calls).toEqual([undefined]);
+    expect(f.discontinuities).toBe(provider);
+    expect(f.xKind).toBe('time');
+    // Same trading-time behavior as the low-level prop — the gap collapses.
+    expect(Math.abs(f.xScale(100) - f.xScale(200))).toBeLessThan(1);
+  });
+
+  it('passes spacing through the calendar sugar', () => {
+    const calls: Array<{ spacing?: string } | undefined> = [];
+    const calendar: TradingCalendarLike = {
+      discontinuities: (options) => {
+        calls.push(options);
+        return provider;
+      },
+    };
+    frameOf({ calendar, spacing: 'uniform' });
+    expect(calls).toEqual([{ spacing: 'uniform' }]);
+  });
+
+  it('the low-level discontinuities prop wins over calendar', () => {
+    let called = false;
+    const calendar: TradingCalendarLike = {
+      discontinuities: () => {
+        called = true;
+        return provider;
+      },
+    };
+    const other = { ...provider }; // a distinct provider identity
+    const f = frameOf({ discontinuities: other, calendar });
+    expect(f.discontinuities).toBe(other); // low-level wins
+    expect(called).toBe(false); // calendar sugar not consulted
   });
 
   it('draws a session divider at each boundary (strokes the divider color)', () => {

@@ -27,6 +27,23 @@ export interface DiscontinuityProvider {
 }
 
 /**
+ * The high-level counterpart to a bare {@link DiscontinuityProvider}: anything
+ * that can *produce* one from an optional `spacing` choice. A
+ * `@pond-ts/financial` `TradingCalendar` satisfies this structurally (its
+ * `discontinuities` accepts a superset of these options), so a consumer can
+ * hand `<ChartContainer calendar={cal} spacing="uniform" />` instead of calling
+ * `cal.discontinuities({ spacing })` themselves — and charts still never imports
+ * the financial package (RFC §6.1). For the full option matrix (a bar `period`,
+ * a scoped `range`) build the provider yourself and pass the low-level
+ * `discontinuities` prop.
+ */
+export interface TradingCalendarLike {
+  discontinuities(options?: {
+    spacing?: 'proportional' | 'uniform';
+  }): DiscontinuityProvider;
+}
+
+/**
  * A d3-scale-shaped time scale whose pixel mapping runs through **trading time**
  * — closed-market gaps (weekends, holidays, overnight, lunch breaks) collapse to
  * nothing while time stays proportional within each session. Exposes the slice

@@ -25,6 +25,7 @@ describe('TradingTimeAxis stories render', () => {
       'HalfDay',
       'HolidayGap',
       'IntradaySessions',
+      'SpacingProportionalVsUniform',
       'WeekendSkip',
     ]);
   });
