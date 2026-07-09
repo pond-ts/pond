@@ -85,12 +85,27 @@ export function scaleTradingTime(
     return provider.offset(domain[0], frac * totalLive());
   };
 
+  /** The session-open instants in the domain — the first session's open (the
+   *  left edge) plus each collapsed-gap boundary — the axis's date anchors. */
+  const sessionOpens = (): number[] => {
+    const bounds = provider.boundaries?.(domain[0], domain[1]) ?? [];
+    return [domain[0], ...bounds];
+  };
+
   scale.ticks = (count = 10): number[] => {
     const live = totalLive();
     if (live <= 0 || count < 1) return [domain[0]];
-    // Interior ticks, evenly spaced in trading time (→ evenly spaced in pixels).
-    // Endpoints are excluded so no tick sits exactly on the plot edge, matching
-    // how a d3 time axis places ticks inside the domain.
+    const opens = sessionOpens();
+    // Calendar-aware: label the session opens (each a new day) rather than
+    // arbitrary even-spaced times — the trading-terminal look. Decimate to
+    // ~count when there are many sessions so the axis never crowds.
+    if (opens.length > 1) {
+      if (opens.length <= count) return opens;
+      const step = Math.ceil(opens.length / count);
+      return opens.filter((_, i) => i % step === 0);
+    }
+    // No boundaries (a single session / no calendar): fall back to interior
+    // even-spaced ticks — endpoints excluded so none sits on the plot edge.
     const out: number[] = [];
     for (let i = 1; i < count; i++) {
       out.push(provider.offset(domain[0], (i / count) * live));
@@ -98,12 +113,15 @@ export function scaleTradingTime(
     return out;
   };
 
-  scale.tickFormat = (count = 10, specifier?: string) =>
-    // d3's multi-scale time format is domain-independent, so `base` needs no
-    // domain sync — it exists only to borrow d3's formatter.
-    specifier !== undefined
-      ? base.tickFormat(count, specifier)
-      : base.tickFormat(count);
+  scale.tickFormat = (count = 10, specifier?: string) => {
+    if (specifier !== undefined) return base.tickFormat(count, specifier);
+    // Two-tier: a **date** at each session open (so you know which day), the
+    // d3 multi-scale default elsewhere (a mid-session tick, or the cursor).
+    const opens = new Set(sessionOpens());
+    const dateFmt = base.tickFormat(count, '%b %d');
+    const defFmt = base.tickFormat(count);
+    return (d: Date) => (opens.has(+d) ? dateFmt(d) : defFmt(d));
+  };
 
   function domainFn(): [number, number];
   function domainFn(next: readonly [number, number]): TradingTimeScale;
