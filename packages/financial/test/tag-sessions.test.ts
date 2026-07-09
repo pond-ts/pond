@@ -81,6 +81,64 @@ describe('tagSessions', () => {
     expect(() => cal.tagSessions(series, { column: 'price' })).toThrow();
   });
 
+  it("stamped:'close' — a bar stamped at the close belongs to the closing session", () => {
+    // The real-fixture finding: a feed stamps each bar at its close, so the last
+    // Monday bar is stamped at 12:00 (== Monday's close). Under the default
+    // open-stamp `[open, close)` that lands in closed time; close-stamping owns
+    // `(open, close]`, so it belongs to Monday.
+    const series = new TimeSeries({
+      name: 'px',
+      schema,
+      rows: [
+        [D0 + 9 * H, 1], // exactly Monday's open — the previous bar's close-stamp
+        [D0 + 10 * H, 2], // mid Monday
+        [D0 + 12 * H, 3], // exactly Monday's close — the last Monday bar
+        [D2 + 12 * H, 4], // exactly Wednesday's close — the last Wednesday bar
+      ],
+    });
+
+    // Default (open-stamped): the 12:00 close bars fall in closed time.
+    expect(
+      cal
+        .tagSessions(series)
+        .toArray()
+        .map((e) => e.get('session')),
+    ).toEqual([MON_ID, MON_ID, undefined, undefined]);
+
+    // Close-stamped: the 12:00 bars join their closing session; the 9:00 open
+    // instant is now the *previous* bar's close, so it no longer joins Monday.
+    expect(
+      cal
+        .tagSessions(series, { stamped: 'close' })
+        .toArray()
+        .map((e) => e.get('session')),
+    ).toEqual([undefined, MON_ID, MON_ID, WED_ID]);
+  });
+
+  it("stamped:'close' — a boundary instant between contiguous sessions joins the one that closed", () => {
+    // Two back-to-back sessions with no gap (a 24h market split at midnight):
+    // the shared boundary is session A's close and session B's open.
+    const A = Date.UTC(2021, 0, 4);
+    const MID = A + 24 * H; // midnight Jan 5 — A's close and B's open
+    const contiguous = TradingCalendar.fromSessions([
+      { date: '2021-01-04', open: A, close: MID },
+      { date: '2021-01-05', open: MID, close: MID + 12 * H },
+    ]);
+    const series = new TimeSeries({
+      name: 'px',
+      schema,
+      rows: [[MID, 1]], // the shared midnight boundary
+    });
+    // Close-stamped → the closing session (A). Open-stamped → the opening one (B).
+    expect(
+      contiguous
+        .tagSessions(series, { stamped: 'close' })
+        .at(0)
+        ?.get('session'),
+    ).toBe(A);
+    expect(contiguous.tagSessions(series).at(0)?.get('session')).toBe(MID);
+  });
+
   it('the session id is the align/rolling stopgap: partitionBy(session) does not bridge sessions', () => {
     // price known on Monday, missing at Wednesday's first bar, known after.
     const optionalSchema = [

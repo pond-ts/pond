@@ -230,6 +230,32 @@ export class TradingCalendar {
    * Tidal Ask 2). Recover the session from an id via {@link sessionOn} /
    * {@link sessionContaining}.
    *
+   * **`stamped`** picks how a timestamp lands relative to a session's edges,
+   * matching the feed's bar-stamp convention:
+   * - `'open'` (default) — a session owns `[open, close)`. A bar stamped at its
+   *   *open* instant belongs to the session; one stamped at the *close* falls in
+   *   closed time (the next session hasn't opened). This is the tick / open-stamp
+   *   convention.
+   * - `'close'` — a session owns `(open, close]`. A bar stamped at the *close*
+   *   (16:00 on a NYSE feed whose 16:00 bar covers 15:55–16:00) belongs to the
+   *   session that just closed, not to closed time; one stamped at the *open*
+   *   belongs to the previous session if it closed there. This is the OHLC /
+   *   close-stamp convention — the real-fixture close-boundary bars motivated it.
+   *
+   * The knob lives here because binning a *bar series* is where the stamp
+   * convention bites; instantaneous point queries ({@link sessionContaining},
+   * {@link isOpen}) stay half-open `[open, close)`, the unambiguous convention
+   * for an instant. Two consequences of that split worth knowing:
+   * - Recovering a session from a `'close'`-tagged id via
+   *   {@link sessionContaining} at the *close* instant returns a different
+   *   session than the tag did (the query is half-open) — recover from the id
+   *   with {@link sessionOn}, or query at a mid-session instant.
+   * - Under `'close'`, a bar stamped exactly at a session's *open* is the
+   *   previous bar's close, so it tags to the previous session (or `undefined`
+   *   if a gap precedes the open — including the very first bar of the series).
+   *   A close-stamped feed does not emit an open-instant bar, so this only bites
+   *   a mixed/misaligned feed.
+   *
    * Default column name `"session"` (override with `column`). Throws if a
    * column of that name already exists (a fresh column is appended, per
    * `withColumn`). O(n + sessions) — a single merge walk over the (sorted)
@@ -237,9 +263,10 @@ export class TradingCalendar {
    */
   tagSessions<S extends SeriesSchema, const Name extends string = 'session'>(
     series: TimeSeries<S>,
-    options: { column?: Name } = {},
+    options: { column?: Name; stamped?: 'open' | 'close' } = {},
   ): TimeSeries<TaggedSchema<S, Name>> {
     const column = (options.column ?? 'session') as Name;
+    const closeStamped = options.stamped === 'close';
     const events = series.toArray();
     const ids = new Array<number | undefined>(events.length);
     const sessions = this.#sessions;
@@ -247,10 +274,21 @@ export class TradingCalendar {
     for (let i = 0; i < events.length; i++) {
       const t = events[i]!.begin();
       // Events are ascending by begin and sessions by open, so the cursor only
-      // moves forward: skip sessions that already closed at or before t.
-      while (c < sessions.length && sessions[c]!.close <= t) c++;
+      // moves forward. Skip sessions that already ended relative to t: for
+      // close-stamped bars a bar *at* the close still belongs to that session,
+      // so only skip once t is strictly past the close.
+      while (
+        c < sessions.length &&
+        (closeStamped ? sessions[c]!.close < t : sessions[c]!.close <= t)
+      )
+        c++;
       const s = c < sessions.length ? sessions[c]! : undefined;
-      ids[i] = s !== undefined && t >= s.open ? s.open : undefined;
+      const inSession =
+        s !== undefined &&
+        (closeStamped
+          ? t > s.open && t <= s.close
+          : t >= s.open && t < s.close);
+      ids[i] = inSession ? s!.open : undefined;
     }
     return series.withColumn(column, ids) as unknown as TimeSeries<
       TaggedSchema<S, Name>
