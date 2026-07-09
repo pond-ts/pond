@@ -40,6 +40,30 @@ function segmentProvider(
     clampUp: (t) => t,
     clampDown: (t) => t,
     copy: () => self,
+    boundaries: (from, to) => {
+      const out: number[] = [];
+      for (let i = 1; i < segments.length; i++) {
+        const start = segments[i]![0];
+        if (start > segments[i - 1]![1] && start > from && start < to) {
+          out.push(start);
+        }
+      }
+      return out;
+    },
+  };
+  return self;
+}
+
+/** A provider with no boundaries (a single live span) — exercises the
+ *  even-spacing tick fallback when there is no calendar structure. */
+function singleSpanProvider(a: number, b: number): DiscontinuityProvider {
+  const self: DiscontinuityProvider = {
+    distance: (from, to) =>
+      Math.min(b, Math.max(a, to)) - Math.min(b, Math.max(a, from)),
+    offset: (v, amt) => Math.min(b, Math.max(a, v)) + amt,
+    clampUp: (t) => t,
+    clampDown: (t) => t,
+    copy: () => self,
   };
   return self;
 }
@@ -88,22 +112,41 @@ describe('scaleTradingTime', () => {
     expect(t).toBe(S1);
   });
 
-  it('ticks are evenly spaced in pixels (uniform in trading time)', () => {
-    const ticks = scale.ticks(6);
-    const px = ticks.map((t) => scale(t));
-    for (let i = 1; i < px.length; i++) {
-      expect(px[i]! - px[i - 1]!).toBeCloseTo(200, 6); // 1200px / 6
-    }
-    // …and none of the tick instants falls inside the collapsed gap.
-    for (const t of ticks) {
-      const inGap = t > S0 + 6 * H && t < S1;
-      expect(inGap).toBe(false);
+  it('ticks are the session opens (date anchors), not arbitrary times', () => {
+    // Two sessions → the left edge (S0) + the one collapse point (S1).
+    expect(scale.ticks(10)).toEqual([S0, S1]);
+    // None falls inside the collapsed gap.
+    for (const t of scale.ticks(10)) {
+      expect(t > S0 + 6 * H && t < S1).toBe(false);
     }
   });
 
-  it('tickFormat delegates to a d3 time format', () => {
-    const fmt = scale.tickFormat();
-    expect(typeof fmt(new Date(S0))).toBe('string');
+  it('decimates session opens toward ~count when there are many', () => {
+    const many = segmentProvider(
+      Array.from({ length: 30 }, (_, i) => [i * 10 * H, i * 10 * H + 6 * H]),
+    );
+    const s = scaleTradingTime(many)
+      .domain([0, 30 * 10 * H])
+      .range([0, 1200]);
+    // 30 sessions decimated toward ~6 (every 5th).
+    expect(s.ticks(6).length).toBeLessThanOrEqual(7);
+    expect(s.ticks(6).length).toBeGreaterThan(3);
+  });
+
+  it('tickFormat shows a date at a session open, a time elsewhere', () => {
+    // Real session instants so the formats are legible.
+    const jan = Date.UTC(2026, 0, 5, 9, 30);
+    const feb = Date.UTC(2026, 1, 2, 9, 30);
+    const cal = segmentProvider([
+      [jan, jan + 6 * H],
+      [feb, feb + 6 * H],
+    ]);
+    const s = scaleTradingTime(cal)
+      .domain([jan, feb + 6 * H])
+      .range([0, 1200]);
+    const fmt = s.tickFormat();
+    expect(fmt(new Date(feb))).toMatch(/Feb/); // the Feb-2 session open → a date
+    expect(fmt(new Date(jan + 3 * H))).not.toMatch(/Jan|Feb/); // mid-session → a time
   });
 
   it('domain/range are getter/setters and copy is independent', () => {
@@ -140,8 +183,14 @@ describe('scaleTradingTime', () => {
     expect(s.ticks(0)).toEqual([S0]);
   });
 
-  it('ticks are interior — none sits exactly on the plot edge', () => {
-    const px = scale.ticks(6).map((t) => scale(t));
+  it('falls back to interior even-spaced ticks with no calendar boundaries', () => {
+    // A single-span provider has no session opens → the even-spacing fallback,
+    // with endpoints excluded so none sits on the plot edge.
+    const s = scaleTradingTime(singleSpanProvider(0, 1000))
+      .domain([0, 1000])
+      .range([0, 1200]);
+    const px = s.ticks(6).map((t) => s(t));
+    expect(px.length).toBe(5); // count-1 interior
     expect(Math.min(...px)).toBeGreaterThan(0);
     expect(Math.max(...px)).toBeLessThan(1200);
   });
