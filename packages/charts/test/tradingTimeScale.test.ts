@@ -265,4 +265,59 @@ describe('coarsenCalendar', () => {
     const months = ticks.map((t) => new Date(t).getMonth());
     expect(new Set(months).size).toBe(months.length); // distinct months
   });
+
+  it('steps to quarter grain when months still overflow', () => {
+    // ~18 months of monthly opens, count 6 → months (18) > 6 → quarters (~6).
+    const monthly = Array.from(
+      { length: 18 },
+      (_, i) => Date.UTC(2024, i, 2) + 14 * H,
+    );
+    const { ticks, granularity } = coarsenCalendar(monthly, 6);
+    expect(granularity).toBe('quarter');
+    expect(ticks.length).toBeLessThanOrEqual(6);
+    const q = (t: number) => {
+      const d = new Date(t);
+      return d.getFullYear() * 4 + Math.floor(d.getMonth() / 3);
+    };
+    expect(new Set(ticks.map(q)).size).toBe(ticks.length); // distinct quarters
+  });
+
+  it('never returns more than count — decimates year starts past yearly grain', () => {
+    // One open per year for 30 years, count 6 → even yearly (30) overflows, so
+    // the fallback decimates the year starts to <= count.
+    const yearly = Array.from(
+      { length: 30 },
+      (_, i) => Date.UTC(2000 + i, 0, 3) + 14 * H,
+    );
+    const { ticks, granularity } = coarsenCalendar(yearly, 6);
+    expect(granularity).toBe('year');
+    expect(ticks.length).toBeLessThanOrEqual(6);
+    expect(ticks.length).toBeGreaterThan(0);
+    // Still ascending and a subset of the input.
+    expect(ticks).toEqual([...ticks].sort((a, b) => a - b));
+    expect(ticks.every((t) => yearly.includes(t))).toBe(true);
+  });
+
+  it('the dividers a chart draws (ticks ∩ boundaries) are a coarse subset, aligned with labels', () => {
+    // The container draws session dividers at exactly the axis ticks that are
+    // collapse boundaries — this pins that they coarsen with the labels rather
+    // than marking every session (Layers: xTickVals.filter(t => boundary)).
+    const DAYc = 24 * H;
+    const start = Date.UTC(2025, 0, 6) + 14 * H;
+    const openList = Array.from({ length: 90 }, (_, i) => start + i * DAYc);
+    const prov = segmentProvider(
+      openList.map((o) => [o, o + 6 * H] as [number, number]),
+    );
+    const s = scaleTradingTime(prov)
+      .domain([openList[0]!, openList[89]! + 6 * H])
+      .range([0, 1200]);
+    const tickSet = new Set(s.ticks(5));
+    const bounds = prov.boundaries!(openList[0]!, openList[89]! + 6 * H);
+    const dividers = bounds.filter((b) => tickSet.has(b));
+    // Far fewer dividers than the ~89 session boundaries — coarsened to months…
+    expect(dividers.length).toBeLessThan(bounds.length / 10);
+    expect(dividers.length).toBeGreaterThan(0);
+    // …and every divider coincides with a labelled tick (alignment).
+    expect(dividers.every((d) => tickSet.has(d))).toBe(true);
+  });
 });

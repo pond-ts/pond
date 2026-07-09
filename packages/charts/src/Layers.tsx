@@ -33,7 +33,10 @@ import {
   type LayerRegistry,
 } from './context.js';
 
-/** Gridline tick count — matches the axes (`YAxis`/`TimeAxis`) so they align. */
+/** Gridline tick count. **Must match the axis label counts** (`XAxis`
+ *  `TICK_COUNT`, `ChartContainer` `TIME_TICK_COUNT`, `YAxis`) — the grid, the
+ *  session dividers, and the axis labels are all derived from `ticks(count)`, so
+ *  they only line up while the counts agree. Kept at 5 across all four. */
 const GRID_TICKS = 5;
 /** Minimum px between session dividers — thins dense collapse points (e.g. a
  *  daily chart where every candle is a new session) so the axis never crowds. */
