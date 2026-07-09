@@ -145,6 +145,18 @@ describe('weekendSkip — offset', () => {
   });
 });
 
+describe('weekendSkip — boundaries', () => {
+  const wk = weekendSkip();
+  it('lists the Mondays (weekend-gap ends) strictly inside the range', () => {
+    // Window spanning Fri 2021-01-01 → Fri 2021-01-15: Mondays 04 and 11.
+    const b = wk.boundaries!(FRI, Date.UTC(2021, 0, 15));
+    expect(b).toEqual([MON, Date.UTC(2021, 0, 11)]);
+  });
+  it('excludes a Monday exactly at the range start (strict)', () => {
+    expect(wk.boundaries!(MON, Date.UTC(2021, 0, 11))).toEqual([]);
+  });
+});
+
 describe('DiscontinuityProvider — structural interface', () => {
   it('both providers satisfy the same shape', () => {
     const providers: DiscontinuityProvider[] = [

@@ -96,6 +96,21 @@ describe('segmentDiscontinuity', () => {
     expect(z.distance(0, 300)).toBe(200); // same as without the empty span
     expect(z.clampUp(150)).toBe(200); // the empty span is not a live target
   });
+
+  it('boundaries lists gap-preceded segment starts strictly inside the range', () => {
+    expect(p.boundaries!(-10, 400)).toEqual([200]); // the one collapse point
+    expect(p.boundaries!(0, 150)).toEqual([]); // 200 not in range
+    expect(p.boundaries!(200, 400)).toEqual([]); // strict: 200 == from excluded
+    expect(p.boundaries!(150, 400)).toEqual([200]);
+  });
+
+  it('boundaries skips touching (gapless) segment joins', () => {
+    const t = segmentDiscontinuity([
+      [0, 100],
+      [100, 200], // touches — no gap
+    ]);
+    expect(t.boundaries!(-10, 300)).toEqual([]);
+  });
 });
 
 const H = 3_600_000;
@@ -166,5 +181,30 @@ describe('TradingCalendar.discontinuities — real NYSE week', () => {
   it('stays proportional within a session', () => {
     const s = sess[0]!;
     expect(p.distance(s.open, s.open + 90 * 60_000)).toBe(90 * 60_000);
+  });
+
+  it('boundaries are the session opens (overnight-gap ends)', () => {
+    // 4 sessions Mon–Thu → 3 interior session opens (Tue, Wed, Thu) are dividers.
+    const b = p.boundaries!(sess[0]!.open, sess[sess.length - 1]!.close);
+    expect(b).toEqual([sess[1]!.open, sess[2]!.open, sess[3]!.open]);
+  });
+});
+
+describe('discontinuities boundaries — with an intraday break', () => {
+  it('includes the post-lunch re-open as a boundary', () => {
+    const D0 = Date.UTC(2021, 0, 4);
+    const D2 = Date.UTC(2021, 0, 6);
+    const cal = TradingCalendar.fromSessions([
+      { date: '2021-01-04', open: D0 + 9 * H, close: D0 + 12 * H },
+      {
+        date: '2021-01-06',
+        open: D2 + 9 * H,
+        close: D2 + 12 * H,
+        breaks: [{ start: D2 + 10 * H, end: D2 + 11 * H }],
+      },
+    ]);
+    const b = cal.discontinuities().boundaries!(D0 + 9 * H, D2 + 12 * H);
+    // Wed open (overnight gap) + Wed 11:00 (lunch re-open).
+    expect(b).toEqual([D2 + 9 * H, D2 + 11 * H]);
   });
 });
