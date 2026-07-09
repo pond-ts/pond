@@ -105,6 +105,13 @@ export interface ChartTheme {
     /** Gridline dash pattern (px on/off pairs); `[]` for solid. */
     readonly gridDash: readonly number[];
     /**
+     * Stroke for **session dividers** — the solid verticals a trading-time axis
+     * draws at each collapsed gap (session/day open). Optional; falls back to
+     * {@link grid}. Set it a touch stronger than the gridlines so a session
+     * boundary reads as structural.
+     */
+    readonly sessionDivider?: string;
+    /**
      * Typography for the axis **title** — the rotated y-axis unit strip and the
      * x-axis label (distinct from the per-tick `label` colour above). Omit a
      * field to fall back: `color` → `label`, `size` → `font.size + 1` (a touch
@@ -392,6 +399,7 @@ export const defaultTheme: ChartTheme = {
     label: '#64748b',
     grid: '#e2e8f0',
     gridDash: [2, 2],
+    sessionDivider: '#cbd5e1', // slate-300 — a step stronger than the gridlines
   },
   font: {
     family: 'system-ui, -apple-system, sans-serif',
