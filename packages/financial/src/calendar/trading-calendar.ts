@@ -245,7 +245,16 @@ export class TradingCalendar {
    * The knob lives here because binning a *bar series* is where the stamp
    * convention bites; instantaneous point queries ({@link sessionContaining},
    * {@link isOpen}) stay half-open `[open, close)`, the unambiguous convention
-   * for an instant.
+   * for an instant. Two consequences of that split worth knowing:
+   * - Recovering a session from a `'close'`-tagged id via
+   *   {@link sessionContaining} at the *close* instant returns a different
+   *   session than the tag did (the query is half-open) — recover from the id
+   *   with {@link sessionOn}, or query at a mid-session instant.
+   * - Under `'close'`, a bar stamped exactly at a session's *open* is the
+   *   previous bar's close, so it tags to the previous session (or `undefined`
+   *   if a gap precedes the open — including the very first bar of the series).
+   *   A close-stamped feed does not emit an open-instant bar, so this only bites
+   *   a mixed/misaligned feed.
    *
    * Default column name `"session"` (override with `column`). Throws if a
    * column of that name already exists (a fresh column is appended, per
