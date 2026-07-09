@@ -31,6 +31,15 @@ export interface DiscontinuityProvider {
   offset(value: number, amount: number): number;
   /** Return an independent copy of this provider. */
   copy(): DiscontinuityProvider;
+  /**
+   * The domain positions of **collapsed gaps** strictly inside `(from, to)` —
+   * each is the far edge of a removed gap (a session/day open, a post-break
+   * re-open), i.e. where two non-adjacent times become adjacent on the axis.
+   * A chart draws a session divider at each. **Optional** — a provider that
+   * can't enumerate its gaps omits it, and the axis just collapses silently.
+   * Ascending; excludes any boundary at the very domain start (no gap precedes it).
+   */
+  boundaries?(from: number, to: number): number[];
 }
 
 /**
@@ -45,6 +54,7 @@ export function identityDiscontinuity(): DiscontinuityProvider {
     distance: (from, to) => to - from,
     offset: (value, amount) => value + amount,
     copy: () => self,
+    boundaries: () => [], // no gaps → no dividers
   };
   return self;
 }
@@ -145,6 +155,17 @@ export function segmentDiscontinuity(
     distance: (from, to) => liveMs(to) - liveMs(from),
     offset: (value, amount) => instantForLive(liveMs(value) + amount),
     copy: () => self,
+    boundaries: (from, to) => {
+      // Each segment start that a real gap precedes, strictly inside (from, to).
+      const out: number[] = [];
+      for (let i = 1; i < n; i++) {
+        const start = segments[i]![0];
+        if (start > segments[i - 1]![1] && start > from && start < to) {
+          out.push(start);
+        }
+      }
+      return out;
+    },
   };
   return self;
 }
@@ -237,6 +258,19 @@ export function weekendSkip(): DiscontinuityProvider {
     offset: (value, amount) =>
       instantForLiveMs(liveMsFromAnchor(value) + amount),
     copy: () => self,
+    boundaries: (from, to) => {
+      // Each Monday 00:00 (the end of a weekend gap) strictly inside (from, to).
+      const out: number[] = [];
+      const firstMondayIndex = Math.ceil(
+        (from - MONDAY_ANCHOR_MS) / (7 * DAY_MS),
+      );
+      for (let w = firstMondayIndex; ; w++) {
+        const monday = MONDAY_ANCHOR_MS + w * 7 * DAY_MS;
+        if (monday >= to) break;
+        if (monday > from) out.push(monday);
+      }
+      return out;
+    },
   };
   return self;
 }
