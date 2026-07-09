@@ -4,7 +4,6 @@ import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { Candlestick } from './Candlestick.js';
-import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import type { DiscontinuityProvider } from './tradingTimeScale.js';
 
@@ -250,17 +249,18 @@ export const IntradaySessions: Story = {
   },
 };
 
-/** The money shot: the *same* daily closes on a continuous time axis (top —
- *  weekend gaps open) vs the trading-time axis (bottom — gaps collapsed). */
+/** The money shot: the *same* daily candles on a continuous time axis (top —
+ *  weekends open as empty bands between candles) vs the trading-time axis
+ *  (bottom — the bands collapse, candles run contiguously). */
 export const ContinuousVsTrading: Story = {
   render: () => {
     const s = weekdaySessions(10);
-    const line = candles(s, sessionSeq(s), 15 * MIN);
+    const bars = candles(s, sessionSeq(s), 15 * MIN);
     const row = (
       <ChartRow height={150}>
         <YAxis id="p" />
         <Layers>
-          <LineChart series={line} column="close" axis="p" />
+          <Candlestick series={bars} axis="p" />
         </Layers>
       </ChartRow>
     );
