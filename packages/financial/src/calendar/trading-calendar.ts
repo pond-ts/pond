@@ -291,8 +291,10 @@ export class TradingCalendar {
    *   every bar out at equal width. `period` is ignored for `'proportional'`.
    *
    * With `range`, only sessions overlapping `[start, end)` contribute.
-   * Collapse-point `boundaries` (session opens, and break re-opens when
-   * `period` is set) are the same either metric — they are epoch-ms edges.
+   * Collapse-point `boundaries` follow the segments each variant uses:
+   * `'proportional'` and period-`'uniform'` split on breaks, so a lunch re-open
+   * is a divider; session-`'uniform'` (no `period`) treats each session as one
+   * slot, so it draws a divider only at session opens, not at breaks.
    */
   discontinuities(
     options: {
@@ -308,7 +310,7 @@ export class TradingCalendar {
         period !== undefined
           ? TradingCalendar.#barSlots(sessions, durationToMs(period))
           : sessions.map((s): LiveSegment => [s.open, s.close]);
-      return segmentDiscontinuity(slots, { metric: 'uniform' });
+      return segmentDiscontinuity(slots, { spacing: 'uniform' });
     }
     return segmentDiscontinuity(TradingCalendar.#liveSegments(sessions));
   }

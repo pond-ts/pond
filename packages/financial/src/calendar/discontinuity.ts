@@ -65,7 +65,8 @@ export type LiveSegment = readonly [start: number, end: number];
 /** How a {@link segmentDiscontinuity} provider measures distance across segments. */
 export interface SegmentDiscontinuityOptions {
   /**
-   * The axis metric:
+   * The axis spacing (`TradingCalendar.discontinuities` exposes the same choice
+   * under the same name):
    * - `'proportional'` (default) — distance is **live-ms**: time is
    *   proportional within and across segments (a 6.5-hour session is twice a
    *   3.25-hour half-day). The true-time trading axis.
@@ -73,10 +74,12 @@ export interface SegmentDiscontinuityOptions {
    *   of its real duration (a half-day is as wide as a full day). The ordinal /
    *   TradingView bar look. Position *within* a segment still interpolates
    *   linearly by time, so a point halfway through a segment sits at its
-   *   midpoint. `clampUp` / `clampDown` / `boundaries` are unaffected — they
-   *   operate on epoch-ms edges, not on the metric.
+   *   midpoint. For **the same segment list**, `clampUp` / `clampDown` /
+   *   `boundaries` are unaffected — they operate on epoch-ms edges, not on the
+   *   spacing. (The calendar's session- vs bar-uniform difference comes from
+   *   passing *different* segment lists, not from this option.)
    */
-  metric?: 'proportional' | 'uniform';
+  spacing?: 'proportional' | 'uniform';
 }
 
 /**
@@ -88,7 +91,7 @@ export interface SegmentDiscontinuityOptions {
  * break both collapse to nothing while time stays proportional *within* each
  * span.
  *
- * The `metric` option (default `'proportional'`) chooses whether distance is
+ * The `spacing` option (default `'proportional'`) chooses whether distance is
  * live-ms or one-unit-per-segment (`'uniform'` — see
  * {@link SegmentDiscontinuityOptions}); it does not change which time is live,
  * only how live distance is measured.
@@ -107,7 +110,7 @@ export function segmentDiscontinuity(
   input: readonly LiveSegment[],
   options: SegmentDiscontinuityOptions = {},
 ): DiscontinuityProvider {
-  const uniform = options.metric === 'uniform';
+  const uniform = options.spacing === 'uniform';
   // Drop zero/negative-length spans at the boundary so every segment is a real
   // live span (the calendar never emits these, but the entry point is public).
   const segments = input.filter((s) => s[1] > s[0]);

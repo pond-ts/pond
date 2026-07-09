@@ -113,13 +113,13 @@ describe('segmentDiscontinuity', () => {
   });
 });
 
-describe('segmentDiscontinuity — uniform metric', () => {
+describe('segmentDiscontinuity — uniform spacing', () => {
   // A wide span [0,100) and a narrow one [200,220) — 5× the width difference.
   const segs: LiveSegment[] = [
     [0, 100],
     [200, 220],
   ];
-  const u = segmentDiscontinuity(segs, { metric: 'uniform' });
+  const u = segmentDiscontinuity(segs, { spacing: 'uniform' });
 
   it('gives each segment one unit of distance regardless of width', () => {
     expect(u.distance(0, 100)).toBe(1); // the wide span
@@ -311,5 +311,35 @@ describe('TradingCalendar.discontinuities — uniform spacing', () => {
     expect(u.boundaries!(M + 9 * H, M + 12 * H)).toEqual([M + 11 * H]);
     // Two 30m bars each side → 4 units, the lunch collapsed.
     expect(u.distance(M + 9 * H, M + 12 * H)).toBe(4);
+  });
+
+  it('session-uniform (no period) treats a session as one slot — no break divider', () => {
+    // The variant where uniform and proportional legitimately diverge on
+    // boundaries: proportional splits on the lunch break, session-uniform does
+    // not (a daily slot spans the lunch), so only the overnight open is a
+    // divider. Two sessions, the second with a lunch break.
+    const c = TradingCalendar.fromSessions([
+      { date: '2021-01-04', open: M + 9 * H, close: M + 12 * H },
+      {
+        date: '2021-01-05',
+        open: T + 9 * H,
+        close: T + 12 * H,
+        breaks: [{ start: T + 10 * H, end: T + 11 * H }],
+      },
+    ]);
+    const from = M + 9 * H;
+    const to = T + 12 * H;
+    // Proportional: overnight open (Tue) + the lunch re-open are both dividers.
+    expect(c.discontinuities().boundaries!(from, to)).toEqual([
+      T + 9 * H,
+      T + 11 * H,
+    ]);
+    // Session-uniform: only the overnight open — the lunch is inside the slot.
+    expect(
+      c.discontinuities({ spacing: 'uniform' }).boundaries!(from, to),
+    ).toEqual([T + 9 * H]);
+    // And each session is one unit even though the second contains a break.
+    const u = c.discontinuities({ spacing: 'uniform' });
+    expect(u.distance(from, to)).toBe(2);
   });
 });
