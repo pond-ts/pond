@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  coarsenCalendar,
   scaleTradingTime,
   type DiscontinuityProvider,
 } from '../src/tradingTimeScale.js';
@@ -121,16 +122,27 @@ describe('scaleTradingTime', () => {
     }
   });
 
-  it('decimates session opens toward ~count when there are many', () => {
-    const many = segmentProvider(
-      Array.from({ length: 30 }, (_, i) => [i * 10 * H, i * 10 * H + 6 * H]),
+  it('coarsens many session opens to a calendar grain (not every-nth)', () => {
+    // ~90 consecutive daily sessions (Jan–Mar 2025) → month grain, one tick per
+    // month start, not an arbitrary every-nth session.
+    const DAY = 24 * H;
+    const start = Date.UTC(2025, 0, 1) + 14 * H; // ~09:30 ET, well inside the day
+    const daily = segmentProvider(
+      Array.from({ length: 90 }, (_, i) => [
+        start + i * DAY,
+        start + i * DAY + 6 * H,
+      ]),
     );
-    const s = scaleTradingTime(many)
-      .domain([0, 30 * 10 * H])
+    const s = scaleTradingTime(daily)
+      .domain([start, start + 90 * DAY])
       .range([0, 1200]);
-    // 30 sessions decimated toward ~6 (every 5th).
-    expect(s.ticks(6).length).toBeLessThanOrEqual(7);
-    expect(s.ticks(6).length).toBeGreaterThan(3);
+    const ticks = s.ticks(6);
+    // Three calendar months spanned → about three ticks (never the ~90 sessions).
+    expect(ticks.length).toBeLessThanOrEqual(6);
+    expect(ticks.length).toBeGreaterThanOrEqual(3);
+    // Each tick is the first session of a distinct local month.
+    const months = ticks.map((t) => new Date(t).getMonth());
+    expect(new Set(months).size).toBe(months.length);
   });
 
   it('tickFormat shows a date at a session open, a time elsewhere', () => {
@@ -193,5 +205,64 @@ describe('scaleTradingTime', () => {
     expect(px.length).toBe(5); // count-1 interior
     expect(Math.min(...px)).toBeGreaterThan(0);
     expect(Math.max(...px)).toBeLessThan(1200);
+  });
+
+  it('labels a year-grain axis with the year, a finer axis with the date', () => {
+    const DAY = 24 * H;
+    // ~3 years of daily opens → year grain → "%Y" labels.
+    const start = Date.UTC(2023, 0, 3) + 14 * H;
+    const years = segmentProvider(
+      Array.from({ length: 3 * 250 }, (_, i) => [
+        start + i * DAY,
+        start + i * DAY + 6 * H,
+      ]),
+    );
+    const s = scaleTradingTime(years)
+      .domain([start, start + 3 * 250 * DAY])
+      .range([0, 1200]);
+    const fmt = s.tickFormat(6);
+    const firstTick = s.ticks(6)[0]!;
+    expect(fmt(new Date(firstTick))).toMatch(/^\d{4}$/); // a bare year
+  });
+});
+
+describe('coarsenCalendar', () => {
+  const DAY = 24 * H;
+  // 120 consecutive daily opens starting 2025-01-06 (a Monday), mid-morning.
+  const start = Date.UTC(2025, 0, 6) + 14 * H;
+  const daily = Array.from({ length: 120 }, (_, i) => start + i * DAY);
+
+  it('returns every open (session grain) when they already fit', () => {
+    const few = daily.slice(0, 4);
+    expect(coarsenCalendar(few, 6)).toEqual({
+      ticks: few,
+      granularity: 'session',
+    });
+  });
+
+  it('steps to week grain — one tick per Monday-anchored week', () => {
+    // ~4 weeks of opens, count 6 → week grain (session count 28 > 6, weeks ~5).
+    const month = daily.slice(0, 28);
+    const { ticks, granularity } = coarsenCalendar(month, 6);
+    expect(granularity).toBe('week');
+    // First tick is the run's start; each subsequent is a new local week.
+    expect(ticks[0]).toBe(month[0]);
+    const weekOf = (t: number) => {
+      const d = new Date(t);
+      const dow = (d.getDay() + 6) % 7;
+      return new Date(
+        d.getFullYear(),
+        d.getMonth(),
+        d.getDate() - dow,
+      ).getTime();
+    };
+    expect(new Set(ticks.map(weekOf)).size).toBe(ticks.length);
+  });
+
+  it('steps to month grain over a quarter of daily opens', () => {
+    const { ticks, granularity } = coarsenCalendar(daily.slice(0, 90), 6);
+    expect(granularity).toBe('month');
+    const months = ticks.map((t) => new Date(t).getMonth());
+    expect(new Set(months).size).toBe(months.length); // distinct months
   });
 });
