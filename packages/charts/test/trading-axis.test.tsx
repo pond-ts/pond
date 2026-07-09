@@ -7,8 +7,10 @@ import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
 import { LineChart } from '../src/LineChart.js';
 import { YAxis } from '../src/YAxis.js';
+import { defaultTheme } from '../src/theme.js';
 import { ContainerContext, type ContainerFrame } from '../src/context.js';
 import { type DiscontinuityProvider } from '../src/tradingTimeScale.js';
+import { stubCanvasContext } from './canvas-mock.js';
 
 afterEach(cleanup);
 
@@ -32,6 +34,8 @@ const provider: DiscontinuityProvider = (() => {
     clampUp: (t) => t,
     clampDown: (t) => t,
     copy: () => self,
+    // One collapse point, at the start of the second span (200).
+    boundaries: (from, to) => (from < 200 && to > 200 ? [200] : []),
   };
   return self;
 })();
@@ -106,5 +110,61 @@ describe('ChartContainer discontinuities → trading-time axis', () => {
     const f = frame!;
     expect(f.xKind).toBe('value');
     expect(f.discontinuities).toBeUndefined(); // gated off on a value axis
+  });
+
+  it('draws a session divider at each boundary (strokes the divider color)', () => {
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'v', kind: 'number' },
+    ] as const;
+    const series = new TimeSeries({
+      name: 's',
+      schema,
+      rows: [
+        [10, 1],
+        [250, 2],
+      ] as [number, number][],
+    });
+    const tree = (props: Record<string, unknown>) => (
+      <ChartContainer range={[0, 300]} width={320} {...props}>
+        <ChartRow height={100}>
+          <YAxis id="a" min={0} max={5} />
+          <Layers>
+            <LineChart series={series} column="v" axis="a" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+    const dividerColor = defaultTheme.axis.sessionDivider!;
+
+    const withStub = stubCanvasContext();
+    try {
+      render(tree({ discontinuities: provider }));
+      const stroked = withStub.calls.some(
+        (c) =>
+          c.type === 'set' &&
+          c.name === 'strokeStyle' &&
+          c.args[0] === dividerColor,
+      );
+      expect(stroked).toBe(true); // the divider was drawn
+    } finally {
+      withStub.restore();
+    }
+    cleanup();
+
+    // Control: no provider → no divider color stroked.
+    const noStub = stubCanvasContext();
+    try {
+      render(tree({}));
+      const stroked = noStub.calls.some(
+        (c) =>
+          c.type === 'set' &&
+          c.name === 'strokeStyle' &&
+          c.args[0] === dividerColor,
+      );
+      expect(stroked).toBe(false);
+    } finally {
+      noStub.restore();
+    }
   });
 });

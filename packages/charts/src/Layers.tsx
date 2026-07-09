@@ -114,10 +114,12 @@ export function Layers({ children }: LayersProps) {
       drawGrid(ctx, xTicks, yTicks, w, h, gridColor, gridDash);
       // Session dividers: solid verticals at the trading calendar's collapse
       // points (session/day opens), where closed time was removed from the axis.
-      const boundaries = container.discontinuities?.boundaries;
-      if (boundaries) {
+      const disc = container.discontinuities;
+      if (disc?.boundaries) {
         const [d0, d1] = container.timeRange;
-        const bx = boundaries(d0, d1).map((t) => xScale(t));
+        // Call as a method (not a detached reference) so a class-based provider
+        // whose `boundaries` reads `this` keeps its receiver.
+        const bx = disc.boundaries(d0, d1).map((t) => xScale(t));
         const dividerColor = container.theme.axis.sessionDivider ?? gridColor;
         drawDividers(ctx, thinPixels(bx, MIN_DIVIDER_PX), h, dividerColor);
       }
