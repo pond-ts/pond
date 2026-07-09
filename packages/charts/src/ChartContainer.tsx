@@ -8,6 +8,10 @@ import {
   type ReactNode,
 } from 'react';
 import { scaleLinear, scaleTime } from 'd3-scale';
+import {
+  scaleTradingTime,
+  type DiscontinuityProvider,
+} from './tradingTimeScale.js';
 import type { TimeRange } from 'pond-ts';
 import {
   ContainerContext,
@@ -58,6 +62,22 @@ export interface ChartContainerProps {
    * the data — so a tuple stays a time domain on a time chart.
    */
   range?: readonly [number, number] | TimeRange;
+  /**
+   * A **trading-calendar** discontinuity provider — closed-market time
+   * (weekends, holidays, overnight, lunch breaks) collapsed. Supply it to turn
+   * the shared x axis into a **trading-time** axis: gaps disappear and time
+   * stays proportional within each session. A `@pond-ts/financial`
+   * `TradingCalendar.discontinuities()` satisfies this structurally (charts
+   * never imports that package). The low-level primitive; pass
+   * `calendar.discontinuities()` directly. Only affects a **time** axis (ignored
+   * on a value axis).
+   *
+   * **Pass a stable reference.** The scale (and container frame) rebuild when
+   * this prop's identity changes, so memoize it — `const disc = useMemo(() =>
+   * calendar.discontinuities(), [calendar])` — rather than calling
+   * `.discontinuities()` inline in JSX, which would rebuild every render.
+   */
+  discontinuities?: DiscontinuityProvider;
   /** Total width in CSS pixels (plot + axis gutters). */
   width: number;
   /** Vertical space between rows in CSS pixels (not under the axis). Default 0. */
@@ -259,6 +279,7 @@ export function ChartContainer({
   snap = true,
   timeFormat,
   theme,
+  discontinuities,
   children,
 }: ChartContainerProps) {
   // The explicit base domain from `range` (a tuple or a TimeRange). `undefined`
@@ -557,6 +578,12 @@ export function ChartContainer({
   // is the one formatter <TimeAxis> + the cursor readout share, so a tick and
   // the cursor read identically. (The `formatTime` name predates the value axis
   // — on a value axis it formats the value, not a time.)
+  // The trading-time provider only applies to a **time** axis — a value axis is
+  // always a plain `scaleLinear`. Gate it once here so the scale branch AND the
+  // frame (which pan/zoom read) agree: on a value axis the provider is dropped,
+  // so interactions use continuous value math, not trading-time math.
+  const xDiscontinuities =
+    resolvedKind === 'time' ? discontinuities : undefined;
   const { xScale, formatTime } = useMemo(() => {
     if (resolvedKind === 'value') {
       const s = scaleLinear().domain([d0, d1]).range([0, plotWidth]);
@@ -565,12 +592,23 @@ export function ChartContainer({
         formatTime: resolveAxisFormat(s, TIME_TICK_COUNT, timeFormat),
       };
     }
+    if (xDiscontinuities !== undefined) {
+      // Trading-time axis: closed-market gaps collapse, time proportional within
+      // sessions. Same tickFormat surface as scaleTime, so the readout is shared.
+      const s = scaleTradingTime(xDiscontinuities)
+        .domain([d0, d1])
+        .range([0, plotWidth]);
+      return {
+        xScale: s,
+        formatTime: resolveTimeFormat(s, TIME_TICK_COUNT, timeFormat),
+      };
+    }
     const s = scaleTime().domain([d0, d1]).range([0, plotWidth]);
     return {
       xScale: s,
       formatTime: resolveTimeFormat(s, TIME_TICK_COUNT, timeFormat),
     };
-  }, [resolvedKind, d0, d1, plotWidth, timeFormat]);
+  }, [resolvedKind, d0, d1, plotWidth, timeFormat, xDiscontinuities]);
 
   // The crosshair pixel (see resolveCursorX). A stored hoverX is a *plot* pixel;
   // if plotWidth changes mid-hover (a gutter reserving, or a width change) it's
@@ -650,6 +688,7 @@ export function ChartContainer({
       labelLanes,
       xScale,
       xKind: resolvedKind,
+      discontinuities: xDiscontinuities,
       panZoom,
       minDuration,
       applyRange,
@@ -698,6 +737,7 @@ export function ChartContainer({
       labelLanes,
       xScale,
       resolvedKind,
+      xDiscontinuities,
       panZoom,
       minDuration,
       applyRange,
