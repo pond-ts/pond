@@ -1294,15 +1294,22 @@ independently built the same `calendar.bars → BoundedSequence` seam.
     the value-axis gate). Public-API PR — human-approved.
   - ✅ **Feature-axis stories** (#384) — `Charts/TradingTimeAxis` (weekend skip,
     holiday, half-day, intraday, continuous-vs-trading), render-smoke-tested.
+  - ✅ **Session-aware axis** (#387–#389) — `DiscontinuityProvider.boundaries()`
+    enumerates collapse points; charts draws a **session divider** at each
+    (`theme.axis.sessionDivider` token) and labels the axis with a **date at each
+    session open** (two-tier `tickFormat`: date at opens, time elsewhere) instead
+    of repeated times. The collapsed axis now reads like a trading terminal.
   - **Deferred (documented follow-ups, none blocking):** the **uniform-spacing
     metric** (`spacing="uniform"`, equal-bar-width / TradingView daily look — Q7
-    default was proportional); `neighbourSpans` point-key slot widths on the
-    discontinuous axis (interval-keyed bars from `aggregate(barSequence)` — the
-    primary path — are immune); annotation-drag deltas; calendar-nice ticks; the
-    `calendar`-sugar prop; the `stamped: 'open'|'close'` ingress knob (motivated by
-    the real-fixture close-boundary bars). Validated against real data: daily EODHD
-    (#375) + intraday SPY fixtures (#376), incl. a half-day, holidays, overnight
-    gaps, and a dirty (duplicated) session.
+    default was proportional); **coarser daily-chart dividers/labels** (week/month
+    granularity — needs calendar knowledge beyond the raw provider; the current
+    per-session decimation is the every-nth stand-in); `neighbourSpans` point-key
+    slot widths on the discontinuous axis (interval-keyed bars from
+    `aggregate(barSequence)` — the primary path — are immune); annotation-drag
+    deltas; the `calendar`-sugar prop; the `stamped: 'open'|'close'` ingress knob
+    (motivated by the real-fixture close-boundary bars). Validated against real
+    data: daily EODHD (#375) + intraday SPY fixtures (#376), incl. a half-day,
+    holidays, overnight gaps, and a dirty (duplicated) session.
 - **Cross-repo coordination — the constellation bridge (live since 2026-07-03).**
   Handoffs between this repo and Tidal are automated; Peter no longer hand-relays
   them. **Inbound:** a Tidal→pond PR with `Tidal` in the title wakes a headless,
