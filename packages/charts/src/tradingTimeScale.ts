@@ -33,10 +33,11 @@ export interface DiscontinuityProvider {
  * of the d3 `ScaleTime` surface `@pond-ts/charts` actually uses, so it drops in
  * wherever the container's `xScale` goes.
  *
- * Ticks are evenly spaced in *trading* time (hence evenly spaced in pixels) —
- * the non-degenerate baseline; a calendar-aware nice-tick generator can override
- * `.ticks` at the container level. `tickFormat` delegates to a d3 `scaleTime` so
- * the multi-scale time format is unchanged.
+ * Ticks are **calendar-aware** when the provider enumerates its gaps: `.ticks`
+ * returns the session opens (each a new day), and `.tickFormat` labels them with
+ * a **date** (`%b %d`) while formatting any other instant — a mid-session tick,
+ * the cursor readout — with the d3 multi-scale default. Without a provider
+ * `boundaries` method it falls back to interior even-spaced time ticks.
  *
  * **Out-of-domain behavior.** Within the calendar the scale extrapolates like a
  * normal scale — a live instant *before* the domain start maps to a negative
