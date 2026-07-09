@@ -210,14 +210,29 @@ export class TradingCalendar {
       );
     }
     const sessions = range ? this.sessionsInRange(range) : this.#sessions;
-    const intervals: Interval[] = [];
+    const intervals = TradingCalendar.#barSlots(sessions, periodMs).map(
+      ([start, end]) => new Interval({ value: start, start, end }),
+    );
+    return new BoundedSequence(intervals);
+  }
+
+  /**
+   * The session-aligned `period`-bar `[start, end)` slots — the geometry behind
+   * {@link barSequence}, shared with the uniform axis. Bars never span a session
+   * boundary or an intraday break; the final bar of each tradeable segment is
+   * truncated at that segment's end.
+   */
+  static #barSlots(
+    sessions: readonly Session[],
+    periodMs: number,
+  ): LiveSegment[] {
+    const slots: LiveSegment[] = [];
     for (const [a, b] of TradingCalendar.#liveSegments(sessions)) {
       for (let t = a; t < b; t += periodMs) {
-        const end = Math.min(t + periodMs, b);
-        intervals.push(new Interval({ value: t, start: t, end }));
+        slots.push([t, Math.min(t + periodMs, b)]);
       }
     }
-    return new BoundedSequence(intervals);
+    return slots;
   }
 
   /**
@@ -259,20 +274,42 @@ export class TradingCalendar {
 
   /**
    * A {@link DiscontinuityProvider} over this calendar's **tradeable spans** —
-   * each session's `[open, close)` with its intraday breaks removed. This is
-   * the **proportional** trading-time axis: closed time between sessions and
-   * inside a lunch break collapses to nothing, while time stays proportional
-   * *within* each span. A `@pond-ts/charts` trading-time scale consumes this
-   * (structurally — no package coupling) to map value → pixel with the gaps
-   * excised; a bar/candle chart then shows contiguous sessions with real
-   * intraday spacing.
+   * each session's `[open, close)` with its intraday breaks removed. Closed time
+   * between sessions and inside a lunch break collapses to nothing. A
+   * `@pond-ts/charts` trading-time scale consumes this (structurally — no
+   * package coupling) to map value → pixel with the gaps excised.
    *
-   * With `range`, only sessions overlapping `[start, end)` contribute segments.
-   * (The *uniform* / equal-bar-width metric is a separate, bar-grid-derived
-   * provider — it belongs with the chart's `spacing` choice, not here.)
+   * **`spacing`** picks the axis metric (the trading-calendar RFC Q7):
+   * - `'proportional'` (default) — time is proportional within *and across*
+   *   sessions; a half-day is half as wide as a full day. The true-time axis.
+   * - `'uniform'` — equal width per slot regardless of duration; the ordinal /
+   *   TradingView bar look. **Without `period`** each *session* is one slot
+   *   (the daily-candle view; intraday breaks are not collapsed *within* the
+   *   slot, since a daily bar spans the lunch). **With `period`** each
+   *   session-aligned bar (the {@link barSequence} grid — break-split, truncated
+   *   at each segment's close) is one slot, so an intraday uniform axis lays
+   *   every bar out at equal width. `period` is ignored for `'proportional'`.
+   *
+   * With `range`, only sessions overlapping `[start, end)` contribute.
+   * Collapse-point `boundaries` (session opens, and break re-opens when
+   * `period` is set) are the same either metric — they are epoch-ms edges.
    */
-  discontinuities(range?: InstantRange): DiscontinuityProvider {
+  discontinuities(
+    options: {
+      range?: InstantRange;
+      spacing?: 'proportional' | 'uniform';
+      period?: DurationInput;
+    } = {},
+  ): DiscontinuityProvider {
+    const { range, spacing = 'proportional', period } = options;
     const sessions = range ? this.sessionsInRange(range) : this.#sessions;
+    if (spacing === 'uniform') {
+      const slots =
+        period !== undefined
+          ? TradingCalendar.#barSlots(sessions, durationToMs(period))
+          : sessions.map((s): LiveSegment => [s.open, s.close]);
+      return segmentDiscontinuity(slots, { metric: 'uniform' });
+    }
     return segmentDiscontinuity(TradingCalendar.#liveSegments(sessions));
   }
 

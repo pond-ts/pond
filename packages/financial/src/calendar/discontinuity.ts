@@ -62,16 +62,38 @@ export function identityDiscontinuity(): DiscontinuityProvider {
 /** A half-open live (non-gap) interval `[start, end)` in epoch-ms. */
 export type LiveSegment = readonly [start: number, end: number];
 
+/** How a {@link segmentDiscontinuity} provider measures distance across segments. */
+export interface SegmentDiscontinuityOptions {
+  /**
+   * The axis metric:
+   * - `'proportional'` (default) — distance is **live-ms**: time is
+   *   proportional within and across segments (a 6.5-hour session is twice a
+   *   3.25-hour half-day). The true-time trading axis.
+   * - `'uniform'` — each segment is **one equal unit** of distance regardless
+   *   of its real duration (a half-day is as wide as a full day). The ordinal /
+   *   TradingView bar look. Position *within* a segment still interpolates
+   *   linearly by time, so a point halfway through a segment sits at its
+   *   midpoint. `clampUp` / `clampDown` / `boundaries` are unaffected — they
+   *   operate on epoch-ms edges, not on the metric.
+   */
+  metric?: 'proportional' | 'uniform';
+}
+
 /**
  * A provider whose live (non-excised) domain is an explicit, sorted,
  * non-overlapping list of `[start, end)` segments — everything *between* the
  * segments is a removed gap. This is the general engine behind a trading
- * calendar's proportional axis: the segments are the tradeable spans (sessions
- * minus intraday breaks), so closed time between sessions and inside a lunch
+ * calendar's axis: the segments are the tradeable spans (sessions minus
+ * intraday breaks, or bars), so closed time between sessions and inside a lunch
  * break both collapse to nothing while time stays proportional *within* each
  * span.
  *
- * All arithmetic is O(log n) via bisection over precomputed cumulative live-ms
+ * The `metric` option (default `'proportional'`) chooses whether distance is
+ * live-ms or one-unit-per-segment (`'uniform'` — see
+ * {@link SegmentDiscontinuityOptions}); it does not change which time is live,
+ * only how live distance is measured.
+ *
+ * All arithmetic is O(log n) via bisection over precomputed cumulative distance
  * at each segment boundary — cheap enough to call per-tick / per-pixel.
  *
  * `clampUp` / `clampDown` snap a value that is not in a live span to the nearest
@@ -83,17 +105,20 @@ export type LiveSegment = readonly [start: number, end: number];
  */
 export function segmentDiscontinuity(
   input: readonly LiveSegment[],
+  options: SegmentDiscontinuityOptions = {},
 ): DiscontinuityProvider {
+  const uniform = options.metric === 'uniform';
   // Drop zero/negative-length spans at the boundary so every segment is a real
   // live span (the calendar never emits these, but the entry point is public).
   const segments = input.filter((s) => s[1] > s[0]);
   const n = segments.length;
-  // Precompute cumulative live-ms at each segment start; cum[n] = total.
+  // Precompute cumulative distance at each segment start; cum[n] = total. Each
+  // segment contributes its real ms width (proportional) or one unit (uniform).
   const cum = new Array<number>(n + 1);
   cum[0] = 0;
   for (let i = 0; i < n; i++) {
     const seg = segments[i]!;
-    cum[i + 1] = cum[i]! + (seg[1] - seg[0]);
+    cum[i + 1] = cum[i]! + (uniform ? 1 : seg[1] - seg[0]);
   }
   const total = cum[n]!;
 
@@ -109,17 +134,19 @@ export function segmentDiscontinuity(
     return lo - 1;
   };
 
-  /** Live (non-gap) ms from the first segment start to `t`, in `[0, total]`. */
+  /** Live (non-gap) distance from the first segment start to `t`, in `[0, total]`. */
   const liveMs = (t: number): number => {
     if (n === 0 || t <= segments[0]![0]) return 0;
     if (t >= segments[n - 1]![1]) return total;
     const i = segAtOrBefore(t); // >= 0 here
     const seg = segments[i]!;
-    // Inside segment i → partial; in the gap after it → the boundary (cum[i+1]).
-    return t < seg[1] ? cum[i]! + (t - seg[0]) : cum[i + 1]!;
+    if (t >= seg[1]) return cum[i + 1]!; // in the gap after segment i → boundary
+    // Inside segment i: raw ms (proportional) or the linear fraction (uniform).
+    const within = t - seg[0];
+    return cum[i]! + (uniform ? within / (seg[1] - seg[0]) : within);
   };
 
-  /** Inverse of {@link liveMs}: the epoch-ms instant at cumulative live `L`. */
+  /** Inverse of {@link liveMs}: the epoch-ms instant at cumulative distance `L`. */
   const instantForLive = (L: number): number => {
     if (n === 0) return 0;
     if (L <= 0) return segments[0]![0];
@@ -132,7 +159,9 @@ export function segmentDiscontinuity(
       if (cum[mid + 1]! <= L) lo = mid + 1;
       else hi = mid;
     }
-    return segments[lo]![0] + (L - cum[lo]!);
+    const seg = segments[lo]!;
+    const within = L - cum[lo]!; // in [0, segment's distance)
+    return seg[0] + (uniform ? within * (seg[1] - seg[0]) : within);
   };
 
   const self: DiscontinuityProvider = {
