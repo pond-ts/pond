@@ -1239,11 +1239,13 @@ commitment).
 #### Trading-calendar wave — ADOPTED (RFC `docs/rfcs/trading-calendar.md`)
 
 The disjoint-time-axis RFC (drafted #366, promoted to an RFC #368, red-teamed by
-Tidal + a Codex pass #370) is being built as a wave. **Phase 1 (the calendar
-engine — pure data, no charts) is COMPLETE and a PLAN commitment; Phase 2 (charts
-`scaleTradingTime`) stays deferred, gated on Tidal sourcing real gappy historical
-data** (Amendment 2 recalibration: Tidal's fixture is gapless today, grain is
-daily, no adoption until real bars land). The design is validated — Tidal
+Tidal + a Codex pass #370) was built as a wave. **Phase 1 (the calendar engine —
+pure data) and Phase 2 (charts `scaleTradingTime`) are both COMPLETE and PLAN
+commitments.** Phase 2 was **built ahead of Tidal's adoption** (a deliberate
+get-ahead-of-the-consumer move, user-directed): rather than wait for Tidal to
+source real gappy data and drive the friction loop, we validated the axis
+against our own real data (daily EODHD + intraday SPY fixtures) so Tidal
+inherits a working scale instead of a draft. The design was validated — Tidal
 independently built the same `calendar.bars → BoundedSequence` seam.
 
 - **`@pond-ts/financial` BOOTSTRAPPED** — the package now exists (scaffolded off
@@ -1252,7 +1254,6 @@ independently built the same `calendar.bars → BoundedSequence` seam.
   (`docs/notes/financial-indicators-assessment-2026-07.md`) follows on the same
   substrate. **Not yet published** (new-package OIDC bootstrap is a later step —
   see [[npm new-package publish bootstrap]] in the release notes).
-- **`@pond-ts/financial` BOOTSTRAPPED** — see the bullet above.
 - **Phase 1 build — COMPLETE (PRs #371–#374, unreleased):**
   - ✅ **`DiscontinuityProvider`** (#371) — the d3fc-style 5-method axis primitive
     (`clampUp`/`clampDown`/`distance`/`offset`/`copy`) + `identityDiscontinuity()`
@@ -1278,6 +1279,30 @@ independently built the same `calendar.bars → BoundedSequence` seam.
     `align`/`rolling` are NOT calendar-correct via `BoundedSequence` (they bridge
     session gaps) — that's the `partitionBy(sessionId)` / G1 / span-hook set, not
     the zero-edit seam.
+- **Phase 2 build — COMPLETE (PRs #377–#379, #384; unreleased):**
+  - ✅ **`TradingCalendar.discontinuities()`** (#377) — the **proportional**
+    trading-time provider (sessions minus breaks → `segmentDiscontinuity`,
+    O(log n)). The Phase-1-deferred piece: the calendar now _produces_ a provider.
+  - ✅ **`scaleTradingTime`** (#378, `@pond-ts/charts`) — a d3-scale-shaped
+    discontinuous time scale on a **structural** `DiscontinuityProvider` (charts
+    never imports `@pond-ts/financial`; RFC §6.1). Callable/`invert`/`ticks`/
+    `tickFormat`/`domain`/`range`/`copy`; interior ticks even in trading time.
+  - ✅ **`ChartContainer discontinuities` prop** (#379) — pass
+    `calendar.discontinuities()` → trading-time x axis (gaps collapse, proportional
+    within sessions). Pan/zoom move in **trading time** (`panRangeTrading`/
+    `zoomRangeTrading`, boundary-safe after a Codex pass fixed span-preservation +
+    the value-axis gate). Public-API PR — human-approved.
+  - ✅ **Feature-axis stories** (#384) — `Charts/TradingTimeAxis` (weekend skip,
+    holiday, half-day, intraday, continuous-vs-trading), render-smoke-tested.
+  - **Deferred (documented follow-ups, none blocking):** the **uniform-spacing
+    metric** (`spacing="uniform"`, equal-bar-width / TradingView daily look — Q7
+    default was proportional); `neighbourSpans` point-key slot widths on the
+    discontinuous axis (interval-keyed bars from `aggregate(barSequence)` — the
+    primary path — are immune); annotation-drag deltas; calendar-nice ticks; the
+    `calendar`-sugar prop; the `stamped: 'open'|'close'` ingress knob (motivated by
+    the real-fixture close-boundary bars). Validated against real data: daily EODHD
+    (#375) + intraday SPY fixtures (#376), incl. a half-day, holidays, overnight
+    gaps, and a dirty (duplicated) session.
 - **Cross-repo coordination — the constellation bridge (live since 2026-07-03).**
   Handoffs between this repo and Tidal are automated; Peter no longer hand-relays
   them. **Inbound:** a Tidal→pond PR with `Tidal` in the title wakes a headless,
@@ -3851,7 +3876,8 @@ retention`). Currently Path B (own deque); same API, perf
 
      ```ts
      type DurationString =
-       `${number}${'ms' | 's' | 'm' | 'h' | 'd'}` | 'buffer';
+       | `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`
+       | 'buffer';
 
      type FusedMapping<S extends SeriesSchema> = Readonly<
        Record<DurationString, FusedMappingValue<S>>
