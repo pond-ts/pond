@@ -16,7 +16,7 @@ import {
   type ReactNode,
 } from 'react';
 import { Canvas } from './Canvas.js';
-import { drawGrid } from './grid.js';
+import { drawGrid, drawDividers, thinPixels } from './grid.js';
 import { cursorParts } from './tracker.js';
 import { resolveSelection } from './select.js';
 import {
@@ -35,6 +35,9 @@ import {
 
 /** Gridline tick count — matches the axes (`YAxis`/`TimeAxis`) so they align. */
 const GRID_TICKS = 5;
+/** Minimum px between session dividers — thins dense collapse points (e.g. a
+ *  daily chart where every candle is a new session) so the axis never crowds. */
+const MIN_DIVIDER_PX = 40;
 
 /** Wheel-zoom sensitivity: `factor = exp(deltaY * k)` (one ~100px notch ≈ ±15%). */
 const ZOOM_SENSITIVITY = 0.0015;
@@ -109,6 +112,17 @@ export function Layers({ children }: LayersProps) {
         ? (explicitY ?? gridY.ticks(GRID_TICKS)).map((t) => gridY(t))
         : [];
       drawGrid(ctx, xTicks, yTicks, w, h, gridColor, gridDash);
+      // Session dividers: solid verticals at the trading calendar's collapse
+      // points (session/day opens), where closed time was removed from the axis.
+      const disc = container.discontinuities;
+      if (disc?.boundaries) {
+        const [d0, d1] = container.timeRange;
+        // Call as a method (not a detached reference) so a class-based provider
+        // whose `boundaries` reads `this` keeps its receiver.
+        const bx = disc.boundaries(d0, d1).map((t) => xScale(t));
+        const dividerColor = container.theme.axis.sessionDivider ?? gridColor;
+        drawDividers(ctx, thinPixels(bx, MIN_DIVIDER_PX), h, dividerColor);
+      }
       for (const entry of layers) {
         const yScale = yScales.get(entry.axisId ?? defaultAxisId);
         if (yScale === undefined) continue;
@@ -124,6 +138,8 @@ export function Layers({ children }: LayersProps) {
       background,
       gridColor,
       gridDash,
+      container.discontinuities,
+      container.timeRange,
     ],
   );
 

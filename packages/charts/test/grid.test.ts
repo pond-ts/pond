@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { drawGrid } from '../src/grid.js';
+import { drawGrid, drawDividers, thinPixels } from '../src/grid.js';
 import { recordingContext } from './canvas-mock.js';
 
 describe('drawGrid', () => {
@@ -52,5 +52,40 @@ describe('drawGrid', () => {
       'stroke',
       'restore',
     ]);
+  });
+});
+
+describe('thinPixels', () => {
+  it('keeps the first of each cluster closer than minGap', () => {
+    expect(thinPixels([0, 10, 25, 30, 60], 20)).toEqual([0, 25, 60]);
+  });
+  it('keeps every position when all are far enough apart', () => {
+    expect(thinPixels([0, 40, 80], 20)).toEqual([0, 40, 80]);
+  });
+  it('handles empty input', () => {
+    expect(thinPixels([], 20)).toEqual([]);
+  });
+});
+
+describe('drawDividers', () => {
+  it('strokes one solid vertical per x, full height', () => {
+    const { ctx, calls } = recordingContext();
+    drawDividers(ctx, [30, 90], 200, '#999');
+    const pen = calls
+      .filter((c) => c.name === 'moveTo' || c.name === 'lineTo')
+      .map((c) => c.args);
+    // Two verticals, each moveTo(x,0) → lineTo(x,height).
+    expect(pen).toEqual([
+      [30.5, 0],
+      [30.5, 200],
+      [90.5, 0],
+      [90.5, 200],
+    ]);
+    expect(calls.find((c) => c.name === 'setLineDash')?.args).toEqual([[]]); // solid
+  });
+  it('draws nothing for an empty list', () => {
+    const { ctx, calls } = recordingContext();
+    drawDividers(ctx, [], 200, '#999');
+    expect(calls.filter((c) => c.type === 'call')).toEqual([]);
   });
 });

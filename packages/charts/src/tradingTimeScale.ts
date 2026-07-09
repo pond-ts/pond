@@ -17,6 +17,13 @@ export interface DiscontinuityProvider {
   /** Advance `value` by `amount` live-ms, skipping gaps (inverse of {@link distance}). */
   offset(value: number, amount: number): number;
   copy(): DiscontinuityProvider;
+  /**
+   * Optional: the domain positions of collapsed gaps strictly inside `(from,
+   * to)` — session/day opens where closed time was removed. The container draws
+   * a **session divider** at each; a provider that omits it just collapses the
+   * axis silently. (A `TradingCalendar.discontinuities()` provider supplies it.)
+   */
+  boundaries?(from: number, to: number): number[];
 }
 
 /**

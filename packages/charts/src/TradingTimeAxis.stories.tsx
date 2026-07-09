@@ -80,6 +80,15 @@ function provider(sessions: Session[]): DiscontinuityProvider {
     clampUp: (t) => t,
     clampDown: (t) => t,
     copy: () => self,
+    boundaries: (from, to) => {
+      const out: number[] = [];
+      for (let i = 1; i < segs.length; i++) {
+        const start = segs[i]![0];
+        if (start > segs[i - 1]![1] && start > from && start < to)
+          out.push(start);
+      }
+      return out;
+    },
   };
   return self;
 }
