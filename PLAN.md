@@ -1358,6 +1358,21 @@ independently built the same `calendar.bars → BoundedSequence` seam.
     #405 fixes it: `moveRegionByPixels` shifts each edge equal **pixels** through the
     scale (rigid pixel translation), an affine no-op on continuous axes; edge-resize
     and marker drags were already correct.
+  - ✅ **Charts interaction feature batch (PRs #407–#410, unreleased).** Five
+    requests off the zones-chart + trading-axis context, each Layer-2-reviewed:
+    - **#407** — made the `CrosshairSnap` story interactive (it pinned
+      `trackerPosition`; the snap path was already correct).
+    - **#408 `binColors`** — per-bin colour for single-series band bars (the
+      zones / value-band look; `colors` is per-group, this is per-bin). The
+      horizontal ordinal bar + band axis already shipped, so the zones chart is
+      buildable today; the multi-column zone _table_ is consumer HTML.
+    - **#409 region cursor** — `cursor="region"` + `cursorSequence` (a pond
+      `Sequence` — duration or calendar-aware — or a `BoundedSequence` like a
+      calendar's `sessionSequence`) shades the bucket under the pointer, cropped
+      to live time through `xScale`.
+    - **#410 snap-to-disjoints** — annotation drags snap to session boundaries;
+      the collapsed close/open share a pixel, so `snapToGuides` picks the side by
+      pointer position (left → close, right → open).
   - **Still deferred (documented, none blocking):** `neighbourSpans` point-key slot
     widths on the discontinuous axis (interval-keyed bars from
     `aggregate(barSequence)` — the primary path — are immune); exact **exchange-tz**
