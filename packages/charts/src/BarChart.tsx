@@ -75,7 +75,8 @@ export interface BarChartProps<
   /**
    * The single series' semantic identifier — what the data _is_. The theme maps
    * it to a {@link BarStyle} (`theme.bar[as] ?? theme.bar.default`). **Single
-   * series only** (a stack colours its segments per group; see `colors`).
+   * series only** — **ignored** (not an error) on a stacked chart, which colours
+   * its segments per group instead (see `colors`).
    */
   as?: string;
   /**
