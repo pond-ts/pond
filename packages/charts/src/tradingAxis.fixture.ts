@@ -203,10 +203,10 @@ export const OHLC = {
 } as const;
 
 /** Interval-keyed OHLC candles over a bucket sequence (immune to point-key slot
- *  widths). Return type widened to the general `SeriesSchema` — the concrete
- *  aggregate schema references an internal pond-ts type that can't be named in
- *  the emitted fixture types (`<Candlestick>` reads the o/h/l/c columns by
- *  runtime name, so the widening is invisible to callers). */
+ *  widths). Return type widened to the general `SeriesSchema`: the inferred
+ *  aggregate schema references an internal pond-ts module and can't be named
+ *  (TS2742), so an explicit annotation is required. `<Candlestick>` reads the
+ *  o/h/l/c columns by runtime name, so the widening is invisible to callers. */
 export function candles(
   sessions: Session[],
   seq: BoundedSequence,
