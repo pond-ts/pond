@@ -326,7 +326,7 @@ const SNAP_PX = 6;
  * Excludes the dragging mark's own `key`, and reads the same registry the guides
  * draw from, so a drag visibly clicks onto the lines you can see.
  */
-function snapToGuides(
+export function snapToGuides(
   container: ContainerFrame,
   selfKey: symbol,
   px: number,
@@ -343,6 +343,23 @@ function snapToGuides(
       if (d < bestDist) {
         bestDist = d;
         best = tx;
+      }
+    }
+  }
+  // Disjoint boundaries: on a trading-time axis a session close and the next
+  // open collapse to the **same pixel**, so a boundary is one snap target with
+  // two possible instants. Snap to the one on the side of the boundary the
+  // pointer is on — left of it → the pre-gap edge (the previous session's
+  // *close*, `clampDown` out of the gap); at/right of it → the post-gap *open*.
+  const disc = container.discontinuities;
+  if (disc?.boundaries) {
+    const [d0, d1] = container.timeRange;
+    for (const open of disc.boundaries(d0, d1)) {
+      const bpx = container.xScale(open);
+      const d = Math.abs(bpx - px);
+      if (d < bestDist) {
+        bestDist = d;
+        best = px < bpx ? disc.clampDown(open - 1) : open;
       }
     }
   }
