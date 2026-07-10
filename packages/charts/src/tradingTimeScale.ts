@@ -34,10 +34,12 @@ export interface DiscontinuityProvider {
  * wherever the container's `xScale` goes.
  *
  * Ticks are **calendar-aware** when the provider enumerates its gaps: `.ticks`
- * returns the session opens (each a new day), and `.tickFormat` labels them with
- * a **date** (`%b %d`) while formatting any other instant — a mid-session tick,
- * the cursor readout — with the d3 multi-scale default. Without a provider
- * `boundaries` method it falls back to interior even-spaced time ticks.
+ * returns the session opens thinned to a calendar grain (week / month / year
+ * starts, whichever fits ~`count`), and `.tickFormat` labels each anchor with a
+ * **date** (`%b %d`) — or the **year** (`%Y`) when ticks are a year apart —
+ * while formatting any other instant (a mid-session tick, the cursor readout)
+ * with the d3 multi-scale default. Without a provider `boundaries` method it
+ * falls back to interior even-spaced time ticks.
  *
  * **Out-of-domain behavior.** Within the calendar the scale extrapolates like a
  * normal scale — a live instant *before* the domain start maps to a negative
@@ -57,6 +59,91 @@ export interface TradingTimeScale {
   range(): [number, number];
   range(next: readonly [number, number]): TradingTimeScale;
   copy(): TradingTimeScale;
+}
+
+/** The calendar grain a run of session opens is bucketed to for axis ticks. */
+type TickGranularity = 'session' | 'week' | 'month' | 'quarter' | 'year';
+
+/**
+ * The local-time bucket key for `t` at grain `g` — two instants in the same
+ * week / month / quarter / year share a key. Local time (not UTC) so it agrees
+ * with the local `scaleTime` label formatter; the exchange's own time zone is
+ * unknown to the scale (the deferred refinement), and a session open sits well
+ * inside its local day, so runtime-local grouping matches the exchange day in
+ * every ordinary case.
+ */
+function bucketKey(t: number, g: TickGranularity): number {
+  if (g === 'session') return t; // every open its own bucket
+  const d = new Date(t);
+  switch (g) {
+    case 'week': {
+      const dow = (d.getDay() + 6) % 7; // 0 = Monday
+      // Local midnight of this week's Monday (Date normalizes a negative date).
+      return new Date(
+        d.getFullYear(),
+        d.getMonth(),
+        d.getDate() - dow,
+      ).getTime();
+    }
+    case 'month':
+      return d.getFullYear() * 12 + d.getMonth();
+    case 'quarter':
+      return d.getFullYear() * 4 + Math.floor(d.getMonth() / 3);
+    case 'year':
+      return d.getFullYear();
+  }
+}
+
+/** The first instant of each distinct `g`-bucket in the ascending list `opens`. */
+function firstOfEachBucket(
+  opens: readonly number[],
+  g: TickGranularity,
+): number[] {
+  const out: number[] = [];
+  let prev: number | undefined;
+  for (const t of opens) {
+    const k = bucketKey(t, g);
+    if (k !== prev) {
+      out.push(t);
+      prev = k;
+    }
+  }
+  return out;
+}
+
+const COARSENING_LADDER: readonly TickGranularity[] = [
+  'week',
+  'month',
+  'quarter',
+  'year',
+];
+
+/**
+ * Thin an ascending run of **session opens** down to about `count` axis ticks by
+ * **calendar grain** — the trading-terminal habit of labelling week / month /
+ * year starts rather than an arbitrary every-nth session. Picks the finest grain
+ * on the ladder (session → week → month → quarter → year) that yields at most
+ * `count` buckets and returns the first open in each; beyond yearly it decimates
+ * every-nth so the axis never crowds. Exported so the container can draw session
+ * dividers at the same instants the axis labels.
+ */
+export function coarsenCalendar(
+  opens: readonly number[],
+  count: number,
+): { ticks: number[]; granularity: TickGranularity } {
+  if (opens.length <= count)
+    return { ticks: [...opens], granularity: 'session' };
+  for (const g of COARSENING_LADDER) {
+    const ticks = firstOfEachBucket(opens, g);
+    if (ticks.length <= count) return { ticks, granularity: g };
+  }
+  // Coarser than yearly isn't a calendar grain — decimate the year starts.
+  const yearly = firstOfEachBucket(opens, 'year');
+  const step = Math.ceil(yearly.length / count);
+  return {
+    ticks: yearly.filter((_, i) => i % step === 0),
+    granularity: 'year',
+  };
 }
 
 /**
@@ -97,14 +184,10 @@ export function scaleTradingTime(
     const live = totalLive();
     if (live <= 0 || count < 1) return [domain[0]];
     const opens = sessionOpens();
-    // Calendar-aware: label the session opens (each a new day) rather than
-    // arbitrary even-spaced times — the trading-terminal look. Decimate to
-    // ~count when there are many sessions so the axis never crowds.
-    if (opens.length > 1) {
-      if (opens.length <= count) return opens;
-      const step = Math.ceil(opens.length / count);
-      return opens.filter((_, i) => i % step === 0);
-    }
+    // Calendar-aware: label the session opens (each a new day), thinned to
+    // week / month / year starts by grain rather than an arbitrary every-nth
+    // session — the trading-terminal look.
+    if (opens.length > 1) return coarsenCalendar(opens, count).ticks;
     // No boundaries (a single session / no calendar): fall back to interior
     // even-spaced ticks — endpoints excluded so none sits on the plot edge.
     const out: number[] = [];
@@ -116,12 +199,21 @@ export function scaleTradingTime(
 
   scale.tickFormat = (count = 10, specifier?: string) => {
     if (specifier !== undefined) return base.tickFormat(count, specifier);
-    // Two-tier: a **date** at each session open (so you know which day), the
-    // d3 multi-scale default elsewhere (a mid-session tick, or the cursor).
-    const opens = new Set(sessionOpens());
-    const dateFmt = base.tickFormat(count, '%b %d');
+    const opens = sessionOpens();
     const defFmt = base.tickFormat(count);
-    return (d: Date) => (opens.has(+d) ? dateFmt(d) : defFmt(d));
+    if (opens.length <= 1) return defFmt; // no calendar → d3 multi-scale default
+    // Anchor label at each coarsened session-open tick: a **date** (`%b %d`), or
+    // the **year** when ticks are a year apart (a plain date would drop the year
+    // the reader needs). Any other instant — a cursor readout — uses the d3
+    // multi-scale default. Same grain as {@link ticks}, so labels and the
+    // dividers drawn at these instants agree.
+    const { ticks, granularity } = coarsenCalendar(opens, count);
+    const anchors = new Set(ticks);
+    const anchorFmt = base.tickFormat(
+      count,
+      granularity === 'year' ? '%Y' : '%b %d',
+    );
+    return (d: Date) => (anchors.has(+d) ? anchorFmt(d) : defFmt(d));
   };
 
   function domainFn(): [number, number];

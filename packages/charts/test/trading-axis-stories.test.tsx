@@ -21,6 +21,7 @@ describe('TradingTimeAxis stories render', () => {
   it('exposes the expected feature-axis stories', () => {
     expect(entries.map(([n]) => n).sort()).toEqual([
       'ContinuousVsTrading',
+      'DailyMonths',
       'HalfDay',
       'HolidayGap',
       'IntradaySessions',

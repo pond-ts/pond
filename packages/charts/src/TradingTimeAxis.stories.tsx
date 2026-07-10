@@ -289,3 +289,27 @@ export const ContinuousVsTrading: Story = {
     );
   },
 };
+
+/** ~4 months of daily candles — too many sessions to label each. The axis
+ *  coarsens to a **calendar grain**: dividers and date labels land on month
+ *  starts, not an arbitrary every-nth session (the trading-terminal habit). */
+export const DailyMonths: Story = {
+  render: () => {
+    const s = weekdaySessions(85); // ~4 trading months
+    const bars = candles(s, sessionSeq(s), 60 * MIN);
+    return (
+      <ChartContainer
+        width={WIDTH}
+        range={rangeOf(s)}
+        discontinuities={provider(s)}
+      >
+        <ChartRow height={260}>
+          <YAxis id="p" />
+          <Layers>
+            <Candlestick series={bars} axis="p" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};

@@ -33,7 +33,10 @@ import {
   type LayerRegistry,
 } from './context.js';
 
-/** Gridline tick count — matches the axes (`YAxis`/`TimeAxis`) so they align. */
+/** Gridline tick count. **Must match the axis label counts** (`XAxis`
+ *  `TICK_COUNT`, `ChartContainer` `TIME_TICK_COUNT`, `YAxis`) — the grid, the
+ *  session dividers, and the axis labels are all derived from `ticks(count)`, so
+ *  they only line up while the counts agree. Kept at 5 across all four. */
 const GRID_TICKS = 5;
 /** Minimum px between session dividers — thins dense collapse points (e.g. a
  *  daily chart where every candle is a new session) so the axis never crowds. */
@@ -107,19 +110,26 @@ export function Layers({ children }: LayersProps) {
       // Explicit `<YAxis ticks>` drive the gridlines too, so they align with the
       // axis labels; otherwise d3 auto-picks (the default).
       const explicitY = tickValues.get(defaultAxisId);
-      const xTicks = xScale.ticks(GRID_TICKS).map((d) => xScale(+d));
+      const xTickVals = xScale.ticks(GRID_TICKS);
+      const xTicks = xTickVals.map((d) => xScale(+d));
       const yTicks = gridY
         ? (explicitY ?? gridY.ticks(GRID_TICKS)).map((t) => gridY(t))
         : [];
       drawGrid(ctx, xTicks, yTicks, w, h, gridColor, gridDash);
       // Session dividers: solid verticals at the trading calendar's collapse
       // points (session/day opens), where closed time was removed from the axis.
+      // Draw them at the axis ticks that are collapse points — the same
+      // calendar-coarsened instants the axis labels — so a divider sits under
+      // each date/month/year label, not at every session (which crowds).
       const disc = container.discontinuities;
       if (disc?.boundaries) {
         const [d0, d1] = container.timeRange;
         // Call as a method (not a detached reference) so a class-based provider
         // whose `boundaries` reads `this` keeps its receiver.
-        const bx = disc.boundaries(d0, d1).map((t) => xScale(t));
+        const collapse = new Set(disc.boundaries(d0, d1));
+        const bx = xTickVals
+          .filter((t) => collapse.has(+t))
+          .map((t) => xScale(+t));
         const dividerColor = container.theme.axis.sessionDivider ?? gridColor;
         drawDividers(ctx, thinPixels(bx, MIN_DIVIDER_PX), h, dividerColor);
       }
