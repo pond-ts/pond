@@ -674,33 +674,33 @@ readonly SelectInfo[]` widen + `selectionMode` (multi-select); `LineChart.hitTes
   consumer shapes: incidents-by-host, risk-by-band, heart-rate zones, and a
   power distribution. Two new capabilities: **(1) stacking** — a group-by
   dimension → per-segment stacked bars, coloured by `colors[group] ??
-  theme.bar[group] ?? default` (theme-role + ad-hoc-palette, the single styling
+theme.bar[group] ?? default` (theme-role + ad-hoc-palette, the single styling
   channel preserved); **(2) `orientation`** — `'vertical'` (default, bars up /
   bins on x) | `'horizontal'` (bars right / bins on a y band axis, labelled via
   `<YAxis ticks>`). New props: `bins` (a `byColumn` `{start,end,…}[]` array),
   `columns` (stacked segments), `series` also accepts a `Map<group,TimeSeries>`
   (the `partitionBy().aggregate().toMap()` shape), `colors`, `ordinal`. New
   exported readers `stacksFromGroups` / `stacksFromColumns` / `stacksFromBins`
-  + `StackedBarSeries` / `BinRecord` / `Orientation` types.
-  **No core changes** — all data-gen composes from shipped operators
-  (`aggregate` / `byColumn` / `partitionBy` / `withColumn`); the histogram is
-  chart-side glue.
-  **Load-bearing decisions:** (a) horizontal fits the existing container/row
-  plumbing by putting the *value* on the shared x (`xKind:'value'`) and the bin
-  range on a normal linear y — no transposition of the container/cursor/scale
-  machinery; (b) hover + click are pixel-hit-tested so they work in both
-  orientations, while the x-scrub `flag`/`crosshair` value cursor stays
-  single-series-vertical only; (c) **no public-type change** — a stacked
-  segment's identity reuses `SelectInfo` as `(id, key=binBegin, label=group)`;
-  (d) `stacksFromGroups` **aligns groups by bucket key, not index** — a caught
-  bug: `partitionBy().aggregate()` gives each group *its own* grid, so an
-  index zip stacked unrelated buckets (fixed via a key-union; regression test
-  pins it). **Deliberately out of scope (documented):** diverging/negative
-  stacks; a horizontal histogram sharing a container with time rows (shared
-  x-kind). Verified: unit tests (geometry both orientations + readers +
-  draw-call + G=1↔drawBars regression pin), headless story render of all 7
-  `Charts/Histogram` stories, and a real-browser Playwright screenshot pass of
-  each. Guide: `website/docs/how-to-guides/histograms.mdx`.
+  - `StackedBarSeries` / `BinRecord` / `Orientation` types.
+    **No core changes** — all data-gen composes from shipped operators
+    (`aggregate` / `byColumn` / `partitionBy` / `withColumn`); the histogram is
+    chart-side glue.
+    **Load-bearing decisions:** (a) horizontal fits the existing container/row
+    plumbing by putting the _value_ on the shared x (`xKind:'value'`) and the bin
+    range on a normal linear y — no transposition of the container/cursor/scale
+    machinery; (b) hover + click are pixel-hit-tested so they work in both
+    orientations, while the x-scrub `flag`/`crosshair` value cursor stays
+    single-series-vertical only; (c) **no public-type change** — a stacked
+    segment's identity reuses `SelectInfo` as `(id, key=binBegin, label=group)`;
+    (d) `stacksFromGroups` **aligns groups by bucket key, not index** — a caught
+    bug: `partitionBy().aggregate()` gives each group _its own_ grid, so an
+    index zip stacked unrelated buckets (fixed via a key-union; regression test
+    pins it). **Deliberately out of scope (documented):** diverging/negative
+    stacks; a horizontal histogram sharing a container with time rows (shared
+    x-kind). Verified: unit tests (geometry both orientations + readers +
+    draw-call + G=1↔drawBars regression pin), headless story render of all 7
+    `Charts/Histogram` stories, and a real-browser Playwright screenshot pass of
+    each. Guide: `website/docs/how-to-guides/histograms.mdx`.
 - **M5 — estela parity.** Faithful `DataChart` reproduction on real activity
   data; prove no-regressions; hand the production swap to the estela agent; flip
   `private:false` + first publish.
@@ -1333,36 +1333,43 @@ independently built the same `calendar.bars → BoundedSequence` seam.
     session open** (two-tier `tickFormat`: date at opens, time elsewhere) instead
     of repeated times. The collapsed axis now reads like a trading terminal.
   - ✅ **Follow-up wave — SHIPPED (PRs #391–#394, unreleased):** the four
-    "ready to build" follow-ups, each Layer1+Layer2-reviewed.
-    - ✅ **`stamped:'open'|'close'` on `tagSessions`** (#391) — a feed's bar-stamp
-      convention: `'close'` bins a bar stamped at the close into its closing
-      session (`(open, close]`) instead of dropping it to closed time. Resolves
-      the real-fixture 16:00 close-boundary finding. Scoped to binning; point
-      queries stay half-open.
-    - ✅ **Uniform-spacing metric** (#392) — `segmentDiscontinuity(segs, { spacing:
+    "ready to build" follow-ups, each Layer1+Layer2-reviewed. - ✅ **`stamped:'open'|'close'` on `tagSessions`** (#391) — a feed's bar-stamp
+    convention: `'close'` bins a bar stamped at the close into its closing
+    session (`(open, close]`) instead of dropping it to closed time. Resolves
+    the real-fixture 16:00 close-boundary finding. Scoped to binning; point
+    queries stay half-open. - ✅ **Uniform-spacing metric** (#392) — `segmentDiscontinuity(segs, { spacing:
 'uniform' })` + `TradingCalendar.discontinuities({ spacing, period })`. Each
-      session (or period-bar) equal width (Q7's TradingView metric); proportional
-      stays default. `discontinuities` now takes an options object.
-    - ✅ **Calendar-grain ticks + aligned dividers** (#393) — `scaleTradingTime`
-      coarsens session opens to week/month/quarter/year starts (`coarsenCalendar`);
-      `tickFormat` labels dates or the year at year grain. Dividers now draw at the
-      axis ticks that are collapse points, so grid + dividers + labels align. Dense
-      → coarse rhythm (terminal look); sparse → every collapse marked (unchanged).
-    - ✅ **`calendar` + `spacing` props** (#394, public API, human-approved) — the
-      high-level sugar over the low-level `discontinuities` prop:
-      `<ChartContainer calendar={cal} spacing="uniform" />`. `calendar` is a
-      structural `TradingCalendarLike` (charts still never imports financial);
-      `spacing` is Q7's explicit prop, default proportional.
+    session (or period-bar) equal width (Q7's TradingView metric); proportional
+    stays default. `discontinuities` now takes an options object. - ✅ **Calendar-grain ticks + aligned dividers** (#393) — `scaleTradingTime`
+    coarsens session opens to week/month/quarter/year starts (`coarsenCalendar`);
+    `tickFormat` labels dates or the year at year grain. Dividers now draw at the
+    axis ticks that are collapse points, so grid + dividers + labels align. Dense
+    → coarse rhythm (terminal look); sparse → every collapse marked (unchanged). - ✅ **`calendar` + `spacing` props** (#394, public API, human-approved) — the
+    high-level sugar over the low-level `discontinuities` prop:
+    `<ChartContainer calendar={cal} spacing="uniform" />`. `calendar` is a
+    structural `TradingCalendarLike` (charts still never imports financial);
+    `spacing` is Q7's explicit prop, default proportional.
+  - ✅ **Interaction stories + annotation-drag fix (PRs #404, #405).** Seven
+    `Charts/TradingTimeAxis/Interactions` stories (cursors, annotations-across-gaps,
+    snapping, pan/zoom) over a shared `tradingAxis.fixture.ts` (#404). The walk
+    verified cursor-snap / region-across-gap / pan-zoom correct **and surfaced the
+    deferred annotation-drag-delta bug** — the region body-move applied a shared
+    epoch-ms delta to both edges, distorting a box dragged across a collapsed gap.
+    #405 fixes it: `moveRegionByPixels` shifts each edge equal **pixels** through the
+    scale (rigid pixel translation), an affine no-op on continuous axes; edge-resize
+    and marker drags were already correct.
   - **Still deferred (documented, none blocking):** `neighbourSpans` point-key slot
     widths on the discontinuous axis (interval-keyed bars from
-    `aggregate(barSequence)` — the primary path — are immune); annotation-drag
-    deltas; exact **exchange-tz** tick grain (the current grain buckets by
-    runtime-local calendar). Validated against real data: daily EODHD (#375) +
-    intraday SPY fixtures (#376), incl. a half-day, holidays, overnight gaps, and a
-    dirty (duplicated) session.
-  - **Unreleased:** `@pond-ts/financial` still needs its first (manual, token-based)
-    npm publish per [[npm new-package publish bootstrap]]; `@pond-ts/charts` needs a
-    version bump + CHANGELOG to ship #391–#394 to Tidal.
+    `aggregate(barSequence)` — the primary path — are immune); exact **exchange-tz**
+    tick grain (the current grain buckets by runtime-local calendar). Validated
+    against real data: daily EODHD (#375) + intraday SPY fixtures (#376), incl. a
+    half-day, holidays, overnight gaps, and a dirty (duplicated) session.
+  - ✅ **RELEASED v0.42.0 (2026-07-10).** All five packages on npm together. The
+    new-package bootstrap: `@pond-ts/financial` was manually token-published at
+    `0.41.0` to claim the name + OIDC trusted publisher (per
+    [[npm new-package publish bootstrap]]), then the `v0.42.0` tag OIDC-published all
+    five (financial's first OIDC release). The charts publish auto-wakes the Tidal
+    adoption agent via the CHANGELOG.
 - **Cross-repo coordination — the constellation bridge (live since 2026-07-03).**
   Handoffs between this repo and Tidal are automated; Peter no longer hand-relays
   them. **Inbound:** a Tidal→pond PR with `Tidal` in the title wakes a headless,
