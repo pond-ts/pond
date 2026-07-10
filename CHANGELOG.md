@@ -82,6 +82,16 @@ collapses closed-market time (weekends, holidays, overnight, lunch breaks).
     (`theme.axis.sessionDivider`), aligned with the labels.
   - `Charts/TradingTimeAxis` stories (weekend/holiday/half-day/intraday,
     continuous-vs-trading, daily-months, proportional-vs-uniform).
+- **`@pond-ts/charts`: first-class histograms.** `<BarChart>` gains **stacking**
+  — a group-by dimension → stacked segments, from a wide series (`columns`), a
+  `Map<group, TimeSeries>` (the `partitionBy().aggregate().toMap()` shape), or a
+  `byColumn` `bins` array; per-group colour via `colors` or theme roles — and an
+  **`orientation`** prop (`'vertical'` default | `'horizontal'`, bars grow right
+  with the bins on a y band axis). New readers `stacksFromGroups` /
+  `stacksFromColumns` / `stacksFromBins` plus `StackedBarSeries` / `BinRecord` /
+  `Orientation` types. All data generation composes from existing operators
+  (`aggregate` / `byColumn` / `partitionBy`); no core changes. Guide: How-to
+  guides → Histograms. (#401)
 - **`@pond-ts/charts`:** selection now has a stable series identity. `SelectInfo`
   carries an `id`, and `BarChart` / `ScatterChart` take an optional `id` prop —
   the series identity used for selection + hover. An `id` **gates interactivity**:

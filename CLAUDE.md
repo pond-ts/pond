@@ -209,6 +209,16 @@ From within `packages/core/`:
 
 Run `npx prettier --write .` before committing. Unformatted code will fail review.
 
+**Add the CHANGELOG entry when the feature lands, not at release time.** Any PR
+with a user-facing change (new/changed API, behaviour shift, notable fix) adds
+its entry under the **`## [Unreleased]`** section of `CHANGELOG.md` as part of
+that PR, grouped `Added` / `Changed` / `Fixed` / `Deprecated`. The release bump
+then just *promotes* `[Unreleased]` to the new version — it does not have to
+reconstruct the changelog from `git log`, which is how a landed feature gets
+shipped undocumented (e.g. histograms rode into v0.42.0 with no entry because the
+release bump only covered the concurrent trading-calendar wave). A feature that
+lands without an `[Unreleased]` entry is a feature that ships invisible.
+
 ## Storybook stories: systematic feature coverage
 
 Stories must give **systematic coverage of a feature's states — not just a few
@@ -513,10 +523,15 @@ To cut a release from `main`:
    them lock-step — the release tag covers the whole monorepo.
 2. If `@pond-ts/react`'s `dependencies.pond-ts` caret needs to widen to
    the new minor (e.g. `^0.4.0` → `^0.5.0`), update it in the same pass.
-3. **Add a `CHANGELOG.md` entry** under a new `## [X.Y.Z] — YYYY-MM-DD`
-   heading, and update the compare-link footnotes. Group notes under
-   `Added` / `Changed` / `Fixed` / `Deprecated`. Consumers upgrading
-   between versions rely on this; skipping it compounds every release.
+3. **Promote the `## [Unreleased]` section** to a new `## [X.Y.Z] — YYYY-MM-DD`
+   heading (leaving a fresh empty `## [Unreleased]` above it), and update the
+   compare-link footnotes. Entries should already be there — each feature PR
+   adds its own as it lands (see "Before opening a PR"). **Still sweep**
+   `git log v<previous>..HEAD` for any user-facing change that slipped in without
+   an `[Unreleased]` entry and add it now — the promote-not-reconstruct flow is
+   the safety net, not a licence to skip the sweep. Group notes under
+   `Added` / `Changed` / `Fixed` / `Deprecated`. Consumers upgrading between
+   versions rely on this; skipping it compounds every release.
 4. Commit with a message like `chore: bump to vX.Y.Z`.
 5. Tag the commit: `git tag vX.Y.Z`.
 6. Push the branch, then push the tag:
