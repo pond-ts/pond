@@ -139,6 +139,12 @@ export interface ChartContainerProps {
    * whole **sessions**. Either way the band maps through `xScale`, so on a
    * trading-time axis the closed part of the bucket collapses. Ignored unless
    * `cursor="region"`.
+   *
+   * **Pass a stable reference.** The buckets are memoized on this value + the
+   * view range; a `Sequence`/`BoundedSequence` rebuilt inline every render
+   * re-realizes the buckets on each pointer move (harmless for a coarse
+   * day/session sequence, wasteful for a fine one over a wide view) — hoist it or
+   * `useMemo` it.
    */
   cursorSequence?: Sequence | BoundedSequence;
   /**
@@ -677,7 +683,8 @@ export function ChartContainer({
   // a coarse sequence (days / sessions) is a handful of intervals.
   const cursorBuckets = useMemo<readonly Interval[] | undefined>(() => {
     if (cursorSequence === undefined) return undefined;
-    if (!(cursorSequence instanceof Sequence)) return cursorSequence.intervals();
+    if (!(cursorSequence instanceof Sequence))
+      return cursorSequence.intervals();
     // `bounded` (sample 'begin') drops a partial *leading* bucket — the one that
     // contains the view start begins before it. Widen the realized range back by
     // one bucket width so that covering bucket is included (a coarse calendar

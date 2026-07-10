@@ -29,6 +29,27 @@ export function bucketAt(
   return undefined;
 }
 
+/**
+ * The pixel band for the `region` cursor: the bucket containing `t` (via
+ * {@link bucketAt}), its `[begin, end)` mapped through `xScale` and clamped to
+ * `[0, plotWidth]`. Returns `null` when `t` is in no bucket, or when the band has
+ * no width — including a bucket that lies entirely in a **collapsed gap** on a
+ * trading-time scale (both edges map to the same pixel), so it draws nothing
+ * there rather than a zero-width sliver.
+ */
+export function bandRect(
+  buckets: readonly Interval[],
+  t: number,
+  xScale: (value: number) => number,
+  plotWidth: number,
+): { x0: number; x1: number } | null {
+  const iv = bucketAt(buckets, t);
+  if (iv === undefined) return null;
+  const x0 = Math.max(0, xScale(iv.begin()));
+  const x1 = Math.min(plotWidth, xScale(iv.end()));
+  return x1 > x0 ? { x0, x1 } : null;
+}
+
 /** Default cursor mode — the synced vertical line (cursor enabled on the
  *  container by default; pair with an off-chart readout via `onTrackerChanged`). */
 export const DEFAULT_CURSOR_MODE: CursorMode = 'line';
