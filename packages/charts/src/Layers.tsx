@@ -17,7 +17,7 @@ import {
 } from 'react';
 import { Canvas } from './Canvas.js';
 import { drawGrid, drawDividers, thinPixels } from './grid.js';
-import { cursorParts } from './tracker.js';
+import { cursorParts, bucketAt } from './tracker.js';
 import { resolveSelection } from './select.js';
 import {
   panRange,
@@ -664,6 +664,21 @@ export function Layers({ children }: LayersProps) {
     };
   })();
 
+  // `region` cursor: the bucket under the pointer (from `cursorBuckets`), shaded
+  // as a band. Binary-search the interval containing `cursorTime`, then map both
+  // edges through `xScale` — so on a trading-time axis the closed part of the
+  // bucket collapses and the band crops to the live session(s) within it.
+  const band: { x0: number; x1: number } | null = (() => {
+    if (!parts.band || cursorTime === null) return null;
+    const buckets = container.cursorBuckets;
+    if (buckets === undefined) return null;
+    const iv = bucketAt(buckets, cursorTime);
+    if (iv === undefined) return null;
+    const x0 = Math.max(0, xScale(iv.begin()));
+    const x1 = Math.min(plotWidth, xScale(iv.end()));
+    return x1 > x0 ? { x0, x1 } : null;
+  })();
+
   // Cross-row guide lines: the x-positions of annotations on the OTHER rows
   // (markers + region edges), so a mark on one row reads against this row's data +
   // the shared x axis. A mark's own row skips itself; baselines cast no vertical
@@ -860,6 +875,16 @@ export function Layers({ children }: LayersProps) {
             pointerEvents: 'none',
           }}
         >
+          {band !== null && (
+            <rect
+              x={band.x0}
+              y={0}
+              width={band.x1 - band.x0}
+              height={row.height}
+              fill={cursorColor}
+              opacity={0.12}
+            />
+          )}
           {parts.line &&
             cursorX !== null &&
             cursorX >= 0 &&

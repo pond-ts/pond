@@ -13,7 +13,8 @@ import {
   type DiscontinuityProvider,
   type TradingCalendarLike,
 } from './tradingTimeScale.js';
-import type { TimeRange } from 'pond-ts';
+import { Sequence, BoundedSequence } from 'pond-ts';
+import type { Interval, TimeRange } from 'pond-ts';
 import {
   ContainerContext,
   type AnnotationKind,
@@ -125,9 +126,21 @@ export interface ChartContainerProps {
    * via `<ChartRow cursor>`). **Default `'line'`** — the synced vertical line,
    * with values surfaced *outside* the chart via {@link onTrackerChanged}.
    * `'point'` / `'inline'` / `'flag'` add per-series marks; `'none'` hides it.
+   * `'region'` shades the bucket under the pointer (needs {@link cursorSequence}).
    * See {@link CursorMode}.
    */
   cursor?: CursorMode;
+  /**
+   * The bucketing for `cursor="region"` — the interval highlighted under the
+   * pointer. A pond {@link Sequence} (duration or calendar-aware —
+   * `Sequence.every('1d')`, `Sequence.calendar('month')`) is realized over the
+   * current view; a {@link BoundedSequence} (e.g. a `TradingCalendar`'s
+   * `sessionSequence()` / `barSequence()`) is used as-is, so the band can track
+   * whole **sessions**. Either way the band maps through `xScale`, so on a
+   * trading-time axis the closed part of the bucket collapses. Ignored unless
+   * `cursor="region"`.
+   */
+  cursorSequence?: Sequence | BoundedSequence;
   /**
    * Fires on pointer move with the hovered time + every series' value there (so
    * you can render a readout outside the chart), and `null` on leave.
@@ -292,6 +305,7 @@ export function ChartContainer({
   onTimeRangeChange,
   minDuration = 1,
   cursor = DEFAULT_CURSOR_MODE,
+  cursorSequence,
   cursorTime = false,
   crosshairSnap = true,
   editAnnotations = false,
@@ -657,6 +671,24 @@ export function ChartContainer({
   // hides an out-of-plot crosshair meanwhile.
   const cursorX = resolveCursorX(trackerPosition, hoverX, xScale);
 
+  // `cursor="region"` buckets: realize the `cursorSequence` over the current view
+  // (a `Sequence` → `.bounded`; a `BoundedSequence` used as-is), so the band can
+  // find the interval under the pointer. Memoized on the sequence + view range;
+  // a coarse sequence (days / sessions) is a handful of intervals.
+  const cursorBuckets = useMemo<readonly Interval[] | undefined>(() => {
+    if (cursorSequence === undefined) return undefined;
+    if (!(cursorSequence instanceof Sequence)) return cursorSequence.intervals();
+    // `bounded` (sample 'begin') drops a partial *leading* bucket — the one that
+    // contains the view start begins before it. Widen the realized range back by
+    // one bucket width so that covering bucket is included (a coarse calendar
+    // unit is bounded at ~a year; a fixed step uses its own width).
+    const back =
+      cursorSequence.kind() === 'fixed'
+        ? cursorSequence.stepMs()
+        : 366 * 86_400_000;
+    return cursorSequence.bounded({ start: d0 - back, end: d1 }).intervals();
+  }, [cursorSequence, d0, d1]);
+
   // Emit { time, values } for an outside readout — recomputed as the cursor moves
   // *or* the window slides under it (xScale change → new time at the same pixel).
   // Out of the plot (null, or a controlled trackerPosition d3 extrapolated past
@@ -703,6 +735,7 @@ export function ChartContainer({
       cursorRowKey: hoverPoint?.rowKey ?? null,
       setHoverY,
       crosshairSnap,
+      cursorBuckets,
       draggingKey,
       setDragging,
       selected: selectedValue,
@@ -752,6 +785,7 @@ export function ChartContainer({
       hoverPoint,
       setHoverY,
       crosshairSnap,
+      cursorBuckets,
       draggingKey,
       setDragging,
       selectedValue,

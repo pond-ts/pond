@@ -2,6 +2,7 @@ import { createContext } from 'react';
 import type { ScaleLinear, ScaleTime } from 'd3-scale';
 import type { ChartTheme } from './theme.js';
 import type { AxisFormat } from './format.js';
+import type { Interval } from 'pond-ts';
 import type {
   TradingTimeScale,
   DiscontinuityProvider,
@@ -70,6 +71,14 @@ export interface ContainerFrame {
    * (`yScale.invert`). The x always snaps to the data grid either way.
    */
   readonly crosshairSnap: boolean;
+  /**
+   * `cursor="region"` buckets — the intervals (from `cursorSequence`) realized
+   * over the current view, sorted + non-overlapping. `Layers` finds the one under
+   * the pointer and shades it (mapped through `xScale`, so on a trading-time axis
+   * the closed part of the bucket collapses). `undefined` when no `cursorSequence`
+   * is set.
+   */
+  readonly cursorBuckets: readonly Interval[] | undefined;
   /**
    * The selected mark, or `null`. Shared across rows (single selection). A layer
    * highlights the mark matching the selection's series **`id`** and the clicked
@@ -475,7 +484,8 @@ export type CursorMode =
   | 'point'
   | 'inline'
   | 'flag'
-  | 'crosshair';
+  | 'crosshair'
+  | 'region';
 
 /** A registered layer plus the axis id it draws against. */
 export interface LayerEntry {

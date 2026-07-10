@@ -5,7 +5,29 @@
  * helpers stay pure, so they're unit-tested directly.
  */
 
+import type { Interval } from 'pond-ts';
 import type { CursorMode } from './context.js';
+
+/**
+ * The interval in the sorted, non-overlapping `buckets` that contains `t`
+ * (`begin ≤ t < end`), or `undefined` if `t` falls in no bucket. Binary search —
+ * the `region` cursor uses it to find the bucket under the pointer.
+ */
+export function bucketAt(
+  buckets: readonly Interval[],
+  t: number,
+): Interval | undefined {
+  let lo = 0;
+  let hi = buckets.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const b = buckets[mid]!;
+    if (t < b.begin()) hi = mid - 1;
+    else if (t >= b.end()) lo = mid + 1;
+    else return b;
+  }
+  return undefined;
+}
 
 /** Default cursor mode — the synced vertical line (cursor enabled on the
  *  container by default; pair with an off-chart readout via `onTrackerChanged`). */
@@ -22,23 +44,31 @@ export function cursorParts(mode: CursorMode): {
   readonly line: boolean;
   readonly dots: boolean;
   readonly chip: 'none' | 'inline' | 'flag' | 'axis';
+  /** `region` mode: a shaded **band** over the bucket under the pointer (from
+   *  `cursorSequence`), drawn by `Layers`; no line/dots/chip of its own. */
+  readonly band: boolean;
 } {
+  const base = { line: false, dots: false, chip: 'none', band: false } as const;
   switch (mode) {
     case 'line':
-      return { line: true, dots: false, chip: 'none' };
+      return { ...base, line: true };
     case 'point':
-      return { line: false, dots: true, chip: 'none' };
+      return { ...base, dots: true };
     case 'inline':
-      return { line: false, dots: true, chip: 'inline' };
+      return { ...base, dots: true, chip: 'inline' };
     case 'flag':
-      return { line: false, dots: true, chip: 'flag' };
+      return { ...base, dots: true, chip: 'flag' };
     case 'crosshair':
       // A single reticle (not per-series): `Layers` draws the dashed vertical +
       // full-width horizontal lines, the centre dot, and one value pill itself
       // (so no generic line/dots here); the x-time pill is on `<XAxis>`.
-      return { line: false, dots: false, chip: 'axis' };
+      return { ...base, chip: 'axis' };
+    case 'region':
+      // A shaded band over the bucket under the pointer — `Layers` resolves the
+      // bucket from `cursorBuckets` and draws the rect (cropped through xScale).
+      return { ...base, band: true };
     case 'none':
-      return { line: false, dots: false, chip: 'none' };
+      return { ...base };
   }
 }
 

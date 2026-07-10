@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Sequence } from 'pond-ts';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
@@ -228,6 +229,63 @@ export const PanZoom: Story = {
         discontinuities={provider(s)}
         panZoom
         minDuration={30 * MIN}
+      >
+        <ChartRow height={260}>
+          <YAxis id="p" side="right" />
+          <Layers>
+            <Candlestick series={bars} axis="p" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+// ── Region cursor ────────────────────────────────────────────────────────────
+
+/** **Region cursor over sessions.** `cursor="region"` + `cursorSequence` — hover
+ *  and a band shades the **bucket** under the pointer. Here the calendar's session
+ *  sequence (a `BoundedSequence`), so hovering highlights the whole trading
+ *  **session** the pointer is in. */
+export const RegionCursorSession: Story = {
+  render: () => {
+    const s = weekdaySessions(4);
+    const bars = candles(s, barSeq(s, 30 * MIN), 5 * MIN);
+    return (
+      <ChartContainer
+        width={WIDTH}
+        range={rangeOf(s)}
+        discontinuities={provider(s)}
+        cursor="region"
+        cursorSequence={sessionSeq(s)}
+      >
+        <ChartRow height={260}>
+          <YAxis id="p" side="right" />
+          <Layers>
+            <Candlestick series={bars} axis="p" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/** **Region cursor, calendar week (cropped).** `cursorSequence={Sequence.calendar(
+ *  'week')}` — a calendar-aware bucket. Hover and the band shades the whole trading
+ *  **week**; because it maps through the trading-time scale, the weekend + overnight
+ *  gaps inside the week **collapse**, so the band crops to the live sessions — the
+ *  "duration or calendar aware, cropped to the disjoined scale" case. */
+export const RegionCursorWeek: Story = {
+  render: () => {
+    const s = weekdaySessions(8); // ~1.5 weeks
+    const bars = candles(s, sessionSeq(s), 15 * MIN);
+    return (
+      <ChartContainer
+        width={WIDTH}
+        range={rangeOf(s)}
+        discontinuities={provider(s)}
+        cursor="region"
+        cursorSequence={Sequence.calendar('week')}
       >
         <ChartRow height={260}>
           <YAxis id="p" side="right" />
