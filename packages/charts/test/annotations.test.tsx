@@ -13,6 +13,7 @@ import {
   Baseline,
   computeLabelLanes,
   orderRegion,
+  moveRegionByPixels,
 } from '../src/annotations.js';
 import type { AnnotationSpec } from '../src/context.js';
 
@@ -204,6 +205,49 @@ describe('orderRegion — edge resize never inverts (pivot clamp)', () => {
     expect(orderRegion(20, 20)).toEqual({ from: 20, to: 20 }); // edges meet, zero width
     expect(orderRegion(25, 20)).toEqual({ from: 20, to: 25 }); // crossed past → re-opens
     expect(orderRegion(5, 20)).toEqual({ from: 5, to: 20 }); // dragged the other way
+  });
+});
+
+/**
+ * A region **body move** must translate rigidly in *pixel* space so the box holds
+ * its shape across a collapsed gap on a discontinuous (trading-time) axis — the
+ * old shared value-delta drifted the two edges apart there. {@link moveRegionByPixels}
+ * shifts each edge the same pixels through the scale.
+ */
+describe('moveRegionByPixels — rigid pixel move across a collapsed gap', () => {
+  // A deliberately discontinuous scale with two *different* value→pixel rates:
+  //   segment 1: value [0,100)   → pixel [0,100)   (rate 1 px/value)
+  //   (collapsed gap)
+  //   segment 2: value [200,240) → pixel [100,200) (rate 2.5 px/value)
+  const scale = Object.assign(
+    (v: number): number => (v <= 100 ? v : 100 + (v - 200) * 2.5),
+    {
+      invert: (px: number): number => (px <= 100 ? px : 200 + (px - 100) / 2.5),
+    },
+  );
+
+  it('shifts both edges by equal PIXELS (unequal value), preserving pixel width', () => {
+    // Box from 50 (px 50, seg 1) to 220 (px 150, seg 2) — a 100px-wide box that
+    // straddles the gap. Move +30px.
+    const m = moveRegionByPixels(scale, 50, 220, 30);
+    // Each edge advanced exactly 30px:
+    expect(scale(m.from)).toBeCloseTo(80, 6);
+    expect(scale(m.to)).toBeCloseTo(180, 6);
+    // …so the PIXEL width is preserved (rigid), not distorted:
+    expect(scale(m.to) - scale(m.from)).toBeCloseTo(100, 6);
+    // The value shifts are UNEQUAL — proof it moved in pixel space, not value:
+    expect(m.from - 50).toBeCloseTo(30, 6); // +30 value in the rate-1 segment
+    expect(m.to - 220).toBeCloseTo(12, 6); //  +12 value in the rate-2.5 segment
+  });
+
+  it('is the identity move on a continuous (affine) scale', () => {
+    const lin = Object.assign((v: number): number => v * 2 + 5, {
+      invert: (px: number): number => (px - 5) / 2,
+    });
+    // +8px = +4 value everywhere on this scale → both edges advance 4.
+    const m = moveRegionByPixels(lin, 10, 40, 8);
+    expect(m.from).toBeCloseTo(14, 9);
+    expect(m.to).toBeCloseTo(44, 9);
   });
 });
 
