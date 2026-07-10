@@ -140,6 +140,11 @@ export interface ChartContainerProps {
    * trading-time axis the closed part of the bucket collapses. Ignored unless
    * `cursor="region"`.
    *
+   * **Time axis only.** A bucket is a *time* interval, so the region cursor is
+   * gated to a **time** x-axis — on a **value** axis (a horizontal histogram, a
+   * value-keyed chart) it's a no-op (highlighting a value *band* on a horizontal
+   * histogram would be a different, y-oriented cursor).
+   *
    * **Pass a stable reference.** The buckets are memoized on this value + the
    * view range; a `Sequence`/`BoundedSequence` rebuilt inline every render
    * re-realizes the buckets on each pointer move (harmless for a coarse
@@ -681,8 +686,13 @@ export function ChartContainer({
   // (a `Sequence` → `.bounded`; a `BoundedSequence` used as-is), so the band can
   // find the interval under the pointer. Memoized on the sequence + view range;
   // a coarse sequence (days / sessions) is a handful of intervals.
+  // A `Sequence` bucket is a **time** interval, so gate it to a time axis — on a
+  // value axis (a horizontal histogram, a value-keyed chart) the value domain is
+  // not epoch-ms, so realizing time buckets over it is meaningless (it would
+  // shade the whole plot). Region cursor is time-axis only.
   const cursorBuckets = useMemo<readonly Interval[] | undefined>(() => {
-    if (cursorSequence === undefined) return undefined;
+    if (cursorSequence === undefined || resolvedKind !== 'time')
+      return undefined;
     if (!(cursorSequence instanceof Sequence))
       return cursorSequence.intervals();
     // `bounded` (sample 'begin') drops a partial *leading* bucket — the one that
@@ -694,7 +704,7 @@ export function ChartContainer({
         ? cursorSequence.stepMs()
         : 366 * 86_400_000;
     return cursorSequence.bounded({ start: d0 - back, end: d1 }).intervals();
-  }, [cursorSequence, d0, d1]);
+  }, [cursorSequence, d0, d1, resolvedKind]);
 
   // Emit { time, values } for an outside readout — recomputed as the cursor moves
   // *or* the window slides under it (xScale change → new time at the same pixel).
