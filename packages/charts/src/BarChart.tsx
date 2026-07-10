@@ -162,8 +162,16 @@ type BarShape =
  *
  * **Baseline (single, vertical).** Bars rest on the zero line when the axis
  * domain spans zero, or on the axis floor when an explicit `<YAxis min>` sits
- * above zero (see {@link resolveBarBaseline}). Stacks always rest on 0
- * (`stackValueExtent` pulls it into the domain) and are assumed non-negative.
+ * above zero (see {@link resolveBarBaseline}).
+ *
+ * **Baseline (stacked).** A stack is **cumulative from value 0** — the segments
+ * sum upward from the zero line, so its value axis **must include 0**. The
+ * auto-fit guarantees this: {@link stackValueExtent} always returns `[0, maxTotal]`.
+ * An explicit `<YAxis min>` **above** 0 is therefore unsupported for a stack — it
+ * would hide the bottom of the cumulative column; only the portion above the floor
+ * draws (clipped cleanly at the plot floor, as any bar below an explicit floor is).
+ * Segment values are assumed **non-negative** (a negative or zero segment is
+ * skipped — diverging stacks are out of scope).
  *
  * **Interaction (opt-in via `id`).** Hover lights the bar / segment under the
  * cursor (hit-tested by pixel rect, so it works in both orientations); click
@@ -289,6 +297,9 @@ export function BarChart<
   const singleStyle =
     (semantic !== undefined ? bar[semantic] : undefined) ?? bar.default;
   const gapPx = gap ?? bar.default.gap;
+  // The stacked path's bar-thickness floor comes from `bar.default` (not the `as`
+  // role — `as` is single-series only), matching how `gapPx` sources its default.
+  const stackMinWidth = bar.default.minWidth;
 
   // Stacked style: per-group fills (colors override → theme role → default),
   // plus the shared opacity / outline from the default bar style. Memoized on the
@@ -424,7 +435,7 @@ export function BarChart<
                   xScale,
                   yScale,
                   gapPx,
-                  singleStyle.minWidth,
+                  stackMinWidth,
                 );
                 if (hit === null) return null;
                 const [, g, begin, name, value] = hit;
@@ -446,7 +457,7 @@ export function BarChart<
             yScale,
             stackStyle,
             gapPx,
-            singleStyle.minWidth,
+            stackMinWidth,
             id,
             selection,
             hover,
@@ -464,6 +475,7 @@ export function BarChart<
     label,
     id,
     gapPx,
+    stackMinWidth,
     selection,
     hover,
     axis,

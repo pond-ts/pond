@@ -292,17 +292,19 @@ export function stackBinExtent(ss: StackedBarSeries): [number, number] | null {
 /**
  * The pixel rect `[x0, x1, yTop, yBottom]` (ascending on both axes) of bin `b`'s
  * segment `g`, stacked so it sits atop `cumBefore` (the summed value of the
- * segments below it, in value units). `null` for a gap (non-finite or negative
- * value — skipped, contributes nothing). Transposes on `orientation`:
+ * segments below it, in value units). `null` for a gap (see below). Transposes on
+ * `orientation`:
  *
  * - **vertical** — the bin span is horizontal (`barSpanPx` on `xScale`); the
  *   segment runs vertically from `yScale(cumBefore)` to `yScale(cumBefore + v)`.
  * - **horizontal** — the bin span is vertical (`barSpanPx` on `yScale`); the
  *   segment runs horizontally from `xScale(cumBefore)` to `xScale(cumBefore + v)`.
  *
- * `minSpanPx` floors the **bin** span (bar thickness); the value direction is
- * unfloored (a zero segment is skipped upstream). Shared by {@link drawStacks}
- * and {@link stackAt} so the drawn rect and the hit rect are identical.
+ * `null` for a **gap** — a non-finite, negative, **or zero** value: none of them
+ * draw (a zero segment has no extent), and each contributes nothing to the running
+ * total. `minSpanPx` floors the **bin** span (bar thickness); the value direction
+ * is unfloored. Shared by {@link drawStacks} and {@link stackAt} so the drawn rect
+ * and the hit rect are identical.
  */
 export function segmentRect(
   ss: StackedBarSeries,
@@ -317,7 +319,9 @@ export function segmentRect(
 ): [x0: number, x1: number, yTop: number, yBottom: number] | null {
   const G = ss.groups.length;
   const v = ss.values[b * G + g]!;
-  if (!Number.isFinite(v) || v < 0) return null;
+  // Skip non-finite / negative / zero: a zero segment would otherwise draw a
+  // wasted zero-extent rect (and can't be hit-tested).
+  if (!Number.isFinite(v) || v <= 0) return null;
   if (orientation === 'vertical') {
     const [x0, x1] = barSpanPx(
       ss.begin[b]!,

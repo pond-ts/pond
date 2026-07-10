@@ -213,17 +213,39 @@ describe('segmentRect', () => {
     ).toEqual([10, 30, 0, 2]);
   });
 
-  it('returns null for a gap / negative segment', () => {
-    const g = stacksFromBins(mk({ start: 0, end: 2, a: NaN, b: -1 }), [
+  it('returns null for a gap / negative / zero segment', () => {
+    const g = stacksFromBins(mk({ start: 0, end: 2, a: NaN, b: -1, c: 0 }), [
       'a',
       'b',
+      'c',
     ]);
+    // NaN, negative, and zero all skip — a zero segment would draw a wasted
+    // zero-extent rect and can't be hit-tested.
     expect(
       segmentRect(g, 0, 0, 'vertical', identity, identity, 0, 0, 1),
     ).toBeNull();
     expect(
       segmentRect(g, 0, 1, 'vertical', identity, identity, 0, 0, 1),
     ).toBeNull();
+    expect(
+      segmentRect(g, 0, 2, 'vertical', identity, identity, 0, 0, 1),
+    ).toBeNull();
+  });
+
+  it('anchors the stack baseline at value 0, not at the axis floor', () => {
+    // The stack is cumulative from 0. Even a value scale whose domain excludes 0
+    // (an explicit <YAxis min> above 0) keeps the bottom segment resting on
+    // scale(0) — so with min>0 the bottom is clipped at the plot floor, it does
+    // not silently rest on the floor the way a single bar does. This pins the
+    // documented "a stacked value axis must include 0" behaviour.
+    const ss2 = stacksFromBins(mk({ start: 0, end: 2, a: 10, b: 20 }), [
+      'a',
+      'b',
+    ]);
+    const scale = (v: number) => 100 - v; // scale(0) = 100 (below a min>0 plot)
+    const seg0 = segmentRect(ss2, 0, 0, 'vertical', identity, scale, 0, 0, 1);
+    expect(seg0?.[3]).toBe(100); // yBottom = scale(0) — value 0, the baseline
+    expect(seg0?.[2]).toBe(90); // yTop = scale(10)
   });
 });
 

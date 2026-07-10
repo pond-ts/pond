@@ -306,10 +306,12 @@ through `onHover` / `onSelect` instead.
 
 ## Gotchas
 
-- **Stacks are non-negative.** Segment values are treated as counts / durations;
-  a negative value is dropped (diverging stacks are out of scope). For a single
-  diverging series (up _and_ down off zero), use a plain `column` bar — see the
-  `BarChart` `Diverging` story.
+- **Stacks are non-negative and rest on 0.** Segment values are treated as
+  counts / durations; a negative or zero value is dropped (diverging stacks are
+  out of scope). A stack is cumulative from 0, so its value axis **must include
+  0** — the auto-fit guarantees it; an explicit `<YAxis min>` above 0 clips the
+  bottom of the column. For a single diverging series (up _and_ down off zero),
+  use a plain `column` bar — see the `BarChart` `Diverging` story.
 - **Align by key, not index.** `<BarChart series={map}>` unions the groups'
   bucket keys, so you don't need every group on the same grid. Pass `aggregate`'s
   `{ range }` if you want the buckets padded to a dense, edge-to-edge window.

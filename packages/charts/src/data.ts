@@ -559,7 +559,10 @@ function seriesSlots<S extends SeriesSchema>(
  * (`NaN`, contributing nothing to that stack). So the segments always line up on
  * the real bucket, never on a positional accident. (Pass `aggregate`'s
  * `{ range }` option if you want every group padded to one dense grid — the union
- * is then that grid.)
+ * is then that grid.) When two groups carry the **same `begin`**, the first
+ * group's `end` sets that slot's width — correct for the uniform-width buckets
+ * `aggregate` / `pivotByGroup` produce (all groups share the grid width), which is
+ * the intended input.
  *
  * @throws Error if `groups` is empty.
  * @throws RangeError / TypeError (via {@link readNumericColumn}) if `column` is
