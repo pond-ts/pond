@@ -35,22 +35,21 @@ type Story = StoryObj;
 
 // ── Cursors ────────────────────────────────────────────────────────────────
 
-/** **Crosshair + snap on candlesticks.** A pinned `trackerPosition` (mid third
- *  session) with `cursor="crosshair"`; the reticle snaps its **x** to the
- *  nearest candle and reads the time on the x-axis pill — all in trading-time,
- *  so the overnight gaps stay collapsed behind it. (Hover to move it.) */
+/** **Crosshair + snap on candlesticks.** `cursor="crosshair"` with the default
+ *  `crosshairSnap` — **hover the plot**: the reticle snaps its **x** to the
+ *  nearest candle and reads the time on the x-axis pill, all resolved through the
+ *  trading-time scale (`invert(pointer) → sampleAt → scale`), so the overnight
+ *  gaps stay collapsed behind it and the snap lands on a real bar. */
 export const CrosshairSnap: Story = {
   render: () => {
     const s = weekdaySessions(4);
     const bars = candles(s, barSeq(s, 30 * MIN), 5 * MIN);
-    const pin = s[2]!.open + 3 * H; // mid the third session
     return (
       <ChartContainer
         width={WIDTH}
         range={rangeOf(s)}
         discontinuities={provider(s)}
         cursor="crosshair"
-        trackerPosition={pin}
       >
         <ChartRow height={260}>
           <YAxis id="p" side="right" />
