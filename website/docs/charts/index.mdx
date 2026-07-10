@@ -72,14 +72,14 @@ type, and default; this is the map.
 
 ### Draw layers
 
-| Export         | What it draws                                      |
-| -------------- | -------------------------------------------------- |
-| `LineChart`    | A gap-aware line.                                  |
-| `AreaChart`    | A filled area.                                     |
-| `BandChart`    | A filled `lower`/`upper` envelope (variance band). |
-| `ScatterChart` | Points, with data-driven radius / colour encoding. |
-| `BarChart`     | Bars.                                              |
-| `BoxPlot`      | Box-and-whisker / candlestick (`shape`).           |
+| Export         | What it draws                                                                                                                                |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LineChart`    | A gap-aware line.                                                                                                                            |
+| `AreaChart`    | A filled area.                                                                                                                               |
+| `BandChart`    | A filled `lower`/`upper` envelope (variance band).                                                                                           |
+| `ScatterChart` | Points, with data-driven radius / colour encoding.                                                                                           |
+| `BarChart`     | Bars, and **histograms** — stacked (`columns` / a `Map` / `bins`) and `horizontal`. See the [histograms guide](../how-to-guides/histograms). |
+| `BoxPlot`      | Box-and-whisker / candlestick (`shape`).                                                                                                     |
 
 Every draw layer takes a pond `series` + a `column`, an `as` **style**
 identifier (theme lookup), and an `axis` **scale** id — style and scale are

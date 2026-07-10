@@ -120,6 +120,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'how-to-guides/dashboard-guide',
         'how-to-guides/ingesting-messy-data',
+        'how-to-guides/histograms',
       ],
     },
     {
