@@ -7,6 +7,7 @@ import type {
   TradingTimeScale,
   DiscontinuityProvider,
 } from './tradingTimeScale.js';
+import type { ScaleBand } from './bandScale.js';
 
 /**
  * The frame a {@link ChartContainer} provides to its rows and the time axis.
@@ -181,7 +182,8 @@ export interface ContainerFrame {
   readonly xScale:
     | ScaleTime<number, number>
     | ScaleLinear<number, number>
-    | TradingTimeScale;
+    | TradingTimeScale
+    | ScaleBand;
   /**
    * The discontinuity provider backing a **trading-time** x axis, if one was
    * supplied to the container — closed-market time (weekends, holidays,
@@ -191,12 +193,13 @@ export interface ContainerFrame {
    */
   readonly discontinuities?: DiscontinuityProvider | undefined;
   /**
-   * The resolved kind of the shared x scale — `'time'` (a `scaleTime`) or
-   * `'value'` (a `scaleLinear`), inferred from the layers' data. `<XAxis>` reads
-   * it to pick its default tick formatter (a time format vs a number format),
-   * and the cursor readout to format the x position.
+   * The resolved kind of the shared x scale — `'time'` (a `scaleTime`),
+   * `'value'` (a `scaleLinear`), or `'category'` (a {@link ScaleBand}: an ordinal
+   * column-domain axis, one slot per category). Inferred from the layers' data.
+   * `<XAxis>` reads it to pick its default tick formatter (time / number / the
+   * category label), and the cursor readout to format the x position.
    */
-  readonly xKind: 'time' | 'value';
+  readonly xKind: 'time' | 'value' | 'category';
   /** Pan/zoom enabled — the plot drag-pans and wheel-zooms the shared time range. */
   readonly panZoom: boolean;
   /** Minimum visible duration (ms) — the zoom-in floor. */
@@ -354,17 +357,26 @@ export interface RowLayer {
   yExtent(): [number, number] | null;
   /**
    * The **kind of x axis** this layer's data lives on — `'time'` for a
-   * `TimeSeries`, `'value'` for a `ValueSeries`. The container infers the one
-   * shared x scale from its layers (all must agree — a mix is an error), so the
-   * axis kind never needs declaring. See {@link ContainerFrame.xScale}.
+   * `TimeSeries`, `'value'` for a `ValueSeries`, `'category'` for a categorical
+   * (ordinal column-domain) layer. The container infers the one shared x scale
+   * from its layers (all must agree — a mix is an error), so the axis kind never
+   * needs declaring. See {@link ContainerFrame.xScale}.
    */
-  readonly xKind: 'time' | 'value';
+  readonly xKind: 'time' | 'value' | 'category';
   /**
    * This layer's `[min, max]` along the **x** axis (the key / value-axis extent),
    * or `null` if empty. The container unions these to auto-fit the shared x
-   * domain when no explicit `range` is given.
+   * domain when no explicit `range` is given. For a `'category'` layer this is
+   * the slot extent `[0, n]` (n = category count).
    */
   xExtent(): readonly [number, number] | null;
+  /**
+   * A `'category'` layer's ordered category names (the ordinal axis domain the
+   * container builds a {@link ScaleBand} + label formatter from). `undefined` /
+   * absent for a `'time'` or `'value'` layer. Category layers in one container
+   * must agree on this list (a mix is an error), the same way {@link xKind} must.
+   */
+  xCategories?(): readonly string[] | null;
   /**
    * The layer's value(s) at `time` — the nearest sample — for the scrub tracker:
    * one for a line, two (lower/upper) for a band, empty at a gap. Each carries
@@ -447,8 +459,10 @@ export interface CursorFlag {
  */
 export interface TrackerSource {
   sampleAt(time: number): readonly TrackerSample[];
-  readonly xKind: 'time' | 'value';
+  readonly xKind: 'time' | 'value' | 'category';
   xExtent(): readonly [number, number] | null;
+  /** A `'category'` source's ordered category names (see {@link RowLayer.xCategories}). */
+  xCategories?(): readonly string[] | null;
 }
 
 /**

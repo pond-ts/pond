@@ -111,7 +111,10 @@ export function Layers({ children }: LayersProps) {
       // Explicit `<YAxis ticks>` drive the gridlines too, so they align with the
       // axis labels; otherwise d3 auto-picks (the default).
       const explicitY = tickValues.get(defaultAxisId);
-      const xTickVals = xScale.ticks(GRID_TICKS);
+      // A category axis draws no vertical gridlines — a line through each bar
+      // centre reads as noise; the bars are the structure.
+      const xTickVals =
+        container.xKind === 'category' ? [] : xScale.ticks(GRID_TICKS);
       const xTicks = xTickVals.map((d) => xScale(+d));
       const yTicks = gridY
         ? (explicitY ?? gridY.ticks(GRID_TICKS)).map((t) => gridY(t))
@@ -348,7 +351,7 @@ export function Layers({ children }: LayersProps) {
         }
         // Modifier required but not held → fall through to pan.
       }
-      if (!c.panZoom) return;
+      if (!c.panZoom || c.xKind === 'category') return;
       const r = c.timeRange;
       // Arm a potential pan: record the anchor, but DON'T capture the pointer or
       // hide the tracker yet. Capturing on press retargets the eventual `click`
@@ -619,7 +622,7 @@ export function Layers({ children }: LayersProps) {
     if (el === null) return;
     const onWheel = (e: WheelEvent) => {
       const c = containerRef.current;
-      if (!c.panZoom) return;
+      if (!c.panZoom || c.xKind === 'category') return;
       e.preventDefault();
       const rect = el.getBoundingClientRect();
       const localX = Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left));

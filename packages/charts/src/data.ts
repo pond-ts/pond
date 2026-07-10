@@ -707,3 +707,39 @@ export function stacksFromBins(
   }
   return { begin, end, groups: columns, values, length: n };
 }
+
+/**
+ * One category's `{ label, value }` for a categorical bar chart — the row-read /
+ * transpose view's `(columnName, cell)` pair (categorical-axis RFC, Phase 1). An
+ * ordered list of these is the explicit categorical data source; Phase 2's
+ * transpose reader produces the same list from a wide series' row.
+ */
+export interface CategoryDatum {
+  readonly label: string;
+  readonly value: number;
+}
+
+/**
+ * Build a {@link StackedBarSeries} (single group, `G === 1`) from an ordered list
+ * of `{ label, value }` categories — one **unit slot** `[i, i+1]` per category, in
+ * order. This is the categorical row-read's geometry: the slots are ordinal
+ * indices (the bar's pixel span comes from the container's {@link ScaleBand}), and
+ * the `label`s become the axis's ordered category names (`xCategories`). A
+ * non-finite value reads as a gap (`NaN`). Reuses the shipped stacked geometry —
+ * no new draw path.
+ */
+export function categoryStack(
+  records: readonly CategoryDatum[],
+): StackedBarSeries {
+  const n = records.length;
+  const begin = new Float64Array(n);
+  const end = new Float64Array(n);
+  const values = new Float64Array(n);
+  for (let i = 0; i < n; i += 1) {
+    begin[i] = i;
+    end[i] = i + 1;
+    const v = records[i]!.value;
+    values[i] = Number.isFinite(v) ? v : NaN;
+  }
+  return { begin, end, groups: ['value'], values, length: n };
+}

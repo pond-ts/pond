@@ -4,10 +4,12 @@ import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
 import {
   barsFromTimeSeries,
   barsFromValueSeries,
+  categoryStack,
   stacksFromBins,
   stacksFromColumns,
   stacksFromGroups,
   type BinRecord,
+  type CategoryDatum,
   type StackedBarSeries,
 } from './data.js';
 import {
@@ -62,6 +64,17 @@ export interface BarChartProps<
    * draw. Pair with `ordinal` for a category (band) axis.
    */
   bins?: readonly BinRecord[];
+  /**
+   * **Categorical** data — an ordered `{ label, value }[]`, one bar per category
+   * on a first-class **ordinal category x-axis** (the container infers
+   * `xKind:'category'` and builds a band scale over the labels). The transpose
+   * view's "columns on x": each `label` is a category (ticker / account / zone),
+   * `value` its bar height. Provide **exactly one** of `series` / `bins` /
+   * `categories`; `categories` takes no `column`/`columns` and is **vertical only**
+   * (categories on x). Colour per category via `binColors`. (Categorical-axis RFC,
+   * Phase 1.)
+   */
+  categories?: readonly CategoryDatum[];
   /** Name of the numeric value column for the bar height (single series). Provide
    *  `column` **or** `columns`, not both. */
   column?: string;
@@ -206,6 +219,7 @@ export function BarChart<
 >({
   series,
   bins,
+  categories,
   column,
   columns,
   as: semantic,
@@ -229,8 +243,26 @@ export function BarChart<
 
   // Validate the data-source / value-column combination up front (throws are
   // stable across renders, so no need to memoize them).
-  if ((series === undefined) === (bins === undefined)) {
-    throw new Error('<BarChart> needs exactly one of `series` or `bins`');
+  const nSources =
+    (series !== undefined ? 1 : 0) +
+    (bins !== undefined ? 1 : 0) +
+    (categories !== undefined ? 1 : 0);
+  if (nSources !== 1) {
+    throw new Error(
+      '<BarChart> needs exactly one of `series`, `bins`, or `categories`',
+    );
+  }
+  if (categories !== undefined) {
+    if (column !== undefined || columns !== undefined) {
+      throw new Error(
+        '<BarChart categories> takes no `column`/`columns` (each datum carries its own value)',
+      );
+    }
+    if (orientation === 'horizontal') {
+      throw new Error(
+        '<BarChart categories> is vertical only (categories on x); horizontal category axes are not yet supported',
+      );
+    }
   }
   const isMap = series instanceof Map;
   if (isMap && columns !== undefined) {
@@ -251,6 +283,12 @@ export function BarChart<
   // stack, any horizontal — builds a StackedBarSeries (G === 1 for a single
   // horizontal bar) so one oriented draw path covers it.
   const shape = useMemo<BarShape>(() => {
+    if (categories !== undefined) {
+      // Categorical row-read: one unit-slot bar per category (G === 1), drawn on
+      // the container's band scale. The reused stacked geometry — only the axis
+      // (band scale + labels) is new.
+      return { kind: 'stacked', ss: categoryStack(categories) };
+    }
     if (bins !== undefined) {
       const cols = columns ?? (column !== undefined ? [column] : undefined);
       if (cols === undefined) {
@@ -290,20 +328,39 @@ export function BarChart<
           ? barsFromValueSeries(s, column)
           : barsFromTimeSeries(s, column),
     };
-  }, [series, bins, column, columns, ordinal, orientation, isMap, label]);
+  }, [
+    series,
+    bins,
+    categories,
+    column,
+    columns,
+    ordinal,
+    orientation,
+    isMap,
+    label,
+  ]);
 
-  // The bin axis kind (time vs value) — a `TimeSeries`/`Map` bins on time, a
-  // `ValueSeries`/`bins`-array on a value axis. For a vertical histogram this is
-  // the shared x-kind; a horizontal one puts the *value* on x (always 'value')
-  // and the bin axis on a linear y.
-  const binAxisKind: 'time' | 'value' =
-    bins !== undefined
-      ? 'value'
-      : isMap
-        ? 'time'
-        : series instanceof ValueSeries
-          ? 'value'
-          : 'time';
+  // The category labels — the ordinal axis's ordered column set (`xCategories`),
+  // and the per-bar readout label. `null` unless this is a categorical chart.
+  const categoryLabels = useMemo<readonly string[] | null>(
+    () => categories?.map((c) => c.label) ?? null,
+    [categories],
+  );
+
+  // The bin axis kind — `'category'` for a categorical chart, else `'time'`/`'value'`
+  // (a `TimeSeries`/`Map` bins on time, a `ValueSeries`/`bins`-array on a value
+  // axis). For a vertical chart this is the shared x-kind; a horizontal one puts
+  // the *value* on x (always 'value') and the bin axis on a linear y.
+  const binAxisKind: 'time' | 'value' | 'category' =
+    categories !== undefined
+      ? 'category'
+      : bins !== undefined
+        ? 'value'
+        : isMap
+          ? 'time'
+          : series instanceof ValueSeries
+            ? 'value'
+            : 'time';
 
   const { bar } = container.theme;
   // Single-series style: the `as` role → theme bar style (the single channel).
@@ -438,6 +495,11 @@ export function BarChart<
         xKind: vertical ? binAxisKind : 'value',
         xExtent: vertical ? binExtent : valueExtent,
         yExtent: vertical ? valueExtent : binExtent,
+        // A categorical chart hands the container its ordered category names — the
+        // ordinal axis domain the shared band scale + label formatter build on.
+        ...(categoryLabels !== null
+          ? { xCategories: () => categoryLabels }
+          : {}),
         // No x-scrub flag for a stack / horizontal chart — hover + click read it
         // out instead (the flag is single-series-vertical only).
         sampleAt: () => [],
@@ -466,7 +528,10 @@ export function BarChart<
                   key: begin,
                   value,
                   color: stackStyle.binFills?.[bi] ?? stackStyle.fills[g]!,
-                  label: name,
+                  // A categorical bar reports its **category name** (the slot's
+                  // label); a stack reports the group. (A stable per-column id is
+                  // Phase 1 PR3; `key` is the slot index for now.)
+                  label: categoryLabels?.[begin] ?? name,
                 };
               },
             }),
@@ -491,6 +556,7 @@ export function BarChart<
   }, [
     shape,
     binAxisKind,
+    categoryLabels,
     orientation,
     singleStyle,
     stackStyle,
