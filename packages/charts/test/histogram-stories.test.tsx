@@ -23,6 +23,7 @@ describe('Histogram stories render', () => {
   it('exposes the expected feature-axis stories', () => {
     expect(entries.map(([n]) => n).sort()).toEqual([
       'HeartRateZones',
+      'HeartRateZonesColored',
       'HorizontalSingle',
       'HoverSelect',
       'IncidentsStacked',

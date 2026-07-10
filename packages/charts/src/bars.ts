@@ -247,6 +247,15 @@ export interface StackStyle {
   readonly fills: readonly string[];
   readonly opacity: number;
   readonly outlineWidth: number;
+  /**
+   * Optional **per-bin** fill override, aligned index-for-index to the bins
+   * (bin `b` uses `binFills[b]`), taking precedence over the per-group
+   * {@link fills} for that whole bin. This is the single-series band case —
+   * colour each bar by its category (heart-rate / power zones, value bands) —
+   * so it's normally paired with a `G === 1` stack. A `null`/`undefined` entry
+   * falls back to the group fill.
+   */
+  readonly binFills?: readonly (string | undefined)[];
 }
 
 /** The narrowed selection / hover identity a stacked segment matches against:
@@ -402,11 +411,13 @@ export function drawStacks(
       // A hovered / selected segment pops to full opacity in its own colour; a
       // resting one draws at the shared alpha.
       ctx.globalAlpha = selected || isHovered ? 1 : style.opacity;
-      ctx.fillStyle = style.fills[g]!;
+      // A per-bin colour (the single-series band case) overrides the group fill.
+      const fill = style.binFills?.[b] ?? style.fills[g]!;
+      ctx.fillStyle = fill;
       ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
       if (selected) {
         ctx.lineWidth = style.outlineWidth;
-        ctx.strokeStyle = style.fills[g]!;
+        ctx.strokeStyle = fill;
         ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
       }
     }
