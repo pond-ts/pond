@@ -1,9 +1,11 @@
-import { useContext, useEffect } from 'react';
+import { useContext, useEffect, type ReactElement } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render } from '@testing-library/react';
 import { BoundedSequence, Interval, Sequence } from 'pond-ts';
+import type { StoryObj } from '@storybook/react-vite';
 import { ChartContainer } from '../src/ChartContainer.js';
 import { ContainerContext, type ContainerFrame } from '../src/context.js';
+import * as regionStories from '../src/CursorsRegion.stories.js';
 
 afterEach(cleanup);
 
@@ -70,4 +72,26 @@ describe('cursor="region" bucket realization', () => {
     const f = frameOf({ range: [D0, D1], cursor: 'region' });
     expect(f.cursorBuckets).toBeUndefined();
   });
+});
+
+describe('Charts/Cursors/Region stories render', () => {
+  const entries = Object.entries(regionStories).filter(
+    ([name, v]) =>
+      name !== 'default' && typeof (v as StoryObj).render === 'function',
+  ) as Array<[string, StoryObj]>;
+
+  it('exposes the expected region-cursor stories', () => {
+    expect(entries.map(([n]) => n).sort()).toEqual([
+      'CroppedToSessions',
+      'Default',
+      'Sessions',
+    ]);
+  });
+
+  for (const [name, story] of entries) {
+    it(`${name} mounts without throwing`, () => {
+      const el = (story.render as () => ReactElement)();
+      expect(() => render(el)).not.toThrow();
+    });
+  }
 });

@@ -58,8 +58,6 @@ describe('TradingTimeAxis interaction stories render', () => {
       'FlagOnCandles',
       'PanZoom',
       'RegionAcrossSessions',
-      'RegionCursorSession',
-      'RegionCursorWeek',
       'Snapping',
     ]);
   });
