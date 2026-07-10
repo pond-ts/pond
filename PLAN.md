@@ -1299,17 +1299,37 @@ independently built the same `calendar.bars → BoundedSequence` seam.
     (`theme.axis.sessionDivider` token) and labels the axis with a **date at each
     session open** (two-tier `tickFormat`: date at opens, time elsewhere) instead
     of repeated times. The collapsed axis now reads like a trading terminal.
-  - **Deferred (documented follow-ups, none blocking):** the **uniform-spacing
-    metric** (`spacing="uniform"`, equal-bar-width / TradingView daily look — Q7
-    default was proportional); **coarser daily-chart dividers/labels** (week/month
-    granularity — needs calendar knowledge beyond the raw provider; the current
-    per-session decimation is the every-nth stand-in); `neighbourSpans` point-key
-    slot widths on the discontinuous axis (interval-keyed bars from
+  - ✅ **Follow-up wave — SHIPPED (PRs #391–#394, unreleased):** the four
+    "ready to build" follow-ups, each Layer1+Layer2-reviewed.
+    - ✅ **`stamped:'open'|'close'` on `tagSessions`** (#391) — a feed's bar-stamp
+      convention: `'close'` bins a bar stamped at the close into its closing
+      session (`(open, close]`) instead of dropping it to closed time. Resolves
+      the real-fixture 16:00 close-boundary finding. Scoped to binning; point
+      queries stay half-open.
+    - ✅ **Uniform-spacing metric** (#392) — `segmentDiscontinuity(segs, { spacing:
+'uniform' })` + `TradingCalendar.discontinuities({ spacing, period })`. Each
+      session (or period-bar) equal width (Q7's TradingView metric); proportional
+      stays default. `discontinuities` now takes an options object.
+    - ✅ **Calendar-grain ticks + aligned dividers** (#393) — `scaleTradingTime`
+      coarsens session opens to week/month/quarter/year starts (`coarsenCalendar`);
+      `tickFormat` labels dates or the year at year grain. Dividers now draw at the
+      axis ticks that are collapse points, so grid + dividers + labels align. Dense
+      → coarse rhythm (terminal look); sparse → every collapse marked (unchanged).
+    - ✅ **`calendar` + `spacing` props** (#394, public API, human-approved) — the
+      high-level sugar over the low-level `discontinuities` prop:
+      `<ChartContainer calendar={cal} spacing="uniform" />`. `calendar` is a
+      structural `TradingCalendarLike` (charts still never imports financial);
+      `spacing` is Q7's explicit prop, default proportional.
+  - **Still deferred (documented, none blocking):** `neighbourSpans` point-key slot
+    widths on the discontinuous axis (interval-keyed bars from
     `aggregate(barSequence)` — the primary path — are immune); annotation-drag
-    deltas; the `calendar`-sugar prop; the `stamped: 'open'|'close'` ingress knob
-    (motivated by the real-fixture close-boundary bars). Validated against real
-    data: daily EODHD (#375) + intraday SPY fixtures (#376), incl. a half-day,
-    holidays, overnight gaps, and a dirty (duplicated) session.
+    deltas; exact **exchange-tz** tick grain (the current grain buckets by
+    runtime-local calendar). Validated against real data: daily EODHD (#375) +
+    intraday SPY fixtures (#376), incl. a half-day, holidays, overnight gaps, and a
+    dirty (duplicated) session.
+  - **Unreleased:** `@pond-ts/financial` still needs its first (manual, token-based)
+    npm publish per [[npm new-package publish bootstrap]]; `@pond-ts/charts` needs a
+    version bump + CHANGELOG to ship #391–#394 to Tidal.
 - **Cross-repo coordination — the constellation bridge (live since 2026-07-03).**
   Handoffs between this repo and Tidal are automated; Peter no longer hand-relays
   them. **Inbound:** a Tidal→pond PR with `Tidal` in the title wakes a headless,
