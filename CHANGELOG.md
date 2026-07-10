@@ -3,12 +3,13 @@
 All notable changes to this project are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`, and
-`@pond-ts/fit` — release together under a single `v*` tag, so this file covers
-them all. Pre-1.0: minor bumps may include new features and type-level changes;
-patch bumps are strictly additive.
+The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
+`@pond-ts/fit`, and `@pond-ts/financial` — release together under a single `v*`
+tag, so this file covers them all. Pre-1.0: minor bumps may include new features
+and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.41.0...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.42.0...HEAD
+[0.42.0]: https://github.com/pjm17971/pond-ts/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/pjm17971/pond-ts/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/pjm17971/pond-ts/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/pjm17971/pond-ts/compare/v0.38.0...v0.39.0
@@ -39,8 +40,48 @@ patch bumps are strictly additive.
 
 ## [Unreleased]
 
+## [0.42.0] — 2026-07-10
+
+The **trading-calendar** release: a new `@pond-ts/financial` package (its first
+publish) and a discontinuous **trading-time x axis** in `@pond-ts/charts` that
+collapses closed-market time (weekends, holidays, overnight, lunch breaks).
+
 ### Added
 
+- **`@pond-ts/financial` — new package (first release).** A calendar/analytics
+  layer on `pond-ts` (peer dep; ESM, no React; `@js-temporal/polyfill` for
+  DST-correct session generation):
+  - **`TradingCalendar`** — `fromSessions` (explicit schedule) and `fromRules`
+    (weekmask / holidays / early-closes / breaks, DST-correct via Temporal);
+    query surface (`sessionOn`, `sessionContaining`, `isOpen`, `sessionsInRange`,
+    `nextSession`, `previousSession`).
+  - **Bucketing seam** — `sessionSequence()` / `barSequence(period)` return a
+    `BoundedSequence` that flows straight through `aggregate` / `materialize`,
+    so every bucket is a real trading session/bar (no weekend/holiday buckets,
+    no bucket spanning a closure). Zero core edits.
+  - **`tagSessions(series, { column?, stamped? })`** — appends a session-id
+    column (`number | undefined`) for `partitionBy` so stateful ops don't bridge
+    a session boundary. `stamped: 'close'` bins a bar stamped at its close into
+    the closing session (`(open, close]`) for OHLC feeds.
+  - **`DiscontinuityProvider`** — the d3fc-style 5-method provider
+    (`clampUp`/`clampDown`/`distance`/`offset`/`copy` + optional `boundaries`);
+    `identityDiscontinuity`, `weekendSkip` (bundled reference), and
+    `segmentDiscontinuity(segments, { spacing })`.
+  - **`TradingCalendar.discontinuities({ range?, spacing?, period? })`** — the
+    chart-ready provider; `spacing: 'proportional'` (default, true-time) or
+    `'uniform'` (equal-width per session/bar, the TradingView ordinal look).
+- **`@pond-ts/charts`: trading-time x axis.** Pass a `@pond-ts/financial`
+  provider (structurally — charts never imports that package) to collapse
+  closed-market gaps:
+  - **`ChartContainer` `discontinuities` prop** (low-level) and **`calendar` +
+    `spacing` props** (high-level sugar; `calendar` is a structural
+    `TradingCalendarLike`, `spacing` defaults to proportional).
+  - **`scaleTradingTime`** — a d3-scale-shaped discontinuous time scale; ticks
+    coarsen to a **calendar grain** (week/month/quarter/year starts) with
+    date/year labels, and **session dividers** draw at the collapse points
+    (`theme.axis.sessionDivider`), aligned with the labels.
+  - `Charts/TradingTimeAxis` stories (weekend/holiday/half-day/intraday,
+    continuous-vs-trading, daily-months, proportional-vs-uniform).
 - **`@pond-ts/charts`:** selection now has a stable series identity. `SelectInfo`
   carries an `id`, and `BarChart` / `ScatterChart` take an optional `id` prop —
   the series identity used for selection + hover. An `id` **gates interactivity**:
@@ -48,6 +89,11 @@ patch bumps are strictly additive.
   renders and reads out but can't be selected). A dev-warning fires when
   `selected`/`onSelect` is wired but no layer carries an `id`. First slice of the
   selection RFC (`docs/rfcs/selection.md`, Amendments 2–3).
+- **`pond-ts`: `bin(W, 'minMaxFirstLast')`** — the four-channel M4 downsampling
+  reducer (per-bin min/max/first/last, validity-aware, chunked-delegating); the
+  foundation for the charts decimator wave.
+- **`pond-ts`: `binBy`** — key-domain bucketed reduction (the M4 gappy-data
+  decimation path).
 
 ### Changed
 
