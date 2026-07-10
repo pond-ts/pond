@@ -14,7 +14,10 @@ import {
   computeLabelLanes,
   orderRegion,
   moveRegionByPixels,
+  snapToGuides,
 } from '../src/annotations.js';
+import type { ContainerFrame } from '../src/context.js';
+import type { DiscontinuityProvider } from '../src/tradingTimeScale.js';
 import type { AnnotationSpec } from '../src/context.js';
 
 afterEach(cleanup);
@@ -248,6 +251,65 @@ describe('moveRegionByPixels — rigid pixel move across a collapsed gap', () =>
     const m = moveRegionByPixels(lin, 10, 40, 8);
     expect(m.from).toBeCloseTo(14, 9);
     expect(m.to).toBeCloseTo(44, 9);
+  });
+});
+
+/**
+ * On a trading-time axis a session **close** and the next **open** collapse to
+ * the same pixel, so a boundary is one snap target with two instants;
+ * `snapToGuides` picks the one on the side of the boundary the pointer is on.
+ */
+describe('snapToGuides — disjoint boundary side heuristic', () => {
+  // Live spans [0,100) and [200,300); the gap [100,200) collapses so both 100
+  // (close) and 200 (open) map to pixel 100.
+  const provider: DiscontinuityProvider = {
+    clampDown: (t) => (t >= 100 && t < 200 ? 100 : t), // in the gap → the close
+    clampUp: (t) => (t > 100 && t <= 200 ? 200 : t),
+    distance: (a, b) => b - a,
+    offset: (v, amt) => v + amt,
+    copy: () => provider,
+    boundaries: () => [200], // one collapse point, at the open (200)
+  };
+  const xScale = (v: number): number =>
+    v <= 100 ? v : v < 200 ? 100 : 100 + (v - 200); // collapse the gap onto px 100
+  const frame = {
+    snap: true,
+    annotations: [],
+    xScale,
+    timeRange: [0, 300] as const,
+    discontinuities: provider,
+  } as unknown as ContainerFrame;
+
+  it('snaps to the close (pre-gap) when the pointer is left of the boundary', () => {
+    // px 98 is left of the boundary pixel (100) → the previous session's close.
+    expect(snapToGuides(frame, Symbol(), 98)).toBe(100);
+  });
+
+  it('snaps to the open (post-gap) when the pointer is at/right of the boundary', () => {
+    // px 103 is right of the boundary pixel → the next session's open.
+    expect(snapToGuides(frame, Symbol(), 103)).toBe(200);
+  });
+
+  it('does not snap beyond SNAP_PX', () => {
+    expect(snapToGuides(frame, Symbol(), 120)).toBeNull(); // 20px away
+  });
+
+  it('exactly on the boundary pixel resolves to the open (post-gap)', () => {
+    // px === bpx: `px < bpx` is false → the post-gap open, not the close.
+    expect(snapToGuides(frame, Symbol(), 100)).toBe(200);
+  });
+
+  it('respects the snap toggle', () => {
+    expect(snapToGuides({ ...frame, snap: false }, Symbol(), 98)).toBeNull();
+  });
+
+  it('is a no-op boundary-wise on a plain axis (no discontinuities)', () => {
+    // No provider → only annotation guidelines snap; here there are none.
+    const plain = {
+      ...frame,
+      discontinuities: undefined,
+    } as unknown as ContainerFrame;
+    expect(snapToGuides(plain, Symbol(), 98)).toBeNull();
   });
 });
 
