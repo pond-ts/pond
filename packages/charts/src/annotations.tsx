@@ -320,11 +320,18 @@ function useAnnotationHover(
 const SNAP_PX = 6;
 
 /**
- * Snap a dragged plot-pixel `px` to the nearest **guideline** — another
- * annotation's x — within {@link SNAP_PX}. Returns that guideline's **axis** value
- * to snap to, or `null` if none is near (the caller keeps the raw position).
- * Excludes the dragging mark's own `key`, and reads the same registry the guides
- * draw from, so a drag visibly clicks onto the lines you can see.
+ * Snap a dragged plot-pixel `px` to the nearest **guideline** within
+ * {@link SNAP_PX} — another annotation's x, **or** a trading-axis **disjoint
+ * boundary** (a session collapse point). Returns the **axis** value to snap to,
+ * or `null` if none is near (the caller keeps the raw position). Excludes the
+ * dragging mark's own `key`, and reads the same registry the guides draw from,
+ * so a drag visibly clicks onto the lines you can see.
+ *
+ * At a disjoint boundary the close and the next open share a pixel, so the value
+ * depends on which side of it the pointer is on (see below). Nearest-pixel wins
+ * across both kinds of target, so an annotation sitting *exactly* on a boundary
+ * open ties and — processed first — takes it (its own guideline), which is the
+ * same instant the right-side heuristic would pick anyway.
  */
 export function snapToGuides(
   container: ContainerFrame,

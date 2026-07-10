@@ -294,8 +294,22 @@ describe('snapToGuides — disjoint boundary side heuristic', () => {
     expect(snapToGuides(frame, Symbol(), 120)).toBeNull(); // 20px away
   });
 
+  it('exactly on the boundary pixel resolves to the open (post-gap)', () => {
+    // px === bpx: `px < bpx` is false → the post-gap open, not the close.
+    expect(snapToGuides(frame, Symbol(), 100)).toBe(200);
+  });
+
   it('respects the snap toggle', () => {
     expect(snapToGuides({ ...frame, snap: false }, Symbol(), 98)).toBeNull();
+  });
+
+  it('is a no-op boundary-wise on a plain axis (no discontinuities)', () => {
+    // No provider → only annotation guidelines snap; here there are none.
+    const plain = {
+      ...frame,
+      discontinuities: undefined,
+    } as unknown as ContainerFrame;
+    expect(snapToGuides(plain, Symbol(), 98)).toBeNull();
   });
 });
 
