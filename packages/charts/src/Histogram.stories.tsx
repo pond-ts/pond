@@ -310,6 +310,41 @@ export const HeartRateZones: Story = {
   },
 };
 
+/** A light→dark ramp, one shade per zone (Recovery → Max) — the zone-intensity
+ *  convention. */
+const ZONE_RAMP = ['#E7D4E8', '#C89BC4', '#A96B9A', '#7E3F73', '#512250'];
+
+/**
+ * **Per-zone colour (`binColors`).** The same horizontal zones chart, but each
+ * band takes its own colour from a light→dark ramp — the training-zones look.
+ * `colors` is per-**group** (it would tint every bar alike on a single-series
+ * chart); `binColors` is the per-**bin/band** channel, `binColors[i]` filling
+ * bar `i`. Selection / hover reads out each bar in its own colour.
+ */
+export const HeartRateZonesColored: Story = {
+  render: () => {
+    const bins = hrZoneMinutes();
+    const zoneTicks = HR_ZONES.map((label, i) => ({ at: i + 0.5, label }));
+    return (
+      <ChartContainer width={660} theme={estelaTheme}>
+        <ChartRow height={230}>
+          <YAxis id="zone" label="zone" width={92} ticks={zoneTicks} />
+          <Layers>
+            <BarChart
+              bins={bins}
+              column="min"
+              orientation="horizontal"
+              ordinal
+              binColors={ZONE_RAMP}
+              gap={8}
+            />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
 // ── Example 4: power distribution — vertical bars over a value (W) axis ──
 
 /** A ride's power trace — `watts` sampled every second. The walk mean-reverts to

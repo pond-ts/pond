@@ -89,6 +89,17 @@ export interface BarChartProps<
    */
   colors?: Readonly<Record<string, string>>;
   /**
+   * **Per-bin** colours for a single-series band chart — `colors[i]` fills bar
+   * `i` (aligned to the bins / bands in order), overriding the `as`/theme fill.
+   * This is the way to colour heart-rate / power **zones** or value bands each
+   * their own colour (the `colors` map above is per-**group**, for stacks). A
+   * `null`/`undefined`/short entry falls back to the theme fill. Meant for a
+   * single-series chart (`column` + `bins`, or a horizontal single series);
+   * on a multi-group stack it would tint every segment of a bin alike, so it's
+   * not the tool there.
+   */
+  binColors?: readonly (string | undefined)[];
+  /**
    * Bar growth direction (the histogram orientation). **Default `'vertical'`.**
    *
    * - `'vertical'` — bars grow **up** from a value baseline, bins on the **x**
@@ -199,6 +210,7 @@ export function BarChart<
   columns,
   as: semantic,
   colors,
+  binColors,
   orientation = 'vertical',
   ordinal = false,
   id,
@@ -311,8 +323,13 @@ export function BarChart<
     const fills = (groups ?? []).map(
       (g) => colors?.[g] ?? (bar[g] ?? base).fill,
     );
-    return { fills, opacity: base.opacity, outlineWidth: base.outlineWidth };
-  }, [bar, groups, colors]);
+    return {
+      fills,
+      opacity: base.opacity,
+      outlineWidth: base.outlineWidth,
+      ...(binColors !== undefined ? { binFills: binColors } : {}),
+    };
+  }, [bar, groups, colors, binColors]);
 
   // The current selection / hover, narrowed to the identity the highlight match
   // needs. For a stack that's (id, key, label = group); the single path uses just
@@ -440,11 +457,14 @@ export function BarChart<
                 );
                 if (hit === null) return null;
                 const [, g, begin, name, value] = hit;
+                // Match the drawn colour: a per-bin override wins over the group
+                // fill, so the readout pill reads the bar's own colour.
+                const bi = ss.begin.indexOf(begin);
                 return {
                   id,
                   key: begin,
                   value,
-                  color: stackStyle.fills[g]!,
+                  color: stackStyle.binFills?.[bi] ?? stackStyle.fills[g]!,
                   label: name,
                 };
               },

@@ -393,6 +393,36 @@ describe('drawStacks', () => {
     );
     expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(0);
   });
+
+  it('binFills override the group fill per bin (the zones / band case)', () => {
+    // A single-group (G=1) stack — one bar per bin — with a per-bin colour.
+    const single = stacksFromBins(
+      mk(
+        { start: 0, end: 1, min: 10 },
+        { start: 1, end: 2, min: 20 },
+        { start: 2, end: 3, min: 30 },
+      ),
+      ['min'],
+    );
+    const { ctx, calls } = recordingContext();
+    drawStacks(
+      ctx,
+      single,
+      'horizontal',
+      identity,
+      identity,
+      { ...stackStyle(['#groupfill']), binFills: ['#z1', '#z2', undefined] },
+      0,
+      1,
+      undefined,
+      null,
+      null,
+    );
+    const fillSets = calls
+      .filter((c) => c.type === 'set' && c.name === 'fillStyle')
+      .map((c) => c.args[0]);
+    expect(fillSets).toEqual(['#z1', '#z2', '#groupfill']); // bin2 falls back
+  });
 });
 
 describe('single-series regression pin (G=1 vertical == drawBars geometry)', () => {
