@@ -11,6 +11,7 @@ import { scaleLinear, scaleTime } from 'd3-scale';
 import {
   scaleTradingTime,
   type DiscontinuityProvider,
+  type TradingCalendarLike,
 } from './tradingTimeScale.js';
 import type { TimeRange } from 'pond-ts';
 import {
@@ -68,9 +69,10 @@ export interface ChartContainerProps {
    * the shared x axis into a **trading-time** axis: gaps disappear and time
    * stays proportional within each session. A `@pond-ts/financial`
    * `TradingCalendar.discontinuities()` satisfies this structurally (charts
-   * never imports that package). The low-level primitive; pass
-   * `calendar.discontinuities()` directly. Only affects a **time** axis (ignored
-   * on a value axis).
+   * never imports that package). The **low-level** primitive: pass
+   * `calendar.discontinuities()` (or a `{ spacing, period }` variant) directly.
+   * Only affects a **time** axis (ignored on a value axis). Takes precedence
+   * over {@link calendar} if both are given.
    *
    * **Pass a stable reference.** The scale (and container frame) rebuild when
    * this prop's identity changes, so memoize it — `const disc = useMemo(() =>
@@ -78,6 +80,28 @@ export interface ChartContainerProps {
    * `.discontinuities()` inline in JSX, which would rebuild every render.
    */
   discontinuities?: DiscontinuityProvider;
+  /**
+   * The **high-level** sugar for {@link discontinuities}: a trading calendar the
+   * container derives the provider from itself (`calendar.discontinuities({
+   * spacing })`), so you don't wire the low-level prop. A `@pond-ts/financial`
+   * `TradingCalendar` satisfies the structural {@link TradingCalendarLike} shape
+   * (charts never imports that package). Combine with {@link spacing}. For the
+   * full option matrix (a bar `period`, a scoped `range`) use the low-level
+   * `discontinuities` prop instead. Only affects a **time** axis.
+   *
+   * The provider is memoized on `(calendar, spacing)`, so pass a **stable**
+   * calendar reference (build it once, not inline in JSX).
+   */
+  calendar?: TradingCalendarLike;
+  /**
+   * The trading axis **metric**, when a {@link calendar} is supplied
+   * (trading-calendar RFC Q7). `'proportional'` (default) keeps time
+   * proportional within and across sessions — a half-day is half as wide.
+   * `'uniform'` gives every session equal width (the TradingView ordinal look).
+   * Ignored without `calendar` (a low-level `discontinuities` provider already
+   * carries its own metric).
+   */
+  spacing?: 'proportional' | 'uniform';
   /** Total width in CSS pixels (plot + axis gutters). */
   width: number;
   /** Vertical space between rows in CSS pixels (not under the axis). Default 0. */
@@ -280,6 +304,8 @@ export function ChartContainer({
   timeFormat,
   theme,
   discontinuities,
+  calendar,
+  spacing,
   children,
 }: ChartContainerProps) {
   // The explicit base domain from `range` (a tuple or a TimeRange). `undefined`
@@ -582,8 +608,23 @@ export function ChartContainer({
   // always a plain `scaleLinear`. Gate it once here so the scale branch AND the
   // frame (which pan/zoom read) agree: on a value axis the provider is dropped,
   // so interactions use continuous value math, not trading-time math.
+  // Resolve the trading-time provider: the low-level `discontinuities` prop wins;
+  // otherwise derive it from the high-level `calendar` sugar at the chosen
+  // `spacing`. Memoized on `(calendar, spacing)` so a stable calendar yields a
+  // stable provider (the scale + frame only rebuild when it actually changes) —
+  // pan/zoom read the same provider identity as the low-level path would. Gated
+  // on a time axis so a value-axis chart never calls `calendar.discontinuities`.
+  const calendarProvider = useMemo(
+    () =>
+      resolvedKind === 'time' &&
+      discontinuities === undefined &&
+      calendar !== undefined
+        ? calendar.discontinuities(spacing ? { spacing } : undefined)
+        : undefined,
+    [resolvedKind, discontinuities, calendar, spacing],
+  );
   const xDiscontinuities =
-    resolvedKind === 'time' ? discontinuities : undefined;
+    resolvedKind === 'time' ? (discontinuities ?? calendarProvider) : undefined;
   const { xScale, formatTime } = useMemo(() => {
     if (resolvedKind === 'value') {
       const s = scaleLinear().domain([d0, d1]).range([0, plotWidth]);

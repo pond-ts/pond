@@ -5,7 +5,10 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { Candlestick } from './Candlestick.js';
 import { YAxis } from './YAxis.js';
-import type { DiscontinuityProvider } from './tradingTimeScale.js';
+import type {
+  DiscontinuityProvider,
+  TradingCalendarLike,
+} from './tradingTimeScale.js';
 
 /**
  * Trading-time x axis — the discontinuous axis that collapses closed-market
@@ -91,6 +94,58 @@ function provider(sessions: Session[]): DiscontinuityProvider {
     },
   };
   return self;
+}
+
+/** A **uniform** trading-time provider — each session is one equal-width slot
+ *  regardless of duration (a half-day is as wide as a full day). */
+function uniformProvider(sessions: Session[]): DiscontinuityProvider {
+  const segs = sessions.map((s) => [s.open, s.close] as const);
+  const n = segs.length;
+  const uCoord = (t: number): number => {
+    if (t <= segs[0]![0]) return 0;
+    if (t >= segs[n - 1]![1]) return n;
+    for (let i = 0; i < n; i++) {
+      const [a, b] = segs[i]!;
+      if (t < a) return i; // in a gap before session i → the boundary
+      if (t < b) return i + (t - a) / (b - a); // linear within the session
+    }
+    return n;
+  };
+  const inst = (u: number): number => {
+    if (u <= 0) return segs[0]![0];
+    if (u >= n) return segs[n - 1]![1];
+    const i = Math.floor(u);
+    const [a, b] = segs[i]!;
+    return a + (u - i) * (b - a);
+  };
+  const self: DiscontinuityProvider = {
+    distance: (x, y) => uCoord(y) - uCoord(x),
+    offset: (v, amt) => inst(uCoord(v) + amt),
+    clampUp: (t) => t,
+    clampDown: (t) => t,
+    copy: () => self,
+    boundaries: (from, to) => {
+      const out: number[] = [];
+      for (let i = 1; i < n; i++) {
+        const start = segs[i]![0];
+        if (start > segs[i - 1]![1] && start > from && start < to)
+          out.push(start);
+      }
+      return out;
+    },
+  };
+  return self;
+}
+
+/** A structural {@link TradingCalendarLike} — the shape `@pond-ts/financial`'s
+ *  `TradingCalendar` satisfies — that the container's `spacing` prop drives. */
+function calendarOf(sessions: Session[]): TradingCalendarLike {
+  return {
+    discontinuities: (options) =>
+      options?.spacing === 'uniform'
+        ? uniformProvider(sessions)
+        : provider(sessions),
+  };
 }
 
 /** One interval per session — the daily-bar grid. */
@@ -310,6 +365,42 @@ export const DailyMonths: Story = {
           </Layers>
         </ChartRow>
       </ChartContainer>
+    );
+  },
+};
+
+/** The `spacing` prop over the `calendar` sugar: **proportional** (top — the
+ *  last session is a half-day, so its block is proportionally narrower) vs
+ *  **uniform** (bottom — every session is equal width, the TradingView look).
+ *  Same calendar, driven by `spacing`; charts derives the provider itself. */
+export const SpacingProportionalVsUniform: Story = {
+  render: () => {
+    // A dramatic early close (11:00 → ~1.5h vs 6.5h) makes the metric obvious.
+    const s = withHalfDay(weekdaySessions(6), 11);
+    const cal = calendarOf(s);
+    const bars = candles(s, sessionSeq(s), 15 * MIN);
+    const row = (
+      <ChartRow height={150}>
+        <YAxis id="p" />
+        <Layers>
+          <Candlestick series={bars} axis="p" />
+        </Layers>
+      </ChartRow>
+    );
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <ChartContainer width={WIDTH} range={rangeOf(s)} calendar={cal}>
+          {row}
+        </ChartContainer>
+        <ChartContainer
+          width={WIDTH}
+          range={rangeOf(s)}
+          calendar={cal}
+          spacing="uniform"
+        >
+          {row}
+        </ChartContainer>
+      </div>
     );
   },
 };
