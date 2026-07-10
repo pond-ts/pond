@@ -1,13 +1,28 @@
 import { useContext, useEffect, useMemo } from 'react';
 import { ValueSeries } from 'pond-ts';
 import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
-import { barsFromTimeSeries, barsFromValueSeries } from './data.js';
+import {
+  barsFromTimeSeries,
+  barsFromValueSeries,
+  stacksFromBins,
+  stacksFromColumns,
+  stacksFromGroups,
+  type BinRecord,
+  type StackedBarSeries,
+} from './data.js';
 import {
   barAt,
   barExtent,
   barIndexAtTime,
   drawBars,
+  drawStacks,
   resolveBarBaseline,
+  stackAt,
+  stackBinExtent,
+  stackValueExtent,
+  type Orientation,
+  type StackMark,
+  type StackStyle,
 } from './bars.js';
 import {
   ContainerContext,
@@ -22,52 +37,97 @@ export interface BarChartProps<
   VS extends ValueSeriesSchema = ValueSeriesSchema,
 > {
   /**
-   * The source series. **Interval / timeRange-keyed** `TimeSeries` is the primary
-   * form — each event's key `[begin, end]` is a bar's x-span. A **point-keyed**
-   * (`time`) series is supported too: each bar's width is derived from neighbour
-   * spacing (see {@link barsFromTimeSeries}). A **`ValueSeries`**
-   * (`series.byValue('dist')`) bars against its value axis — also point-keyed, so
-   * the same neighbour-spacing span applies (see {@link barsFromValueSeries}); the
-   * container infers the x-kind from the data, no axis-type prop (mirrors the
-   * other layers).
+   * The source series. Provide **exactly one** of `series` or `bins`.
    *
-   * **Live charts:** `series.byValue(…)` mints a *fresh* projection each call, so
-   * an inline `series={s.byValue('dist')}` re-registers this layer every render —
-   * on a frequently re-rendering chart, memoize the projection (`useMemo`).
+   * - A **`TimeSeries`** (interval / timeRange-keyed is the primary form — each
+   *   event's key `[begin, end]` is a bar's x-span; a point-keyed series derives
+   *   its width from neighbour spacing) → single-series bars via `column`, or
+   *   stacked bars from a **wide** series via `columns`.
+   * - A **`ValueSeries`** (`series.byValue('dist')`) bars against its value axis.
+   * - A **`ReadonlyMap<group, TimeSeries>`** — one series per stack group, all on
+   *   the same bin grid, the shape
+   *   `series.partitionBy('host', { groups }).aggregate(seq, m).toMap()` returns.
+   *   Stacked bars, `column` names the shared value column, groups = map order.
+   *
+   * **Live charts:** `series.byValue(…)` / `.toMap()` mint fresh objects each
+   * call, so an inline `series={…}` re-registers this layer every render — on a
+   * frequently re-rendering chart, memoize the projection (`useMemo`).
    */
-  series: TimeSeries<S> | ValueSeries<VS>;
-  /** Name of the numeric value column for the bar height. */
-  column: string;
+  series?: TimeSeries<S> | ValueSeries<VS> | ReadonlyMap<string, TimeSeries<S>>;
   /**
-   * The series' semantic identifier — what the data _is_ / how it should read.
-   * The theme maps it to a {@link BarStyle} (`theme.bar[as] ?? theme.bar.default`).
-   * **Omitted ⇒ the `default` style** — `column` is the data, `as` is the
-   * identity, and there's no per-component colour override (the single styling
-   * channel; restyle via the theme).
+   * `byColumn` **bin records** — `Array<{ start, end, …aggregates }>` from a
+   * value-band aggregation
+   * (`series.byColumn('power', { width: 20 }, { seconds: … })`). The value-axis
+   * alternative to `series`: `column` / `columns` name the aggregate field(s) to
+   * draw. Pair with `ordinal` for a category (band) axis.
+   */
+  bins?: readonly BinRecord[];
+  /** Name of the numeric value column for the bar height (single series). Provide
+   *  `column` **or** `columns`, not both. */
+  column?: string;
+  /**
+   * Stacked-segment columns, **bottom → top** — one segment per name. Use with a
+   * **wide** `series` (e.g. `pivotByGroup` output) or with `bins`. Mutually
+   * exclusive with `column`, and invalid with a `Map` series (there the segments
+   * are the map's groups; use `column`).
+   */
+  columns?: readonly string[];
+  /**
+   * The single series' semantic identifier — what the data _is_. The theme maps
+   * it to a {@link BarStyle} (`theme.bar[as] ?? theme.bar.default`). **Single
+   * series only** (a stack colours its segments per group; see `colors`).
    */
   as?: string;
   /**
-   * The **stable series identity** for selection + hover. **Optional, and it
-   * gates interactivity:** a bar layer is selectable/hoverable only when given an
-   * `id` — omit it and the bars render + read out but can't be clicked (a click
-   * on them reads as empty space ⇒ deselect). Distinct from `as` (a theme role
-   * that can repeat): `id` must be unique among the selectable layers, and it is
-   * the key the controlled `selected`/`hovered` echo, dedup, and (later)
-   * multi-select all match on — so a selection survives a data update where a
-   * sample `key` would go stale.
+   * Per-group colour override for a **stacked** chart — `{ group: cssColor }`.
+   * A segment resolves `colors[group] ?? theme.bar[group]?.fill ??
+   * theme.bar.default.fill`, so named roles (e.g. a `crit` band styled in the
+   * theme) come from the theme while ad-hoc groups (five hosts) take a colour
+   * here without minting a theme role. The single styling channel still holds:
+   * this is the stack's one colour input.
+   */
+  colors?: Readonly<Record<string, string>>;
+  /**
+   * Bar growth direction (the histogram orientation). **Default `'vertical'`.**
+   *
+   * - `'vertical'` — bars grow **up** from a value baseline, bins on the **x**
+   *   axis (time buckets, value bands). The column / time-histogram look.
+   * - `'horizontal'` — bars grow **right**, bins on the **y** axis (a band axis
+   *   like heart-rate zones). Label the bands with `<YAxis ticks={[{ at, label }]}>`.
+   *
+   * A `'horizontal'` chart puts the **value** on the shared x axis, so its
+   * container's x-kind is `'value'` — it cannot share a `<ChartContainer>` with
+   * time-series rows (each horizontal histogram stands alone). Vertical charts
+   * have no such constraint. The in-chart `flag` / `crosshair` value cursor is
+   * drawn for the **single-series vertical** case only; stacked and horizontal
+   * charts read out via hover / click (`onHover` / `onSelect`).
+   */
+  orientation?: Orientation;
+  /**
+   * For `bins`: lay the bands out as uniform **unit slots** (`[i, i+1]`) instead
+   * of their numeric `[start, end]` edges — an ordinal band axis where every band
+   * reads the same width (heart-rate zones). Ignored for `series`.
+   */
+  ordinal?: boolean;
+  /**
+   * The **stable series identity** for selection + hover — and it **gates
+   * interactivity** (a bar layer is selectable/hoverable only when given an
+   * `id`). For a stack, a clicked / hovered **segment** is identified by
+   * `(id, key = bin begin, label = group)`, so two segments in one bin don't both
+   * light up.
    */
   id?: string;
   /**
-   * Which `<YAxis>` (by its `id`) this bar scales against — picks the *scale*,
-   * where `as` picks the *style* (separate concerns). **Omitted ⇒ the row's
-   * default axis.**
+   * Which `<YAxis>` (by its `id`) this layer scales against — the *scale* (`as`
+   * picks the *style*). **Omitted ⇒ the row's default axis.** For a horizontal
+   * histogram this is the **bin (band) axis**; for a vertical one the **value**
+   * axis.
    */
   axis?: string;
   /**
-   * Pixel gap between adjacent bars — each bar's key span is inset by this total
-   * (half each side), so neighbours breathe. **Omitted ⇒ the theme's
-   * `bar[as].gap`.** A span the gap would invert collapses to the style's
-   * `minWidth`, so a too-thin bucket stays visible.
+   * Pixel gap between adjacent bars / bins — the bar's key span is inset by this
+   * total (half each side). **Omitted ⇒ the theme's `bar` `gap`.** A span the gap
+   * would invert collapses to the style's `minWidth`.
    */
   gap?: number;
   /**
@@ -77,43 +137,46 @@ export interface BarChartProps<
   index?: number;
 }
 
+/** Discriminated build result: a single-series bar view or a stacked one. */
+type BarShape =
+  | {
+      readonly kind: 'single';
+      readonly bs: ReturnType<typeof barsFromTimeSeries>;
+    }
+  | { readonly kind: 'stacked'; readonly ss: StackedBarSeries };
+
 /**
- * A bar draw layer: one rectangle per event, spanning the key's `[begin, end]`
- * (inset by `gap`) from the axis baseline to a numeric `column`'s value. Reads
- * the key endpoints + column into a {@link BarSeries}, registers into the
- * enclosing {@link Layers} (scaling against its `axis`), and renders nothing to
- * the DOM — the row draws it. A gap (missing value) is skipped (no bar).
+ * A bar / histogram draw layer. In its simplest form, one rectangle per event
+ * spanning the key's `[begin, end]` from the axis baseline to a numeric
+ * `column`'s value (see below). It also draws **stacked** bars (a group-by
+ * dimension → segments, `columns` / a `Map` series / `bins`) and **horizontal**
+ * bars (`orientation='horizontal'`, bins on the y axis) — first-class histogram
+ * support. Registers into the enclosing {@link Layers} and renders nothing to the
+ * DOM; the row draws it.
  *
- * **Baseline.** Bars rest on the zero line when the axis domain spans zero (the
- * common all-positive auto-fit case — {@link barExtent} pulls `0` into the
- * domain), or on the axis floor when an explicit `<YAxis min={…}>` sits above
- * zero (see {@link resolveBarBaseline}).
+ * **Data sources.** A time / value `TimeSeries` or `ValueSeries` (`column`), a
+ * wide series or `bins` array (`columns`), or a `Map<group, TimeSeries>`
+ * (`column`) — the last three stack. Every shape composes from pond's own
+ * aggregation (`aggregate` / `byColumn` / `partitionBy`); the histogram guide
+ * has the recipes.
  *
- * **Interaction (opt-in via `id`).** Hover joins the tracker (`sampleAt` → the
- * value of the bar **under the cursor**) and lights that bar (hover-highlight).
- * Click selects the hit bar (`hitTest`); the matching bar — the selection's
- * series `id` **and** the sample `key`, so two series sharing a timestamp don't
- * both light up — draws highlighted
- * (outlined for the committed select, fill-only for the transient hover). Both
- * resolve by **containment**: the tracker by the bar's `[begin, end]` time span
- * (`barIndexAtTime`), the click by the bar's pixel rect (`barAt`) — so the
- * readout reads the same bar you click, even across a wide bucket (they differ
- * only by the `gap` inset, where the pixel rect is narrower than the span).
+ * **Baseline (single, vertical).** Bars rest on the zero line when the axis
+ * domain spans zero, or on the axis floor when an explicit `<YAxis min>` sits
+ * above zero (see {@link resolveBarBaseline}). Stacks always rest on 0
+ * (`stackValueExtent` pulls it into the domain) and are assumed non-negative.
  *
- * Both channels are also **controllable from outside** the chart via the
- * container: `selected`/`onSelect` (committed) and `hovered`/`onHover` (transient)
- * — pass either to pin the lit/selected bar from a legend or list row, and read
- * the callback to mirror a bar-originated hover/click out-of-band. Symmetric pair,
- * keyed by the same {@link SelectInfo} identity.
- *
- * **Value axis** — bars also scale on a value axis when fed a `ValueSeries`
- * (`series.byValue('dist')`): estela's distance-domain splits/laps, one bar per
- * segment over a monotonic axis. A `ValueSeries` is point-keyed, so the span is
- * neighbour-derived like a point `TimeSeries` (see {@link barsFromValueSeries}).
+ * **Interaction (opt-in via `id`).** Hover lights the bar / segment under the
+ * cursor (hit-tested by pixel rect, so it works in both orientations); click
+ * selects it (outlined). A stacked segment's identity is `(id, key = bin begin,
+ * label = group)`. Both channels are controllable from outside via the container
+ * (`selected`/`onSelect`, `hovered`/`onHover`). The in-chart `flag`/`crosshair`
+ * value cursor is single-series-vertical only.
  *
  * ```tsx
  * <Layers>
  *   <BarChart series={hourlyVolume} column="count" />
+ *   <BarChart series={byHost} column="n" colors={{ web1: '#…' }} />
+ *   <BarChart bins={powerDist} column="seconds" orientation="horizontal" ordinal />
  * </Layers>
  * ```
  */
@@ -122,8 +185,13 @@ export function BarChart<
   VS extends ValueSeriesSchema = ValueSeriesSchema,
 >({
   series,
+  bins,
   column,
+  columns,
   as: semantic,
+  colors,
+  orientation = 'vertical',
+  ordinal = false,
   id,
   axis,
   gap,
@@ -138,117 +206,247 @@ export function BarChart<
     throw new Error('<BarChart> must be rendered inside a <Layers>');
   }
 
-  const bs = useMemo(
-    () =>
-      series instanceof ValueSeries
-        ? barsFromValueSeries(series, column)
-        : barsFromTimeSeries(series, column),
-    [series, column],
-  );
-  // Styling: semantic identifier → theme bar style. The single styling channel.
+  // Validate the data-source / value-column combination up front (throws are
+  // stable across renders, so no need to memoize them).
+  if ((series === undefined) === (bins === undefined)) {
+    throw new Error('<BarChart> needs exactly one of `series` or `bins`');
+  }
+  const isMap = series instanceof Map;
+  if (isMap && columns !== undefined) {
+    throw new Error(
+      '<BarChart> with a `Map` series stacks its groups — use `column` (the shared value column), not `columns`',
+    );
+  }
+  if (column !== undefined && columns !== undefined) {
+    throw new Error('<BarChart> takes `column` or `columns`, not both');
+  }
+
+  // The single series' semantic label (its identity for the readout + selection):
+  // the `as` role, else the value column. Used only on the single path.
+  const label = semantic ?? column ?? id ?? 'value';
+
+  // Build the chart-ready data view. Single-series *vertical* stays on the
+  // original BarSeries path (its pixels are unchanged); everything else — any
+  // stack, any horizontal — builds a StackedBarSeries (G === 1 for a single
+  // horizontal bar) so one oriented draw path covers it.
+  const shape = useMemo<BarShape>(() => {
+    if (bins !== undefined) {
+      const cols = columns ?? (column !== undefined ? [column] : undefined);
+      if (cols === undefined) {
+        throw new Error('<BarChart bins> needs `column` or `columns`');
+      }
+      return { kind: 'stacked', ss: stacksFromBins(bins, cols, { ordinal }) };
+    }
+    if (isMap) {
+      if (column === undefined) {
+        throw new Error('<BarChart> with a `Map` series needs `column`');
+      }
+      return {
+        kind: 'stacked',
+        ss: stacksFromGroups(
+          series as ReadonlyMap<string, TimeSeries<S>>,
+          column,
+        ),
+      };
+    }
+    const s = series as TimeSeries<S> | ValueSeries<VS>;
+    if (columns !== undefined) {
+      return { kind: 'stacked', ss: stacksFromColumns(s, columns) };
+    }
+    if (column === undefined) {
+      throw new Error('<BarChart> needs `column` or `columns`');
+    }
+    if (orientation === 'horizontal') {
+      // Single horizontal bar: route through the stacked path (G === 1), naming
+      // the one group with the series' label so selection matches on it.
+      const ss = stacksFromColumns(s, [column]);
+      return { kind: 'stacked', ss: { ...ss, groups: [label] } };
+    }
+    return {
+      kind: 'single',
+      bs:
+        s instanceof ValueSeries
+          ? barsFromValueSeries(s, column)
+          : barsFromTimeSeries(s, column),
+    };
+  }, [series, bins, column, columns, ordinal, orientation, isMap, label]);
+
+  // The bin axis kind (time vs value) — a `TimeSeries`/`Map` bins on time, a
+  // `ValueSeries`/`bins`-array on a value axis. For a vertical histogram this is
+  // the shared x-kind; a horizontal one puts the *value* on x (always 'value')
+  // and the bin axis on a linear y.
+  const binAxisKind: 'time' | 'value' =
+    bins !== undefined
+      ? 'value'
+      : isMap
+        ? 'time'
+        : series instanceof ValueSeries
+          ? 'value'
+          : 'time';
+
   const { bar } = container.theme;
-  const style =
+  // Single-series style: the `as` role → theme bar style (the single channel).
+  const singleStyle =
     (semantic !== undefined ? bar[semantic] : undefined) ?? bar.default;
-  // Series identity for the readout + selection match (the `as` role, else the
-  // column name).
-  const label = semantic ?? column;
-  // The gap prop overrides the theme default; otherwise the style carries it.
-  const gapPx = gap ?? style.gap;
-  // The current selection, narrowed to what the highlight match needs (the
-  // series `id` + the sample `key`). Read here so a selection change re-registers
-  // the layer (in the deps) → the data canvas repaints with the highlight.
-  // Infrequent (a click). `drawBars` matches this layer's own `id` against the
-  // selection's, so a no-id (non-selectable) layer never highlights.
+  const gapPx = gap ?? bar.default.gap;
+
+  // Stacked style: per-group fills (colors override → theme role → default),
+  // plus the shared opacity / outline from the default bar style. Memoized on the
+  // groups + colours so a selection change doesn't rebuild it.
+  const groups = shape.kind === 'stacked' ? shape.ss.groups : undefined;
+  const stackStyle = useMemo<StackStyle>(() => {
+    const base = bar.default;
+    const fills = (groups ?? []).map(
+      (g) => colors?.[g] ?? (bar[g] ?? base).fill,
+    );
+    return { fills, opacity: base.opacity, outlineWidth: base.outlineWidth };
+  }, [bar, groups, colors]);
+
+  // The current selection / hover, narrowed to the identity the highlight match
+  // needs. For a stack that's (id, key, label = group); the single path uses just
+  // (id, key). Read here so a change re-registers the layer → the canvas repaints.
   const selected = container.selected;
-  const selection = useMemo(
-    () => (selected === null ? null : { key: selected.key, id: selected.id }),
+  const hoveredMark = container.hovered;
+  const selection = useMemo<StackMark | null>(
+    () =>
+      selected === null
+        ? null
+        : { id: selected.id, key: selected.key, label: selected.label },
     [selected],
   );
-  // The transient hover-highlight, narrowed like the selection (id + key). Read
-  // here so a hover change re-registers the layer → the data canvas repaints with
-  // the lit bar. Deduped in the container, so this only fires on a bar transition
-  // (not every pointer move).
-  const hoveredMark = container.hovered;
-  const hover = useMemo(
+  const hover = useMemo<StackMark | null>(
     () =>
       hoveredMark === null
         ? null
-        : { key: hoveredMark.key, id: hoveredMark.id },
+        : {
+            id: hoveredMark.id,
+            key: hoveredMark.key,
+            label: hoveredMark.label,
+          },
     [hoveredMark],
   );
 
-  const entry = useMemo<LayerEntry>(
-    () => ({
-      layer: {
-        yExtent: () => barExtent(bs),
-        // The container infers the shared x scale's kind from its layers — a
-        // ValueSeries bars on a value axis, a TimeSeries on time.
-        xKind: series instanceof ValueSeries ? 'value' : 'time',
-        xExtent: () =>
-          bs.length === 0 ? null : [bs.begin[0]!, bs.end[bs.length - 1]!],
-        sampleAt: (time) => {
-          // The flag belongs to the bar **under the cursor** — the bar whose
-          // span `[begin, end]` contains `time` (barIndexAtTime), NOT
-          // nearest-by-begin (which flips to the next bar past a wide bar's
-          // midpoint, landing the flag on the wrong bar). For a point key the
-          // span is the neighbour-derived Voronoi cell (`barsFromTimeSeries`
-          // widens `begin === end` into one), so the cells tile the axis and a
-          // moving cursor always lands in one. Before the first / after the last
-          // bar → no readout, matching the line/area tracker.
-          if (bs.length === 0) return [];
-          const i = barIndexAtTime(bs, time);
-          if (i < 0) return [];
-          const v = bs.y[i]!;
-          if (!Number.isFinite(v)) return []; // a gap bar (missing value) reads nothing
-          // Anchor at the bar's **top-centre** (RFC): the span's centre time
-          // `(begin + end) / 2` (the bucket mid for an interval key; the Voronoi
-          // cell centre — ~on the point — for a point key), at `yScale(value)` =
-          // the bar top. A tall bar (top above the flag stack) drops the staff for
-          // free (the shared `s.py > stackBottom` rule).
-          return [
-            {
-              x: (bs.begin[i]! + bs.end[i]!) / 2,
-              value: v,
-              color: style.fill,
-              label,
-            },
-          ];
+  const entry = useMemo<LayerEntry>(() => {
+    // ── Single-series, vertical: the original bar path, pixels unchanged. ──
+    if (shape.kind === 'single') {
+      const bs = shape.bs;
+      return {
+        layer: {
+          yExtent: () => barExtent(bs),
+          xKind: binAxisKind,
+          xExtent: () =>
+            bs.length === 0 ? null : [bs.begin[0]!, bs.end[bs.length - 1]!],
+          sampleAt: (time) => {
+            if (bs.length === 0) return [];
+            const i = barIndexAtTime(bs, time);
+            if (i < 0) return [];
+            const v = bs.y[i]!;
+            if (!Number.isFinite(v)) return [];
+            return [
+              {
+                x: (bs.begin[i]! + bs.end[i]!) / 2,
+                value: v,
+                color: singleStyle.fill,
+                label,
+              },
+            ];
+          },
+          ...(id === undefined
+            ? {}
+            : {
+                hitTest: (px, py, xScale, yScale): SelectInfo | null => {
+                  const baseline = resolveBarBaseline(yScale);
+                  const hit = barAt(
+                    bs,
+                    px,
+                    py,
+                    xScale,
+                    yScale,
+                    baseline,
+                    gapPx,
+                    singleStyle.minWidth,
+                  );
+                  if (hit === null) return null;
+                  const [, begin, value] = hit;
+                  return {
+                    id,
+                    key: begin,
+                    value,
+                    color: singleStyle.fill,
+                    label,
+                  };
+                },
+              }),
+          draw: (ctx, xScale, yScale) =>
+            drawBars(
+              ctx,
+              bs,
+              xScale,
+              yScale,
+              singleStyle,
+              resolveBarBaseline(yScale),
+              gapPx,
+              id,
+              selection,
+              hover,
+            ),
         },
-        // `id` gates interactivity: only an id-bearing layer wires a hitTest, so
-        // a no-id layer is display-only (a click on it resolves to empty space).
-        // Omit the key entirely when there's no id (exactOptionalPropertyTypes).
+        axisId: axis,
+        index,
+      };
+    }
+
+    // ── Stacked (or single horizontal): the oriented, transposed draw path. ──
+    const ss = shape.ss;
+    const binExtent = () => stackBinExtent(ss);
+    const valueExtent = () => stackValueExtent(ss);
+    const vertical = orientation === 'vertical';
+    return {
+      layer: {
+        // Horizontal puts the value on the shared x (always 'value'); vertical
+        // keeps the bin axis on x. The bin axis on the *other* side is a linear
+        // numeric scale either way (time ms label via <YAxis ticks>).
+        xKind: vertical ? binAxisKind : 'value',
+        xExtent: vertical ? binExtent : valueExtent,
+        yExtent: vertical ? valueExtent : binExtent,
+        // No x-scrub flag for a stack / horizontal chart — hover + click read it
+        // out instead (the flag is single-series-vertical only).
+        sampleAt: () => [],
         ...(id === undefined
           ? {}
           : {
               hitTest: (px, py, xScale, yScale): SelectInfo | null => {
-                const baseline = resolveBarBaseline(yScale);
-                const hit = barAt(
-                  bs,
+                const hit = stackAt(
+                  ss,
                   px,
                   py,
+                  orientation,
                   xScale,
                   yScale,
-                  baseline,
                   gapPx,
-                  style.minWidth,
+                  singleStyle.minWidth,
                 );
                 if (hit === null) return null;
-                const [, begin, value] = hit;
-                // id = the series identity (the selection key); key = the bar's
-                // begin (click provenance); colour = the resolved fill; label =
-                // the display identity.
-                return { id, key: begin, value, color: style.fill, label };
+                const [, g, begin, name, value] = hit;
+                return {
+                  id,
+                  key: begin,
+                  value,
+                  color: stackStyle.fills[g]!,
+                  label: name,
+                };
               },
             }),
         draw: (ctx, xScale, yScale) =>
-          drawBars(
+          drawStacks(
             ctx,
-            bs,
+            ss,
+            orientation,
             xScale,
             yScale,
-            style,
-            resolveBarBaseline(yScale),
+            stackStyle,
             gapPx,
+            singleStyle.minWidth,
             id,
             selection,
             hover,
@@ -256,31 +454,33 @@ export function BarChart<
       },
       axisId: axis,
       index,
-    }),
-    [
-      bs,
-      series,
-      column,
-      style,
-      label,
-      id,
-      gapPx,
-      selection,
-      hover,
-      axis,
-      index,
-    ],
-  );
-  // A stable per-instance slot (see useSlotKey) keeps this layer's z-position
-  // fixed across series/style/selection updates (no jump to the front).
+    };
+  }, [
+    shape,
+    binAxisKind,
+    orientation,
+    singleStyle,
+    stackStyle,
+    label,
+    id,
+    gapPx,
+    selection,
+    hover,
+    axis,
+    index,
+  ]);
+
+  // A stable per-instance slot keeps this layer's z-position fixed across data /
+  // style / selection updates (see useSlotKey).
   const slot = useSlotKey();
   useEffect(() => () => layers.unregisterLayer(slot), [layers, slot]);
   useEffect(() => {
     layers.registerLayer(slot, entry);
   }, [layers, slot, entry]);
 
-  // Also a tracker source: the container fans in this series' value at the
-  // cursor for the (outside-the-chart) readout.
+  // Also a tracker source: the container fans in this layer's value at the cursor
+  // for the (outside-the-chart) readout. A stacked / horizontal layer's sampleAt
+  // returns nothing, so it contributes no flag but still registers cleanly.
   const { registerTrackerSource, unregisterTrackerSource } = container;
   useEffect(
     () => () => unregisterTrackerSource(slot),
@@ -290,8 +490,7 @@ export function BarChart<
     registerTrackerSource(slot, entry.layer);
   }, [registerTrackerSource, slot, entry.layer]);
 
-  // Advertise selectability (only when an `id` was given) so the container can
-  // warn if selection is wired but nothing is selectable.
+  // Advertise selectability (only when an `id` was given).
   const { registerSelectable, unregisterSelectable } = container;
   useEffect(() => {
     if (id === undefined) return;

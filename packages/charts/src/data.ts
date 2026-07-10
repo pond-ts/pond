@@ -1,7 +1,7 @@
+import { ValueSeries } from 'pond-ts';
 import type {
   SeriesSchema,
   TimeSeries,
-  ValueSeries,
   ValueSeriesColumnName,
   ValueSeriesSchema,
 } from 'pond-ts';
@@ -105,6 +105,33 @@ export interface BarSeries {
   readonly begin: Float64Array;
   readonly end: Float64Array;
   readonly y: Float64Array;
+  readonly length: number;
+}
+
+/**
+ * A chart-ready view of a **stacked / histogram** bar series — the multi-segment
+ * generalization of {@link BarSeries}. Each of the `length` bins spans
+ * `[begin[i], end[i]]` on the **bin axis** (time ms, a value, or a band edge) and
+ * carries one value per `group` (a stack segment). `groups` lists the segment
+ * identities **bottom → top**; `values` is a flat `length × groups.length` grid
+ * in **row-major** order, so bin `b`'s segment `g` is `values[b * groups.length + g]`.
+ *
+ * A single-series bar (the {@link BarSeries} case) is just `groups.length === 1`.
+ * Missing / non-finite segment values are `NaN` — the gap signal a stack skips
+ * (no segment, and it contributes nothing to the running total), the same
+ * `Number.isFinite` contract as {@link BarSeries}. Segment values are assumed
+ * **non-negative** (counts / durations); a negative value is treated as a gap
+ * (diverging stacks are out of scope — see the histogram guide).
+ *
+ * The bin axis is x for a **vertical** histogram (bars grow up) and y for a
+ * **horizontal** one (bars grow right); the same grid drives both — the draw
+ * layer transposes by orientation, the data does not change.
+ */
+export interface StackedBarSeries {
+  readonly begin: Float64Array;
+  readonly end: Float64Array;
+  readonly groups: readonly string[];
+  readonly values: Float64Array;
   readonly length: number;
 }
 
@@ -496,4 +523,184 @@ export function barsFromValueSeries<VS extends ValueSeriesSchema>(
   // and allocates fresh span buffers (never mutates the source).
   const { begin, end } = neighbourSpans(series.axisValues(), n);
   return { begin, end, y, length: n };
+}
+
+/**
+ * The per-bin `[begin, end]` slots for a `TimeSeries`, key-shape aware — the same
+ * rule {@link barsFromTimeSeries} applies: an interval / timeRange key uses its
+ * own endpoints; a point (`time`) key synthesizes a span from neighbour spacing
+ * (see {@link neighbourSpans}). Shared by the stacked readers so a stack draws
+ * true bucket spans over an `aggregate` rollup and contiguous bars over a raw
+ * point series.
+ */
+function seriesSlots<S extends SeriesSchema>(
+  series: TimeSeries<S>,
+): { begin: Float64Array; end: Float64Array } {
+  const n = series.length;
+  if (series.keyColumn().kind !== 'time') {
+    return keyBeginEnd(series);
+  }
+  return neighbourSpans(series.keyColumn().begin, n);
+}
+
+/**
+ * Build a {@link StackedBarSeries} from a **`Map` of grouped series** — one series
+ * per stack group. This is the natural reader for pond's grouped-aggregate output:
+ * `series.partitionBy('host', { groups }).aggregate(Sequence.every('5m'), { n: 'count' }).toMap()`
+ * yields a `Map<host, TimeSeries>`, one interval-keyed series per host. The stack
+ * order (`groups`, bottom → top) is the map's **insertion order** (stable when you
+ * pass `partitionBy`'s `{ groups }` option).
+ *
+ * **Aligned by bucket key, not by index.** Each partition's `aggregate` spans only
+ * *its own* events' range, so the groups generally have **different** grids (host A
+ * might have buckets 0–8, host B buckets 3–9). This reader takes the **union** of
+ * every group's `[begin, end)` slots (ascending) and places each group's `column`
+ * value at the matching `begin`; a bucket a group is missing reads as a gap
+ * (`NaN`, contributing nothing to that stack). So the segments always line up on
+ * the real bucket, never on a positional accident. (Pass `aggregate`'s
+ * `{ range }` option if you want every group padded to one dense grid — the union
+ * is then that grid.)
+ *
+ * @throws Error if `groups` is empty.
+ * @throws RangeError / TypeError (via {@link readNumericColumn}) if `column` is
+ *   missing or non-numeric in any member.
+ */
+export function stacksFromGroups<S extends SeriesSchema>(
+  groups: ReadonlyMap<string, TimeSeries<S>>,
+  column: string,
+): StackedBarSeries {
+  const names = [...groups.keys()];
+  if (names.length === 0) {
+    throw new Error('stacksFromGroups: `groups` map is empty');
+  }
+  const series = [...groups.values()];
+  const G = names.length;
+  // Union of all groups' slots, keyed by begin (each begin → its end).
+  const ends = new Map<number, number>();
+  const perGroupSlots = series.map((s) => seriesSlots(s));
+  for (let g = 0; g < G; g += 1) {
+    const { begin, end } = perGroupSlots[g]!;
+    for (let i = 0; i < series[g]!.length; i += 1) {
+      if (!ends.has(begin[i]!)) ends.set(begin[i]!, end[i]!);
+    }
+  }
+  const begins = [...ends.keys()].sort((a, b) => a - b);
+  const n = begins.length;
+  const beginArr = new Float64Array(n);
+  const endArr = new Float64Array(n);
+  const slotOf = new Map<number, number>();
+  for (let i = 0; i < n; i += 1) {
+    beginArr[i] = begins[i]!;
+    endArr[i] = ends.get(begins[i]!)!;
+    slotOf.set(begins[i]!, i);
+  }
+  const values = new Float64Array(n * G);
+  values.fill(NaN);
+  for (let g = 0; g < G; g += 1) {
+    const { begin } = perGroupSlots[g]!;
+    const col = readNumericColumn(series[g]!, column);
+    for (let i = 0; i < series[g]!.length; i += 1) {
+      const slot = slotOf.get(begin[i]!);
+      if (slot !== undefined) values[slot * G + g] = col[i]!;
+    }
+  }
+  return { begin: beginArr, end: endArr, groups: names, values, length: n };
+}
+
+/**
+ * Build a {@link StackedBarSeries} from a **wide** series — one numeric column
+ * per stack group. This is the reader for pond's `pivotByGroup` output (long →
+ * wide reshape: each group value becomes its own column), or any series that is
+ * already wide (e.g. `in` / `out` traffic). `columns` names the segment columns
+ * **bottom → top**; a `ValueSeries` bins on its value axis (neighbour-spaced
+ * slots), a `TimeSeries` on its key (interval spans or neighbour-spaced points).
+ *
+ * @throws RangeError / TypeError if any column is missing or non-numeric.
+ */
+export function stacksFromColumns<
+  S extends SeriesSchema,
+  VS extends ValueSeriesSchema,
+>(
+  series: TimeSeries<S> | ValueSeries<VS>,
+  columns: readonly string[],
+): StackedBarSeries {
+  const n = series.length;
+  const G = columns.length;
+  const isValue = series instanceof ValueSeries;
+  const { begin, end } = isValue
+    ? neighbourSpans((series as ValueSeries<VS>).axisValues(), n)
+    : seriesSlots(series as TimeSeries<S>);
+  const values = new Float64Array(n * G);
+  for (let g = 0; g < G; g += 1) {
+    const col = isValue
+      ? readValueColumn(series as ValueSeries<VS>, columns[g]!)
+      : readNumericColumn(series as TimeSeries<S>, columns[g]!);
+    for (let i = 0; i < n; i += 1) {
+      values[i * G + g] = col[i]!;
+    }
+  }
+  return { begin, end, groups: columns, values, length: n };
+}
+
+/**
+ * A single bin record from `byColumn` — its `[start, end)` range plus the mapped
+ * aggregate columns (read by name via {@link stacksFromBins}). Deliberately just
+ * the `start`/`end` shape (no index signature) so pond's
+ * `byColumn(...): Array<{ start, end } & ReduceResult>` assigns to it structurally
+ * — the aggregate fields ride along and are read out by the reader.
+ */
+export type BinRecord = { readonly start: number; readonly end: number };
+
+/** Options for {@link stacksFromBins}. */
+export interface StacksFromBinsOptions {
+  /**
+   * Use uniform **unit slots** (`[i, i+1]`) for the bins instead of their numeric
+   * `[start, end]` edges — an **ordinal** band axis (heart-rate zones, Coggan
+   * power zones) where every band reads the same width regardless of its numeric
+   * span. The caller labels the slots via `<YAxis ticks>` at `i + 0.5`. Omitted /
+   * `false` ⇒ real numeric edges (a true value axis — power W, risk %).
+   */
+  readonly ordinal?: boolean;
+}
+
+/**
+ * Build a {@link StackedBarSeries} from **`byColumn` bin records** — the array of
+ * `{ start, end, …aggregates }` a value-band aggregation returns
+ * (`series.byColumn('power', { width: 20 }, { seconds: { from: 'dt', using: 'sum' } })`).
+ * `columns` names the aggregate field(s) to draw as segments (`['seconds']` for a
+ * plain distribution; several for a stacked value-band histogram).
+ *
+ * By default each bin keeps its real numeric `[start, end]` edges — a true value
+ * axis (power W, risk %). Pass `{ ordinal: true }` for uniform unit slots
+ * (`[i, i+1]`) when the bins are **categories** whose numeric width shouldn't
+ * distort the layout (heart-rate zones); label them with `<YAxis ticks>`.
+ *
+ * A missing / non-finite aggregate reads as a gap (`NaN`).
+ */
+export function stacksFromBins(
+  bins: readonly BinRecord[],
+  columns: readonly string[],
+  options: StacksFromBinsOptions = {},
+): StackedBarSeries {
+  const n = bins.length;
+  const G = columns.length;
+  const begin = new Float64Array(n);
+  const end = new Float64Array(n);
+  const values = new Float64Array(n * G);
+  for (let i = 0; i < n; i += 1) {
+    const bin = bins[i]!;
+    if (options.ordinal) {
+      begin[i] = i;
+      end[i] = i + 1;
+    } else {
+      begin[i] = bin.start;
+      end[i] = bin.end;
+    }
+    const fields = bin as unknown as Record<string, unknown>;
+    for (let g = 0; g < G; g += 1) {
+      const v = fields[columns[g]!];
+      values[i * G + g] = typeof v === 'number' && Number.isFinite(v) ? v : NaN;
+    }
+  }
+  return { begin, end, groups: columns, values, length: n };
 }

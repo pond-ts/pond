@@ -668,6 +668,39 @@ direction|series`, `showOHLC` (Phase-2 four-pill readout, folded in early),
 readonly SelectInfo[]` widen + `selectionMode` (multi-select); `LineChart.hitTest`
     threshold nearest-point; the `snapToClosest | snapToClosestSelected` prop;
     theme-referenced dim state.
+- **Histograms (BarChart) — SHIPPED** (`feat/charts-histograms`,
+  user-directed 2026-07-10). First-class histogram support as an **extension of
+  `<BarChart>`** (not a new component — user decision), covering four real
+  consumer shapes: incidents-by-host, risk-by-band, heart-rate zones, and a
+  power distribution. Two new capabilities: **(1) stacking** — a group-by
+  dimension → per-segment stacked bars, coloured by `colors[group] ??
+  theme.bar[group] ?? default` (theme-role + ad-hoc-palette, the single styling
+  channel preserved); **(2) `orientation`** — `'vertical'` (default, bars up /
+  bins on x) | `'horizontal'` (bars right / bins on a y band axis, labelled via
+  `<YAxis ticks>`). New props: `bins` (a `byColumn` `{start,end,…}[]` array),
+  `columns` (stacked segments), `series` also accepts a `Map<group,TimeSeries>`
+  (the `partitionBy().aggregate().toMap()` shape), `colors`, `ordinal`. New
+  exported readers `stacksFromGroups` / `stacksFromColumns` / `stacksFromBins`
+  + `StackedBarSeries` / `BinRecord` / `Orientation` types.
+  **No core changes** — all data-gen composes from shipped operators
+  (`aggregate` / `byColumn` / `partitionBy` / `withColumn`); the histogram is
+  chart-side glue.
+  **Load-bearing decisions:** (a) horizontal fits the existing container/row
+  plumbing by putting the *value* on the shared x (`xKind:'value'`) and the bin
+  range on a normal linear y — no transposition of the container/cursor/scale
+  machinery; (b) hover + click are pixel-hit-tested so they work in both
+  orientations, while the x-scrub `flag`/`crosshair` value cursor stays
+  single-series-vertical only; (c) **no public-type change** — a stacked
+  segment's identity reuses `SelectInfo` as `(id, key=binBegin, label=group)`;
+  (d) `stacksFromGroups` **aligns groups by bucket key, not index** — a caught
+  bug: `partitionBy().aggregate()` gives each group *its own* grid, so an
+  index zip stacked unrelated buckets (fixed via a key-union; regression test
+  pins it). **Deliberately out of scope (documented):** diverging/negative
+  stacks; a horizontal histogram sharing a container with time rows (shared
+  x-kind). Verified: unit tests (geometry both orientations + readers +
+  draw-call + G=1↔drawBars regression pin), headless story render of all 7
+  `Charts/Histogram` stories, and a real-browser Playwright screenshot pass of
+  each. Guide: `website/docs/how-to-guides/histograms.mdx`.
 - **M5 — estela parity.** Faithful `DataChart` reproduction on real activity
   data; prove no-regressions; hand the production swap to the estela agent; flip
   `private:false` + first publish.

@@ -71,6 +71,11 @@ export {
   boxFromTimeSeries,
   barsFromTimeSeries,
   ohlcFromTimeSeries,
+  // Stacked / histogram readers — assemble a StackedBarSeries from pond's own
+  // aggregation output: a Map of grouped series, a wide series, or byColumn bins.
+  stacksFromGroups,
+  stacksFromColumns,
+  stacksFromBins,
 } from './data.js';
 export type {
   ChartSeries,
@@ -80,7 +85,12 @@ export type {
   BarSeries,
   OhlcSeries,
   OhlcColumns,
+  StackedBarSeries,
+  BinRecord,
+  StacksFromBinsOptions,
 } from './data.js';
+// The histogram bar orientation (`'vertical'` | `'horizontal'`).
+export type { Orientation } from './bars.js';
 
 // Scatter's data-driven point encoding (radius / colour from columns via
 // scales) — the deliberate, signed-off exception to single-channel styling.

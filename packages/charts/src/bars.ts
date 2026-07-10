@@ -1,7 +1,16 @@
 import { barSpanPx } from './range.js';
-import type { BarSeries } from './data.js';
+import type { BarSeries, StackedBarSeries } from './data.js';
 import type { Scale } from './line.js';
 import type { BarStyle } from './theme.js';
+
+/**
+ * Bar growth direction — the histogram orientation. `'vertical'` bars grow **up**
+ * from a value baseline, bins on the x axis (the column / time-bucket look);
+ * `'horizontal'` bars grow **right**, bins on the y axis (the band look, e.g.
+ * heart-rate zones). The stacked geometry below transposes on this alone — the
+ * {@link StackedBarSeries} data is identical for both.
+ */
+export type Orientation = 'vertical' | 'horizontal';
 
 /**
  * The `[min, max]` vertical extent the bars occupy — the finite values of `cs.y`
@@ -210,6 +219,242 @@ export function barAt(
     const [x0, x1, yTop, yBottom] = rect;
     if (px >= x0 && px <= x1 && py >= yTop && py <= yBottom) {
       return [i, cs.begin[i]!, cs.y[i]!];
+    }
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stacked / oriented geometry (histograms). A single-series bar is the G === 1
+// case; the same code draws both orientations, transposing which scale carries
+// the bin span vs the stacked value. Stacks rest on value 0 (always in-domain —
+// stackValueExtent pulls 0 in), so no late baseline resolution is needed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A resolved per-group stack style: `fills` aligned index-for-index to
+ * {@link StackedBarSeries.groups} (segment `g` uses `fills[g]`), plus the shared
+ * `opacity` (applied to every resting segment) and `outlineWidth` (the selected
+ * segment's stroke). Assembled by `BarChart` from the theme's `bar` style + the
+ * `colors` override, so the draw layer stays theme-free (unit-testable).
+ *
+ * There is no separate highlight colour: a hovered / selected segment pops by
+ * drawing its **own** `fill` at full opacity (and, when selected, an outline in
+ * that same colour). Colour-agnostic, so it reads correctly whatever palette the
+ * `colors` override supplies.
+ */
+export interface StackStyle {
+  readonly fills: readonly string[];
+  readonly opacity: number;
+  readonly outlineWidth: number;
+}
+
+/** The narrowed selection / hover identity a stacked segment matches against:
+ *  the series `id`, the bin's `begin` (its `key`), and the group (its `label`). */
+export interface StackMark {
+  readonly id: string;
+  readonly key: number;
+  readonly label: string;
+}
+
+/**
+ * The `[min, max]` extent of the **value (stacked) axis** — always `[0, maxTotal]`,
+ * where `maxTotal` is the tallest bin's summed finite non-negative segments. `0` is
+ * pulled in so the stack rests on a visible baseline (the bar analog of
+ * {@link barExtent}). An empty / all-gap series returns `[0, 1]` so the axis still
+ * has a usable domain. Feeds the y auto-fit for a vertical histogram, the x
+ * auto-fit for a horizontal one.
+ */
+export function stackValueExtent(ss: StackedBarSeries): [number, number] {
+  const G = ss.groups.length;
+  let max = 0;
+  for (let b = 0; b < ss.length; b += 1) {
+    let cum = 0;
+    for (let g = 0; g < G; g += 1) {
+      const v = ss.values[b * G + g]!;
+      if (Number.isFinite(v) && v > 0) cum += v;
+    }
+    if (cum > max) max = cum;
+  }
+  return [0, max > 0 ? max : 1];
+}
+
+/**
+ * The `[min, max]` extent of the **bin axis** — the first bin's `begin` to the
+ * last bin's `end` (the slots are ascending). `null` for an empty series. Feeds
+ * the x auto-fit for a vertical histogram, the y auto-fit for a horizontal one.
+ */
+export function stackBinExtent(ss: StackedBarSeries): [number, number] | null {
+  if (ss.length === 0) return null;
+  return [ss.begin[0]!, ss.end[ss.length - 1]!];
+}
+
+/**
+ * The pixel rect `[x0, x1, yTop, yBottom]` (ascending on both axes) of bin `b`'s
+ * segment `g`, stacked so it sits atop `cumBefore` (the summed value of the
+ * segments below it, in value units). `null` for a gap (non-finite or negative
+ * value — skipped, contributes nothing). Transposes on `orientation`:
+ *
+ * - **vertical** — the bin span is horizontal (`barSpanPx` on `xScale`); the
+ *   segment runs vertically from `yScale(cumBefore)` to `yScale(cumBefore + v)`.
+ * - **horizontal** — the bin span is vertical (`barSpanPx` on `yScale`); the
+ *   segment runs horizontally from `xScale(cumBefore)` to `xScale(cumBefore + v)`.
+ *
+ * `minSpanPx` floors the **bin** span (bar thickness); the value direction is
+ * unfloored (a zero segment is skipped upstream). Shared by {@link drawStacks}
+ * and {@link stackAt} so the drawn rect and the hit rect are identical.
+ */
+export function segmentRect(
+  ss: StackedBarSeries,
+  b: number,
+  g: number,
+  orientation: Orientation,
+  xScale: Scale,
+  yScale: Scale,
+  cumBefore: number,
+  gapPx: number,
+  minSpanPx: number,
+): [x0: number, x1: number, yTop: number, yBottom: number] | null {
+  const G = ss.groups.length;
+  const v = ss.values[b * G + g]!;
+  if (!Number.isFinite(v) || v < 0) return null;
+  if (orientation === 'vertical') {
+    const [x0, x1] = barSpanPx(
+      ss.begin[b]!,
+      ss.end[b]!,
+      xScale,
+      gapPx,
+      minSpanPx,
+    );
+    const yA = yScale(cumBefore);
+    const yB = yScale(cumBefore + v);
+    return [x0, x1, Math.min(yA, yB), Math.max(yA, yB)];
+  }
+  const [y0, y1] = barSpanPx(
+    ss.begin[b]!,
+    ss.end[b]!,
+    yScale,
+    gapPx,
+    minSpanPx,
+  );
+  const xA = xScale(cumBefore);
+  const xB = xScale(cumBefore + v);
+  return [Math.min(xA, xB), Math.max(xA, xB), y0, y1];
+}
+
+/**
+ * Fill every segment of every bin in `ss`, stacking each bin's groups from the
+ * value baseline outward (bottom → top vertical, left → right horizontal). A gap
+ * (non-finite / negative) segment is skipped and adds nothing to the running
+ * total, so the segments above it close the space. A segment matching the current
+ * `selection` (same series `id`, bin `key` **and** group `label`) draws in its
+ * group's `highlight` **and** outlined; one matching `hover` draws in `highlight`
+ * without the outline; all others use the flat `fill`. `globalAlpha` carries the
+ * shared opacity and is restored.
+ *
+ * O(N·G) over bins × groups, one fill (+ optional stroke) per drawn segment.
+ */
+export function drawStacks(
+  ctx: CanvasRenderingContext2D,
+  ss: StackedBarSeries,
+  orientation: Orientation,
+  xScale: Scale,
+  yScale: Scale,
+  style: StackStyle,
+  gapPx: number,
+  minSpanPx: number,
+  seriesId: string | undefined,
+  selection: StackMark | null,
+  hover: StackMark | null,
+): void {
+  const G = ss.groups.length;
+  ctx.save();
+  ctx.globalAlpha = style.opacity;
+  for (let b = 0; b < ss.length; b += 1) {
+    let cum = 0;
+    for (let g = 0; g < G; g += 1) {
+      const rect = segmentRect(
+        ss,
+        b,
+        g,
+        orientation,
+        xScale,
+        yScale,
+        cum,
+        gapPx,
+        minSpanPx,
+      );
+      const v = ss.values[b * G + g]!;
+      if (Number.isFinite(v) && v > 0) cum += v;
+      if (rect === null) continue;
+      const [x0, x1, yTop, yBottom] = rect;
+      const matches = (m: StackMark | null): boolean =>
+        m !== null &&
+        m.id === seriesId &&
+        m.key === ss.begin[b] &&
+        m.label === ss.groups[g];
+      const selected = matches(selection);
+      const isHovered = matches(hover);
+      // A hovered / selected segment pops to full opacity in its own colour; a
+      // resting one draws at the shared alpha.
+      ctx.globalAlpha = selected || isHovered ? 1 : style.opacity;
+      ctx.fillStyle = style.fills[g]!;
+      ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
+      if (selected) {
+        ctx.lineWidth = style.outlineWidth;
+        ctx.strokeStyle = style.fills[g]!;
+        ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
+      }
+    }
+  }
+  ctx.restore();
+}
+
+/**
+ * Hit-test plot-pixel `(px, py)` against `ss`'s stacked segments — the **first**
+ * segment whose rect contains the point, or `null`. The geometry is
+ * {@link segmentRect}, so the hit rect is exactly the drawn rect. The returned
+ * tuple is `[bin, group, begin, groupName, value]` for the chart to assemble a
+ * `SelectInfo` (it owns the colour). Orientation-agnostic — it reads `(px, py)`,
+ * so a horizontal histogram hit-tests the same way a vertical one does.
+ *
+ * O(N·G) over bins × groups (no spatial index — histogram bin/group counts are
+ * small; click / hover are cheap events).
+ */
+export function stackAt(
+  ss: StackedBarSeries,
+  px: number,
+  py: number,
+  orientation: Orientation,
+  xScale: Scale,
+  yScale: Scale,
+  gapPx: number,
+  minSpanPx: number,
+):
+  | [bin: number, group: number, begin: number, name: string, value: number]
+  | null {
+  const G = ss.groups.length;
+  for (let b = 0; b < ss.length; b += 1) {
+    let cum = 0;
+    for (let g = 0; g < G; g += 1) {
+      const rect = segmentRect(
+        ss,
+        b,
+        g,
+        orientation,
+        xScale,
+        yScale,
+        cum,
+        gapPx,
+        minSpanPx,
+      );
+      const v = ss.values[b * G + g]!;
+      if (Number.isFinite(v) && v > 0) cum += v;
+      if (rect === null) continue;
+      const [x0, x1, yTop, yBottom] = rect;
+      if (px >= x0 && px <= x1 && py >= yTop && py <= yBottom) {
+        return [b, g, ss.begin[b]!, ss.groups[g]!, v];
+      }
     }
   }
   return null;

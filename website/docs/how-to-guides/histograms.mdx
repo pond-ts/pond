@@ -1,0 +1,334 @@
+---
+title: Histograms
+sidebar_position: 3
+---
+
+# Histograms
+
+A guide for building **histograms** with `@pond-ts/charts` — stacked bars,
+value/ordinal band axes, and horizontal orientation — where the buckets come
+from **pond's own aggregation**, not a hand-rolled binning pass.
+
+Histograms are `<BarChart>`. The same layer that draws one bar per event also
+draws stacked bars (a group-by dimension), bars over value-bands, and bars that
+grow **right** from a category axis. Everything below composes from operators
+you already have — `aggregate`, `byColumn`, `partitionBy` — so the data
+generation and the chart are one pipeline.
+
+## Two orientations, one mental model
+
+A histogram has a **bin axis** (the buckets) and a **value axis** (the bar
+magnitude). `orientation` picks which way the bars grow:
+
+- **`orientation="vertical"`** (the default) — bars grow **up**; the bins sit on
+  the **x** axis. This is the column / time-bucket look: incidents over time,
+  a power distribution.
+- **`orientation="horizontal"`** — bars grow **right**; the bins sit on the
+  **y** axis. This is the band look: heart-rate zones, a top-N list.
+
+Each bar can be a **stack** of segments — a group-by dimension (per host, per
+risk band) coloured per group. A plain single-value bar is just a stack of one.
+
+The four worked examples below cover the space:
+
+| Example            | Bins               | Orientation    | Stacked  | Data source                         |
+| ------------------ | ------------------ | -------------- | -------- | ----------------------------------- |
+| Incidents by host  | 5-min time buckets | vertical       | ✅ hosts | `partitionBy().aggregate().toMap()` |
+| Risk by band       | 5-min time buckets | vertical       | ✅ bands | same, groups are classified bands   |
+| Heart-rate zones   | bpm zones          | **horizontal** | —        | `byColumn({ edges })`               |
+| Power distribution | 20 W bands         | vertical       | —        | `byColumn({ width })`               |
+
+All four render as `Charts/Histogram` stories in the `@pond-ts/charts`
+Storybook — run `npm run storybook` in `packages/charts` to see them live.
+
+---
+
+## Example 1 — incidents, stacked by host
+
+The ask: incidents over the past hour, bucketed into 5-minute columns, each
+column split by which of five hosts raised it.
+
+### Generate the buckets
+
+Start from raw incidents — one row per incident, a `time` key and a `host`
+column. Bucket **per host** with `partitionBy(...).aggregate(...)`, then
+`.toMap()` to get one interval-keyed series per host:
+
+```ts
+import { Sequence, TimeSeries } from 'pond-ts';
+
+const HOSTS = ['web-1', 'web-2', 'web-3', 'db-1', 'cache-1'] as const;
+
+const byHost = incidents // TimeSeries<{ time, host }>
+  .partitionBy('host', { groups: HOSTS })
+  .aggregate(
+    Sequence.every('5m'),
+    { n: { from: 'host', using: 'count' } },
+    { range: [hourStart, hourEnd] }, // pad every host to the full hour
+  )
+  .toMap(); // Map<host, TimeSeries<{ timeRange, n }>>
+```
+
+`Sequence.every('5m')` is the fixed 5-minute grid; `count` over the (required)
+`host` column counts rows per bucket. The `{ range }` option anchors every
+partition to the same window so the columns line up edge to edge.
+
+:::note[Each group gets its own grid]
+`partitionBy(...).aggregate(...)` buckets **within** each partition, so a host
+that only had incidents in the second half of the hour produces a _shorter_
+series than one busy throughout. That's fine — `<BarChart>` **aligns the groups
+by bucket key**, not by position, taking the union of every group's buckets and
+placing each host's count on the matching one (a host missing a bucket
+contributes nothing there). You never have to pre-align the grids yourself.
+:::
+
+### Draw the stack
+
+Hand the `Map` straight to `<BarChart series>`; `column` names the shared value
+column, and the stack order is the map's insertion order (stable under
+`partitionBy`'s `{ groups }`). `colors` supplies a hue per host:
+
+```tsx
+import {
+  BarChart,
+  ChartContainer,
+  ChartRow,
+  Layers,
+  YAxis,
+} from '@pond-ts/charts';
+
+const HOST_COLORS = {
+  'web-1': '#7FE2D2',
+  'web-2': '#45CDBE',
+  'web-3': '#15B3A6',
+  'db-1': '#E0B36A',
+  'cache-1': '#C98A5B',
+};
+
+<ChartContainer range={[hourStart, hourEnd]} width={660}>
+  <ChartRow height={260}>
+    <YAxis id="count" label="incidents" min={0} pad={0.06} />
+    <Layers>
+      <BarChart series={byHost} column="n" colors={HOST_COLORS} gap={2} />
+    </Layers>
+  </ChartRow>
+</ChartContainer>;
+```
+
+That's the whole histogram: the `Map` is the stack, `column` is the height,
+`colors` is the palette. The bin axis (time) is inferred from the data, and the
+value axis auto-fits to the tallest stack (with `min={0}` so the bars rest on a
+visible floor and `pad` for a little headroom).
+
+---
+
+## Example 2 — risk usage, stacked by band
+
+The ask: the same 5-minute columns, but split by a **classified band** —
+risk-used / risk-allowed bucketed into `safe` (0–75 %), `warn` (75–90 %), and
+`crit` (90–100 %), coloured green / orange / red.
+
+The only difference from the incidents stack is where the groups come from:
+classify each reading into a band, then partition on that band.
+
+```ts
+const RISK_BANDS = ['safe', 'warn', 'crit'] as const;
+const band = (usagePct: number) =>
+  usagePct < 75 ? 'safe' : usagePct < 90 ? 'warn' : 'crit';
+
+// raw readings → a `band` column (via TimeSeries.map, or classify at the source)
+const byBand = riskReadings // TimeSeries<{ time, band }>
+  .partitionBy('band', { groups: RISK_BANDS })
+  .aggregate(Sequence.every('5m'), { n: { from: 'band', using: 'count' } })
+  .toMap();
+```
+
+```tsx
+<BarChart
+  series={byBand}
+  column="n"
+  colors={{ safe: '#3FB984', warn: '#E0A24A', crit: '#D9534F' }}
+  gap={2}
+/>
+```
+
+Because `crit` is last in `RISK_BANDS`, red stacks on top — as usage drifts up
+over the hour the stack visibly reddens from the top down.
+
+### Colours: `colors` prop vs theme roles
+
+There are two ways to colour a stack, and they follow the same "one styling
+channel" rule as every other layer:
+
+- **`colors={{ group: hue }}`** — the ad-hoc path. Best for throwaway groups
+  (five hosts you won't name in a theme).
+- **theme roles** — name the groups as `bar` styles in your theme
+  (`theme.bar.safe`, `theme.bar.warn`, …) and drop the `colors` prop. Best when
+  the groups are a stable vocabulary the whole app shares.
+
+A segment resolves `colors[group] ?? theme.bar[group]?.fill ??
+theme.bar.default.fill`, so you can mix — name the important bands in the theme
+and let the rest fall back. The `RiskBandsThemeRoles` story shows the identical
+chart driven entirely from theme roles.
+
+---
+
+## Example 3 — heart-rate zones (horizontal)
+
+The ask: time spent in each heart-rate zone — Recovery, Endurance, Aerobic,
+Threshold, Max — as horizontal bars, one per zone.
+
+This is where `byColumn` and `orientation="horizontal"` come in.
+
+### Generate the bands
+
+`byColumn` buckets rows by the **value** of a column (here `hr`) using explicit
+edges, and reduces each bucket. Summing a per-sample duration column gives
+time-in-zone:
+
+```ts
+const HR_EDGES = [90, 120, 140, 160, 175, 200]; // 5 zones ⇒ 6 edges
+
+const zones = ride.byColumn(
+  'hr',
+  { edges: HR_EDGES, inclusive: '(]' }, // a sample on an edge counts to the lower zone
+  { min: { from: 'min', using: 'sum' } }, // minutes per sample, summed
+);
+// → [{ start: 90, end: 120, min: … }, { start: 120, end: 140, min: … }, …]
+```
+
+`byColumn` returns a **plain array** of `{ start, end, …aggregates }` records
+(value bands aren't time-indexed, so they aren't a `TimeSeries`). Feed it to
+`<BarChart bins>`.
+
+### Draw it horizontal
+
+Two knobs make this a horizontal band histogram:
+
+- **`orientation="horizontal"`** transposes the draw — bars grow right, bins go
+  on the y axis.
+- **`ordinal`** lays the bands out as uniform slots (each zone the same height)
+  regardless of its bpm width, and you label them with `<YAxis ticks>` at the
+  slot centres (`i + 0.5`).
+
+```tsx
+const ZONES = ['Recovery', 'Endurance', 'Aerobic', 'Threshold', 'Max'];
+const zoneTicks = ZONES.map((label, i) => ({ at: i + 0.5, label }));
+
+<ChartContainer width={660}>
+  <ChartRow height={230}>
+    <YAxis id="zone" label="zone" width={92} ticks={zoneTicks} />
+    <Layers>
+      <BarChart
+        bins={zones}
+        column="min"
+        orientation="horizontal"
+        ordinal
+        colors={{ min: '#15B3A6' }}
+        gap={8}
+      />
+    </Layers>
+  </ChartRow>
+</ChartContainer>;
+```
+
+:::caution[Horizontal charts stand alone]
+A horizontal histogram puts the **value** on the shared x axis, so its
+container's x-kind becomes `value` — it can't share a `<ChartContainer>` with
+time-series rows. Give a horizontal histogram its own container. Vertical
+histograms have no such constraint and compose freely with other rows.
+:::
+
+Drop `ordinal` if you want the bands drawn at their real numeric widths (a true
+value axis) instead of uniform slots.
+
+---
+
+## Example 4 — power distribution
+
+The ask: seconds spent in each 20-watt band across a ride — a classic
+distribution histogram over a numeric x axis.
+
+Same `byColumn`, this time with **even-width** bins, and `withColumn` to attach
+the per-sample duration the reducer sums:
+
+```ts
+const secs = new Float64Array(ride.length).fill(1); // 1 s cadence
+
+const dist = ride
+  .withColumn('secs', secs)
+  .byColumn('watts', { width: 20 }, { secs: { from: 'secs', using: 'sum' } });
+// → [{ start: 0, end: 20, secs: … }, { start: 20, end: 40, secs: … }, …]
+```
+
+Drawn vertically over a value x axis — the container infers `value` (not time)
+from the bins, so the x ticks read as watts:
+
+```tsx
+<ChartContainer range={[0, 300]} width={660}>
+  <ChartRow height={240}>
+    <YAxis id="secs" label="seconds" min={0} pad={0.06} />
+    <Layers>
+      <BarChart bins={dist} column="secs" gap={2} />
+    </Layers>
+  </ChartRow>
+</ChartContainer>
+```
+
+`{ width: 20 }` emits contiguous bins across the occupied range (interior empty
+bands included, so the distribution has no holes); `{ edges }` is the explicit
+alternative when the bands aren't even (the HR zones above).
+
+---
+
+## Interaction
+
+Give a histogram an `id` to make it interactive. Hover lights the bar or
+**segment** under the cursor; click selects it (outlined). A stacked segment's
+identity is `(id, bucket, group)`, so two hosts in one bucket never both light
+up. Both channels are controllable from the container via
+`selected`/`onSelect` and `hovered`/`onHover`, keyed by `SelectInfo` — the
+segment's `label` carries the group name and `value` its magnitude:
+
+```tsx
+<ChartContainer onSelect={(hit) => hit && console.log(hit.label, hit.value)}>
+  …
+  <BarChart series={byHost} column="n" colors={HOST_COLORS} id="incidents" />
+</ChartContainer>
+```
+
+Hover and click work in both orientations (they hit-test by pixel). The in-chart
+`flag` / `crosshair` value cursor — the one that scrubs along x — is drawn for
+the single-series **vertical** case only; stacked and horizontal charts read out
+through `onHover` / `onSelect` instead.
+
+---
+
+## Gotchas
+
+- **Stacks are non-negative.** Segment values are treated as counts / durations;
+  a negative value is dropped (diverging stacks are out of scope). For a single
+  diverging series (up _and_ down off zero), use a plain `column` bar — see the
+  `BarChart` `Diverging` story.
+- **Align by key, not index.** `<BarChart series={map}>` unions the groups'
+  bucket keys, so you don't need every group on the same grid. Pass `aggregate`'s
+  `{ range }` if you want the buckets padded to a dense, edge-to-edge window.
+- **Horizontal forces a value x.** A `horizontal` chart owns its container's x
+  axis (see the caution above).
+- **`byColumn` returns an array, not a series.** Feed it via `bins`, not
+  `series`. Its `{ start, end }` are already the bar edges.
+
+## Data readers
+
+If you're assembling the stacked view yourself, the same readers `<BarChart>`
+uses are exported:
+
+- `stacksFromGroups(map, column)` — a `Map<group, TimeSeries>` → a stacked view
+  (key-aligned union).
+- `stacksFromColumns(series, columns)` — a **wide** series (one column per group,
+  e.g. `pivotByGroup` output) → a stacked view.
+- `stacksFromBins(bins, columns, { ordinal? })` — `byColumn` records → a stacked
+  view over a value / ordinal band axis.
+
+All three produce a `StackedBarSeries` (`begin` / `end` / `groups` / `values`
+grid), the shape the draw layer consumes.
