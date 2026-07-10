@@ -364,6 +364,36 @@ export function orderRegion(
   return v <= pivot ? { from: v, to: pivot } : { from: pivot, to: v };
 }
 
+/** The slice of a scale a rigid pixel-move needs: value → pixel and back.
+ *  `invert` may return a `Date` (a d3 `scaleTime`) — the move coerces with `+`. */
+interface InvertibleScale {
+  (value: number): number;
+  invert(pixel: number): number | Date;
+}
+
+/**
+ * Translate a region's `[from, to]` by `dpx` **plot-pixels** through `scale`, so
+ * the box moves rigidly in *pixel* space — each edge's pixel position shifts by
+ * the same `dpx`, then inverts back to an axis value.
+ *
+ * This is the move that stays correct on a **discontinuous** (trading-time) axis:
+ * a shared *value* delta (`from + Δt`) would move the two edges by unequal pixels
+ * when they sit in different gap-contexts, distorting the box as it crosses a
+ * collapsed gap. On a continuous (affine) scale it is identical to the value-delta
+ * move, so this is a no-op there.
+ */
+export function moveRegionByPixels(
+  scale: InvertibleScale,
+  from: number,
+  to: number,
+  dpx: number,
+): { from: number; to: number } {
+  return {
+    from: +scale.invert(scale(from) + dpx),
+    to: +scale.invert(scale(to) + dpx),
+  };
+}
+
 /** A label chip — the cursor value flag's shape (shared {@link flagChipStyle}:
  *  filled, no outline) with text in the annotation register. */
 function Chip({
@@ -1079,33 +1109,33 @@ export function Region({
               onDrag={(px) => {
                 const s = dragRef.current;
                 if (s === null) return;
-                // Raw position = start + TOTAL pointer delta (snap-independent),
-                // so dragging past SNAP_PX escapes a snapped edge.
-                const delta =
-                  +container.xScale.invert(px) -
-                  +container.xScale.invert(s.startPx);
-                let nf = s.from + delta;
-                let nt = s.to + delta;
-                // Snap whichever edge lands near a guideline, keeping the width —
-                // output only, so the raw drift above can pull free of it.
-                const sf = snapToGuides(
-                  container,
-                  selfKey,
-                  container.xScale(nf),
+                // Rigid move by the TOTAL pointer *pixel* delta from the press
+                // origin — each edge shifts the same pixels through the scale, so
+                // the box holds its shape even across a collapsed gap (a shared
+                // value-delta would drift the edges apart there).
+                const moved = moveRegionByPixels(
+                  container.xScale,
+                  s.from,
+                  s.to,
+                  px - s.startPx,
                 );
-                const st = snapToGuides(
-                  container,
-                  selfKey,
-                  container.xScale(nt),
-                );
-                if (sf !== null) {
-                  nt += sf - nf;
-                  nf = sf;
-                } else if (st !== null) {
-                  nf += st - nt;
-                  nt = st;
-                }
-                onChange?.({ from: nf, to: nt });
+                // Snap either edge to a guideline, shifting BOTH by the same pixel
+                // correction so the box keeps its width; snap-independent, so a
+                // drag past SNAP_PX releases cleanly.
+                const fpx = container.xScale(moved.from);
+                const tpx = container.xScale(moved.to);
+                const sf = snapToGuides(container, selfKey, fpx);
+                const st = snapToGuides(container, selfKey, tpx);
+                const d =
+                  sf !== null
+                    ? container.xScale(sf) - fpx
+                    : st !== null
+                      ? container.xScale(st) - tpx
+                      : 0;
+                onChange?.({
+                  from: +container.xScale.invert(fpx + d),
+                  to: +container.xScale.invert(tpx + d),
+                });
               }}
             />
             {editable && (
