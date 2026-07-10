@@ -89,14 +89,14 @@ export interface BarChartProps<
    */
   colors?: Readonly<Record<string, string>>;
   /**
-   * **Per-bin** colours for a single-series band chart — `colors[i]` fills bar
-   * `i` (aligned to the bins / bands in order), overriding the `as`/theme fill.
-   * This is the way to colour heart-rate / power **zones** or value bands each
-   * their own colour (the `colors` map above is per-**group**, for stacks). A
-   * `null`/`undefined`/short entry falls back to the theme fill. Meant for a
-   * single-series chart (`column` + `bins`, or a horizontal single series);
-   * on a multi-group stack it would tint every segment of a bin alike, so it's
-   * not the tool there.
+   * **Per-bin** colours for a single-series band chart — `binColors[i]` fills
+   * bar `i` (aligned to the bins / bands in order), overriding the `as`/theme
+   * fill. This is the way to colour heart-rate / power **zones** or value bands
+   * each their own colour (the `colors` map above is per-**group**, for stacks).
+   * An `undefined`/short entry falls back to the theme fill. Meant for a
+   * single-series chart (`column` + `bins`, or a horizontal single series); on a
+   * multi-group stack it would tint every segment of a bin alike, so it's not
+   * the tool there.
    */
   binColors?: readonly (string | undefined)[];
   /**
@@ -456,10 +456,11 @@ export function BarChart<
                   stackMinWidth,
                 );
                 if (hit === null) return null;
-                const [, g, begin, name, value] = hit;
+                const [bi, g, begin, name, value] = hit;
                 // Match the drawn colour: a per-bin override wins over the group
-                // fill, so the readout pill reads the bar's own colour.
-                const bi = ss.begin.indexOf(begin);
+                // fill, so the readout pill reads the bar's own colour. `bi` is
+                // the exact bin index from the hit (not an `indexOf`, which a
+                // duplicate `begin` would resolve to the wrong bar).
                 return {
                   id,
                   key: begin,
