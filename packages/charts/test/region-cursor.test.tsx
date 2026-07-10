@@ -1,9 +1,13 @@
 import { useContext, useEffect, type ReactElement } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render } from '@testing-library/react';
-import { BoundedSequence, Interval, Sequence } from 'pond-ts';
+import { BoundedSequence, Interval, Sequence, TimeSeries } from 'pond-ts';
 import type { StoryObj } from '@storybook/react-vite';
 import { ChartContainer } from '../src/ChartContainer.js';
+import { ChartRow } from '../src/ChartRow.js';
+import { Layers } from '../src/Layers.js';
+import { LineChart } from '../src/LineChart.js';
+import { YAxis } from '../src/YAxis.js';
 import { ContainerContext, type ContainerFrame } from '../src/context.js';
 import * as regionStories from '../src/CursorsRegion.stories.js';
 
@@ -71,6 +75,43 @@ describe('cursor="region" bucket realization', () => {
   it('no cursorSequence ⇒ cursorBuckets is undefined', () => {
     const f = frameOf({ range: [D0, D1], cursor: 'region' });
     expect(f.cursorBuckets).toBeUndefined();
+  });
+
+  it('is gated off a value axis (a time bucket is meaningless there)', () => {
+    // A value-keyed (distance) row makes this a value axis; a time cursorSequence
+    // realized over a value domain would otherwise shade the whole plot.
+    const rideByDistance = new TimeSeries({
+      name: 'ride',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'cumDist', kind: 'number' },
+        { name: 'hr', kind: 'number' },
+      ] as const,
+      rows: [
+        [0, 0, 120],
+        [1000, 500, 130],
+        [2000, 1200, 140],
+      ],
+    }).byValue('cumDist');
+
+    let frame: ContainerFrame | null = null;
+    render(
+      <ChartContainer
+        width={320}
+        cursor="region"
+        cursorSequence={Sequence.daily()}
+      >
+        <ChartRow height={100}>
+          <YAxis id="a" min={100} max={160} />
+          <Layers>
+            <LineChart series={rideByDistance} column="hr" axis="a" />
+          </Layers>
+          <Capture sink={(f) => (frame = f)} />
+        </ChartRow>
+      </ChartContainer>,
+    );
+    expect(frame!.xKind).toBe('value');
+    expect(frame!.cursorBuckets).toBeUndefined(); // gated off
   });
 });
 
