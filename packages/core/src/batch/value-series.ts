@@ -5,6 +5,8 @@ import {
   ValueKeyColumn,
   withRowRange,
 } from '../columnar/index.js';
+import { ValidationError } from '../core/errors.js';
+import { ingestColumnsToStore } from './operators/ingest-columns.js';
 import type {
   ValueSeriesColumnName,
   ValueSeriesSchema,
@@ -13,7 +15,12 @@ import type {
 /**
  * A **value-keyed series** — the closed value-axis counterpart of
  * `TimeSeries`. Its key is a monotonic non-time axis (distance, cumulative
- * work, …) rather than time, produced by `TimeSeries.byValue(axis)`.
+ * work, …). Two doors in: **project** a `TimeSeries` onto one of its monotonic
+ * columns (`TimeSeries.byValue(axis)` — a track re-keyed by cumulative
+ * distance), or **construct directly** from columnar arrays
+ * ({@link ValueSeries.fromColumns}) when the data is natively value-keyed and
+ * never had a meaningful time key per row — cross-sectional data such as an
+ * options chain keyed by strike or a spectrum keyed by frequency.
  *
  * `ValueSeries` carries the **ordering-based** operators (read the axis, read
  * value columns, nearest-by-value, slice-by-value) — the part of the series
@@ -35,13 +42,92 @@ export class ValueSeries<VS extends ValueSeriesSchema> {
   /**
    * @internal Trusted construction — `store` must be value-keyed and structurally
    * match `schema` (the invariant `TimeSeries.byValue` / `byValueOp` establish).
-   * Not for general use; construct a `ValueSeries` via `TimeSeries.byValue`.
+   * Not for general use; construct a `ValueSeries` via `TimeSeries.byValue` or
+   * {@link ValueSeries.fromColumns}.
    */
   static fromTrustedStore<VS extends ValueSeriesSchema>(
     name: string,
     schema: VS,
     store: ColumnarStore<ColumnSchema>,
   ): ValueSeries<VS> {
+    return new ValueSeries(name, schema, store);
+  }
+
+  /**
+   * Example: `ValueSeries.fromColumns({ name, schema, columns })`.
+   *
+   * The **direct columnar door** into value-land — for data that is *natively*
+   * value-keyed and never had a meaningful per-row time key: an options chain
+   * keyed by strike, a spectrum keyed by frequency, a profile keyed by depth.
+   * (Data that starts life time-keyed projects in via `TimeSeries.byValue`
+   * instead; before this door existed, cross-sectional callers had to launder
+   * their axis through a fake `time` column just to reach
+   * `TimeSeries.fromColumns` + `byValue`.)
+   *
+   * The exact `TimeSeries.fromColumns` contract, with the axis in place of
+   * time — the two doors share one ingest engine. `schema[0]` is the
+   * `'value'`-kind **axis** column; each `columns` entry is one column's
+   * values, keyed by schema column name and aligned by index. Values may be a
+   * plain `number[]` **or** a `Float64Array`; a value cell is a gap (missing)
+   * iff it's `null`/`undefined` or non-finite — identical rule for both input
+   * types.
+   *
+   * **`Float64Array` inputs are adopted, not copied** (zero-copy): the
+   * resulting series' columns alias the caller's buffers; pass a fresh buffer
+   * if that matters. (**`sort` disables the adoption** — a reorder needs its
+   * own buffers.)
+   *
+   * **Ordering.** The axis must be **defined, finite, and non-decreasing** —
+   * it becomes the index (the same contract `byValue` enforces with
+   * `assertMonotonicAxis`), so an out-of-order axis throws by default. Pass
+   * **`sort: true`** to sort the rows by axis value before construction — the
+   * stable sort every unordered snapshot wants (e.g. a keyed live feed that
+   * delivers rows in update order, not axis order).
+   *
+   * **v1 scope:** `number` value columns, matching `TimeSeries.fromColumns`.
+   *
+   * @throws ValidationError on a non-`'value'` axis kind, a missing column, a
+   *   length mismatch, a non-`'number'` value column, or an out-of-order axis
+   *   when `sort` is not set. Throws RangeError on a non-finite
+   *   (`null`/`NaN`/`±Infinity`) axis cell — sorting can't make it valid.
+   */
+  static fromColumns<VS extends ValueSeriesSchema>(input: {
+    name: string;
+    schema: VS;
+    columns: Record<
+      string,
+      ReadonlyArray<number | null | undefined> | Float64Array
+    >;
+    /**
+     * Sort the rows by axis value before construction (off by default), for a
+     * payload whose rows aren't guaranteed ordered. Stable; disables the
+     * `Float64Array` zero-copy adoption (columns are reordered into fresh
+     * buffers).
+     */
+    sort?: boolean;
+  }): ValueSeries<VS> {
+    const { name, schema, columns, sort = false } = input;
+
+    const keyDef = (schema as ValueSeriesSchema)[0];
+    if (keyDef === undefined) {
+      throw new ValidationError(
+        'ValueSeries.fromColumns: schema must have at least an axis column',
+      );
+    }
+    if (keyDef.kind !== 'value') {
+      throw new ValidationError(
+        `ValueSeries.fromColumns: schema[0] '${keyDef.name}' must be the 'value'-kind axis column; got '${keyDef.kind}'`,
+      );
+    }
+
+    const store = ingestColumnsToStore({
+      op: 'ValueSeries.fromColumns',
+      keyNoun: 'axis values',
+      schema: schema as unknown as ColumnSchema,
+      columns,
+      sort,
+      makeKey: (begin, count) => new ValueKeyColumn(begin, count),
+    });
     return new ValueSeries(name, schema, store);
   }
 

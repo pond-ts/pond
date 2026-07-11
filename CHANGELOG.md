@@ -41,6 +41,18 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **`ValueSeries.fromColumns({ name, schema, columns, sort? })`** (`pond-ts`) —
+  the direct columnar door into value-land, for data that is _natively_
+  value-keyed (cross-sectional): an options chain keyed by strike, a spectrum
+  keyed by frequency. Exact `TimeSeries.fromColumns` contract with the axis in
+  place of time — same polymorphic `number[]` / `Float64Array` inputs, same
+  zero-copy adoption, same stable opt-in `sort`, same gap rule — the two doors
+  share one ingest engine. Previously cross-sectional callers had to launder
+  the axis through a fake `time` column (`TimeSeries.fromColumns` +
+  `byValue`); that detour is no longer needed.
+
 ## [0.43.0] — 2026-07-11
 
 The **categorical x-axis** release: a first-class ordinal band scale (ticker /
