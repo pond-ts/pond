@@ -59,6 +59,30 @@ const meta = {
 export default meta;
 type Story = StoryObj;
 
+/** **Interactive** — hover-driven (no `trackerPosition` pin), so you can test
+ *  the flag behaviour yourself: the dots + stacked flags track the pointer, and
+ *  the time chip caps the stack. The other stories pin a controlled position for
+ *  a static regression shot; this is the live one. */
+export const Interactive: Story = {
+  render: () => (
+    <ChartContainer
+      range={RANGE}
+      width={W}
+      cursor="flag"
+      cursorTime
+      theme={twoColorTheme}
+    >
+      <ChartRow height={220}>
+        <Layers>
+          <LineChart series={s} column="fast" as="fast" axis="usd" />
+          <LineChart series={s} column="slow" as="slow" axis="usd" />
+        </Layers>
+        <YAxis id="usd" side="right" format=",.0f" />
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
 /** **Single series** — one dot, one flag on its staff. */
 export const SingleSeries: Story = {
   render: () => (
