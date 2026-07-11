@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TimeSeries, ValueSeries } from '../src/index.js';
+import { TimeSeries, ValidationError, ValueSeries } from '../src/index.js';
 
 /**
  * `ValueSeries.fromColumns` — the direct columnar door into value-land, for
@@ -188,14 +188,15 @@ describe('ValueSeries.fromColumns', () => {
     expect(vs.column('iv')?.read(1)).toBe(0.25);
   });
 
-  it('throws on an out-of-order axis without sort', () => {
-    expect(() =>
+  it('throws ValidationError on an out-of-order axis without sort', () => {
+    const build = () =>
       ValueSeries.fromColumns({
         name: 'bad',
         schema: SMILE,
         columns: { strike: [100, 90], iv: [1, 2], oi: [1, 2] },
-      }),
-    ).toThrow(/out of order.*axis values/);
+      });
+    expect(build).toThrow(/out of order.*axis values/);
+    expect(build).toThrow(ValidationError);
   });
 
   it('throws on a non-value axis kind', () => {
@@ -212,7 +213,7 @@ describe('ValueSeries.fromColumns', () => {
     ).toThrow(/'value'-kind axis/);
   });
 
-  it('throws on a non-finite axis cell, even with sort', () => {
+  it('throws RangeError on a non-finite axis cell, even with sort', () => {
     for (const strike of [
       [90, NaN, 100],
       [90, null, 100],
@@ -225,7 +226,7 @@ describe('ValueSeries.fromColumns', () => {
           columns: { strike, iv: [1, 2, 3], oi: [1, 2, 3] },
           sort: true,
         }),
-      ).toThrow();
+      ).toThrow(RangeError);
     }
   });
 

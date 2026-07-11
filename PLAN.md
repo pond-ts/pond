@@ -432,11 +432,11 @@ Axis>>` carrying ordering-based ops (`axisValues`/`axisAt`/`column`/
     `ValueSeriesSchema`). Wraps the `ColumnarStore` directly (not `SeriesStore`).
     O(N+C) projection / O(log N) bisect / O(log N+C) zero-copy slice; byValue
     reuses the packed axis buffer zero-copy (#283). **`ValueSeries.fromColumns`
-    SHIPPED (2026-07-11)** — the direct columnar door for _natively_ value-keyed
-    (cross-sectional) data: an options chain keyed by strike (the Tidal
-    vol-smile driver — a live cross-section is pond's third chart archetype
-    after time-marching and categorical), a spectrum keyed by frequency.
-    Exact `TimeSeries.fromColumns` contract (polymorphic `number[]` /
+    SHIPPED (2026-07-11, #420)** — the direct columnar door for _natively_
+    value-keyed (cross-sectional) data: an options chain keyed by strike (the
+    Tidal vol-smile driver — a live cross-section is pond's third chart
+    archetype after time-marching and categorical), a spectrum keyed by
+    frequency. Exact `TimeSeries.fromColumns` contract (polymorphic `number[]` /
     `Float64Array`, zero-copy adoption, stable opt-in `sort`, one gap rule) —
     the shared engine extracted to `operators/ingest-columns.ts`, so the two
     doors can't drift; before this, cross-sectional callers laundered the axis
@@ -714,8 +714,8 @@ theme.bar[group] ?? default` (theme-role + ad-hoc-palette, the single styling
 - **Categorical axis — Phase 1 (ADOPTED from `docs/rfcs/categorical-axis.md`,
   building 2026-07-10).** The RFC's Phase 1 — a first-class **ordinal
   column-domain x-axis** (the transpose view's "columns on x"; closes SPARC's
-  item 2, replacing the hand-rolled ordinal-index hack). This is the RFC's _sole
-  new scale primitive_ and its stated design-risk piece. Adopted into PLAN by
+  item 2, replacing the hand-rolled ordinal-index hack). This is the RFC's *sole
+  new scale primitive* and its stated design-risk piece. Adopted into PLAN by
   user direction; the metric branch + cursor-binding (Phase 2) stay RFC-only.
   Sequenced as a **series of PRs**:
   - **PR1 — the category axis foundation (building on `feat/charts-categorical-axis`).**
@@ -727,17 +727,17 @@ theme.bar[group] ?? default` (theme-role + ad-hoc-palette, the single styling
     `label(i)` formatter). New `xKind:'category'` (widened in `context.ts`'s three
     sites) + an `xCategories()` layer channel; the container reconciles the
     category list (throw on disagreement, like the kind) and builds the band scale
-    - label formatter. `<CategoryAxis>` preset (ticks once per category via the
-      container's `formatTime`). `<BarChart categories={{label,value}[]}>` — a third
-      data source (alongside `series`/`bins`) reusing the shipped stacked geometry
-      (`categoryStack` → unit slots → `drawStacks`/`stackAt`, **zero new draw
-      code**); vertical only; per-category colour via `binColors`; selection reports
-      the **category name** as `SelectInfo.label`. Pan/zoom + x-gridlines gated off
-      the category axis in `Layers`. Verified: `bandScale.test.ts` (centres, invert
-      snap, ticks, bandwidth, label, copy) + a headless category-stories render test
-    - a real-browser Playwright screenshot pass (`Charts/CategoryAxis`:
-      Tickers/SingleHue/HighCardinality/Select); 463 charts tests green; existing
-      time/value/trading charts unchanged (the branch is purely additive).
+    + label formatter. `<CategoryAxis>` preset (ticks once per category via the
+    container's `formatTime`). `<BarChart categories={{label,value}[]}>` — a third
+    data source (alongside `series`/`bins`) reusing the shipped stacked geometry
+    (`categoryStack` → unit slots → `drawStacks`/`stackAt`, **zero new draw
+    code**); vertical only; per-category colour via `binColors`; selection reports
+    the **category name** as `SelectInfo.label`. Pan/zoom + x-gridlines gated off
+    the category axis in `Layers`. Verified: `bandScale.test.ts` (centres, invert
+    snap, ticks, bandwidth, label, copy) + a headless category-stories render test
+    + a real-browser Playwright screenshot pass (`Charts/CategoryAxis`:
+    Tickers/SingleHue/HighCardinality/Select); 463 charts tests green; existing
+    time/value/trading charts unchanged (the branch is purely additive).
   - **PR2 — the transpose reader.** `transposeRow(wideSeries, { at })` → the
     `{label,value}[]` from one row of a wide series (`Event` via
     `.at`/`.last`/`.nearest`; numeric columns via `schema.slice(1)`). "Read a row

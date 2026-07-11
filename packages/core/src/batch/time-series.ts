@@ -903,9 +903,10 @@ export class TimeSeries<S extends SeriesSchema> {
    * value columns throw for now — extend as consumers need.
    *
    * @throws ValidationError on a missing column, a length mismatch, an
-   *   unsupported kind, a non-finite timestamp key, or an out-of-order
-   *   (decreasing) timestamp when `sort` is not set — keys must be non-decreasing,
-   *   same as `fromJSON`.
+   *   unsupported kind, or an out-of-order (decreasing) timestamp when `sort`
+   *   is not set — keys must be non-decreasing, same as `fromJSON`. Throws
+   *   RangeError on a non-finite timestamp key (from the key-column
+   *   constructor) or a duplicate column name.
    */
   static fromColumns<S extends SeriesSchema>(input: {
     name: string;

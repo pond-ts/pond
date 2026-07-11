@@ -89,7 +89,8 @@ export class ValueSeries<VS extends ValueSeriesSchema> {
    * @throws ValidationError on a non-`'value'` axis kind, a missing column, a
    *   length mismatch, a non-`'number'` value column, or an out-of-order axis
    *   when `sort` is not set. Throws RangeError on a non-finite
-   *   (`null`/`NaN`/`±Infinity`) axis cell — sorting can't make it valid.
+   *   (`null`/`NaN`/`±Infinity`) axis cell — sorting can't make it valid — or
+   *   a duplicate column name (the axis name repeated among the value columns).
    */
   static fromColumns<VS extends ValueSeriesSchema>(input: {
     name: string;
