@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 tag, so this file covers them all. Pre-1.0: minor bumps may include new features
 and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.43.0...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.44.0...HEAD
+[0.44.0]: https://github.com/pjm17971/pond-ts/compare/v0.43.0...v0.44.0
 [0.43.0]: https://github.com/pjm17971/pond-ts/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/pjm17971/pond-ts/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/pjm17971/pond-ts/compare/v0.40.0...v0.41.0
@@ -40,6 +41,15 @@ and type-level changes; patch bumps are strictly additive.
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
 
 ## [Unreleased]
+
+## [0.44.0] — 2026-07-11
+
+The **value-axis charts** release: cross-sectional data (a volatility smile keyed
+by strike) becomes a first-class charting surface. `ValueSeries.fromColumns` is
+the direct columnar door; `<ScatterChart>` and `<BoxPlot>` join `<LineChart>` on
+the value axis; `<BoxPlot>` gains range-only (bid→ask) marks, `offset` pairing,
+and `capWidth`; and the region cursor works on value axes and snaps to histogram
+bins.
 
 ### Added
 
