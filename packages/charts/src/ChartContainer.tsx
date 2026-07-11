@@ -158,8 +158,12 @@ export interface ChartContainerProps {
    * release this fires **once** with the selected `[start, end)` `TimeRange`, and
    * the cursor reverts to the single-bucket highlight (it does not keep the
    * range). Typical use — zoom the view to the returned range (the container
-   * doesn't zoom itself; that's the consumer's call). No-op unless
-   * `cursor="region"` with a `cursorSequence`.
+   * doesn't zoom itself; that's the consumer's call).
+   *
+   * With **no `cursorSequence`** the region cursor is the degenerate case — it
+   * renders as a **line** on hover and the drag is **freeform** (raw `[start,
+   * end)`, no bucket snapping); the same callback fires on release. No-op unless
+   * `cursor="region"` (and a **time** x-axis).
    */
   onRegionSelect?: (range: TimeRange) => void;
   /**
