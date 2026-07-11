@@ -187,6 +187,37 @@ describe('cursor="region" snaps to a histogram\'s bins', () => {
     expect(widths.every((w) => w >= 5 * 24 * H)).toBe(true);
   });
 
+  it('a time-axis histogram with NO sequence snaps to its own bars', () => {
+    // The bin-fallback isn't value-axis-only: a time-keyed bar chart with no
+    // cursorSequence snaps to the bars it draws (one bucket per bar).
+    const byHour = new TimeSeries({
+      name: 'events',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'n', kind: 'number' },
+      ] as const,
+      rows: [
+        [D0, 3],
+        [D0 + H, 5],
+        [D0 + 2 * H, 2],
+      ],
+    });
+    const f = render_(<BarChart series={byHour} column="n" />, {
+      range: [D0, D0 + 3 * H],
+    });
+    expect(f.xKind).toBe('time');
+    const buckets = f.cursorBuckets ?? [];
+    expect(buckets.length).toBe(3); // one snap bucket per bar
+    // Point-keyed bars derive their span from neighbour spacing (centred on the
+    // event), so exact edges aren't D0-aligned — but the buckets are ascending,
+    // non-overlapping, and span the hourly events.
+    expect(
+      buckets.every((b, i) => i === 0 || b.begin() >= buckets[i - 1]!.end()),
+    ).toBe(true);
+    expect(buckets[0]!.begin()).toBeLessThanOrEqual(D0 + H);
+    expect(buckets[2]!.end()).toBeGreaterThanOrEqual(D0 + 2 * H);
+  });
+
   it('a non-bar row on a value axis stays freeform (no bins to snap to)', () => {
     const ride = new TimeSeries({
       name: 'ride',

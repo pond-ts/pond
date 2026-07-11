@@ -789,6 +789,12 @@ export function ChartContainer({
     // or a time-axis histogram with no explicit sequence). `binIntervals` is only
     // published by a vertical bar layer on a continuous axis, so this is a no-op
     // for line/area/scatter rows and for a category axis.
+    //
+    // **First bar layer wins** — deliberately non-fatal, unlike `xCategories`
+    // (which *throws* when category rows disagree, because a mismatched slot order
+    // corrupts the shared band scale). Two overlaid histograms with different bins
+    // is a degenerate layout the region cursor just snaps to whichever registered
+    // first; a wrong snap grid is harmless where a wrong axis is not.
     if (resolvedKind === 'time' || resolvedKind === 'value') {
       for (const s of sources.values()) {
         const bins = s.binIntervals?.() ?? null;
