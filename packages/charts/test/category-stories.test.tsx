@@ -25,6 +25,8 @@ describe('CategoryAxis stories render', () => {
       'Select',
       'SingleHue',
       'Tickers',
+      'Transpose',
+      'TransposeScrub',
     ]);
   });
 

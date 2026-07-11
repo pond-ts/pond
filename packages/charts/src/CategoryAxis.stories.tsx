@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import { TimeSeries } from 'pond-ts';
 import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { BarChart } from './BarChart.js';
 import { YAxis } from './YAxis.js';
+import { transposeRow } from './data.js';
 import { estelaTheme } from './theme.js';
 import type { SelectInfo } from './context.js';
 
@@ -147,3 +149,106 @@ function SelectDemo() {
 }
 
 export const Select: Story = { render: () => <SelectDemo /> };
+
+// ── The transpose reader: read one row of a WIDE series across (PR2) ──
+
+const NAMES = ['AAPL', 'MSFT', 'GOOG', 'NVDA', 'AMZN'] as const;
+const N_ROWS = 12;
+const BASE = Date.UTC(2026, 0, 1);
+const HOUR = 3_600_000;
+
+/**
+ * A **wide** time×category series — one numeric column per ticker, a row per
+ * hour. In practice you'd get this from `series.pivotByGroup('ticker', 'value')`
+ * (long → wide); here it's built directly with clean column names. Each row is a
+ * cross-section; `transposeRow` reads one **across**.
+ */
+function wideSeries() {
+  const schema = [
+    { name: 'time', kind: 'time' },
+    { name: 'AAPL', kind: 'number' },
+    { name: 'MSFT', kind: 'number' },
+    { name: 'GOOG', kind: 'number' },
+    { name: 'NVDA', kind: 'number' },
+    { name: 'AMZN', kind: 'number' },
+  ] as const;
+  const rows = Array.from({ length: N_ROWS }, (_, r) => [
+    BASE + r * HOUR,
+    ...NAMES.map((_n, c) =>
+      Math.round(30 + 25 * Math.sin((r / N_ROWS) * Math.PI + c)),
+    ),
+  ]);
+  return new TimeSeries({ name: 'wide', schema, rows: rows as never });
+}
+
+/**
+ * **The transpose.** `transposeRow(wide, { at: 'last' })` reads the wide series'
+ * **head row** across — its columns (the tickers) become the categories, that
+ * row's cells the bar heights. The head row is the live snapshot; this is
+ * "columns on x" sourced from a real series rather than a hand-written array.
+ */
+export const Transpose: Story = {
+  render: () => {
+    const data = transposeRow(wideSeries(), { at: 'last' });
+    return (
+      <ChartContainer width={640} theme={estelaTheme}>
+        <ChartRow height={240}>
+          <YAxis id="v" label="value" min={0} pad={0.08} />
+          <Layers>
+            <BarChart categories={data} binColors={PALETTE} gap={6} />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **Scrub the row.** The same wide series, read at a chosen row index — drag the
+ * slider and the bars re-transpose. `transposeRow(wide, { at: rowIndex })` is the
+ * only data step; the read-down time chart and this read-across bar chart are two
+ * views of one matrix. (Binding the row to a shared **time cursor** — scrub a
+ * sibling time chart and this animates — is Phase 2; here it's driven by hand.)
+ */
+function ScrubDemo() {
+  const wide = useMemo(() => wideSeries(), []);
+  const [row, setRow] = useState(N_ROWS - 1);
+  const data = useMemo(() => transposeRow(wide, { at: row }), [wide, row]);
+  return (
+    <div>
+      <div
+        style={{
+          marginBottom: 8,
+          display: 'flex',
+          gap: 12,
+          alignItems: 'center',
+          fontFamily: estelaTheme.font.family,
+          fontSize: 12,
+          color: estelaTheme.axis.label,
+        }}
+      >
+        <span>
+          row {row} · {new Date(BASE + row * HOUR).toISOString().slice(11, 16)}{' '}
+          UTC
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={N_ROWS - 1}
+          value={row}
+          onChange={(e) => setRow(Number(e.target.value))}
+        />
+      </div>
+      <ChartContainer width={640} theme={estelaTheme}>
+        <ChartRow height={240}>
+          <YAxis id="v" label="value" min={0} pad={0.08} />
+          <Layers>
+            <BarChart categories={data} binColors={PALETTE} gap={6} />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    </div>
+  );
+}
+
+export const TransposeScrub: Story = { render: () => <ScrubDemo /> };

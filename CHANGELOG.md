@@ -51,6 +51,12 @@ and type-level changes; patch bumps are strictly additive.
   `ScaleBand`, `CategoryAxis`, `categoryStack` / `CategoryDatum`. Additive — a new
   x-kind alongside time / value; existing charts are unchanged. First slice of the
   categorical-axis RFC (`docs/rfcs/categorical-axis.md`, Phase 1).
+- **`@pond-ts/charts`: `transposeRow`** — read one **row** of a wide `TimeSeries`
+  **across** into `{ label, value }[]` for `<BarChart categories>`: the schema's
+  numeric columns (a `pivotByGroup` output's per-group columns, a term
+  structure's per-expiry columns) become the categories at one instant. Pick the
+  row with `at` (`'last'` — the head/live row — by default; `'first'`, an index,
+  or `{ time }`); bound / order the set with `columns`.
 
 ## [0.42.0] — 2026-07-10
 

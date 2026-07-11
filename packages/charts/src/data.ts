@@ -743,3 +743,80 @@ export function categoryStack(
   }
   return { begin, end, groups: ['value'], values, length: n };
 }
+
+/** Which row {@link transposeRow} reads across. */
+export type RowAt =
+  | 'first'
+  | 'last'
+  | number // a row index (negative counts from the end, like `TimeSeries.at`)
+  | { readonly time: number }; // the row nearest this key (epoch ms / value key)
+
+/** Options for {@link transposeRow}. */
+export interface TransposeRowOptions {
+  /**
+   * Which row to read across. **Default `'last'`** — the head / latest row (the
+   * live snapshot). `'first'`, an **index** (negative from the end), or
+   * `{ time }` for the row nearest a key.
+   */
+  readonly at?: RowAt;
+  /**
+   * The columns to lay on the axis, **in order** — a declared / bounded set (a
+   * watchlist, or a top-N computed upstream; the RFC §7 "bound in the data layer"
+   * stance). Omit to use **every numeric value column** of the series, in schema
+   * order. A named column that's missing / non-numeric in the row reads as a gap.
+   */
+  readonly columns?: readonly string[];
+}
+
+/** A series' numeric value column names in schema order (the key column excluded). */
+function numericValueColumns<S extends SeriesSchema>(
+  series: TimeSeries<S>,
+): string[] {
+  const schema = series.schema as unknown as ReadonlyArray<{
+    name: string;
+    kind: string;
+  }>;
+  return schema
+    .slice(1)
+    .filter((c) => c.kind === 'number')
+    .map((c) => c.name);
+}
+
+/**
+ * **The transpose reader** (categorical-axis RFC, Phase 1 PR2): read **one row**
+ * of a wide `TimeSeries` **across** — its columns become the categories, that
+ * row's cells the values — for `<BarChart categories={…}>`. This is "columns on
+ * x": the schema's numeric columns (a `pivotByGroup` output's per-group columns,
+ * a vol term structure's per-expiry columns, …) laid out at one instant.
+ *
+ * The row is picked the ordinary way (`options.at`, default the **head row**):
+ * `series.last()` / `.first()` / `.at(index)` / `.nearest(time)`. So "which row"
+ * is just row selection — the live snapshot is the head row; a static report
+ * pins a row by index or time. (Binding the row to a scrubbing time cursor is a
+ * later phase.) Pass `options.columns` to bound / order the category set; omit it
+ * to take every numeric value column. An empty series (or a row past the ends)
+ * yields `[]`; a missing / non-numeric cell reads as a gap (`NaN`).
+ */
+export function transposeRow<S extends SeriesSchema>(
+  series: TimeSeries<S>,
+  options: TransposeRowOptions = {},
+): CategoryDatum[] {
+  const at = options.at ?? 'last';
+  const event =
+    at === 'last'
+      ? series.last()
+      : at === 'first'
+        ? series.first()
+        : typeof at === 'number'
+          ? series.at(at)
+          : series.nearest(at.time);
+  if (event === undefined) return [];
+  const cols = options.columns ?? numericValueColumns(series);
+  const get = (event as unknown as { get(field: string): unknown }).get.bind(
+    event,
+  );
+  return cols.map((name) => {
+    const v = get(name);
+    return { label: name, value: typeof v === 'number' ? v : NaN };
+  });
+}

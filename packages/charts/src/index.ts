@@ -82,6 +82,8 @@ export {
   stacksFromBins,
   // Categorical row-read: one bar per `{ label, value }` on the category axis.
   categoryStack,
+  // The transpose reader — one row of a wide series read across into categories.
+  transposeRow,
 } from './data.js';
 export type {
   ChartSeries,
@@ -95,6 +97,8 @@ export type {
   BinRecord,
   StacksFromBinsOptions,
   CategoryDatum,
+  RowAt,
+  TransposeRowOptions,
 } from './data.js';
 // The histogram bar orientation (`'vertical'` | `'horizontal'`).
 export type { Orientation } from './bars.js';
