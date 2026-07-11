@@ -123,6 +123,7 @@ describe('Charts/Cursors/Region stories render', () => {
 
   it('exposes the expected region-cursor stories', () => {
     expect(entries.map(([n]) => n).sort()).toEqual([
+      'AggregationAligned',
       'CroppedToSessions',
       'Default',
       'Sessions',
