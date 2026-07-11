@@ -100,6 +100,15 @@ export interface BoxPlotProps<
    */
   offset?: number;
   /**
+   * Whisker end-cap **total width in pixels** (the top/bottom bars of the `T`).
+   * **Omitted ⇒ half the box width** (responsive — scales with the slot). Set a
+   * small fixed value (e.g. `6`) to keep the caps narrow so two `offset`-paired
+   * marks (call/put at one strike) don't overlap their T-bars — the caps no longer
+   * grow with the wide value-axis slot. Clamped to the box width. Only affects the
+   * `'whisker'` shape (`'solid'`/`'none'` have no caps).
+   */
+  capWidth?: number;
+  /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
    */
@@ -156,6 +165,7 @@ export function BoxPlot<
   shape = 'whisker',
   showMedian = true,
   offset = 0,
+  capWidth,
   index = 0,
 }: BoxPlotProps<S, VS>) {
   const container = useContext(ContainerContext);
@@ -258,6 +268,7 @@ export function BoxPlot<
             shape,
             showMedian,
             offset,
+            capWidth,
           ),
       },
       axisId: axis,
@@ -278,6 +289,7 @@ export function BoxPlot<
       shape,
       showMedian,
       offset,
+      capWidth,
       axis,
       index,
     ],

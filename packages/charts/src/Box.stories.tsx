@@ -328,10 +328,11 @@ export const VolSmileWithMid: Story = {
 };
 
 /**
- * **`offset` — call / put pairing at one strike.** Calls and puts sit at the same
- * strike; a pixel `offset` nudges each side of the pair apart so both bid→ask
- * segments read without overlap (the react-timeseries-charts side-by-side
- * precedent). Zoom-stable — the nudge is in pixels, not strike units.
+ * **`offset` + `capWidth` — call / put pairing at one strike.** Calls and puts sit
+ * at the same strike; a pixel `offset` nudges each side apart, and a small
+ * `capWidth` keeps the whisker T-bars narrow so the two segments read cleanly
+ * without their caps overlapping (the caps would otherwise scale to half the wide
+ * value-axis slot). Both zoom-stable — pixels, not strike units.
  */
 export const CallPutPair: Story = {
   render: () => {
@@ -361,8 +362,15 @@ export const CallPutPair: Story = {
               upper="ask"
               as="iv"
               offset={-5}
+              capWidth={7}
             />
-            <BoxPlot series={put} lower="bid" upper="ask" offset={5} />
+            <BoxPlot
+              series={put}
+              lower="bid"
+              upper="ask"
+              offset={5}
+              capWidth={7}
+            />
           </Layers>
         </ChartRow>
       </ChartContainer>

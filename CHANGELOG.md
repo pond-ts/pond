@@ -59,6 +59,10 @@ and type-level changes; patch bumps are strictly additive.
     pairing same-key marks (call/put at one strike) side by side, zoom-stable. On
     the scatter it moves the draw **and** the click hit-test together; on the box
     the readout hit-tests in un-shifted data space (keep the offset small).
+  - **`capWidth` prop** (`<BoxPlot>`) — the whisker end-cap width in **pixels**
+    (else half the box width). A small fixed cap keeps two `offset`-paired marks'
+    T-bars from overlapping when the value-axis slot is wide; clamped to the box
+    width, `'whisker'` shape only.
   - **Readout labels** carry the series' `as` identity (`iv upper`, `iv median`)
     when set, instead of bare column names — the `as ?? column` convention
     Line/Scatter already use.
