@@ -17,7 +17,6 @@ import {
 } from 'react';
 import { Canvas } from './Canvas.js';
 import { drawGrid, drawDividers, thinPixels } from './grid.js';
-import { TimeRange } from 'pond-ts';
 import { cursorParts, bandRect, regionSpan } from './tracker.js';
 import { resolveSelection } from './select.js';
 import {
@@ -324,13 +323,19 @@ export function Layers({ children }: LayersProps) {
         }
         return;
       }
-      // Region-cursor drag-select (opt-in via `onRegionSelect`, time axis only):
-      // anchor the selection at the press; the band then extends as the pointer
-      // moves (bucket by bucket with a sequence, freeform without), and release
-      // commits the range. A `regionSelectModifier` (only while `panZoom` is on)
-      // gates it behind the key so plain drag can still pan; otherwise it preempts
-      // pan (returns before the pan is armed below).
-      if (c.cursor === 'region' && c.onRegionSelect && c.xKind === 'time') {
+      // Region-cursor drag-select (opt-in via `onRegionSelect`): anchor the
+      // selection at the press; the band then extends as the pointer moves (bucket
+      // by bucket with a sequence, freeform without), and release commits the span.
+      // Works on a continuous x axis — time **or** value (a category axis is
+      // excluded; its ordinal-slot select is a different gesture). A
+      // `regionSelectModifier` (only while `panZoom` is on) gates it behind the key
+      // so plain drag can still pan; otherwise it preempts pan (returns before the
+      // pan is armed below).
+      if (
+        c.cursor === 'region' &&
+        c.onRegionSelect &&
+        (c.xKind === 'time' || c.xKind === 'value')
+      ) {
         const needsShift = c.regionSelectModifier === 'shift' && c.panZoom;
         if (!needsShift || e.shiftKey) {
           const px = Math.max(
@@ -500,10 +505,7 @@ export function Layers({ children }: LayersProps) {
         } catch {
           /* ignore */
         }
-        if (span)
-          c.onRegionSelect?.(
-            new TimeRange({ start: span.start, end: span.end }),
-          );
+        if (span) c.onRegionSelect?.([span.start, span.end]);
         return;
       }
       if (c.creating !== null) {
@@ -732,12 +734,14 @@ export function Layers({ children }: LayersProps) {
     };
   })();
 
-  // `region` cursor (time axis only): shade the span under the pointer. With a
-  // `cursorSequence` the band snaps to the bucket (and extends bucket by bucket
-  // under a drag); with none it's the **freeform** case — a bare hover draws a
-  // plain line (`regionLine`), a drag shades the raw `[anchor, pointer]`. Edges
-  // map through `xScale`, so on a trading-time axis the band crops to live time.
-  const regionActive = parts.band && container.xKind === 'time';
+  // `region` cursor (continuous x axis — time or value): shade the span under the
+  // pointer. With a `cursorSequence` (time axis only) the band snaps to the bucket
+  // (and extends bucket by bucket under a drag); with none — always the case on a
+  // value axis — it's the **freeform** case: a bare hover draws a plain line
+  // (`regionLine`), a drag shades the raw `[anchor, pointer]`. Edges map through
+  // `xScale`, so on a trading-time axis the band crops to live time.
+  const regionActive =
+    parts.band && (container.xKind === 'time' || container.xKind === 'value');
   const band: { x0: number; x1: number } | null =
     regionActive && cursorTime !== null
       ? bandRect(

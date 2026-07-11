@@ -156,17 +156,25 @@ export interface ChartContainerProps {
   /**
    * Makes the `region` cursor **draggable**: drag across the plot and the band
    * extends **bucket by bucket** (snapping to `cursorSequence` points); on
-   * release this fires **once** with the selected `[start, end)` `TimeRange`, and
-   * the cursor reverts to the single-bucket highlight (it does not keep the
-   * range). Typical use — zoom the view to the returned range (the container
-   * doesn't zoom itself; that's the consumer's call).
+   * release this fires **once** with the selected `[lo, hi]` span, and the cursor
+   * reverts to the single-bucket highlight (it does not keep the range). Typical
+   * use — zoom the view to the returned span (the container doesn't zoom itself;
+   * that's the consumer's call), or map it onto a data subscription's range params.
+   *
+   * The span is a **neutral numeric pair in axis units** — epoch ms on a **time**
+   * axis, the axis value (strike, distance, …) on a **value** axis — mirroring the
+   * polymorphic `range` input. A time consumer that wants a `TimeRange` builds one
+   * from the pair.
    *
    * With **no `cursorSequence`** the region cursor is the degenerate case — it
-   * renders as a **line** on hover and the drag is **freeform** (raw `[start,
-   * end)`, no bucket snapping); the same callback fires on release. No-op unless
-   * `cursor="region"` (and a **time** x-axis).
+   * renders as a **line** on hover and the drag is **freeform** (raw `[lo, hi]`, no
+   * bucket snapping); the same callback fires on release. Bucket snapping needs a
+   * `cursorSequence`, which is **time-axis only** (a time interval over a value
+   * domain is meaningless), so a **value** axis is always freeform. No-op unless
+   * `cursor="region"` on a **time** or **value** x-axis (a **category** axis is
+   * excluded — an ordinal-slot select is a different gesture).
    */
-  onRegionSelect?: (range: TimeRange) => void;
+  onRegionSelect?: (range: readonly [number, number]) => void;
   /**
    * Which modifier a region-drag needs — set `'shift'` when you also enable
    * `panZoom` and want **plain drag to pan, shift-drag to select**. It's only
