@@ -183,3 +183,77 @@ function DragToSelectDemo() {
   );
 }
 export const DragToSelect: Story = { render: () => <DragToSelectDemo /> };
+
+/** **Freeform (no sequence).** Omit `cursorSequence` and the region cursor is the
+ *  degenerate case: it renders as a **line** on hover, and a drag selects a
+ *  **freeform** range (no bucket snapping) — the same `onRegionSelect` fires on
+ *  release. Here it zooms; **Reset** restores the full range. */
+function FreeformDemo() {
+  const full: [number, number] = [RANGE[0], RANGE[1]];
+  const [range, setRange] = useState<[number, number]>(full);
+  const zoomed = range[0] !== full[0] || range[1] !== full[1];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: W }}>
+      <button
+        type="button"
+        onClick={() => setRange(full)}
+        disabled={!zoomed}
+        style={{ alignSelf: 'flex-start', padding: '2px 10px', fontSize: 12 }}
+      >
+        Reset zoom
+      </button>
+      <ChartContainer
+        width={W}
+        range={range}
+        theme={twoColorTheme}
+        cursor="region"
+        onRegionSelect={(r: TimeRange) => setRange([r.begin(), r.end()])}
+      >
+        <ChartRow height={220}>
+          <Layers>
+            <LineChart series={priceSeries()} column="price" axis="p" />
+          </Layers>
+          <YAxis id="p" side="right" format=",.0f" />
+        </ChartRow>
+      </ChartContainer>
+    </div>
+  );
+}
+export const Freeform: Story = { render: () => <FreeformDemo /> };
+
+/** **Pan + shift-select.** With `panZoom` on, `regionSelectModifier="shift"` shares
+ *  the drag: **plain drag pans**, **shift-drag** selects a region (shown below).
+ *  Wheel-zoom works either way. Without the modifier a region-drag would preempt
+ *  pan entirely. */
+function PanAndSelectDemo() {
+  const s = weekdaySessions(3);
+  const hourGrid = barSeq(s, 60 * MIN);
+  const bars = candles(s, hourGrid, 5 * MIN);
+  const [sel, setSel] = useState('— (shift-drag to select)');
+  const fmt = (t: number) => new Date(t).toISOString().slice(5, 16);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: W }}>
+      <div style={{ fontSize: 12 }}>selected: {sel}</div>
+      <ChartContainer
+        width={W}
+        range={rangeOf(s)}
+        discontinuities={provider(s)}
+        panZoom
+        cursor="region"
+        cursorSequence={hourGrid}
+        regionSelectModifier="shift"
+        onRegionSelect={(r: TimeRange) =>
+          setSel(`${fmt(r.begin())} → ${fmt(r.end())}`)
+        }
+      >
+        <ChartRow height={220}>
+          <YAxis id="p" side="right" />
+          <Layers>
+            <Candlestick series={bars} axis="p" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    </div>
+  );
+}
+export const PanAndSelect: Story = { render: () => <PanAndSelectDemo /> };

@@ -94,9 +94,15 @@ describe('regionSpan — the region-cursor / drag span', () => {
     expect(regionSpan(buckets, 25, 15)).toEqual({ start: 20, end: 30 });
   });
 
-  it('null when the primary time is in no bucket', () => {
-    expect(regionSpan(buckets, 15)).toBeNull();
+  it('freeform (no bucket under t1): a drag spans raw [t1, t2], a hover is null', () => {
+    // No sequence → empty buckets: a drag selects the raw range, either
+    // direction; a bare hover has nothing to shade (the cursor is a line).
+    expect(regionSpan([], 100, 250)).toEqual({ start: 100, end: 250 });
+    expect(regionSpan([], 250, 100)).toEqual({ start: 100, end: 250 });
     expect(regionSpan([], 5)).toBeNull();
+    // Same freeform fallback when t1 lands in a gap between buckets.
+    expect(regionSpan(buckets, 15, 45)).toEqual({ start: 15, end: 45 });
+    expect(regionSpan(buckets, 15)).toBeNull();
   });
 });
 

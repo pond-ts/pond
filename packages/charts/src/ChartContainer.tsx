@@ -163,6 +163,15 @@ export interface ChartContainerProps {
    */
   onRegionSelect?: (range: TimeRange) => void;
   /**
+   * Which modifier a region-drag needs — set `'shift'` when you also enable
+   * `panZoom` and want **plain drag to pan, shift-drag to select**. It's only
+   * enforced while `panZoom` is on (with pan off there's no gesture conflict, so
+   * shift is optional — either drag selects). **Omitted** ⇒ a region-drag
+   * **preempts** pan (drag always selects; document that precedence for users).
+   * Wheel-zoom is unaffected in every case.
+   */
+  regionSelectModifier?: 'shift';
+  /**
    * Fires on pointer move with the hovered time + every series' value there (so
    * you can render a readout outside the chart), and `null` on leave.
    */
@@ -328,6 +337,7 @@ export function ChartContainer({
   cursor = DEFAULT_CURSOR_MODE,
   cursorSequence,
   onRegionSelect,
+  regionSelectModifier,
   cursorTime = false,
   crosshairSnap = true,
   editAnnotations = false,
@@ -769,6 +779,7 @@ export function ChartContainer({
       regionAnchor,
       setRegionAnchor,
       onRegionSelect,
+      regionSelectModifier,
       draggingKey,
       setDragging,
       selected: selectedValue,
@@ -822,6 +833,7 @@ export function ChartContainer({
       regionAnchor,
       setRegionAnchor,
       onRegionSelect,
+      regionSelectModifier,
       draggingKey,
       setDragging,
       selectedValue,

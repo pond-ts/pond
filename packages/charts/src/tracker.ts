@@ -30,11 +30,15 @@ export function bucketAt(
 }
 
 /**
- * The `[start, end)` **span** a region cursor covers: the bucket containing `t1`,
- * or — when a drag anchor `t2` is given — the union of the buckets at `t1` and
- * `t2` (so a drag extends the region **bucket by bucket**, either direction).
- * `null` if `t1` is in no bucket; a `t2` in no bucket is ignored (the span stays
- * `t1`'s bucket). Times, not pixels — the drag-release callback reports this.
+ * The `[start, end)` **span** a region cursor covers, in axis units (not pixels —
+ * the drag-release callback reports this):
+ *
+ * - **Snapping** (`buckets` non-empty, `t1` in a bucket): the bucket at `t1`, or —
+ *   with a drag anchor `t2` — the union of the `t1` and `t2` buckets, so a drag
+ *   extends **bucket by bucket** either direction. A `t2` in no bucket is ignored.
+ * - **Freeform** (`t1` in no bucket — e.g. no `cursorSequence` at all): a drag
+ *   spans the raw `[t1, t2]`; without a drag (`t2` omitted) there's nothing to
+ *   shade (the cursor renders as a plain line), so it returns `null`.
  */
 export function regionSpan(
   buckets: readonly Interval[],
@@ -42,7 +46,13 @@ export function regionSpan(
   t2?: number,
 ): { start: number; end: number } | null {
   const a = bucketAt(buckets, t1);
-  if (a === undefined) return null;
+  if (a === undefined) {
+    // Freeform: no bucket under t1. A drag spans the raw [t1, t2]; a bare hover
+    // has nothing to shade (Layers draws a line for the degenerate region cursor).
+    return t2 === undefined
+      ? null
+      : { start: Math.min(t1, t2), end: Math.max(t1, t2) };
+  }
   if (t2 === undefined) return { start: a.begin(), end: a.end() };
   const b = bucketAt(buckets, t2);
   if (b === undefined) return { start: a.begin(), end: a.end() };

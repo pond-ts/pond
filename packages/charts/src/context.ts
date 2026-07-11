@@ -97,6 +97,13 @@ export interface ContainerFrame {
    */
   readonly onRegionSelect: ((range: TimeRange) => void) | undefined;
   /**
+   * Require a modifier key held to start a region-drag — set to `'shift'` to make
+   * plain drag **pan** and **shift**-drag select, when `panZoom` is on. Only
+   * enforced while pan is enabled (with no pan there's no gesture to share, so the
+   * modifier is optional). `undefined` ⇒ a region-drag preempts pan.
+   */
+  readonly regionSelectModifier: 'shift' | undefined;
+  /**
    * The selected mark, or `null`. Shared across rows (single selection). A layer
    * highlights the mark matching the selection's series **`id`** and the clicked
    * sample `key` (epoch ms) — the `id` picks the series (so two series sharing a
