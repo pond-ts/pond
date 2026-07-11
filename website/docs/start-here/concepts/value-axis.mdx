@@ -74,6 +74,13 @@ The usual way to build a monotonic axis is
 that turns per-sample deltas (distance-between-fixes, work-per-tick)
 into a cumulative column you can key on.
 
+Projection is for data that _starts_ time-keyed. When rows are natively
+value-keyed — an options chain keyed by strike, nothing temporal about
+any row — skip the detour:
+[`ValueSeries.fromColumns`](../creating#columnar-ingest) constructs a
+`ValueSeries` directly from columnar arrays, the same contract as
+`TimeSeries.fromColumns` with the axis in place of time.
+
 ## Closed vs projected-out: `byValue` vs `byColumn`
 
 pond-ts is a **closed algebra** — a `TimeSeries` transform returns a
