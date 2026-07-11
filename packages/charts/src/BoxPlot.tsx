@@ -75,7 +75,9 @@ export interface BoxPlotProps<
    * How each box renders its spread — `'whisker'` (default; thin stems + caps),
    * `'solid'` (the candlestick look: a light outer bar over the full range with a
    * darker inner q1→q3 box, no stems), or `'none'` (the q1→q3 box only, no spread
-   * marks). See {@link BoxShape}.
+   * marks). See {@link BoxShape}. On a **range-only** box (no `q1`/`q3`),
+   * `'whisker'` is one full `lower→upper` stem and `'solid'` the outer bar; `'none'`
+   * would draw **nothing** (no body + no spread), so use `'whisker'`/`'solid'` there.
    */
   shape?: BoxShape;
   /** Draw the median (centre) line across each box. Default `true`, but a no-op
@@ -89,10 +91,12 @@ export interface BoxPlotProps<
    * react-timeseries-charts side-by-side-bars precedent). Pairs with
    * `<ScatterChart offset>`.
    *
-   * The **draw** is shifted; the off-chart **readout** still hit-tests in
-   * un-shifted data space (a box is found by span containment on `xScale.invert`),
-   * so with a large offset the hover edge can be off by up to `offset` px. Keep the
-   * offset small (a pairing nudge, not a layout tool) and it's imperceptible.
+   * Only the **draw** is shifted. The box's **readouts** stay in un-shifted data
+   * space — the off-chart hover finds a box by span containment (`xScale.invert`),
+   * and the in-chart `flag` staff anchors at the box's data centre — so both can
+   * sit up to `offset` px from the pixel-shifted box. Keep the offset small (a
+   * pairing nudge, not a layout tool) and it's imperceptible. (`<ScatterChart
+   * offset>` has no such gap — its hit-test is pixel-space and shifts too.)
    */
   offset?: number;
   /**

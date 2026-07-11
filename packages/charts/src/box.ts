@@ -8,9 +8,10 @@ const WHISKER_CAP_FRACTION = 0.5;
 
 /**
  * The `[min, max]` vertical extent of the **drawn** boxes — the lowest `lower`
- * whisker and highest `upper` whisker over keys where **all five** quantiles are
- * finite — or `null` if none are. Gap keys (any quantile `NaN`) are excluded,
- * matching what {@link drawBox} draws, so they don't drag the y-domain.
+ * whisker and highest `upper` whisker over the keys {@link isFiniteBox} draws
+ * (a full box needs all five quantiles; a range-only box just `lower`/`upper`) —
+ * or `null` if none are. Gap keys are excluded, matching what {@link drawBox}
+ * draws, so they don't drag the y-domain.
  *
  * Only `lower`/`upper` bound the extent: they are the outermost reach of a key
  * (the whisker ends), so `q1`/`median`/`q3` lie within `[lower, upper]` for any
@@ -68,11 +69,18 @@ export type BoxShape = 'whisker' | 'solid' | 'none';
  *   reads darker on a light ground, brighter on a dark one), no stems/outline.
  * - **`none`** — the `q1→q3` box fill + outline only, no spread marks.
  *
- * Then, if `showMedian`, the median line across the box on top. Fills are
- * bracketed by `save`/`restore` so their `globalAlpha` doesn't leak.
+ * **Range-only** (`box.hasBox === false` — no `q1`/`q3`): there's no body, so
+ * `whisker` draws **one** full `lower→upper` stem with caps, `solid` draws just
+ * the outer bar, and `none` draws **nothing** (no body + no spread ⇒ empty — pick
+ * `whisker`/`solid` for a range-only box). `showMedian` is a no-op when the box
+ * carries no `median` (`hasMedian === false`).
  *
- * **Gap-aware**: a key with any quantile non-finite is skipped entirely (no
- * partial box) — the same contract as a band gap.
+ * Then, if `showMedian` (and a median is present), the median line on top. Fills
+ * are bracketed by `save`/`restore` so their `globalAlpha` doesn't leak.
+ * `offsetPx` shifts every mark in pixel space (for pairing same-key marks).
+ *
+ * **Gap-aware**: a key whose present quantiles aren't all finite is skipped
+ * entirely (no partial box) — the same contract as a band gap.
  *
  * O(N) over the keys, a fixed number of path ops each — no per-key allocation
  * beyond the `barSpanPx` tuple.

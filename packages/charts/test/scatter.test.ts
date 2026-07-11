@@ -438,4 +438,39 @@ describe('hitTestScatter', () => {
       ),
     ).toBeNull();
   });
+
+  it('offset shifts the hit target in lockstep with the draw (a nudged point still selects)', () => {
+    const p = cs([10], [0]); // one point at x=10, y=0, r=4
+    // With offset +8 the point draws at px 18, so a click at the un-shifted x=10
+    // now MISSES (10 is > r=4 from 18)…
+    expect(
+      hitTestScatter(
+        p,
+        10,
+        0,
+        identity,
+        identity,
+        fixed(4),
+        keyAt(p),
+        'pts',
+        'v',
+        8,
+      ),
+    ).toBeNull();
+    // …and a click at the shifted x=18 HITS. Draw + hit-test move together.
+    const hit = hitTestScatter(
+      p,
+      18,
+      0,
+      identity,
+      identity,
+      fixed(4),
+      keyAt(p),
+      'pts',
+      'v',
+      8,
+    );
+    expect(hit).not.toBeNull();
+    expect(hit!.key).toBe(10); // identity is still the un-shifted data key
+  });
 });

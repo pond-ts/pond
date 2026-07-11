@@ -38,14 +38,15 @@ export interface BandSeries {
 }
 
 /**
- * A chart-ready view of a box-and-whisker series ({@link BoxPlot}): the
- * interval-keyed time axis (`x` = key `begin`, `xEnd` = key `end`, the box's
- * horizontal span) plus the five quantile edges per key —
- * `lower`/`q1`/`median`/`q3`/`upper`. The quantiles are pre-computed columns
- * (a `rolling`/`aggregate` percentile pass upstream); the chart only reads them.
+ * A chart-ready view of a box-and-whisker series ({@link BoxPlot}): a horizontal
+ * span (`x`/`xEnd`) per key plus its quantile edges — the required
+ * `lower`/`upper` (whisker reach) and the optional `q1`/`median`/`q3` (box body +
+ * centre line). The quantiles are pre-computed columns (a `rolling`/`aggregate`
+ * percentile pass upstream); the chart only reads them.
  *
- * A key is drawn only where **all five** quantiles are finite; any one `NaN` is
- * a gap (the box draws nothing — same gap contract as {@link BandSeries}).
+ * A key is drawn only where the quantiles it **carries** are all finite (a full
+ * box needs all five; a range-only box just `lower`/`upper`); any present one
+ * `NaN` is a gap (the box draws nothing — same gap contract as {@link BandSeries}).
  *
  * `x` and `xEnd` are the box's horizontal span. An **interval**-keyed
  * `TimeSeries` uses the key's own `[begin, end)`; a **point**-keyed `TimeSeries`
