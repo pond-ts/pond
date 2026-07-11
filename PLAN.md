@@ -460,7 +460,10 @@ Axis>>` carrying ordering-based ops (`axisValues`/`axisAt`/`column`/
     an `<XAxis format>`→cursor-readout coupling), `onTimeRangeChange`, and the
     internal `ContainerFrame.timeRange` field. **Next: more chart types
     (Bar/Band/Box/Area/Scatter) on the value axis + the naming follow-up + estela
-    friction cycle.** **Decimator
+    friction cycle** (Bar/Band/Area landed with later waves; **Scatter SHIPPED
+    2026-07-11** — the vol-smile G2 item, instanceof-branch mirroring LineChart,
+    encodings/label/sampleAt all value-axis-clean, Box/Candlestick still
+    time-only)**.** **Decimator
     DECOUPLED** (dashboard): ship time-only (index `Column.bin`) first; the value
     axis brings axis-domain `binByAxis` (Codex: `Column.bin` is index-domain,
     wrong for gappy data). `byColumn` is **order-free** (Codex: v1 wrongly said it

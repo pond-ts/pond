@@ -13,6 +13,9 @@ const cases: ReadonlyArray<readonly [id: string, file: string]> = [
   ['charts-scatterchart--encoded', 'scatter-encoded.png'],
   ['charts-scatterchart--labelled', 'scatter-labelled.png'],
   ['charts-scatterchart--over-line', 'scatter-over-line.png'],
+  // Value axis (ValueSeries): the smile composition + the encodings state.
+  ['charts-scatterchart--value-axis-smile', 'scatter-value-axis-smile.png'],
+  ['charts-scatterchart--value-axis-encoded', 'scatter-value-axis-encoded.png'],
 ];
 
 test.describe('ScatterChart', () => {

@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { TimeSeries } from 'pond-ts';
+import { TimeSeries, ValueSeries } from 'pond-ts';
 import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { ScatterChart } from './ScatterChart.js';
 import { LineChart } from './LineChart.js';
+import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
 import { defaultTheme, estelaTheme } from './theme.js';
 import type { SelectInfo } from './context.js';
@@ -226,4 +227,154 @@ function ControlledSelectDemo() {
 
 export const ControlledSelect: Story = {
   render: () => <ControlledSelectDemo />,
+};
+
+// ---------------------------------------------------------------------------
+// Value axis — scatter on a ValueSeries (strike / distance / frequency on x).
+// ---------------------------------------------------------------------------
+
+/**
+ * A deterministic synthetic **vol smile**: one row per strike (a cross-section
+ * — no row has a meaningful time), built through the direct value-land door
+ * `ValueSeries.fromColumns`. `fair` is a skewed parabola (downside strikes
+ * carry more vol), `bidIv`/`askIv` straddle it with a spread that widens in the
+ * wings plus a small deterministic wiggle (market noise without RNG), and `oi`
+ * humps at the money (drives point radius). `ivChg` is a signed
+ * day-over-day-ish change (drives point colour).
+ */
+function smileChain() {
+  const strikes: number[] = [];
+  for (let k = 80; k <= 120; k += 2.5) strikes.push(k);
+  const fair: number[] = [];
+  const bidIv: number[] = [];
+  const askIv: number[] = [];
+  const oi: number[] = [];
+  const ivChg: number[] = [];
+  for (const k of strikes) {
+    const m = k - 100; // distance from the money
+    const f = 0.24 + 0.00042 * m * m - 0.0016 * m;
+    const spread = 0.008 + 0.0006 * Math.abs(m);
+    const wiggle = 0.002 * Math.sin(k / 3.1);
+    fair.push(f);
+    bidIv.push(f - spread / 2 + wiggle);
+    askIv.push(f + spread / 2 + wiggle);
+    oi.push(Math.round(150 + 850 * (1 - Math.min(1, Math.abs(m) / 22)) ** 2));
+    ivChg.push(0.012 * Math.sin(m / 5.3));
+  }
+  return ValueSeries.fromColumns({
+    name: 'smile',
+    schema: [
+      { name: 'strike', kind: 'value' },
+      { name: 'fair', kind: 'number' },
+      { name: 'bidIv', kind: 'number' },
+      { name: 'askIv', kind: 'number' },
+      { name: 'oi', kind: 'number' },
+      { name: 'ivChg', kind: 'number' },
+    ] as const,
+    columns: { strike: strikes, fair, bidIv, askIv, oi, ivChg },
+  });
+}
+
+/**
+ * **Value axis.** The same `<ScatterChart>` consuming a `ValueSeries` — IV
+ * marks keyed by **strike**, not time. The chart **infers** a value (linear) x
+ * from the data (no axis-type prop) and auto-fits the domain; numeric tick
+ * format via `timeFormat`.
+ */
+export const ValueAxis: Story = {
+  render: () => (
+    <ChartContainer timeFormat=",.0f" width={520}>
+      <ChartRow height={220}>
+        <YAxis id="iv" format=".0%" />
+        <Layers>
+          <ScatterChart series={smileChain()} column="fair" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
+ * **Value axis + encodings.** The data-driven channels on a value axis: point
+ * *radius* from open interest (`oi`, humped at the money) and point *colour*
+ * from the signed IV change (`ivChg`, red↔green ramp). Same encoding contract
+ * as the time axis — a column + range, not a callback.
+ */
+export const ValueAxisEncoded: Story = {
+  render: () => (
+    <ChartContainer timeFormat=",.0f" width={520}>
+      <ChartRow height={220}>
+        <YAxis id="iv" format=".0%" />
+        <Layers>
+          <ScatterChart
+            series={smileChain()}
+            column="fair"
+            radius={{ column: 'oi', range: [2.5, 11] }}
+            color={{ column: 'ivChg', range: ['#e8836b', '#15B3A6'] }}
+          />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
+ * **Value axis, marks over a line — a vol smile.** The composition a smile
+ * chart is made of: the fair-vol curve as a `<LineChart curve="natural">`, and
+ * per-strike **bid / ask IV marks** as two scatters (`secondary` / `primary`
+ * roles) straddling it. One shared strike axis, labelled via an explicit
+ * `<XAxis>`; hover reads the nearest strike's values.
+ */
+export const ValueAxisSmile: Story = {
+  render: () => {
+    const chain = smileChain();
+    return (
+      <ChartContainer timeFormat=",.0f" cursor="crosshair" width={620}>
+        <ChartRow height={260}>
+          <YAxis id="iv" label="implied vol" format=".1%" />
+          <Layers>
+            <LineChart series={chain} column="fair" curve="natural" />
+            <ScatterChart
+              series={chain}
+              column="bidIv"
+              as="secondary"
+              id="bid"
+            />
+            <ScatterChart series={chain} column="askIv" as="primary" id="ask" />
+          </Layers>
+        </ChartRow>
+        <XAxis label="Strike" format=",.0f" />
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **Value axis + flag cursor.** Scatter's `sampleAt` bisecting the **strike**
+ * axis: hover and the staff snaps to the nearest drawn mark, the flag reading
+ * its IV, `cursorTime` showing the strike. Proves the tracker readout follows
+ * the pointer on a value axis, not just time.
+ */
+export const ValueAxisFlag: Story = {
+  render: () => {
+    const chain = smileChain();
+    const lo = chain.axisAt(0);
+    const hi = chain.axisAt(chain.length - 1);
+    return (
+      <ChartContainer
+        range={[lo, hi]}
+        timeFormat=",.0f"
+        cursor="flag"
+        cursorTime
+        width={520}
+      >
+        <ChartRow height={220}>
+          <YAxis id="iv" format=".1%" />
+          <Layers>
+            <ScatterChart series={chain} column="fair" id="fair" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
 };

@@ -43,6 +43,15 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`<ScatterChart>` accepts a `ValueSeries`** (`@pond-ts/charts`) — scatter
+  marks on the value axis, the same instanceof-branched adapter as
+  `<LineChart>` (the container infers the x kind from the data). The
+  data-driven `radius` / `color` encodings and per-point `label` work
+  unchanged on a value axis — IV marks keyed by strike with open-interest
+  radius is the driving composition (vol smile). New value-axis Storybook
+  fan-out (`ValueAxis` / `ValueAxisEncoded` / `ValueAxisSmile` /
+  `ValueAxisFlag`) + Linux visual baselines.
+
 - **`ValueSeries.fromColumns({ name, schema, columns, sort? })`** (`pond-ts`) —
   the direct columnar door into value-land, for data that is _natively_
   value-keyed (cross-sectional): an options chain keyed by strike, a spectrum
