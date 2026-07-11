@@ -458,9 +458,10 @@ This is looser than `fromJSON`, which rejects a non-finite _provided_
 number outright rather than treating it as a gap.
 
 Columns must be in **non-decreasing key order**, same invariant as
-`fromJSON` — an out-of-order key throws, naming the offending index. Unlike
-`fromJSON`, there's no `sort: true` escape hatch yet; pre-sort columnar
-input before calling `fromColumns`.
+`fromJSON` — an out-of-order key throws, naming the offending index. For a
+payload whose rows aren't guaranteed ordered, pass `sort: true` to sort
+rows by key before construction — a stable sort, like `fromJSON`'s. (Sorting
+disables the zero-copy adoption above: a reorder needs fresh buffers.)
 
 ### Scope
 
@@ -468,6 +469,17 @@ input before calling `fromColumns`.
 value columns — the market-data / chart wire-format case that motivated
 it. Other key kinds (`interval`, `timerange`) and non-numeric value
 columns throw for now.
+
+:::info[Value-keyed data has its own door]
+`fromColumns` builds a **time**-keyed series. If your rows are keyed by a
+monotonic _value_ instead — an options chain keyed by strike, a spectrum
+keyed by frequency — don't launder the axis through a fake `time` column:
+**`ValueSeries.fromColumns({ name, schema, columns, sort })`** is the same
+door with a `'value'`-kind axis column in place of time. Same
+`number[]` / `Float64Array` inputs, same zero-copy adoption, same
+`sort: true`. Data that _starts_ time-keyed projects into value-land with
+[`byValue`](./concepts/value-axis) instead.
+:::
 
 :::tip[Why this matters for interactive charts]
 The real cost this solves isn't raw parse speed — it's _when_ the parse
