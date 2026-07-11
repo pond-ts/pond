@@ -386,6 +386,17 @@ export interface RowLayer {
    */
   xCategories?(): readonly string[] | null;
   /**
+   * A bar/histogram layer's bar `[begin, end)` spans, as pond `Interval`s — the
+   * **region cursor's snap buckets**. When present (and no `cursorSequence` is
+   * set), a region drag snaps bar by bar and a hover highlights the bar under the
+   * pointer, so a histogram gets bin-aligned selection for free. Only a
+   * **vertical** bar layer on a **continuous** (time / value) x axis publishes
+   * them — a horizontal chart puts the value on x (snapping counts is meaningless)
+   * and a **category** (ordinal-slot) axis is excluded from the region cursor.
+   * `null` / absent otherwise.
+   */
+  binIntervals?(): readonly Interval[] | null;
+  /**
    * The layer's value(s) at `time` — the nearest sample — for the scrub tracker:
    * one for a line, two (lower/upper) for a band, empty at a gap. Each carries
    * the sample's own `x` (the dot snaps onto the data point) and dot colour.
@@ -471,6 +482,8 @@ export interface TrackerSource {
   xExtent(): readonly [number, number] | null;
   /** A `'category'` source's ordered category names (see {@link RowLayer.xCategories}). */
   xCategories?(): readonly string[] | null;
+  /** A bar/histogram source's bar `[begin, end)` spans (see {@link RowLayer.binIntervals}). */
+  binIntervals?(): readonly Interval[] | null;
 }
 
 /**
