@@ -80,6 +80,7 @@ import {
 } from './operators/cumulative.js';
 import { scanOp, type ScanStep } from './operators/scan.js';
 import { byValueOp } from './operators/by-value.js';
+import { ingestColumnsToStore } from './operators/ingest-columns.js';
 import { ValueSeries } from './value-series.js';
 import { diffRateOp, type DiffRateMode } from './operators/diff-rate.js';
 import { fillOp, type ResolvedFillSpec } from './operators/fill.js';
@@ -127,7 +128,6 @@ import {
   TimeRangeKeyColumn,
   float64ColumnFromArray,
   stringColumnFromArray,
-  validityFromPredicate,
   withColumnAppended,
   withColumnsRenamed,
   withColumnsSelected,
@@ -903,9 +903,10 @@ export class TimeSeries<S extends SeriesSchema> {
    * value columns throw for now — extend as consumers need.
    *
    * @throws ValidationError on a missing column, a length mismatch, an
-   *   unsupported kind, a non-finite timestamp key, or an out-of-order
-   *   (decreasing) timestamp when `sort` is not set — keys must be non-decreasing,
-   *   same as `fromJSON`.
+   *   unsupported kind, or an out-of-order (decreasing) timestamp when `sort`
+   *   is not set — keys must be non-decreasing, same as `fromJSON`. Throws
+   *   RangeError on a non-finite timestamp key (from the key-column
+   *   constructor) or a duplicate column name.
    */
   static fromColumns<S extends SeriesSchema>(input: {
     name: string;
@@ -936,140 +937,19 @@ export class TimeSeries<S extends SeriesSchema> {
         `fromColumns: v1 supports a 'time' key; schema[0] '${keyDef.name}' is '${keyDef.kind}'`,
       );
     }
-    const keyRaw = columns[keyDef.name];
-    if (keyRaw === undefined) {
-      throw new ValidationError(
-        `fromColumns: missing key column '${keyDef.name}'`,
-      );
-    }
-    // epoch-ms buffer; TimeKeyColumn asserts all finite. A manual loop, not
-    // `Float64Array.from(arr, mapFn)`: supplying a map function forces V8's
-    // generic iterable-protocol path even for a plain array, ~15-20x slower
-    // than a preallocated-buffer copy at 100k-element scale — measured, not
-    // theoretical (see the pond-columnar-ingest spike's ingest regression).
-    let rawBegin: Float64Array;
-    if (keyRaw instanceof Float64Array) {
-      rawBegin = keyRaw;
-    } else {
-      rawBegin = new Float64Array(keyRaw.length);
-      for (let j = 0; j < keyRaw.length; j += 1) {
-        const v = keyRaw[j];
-        rawBegin[j] = v == null ? NaN : Number(v);
-      }
-    }
-    const count = rawBegin.length;
 
-    // `sort: true` — reorder every column by ascending key before construction.
-    // Compute the row permutation once (a stable sort of the index array; V8's
-    // Array.sort is stable, so equal keys keep input order, matching fromJSON's
-    // stable intake), then remap the key + each value column through it below.
-    // `order` stays null on the (default) trusted fast path, so no allocation /
-    // copy is paid unless asked. A non-finite key is left for `TimeKeyColumn` to
-    // reject — sorting can't make it valid.
-    let begin: Float64Array;
-    let order: Uint32Array | null = null;
-    if (sort) {
-      const idx = Array.from({ length: count }, (_, i) => i);
-      idx.sort((a, b) => rawBegin[a]! - rawBegin[b]!);
-      order = Uint32Array.from(idx);
-      begin = new Float64Array(count);
-      for (let j = 0; j < count; j += 1) begin[j] = rawBegin[order[j]!]!;
-    } else {
-      begin = rawBegin;
-    }
-
-    // Throws on any non-finite timestamp.
-    const keys = new TimeKeyColumn(begin, count);
-    // Enforce the non-decreasing-key invariant that `fromJSON`'s
-    // `validateAndNormalize` guarantees. Trusted construction skips row
-    // materialization + kind re-validation, but NOT this correctness contract:
-    // bisect-based operators (crop, `atTime`, range queries) rely on it, so an
-    // unsorted columnar input must fail loudly here rather than build a silently
-    // broken series. One O(N) scan over already-finite values — negligible next
-    // to decode. (When `sort` is set the keys are now non-decreasing, so this is
-    // a cheap post-condition check rather than a rejection.)
-    for (let j = 1; j < count; j += 1) {
-      if (begin[j]! < begin[j - 1]!) {
-        throw new ValidationError(
-          `fromColumns: key column '${keyDef.name}' is out of order at index ${j} ` +
-            `(${begin[j]} < ${begin[j - 1]}) — timestamps must be non-decreasing; ` +
-            `pass { sort: true } or pre-sort the columns`,
-        );
-      }
-    }
-
-    // Value columns — packed directly (missing-aware) from the arrays.
-    const columnMap = new Map<string, ColumnarColumn>();
-    for (let i = 1; i < schema.length; i += 1) {
-      const def = schema[i]!;
-      if (def.kind !== 'number') {
-        throw new ValidationError(
-          `fromColumns: v1 supports 'number' value columns; column '${def.name}' is '${def.kind}'`,
-        );
-      }
-      const raw = columns[def.name];
-      if (raw === undefined) {
-        throw new ValidationError(`fromColumns: missing column '${def.name}'`);
-      }
-      if (raw.length !== count) {
-        throw new ValidationError(
-          `fromColumns: column '${def.name}' length ${raw.length} does not match key length ${count}`,
-        );
-      }
-      // Normalize to a Float64Array either way — adopt if already typed (the
-      // fast path a protobuf / fixed-point decoder hits, zero-copy), else
-      // convert (`null`/`undefined` -> `NaN`) — then apply ONE validity rule
-      // to both: a cell is a gap iff it's non-finite. This must be identical
-      // regardless of input type: an earlier version used `float64ColumnFromArray`
-      // for the `number[]` branch, which treats a `NaN` *value* (as opposed to
-      // `null`) as defined-but-non-finite rather than missing, diverging from
-      // the `Float64Array` branch's `Number.isFinite` gap signal — the same
-      // wire value would silently mean different things depending on which
-      // array type decoded it.
-      // Manual loop, not `Float64Array.from(arr, mapFn)` — see the key-column
-      // comment above; the cost applies identically here.
-      let values: Float64Array;
-      if (order !== null) {
-        // Sorting: reorder into a fresh buffer through the key permutation (no
-        // zero-copy adoption — the rows are being moved). Same missing rule
-        // (`null`/`undefined` → NaN) applied while remapping.
-        values = new Float64Array(count);
-        if (raw instanceof Float64Array) {
-          for (let j = 0; j < count; j += 1) values[j] = raw[order[j]!]!;
-        } else {
-          for (let j = 0; j < count; j += 1) {
-            const v = raw[order[j]!];
-            values[j] = v == null ? NaN : v;
-          }
-        }
-      } else if (raw instanceof Float64Array) {
-        values = raw;
-      } else {
-        values = new Float64Array(count);
-        for (let j = 0; j < count; j += 1) {
-          const v = raw[j];
-          values[j] = v == null ? NaN : v;
-        }
-      }
-      const validity = validityFromPredicate(count, (j) =>
-        Number.isFinite(values[j]!),
-      );
-      columnMap.set(
-        def.name,
-        new Float64Column(values, count, validity, validity === undefined),
-      );
-    }
-
-    const store = ColumnarStore.fromTrustedStore(
-      schema as unknown as ColumnSchema,
-      keys,
-      columnMap,
-    );
-    return TimeSeries.#fromTrustedStore(
-      name,
-      schema,
-      store as unknown as ColumnarStore<ColumnSchema>,
-    );
+    // The normalize -> sort -> key -> order-check -> pack pipeline is shared
+    // with `ValueSeries.fromColumns` -- one ingest engine, two key kinds (see
+    // `operators/ingest-columns.ts`).
+    const store = ingestColumnsToStore({
+      op: 'fromColumns',
+      keyNoun: 'timestamps',
+      schema: schema as unknown as ColumnSchema,
+      columns,
+      sort,
+      makeKey: (begin, count) => new TimeKeyColumn(begin, count),
+    });
+    return TimeSeries.#fromTrustedStore(name, schema, store);
   }
 
   /**

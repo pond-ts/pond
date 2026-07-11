@@ -1,5 +1,5 @@
 import { performance } from 'node:perf_hooks';
-import { TimeSeries } from '../dist/index.js';
+import { TimeSeries, ValueSeries } from '../dist/index.js';
 
 const schema = Object.freeze([
   { name: 'time', kind: 'time' },
@@ -39,12 +39,67 @@ function makeColumns(length, { typed, sparse = false, shuffled = false } = {}) {
   return columns;
 }
 
+const vsSchema = Object.freeze([
+  { name: 'strike', kind: 'value' },
+  { name: 'open', kind: 'number' },
+  { name: 'high', kind: 'number' },
+  { name: 'low', kind: 'number' },
+  { name: 'close', kind: 'number' },
+  { name: 'volume', kind: 'number' },
+  { name: 'vwap', kind: 'number' },
+]);
+
+/** The `makeColumns` output with the key renamed `time` -> `strike`. */
+function asValueColumns(columns) {
+  const { time, ...rest } = columns;
+  return { strike: time, ...rest };
+}
+
 function median(values) {
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 === 0
     ? (sorted[mid - 1] + sorted[mid]) / 2
     : sorted[mid];
+}
+
+function benchmarkValueSeries(
+  name,
+  columns,
+  { sort = false, repeats = 7 } = {},
+) {
+  const vsColumns = asValueColumns(columns);
+  // warmup
+  ValueSeries.fromColumns({
+    name: 'w',
+    schema: vsSchema,
+    columns: vsColumns,
+    sort,
+  });
+
+  const samples = [];
+  for (let run = 0; run < repeats; run += 1) {
+    const start = performance.now();
+    const series = ValueSeries.fromColumns({
+      name,
+      schema: vsSchema,
+      columns: vsColumns,
+      sort,
+    });
+    const end = performance.now();
+    if (series.length !== vsColumns.strike.length) {
+      throw new Error(`unexpected length for ${name}`);
+    }
+    samples.push(end - start);
+  }
+
+  return {
+    scenario: name,
+    length: vsColumns.strike.length,
+    medianMs: Number(median(samples).toFixed(3)),
+    minMs: Number(Math.min(...samples).toFixed(3)),
+    maxMs: Number(Math.max(...samples).toFixed(3)),
+  };
 }
 
 function benchmark(name, columns, { sort = false, repeats = 7 } = {}) {
@@ -105,6 +160,22 @@ const results = [
     'Float64Array columns, sort: true, descending — copy path (100k x 7 cols)',
     makeColumns(LENGTH, { typed: true, shuffled: true }),
     { sort: true },
+  ),
+  // ValueSeries.fromColumns — same ingest engine behind a value-kind key;
+  // pins the direct value-land door (cross-sectional construction) so a
+  // regression on either door surfaces here.
+  benchmarkValueSeries(
+    'ValueSeries: Float64Array columns, dense — adopt path (100k x 7 cols)',
+    makeColumns(LENGTH, { typed: true }),
+  ),
+  benchmarkValueSeries(
+    'ValueSeries: number[] columns, sort: true, descending (100k x 7 cols)',
+    makeColumns(LENGTH, { typed: false, shuffled: true }),
+    { sort: true },
+  ),
+  benchmarkValueSeries(
+    'ValueSeries: per-element floor (1k x 7 cols, number[])',
+    makeColumns(1_000, { typed: false }),
   ),
 ];
 

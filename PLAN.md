@@ -431,7 +431,17 @@ Axis>>` carrying ordering-based ops (`axisValues`/`axisAt`/`column`/
     `nearestIndex`/`sliceByValue`), calendar ops type-impossible (disjoint
     `ValueSeriesSchema`). Wraps the `ColumnarStore` directly (not `SeriesStore`).
     O(N+C) projection / O(log N) bisect / O(log N+C) zero-copy slice; byValue
-    reuses the packed axis buffer zero-copy (#283). **Phase 2 — chart
+    reuses the packed axis buffer zero-copy (#283). **`ValueSeries.fromColumns`
+    SHIPPED (2026-07-11, #420)** — the direct columnar door for _natively_
+    value-keyed (cross-sectional) data: an options chain keyed by strike (the
+    Tidal vol-smile driver — a live cross-section is pond's third chart
+    archetype after time-marching and categorical), a spectrum keyed by
+    frequency. Exact `TimeSeries.fromColumns` contract (polymorphic `number[]` /
+    `Float64Array`, zero-copy adoption, stable opt-in `sort`, one gap rule) —
+    the shared engine extracted to `operators/ingest-columns.ts`, so the two
+    doors can't drift; before this, cross-sectional callers laundered the axis
+    through a fake `time` column. The projection door (`byValue`) stays the
+    right entry for data that starts life time-keyed. **Phase 2 — chart
     x-on-`ValueSeries` SHIPPED** (#284, `@pond-ts/charts`): additive
     `xScaleType: 'time' | 'linear'` → a `scaleLinear` value axis; `xScale` widened
     to `ScaleTime | ScaleLinear` (rippled to no consumer — draw layers already take
