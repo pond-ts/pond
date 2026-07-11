@@ -329,7 +329,12 @@ export const ValueAxisSmile: Story = {
   render: () => {
     const chain = smileChain();
     return (
-      <ChartContainer timeFormat=",.0f" cursor="crosshair" width={620}>
+      <ChartContainer
+        timeFormat=",.0f"
+        cursor="crosshair"
+        showAxis={false}
+        width={620}
+      >
         <ChartRow height={260}>
           <YAxis id="iv" label="implied vol" format=".1%" />
           <Layers>
