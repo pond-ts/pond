@@ -38,19 +38,30 @@ export interface BandSeries {
 }
 
 /**
- * A chart-ready view of a box-and-whisker series ({@link BoxPlot}): the
- * interval-keyed time axis (`x` = key `begin`, `xEnd` = key `end`, the box's
- * horizontal span) plus the five quantile edges per key —
- * `lower`/`q1`/`median`/`q3`/`upper`. The quantiles are pre-computed columns
- * (a `rolling`/`aggregate` percentile pass upstream); the chart only reads them.
+ * A chart-ready view of a box-and-whisker series ({@link BoxPlot}): a horizontal
+ * span (`x`/`xEnd`) per key plus its quantile edges — the required
+ * `lower`/`upper` (whisker reach) and the optional `q1`/`median`/`q3` (box body +
+ * centre line). The quantiles are pre-computed columns (a `rolling`/`aggregate`
+ * percentile pass upstream); the chart only reads them.
  *
- * A key is drawn only where **all five** quantiles are finite; any one `NaN` is
- * a gap (the box draws nothing — same gap contract as {@link BandSeries}).
+ * A key is drawn only where the quantiles it **carries** are all finite (a full
+ * box needs all five; a range-only box just `lower`/`upper`); any present one
+ * `NaN` is a gap (the box draws nothing — same gap contract as {@link BandSeries}).
  *
- * `x` and `xEnd` are zero-copy views of the key column's `begin`/`end` buffers
- * (immutable by contract — do not mutate). For a point-in-time key the column's
- * `end` coincides with `begin`, so `xEnd === x` and the box collapses to a
- * minimum-width mark via `barSpanPx`; an interval key gives the box real width.
+ * `x` and `xEnd` are the box's horizontal span. An **interval**-keyed
+ * `TimeSeries` uses the key's own `[begin, end)`; a **point**-keyed `TimeSeries`
+ * (or a `ValueSeries`, always point-keyed on its value axis) synthesizes the span
+ * from **neighbour spacing** (each box centred on its key, reaching halfway to
+ * each neighbour — the same rule as bars / candles), so a point series still gets
+ * real box width instead of collapsing to the 1px floor.
+ *
+ * **Range-only boxes.** `q1`/`median`/`q3` are optional at the source (a bid→ask
+ * IV segment is a degenerate box — whiskers only, no body). `hasBox` is `false`
+ * when `q1`/`q3` were omitted (no box body; the whisker runs the full
+ * `lower→upper`), and `hasMedian` is `false` when `median` was omitted (no centre
+ * line). Absent quantile buffers are all-`NaN`; the flags — not the buffers —
+ * decide what draws, so an absent quantile isn't confused with a per-row gap.
+ * Both default to `true` (a full five-number box) when unset.
  */
 export interface BoxSeries {
   readonly x: Float64Array;
@@ -61,6 +72,10 @@ export interface BoxSeries {
   readonly q3: Float64Array;
   readonly upper: Float64Array;
   readonly length: number;
+  /** `false` ⇒ `q1`/`q3` absent (range-only box, no body). Default `true`. */
+  readonly hasBox?: boolean;
+  /** `false` ⇒ `median` absent (no centre line). Default `true`. */
+  readonly hasMedian?: boolean;
 }
 
 /**
@@ -223,27 +238,22 @@ function timeAxis<S extends SeriesSchema>(series: TimeSeries<S>): Float64Array {
 }
 
 /**
- * The key column's `end` buffer aligned to the logical length (zero-copy). For a
- * point-in-time key the column sets `end === begin`, so this returns the same
- * timestamps as {@link timeAxis} — an interval key gives a distinct span.
+ * The quantile column names a {@link boxFromTimeSeries} / {@link boxFromValueSeries}
+ * reads. `lower`/`upper` (the whisker reach) are required; `q1`/`q3` (the box
+ * body) and `median` (the centre line) are **optional** — omit them for a
+ * range-only box (a bid→ask IV segment: whiskers only, no body). Omitting exactly
+ * one of `q1`/`q3` is a data error (a box needs both edges or neither).
  */
-function timeEndAxis<S extends SeriesSchema>(
-  series: TimeSeries<S>,
-): Float64Array {
-  return series.keyColumn().end.subarray(0, series.length);
-}
-
-/** The five quantile column names a {@link boxFromTimeSeries} reads, in order. */
 export interface BoxColumns {
-  /** Lower whisker end (e.g. `p5` / `min`). */
+  /** Lower whisker end (e.g. `p5` / `min`). Required. */
   readonly lower: string;
-  /** Box bottom — first quartile (e.g. `p25`). */
-  readonly q1: string;
-  /** Median line inside the box (e.g. `p50`). */
-  readonly median: string;
-  /** Box top — third quartile (e.g. `p75`). */
-  readonly q3: string;
-  /** Upper whisker end (e.g. `p95` / `max`). */
+  /** Box bottom — first quartile (e.g. `p25`). Omit with `q3` for a range-only box. */
+  readonly q1?: string | undefined;
+  /** Median line inside the box (e.g. `p50`). Omit for no centre line. */
+  readonly median?: string | undefined;
+  /** Box top — third quartile (e.g. `p75`). Omit with `q1` for a range-only box. */
+  readonly q3?: string | undefined;
+  /** Upper whisker end (e.g. `p95` / `max`). Required. */
   readonly upper: string;
 }
 
@@ -354,28 +364,103 @@ export function bandFromValueSeries<VS extends ValueSeriesSchema>(
 }
 
 /**
- * Build a {@link BoxSeries} from a pond `TimeSeries` — five numeric quantile
- * columns (`lower`/`q1`/`median`/`q3`/`upper`) sharing the series' interval time
- * axis (`begin`/`end`, the box's horizontal span). The quantile columns are
- * typically `rolling`/`aggregate` percentiles (e.g. p5/p25/p50/p75/p95); a key
- * with any quantile missing reads as a gap (the box draws nothing).
+ * Reject a half-specified box body — `q1`/`q3` are both-or-neither (a box needs
+ * two edges or none). Called by both box readers before they build.
+ */
+function validateBoxColumns(columns: BoxColumns): void {
+  if ((columns.q1 === undefined) !== (columns.q3 === undefined)) {
+    throw new RangeError(
+      `BoxPlot: 'q1' and 'q3' are both-or-neither — a box body needs both edges ` +
+        `(got q1=${columns.q1 ?? 'undefined'}, q3=${columns.q3 ?? 'undefined'}). ` +
+        `Omit both for a range-only box (whiskers lower→upper).`,
+    );
+  }
+}
+
+/** An all-`NaN` buffer of length `n` — the value channel of an absent quantile. */
+function nanBuffer(n: number): Float64Array {
+  return new Float64Array(n).fill(NaN);
+}
+
+/**
+ * Build a {@link BoxSeries} from a pond `TimeSeries`. `lower`/`upper` (the whisker
+ * reach) are required; `q1`/`q3` (the box body) and `median` (the centre line)
+ * are optional — omit them for a **range-only** box (a bid→ask segment). The
+ * quantile columns are typically `rolling`/`aggregate` percentiles; a key with
+ * any **present** quantile missing reads as a gap (the box draws nothing).
  *
- * @throws RangeError if any quantile column does not exist.
- * @throws TypeError if any quantile column is not a numeric column.
+ * **Key-shape aware, like {@link ohlcFromTimeSeries}.** An **interval /
+ * timeRange**-keyed series uses the key's own `[begin, end)` as the box span; a
+ * **point**-keyed (`time`) series synthesizes the span from neighbour spacing
+ * (each box centred on its timestamp, halfway to each neighbour), so a raw
+ * percentile-per-timestamp feed renders as contiguous boxes instead of collapsing
+ * to the 1px floor.
+ *
+ * @throws RangeError if any named quantile column does not exist, or if exactly
+ *   one of `q1`/`q3` is given.
+ * @throws TypeError if any named quantile column is not a numeric column.
  */
 export function boxFromTimeSeries<S extends SeriesSchema>(
   series: TimeSeries<S>,
   columns: BoxColumns,
 ): BoxSeries {
+  validateBoxColumns(columns);
+  const n = series.length;
+  const hasBox = columns.q1 !== undefined;
+  const hasMedian = columns.median !== undefined;
+  const { begin, end } =
+    series.keyColumn().kind !== 'time'
+      ? keyBeginEnd(series) // interval / timeRange: the key's own span
+      : neighbourSpans(series.keyColumn().begin, n); // point: neighbour spacing
   return {
-    x: timeAxis(series),
-    xEnd: timeEndAxis(series),
+    x: begin,
+    xEnd: end,
     lower: readNumericColumn(series, columns.lower),
-    q1: readNumericColumn(series, columns.q1),
-    median: readNumericColumn(series, columns.median),
-    q3: readNumericColumn(series, columns.q3),
+    q1: hasBox ? readNumericColumn(series, columns.q1!) : nanBuffer(n),
+    median: hasMedian
+      ? readNumericColumn(series, columns.median!)
+      : nanBuffer(n),
+    q3: hasBox ? readNumericColumn(series, columns.q3!) : nanBuffer(n),
     upper: readNumericColumn(series, columns.upper),
-    length: series.length,
+    length: n,
+    hasBox,
+    hasMedian,
+  };
+}
+
+/**
+ * Build a {@link BoxSeries} from a pond `ValueSeries` — the value-axis sibling of
+ * {@link boxFromTimeSeries} (a volatility smile's per-strike bid/ask IV segments,
+ * a per-strike intraday IV distribution). A `ValueSeries` is **point-keyed** on
+ * its value axis, so the box span comes from **neighbour spacing** on
+ * `axisValues()` (each box centred on its axis value, halfway to each neighbour —
+ * the same rule as {@link barsFromValueSeries}), instead of collapsing to a point.
+ * Same optional-quantile / range-only contract as the time reader.
+ *
+ * @throws RangeError if any named quantile column does not exist, or if exactly
+ *   one of `q1`/`q3` is given.
+ * @throws TypeError if any named quantile column is not a numeric column.
+ */
+export function boxFromValueSeries<VS extends ValueSeriesSchema>(
+  series: ValueSeries<VS>,
+  columns: BoxColumns,
+): BoxSeries {
+  validateBoxColumns(columns);
+  const n = series.length;
+  const hasBox = columns.q1 !== undefined;
+  const hasMedian = columns.median !== undefined;
+  const { begin, end } = neighbourSpans(series.axisValues(), n);
+  return {
+    x: begin,
+    xEnd: end,
+    lower: readValueColumn(series, columns.lower),
+    q1: hasBox ? readValueColumn(series, columns.q1!) : nanBuffer(n),
+    median: hasMedian ? readValueColumn(series, columns.median!) : nanBuffer(n),
+    q3: hasBox ? readValueColumn(series, columns.q3!) : nanBuffer(n),
+    upper: readValueColumn(series, columns.upper),
+    length: n,
+    hasBox,
+    hasMedian,
   };
 }
 

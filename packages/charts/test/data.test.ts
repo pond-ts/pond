@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { TimeSeries } from 'pond-ts';
+import { TimeSeries, ValueSeries } from 'pond-ts';
 import {
   bandFromValueSeries,
   barsFromTimeSeries,
   barsFromValueSeries,
+  boxFromTimeSeries,
+  boxFromValueSeries,
   fromTimeSeries,
   fromValueSeries,
 } from '../src/data.js';
@@ -421,5 +423,143 @@ describe('barsFromValueSeries', () => {
       rows: [[0, 0, 'a']],
     }).byValue('cumDist');
     expect(() => barsFromValueSeries(s, 'label')).toThrow(/must be numeric/);
+  });
+});
+
+describe('boxFromTimeSeries — key-shape aware', () => {
+  const full = {
+    lower: 'p5',
+    q1: 'p25',
+    median: 'p50',
+    q3: 'p75',
+    upper: 'p95',
+  };
+
+  it('an interval-keyed series uses the key span, all five columns present', () => {
+    // A timeRange key carries a real [begin, end) — the box's own width.
+    const s = new TimeSeries({
+      name: 'q',
+      schema: [
+        { name: 'timeRange', kind: 'timeRange' },
+        { name: 'p5', kind: 'number' },
+        { name: 'p25', kind: 'number' },
+        { name: 'p50', kind: 'number' },
+        { name: 'p75', kind: 'number' },
+        { name: 'p95', kind: 'number' },
+      ] as const,
+      rows: [
+        [[0, 10], 1, 2, 3, 4, 5],
+        [[10, 20], 1, 2, 3, 4, 5],
+      ] as never,
+    });
+    const b = boxFromTimeSeries(s, full);
+    expect(Array.from(b.x)).toEqual([0, 10]);
+    expect(Array.from(b.xEnd)).toEqual([10, 20]); // real interval width
+    expect(b.hasBox).toBe(true);
+    expect(b.hasMedian).toBe(true);
+  });
+
+  it('a point-keyed (time) series synthesizes width from neighbour spacing', () => {
+    const s = new TimeSeries({
+      name: 'q',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'p5', kind: 'number' },
+        { name: 'p25', kind: 'number' },
+        { name: 'p50', kind: 'number' },
+        { name: 'p75', kind: 'number' },
+        { name: 'p95', kind: 'number' },
+      ] as const,
+      rows: [
+        [0, 1, 2, 3, 4, 5],
+        [10, 1, 2, 3, 4, 5],
+        [20, 1, 2, 3, 4, 5],
+      ],
+    });
+    const b = boxFromTimeSeries(s, full);
+    // Each box centred on its timestamp, halfway to each neighbour (not collapsed).
+    expect(Array.from(b.x)).toEqual([-5, 5, 15]);
+    expect(Array.from(b.xEnd)).toEqual([5, 15, 25]);
+  });
+
+  it('omitting q1+q3 (and median) builds a range-only box', () => {
+    const s = new TimeSeries({
+      name: 'q',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'bid', kind: 'number' },
+        { name: 'ask', kind: 'number' },
+      ] as const,
+      rows: [
+        [0, 1, 5],
+        [10, 2, 6],
+      ],
+    });
+    const b = boxFromTimeSeries(s, { lower: 'bid', upper: 'ask' });
+    expect(b.hasBox).toBe(false);
+    expect(b.hasMedian).toBe(false);
+    expect(Array.from(b.lower)).toEqual([1, 2]);
+    expect(Array.from(b.upper)).toEqual([5, 6]);
+    // absent quantiles read as all-NaN buffers (not confused with a gap)
+    expect(b.q1.every((v) => Number.isNaN(v))).toBe(true);
+    expect(b.median.every((v) => Number.isNaN(v))).toBe(true);
+  });
+
+  it('throws when exactly one of q1/q3 is given', () => {
+    const s = new TimeSeries({
+      name: 'q',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'a', kind: 'number' },
+        { name: 'b', kind: 'number' },
+        { name: 'c', kind: 'number' },
+      ] as const,
+      rows: [[0, 1, 2, 3]],
+    });
+    expect(() =>
+      boxFromTimeSeries(s, { lower: 'a', q1: 'b', upper: 'c' }),
+    ).toThrow(/both-or-neither/);
+  });
+});
+
+describe('boxFromValueSeries', () => {
+  // A vol smile keyed by strike (natively value-keyed, point on the value axis).
+  const smile = () =>
+    ValueSeries.fromColumns({
+      name: 'smile',
+      schema: [
+        { name: 'strike', kind: 'value' },
+        { name: 'bid', kind: 'number' },
+        { name: 'ask', kind: 'number' },
+        { name: 'mid', kind: 'number' },
+      ] as const,
+      columns: {
+        strike: [90, 100, 110],
+        bid: [0.3, 0.24, 0.28],
+        ask: [0.34, 0.28, 0.32],
+        mid: [0.32, 0.26, 0.3],
+      },
+    });
+
+  it('derives a neighbour-spacing span on the value axis (range-only bid/ask)', () => {
+    const b = boxFromValueSeries(smile(), { lower: 'bid', upper: 'ask' });
+    expect(b.length).toBe(3);
+    // strikes 90/100/110 → each box halfway to each neighbour
+    expect(Array.from(b.x)).toEqual([85, 95, 105]);
+    expect(Array.from(b.xEnd)).toEqual([95, 105, 115]);
+    expect(b.hasBox).toBe(false);
+    expect(Array.from(b.lower)).toEqual([0.3, 0.24, 0.28]);
+    expect(Array.from(b.upper)).toEqual([0.34, 0.28, 0.32]);
+  });
+
+  it('carries the median column when given (hasMedian true, still no body)', () => {
+    const b = boxFromValueSeries(smile(), {
+      lower: 'bid',
+      median: 'mid',
+      upper: 'ask',
+    });
+    expect(b.hasBox).toBe(false);
+    expect(b.hasMedian).toBe(true);
+    expect(Array.from(b.median)).toEqual([0.32, 0.26, 0.3]);
   });
 });

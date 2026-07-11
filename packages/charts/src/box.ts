@@ -8,9 +8,10 @@ const WHISKER_CAP_FRACTION = 0.5;
 
 /**
  * The `[min, max]` vertical extent of the **drawn** boxes — the lowest `lower`
- * whisker and highest `upper` whisker over keys where **all five** quantiles are
- * finite — or `null` if none are. Gap keys (any quantile `NaN`) are excluded,
- * matching what {@link drawBox} draws, so they don't drag the y-domain.
+ * whisker and highest `upper` whisker over the keys {@link isFiniteBox} draws
+ * (a full box needs all five quantiles; a range-only box just `lower`/`upper`) —
+ * or `null` if none are. Gap keys are excluded, matching what {@link drawBox}
+ * draws, so they don't drag the y-domain.
  *
  * Only `lower`/`upper` bound the extent: they are the outermost reach of a key
  * (the whisker ends), so `q1`/`median`/`q3` lie within `[lower, upper]` for any
@@ -68,11 +69,18 @@ export type BoxShape = 'whisker' | 'solid' | 'none';
  *   reads darker on a light ground, brighter on a dark one), no stems/outline.
  * - **`none`** — the `q1→q3` box fill + outline only, no spread marks.
  *
- * Then, if `showMedian`, the median line across the box on top. Fills are
- * bracketed by `save`/`restore` so their `globalAlpha` doesn't leak.
+ * **Range-only** (`box.hasBox === false` — no `q1`/`q3`): there's no body, so
+ * `whisker` draws **one** full `lower→upper` stem with caps, `solid` draws just
+ * the outer bar, and `none` draws **nothing** (no body + no spread ⇒ empty — pick
+ * `whisker`/`solid` for a range-only box). `showMedian` is a no-op when the box
+ * carries no `median` (`hasMedian === false`).
  *
- * **Gap-aware**: a key with any quantile non-finite is skipped entirely (no
- * partial box) — the same contract as a band gap.
+ * Then, if `showMedian` (and a median is present), the median line on top. Fills
+ * are bracketed by `save`/`restore` so their `globalAlpha` doesn't leak.
+ * `offsetPx` shifts every mark in pixel space (for pairing same-key marks).
+ *
+ * **Gap-aware**: a key whose present quantiles aren't all finite is skipped
+ * entirely (no partial box) — the same contract as a band gap.
  *
  * O(N) over the keys, a fixed number of path ops each — no per-key allocation
  * beyond the `barSpanPx` tuple.
@@ -87,68 +95,85 @@ export function drawBox(
   minWidthPx = 1,
   shape: BoxShape = 'whisker',
   showMedian = true,
+  offsetPx = 0,
 ): void {
+  // A range-only box (bid→ask segment) has no body / median; the whisker (or the
+  // solid bar) runs the full lower→upper. Flags default true (a full box).
+  const hasBox = box.hasBox !== false;
+  const drawMedian = showMedian && box.hasMedian !== false;
   for (let i = 0; i < box.length; i += 1) {
     if (!isFiniteBox(box, i)) continue;
-    const [x0, x1] = barSpanPx(
+    const [span0, span1] = barSpanPx(
       box.x[i]!,
       box.xEnd[i]!,
       xScale,
       gapPx,
       minWidthPx,
     );
+    // `offsetPx` nudges the whole mark in pixel space (zoom-stable) — for pairing
+    // same-key marks (call/put at one strike) side by side without overlap.
+    const x0 = span0 + offsetPx;
+    const x1 = span1 + offsetPx;
     const mid = (x0 + x1) / 2;
     const yLower = yScale(box.lower[i]!);
-    const yQ1 = yScale(box.q1[i]!);
-    const yMedian = yScale(box.median[i]!);
-    const yQ3 = yScale(box.q3[i]!);
     const yUpper = yScale(box.upper[i]!);
+    // q1/q3 are NaN on a range-only box — read them only when there's a body.
+    const yQ1 = hasBox ? yScale(box.q1[i]!) : 0;
+    const yQ3 = hasBox ? yScale(box.q3[i]!) : 0;
 
     if (shape === 'solid') {
-      // Candlestick: a light outer bar over the full lower→upper spread, then a
-      // more-prominent inner q1→q3 box on top (same fill at rising opacity, so the
-      // inner reads darker on a light ground / brighter on a dark one). No stems,
-      // no outline.
+      // Candlestick: a light outer bar over the full lower→upper spread, then —
+      // when there's a body — a more-prominent inner q1→q3 box on top (same fill
+      // at rising opacity). No stems, no outline.
       ctx.save();
       ctx.fillStyle = style.fill;
       ctx.globalAlpha = style.fillOpacity;
       ctx.fillRect(x0, yUpper, x1 - x0, yLower - yUpper);
-      ctx.globalAlpha = Math.min(1, style.fillOpacity * 2);
-      ctx.fillRect(x0, yQ3, x1 - x0, yQ1 - yQ3);
+      if (hasBox) {
+        ctx.globalAlpha = Math.min(1, style.fillOpacity * 2);
+        ctx.fillRect(x0, yQ3, x1 - x0, yQ1 - yQ3);
+      }
       ctx.restore();
     } else {
-      // `whisker` / `none`: the graded q1→q3 box fill + outline.
-      ctx.save();
-      ctx.fillStyle = style.fill;
-      ctx.globalAlpha = style.fillOpacity;
-      ctx.fillRect(x0, yQ3, x1 - x0, yQ1 - yQ3);
-      ctx.restore();
-      ctx.strokeStyle = style.stroke;
-      ctx.lineWidth = style.strokeWidth;
-      ctx.strokeRect(x0, yQ3, x1 - x0, yQ1 - yQ3);
+      // `whisker` / `none`: the graded q1→q3 box fill + outline (body only).
+      if (hasBox) {
+        ctx.save();
+        ctx.fillStyle = style.fill;
+        ctx.globalAlpha = style.fillOpacity;
+        ctx.fillRect(x0, yQ3, x1 - x0, yQ1 - yQ3);
+        ctx.restore();
+        ctx.strokeStyle = style.stroke;
+        ctx.lineWidth = style.strokeWidth;
+        ctx.strokeRect(x0, yQ3, x1 - x0, yQ1 - yQ3);
+      }
 
       if (shape === 'whisker') {
-        // Whiskers: a stem from each box edge to the whisker end, with a cap.
+        // Whiskers with end-caps. With a body: two stems (q3→upper, q1→lower).
+        // Range-only (no body): one stem spanning the full lower→upper.
         const capHalf = ((x1 - x0) * WHISKER_CAP_FRACTION) / 2;
         ctx.strokeStyle = style.whisker;
         ctx.lineWidth = style.whiskerWidth;
         ctx.beginPath();
-        // Upper: stem q3 → upper, cap at upper.
-        ctx.moveTo(mid, yQ3);
+        // Upper stem: from the box top (q3) or, range-only, from lower.
+        ctx.moveTo(mid, hasBox ? yQ3 : yLower);
         ctx.lineTo(mid, yUpper);
         ctx.moveTo(mid - capHalf, yUpper);
         ctx.lineTo(mid + capHalf, yUpper);
-        // Lower: stem q1 → lower, cap at lower.
-        ctx.moveTo(mid, yQ1);
-        ctx.lineTo(mid, yLower);
+        // Lower cap (and, with a body, the lower stem q1→lower).
+        if (hasBox) {
+          ctx.moveTo(mid, yQ1);
+          ctx.lineTo(mid, yLower);
+        }
         ctx.moveTo(mid - capHalf, yLower);
         ctx.lineTo(mid + capHalf, yLower);
         ctx.stroke();
       }
     }
 
-    // The median line across the box, on top — always optional.
-    if (showMedian) {
+    // The median line across the box, on top — drawn only when the box carries a
+    // median column and `showMedian` is on.
+    if (drawMedian) {
+      const yMedian = yScale(box.median[i]!);
       ctx.strokeStyle = style.median;
       ctx.lineWidth = style.medianWidth;
       ctx.beginPath();
@@ -159,13 +184,25 @@ export function drawBox(
   }
 }
 
-/** All five quantiles finite at `i` — i.e. this key is drawn. */
+/**
+ * This key is drawable — the quantiles it actually carries are all finite at `i`.
+ * `lower`/`upper` (the whisker reach) are always required; `q1`/`q3` only when the
+ * box has a body (`hasBox !== false`), `median` only when it has a centre line
+ * (`hasMedian !== false`). So a **range-only** box (bid→ask, no body/median) draws
+ * wherever `lower`/`upper` are finite, and a full box still needs all five.
+ */
 export function isFiniteBox(box: BoxSeries, i: number): boolean {
-  return (
-    Number.isFinite(box.lower[i]!) &&
-    Number.isFinite(box.q1[i]!) &&
-    Number.isFinite(box.median[i]!) &&
-    Number.isFinite(box.q3[i]!) &&
-    Number.isFinite(box.upper[i]!)
-  );
+  if (!Number.isFinite(box.lower[i]!) || !Number.isFinite(box.upper[i]!)) {
+    return false;
+  }
+  if (
+    box.hasBox !== false &&
+    (!Number.isFinite(box.q1[i]!) || !Number.isFinite(box.q3[i]!))
+  ) {
+    return false;
+  }
+  if (box.hasMedian !== false && !Number.isFinite(box.median[i]!)) {
+    return false;
+  }
+  return true;
 }
