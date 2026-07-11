@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { Sequence, TimeSeries, type SeriesSchema } from 'pond-ts';
+import { Sequence, TimeSeries, ValueSeries, type SeriesSchema } from 'pond-ts';
 import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
@@ -253,6 +253,116 @@ export const Themed: Story = {
               upper="p95"
               gap={14}
             />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+// ── Value axis: a volatility smile keyed by strike ──
+
+/** A vol smile: bid/ask/mid IV per strike, natively value-keyed (strike on x). */
+function smile() {
+  const strike = [80, 90, 100, 110, 120, 130];
+  const mid = [0.34, 0.29, 0.25, 0.26, 0.3, 0.36];
+  return ValueSeries.fromColumns({
+    name: 'smile',
+    schema: [
+      { name: 'strike', kind: 'value' },
+      { name: 'bid', kind: 'number' },
+      { name: 'ask', kind: 'number' },
+      { name: 'mid', kind: 'number' },
+    ] as const,
+    columns: {
+      strike,
+      bid: mid.map((v) => v - 0.012),
+      ask: mid.map((v) => v + 0.012),
+      mid,
+    },
+  });
+}
+
+/**
+ * **Range-only box on a value axis (the vol smile).** A `ValueSeries` keyed by
+ * **strike** (x is strike, not time). Omitting `q1`/`q3`/`median` makes each box a
+ * **bid→ask IV segment** — whiskers only, no body — a degenerate box that reads as
+ * a market range mark. The box width is neighbour-spacing derived (each strike
+ * halfway to its neighbours), so the segments don't collapse.
+ */
+export const VolSmile: Story = {
+  render: () => {
+    const s = smile();
+    return (
+      <ChartContainer width={620} theme={estelaTheme}>
+        <ChartRow height={260}>
+          <YAxis id="iv" label="IV" />
+          <Layers>
+            <BoxPlot series={s} lower="bid" upper="ask" as="iv" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **Range-only + median (bid / mid / ask).** The same smile, now naming `median`
+ * (the mid IV) — a centre tick on each bid→ask segment. Still no box body
+ * (`q1`/`q3` omitted); `median` is independent of the body.
+ */
+export const VolSmileWithMid: Story = {
+  render: () => {
+    const s = smile();
+    return (
+      <ChartContainer width={620} theme={estelaTheme}>
+        <ChartRow height={260}>
+          <YAxis id="iv" label="IV" />
+          <Layers>
+            <BoxPlot series={s} lower="bid" median="mid" upper="ask" as="iv" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **`offset` — call / put pairing at one strike.** Calls and puts sit at the same
+ * strike; a pixel `offset` nudges each side of the pair apart so both bid→ask
+ * segments read without overlap (the react-timeseries-charts side-by-side
+ * precedent). Zoom-stable — the nudge is in pixels, not strike units.
+ */
+export const CallPutPair: Story = {
+  render: () => {
+    const strike = [80, 90, 100, 110, 120, 130];
+    const call = smile();
+    const put = ValueSeries.fromColumns({
+      name: 'put',
+      schema: [
+        { name: 'strike', kind: 'value' },
+        { name: 'bid', kind: 'number' },
+        { name: 'ask', kind: 'number' },
+      ] as const,
+      columns: {
+        strike,
+        bid: [0.36, 0.31, 0.27, 0.28, 0.32, 0.38].map((v) => v - 0.012),
+        ask: [0.36, 0.31, 0.27, 0.28, 0.32, 0.38].map((v) => v + 0.012),
+      },
+    });
+    return (
+      <ChartContainer width={620} theme={estelaTheme}>
+        <ChartRow height={260}>
+          <YAxis id="iv" label="IV" />
+          <Layers>
+            <BoxPlot
+              series={call}
+              lower="bid"
+              upper="ask"
+              as="iv"
+              offset={-5}
+            />
+            <BoxPlot series={put} lower="bid" upper="ask" offset={5} />
           </Layers>
         </ChartRow>
       </ChartContainer>

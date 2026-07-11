@@ -43,6 +43,25 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`<BoxPlot>` finished for the value axis + range-only marks** (`@pond-ts/charts`).
+  Four coordinated changes, driven by the volatility smile's per-strike bid/ask IV
+  segments (`docs/notes/vol-smile-followups-2026-07.md` §1):
+  - **Accepts a `ValueSeries`** (`series.byValue('strike')` /
+    `ValueSeries.fromColumns`) — boxes on a value axis, the same instanceof branch
+    as `<LineChart>` / `<ScatterChart>`. The box **width** now comes from neighbour
+    spacing for a **point** key (a `ValueSeries`, or a point-keyed `TimeSeries`) —
+    like bars/candles — instead of collapsing to the 1px floor; an interval-keyed
+    `TimeSeries` still uses its `[begin, end)`.
+  - **Optional `q1`/`median`/`q3`** — omit `q1`+`q3` for a **range-only** box: a
+    whisker-only `lower→upper` segment, no body (a bid→ask IV mark honestly named,
+    not a candlestick abuse). Omitting exactly one of `q1`/`q3` throws.
+  - **`offset` prop** (`<BoxPlot>` and `<ScatterChart>`) — a **pixel** shift for
+    pairing same-key marks (call/put at one strike) side by side, zoom-stable. On
+    the scatter it moves the draw **and** the click hit-test together; on the box
+    the readout hit-tests in un-shifted data space (keep the offset small).
+  - **Readout labels** carry the series' `as` identity (`iv upper`, `iv median`)
+    when set, instead of bare column names — the `as ?? column` convention
+    Line/Scatter already use.
 - **`<ScatterChart>` accepts a `ValueSeries`** (`@pond-ts/charts`) — scatter
   marks on the value axis, the same instanceof-branched adapter as
   `<LineChart>` (the container infers the x kind from the data). The

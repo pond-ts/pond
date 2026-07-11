@@ -1,6 +1,7 @@
 import { useContext, useEffect, useMemo } from 'react';
-import type { SeriesSchema, TimeSeries } from 'pond-ts';
-import { boxFromTimeSeries } from './data.js';
+import { ValueSeries } from 'pond-ts';
+import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
+import { boxFromTimeSeries, boxFromValueSeries } from './data.js';
 import {
   boxExtent,
   boxIndexAtTime,
@@ -11,24 +12,44 @@ import {
 import {
   ContainerContext,
   LayersContext,
+  type CursorFlagLine,
   type LayerEntry,
   type TrackerSample,
 } from './context.js';
 import { useSlotKey } from './use-slot-key.js';
 
-export interface BoxPlotProps<S extends SeriesSchema> {
-  /** The source series. Its interval key column supplies the time axis (the box
-   *  x-span is the key's `[begin, end)`). */
-  series: TimeSeries<S>;
-  /** Name of the numeric column for the lower whisker end (e.g. `p5` / `min`). */
+export interface BoxPlotProps<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> {
+  /**
+   * The source series. A `TimeSeries` plots against the time axis; a `ValueSeries`
+   * (`series.byValue('strike')`, or `ValueSeries.fromColumns` for natively
+   * value-keyed data — a per-strike IV distribution) against its value axis — the
+   * container infers which from the data, no axis-type prop (mirrors `<LineChart>`
+   * / `<ScatterChart>`). The box x-span is the key's `[begin, end)` for an
+   * interval-keyed `TimeSeries`, else synthesized from neighbour spacing (a
+   * point-keyed `TimeSeries`, or a `ValueSeries`) so the box keeps real width.
+   */
+  series: TimeSeries<S> | ValueSeries<VS>;
+  /** Name of the numeric column for the lower whisker end (e.g. `p5` / `min`).
+   *  **Required** — with `upper` it's the whisker reach. */
   lower: string;
-  /** Name of the numeric column for the box bottom — first quartile (e.g. `p25`). */
-  q1: string;
-  /** Name of the numeric column for the median line (e.g. `p50`). */
-  median: string;
-  /** Name of the numeric column for the box top — third quartile (e.g. `p75`). */
-  q3: string;
-  /** Name of the numeric column for the upper whisker end (e.g. `p95` / `max`). */
+  /**
+   * Name of the numeric column for the box bottom — first quartile (e.g. `p25`).
+   * **Optional:** omit `q1` **and** `q3` together for a **range-only** box — a
+   * whisker-only `lower→upper` segment, no body (a bid→ask IV mark). Giving just
+   * one of `q1`/`q3` throws.
+   */
+  q1?: string;
+  /** Name of the numeric column for the median line (e.g. `p50`). **Optional** —
+   *  omit for no centre line (independent of the box body). */
+  median?: string;
+  /** Name of the numeric column for the box top — third quartile (e.g. `p75`).
+   *  **Optional** — omit with `q1` for a range-only box (see `q1`). */
+  q3?: string;
+  /** Name of the numeric column for the upper whisker end (e.g. `p95` / `max`).
+   *  **Required** — with `lower` it's the whisker reach. */
   upper: string;
   /**
    * The box series' semantic identifier — what the spread _is_ (e.g. `latency`).
@@ -57,9 +78,23 @@ export interface BoxPlotProps<S extends SeriesSchema> {
    * marks). See {@link BoxShape}.
    */
   shape?: BoxShape;
-  /** Draw the median (centre) line across each box. Always optional; default
-   *  `true`. (The `median` prop above names the *column*; this toggles the line.) */
+  /** Draw the median (centre) line across each box. Default `true`, but a no-op
+   *  when the `median` column is omitted (nothing to draw). The `median` prop
+   *  names the *column*; this toggles the line. */
   showMedian?: boolean;
+  /**
+   * A **pixel** shift applied to every box's x — zoom-stable (unlike a data-space
+   * nudge). **Default `0`.** For pairing marks that share a key side by side: e.g.
+   * a call and a put box at the same strike, `offset={-4}` / `offset={+4}` (the
+   * react-timeseries-charts side-by-side-bars precedent). Pairs with
+   * `<ScatterChart offset>`.
+   *
+   * The **draw** is shifted; the off-chart **readout** still hit-tests in
+   * un-shifted data space (a box is found by span containment on `xScale.invert`),
+   * so with a large offset the hover edge can be off by up to `offset` px. Keep the
+   * offset small (a pairing nudge, not a layout tool) and it's imperceptible.
+   */
+  offset?: number;
   /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
@@ -72,28 +107,39 @@ const MIN_BOX_WIDTH_PX = 1;
 
 /**
  * A discrete box-and-whisker draw layer — the bar-chart analog of the variance
- * band. Reads five **pre-computed quantile columns** of `series` (typically a
+ * band. Reads **pre-computed quantile columns** of `series` (typically a
  * `rolling`/`aggregate` percentile pass — the chart does **not** compute them)
- * into a {@link BoxSeries} and draws one box per key: the q1→q3 box, the median
- * line, and whiskers out to lower/upper, over the key's interval x-span. Gap-aware
- * (a key missing any quantile draws nothing) and registers itself into the
- * enclosing {@link Layers}. Renders nothing to the DOM — the row draws it.
+ * into a {@link BoxSeries} and draws one box per key: the q1→q3 body, the median
+ * line, and whiskers out to lower/upper. Registers itself into the enclosing
+ * {@link Layers}; renders nothing to the DOM — the row draws it.
+ *
+ * - **Any axis.** A `TimeSeries` plots on time, a `ValueSeries`
+ *   (`series.byValue('strike')` or `ValueSeries.fromColumns`) on its value axis —
+ *   a vol smile's per-strike IV. The box width is the interval key's `[begin, end)`
+ *   or, for a point key (a `ValueSeries`, or a point-keyed `TimeSeries`),
+ *   neighbour spacing — so it never collapses to the 1px floor.
+ * - **Range-only.** `q1`/`q3` (the body) and `median` (the centre line) are
+ *   optional: omit `q1`+`q3` for a whisker-only `lower→upper` segment — a bid→ask
+ *   IV mark. Gap-aware: a key missing any **present** quantile draws nothing.
+ * - **`offset`** nudges the whole layer in pixel space, for pairing same-key marks
+ *   (call/put at one strike) side by side.
  *
  * There's no baseline — a box is a spread, not a bar to a floor; the y-domain
  * auto-fits the whisker reach (lower→upper).
  *
  * ```tsx
  * <Layers>
- *   <BoxPlot
- *     series={q}
- *     lower="p5" q1="p25" median="p50" q3="p75" upper="p95"
- *     as="latency"
- *     gap={6}
- *   />
+ *   <BoxPlot series={q} lower="p5" q1="p25" median="p50" q3="p75" upper="p95"
+ *     as="latency" gap={6} />
+ *   // range-only bid→ask on a value axis (a vol smile):
+ *   <BoxPlot series={smile} lower="bid" upper="ask" />
  * </Layers>
  * ```
  */
-export function BoxPlot<S extends SeriesSchema>({
+export function BoxPlot<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+>({
   series,
   lower,
   q1,
@@ -105,8 +151,9 @@ export function BoxPlot<S extends SeriesSchema>({
   gap = 0,
   shape = 'whisker',
   showMedian = true,
+  offset = 0,
   index = 0,
-}: BoxPlotProps<S>) {
+}: BoxPlotProps<S, VS>) {
   const container = useContext(ContainerContext);
   if (container === null) {
     throw new Error('<BoxPlot> must be rendered inside a <ChartContainer>');
@@ -116,62 +163,83 @@ export function BoxPlot<S extends SeriesSchema>({
     throw new Error('<BoxPlot> must be rendered inside a <Layers>');
   }
 
+  const isValue = series instanceof ValueSeries;
   const bx = useMemo(
-    () => boxFromTimeSeries(series, { lower, q1, median, q3, upper }),
+    () =>
+      series instanceof ValueSeries
+        ? boxFromValueSeries(series, { lower, q1, median, q3, upper })
+        : boxFromTimeSeries(series, { lower, q1, median, q3, upper }),
     [series, lower, q1, median, q3, upper],
   );
   // Styling: semantic identifier → theme box style. The single styling channel.
   const { box } = container.theme;
   const style =
     (semantic !== undefined ? box[semantic] : undefined) ?? box.default;
+  // Readout label per quantile: when a semantic `as` is set, label reads under the
+  // series name + role (`iv upper`, `iv median`) — the `as ?? column` convention
+  // Line/Scatter use, so a box no longer reads out as bare column names (e.g.
+  // `bidIv`); with no `as`, fall back to the column name (its role is self-evident).
+  const qLabel = useMemo(() => {
+    return (col: string | undefined, role: string): string =>
+      semantic !== undefined ? `${semantic} ${role}` : (col ?? role);
+  }, [semantic]);
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
         yExtent: () => boxExtent(bx),
-        xKind: 'time',
+        // A ValueSeries plots on a value axis, a TimeSeries on time; the container
+        // infers the shared x kind from its layers.
+        xKind: isValue ? 'value' : 'time',
         xExtent: () =>
           bx.length === 0 ? null : [bx.x[0]!, bx.xEnd[bx.length - 1]!],
-        sampleAt: (time) => {
+        sampleAt: (x) => {
           // The readout reads the box **under the cursor** (boxIndexAtTime — span
           // containment, not nearest-by-begin which flips past a wide box's
           // midpoint), anchored at the box **centre** `(x + xEnd) / 2`. Outside
           // every box → no readout. Off-chart fan-in only; the in-chart flag is
-          // `cursorFlag`.
+          // `cursorFlag`. `push` skips a non-finite quantile, so an absent
+          // (range-only) q1/q3/median simply doesn't read out.
           if (bx.length === 0) return [];
-          const i = boxIndexAtTime(bx, time);
+          const i = boxIndexAtTime(bx, x);
           if (i < 0) return [];
           const at = (bx.x[i]! + bx.xEnd[i]!) / 2;
           const samples: TrackerSample[] = [];
-          // The median is the primary readout (median colour); the four quantile
-          // edges ride the whisker colour, each labelled by its own column. A
-          // single non-finite quantile is omitted (a gap key yields nothing — all
-          // five missing — but a malformed partial set still reads what it has).
-          push(samples, at, bx.upper[i], style.whisker, upper);
-          push(samples, at, bx.q3[i], style.whisker, q3);
-          push(samples, at, bx.median[i], style.median, median);
-          push(samples, at, bx.q1[i], style.whisker, q1);
-          push(samples, at, bx.lower[i], style.whisker, lower);
+          push(samples, at, bx.upper[i], style.whisker, qLabel(upper, 'upper'));
+          push(samples, at, bx.q3[i], style.whisker, qLabel(q3, 'q3'));
+          push(
+            samples,
+            at,
+            bx.median[i],
+            style.median,
+            qLabel(median, 'median'),
+          );
+          push(samples, at, bx.q1[i], style.whisker, qLabel(q1, 'q1'));
+          push(samples, at, bx.lower[i], style.whisker, qLabel(lower, 'lower'));
           return samples;
         },
-        cursorFlag: (time) => {
-          // The in-chart `flag`: all five values on **one** flag at the box's
+        cursorFlag: (x) => {
+          // The in-chart `flag`: the box's values on **one** flag at its
           // top-centre. The staff rises from `upper` (the mark's top); the values
           // run high→low across one horizontal row (Layers renders them
-          // left→right), each coloured to its box piece. All-or-nothing — a gap
-          // box (any quantile non-finite, not drawn) shows no flag.
+          // left→right), each coloured to its box piece. A gap box (its present
+          // quantiles not all finite) shows no flag; an absent (range-only)
+          // quantile is simply skipped.
           if (bx.length === 0) return null;
-          const i = boxIndexAtTime(bx, time);
+          const i = boxIndexAtTime(bx, x);
           if (i < 0 || !isFiniteBox(bx, i)) return null;
+          const lines: CursorFlagLine[] = [];
+          const line = (value: number, color: string, label: string) => {
+            if (Number.isFinite(value)) lines.push({ value, color, label });
+          };
+          line(bx.upper[i]!, style.whisker, qLabel(upper, 'upper'));
+          line(bx.q3[i]!, style.whisker, qLabel(q3, 'q3'));
+          line(bx.median[i]!, style.median, qLabel(median, 'median'));
+          line(bx.q1[i]!, style.whisker, qLabel(q1, 'q1'));
+          line(bx.lower[i]!, style.whisker, qLabel(lower, 'lower'));
           return {
             x: (bx.x[i]! + bx.xEnd[i]!) / 2,
             topValue: bx.upper[i]!,
-            lines: [
-              { value: bx.upper[i]!, color: style.whisker, label: upper },
-              { value: bx.q3[i]!, color: style.whisker, label: q3 },
-              { value: bx.median[i]!, color: style.median, label: median },
-              { value: bx.q1[i]!, color: style.whisker, label: q1 },
-              { value: bx.lower[i]!, color: style.whisker, label: lower },
-            ],
+            lines,
           };
         },
         draw: (ctx, xScale, yScale) =>
@@ -185,6 +253,7 @@ export function BoxPlot<S extends SeriesSchema>({
             MIN_BOX_WIDTH_PX,
             shape,
             showMedian,
+            offset,
           ),
       },
       axisId: axis,
@@ -192,16 +261,19 @@ export function BoxPlot<S extends SeriesSchema>({
     }),
     [
       bx,
+      isValue,
       series,
       lower,
       q1,
       median,
       q3,
       upper,
+      qLabel,
       style,
       gap,
       shape,
       showMedian,
+      offset,
       axis,
       index,
     ],

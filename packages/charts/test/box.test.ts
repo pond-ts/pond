@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boxExtent, boxIndexAtTime, drawBox } from '../src/box.js';
+import { boxExtent, boxIndexAtTime, drawBox, isFiniteBox } from '../src/box.js';
 import { recordingContext } from './canvas-mock.js';
 import type { BoxSeries } from '../src/data.js';
 
@@ -327,6 +327,66 @@ describe('drawBox', () => {
     drawBox(ctx, oneBox(), identity, identity, style, 0, 1, 'whisker', false);
     // Whiskers draw (4 moveTo: 2 stems + 2 caps); the median's 5th moveTo is gone.
     expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(4);
+    // The median colour is never set.
+    expect(calls.some((c) => c.type === 'set' && c.args[0] === '#456')).toBe(
+      false,
+    );
+  });
+
+  it('offset shifts the whole box in pixel space', () => {
+    const { ctx, calls } = recordingContext();
+    const flipY = (v: number) => 100 - v;
+    // oneBox [10,30]; offset 8 → x-span [18,38]. q3=4→96, q1=2→98 (height 2).
+    drawBox(ctx, oneBox(), identity, flipY, style, 0, 1, 'whisker', true, 8);
+    expect(calls.find((c) => c.name === 'fillRect')?.args).toEqual([
+      18, 96, 20, 2,
+    ]);
+    // The whisker stem rides the shifted mid (18+38)/2 = 28.
+    expect(calls.filter((c) => c.name === 'moveTo')[0]?.args).toEqual([28, 96]);
+  });
+});
+
+/** A range-only box (bid→ask segment): lower/upper only, no body / median. */
+const rangeBox = (): BoxSeries => ({
+  x: Float64Array.from([10]),
+  xEnd: Float64Array.from([30]),
+  lower: Float64Array.from([1]),
+  q1: Float64Array.from([NaN]),
+  median: Float64Array.from([NaN]),
+  q3: Float64Array.from([NaN]),
+  upper: Float64Array.from([5]),
+  length: 1,
+  hasBox: false,
+  hasMedian: false,
+});
+
+describe('range-only box (hasBox / hasMedian false)', () => {
+  it('isFiniteBox needs only lower/upper when there is no body/median', () => {
+    expect(isFiniteBox(rangeBox(), 0)).toBe(true);
+    // a NaN upper is still a gap
+    expect(
+      isFiniteBox({ ...rangeBox(), upper: Float64Array.from([NaN]) }, 0),
+    ).toBe(false);
+  });
+
+  it('boxExtent spans lower→upper (q1/q3 absent, not counted)', () => {
+    expect(boxExtent(rangeBox())).toEqual([1, 5]);
+  });
+
+  it('draws a single whisker lower→upper — no box fill/outline, no median', () => {
+    const { ctx, calls } = recordingContext();
+    drawBox(ctx, rangeBox(), identity, identity, style);
+    const names = calls.filter((c) => c.type === 'call').map((c) => c.name);
+    expect(names).not.toContain('fillRect'); // no body
+    expect(names).not.toContain('strokeRect'); // no outline
+    const moves = calls.filter((c) => c.name === 'moveTo');
+    const lines = calls.filter((c) => c.name === 'lineTo');
+    // One full stem lower→upper + two caps = 3 moveTo / 3 lineTo (no median line).
+    expect(moves).toHaveLength(3);
+    expect(lines).toHaveLength(3);
+    // Stem runs the full range: mid=20, lower=1 → upper=5.
+    expect(moves[0]?.args).toEqual([20, 1]);
+    expect(lines[0]?.args).toEqual([20, 5]);
     // The median colour is never set.
     expect(calls.some((c) => c.type === 'set' && c.args[0] === '#456')).toBe(
       false,

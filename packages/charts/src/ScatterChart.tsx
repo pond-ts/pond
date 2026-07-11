@@ -101,6 +101,14 @@ export interface ScatterChartProps<
    */
   label?: string | boolean;
   /**
+   * A **pixel** shift applied to every point's x — zoom-stable. **Default `0`.**
+   * For pairing marks that share a key side by side (a call and a put mark at one
+   * strike: `offset={-4}` / `offset={+4}`). Pairs with `<BoxPlot offset>`; on the
+   * scatter the shift is exact — both the draw and the click hit-test move
+   * together, so a nudged point still selects.
+   */
+  offset?: number;
+  /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
    */
@@ -152,6 +160,7 @@ export function ScatterChart<
   radius,
   color,
   label,
+  offset = 0,
   index = 0,
 }: ScatterChartProps<S, VS>) {
   const container = useContext(ContainerContext);
@@ -277,6 +286,7 @@ export function ScatterChart<
                   keyAt,
                   id,
                   seriesLabel,
+                  offset,
                 ),
             }),
         draw: (ctx, xScale, yScale) =>
@@ -292,6 +302,7 @@ export function ScatterChart<
             font,
             container.selected,
             id,
+            offset,
           ),
       },
       axisId: axis,
@@ -309,6 +320,7 @@ export function ScatterChart<
       labelAt,
       font,
       container.selected,
+      offset,
       axis,
       index,
     ],

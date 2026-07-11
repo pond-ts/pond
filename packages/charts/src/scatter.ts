@@ -131,6 +131,7 @@ export function drawScatter(
   font: { readonly family: string; readonly size: number },
   selected: SelectInfo | null,
   seriesId: string | undefined,
+  offsetPx = 0,
 ): void {
   ctx.save();
   // The selection only lights up a point of *this* series; resolve the key once.
@@ -144,7 +145,9 @@ export function drawScatter(
 
   for (let i = 0; i < cs.length; i += 1) {
     if (!isPoint(cs, i)) continue;
-    const px = xScale(cs.x[i]!);
+    // `offsetPx` nudges the whole scatter in pixel space (zoom-stable) — for
+    // pairing same-key marks (call/put at one strike) beside each other.
+    const px = xScale(cs.x[i]!) + offsetPx;
     const py = yScale(cs.y[i]!);
     const r = encoding.radiusAt(i);
     ctx.beginPath();
@@ -184,7 +187,7 @@ export function drawScatter(
       if (!isPoint(cs, i)) continue;
       const text = labelAt(i);
       if (text === undefined || text === '') continue;
-      const px = xScale(cs.x[i]!);
+      const px = xScale(cs.x[i]!) + offsetPx;
       const py = yScale(cs.y[i]!);
       const r = encoding.radiusAt(i);
       // Sit the label just right of the point (past its radius), vertically
@@ -224,10 +227,12 @@ export function hitTestScatter(
   keyAt: (i: number) => number,
   id: string,
   seriesLabel: string,
+  offsetPx = 0,
 ): SelectInfo | null {
   for (let i = cs.length - 1; i >= 0; i -= 1) {
     if (!isPoint(cs, i)) continue;
-    const px = xScale(cs.x[i]!);
+    // Match the drawn position (offset in px space) so the click target aligns.
+    const px = xScale(cs.x[i]!) + offsetPx;
     const py = yScale(cs.y[i]!);
     const r = encoding.radiusAt(i);
     const dx = qx - px;
