@@ -99,6 +99,21 @@ collapses closed-market time (weekends, holidays, overnight, lunch breaks).
   renders and reads out but can't be selected). A dev-warning fires when
   `selected`/`onSelect` is wired but no layer carries an `id`. First slice of the
   selection RFC (`docs/rfcs/selection.md`, Amendments 2–3).
+- **`@pond-ts/charts`: region cursor (`cursor="region"`).** A shaded **band**
+  highlights the bucket under the pointer, bucketed by a new **`cursorSequence`**
+  prop — a `Sequence` (`Sequence.every('15m')`, `Sequence.calendar('week')`)
+  realized over the view, or a `BoundedSequence` (a `TradingCalendar`'s
+  `sessionSequence()` / `barSequence()`) used as-is. The band maps through the x
+  scale, so on a trading-time axis the closed part of a bucket collapses (crops
+  to live sessions). Time-axis only (a no-op on a value axis). (#409, #413)
+- **`@pond-ts/charts`: draggable region cursor → one-shot select.** Opt-in
+  **`onRegionSelect?: (range: TimeRange) => void`** makes the region cursor
+  draggable: the band extends bucket by bucket and fires **once** on release
+  with the selected `[start, end)` `TimeRange` (the cursor doesn't keep it —
+  typical use is to zoom the view). With **no `cursorSequence`** it degenerates
+  to a hover **line** + **freeform** drag. **`regionSelectModifier="shift"`**
+  resolves the gesture conflict with `panZoom` (plain drag pans, shift-drag
+  selects); omitted, a region-drag preempts pan. (#416)
 - **`pond-ts`: `bin(W, 'minMaxFirstLast')`** — the four-channel M4 downsampling
   reducer (per-bin min/max/first/last, validity-aware, chunked-delegating); the
   foundation for the charts decimator wave.
