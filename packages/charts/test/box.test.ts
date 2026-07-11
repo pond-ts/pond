@@ -181,6 +181,52 @@ describe('drawBox', () => {
     expect(lines[3]?.args).toEqual([25, 1]);
   });
 
+  it('capWidth sets a fixed pixel cap (narrow T-bars for paired marks)', () => {
+    const { ctx, calls } = recordingContext();
+    // capWidth=6 → capHalf=3, so caps span [mid-3, mid+3] = [17, 23] (not the
+    // half-box-width [15,25]); the stem stays centred on mid=20.
+    drawBox(
+      ctx,
+      oneBox(),
+      identity,
+      identity,
+      style,
+      0,
+      1,
+      'whisker',
+      true,
+      0,
+      6,
+    );
+    const moves = calls.filter((c) => c.name === 'moveTo');
+    const lines = calls.filter((c) => c.name === 'lineTo');
+    expect(moves[1]?.args).toEqual([17, 5]); // upper cap start
+    expect(lines[1]?.args).toEqual([23, 5]); // upper cap end
+    expect(moves[3]?.args).toEqual([17, 1]); // lower cap start
+    expect(lines[3]?.args).toEqual([23, 1]);
+  });
+
+  it('capWidth is clamped to the box width', () => {
+    const { ctx, calls } = recordingContext();
+    // Box [10,30] is 20px wide; a 40px cap clamps to 20 → capHalf=10 → [10,30].
+    drawBox(
+      ctx,
+      oneBox(),
+      identity,
+      identity,
+      style,
+      0,
+      1,
+      'whisker',
+      true,
+      0,
+      40,
+    );
+    const moves = calls.filter((c) => c.name === 'moveTo');
+    expect(moves[1]?.args).toEqual([10, 5]); // clamped to the box edges
+    expect(calls.filter((c) => c.name === 'lineTo')[1]?.args).toEqual([30, 5]);
+  });
+
   it('draws the median line across the full box width', () => {
     const { ctx, calls } = recordingContext();
     drawBox(ctx, oneBox(), identity, identity, style);

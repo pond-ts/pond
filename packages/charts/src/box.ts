@@ -77,7 +77,10 @@ export type BoxShape = 'whisker' | 'solid' | 'none';
  *
  * Then, if `showMedian` (and a median is present), the median line on top. Fills
  * are bracketed by `save`/`restore` so their `globalAlpha` doesn't leak.
- * `offsetPx` shifts every mark in pixel space (for pairing same-key marks).
+ * `offsetPx` shifts every mark in pixel space (for pairing same-key marks);
+ * `capWidthPx` sets a fixed whisker-cap width (else half the box width — a small
+ * fixed cap keeps paired offset marks' T-bars from overlapping), clamped to the
+ * box width.
  *
  * **Gap-aware**: a key whose present quantiles aren't all finite is skipped
  * entirely (no partial box) — the same contract as a band gap.
@@ -96,6 +99,7 @@ export function drawBox(
   shape: BoxShape = 'whisker',
   showMedian = true,
   offsetPx = 0,
+  capWidthPx?: number,
 ): void {
   // A range-only box (bid→ask segment) has no body / median; the whisker (or the
   // solid bar) runs the full lower→upper. Flags default true (a full box).
@@ -150,7 +154,13 @@ export function drawBox(
       if (shape === 'whisker') {
         // Whiskers with end-caps. With a body: two stems (q3→upper, q1→lower).
         // Range-only (no body): one stem spanning the full lower→upper.
-        const capHalf = ((x1 - x0) * WHISKER_CAP_FRACTION) / 2;
+        // Cap half-width: an explicit `capWidthPx` (a fixed pixel cap — for
+        // pairing offset marks without their T-bars overlapping) else a fraction
+        // of the box width (responsive default). Never wider than the box.
+        const capHalf =
+          capWidthPx !== undefined
+            ? Math.min(capWidthPx, x1 - x0) / 2
+            : ((x1 - x0) * WHISKER_CAP_FRACTION) / 2;
         ctx.strokeStyle = style.whisker;
         ctx.lineWidth = style.whiskerWidth;
         ctx.beginPath();
