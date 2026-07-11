@@ -9,6 +9,7 @@ import { YAxis } from './YAxis.js';
 import { priceSeries, RANGE, twoColorTheme } from './story-data.fixture.js';
 import {
   MIN,
+  barSeq,
   candles,
   provider,
   rangeOf,
@@ -97,6 +98,35 @@ export const CroppedToSessions: Story = {
         discontinuities={provider(s)}
         cursor="region"
         cursorSequence={Sequence.calendar('week')}
+      >
+        <ChartRow height={240}>
+          <YAxis id="p" side="right" />
+          <Layers>
+            <Candlestick series={bars} axis="p" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/** **Aggregation-aligned.** 5-minute ticks aggregated to **1-hour** candles, with
+ *  the region cursor driven by the **same** 1-hour windows — the one
+ *  `barSequence` feeds both `aggregate` and `cursorSequence`. So hovering a candle
+ *  shades exactly the bucket that produced it: the band frames the candle's hour,
+ *  the last (truncated) bar of each session included. */
+export const AggregationAligned: Story = {
+  render: () => {
+    const s = weekdaySessions(3);
+    const hourGrid = barSeq(s, 60 * MIN); // the 1-hour aggregation windows
+    const bars = candles(s, hourGrid, 5 * MIN); // 5m ticks → 1h OHLC over that grid
+    return (
+      <ChartContainer
+        width={W}
+        range={rangeOf(s)}
+        discontinuities={provider(s)}
+        cursor="region"
+        cursorSequence={hourGrid}
       >
         <ChartRow height={240}>
           <YAxis id="p" side="right" />
