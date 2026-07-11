@@ -1,0 +1,241 @@
+---
+title: Categorical charts (the transpose view)
+sidebar_position: 4
+---
+
+# Categorical charts — the transpose view
+
+A guide for putting **categories on the x-axis** with `@pond-ts/charts` — a bar
+per ticker / account / zone — and, more interestingly, for reading those
+categories straight out of a time series. The one idea worth internalising: a
+categorical bar chart is the **transpose** of the time chart. Everything else
+follows from that.
+
+## The idea: columns on x
+
+A pond `TimeSeries` is a matrix — **rows are timestamps, columns are channels.**
+Every chart you've drawn so far reads a **column down** the matrix: time on x, one
+line or bar per column.
+
+```
+         AAPL  MSFT  GOOG        ← columns (channels)
+  t0      12    9     4
+  t1      15    8     5
+  t2      11    9     6          read DOWN: x = time, one series per column
+```
+
+A categorical bar chart reads a **row across** it — fix one timestamp, spread the
+**columns** along x, that row's cells become the bar heights:
+
+```
+  t2  →   AAPL=11   MSFT=9   GOOG=6      read ACROSS: x = columns, one bar each, one row
+```
+
+Same data, rotated 90°. "Ticker on the x-axis" is just "the schema's columns on
+the x-axis, at one instant." The design rationale lives in
+[`docs/rfcs/categorical-axis.md`](https://github.com/pjm17971/pond-ts/blob/main/docs/rfcs/categorical-axis.md);
+this guide is the how-to.
+
+## The simplest categorical chart
+
+Feed `<BarChart>` an ordered `categories` list — a third data source alongside
+`series` and `bins`:
+
+```tsx
+import {
+  ChartContainer,
+  ChartRow,
+  Layers,
+  BarChart,
+  YAxis,
+} from '@pond-ts/charts';
+
+<ChartContainer width={640}>
+  <ChartRow height={240}>
+    <YAxis id="v" label="net Δ" min={0} pad={0.08} />
+    <Layers>
+      <BarChart
+        categories={[
+          { label: 'AAPL', value: 42 },
+          { label: 'MSFT', value: 31 },
+          { label: 'NVDA', value: 55 },
+        ]}
+        gap={6}
+      />
+    </Layers>
+  </ChartRow>
+</ChartContainer>;
+```
+
+That's it. The container **infers `xKind:'category'`** from the layer, builds a
+band scale over the labels, and the bottom axis ticks once per category. No
+`range` prop, no hand-placed `<XAxis ticks>` — this is a **first-class ordinal
+axis**, not the ordinal-index hack a categorical chart used to require.
+
+### Colour per category
+
+The one styling channel for a category chart is `binColors` — one hue per bar, in
+order:
+
+```tsx
+<BarChart
+  categories={data}
+  binColors={['#15B3A6', '#45CDBE', '#E0B36A']}
+  gap={6}
+/>
+```
+
+Omit it and every bar takes the theme's default bar fill — colour is optional.
+
+## Reading a row out of a series
+
+The hand-written `{ label, value }[]` above is fine for a fixed set, but the real
+power is reading the row **from a series** — the transpose. `transposeRow` takes
+one row of a **wide** `TimeSeries` (one numeric column per category) and hands
+back the `categories` list:
+
+```ts
+import { transposeRow } from '@pond-ts/charts';
+
+// `wide` is a TimeSeries with columns AAPL / MSFT / GOOG / … over time.
+const row = transposeRow(wide, { at: 'last' }); // the head row → [{label:'AAPL', value:…}, …]
+
+<BarChart categories={row} />
+```
+
+`transposeRow` enumerates the series' **numeric value columns** (in schema order),
+reads the chosen row's cell for each, and returns `{ label: columnName, value }`.
+A non-numeric or missing cell reads as a gap (`NaN`, which draws no bar).
+
+### Where the wide series comes from
+
+You usually don't store data wide — you `pivotByGroup` it. Long rows (one
+`{ ticker, value }` per row over time) reshape to a wide series (one column per
+ticker) with one call:
+
+```ts
+const wide = long.pivotByGroup('ticker', 'value', { groups: WATCHLIST });
+const row = transposeRow(wide, { at: 'last' });
+```
+
+So the pipeline is **`groupBy`/`pivotByGroup` → a wide series → `transposeRow` →
+one bar per column** — all pond, no bespoke reshaping.
+
+### Which row?
+
+`at` selects the row the ordinary way — the same row-picking a `TimeSeries` already
+does:
+
+| `at`               | Row                                                                 |
+| ------------------ | ------------------------------------------------------------------- |
+| `'last'` (default) | the **head** row — the live snapshot                                |
+| `'first'`          | the first row                                                       |
+| a number           | that **index** (negative counts from the end, like `TimeSeries.at`) |
+| `{ time }`         | the row **nearest** that key                                        |
+
+```ts
+transposeRow(wide, { at: 'last' }); // live snapshot (default)
+transposeRow(wide, { at: { time: t } }); // the row at cursor time t
+transposeRow(wide, { at: -2 }); // second-to-last
+```
+
+The head row _is_ the live snapshot: as new rows arrive, `transposeRow(wide)`
+re-reads the latest cross-section. Scrubbing a chosen row by hand today is a
+one-liner — bind `at` to a slider or a cursor:
+
+```tsx
+const [row, setRow] = useState(wide.length - 1);
+<input type="range" max={wide.length - 1} value={row}
+       onChange={(e) => setRow(Number(e.target.value))} />
+<BarChart categories={transposeRow(wide, { at: row })} />
+```
+
+:::note[Two views, one matrix]
+The read-**down** view (a line chart over time) and the read-**across** view (these
+bars at one instant) are the **same series**. Wiring the across-view's row to the
+down-view's shared **time cursor** — scrub the time chart and the bars animate — is
+the next phase; for now you drive `at` yourself.
+:::
+
+## Selection — a stable per-column identity
+
+Give the layer an `id` to make the bars selectable. A click reports the
+**category name** in `SelectInfo.label` **and** in the stable `SelectInfo.mark`:
+
+```tsx
+<ChartContainer onSelect={(hit) => hit && filterStore.toggle(hit.mark)}>
+  …
+  <BarChart categories={data} binColors={palette} id="tickers" />
+</ChartContainer>
+```
+
+`mark` is the key detail. A category chart shares one layer `id` across every bar,
+so each bar needs its own stable handle — and that handle is the **column name**,
+not the slot index. So a controlled `selected` prop pins a category by name, and
+the highlight **survives a reorder**: sort the bars by value and the selected
+column stays lit, because the selection tracks `mark`, not the renumbered slot.
+This is why `mark` exists (it's `undefined` for a time/value bar, whose sample key
+is already stable).
+
+## Many categories — the label policy
+
+A dense axis can't show every label. When the categories crowd, the axis **thins**
+(keeps every k-th) and **ellipsis-truncates** the kept labels so they stay legible,
+while every bar still draws:
+
+```tsx
+// 20 long labels → the axis shows ~every 3rd, full; all 20 bars render
+<BarChart categories={accounts /* ACME-DESK-01 … */} gap={2} />
+```
+
+Short labels that fit are all shown (the policy is a no-op). Rotation is a later
+option; today it thins + truncates.
+
+### Bounding the set (high cardinality)
+
+The chart renders **whatever columns the row carries** — it doesn't discover or
+cap categories. When the set is large or churns (thousands of tickers), bound it
+in the **data layer**, where pond's tools already live:
+
+```ts
+// a declared watchlist…
+long.pivotByGroup('ticker', 'value', { groups: WATCHLIST });
+
+// …or pick / order the columns at read time
+transposeRow(wide, { columns: TOP_N_BY_VALUE });
+```
+
+`columns` also **orders** the axis (the array order is the slot order), so a
+top-N-by-value ranking or a fixed watchlist drops straight in. Keeping the bound
+in the data means the axis stays a simple, bounded thing.
+
+## Constraints (thrown, not silent)
+
+A category chart is deliberately narrow in Phase 1:
+
+- **Vertical only.** `categories` puts the categories on **x** (bars grow up); a
+  `horizontal` category axis (categories on y) isn't supported yet — it throws.
+- **Stands alone in its container.** A category chart's x **is** the category axis,
+  so it can't share a `<ChartContainer>` with time / value rows (the shared x is
+  one kind) — the same standalone rule a horizontal histogram has.
+- **Ignores `format` and `range`.** The labels come from the `categories` data (a
+  d3 number `format` can't name a category — customize the datum's `label`
+  instead), and the axis domain is always the slot set (an explicit container
+  `range` doesn't apply).
+- **One value per bar.** `categories` is a single-series bar (`{ label, value }`).
+  A per-category stacked breakdown is a later composition.
+
+## What's next
+
+Phase 1 (this guide) is the **ordinal** category axis — categories with no metric
+spacing (tickers, accounts). Two things are deliberately deferred:
+
+- **A metric x** — when the columns carry a numeric coordinate (days-to-expiry, a
+  distance), the marks should sit at that coordinate on a value axis (a vol curve,
+  a lap profile), not at equal ordinal slots.
+- **The linked cursor** — binding the transpose row to a sibling time chart's
+  crosshair, so scrubbing time animates the cross-section.
+
+Both are on the roadmap (`docs/rfcs/categorical-axis.md`, Phase 2). For now:
+categories in, one bar each, read from a hand-written list or straight off a
+series' row.

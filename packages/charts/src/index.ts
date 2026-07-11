@@ -31,6 +31,7 @@ export type { YAxisProps } from './YAxis.js';
 export { XAxis } from './XAxis.js';
 export type { XAxisProps } from './XAxis.js';
 export { TimeAxis } from './TimeAxis.js';
+export { CategoryAxis } from './CategoryAxis.js';
 export type { AxisFormat } from './format.js';
 export { LineChart } from './LineChart.js';
 export type { LineChartProps } from './LineChart.js';
@@ -52,6 +53,9 @@ export type {
   TradingTimeScale,
   DiscontinuityProvider,
 } from './tradingTimeScale.js';
+// The ordinal category (band) scale — the transpose view's "columns on x" axis.
+export { scaleBand } from './bandScale.js';
+export type { ScaleBand } from './bandScale.js';
 
 // Annotations — user-authored marks in the turquoise register (distinct from the
 // data): a shaded span, a horizontal value line, a vertical x line.
@@ -76,6 +80,10 @@ export {
   stacksFromGroups,
   stacksFromColumns,
   stacksFromBins,
+  // Categorical row-read: one bar per `{ label, value }` on the category axis.
+  categoryStack,
+  // The transpose reader — one row of a wide series read across into categories.
+  transposeRow,
 } from './data.js';
 export type {
   ChartSeries,
@@ -88,6 +96,9 @@ export type {
   StackedBarSeries,
   BinRecord,
   StacksFromBinsOptions,
+  CategoryDatum,
+  RowAt,
+  TransposeRowOptions,
 } from './data.js';
 // The histogram bar orientation (`'vertical'` | `'horizontal'`).
 export type { Orientation } from './bars.js';

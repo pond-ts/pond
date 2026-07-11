@@ -40,6 +40,34 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **`@pond-ts/charts`: a first-class categorical x-axis.** `<BarChart
+categories={[{ label, value }]}>` draws one bar per category on an ordinal
+  **band scale** (the transpose view's "columns on x" — ticker / account / zone
+  on x). The container infers `xKind:'category'` and builds a `scaleBand` over the
+  labels; `<CategoryAxis>` ticks once per category. Colour per category via
+  `binColors`; selection reports the category name. **Negative** category values
+  draw below the baseline (the P&L / delta case) — a single-series category bar
+  honours its sign. New exports `scaleBand` / `ScaleBand`, `CategoryAxis`,
+  `categoryStack` / `CategoryDatum`. Additive — a new x-kind alongside time /
+  value; existing charts are unchanged. First slice of the categorical-axis RFC
+  (`docs/rfcs/categorical-axis.md`, Phase 1).
+- **`@pond-ts/charts`: `transposeRow`** — read one **row** of a wide `TimeSeries`
+  **across** into `{ label, value }[]` for `<BarChart categories>`: the schema's
+  numeric columns (a `pivotByGroup` output's per-group columns, a term
+  structure's per-expiry columns) become the categories at one instant. Pick the
+  row with `at` (`'last'` — the head/live row — by default; `'first'`, an index,
+  or `{ time }`); bound / order the set with `columns`.
+- **`@pond-ts/charts`: stable per-column selection identity.** `SelectInfo` gains
+  an optional **`mark`** — a stable per-mark identity within a layer. A categorical
+  bar reports its **column name** as `mark`, and a controlled `selected` echo /
+  the highlight match key on `(id, mark)`, so a pinned selection survives a column
+  reorder (the slot index doesn't; the name does). Additive — `mark` is
+  `undefined` for a time / value bar (whose sample `key` is already its identity).
+  Plus a category-axis **label policy**: a dense axis thins (keeps every k-th) and
+  ellipsis-truncates its labels so they stay legible while every bar draws.
+
 ## [0.42.0] — 2026-07-10
 
 The **trading-calendar** release: a new `@pond-ts/financial` package (its first

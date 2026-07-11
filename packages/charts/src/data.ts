@@ -133,6 +133,14 @@ export interface StackedBarSeries {
   readonly groups: readonly string[];
   readonly values: Float64Array;
   readonly length: number;
+  /**
+   * Optional **stable per-bin identity** — `marks[b]` names bin `b` (a category's
+   * column name on the categorical axis). When present, the draw / hit-test /
+   * selection key on this name instead of the bin's `begin` slot index, so a
+   * pinned selection survives a column reorder (the slot index is not stable).
+   * `undefined` for a time / value series whose `begin` is already stable.
+   */
+  readonly marks?: readonly string[];
 }
 
 /**
@@ -706,4 +714,129 @@ export function stacksFromBins(
     }
   }
   return { begin, end, groups: columns, values, length: n };
+}
+
+/**
+ * One category's `{ label, value }` for a categorical bar chart — the row-read /
+ * transpose view's `(columnName, cell)` pair (categorical-axis RFC, Phase 1). An
+ * ordered list of these is the explicit categorical data source; Phase 2's
+ * transpose reader produces the same list from a wide series' row.
+ *
+ * **Labels are the stable identity** — the axis maps each `label` to a slot and
+ * selection/highlight key on it (so a pick survives a reorder). They must be
+ * **unique** within the list: two categories sharing a label collapse to one axis
+ * tick and both highlight together on a pick. The transpose reader satisfies this
+ * for free (a series' column names are unique); only a hand-built list can break
+ * it. `value` may be **negative** — a single-series category bar draws it below
+ * the baseline (the P&L / delta case).
+ */
+export interface CategoryDatum {
+  readonly label: string;
+  readonly value: number;
+}
+
+/**
+ * Build a {@link StackedBarSeries} (single group, `G === 1`) from an ordered list
+ * of `{ label, value }` categories — one **unit slot** `[i, i+1]` per category, in
+ * order. This is the categorical row-read's geometry: the slots are ordinal
+ * indices (the bar's pixel span comes from the container's {@link ScaleBand}), and
+ * the `label`s become the axis's ordered category names (`xCategories`). A
+ * non-finite value reads as a gap (`NaN`). Reuses the shipped stacked geometry —
+ * no new draw path.
+ */
+export function categoryStack(
+  records: readonly CategoryDatum[],
+): StackedBarSeries {
+  const n = records.length;
+  const begin = new Float64Array(n);
+  const end = new Float64Array(n);
+  const values = new Float64Array(n);
+  const marks = new Array<string>(n);
+  for (let i = 0; i < n; i += 1) {
+    begin[i] = i;
+    end[i] = i + 1;
+    const v = records[i]!.value;
+    values[i] = Number.isFinite(v) ? v : NaN;
+    marks[i] = records[i]!.label;
+  }
+  // `marks` carry the category names — the stable per-bar identity the categorical
+  // axis selects on (the slot index `begin` renumbers on reorder; the name doesn't).
+  return { begin, end, groups: ['value'], values, length: n, marks };
+}
+
+/** Which row {@link transposeRow} reads across. */
+export type RowAt =
+  | 'first'
+  | 'last'
+  | number // a row index (negative counts from the end, like `TimeSeries.at`)
+  | { readonly time: number }; // the row nearest this key (epoch ms / value key)
+
+/** Options for {@link transposeRow}. */
+export interface TransposeRowOptions {
+  /**
+   * Which row to read across. **Default `'last'`** — the head / latest row (the
+   * live snapshot). `'first'`, an **index** (negative from the end), or
+   * `{ time }` for the row nearest a key.
+   */
+  readonly at?: RowAt;
+  /**
+   * The columns to lay on the axis, **in order** — a declared / bounded set (a
+   * watchlist, or a top-N computed upstream; the RFC §7 "bound in the data layer"
+   * stance). Omit to use **every numeric value column** of the series, in schema
+   * order. A named column that's missing / non-numeric in the row reads as a gap.
+   */
+  readonly columns?: readonly string[];
+}
+
+/** A series' numeric value column names in schema order (the key column excluded). */
+function numericValueColumns<S extends SeriesSchema>(
+  series: TimeSeries<S>,
+): string[] {
+  const schema = series.schema as unknown as ReadonlyArray<{
+    name: string;
+    kind: string;
+  }>;
+  return schema
+    .slice(1)
+    .filter((c) => c.kind === 'number')
+    .map((c) => c.name);
+}
+
+/**
+ * **The transpose reader** (categorical-axis RFC, Phase 1 PR2): read **one row**
+ * of a wide `TimeSeries` **across** — its columns become the categories, that
+ * row's cells the values — for `<BarChart categories={…}>`. This is "columns on
+ * x": the schema's numeric columns (a `pivotByGroup` output's per-group columns,
+ * a vol term structure's per-expiry columns, …) laid out at one instant.
+ *
+ * The row is picked the ordinary way (`options.at`, default the **head row**):
+ * `series.last()` / `.first()` / `.at(index)` / `.nearest(time)`. So "which row"
+ * is just row selection — the live snapshot is the head row; a static report
+ * pins a row by index or time. (Binding the row to a scrubbing time cursor is a
+ * later phase.) Pass `options.columns` to bound / order the category set; omit it
+ * to take every numeric value column. An empty series (or a row past the ends)
+ * yields `[]`; a missing / non-numeric cell reads as a gap (`NaN`).
+ */
+export function transposeRow<S extends SeriesSchema>(
+  series: TimeSeries<S>,
+  options: TransposeRowOptions = {},
+): CategoryDatum[] {
+  const at = options.at ?? 'last';
+  const event =
+    at === 'last'
+      ? series.last()
+      : at === 'first'
+        ? series.first()
+        : typeof at === 'number'
+          ? series.at(at)
+          : series.nearest(at.time);
+  if (event === undefined) return [];
+  const cols = options.columns ?? numericValueColumns(series);
+  const get = (event as unknown as { get(field: string): unknown }).get.bind(
+    event,
+  );
+  return cols.map((name) => {
+    const v = get(name);
+    return { label: name, value: typeof v === 'number' ? v : NaN };
+  });
 }

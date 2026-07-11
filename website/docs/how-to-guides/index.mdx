@@ -31,6 +31,12 @@ Available:
   (`aggregate` / `byColumn` / `partitionBy`). Four worked examples:
   incidents-by-host, risk bands, heart-rate zones, and a power
   distribution.
+- [**Categorical charts (the transpose view)**](./categorical-charts)
+  — categories on the x-axis (ticker / account / zone) as the
+  **transpose** of the time chart: read one row of a wide series
+  _across_ into a bar per column, via `pivotByGroup` →
+  `transposeRow` → `<BarChart categories>`. Covers the band scale,
+  stable per-column selection, and the high-cardinality label policy.
 
 In flight:
 

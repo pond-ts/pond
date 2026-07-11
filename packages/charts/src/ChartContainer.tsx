@@ -13,6 +13,7 @@ import {
   type DiscontinuityProvider,
   type TradingCalendarLike,
 } from './tradingTimeScale.js';
+import { scaleBand } from './bandScale.js';
 import { Sequence, BoundedSequence } from 'pond-ts';
 import type { Interval, TimeRange } from 'pond-ts';
 import {
@@ -497,19 +498,40 @@ export function ChartContainer({
   // has one shared x (the synced cursor's whole point), so the rows must agree
   // — a mix is a hard error. Defaults to `'time'` until a layer registers (the
   // two-pass: register → re-resolve → rescale).
-  const resolvedKind: 'time' | 'value' = useMemo(() => {
-    let kind: 'time' | 'value' | undefined;
+  const resolvedKind: 'time' | 'value' | 'category' = useMemo(() => {
+    let kind: 'time' | 'value' | 'category' | undefined;
     for (const s of sources.values()) {
       if (kind === undefined) kind = s.xKind;
       else if (kind !== s.xKind) {
         throw new Error(
           `ChartContainer: rows mix x-axis kinds ('${kind}' and '${s.xKind}'). ` +
             `A container has one shared x axis — every row must plot the same ` +
-            `kind (all time-keyed, or all value-keyed).`,
+            `kind (all time-keyed, all value-keyed, or all category).`,
         );
       }
     }
     return kind ?? 'time';
+  }, [sources]);
+
+  // A `'category'` container's ordered category names — the ordinal axis domain.
+  // Every category layer must agree on the same list (a mix is an error, like the
+  // kind), so the shared band scale has one authoritative slot order. `null` when
+  // no category layer has registered (or the kind isn't category).
+  const categories = useMemo((): readonly string[] | null => {
+    let cats: readonly string[] | null = null;
+    for (const s of sources.values()) {
+      const c = s.xCategories?.() ?? null;
+      if (c === null) continue;
+      if (cats === null) cats = c;
+      else if (cats.length !== c.length || cats.some((v, i) => v !== c[i])) {
+        throw new Error(
+          `ChartContainer: category rows disagree on the axis categories. ` +
+            `Every category layer in one container must share the same ordered ` +
+            `column set (got [${cats.join(', ')}] and [${c.join(', ')}]).`,
+        );
+      }
+    }
+    return cats;
   }, [sources]);
 
   // Auto-fit extent — the union of the layers' x extents — used as the domain
@@ -678,6 +700,17 @@ export function ChartContainer({
   const xDiscontinuities =
     resolvedKind === 'time' ? (discontinuities ?? calendarProvider) : undefined;
   const { xScale, formatTime } = useMemo(() => {
+    if (resolvedKind === 'category') {
+      // Ordinal column-domain axis: a band scale over the category slots. The
+      // domain is **always** `[0, n]` (one unit slot per category) — NOT the
+      // resolved `[d0, d1]`: a category axis ignores an explicit `range` (its
+      // slots are absolute `0..n`, matching `categoryStack`), so an out-of-`[0,n]`
+      // range can't silently offset the labels from the bars. The pixel mapping
+      // stays linear; the formatter is the category-name lookup.
+      const cats = categories ?? [];
+      const s = scaleBand(cats).domain([0, cats.length]).range([0, plotWidth]);
+      return { xScale: s, formatTime: (v: number) => s.label(v) };
+    }
     if (resolvedKind === 'value') {
       const s = scaleLinear().domain([d0, d1]).range([0, plotWidth]);
       return {
@@ -701,7 +734,15 @@ export function ChartContainer({
       xScale: s,
       formatTime: resolveTimeFormat(s, TIME_TICK_COUNT, timeFormat),
     };
-  }, [resolvedKind, d0, d1, plotWidth, timeFormat, xDiscontinuities]);
+  }, [
+    resolvedKind,
+    categories,
+    d0,
+    d1,
+    plotWidth,
+    timeFormat,
+    xDiscontinuities,
+  ]);
 
   // The crosshair pixel (see resolveCursorX). A stored hoverX is a *plot* pixel;
   // if plotWidth changes mid-hover (a gutter reserving, or a width change) it's

@@ -701,6 +701,53 @@ theme.bar[group] ?? default` (theme-role + ad-hoc-palette, the single styling
     draw-call + G=1↔drawBars regression pin), headless story render of all 7
     `Charts/Histogram` stories, and a real-browser Playwright screenshot pass of
     each. Guide: `website/docs/how-to-guides/histograms.mdx`.
+- **Categorical axis — Phase 1 (ADOPTED from `docs/rfcs/categorical-axis.md`,
+  building 2026-07-10).** The RFC's Phase 1 — a first-class **ordinal
+  column-domain x-axis** (the transpose view's "columns on x"; closes SPARC's
+  item 2, replacing the hand-rolled ordinal-index hack). This is the RFC's *sole
+  new scale primitive* and its stated design-risk piece. Adopted into PLAN by
+  user direction; the metric branch + cursor-binding (Phase 2) stay RFC-only.
+  Sequenced as a **series of PRs**:
+  - **PR1 — the category axis foundation (building on `feat/charts-categorical-axis`).**
+    `bandScale.ts` — `scaleBand(categories)`, a thin `scaleLinear` wrapper over a
+    **numeric slot-index domain** `[0, n]` (the load-bearing choice, mirroring how
+    `scaleTradingTime` kept an epoch-ms domain: the pixel mapping stays linear so
+    the container's numeric domain / auto-fit / pan pipeline is untouched; the
+    category-ness is only in `ticks`→band-centres, `invert`→snap-to-slot, and a
+    `label(i)` formatter). New `xKind:'category'` (widened in `context.ts`'s three
+    sites) + an `xCategories()` layer channel; the container reconciles the
+    category list (throw on disagreement, like the kind) and builds the band scale
+    + label formatter. `<CategoryAxis>` preset (ticks once per category via the
+    container's `formatTime`). `<BarChart categories={{label,value}[]}>` — a third
+    data source (alongside `series`/`bins`) reusing the shipped stacked geometry
+    (`categoryStack` → unit slots → `drawStacks`/`stackAt`, **zero new draw
+    code**); vertical only; per-category colour via `binColors`; selection reports
+    the **category name** as `SelectInfo.label`. Pan/zoom + x-gridlines gated off
+    the category axis in `Layers`. Verified: `bandScale.test.ts` (centres, invert
+    snap, ticks, bandwidth, label, copy) + a headless category-stories render test
+    + a real-browser Playwright screenshot pass (`Charts/CategoryAxis`:
+    Tickers/SingleHue/HighCardinality/Select); 463 charts tests green; existing
+    time/value/trading charts unchanged (the branch is purely additive).
+  - **PR2 — the transpose reader.** `transposeRow(wideSeries, { at })` → the
+    `{label,value}[]` from one row of a wide series (`Event` via
+    `.at`/`.last`/`.nearest`; numeric columns via `schema.slice(1)`). "Read a row
+    of a series, columns on x."
+  - **PR3 — per-column stable identity + label policy (built).** `SelectInfo`
+    gains an optional **`mark`** (a stable per-mark identity); a categorical bar
+    reports its **column name** as `mark`, and the highlight match / controlled
+    `selected` key on `(id, mark)` so a pinned selection survives a column reorder
+    (Estela's `F-charts-bar-stable-id`). Additive (`mark` undefined for time/value
+    bars) — **but a public-type touch → human-approval gate at merge.** Plus a
+    category-axis **thin + truncate** label policy (width-estimated) for
+    high-cardinality (SPARC's tickers); rotate deferred.
+  - **All three PRs are built + verified on `feat/charts-categorical-axis`** (479
+    charts tests green; `bandScale` / `transposeRow` / category-identity unit
+    tests; real-browser screenshots of the 7 `Charts/CategoryAxis` stories). Not
+    yet pushed. Landing sequence per PR: self-review → Layer-2 → a Codex pass (a
+    new scale primitive warrants it); the `SelectInfo` widening needs the
+    human-approval gate. The RFC's own owed Codex red-team (§12.3) runs in
+    parallel. **Deferred beyond Phase 1:** the metric branch (value-x coords —
+    Tidal/Estela), the cursor binding / head-row (Phase 2), and label rotation.
 - **M5 — estela parity.** Faithful `DataChart` reproduction on real activity
   data; prove no-regressions; hand the production swap to the estela agent; flip
   `private:false` + first publish.
