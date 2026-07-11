@@ -153,6 +153,29 @@ export interface ChartContainerProps {
    */
   cursorSequence?: Sequence | BoundedSequence;
   /**
+   * Makes the `region` cursor **draggable**: drag across the plot and the band
+   * extends **bucket by bucket** (snapping to `cursorSequence` points); on
+   * release this fires **once** with the selected `[start, end)` `TimeRange`, and
+   * the cursor reverts to the single-bucket highlight (it does not keep the
+   * range). Typical use — zoom the view to the returned range (the container
+   * doesn't zoom itself; that's the consumer's call).
+   *
+   * With **no `cursorSequence`** the region cursor is the degenerate case — it
+   * renders as a **line** on hover and the drag is **freeform** (raw `[start,
+   * end)`, no bucket snapping); the same callback fires on release. No-op unless
+   * `cursor="region"` (and a **time** x-axis).
+   */
+  onRegionSelect?: (range: TimeRange) => void;
+  /**
+   * Which modifier a region-drag needs — set `'shift'` when you also enable
+   * `panZoom` and want **plain drag to pan, shift-drag to select**. It's only
+   * enforced while `panZoom` is on (with pan off there's no gesture conflict, so
+   * shift is optional — either drag selects). **Omitted** ⇒ a region-drag
+   * **preempts** pan (drag always selects; document that precedence for users).
+   * Wheel-zoom is unaffected in every case.
+   */
+  regionSelectModifier?: 'shift';
+  /**
    * Fires on pointer move with the hovered time + every series' value there (so
    * you can render a readout outside the chart), and `null` on leave.
    */
@@ -317,6 +340,8 @@ export function ChartContainer({
   minDuration = 1,
   cursor = DEFAULT_CURSOR_MODE,
   cursorSequence,
+  onRegionSelect,
+  regionSelectModifier,
   cursorTime = false,
   crosshairSnap = true,
   editAnnotations = false,
@@ -381,6 +406,8 @@ export function ChartContainer({
   // still cursor stays put while a live window slides under it; a controlled
   // `trackerPosition` resolves to a pixel below.
   const [hoverX, setHoverX] = useState<number | null>(null);
+  // The region-cursor drag anchor (epoch ms) — set on press, cleared on release.
+  const [regionAnchor, setRegionAnchor] = useState<number | null>(null);
   // The free-form crosshair also needs the pointer's y + which row (row-specific,
   // unlike the shared x). One state object so a move updates both atomically.
   const [hoverPoint, setHoverPoint] = useState<{
@@ -753,6 +780,10 @@ export function ChartContainer({
       setHoverY,
       crosshairSnap,
       cursorBuckets,
+      regionAnchor,
+      setRegionAnchor,
+      onRegionSelect,
+      regionSelectModifier,
       draggingKey,
       setDragging,
       selected: selectedValue,
@@ -803,6 +834,10 @@ export function ChartContainer({
       setHoverY,
       crosshairSnap,
       cursorBuckets,
+      regionAnchor,
+      setRegionAnchor,
+      onRegionSelect,
+      regionSelectModifier,
       draggingKey,
       setDragging,
       selectedValue,

@@ -30,23 +30,57 @@ export function bucketAt(
 }
 
 /**
- * The pixel band for the `region` cursor: the bucket containing `t` (via
- * {@link bucketAt}), its `[begin, end)` mapped through `xScale` and clamped to
- * `[0, plotWidth]`. Returns `null` when `t` is in no bucket, or when the band has
- * no width — including a bucket that lies entirely in a **collapsed gap** on a
+ * The `[start, end)` **span** a region cursor covers, in axis units (not pixels —
+ * the drag-release callback reports this):
+ *
+ * - **Snapping** (`buckets` non-empty, `t1` in a bucket): the bucket at `t1`, or —
+ *   with a drag anchor `t2` — the union of the `t1` and `t2` buckets, so a drag
+ *   extends **bucket by bucket** either direction. A `t2` in no bucket is ignored.
+ * - **Freeform** (`t1` in no bucket — e.g. no `cursorSequence` at all): a drag
+ *   spans the raw `[t1, t2]`; without a drag (`t2` omitted) there's nothing to
+ *   shade (the cursor renders as a plain line), so it returns `null`.
+ */
+export function regionSpan(
+  buckets: readonly Interval[],
+  t1: number,
+  t2?: number,
+): { start: number; end: number } | null {
+  const a = bucketAt(buckets, t1);
+  if (a === undefined) {
+    // Freeform: no bucket under t1. A drag spans the raw [t1, t2]; a bare hover
+    // has nothing to shade (Layers draws a line for the degenerate region cursor).
+    return t2 === undefined
+      ? null
+      : { start: Math.min(t1, t2), end: Math.max(t1, t2) };
+  }
+  if (t2 === undefined) return { start: a.begin(), end: a.end() };
+  const b = bucketAt(buckets, t2);
+  if (b === undefined) return { start: a.begin(), end: a.end() };
+  return {
+    start: Math.min(a.begin(), b.begin()),
+    end: Math.max(a.end(), b.end()),
+  };
+}
+
+/**
+ * The pixel band for the `region` cursor: the {@link regionSpan} for `t1` (and an
+ * optional drag anchor `t2`), its `[start, end)` mapped through `xScale` and
+ * clamped to `[0, plotWidth]`. Returns `null` when there's no span, or when the
+ * band has no width — including a span entirely in a **collapsed gap** on a
  * trading-time scale (both edges map to the same pixel), so it draws nothing
  * there rather than a zero-width sliver.
  */
 export function bandRect(
   buckets: readonly Interval[],
-  t: number,
+  t1: number,
   xScale: (value: number) => number,
   plotWidth: number,
+  t2?: number,
 ): { x0: number; x1: number } | null {
-  const iv = bucketAt(buckets, t);
-  if (iv === undefined) return null;
-  const x0 = Math.max(0, xScale(iv.begin()));
-  const x1 = Math.min(plotWidth, xScale(iv.end()));
+  const span = regionSpan(buckets, t1, t2);
+  if (span === null) return null;
+  const x0 = Math.max(0, xScale(span.start));
+  const x1 = Math.min(plotWidth, xScale(span.end));
   return x1 > x0 ? { x0, x1 } : null;
 }
 

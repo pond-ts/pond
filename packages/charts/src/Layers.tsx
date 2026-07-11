@@ -17,7 +17,8 @@ import {
 } from 'react';
 import { Canvas } from './Canvas.js';
 import { drawGrid, drawDividers, thinPixels } from './grid.js';
-import { cursorParts, bandRect } from './tracker.js';
+import { TimeRange } from 'pond-ts';
+import { cursorParts, bandRect, regionSpan } from './tracker.js';
 import { resolveSelection } from './select.js';
 import {
   panRange,
@@ -320,6 +321,33 @@ export function Layers({ children }: LayersProps) {
         }
         return;
       }
+      // Region-cursor drag-select (opt-in via `onRegionSelect`, time axis only):
+      // anchor the selection at the press; the band then extends as the pointer
+      // moves (bucket by bucket with a sequence, freeform without), and release
+      // commits the range. A `regionSelectModifier` (only while `panZoom` is on)
+      // gates it behind the key so plain drag can still pan; otherwise it preempts
+      // pan (returns before the pan is armed below).
+      if (c.cursor === 'region' && c.onRegionSelect && c.xKind === 'time') {
+        const needsShift = c.regionSelectModifier === 'shift' && c.panZoom;
+        if (!needsShift || e.shiftKey) {
+          const px = Math.max(
+            0,
+            Math.min(
+              c.plotWidth,
+              e.clientX - e.currentTarget.getBoundingClientRect().left,
+            ),
+          );
+          c.setRegionAnchor(+c.xScale.invert(px));
+          c.setHoverX(px);
+          try {
+            e.currentTarget.setPointerCapture(e.pointerId);
+          } catch {
+            /* ignore */
+          }
+          return;
+        }
+        // Modifier required but not held → fall through to pan.
+      }
       if (!c.panZoom) return;
       const r = c.timeRange;
       // Arm a potential pan: record the anchor, but DON'T capture the pointer or
@@ -351,6 +379,13 @@ export function Layers({ children }: LayersProps) {
         const px = Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left));
         setCreatePt({ x: px, y: e.clientY - rect.top });
         c.setHoverX(px); // share the preview x so other rows draw a guide there
+        return;
+      }
+      // Region drag in progress: just track the pointer x (the band spans from the
+      // anchor bucket to here); no pan, no hover hit-test.
+      if (c.regionAnchor !== null) {
+        const rect = e.currentTarget.getBoundingClientRect();
+        c.setHoverX(Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left)));
         return;
       }
       // A pan is only live while a button is held. A move with no buttons means
@@ -441,6 +476,33 @@ export function Layers({ children }: LayersProps) {
   const handlePointerUp = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       const c = containerRef.current;
+      // End a region drag: commit the anchor→pointer span as a one-shot range,
+      // then clear the anchor (the cursor reverts to the single-bucket highlight).
+      if (c.regionAnchor !== null) {
+        const px = Math.max(
+          0,
+          Math.min(
+            c.plotWidth,
+            e.clientX - e.currentTarget.getBoundingClientRect().left,
+          ),
+        );
+        const span = regionSpan(
+          c.cursorBuckets ?? [],
+          c.regionAnchor,
+          +c.xScale.invert(px),
+        );
+        c.setRegionAnchor(null);
+        try {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        if (span)
+          c.onRegionSelect?.(
+            new TimeRange({ start: span.start, end: span.end }),
+          );
+        return;
+      }
       if (c.creating !== null) {
         const rect = e.currentTarget.getBoundingClientRect();
         const px = Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left));
@@ -506,6 +568,9 @@ export function Layers({ children }: LayersProps) {
       c.setHoverY(null, null);
       return;
     }
+    // Cancel a region-drag on leave (no commit) — a safety net for the rare case
+    // where the pointer capture didn't take, so the anchor can't get stuck.
+    if (c.regionAnchor !== null) c.setRegionAnchor(null);
     c.setHoverX(null);
     c.setHoverY(null, null);
     c.setHovered(null);
@@ -664,19 +729,30 @@ export function Layers({ children }: LayersProps) {
     };
   })();
 
-  // `region` cursor: the bucket under the pointer (from `cursorBuckets`), shaded
-  // as a band. Binary-search the interval containing `cursorTime`, then map both
-  // edges through `xScale` — so on a trading-time axis the closed part of the
-  // bucket collapses and the band crops to the live session(s) within it.
+  // `region` cursor (time axis only): shade the span under the pointer. With a
+  // `cursorSequence` the band snaps to the bucket (and extends bucket by bucket
+  // under a drag); with none it's the **freeform** case — a bare hover draws a
+  // plain line (`regionLine`), a drag shades the raw `[anchor, pointer]`. Edges
+  // map through `xScale`, so on a trading-time axis the band crops to live time.
+  const regionActive = parts.band && container.xKind === 'time';
   const band: { x0: number; x1: number } | null =
-    parts.band && cursorTime !== null && container.cursorBuckets !== undefined
+    regionActive && cursorTime !== null
       ? bandRect(
-          container.cursorBuckets,
+          container.cursorBuckets ?? [],
           cursorTime,
           (v) => xScale(v),
           plotWidth,
+          container.regionAnchor ?? undefined,
         )
       : null;
+  // Degenerate region cursor (no sequence, not mid-drag): a plain vertical line.
+  const regionLine =
+    regionActive &&
+    container.cursorBuckets === undefined &&
+    container.regionAnchor === null &&
+    cursorX !== null &&
+    cursorX >= 0 &&
+    cursorX <= plotWidth;
 
   // Cross-row guide lines: the x-positions of annotations on the OTHER rows
   // (markers + region edges), so a mark on one row reads against this row's data +
@@ -882,6 +958,17 @@ export function Layers({ children }: LayersProps) {
               height={row.height}
               fill={cursorColor}
               opacity={0.12}
+            />
+          )}
+          {regionLine && cursorX !== null && (
+            <line
+              x1={Math.round(cursorX)}
+              y1={0}
+              x2={Math.round(cursorX)}
+              y2={row.height}
+              stroke={cursorColor}
+              strokeWidth={1}
+              shapeRendering="crispEdges"
             />
           )}
           {parts.line &&

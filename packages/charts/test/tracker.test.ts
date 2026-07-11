@@ -5,6 +5,7 @@ import {
   bucketAt,
   cursorParts,
   DEFAULT_CURSOR_MODE,
+  regionSpan,
   resolveCursorX,
 } from '../src/tracker.js';
 
@@ -60,6 +61,48 @@ describe('bandRect — the region-cursor pixel band', () => {
     // A bucket spanning into live time crops to the live pixels.
     const spanning = [new Interval({ value: 0, start: 0, end: 95 })];
     expect(bandRect(spanning, 5, disc, 200)).toEqual({ x0: 0, x1: 15 });
+  });
+
+  it('a drag anchor (t2) extends the band to the union of both buckets', () => {
+    // anchor in bucket [0,10), pointer in [20,30) → span [0,30) → px [0,30].
+    const buckets = [
+      new Interval({ value: 0, start: 0, end: 10 }),
+      new Interval({ value: 20, start: 20, end: 30 }),
+    ];
+    expect(bandRect(buckets, 25, identity, 100, 5)).toEqual({ x0: 0, x1: 30 });
+  });
+});
+
+describe('regionSpan — the region-cursor / drag span', () => {
+  const buckets = [
+    new Interval({ value: 0, start: 0, end: 10 }),
+    new Interval({ value: 20, start: 20, end: 30 }),
+    new Interval({ value: 40, start: 40, end: 50 }),
+  ];
+
+  it('single bucket when no drag anchor', () => {
+    expect(regionSpan(buckets, 25)).toEqual({ start: 20, end: 30 });
+  });
+
+  it('unions the two buckets under a drag, either direction', () => {
+    // drag from bucket 0 to bucket 2 → [0, 50); same span dragging back.
+    expect(regionSpan(buckets, 5, 45)).toEqual({ start: 0, end: 50 });
+    expect(regionSpan(buckets, 45, 5)).toEqual({ start: 0, end: 50 });
+  });
+
+  it('a pointer in no bucket (a gap) keeps the anchor bucket', () => {
+    expect(regionSpan(buckets, 25, 15)).toEqual({ start: 20, end: 30 });
+  });
+
+  it('freeform (no bucket under t1): a drag spans raw [t1, t2], a hover is null', () => {
+    // No sequence → empty buckets: a drag selects the raw range, either
+    // direction; a bare hover has nothing to shade (the cursor is a line).
+    expect(regionSpan([], 100, 250)).toEqual({ start: 100, end: 250 });
+    expect(regionSpan([], 250, 100)).toEqual({ start: 100, end: 250 });
+    expect(regionSpan([], 5)).toBeNull();
+    // Same freeform fallback when t1 lands in a gap between buckets.
+    expect(regionSpan(buckets, 15, 45)).toEqual({ start: 15, end: 45 });
+    expect(regionSpan(buckets, 15)).toBeNull();
   });
 });
 
