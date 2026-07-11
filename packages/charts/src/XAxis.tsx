@@ -133,7 +133,10 @@ export function XAxis({
   // value scale); otherwise the container's shared formatter — the one the
   // cursor readout uses, so a tick and the cursor read identically.
   const fmt: (value: number) => string =
-    format === undefined
+    // A category axis labels by name (the container's `formatTime` = the band
+    // scale's label lookup); a d3 number/time `format` can't name a category, so
+    // it's ignored here (customize the labels in the `categories` data instead).
+    format === undefined || xKind === 'category'
       ? formatTime
       : xKind === 'time'
         ? resolveTimeFormat(

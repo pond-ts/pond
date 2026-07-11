@@ -702,11 +702,13 @@ export function ChartContainer({
   const { xScale, formatTime } = useMemo(() => {
     if (resolvedKind === 'category') {
       // Ordinal column-domain axis: a band scale over the category slots. The
-      // domain is numeric `[0, n]` (from the layer's slot extent), so the pixel
-      // mapping stays linear; the formatter is the category-name lookup.
-      const s = scaleBand(categories ?? [])
-        .domain([d0, d1])
-        .range([0, plotWidth]);
+      // domain is **always** `[0, n]` (one unit slot per category) — NOT the
+      // resolved `[d0, d1]`: a category axis ignores an explicit `range` (its
+      // slots are absolute `0..n`, matching `categoryStack`), so an out-of-`[0,n]`
+      // range can't silently offset the labels from the bars. The pixel mapping
+      // stays linear; the formatter is the category-name lookup.
+      const cats = categories ?? [];
+      const s = scaleBand(cats).domain([0, cats.length]).range([0, plotWidth]);
       return { xScale: s, formatTime: (v: number) => s.label(v) };
     }
     if (resolvedKind === 'value') {

@@ -8,9 +8,10 @@ import { XAxis, type XAxisProps } from './XAxis.js';
  * formatter). Kept as the familiar name for categorical charts, mirroring
  * {@link TimeAxis}. Forwards every {@link XAxisProps} (`label`, `side`, …).
  *
- * A high-cardinality axis (many categories) crowds its labels; the thin /
- * truncate / rotate label policy is a follow-on (categorical-axis RFC, Phase 1
- * PR3). Pass `format` only to override the default category-name labels.
+ * A high-cardinality axis (many categories) thins + truncates its labels to stay
+ * legible (categorical-axis RFC, Phase 1). The labels **come from the data** (the
+ * `categories` list), so a d3 `format` prop does not apply here (it can't name a
+ * category); customize a label by changing the `categories` datum's `label`.
  */
 export function CategoryAxis(props: XAxisProps = {}) {
   return <XAxis {...props} />;

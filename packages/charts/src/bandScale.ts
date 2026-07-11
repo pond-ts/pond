@@ -29,6 +29,12 @@ export interface ScaleBand {
   invert(pixel: number): number;
   /** One tick per category, at its band **centre** (`i + 0.5`). */
   ticks(count?: number): number[];
+  /**
+   * A formatter mapping a slot value → the category name (the numeric `specifier`
+   * is ignored — a category axis labels by name, not a number format). Present so
+   * the scale is a safe drop-in wherever the container resolves a `tickFormat`.
+   */
+  tickFormat(count?: number, specifier?: string): (value: number) => string;
   /** One slot's width in pixels (`|range| / slots`). The bar's `gap` insets within it. */
   bandwidth(): number;
   /** Slot pitch in pixels — same as {@link bandwidth} (padding is the bar's `gap`). */
@@ -92,6 +98,8 @@ export function scaleBand(categories: readonly string[]): ScaleBand {
     const i = Math.floor(value - domain[0]);
     return i >= 0 && i < categories.length ? categories[i]! : '';
   };
+
+  scale.tickFormat = () => scale.label;
 
   function domainFn(): [number, number];
   function domainFn(next: readonly [number, number]): ScaleBand;

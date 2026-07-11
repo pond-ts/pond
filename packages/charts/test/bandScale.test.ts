@@ -51,6 +51,13 @@ describe('scaleBand', () => {
     expect(scale(1)).toBe(100); // slot boundary at the midpoint
   });
 
+  it('tickFormat maps a slot value to its category name (specifier ignored)', () => {
+    // A category axis labels by name; a numeric specifier can't name a category.
+    const f = s().tickFormat(5, '.0%');
+    expect(f(0.5)).toBe('a');
+    expect(f(2.5)).toBe('c');
+  });
+
   it('copy is independent of the original', () => {
     const a = s();
     const b = a.copy().range([0, 800]);
