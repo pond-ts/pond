@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 tag, so this file covers them all. Pre-1.0: minor bumps may include new features
 and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.42.0...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.43.0...HEAD
+[0.43.0]: https://github.com/pjm17971/pond-ts/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/pjm17971/pond-ts/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/pjm17971/pond-ts/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/pjm17971/pond-ts/compare/v0.39.0...v0.40.0
@@ -40,6 +41,14 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+## [0.43.0] — 2026-07-11
+
+The **categorical x-axis** release: a first-class ordinal band scale (ticker /
+account / expiry on x — the transpose view of a time series), plus the charts
+**interaction** wave that landed after v0.42.0 was cut — the region cursor and
+its drag-to-select gesture, per-bin band colour, and annotation edges that snap
+to session boundaries.
+
 ### Added
 
 - **`@pond-ts/charts`: a first-class categorical x-axis.** `<BarChart
@@ -67,6 +76,41 @@ categories={[{ label, value }]}>` draws one bar per category on an ordinal
   `undefined` for a time / value bar (whose sample `key` is already its identity).
   Plus a category-axis **label policy**: a dense axis thins (keeps every k-th) and
   ellipsis-truncates its labels so they stay legible while every bar draws.
+- **`@pond-ts/charts`: region cursor (`cursor="region"`).** A shaded **band**
+  highlights the bucket under the pointer, bucketed by a new **`cursorSequence`**
+  prop — a `Sequence` (`Sequence.every('15m')`, `Sequence.calendar('week')`)
+  realized over the view, or a `BoundedSequence` (a `TradingCalendar`'s
+  `sessionSequence()` / `barSequence()`) used as-is. The band maps through the x
+  scale, so on a trading-time axis the closed part of a bucket collapses (crops
+  to live sessions). Time-axis only (a no-op on a value axis). (#409, #413)
+- **`@pond-ts/charts`: draggable region cursor → one-shot select.** Opt-in
+  **`onRegionSelect?: (range: TimeRange) => void`** makes the region cursor
+  draggable: the band extends bucket by bucket and fires **once** on release
+  with the selected `[start, end)` `TimeRange` (the cursor doesn't keep it —
+  typical use is to zoom the view). With **no `cursorSequence`** it degenerates
+  to a hover **line** + **freeform** drag. **`regionSelectModifier="shift"`**
+  resolves the gesture conflict with `panZoom` (plain drag pans, shift-drag
+  selects); omitted, a region-drag preempts pan. (#416)
+- **`@pond-ts/charts`: `binColors` — per-bin colour for single-series bars.**
+  `<BarChart binColors={[...]}>` colours each bar/band segment individually (one
+  colour per bin, in order), the single-series analog of the stacked `colors`
+  prop — used by the category axis (colour per category) and any single-series
+  band chart. (#408)
+- **`@pond-ts/charts`: annotation edges snap to session boundaries.** When a
+  `<ChartContainer>` carries a trading calendar (disjoint x axis), dragging a
+  `<Region>` edge (or creating one) snaps to the nearest **session boundary**
+  rather than raw wall-clock, so a drawn span aligns with real market sessions.
+  (#410)
+
+### Fixed
+
+- **`@pond-ts/charts`: region body-move no longer distorts across a session
+  boundary.** On a trading-time (discontinuous) axis, dragging a `<Region>`
+  annotation by its body now translates it rigidly in pixel space, so the box
+  keeps its width as it crosses a collapsed gap (it previously applied one
+  value-delta to both edges, which stretched the box in the different
+  rate-contexts either side of a session boundary). No-op on a continuous axis.
+  (#405)
 
 ## [0.42.0] — 2026-07-10
 
@@ -127,21 +171,6 @@ collapses closed-market time (weekends, holidays, overnight, lunch breaks).
   renders and reads out but can't be selected). A dev-warning fires when
   `selected`/`onSelect` is wired but no layer carries an `id`. First slice of the
   selection RFC (`docs/rfcs/selection.md`, Amendments 2–3).
-- **`@pond-ts/charts`: region cursor (`cursor="region"`).** A shaded **band**
-  highlights the bucket under the pointer, bucketed by a new **`cursorSequence`**
-  prop — a `Sequence` (`Sequence.every('15m')`, `Sequence.calendar('week')`)
-  realized over the view, or a `BoundedSequence` (a `TradingCalendar`'s
-  `sessionSequence()` / `barSequence()`) used as-is. The band maps through the x
-  scale, so on a trading-time axis the closed part of a bucket collapses (crops
-  to live sessions). Time-axis only (a no-op on a value axis). (#409, #413)
-- **`@pond-ts/charts`: draggable region cursor → one-shot select.** Opt-in
-  **`onRegionSelect?: (range: TimeRange) => void`** makes the region cursor
-  draggable: the band extends bucket by bucket and fires **once** on release
-  with the selected `[start, end)` `TimeRange` (the cursor doesn't keep it —
-  typical use is to zoom the view). With **no `cursorSequence`** it degenerates
-  to a hover **line** + **freeform** drag. **`regionSelectModifier="shift"`**
-  resolves the gesture conflict with `panZoom` (plain drag pans, shift-drag
-  selects); omitted, a region-drag preempts pan. (#416)
 - **`pond-ts`: `bin(W, 'minMaxFirstLast')`** — the four-channel M4 downsampling
   reducer (per-bin min/max/first/last, validity-aware, chunked-delegating); the
   foundation for the charts decimator wave.
