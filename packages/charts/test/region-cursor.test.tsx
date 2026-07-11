@@ -77,9 +77,12 @@ describe('cursor="region" bucket realization', () => {
     expect(f.cursorBuckets).toBeUndefined();
   });
 
-  it('is gated off a value axis (a time bucket is meaningless there)', () => {
+  it('bucket snapping is gated off a value axis, but the region cursor stays freeform-active', () => {
     // A value-keyed (distance) row makes this a value axis; a time cursorSequence
-    // realized over a value domain would otherwise shade the whole plot.
+    // realized over a value domain would otherwise shade the whole plot — so the
+    // *buckets* are gated off (snapping is time-only). The region cursor itself is
+    // NOT gated: it falls back to the freeform raw-span drag on a value axis, and
+    // onRegionSelect fires the neutral `[lo, hi]` in value units.
     const rideByDistance = new TimeSeries({
       name: 'ride',
       schema: [
@@ -130,6 +133,7 @@ describe('Charts/Cursors/Region stories render', () => {
       'Freeform',
       'PanAndSelect',
       'Sessions',
+      'ValueAxisSelect',
     ]);
   });
 

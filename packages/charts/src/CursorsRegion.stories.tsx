@@ -1,7 +1,6 @@
-import { useState } from 'react';
-import { Sequence } from 'pond-ts';
+import { useMemo, useState } from 'react';
+import { Sequence, TimeSeries } from 'pond-ts';
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import type { TimeRange } from 'pond-ts';
 import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
@@ -144,7 +143,8 @@ export const AggregationAligned: Story = {
 /** **Drag to select → zoom.** Providing `onRegionSelect` makes the region cursor
  *  **draggable**: drag across the plot and the band extends **bucket by bucket**
  *  (here 1-hour candles), and on release it fires once with the selected
- *  `TimeRange`. The cursor doesn't keep the range — the callback does. This demo
+ *  `[lo, hi]` span (epoch ms here — the neutral pair). The cursor doesn't keep the
+ *  range — the callback does. This demo
  *  zooms the view to the selection (the container doesn't zoom itself; that's the
  *  consumer's job); **Reset** restores the full range. */
 function DragToSelectDemo() {
@@ -170,7 +170,7 @@ function DragToSelectDemo() {
         discontinuities={provider(s)}
         cursor="region"
         cursorSequence={hourGrid}
-        onRegionSelect={(r: TimeRange) => setRange([r.begin(), r.end()])}
+        onRegionSelect={(r) => setRange([r[0], r[1]])}
       >
         <ChartRow height={220}>
           <YAxis id="p" side="right" />
@@ -207,7 +207,7 @@ function FreeformDemo() {
         range={range}
         theme={twoColorTheme}
         cursor="region"
-        onRegionSelect={(r: TimeRange) => setRange([r.begin(), r.end()])}
+        onRegionSelect={(r) => setRange([r[0], r[1]])}
       >
         <ChartRow height={220}>
           <Layers>
@@ -220,6 +220,65 @@ function FreeformDemo() {
   );
 }
 export const Freeform: Story = { render: () => <FreeformDemo /> };
+
+/** **Value axis (freeform).** The region cursor also works on a **value** x-axis —
+ *  here a distance-keyed ride (`byValue('cumDist')`), x in metres. Bucket snapping
+ *  needs a `cursorSequence`, which is time-only, so a value axis is always
+ *  **freeform**: hover draws a line, a drag shades the raw span, and
+ *  `onRegionSelect` fires the selected **distance** window as a neutral `[lo, hi]`
+ *  (axis units, not a `TimeRange`) — the gesture that maps onto a distance / strike
+ *  range. Here it zooms the value axis; **Reset** restores the full span. */
+function ValueAxisSelectDemo() {
+  const ride = useMemo(
+    () =>
+      new TimeSeries({
+        name: 'ride',
+        schema: [
+          { name: 'time', kind: 'time' },
+          { name: 'cumDist', kind: 'number' },
+          { name: 'hr', kind: 'number' },
+        ] as const,
+        rows: Array.from({ length: 60 }, (_, i) => [
+          i * 1000,
+          i * 100, // cumulative distance 0..5900 m
+          120 + Math.round(30 * Math.sin(i / 8)),
+        ]),
+      }).byValue('cumDist'),
+    [],
+  );
+  const full: [number, number] = [0, 5900];
+  const [range, setRange] = useState<[number, number]>(full);
+  const zoomed = range[0] !== full[0] || range[1] !== full[1];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: W }}>
+      <button
+        type="button"
+        onClick={() => setRange(full)}
+        disabled={!zoomed}
+        style={{ alignSelf: 'flex-start', padding: '2px 10px', fontSize: 12 }}
+      >
+        Reset zoom
+      </button>
+      <ChartContainer
+        width={W}
+        range={range}
+        theme={twoColorTheme}
+        cursor="region"
+        onRegionSelect={(r) => setRange([r[0], r[1]])}
+      >
+        <ChartRow height={220}>
+          <Layers>
+            <LineChart series={ride} column="hr" axis="a" />
+          </Layers>
+          <YAxis id="a" side="right" />
+        </ChartRow>
+      </ChartContainer>
+    </div>
+  );
+}
+export const ValueAxisSelect: Story = {
+  render: () => <ValueAxisSelectDemo />,
+};
 
 /** **Pan + shift-select-to-zoom.** With `panZoom` on, `regionSelectModifier="shift"`
  *  shares the drag: **shift-drag** selects a range → **zooms** to it, then **plain
@@ -252,7 +311,7 @@ function PanAndSelectDemo() {
         cursor="region"
         cursorSequence={hourGrid}
         regionSelectModifier="shift"
-        onRegionSelect={(r: TimeRange) => setRange([r.begin(), r.end()])}
+        onRegionSelect={(r) => setRange([r[0], r[1]])}
       >
         <ChartRow height={220}>
           <YAxis id="p" side="right" />

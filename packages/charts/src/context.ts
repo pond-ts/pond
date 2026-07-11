@@ -2,7 +2,7 @@ import { createContext } from 'react';
 import type { ScaleLinear, ScaleTime } from 'd3-scale';
 import type { ChartTheme } from './theme.js';
 import type { AxisFormat } from './format.js';
-import type { Interval, TimeRange } from 'pond-ts';
+import type { Interval } from 'pond-ts';
 import type {
   TradingTimeScale,
   DiscontinuityProvider,
@@ -81,22 +81,30 @@ export interface ContainerFrame {
    */
   readonly cursorBuckets: readonly Interval[] | undefined;
   /**
-   * The `region`-cursor **drag anchor** (epoch ms), or `null` when not dragging.
-   * A drag on a region cursor (only when {@link onRegionSelect} is set) records
-   * the press time here; the band then spans from the anchor's bucket to the
-   * pointer's bucket (extending bucket by bucket). Cleared on release.
+   * The `region`-cursor **drag anchor** in axis units (epoch ms on a time axis,
+   * the axis value on a value axis), or `null` when not dragging. A drag on a
+   * region cursor (only when {@link onRegionSelect} is set) records the press
+   * position here; the band then spans from the anchor's bucket to the pointer's
+   * bucket (extending bucket by bucket), or freeform when there are no buckets.
+   * Cleared on release.
    */
   readonly regionAnchor: number | null;
   /** Set / clear the region-drag anchor (see {@link regionAnchor}). */
-  setRegionAnchor(time: number | null): void;
+  setRegionAnchor(value: number | null): void;
   /**
    * One-shot callback fired when a `region`-cursor **drag** is released, with the
-   * selected `[start, end)` `TimeRange` (snapped to the `cursorSequence` buckets).
+   * selected `[lo, hi]` span in **axis units** — epoch ms on a time axis, the axis
+   * value on a value axis (snapped to the `cursorSequence` buckets when present,
+   * else the raw drag span). The neutral numeric pair mirrors the container's
+   * polymorphic `range` input (which never takes the axis *kind* from its value);
+   * a time-axis consumer who wants a `TimeRange` constructs one from the pair.
    * Providing it is what makes the region cursor **draggable**; the cursor does
    * not keep the range (it reverts to the single-bucket highlight). Typical use:
-   * zoom the view to the returned range.
+   * zoom the view, or map the span onto a subscription's range params.
    */
-  readonly onRegionSelect: ((range: TimeRange) => void) | undefined;
+  readonly onRegionSelect:
+    | ((range: readonly [number, number]) => void)
+    | undefined;
   /**
    * Require a modifier key held to start a region-drag — set to `'shift'` to make
    * plain drag **pan** and **shift**-drag select, when `panZoom` is on. Only

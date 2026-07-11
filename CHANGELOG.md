@@ -63,6 +63,20 @@ and type-level changes; patch bumps are strictly additive.
   the axis through a fake `time` column (`TimeSeries.fromColumns` +
   `byValue`); that detour is no longer needed.
 
+### Changed
+
+- **BREAKING (`@pond-ts/charts`): the region cursor works on a value x-axis, and
+  `onRegionSelect` reports a neutral `[lo, hi]` pair.** The drag-select callback
+  fired a `TimeRange`; it now fires `readonly [number, number]` in **axis units** —
+  epoch ms on a time axis, the axis value (strike, distance, …) on a value axis —
+  mirroring the container's polymorphic `range` input (which never takes the axis
+  _kind_ from its value). A time-axis consumer that wants a `TimeRange` builds one
+  from the pair (`new TimeRange({ start: lo, end: hi })`). The cursor itself is
+  ungated from time-only to any **continuous** x-axis (time **or** value; a
+  **category** axis stays excluded — an ordinal-slot select is a different gesture).
+  Bucket **snapping** stays time-only (a `cursorSequence` bucket is a time
+  interval), so a value axis is always **freeform** (hover line + raw-span drag).
+
 ## [0.43.0] — 2026-07-11
 
 The **categorical x-axis** release: a first-class ordinal band scale (ticker /
