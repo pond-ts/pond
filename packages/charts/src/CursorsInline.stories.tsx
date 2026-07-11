@@ -60,6 +60,30 @@ const meta = {
 export default meta;
 type Story = StoryObj;
 
+/** **Interactive** — hover-driven (no `trackerPosition` pin), so you can test
+ *  the inline behaviour yourself: a dot rides each series with its value chip
+ *  beside it, flipping/clamping near the edges as you move. The other stories
+ *  pin a controlled position for a static regression shot; this is the live one. */
+export const Interactive: Story = {
+  render: () => (
+    <ChartContainer
+      range={RANGE}
+      width={W}
+      cursor="inline"
+      cursorTime
+      theme={twoColorTheme}
+    >
+      <ChartRow height={220}>
+        <Layers>
+          <LineChart series={s} column="fast" as="fast" axis="usd" />
+          <LineChart series={s} column="slow" as="slow" axis="usd" />
+        </Layers>
+        <YAxis id="usd" side="right" format=",.0f" />
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
 /** **Single series** — one dot, its value chip beside it. */
 export const SingleSeries: Story = {
   render: () => (
