@@ -1,5 +1,5 @@
 import { useContext, useEffect, useMemo } from 'react';
-import { ValueSeries } from 'pond-ts';
+import { Interval, ValueSeries } from 'pond-ts';
 import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
 import {
   barsFromTimeSeries,
@@ -362,6 +362,26 @@ export function BarChart<
             ? 'value'
             : 'time';
 
+  // The bars' `[begin, end)` spans as pond `Interval`s — the region cursor's snap
+  // buckets (a region drag snaps bar by bar; a hover highlights the bar under the
+  // pointer). Published only for a **vertical** bar layer on a **continuous**
+  // (time / value) x axis: a horizontal chart puts the value/count on x (snapping
+  // it is meaningless) and a categorical (ordinal-slot) axis is out of the region
+  // cursor's scope. Memoized off the shape alone, so a hover / selection change
+  // (which rebuilds the layer entry) doesn't re-allocate the intervals.
+  const binBuckets = useMemo<readonly Interval[] | null>(() => {
+    if (orientation !== 'vertical' || binAxisKind === 'category') return null;
+    const { begin, end, length } =
+      shape.kind === 'single' ? shape.bs : shape.ss;
+    if (length === 0) return null;
+    const out = new Array<Interval>(length);
+    for (let i = 0; i < length; i += 1) {
+      const b = begin[i]!;
+      out[i] = new Interval({ value: b, start: b, end: end[i]! });
+    }
+    return out;
+  }, [shape, orientation, binAxisKind]);
+
   const { bar } = container.theme;
   // Single-series style: the `as` role → theme bar style (the single channel).
   const singleStyle =
@@ -430,6 +450,7 @@ export function BarChart<
           xKind: binAxisKind,
           xExtent: () =>
             bs.length === 0 ? null : [bs.begin[0]!, bs.end[bs.length - 1]!],
+          ...(binBuckets !== null ? { binIntervals: () => binBuckets } : {}),
           sampleAt: (time) => {
             if (bs.length === 0) return [];
             const i = barIndexAtTime(bs, time);
@@ -503,6 +524,7 @@ export function BarChart<
         xKind: vertical ? binAxisKind : 'value',
         xExtent: vertical ? binExtent : valueExtent,
         yExtent: vertical ? valueExtent : binExtent,
+        ...(binBuckets !== null ? { binIntervals: () => binBuckets } : {}),
         // A categorical chart hands the container its ordered category names — the
         // ordinal axis domain the shared band scale + label formatter build on.
         ...(categoryLabels !== null
@@ -566,6 +588,7 @@ export function BarChart<
   }, [
     shape,
     binAxisKind,
+    binBuckets,
     categoryLabels,
     orientation,
     singleStyle,

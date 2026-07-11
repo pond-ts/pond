@@ -6,6 +6,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { Candlestick } from './Candlestick.js';
+import { BarChart } from './BarChart.js';
 import { YAxis } from './YAxis.js';
 import { priceSeries, RANGE, twoColorTheme } from './story-data.fixture.js';
 import {
@@ -279,6 +280,55 @@ function ValueAxisSelectDemo() {
 export const ValueAxisSelect: Story = {
   render: () => <ValueAxisSelectDemo />,
 };
+
+/** **Histogram (bin-snapped).** On a histogram the region cursor snaps to the
+ *  **bars** — no `cursorSequence` needed: hover highlights the bar under the
+ *  pointer, a drag extends **bar by bar**, and `onRegionSelect` returns the
+ *  selected bin range `[lo, hi]` at the bar edges. (The `BarChart` publishes its
+ *  bins as the snap buckets; the same machinery a `cursorSequence` drives on a
+ *  time axis.) Here it zooms the value axis to the selected bars; **Reset**
+ *  restores the full span. */
+function HistogramBinsDemo() {
+  const bins = useMemo(
+    () =>
+      Array.from({ length: 12 }, (_, i) => ({
+        start: i * 20,
+        end: (i + 1) * 20,
+        secs: Math.round(40 * Math.exp(-((i - 5) ** 2) / 8)),
+      })),
+    [],
+  );
+  const full: [number, number] = [0, 240];
+  const [range, setRange] = useState<[number, number]>(full);
+  const zoomed = range[0] !== full[0] || range[1] !== full[1];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: W }}>
+      <button
+        type="button"
+        onClick={() => setRange(full)}
+        disabled={!zoomed}
+        style={{ alignSelf: 'flex-start', padding: '2px 10px', fontSize: 12 }}
+      >
+        Reset zoom
+      </button>
+      <ChartContainer
+        width={W}
+        range={range}
+        theme={twoColorTheme}
+        cursor="region"
+        onRegionSelect={(r) => setRange([r[0], r[1]])}
+      >
+        <ChartRow height={220}>
+          <YAxis id="s" label="seconds" min={0} side="right" />
+          <Layers>
+            <BarChart bins={bins} column="secs" gap={2} />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    </div>
+  );
+}
+export const HistogramBins: Story = { render: () => <HistogramBinsDemo /> };
 
 /** **Pan + shift-select-to-zoom.** With `panZoom` on, `regionSelectModifier="shift"`
  *  shares the drag: **shift-drag** selects a range → **zooms** to it, then **plain

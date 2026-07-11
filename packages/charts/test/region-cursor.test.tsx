@@ -7,6 +7,7 @@ import { ChartContainer } from '../src/ChartContainer.js';
 import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
 import { LineChart } from '../src/LineChart.js';
+import { BarChart } from '../src/BarChart.js';
 import { YAxis } from '../src/YAxis.js';
 import { ContainerContext, type ContainerFrame } from '../src/context.js';
 import * as regionStories from '../src/CursorsRegion.stories.js';
@@ -118,6 +119,93 @@ describe('cursor="region" bucket realization', () => {
   });
 });
 
+describe('cursor="region" snaps to a histogram\'s bins', () => {
+  const HIST = [
+    { start: 0, end: 20, secs: 5 },
+    { start: 20, end: 40, secs: 12 },
+    { start: 40, end: 60, secs: 8 },
+  ];
+  const render_ = (
+    extra: ReactElement,
+    props: Record<string, unknown> = {},
+  ) => {
+    let frame: ContainerFrame | null = null;
+    render(
+      <ChartContainer width={320} cursor="region" {...props}>
+        <ChartRow height={100}>
+          <YAxis id="s" min={0} />
+          <Layers>{extra}</Layers>
+          <Capture sink={(f) => (frame = f)} />
+        </ChartRow>
+      </ChartContainer>,
+    );
+    return frame!;
+  };
+
+  it('a vertical histogram publishes its bins as the region snap buckets', () => {
+    const f = render_(<BarChart bins={HIST} column="secs" />);
+    expect(f.xKind).toBe('value');
+    // The bins become the cursor buckets — no cursorSequence needed.
+    expect((f.cursorBuckets ?? []).map((b) => [b.begin(), b.end()])).toEqual([
+      [0, 20],
+      [20, 40],
+      [40, 60],
+    ]);
+  });
+
+  it('a horizontal histogram does NOT snap (value/count is on x, not bins)', () => {
+    // Horizontal puts the count on x; snapping the region cursor to count-bins is
+    // meaningless, so no buckets are published — the cursor stays freeform.
+    const f = render_(
+      <BarChart bins={HIST} column="secs" orientation="horizontal" ordinal />,
+    );
+    expect(f.cursorBuckets).toBeUndefined();
+  });
+
+  it('an explicit cursorSequence still wins on a time-axis histogram', () => {
+    // A time-keyed bar chart + an explicit cursorSequence: the sequence is the
+    // author's intent and takes precedence over the auto bin buckets.
+    const byHour = new TimeSeries({
+      name: 'events',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'n', kind: 'number' },
+      ] as const,
+      rows: [
+        [D0, 3],
+        [D0 + H, 5],
+        [D0 + 2 * H, 2],
+      ],
+    });
+    const f = render_(<BarChart series={byHour} column="n" />, {
+      range: [D0, D0 + 3 * H],
+      cursorSequence: Sequence.calendar('week'),
+    });
+    expect(f.xKind).toBe('time');
+    // Weekly buckets (from the sequence), not the per-hour bar bins.
+    const widths = (f.cursorBuckets ?? []).map((b) => b.end() - b.begin());
+    expect(widths.every((w) => w >= 5 * 24 * H)).toBe(true);
+  });
+
+  it('a non-bar row on a value axis stays freeform (no bins to snap to)', () => {
+    const ride = new TimeSeries({
+      name: 'ride',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'cumDist', kind: 'number' },
+        { name: 'hr', kind: 'number' },
+      ] as const,
+      rows: [
+        [0, 0, 120],
+        [1000, 500, 130],
+      ],
+    }).byValue('cumDist');
+    const f = render_(<LineChart series={ride} column="hr" axis="s" />);
+    expect(f.xKind).toBe('value');
+    expect(f.cursorBuckets).toBeUndefined();
+  });
+});
+
 describe('Charts/Cursors/Region stories render', () => {
   const entries = Object.entries(regionStories).filter(
     ([name, v]) =>
@@ -131,6 +219,7 @@ describe('Charts/Cursors/Region stories render', () => {
       'Default',
       'DragToSelect',
       'Freeform',
+      'HistogramBins',
       'PanAndSelect',
       'Sessions',
       'ValueAxisSelect',

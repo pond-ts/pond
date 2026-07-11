@@ -63,6 +63,18 @@ and type-level changes; patch bumps are strictly additive.
   the axis through a fake `time` column (`TimeSeries.fromColumns` +
   `byValue`); that detour is no longer needed.
 
+- **The region cursor snaps to a histogram's bins** (`@pond-ts/charts`). On a
+  `<BarChart>` histogram, `cursor="region"` now snaps **bar by bar** with no
+  `cursorSequence`: hovering highlights the bar under the pointer, a drag extends
+  across whole bars, and `onRegionSelect` reports the selected bin range
+  `[lo, hi]` at the bar edges. The bar layer publishes its `[begin, end)` spans
+  (a new internal `binIntervals` channel) as the region cursor's snap buckets —
+  the same machinery a `cursorSequence` drives on a time axis, so it also covers a
+  time-axis histogram. Only a **vertical** bar layer on a continuous (time /
+  value) x axis publishes bins; a horizontal chart (value on x) and a categorical
+  axis stay freeform / excluded. An explicit `cursorSequence` still takes
+  precedence. New `HistogramBins` region-cursor story.
+
 ### Changed
 
 - **BREAKING (`@pond-ts/charts`): the region cursor works on a value x-axis, and

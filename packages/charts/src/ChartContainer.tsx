@@ -758,29 +758,45 @@ export function ChartContainer({
   // hides an out-of-plot crosshair meanwhile.
   const cursorX = resolveCursorX(trackerPosition, hoverX, xScale);
 
-  // `cursor="region"` buckets: realize the `cursorSequence` over the current view
-  // (a `Sequence` → `.bounded`; a `BoundedSequence` used as-is), so the band can
-  // find the interval under the pointer. Memoized on the sequence + view range;
-  // a coarse sequence (days / sessions) is a handful of intervals.
-  // A `Sequence` bucket is a **time** interval, so gate it to a time axis — on a
-  // value axis (a horizontal histogram, a value-keyed chart) the value domain is
-  // not epoch-ms, so realizing time buckets over it is meaningless (it would
-  // shade the whole plot). Region cursor is time-axis only.
+  // `cursor="region"` snap buckets — the intervals the band snaps to (and a drag
+  // extends bucket by bucket over). Two sources, in precedence order:
+  //
+  // 1. **An explicit `cursorSequence`** (time axis only): realized over the view
+  //    (a `Sequence` → `.bounded`; a `BoundedSequence` used as-is). A `Sequence`
+  //    bucket is a *time* interval, so it's gated to a time axis — realizing time
+  //    buckets over a value domain is meaningless (it would shade the whole plot).
+  // 2. **A bar/histogram layer's bins** (`binIntervals`, time **or** value axis):
+  //    when no `cursorSequence` is set, the region cursor snaps to the bars —
+  //    a histogram gets bin-aligned selection for free (the first bar layer that
+  //    publishes bins wins; a plain histogram has exactly one).
+  //
+  // With neither, `undefined` ⇒ the freeform region cursor (raw-span drag).
   const cursorBuckets = useMemo<readonly Interval[] | undefined>(() => {
-    if (cursorSequence === undefined || resolvedKind !== 'time')
-      return undefined;
-    if (!(cursorSequence instanceof Sequence))
-      return cursorSequence.intervals();
-    // `bounded` (sample 'begin') drops a partial *leading* bucket — the one that
-    // contains the view start begins before it. Widen the realized range back by
-    // one bucket width so that covering bucket is included (a coarse calendar
-    // unit is bounded at ~a year; a fixed step uses its own width).
-    const back =
-      cursorSequence.kind() === 'fixed'
-        ? cursorSequence.stepMs()
-        : 366 * 86_400_000;
-    return cursorSequence.bounded({ start: d0 - back, end: d1 }).intervals();
-  }, [cursorSequence, d0, d1, resolvedKind]);
+    if (cursorSequence !== undefined && resolvedKind === 'time') {
+      if (!(cursorSequence instanceof Sequence))
+        return cursorSequence.intervals();
+      // `bounded` (sample 'begin') drops a partial *leading* bucket — the one that
+      // contains the view start begins before it. Widen the realized range back by
+      // one bucket width so that covering bucket is included (a coarse calendar
+      // unit is bounded at ~a year; a fixed step uses its own width).
+      const back =
+        cursorSequence.kind() === 'fixed'
+          ? cursorSequence.stepMs()
+          : 366 * 86_400_000;
+      return cursorSequence.bounded({ start: d0 - back, end: d1 }).intervals();
+    }
+    // No sequence → snap to a bar/histogram layer's bins, if any (a value axis,
+    // or a time-axis histogram with no explicit sequence). `binIntervals` is only
+    // published by a vertical bar layer on a continuous axis, so this is a no-op
+    // for line/area/scatter rows and for a category axis.
+    if (resolvedKind === 'time' || resolvedKind === 'value') {
+      for (const s of sources.values()) {
+        const bins = s.binIntervals?.() ?? null;
+        if (bins && bins.length > 0) return bins;
+      }
+    }
+    return undefined;
+  }, [cursorSequence, d0, d1, resolvedKind, sources]);
 
   // Emit { time, values } for an outside readout — recomputed as the cursor moves
   // *or* the window slides under it (xScale change → new time at the same pixel).
