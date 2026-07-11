@@ -397,7 +397,12 @@ export function BarChart<
     () =>
       selected === null
         ? null
-        : { id: selected.id, key: selected.key, label: selected.label },
+        : {
+            id: selected.id,
+            key: selected.key,
+            label: selected.label,
+            ...(selected.mark !== undefined ? { mark: selected.mark } : {}),
+          },
     [selected],
   );
   const hover = useMemo<StackMark | null>(
@@ -408,6 +413,9 @@ export function BarChart<
             id: hoveredMark.id,
             key: hoveredMark.key,
             label: hoveredMark.label,
+            ...(hoveredMark.mark !== undefined
+              ? { mark: hoveredMark.mark }
+              : {}),
           },
     [hoveredMark],
   );
@@ -519,19 +527,21 @@ export function BarChart<
                 );
                 if (hit === null) return null;
                 const [bi, g, begin, name, value] = hit;
-                // Match the drawn colour: a per-bin override wins over the group
-                // fill, so the readout pill reads the bar's own colour. `bi` is
-                // the exact bin index from the hit (not an `indexOf`, which a
-                // duplicate `begin` would resolve to the wrong bar).
+                // A categorical bar carries a stable per-bar `mark` (its column
+                // name); the selection keys on `(id, mark)` so it survives a
+                // reorder. `bi` is the exact bin index from the hit.
+                const stableMark = ss.marks?.[bi];
                 return {
                   id,
                   key: begin,
                   value,
+                  // A per-bin colour override wins over the group fill, so the
+                  // readout pill reads the bar's own colour.
                   color: stackStyle.binFills?.[bi] ?? stackStyle.fills[g]!,
-                  // A categorical bar reports its **category name** (the slot's
-                  // label); a stack reports the group. (A stable per-column id is
-                  // Phase 1 PR3; `key` is the slot index for now.)
-                  label: categoryLabels?.[begin] ?? name,
+                  // A categorical bar reports its category name; a stack reports
+                  // the group.
+                  label: stableMark ?? name,
+                  ...(stableMark !== undefined ? { mark: stableMark } : {}),
                 };
               },
             }),

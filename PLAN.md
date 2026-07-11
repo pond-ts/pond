@@ -732,14 +732,22 @@ theme.bar[group] ?? default` (theme-role + ad-hoc-palette, the single styling
     `{label,value}[]` from one row of a wide series (`Event` via
     `.at`/`.last`/`.nearest`; numeric columns via `schema.slice(1)`). "Read a row
     of a series, columns on x."
-  - **PR3 — per-column stable identity + label policy.** Extend the hit-test /
-    `SelectInfo` so a selected column reports its **column name** as the stable key
-    (Estela's `F-charts-bar-stable-id`; public-type touch → human-approval gate);
-    the category-axis **thin / truncate / rotate** label policy for
-    high-cardinality (SPARC's tickers — the `HighCardinality` story shows the
-    crowding today). Each PR: self-review → Layer-2 → a Codex pass (a new scale
-    primitive warrants it). The RFC's own owed Codex red-team (§12.3) runs in
-    parallel.
+  - **PR3 — per-column stable identity + label policy (built).** `SelectInfo`
+    gains an optional **`mark`** (a stable per-mark identity); a categorical bar
+    reports its **column name** as `mark`, and the highlight match / controlled
+    `selected` key on `(id, mark)` so a pinned selection survives a column reorder
+    (Estela's `F-charts-bar-stable-id`). Additive (`mark` undefined for time/value
+    bars) — **but a public-type touch → human-approval gate at merge.** Plus a
+    category-axis **thin + truncate** label policy (width-estimated) for
+    high-cardinality (SPARC's tickers); rotate deferred.
+  - **All three PRs are built + verified on `feat/charts-categorical-axis`** (479
+    charts tests green; `bandScale` / `transposeRow` / category-identity unit
+    tests; real-browser screenshots of the 7 `Charts/CategoryAxis` stories). Not
+    yet pushed. Landing sequence per PR: self-review → Layer-2 → a Codex pass (a
+    new scale primitive warrants it); the `SelectInfo` widening needs the
+    human-approval gate. The RFC's own owed Codex red-team (§12.3) runs in
+    parallel. **Deferred beyond Phase 1:** the metric branch (value-x coords —
+    Tidal/Estela), the cursor binding / head-row (Phase 2), and label rotation.
 - **M5 — estela parity.** Faithful `DataChart` reproduction on real activity
   data; prove no-regressions; hand the production swap to the estela agent; flip
   `private:false` + first publish.

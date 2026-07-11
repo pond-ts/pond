@@ -21,6 +21,7 @@ describe('CategoryAxis stories render', () => {
 
   it('exposes the expected stories', () => {
     expect(entries.map(([n]) => n).sort()).toEqual([
+      'CrowdedLabels',
       'HighCardinality',
       'Select',
       'SingleHue',

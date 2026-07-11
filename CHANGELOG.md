@@ -57,6 +57,14 @@ and type-level changes; patch bumps are strictly additive.
   structure's per-expiry columns) become the categories at one instant. Pick the
   row with `at` (`'last'` — the head/live row — by default; `'first'`, an index,
   or `{ time }`); bound / order the set with `columns`.
+- **`@pond-ts/charts`: stable per-column selection identity.** `SelectInfo` gains
+  an optional **`mark`** — a stable per-mark identity within a layer. A categorical
+  bar reports its **column name** as `mark`, and a controlled `selected` echo /
+  the highlight match key on `(id, mark)`, so a pinned selection survives a column
+  reorder (the slot index doesn't; the name does). Additive — `mark` is
+  `undefined` for a time / value bar (whose sample `key` is already its identity).
+  Plus a category-axis **label policy**: a dense axis thins (keeps every k-th) and
+  ellipsis-truncates its labels so they stay legible while every bar draws.
 
 ## [0.42.0] — 2026-07-10
 

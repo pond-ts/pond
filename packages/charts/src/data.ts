@@ -133,6 +133,14 @@ export interface StackedBarSeries {
   readonly groups: readonly string[];
   readonly values: Float64Array;
   readonly length: number;
+  /**
+   * Optional **stable per-bin identity** — `marks[b]` names bin `b` (a category's
+   * column name on the categorical axis). When present, the draw / hit-test /
+   * selection key on this name instead of the bin's `begin` slot index, so a
+   * pinned selection survives a column reorder (the slot index is not stable).
+   * `undefined` for a time / value series whose `begin` is already stable.
+   */
+  readonly marks?: readonly string[];
 }
 
 /**
@@ -735,13 +743,17 @@ export function categoryStack(
   const begin = new Float64Array(n);
   const end = new Float64Array(n);
   const values = new Float64Array(n);
+  const marks = new Array<string>(n);
   for (let i = 0; i < n; i += 1) {
     begin[i] = i;
     end[i] = i + 1;
     const v = records[i]!.value;
     values[i] = Number.isFinite(v) ? v : NaN;
+    marks[i] = records[i]!.label;
   }
-  return { begin, end, groups: ['value'], values, length: n };
+  // `marks` carry the category names — the stable per-bar identity the categorical
+  // axis selects on (the slot index `begin` renumbers on reorder; the name doesn't).
+  return { begin, end, groups: ['value'], values, length: n, marks };
 }
 
 /** Which row {@link transposeRow} reads across. */

@@ -259,11 +259,14 @@ export interface StackStyle {
 }
 
 /** The narrowed selection / hover identity a stacked segment matches against:
- *  the series `id`, the bin's `begin` (its `key`), and the group (its `label`). */
+ *  the series `id`, the bin's `begin` (its `key`), and the group (its `label`).
+ *  When the series carries `marks` (the categorical axis), the match keys on the
+ *  stable `mark` (the column name) instead of the `key` slot index. */
 export interface StackMark {
   readonly id: string;
   readonly key: number;
   readonly label: string;
+  readonly mark?: string;
 }
 
 /**
@@ -401,11 +404,16 @@ export function drawStacks(
       if (Number.isFinite(v) && v > 0) cum += v;
       if (rect === null) continue;
       const [x0, x1, yTop, yBottom] = rect;
+      // With `marks` (the categorical axis), match on the stable per-bin name so a
+      // pinned selection survives a column reorder; otherwise on the sample `key`
+      // (begin) + group `label`, as a time / value stack does.
+      const stableMark = ss.marks?.[b];
       const matches = (m: StackMark | null): boolean =>
         m !== null &&
         m.id === seriesId &&
-        m.key === ss.begin[b] &&
-        m.label === ss.groups[g];
+        (stableMark !== undefined
+          ? m.mark === stableMark
+          : m.key === ss.begin[b] && m.label === ss.groups[g]);
       const selected = matches(selection);
       const isHovered = matches(hover);
       // A hovered / selected segment pops to full opacity in its own colour; a

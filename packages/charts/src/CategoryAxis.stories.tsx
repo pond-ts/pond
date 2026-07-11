@@ -81,9 +81,8 @@ export const SingleHue: Story = {
 };
 
 /**
- * **High cardinality.** ~30 categories on one axis — the labels crowd at this
- * density (the thin / truncate / rotate label policy is the Phase 1 PR3
- * follow-on); the bars themselves stay fixed-pitch and readable.
+ * **High cardinality (short labels).** ~30 categories — short labels (`S01`…)
+ * still fit each slot, so the axis shows them all; the bars stay fixed-pitch.
  */
 export const HighCardinality: Story = {
   render: () => {
@@ -106,9 +105,35 @@ export const HighCardinality: Story = {
 };
 
 /**
+ * **Crowded long labels.** ~20 categories with long names that can't all fit —
+ * the axis **thins** (keeps every k-th) and **truncates** the kept labels with an
+ * ellipsis so they stay legible, while every bar still draws. (Width-estimated,
+ * no DOM measure; rotation is a later option.)
+ */
+export const CrowdedLabels: Story = {
+  render: () => {
+    const data = Array.from({ length: 20 }, (_, i) => ({
+      label: `ACME-DESK-${String(i + 1).padStart(2, '0')}`,
+      value: Math.round(15 + 35 * Math.abs(Math.sin((i / 20) * Math.PI + 0.4))),
+    }));
+    return (
+      <ChartContainer width={720} theme={estelaTheme}>
+        <ChartRow height={240}>
+          <YAxis id="v" label="orders" min={0} pad={0.08} />
+          <Layers>
+            <BarChart categories={data} gap={2} />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
  * **Click a bar.** With an `id` the category bars are selectable; a click reports
- * the **category name** (`SelectInfo.label`). (A stable per-column identity is the
- * PR3 follow-on; the `key` is the slot index for now.)
+ * the **category name** in both `SelectInfo.label` and the stable `SelectInfo.mark`
+ * — the per-column identity a controlled `selected` pins on, so it survives a
+ * column reorder (the slot index doesn't; the name does).
  */
 function SelectDemo() {
   const [sel, setSel] = useState<SelectInfo | null>(null);

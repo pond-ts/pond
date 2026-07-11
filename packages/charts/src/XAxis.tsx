@@ -20,6 +20,39 @@ interface PlacedTick {
   readonly label: string;
 }
 
+/**
+ * Thin + truncate a **category** axis's labels so a dense axis stays legible: keep
+ * every `stride`-th label (so a kept label has room), and ellipsize one that still
+ * overruns its space. `stride` grows with the longest label vs the per-category
+ * slot width, so a few short categories keep every full label and many long ones
+ * decimate. A rough `fontSize`-based width estimate (no DOM measure) — good enough
+ * for placement; the exact metric is the browser's. Rotation is a later option.
+ */
+function thinCategoryLabels(
+  ticks: readonly PlacedTick[],
+  plotWidth: number,
+  fontSize: number,
+): PlacedTick[] {
+  const n = ticks.length;
+  const slot = plotWidth / n; // per-category width in px
+  const charW = fontSize * 0.62; // ~average glyph advance
+  const longest = Math.min(
+    12,
+    ticks.reduce((m, t) => Math.max(m, t.label.length), 1),
+  );
+  const stride = Math.max(1, Math.ceil((longest * charW) / slot));
+  const room = Math.max(1, Math.floor((slot * stride) / charW));
+  const out: PlacedTick[] = [];
+  for (let i = 0; i < n; i += stride) {
+    const s = ticks[i]!.label;
+    out.push({
+      x: ticks[i]!.x,
+      label: s.length <= room ? s : `${s.slice(0, Math.max(1, room - 1))}…`,
+    });
+  }
+  return out;
+}
+
 export interface XAxisProps {
   /**
    * Tick / cursor value formatting — a d3 format/time specifier string or a
@@ -161,12 +194,18 @@ export function XAxis({
   }
   const maxPillLane = Math.max(0, pillLaneEnds.length - 1);
 
-  const placed: PlacedTick[] = customTicks
+  const rawTicks: PlacedTick[] = customTicks
     ? customTicks.map((t) => ({ x: xScale(t.at), label: t.label }))
     : (xScale.ticks(TICK_COUNT) as ReadonlyArray<number | Date>).map((d) => ({
         x: xScale(d as number),
         label: fmt(+d),
       }));
+  // A category axis ticks once per category; thin + truncate its labels when they
+  // crowd (an explicit `customTicks` axis keeps its labels verbatim).
+  const placed: PlacedTick[] =
+    xKind === 'category' && customTicks === undefined && rawTicks.length > 1
+      ? thinCategoryLabels(rawTicks, plotWidth, theme.font.size)
+      : rawTicks;
 
   const onTop = side === 'top';
   // Axis pills (marker / crosshair) sit at the same offset as the tick labels so

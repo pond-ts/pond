@@ -491,6 +491,16 @@ export interface SelectInfo {
   readonly color: string;
   /** Display label (`as` ?? column ?? id) — labels the selection in a readout. */
   readonly label: string;
+  /**
+   * An optional **stable per-mark identity within the layer** — a *category's
+   * column name* on the categorical axis, where every bar shares the layer's
+   * `id` but each column needs its own stable handle. When present, the
+   * highlight match + controlled `selected` echo key on `(id, mark)` instead of
+   * the sample `key`, so a pinned selection survives a column reorder / data
+   * update (the slot index is not stable; the column name is). `undefined` for
+   * marks whose sample `key` is already their identity (a time / value bar).
+   */
+  readonly mark?: string;
 }
 
 /** The hover snapshot handed to `onTrackerChanged` — the cursor time + every
