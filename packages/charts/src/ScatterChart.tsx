@@ -1,6 +1,12 @@
 import { useContext, useEffect, useMemo } from 'react';
-import type { SeriesSchema, TimeSeries } from 'pond-ts';
-import { fromTimeSeries } from './data.js';
+import { ValueSeries } from 'pond-ts';
+import type {
+  SeriesSchema,
+  TimeSeries,
+  ValueSeriesColumnName,
+  ValueSeriesSchema,
+} from 'pond-ts';
+import { fromTimeSeries, fromValueSeries } from './data.js';
 import {
   drawScatter,
   hitTestScatter,
@@ -15,9 +21,24 @@ import {
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
 import { useSlotKey } from './use-slot-key.js';
 
-export interface ScatterChartProps<S extends SeriesSchema> {
-  /** The source series. Its key column supplies the time axis (each point's x). */
-  series: TimeSeries<S>;
+export interface ScatterChartProps<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> {
+  /**
+   * The source series. A `TimeSeries` scatters against the time axis; a
+   * `ValueSeries` (`series.byValue('cumDist')`, or `ValueSeries.fromColumns`
+   * for natively value-keyed data — IV marks keyed by strike) against its
+   * value axis — the container infers which from the data, no axis-type prop
+   * (mirrors `<LineChart>`). Either way the key / axis column supplies each
+   * point's x and `column` supplies y.
+   *
+   * **Live charts:** `series.byValue(…)` mints a *fresh* projection each call,
+   * so passing `series={s.byValue('dist')}` inline re-registers this layer
+   * every render — memoize the projection (`useMemo`) on a frequently
+   * re-rendering chart.
+   */
+  series: TimeSeries<S> | ValueSeries<VS>;
   /** Name of the numeric value column — each point's y. */
   column: string;
   /**
@@ -39,6 +60,11 @@ export interface ScatterChartProps<S extends SeriesSchema> {
    * the key the controlled `selected` echo, dedup, and (later) multi-select all
    * match on — so a selection survives a data update where a sample `key` goes
    * stale.
+   *
+   * A point's identity within the series is its **x** (key / axis value). The
+   * key contract allows duplicate x's (equal timestamps; a value-axis plateau
+   * from `byValue('cumDist')`) — points sharing an x share identity, so
+   * selecting one highlights the last drawn point at that x.
    */
   id?: string;
   /**
@@ -87,7 +113,8 @@ export interface ScatterChartProps<S extends SeriesSchema> {
 type FieldReader = { get(field: string): unknown };
 
 /**
- * A scatter draw layer: one mark per finite point at `(time, column-value)`,
+ * A scatter draw layer: one mark per finite point at `(x, column-value)`
+ * — x from the series' key / axis column (time or value axis) —
  * with **data-driven radius + colour** (the signed-off exception — encode from
  * columns via scales, not a per-event style callback). Reads `column` into a
  * {@link ChartSeries} (gaps as NaN → no mark), registers into the enclosing
@@ -113,7 +140,10 @@ type FieldReader = { get(field: string): unknown };
  * </Layers>
  * ```
  */
-export function ScatterChart<S extends SeriesSchema>({
+export function ScatterChart<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+>({
   series,
   column,
   as: semantic,
@@ -123,7 +153,7 @@ export function ScatterChart<S extends SeriesSchema>({
   color,
   label,
   index = 0,
-}: ScatterChartProps<S>) {
+}: ScatterChartProps<S, VS>) {
   const container = useContext(ContainerContext);
   if (container === null) {
     throw new Error(
@@ -135,7 +165,13 @@ export function ScatterChart<S extends SeriesSchema>({
     throw new Error('<ScatterChart> must be rendered inside a <Layers>');
   }
 
-  const cs = useMemo(() => fromTimeSeries(series, column), [series, column]);
+  const cs = useMemo(
+    () =>
+      series instanceof ValueSeries
+        ? fromValueSeries(series, column)
+        : fromTimeSeries(series, column),
+    [series, column],
+  );
   // Styling: semantic identifier → theme scatter style. The single styling
   // channel for the base mark.
   const { scatter } = container.theme;
@@ -152,13 +188,10 @@ export function ScatterChart<S extends SeriesSchema>({
   // so a typo surfaces at render, not silently as base-styled points).
   const encoding = useMemo(
     () =>
-      resolveEncoding(
-        cs,
-        style.radius,
-        style.color,
-        radius,
-        color,
-        (col) => fromTimeSeries(series, col).y,
+      resolveEncoding(cs, style.radius, style.color, radius, color, (col) =>
+        series instanceof ValueSeries
+          ? fromValueSeries(series, col).y
+          : fromTimeSeries(series, col).y,
       ),
     [cs, style.radius, style.color, radius, color, series],
   );
@@ -170,6 +203,17 @@ export function ScatterChart<S extends SeriesSchema>({
   >(() => {
     if (label === undefined || label === false) return undefined;
     const field = label === true ? column : label;
+    if (series instanceof ValueSeries) {
+      // Columnar read — a ValueSeries has no per-row events. The field is a
+      // runtime string, cast onto the schema-literal column name (the same
+      // pattern as data.ts' readValueColumn). A gap or an unknown column reads
+      // undefined => no label at that point.
+      const col = series.column(field as ValueSeriesColumnName<VS>);
+      return (i) => {
+        const v = col?.read(i);
+        return v === undefined || v === null ? undefined : String(v);
+      };
+    }
     return (i) => {
       // series.at(i) is O(1) per row (columnar eventAt cache), so a label per
       // point stays cheap. The field is a runtime string → cast off the literal-
@@ -181,31 +225,31 @@ export function ScatterChart<S extends SeriesSchema>({
     };
   }, [label, column, series]);
 
-  // The point's stable key is its event begin (epoch ms) — the same as cs.x[i],
-  // which is the key column's begin buffer. Used for selection identity.
+  // The point's stable key is its x — the event begin (epoch ms) on a time
+  // axis, the axis value on a value axis; either way it's cs.x[i], the key
+  // column's begin buffer. Used for selection identity.
   const keyAt = useMemo(() => (i: number) => cs.x[i]!, [cs]);
 
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
         yExtent: () => scatterExtent(cs),
-        xKind: 'time',
+        // The container infers the shared x scale's kind + auto-fit domain from
+        // its layers: a ValueSeries scatters on a value axis, a TimeSeries on time.
+        xKind: series instanceof ValueSeries ? 'value' : 'time',
         xExtent: () =>
           cs.length === 0 ? null : [cs.x[0]!, cs.x[cs.length - 1]!],
-        sampleAt: (time) => {
+        sampleAt: (x) => {
           // No readout past the data (tracker policy — the dot snaps to a drawn
-          // mark, never extrapolates past the span); bounds from the time axis.
-          if (
-            cs.length === 0 ||
-            time < cs.x[0]! ||
-            time > cs.x[cs.length - 1]!
-          ) {
+          // mark, never extrapolates past the span); bounds from the columnar x
+          // axis (epoch ms or axis value — the bisect doesn't care).
+          if (cs.length === 0 || x < cs.x[0]! || x > cs.x[cs.length - 1]!) {
             return [];
           }
           // Nearest *drawn* point by index (skips gaps) — O(log N). Reading by
           // index gives the value, the snap-to x, and the encoded colour in one
           // shot, so the readout swatch matches the mark the user sees.
-          const i = nearestIndex(cs, time);
+          const i = nearestIndex(cs, x);
           if (i < 0) return [];
           return [
             {
