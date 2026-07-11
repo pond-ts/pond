@@ -221,30 +221,38 @@ function FreeformDemo() {
 }
 export const Freeform: Story = { render: () => <FreeformDemo /> };
 
-/** **Pan + shift-select.** With `panZoom` on, `regionSelectModifier="shift"` shares
- *  the drag: **plain drag pans**, **shift-drag** selects a region (shown below).
- *  Wheel-zoom works either way. Without the modifier a region-drag would preempt
- *  pan entirely. */
+/** **Pan + shift-select-to-zoom.** With `panZoom` on, `regionSelectModifier="shift"`
+ *  shares the drag: **shift-drag** selects a range → **zooms** to it, then **plain
+ *  drag pans** the zoomed view (and the wheel zooms). Controlled (`onTimeRangeChange`
+ *  + `range`) so the pan gesture and the shift-select write the same range. Without
+ *  the modifier a region-drag would preempt pan entirely. */
 function PanAndSelectDemo() {
   const s = weekdaySessions(3);
   const hourGrid = barSeq(s, 60 * MIN);
   const bars = candles(s, hourGrid, 5 * MIN);
-  const [sel, setSel] = useState('— (shift-drag to select)');
-  const fmt = (t: number) => new Date(t).toISOString().slice(5, 16);
+  const full = rangeOf(s);
+  const [range, setRange] = useState<[number, number]>(full);
+  const zoomed = range[0] !== full[0] || range[1] !== full[1];
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: W }}>
-      <div style={{ fontSize: 12 }}>selected: {sel}</div>
+      <button
+        type="button"
+        onClick={() => setRange(full)}
+        disabled={!zoomed}
+        style={{ alignSelf: 'flex-start', padding: '2px 10px', fontSize: 12 }}
+      >
+        Reset zoom
+      </button>
       <ChartContainer
         width={W}
-        range={rangeOf(s)}
+        range={range}
         discontinuities={provider(s)}
         panZoom
+        onTimeRangeChange={setRange}
         cursor="region"
         cursorSequence={hourGrid}
         regionSelectModifier="shift"
-        onRegionSelect={(r: TimeRange) =>
-          setSel(`${fmt(r.begin())} → ${fmt(r.end())}`)
-        }
+        onRegionSelect={(r: TimeRange) => setRange([r.begin(), r.end()])}
       >
         <ChartRow height={220}>
           <YAxis id="p" side="right" />

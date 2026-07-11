@@ -568,6 +568,9 @@ export function Layers({ children }: LayersProps) {
       c.setHoverY(null, null);
       return;
     }
+    // Cancel a region-drag on leave (no commit) — a safety net for the rare case
+    // where the pointer capture didn't take, so the anchor can't get stuck.
+    if (c.regionAnchor !== null) c.setRegionAnchor(null);
     c.setHoverX(null);
     c.setHoverY(null, null);
     c.setHovered(null);
