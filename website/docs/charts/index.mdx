@@ -68,18 +68,19 @@ type, and default; this is the map.
 | `YAxis`          | A y axis: `id`, `side`, auto-fit or explicit domain, `format`. |
 | `XAxis`          | A placeable x axis (time or value), custom `ticks`.            |
 | `TimeAxis`       | A thin `<XAxis>` preset for the time axis.                     |
+| `CategoryAxis`   | A thin `<XAxis>` preset for the ordinal category axis.         |
 | `Canvas`         | The low-level DPR-aware canvas primitive rows draw on.         |
 
 ### Draw layers
 
-| Export         | What it draws                                                                                                                                |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LineChart`    | A gap-aware line.                                                                                                                            |
-| `AreaChart`    | A filled area.                                                                                                                               |
-| `BandChart`    | A filled `lower`/`upper` envelope (variance band).                                                                                           |
-| `ScatterChart` | Points, with data-driven radius / colour encoding.                                                                                           |
-| `BarChart`     | Bars, and **histograms** — stacked (`columns` / a `Map` / `bins`) and `horizontal`. See the [histograms guide](../how-to-guides/histograms). |
-| `BoxPlot`      | Box-and-whisker / candlestick (`shape`).                                                                                                     |
+| Export         | What it draws                                                                                                                                                                                                                                         |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LineChart`    | A gap-aware line.                                                                                                                                                                                                                                     |
+| `AreaChart`    | A filled area.                                                                                                                                                                                                                                        |
+| `BandChart`    | A filled `lower`/`upper` envelope (variance band).                                                                                                                                                                                                    |
+| `ScatterChart` | Points, with data-driven radius / colour encoding.                                                                                                                                                                                                    |
+| `BarChart`     | Bars, **histograms** — stacked (`columns` / a `Map` / `bins`) and `horizontal` ([guide](../how-to-guides/histograms)) — and **categorical** bars (`categories`, a bar per category on an ordinal axis; [guide](../how-to-guides/categorical-charts)). |
+| `BoxPlot`      | Box-and-whisker / candlestick (`shape`).                                                                                                                                                                                                              |
 
 Every draw layer takes a pond `series` + a `column`, an `as` **style**
 identifier (theme lookup), and an `axis` **scale** id — style and scale are

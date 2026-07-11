@@ -121,6 +121,7 @@ const sidebars: SidebarsConfig = {
         'how-to-guides/dashboard-guide',
         'how-to-guides/ingesting-messy-data',
         'how-to-guides/histograms',
+        'how-to-guides/categorical-charts',
       ],
     },
     {
