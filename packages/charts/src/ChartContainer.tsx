@@ -153,6 +153,16 @@ export interface ChartContainerProps {
    */
   cursorSequence?: Sequence | BoundedSequence;
   /**
+   * Makes the `region` cursor **draggable**: drag across the plot and the band
+   * extends **bucket by bucket** (snapping to `cursorSequence` points); on
+   * release this fires **once** with the selected `[start, end)` `TimeRange`, and
+   * the cursor reverts to the single-bucket highlight (it does not keep the
+   * range). Typical use — zoom the view to the returned range (the container
+   * doesn't zoom itself; that's the consumer's call). No-op unless
+   * `cursor="region"` with a `cursorSequence`.
+   */
+  onRegionSelect?: (range: TimeRange) => void;
+  /**
    * Fires on pointer move with the hovered time + every series' value there (so
    * you can render a readout outside the chart), and `null` on leave.
    */
@@ -317,6 +327,7 @@ export function ChartContainer({
   minDuration = 1,
   cursor = DEFAULT_CURSOR_MODE,
   cursorSequence,
+  onRegionSelect,
   cursorTime = false,
   crosshairSnap = true,
   editAnnotations = false,
@@ -381,6 +392,8 @@ export function ChartContainer({
   // still cursor stays put while a live window slides under it; a controlled
   // `trackerPosition` resolves to a pixel below.
   const [hoverX, setHoverX] = useState<number | null>(null);
+  // The region-cursor drag anchor (epoch ms) — set on press, cleared on release.
+  const [regionAnchor, setRegionAnchor] = useState<number | null>(null);
   // The free-form crosshair also needs the pointer's y + which row (row-specific,
   // unlike the shared x). One state object so a move updates both atomically.
   const [hoverPoint, setHoverPoint] = useState<{
@@ -753,6 +766,9 @@ export function ChartContainer({
       setHoverY,
       crosshairSnap,
       cursorBuckets,
+      regionAnchor,
+      setRegionAnchor,
+      onRegionSelect,
       draggingKey,
       setDragging,
       selected: selectedValue,
@@ -803,6 +819,9 @@ export function ChartContainer({
       setHoverY,
       crosshairSnap,
       cursorBuckets,
+      regionAnchor,
+      setRegionAnchor,
+      onRegionSelect,
       draggingKey,
       setDragging,
       selectedValue,

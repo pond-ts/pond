@@ -126,6 +126,7 @@ describe('Charts/Cursors/Region stories render', () => {
       'AggregationAligned',
       'CroppedToSessions',
       'Default',
+      'DragToSelect',
       'Sessions',
     ]);
   });

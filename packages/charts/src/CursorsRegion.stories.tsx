@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { Sequence } from 'pond-ts';
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import type { TimeRange } from 'pond-ts';
 import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
@@ -138,3 +140,46 @@ export const AggregationAligned: Story = {
     );
   },
 };
+
+/** **Drag to select → zoom.** Providing `onRegionSelect` makes the region cursor
+ *  **draggable**: drag across the plot and the band extends **bucket by bucket**
+ *  (here 1-hour candles), and on release it fires once with the selected
+ *  `TimeRange`. The cursor doesn't keep the range — the callback does. This demo
+ *  zooms the view to the selection (the container doesn't zoom itself; that's the
+ *  consumer's job); **Reset** restores the full range. */
+function DragToSelectDemo() {
+  const s = weekdaySessions(3);
+  const hourGrid = barSeq(s, 60 * MIN);
+  const bars = candles(s, hourGrid, 5 * MIN);
+  const full = rangeOf(s);
+  const [range, setRange] = useState<[number, number]>(full);
+  const zoomed = range[0] !== full[0] || range[1] !== full[1];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: W }}>
+      <button
+        type="button"
+        onClick={() => setRange(full)}
+        disabled={!zoomed}
+        style={{ alignSelf: 'flex-start', padding: '2px 10px', fontSize: 12 }}
+      >
+        Reset zoom
+      </button>
+      <ChartContainer
+        width={W}
+        range={range}
+        discontinuities={provider(s)}
+        cursor="region"
+        cursorSequence={hourGrid}
+        onRegionSelect={(r: TimeRange) => setRange([r.begin(), r.end()])}
+      >
+        <ChartRow height={220}>
+          <YAxis id="p" side="right" />
+          <Layers>
+            <Candlestick series={bars} axis="p" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    </div>
+  );
+}
+export const DragToSelect: Story = { render: () => <DragToSelectDemo /> };

@@ -17,7 +17,8 @@ import {
 } from 'react';
 import { Canvas } from './Canvas.js';
 import { drawGrid, drawDividers, thinPixels } from './grid.js';
-import { cursorParts, bandRect } from './tracker.js';
+import { TimeRange } from 'pond-ts';
+import { cursorParts, bandRect, regionSpan } from './tracker.js';
 import { resolveSelection } from './select.js';
 import {
   panRange,
@@ -320,6 +321,26 @@ export function Layers({ children }: LayersProps) {
         }
         return;
       }
+      // Region-cursor drag-select (opt-in via `onRegionSelect`): anchor the
+      // selection at the bucket under the press; the band then extends bucket by
+      // bucket as the pointer moves, and release commits the range. Preempts pan.
+      if (c.cursor === 'region' && c.onRegionSelect && c.cursorBuckets) {
+        const px = Math.max(
+          0,
+          Math.min(
+            c.plotWidth,
+            e.clientX - e.currentTarget.getBoundingClientRect().left,
+          ),
+        );
+        c.setRegionAnchor(+c.xScale.invert(px));
+        c.setHoverX(px);
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
       if (!c.panZoom) return;
       const r = c.timeRange;
       // Arm a potential pan: record the anchor, but DON'T capture the pointer or
@@ -351,6 +372,13 @@ export function Layers({ children }: LayersProps) {
         const px = Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left));
         setCreatePt({ x: px, y: e.clientY - rect.top });
         c.setHoverX(px); // share the preview x so other rows draw a guide there
+        return;
+      }
+      // Region drag in progress: just track the pointer x (the band spans from the
+      // anchor bucket to here); no pan, no hover hit-test.
+      if (c.regionAnchor !== null) {
+        const rect = e.currentTarget.getBoundingClientRect();
+        c.setHoverX(Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left)));
         return;
       }
       // A pan is only live while a button is held. A move with no buttons means
@@ -441,6 +469,31 @@ export function Layers({ children }: LayersProps) {
   const handlePointerUp = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       const c = containerRef.current;
+      // End a region drag: commit the anchor→pointer span as a one-shot range,
+      // then clear the anchor (the cursor reverts to the single-bucket highlight).
+      if (c.regionAnchor !== null) {
+        const px = Math.max(
+          0,
+          Math.min(
+            c.plotWidth,
+            e.clientX - e.currentTarget.getBoundingClientRect().left,
+          ),
+        );
+        const span = c.cursorBuckets
+          ? regionSpan(c.cursorBuckets, c.regionAnchor, +c.xScale.invert(px))
+          : null;
+        c.setRegionAnchor(null);
+        try {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        if (span)
+          c.onRegionSelect?.(
+            new TimeRange({ start: span.start, end: span.end }),
+          );
+        return;
+      }
       if (c.creating !== null) {
         const rect = e.currentTarget.getBoundingClientRect();
         const px = Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left));
@@ -665,9 +718,10 @@ export function Layers({ children }: LayersProps) {
   })();
 
   // `region` cursor: the bucket under the pointer (from `cursorBuckets`), shaded
-  // as a band. Binary-search the interval containing `cursorTime`, then map both
-  // edges through `xScale` — so on a trading-time axis the closed part of the
-  // bucket collapses and the band crops to the live session(s) within it.
+  // as a band, its edges mapped through `xScale` — so on a trading-time axis the
+  // closed part of the bucket collapses and the band crops to the live session(s)
+  // within it. While a drag is live (`regionAnchor`), the band spans from the
+  // anchor's bucket to the pointer's, extending bucket by bucket.
   const band: { x0: number; x1: number } | null =
     parts.band && cursorTime !== null && container.cursorBuckets !== undefined
       ? bandRect(
@@ -675,6 +729,7 @@ export function Layers({ children }: LayersProps) {
           cursorTime,
           (v) => xScale(v),
           plotWidth,
+          container.regionAnchor ?? undefined,
         )
       : null;
 
