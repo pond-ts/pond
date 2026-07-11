@@ -60,6 +60,11 @@ export interface ScatterChartProps<
    * the key the controlled `selected` echo, dedup, and (later) multi-select all
    * match on — so a selection survives a data update where a sample `key` goes
    * stale.
+   *
+   * A point's identity within the series is its **x** (key / axis value). The
+   * key contract allows duplicate x's (equal timestamps; a value-axis plateau
+   * from `byValue('cumDist')`) — points sharing an x share identity, so
+   * selecting one highlights the last drawn point at that x.
    */
   id?: string;
   /**
@@ -136,7 +141,7 @@ type FieldReader = { get(field: string): unknown };
  * ```
  */
 export function ScatterChart<
-  S extends SeriesSchema,
+  S extends SeriesSchema = SeriesSchema,
   VS extends ValueSeriesSchema = ValueSeriesSchema,
 >({
   series,

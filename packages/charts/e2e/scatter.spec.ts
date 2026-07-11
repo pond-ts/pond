@@ -16,6 +16,11 @@ const cases: ReadonlyArray<readonly [id: string, file: string]> = [
   // Value axis (ValueSeries): the smile composition + the encodings state.
   ['charts-scatterchart--value-axis-smile', 'scatter-value-axis-smile.png'],
   ['charts-scatterchart--value-axis-encoded', 'scatter-value-axis-encoded.png'],
+  // Labels on a value axis run the columnar labelAt branch in a real draw.
+  [
+    'charts-scatterchart--value-axis-labelled',
+    'scatter-value-axis-labelled.png',
+  ],
 ];
 
 test.describe('ScatterChart', () => {

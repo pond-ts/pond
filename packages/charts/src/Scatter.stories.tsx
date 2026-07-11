@@ -355,6 +355,30 @@ export const ValueAxisSmile: Story = {
 };
 
 /**
+ * **Value axis + labels.** The per-point `label` channel on a `ValueSeries` —
+ * a **columnar read** (a value series has no per-row events): each mark labels
+ * its open interest. The chain is windowed to the body of the smile with
+ * `sliceByValue(94, 108)` so the labels stay sparse — the value-axis cull
+ * doing story duty.
+ */
+export const ValueAxisLabelled: Story = {
+  render: () => (
+    <ChartContainer timeFormat=",.0f" width={520}>
+      <ChartRow height={220}>
+        <YAxis id="iv" format=".1%" />
+        <Layers>
+          <ScatterChart
+            series={smileChain().sliceByValue(94, 108)}
+            column="fair"
+            label="oi"
+          />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
  * **Value axis + flag cursor.** Scatter's `sampleAt` bisecting the **strike**
  * axis: hover and the staff snaps to the nearest drawn mark, the flag reading
  * its IV, `cursorTime` showing the strike. Proves the tracker readout follows

@@ -46,8 +46,9 @@ and type-level changes; patch bumps are strictly additive.
 - **`<ScatterChart>` accepts a `ValueSeries`** (`@pond-ts/charts`) — scatter
   marks on the value axis, the same instanceof-branched adapter as
   `<LineChart>` (the container infers the x kind from the data). The
-  data-driven `radius` / `color` encodings and per-point `label` work
-  unchanged on a value axis — IV marks keyed by strike with open-interest
+  data-driven `radius` / `color` encodings work unchanged on a value axis;
+  the per-point `label` reads through a new columnar branch (a `ValueSeries`
+  has no per-row events) — IV marks keyed by strike with open-interest
   radius is the driving composition (vol smile). New value-axis Storybook
   fan-out (`ValueAxis` / `ValueAxisEncoded` / `ValueAxisSmile` /
   `ValueAxisFlag`) + Linux visual baselines.
