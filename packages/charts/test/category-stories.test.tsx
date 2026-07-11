@@ -24,6 +24,7 @@ describe('CategoryAxis stories render', () => {
       'CrowdedLabels',
       'HighCardinality',
       'Select',
+      'Signed',
       'SingleHue',
       'Tickers',
       'Transpose',

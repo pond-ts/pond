@@ -43,14 +43,16 @@ and type-level changes; patch bumps are strictly additive.
 ### Added
 
 - **`@pond-ts/charts`: a first-class categorical x-axis.** `<BarChart
-  categories={[{ label, value }]}>` draws one bar per category on an ordinal
+categories={[{ label, value }]}>` draws one bar per category on an ordinal
   **band scale** (the transpose view's "columns on x" — ticker / account / zone
   on x). The container infers `xKind:'category'` and builds a `scaleBand` over the
   labels; `<CategoryAxis>` ticks once per category. Colour per category via
-  `binColors`; selection reports the category name. New exports `scaleBand` /
-  `ScaleBand`, `CategoryAxis`, `categoryStack` / `CategoryDatum`. Additive — a new
-  x-kind alongside time / value; existing charts are unchanged. First slice of the
-  categorical-axis RFC (`docs/rfcs/categorical-axis.md`, Phase 1).
+  `binColors`; selection reports the category name. **Negative** category values
+  draw below the baseline (the P&L / delta case) — a single-series category bar
+  honours its sign. New exports `scaleBand` / `ScaleBand`, `CategoryAxis`,
+  `categoryStack` / `CategoryDatum`. Additive — a new x-kind alongside time /
+  value; existing charts are unchanged. First slice of the categorical-axis RFC
+  (`docs/rfcs/categorical-axis.md`, Phase 1).
 - **`@pond-ts/charts`: `transposeRow`** — read one **row** of a wide `TimeSeries`
   **across** into `{ label, value }[]` for `<BarChart categories>`: the schema's
   numeric columns (a `pivotByGroup` output's per-group columns, a term

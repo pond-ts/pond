@@ -270,9 +270,12 @@ export interface StackMark {
 }
 
 /**
- * The `[min, max]` extent of the **value (stacked) axis** — always `[0, maxTotal]`,
- * where `maxTotal` is the tallest bin's summed finite non-negative segments. `0` is
- * pulled in so the stack rests on a visible baseline (the bar analog of
+ * The `[min, max]` extent of the **value (stacked) axis**. For a true multi-group
+ * stack it is `[0, maxTotal]`, where `maxTotal` is the tallest bin's summed finite
+ * non-negative segments. For a **single-group** series (`G === 1` — the plain /
+ * categorical bar case) it spans the values' own `[min, max]`, so a **negative**
+ * bar's floor is in the domain (segments below the baseline stay visible). `0` is
+ * always pulled in so the bars rest on a visible baseline (the bar analog of
  * {@link barExtent}). An empty / all-gap series returns `[0, 1]` so the axis still
  * has a usable domain. Feeds the y auto-fit for a vertical histogram, the x
  * auto-fit for a horizontal one.
@@ -280,15 +283,26 @@ export interface StackMark {
 export function stackValueExtent(ss: StackedBarSeries): [number, number] {
   const G = ss.groups.length;
   let max = 0;
+  let min = 0;
   for (let b = 0; b < ss.length; b += 1) {
     let cum = 0;
     for (let g = 0; g < G; g += 1) {
       const v = ss.values[b * G + g]!;
-      if (Number.isFinite(v) && v > 0) cum += v;
+      if (!Number.isFinite(v)) continue;
+      if (G === 1) {
+        // Single-group: a bar honours its sign, so track both ends.
+        if (v > max) max = v;
+        if (v < min) min = v;
+      } else if (v > 0) {
+        cum += v; // True stack: sum the positive segments.
+      }
     }
     if (cum > max) max = cum;
   }
-  return [0, max > 0 ? max : 1];
+  // Empty / all-gap / all-zero → a usable unit domain; otherwise the real extent
+  // (with 0 pulled in via the `min`/`max` seeds above).
+  if (min === 0 && max === 0) return [0, 1];
+  return [min, max];
 }
 
 /**
@@ -331,9 +345,14 @@ export function segmentRect(
 ): [x0: number, x1: number, yTop: number, yBottom: number] | null {
   const G = ss.groups.length;
   const v = ss.values[b * G + g]!;
-  // Skip non-finite / negative / zero: a zero segment would otherwise draw a
-  // wasted zero-extent rect (and can't be hit-tested).
-  if (!Number.isFinite(v) || v <= 0) return null;
+  // Skip non-finite (a gap) or zero (a zero-extent rect that can't draw or be
+  // hit-tested). A **negative** value is a gap only in a true multi-group stack
+  // (`G > 1`) — stacking a negative segment is undefined. A **single-group**
+  // series (`G === 1`) is a plain bar: it honours its sign and draws from the
+  // baseline *down* to a negative value (the categorical row-read's P&L / delta
+  // case), so negatives are kept and the `Math.min/Math.max` below normalizes the
+  // below-baseline rect.
+  if (!Number.isFinite(v) || v === 0 || (v < 0 && G > 1)) return null;
   if (orientation === 'vertical') {
     const [x0, x1] = barSpanPx(
       ss.begin[b]!,
@@ -361,8 +380,10 @@ export function segmentRect(
 /**
  * Fill every segment of every bin in `ss`, stacking each bin's groups from the
  * value baseline outward (bottom → top vertical, left → right horizontal). A gap
- * (non-finite / negative) segment is skipped and adds nothing to the running
- * total, so the segments above it close the space. A segment matching the current
+ * (non-finite, or a negative segment of a true multi-group stack) is skipped and
+ * adds nothing to the running total, so the segments above it close the space; a
+ * single-group series draws its negative bars below the baseline (see
+ * {@link segmentRect}). A segment matching the current
  * `selection` (same series `id`, bin `key` **and** group `label`) draws in its
  * group's `highlight` **and** outlined; one matching `hover` draws in `highlight`
  * without the outline; all others use the flat `fill`. `globalAlpha` carries the

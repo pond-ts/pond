@@ -175,6 +175,36 @@ function SelectDemo() {
 
 export const Select: Story = { render: () => <SelectDemo /> };
 
+/**
+ * **Signed values.** A single-series category bar honours its sign — a negative
+ * category (a losing ticker's day P&L) draws **below the zero baseline**, a
+ * positive one above it. The y-axis auto-fits to span the negatives (no `min`
+ * pinning it to zero), so the baseline sits inside the plot. The transpose view's
+ * P&L / delta / net-change case.
+ */
+export const Signed: Story = {
+  render: () => {
+    const pnl = [
+      { label: 'AAPL', value: 42 },
+      { label: 'MSFT', value: -18 },
+      { label: 'GOOG', value: 27 },
+      { label: 'NVDA', value: -33 },
+      { label: 'AMZN', value: 11 },
+      { label: 'META', value: -7 },
+    ];
+    return (
+      <ChartContainer width={640} theme={estelaTheme}>
+        <ChartRow height={240}>
+          <YAxis id="v" label="day P&L" pad={0.1} />
+          <Layers>
+            <BarChart categories={pnl} binColors={PALETTE} gap={6} />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
 // ── The transpose reader: read one row of a WIDE series across (PR2) ──
 
 const NAMES = ['AAPL', 'MSFT', 'GOOG', 'NVDA', 'AMZN'] as const;

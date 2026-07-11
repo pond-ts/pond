@@ -721,6 +721,14 @@ export function stacksFromBins(
  * transpose view's `(columnName, cell)` pair (categorical-axis RFC, Phase 1). An
  * ordered list of these is the explicit categorical data source; Phase 2's
  * transpose reader produces the same list from a wide series' row.
+ *
+ * **Labels are the stable identity** — the axis maps each `label` to a slot and
+ * selection/highlight key on it (so a pick survives a reorder). They must be
+ * **unique** within the list: two categories sharing a label collapse to one axis
+ * tick and both highlight together on a pick. The transpose reader satisfies this
+ * for free (a series' column names are unique); only a hand-built list can break
+ * it. `value` may be **negative** — a single-series category bar draws it below
+ * the baseline (the P&L / delta case).
  */
 export interface CategoryDatum {
   readonly label: string;

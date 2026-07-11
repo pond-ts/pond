@@ -35,6 +35,10 @@ function thinCategoryLabels(
 ): PlacedTick[] {
   const n = ticks.length;
   const slot = plotWidth / n; // per-category width in px
+  // Before first layout `plotWidth` is 0 → `slot` is 0 and the stride/room math
+  // below goes to Infinity/NaN. Nothing is visible at zero width anyway, so pass
+  // the ticks through untouched until a real width arrives.
+  if (!(slot > 0)) return [...ticks];
   const charW = fontSize * 0.62; // ~average glyph advance
   const longest = Math.min(
     12,
