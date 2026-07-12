@@ -954,7 +954,7 @@ Phases (each independently shippable, ends with a docs deploy):
       landing now lists all five packages, re-home the orphaned
       `recipes/` pages into the sidebar, fix `intro.mdx`'s stale site
       map and the homepage CTA target.
-- [ ] **P1 — foundation** (in progress; 6/7 shipped):
+- [x] **P1 — foundation** (complete, 7/7 shipped):
   - [x] Storybook `docsTheme` restyle + tree normalization + one-time
         visual-baseline regen (#433)
   - [x] site visual-theme pass, dark mode, local search, redirects
@@ -995,7 +995,33 @@ Phases (each independently shippable, ends with a docs deploy):
         item ids and every chapter's internal `Next:` link had to
         drop the prefix too (`learn-charts/your-first-chart`, not
         `learn-charts/01-your-first-chart`).
-  - [ ] responsive-width recipe, `@pond-ts/financial` section stub
+  - [x] responsive-width recipe + `@pond-ts/financial` section stub
+        (#445) — `recipes/responsive-width.mdx`: the `useMeasuredWidth`
+        `ResizeObserver` pattern already used ad hoc by `GalleryCard`
+        and `MultiPanelLayout.stories.tsx`, now a documented recipe
+        with a live drag-to-resize demo; the 3 "not yet a documented
+        recipe" placeholders (charts index, `GalleryCard`'s doc
+        comment, Learn ch1's width caution) now link to it.
+        `financial/index.mdx` (new `@pond-ts/financial` sidebar
+        category, `website` takes a `file:` dep on the package): the
+        `TradingCalendar` quickstart (`fromRules`/`fromSessions`,
+        `sessions`/`sessionOn`/`isTradingDay`/`sessionContaining`,
+        `barSequence`/`sessionSequence` → `aggregate`, `tagSessions` →
+        `partitionBy`), with a real live demo — a candlestick chart
+        built from weekday-only session data, calendar-aware via
+        `ChartContainer`'s `calendar` prop, so weekends visibly
+        collapse on the axis rather than leaving gaps. Explicitly not
+        the full financial guide (OHLC → rollups → volume row → live
+        forming-bar pattern) — that's still P3's flagship guide.
+        Real bug caught in self-review before the PR even opened: the
+        `responsive-width` demo measured its own padded/bordered box
+        and hand the *outer* (padded) width to `ChartContainer`, which
+        then rendered inside the *inner* (unpadded) space — silently
+        clipped by the demo's `overflow: hidden`. Fixed by splitting
+        the styled outer box from a plain, unstyled inner box that's
+        the one actually measured; documented as a new gotcha in the
+        recipe itself, since it's a realistic mistake the next reader
+        would make too.
 - [ ] **P2 — interaction + doc-debt burn-down**: Learn 6–9,
       Interaction section, Annotations & indicators section, Financial
       charts hub (+ TradingView vocabulary bridge), Missing data &

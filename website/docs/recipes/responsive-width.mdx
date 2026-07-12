@@ -1,0 +1,126 @@
+---
+sidebar_position: 5
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import ResponsiveWidth from '@site/src/examples/responsive-width';
+
+# Filling a responsive box
+
+`<ChartContainer>` takes `width` as a **required pixel number**, not
+`"100%"` — the canvas renderer needs real pixels to lay out ticks and
+slots before it draws. Filling a box that itself resizes (a flex column, a
+CSS Grid cell, a browser window) is one `ResizeObserver` away.
+
+Drag the bottom-right corner of the chart below to resize it — the width
+prop updates live:
+
+<ChartExample name="responsive-width" height={230}>
+  <ResponsiveWidth />
+</ChartExample>
+
+## The recipe
+
+```tsx
+import { useLayoutEffect, useRef, useState } from 'react';
+import {
+  ChartContainer,
+  ChartRow,
+  Layers,
+  LineChart,
+  YAxis,
+} from '@pond-ts/charts';
+
+/**
+ * Measure a box's content width via `ResizeObserver`. The first read is
+ * synchronous (`getBoundingClientRect`) so it doesn't depend on RO's
+ * initial callback firing — its timing isn't guaranteed, and relying on
+ * it can leave a chart that never mounts. RO then keeps it live.
+ */
+function useMeasuredWidth<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null);
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () =>
+      setWidth(Math.round(el.getBoundingClientRect().width));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, width] as const;
+}
+
+export function ResponsiveChart({ series, theme }) {
+  const [boxRef, width] = useMeasuredWidth<HTMLDivElement>();
+
+  return (
+    <div ref={boxRef} style={{ width: '100%' }}>
+      {width > 0 && (
+        <ChartContainer range={series.timeRange()} width={width} theme={theme}>
+          <ChartRow height={200}>
+            <YAxis id="pct" side="right" format=".0%" />
+            <Layers>
+              <LineChart series={series} column="cpu" axis="pct" />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>
+      )}
+    </div>
+  );
+}
+```
+
+Three pieces:
+
+1. **`useLayoutEffect`, not `useEffect`.** A layout effect runs before the
+   browser paints, so the first real width lands before the user sees a
+   flash of the zero-width fallback.
+2. **Measure synchronously on mount, then let `ResizeObserver` take over.**
+   `ResizeObserver`'s own first callback isn't guaranteed to fire
+   immediately in every browser — relying on it alone can leave `width`
+   stuck at `0`. `getBoundingClientRect()` in the effect body gives you a
+   real number up front.
+3. **Gate the render on `width > 0`.** `<ChartContainer width={0}>` is a
+   degenerate chart, not an empty one — don't mount it until you have a
+   real measurement.
+
+## Notes and gotchas
+
+- **The ref goes on a plain box, not the container.** `ChartContainer`
+  itself renders a fixed-width canvas; measure an ancestor `<div>` and
+  pass its width down, the same way every live embed on this site does
+  it (see `GalleryCard`, which uses this exact pattern for its card
+  grid, and [Resizable multi-panel layout](./resizable-panels), which
+  extends it with a draggable splitter between two rows).
+- **Debounce only if you have a real reason to.** `ResizeObserver`
+  already batches — most consumers don't need to add their own
+  debounce/throttle on top. Add one only if profiling shows the redraw
+  cost matters (many rows, many series, a very hot resize loop).
+- **A resizable parent needs a resizable parent.** `width: '100%'` on the
+  measured box only does anything if something upstream actually
+  constrains it — a flex/grid cell, a resizable panel, or (as in the demo
+  above) a plain `resize: horizontal` box. Measuring a box with no
+  external constraint just measures its own content, which doesn't
+  change.
+- **Never measure a box you've also styled with padding or a border.**
+  `getBoundingClientRect()` returns the full border box; hand that number
+  straight to `ChartContainer` and the chart renders at the padded box's
+  _outer_ width while only having the _inner_ (content) width available,
+  overflowing by exactly the padding + border — silently clipped if the
+  box also sets `overflow: hidden`. If you want a bordered/padded frame
+  around the chart (as the demo above does, for the dashed resize
+  outline), put that styling on an **outer** wrapper and measure a plain,
+  unstyled **inner** box instead — the demo's own source does this: the
+  `resize`/`padding`/`border` box and the measured `ref` box are two
+  nested `<div>`s, not one.
+
+## See also
+
+- [Resizable multi-panel layout](./resizable-panels) — this same pattern,
+  extended with a draggable splitter between two `ChartRow`s.
+- The Gallery's `GalleryCard` component (`website/src/components/GalleryCard`)
+  — the site's own production use of this recipe, one per card in a
+  responsive grid.
