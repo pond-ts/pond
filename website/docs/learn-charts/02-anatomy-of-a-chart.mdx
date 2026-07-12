@@ -1,0 +1,153 @@
+---
+title: 2. Anatomy of a chart
+sidebar_label: 2. Anatomy of a chart
+sidebar_position: 2
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import DualAxis from '@site/src/examples/learn-02-dual-axis';
+import TwoRow from '@site/src/examples/learn-02-two-row';
+
+# Anatomy of a chart
+
+:::info[You will learn]
+
+- How axes are declared and linked to draw layers by `id`
+- Two ways to show a second series: a second axis, or a second row
+- `Layers`' z-stack order and why it's just declaration order
+- The prop-identity caution every chart component shares
+  :::
+
+Chapter 1's chart had one row, one axis, one line. Real charts rarely stop
+there — this chapter is what changes when they grow.
+
+## Axes are declared, not implied
+
+`axis="pct"` on a draw layer doesn't create a scale — it looks one up.
+`<YAxis id="pct" .../>` is what creates it. Any number of layers can point
+`axis` at the same `id`, and they all share that one scale:
+
+```tsx
+<YAxis id="pct" side="right" format=".0%" />
+<Layers>
+  <LineChart series={cpuSeries} column="cpu" axis="pct" />
+  <LineChart series={otherSeries} column="cpu" axis="pct" />
+</Layers>
+```
+
+That indirection is also how you get a **second, independently-scaled**
+series: declare a second `YAxis` with its own `id`, and point a layer at
+it instead.
+
+<ChartExample name="learn-02-dual-axis" height={280}>
+  <DualAxis />
+</ChartExample>
+
+```tsx
+<ChartRow height={220}>
+  <YAxis id="pct" side="left" label="cpu" format=".0%" />
+  <YAxis id="ms" side="right" label="latency (ms)" format=",.0f" />
+  <Layers>
+    <LineChart series={series} column="cpu" axis="pct" as="primary" />
+    <LineChart series={series} column="latency" axis="ms" as="secondary" />
+  </Layers>
+</ChartRow>
+```
+
+Two `YAxis` elements, two `axis` targets, one row — cpu (percent, left) and
+latency (milliseconds, right) share the same x axis and the same cursor,
+but scale independently.
+
+## Or: a second row
+
+The other way to show a second series is a **second `ChartRow`** — its own
+plot band, its own y axis, still sharing the container's x axis and cursor:
+
+<ChartExample name="learn-02-two-row" height={310}>
+  <TwoRow />
+</ChartExample>
+
+```tsx
+<ChartContainer range={series.timeRange()} width={560} theme={theme}>
+  <ChartRow height={140}>
+    <YAxis id="pct" side="right" label="cpu" format=".0%" />
+    <Layers>
+      <LineChart series={series} column="cpu" axis="pct" as="primary" />
+    </Layers>
+  </ChartRow>
+  <ChartRow height={100}>
+    <YAxis id="ms" side="right" label="latency (ms)" format=",.0f" />
+    <Layers>
+      <LineChart series={series} column="latency" axis="ms" as="secondary" />
+    </Layers>
+  </ChartRow>
+</ChartContainer>
+```
+
+A container holds as many rows as you give it — each gets its own `height`
+and y axis, and the container reserves one shared time axis strip at the
+bottom, aligned under every row's gutters.
+
+**Which one?** Dual-axis when the two series belong on the same plot (price
+and volume, actual vs. target). A second row when they don't share a visual
+scale or would visually collide (cpu and an error-count histogram). There's
+no rule enforced by the library — both are the same four primitives, just
+nested differently.
+
+## `Layers` is a z-stack, in declaration order
+
+Inside one row, `<Layers>` draws its children **back-to-front, in the order
+you write them** — the first child is furthest back, the last child is on
+top. There's no `zIndex` prop; reorder the JSX to reorder the paint:
+
+```tsx
+<Layers>
+  <AreaChart series={series} column="volume" as="background" />
+  {/* drawn first — behind */}
+  <LineChart series={series} column="price" as="primary" />
+  {/* drawn last — in front */}
+</Layers>
+```
+
+## Gutters and slots
+
+Every row in a container reserves the **same left/right gutter width** —
+the widest y-axis label across all rows sets it for every row, so a
+narrower row's axis still lines up with a wider one below it. You don't
+configure this; it's computed from what you render.
+
+:::caution[The prop-identity caution]
+A few props — `format` functions, computed `radius`/`color` encodings,
+anything you'd write as an inline arrow function — get **re-created on
+every render** if you write them inline:
+
+```tsx
+// Re-allocates a new function identity every render
+<YAxis id="pct" format={(v) => `${(v * 100).toFixed(1)}%`} />
+```
+
+For a chart re-rendering on every animation frame or live-data tick, that's
+a fresh function the renderer can't memo against. Hoist it to module scope
+(or `useCallback` if it closes over component state) once it starts
+mattering:
+
+```tsx
+const pctFormat = (v: number) => `${(v * 100).toFixed(1)}%`;
+// ...
+<YAxis id="pct" format={pctFormat} />;
+```
+
+Every chapter from here on writes format functions and encodings this way
+— it's not a special case, it's the default habit worth building early.
+:::
+
+## Recap
+
+Axes are named scales draw layers opt into by `id`. A second series gets
+either a second axis (same row) or a second row (own y axis, shared x axis
+and cursor). `Layers` paints back-to-front in JSX order. And inline
+closures in chart props are worth hoisting once they're not one-off.
+
+**Next: [Feeding charts pond data](./feeding-charts-pond-data)** — every
+example so far used a pre-built `series`. This chapter is where that data
+comes from.

@@ -954,7 +954,7 @@ Phases (each independently shippable, ends with a docs deploy):
       landing now lists all five packages, re-home the orphaned
       `recipes/` pages into the sidebar, fix `intro.mdx`'s stale site
       map and the homepage CTA target.
-- [ ] **P1 — foundation** (in progress; 4/7 shipped):
+- [ ] **P1 — foundation** (in progress; 6/7 shipped):
   - [x] Storybook `docsTheme` restyle + tree normalization + one-time
         visual-baseline regen (#433)
   - [x] site visual-theme pass, dark mode, local search, redirects
@@ -977,7 +977,24 @@ Phases (each independently shippable, ends with a docs deploy):
         doors). Drive-by fix: `ChartExample`'s placeholder referenced
         the pre-#438 `--pond-grid` token name (dangling since the
         rename to `--pond-viz-grid`).
-  - [ ] Learn chapters 1–5
+  - [x] Learn chapters 1–5 (#443) — a five-chapter tutorial track
+        (`website/docs/learn-charts/`), one running server-metrics
+        example threaded throughout: ch1 the four-primitive minimal
+        chart, ch2 dual-axis/two-row layout + the prop-identity
+        caution, ch3 `fromJSON` + temporal keys (point vs. interval)
+        + the data-contract idea, ch4 (the centerpiece) `aggregate` →
+        bars, `rolling`+`baseline` → smoothed line + `BandChart`
+        envelope, `partitionBy` → per-host multi-series, `byColumn` →
+        value-axis histogram, ch5 the `as`-role styling pipeline +
+        the three-way theming decision table. Every chapter has a
+        live `ChartExample` embed. `charts/index.mdx`'s "Where to go
+        next" now leads with Learn charts instead of the honest
+        placeholder #441 shipped. Gotcha hit + fixed: Docusaurus
+        strips a filename's leading `NN-` numeric-ordering prefix
+        from both the doc id and the route slug, so `sidebars.ts`
+        item ids and every chapter's internal `Next:` link had to
+        drop the prefix too (`learn-charts/your-first-chart`, not
+        `learn-charts/01-your-first-chart`).
   - [ ] responsive-width recipe, `@pond-ts/financial` section stub
 - [ ] **P2 — interaction + doc-debt burn-down**: Learn 6–9,
       Interaction section, Annotations & indicators section, Financial

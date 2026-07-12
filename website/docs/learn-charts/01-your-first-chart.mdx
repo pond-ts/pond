@@ -1,0 +1,123 @@
+---
+title: 1. Your first chart
+sidebar_label: 1. Your first chart
+sidebar_position: 1
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import FirstChart from '@site/src/examples/first-chart';
+
+# Your first chart
+
+:::info[You will learn]
+
+- How to install `@pond-ts/charts` and its peers
+- The four things every chart needs: a container, a row, a layer, an axis
+- Where to go next if your data isn't a pond `TimeSeries` yet
+  :::
+
+## Install
+
+```sh
+npm install @pond-ts/charts pond-ts @pond-ts/react react react-dom
+```
+
+`@pond-ts/charts` peer-depends on `pond-ts`, `@pond-ts/react`, and `react`.
+The pond packages release together under one version — keep their ranges in
+step.
+
+## Render one line
+
+Here's the whole chart — hover it, the crosshair is live:
+
+<ChartExample name="first-chart" height={260}>
+  <FirstChart />
+</ChartExample>
+
+Four pieces, four lines:
+
+```tsx
+<ChartContainer range={series.timeRange()} width={560} theme={theme}>
+  <ChartRow height={220}>
+    <Layers>
+      <LineChart series={series} column="cpu" axis="pct" />
+    </Layers>
+    <YAxis id="pct" side="right" format=".0%" />
+  </ChartRow>
+</ChartContainer>
+```
+
+- **`ChartContainer`** — the root. Owns the shared x axis (inferred from
+  `series`), the visible `range`, the pixel `width`, and the `theme`.
+- **`ChartRow`** — one plot band, `height` in pixels. A container can hold
+  several, stacked, all sharing the container's x axis.
+- **`Layers`** — the z-stack inside a row. Everything you draw goes here.
+- **`LineChart`** — a draw layer. It reads `column` off `series` and paints
+  it. `axis="pct"` says "scale against the y axis named `pct`."
+- **`YAxis`** — the y axis itself, `id="pct"` is what `axis="pct"` links to.
+
+That's the whole vocabulary for chapter 1. Charts are **composed, not
+configured** — there's no `<Chart type="line" data={...} />` prop-soup to
+learn; you'll recognise every one of these five components again in every
+chapter that follows.
+
+:::tip[Bring your own data]
+The example above uses a small seeded dataset. If you already have data as
+an array of plain objects — the shape most APIs hand you — building a
+`series` is five lines:
+
+```ts
+import { TimeSeries } from 'pond-ts';
+
+const series = TimeSeries.fromJSON({
+  name: 'cpu',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'cpu', kind: 'number' },
+  ] as const,
+  rows: [
+    { time: Date.now() - 60_000, cpu: 0.42 },
+    { time: Date.now(), cpu: 0.51 },
+  ],
+});
+```
+
+Chapter 3, [Feeding charts pond data](./feeding-charts-pond-data), covers
+this properly — including the columnar (struct-of-arrays) shape if that's
+what you're holding instead.
+:::
+
+:::tip[A styling preview]
+`LineChart` above took no colour prop — it's teal because the docs site's
+theme says so. Every draw layer takes an `as` prop instead of colour/width
+props directly:
+
+```tsx
+<LineChart series={series} column="cpu" as="primary" axis="pct" />
+```
+
+`as="primary"` is a **semantic role**, resolved against the active
+`ChartTheme` — swap the theme, every `as="primary"` line repaints, with zero
+changes to the chart code. The full pipeline (and why style and scale are
+deliberately separate channels) is chapter 5,
+[Styling and theming](./styling-and-theming).
+:::
+
+:::caution[The width caution]
+`width` on `<ChartContainer>` is a **required number**, not `"100%"` — the
+canvas renderer needs real pixels to lay out ticks and slots. Every example
+in this track hardcodes a width for that reason. Filling a responsive box
+is one `ResizeObserver` away — see the
+[Resizable multi-panel layout](../recipes/resizable-panels) recipe for the
+pattern this whole site's live charts use.
+:::
+
+## Recap
+
+You rendered a real, interactive chart from four components:
+`ChartContainer` → `ChartRow` → `Layers` → a draw layer, plus one `YAxis` to
+scale against. Every chart in this library, however complex, is this same
+shape nested deeper.
+
+**Next: [Anatomy of a chart](./anatomy-of-a-chart)** — what happens when
+you add a second row, a second axis, and a second series.

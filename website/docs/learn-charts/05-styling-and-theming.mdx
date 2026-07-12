@@ -1,0 +1,83 @@
+---
+title: 5. Styling and theming
+sidebar_label: 5. Styling and theming
+sidebar_position: 5
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import DualAxis from '@site/src/examples/learn-02-dual-axis';
+
+# Styling and theming
+
+:::info[You will learn]
+
+- The full styling pipeline, in one sentence
+- Why `as` (style) and `axis` (scale) are deliberately separate props
+- Which of the three theming approaches fits your app
+  :::
+
+Chapter 1 teased `as="primary"`. Here's the whole pipeline it belongs to:
+
+**a draw layer's `column` → its `as` role → `theme.line[as] ?? theme.line.default`.**
+
+Every chart on this page runs it live — this site's own `useSiteChartTheme`
+is the same chart you're about to see:
+
+<ChartExample name="learn-02-dual-axis" height={280}>
+  <DualAxis />
+</ChartExample>
+
+```tsx
+<LineChart series={series} column="cpu" axis="pct" as="primary" />
+<LineChart series={series} column="latency" axis="ms" as="secondary" />
+```
+
+`as="primary"` and `as="secondary"` are **semantic roles** — not colours.
+The active `ChartTheme` maps each role to a concrete style
+(`{ color, width, dash? }`); change the theme and every chart using that
+role repaints, with zero code changes. There are **no per-component colour
+props** — a `<LineChart>` doesn't take a `color`. One styling channel, not
+two fighting each other.
+
+## `as` picks style; `axis` picks scale
+
+These are two different props for a reason: `as` says _which style_ a mark
+resolves to; `axis` says _which `YAxis` scale_ it draws against (chapter
+2). A layer's style and its scale are independent — two series can share a
+style and draw on different axes, or share an axis and carry different
+styles. Conflating them is exactly the kind of prop-soup composed charts
+are trying to avoid.
+
+## Three ways to build a theme
+
+| Your app...                                     | Use                                                    |
+| ----------------------------------------------- | ------------------------------------------------------ |
+| Has one fixed look, no design-system tokens     | Spread `defaultTheme`, override the slots you want     |
+| Themes from CSS custom properties (`--brand-*`) | `cssVarTheme(base, resolve)`                           |
+| Has a live dark/light toggle to follow          | `useChartTheme(base, resolve)` — re-resolves on toggle |
+
+This docs site is the third case — `useSiteChartTheme` (which every
+embedded example on this page calls) is a thin wrapper around
+`useChartTheme` reading this site's own `--pond-viz-*` tokens. Toggle the
+site's dark mode switch and the chart above repaints with no `mode` prop
+threaded anywhere.
+
+The full pipeline — custom theme objects, the `dash` style for
+model-vs-observed lines, the repaint contract, all the theme slots
+(`band`, `area`, `scatter`, `box`, `bar`, `annotation`, …) — is
+[Theming charts](../recipes/theming). This chapter is the map; that recipe
+is the territory.
+
+## Recap
+
+Style flows `column → as → theme.line[as] ?? default`; `as` and `axis` are
+separate concerns by design; and which theming approach you reach for
+depends on whether your app has CSS tokens, a live toggle, or neither.
+
+That's chapters 1 through 5 — the whole core vocabulary: compose a
+container from rows, layers, and axes; bring your own data; shape it with
+pond's transforms; style it by role. From here, the
+[Gallery](../charts/gallery) and the
+[chart-type reference](../charts/index.mdx#the-minimal-api-set--compact-cut)
+are where you'll spend the most time — Scatter, BoxPlot, and Candlestick
+never starred in this track, and that's where you'll meet them.
