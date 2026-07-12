@@ -9,7 +9,12 @@ interface GalleryCardProps {
   /** Absolute pathname into the deployed Storybook, e.g.
    *  `/storybook/?path=/story/charts-candlestick--show-ohlc`. */
   storybookHref: string;
-  /** Fixed pixel height for the chart stage. */
+  /** Fixed pixel height for the chart stage. **Must budget for the
+   *  `ChartContainer`'s auto-rendered time-axis strip** (`showAxis`
+   *  defaults `true`, adding ~22px below the rows) on top of the sum of
+   *  the mounted example's own `<ChartRow height>`s — the stage clips
+   *  (`overflow: hidden`) anything taller, silently cutting off axis
+   *  labels rather than erroring. */
   height?: number;
   /** Render-prop: the card measures its own box (ResizeObserver) and hands
    *  back the width, since `<ChartContainer>` takes an explicit pixel width
