@@ -33,7 +33,7 @@ function HomepageHeader(): ReactNode {
           </Link>
           <Link
             className="button button--outline button--primary button--lg"
-            to="/docs/recipes/cpu-metrics"
+            to="/docs/recipes/"
           >
             Explore an example
           </Link>

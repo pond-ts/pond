@@ -126,7 +126,7 @@ Scalar reducers (`'min'`, `'max'`, `'sum'`, `'mean'`, `'stdev'`, `'median'`,
 hot path). Empty bins land as `NaN` (or `0` for `'sum'` / `'count'`) — and
 `ctx.lineTo(px, NaN)` correctly breaks the line for "no data here."
 
-:::note Index bins, not time bins
+:::note[Index bins, not time bins]
 `bin` splits by **index**, which matches pixel columns only when samples are
 uniformly time-spaced. For bursty / irregular data you want time-aware binning
 (on the roadmap); `bin` is the right tool for uniform input.

@@ -901,6 +901,71 @@ good-enough-no-schema middle. Exactly the menu a market-data feed needs.
 
 ---
 
+## Docs site wave — the charts guide buildout (adopted 2026-07-12)
+
+**Decision (pjm17971, 2026-07-11/12): build a best-in-class docs site
+for `@pond-ts/charts` and the data→chart pipeline.** The full plan —
+19-agent research across charting-library docs sites + repo grounding,
+three-lens adversarial review, and the user's design directives —
+lives in
+[docs/notes/charts-docs-site-plan-2026-07.md](docs/notes/charts-docs-site-plan-2026-07.md)
+(v2.2). Per the RFC-vs-PLAN layering, the note is context; **this
+entry is the binding commitment.** The value-axis item in the
+Documentation backlog (its own "highest priority" flag) rides P2 of
+this wave.
+
+Binding directives (user):
+
+- **Live chart embeds** — real mounted components in MDX, cursors /
+  hover / selection always on ("alive and beautiful" is the acceptance
+  bar). Live _editable_ code stays deferred behind RFC #285.
+- **One look** — a neutral, professional `docsTheme` (Tidal-style
+  dark-grey/light terminal aesthetic) for site chrome, every embed,
+  and every Storybook story, light + dark; estela-flavored palette
+  only as the worked example on theming-teaching pages/stories.
+- **Storybook = the disciplined, API-adjacent knob walk** — the
+  story-discipline pass (tree normalization, thin-group coverage fill)
+  is planned work in this wave.
+
+Phases (each independently shippable, ends with a docs deploy):
+
+- [x] **P0 — hygiene** (shipped in this adoption PR): fix
+      `advanced/charting.mdx` (claimed no first-party charts existed),
+      add `Candlestick`/`ohlcFromTimeSeries` + the reader functions to
+      the charts index (and remove the nonexistent `BoxPlot`
+      candlestick-`shape` claim), `typedoc.financial.json` + `/api`
+      landing now lists all five packages, re-home the orphaned
+      `recipes/` pages into the sidebar, fix `intro.mdx`'s stale site
+      map and the homepage CTA target.
+- [ ] **P1 — foundation**: live-embed infrastructure (workspace dep,
+      client-only mounting, single-source examples: the code shown IS
+      the component mounted), Storybook `docsTheme` restyle + tree
+      normalization (+ one-time visual-baseline regen), deployed
+      Storybook, site visual-theme pass, Gallery (live cards),
+      evaluator-first charts Overview, Learn chapters 1–5,
+      responsive-width recipe, `@pond-ts/financial` section stub,
+      redirects plugin, llms.txt, local search.
+- [ ] **P2 — interaction + doc-debt burn-down**: Learn 6–9,
+      Interaction section, Annotations & indicators section, Financial
+      charts hub (+ TradingView vocabulary bridge), Missing data &
+      gaps page, **value-axis docs** (the Documentation backlog's
+      highest-priority item), prop-identity recipe, story-coverage
+      fill for the groups these pages source from.
+- [ ] **P3 — reference fan-out + flagship guide**: per-chart-type
+      pages, Axes & layout, Theming, Data adapters, Cheat sheet,
+      Rendering & performance (measured perf envelope — the accepted
+      #395 docs deliverable), Design philosophy (2 pages),
+      Accessibility, Troubleshooting, Coming-from-RTC migration page,
+      the financial end-to-end guide.
+- [ ] **P4 — guides library completion**: ops-dashboard, annotation
+      workflows, and value-axis guides + remaining recipes.
+
+Content-ownership rule (review-checklist item for every docs PR in
+this wave): every cross-cutting concept has one canonical page;
+everything else links — see the ownership table in the plan note §3a.
+
+---
+
 ## Active experiments
 
 Pond is battle-tested through parallel multi-agent experiments — see
@@ -6857,6 +6922,9 @@ deployment" / "observability" surface in one place.
   operator reference + a dedicated "value-axis charts" how-to /
   concept page; cross-link the RFC (#279). Land before the next
   release so the npm version's docs match its surface.
+  **→ Adopted into the Docs site wave, P2** (see the "Docs site wave"
+  section above) — the wave's Learn ch. 9 + reference pages are the
+  venue.
 
 - **`pushMany` is the throughput-critical primitive** — call this
   out explicitly in `live-series.mdx`'s push section. Apps forwarding
