@@ -108,10 +108,23 @@ become the bottleneck. The [column API](./columns) hands you dense
 straight to canvas from those. (This is the same machinery
 `@pond-ts/charts` uses internally.)
 
+## Live-update gotchas
+
+Two recurring snags when an external chart re-renders on live
+snapshots:
+
+- **Disable animation on snapshot ticks** — a chart that tweens every
+  update smears a 100 ms snapshot cadence into continuous motion
+  (`isAnimationActive={false}` in Recharts, or your library's
+  equivalent).
+- **Branch on the empty snapshot for fixed domains** — before the
+  first event arrives, `toPoints()` is `[]`; a chart with an explicit
+  y-domain will happily render empty axes over no data. Render an
+  empty-state instead of the chart until the snapshot has rows.
+
 ## Worked example
 
 The [dashboard how-to guide](../../how-to-guides/dashboard-guide)
 builds a complete live Recharts dashboard on pond data — snapshots,
-baselines, gaps, and the live-update gotchas (animation on snapshot
-ticks, empty-state domains) — and is the maintained end-to-end
-reference for this bridge.
+baselines, gaps, and the animation gotcha above worked in context —
+and is the maintained end-to-end reference for this bridge.
