@@ -919,10 +919,20 @@ Binding directives (user):
 - **Live chart embeds** — real mounted components in MDX, cursors /
   hover / selection always on ("alive and beautiful" is the acceptance
   bar). Live _editable_ code stays deferred behind RFC #285.
-- **One look** — a neutral, professional `docsTheme` (Tidal-style
-  dark-grey/light terminal aesthetic) for site chrome, every embed,
-  and every Storybook story, light + dark; estela-flavored palette
-  only as the worked example on theming-teaching pages/stories.
+- **One look** — a neutral, professional `docsTheme` for site chrome,
+  every embed, and every Storybook story, light + dark; estela-flavored
+  palette only as the worked example on theming-teaching pages/stories.
+  **Superseded 2026-07-12** by the real Pond brand system (bracket
+  mark, teal accent, IBM Plex): site chrome shipped in #437, and
+  `docsTheme`/`docsThemeDark` retuned onto the brand's `tokens.viz.css`
+  data-visualization ramp in #438 (`viz1`-`viz5` + `vizMark` + `vizUp`/
+  `vizDown`, with the hard rule that `vizMark` never shares a hue
+  family with any data-role color). `packages/charts/test/docs-theme-sync.test.ts`
+  keeps `docs-theme.fixture.ts` and `website/src/css/custom.css` in
+  lockstep; both PRs did a full wipe-then-regen of the 62 Playwright
+  Linux baselines rather than a single-pass update, since a one-shot
+  regen only rewrites snapshots that fail the 2% pixel tolerance and
+  silently leaves old-palette-but-within-tolerance images in place.
 - **Storybook = the disciplined, API-adjacent knob walk** — the
   story-discipline pass (tree normalization, thin-group coverage fill)
   is planned work in this wave.
