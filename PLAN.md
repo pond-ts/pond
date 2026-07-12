@@ -966,8 +966,17 @@ Phases (each independently shippable, ends with a docs deploy):
         single-source pattern, the seeded server-metrics dataset,
         one pilot example verified end-to-end (SSG, hydration,
         interaction, dark-mode retheme) (#435)
-  - [ ] Gallery (live cards)
-  - [ ] evaluator-first charts Overview rewrite
+  - [x] Gallery (live cards) + evaluator-first charts Overview rewrite
+        (#441) — 8 live `GalleryCard`s (ops dashboard, financial
+        candlesticks, activity area, annotated region/marker/baseline,
+        variance band, value-axis histogram, encoded scatter, boxplot
+        percentiles) in a responsive `ResizeObserver`-driven grid, each
+        linking its exact Storybook story id; `charts/index.mdx`
+        reordered per plan §5a (live hero → snippet → compact
+        capability matrix → why/when-not → used-in-production →
+        doors). Drive-by fix: `ChartExample`'s placeholder referenced
+        the pre-#438 `--pond-grid` token name (dangling since the
+        rename to `--pond-viz-grid`).
   - [ ] Learn chapters 1–5
   - [ ] responsive-width recipe, `@pond-ts/financial` section stub
 - [ ] **P2 — interaction + doc-debt burn-down**: Learn 6–9,

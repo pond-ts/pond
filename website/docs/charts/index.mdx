@@ -4,38 +4,30 @@ title: '@pond-ts/charts'
 sidebar_position: 1
 ---
 
+import ChartExample from '@site/src/components/ChartExample';
+import FirstChart from '@site/src/examples/first-chart';
+
 # @pond-ts/charts
 
 **Canvas-rendered, streaming-first time-series charts** for pond-ts, with a
 [react-timeseries-charts](https://software.es.net/react-timeseries-charts/)-style
-declarative layout. A chart consumes a pond `TimeSeries` directly: you compose a
-container, rows, and draw layers as React components, and the canvas renderer
-does the drawing.
+declarative layout.
+
+<ChartExample name="first-chart" height={260}>
+  <FirstChart />
+</ChartExample>
+
+Hover the chart above — the crosshair, the axis readout, all of it is live,
+not a screenshot. That's the entire pitch: a chart consumes a pond
+`TimeSeries` directly, you compose a container, rows, and draw layers as
+React components, and the canvas renderer does the drawing. No chart-library
+data model to adapt to; no imperative escape hatch for interaction.
 
 **Install** — `npm install @pond-ts/charts pond-ts @pond-ts/react react react-dom`.
 Peer-depends on `pond-ts`, `@pond-ts/react`, and `react`; the pond packages
 release together, so keep their ranges in step. See
 [Using @pond-ts/charts](../recipes/using-charts) for the two integration
 gotchas (Storybook `react-docgen`, the repaint contract).
-
-```tsx
-import {
-  ChartContainer,
-  ChartRow,
-  Layers,
-  LineChart,
-  YAxis,
-} from '@pond-ts/charts';
-
-<ChartContainer range={timeRange} width={560}>
-  <ChartRow height={220}>
-    <Layers>
-      <LineChart series={cpuSeries} column="cpu" axis="pct" />
-    </Layers>
-    <YAxis id="pct" side="right" format=".0%" />
-  </ChartRow>
-</ChartContainer>;
-```
 
 ## The layout model
 
@@ -52,7 +44,7 @@ users will recognise:
   layer's `axis` to a scale; `side` places it; `format` (a d3 specifier or a
   function) formats ticks _and_ the matching cursor readout.
 
-## The minimal API set
+## The minimal API set — compact cut
 
 The primitives you compose a chart from. The
 [**generated API reference**](pathname:///generated-api/charts/) has every prop,
@@ -89,13 +81,13 @@ separate channels by design (no per-component colour/width props).
 
 ### Annotations & indicators
 
-| Export            | What it is                                               |
-| ----------------- | -------------------------------------------------------- |
-| `Region`          | A shaded x-range (turquoise annotation register).        |
-| `Baseline`        | A horizontal value line, optional axis-pill `indicator`. |
-| `Marker`          | A vertical x line, optional axis-pill `indicator`.       |
-| `YAxisIndicator`  | A live value pill pinned to a y-axis edge.               |
-| `createLiveValue` | High-frequency pill updates with an isolated repaint.    |
+| Export            | What it is                                                 |
+| ----------------- | ---------------------------------------------------------- |
+| `Region`          | A shaded x-range (annotation register — never a data hue). |
+| `Baseline`        | A horizontal value line, optional axis-pill `indicator`.   |
+| `Marker`          | A vertical x line, optional axis-pill `indicator`.         |
+| `YAxisIndicator`  | A live value pill pinned to a y-axis edge.                 |
+| `createLiveValue` | High-frequency pill updates with an isolated repaint.      |
 
 ### Data adapters & theming
 
@@ -106,13 +98,40 @@ separate channels by design (no per-component colour/width props).
 | `defaultTheme`                                                                                          | The neutral built-in `ChartTheme`.                                          |
 | `cssVarTheme`, `useChartTheme`                                                                          | Build a theme from CSS custom properties and follow a dark/light toggle.    |
 
-## Where to start
+## Why @pond-ts/charts — and when not to use it
 
-- [**API reference**](pathname:///generated-api/charts/) — the generated,
-  full-width reference: every component, prop, and type.
+The pitch is narrow on purpose: **canvas rendering**, **streaming-first**
+(a `LiveSeries` re-render is the same code path as a batch one — no separate
+"live mode" API), and **the pond transform pipeline right up to the plot**
+(rolling, aggregation, gap-fill all feed the same layer props a batch chart
+uses). If your charts are static SVG dashboards over plain arrays, that's
+real machinery you don't need — the [bridge page](../pond-ts/advanced/charting)
+covers exporting pond data to Recharts instead.
+
+Some honest constraints, before you commit: you adopt the pond `TimeSeries`
+data model end to end (not a drop-in over arbitrary JSON); `width` is an
+explicit number today (no responsive mode — the [Gallery](./gallery)'s cards
+solve it locally with a `ResizeObserver`, not yet a documented recipe);
+interaction is mouse-only (no keyboard/touch cursor or selection yet); and
+the package is **pre-1.0** — the API is stabilizing, not frozen. None of that
+is hidden: the [Storybook](pathname:///storybook/) and the Gallery show
+exactly what ships today, working, not a mockup.
+
+**Used in production for** activity dashboards and ops telemetry today, with
+a financial-charts build actively underway. See the
+[CHANGELOG](https://github.com/pjm17971/pond-ts/blob/main/CHANGELOG.md) for
+what's shipped in each release — the whole monorepo tags and publishes
+together.
+
+## Where to go next
+
+- [**Gallery**](./gallery) — eight live charts spanning every draw layer,
+  each linking its full Storybook coverage. Touch one before you read
+  another word of API reference.
 - [**Storybook**](pathname:///storybook/) — every component and interaction
   mode, one story per prop/state: the systematic, API-adjacent knob walk.
-  Complements the reference above rather than replacing it.
+- [**API reference**](pathname:///generated-api/charts/) — the generated,
+  full-width reference: every component, prop, and type.
 - [Using @pond-ts/charts](../recipes/using-charts) — install notes and
   integration gotchas.
 - [Theming charts](../recipes/theming) — the `ChartTheme` model and the
@@ -121,7 +140,8 @@ separate channels by design (no per-component colour/width props).
   layout worked end to end.
 
 :::note
-The docs here are an introduction plus the generated type reference. Detailed
-examples and guides (per-layer walkthroughs, the cursor system, annotations)
-follow as the API settles.
+The docs here are an introduction plus the generated type reference. A full
+tutorial track (Learn charts) and a per-chart-type reference section are on
+the roadmap — see [PLAN.md](https://github.com/pjm17971/pond-ts/blob/main/PLAN.md)'s
+"Docs site wave" for what's shipped and what's next.
 :::

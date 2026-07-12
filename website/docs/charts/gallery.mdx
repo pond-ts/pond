@@ -1,0 +1,113 @@
+---
+title: Gallery
+sidebar_position: 2
+---
+
+# Gallery
+
+Eight live, **touchable** charts — not thumbnails. Hover any of them to see
+the crosshair track; each is the exact same `@pond-ts/charts` primitives you'd
+compose yourself. Click a card's **Story** link to jump to its full
+Storybook coverage (every prop, every variant).
+
+import GalleryGrid from '@site/src/components/GalleryGrid';
+import GalleryCard from '@site/src/components/GalleryCard';
+import GalleryDashboard from '@site/src/examples/gallery-dashboard';
+import GalleryFinancial from '@site/src/examples/gallery-financial';
+import GalleryActivity from '@site/src/examples/gallery-activity';
+import GalleryAnnotated from '@site/src/examples/gallery-annotated';
+import GalleryBand from '@site/src/examples/gallery-band';
+import GalleryHistogram from '@site/src/examples/gallery-histogram';
+import GalleryScatter from '@site/src/examples/gallery-scatter';
+import GalleryBoxplot from '@site/src/examples/gallery-boxplot';
+
+<GalleryGrid>
+
+<GalleryCard
+  title="Ops dashboard"
+  blurb="Requests/sec over error rate — two rows, one shared time axis and cursor."
+  storybookHref="pathname:///storybook/?path=/story/layout-multi-panel--resizable-fill"
+  height={190}
+>
+  {(width) => <GalleryDashboard width={width} />}
+</GalleryCard>
+
+<GalleryCard
+  title="Financial terminal"
+  blurb="Daily OHLC candles with the crosshair cursor and the axis-pill OHLC readout."
+  storybookHref="pathname:///storybook/?path=/story/charts-candlestick--show-ohlc"
+  height={246}
+>
+  {(width) => <GalleryFinancial width={width} />}
+</GalleryCard>
+
+<GalleryCard
+  title="Activity chart"
+  blurb="A ride's elevation profile, filled — the shape an activity tracker reaches for constantly."
+  storybookHref="pathname:///storybook/?path=/story/charts-areachart--elevation"
+  height={226}
+>
+  {(width) => <GalleryActivity width={width} />}
+</GalleryCard>
+
+<GalleryCard
+  title="Annotated chart"
+  blurb="Latency data with an incident region, a deploy marker, and an SLA baseline — two registers, one hue rule."
+  storybookHref="pathname:///storybook/?path=/story/charts-annotations-scenarios--in-context"
+  height={246}
+>
+  {(width) => <GalleryAnnotated width={width} />}
+</GalleryCard>
+
+<GalleryCard
+  title="Variance band"
+  blurb="A rolling p5–p95 latency envelope with the p50 centreline — nested bands plus a line."
+  storybookHref="pathname:///storybook/?path=/story/charts-bandchart--rolling-percentiles"
+  height={246}
+>
+  {(width) => <GalleryBand width={width} />}
+</GalleryCard>
+
+<GalleryCard
+  title="Distribution"
+  blurb="Response-time histogram on a value axis, inferred from the bins — not a time axis."
+  storybookHref="pathname:///storybook/?path=/story/charts-histogram--power-distribution"
+  height={246}
+>
+  {(width) => <GalleryHistogram width={width} />}
+</GalleryCard>
+
+<GalleryCard
+  title="Trade ticks"
+  blurb="A data-driven scatter: radius encodes trade size, colour encodes up/down."
+  storybookHref="pathname:///storybook/?path=/story/charts-scatterchart--encoded"
+  height={246}
+>
+  {(width) => <GalleryScatter width={width} />}
+</GalleryCard>
+
+<GalleryCard
+  title="Latency percentiles"
+  blurb="Hourly box-and-whisker buckets from five pre-computed quantile columns."
+  storybookHref="pathname:///storybook/?path=/story/charts-boxplot--percentiles"
+  height={246}
+>
+  {(width) => <GalleryBoxplot width={width} />}
+</GalleryCard>
+
+</GalleryGrid>
+
+## Where these come from
+
+Every card above is one of the [chart-type support matrix](./index.mdx#the-minimal-api-set--compact-cut)'s
+draw layers, seeded with deterministic sample data (no `Math.random()`, no
+`Date.now()` — what you see is what renders on every visit). None of it is a
+special "demo mode": the same `ChartContainer` / `ChartRow` / `Layers` composition
+you'd write yourself, mounted for real.
+
+- [**Storybook**](pathname:///storybook/) — the systematic, per-prop knob walk
+  each card's **Story** link jumps into.
+- [Using @pond-ts/charts](../recipes/using-charts) — install notes and
+  integration gotchas.
+- [Theming charts](../recipes/theming) — the `ChartTheme` model behind every
+  card here (they all run the docs site's own live theme, `useSiteChartTheme`).
