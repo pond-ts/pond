@@ -4,22 +4,31 @@ import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 import Layout from '@theme/Layout';
+import ThemedImage from '@theme/ThemedImage';
 import HomepageFeatures from '@site/src/components/HomepageFeatures';
 import Heading from '@theme/Heading';
 import styles from './index.module.css';
 
 function HomepageHeader(): ReactNode {
   const { siteConfig } = useDocusaurusContext();
-  const logoUrl = useBaseUrl('/img/logo.png');
+  const logoSources = {
+    light: useBaseUrl('/img/pond-mark-light.svg'),
+    dark: useBaseUrl('/img/pond-mark-dark.svg'),
+  };
 
   return (
     <header className={clsx('hero hero--primary', styles.heroBanner)}>
       <div className={clsx('container', styles.heroContent)}>
         <div className={styles.heroLogoWrap}>
           <div className={styles.heroLogoFrame}>
-            <img className={styles.heroLogo} src={logoUrl} alt="Pond logo" />
+            <ThemedImage
+              className={styles.heroLogo}
+              sources={logoSources}
+              alt="Pond logo"
+            />
           </div>
         </div>
+        <span className={styles.heroEyebrow}>[ TypeScript · time series ]</span>
         <Heading as="h1" className="hero__title">
           {siteConfig.title}
         </Heading>

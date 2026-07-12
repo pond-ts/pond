@@ -32,6 +32,26 @@ const TOKEN_TO_RAMP: Record<string, keyof typeof docsPalette.light> = {
   '--pond-falling': 'falling',
 };
 
+/**
+ * Brand UI-chrome tokens (brand/Pond Brand Spec.html §02) the site defines
+ * for its own chrome — buttons, cards, nav, code blocks — with no chart-side
+ * counterpart in `docsTheme` (yet: docsTheme's rebuild onto this same brand
+ * palette is a tracked follow-up). Listed explicitly, not wildcarded, so a
+ * genuinely stray/typo'd `--pond-*` token still fails the check below.
+ */
+const SITE_ONLY_TOKENS = [
+  '--pond-bg',
+  '--pond-surface',
+  '--pond-surface-2',
+  '--pond-body',
+  '--pond-muted',
+  '--pond-hairline',
+  '--pond-accent',
+  '--pond-accent-strong',
+  '--pond-code-bg',
+  '--pond-footer-bg',
+];
+
 const css = readFileSync(
   join(__dirname, '../../../website/src/css/custom.css'),
   'utf8',
@@ -77,9 +97,12 @@ describe('docsTheme fixture ↔ website --pond-* tokens', () => {
 
   it('has no unmapped --pond-* tokens in the CSS', () => {
     const tokens = { ...tokensIn(rootBlock), ...tokensIn(darkBlock) };
-    const unmapped = Object.keys(tokens).filter((t) => !(t in TOKEN_TO_RAMP));
-    expect(unmapped, 'add new tokens to TOKEN_TO_RAMP + the fixture').toEqual(
-      [],
+    const unmapped = Object.keys(tokens).filter(
+      (t) => !(t in TOKEN_TO_RAMP) && !SITE_ONLY_TOKENS.includes(t),
     );
+    expect(
+      unmapped,
+      'add new chart-mirrored tokens to TOKEN_TO_RAMP + the fixture, or site-only tokens to SITE_ONLY_TOKENS',
+    ).toEqual([]);
   });
 });

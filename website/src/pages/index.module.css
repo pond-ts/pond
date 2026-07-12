@@ -17,20 +17,36 @@
   margin-bottom: 1.5rem;
 }
 
+/* The mark is two angular brackets (44×40) — framed as a card chip, never
+   clipped to a circle. */
 .heroLogoFrame {
-  width: 5rem;
-  height: 5rem;
-  overflow: hidden;
-  border-radius: 50%;
-  box-shadow: 0 18px 44px rgba(63, 105, 194, 0.18);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.1rem 1.4rem;
+  border-radius: 14px;
+  border: 1px solid var(--site-surface-border);
+  background: var(--ifm-background-surface-color);
+  box-shadow: 0 18px 44px rgba(14, 143, 134, 0.16);
 }
 
 .heroLogo {
-  width: 5rem;
-  height: 5rem;
+  height: 2.75rem;
+  width: auto;
   display: block;
-  transform: scale(1.12);
-  transform-origin: center;
+}
+
+.heroEyebrow {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.8125rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--pond-accent-strong);
+  margin-top: 1.25rem;
+}
+
+html[data-theme='dark'] .heroEyebrow {
+  color: var(--pond-accent);
 }
 
 .heroSubtitle {
