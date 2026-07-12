@@ -8,12 +8,12 @@ import { YAxis } from './YAxis.js';
 import {
   twoSeries,
   hrSeries,
-  twoColorTheme,
   BASE,
   STEP,
   N,
   RANGE,
 } from './story-data.fixture.js';
+import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * `cursor="flag"` — a dot on each series at the cursor, each value flying as a
@@ -42,7 +42,7 @@ function Chart({
       cursor="flag"
       cursorTime={cursorTime ?? false}
       trackerPosition={pin}
-      theme={twoColorTheme}
+      theme={docsTheme}
     >
       <ChartRow height={220}>
         <Layers>{children}</Layers>
@@ -70,7 +70,7 @@ export const Interactive: Story = {
       width={W}
       cursor="flag"
       cursorTime
-      theme={twoColorTheme}
+      theme={docsTheme}
     >
       <ChartRow height={220}>
         <Layers>
@@ -122,7 +122,7 @@ export const MultiRow: Story = {
       cursor="flag"
       cursorTime
       trackerPosition={BASE + 45 * STEP}
-      theme={twoColorTheme}
+      theme={docsTheme}
     >
       <ChartRow height={150}>
         <Layers>

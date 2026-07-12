@@ -6,7 +6,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
-import { estelaTheme } from './theme.js';
+import { docsTheme } from './docs-theme.fixture.js';
 import type { TrackerInfo } from './context.js';
 
 const N = 60;
@@ -39,7 +39,7 @@ function demo(phase = 0, amp = 40, mid = 50) {
  * a value flag stacked near the top.
  */
 const meta = {
-  title: 'Interactions',
+  title: 'Charts/Cursors/Scenarios',
   parameters: { layout: 'centered' },
 } satisfies Meta;
 
@@ -53,13 +53,13 @@ function Rows() {
       <ChartRow height={130}>
         <YAxis id="a" label="power" />
         <Layers>
-          <LineChart series={demo(0)} column="v" as="foam" />
+          <LineChart series={demo(0)} column="v" as="primary" />
         </Layers>
       </ChartRow>
       <ChartRow height={130}>
         <YAxis id="b" label="hr" />
         <Layers>
-          <LineChart series={demo(1.5)} column="v" as="hr" />
+          <LineChart series={demo(1.5)} column="v" as="secondary" />
         </Layers>
       </ChartRow>
     </>
@@ -75,7 +75,7 @@ function Rows() {
  */
 export const CursorSync: Story = {
   render: () => (
-    <ChartContainer range={TIME_RANGE} width={560} theme={estelaTheme}>
+    <ChartContainer range={TIME_RANGE} width={560} theme={docsTheme}>
       <Rows />
     </ChartContainer>
   ),
@@ -90,7 +90,7 @@ export const FlagReadout: Story = {
     <ChartContainer
       range={TIME_RANGE}
       width={560}
-      theme={estelaTheme}
+      theme={docsTheme}
       cursor="flag"
     >
       <Rows />
@@ -108,7 +108,7 @@ export const InlineReadout: Story = {
     <ChartContainer
       range={TIME_RANGE}
       width={560}
-      theme={estelaTheme}
+      theme={docsTheme}
       cursor="inline"
     >
       <Rows />
@@ -125,7 +125,7 @@ export const PointCursor: Story = {
     <ChartContainer
       range={TIME_RANGE}
       width={560}
-      theme={estelaTheme}
+      theme={docsTheme}
       cursor="point"
     >
       <Rows />
@@ -146,13 +146,13 @@ export const Formats: Story = {
     <ChartContainer
       range={TIME_RANGE}
       width={560}
-      theme={estelaTheme}
+      theme={docsTheme}
       cursor="inline"
     >
       <ChartRow height={90}>
         <YAxis id="pct" label="ratio" min={0} max={1} format=".0%" />
         <Layers>
-          <LineChart series={demo(0, 0.4, 0.5)} column="v" as="foam" />
+          <LineChart series={demo(0, 0.4, 0.5)} column="v" as="primary" />
         </Layers>
       </ChartRow>
       <ChartRow height={90}>
@@ -165,7 +165,7 @@ export const Formats: Story = {
           width={70}
         />
         <Layers>
-          <LineChart series={demo(0.5, 40000, 50000)} column="v" as="foam" />
+          <LineChart series={demo(0.5, 40000, 50000)} column="v" as="primary" />
         </Layers>
       </ChartRow>
       <ChartRow height={90}>
@@ -178,13 +178,13 @@ export const Formats: Story = {
           width={70}
         />
         <Layers>
-          <LineChart series={demo(1, 40000, 50000)} column="v" as="foam" />
+          <LineChart series={demo(1, 40000, 50000)} column="v" as="primary" />
         </Layers>
       </ChartRow>
       <ChartRow height={90}>
         <YAxis id="ms" label="latency" format={(v) => `${Math.round(v)} ms`} />
         <Layers>
-          <LineChart series={demo(1.5, 40, 50)} column="v" as="foam" />
+          <LineChart series={demo(1.5, 40, 50)} column="v" as="primary" />
         </Layers>
       </ChartRow>
       <ChartRow height={90}>
@@ -201,8 +201,18 @@ export const Formats: Story = {
           width={55}
         />
         <Layers>
-          <LineChart series={demo(0, 0.4, 0.5)} column="v" as="foam" axis="L" />
-          <LineChart series={demo(2, 400, 500)} column="v" as="hr" axis="R" />
+          <LineChart
+            series={demo(0, 0.4, 0.5)}
+            column="v"
+            as="primary"
+            axis="L"
+          />
+          <LineChart
+            series={demo(2, 400, 500)}
+            column="v"
+            as="secondary"
+            axis="R"
+          />
         </Layers>
       </ChartRow>
     </ChartContainer>
@@ -220,7 +230,7 @@ export const CursorTime: Story = {
     <ChartContainer
       range={TIME_RANGE}
       width={560}
-      theme={estelaTheme}
+      theme={docsTheme}
       cursor="flag"
       cursorTime
       timeFormat="%I:%M %p"
@@ -248,9 +258,9 @@ function OutsideReadoutDemo() {
           marginBottom: '8px',
           display: 'flex',
           gap: '16px',
-          fontFamily: estelaTheme.font.family,
+          fontFamily: docsTheme.font.family,
           fontSize: '12px',
-          color: estelaTheme.axis.label,
+          color: docsTheme.axis.label,
         }}
       >
         {info === null ? (
@@ -269,7 +279,7 @@ function OutsideReadoutDemo() {
       <ChartContainer
         range={TIME_RANGE}
         width={560}
-        theme={estelaTheme}
+        theme={docsTheme}
         onTrackerChanged={setInfo}
       >
         <Rows />
@@ -305,7 +315,7 @@ function ControlledCursorDemo() {
       <ChartContainer
         range={TIME_RANGE}
         width={560}
-        theme={estelaTheme}
+        theme={docsTheme}
         trackerPosition={t}
       >
         <Rows />
@@ -329,7 +339,7 @@ export const PanZoom: Story = {
     <ChartContainer
       range={TIME_RANGE}
       width={560}
-      theme={estelaTheme}
+      theme={docsTheme}
       panZoom
       minDuration={2 * STEP}
     >

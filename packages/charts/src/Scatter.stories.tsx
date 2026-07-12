@@ -8,7 +8,7 @@ import { ScatterChart } from './ScatterChart.js';
 import { LineChart } from './LineChart.js';
 import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
-import { defaultTheme, estelaTheme } from './theme.js';
+import { docsTheme } from './docs-theme.fixture.js';
 import type { SelectInfo } from './context.js';
 
 const N = 48;
@@ -73,7 +73,7 @@ export const Encoded: Story = {
   render: () => {
     const t = trades();
     return (
-      <ChartContainer range={TIME_RANGE} width={620} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={620} theme={docsTheme}>
         <ChartRow height={300}>
           <YAxis id="price" label="price" />
           <Layers>
@@ -103,7 +103,7 @@ export const CursorFlag: Story = {
       <ChartContainer
         range={TIME_RANGE}
         width={620}
-        theme={estelaTheme}
+        theme={docsTheme}
         cursor="flag"
       >
         <ChartRow height={300}>
@@ -132,7 +132,7 @@ export const Labelled: Story = {
   render: () => {
     const t = trades();
     return (
-      <ChartContainer range={TIME_RANGE} width={620} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={620} theme={docsTheme}>
         <ChartRow height={300}>
           <YAxis id="price" label="price" />
           <Layers>
@@ -152,7 +152,7 @@ export const Labelled: Story = {
 
 /**
  * **Scatter over a line — shared identity via `as`.** A `price` line with the
- * scatter marks on top, both tagged `as="foam"` so they read as one series
+ * scatter marks on top, both tagged `as="primary"` so they read as one series
  * (z-order = declaration order: line behind, points in front). Fixed-radius
  * points (the default) here — the encoding exception is opt-in.
  */
@@ -160,12 +160,17 @@ export const OverLine: Story = {
   render: () => {
     const t = trades();
     return (
-      <ChartContainer range={TIME_RANGE} width={620} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={620} theme={docsTheme}>
         <ChartRow height={260}>
           <YAxis id="price" label="price" />
           <Layers>
-            <LineChart series={t} column="price" as="foam" curve="monotone" />
-            <ScatterChart series={t} column="price" as="foam" />
+            <LineChart
+              series={t}
+              column="price"
+              as="primary"
+              curve="monotone"
+            />
+            <ScatterChart series={t} column="price" as="primary" />
           </Layers>
         </ChartRow>
       </ChartContainer>
@@ -190,9 +195,9 @@ function ControlledSelectDemo() {
         style={{
           height: '18px',
           marginBottom: '8px',
-          fontFamily: defaultTheme.font.family,
+          fontFamily: docsTheme.font.family,
           fontSize: '12px',
-          color: defaultTheme.axis.label,
+          color: docsTheme.axis.label,
         }}
       >
         {sel === null ? (
@@ -206,6 +211,7 @@ function ControlledSelectDemo() {
       <ChartContainer
         range={TIME_RANGE}
         width={620}
+        theme={docsTheme}
         selected={sel}
         onSelect={setSel}
       >
@@ -283,7 +289,7 @@ function smileChain() {
  */
 export const ValueAxis: Story = {
   render: () => (
-    <ChartContainer timeFormat=",.0f" width={520}>
+    <ChartContainer timeFormat=",.0f" width={520} theme={docsTheme}>
       <ChartRow height={220}>
         <YAxis id="iv" format=".0%" />
         <Layers>
@@ -302,7 +308,7 @@ export const ValueAxis: Story = {
  */
 export const ValueAxisEncoded: Story = {
   render: () => (
-    <ChartContainer timeFormat=",.0f" width={520}>
+    <ChartContainer timeFormat=",.0f" width={520} theme={docsTheme}>
       <ChartRow height={220}>
         <YAxis id="iv" format=".0%" />
         <Layers>
@@ -334,6 +340,7 @@ export const ValueAxisSmile: Story = {
         cursor="crosshair"
         showAxis={false}
         width={620}
+        theme={docsTheme}
       >
         <ChartRow height={260}>
           <YAxis id="iv" label="implied vol" format=".1%" />
@@ -363,7 +370,7 @@ export const ValueAxisSmile: Story = {
  */
 export const ValueAxisLabelled: Story = {
   render: () => (
-    <ChartContainer timeFormat=",.0f" width={520}>
+    <ChartContainer timeFormat=",.0f" width={520} theme={docsTheme}>
       <ChartRow height={220}>
         <YAxis id="iv" format=".1%" />
         <Layers>
@@ -396,6 +403,7 @@ export const ValueAxisFlag: Story = {
         cursor="flag"
         cursorTime
         width={520}
+        theme={docsTheme}
       >
         <ChartRow height={220}>
           <YAxis id="iv" format=".1%" />

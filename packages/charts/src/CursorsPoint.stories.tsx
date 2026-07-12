@@ -4,13 +4,8 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
-import {
-  twoSeries,
-  twoColorTheme,
-  BASE,
-  STEP,
-  RANGE,
-} from './story-data.fixture.js';
+import { twoSeries, BASE, STEP, RANGE } from './story-data.fixture.js';
+import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * `cursor="point"` — a dot rides each series at the cursor, **no line and no
@@ -33,12 +28,7 @@ type Story = StoryObj;
  *  line, no chip. The other stories pin a controlled position for a static shot. */
 export const Interactive: Story = {
   render: () => (
-    <ChartContainer
-      range={RANGE}
-      width={W}
-      cursor="point"
-      theme={twoColorTheme}
-    >
+    <ChartContainer range={RANGE} width={W} cursor="point" theme={docsTheme}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={s} column="fast" as="fast" axis="usd" />
@@ -58,7 +48,7 @@ export const SingleSeries: Story = {
       width={W}
       cursor="point"
       trackerPosition={BASE + 45 * STEP}
-      theme={twoColorTheme}
+      theme={docsTheme}
     >
       <ChartRow height={220}>
         <Layers>
@@ -78,7 +68,7 @@ export const MultipleSeries: Story = {
       width={W}
       cursor="point"
       trackerPosition={BASE + 45 * STEP}
-      theme={twoColorTheme}
+      theme={docsTheme}
     >
       <ChartRow height={220}>
         <Layers>

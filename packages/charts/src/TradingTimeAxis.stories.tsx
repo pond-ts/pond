@@ -16,6 +16,7 @@ import {
   weekdaySessions,
   withHalfDay,
 } from './tradingAxis.fixture.js';
+import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * Trading-time x axis — the discontinuous axis that collapses closed-market
@@ -43,6 +44,7 @@ export const WeekendSkip: Story = {
         width={WIDTH}
         range={rangeOf(s)}
         discontinuities={provider(s)}
+        theme={docsTheme}
       >
         <ChartRow height={260}>
           <YAxis id="p" />
@@ -65,6 +67,7 @@ export const HolidayGap: Story = {
         width={WIDTH}
         range={rangeOf(s)}
         discontinuities={provider(s)}
+        theme={docsTheme}
       >
         <ChartRow height={260}>
           <YAxis id="p" />
@@ -87,6 +90,7 @@ export const HalfDay: Story = {
         width={WIDTH}
         range={rangeOf(s)}
         discontinuities={provider(s)}
+        theme={docsTheme}
       >
         <ChartRow height={260}>
           <YAxis id="p" />
@@ -110,6 +114,7 @@ export const IntradaySessions: Story = {
         width={WIDTH}
         range={rangeOf(s)}
         discontinuities={provider(s)}
+        theme={docsTheme}
       >
         <ChartRow height={260}>
           <YAxis id="p" />
@@ -139,13 +144,14 @@ export const ContinuousVsTrading: Story = {
     );
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <ChartContainer width={WIDTH} range={rangeOf(s)}>
+        <ChartContainer width={WIDTH} range={rangeOf(s)} theme={docsTheme}>
           {row}
         </ChartContainer>
         <ChartContainer
           width={WIDTH}
           range={rangeOf(s)}
           discontinuities={provider(s)}
+          theme={docsTheme}
         >
           {row}
         </ChartContainer>
@@ -166,6 +172,7 @@ export const DailyMonths: Story = {
         width={WIDTH}
         range={rangeOf(s)}
         discontinuities={provider(s)}
+        theme={docsTheme}
       >
         <ChartRow height={260}>
           <YAxis id="p" />
@@ -198,7 +205,12 @@ export const SpacingProportionalVsUniform: Story = {
     );
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <ChartContainer width={WIDTH} range={rangeOf(s)} calendar={cal}>
+        <ChartContainer
+          width={WIDTH}
+          range={rangeOf(s)}
+          calendar={cal}
+          theme={docsTheme}
+        >
           {row}
         </ChartContainer>
         <ChartContainer
@@ -206,6 +218,7 @@ export const SpacingProportionalVsUniform: Story = {
           range={rangeOf(s)}
           calendar={cal}
           spacing="uniform"
+          theme={docsTheme}
         >
           {row}
         </ChartContainer>

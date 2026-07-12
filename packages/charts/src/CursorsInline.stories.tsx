@@ -8,11 +8,11 @@ import { YAxis } from './YAxis.js';
 import {
   twoSeries,
   hrSeries,
-  twoColorTheme,
   BASE,
   STEP,
   RANGE,
 } from './story-data.fixture.js';
+import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * `cursor="inline"` — a dot on each series with its value chip **beside the dot**
@@ -43,7 +43,7 @@ function Chart({
       cursor="inline"
       cursorTime={cursorTime ?? false}
       trackerPosition={pin}
-      theme={twoColorTheme}
+      theme={docsTheme}
     >
       <ChartRow height={220}>
         <Layers>{children}</Layers>
@@ -71,7 +71,7 @@ export const Interactive: Story = {
       width={W}
       cursor="inline"
       cursorTime
-      theme={twoColorTheme}
+      theme={docsTheme}
     >
       <ChartRow height={220}>
         <Layers>
@@ -154,7 +154,7 @@ export const MultiRow: Story = {
       width={W}
       cursor="inline"
       trackerPosition={BASE + 45 * STEP}
-      theme={twoColorTheme}
+      theme={docsTheme}
     >
       <ChartRow height={150}>
         <Layers>

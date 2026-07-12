@@ -7,11 +7,11 @@ import { YAxis } from './YAxis.js';
 import {
   twoSeries,
   hrSeries,
-  twoColorTheme,
   BASE,
   STEP,
   RANGE,
 } from './story-data.fixture.js';
+import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * `cursor="crosshair"` — a single inspection **reticle**: a full-height dashed
@@ -52,7 +52,7 @@ export const FreeReticle: Story = {
       width={W}
       cursor="crosshair"
       crosshairSnap={false}
-      theme={twoColorTheme}
+      theme={docsTheme}
     >
       <ChartRow height={240}>
         <Layers>
@@ -72,7 +72,7 @@ export const SingleSeries: Story = {
       width={W}
       cursor="crosshair"
       trackerPosition={PIN}
-      theme={twoColorTheme}
+      theme={docsTheme}
     >
       <ChartRow height={240}>
         <Layers>
@@ -93,7 +93,7 @@ export const MultipleSeries: Story = {
       width={W}
       cursor="crosshair"
       trackerPosition={PIN}
-      theme={twoColorTheme}
+      theme={docsTheme}
     >
       <ChartRow height={240}>
         <Layers>
@@ -115,7 +115,7 @@ export const LeftAxis: Story = {
       width={W}
       cursor="crosshair"
       trackerPosition={PIN}
-      theme={twoColorTheme}
+      theme={docsTheme}
     >
       <ChartRow height={240}>
         <YAxis id="usd" side="left" format=",.0f" />
@@ -136,7 +136,7 @@ export const DualAxis: Story = {
       width={W}
       cursor="crosshair"
       trackerPosition={PIN}
-      theme={twoColorTheme}
+      theme={docsTheme}
     >
       <ChartRow height={240}>
         <YAxis id="L" side="left" format=",.0f" />
@@ -159,7 +159,7 @@ export const MultiRow: Story = {
       width={W}
       cursor="crosshair"
       trackerPosition={PIN}
-      theme={twoColorTheme}
+      theme={docsTheme}
     >
       <ChartRow height={150}>
         <Layers>

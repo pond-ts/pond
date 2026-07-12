@@ -5,7 +5,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { AreaChart } from './AreaChart.js';
 import { YAxis } from './YAxis.js';
-import { estelaTheme } from './theme.js';
+import { docsTheme } from './docs-theme.fixture.js';
 
 const N = 60;
 /** Fixed base epoch (2026-01-01 12:00 UTC) + 1-minute step, so the time axis
@@ -102,7 +102,7 @@ type Story = StoryObj;
 
 /**
  * The elevation form (driver: estela elevation). One `<AreaChart>` with no
- * `baseline` rests on the axis floor; the graded shade fades from the brand-teal
+ * `baseline` rests on the axis floor; the graded shade fades from the themed
  * outline down to the bottom. The coast reads as a break in both the fill and
  * the outline — never a bridge to the floor.
  */
@@ -110,7 +110,7 @@ export const Elevation: Story = {
   render: () => {
     const e = elevation();
     return (
-      <ChartContainer range={TIME_RANGE} width={560} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={560} theme={docsTheme}>
         <ChartRow height={240}>
           <YAxis id="m" label="m" />
           <Layers>
@@ -124,7 +124,7 @@ export const Elevation: Story = {
 
 /**
  * The above/below-axis form (driver: esnet traffic). Two `<AreaChart>`s share a
- * fixed `baseline={0}`: `in` (teal) fills up, `out` (warm filament, stored
+ * fixed `baseline={0}`: `in` (blue) fills up, `out` (rose, stored
  * negative) fills down. Each side's shade fades toward the zero axis. Two layers
  * + two `as` roles — the single styling channel, composed (no per-component
  * colour). The y-axis includes 0 because the fixed baseline is pulled into the
@@ -134,7 +134,7 @@ export const AboveBelowAxis: Story = {
   render: () => {
     const t = traffic();
     return (
-      <ChartContainer range={TIME_RANGE} width={560} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={560} theme={docsTheme}>
         <ChartRow height={240}>
           <YAxis id="mbps" label="Mb/s" />
           <Layers>
@@ -148,8 +148,8 @@ export const AboveBelowAxis: Story = {
 };
 
 /**
- * The esnet network-traffic look reproduced statically: **"Into Site"** (teal,
- * above the zero axis) over **"Out of site"** (warm filament, below), two
+ * The esnet network-traffic look reproduced statically: **"Into Site"** (blue,
+ * above the zero axis) over **"Out of site"** (rose, below), two
  * `<AreaChart>`s on a shared `baseline={0}`, each side's shade fading toward the
  * axis. This is the static picture from the classic esnet example — deterministic
  * diurnal data, no brush (the range-editing overlay is designed separately).
@@ -158,7 +158,7 @@ export const TrafficAreas: Story = {
   render: () => {
     const t = siteTraffic();
     return (
-      <ChartContainer range={TIME_RANGE} width={640} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={640} theme={docsTheme}>
         <ChartRow height={260}>
           <YAxis id="bps" label="Gbps" />
           <Layers>

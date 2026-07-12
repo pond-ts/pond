@@ -1,5 +1,4 @@
 import { TimeSeries } from 'pond-ts';
-import { defaultTheme, type ChartTheme } from './theme.js';
 
 /**
  * Shared fixtures for the feature-axis reference stories (Annotations, Cursors,
@@ -67,25 +66,3 @@ export function hrSeries() {
     rows,
   });
 }
-
-/** Two colour-coded lines (blue fast / red slow) — matches the crosshair shots. */
-export const twoColorTheme: ChartTheme = {
-  ...defaultTheme,
-  line: {
-    ...defaultTheme.line,
-    fast: { ...defaultTheme.line.default, color: '#4a90e2' },
-    slow: { ...defaultTheme.line.default, color: '#e5534b' },
-  },
-};
-
-/** A dark, trading-terminal-ish theme for the cursor stories. */
-export const darkTheme: ChartTheme = {
-  ...defaultTheme,
-  background: '#0d1117',
-  axis: { ...defaultTheme.axis, label: '#8b949e', grid: '#21262d' },
-  line: {
-    ...defaultTheme.line,
-    default: { ...defaultTheme.line.default, color: '#e6edf3' },
-  },
-  cursor: '#58a6ff',
-};

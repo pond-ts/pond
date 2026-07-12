@@ -7,7 +7,7 @@ import { Layers } from './Layers.js';
 import { BarChart } from './BarChart.js';
 import { YAxis } from './YAxis.js';
 import { transposeRow } from './data.js';
-import { estelaTheme } from './theme.js';
+import { docsTheme } from './docs-theme.fixture.js';
 import type { SelectInfo } from './context.js';
 
 /**
@@ -52,7 +52,7 @@ const PALETTE = [
  */
 export const Tickers: Story = {
   render: () => (
-    <ChartContainer width={640} theme={estelaTheme}>
+    <ChartContainer width={640} theme={docsTheme}>
       <ChartRow height={240}>
         <YAxis id="v" label="net Δ" min={0} pad={0.08} />
         <Layers>
@@ -69,7 +69,7 @@ export const Tickers: Story = {
  */
 export const SingleHue: Story = {
   render: () => (
-    <ChartContainer width={640} theme={estelaTheme}>
+    <ChartContainer width={640} theme={docsTheme}>
       <ChartRow height={240}>
         <YAxis id="v" label="net Δ" min={0} pad={0.08} />
         <Layers>
@@ -92,7 +92,7 @@ export const HighCardinality: Story = {
       value: Math.round(10 + 40 * Math.abs(Math.sin((i / 30) * Math.PI))),
     }));
     return (
-      <ChartContainer width={720} theme={estelaTheme}>
+      <ChartContainer width={720} theme={docsTheme}>
         <ChartRow height={240}>
           <YAxis id="v" label="count" min={0} pad={0.08} />
           <Layers>
@@ -117,7 +117,7 @@ export const CrowdedLabels: Story = {
       value: Math.round(15 + 35 * Math.abs(Math.sin((i / 20) * Math.PI + 0.4))),
     }));
     return (
-      <ChartContainer width={720} theme={estelaTheme}>
+      <ChartContainer width={720} theme={docsTheme}>
         <ChartRow height={240}>
           <YAxis id="v" label="orders" min={0} pad={0.08} />
           <Layers>
@@ -143,9 +143,9 @@ function SelectDemo() {
         style={{
           height: 18,
           marginBottom: 8,
-          fontFamily: estelaTheme.font.family,
+          fontFamily: docsTheme.font.family,
           fontSize: 12,
-          color: estelaTheme.axis.label,
+          color: docsTheme.axis.label,
         }}
       >
         {sel === null ? (
@@ -156,7 +156,7 @@ function SelectDemo() {
           </span>
         )}
       </div>
-      <ChartContainer width={640} theme={estelaTheme} onSelect={setSel}>
+      <ChartContainer width={640} theme={docsTheme} onSelect={setSel}>
         <ChartRow height={240}>
           <YAxis id="v" label="net Δ" min={0} pad={0.08} />
           <Layers>
@@ -193,7 +193,7 @@ export const Signed: Story = {
       { label: 'META', value: -7 },
     ];
     return (
-      <ChartContainer width={640} theme={estelaTheme}>
+      <ChartContainer width={640} theme={docsTheme}>
         <ChartRow height={240}>
           <YAxis id="v" label="day P&L" pad={0.1} />
           <Layers>
@@ -246,7 +246,7 @@ export const Transpose: Story = {
   render: () => {
     const data = transposeRow(wideSeries(), { at: 'last' });
     return (
-      <ChartContainer width={640} theme={estelaTheme}>
+      <ChartContainer width={640} theme={docsTheme}>
         <ChartRow height={240}>
           <YAxis id="v" label="value" min={0} pad={0.08} />
           <Layers>
@@ -277,9 +277,9 @@ function ScrubDemo() {
           display: 'flex',
           gap: 12,
           alignItems: 'center',
-          fontFamily: estelaTheme.font.family,
+          fontFamily: docsTheme.font.family,
           fontSize: 12,
-          color: estelaTheme.axis.label,
+          color: docsTheme.axis.label,
         }}
       >
         <span>
@@ -294,7 +294,7 @@ function ScrubDemo() {
           onChange={(e) => setRow(Number(e.target.value))}
         />
       </div>
-      <ChartContainer width={640} theme={estelaTheme}>
+      <ChartContainer width={640} theme={docsTheme}>
         <ChartRow height={240}>
           <YAxis id="v" label="value" min={0} pad={0.08} />
           <Layers>
