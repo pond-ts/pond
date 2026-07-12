@@ -1,21 +1,43 @@
 /**
- * The site's visual register — the same neutral, professional
- * dark-grey/light terminal pairing as the charts' docsTheme, so the
- * chrome and the rendered charts read as one designed system.
+ * The Pond brand system (brand/Pond Brand Spec.html) applied to the docs
+ * site. One teal accent carries interaction and data; everything else is a
+ * cool near-neutral — the same design language the mark expresses (two
+ * brackets, a TimeRange, framing a rising series line).
  *
- * The `--pond-*` custom properties are the canonical CSS mirror of
- * `packages/charts/src/docs-theme.fixture.ts` (the fixture is the
- * source of truth; a sync test keeps the two in lockstep). The docs
- * site's live chart embeds read these vars back through
- * `cssVarTheme`/`useChartTheme`, so a chart follows the color-mode
- * toggle natively — the exact bridge the Theming page documents.
+ * Sequencing note: this file introduces the brand's *UI-chrome* tokens
+ * (bg/surface/body/muted/hairline/accent/accent-strong/code-bg) under their
+ * canonical `--pond-*` names. The pre-existing *chart* tokens below (the
+ * docsTheme mirror — blue/amber/teal/rose/violet/ink/label/grid/etc.) are
+ * deliberately left untouched here to avoid breaking the fixture↔website
+ * sync test (`packages/charts/test/docs-theme-sync.test.ts`) mid-flight —
+ * docsTheme's rebuild onto this same brand palette is a follow-up PR that
+ * retunes that whole block (and, at that point, unifies `--pond-ink` into
+ * one token instead of the two ships-in-the-night values below and in
+ * `--ifm-heading-color`).
  */
-@import '@fontsource/roboto/400.css';
-@import '@fontsource/roboto/500.css';
-@import '@fontsource/roboto/700.css';
+@import '@fontsource/ibm-plex-serif/500.css';
+@import '@fontsource/ibm-plex-serif/600.css';
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-sans/700.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
 
 :root {
-  /* ---- pond chart tokens (docsTheme, light) ---- */
+  /* ---- brand UI tokens (light) — brand spec §02 ---- */
+  --pond-bg: #f6f9f9;
+  --pond-surface: #ffffff;
+  --pond-surface-2: #eef4f3; /* derived: recessed fill for inputs/chips */
+  --pond-body: #46605f;
+  --pond-muted: #8ba3a1;
+  --pond-hairline: rgba(12, 40, 40, 0.1);
+  --pond-accent: #0e8f86;
+  --pond-accent-strong: #0b6d66;
+  --pond-code-bg: #0c1a1a; /* code blocks are this ground in BOTH modes */
+  --pond-footer-bg: #050c0b; /* footer is always the dark "deep" band */
+
+  /* ---- pond chart tokens (docsTheme, light) — unchanged, see note above ---- */
   --pond-blue: #3d76c2;
   --pond-amber: #c99a2e;
   --pond-teal: #319795;
@@ -32,34 +54,52 @@
   --pond-falling: #d15656;
 
   /* ---- site chrome (Infima), light ---- */
-  --ifm-color-primary: #3d76c2;
-  --ifm-color-primary-dark: #366bb1;
-  --ifm-color-primary-darker: #3365a7;
-  --ifm-color-primary-darkest: #2a538a;
-  --ifm-color-primary-light: #4e83c9;
-  --ifm-color-primary-lighter: #5a8bcd;
-  --ifm-color-primary-lightest: #7ba3d8;
-  --ifm-background-color: #fafbfc;
-  --ifm-background-surface-color: #ffffff;
-  --ifm-navbar-background-color: rgba(250, 251, 252, 0.92);
-  --ifm-footer-background-color: #eef1f5;
-  --ifm-heading-color: #1d2430;
-  --ifm-font-color-base: #333c49;
-  --ifm-link-color: #35679f;
+  --ifm-color-primary: #0e8f86;
+  --ifm-color-primary-dark: #0c8078;
+  --ifm-color-primary-darker: #0b6d66;
+  --ifm-color-primary-darkest: #084f4a;
+  --ifm-color-primary-light: #23a79d;
+  --ifm-color-primary-lighter: #3bb6ac;
+  --ifm-color-primary-lightest: #7dd0c6;
+  --ifm-background-color: var(--pond-bg);
+  --ifm-background-surface-color: var(--pond-surface);
+  --ifm-navbar-height: 66px;
+  --ifm-navbar-background-color: rgba(246, 249, 249, 0.92);
+  --ifm-footer-background-color: var(--pond-footer-bg);
+  /* Heading/ink hardcoded for now rather than routed through a --pond-ink
+     indirection — see the file-header sequencing note. */
+  --ifm-heading-color: #0c2222;
+  --ifm-font-color-base: var(--pond-body);
+  --ifm-link-color: var(--pond-accent-strong);
   --ifm-font-family-base:
-    'Roboto', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --ifm-code-font-size: 95%;
-  --docusaurus-highlighted-code-line-bg: rgba(61, 118, 194, 0.11);
-  --site-hero-glow: rgba(61, 118, 194, 0.14);
-  --site-hero-soft: rgba(93, 102, 115, 0.12);
-  --site-surface-border: rgba(61, 118, 194, 0.14);
-  --site-shadow-soft: 0 24px 60px rgba(52, 63, 82, 0.08);
+    'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --ifm-heading-font-family:
+    'IBM Plex Serif', Georgia, 'Times New Roman', serif;
+  --ifm-heading-font-weight: 600;
+  --ifm-font-family-monospace:
+    'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  --ifm-code-font-size: 92%;
+  --docusaurus-highlighted-code-line-bg: rgba(52, 211, 192, 0.14);
+  --site-hero-glow: rgba(14, 143, 134, 0.14);
+  --site-hero-soft: rgba(70, 96, 95, 0.1);
+  --site-surface-border: var(--pond-hairline);
+  --site-shadow-soft: 0 24px 60px rgba(12, 34, 34, 0.08);
 }
 
 html[data-theme='dark'] {
   color-scheme: dark;
 
-  /* ---- pond chart tokens (docsThemeDark) ---- */
+  /* ---- brand UI tokens (dark) — brand spec §02 ---- */
+  --pond-bg: #081311;
+  --pond-surface: #0f1c1a;
+  --pond-surface-2: #142523; /* derived: recessed fill for inputs/chips */
+  --pond-body: #9fb4b1;
+  --pond-muted: #6b8180;
+  --pond-hairline: rgba(255, 255, 255, 0.1);
+  --pond-accent: #34d3c0;
+  --pond-accent-strong: #7fe6d8;
+
+  /* ---- pond chart tokens (docsThemeDark) — unchanged, see note above ---- */
   --pond-blue: #6ea3e8;
   --pond-amber: #dcb04a;
   --pond-teal: #45b8b0;
@@ -75,27 +115,31 @@ html[data-theme='dark'] {
   --pond-rising: #35b593;
   --pond-falling: #e06c66;
 
-  /* ---- site chrome (Infima), dark terminal ground ---- */
-  --ifm-color-primary: #6ea3e8;
-  --ifm-color-primary-dark: #5391e4;
-  --ifm-color-primary-darker: #4589e2;
-  --ifm-color-primary-darkest: #2470d9;
-  --ifm-color-primary-light: #89b5ec;
-  --ifm-color-primary-lighter: #97beee;
-  --ifm-color-primary-lightest: #c0d8f5;
-  --ifm-background-color: #16191f;
-  --ifm-background-surface-color: #1c2027;
-  --ifm-navbar-background-color: rgba(22, 25, 31, 0.92);
-  --ifm-footer-background-color: #12151a;
-  --ifm-heading-color: #dde3ea;
-  --ifm-font-color-base: #b6bec9;
-  --ifm-link-color: #89b5ec;
-  --docusaurus-highlighted-code-line-bg: rgba(110, 163, 232, 0.14);
-  --site-hero-glow: rgba(110, 163, 232, 0.1);
-  --site-hero-soft: rgba(153, 163, 174, 0.08);
-  --site-surface-border: rgba(110, 163, 232, 0.16);
-  --site-shadow-soft: 0 24px 60px rgba(0, 0, 0, 0.35);
+  /* ---- site chrome (Infima), dark ---- */
+  --ifm-color-primary: #34d3c0;
+  --ifm-color-primary-dark: #22b8a6;
+  --ifm-color-primary-darker: #1ca290;
+  --ifm-color-primary-darkest: #147a6c;
+  --ifm-color-primary-light: #5ddfcf;
+  --ifm-color-primary-lighter: #7fe6d8;
+  --ifm-color-primary-lightest: #a8eee3;
+  --ifm-background-color: var(--pond-bg);
+  --ifm-background-surface-color: var(--pond-surface);
+  --ifm-navbar-background-color: rgba(8, 19, 17, 0.92);
+  --ifm-footer-background-color: var(--pond-footer-bg);
+  --ifm-heading-color: #e6f2f0;
+  --ifm-font-color-base: var(--pond-body);
+  --ifm-link-color: var(--pond-accent);
+  --docusaurus-highlighted-code-line-bg: rgba(52, 211, 192, 0.16);
+  --site-hero-glow: rgba(52, 211, 192, 0.12);
+  --site-hero-soft: rgba(159, 180, 177, 0.07);
+  --site-surface-border: var(--pond-hairline);
+  --site-shadow-soft: 0 24px 60px rgba(0, 0, 0, 0.4);
 }
+
+/* ---------------------------------------------------------------------
+   Layout chrome
+   ------------------------------------------------------------------- */
 
 .hero--primary {
   background:
@@ -109,6 +153,12 @@ html[data-theme='dark'] {
   color: var(--ifm-heading-color);
 }
 
+.hero__title {
+  margin-left: auto;
+  margin-right: auto;
+  letter-spacing: -0.02em;
+}
+
 .navbar {
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--site-surface-border);
@@ -116,22 +166,56 @@ html[data-theme='dark'] {
 }
 
 .footer {
-  border-top: 1px solid var(--site-surface-border);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+/* The bracket mark isn't circular (44×40, angular brackets) — no clipping,
+   size to its natural aspect ratio. */
+.navbar__logo img {
+  display: block;
+  height: 2rem;
+  width: auto;
+}
+
+.navbar__logo {
+  height: 2rem;
+  width: auto;
+}
+
+/* ---------------------------------------------------------------------
+   Components — brand spec §05
+   ------------------------------------------------------------------- */
+
+/* CARD — radius 14 · pad 26 · hairline */
 .theme-code-block,
 .pagination-nav__link,
 .card {
   box-shadow: var(--site-shadow-soft);
 }
 
+.card {
+  background: var(--ifm-background-surface-color);
+  border: 1px solid var(--site-surface-border);
+  border-radius: 14px;
+  padding: 26px;
+}
+
+/* BUTTONS — radius 10 · pad 12–13×24–26 · 600 · shadow on primary only */
+.button {
+  border-radius: 10px;
+  font-weight: 600;
+  padding: 13px 26px;
+}
+
 .button.button--outline {
   border-color: var(--site-surface-border);
+  box-shadow: none;
 }
 
 .button.button--primary {
   background: var(--ifm-color-primary);
   border-color: var(--ifm-color-primary);
+  box-shadow: 0 8px 20px rgba(14, 143, 134, 0.25);
   color: #fff;
 }
 
@@ -151,31 +235,41 @@ html[data-theme='dark'] {
 }
 
 html[data-theme='dark'] .button.button--primary {
-  color: #10131a;
+  box-shadow: 0 8px 20px rgba(52, 211, 192, 0.2);
+  color: #06120f;
 }
 
 html[data-theme='dark'] .button.button--outline.button--primary {
+  border-color: rgba(52, 211, 192, 0.35);
   color: var(--ifm-color-primary-light);
-  border-color: rgba(110, 163, 232, 0.45);
 }
 
 html[data-theme='dark'] .button.button--outline.button--primary:hover {
   color: var(--ifm-color-primary-lightest);
 }
 
-.hero__title {
-  margin-left: auto;
-  margin-right: auto;
+/* SEARCH / INPUT — radius 9 · surface-2 fill · hairline border */
+.navbar__search-input {
+  background-color: var(--pond-surface-2);
+  border: 1px solid var(--site-surface-border);
+  border-radius: 9px;
 }
 
-.navbar__logo img {
-  border-radius: 50%;
-  display: block;
-  transform: scale(1.14);
-  transform-origin: center;
+/* CODE BLOCK — bg #0C1A1A always · radius 10–14 · teal keywords (theme in
+   src/prism-pond-theme.ts) */
+.theme-code-block {
+  border-radius: 12px;
 }
 
-.navbar__logo {
-  border-radius: 50%;
-  overflow: hidden;
+/* CALLOUT — a half-bracket, never a full box: left interval bracket only. */
+.alert {
+  background-color: color-mix(
+    in srgb,
+    var(--ifm-alert-background-color) 35%,
+    transparent
+  );
+  border-style: none none none solid;
+  border-left-width: 2px;
+  border-radius: 0 6px 6px 0;
+  box-shadow: none;
 }

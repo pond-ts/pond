@@ -1,11 +1,11 @@
-import { themes as prismThemes } from 'prism-react-renderer';
 import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
+import { pondCodeTheme } from './src/prism-pond-theme';
 
 const config: Config = {
   title: 'Pond',
   tagline: 'Typed time series primitives for modern TypeScript projects',
-  favicon: 'img/favicon.ico',
+  favicon: 'img/pond-favicon.svg',
   future: {
     v4: true,
   },
@@ -74,7 +74,8 @@ const config: Config = {
       title: 'Pond',
       logo: {
         alt: 'Pond logo',
-        src: 'img/logo.png',
+        src: 'img/pond-mark-light.svg',
+        srcDark: 'img/pond-mark-dark.svg',
       },
       items: [
         {
@@ -137,8 +138,11 @@ const config: Config = {
       copyright: `Copyright © ${new Date().getFullYear()} Peter Murphy. Built with Docusaurus.`,
     },
     prism: {
-      theme: prismThemes.github,
-      darkTheme: prismThemes.oneDark,
+      // Code blocks are always the brand's dark-teal "terminal chip" — one
+      // ground regardless of site theme (brand spec §05: "CODE BLOCK bg
+      // #0C1A1A ... teal keywords"), not a light/dark pair.
+      theme: pondCodeTheme,
+      darkTheme: pondCodeTheme,
     },
   } satisfies Preset.ThemeConfig,
 };
