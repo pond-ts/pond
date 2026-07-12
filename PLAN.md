@@ -733,7 +733,7 @@ theme.bar[group] ?? default` (theme-role + ad-hoc-palette, the single styling
     needs horizontal-histogram selection.
 - **Categorical axis — Phase 1 (ADOPTED from `docs/rfcs/categorical-axis.md`,
   building 2026-07-10).** The RFC's Phase 1 — a first-class **ordinal
-  column-domain x-axis** (the transpose view's "columns on x"; closes SPARC's
+  column-domain x-axis** (the transpose view's "columns on x"; closes the categorical-charts report's
   item 2, replacing the hand-rolled ordinal-index hack). This is the RFC's _sole
   new scale primitive_ and its stated design-risk piece. Adopted into PLAN by
   user direction; the metric branch + cursor-binding (Phase 2) stay RFC-only.
@@ -769,7 +769,7 @@ theme.bar[group] ?? default` (theme-role + ad-hoc-palette, the single styling
     (Estela's `F-charts-bar-stable-id`). Additive (`mark` undefined for time/value
     bars) — **but a public-type touch → human-approval gate at merge.** Plus a
     category-axis **thin + truncate** label policy (width-estimated) for
-    high-cardinality (SPARC's tickers); rotate deferred.
+    high-cardinality (many category labels); rotate deferred.
   - **All three PRs are built + verified on `feat/charts-categorical-axis`** (479
     charts tests green; `bandScale` / `transposeRow` / category-identity unit
     tests; real-browser screenshots of the 7 `Charts/CategoryAxis` stories). Not
