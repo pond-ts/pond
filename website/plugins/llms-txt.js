@@ -16,7 +16,10 @@
 const fs = require('fs');
 const path = require('path');
 
-/** Recursively collect .md/.mdx files under a directory. */
+/**
+ * Recursively collect .md/.mdx files under a directory.
+ * @param {string} dir
+ */
 function walk(dir) {
   /** @type {string[]} */
   const out = [];

@@ -1,9 +1,10 @@
+import type { ReactNode } from 'react';
 import Layout from '@theme/Layout';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 
 import styles from './api.module.css';
 
-export default function ApiPage(): JSX.Element {
+export default function ApiPage(): ReactNode {
   const coreHref = useBaseUrl('/generated-api/core/');
   const reactHref = useBaseUrl('/generated-api/react/');
   const fitHref = useBaseUrl('/generated-api/fit/');
