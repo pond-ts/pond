@@ -1,0 +1,134 @@
+---
+id: financial-index
+title: '@pond-ts/financial'
+sidebar_position: 1
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import FinancialCalendarChart from '@site/src/examples/financial-calendar-chart';
+
+# @pond-ts/financial
+
+**A trading calendar**: a session schedule — open/close instants, holidays,
+intraday breaks — plus the query surface pond's data ops and
+`@pond-ts/charts`' trading-time axis need. `@pond-ts/financial` is
+deliberately small: one class, `TradingCalendar`.
+
+**Install** — `npm install @pond-ts/financial pond-ts`. Peer-depends on
+`pond-ts`; the pond packages release together, so keep their ranges in
+step.
+
+## The candle below is calendar-aware
+
+Weekends genuinely don't exist in the data below — every bar is stamped at
+a real trading session's open, with no bar for Saturday or Sunday. Handing
+the calendar to `<ChartContainer>` collapses that closed time from the
+_axis_ too, so trading days sit flush against each other instead of a gap
+opening up every weekend:
+
+<ChartExample name="financial-calendar-chart" height={280}>
+  <FinancialCalendarChart />
+</ChartExample>
+
+```tsx
+<ChartContainer range={range} width={560} theme={theme} calendar={cal}>
+  <ChartRow height={220}>
+    <YAxis id="price" side="right" format="$,.0f" />
+    <Layers>
+      <Candlestick series={series} as="demo" showOHLC />
+    </Layers>
+  </ChartRow>
+</ChartContainer>
+```
+
+`calendar` is the only new prop — everything else is the same
+`ChartContainer`/`ChartRow`/`Layers`/`Candlestick` vocabulary from the
+[Learn charts](../learn-charts/) track. No package coupling: the chart
+only needs an object shaped like `{ discontinuities(): ... }`, which
+`TradingCalendar` happens to be.
+
+## Building a calendar
+
+Two constructors, both first-class — pick whichever shape your data
+starts in:
+
+```ts
+import { TradingCalendar } from '@pond-ts/financial';
+
+// From hours + a date range — a calendar that *generates* its sessions.
+const cal = TradingCalendar.fromRules(
+  { timeZone: 'America/New_York', open: '09:30', close: '16:00' },
+  { from: '2026-01-05', to: '2026-02-13' },
+);
+
+// From an explicit session list — for a feed that already hands you
+// dated open/close instants (a vendor calendar, a holiday API).
+const cal2 = TradingCalendar.fromSessions(sessions);
+```
+
+`SessionRules` also takes `weekmask` (default Monday–Friday), `breaks`
+(a lunch), `holidays` (dates with no session), and `earlyCloses`
+(per-date override closes) — every hour is resolved DST-correctly
+against the IANA `timeZone` you give it, not a fixed UTC offset.
+
+## Querying the calendar
+
+```ts
+cal.sessions(); // every session, ascending
+cal.sessionOn('2026-01-06'); // the session on a date, or undefined
+cal.isTradingDay('2026-01-10'); // false — a Saturday
+cal.sessionContaining(instant); // the session an instant falls in
+cal.isOpen(instant); // inside a session AND not inside a break
+```
+
+## Feeding a chart-ready bucketing grid
+
+`sessionSequence`/`barSequence` return a pond `BoundedSequence` — feed it
+straight to `.aggregate`/`.materialize` and every bucket lands on a real
+trading session, with no weekend/holiday buckets and no bucket spanning a
+market closure:
+
+```ts
+const dailyBars = tickSeries.aggregate(cal.sessionSequence(), {
+  price: { from: 'price', using: 'last' },
+});
+
+const fiveMinBars = tickSeries.aggregate(cal.barSequence('5m'), {
+  price: { from: 'price', using: 'last' },
+});
+```
+
+`barSequence` bars are session-aligned — they never span a session
+boundary or an intraday break, and the final bar of each tradeable
+segment truncates at the close rather than overrunning it.
+
+## Tagging events with their session
+
+`tagSessions` appends a session-id column — use it as a `partitionBy` key
+so stateful ops (`rolling`, `fill`, cumulative folds) don't bridge across
+a session boundary a raw time-based window would silently cross:
+
+```ts
+const tagged = cal.tagSessions(series); // adds a "session" column
+const smoothed = tagged
+  .partitionBy('session')
+  .rolling('5m', { price: 'avg' })
+  .collect();
+```
+
+## Where to go next
+
+- [**API reference**](pathname:///generated-api/financial/) — the
+  generated, full-width reference: every method, option, and type.
+- [Learn charts](../learn-charts/) — the tutorial track this page's chart
+  reuses every primitive from.
+- [Resizable multi-panel layout](../recipes/resizable-panels) — the
+  canonical financial shape: a price chart over an indicator panel.
+
+:::note
+This page is a quickstart, not the full financial-charting guide — a
+flagship end-to-end guide (OHLC data → `aggregate` rollups → `Candlestick`
+variants → volume row → the forming-bar live pattern) is on the roadmap.
+See [PLAN.md](https://github.com/pjm17971/pond-ts/blob/main/PLAN.md)'s
+"Docs site wave" for what's shipped and what's next.
+:::

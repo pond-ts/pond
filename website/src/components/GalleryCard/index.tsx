@@ -18,8 +18,9 @@ interface GalleryCardProps {
   height?: number;
   /** Render-prop: the card measures its own box (ResizeObserver) and hands
    *  back the width, since `<ChartContainer>` takes an explicit pixel width
-   *  with no responsive mode yet — the same seam `MultiPanelLayout.stories.tsx`
-   *  solves locally, not yet a documented site-wide recipe (PLAN P1g). */
+   *  with no responsive mode yet — the
+   *  [responsive-width recipe](/docs/recipes/responsive-width)'s pattern,
+   *  applied per-card. */
   children: (width: number) => ReactNode;
 }
 

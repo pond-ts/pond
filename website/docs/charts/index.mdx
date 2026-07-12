@@ -110,8 +110,9 @@ covers exporting pond data to Recharts instead.
 
 Some honest constraints, before you commit: you adopt the pond `TimeSeries`
 data model end to end (not a drop-in over arbitrary JSON); `width` is an
-explicit number today (no responsive mode — the [Gallery](./gallery)'s cards
-solve it locally with a `ResizeObserver`, not yet a documented recipe);
+explicit pixel number, not `"100%"` — the
+[responsive-width recipe](../recipes/responsive-width) is one
+`ResizeObserver` away, and it's what the Gallery's own cards run on;
 interaction is mouse-only (no keyboard/touch cursor or selection yet); and
 the package is **pre-1.0** — the API is stabilizing, not frozen. None of that
 is hidden: the [Storybook](pathname:///storybook/) and the Gallery show

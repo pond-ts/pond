@@ -103,6 +103,18 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: '@pond-ts/financial',
+      link: { type: 'doc', id: 'financial/financial-index' },
+      items: [
+        {
+          type: 'link',
+          label: 'API reference (financial)',
+          href: 'pathname:///generated-api/financial/',
+        },
+      ],
+    },
+    {
+      type: 'category',
       label: '@pond-ts/charts',
       link: { type: 'doc', id: 'charts/charts-index' },
       items: [
@@ -147,6 +159,7 @@ const sidebars: SidebarsConfig = {
         'recipes/streaming-baseline',
         'recipes/cpu-metrics',
         'recipes/error-rate-dashboard',
+        'recipes/responsive-width',
         'recipes/resizable-panels',
         'recipes/using-charts',
         'recipes/theming',
