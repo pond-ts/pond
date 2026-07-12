@@ -23,7 +23,7 @@ const cases: ReadonlyArray<readonly [id: string, file: string]> = [
   ['charts-cursors-scenarios--cursor-time', 'interactions-cursor-time.png'], // time atop readout
 ];
 
-test.describe('Interactions', () => {
+test.describe('Charts/Cursors/Scenarios', () => {
   for (const [id, file] of cases) {
     test(`renders ${id}`, async ({ page }) => {
       // These stories render the tracker (sampleAt → value read), so guard
