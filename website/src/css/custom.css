@@ -112,7 +112,7 @@ html[data-theme='dark'] {
 .navbar {
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--site-surface-border);
-  box-shadow: 0 8px 30px rgba(52, 63, 82, 0.06);
+  box-shadow: var(--site-shadow-soft);
 }
 
 .footer {
@@ -126,7 +126,7 @@ html[data-theme='dark'] {
 }
 
 .button.button--outline {
-  border-color: rgba(61, 118, 194, 0.35);
+  border-color: var(--site-surface-border);
 }
 
 .button.button--primary {
