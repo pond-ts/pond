@@ -1,0 +1,153 @@
+---
+title: 4. Shaping data to chart
+sidebar_label: 4. Shaping data to chart
+sidebar_position: 4
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import AggregateBars from '@site/src/examples/learn-04-aggregate-bars';
+import RollingBand from '@site/src/examples/learn-04-rolling-band';
+import PartitionMulti from '@site/src/examples/learn-04-partition-multi';
+import Histogram from '@site/src/examples/learn-04-histogram';
+
+# Shaping data to chart
+
+:::info[You will learn]
+
+- Turning raw point readings into time buckets a `BarChart` can draw
+- Smoothing a noisy line into a centreline with a variance envelope
+- Splitting one series into one line per host
+- Bucketing by _value_ instead of time, for a distribution
+  :::
+
+Raw data is rarely chart-shaped. This chapter is the "make the most of
+pond" chapter — four transforms, four charts, all starting from the same
+raw cpu/latency readings chapter 3 introduced.
+
+## `aggregate` → bars
+
+A `BarChart` needs a span to fill, not a point (chapter 3's temporal-keys
+note). `.aggregate` buckets point-keyed readings into **interval-keyed**
+time buckets — exactly the shape a bar needs:
+
+<ChartExample name="learn-04-aggregate-bars" height={230}>
+  <AggregateBars />
+</ChartExample>
+
+```ts
+import { Sequence } from 'pond-ts';
+
+const buckets = series.aggregate(Sequence.every('10m'), { cpu: 'avg' });
+// buckets.schema[0].kind === 'interval'
+```
+
+```tsx
+<BarChart series={buckets} column="cpu" axis="pct" gap={3} />
+```
+
+`{ cpu: 'avg' }` is shorthand for `{ cpu: { from: 'cpu', using: 'avg' } }` —
+`.aggregate` takes a wide vocabulary of reducers (`sum`, `min`, `max`,
+`count`, `median`, `p95`, and more). Full list:
+[Aggregation](../pond-ts/transforms/aggregation).
+
+## `rolling` + `baseline` → a smoothed line and its envelope
+
+A noisy raw signal is rarely what you want to show as-is. `.baseline`
+computes a rolling mean and standard deviation in one pass, appending
+`avg`/`sd`/`upper`/`lower` columns — feed `avg` to a `LineChart` and
+`lower`/`upper` to a `BandChart` and you get a centreline with its own
+variance band:
+
+<ChartExample name="learn-04-rolling-band" height={280}>
+  <RollingBand />
+</ChartExample>
+
+```ts
+const banded = series.baseline('cpu', { window: '10m', sigma: 1.5 });
+// banded columns: time, cpu, host, avg, sd, upper, lower
+```
+
+```tsx
+<BandChart series={banded} lower="lower" upper="upper" axis="pct" as="outer" />
+<LineChart series={banded} column="avg" axis="pct" as="primary" />
+```
+
+`.baseline` is sugar over a `.rolling` call with `avg`/`stdev` reducers —
+reach for `.rolling` directly when you want the window without the
+band-shaped output. Both: [Rolling windows](../pond-ts/transforms/rolling);
+`.baseline`/`.outliers`:
+[Anomaly detection](../pond-ts/transforms/anomaly-detection).
+
+## `partitionBy` → one line per host
+
+The running example has been one host so far. With all three:
+
+<ChartExample name="learn-04-partition-multi" height={280}>
+  <PartitionMulti />
+</ChartExample>
+
+```ts
+const byHost = series.partitionBy('host').toMap(); // Map<string, TimeSeries<S>>
+```
+
+```tsx
+<Layers>
+  {HOSTS.map((host) => (
+    <LineChart
+      key={host}
+      series={byHost.get(host)!}
+      column="cpu"
+      as={/* … */}
+    />
+  ))}
+</Layers>
+```
+
+`.partitionBy` returns a view, not a `Map` directly — `.toMap()` is the
+terminal call that gives you one `series` per partition key, ready to map
+over into one draw layer each. (If you instead want to run a transform
+**per partition and rejoin into one series** — a per-host rolling average,
+say — `.collect()` is the terminal call for that shape instead.) Full
+model: [Reshape](../pond-ts/transforms/reshape).
+
+## `byColumn` → a distribution
+
+Every transform above buckets by **time**. `.byColumn` buckets by
+**value** instead — the shape a distribution or histogram needs, with no
+time axis at all:
+
+<ChartExample name="learn-04-histogram" height={230}>
+  <Histogram />
+</ChartExample>
+
+```ts
+const count = new Float64Array(series.length).fill(1);
+const bins = series
+  .withColumn('count', count)
+  .byColumn(
+    'latency',
+    { width: 5 },
+    { count: { from: 'count', using: 'sum' } },
+  );
+// bins: Array<{ start, end, count }> — a plain array, not a series
+```
+
+```tsx
+<BarChart bins={bins} column="count" gap={2} />
+```
+
+`.byColumn` returns a plain array of bin records, not a `series` — value
+bins aren't time-indexed, so there's nothing to key. `<BarChart bins={…}>`
+reads that shape directly.
+
+## Recap
+
+Four transforms, four chart-ready shapes: `aggregate` for time buckets,
+`baseline` for a smoothed centreline plus its envelope, `partitionBy` for
+one series per group, `byColumn` for a value distribution. Every one of
+them takes the exact same raw readings chapter 3 built and reshapes them
+without touching how the chart itself is drawn — the shaping happens
+before the chart ever sees the data.
+
+**Next: [Styling and theming](./styling-and-theming)** — the last
+core-vocabulary chapter: how a series column becomes a colour on screen.

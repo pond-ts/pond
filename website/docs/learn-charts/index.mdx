@@ -1,0 +1,43 @@
+---
+id: learn-charts-index
+title: Learn charts
+sidebar_label: Learn charts
+sidebar_position: 0
+---
+
+# Learn charts
+
+A five-chapter tutorial track for `@pond-ts/charts` — start here if you're
+new to the library, not just looking something up (that's the
+[Overview](../charts/index.mdx) and the [Gallery](../charts/gallery)).
+
+Every chapter has at least one **live chart embed** — the code shown is the
+exact component mounted on the page, never a fragment you can't run
+yourself. Cursors and hover work from chapter 1 on; you're touching the
+interaction system before it's formally taught.
+
+One running example threads the whole track: a small seeded **server
+metrics** series (cpu + latency per host, on a one-minute grid) — the same
+dataset chapter 1's chart renders is the one chapter 2 adds a second axis
+and a second row to.
+
+1. [**Your first chart**](./your-first-chart) — install, render, the
+   four components every chart needs. Under 10 minutes to a working chart.
+2. [**Anatomy of a chart**](./anatomy-of-a-chart) — a second axis, a
+   second row, the `Layers` z-stack, and a caution about prop identity.
+3. [**Feeding charts pond data**](./feeding-charts-pond-data) — from "I
+   have an API response" to a rendered series: `fromJSON`, temporal keys,
+   what a draw layer actually reads.
+4. [**Shaping data to chart**](./shaping-data-to-chart) — the
+   "make the most of pond" chapter: `aggregate`, `rolling`, `partitionBy`,
+   and `byColumn`, each turning raw data into a chart-ready shape.
+5. [**Styling and theming**](./styling-and-theming) — the styling
+   pipeline in one sentence, and which of three theming approaches fits
+   your app.
+
+Chapters on cursors/zoom, annotations, live charts, and non-time axes are
+on the roadmap — see [PLAN.md](https://github.com/pjm17971/pond-ts/blob/main/PLAN.md)'s
+"Docs site wave" for what's shipped and what's next. Until then, the
+[Cursors & readouts](pathname:///storybook/?path=/story/charts-cursors-scenarios--in-context)
+and [Annotations](pathname:///storybook/?path=/story/charts-annotations-scenarios--in-context)
+Storybook groups cover that ground directly.

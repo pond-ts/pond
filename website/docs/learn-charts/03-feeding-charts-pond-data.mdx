@@ -1,0 +1,97 @@
+---
+title: 3. Feeding charts pond data
+sidebar_label: 3. Feeding charts pond data
+sidebar_position: 3
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import FromApi from '@site/src/examples/learn-03-from-api';
+
+# Feeding charts pond data
+
+:::info[You will learn]
+
+- Turning an API response into a `series` a chart can draw
+- The difference between a **point** key and an **interval** key — and why
+  it matters for bars
+- What a draw layer actually reads off your data (the "data contract")
+  :::
+
+Every chart so far started from a `series` that was already built. Say
+you've got this instead — a typical JSON API response:
+
+```json
+[
+  { "time": 1700000000000, "cpu": 0.31 },
+  { "time": 1700000060000, "cpu": 0.34 },
+  { "time": 1700000120000, "cpu": 0.42 }
+]
+```
+
+`TimeSeries.fromJSON` turns that straight into a `series`:
+
+<ChartExample name="learn-03-from-api" height={240}>
+  <FromApi />
+</ChartExample>
+
+```ts
+import { TimeSeries } from 'pond-ts';
+
+const series = TimeSeries.fromJSON({
+  name: 'cpu',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'cpu', kind: 'number' },
+  ] as const,
+  rows: apiResponse, // the array of objects above
+});
+```
+
+`rows` also accepts array-tuples (`[time, cpu]` instead of `{time, cpu}`) —
+every example before this chapter used that shape. Struct-of-arrays data
+(a bulk columnar payload, decoded protobuf, typed arrays) skips the
+row round-trip entirely via `TimeSeries.fromColumns` — see
+[Creating series → Columnar ingest](../start-here/creating#columnar-ingest)
+for that shape; it's the same series either way once built.
+
+## Point keys vs. interval keys
+
+`schema[0]` — the first column — is the **temporal key**, and its `kind`
+matters beyond just "when": `'time'` keys one **instant**; `'interval'`
+keys a **span** (a begin and an end). Every example so far has been
+point-keyed (`kind: 'time'`) — a raw reading at an instant, which is what
+an API response usually looks like.
+
+This matters the moment you reach for a bar-shaped layer. A line has no
+width to fill, so a point key is fine. A bar does — chapter 4's
+`aggregate` call turns point-keyed readings into **interval-keyed**
+buckets (each output row spans a time bucket, not just an instant), which
+is exactly the shape `BarChart` needs to size each bar. Interval keys
+aren't a special case bolted on later; they're what "shaping data to
+chart" produces naturally. [Temporal keys](../start-here/concepts/temporal-keys)
+covers the full model (a third kind, `timeRange`, covers point-in-time
+snapshots over an arbitrary span).
+
+## What a draw layer actually reads
+
+A `<LineChart series={series} column="cpu" />` reads exactly one thing off
+your series: a numeric column named `cpu`. That's the whole data contract
+for a line — no required shape beyond "this column exists and is
+numeric." Other layers read more: `<BandChart>` reads a `lower` and an
+`upper` column; `<Candlestick>` reads `open`/`high`/`low`/`close`; `<BoxPlot>`
+reads five quantile columns. The
+[chart-type table](../charts/index.mdx#the-minimal-api-set--compact-cut)
+lists what each layer expects — worth a glance before you shape data for
+one, which is exactly what the next chapter does.
+
+## Recap
+
+`TimeSeries.fromJSON` turns an API response (or a `fromColumns` struct-of-
+arrays payload) into a chartable `series`. The temporal key's `kind` is
+`'time'` for raw readings, `'interval'` once you've bucketed — and bars
+need the latter. Every draw layer reads a specific, small set of named
+columns off your series; that's its data contract.
+
+**Next: [Shaping data to chart](./shaping-data-to-chart)** — the
+transforms that turn raw readings into the interval buckets, rolling
+windows, and per-series splits real charts are built from.

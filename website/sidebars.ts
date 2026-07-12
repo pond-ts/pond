@@ -108,6 +108,18 @@ const sidebars: SidebarsConfig = {
       items: [
         'charts/gallery',
         {
+          type: 'category',
+          label: 'Learn charts',
+          link: { type: 'doc', id: 'learn-charts/learn-charts-index' },
+          items: [
+            'learn-charts/your-first-chart',
+            'learn-charts/anatomy-of-a-chart',
+            'learn-charts/feeding-charts-pond-data',
+            'learn-charts/shaping-data-to-chart',
+            'learn-charts/styling-and-theming',
+          ],
+        },
+        {
           type: 'link',
           label: 'API reference (charts)',
           href: 'pathname:///generated-api/charts/',
