@@ -87,11 +87,12 @@ const chartTheme: ChartTheme = {
   ...docsTheme,
   line: {
     ...docsTheme.line,
-    // The docs ramp, by role: blue / violet / rose / amber.
-    atm: { color: '#3d76c2', width: 1.3 },
-    realized: { color: '#8168b8', width: 1.3 },
-    garch: { color: '#c25450', width: 1.3 },
-    price: { color: '#c99a2e', width: 1.6 },
+    // The docs viz ramp, by role: viz1 / viz2 / viz3 / viz4 — all four stay
+    // in the data register (never vizMark, which is annotations-only).
+    atm: { color: docsTheme.line.primary!.color, width: 1.3 },
+    realized: { color: docsTheme.line.secondary!.color, width: 1.3 },
+    garch: { color: docsTheme.line.context!.color, width: 1.3 },
+    price: { color: docsTheme.line.slow!.color, width: 1.6 },
   },
 };
 
