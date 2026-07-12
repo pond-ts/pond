@@ -126,6 +126,21 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Recipes',
+      link: { type: 'doc', id: 'recipes/recipes-index' },
+      items: [
+        'recipes/telemetry-reporting',
+        'recipes/streaming-dashboard',
+        'recipes/streaming-baseline',
+        'recipes/cpu-metrics',
+        'recipes/error-rate-dashboard',
+        'recipes/resizable-panels',
+        'recipes/using-charts',
+        'recipes/theming',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Reference',
       link: { type: 'doc', id: 'reference/reference-index' },
       items: ['reference/benchmarks'],

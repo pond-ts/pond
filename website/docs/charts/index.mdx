@@ -80,7 +80,8 @@ type, and default; this is the map.
 | `BandChart`    | A filled `lower`/`upper` envelope (variance band).                                                                                                                                                                                                    |
 | `ScatterChart` | Points, with data-driven radius / colour encoding.                                                                                                                                                                                                    |
 | `BarChart`     | Bars, **histograms** — stacked (`columns` / a `Map` / `bins`) and `horizontal` ([guide](../how-to-guides/histograms)) — and **categorical** bars (`categories`, a bar per category on an ordinal axis; [guide](../how-to-guides/categorical-charts)). |
-| `BoxPlot`      | Box-and-whisker / candlestick (`shape`).                                                                                                                                                                                                              |
+| `BoxPlot`      | Box-and-whisker per bucket (`shape`: `whisker` / `solid` / `none`) from five pre-computed quantile columns.                                                                                                                                           |
+| `Candlestick`  | First-class OHLC candles (`variant`: `candle` / `bar` / `hollow`; `colorBy`; optional `showOHLC` axis pills). Pairs with the trading-time axis (`calendar` on `ChartContainer`).                                                                      |
 
 Every draw layer takes a pond `series` + a `column`, an `as` **style**
 identifier (theme lookup), and an `axis` **scale** id — style and scale are
@@ -98,11 +99,12 @@ separate channels by design (no per-component colour/width props).
 
 ### Data adapters & theming
 
-| Export                                                                            | What it is                                                               |
-| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `fromTimeSeries`, `bandFromTimeSeries`, `boxFromTimeSeries`, `barsFromTimeSeries` | Adapters shaping a `TimeSeries` for the matching layer.                  |
-| `defaultTheme`                                                                    | The neutral built-in `ChartTheme`.                                       |
-| `cssVarTheme`, `useChartTheme`                                                    | Build a theme from CSS custom properties and follow a dark/light toggle. |
+| Export                                                                                                  | What it is                                                                  |
+| ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `fromTimeSeries`, `bandFromTimeSeries`, `boxFromTimeSeries`, `barsFromTimeSeries`, `ohlcFromTimeSeries` | Adapters shaping a `TimeSeries` for the matching layer.                     |
+| `stacksFromGroups`, `stacksFromColumns`, `stacksFromBins`, `categoryStack`, `transposeRow`              | Stacked-bar / histogram / categorical readers over pond aggregation output. |
+| `defaultTheme`                                                                                          | The neutral built-in `ChartTheme`.                                          |
+| `cssVarTheme`, `useChartTheme`                                                                          | Build a theme from CSS custom properties and follow a dark/light toggle.    |
 
 ## Where to start
 

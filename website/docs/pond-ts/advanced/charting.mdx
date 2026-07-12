@@ -2,15 +2,24 @@
 sidebar_position: 19
 ---
 
-# Charting
+# Using other chart libraries
 
-pond-ts is not a chart library. The actual rendering is yours. The
-bridge to whichever charting library you pick is deliberately short.
+:::tip[pond has first-party charts]
+**[`@pond-ts/charts`](../../charts/index.mdx)** is the first-party
+chart library: canvas-rendered, streaming-first time-series charts
+that consume a `TimeSeries` directly — no point-array conversion, with
+cursors, selection, annotations, and theming built in. Start there.
 
-A first-party `@pond-ts/charts` is on the long-term roadmap (likely
-built on visx). Until then, the workflow is: shape your `TimeSeries`
-into the chart library's expected input via `toPoints` / `fromPoints`,
-hand it to the chart, done.
+This page is for the other case: you're rendering with a
+general-purpose chart library (Recharts, Observable Plot, visx, raw
+d3) and just need pond's data out in the shape those libraries eat.
+:::
+
+The bridge is deliberately short: shape your `TimeSeries` with pond's
+transforms, then export flat rows via `toPoints()`. If your data is
+plain arrays to begin with and you don't need the transform pipeline,
+a general-purpose chart library alone may genuinely be the better
+fit — pond earns its keep when the data needs shaping first.
 
 ## `toPoints()` — the bridge
 
@@ -27,21 +36,14 @@ const data = cpu.toPoints();
 values stay `undefined`; chart libraries render those as gaps with
 `connectNulls={false}` or equivalent.
 
-The shape — flat `{ ts, ...cols }[]` — is what every mainstream
-chart library accepts directly (Recharts, Observable Plot, visx, raw
-d3).
-
-### Narrowing to a single column
-
-For a single-series chart, compose with `select` to drop the columns
-you don't want:
+The shape — flat `{ ts, ...cols }[]` — is what every mainstream chart
+library accepts directly. For a single-series chart, compose with
+`select` to drop the columns you don't want:
 
 ```ts
 const cpuPoints = cpu.select('cpu').toPoints();
 // [{ ts: number, cpu: number | undefined }, ...]
 ```
-
-The narrowed-row shape is the same; just fewer keys.
 
 ## `fromPoints(points, { schema, name? })` — the inverse
 
@@ -69,452 +71,47 @@ The schema's first column must be `kind: 'time'` (`ts` is a single
 timestamp; it can't reconstruct a `TimeRange` or `Interval` extent).
 Missing keys on a row become `undefined` on the resulting `Event`.
 
-Useful for round-tripping derived data — flatten anomaly events into
-chart points, edit, then turn back into a `TimeSeries` for further
-composition.
-
-## Single line chart with Recharts
-
-The simple case. Drop `toPoints` straight into a `LineChart`:
-
-```tsx
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
-
-function CpuChart({ cpu }: { cpu: TimeSeries<Schema> }) {
-  const data = cpu.toPoints();
-
-  return (
-    <ResponsiveContainer width="100%" height={300}>
-      <LineChart data={data}>
-        <CartesianGrid strokeDasharray="3 3" />
-        <XAxis
-          dataKey="ts"
-          type="number"
-          domain={['dataMin', 'dataMax']}
-          tickFormatter={(t) => new Date(t).toISOString().slice(11, 19)}
-        />
-        <YAxis />
-        <Tooltip labelFormatter={(t) => new Date(t).toISOString()} />
-        <Line
-          type="monotone"
-          dataKey="cpu"
-          dot={false}
-          isAnimationActive={false}
-        />
-      </LineChart>
-    </ResponsiveContainer>
-  );
-}
-```
-
-Note `dataKey="cpu"` — the column name from the schema. No `.value`
-accessor; that was the old narrow-form API.
-
-`isAnimationActive={false}` is load-bearing for live dashboards — see
-[Live-update gotchas](#live-update-gotchas) below.
-
-## Band chart with a filled region
-
-`baseline()` adds `avg` / `sd` / `upper` / `lower` columns to the
-source schema. `toPoints()` emits all of them in one wide-row array:
-
-```tsx
-import {
-  Area,
-  ComposedChart,
-  Line,
-  ResponsiveContainer,
-  XAxis,
-  YAxis,
-} from 'recharts';
-
-function CpuBand({ cpu }: { cpu: TimeSeries<Schema> }) {
-  const bands = cpu.baseline('cpu', { window: '1m', sigma: 2 });
-  const data = bands.toPoints();
-  // [{ ts, cpu, avg, sd, upper, lower, host, ... }, ...]
-
-  return (
-    <ResponsiveContainer width="100%" height={300}>
-      <ComposedChart data={data}>
-        <XAxis dataKey="ts" type="number" />
-        <YAxis />
-        <Area
-          // Ranged dataKey: returns [low, high]; Recharts fills between.
-          dataKey={(d) =>
-            d.lower != null && d.upper != null
-              ? [d.lower, d.upper]
-              : [null, null]
-          }
-          stroke="none"
-          fill="#3b82f6"
-          fillOpacity={0.15}
-          isAnimationActive={false}
-        />
-        <Line
-          type="monotone"
-          dataKey="avg"
-          stroke="#3b82f6"
-          dot={false}
-          connectNulls={false}
-          isAnimationActive={false}
-        />
-      </ComposedChart>
-    </ResponsiveContainer>
-  );
-}
-```
-
-Two non-obvious tricks:
-
-1. **`<Area>` with a ranged `dataKey`** — return `[lower, upper]`
-   and Recharts paints the region between. Far less code than two
-   separate `<Line>` strokes plus a `<polygon>` overlay.
-2. **`connectNulls={false}`** — leaves the band visibly open in
-   warm-up and flat-window regions instead of papering over them.
-
-## Anomaly dots overlay with `<Scatter>`
-
-Recharts' `<Scatter>` accepts its **own** `data` prop, separate from
-the chart-level `data`. Useful for anomaly markers that don't share
-the main series' grid:
-
-```tsx
-import {
-  ComposedChart,
-  Line,
-  ResponsiveContainer,
-  Scatter,
-  XAxis,
-  YAxis,
-} from 'recharts';
-
-function CpuWithAnomalies({ cpu }: { cpu: TimeSeries<Schema> }) {
-  const main = cpu.toPoints();
-  const anomalies = cpu
-    .outliers('cpu', { window: '1m', sigma: 2 })
-    .select('cpu')
-    .toPoints();
-
-  return (
-    <ResponsiveContainer width="100%" height={300}>
-      <ComposedChart data={main}>
-        <XAxis dataKey="ts" type="number" domain={['dataMin', 'dataMax']} />
-        <YAxis />
-        <Line
-          type="monotone"
-          dataKey="cpu"
-          dot={false}
-          isAnimationActive={false}
-        />
-        {/* Scatter has its own data prop — independent of the parent. */}
-        <Scatter
-          data={anomalies}
-          dataKey="cpu"
-          fill="#ef4444"
-          isAnimationActive={false}
-        />
-      </ComposedChart>
-    </ResponsiveContainer>
-  );
-}
-```
-
-For per-host anomaly dots, render one `<Scatter>` per host with its
-own filtered data and color.
-
-## Live-update gotchas
-
-Two things bite immediately when wiring Recharts to a `LiveSeries`:
-
-### Disable animation on snapshot ticks
-
-Recharts' default is `isAnimationActive={true}`, which animates from
-the previous frame to the new one over ~1.5 seconds. With a live
-`useSnapshot` rebuilding the snapshot every 100–200 ms (the
-[default throttle](../../react/concepts#throttling)), the chart
-visibly **redraws** on every tick — it's mid-animation when the
-next snapshot lands.
-
-Set `isAnimationActive={false}` on every `<Line>` / `<Area>` /
-`<Scatter>` in a live chart. Static (one-time-fetched) charts can
-keep animation; live ones should not.
-
-### Empty-state branch for fixed domains
-
-With a fixed time domain (`domain={[tStart, tEnd]}`), Recharts
-renders the axis even with an empty `data` array. The chart looks
-"there" before any source events arrive — usually the wrong thing.
-Add an explicit branch:
-
-```tsx
-function LiveCpu({ live }: { live: LiveSeries<Schema> }) {
-  const snap = useSnapshot(live);
-  if (!snap || snap.length === 0) {
-    return <div className="placeholder">Waiting for data…</div>;
-  }
-  return <CpuChart cpu={snap} />;
-}
-```
-
-For a `'dataMin' | 'dataMax'` auto-domain, an empty array renders an
-empty axis with no grid — generally fine — but a fixed domain plus
-no data renders a confusingly populated-looking empty chart.
-
 ## Per-group wide rows (one source, categorical column)
 
 The most common dashboard shape: **one** source where events carry a
 categorical column (`host`, `region`, `service`, …), and you want one
-chart line per category. The events arrive in long form — multiple
-rows per timestamp, each tagged with its category — and Recharts wants
-wide form, one row per timestamp with one column per category.
-
-`pivotByGroup` is the reshape:
+chart line per category. The events arrive in long form; most chart
+libraries want wide form — one row per timestamp, one column per
+category. `pivotByGroup` is the reshape:
 
 ```ts
-const long = TimeSeries.fromJSON({
-  name: 'cpu',
-  schema: [
-    { name: 'time', kind: 'time' },
-    { name: 'cpu', kind: 'number' },
-    { name: 'host', kind: 'string' },
-  ] as const,
-  rows: [
-    [0, 0.31, 'api-1'],
-    [0, 0.52, 'api-2'],
-    [60_000, 0.44, 'api-1'],
-    [60_000, 0.48, 'api-2'],
-  ],
-});
-
 const wide = long.pivotByGroup('host', 'cpu');
 // schema: [time, "api-1_cpu", "api-2_cpu"]
 
 wide.toPoints();
-// [
-//   { ts: 0,      "api-1_cpu": 0.31, "api-2_cpu": 0.52 },
-//   { ts: 60_000, "api-1_cpu": 0.44, "api-2_cpu": 0.48 },
-// ]
+// [{ ts: 0, "api-1_cpu": 0.31, "api-2_cpu": 0.52 }, ...]
 ```
 
-Drop the points straight into Recharts:
+`pivotByGroup` is the simpler primitive when there's one value column
+per group; `groupBy` + `joinMany` is the heavier workflow when each
+group spawns multiple derived columns (per-host baselines). Full
+reference: [Reshaping → pivotByGroup](../transforms/reshape#pivotbygroup).
 
-```tsx
-<LineChart data={wide.toPoints()}>
-  <Line dataKey="api-1_cpu" />
-  <Line dataKey="api-2_cpu" />
-</LineChart>
-```
+## Overlaying multiple `TimeSeries`
 
-If a host is missing at a given timestamp, that cell is `undefined` —
-`<Line connectNulls />` joins across the gap, or `.fill({ 'api-2_cpu':
-'hold' })` carry-forwards before charting. If two events share both a
-timestamp **and** a host, the call throws by default; opt in with
-`{ aggregate: 'avg' | 'sum' | 'first' | 'last' | ... }` to combine.
-
-`pivotByGroup` composes downstream — every wide column is a regular
-numeric column:
-
-```ts
-const smoothed = wide.rolling('5m', {
-  'api-1_cpu': 'avg',
-  'api-2_cpu': 'avg',
-});
-```
-
-Per-host **baselines** (anomaly bands per host) need a slightly
-different shape — `baseline` is single-column today, so reach for
-`groupBy` + `joinMany` instead of pivot:
-
-```ts
-const groups = long.groupBy('host', (g, host) =>
-  g.baseline('cpu', { window: '5m', sigma: 2 }).rename({
-    cpu: `${host}_cpu`,
-    avg: `${host}_avg`,
-    upper: `${host}_upper`,
-    lower: `${host}_lower`,
-  }),
-);
-const wide = TimeSeries.joinMany([...groups.values()], { type: 'outer' });
-wide.toPoints();
-// { ts, "api-1_cpu", "api-1_upper", "api-1_lower",
-//       "api-2_cpu", "api-2_upper", "api-2_lower", ... }
-```
-
-`pivotByGroup` is the simpler primitive when there's just one value
-column per group; `groupBy` + `joinMany` is the heavier workflow when
-each group spawns multiple derived columns. Full reference:
-[Reshaping → pivotByGroup](../transforms/reshape#pivotbygroup).
-
-## Joining across multiple `TimeSeries` instances
-
-When all your data comes from a **single** `TimeSeries` (a snapshot,
-a baseline, an outliers result), `toPoints()` already returns wide
-rows — drop in. When you have **two TimeSeries** to overlay
-(this-week vs last-week, two metrics joined for a comparison chart,
-…), reach for [`series.join(other)`](../transforms/reshape#join) before going to
-the chart layer. The library does the temporal join for you:
-
-```ts
-const joined = thisWeek.join(lastWeek, {
-  type: 'outer',
-  onConflict: 'prefix',
-  prefixes: ['this_', 'last_'],
-});
-const data = joined.toPoints();
-// [{ ts, this_cpu, last_cpu, ... }, ...] — exactly what Recharts wants
-```
-
-For more than two sources, [`TimeSeries.joinMany([a, b, c, ...])`](../transforms/reshape#joinmany)
-folds them all in one pass. Full join semantics — types,
-conflict handling, the exact-key contract — live on
-[Reshaping](../transforms/reshape#join).
-
-This stays inside the typed pond-ts contract. The chart-layer helper
-below is only useful when one of your inputs **isn't** a
-`TimeSeries` — e.g. a flat `{ ts, value }[]` you fetched from a JSON
-endpoint and don't want to round-trip through `fromPoints`.
-
-### Manual recipe — for non-`TimeSeries` inputs
-
-If you do find yourself merging arrays from outside the library:
-
-```ts
-type Row = Record<string, number | undefined> & { ts: number };
-
-function mergeWideRows(
-  parts: ReadonlyArray<{
-    name: string;
-    points: ReadonlyArray<{ ts: number } & Record<string, unknown>>;
-    key: string;
-  }>,
-): Row[] {
-  const byTs = new Map<number, Row>();
-  const get = (ts: number): Row => {
-    let r = byTs.get(ts);
-    if (!r) {
-      r = { ts };
-      byTs.set(ts, r);
-    }
-    return r;
-  };
-  for (const part of parts) {
-    for (const p of part.points) {
-      const v = p[part.key];
-      if (typeof v === 'number') get(p.ts)[part.name] = v;
-    }
-  }
-  return [...byTs.values()].sort((a, b) => a.ts - b.ts);
-}
-```
-
-This isn't exported from `pond-ts` because it's chart-layer plumbing,
-not a time-series operation. Paste it once into your codebase if you
-need it.
-
-### Live: snapshot-then-batch-join
-
-Live counterpart isn't yet a first-class operator — there's no
-`LiveSeries.join(a, b)` today (see
-[PLAN.md](https://github.com/pjm17971/pond-ts/blob/main/PLAN.md)).
-The workaround is to snapshot each live source via `useSnapshot`,
-then run a batch `join` over the two snapshots:
-
-```tsx
-function ComparisonChart({
-  liveA,
-  liveB,
-}: {
-  liveA: LiveSeries<S>;
-  liveB: LiveSeries<S>;
-}) {
-  const snapA = useSnapshot(liveA);
-  const snapB = useSnapshot(liveB);
-
-  const joined = useMemo(() => {
-    if (!snapA || !snapB) return null;
-    return snapA.join(snapB, {
-      type: 'outer',
-      onConflict: 'prefix',
-      prefixes: ['a_', 'b_'],
-    });
-  }, [snapA, snapB]);
-
-  if (!joined) return null;
-  return <ChartOf data={joined.toPoints()} />;
-}
-```
-
-Each snapshot has its own throttle; the `useMemo` only re-runs when
-a snapshot identity changes, so the chart updates at the slower of
-the two cadences without recomputing on every push.
-
-## When to skip Recharts
-
-Honest tradeoffs from a real adapter swap (custom SVG → Recharts on
-a CPU/requests/anomaly dashboard):
-
-| Need                                                | Recharts                                     | Custom SVG        |
-| --------------------------------------------------- | -------------------------------------------- | ----------------- |
-| Single-series line / area / bar                     | clear win                                    | overkill          |
-| Tooltips, snap-to-tick, auto axes                   | free                                         | DIY               |
-| Banded region                                       | `<Area>` 1 line                              | polygon ~8 lines  |
-| Live update without flicker                         | needs `isAnimationActive={false}` everywhere | natural           |
-| Bands + dots + multi-host + threshold + raw overlay | one `toPoints()` per source, fine            | sometimes cleaner |
-| Very large datasets (>10k points)                   | slow                                         | canvas faster     |
-| Precise visual control (custom render order)        | fights you                                   | you control it    |
-
-The pond-side prep is identical either way — `toPoints()` is the
-only call that matters. The chart-side weight is in component
-configuration for Recharts vs draw logic for SVG. For typical
-dashboards Recharts wins on bundle-vs-features.
-
-If you outgrow Recharts, **visx** is the next step up — same
-`toPoints` bridge, primitives instead of components. Reach for it
-when you need fine-grained control over scales, render order, or
-canvas rendering for big datasets. A first-party `@pond-ts/charts`
-will eventually wrap visx with opinionated defaults; until then,
-build your own thin wrapper if you find yourself repeating the same
-visx scaffolding.
+Two series to overlay (this-week vs last-week) join _before_ the chart
+layer: [`series.join(other)`](../transforms/reshape#join) or
+[`TimeSeries.joinMany([...])`](../transforms/reshape#joinmany), then
+one `toPoints()` on the result.
 
 ## Large datasets: the column API
 
-`toPoints()` is the right bridge for row-shaped chart libraries (Recharts,
-Plot, visx props). But at large point counts — the "canvas faster" row in the
-table above — you don't want one object per row at all. Reach for the
-[column API](./columns) instead: pull a dense `Float64Array` or downsample to
-one bucket per pixel, and draw straight to a canvas with no per-`Event`
-allocation.
+Past tens of thousands of points, per-row objects from `toPoints()`
+become the bottleneck. The [column API](./columns) hands you dense
+`Float64Array`s (`series.column('cpu').toFloat64Array()`) and
+`bin`/`binBy` for decimation without per-event allocation — draw
+straight to canvas from those. (This is the same machinery
+`@pond-ts/charts` uses internally.)
 
-```ts
-// Downsample a million points to the canvas width, then draw.
-const visible = series.column('cpu').slice(startIdx, endIdx);
-const { lo, hi } = visible.bin(cssWidth, 'minMax');
-for (let px = 0; px < cssWidth; px += 1) {
-  ctx.moveTo(px, scaleY(hi[px]!));
-  ctx.lineTo(px, scaleY(lo[px]!));
-}
-```
+## Worked example
 
-`series.column('cpu').toFloat64Array()` gives you the raw values for a custom
-draw loop; `series.keyColumn().at(i)` (or `.slice(s, e)`) the X axis. See
-[Columns](./columns) for the full surface. (A first-party `@pond-ts/charts`
-will eventually wrap this; until then it's the build-your-own-canvas path.)
-
-## Why no first-party charts yet
-
-Chart components carry a lot of opinions — dimensions, themes,
-interactivity, accessibility, animation. Rolling those out before
-the data layer is settled would tie pond-ts to a specific chart
-shape. Better to keep the data layer stable and clean, and ship a
-first-party chart package once the patterns settle.
-
-If you build a particularly clean adapter for a chart library, an
-issue or PR adding a snippet to this page is welcome.
+The [dashboard how-to guide](../../how-to-guides/dashboard-guide)
+builds a complete live Recharts dashboard on pond data — snapshots,
+baselines, gaps, and the live-update gotchas (animation on snapshot
+ticks, empty-state domains) — and is the maintained end-to-end
+reference for this bridge.

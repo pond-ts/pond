@@ -174,16 +174,22 @@ dashboard patterns.
 - **Framework-agnostic** — the core has no React dependency;
   `@pond-ts/react` is strictly optional.
 
-Not a database. Not a query engine. Not a chart library —
-`toPoints()` is the one-line bridge to every charting option.
+Not a database. Not a query engine. The core is not a chart library
+either — [`@pond-ts/charts`](../charts/index.mdx) is the first-party
+chart layer on top of it, and `toPoints()` is the one-line bridge to
+every other charting option.
 
 ## In this docs site
 
 - **Start here** — install, first workflow, the mental model.
 - **pond-ts (core)** — `TimeSeries`, `LiveSeries`, advanced
-  (charting, array columns).
+  (array columns, bridging to other chart libraries).
 - **@pond-ts/react** — React hooks for subscribing to live sources.
-- **Recipes** — end-to-end worked dashboards.
-- **Reference** — benchmarks, migration, bibliography.
+- **@pond-ts/fit** — activity/fitness analytics on top of core.
+- **@pond-ts/charts** — first-party canvas charts consuming a
+  `TimeSeries` directly.
+- **How-to guides** — long-form, end-to-end scenario walkthroughs.
+- **Recipes** — single-technique, code-forward pages.
+- **Reference** — benchmarks and cross-package reference material.
 
-Full generated API references for both packages live at [**/api**](/api).
+Full generated API references for every package live at [**/api**](/api).

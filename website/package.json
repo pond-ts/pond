@@ -3,8 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "build:api": "npm run build:api:core && npm run build:api:react && npm run build:api:fit && npm run build:api:charts",
+    "build:api": "npm run build:api:core && npm run build:api:react && npm run build:api:fit && npm run build:api:charts && npm run build:api:financial",
     "build:api:fit": "typedoc --options typedoc.fit.json",
+    "build:api:financial": "typedoc --options typedoc.financial.json",
     "build:api:core": "typedoc --options typedoc.core.json",
     "build:api:react": "typedoc --options typedoc.react.json",
     "build:api:charts": "typedoc --options typedoc.charts.json",

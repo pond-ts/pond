@@ -1,0 +1,15 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["../packages/financial/src/index.ts"],
+  "tsconfig": "../packages/financial/tsconfig.json",
+  "out": "static/generated-api/financial",
+  "name": "@pond-ts/financial API Reference",
+  "readme": "none",
+  "cleanOutputDir": true,
+  "excludePrivate": true,
+  "excludeProtected": true,
+  "lightHighlightTheme": "github-light",
+  "darkHighlightTheme": "github-light",
+  "customCss": "typedoc/custom.css",
+  "customJs": "typedoc/custom.js"
+}
