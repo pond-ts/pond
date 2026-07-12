@@ -13,7 +13,7 @@ export default function FirstChart() {
   const series = singleHostSeries();
 
   return (
-    <ChartContainer range={series.timeRange()!} width={560} theme={theme}>
+    <ChartContainer range={series.timeRange()} width={560} theme={theme}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={series} column="cpu" axis="pct" />
