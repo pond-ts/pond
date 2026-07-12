@@ -4,16 +4,11 @@
  * cool near-neutral — the same design language the mark expresses (two
  * brackets, a TimeRange, framing a rising series line).
  *
- * Sequencing note: this file introduces the brand's *UI-chrome* tokens
- * (bg/surface/body/muted/hairline/accent/accent-strong/code-bg) under their
- * canonical `--pond-*` names. The pre-existing *chart* tokens below (the
- * docsTheme mirror — blue/amber/teal/rose/violet/ink/label/grid/etc.) are
- * deliberately left untouched here to avoid breaking the fixture↔website
- * sync test (`packages/charts/test/docs-theme-sync.test.ts`) mid-flight —
- * docsTheme's rebuild onto this same brand palette is a follow-up PR that
- * retunes that whole block (and, at that point, unifies `--pond-ink` into
- * one token instead of the two ships-in-the-night values below and in
- * `--ifm-heading-color`).
+ * The `--pond-viz-*` tokens (brand spec §07 "Data visualization") are the
+ * canonical mirror of `packages/charts/src/docs-theme.fixture.ts`'s
+ * `docsPalette` — a sync test keeps the two in lockstep. `--pond-ink` is
+ * one token used by both site chrome and chart axis titles/medians, not
+ * two separate values.
  */
 @import '@fontsource/ibm-plex-serif/500.css';
 @import '@fontsource/ibm-plex-serif/600.css';
@@ -29,6 +24,7 @@
   --pond-bg: #f6f9f9;
   --pond-surface: #ffffff;
   --pond-surface-2: #eef4f3; /* derived: recessed fill for inputs/chips */
+  --pond-ink: #0c2222;
   --pond-body: #46605f;
   --pond-muted: #8ba3a1;
   --pond-hairline: rgba(12, 40, 40, 0.1);
@@ -37,21 +33,19 @@
   --pond-code-bg: #0c1a1a; /* code blocks are this ground in BOTH modes */
   --pond-footer-bg: #050c0b; /* footer is always the dark "deep" band */
 
-  /* ---- pond chart tokens (docsTheme, light) — unchanged, see note above ---- */
-  --pond-blue: #3d76c2;
-  --pond-amber: #c99a2e;
-  --pond-teal: #319795;
-  --pond-rose: #c25450;
-  --pond-violet: #8168b8;
-  --pond-ink: #454c56;
-  --pond-label: #5d6673;
-  --pond-grid: #eceff3;
-  --pond-divider: #d4dae1;
-  --pond-chart-bg: #ffffff;
-  --pond-chip: #f4f6f9;
-  --pond-mark: #0f9e8e;
-  --pond-rising: #2e9e83;
-  --pond-falling: #d15656;
+  /* ---- data-visualization ramp (docsTheme, light) — brand spec §07 ---- */
+  --pond-viz-1: #0e8f86; /* primary — the brand accent */
+  --pond-viz-2: #3d6fd9;
+  --pond-viz-3: #8354cc;
+  --pond-viz-4: #c43d82;
+  --pond-viz-5: #5b7088; /* overflow, desaturated */
+  --pond-viz-mark: #c2790f; /* annotations — never a data hue */
+  --pond-viz-up: #1f9d63; /* candle up/down — the conventional exception */
+  --pond-viz-down: #d8473f;
+  /* muted @ 40%/65% opacity — computed to match docsTheme's axis.grid /
+     axis.sessionDivider exactly (see docs-theme.fixture.ts withAlpha) */
+  --pond-viz-grid: rgba(139, 163, 161, 0.4);
+  --pond-viz-divider: rgba(139, 163, 161, 0.65);
 
   /* ---- site chrome (Infima), light ---- */
   --ifm-color-primary: #0e8f86;
@@ -66,9 +60,7 @@
   --ifm-navbar-height: 66px;
   --ifm-navbar-background-color: rgba(246, 249, 249, 0.92);
   --ifm-footer-background-color: var(--pond-footer-bg);
-  /* Heading/ink hardcoded for now rather than routed through a --pond-ink
-     indirection — see the file-header sequencing note. */
-  --ifm-heading-color: #0c2222;
+  --ifm-heading-color: var(--pond-ink);
   --ifm-font-color-base: var(--pond-body);
   --ifm-link-color: var(--pond-accent-strong);
   --ifm-font-family-base:
@@ -93,27 +85,24 @@ html[data-theme='dark'] {
   --pond-bg: #081311;
   --pond-surface: #0f1c1a;
   --pond-surface-2: #142523; /* derived: recessed fill for inputs/chips */
+  --pond-ink: #e6f2f0;
   --pond-body: #9fb4b1;
   --pond-muted: #6b8180;
   --pond-hairline: rgba(255, 255, 255, 0.1);
   --pond-accent: #34d3c0;
   --pond-accent-strong: #7fe6d8;
 
-  /* ---- pond chart tokens (docsThemeDark) — unchanged, see note above ---- */
-  --pond-blue: #6ea3e8;
-  --pond-amber: #dcb04a;
-  --pond-teal: #45b8b0;
-  --pond-rose: #e07a72;
-  --pond-violet: #a08fd8;
-  --pond-ink: #c6cdd6;
-  --pond-label: #99a3ae;
-  --pond-grid: #262b33;
-  --pond-divider: #3a414b;
-  --pond-chart-bg: #16191f;
-  --pond-chip: #20252d;
-  --pond-mark: #34c9b9;
-  --pond-rising: #35b593;
-  --pond-falling: #e06c66;
+  /* ---- data-visualization ramp (docsThemeDark) — brand spec §07 ---- */
+  --pond-viz-1: #34d3c0;
+  --pond-viz-2: #7fa8ff;
+  --pond-viz-3: #b092f0;
+  --pond-viz-4: #f17fc0;
+  --pond-viz-5: #8fa3be;
+  --pond-viz-mark: #f2b94a;
+  --pond-viz-up: #3ddc8f;
+  --pond-viz-down: #ff6e68;
+  --pond-viz-grid: rgba(107, 129, 128, 0.4);
+  --pond-viz-divider: rgba(107, 129, 128, 0.65);
 
   /* ---- site chrome (Infima), dark ---- */
   --ifm-color-primary: #34d3c0;
@@ -127,7 +116,7 @@ html[data-theme='dark'] {
   --ifm-background-surface-color: var(--pond-surface);
   --ifm-navbar-background-color: rgba(8, 19, 17, 0.92);
   --ifm-footer-background-color: var(--pond-footer-bg);
-  --ifm-heading-color: #e6f2f0;
+  --ifm-heading-color: var(--pond-ink);
   --ifm-font-color-base: var(--pond-body);
   --ifm-link-color: var(--pond-accent);
   --docusaurus-highlighted-code-line-bg: rgba(52, 211, 192, 0.16);

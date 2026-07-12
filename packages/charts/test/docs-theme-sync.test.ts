@@ -16,35 +16,31 @@ import { docsPalette } from '../src/docs-theme.fixture.js';
 
 /** token name in custom.css → key into a docsPalette ramp */
 const TOKEN_TO_RAMP: Record<string, keyof typeof docsPalette.light> = {
-  '--pond-blue': 'blue',
-  '--pond-amber': 'amber',
-  '--pond-teal': 'teal',
-  '--pond-rose': 'rose',
-  '--pond-violet': 'violet',
   '--pond-ink': 'ink',
-  '--pond-label': 'label',
-  '--pond-grid': 'grid',
-  '--pond-divider': 'divider',
-  '--pond-chart-bg': 'bg',
-  '--pond-chip': 'chip',
-  '--pond-mark': 'mark',
-  '--pond-rising': 'rising',
-  '--pond-falling': 'falling',
+  '--pond-body': 'body',
+  '--pond-muted': 'muted',
+  '--pond-surface': 'surface',
+  '--pond-surface-2': 'surface2',
+  '--pond-viz-1': 'viz1',
+  '--pond-viz-2': 'viz2',
+  '--pond-viz-3': 'viz3',
+  '--pond-viz-4': 'viz4',
+  '--pond-viz-5': 'viz5',
+  '--pond-viz-mark': 'vizMark',
+  '--pond-viz-up': 'vizUp',
+  '--pond-viz-down': 'vizDown',
+  '--pond-viz-grid': 'grid',
+  '--pond-viz-divider': 'divider',
 };
 
 /**
  * Brand UI-chrome tokens (brand/Pond Brand Spec.html §02) the site defines
- * for its own chrome — buttons, cards, nav, code blocks — with no chart-side
- * counterpart in `docsTheme` (yet: docsTheme's rebuild onto this same brand
- * palette is a tracked follow-up). Listed explicitly, not wildcarded, so a
- * genuinely stray/typo'd `--pond-*` token still fails the check below.
+ * for its own chrome — buttons, nav, footer, code-block ground — with no
+ * chart-side counterpart in `docsTheme`. Listed explicitly, not wildcarded,
+ * so a genuinely stray/typo'd `--pond-*` token still fails the check below.
  */
 const SITE_ONLY_TOKENS = [
   '--pond-bg',
-  '--pond-surface',
-  '--pond-surface-2',
-  '--pond-body',
-  '--pond-muted',
   '--pond-hairline',
   '--pond-accent',
   '--pond-accent-strong',
@@ -60,7 +56,7 @@ const css = readFileSync(
 /** Pull the `--pond-*` declarations out of one CSS block. */
 function tokensIn(block: string): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const m of block.matchAll(/(--pond-[a-z-]+):\s*([^;]+);/g)) {
+  for (const m of block.matchAll(/(--pond-[a-z0-9-]+):\s*([^;]+);/g)) {
     out[m[1]!] = m[2]!.trim();
   }
   return out;
@@ -88,9 +84,9 @@ describe('docsTheme fixture ↔ website --pond-* tokens', () => {
       for (const [token, key] of Object.entries(TOKEN_TO_RAMP)) {
         expect(tokens[token], `${token} missing from custom.css`).toBeDefined();
         expect(
-          tokens[token]!.toLowerCase(),
+          tokens[token]!.toLowerCase().replace(/\s+/g, ' '),
           `${token} diverged from docsPalette.${key}`,
-        ).toBe(ramp[key].toLowerCase());
+        ).toBe(ramp[key].toLowerCase().replace(/\s+/g, ' '));
       }
     });
   }
