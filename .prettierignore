@@ -12,3 +12,7 @@ website/.docusaurus
 website/.cache-loader
 website/static/generated-api
 website/static/api
+
+# The Pond brand spec is a bundled interactive HTML deliverable from the
+# design-system agent, not authored source — left byte-for-byte as delivered.
+brand/Pond Brand Spec.html
