@@ -278,7 +278,7 @@ Rationale for the shape:
 
 - **Charts gets its own learn track** rather than extending Start-here,
   because chart-first arrivals are now the top of the funnel (three of
-  four consumer tracks — estela, Tidal, SPARC — came for charts) and
+  four consumer tracks — estela, Tidal, a consumer app — came for charts) and
   D3/Recharts evidence says a learner must reach first-render inside
   ~10 minutes without a data-theory prerequisite. Core concepts are
   pulled in on demand (chapters 3–4) with links into the existing core
@@ -570,7 +570,7 @@ Existing content re-dispositioned against that test in §4 (three
 2. **A live ops dashboard on @pond-ts/charts** [P4] — partitioned
    LiveSeries → `useSnapshot` → multi-row layout → rolling baselines →
    region select-to-zoom. The charts-native successor to the Recharts
-   dashboard guide. (SPARC/dashboard track; LiveSine + MultiPanelLayout
+   dashboard guide. (dashboard track; LiveSine + MultiPanelLayout
    stories are the seed.)
 3. **Annotating a chart: inspect, edit, create** [P4] — the three
    interaction workflows with a toolbar, `onCreate`, controlled
@@ -849,7 +849,7 @@ over, by three independent review agents:
   troubleshooting / RTC-migration pages, the ch. 1 "bring your own
   data" + ch. 3 task-first inversion, the ch. 6 zoom loop, the merged
   Annotations & indicators section, and the §6 template guardrails.
-- **Consumer-persona pass** (estela / Tidal / SPARC / evaluator /
+- **Consumer-persona pass** (estela / Tidal / a consumer app / evaluator /
   AI-agent lenses): caught B7 (`@pond-ts/financial` invisible — the
   v1 draft itself said "four packages"), drove the Gallery (P1), the
   Financial charts hub (P2), the Missing data & gaps page, the
