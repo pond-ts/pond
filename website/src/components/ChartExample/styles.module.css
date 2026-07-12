@@ -16,7 +16,7 @@
 .placeholder {
   width: 100%;
   border-radius: 0.5rem;
-  background: var(--pond-grid);
+  background: var(--pond-viz-grid);
   opacity: 0.4;
 }
 

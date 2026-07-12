@@ -1,0 +1,46 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--site-surface-border);
+  border-radius: 0.75rem;
+  overflow: hidden;
+  background: var(--ifm-background-surface-color);
+  box-shadow: var(--site-shadow-soft);
+}
+
+.stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--site-surface-border);
+}
+
+.placeholder {
+  width: 100%;
+  border-radius: 0.5rem;
+  background: var(--pond-viz-grid);
+  opacity: 0.4;
+}
+
+.meta {
+  padding: 1rem 1.25rem 1.25rem;
+}
+
+.title {
+  margin: 0 0 0.35rem;
+  font-size: 1.05rem;
+}
+
+.blurb {
+  margin: 0 0 0.6rem;
+  font-size: 0.92rem;
+  color: var(--ifm-font-color-base);
+  opacity: 0.85;
+}
+
+.link {
+  font-size: 0.85rem;
+  font-weight: 600;
+}

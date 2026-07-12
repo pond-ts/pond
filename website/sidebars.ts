@@ -106,6 +106,7 @@ const sidebars: SidebarsConfig = {
       label: '@pond-ts/charts',
       link: { type: 'doc', id: 'charts/charts-index' },
       items: [
+        'charts/gallery',
         {
           type: 'link',
           label: 'API reference (charts)',
