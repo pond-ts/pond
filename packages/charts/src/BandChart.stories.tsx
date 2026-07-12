@@ -6,7 +6,8 @@ import { Layers } from './Layers.js';
 import { BandChart } from './BandChart.js';
 import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
-import { defaultTheme, estelaTheme, type ChartTheme } from './theme.js';
+import { defaultTheme, type ChartTheme } from './theme.js';
+import { docsTheme } from './docs-theme.fixture.js';
 import { sanFranciscoTemperatures } from './sf-temperatures.fixture.js';
 
 const N = 60;
@@ -88,13 +89,13 @@ export const TwoTone: Story = {
   render: () => {
     const v = variance();
     return (
-      <ChartContainer range={TIME_RANGE} width={560} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={560} theme={docsTheme}>
         <ChartRow height={240}>
           <YAxis id="v" label="v" min={0} max={100} />
           <Layers>
             <BandChart series={v} lower="p5" upper="p95" as="outer" />
             <BandChart series={v} lower="p25" upper="p75" as="inner" />
-            <LineChart series={v} column="p50" as="foam" />
+            <LineChart series={v} column="p50" as="primary" />
           </Layers>
         </ChartRow>
       </ChartContainer>
@@ -107,7 +108,7 @@ export const WithGap: Story = {
   render: () => {
     const g = bandWithGap();
     return (
-      <ChartContainer range={TIME_RANGE} width={480}>
+      <ChartContainer range={TIME_RANGE} width={480} theme={docsTheme}>
         <ChartRow height={200}>
           <YAxis id="v" label="v" min={0} max={100} />
           <Layers>
@@ -194,7 +195,7 @@ export const RollingPercentiles: Story = {
     const begins = b.keyColumn().begin;
     const timeRange: [number, number] = [begins[0]!, begins[b.length - 1]!];
     return (
-      <ChartContainer range={timeRange} width={560} theme={estelaTheme}>
+      <ChartContainer range={timeRange} width={560} theme={docsTheme}>
         <ChartRow height={240}>
           <YAxis id="v" label="v" />
           <Layers>
@@ -212,7 +213,7 @@ export const RollingPercentiles: Story = {
               as="inner"
               curve="natural"
             />
-            <LineChart series={b} column="p50" as="foam" curve="monotone" />
+            <LineChart series={b} column="p50" as="primary" curve="monotone" />
           </Layers>
         </ChartRow>
       </ChartContainer>

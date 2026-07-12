@@ -6,7 +6,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { BarChart } from './BarChart.js';
 import { YAxis } from './YAxis.js';
-import { estelaTheme } from './theme.js';
+import { docsTheme } from './docs-theme.fixture.js';
 import type { SelectInfo } from './context.js';
 
 const N = 24;
@@ -73,7 +73,7 @@ export const Buckets: Story = {
   render: () => {
     const v = hourlyVolume();
     return (
-      <ChartContainer range={TIME_RANGE} width={640} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={640} theme={docsTheme}>
         <ChartRow height={240}>
           <YAxis id="count" label="req" min={0} />
           <Layers>
@@ -95,7 +95,7 @@ export const Diverging: Story = {
   render: () => {
     const f = netFlow();
     return (
-      <ChartContainer range={TIME_RANGE} width={640} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={640} theme={docsTheme}>
         <ChartRow height={240}>
           <YAxis id="flow" label="net" />
           <Layers>
@@ -129,9 +129,9 @@ function HoverSelectDemo() {
           marginBottom: '8px',
           display: 'flex',
           gap: '16px',
-          fontFamily: estelaTheme.font.family,
+          fontFamily: docsTheme.font.family,
           fontSize: '12px',
-          color: estelaTheme.axis.label,
+          color: docsTheme.axis.label,
         }}
       >
         {sel === null ? (
@@ -145,7 +145,7 @@ function HoverSelectDemo() {
       <ChartContainer
         range={TIME_RANGE}
         width={640}
-        theme={estelaTheme}
+        theme={docsTheme}
         cursor="flag"
         onSelect={setSel}
       >
@@ -180,14 +180,14 @@ export const ControlledSelection: Story = {
       id: 'count',
       key,
       value,
-      color: estelaTheme.bar.default.fill,
+      color: docsTheme.bar.default.fill,
       label: 'count',
     };
     return (
       <ChartContainer
         range={TIME_RANGE}
         width={640}
-        theme={estelaTheme}
+        theme={docsTheme}
         selected={pinned}
       >
         <ChartRow height={240}>

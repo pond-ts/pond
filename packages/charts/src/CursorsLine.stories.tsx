@@ -7,11 +7,11 @@ import { YAxis } from './YAxis.js';
 import {
   twoSeries,
   hrSeries,
-  twoColorTheme,
   BASE,
   STEP,
   RANGE,
 } from './story-data.fixture.js';
+import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * `cursor="line"` (the **default**) — a single synced vertical line at the
@@ -36,7 +36,7 @@ type Story = StoryObj;
  *  marks on the data. `cursorTime` adds the time chip at the axis. */
 export const Interactive: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} cursorTime theme={twoColorTheme}>
+    <ChartContainer range={RANGE} width={W} cursorTime theme={docsTheme}>
       <ChartRow height={220}>
         <Layers>
           <LineChart series={s} column="fast" as="fast" axis="usd" />
@@ -52,7 +52,7 @@ export const Interactive: Story = {
  *  common x, the time chip shows once at the bottom. */
 export const MultiRowSync: Story = {
   render: () => (
-    <ChartContainer range={RANGE} width={W} cursorTime theme={twoColorTheme}>
+    <ChartContainer range={RANGE} width={W} cursorTime theme={docsTheme}>
       <ChartRow height={150}>
         <Layers>
           <LineChart series={s} column="fast" as="fast" axis="usd" />
@@ -80,7 +80,7 @@ export const Controlled: Story = {
       width={W}
       cursorTime
       trackerPosition={BASE + 45 * STEP}
-      theme={twoColorTheme}
+      theme={docsTheme}
     >
       <ChartRow height={220}>
         <Layers>

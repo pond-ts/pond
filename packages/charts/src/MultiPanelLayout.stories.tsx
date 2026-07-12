@@ -6,8 +6,8 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
-import { defaultTheme } from './theme.js';
 import type { ChartTheme } from './theme.js';
+import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * A **full multi-panel layout** the way a financial tool assembles it (the Tidal
@@ -84,13 +84,14 @@ function buildSeries(): TimeSeries<typeof SCHEMA> {
 // per-series line style lands; today LineStyle is { color, width } only, so it's
 // a distinct hue instead. That gap is the sibling ask to this story.)
 const chartTheme: ChartTheme = {
-  ...defaultTheme,
+  ...docsTheme,
   line: {
-    ...defaultTheme.line,
-    atm: { color: '#2f6fb0', width: 1.3 },
-    realized: { color: '#8b5cf6', width: 1.3 },
-    garch: { color: '#d63d8a', width: 1.3 },
-    price: { color: '#bf972f', width: 1.6 },
+    ...docsTheme.line,
+    // The docs ramp, by role: blue / violet / rose / amber.
+    atm: { color: '#3d76c2', width: 1.3 },
+    realized: { color: '#8168b8', width: 1.3 },
+    garch: { color: '#c25450', width: 1.3 },
+    price: { color: '#c99a2e', width: 1.6 },
   },
 };
 
@@ -340,7 +341,7 @@ function MultiPanelDemo() {
 }
 
 const meta = {
-  title: 'Layouts/Multi-Panel',
+  title: 'Layout/Multi-Panel',
   parameters: { layout: 'fullscreen' },
 } satisfies Meta;
 

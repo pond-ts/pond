@@ -5,7 +5,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { BoxPlot } from './BoxPlot.js';
 import { YAxis } from './YAxis.js';
-import { defaultTheme, estelaTheme } from './theme.js';
+import { docsTheme } from './docs-theme.fixture.js';
 
 const BASE = Date.UTC(2026, 0, 1, 12, 0, 0);
 
@@ -111,7 +111,7 @@ export default meta;
 type Story = StoryObj;
 
 /**
- * The headline: per-bucket latency percentiles as boxes on the estela theme.
+ * The headline: per-bucket latency percentiles as boxes on the docs theme.
  * Five columns (`p5`/`p25`/`p50`/`p75`/`p95`) map to the lower whisker / box /
  * median / box / upper whisker. `gap` insets adjacent boxes so they breathe.
  */
@@ -119,7 +119,7 @@ export const Percentiles: Story = {
   render: () => {
     const q = percentileBuckets();
     return (
-      <ChartContainer range={rangeOf(q)} width={620} theme={estelaTheme}>
+      <ChartContainer range={rangeOf(q)} width={620} theme={docsTheme}>
         <ChartRow height={260}>
           <YAxis id="ms" label="ms" />
           <Layers>
@@ -153,7 +153,7 @@ export const CursorFlag: Story = {
       <ChartContainer
         range={rangeOf(q)}
         width={620}
-        theme={estelaTheme}
+        theme={docsTheme}
         cursor="flag"
       >
         <ChartRow height={260}>
@@ -186,7 +186,7 @@ export const Solid: Story = {
   render: () => {
     const q = percentileBuckets();
     return (
-      <ChartContainer range={rangeOf(q)} width={620} theme={estelaTheme}>
+      <ChartContainer range={rangeOf(q)} width={620} theme={docsTheme}>
         <ChartRow height={260}>
           <YAxis id="ms" label="ms" />
           <Layers>
@@ -214,7 +214,7 @@ export const WithGap: Story = {
   render: () => {
     const g = bucketsWithGap();
     return (
-      <ChartContainer range={rangeOf(g)} width={520}>
+      <ChartContainer range={rangeOf(g)} width={520} theme={docsTheme}>
         <ChartRow height={220}>
           <YAxis id="v" label="v" min={0} max={80} />
           <Layers>
@@ -234,13 +234,13 @@ export const WithGap: Story = {
   },
 };
 
-/** The same percentile pipeline on the neutral default theme (the `box.default`
- *  token) — the light-ground baseline. */
+/** The same percentile pipeline styled entirely by the theme's `box.default`
+ *  token (no `as` role named at the call site). */
 export const Themed: Story = {
   render: () => {
     const q = percentileBuckets();
     return (
-      <ChartContainer range={rangeOf(q)} width={620} theme={defaultTheme}>
+      <ChartContainer range={rangeOf(q)} width={620} theme={docsTheme}>
         <ChartRow height={260}>
           <YAxis id="ms" label="ms" />
           <Layers>
@@ -294,7 +294,7 @@ export const VolSmile: Story = {
   render: () => {
     const s = smile();
     return (
-      <ChartContainer width={620} theme={estelaTheme}>
+      <ChartContainer width={620} theme={docsTheme}>
         <ChartRow height={260}>
           <YAxis id="iv" label="IV" />
           <Layers>
@@ -315,7 +315,7 @@ export const VolSmileWithMid: Story = {
   render: () => {
     const s = smile();
     return (
-      <ChartContainer width={620} theme={estelaTheme}>
+      <ChartContainer width={620} theme={docsTheme}>
         <ChartRow height={260}>
           <YAxis id="iv" label="IV" />
           <Layers>
@@ -352,7 +352,7 @@ export const CallPutPair: Story = {
       },
     });
     return (
-      <ChartContainer width={620} theme={estelaTheme}>
+      <ChartContainer width={620} theme={docsTheme}>
         <ChartRow height={260}>
           <YAxis id="iv" label="IV" />
           <Layers>

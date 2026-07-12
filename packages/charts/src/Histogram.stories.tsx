@@ -8,6 +8,7 @@ import { BarChart } from './BarChart.js';
 import { YAxis } from './YAxis.js';
 import { estelaTheme } from './theme.js';
 import type { ChartTheme } from './theme.js';
+import { docsTheme } from './docs-theme.fixture.js';
 import type { SelectInfo } from './context.js';
 
 /**
@@ -106,11 +107,7 @@ export const IncidentsStacked: Story = {
   render: () => {
     const byHost = incidentsByHost();
     return (
-      <ChartContainer
-        range={[BASE, BASE + HOUR]}
-        width={660}
-        theme={estelaTheme}
-      >
+      <ChartContainer range={[BASE, BASE + HOUR]} width={660} theme={docsTheme}>
         <ChartRow height={260}>
           <YAxis id="count" label="incidents" min={0} pad={0.06} />
           <Layers>
@@ -183,11 +180,7 @@ export const RiskBands: Story = {
   render: () => {
     const byBand = riskByBand();
     return (
-      <ChartContainer
-        range={[BASE, BASE + HOUR]}
-        width={660}
-        theme={estelaTheme}
-      >
+      <ChartContainer range={[BASE, BASE + HOUR]} width={660} theme={docsTheme}>
         <ChartRow height={260}>
           <YAxis id="count" label="hosts" min={0} pad={0.06} />
           <Layers>
@@ -291,7 +284,7 @@ export const HeartRateZones: Story = {
     const bins = hrZoneMinutes();
     const zoneTicks = HR_ZONES.map((label, i) => ({ at: i + 0.5, label }));
     return (
-      <ChartContainer width={660} theme={estelaTheme}>
+      <ChartContainer width={660} theme={docsTheme}>
         <ChartRow height={230}>
           <YAxis id="zone" label="zone" width={92} ticks={zoneTicks} />
           <Layers>
@@ -326,7 +319,7 @@ export const HeartRateZonesColored: Story = {
     const bins = hrZoneMinutes();
     const zoneTicks = HR_ZONES.map((label, i) => ({ at: i + 0.5, label }));
     return (
-      <ChartContainer width={660} theme={estelaTheme}>
+      <ChartContainer width={660} theme={docsTheme}>
         <ChartRow height={230}>
           <YAxis id="zone" label="zone" width={92} ticks={zoneTicks} />
           <Layers>
@@ -393,7 +386,7 @@ export const PowerDistribution: Story = {
   render: () => {
     const bins = powerDistribution();
     return (
-      <ChartContainer range={[0, 300]} width={660} theme={estelaTheme}>
+      <ChartContainer range={[0, 300]} width={660} theme={docsTheme}>
         <ChartRow height={240}>
           <YAxis id="secs" label="seconds" min={0} pad={0.06} />
           <Layers>
@@ -426,7 +419,7 @@ export const HorizontalSingle: Story = {
     });
     const ticks = cats.map((label, i) => ({ at: i + 0.5, label }));
     return (
-      <ChartContainer width={620} theme={estelaTheme}>
+      <ChartContainer width={620} theme={docsTheme}>
         <ChartRow height={200}>
           <YAxis id="verb" label="method" width={80} ticks={ticks} />
           <Layers>
@@ -461,9 +454,9 @@ function HoverSelectDemo() {
         style={{
           height: '18px',
           marginBottom: '8px',
-          fontFamily: estelaTheme.font.family,
+          fontFamily: docsTheme.font.family,
           fontSize: '12px',
-          color: estelaTheme.axis.label,
+          color: docsTheme.axis.label,
         }}
       >
         {sel === null ? (
@@ -477,7 +470,7 @@ function HoverSelectDemo() {
       <ChartContainer
         range={[BASE, BASE + HOUR]}
         width={660}
-        theme={estelaTheme}
+        theme={docsTheme}
         onSelect={setSel}
       >
         <ChartRow height={260}>

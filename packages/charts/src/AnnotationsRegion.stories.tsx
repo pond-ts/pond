@@ -7,6 +7,7 @@ import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import { Region } from './annotations.js';
 import { priceSeries, BASE, STEP, RANGE } from './story-data.fixture.js';
+import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * `<Region>` — a shaded x-span, in the turquoise annotation register. These
@@ -20,7 +21,7 @@ const at = (i: number) => BASE + i * STEP;
 
 function Chart({ children }: { children: ReactNode }) {
   return (
-    <ChartContainer range={RANGE} width={W}>
+    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
       <ChartRow height={H}>
         <Layers>
           <LineChart series={priceSeries()} column="price" axis="usd" />

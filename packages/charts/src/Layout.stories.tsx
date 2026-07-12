@@ -6,6 +6,7 @@ import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { YAxis } from './YAxis.js';
 import { estelaTheme } from './theme.js';
+import { docsTheme } from './docs-theme.fixture.js';
 
 const N = 60;
 /** Fixed base epoch (2026-01-01 12:00 UTC) + 1-minute step, so the time axis
@@ -48,7 +49,7 @@ export const SingleRow: Story = {
   render: () => {
     const series = demo();
     return (
-      <ChartContainer range={TIME_RANGE} width={520}>
+      <ChartContainer range={TIME_RANGE} width={520} theme={docsTheme}>
         <ChartRow height={200}>
           <Layers>
             <LineChart series={series} column="v" />
@@ -68,7 +69,7 @@ export const LeftAxis: Story = {
   render: () => {
     const series = demo();
     return (
-      <ChartContainer range={TIME_RANGE} width={520}>
+      <ChartContainer range={TIME_RANGE} width={520} theme={docsTheme}>
         <ChartRow height={200}>
           <YAxis id="value" label="v" />
           <Layers>
@@ -92,7 +93,7 @@ export const DualAxis: Story = {
     const temp = demo(0, 8, 20); // ~12–28
     const humidity = demo(2, 28, 58); // ~30–86
     return (
-      <ChartContainer range={TIME_RANGE} width={560}>
+      <ChartContainer range={TIME_RANGE} width={560} theme={docsTheme}>
         <ChartRow height={220}>
           <YAxis id="temp" label="°C" />
           <Layers>
@@ -124,7 +125,7 @@ export const SameSeriesTwoAxes: Story = {
   render: () => {
     const series = demo(0, 10, 12); // one series, values ~2–22
     return (
-      <ChartContainer range={TIME_RANGE} width={560}>
+      <ChartContainer range={TIME_RANGE} width={560} theme={docsTheme}>
         <ChartRow height={240}>
           <YAxis id="zoomed" label="0–25" min={0} max={25} />
           <Layers>
@@ -144,7 +145,7 @@ export const SameSeriesTwoAxes: Story = {
  */
 export const MultiRow: Story = {
   render: () => (
-    <ChartContainer range={TIME_RANGE} width={520}>
+    <ChartContainer range={TIME_RANGE} width={520} theme={docsTheme}>
       <ChartRow height={120}>
         <YAxis id="a" label="v" />
         <Layers>
@@ -175,7 +176,7 @@ export const MultiRow: Story = {
  */
 export const VaryingGutters: Story = {
   render: () => (
-    <ChartContainer range={TIME_RANGE} width={520}>
+    <ChartContainer range={TIME_RANGE} width={520} theme={docsTheme}>
       <ChartRow height={130}>
         <YAxis id="withAxis" label="v" />
         <Layers>
@@ -228,7 +229,7 @@ export const TwoLeftAxes: Story = {
     const power = demo(0, 60, 220);
     const hr = demo(0.8, 22, 150);
     return (
-      <ChartContainer range={TIME_RANGE} width={560}>
+      <ChartContainer range={TIME_RANGE} width={560} theme={docsTheme}>
         <ChartRow height={220}>
           <YAxis id="watts" label="W" width={64} />
           <YAxis id="bpm" label="bpm" width={44} />
@@ -252,7 +253,7 @@ export const TwoLeftAxes: Story = {
  */
 export const PerSlotAlignment: Story = {
   render: () => (
-    <ChartContainer range={TIME_RANGE} width={560}>
+    <ChartContainer range={TIME_RANGE} width={560} theme={docsTheme}>
       <ChartRow height={130}>
         <YAxis id="wide" label="wide" width={80} />
         <Layers>
@@ -289,15 +290,15 @@ export const MultiAxisBothSides: Story = {
     const cadence = demo(1.2, 18, 85);
     const temp = demo(2, 8, 20);
     return (
-      <ChartContainer range={TIME_RANGE} width={620} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={620} theme={docsTheme}>
         <ChartRow height={240}>
           <YAxis id="watts" label="W" width={60} />
           <YAxis id="bpm" label="bpm" width={44} />
           <Layers>
-            <LineChart series={power} column="v" axis="watts" as="foam" />
-            <LineChart series={hr} column="v" axis="bpm" as="hr" />
-            <LineChart series={cadence} column="v" axis="rpm" />
-            <LineChart series={temp} column="v" axis="degc" as="hr" />
+            <LineChart series={power} column="v" axis="watts" as="primary" />
+            <LineChart series={hr} column="v" axis="bpm" as="secondary" />
+            <LineChart series={cadence} column="v" axis="rpm" as="context" />
+            <LineChart series={temp} column="v" axis="degc" as="slow" />
           </Layers>
           <YAxis id="rpm" side="right" label="rpm" width={44} />
           <YAxis id="degc" side="right" label="°C" width={56} />
@@ -313,7 +314,12 @@ export const MultiAxisBothSides: Story = {
  */
 export const RowGap: Story = {
   render: () => (
-    <ChartContainer range={TIME_RANGE} width={520} rowGap={24}>
+    <ChartContainer
+      range={TIME_RANGE}
+      width={520}
+      rowGap={24}
+      theme={docsTheme}
+    >
       <ChartRow height={110}>
         <YAxis id="a" label="v" />
         <Layers>
@@ -343,7 +349,7 @@ export const RowGap: Story = {
  */
 export const DifferentHeights: Story = {
   render: () => (
-    <ChartContainer range={TIME_RANGE} width={520}>
+    <ChartContainer range={TIME_RANGE} width={520} theme={docsTheme}>
       <ChartRow height={80}>
         <YAxis id="a" label="v" />
         <Layers>
@@ -373,7 +379,12 @@ export const DifferentHeights: Story = {
  */
 export const NoTimeAxis: Story = {
   render: () => (
-    <ChartContainer range={TIME_RANGE} width={520} showAxis={false}>
+    <ChartContainer
+      range={TIME_RANGE}
+      width={520}
+      showAxis={false}
+      theme={docsTheme}
+    >
       <ChartRow height={140}>
         <YAxis id="a" label="v" />
         <Layers>
@@ -391,7 +402,7 @@ export const NoTimeAxis: Story = {
  */
 export const ExplicitTicks: Story = {
   render: () => (
-    <ChartContainer range={TIME_RANGE} width={520}>
+    <ChartContainer range={TIME_RANGE} width={520} theme={docsTheme}>
       <ChartRow height={200}>
         <YAxis
           id="value"
@@ -440,11 +451,11 @@ export const PaceAxisTicks: Story = {
       label: mmss(secKm),
     }));
     return (
-      <ChartContainer range={TIME_RANGE} width={560} theme={estelaTheme}>
+      <ChartContainer range={TIME_RANGE} width={560} theme={docsTheme}>
         <ChartRow height={220}>
           <YAxis id="pace" label="/km" min={-360} max={-240} ticks={ticks} />
           <Layers>
-            <LineChart series={run} column="pace" as="speed" />
+            <LineChart series={run} column="pace" />
           </Layers>
         </ChartRow>
       </ChartContainer>

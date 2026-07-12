@@ -10,7 +10,7 @@ import { YAxis } from './YAxis.js';
 import { Region } from './annotations.js';
 import { Baseline } from './annotations.js';
 import { Marker } from './annotations.js';
-import { estelaTheme } from './theme.js';
+import { docsTheme } from './docs-theme.fixture.js';
 
 /** A 40-minute interval on a 1-minute grid (5:00–5:40), so the x is wall-clock. */
 const BASE = Date.UTC(2026, 0, 1, 5, 0, 0);
@@ -18,7 +18,7 @@ const STEP = 60_000;
 const N = 41;
 const INTERVAL: readonly [number, number] = [BASE, BASE + (N - 1) * STEP];
 
-/** A wavy power trace (W) over the interval — the foam (data) line. */
+/** A wavy power trace (W) over the interval — the data line. */
 function power() {
   const rows: Array<[number, number]> = [];
   for (let i = 0; i < N; i += 1) {
@@ -81,7 +81,7 @@ export default meta;
 type Story = StoryObj;
 
 /**
- * **In context** — the data stays **foam** (white), the marks you place are
+ * **In context** — the data stays in the data register, the marks you place are
  * **turquoise**: a selected `<Region>` (5:15–5:35, forward at level 1), a
  * `<Baseline>` at 225 W, and a `<Marker>` at 5:28, both resting at the back (level
  * 3). **Brightness is depth** — hover a mark to bring it mid (level 2). They paint
@@ -90,11 +90,11 @@ type Story = StoryObj;
  */
 export const InContext: Story = {
   render: () => (
-    <ChartContainer range={INTERVAL} width={680} theme={estelaTheme}>
+    <ChartContainer range={INTERVAL} width={680} theme={docsTheme}>
       <ChartRow height={280}>
         <YAxis id="power" label="W" min={0} max={300} />
         <Layers>
-          <LineChart series={power()} column="watts" as="foam" />
+          <LineChart series={power()} column="watts" as="primary" />
           <Region
             from={BASE + 15 * STEP}
             to={BASE + 35 * STEP}
@@ -119,11 +119,11 @@ export const ValueAxis: Story = {
   render: () => {
     const ride = rideByDistance();
     return (
-      <ChartContainer width={680} theme={estelaTheme} timeFormat=",.0f">
+      <ChartContainer width={680} theme={docsTheme} timeFormat=",.0f">
         <ChartRow height={260}>
           <YAxis id="hr" label="bpm" />
           <Layers>
-            <LineChart series={ride} column="hr" as="foam" />
+            <LineChart series={ride} column="hr" as="primary" />
             <Region from={2000} to={3200} label="Climb" />
             <Marker at={3000} label="Lap 3" selected />
           </Layers>
@@ -150,13 +150,13 @@ export const Selectable: Story = {
       <ChartContainer
         range={INTERVAL}
         width={680}
-        theme={estelaTheme}
+        theme={docsTheme}
         onSelectAnnotation={setSel}
       >
         <ChartRow height={260}>
           <YAxis id="power" label="W" min={0} max={300} />
           <Layers>
-            <LineChart series={power()} column="watts" as="foam" />
+            <LineChart series={power()} column="watts" as="primary" />
             <Region
               id="interval"
               from={BASE + 8 * STEP}
@@ -187,11 +187,11 @@ export const Selectable: Story = {
  */
 export const Highlight: Story = {
   render: () => (
-    <ChartContainer range={INTERVAL} width={680} theme={estelaTheme}>
+    <ChartContainer range={INTERVAL} width={680} theme={docsTheme}>
       <ChartRow height={260}>
         <YAxis id="power" label="W" min={0} max={300} />
         <Layers>
-          <LineChart series={power()} column="watts" as="foam" />
+          <LineChart series={power()} column="watts" as="primary" />
           <Region
             id="a"
             from={BASE + 8 * STEP}
@@ -220,7 +220,7 @@ export const Highlight: Story = {
  */
 export const BackgroundZones: Story = {
   render: () => (
-    <ChartContainer range={INTERVAL} width={680} theme={estelaTheme}>
+    <ChartContainer range={INTERVAL} width={680} theme={docsTheme}>
       <ChartRow height={260}>
         <YAxis id="power" label="W" min={0} max={300} />
         <Layers>
@@ -237,7 +237,7 @@ export const BackgroundZones: Story = {
             label={false}
             selectable={false}
           />
-          <LineChart series={power()} column="watts" as="foam" />
+          <LineChart series={power()} column="watts" as="primary" />
         </Layers>
       </ChartRow>
     </ChartContainer>
@@ -264,13 +264,13 @@ export const Editable: Story = {
       <ChartContainer
         range={INTERVAL}
         width={680}
-        theme={estelaTheme}
+        theme={docsTheme}
         editAnnotations
       >
         <ChartRow height={280}>
           <YAxis id="power" label="W" min={0} max={300} />
           <Layers>
-            <LineChart series={power()} column="watts" as="foam" />
+            <LineChart series={power()} column="watts" as="primary" />
             <Region
               from={region.from}
               to={region.to}
@@ -345,7 +345,7 @@ export const Select: Story = {
         <ChartContainer
           range={INTERVAL}
           width={680}
-          theme={estelaTheme}
+          theme={docsTheme}
           editAnnotations={edit}
           onSelectAnnotation={(id) => {
             setSelectedId(id);
@@ -360,7 +360,7 @@ export const Select: Story = {
           <ChartRow height={280}>
             <YAxis id="power" label="W" min={0} max={300} />
             <Layers>
-              <LineChart series={power()} column="watts" as="foam" />
+              <LineChart series={power()} column="watts" as="primary" />
               {/* Inert context — pinned at the back (level 3), no hover/select. */}
               <Baseline value={100} label="floor" selectable={false} />
               <Region
@@ -541,13 +541,13 @@ export const MultiRow: Story = {
       <ChartContainer
         range={INTERVAL}
         width={680}
-        theme={estelaTheme}
+        theme={docsTheme}
         editAnnotations
       >
         <ChartRow height={170}>
           <YAxis id="power" label="W" min={0} max={300} />
           <Layers>
-            <LineChart series={power()} column="watts" as="foam" />
+            <LineChart series={power()} column="watts" as="primary" />
             <Region
               from={region.from}
               to={region.to}
@@ -560,7 +560,7 @@ export const MultiRow: Story = {
         <ChartRow height={170}>
           <YAxis id="hr" label="bpm" min={80} max={200} />
           <Layers>
-            <LineChart series={hr()} column="bpm" as="hr" />
+            <LineChart series={hr()} column="bpm" as="secondary" />
             <Region
               from={hrRegion.from}
               to={hrRegion.to}
@@ -601,13 +601,13 @@ export const MultiRowMarkers: Story = {
       <ChartContainer
         range={INTERVAL}
         width={680}
-        theme={estelaTheme}
+        theme={docsTheme}
         editAnnotations
       >
         <ChartRow height={170}>
           <YAxis id="power" label="W" min={0} max={300} />
           <Layers>
-            <LineChart series={power()} column="watts" as="foam" />
+            <LineChart series={power()} column="watts" as="primary" />
             {p.map((at, i) => (
               <Marker
                 key={i}
@@ -622,7 +622,7 @@ export const MultiRowMarkers: Story = {
         <ChartRow height={170}>
           <YAxis id="hr" label="bpm" min={80} max={200} />
           <Layers>
-            <LineChart series={hr()} column="bpm" as="hr" />
+            <LineChart series={hr()} column="bpm" as="secondary" />
             {h.map((at, i) => (
               <Marker
                 key={i}
@@ -698,7 +698,7 @@ export const Create: Story = {
         <ChartContainer
           range={INTERVAL}
           width={680}
-          theme={estelaTheme}
+          theme={docsTheme}
           editAnnotations
           creating={tool}
           snap={snap}
@@ -713,7 +713,7 @@ export const Create: Story = {
           <ChartRow height={280}>
             <YAxis id="power" label="W" min={0} max={300} />
             <Layers>
-              <LineChart series={power()} column="watts" as="foam" />
+              <LineChart series={power()} column="watts" as="primary" />
               {marks.map((m) =>
                 m.kind === 'marker' ? (
                   <Marker
@@ -810,7 +810,7 @@ export const PanZoomSelect: Story = {
         <ChartContainer
           range={range}
           width={680}
-          theme={estelaTheme}
+          theme={docsTheme}
           panZoom={panZoom}
           onTimeRangeChange={setRange}
           onSelectAnnotation={setSelectedId}
@@ -818,7 +818,7 @@ export const PanZoomSelect: Story = {
           <ChartRow height={260}>
             <YAxis id="power" label="W" min={0} max={300} />
             <Layers>
-              <LineChart series={power()} column="watts" as="foam" />
+              <LineChart series={power()} column="watts" as="primary" />
               {/* Selectable but NOT editable (no onChange) — the repro mark. */}
               <Region
                 id="region"
