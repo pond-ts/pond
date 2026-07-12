@@ -37,7 +37,8 @@
   font-size: 1.2rem;
   max-width: 48rem;
   margin: 1rem auto 0;
-  color: #415577;
+  color: var(--ifm-font-color-base);
+  opacity: 0.9;
 }
 
 .buttons {
@@ -58,12 +59,16 @@
 }
 
 .heroPill {
-  border: 1px solid rgba(75, 129, 224, 0.18);
+  border: 1px solid var(--site-surface-border);
   border-radius: 999px;
   padding: 0.45rem 0.8rem;
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--ifm-background-surface-color);
   font-size: 0.9rem;
-  color: #38507f;
+  color: var(--ifm-color-primary-darkest);
+}
+
+html[data-theme='dark'] .heroPill {
+  color: var(--ifm-color-primary-light);
 }
 
 @media screen and (max-width: 996px) {
