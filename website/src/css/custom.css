@@ -1,38 +1,118 @@
+/**
+ * The site's visual register — the same neutral, professional
+ * dark-grey/light terminal pairing as the charts' docsTheme, so the
+ * chrome and the rendered charts read as one designed system.
+ *
+ * The `--pond-*` custom properties are the canonical CSS mirror of
+ * `packages/charts/src/docs-theme.fixture.ts` (the fixture is the
+ * source of truth; a sync test keeps the two in lockstep). The docs
+ * site's live chart embeds read these vars back through
+ * `cssVarTheme`/`useChartTheme`, so a chart follows the color-mode
+ * toggle natively — the exact bridge the Theming page documents.
+ */
+@import '@fontsource/roboto/400.css';
+@import '@fontsource/roboto/500.css';
+@import '@fontsource/roboto/700.css';
+
 :root {
-  --ifm-color-primary: #4b81e0;
-  --ifm-color-primary-dark: #3973dc;
-  --ifm-color-primary-darker: #2f6bd9;
-  --ifm-color-primary-darkest: #2159c2;
-  --ifm-color-primary-light: #5d8fe4;
-  --ifm-color-primary-lighter: #6797e6;
-  --ifm-color-primary-lightest: #84aceb;
-  --ifm-background-color: #f9fbff;
+  /* ---- pond chart tokens (docsTheme, light) ---- */
+  --pond-blue: #3d76c2;
+  --pond-amber: #c99a2e;
+  --pond-teal: #319795;
+  --pond-rose: #c25450;
+  --pond-violet: #8168b8;
+  --pond-ink: #454c56;
+  --pond-label: #5d6673;
+  --pond-grid: #eceff3;
+  --pond-divider: #d4dae1;
+  --pond-chart-bg: #ffffff;
+  --pond-chip: #f4f6f9;
+  --pond-mark: #0f9e8e;
+  --pond-rising: #2e9e83;
+  --pond-falling: #d15656;
+
+  /* ---- site chrome (Infima), light ---- */
+  --ifm-color-primary: #3d76c2;
+  --ifm-color-primary-dark: #366bb1;
+  --ifm-color-primary-darker: #3365a7;
+  --ifm-color-primary-darkest: #2a538a;
+  --ifm-color-primary-light: #4e83c9;
+  --ifm-color-primary-lighter: #5a8bcd;
+  --ifm-color-primary-lightest: #7ba3d8;
+  --ifm-background-color: #fafbfc;
   --ifm-background-surface-color: #ffffff;
-  --ifm-navbar-background-color: rgba(249, 251, 255, 0.92);
-  --ifm-footer-background-color: #edf3ff;
-  --ifm-heading-color: #15233f;
-  --ifm-font-color-base: #32415f;
-  --ifm-link-color: #3b74d9;
+  --ifm-navbar-background-color: rgba(250, 251, 252, 0.92);
+  --ifm-footer-background-color: #eef1f5;
+  --ifm-heading-color: #1d2430;
+  --ifm-font-color-base: #333c49;
+  --ifm-link-color: #35679f;
+  --ifm-font-family-base:
+    'Roboto', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --ifm-code-font-size: 95%;
-  --docusaurus-highlighted-code-line-bg: rgba(75, 129, 224, 0.11);
-  --site-hero-glow: rgba(75, 129, 224, 0.18);
-  --site-hero-soft: rgba(115, 162, 238, 0.2);
-  --site-surface-border: rgba(75, 129, 224, 0.14);
-  --site-shadow-soft: 0 24px 60px rgba(48, 86, 163, 0.1);
+  --docusaurus-highlighted-code-line-bg: rgba(61, 118, 194, 0.11);
+  --site-hero-glow: rgba(61, 118, 194, 0.14);
+  --site-hero-soft: rgba(93, 102, 115, 0.12);
+  --site-surface-border: rgba(61, 118, 194, 0.14);
+  --site-shadow-soft: 0 24px 60px rgba(52, 63, 82, 0.08);
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* ---- pond chart tokens (docsThemeDark) ---- */
+  --pond-blue: #6ea3e8;
+  --pond-amber: #dcb04a;
+  --pond-teal: #45b8b0;
+  --pond-rose: #e07a72;
+  --pond-violet: #a08fd8;
+  --pond-ink: #c6cdd6;
+  --pond-label: #99a3ae;
+  --pond-grid: #262b33;
+  --pond-divider: #3a414b;
+  --pond-chart-bg: #16191f;
+  --pond-chip: #20252d;
+  --pond-mark: #34c9b9;
+  --pond-rising: #35b593;
+  --pond-falling: #e06c66;
+
+  /* ---- site chrome (Infima), dark terminal ground ---- */
+  --ifm-color-primary: #6ea3e8;
+  --ifm-color-primary-dark: #5391e4;
+  --ifm-color-primary-darker: #4589e2;
+  --ifm-color-primary-darkest: #2470d9;
+  --ifm-color-primary-light: #89b5ec;
+  --ifm-color-primary-lighter: #97beee;
+  --ifm-color-primary-lightest: #c0d8f5;
+  --ifm-background-color: #16191f;
+  --ifm-background-surface-color: #1c2027;
+  --ifm-navbar-background-color: rgba(22, 25, 31, 0.92);
+  --ifm-footer-background-color: #12151a;
+  --ifm-heading-color: #dde3ea;
+  --ifm-font-color-base: #b6bec9;
+  --ifm-link-color: #89b5ec;
+  --docusaurus-highlighted-code-line-bg: rgba(110, 163, 232, 0.14);
+  --site-hero-glow: rgba(110, 163, 232, 0.1);
+  --site-hero-soft: rgba(153, 163, 174, 0.08);
+  --site-surface-border: rgba(110, 163, 232, 0.16);
+  --site-shadow-soft: 0 24px 60px rgba(0, 0, 0, 0.35);
 }
 
 .hero--primary {
   background:
     radial-gradient(circle at top, var(--site-hero-glow), transparent 34%),
     radial-gradient(circle at 20% 15%, var(--site-hero-soft), transparent 28%),
-    linear-gradient(180deg, #f3f7ff 0%, #e9f1ff 100%);
-  color: #15233f;
+    linear-gradient(
+      180deg,
+      var(--ifm-background-color) 0%,
+      var(--ifm-background-surface-color) 100%
+    );
+  color: var(--ifm-heading-color);
 }
 
 .navbar {
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--site-surface-border);
-  box-shadow: 0 8px 30px rgba(54, 87, 155, 0.06);
+  box-shadow: 0 8px 30px rgba(52, 63, 82, 0.06);
 }
 
 .footer {
@@ -46,28 +126,41 @@
 }
 
 .button.button--outline {
-  border-color: rgba(75, 129, 224, 0.35);
+  border-color: rgba(61, 118, 194, 0.35);
 }
 
 .button.button--primary {
-  background: #4b81e0;
-  border-color: #4b81e0;
+  background: var(--ifm-color-primary);
+  border-color: var(--ifm-color-primary);
   color: #fff;
 }
 
 .button.button--primary:hover {
-  background: #3d76df;
-  border-color: #3d76df;
+  background: var(--ifm-color-primary-dark);
+  border-color: var(--ifm-color-primary-dark);
 }
 
 .button.button--outline.button--primary {
-  background: rgba(255, 255, 255, 0.85);
-  color: #254d9d;
+  background: var(--ifm-background-surface-color);
+  color: var(--ifm-color-primary-darkest);
 }
 
 .button.button--outline.button--primary:hover {
-  background: rgba(255, 255, 255, 1);
-  color: #20458f;
+  background: var(--ifm-background-color);
+  color: var(--ifm-color-primary-darker);
+}
+
+html[data-theme='dark'] .button.button--primary {
+  color: #10131a;
+}
+
+html[data-theme='dark'] .button.button--outline.button--primary {
+  color: var(--ifm-color-primary-light);
+  border-color: rgba(110, 163, 232, 0.45);
+}
+
+html[data-theme='dark'] .button.button--outline.button--primary:hover {
+  color: var(--ifm-color-primary-lightest);
 }
 
 .hero__title {
@@ -85,8 +178,4 @@
 .navbar__logo {
   border-radius: 50%;
   overflow: hidden;
-}
-
-html[data-theme='dark'] {
-  color-scheme: light;
 }

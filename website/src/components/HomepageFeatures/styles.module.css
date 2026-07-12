@@ -7,16 +7,12 @@
 }
 
 .featureInner {
-  border: 1px solid rgba(75, 129, 224, 0.14);
+  border: 1px solid var(--site-surface-border);
   border-radius: 1rem;
-  background: linear-gradient(
-    180deg,
-    rgba(102, 146, 233, 0.12),
-    rgba(255, 255, 255, 0.9)
-  );
+  background: var(--ifm-background-surface-color);
   padding: 1.5rem;
   width: 100%;
-  box-shadow: 0 24px 54px rgba(49, 78, 139, 0.08);
+  box-shadow: var(--site-shadow-soft);
 }
 
 .featureInner h3 {
