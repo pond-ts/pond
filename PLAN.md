@@ -944,14 +944,22 @@ Phases (each independently shippable, ends with a docs deploy):
       landing now lists all five packages, re-home the orphaned
       `recipes/` pages into the sidebar, fix `intro.mdx`'s stale site
       map and the homepage CTA target.
-- [ ] **P1 — foundation**: live-embed infrastructure (workspace dep,
-      client-only mounting, single-source examples: the code shown IS
-      the component mounted), Storybook `docsTheme` restyle + tree
-      normalization (+ one-time visual-baseline regen), deployed
-      Storybook, site visual-theme pass, Gallery (live cards),
-      evaluator-first charts Overview, Learn chapters 1–5,
-      responsive-width recipe, `@pond-ts/financial` section stub,
-      redirects plugin, llms.txt, local search.
+- [ ] **P1 — foundation** (in progress; 4/7 shipped):
+  - [x] Storybook `docsTheme` restyle + tree normalization + one-time
+        visual-baseline regen (#433)
+  - [x] site visual-theme pass, dark mode, local search, redirects
+        plugin, llms.txt (#432)
+  - [x] deployed Storybook, linked from the charts index (#434)
+  - [x] live-embed infrastructure — `file:` workspace dep,
+        `useSiteChartTheme` (the CSS-var bridge, not the dev-only
+        fixture), the `example-sources` plugin + `<ChartExample>`
+        single-source pattern, the seeded server-metrics dataset,
+        one pilot example verified end-to-end (SSG, hydration,
+        interaction, dark-mode retheme) (#435)
+  - [ ] Gallery (live cards)
+  - [ ] evaluator-first charts Overview rewrite
+  - [ ] Learn chapters 1–5
+  - [ ] responsive-width recipe, `@pond-ts/financial` section stub
 - [ ] **P2 — interaction + doc-debt burn-down**: Learn 6–9,
       Interaction section, Annotations & indicators section, Financial
       charts hub (+ TradingView vocabulary bridge), Missing data &
