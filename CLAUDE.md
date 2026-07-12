@@ -370,6 +370,15 @@ Agent({
   prompt: `Review pond-ts PR #<N> adversarially. Read the diff via
   \`gh pr diff <N>\` and the description via \`gh pr view <N>\`.
 
+  READ-ONLY CONSTRAINT: use only read-only git/gh operations —
+  \`gh pr diff\`, \`gh pr view\`, \`gh pr checks\`, \`git show
+  <ref>:<path>\`, \`git log <ref>\`. Never run \`git checkout\`,
+  \`git switch\`, \`git merge\`, or \`git reset\` — the tree you're
+  running in is very likely the user's live primary checkout, not a
+  disposable worktree, and checking out a branch into it clobbers
+  uncommitted work. If you need a file's content at the PR branch's
+  tip, use \`git show origin/<branch>:<path>\`, never a checkout.
+
   Flag concerns in these categories, in priority order:
   1. **Correctness** — missing edge cases, off-by-one errors,
      silent breaking changes, unhandled undefined values,
