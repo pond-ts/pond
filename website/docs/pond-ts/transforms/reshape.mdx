@@ -135,7 +135,7 @@ Requires a time-keyed input. Piping from `aggregate`/`materialize`?
 Their output is interval-keyed, so `pivotByGroup` throws at runtime —
 rekey first with `.asTime({ at: 'begin' })`. See
 [Charting → Per-group wide rows](../advanced/charting#per-group-wide-rows-one-source-categorical-column)
-for the end-to-end Recharts pipeline.
+for the end-to-end third-party chart-package pipeline.
 
 :::note[Known limitation]
 A group column containing both literal `"undefined"` strings and

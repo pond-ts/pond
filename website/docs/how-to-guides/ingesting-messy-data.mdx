@@ -421,7 +421,8 @@ Two primary export shapes:
 // JSON wire format — round-trips through fromJSON.
 const wire = cleaned.toJSON({ rowFormat: 'object' });
 
-// Wide-row points for chart libraries (Recharts, Observable Plot, visx).
+// Wide-row points for third-party chart packages (see Using other
+// chart libraries); @pond-ts/charts consumes the TimeSeries directly.
 const points = cleaned.toPoints();
 // [{ ts: number, cpu: number | undefined, memory: ..., host: ... }, ...]
 ```

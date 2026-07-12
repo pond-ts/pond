@@ -4,22 +4,23 @@ sidebar_position: 19
 
 # Using other chart libraries
 
-:::tip[pond has first-party charts]
-**[`@pond-ts/charts`](../../charts/index.mdx)** is the first-party
-chart library: canvas-rendered, streaming-first time-series charts
-that consume a `TimeSeries` directly — no point-array conversion, with
-cursors, selection, annotations, and theming built in. Start there.
+**The charting answer to pond's data is
+[`@pond-ts/charts`](../../charts/index.mdx).** It consumes a
+`TimeSeries` directly — no point-array conversion — and ships the
+things you'd otherwise rebuild by hand: cursors and readouts,
+selection, annotations, theming, gap-aware rendering, live updates.
+If you're choosing how to chart pond data, start there; the rest of
+this site assumes it.
 
-This page is for the other case: you're rendering with a
-general-purpose chart library (Recharts, Observable Plot, visx, raw
-d3) and just need pond's data out in the shape those libraries eat.
-:::
-
+This page covers the other case — and it is the **one place** in
+these docs that does: getting data _out_ of pond to feed a
+third-party chart package (Recharts, Observable Plot, visx, raw d3).
 The bridge is deliberately short: shape your `TimeSeries` with pond's
-transforms, then export flat rows via `toPoints()`. If your data is
-plain arrays to begin with and you don't need the transform pipeline,
-a general-purpose chart library alone may genuinely be the better
-fit — pond earns its keep when the data needs shaping first.
+transforms, then export flat rows via `toPoints()` (or dense typed
+arrays via the column API for large data). If your data is plain
+arrays to begin with and you don't need the transform pipeline, a
+general-purpose chart library alone may genuinely be the better fit —
+pond earns its keep when the data needs shaping first.
 
 ## `toPoints()` — the bridge
 
@@ -44,6 +45,33 @@ library accepts directly. For a single-series chart, compose with
 const cpuPoints = cpu.select('cpu').toPoints();
 // [{ ts: number, cpu: number | undefined }, ...]
 ```
+
+Worked example — the rows drop straight into a Recharts line chart
+(the same shape works for Observable Plot's `data` or a d3 scale
+domain):
+
+```tsx
+import { LineChart, Line, XAxis, YAxis } from 'recharts';
+
+function CpuChart({ series }: { series: typeof cpu }) {
+  const data = series.select('cpu').toPoints();
+  return (
+    <LineChart width={560} height={220} data={data}>
+      <XAxis
+        dataKey="ts"
+        type="number"
+        domain={['dataMin', 'dataMax']}
+        tickFormatter={(ts) => new Date(ts).toLocaleTimeString()}
+      />
+      <YAxis />
+      <Line dataKey="cpu" dot={false} connectNulls={false} />
+    </LineChart>
+  );
+}
+```
+
+`connectNulls={false}` keeps pond's gaps honest — an `undefined` cell
+renders as a break, not an interpolated bridge.
 
 ## `fromPoints(points, { schema, name? })` — the inverse
 
@@ -122,7 +150,7 @@ snapshots:
   y-domain will happily render empty axes over no data. Render an
   empty-state instead of the chart until the snapshot has rows.
 
-## Worked example
+## Full worked example
 
 The [dashboard how-to guide](../../how-to-guides/dashboard-guide)
 builds a complete live Recharts dashboard on pond data — snapshots,
