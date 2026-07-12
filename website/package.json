@@ -31,7 +31,10 @@
     "@easyops-cn/docusaurus-search-local": "^0.55.2",
     "@fontsource/roboto": "^5.2.10",
     "@mdx-js/react": "^3.0.0",
+    "@pond-ts/charts": "file:../packages/charts",
+    "@pond-ts/react": "file:../packages/react",
     "clsx": "^2.0.0",
+    "pond-ts": "file:../packages/core",
     "prism-react-renderer": "^2.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

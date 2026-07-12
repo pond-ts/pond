@@ -1,0 +1,28 @@
+.wrap {
+  border: 1px solid var(--site-surface-border);
+  border-radius: 0.75rem;
+  overflow: hidden;
+  margin: 1.5rem 0;
+  background: var(--ifm-background-surface-color);
+}
+
+.stage {
+  display: flex;
+  justify-content: center;
+  padding: 1.25rem;
+  overflow-x: auto;
+}
+
+.placeholder {
+  width: 100%;
+  border-radius: 0.5rem;
+  background: var(--pond-grid);
+  opacity: 0.4;
+}
+
+.wrap :global(.theme-code-block) {
+  margin: 0;
+  border-radius: 0;
+  box-shadow: none;
+  border-top: 1px solid var(--site-surface-border);
+}
