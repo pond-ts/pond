@@ -55,6 +55,15 @@ jobs:
         working-directory: website
         run: npm run build
 
+      - name: Build Storybook
+        # The docs site's interactive reference surface (docs plan, "Storybook
+        # = the disciplined API-adjacent knob walk"). Vite's Storybook builder
+        # emits relative asset paths, so it's safe to nest under any subpath —
+        # no baseUrl config needed. Runs after the website build so it can
+        # land straight into the artifact tree.
+        working-directory: packages/charts
+        run: npm run build-storybook -- --quiet -o ../../website/build/storybook
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
