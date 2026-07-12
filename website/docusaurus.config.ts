@@ -61,6 +61,7 @@ const config: Config = {
       },
     ],
     './plugins/llms-txt.js',
+    './plugins/example-sources.js',
   ],
   themeConfig: {
     image: 'img/docusaurus-social-card.jpg',
