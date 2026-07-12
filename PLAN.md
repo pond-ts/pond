@@ -926,6 +926,13 @@ Binding directives (user):
 - **Storybook = the disciplined, API-adjacent knob walk** — the
   story-discipline pass (tree normalization, thin-group coverage fill)
   is planned work in this wave.
+- **Third-party charting is quarantined to the bridge page** —
+  `pond-ts → Advanced → Using other chart libraries` assumes
+  `@pond-ts/charts` is _the_ charting answer and is the only place the
+  docs discuss exporting pond data to third-party chart packages
+  (`toPoints`/column-API-as-export + a Recharts example live there,
+  nowhere else). The Recharts-based dashboard guide is retired when
+  the charts-native dashboard guide (P4) replaces it.
 
 Phases (each independently shippable, ends with a docs deploy):
 
@@ -4100,7 +4107,8 @@ retention`). Currently Path B (own deque); same API, perf
 
      ```ts
      type DurationString =
-       `${number}${'ms' | 's' | 'm' | 'h' | 'd'}` | 'buffer';
+       | `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`
+       | 'buffer';
 
      type FusedMapping<S extends SeriesSchema> = Readonly<
        Record<DurationString, FusedMappingValue<S>>

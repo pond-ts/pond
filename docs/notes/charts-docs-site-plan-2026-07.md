@@ -1,6 +1,6 @@
 # Charts docs site plan — a best-in-class guide for @pond-ts/charts (and making the most of pond)
 
-_2026-07-11 · Pond technical consultant (Claude) · status: PROPOSAL v2.2 — v2 reviewed and approved by pjm17971; v2.1 adds his visual-design direction (§9.5, §10); v2.2 adds his live-embeds directive + Storybook-discipline mandate (§1 P3, §9). Ready to build._
+_2026-07-11 · Pond technical consultant (Claude) · status: ADOPTED into PLAN.md 2026-07-12 (v2.2); v2.1 = visual-design direction (§9.5, §10); v2.2 = live-embeds directive + Storybook-discipline mandate (§1 P3, §9); v2.3 = third-party charting policy (§3a). PLAN.md's Docs site wave entry is the binding version._
 
 This is the site-structure plan for the charts documentation buildout:
 incremental knowledge-building from getting-started to advanced topics,
@@ -310,6 +310,16 @@ every other mention links. This is the page-granularity version of the
 RTC/pondjs lesson, and "restates instead of links" becomes a review
 checklist item for all P2/P3 PRs.
 
+**Third-party charting policy (v2.3, user direction).** The bridge
+page (`pond-ts → Advanced → Using other chart libraries`) leans hard
+into `@pond-ts/charts` as _the_ charting answer to pond's data — and
+is the **only** place in the docs that discusses data portability out
+of pond in the context of third-party chart packages (`toPoints`, the
+column API as an export path, and a Recharts mention/example are
+sanctioned there, nowhere else). Every other page assumes
+`@pond-ts/charts`. This joins "link, don't restate" on the docs-PR
+review checklist.
+
 | Concept                                                           | Canonical owner                                                             | Everyone else                                             |
 | ----------------------------------------------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------- |
 | Gap semantics (fill/maxGap → GapMode, per-layer matrix)           | Missing data & gaps                                                         | chart-type variant bullets, ch. 4, philosophy — link only |
@@ -326,18 +336,18 @@ checklist item for all P2/P3 PRs.
 
 ## 4. What happens to existing content (no orphans, no big-bang)
 
-| Existing page                                                                | Disposition                                                                                                                                                                         |
-| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `charts/index.mdx`                                                           | Rewritten as Overview (B3 fixed in P0 first); its "minimal API set" map tables survive into the Overview/cheat sheet — they're the best returning-user artifact on the current site |
-| `recipes/theming.mdx`                                                        | Re-homed → charts/Theming, expanded (redirect kept)                                                                                                                                 |
-| `recipes/using-charts.mdx`                                                   | Re-homed → charts/Install & integration (redirect kept)                                                                                                                             |
-| `recipes/resizable-panels.mdx`                                               | Becomes the canonical responsive-width recipe (P1); mechanics cross-linked from Install & integration and the multi-panel page                                                      |
-| `recipes/error-rate-dashboard`, `streaming-dashboard`, `telemetry-reporting` | Re-shelved as **guides** — they are multi-technique end-to-end walkthroughs and fail the recipe scope test (§8)                                                                     |
-| `recipes/cpu-metrics`, `streaming-baseline`                                  | Stay recipes, re-homed into the sidebar                                                                                                                                             |
-| `pond-ts/advanced/charting.mdx`                                              | Shrunk to a stub: banner to `@pond-ts/charts` + the evaluator exit-path paragraph ("plain arrays, no transforms → use Recharts; here's the bridge"). No maintained bridge content   |
-| `how-to-guides/*` (4)                                                        | Unchanged; `histograms` + `categorical-charts` get "reference page" cross-links once those exist                                                                                    |
-| `dashboard-guide.mdx` (Recharts-based)                                       | Kept as-is for now (honest history + teaches the react hooks); the charts-native dashboard guide joins the roster (§8). Revisit retiring it when that lands                         |
-| Core + react + fit sections                                                  | Untouched                                                                                                                                                                           |
+| Existing page                                                                | Disposition                                                                                                                                                                             |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `charts/index.mdx`                                                           | Rewritten as Overview (B3 fixed in P0 first); its "minimal API set" map tables survive into the Overview/cheat sheet — they're the best returning-user artifact on the current site     |
+| `recipes/theming.mdx`                                                        | Re-homed → charts/Theming, expanded (redirect kept)                                                                                                                                     |
+| `recipes/using-charts.mdx`                                                   | Re-homed → charts/Install & integration (redirect kept)                                                                                                                                 |
+| `recipes/resizable-panels.mdx`                                               | Becomes the canonical responsive-width recipe (P1); mechanics cross-linked from Install & integration and the multi-panel page                                                          |
+| `recipes/error-rate-dashboard`, `streaming-dashboard`, `telemetry-reporting` | Re-shelved as **guides** — they are multi-technique end-to-end walkthroughs and fail the recipe scope test (§8)                                                                         |
+| `recipes/cpu-metrics`, `streaming-baseline`                                  | Stay recipes, re-homed into the sidebar                                                                                                                                                 |
+| `pond-ts/advanced/charting.mdx`                                              | Shrunk to a stub: banner to `@pond-ts/charts` + the evaluator exit-path paragraph ("plain arrays, no transforms → use Recharts; here's the bridge"). No maintained bridge content       |
+| `how-to-guides/*` (4)                                                        | Unchanged; `histograms` + `categorical-charts` get "reference page" cross-links once those exist                                                                                        |
+| `dashboard-guide.mdx` (Recharts-based)                                       | Kept only until the charts-native dashboard guide (§8 guide #2) lands, then retired/replaced — hardened by the v2.3 third-party policy (Recharts content lives only on the bridge page) |
+| Core + react + fit sections                                                  | Untouched                                                                                                                                                                               |
 
 All moved pages keep their old URLs via
 `@docusaurus/plugin-client-redirects` (new infra item, §10) — agents and
@@ -801,8 +811,9 @@ don't restate") joins the Layer 1 checklist for docs PRs.
 2. **Dark mode site-wide** — RESOLVED (user direction, v2.1): yes;
    site theme and `docsTheme` ship light + dark from P1.
 3. **Search** — local plugin now (recommended), Algolia later?
-4. **The Recharts dashboard guide** — keep alongside the new
-   charts-native guide (recommended), or retire when guide #2 lands?
+4. **The Recharts dashboard guide** — RESOLVED (user direction,
+   v2.3): retire/replace when guide #2 lands; third-party charting
+   content is exclusive to the bridge page.
 5. **Value-axis naming** — the value-axis RFC explicitly defers the
    naming question ("value axis" vs "domain axis" vs "monotonic axis")
    to "a docs forcing-function" — this plan is that forcing function.
@@ -860,6 +871,15 @@ stories adopt `docsTheme` (single source of truth as a dev-only
 fixture in `packages/charts`; one-time visual-baseline regeneration).
 Explicitly guidance-level: the wave's priority remains getting the
 content in place. Resolves open decision #2 (dark mode: yes).
+
+**v2.3 (2026-07-12, user review, round 3):** the third-party
+charting policy (§3a): the bridge page assumes `@pond-ts/charts` is
+the charting answer and is the sole home for third-party-chart-package
+data portability (Recharts example sanctioned there, nowhere else);
+the Recharts dashboard guide's disposition hardened to
+retire-on-replacement (resolves open decision #4). Enforced in the
+same pass: the three stray mentions (intro.mdx, ingesting-messy-data,
+reshape link text) neutralized.
 
 **v2.2 (2026-07-11, user review, round 2):** two directives, both
 overriding v2 scoping calls. (1) **Live chart embeds are in this

@@ -62,9 +62,9 @@ const bands = cpu.baseline('cpu', { window: '2m', sigma: 2 });
 const anomalies = cpu.outliers('cpu', { window: '2m', sigma: 2 });
 //    ^ schema-preserving filter — same columns, just the spikes.
 
-// 4. Chart-ready output. `toPoints()` returns wide rows keyed by
-//    schema column name — drop straight into Recharts / Observable
-//    Plot / visx / d3.
+// 4. Chart-ready output. Feed the series straight to @pond-ts/charts,
+//    or export wide rows via `toPoints()` for a third-party chart
+//    package (see pond-ts → Advanced → Using other chart libraries).
 byMinute.toPoints(); // [{ ts, cpu, requests, host }, ...]
 bands.toPoints(); // [{ ts, cpu, ..., avg, sd, upper, lower }, ...]
 anomalies.length; // how many spikes tripped the 2σ band
