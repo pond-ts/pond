@@ -155,4 +155,32 @@ describe('TimeSeries.rolling { count } — validation & shape', () => {
       evenSeries().rolling(Sequence.every('1ms'), { count: 3 }, { v: 'avg' }),
     ).toThrow(/not supported with a sequence/);
   });
+
+  it('count: 1 reduces each row on its own (window is just that row)', () => {
+    const r = evenSeries(4).rolling({ count: 1 }, { v: 'avg' });
+    expect([0, 1, 2, 3].map((i) => r.at(i)!.get('v'))).toEqual([0, 1, 2, 3]);
+  });
+
+  it('count larger than the series clamps to the rows present', () => {
+    // count 10 over 4 rows, trailing → every window is [0, i]; no row ever
+    // reaches 10 samples, so with the default gate each still emits.
+    const r = evenSeries(4).rolling({ count: 10 }, { v: 'avg' });
+    expect(r.at(0)!.get('v')).toBe(0); // [0]
+    expect(r.at(3)!.get('v')).toBe(1.5); // [0,1,2,3]
+    // minSamples: 10 then suppresses every row (never that many present).
+    const gated = evenSeries(4).rolling(
+      { count: 10 },
+      { v: 'avg' },
+      { minSamples: 10 },
+    );
+    expect([0, 1, 2, 3].every((i) => gated.at(i)!.get('v') === undefined)).toBe(
+      true,
+    );
+  });
+
+  it('an empty series yields an empty result (no throw)', () => {
+    const empty = new TimeSeries({ name: 'v', schema, rows: [] });
+    const r = empty.rolling({ count: 3 }, { v: 'avg' });
+    expect(r.length).toBe(0);
+  });
 });
