@@ -108,6 +108,19 @@ def envelope(n: int, percent: float) -> dict:
     }
 
 
+def envelope_ema(n: int, percent: float) -> dict:
+    # maType: 'ema' — centre line is a span-EMA (adjust=False), first n-1 masked
+    # (our length-preserving warm-up). Validates the emaValues kernel helper.
+    mid = s.ewm(span=n, adjust=False).mean()
+    mid.iloc[: n - 1] = math.nan
+    f = percent / 100
+    return {
+        "envMiddle": col(mid),
+        "envUpper": col(mid * (1 + f)),
+        "envLower": col(mid * (1 - f)),
+    }
+
+
 def percent_change(periods: int) -> dict:
     return {"pctChange": col(s.pct_change(periods) * 100)}
 
@@ -135,6 +148,11 @@ cases = [
         "study": "envelope",
         "params": {"period": 20, "percent": 2.5},
         "expected": envelope(20, 2.5),
+    },
+    {
+        "study": "envelope",
+        "params": {"period": 20, "percent": 2.5, "maType": "ema"},
+        "expected": envelope_ema(20, 2.5),
     },
     {
         "study": "percentChange",

@@ -32,6 +32,7 @@ interface OracleCase {
     q?: number;
     percent?: number;
     periods?: number;
+    maType?: 'sma' | 'ema';
   };
   expected: Record<string, Array<number | null>>;
 }
@@ -80,7 +81,10 @@ function run(c: OracleCase): unknown {
     case 'zScore':
       return zScore(series(), p as { period: number });
     case 'envelope':
-      return envelope(series(), p as { period: number; percent?: number });
+      return envelope(
+        series(),
+        p as { period: number; percent?: number; maType?: 'sma' | 'ema' },
+      );
     case 'percentChange':
       return percentChange(series(), p as { periods?: number });
     default:
