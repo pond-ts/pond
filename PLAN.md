@@ -1650,6 +1650,39 @@ independently built the same `calendar.bars → BoundedSequence` seam.
     [[npm new-package publish bootstrap]]), then the `v0.42.0` tag OIDC-published all
     five (financial's first OIDC release). The charts publish auto-wakes the Tidal
     adoption agent via the CHANGELOG.
+- **Indicator / studies track — the `@pond-ts/financial` analytics layer.**
+  Grounded in the corpus assessment
+  (`docs/notes/financial-indicators-assessment-2026-07.md`): 124 ChartIQ studies
+  reduce to ~11 kernels, ~80% expressible on core primitives today. Kicked off by
+  the study-primitives report (issue #449, triaged 2026-07-13). **Dispositions
+  (owner-acked):**
+  - **Item 1 (static trailing-window transform)** — the reducer set (`avg`/`stdev`/
+    `min`/`max`/`median`/`p{q}`) ships today on `rolling(duration, …)`; the real
+    gap is a **count-based (N-bar) window** (G1) — the only correct window across
+    session gaps. **→ built (see below).**
+  - **Item 2 (EWMA)** — `smooth('ema', { alpha })` ships; gap is the `span`
+    parameterization (α = 2/(span+1)). **→ PLAN** (public option-type change,
+    human-approval gate).
+  - **Item 3 (warmup/alignment convention)** — `rolling` `minSamples` keeps length
+    (emits `undefined`), ema `warmup` slices length. **→ PLAN**: document one
+    length-preserving convention; reconcile ema toward it. Too small for an RFC.
+  - **Decision (owner):** land **G1 in core first** (gap-correct from the first
+    studies release), then the **#449 first-batch studies** (SMA, EMA-span,
+    Bollinger®, MA-envelope, z-score, rolling stdev/min/max/percentile,
+    percent-change) in `@pond-ts/financial` — package shape per assessment §7
+    (`kernels/`/`studies/`/`contract/`, `column`/`output` on every fn, shared
+    `maType`, bar-count `period` in the public API from day 1).
+  - ✅ **G1 count-based rolling window — BUILT (unreleased).** `TimeSeries.rolling`
+    now takes `{ count: N }` in place of a duration: reduces the last/next/centered
+    `N` **rows** by position, so an N-bar window is correct across session gaps
+    (where `N` bars ≠ `N × barSize` of time). Honours `alignment` + `minSamples`
+    (`minSamples: N` = the conventional first-`N-1`-`undefined` warmup); per-row
+    only (throws with a sequence). Same amortized-O(1)-per-row sweep as the duration
+    path (perf: linear, ~16ms/100k rows, tracks the duration numbers). Adds an
+    overload to `TimeSeries` → human-approval gate before merge. 10 tests +
+    `perf-rolling.mjs` count scenario.
+  - **Next:** `span` on `smooth('ema')` + the length-preserving warmup convention
+    (both core, approval-gated), then the first-batch studies in financial.
 - **Cross-repo coordination — the constellation bridge (live since 2026-07-03).**
   Handoffs between this repo and Tidal are automated; Peter no longer hand-relays
   them. **Inbound:** a Tidal→pond PR with `Tidal` in the title wakes a headless,

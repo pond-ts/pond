@@ -54,7 +54,46 @@ function benchmark(length, repeats = 5) {
   };
 }
 
-const scales = [250, 500, 1_000, 2_000, 4_000];
-const results = scales.map((scale) => benchmark(scale));
+/** Count-based ({ count: N }) window — the N-bar sweep. Same two-pointer
+ *  structure as the duration trailing path (each row enters/leaves once), so
+ *  this should track the duration numbers, not regress against them. */
+function benchmarkCount(length, count = 60, repeats = 5) {
+  const series = makeSeries(length);
+  series.rolling(
+    { count },
+    { value: 'avg', load: 'sum' },
+    { minSamples: count },
+  );
+
+  const samples = [];
+  for (let run = 0; run < repeats; run += 1) {
+    const start = performance.now();
+    const rolled = series.rolling(
+      { count },
+      { value: 'avg', load: 'sum' },
+      { minSamples: count },
+    );
+    const end = performance.now();
+    if (rolled.length !== length) {
+      throw new Error(
+        `unexpected count output length for ${length}: ${rolled.length}`,
+      );
+    }
+    samples.push(end - start);
+  }
+
+  return {
+    length,
+    medianMs: Number(median(samples).toFixed(2)),
+    minMs: Number(Math.min(...samples).toFixed(2)),
+    maxMs: Number(Math.max(...samples).toFixed(2)),
+  };
+}
+
+const scales = [250, 500, 1_000, 2_000, 4_000, 100_000];
+const results = {
+  duration: scales.map((scale) => benchmark(scale)),
+  count: scales.map((scale) => benchmarkCount(scale)),
+};
 
 console.log(JSON.stringify(results, null, 2));
