@@ -3714,6 +3714,16 @@ export class TimeSeries<S extends SeriesSchema> {
    * Applies a smoothing transform to one numeric payload column while preserving the original key
    * type, key values, and all non-target payload fields.
    *
+   * **EMA rate + warm-up.** Give the rate as either `alpha` (0,1] **or** the
+   * financial `span` convention (`α = 2/(span+1)` — a `span`-period EMA, e.g.
+   * `{ span: 12 }`), exactly one of the two. Two warm-up options, both optional:
+   * `warmup: N` **drops** the first N rows (length-changing — hides the noisy
+   * initial convergence); `minSamples: N` **keeps** the rows but emits
+   * `undefined` until N present values have been consumed (length-preserving —
+   * mirrors {@link TimeSeries.rolling}'s `minSamples`, the convention studies
+   * use so a smoothed line aligns on its source's time axis). The EMA converges
+   * on the real values underneath either way.
+   *
    * Example: `series.smooth("value", "movingAverage", { window: "5m", alignment: "centered", output: "valueAvg" })`.
    * Computes a moving average over the selected numeric column using anchor points derived from
    * event keys. `Time` keys use their timestamp. `TimeRange` and `Interval` keys use the midpoint
@@ -3751,7 +3761,8 @@ export class TimeSeries<S extends SeriesSchema> {
     column: Target,
     method: SmoothMethod,
     options:
-      | { alpha: number; warmup?: number; output?: Output }
+      | { alpha: number; warmup?: number; minSamples?: number; output?: Output }
+      | { span: number; warmup?: number; minSamples?: number; output?: Output }
       | {
           window: DurationInput;
           alignment?: RollingAlignment;
@@ -3779,25 +3790,44 @@ export class TimeSeries<S extends SeriesSchema> {
     );
 
     if (method === 'ema') {
-      if (!('alpha' in options)) {
-        throw new TypeError('ema smoothing requires an alpha option');
-      }
-      const alpha = options.alpha;
-      if (
-        typeof alpha !== 'number' ||
-        !Number.isFinite(alpha) ||
-        alpha <= 0 ||
-        alpha > 1
-      ) {
+      // Rate parameter: `alpha` directly, or the financial `span` convention
+      // (α = 2/(span+1) — a `span`-period EMA), exactly one of the two.
+      const hasAlpha = 'alpha' in options && options.alpha !== undefined;
+      const hasSpan = 'span' in options && options.span !== undefined;
+      if (hasAlpha === hasSpan) {
         throw new TypeError(
-          'ema smoothing requires alpha to be a finite number in the range (0, 1]',
+          'ema smoothing requires exactly one of alpha or span',
         );
+      }
+      let alpha: number;
+      if (hasSpan) {
+        const span = (options as { span: number }).span;
+        if (typeof span !== 'number' || !Number.isFinite(span) || span < 1) {
+          throw new TypeError(
+            'ema smoothing requires span to be a finite number >= 1',
+          );
+        }
+        alpha = 2 / (span + 1);
+      } else {
+        alpha = (options as { alpha: number }).alpha;
+        if (
+          typeof alpha !== 'number' ||
+          !Number.isFinite(alpha) ||
+          alpha <= 0 ||
+          alpha > 1
+        ) {
+          throw new TypeError(
+            'ema smoothing requires alpha to be a finite number in the range (0, 1]',
+          );
+        }
       }
 
       // Optional warm-up: drop the first N output rows to hide the
       // noisy initial convergence of the EMA. The smoother still
       // processes those events so `previous` is correctly warmed up
-      // by the time we keep a row.
+      // by the time we keep a row. **Length-changing** (rows are removed) —
+      // for the length-preserving warmup that studies want (align on a shared
+      // time axis), use `minSamples` instead.
       const warmup =
         'warmup' in options && options.warmup !== undefined
           ? options.warmup
@@ -3807,8 +3837,26 @@ export class TimeSeries<S extends SeriesSchema> {
           'ema smoothing requires warmup to be a non-negative integer',
         );
       }
+      // Length-preserving warm-up: emit `undefined` until `minSamples` present
+      // source values have been consumed, keeping the row (mirrors `rolling`'s
+      // `minSamples`). The EMA still converges on the real values underneath —
+      // only the emitted value is masked — so the kept tail is unchanged.
+      const minSamples =
+        'minSamples' in options && options.minSamples !== undefined
+          ? options.minSamples
+          : 0;
+      if (
+        !Number.isInteger(minSamples) ||
+        minSamples < 0 ||
+        !Number.isFinite(minSamples)
+      ) {
+        throw new TypeError(
+          'ema smoothing requires minSamples to be a non-negative integer',
+        );
+      }
 
       let previous: number | undefined;
+      let seen = 0;
       const resultRows = this.events.map((event) => {
         const raw = event.get(column);
         const smoothed =
@@ -3820,12 +3868,16 @@ export class TimeSeries<S extends SeriesSchema> {
 
         if (smoothed !== undefined) {
           previous = smoothed;
+          seen += 1;
         }
+        // Mask the emitted value during the length-preserving warm-up, but keep
+        // `previous`/`seen` advancing on the real value above.
+        const emitted = seen < minSamples ? undefined : smoothed;
 
         const nextEvent =
           output === undefined
-            ? event.set(column, smoothed as EventDataForSchema<S>[Target])
-            : event.merge({ [output]: smoothed });
+            ? event.set(column, emitted as EventDataForSchema<S>[Target])
+            : event.merge({ [output]: emitted });
         return Object.freeze([
           nextEvent.key(),
           ...resultSchema
@@ -3881,7 +3933,7 @@ export class TimeSeries<S extends SeriesSchema> {
       // `missing: 'skip'` — a cell whose own value is missing stays missing
       // (don't fit a fabricated value across the hole from its present
       // neighbours). Default `'bridge'` is the prior behaviour (fit everywhere).
-      const skipMissing = options.missing === 'skip';
+      const skipMissing = 'missing' in options && options.missing === 'skip';
       const resultRows = this.events.map((event, index) => {
         const smoothed =
           skipMissing && sourceValues[index] === undefined
