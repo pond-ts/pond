@@ -51,6 +51,10 @@ function run(c: OracleCase): unknown {
       return ema(series(), c.params);
     case 'bollinger':
       return bollinger(series(), c.params);
+    default:
+      // A fixture case whose study has no dispatch here must fail loudly, not
+      // silently skip — the guard for future fan-out studies.
+      throw new Error(`no dispatch for oracle study '${String(c.study)}'`);
   }
 }
 
