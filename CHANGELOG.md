@@ -45,6 +45,14 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **core:** `smooth(col, 'ema', …)` gains the financial **`span`** rate
+  convention (`α = 2/(span+1)`, e.g. `{ span: 12 }` for a 12-period EMA) as an
+  alternative to `alpha` (exactly one required), and a length-preserving
+  **`minSamples`** warm-up that emits `undefined` for the first `N` present
+  values while **keeping the row count** — mirroring `rolling`'s `minSamples`,
+  the one warm-up convention studies use so a smoothed line aligns on its
+  source's time axis. (The existing `warmup` option is unchanged — it still
+  *drops* the head rows; `minSamples` is the length-preserving counterpart.)
 - **core:** `TimeSeries.rolling` accepts a **count-based** window —
   `rolling({ count: N }, mapping, opts?)` reduces the last / next / centered
   `N` _rows_ (bars) by position instead of a time span. Unlike a duration

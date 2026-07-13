@@ -1681,8 +1681,18 @@ independently built the same `calendar.bars → BoundedSequence` seam.
     path (perf: linear, ~16ms/100k rows, tracks the duration numbers). Adds an
     overload to `TimeSeries` → human-approval gate before merge. 10 tests +
     `perf-rolling.mjs` count scenario.
-  - **Next:** `span` on `smooth('ema')` + the length-preserving warmup convention
-    (both core, approval-gated), then the first-batch studies in financial.
+  - ✅ **`span` + `minSamples` on `smooth('ema')` — BUILT (unreleased).** ema now
+    takes the financial `span` rate (`α = 2/(span+1)`) as an alternative to
+    `alpha`, and a **length-preserving** `minSamples` warm-up (emit `undefined`
+    for the first `N` present values, keep the row count) — mirroring `rolling`'s
+    `minSamples`, so **one** warm-up convention holds across primitives. The
+    existing length-changing `warmup` is untouched (documented as the drop-the-
+    head counterpart) — item 3 reconciled additively, no breaking change. Adds
+    options on `smooth` → human-approval gate. 8 tests.
+  - **Next:** the first-batch studies in `@pond-ts/financial` (SMA, EMA-span,
+    Bollinger®, MA-envelope, z-score, rolling stdev/min/max/percentile,
+    percent-change) — package shape per assessment §7. The core substrate (G1
+    count windows + span/minSamples EMA + the reducer set) is now complete.
 - **Cross-repo coordination — the constellation bridge (live since 2026-07-03).**
   Handoffs between this repo and Tidal are automated; Peter no longer hand-relays
   them. **Inbound:** a Tidal→pond PR with `Tidal` in the title wakes a headless,
