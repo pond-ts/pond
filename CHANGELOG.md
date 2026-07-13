@@ -45,6 +45,14 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **financial:** opt-in **fluent studies** via `import '@pond-ts/financial/fluent'`
+  — mounts `sma` / `ema` / `bollinger` as chainable `TimeSeries` methods so
+  composition reads like the core operators beside it:
+  `bars.sma({ period: 20 }).ema({ period: 12 }).bollinger({ period: 20 })`.
+  Opt-in by import (the default entry leaves `TimeSeries` untouched, so a
+  non-financial series never sees `.sma()`); the methods are exactly the
+  standalone functions bound to `this`, fully typed (each appends its column to
+  the schema). Same prototype-augmentation pattern core uses for column methods.
 - **financial:** `@pond-ts/financial` gains its first **studies** — `sma`, `ema`,
   and `bollinger` (Bollinger Bands®) — pure functions that append a column (or a
   `${prefix}Middle/Upper/Lower` family) to a bar series. Every study takes a
