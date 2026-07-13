@@ -1689,10 +1689,21 @@ independently built the same `calendar.bars → BoundedSequence` seam.
     existing length-changing `warmup` is untouched (documented as the drop-the-
     head counterpart) — item 3 reconciled additively, no breaking change. Adds
     options on `smooth` → human-approval gate. 8 tests.
-  - **Next:** the first-batch studies in `@pond-ts/financial` (SMA, EMA-span,
-    Bollinger®, MA-envelope, z-score, rolling stdev/min/max/percentile,
-    percent-change) — package shape per assessment §7. The core substrate (G1
-    count windows + span/minSamples EMA + the reducer set) is now complete.
+  - ✅ **First studies — BUILT (unreleased):** `@pond-ts/financial` now ships
+    `sma` / `ema` / `bollinger` on the assessment §7 package shape — `contract/`
+    (`OhlcvColumns` + `DEFAULT_OHLCV`), `kernels/` (`rollingValues` count-window
+    read-and-append + `assertPeriod`/`assertNoColumn`), `studies/` (one file per
+    study, `column`/`output` on every fn, bar-count `period`, length-preserving
+    warm-up). SMA/Bollinger compose on core's `rolling({ count })`; EMA on
+    `smooth('ema', { span, minSamples })`. Core `AppendColumn` exported so study
+    returns name their appended column (typed composition — a study over another
+    study's output). 8 tests. Adds `@pond-ts/financial` public API + a core type
+    export → human-approval gate.
+  - **Next (fan-out):** the rest of the #449 first batch — MA-envelope, z-score,
+    rolling stdev/min/max/percentile, percent-change — mechanical on the same
+    kernel. Then assessment §7.4 Phase-1 breadth (RSI, MACD, ATR, stochastics,
+    …). The core substrate (G1 count windows + span/minSamples EMA + the reducer
+    set) is complete.
 - **Cross-repo coordination — the constellation bridge (live since 2026-07-03).**
   Handoffs between this repo and Tidal are automated; Peter no longer hand-relays
   them. **Inbound:** a Tidal→pond PR with `Tidal` in the title wakes a headless,

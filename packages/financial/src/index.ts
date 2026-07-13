@@ -17,3 +17,12 @@ export type {
   TaggedSchema,
 } from './calendar/trading-calendar.js';
 export { TradingCalendar } from './calendar/trading-calendar.js';
+
+// --- Market analytics: studies (batch, TimeSeries → TimeSeries + columns) ---
+export type { OhlcvColumns } from './contract/columns.js';
+export { DEFAULT_OHLCV, DEFAULT_SOURCE } from './contract/columns.js';
+export type { RollingReducer } from './kernels/rolling.js';
+export type { MovingAverageOptions } from './studies/moving-average.js';
+export { sma, ema } from './studies/moving-average.js';
+export type { BollingerOptions } from './studies/bollinger.js';
+export { bollinger } from './studies/bollinger.js';
