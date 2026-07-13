@@ -105,4 +105,34 @@ describe('smooth ema — minSamples (length-preserving warm-up)', () => {
       expect(zero.at(i)!.get('v')).toBe(none.at(i)!.get('v'));
     }
   });
+
+  it('minSamples larger than the series → every row undefined, length kept', () => {
+    const r = series(3).smooth('v', 'ema', { alpha: 0.5, minSamples: 5 });
+    expect(r.length).toBe(3);
+    expect([0, 1, 2].every((i) => r.at(i)!.get('v') === undefined)).toBe(true);
+  });
+
+  it('counts only PRESENT values toward minSamples (a head gap shifts it)', () => {
+    // seen counts present cells only, so the missing row at index 1 doesn't
+    // advance the gate — the 2nd *present* value (index 2) is the first emitted.
+    const gapped = new TimeSeries({
+      name: 'v',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number', required: false },
+      ] as const,
+      rows: [
+        [0, 10],
+        [1000, undefined],
+        [2000, 30],
+        [3000, 40],
+      ] as Array<[number, number | undefined]>,
+    });
+    const r = gapped.smooth('v', 'ema', { alpha: 0.5, minSamples: 2 });
+    expect(r.length).toBe(4);
+    expect(r.at(0)!.get('v')).toBeUndefined(); // 1st present, seen 1 < 2
+    expect(r.at(1)!.get('v')).toBeUndefined(); // missing cell stays missing
+    expect(r.at(2)!.get('v')).toBeDefined(); // 2nd present, seen 2 → emit
+    expect(r.at(3)!.get('v')).toBeDefined();
+  });
 });
