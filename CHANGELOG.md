@@ -42,6 +42,21 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **charts:** trading-time axis tick density now derives from plot width
+  instead of a fixed count of 5. The trading scale's tick `count` caps how many
+  calendar buckets `coarsenCalendar` may keep, so the fixed count coarsened any
+  ≳6-month daily view to quarter or year grain — a 1-year daily chart on a
+  ~900px plot showed 2 ticks; it now lands on month grain (~12). Continuous
+  (non-trading) time and value axes keep the fixed default, unchanged. The
+  count is shared through the container frame (`xTickCount`), so axis labels,
+  x gridlines, session dividers, and the cursor-time formatter all derive from
+  the same instants — previously the label formatter anchored at the scale's
+  internal default (10) while ticks used 5, which is why sparse year-grain
+  ticks were labelled with dates (`Jun 22`) instead of years. (Tidal friction
+  report, charts 0.44.)
+
 ## [0.44.0] — 2026-07-11
 
 The **value-axis charts** release: cross-sectional data (a volatility smile keyed

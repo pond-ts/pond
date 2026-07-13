@@ -13,6 +13,7 @@ import {
   type DiscontinuityProvider,
   type TradingCalendarLike,
 } from '../src/tradingTimeScale.js';
+import { provider as sessionsProvider } from '../src/tradingAxis.fixture.js';
 import { stubCanvasContext } from './canvas-mock.js';
 
 afterEach(cleanup);
@@ -248,5 +249,98 @@ describe('ChartContainer discontinuities → trading-time axis', () => {
     } finally {
       noStub.restore();
     }
+  });
+});
+
+describe('trading-axis tick density derives from plot width', () => {
+  const H = 3_600_000;
+  const DAY = 24 * H;
+
+  /** `n` weekday sessions (09:30–16:00 UTC) from Mon 2025-06-23 — mid-year
+   *  anchored, as a "1Y back from today" trading view is. At the old fixed
+   *  count of 5 this span rendered 5 quarterly ticks at best and 2 year-grain
+   *  ticks once it stretched past ~5 quarters (the 0.44 Tidal report). */
+  function yearSessions(n = 260) {
+    const mon = Date.UTC(2025, 5, 23);
+    const out: Array<{ date: string; open: number; close: number }> = [];
+    for (let d = 0; out.length < n; d++) {
+      const day = mon + d * DAY;
+      const dow = new Date(day).getUTCDay();
+      if (dow === 0 || dow === 6) continue;
+      out.push({ date: '', open: day + 9.5 * H, close: day + 16 * H });
+    }
+    return out;
+  }
+
+  function tradingFrame(width: number, n?: number): ContainerFrame {
+    const sessions = yearSessions(n);
+    let frame: ContainerFrame | null = null;
+    render(
+      <ChartContainer
+        range={[sessions[0]!.open, sessions[sessions.length - 1]!.close]}
+        width={width}
+        discontinuities={sessionsProvider(sessions)}
+        showAxis={false}
+      >
+        <Capture sink={(f) => (frame = f)} />
+      </ChartContainer>,
+    );
+    return frame!;
+  }
+
+  const tickList = (f: ContainerFrame): number[] =>
+    (f.xScale.ticks(f.xTickCount) as ReadonlyArray<number | Date>).map(
+      (d) => +d,
+    );
+
+  it('a ~900px year-long daily view ticks ~monthly (the 0.44 report showed 2)', () => {
+    const f = tradingFrame(900);
+    const ticks = tickList(f);
+    expect(ticks.length).toBeGreaterThanOrEqual(10); // month grain, not year
+    expect(ticks.length).toBeLessThanOrEqual(f.xTickCount);
+    // …and the shared formatter labels those ticks as month-start dates on the
+    // same grain (`%b %d`), so labels sit on the exact instants the ticks do.
+    expect(f.formatTime(ticks[1]!)).toMatch(/^[A-Z][a-z]{2} \d{2}$/);
+  });
+
+  it('a narrower view of the same data coarsens the grain (fewer ticks)', () => {
+    const wide = tradingFrame(900);
+    const narrow = tradingFrame(420);
+    expect(narrow.xTickCount).toBeLessThan(wide.xTickCount);
+    expect(tickList(narrow).length).toBeLessThan(tickList(wide).length);
+    expect(tickList(narrow).length).toBeLessThanOrEqual(narrow.xTickCount);
+  });
+
+  it('a continuous time axis keeps the fixed default count', () => {
+    // No provider → plain d3 scaleTime; density is unchanged by this feature.
+    const f = frameOf({});
+    expect(f.xTickCount).toBe(5);
+  });
+
+  it('the auto-rendered axis shows the dense labels (DOM, not just the scale)', () => {
+    const sessions = yearSessions();
+    const { container: dom } = render(
+      <ChartContainer
+        range={[sessions[0]!.open, sessions[sessions.length - 1]!.close]}
+        width={900}
+        discontinuities={sessionsProvider(sessions)}
+      />,
+    );
+    // One label div per tick, text like "Jul 01" (`%b %d` anchors).
+    const labels = Array.from(dom.querySelectorAll('div')).filter((el) =>
+      /^[A-Z][a-z]{2} \d{2}$/.test(el.textContent ?? ''),
+    );
+    expect(labels.length).toBeGreaterThanOrEqual(10);
+  });
+
+  it('formatTime labels year-grain ticks with the year — count shared with ticks', () => {
+    // ~2 years of dailies at a narrow width → year grain. Before the count was
+    // shared, ticks coarsened at 5 (year grain) while formatTime anchored at
+    // the scale's internal default (10 → quarter grain), so a year-grain tick
+    // read as a date ("Jun 22") instead of "%Y" — the labels in the report.
+    const f = tradingFrame(220, 520);
+    const labels = tickList(f).map((t) => f.formatTime(t));
+    expect(labels.length).toBeGreaterThanOrEqual(2);
+    expect(labels.every((l) => /^\d{4}$/.test(l))).toBe(true);
   });
 });

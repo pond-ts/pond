@@ -33,10 +33,12 @@ import {
   type LayerRegistry,
 } from './context.js';
 
-/** Gridline tick count. **Must match the axis label counts** (`XAxis`
- *  `TICK_COUNT`, `ChartContainer` `TIME_TICK_COUNT`, `YAxis`) — the grid, the
- *  session dividers, and the axis labels are all derived from `ticks(count)`, so
- *  they only line up while the counts agree. Kept at 5 across all four. */
+/** **Y**-gridline tick count. **Must match the y-axis label counts** (`YAxis`
+ *  `TICK_COUNT`, `ChartRow` `AXIS_TICK_COUNT`) — horizontal gridlines and the y
+ *  labels are both derived from `ticks(count)`, so they only line up while the
+ *  counts agree; kept at 5 across all three. The **x** side instead reads the
+ *  container's shared `xTickCount` (as `<XAxis>` and `formatTime` do), which is
+ *  width-derived on a trading-time axis. */
 const GRID_TICKS = 5;
 /** Minimum px between session dividers — thins dense collapse points (e.g. a
  *  daily chart where every candle is a new session) so the axis never crowds. */
@@ -96,8 +98,10 @@ export function Layers({ children }: LayersProps) {
   const { grid: gridColor, gridDash } = container.theme.axis;
   const { layers, yScales, formats, defaultAxisId, tickValues, axisSides } =
     row;
-  // x geometry is shared and lives on the container (uniform across rows).
-  const { xScale, plotWidth } = container;
+  // x geometry is shared and lives on the container (uniform across rows), and
+  // so is the x tick count — vertical gridlines must sit under the `<XAxis>`
+  // labels, which pass the same `xTickCount` to the same scale.
+  const { xScale, plotWidth, xTickCount } = container;
   const draw = useCallback(
     (ctx: CanvasRenderingContext2D, w: number, h: number) => {
       if (background !== undefined) {
@@ -113,7 +117,7 @@ export function Layers({ children }: LayersProps) {
       // A category axis draws no vertical gridlines — a line through each bar
       // centre reads as noise; the bars are the structure.
       const xTickVals =
-        container.xKind === 'category' ? [] : xScale.ticks(GRID_TICKS);
+        container.xKind === 'category' ? [] : xScale.ticks(xTickCount);
       const xTicks = xTickVals.map((d) => xScale(+d));
       const yTicks = gridY
         ? (explicitY ?? gridY.ticks(GRID_TICKS)).map((t) => gridY(t))
@@ -146,6 +150,7 @@ export function Layers({ children }: LayersProps) {
       layers,
       yScales,
       xScale,
+      xTickCount,
       defaultAxisId,
       tickValues,
       background,
