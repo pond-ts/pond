@@ -162,6 +162,7 @@ export type {
   RenameSchema,
   RekeySchema,
   RowForSchema,
+  AppendColumn,
   ArrayValue,
   ColumnValue,
   ScalarKind,

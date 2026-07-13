@@ -45,6 +45,15 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **financial:** `@pond-ts/financial` gains its first **studies** — `sma`, `ema`,
+  and `bollinger` (Bollinger Bands®) — pure functions that append a column (or a
+  `${prefix}Middle/Upper/Lower` family) to a bar series. Every study takes a
+  `column` source (default `'close'`) and an `output` name, so a study runs over
+  any numeric column including another study's output; periods are **bar counts**
+  (on core's count window, gap-correct); warm-up rows are `undefined`
+  (length-preserving). Plus the `OhlcvColumns` contract + `DEFAULT_OHLCV`. (Core
+  `AppendColumn` is now exported so study return types name their appended
+  column.)
 - **core:** `smooth(col, 'ema', …)` gains the financial **`span`** rate
   convention (`α = 2/(span+1)`, e.g. `{ span: 12 }` for a 12-period EMA) as an
   alternative to `alpha` (exactly one required), and a length-preserving
