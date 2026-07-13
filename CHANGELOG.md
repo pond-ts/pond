@@ -45,6 +45,17 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts:** the time axis now walks a **logical tick ladder** — clock/calendar
+  units (1H / 3H / 6H / 12H / day / week / month / quarter / year), picking the
+  finest grain that fits the width-derived cap — and renders **two-tier labels**:
+  a first row at the tick grain (`14:00`, `Feb 02`, `Feb`, `2026`) plus a
+  **boundary row** carrying the coarser context the first row omits (the date
+  under hours, `Jan 2026` under days, the year under months), shown once under
+  the first tick of each new period. Hour anchors are generated in **live**
+  trading time, so none lands in a collapsed gap, an early close, or a lunch
+  break. `TradingTimeScale` gains `tickBoundaries(count)`; a cramped leading
+  partial-period anchor (the `"Jun 23Jul 07"` pile-up) is dropped. Systematic
+  story matrix under `Charts/TimeAxisTicks`.
 - **financial:** the rest of the first study batch — `rollingStdev`,
   `rollingMin`, `rollingMax`, `rollingPercentile` (linear interpolation),
   `zScore` (rolling), `envelope` (MA ± percent, `maType` sma/ema), and
@@ -98,6 +109,17 @@ and type-level changes; patch bumps are strictly additive.
   set both independently. Default `false`; a no-op on a continuous axis or a
   provider without `boundaries`. New `Charts/TradingTimeAxis/SessionBreaks`
   story (connected vs broken) + `sessionRuns` / `gappingTicks` helpers.
+
+### Changed
+
+- **charts:** a **plain continuous time axis** now runs the same ladder as a
+  trading-calendar axis (via an internal gap-free identity provider) instead of
+  d3's multi-scale default — so a year of daily data ticks cleanly on month
+  starts (`Jul Aug … Jun` + the year underneath) rather than mixed
+  `"Jun 23" / "Sep" / "Dec"` labels, and its tick count is now width-derived
+  like the trading axis's. Month/quarter-grain anchor labels are now bare
+  months (`Feb`, was `Feb 02`) with the year on the boundary row;
+  `coarsenCalendar`'s finest granularity is renamed `'session'` → `'day'`.
 
 ### Fixed
 

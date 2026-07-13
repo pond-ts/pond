@@ -113,12 +113,21 @@ describe('scaleTradingTime', () => {
     expect(t).toBe(S1);
   });
 
-  it('ticks are the session opens (date anchors), not arbitrary times', () => {
-    // Two sessions → the left edge (S0) + the one collapse point (S1).
-    expect(scale.ticks(10)).toEqual([S0, S1]);
-    // None falls inside the collapsed gap.
-    for (const t of scale.ticks(10)) {
-      expect(t > S0 + 6 * H && t < S1).toBe(false);
+  it('ticks anchor on the session opens, never inside the collapsed gap', () => {
+    // A tight cap → day grain: exactly the left edge (S0) + the collapse point.
+    expect(scale.ticks(2)).toEqual([S0, S1]);
+    // A roomy cap descends to an hour grain: the opens are still anchors, the
+    // extra ticks are clock-aligned instants inside a live session — none in
+    // the collapsed gap.
+    const dense = scale.ticks(10);
+    expect(dense).toContain(S0);
+    expect(dense).toContain(S1);
+    expect(dense.length).toBeGreaterThan(2);
+    expect(dense.length).toBeLessThanOrEqual(10);
+    for (const t of dense) {
+      const inS0 = t >= S0 && t < S0 + 6 * H;
+      const inS1 = t >= S1 && t < S1 + 6 * H;
+      expect(inS0 || inS1).toBe(true);
     }
   });
 
@@ -145,7 +154,7 @@ describe('scaleTradingTime', () => {
     expect(new Set(months).size).toBe(months.length);
   });
 
-  it('tickFormat shows a date at a session open, a time elsewhere', () => {
+  it('tickFormat labels ticks at the chosen grain; the boundary row carries the rest', () => {
     // Real session instants so the formats are legible.
     const jan = Date.UTC(2026, 0, 5, 9, 30);
     const feb = Date.UTC(2026, 1, 2, 9, 30);
@@ -156,9 +165,43 @@ describe('scaleTradingTime', () => {
     const s = scaleTradingTime(cal)
       .domain([jan, feb + 6 * H])
       .range([0, 1200]);
-    const fmt = s.tickFormat();
-    expect(fmt(new Date(feb))).toMatch(/Feb/); // the Feb-2 session open → a date
-    expect(fmt(new Date(jan + 3 * H))).not.toMatch(/Jan|Feb/); // mid-session → a time
+    // A tight cap → day grain: the anchors read as dates.
+    expect(s.tickFormat(2)(new Date(feb))).toMatch(/Feb 02/);
+    // A roomy cap → an hour grain: anchors read as clock times, and the date
+    // context moves to the boundary (second) row — each session opens a new
+    // local day, so both opens carry it; a mid-session tick doesn't.
+    const dense = s.ticks(10);
+    const fmt = s.tickFormat(10);
+    expect(fmt(new Date(jan))).toMatch(/^\d{2}:\d{2}$/);
+    const boundary = s.tickBoundaries(10);
+    expect(boundary(jan)).toMatch(/Jan 05/);
+    expect(boundary(feb)).toMatch(/Feb 02/);
+    const midSession = dense.find((t) => t !== jan && t < jan + 6 * H)!;
+    expect(boundary(midSession)).toBeUndefined();
+  });
+
+  it('tickBoundaries puts the year under a month-grain axis, once per year turn', () => {
+    // ~8 months of daily opens straddling a year boundary → month grain at a
+    // cap of 9. The first tick carries the year, the January tick carries the
+    // new year, and no other tick repeats it.
+    const DAY = 24 * H;
+    const start = Date.UTC(2025, 8, 1) + 14 * H; // Sep 2025 … Apr 2026
+    const daily = segmentProvider(
+      Array.from({ length: 240 }, (_, i) => [
+        start + i * DAY,
+        start + i * DAY + 6 * H,
+      ]),
+    );
+    const s = scaleTradingTime(daily)
+      .domain([start, start + 240 * DAY])
+      .range([0, 1200]);
+    const ticks = s.ticks(9);
+    const boundary = s.tickBoundaries(9);
+    expect(s.tickFormat(9)(new Date(ticks[1]!))).toMatch(/^[A-Z][a-z]{2}$/);
+    const labels = ticks.map((t) => boundary(t));
+    expect(labels[0]).toBe('2025'); // the first tick always carries context
+    expect(labels.filter((l) => l === '2026')).toHaveLength(1); // the year turn
+    expect(labels.filter((l) => l !== undefined)).toHaveLength(2);
   });
 
   it('domain/range are getter/setters and copy is independent', () => {
@@ -232,11 +275,11 @@ describe('coarsenCalendar', () => {
   const start = Date.UTC(2025, 0, 6) + 14 * H;
   const daily = Array.from({ length: 120 }, (_, i) => start + i * DAY);
 
-  it('returns every open (session grain) when they already fit', () => {
+  it('returns every open (day grain) when they already fit', () => {
     const few = daily.slice(0, 4);
     expect(coarsenCalendar(few, 6)).toEqual({
       ticks: few,
-      granularity: 'session',
+      granularity: 'day',
     });
   });
 
