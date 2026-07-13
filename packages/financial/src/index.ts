@@ -26,3 +26,19 @@ export type { MovingAverageOptions } from './studies/moving-average.js';
 export { sma, ema } from './studies/moving-average.js';
 export type { BollingerOptions } from './studies/bollinger.js';
 export { bollinger } from './studies/bollinger.js';
+export type {
+  RollingStatOptions,
+  RollingPercentileOptions,
+} from './studies/rolling-stat.js';
+export {
+  rollingStdev,
+  rollingMin,
+  rollingMax,
+  rollingPercentile,
+} from './studies/rolling-stat.js';
+export type { ZScoreOptions } from './studies/z-score.js';
+export { zScore } from './studies/z-score.js';
+export type { EnvelopeOptions } from './studies/envelope.js';
+export { envelope } from './studies/envelope.js';
+export type { PercentChangeOptions } from './studies/percent-change.js';
+export { percentChange } from './studies/percent-change.js';

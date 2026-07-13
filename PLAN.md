@@ -1707,11 +1707,18 @@ independently built the same `calendar.bars → BoundedSequence` seam.
     = population, TA-Lib's). **Phase-2 named indicators (RSI/MACD/ATR) add TA-Lib**
     to the same harness, documenting deltas (vendor bar-parity is a non-goal).
     This is the "fully trust the numbers" gate for the whole studies track.
-  - **Next (fan-out):** the rest of the #449 first batch — MA-envelope, z-score,
-    rolling stdev/min/max/percentile, percent-change — mechanical on the same
-    kernel. Then assessment §7.4 Phase-1 breadth (RSI, MACD, ATR, stochastics,
-    …). The core substrate (G1 count windows + span/minSamples EMA + the reducer
-    set) is complete.
+  - ✅ **Fan-out — #449 first batch COMPLETE (unreleased):** `rollingStdev` /
+    `rollingMin` / `rollingMax` / `rollingPercentile`, `zScore`, `envelope`
+    (MA ± percent, `maType` sma/ema), `percentChange` (n-bar) — all on the shipped
+    `rollingColumns`/`columnValues`/`emaValues` kernel, each with a fluent method
+    and a pandas-oracle case (13 oracle cases now). The whole first batch (SMA,
+    EMA, Bollinger + these) is built, fluent, and pandas-verified.
+  - **Next:** assessment §7.4 **Phase-1 breadth** — RSI, MACD, ATR(+bands),
+    stochastics, %R, Donchian, OBV, VWAP, Historical Volatility, momentum/ROC.
+    These add **TA-Lib** alongside pandas in the oracle (named-indicator
+    convention deltas documented). The core substrate (G1 count windows +
+    span/minSamples EMA + the reducer set) is complete; a few need the K6
+    stateful-fold shim (PSAR/SuperTrend etc., Phase 3).
 - **Cross-repo coordination — the constellation bridge (live since 2026-07-03).**
   Handoffs between this repo and Tidal are automated; Peter no longer hand-relays
   them. **Inbound:** a Tidal→pond PR with `Tidal` in the title wakes a headless,

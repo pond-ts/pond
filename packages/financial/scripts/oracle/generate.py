@@ -48,8 +48,11 @@ s = pd.Series(closes, dtype="float64")
 
 
 def col(series: pd.Series) -> list:
-    """A pandas Series -> JSON list, NaN (missing) -> null."""
-    return [None if pd.isna(x) else float(x) for x in series]
+    """A pandas Series -> JSON list; NaN / non-finite (missing) -> null."""
+    return [
+        None if (pd.isna(x) or not math.isfinite(float(x))) else float(x)
+        for x in series
+    ]
 
 
 def sma(n: int) -> dict:
@@ -72,6 +75,43 @@ def bollinger(n: int, k: float) -> dict:
     }
 
 
+def rolling_stdev(n: int) -> dict:
+    return {"stdev": col(s.rolling(n).std(ddof=0))}  # population
+
+
+def rolling_min(n: int) -> dict:
+    return {"min": col(s.rolling(n).min())}
+
+
+def rolling_max(n: int) -> dict:
+    return {"max": col(s.rolling(n).max())}
+
+
+def rolling_percentile(n: int, q: float) -> dict:
+    # linear interpolation (pandas default) == our p{q} reducer.
+    return {f"p{q}": col(s.rolling(n).quantile(q / 100))}
+
+
+def zscore(n: int) -> dict:
+    m = s.rolling(n).mean()
+    sd = s.rolling(n).std(ddof=0)
+    return {"zscore": col((s - m) / sd)}
+
+
+def envelope(n: int, percent: float) -> dict:
+    mid = s.rolling(n).mean()
+    f = percent / 100
+    return {
+        "envMiddle": col(mid),
+        "envUpper": col(mid * (1 + f)),
+        "envLower": col(mid * (1 - f)),
+    }
+
+
+def percent_change(periods: int) -> dict:
+    return {"pctChange": col(s.pct_change(periods) * 100)}
+
+
 cases = [
     {"study": "sma", "params": {"period": 20}, "expected": sma(20)},
     {"study": "sma", "params": {"period": 5}, "expected": sma(5)},
@@ -81,6 +121,30 @@ cases = [
         "study": "bollinger",
         "params": {"period": 20, "stdDev": 2},
         "expected": bollinger(20, 2),
+    },
+    {"study": "rollingStdev", "params": {"period": 20}, "expected": rolling_stdev(20)},
+    {"study": "rollingMin", "params": {"period": 20}, "expected": rolling_min(20)},
+    {"study": "rollingMax", "params": {"period": 20}, "expected": rolling_max(20)},
+    {
+        "study": "rollingPercentile",
+        "params": {"period": 20, "q": 90},
+        "expected": rolling_percentile(20, 90),
+    },
+    {"study": "zScore", "params": {"period": 20}, "expected": zscore(20)},
+    {
+        "study": "envelope",
+        "params": {"period": 20, "percent": 2.5},
+        "expected": envelope(20, 2.5),
+    },
+    {
+        "study": "percentChange",
+        "params": {"periods": 1},
+        "expected": percent_change(1),
+    },
+    {
+        "study": "percentChange",
+        "params": {"periods": 5},
+        "expected": percent_change(5),
     },
 ]
 

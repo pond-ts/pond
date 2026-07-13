@@ -41,6 +41,22 @@ import { sma as smaStudy, ema as emaStudy } from './studies/moving-average.js';
 import type { MovingAverageOptions } from './studies/moving-average.js';
 import { bollinger as bollingerStudy } from './studies/bollinger.js';
 import type { BollingerOptions } from './studies/bollinger.js';
+import {
+  rollingStdev as rollingStdevStudy,
+  rollingMin as rollingMinStudy,
+  rollingMax as rollingMaxStudy,
+  rollingPercentile as rollingPercentileStudy,
+} from './studies/rolling-stat.js';
+import type {
+  RollingStatOptions,
+  RollingPercentileOptions,
+} from './studies/rolling-stat.js';
+import { zScore as zScoreStudy } from './studies/z-score.js';
+import type { ZScoreOptions } from './studies/z-score.js';
+import { envelope as envelopeStudy } from './studies/envelope.js';
+import type { EnvelopeOptions } from './studies/envelope.js';
+import { percentChange as percentChangeStudy } from './studies/percent-change.js';
+import type { PercentChangeOptions } from './studies/percent-change.js';
 
 /** A series schema with one optional number column appended — the shape
  *  `TimeSeries.withColumn` (and hence `sma`) yields. */
@@ -69,16 +85,45 @@ declare module 'pond-ts' {
         `${Prefix}Lower`
       >
     >;
+    /** Fluent rolling standard deviation. */
+    rollingStdev<const Output extends string = 'stdev'>(
+      options: RollingStatOptions<S, Output>,
+    ): TimeSeries<AppendOpt<S, Output>>;
+    /** Fluent rolling minimum. */
+    rollingMin<const Output extends string = 'min'>(
+      options: RollingStatOptions<S, Output>,
+    ): TimeSeries<AppendOpt<S, Output>>;
+    /** Fluent rolling maximum. */
+    rollingMax<const Output extends string = 'max'>(
+      options: RollingStatOptions<S, Output>,
+    ): TimeSeries<AppendOpt<S, Output>>;
+    /** Fluent rolling percentile. */
+    rollingPercentile<const Output extends string = string>(
+      options: RollingPercentileOptions<S, Output>,
+    ): TimeSeries<AppendOpt<S, Output>>;
+    /** Fluent rolling z-score. */
+    zScore<const Output extends string = 'zscore'>(
+      options: ZScoreOptions<S, Output>,
+    ): TimeSeries<AppendOpt<S, Output>>;
+    /** Fluent moving-average envelope. */
+    envelope<const Prefix extends string = 'env'>(
+      options: EnvelopeOptions<S, Prefix>,
+    ): TimeSeries<
+      AppendOpt<
+        AppendOpt<AppendOpt<S, `${Prefix}Middle`>, `${Prefix}Upper`>,
+        `${Prefix}Lower`
+      >
+    >;
+    /** Fluent percent change (rate of change). */
+    percentChange<const Output extends string = 'pctChange'>(
+      options?: PercentChangeOptions<S, Output>,
+    ): TimeSeries<AppendOpt<S, Output>>;
   }
 }
 
 // Runtime mount. Each method delegates to the standalone study bound to `this`;
 // the declared signatures above carry the precise per-study return types.
-const proto = TimeSeries.prototype as unknown as {
-  sma: unknown;
-  ema: unknown;
-  bollinger: unknown;
-};
+const proto = TimeSeries.prototype as unknown as Record<string, unknown>;
 proto.sma = function (
   this: TimeSeries<SeriesSchema>,
   options: MovingAverageOptions<SeriesSchema, string>,
@@ -96,4 +141,46 @@ proto.bollinger = function (
   options: BollingerOptions<SeriesSchema, string>,
 ) {
   return bollingerStudy(this, options);
+};
+proto.rollingStdev = function (
+  this: TimeSeries<SeriesSchema>,
+  options: RollingStatOptions<SeriesSchema, string>,
+) {
+  return rollingStdevStudy(this, options);
+};
+proto.rollingMin = function (
+  this: TimeSeries<SeriesSchema>,
+  options: RollingStatOptions<SeriesSchema, string>,
+) {
+  return rollingMinStudy(this, options);
+};
+proto.rollingMax = function (
+  this: TimeSeries<SeriesSchema>,
+  options: RollingStatOptions<SeriesSchema, string>,
+) {
+  return rollingMaxStudy(this, options);
+};
+proto.rollingPercentile = function (
+  this: TimeSeries<SeriesSchema>,
+  options: RollingPercentileOptions<SeriesSchema, string>,
+) {
+  return rollingPercentileStudy(this, options);
+};
+proto.zScore = function (
+  this: TimeSeries<SeriesSchema>,
+  options: ZScoreOptions<SeriesSchema, string>,
+) {
+  return zScoreStudy(this, options);
+};
+proto.envelope = function (
+  this: TimeSeries<SeriesSchema>,
+  options: EnvelopeOptions<SeriesSchema, string>,
+) {
+  return envelopeStudy(this, options);
+};
+proto.percentChange = function (
+  this: TimeSeries<SeriesSchema>,
+  options?: PercentChangeOptions<SeriesSchema, string>,
+) {
+  return percentChangeStudy(this, options);
 };

@@ -1,6 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import { TimeSeries } from 'pond-ts';
-import { sma, ema, bollinger } from '../src/index.js';
+import {
+  sma,
+  ema,
+  bollinger,
+  rollingStdev,
+  rollingMin,
+  rollingMax,
+  rollingPercentile,
+  zScore,
+  envelope,
+  percentChange,
+} from '../src/index.js';
 
 /** A close-only bar series at 1ms spacing (value = the close). */
 const closeSchema = [
@@ -130,6 +141,76 @@ describe('bollinger', () => {
   it('throws on a non-positive stdDev', () => {
     expect(() => bollinger(bars([1, 2, 3]), { period: 2, stdDev: 0 })).toThrow(
       /stdDev/,
+    );
+  });
+});
+
+// Values for the studies below are cross-validated against pandas in
+// study-oracle.test.ts; here we pin the behaviours the oracle doesn't cover
+// (output naming, warm-up shape, σ=0 / edge handling, validation).
+describe('rolling-stat family', () => {
+  it('rollingStdev/Min/Max append their default columns, warmup undefined', () => {
+    const src = bars([10, 12, 11, 15, 14]);
+    expect(col(rollingStdev(src, { period: 3 }), 'stdev')[1]).toBeUndefined();
+    expect(col(rollingMin(src, { period: 3 }), 'min')[2]).toBe(10);
+    expect(col(rollingMax(src, { period: 3 }), 'max')[2]).toBe(12);
+    expect(col(rollingMax(src, { period: 3 }), 'max')[3]).toBe(15);
+  });
+
+  it('rollingPercentile defaults output to p{q} and validates q', () => {
+    const r = rollingPercentile(bars([1, 2, 3, 4, 5]), { period: 3, q: 50 });
+    expect(col(r, 'p50')[2]).toBe(2); // median of [1,2,3]
+    expect(() =>
+      rollingPercentile(bars([1, 2]), { period: 2, q: 150 }),
+    ).toThrow(/\[0, 100\]/);
+  });
+});
+
+describe('zScore', () => {
+  it('is (value - mean) / stdev, undefined on warmup and flat windows', () => {
+    // window [10,20,30] → mean 20, pop stdev sqrt(200/3); z of 30 = 10/sd.
+    const r = zScore(bars([10, 20, 30]), { period: 3 });
+    expect(col(r, 'zscore')[1]).toBeUndefined();
+    expect(col(r, 'zscore')[2]).toBeCloseTo(10 / Math.sqrt(200 / 3), 10);
+    // flat window → σ = 0 → undefined (not ±Infinity).
+    expect(col(zScore(bars([5, 5, 5]), { period: 3 }), 'zscore')[2]).toBe(
+      undefined,
+    );
+  });
+});
+
+describe('envelope', () => {
+  it('bands are middle × (1 ± percent/100); honours prefix', () => {
+    const r = envelope(bars([10, 20, 30]), { period: 3, percent: 10 });
+    expect(col(r, 'envMiddle')[2]).toBe(20);
+    expect(col(r, 'envUpper')[2]).toBeCloseTo(22, 10); // 20 * 1.10
+    expect(col(r, 'envLower')[2]).toBeCloseTo(18, 10); // 20 * 0.90
+    const e = envelope(bars([10, 20, 30]), { period: 3, prefix: 'ma' });
+    expect(col(e, 'maMiddle')[2]).toBe(20);
+  });
+
+  it('throws on a non-positive percent', () => {
+    expect(() => envelope(bars([1, 2, 3]), { period: 2, percent: 0 })).toThrow(
+      /percent/,
+    );
+  });
+});
+
+describe('percentChange', () => {
+  it('is (v / v[-periods] - 1) * 100; first `periods` rows undefined', () => {
+    const r = percentChange(bars([100, 110, 121]), { periods: 1 });
+    expect(col(r, 'pctChange')[0]).toBeUndefined();
+    expect(col(r, 'pctChange')[1]).toBeCloseTo(10, 10); // 110/100 - 1
+    expect(col(r, 'pctChange')[2]).toBeCloseTo(10, 10); // 121/110 - 1
+  });
+
+  it('defaults periods to 1 and validates', () => {
+    expect(col(percentChange(bars([100, 105])), 'pctChange')[1]).toBeCloseTo(
+      5,
+      10,
+    );
+    expect(() => percentChange(bars([1, 2]), { periods: 0 })).toThrow(
+      /positive integer/,
     );
   });
 });

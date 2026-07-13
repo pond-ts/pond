@@ -59,6 +59,29 @@ describe('fluent studies (opt-in prototype augmentation)', () => {
     expect(col(bars().sma({ period: 3, output: 'ma' }), 'ma')[4]).toBe(13);
   });
 
+  it('mounts the whole study set as chainable methods', () => {
+    const study = bars()
+      .rollingStdev({ period: 3 })
+      .rollingMin({ period: 3 })
+      .rollingMax({ period: 3 })
+      .rollingPercentile({ period: 3, q: 90 })
+      .zScore({ period: 3 })
+      .envelope({ period: 3, percent: 2 })
+      .percentChange({ periods: 1 });
+    const last = study.events.at(-1)!.data();
+    for (const c of [
+      'stdev',
+      'min',
+      'max',
+      'p90',
+      'zscore',
+      'envMiddle',
+      'pctChange',
+    ]) {
+      expect(typeof last[c], c).toBe('number');
+    }
+  });
+
   it('is exactly the standalone functions bound to the series', () => {
     const fluent = bars()
       .sma({ period: 3 })

@@ -1,4 +1,9 @@
-import type { AggregateOutputMap, SeriesSchema, TimeSeries } from 'pond-ts';
+import type {
+  AggregateOutputMap,
+  NumericColumnNameForSchema,
+  SeriesSchema,
+  TimeSeries,
+} from 'pond-ts';
 
 /**
  * The count-window reducers the studies compose on — pond's built-in aggregate
@@ -80,4 +85,35 @@ export function rollingValues(
     { value: { from: column, using: reducer } },
     period,
   )['value']!;
+}
+
+/** A raw numeric column read as `(number | undefined)[]`, row-aligned — the
+ *  source values a study derives from (percent-change, z-score numerator). */
+export function columnValues(
+  series: TimeSeries<SeriesSchema>,
+  column: string,
+): Array<number | undefined> {
+  return series.events.map((event) => {
+    const v = (event.data() as Record<string, unknown>)[column];
+    return typeof v === 'number' ? v : undefined;
+  });
+}
+
+/** Row-aligned `period`-span EMA values over `column` (`α = 2/(period+1)`),
+ *  length-preserving warm-up — the moving-average alternative for a study whose
+ *  centre line can be an EMA (e.g. an EMA envelope). Composes on `smooth`. */
+export function emaValues(
+  series: TimeSeries<SeriesSchema>,
+  column: string,
+  period: number,
+): Array<number | undefined> {
+  const smoothed = series.smooth(
+    column as NumericColumnNameForSchema<SeriesSchema>,
+    'ema',
+    { span: period, minSamples: period, output: '__ema__' },
+  );
+  return columnValues(
+    smoothed as unknown as TimeSeries<SeriesSchema>,
+    '__ema__',
+  );
 }

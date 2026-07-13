@@ -45,6 +45,14 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **financial:** the rest of the first study batch — `rollingStdev`,
+  `rollingMin`, `rollingMax`, `rollingPercentile` (linear interpolation),
+  `zScore` (rolling), `envelope` (MA ± percent, `maType` sma/ema), and
+  `percentChange` (n-bar rate of change). Same shape as the others — `column` /
+  `output` (or `prefix`) on every one, bar-count periods, length-preserving
+  warm-up — and each has a fluent method (`bars.zScore({ period: 20 })`) and a
+  **pandas oracle** case (values cross-validated bar-for-bar). This completes the
+  #449 first batch.
 - **financial:** opt-in **fluent studies** via `import '@pond-ts/financial/fluent'`
   — mounts `sma` / `ema` / `bollinger` as chainable `TimeSeries` methods so
   composition reads like the core operators beside it:
