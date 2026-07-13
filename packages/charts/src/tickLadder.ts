@@ -2,7 +2,7 @@ import type { DiscontinuityProvider } from './tradingTimeScale.js';
 
 /**
  * The logical tick ladder — grain selection for a time axis. Ticks sit on real
- * calendar/clock units (1H / 3H / 6H / 12H / day / week / month / quarter /
+ * calendar/clock units (1s…30s, 1m…30m, 1H…12H, day / week / month / quarter /
  * year — the trading-terminal convention), never on even pixel spacing: the
  * axis walks the ladder finest→coarsest and picks the first grain whose anchor
  * count fits the width-derived cap. The same ladder serves a **disjoint
@@ -19,6 +19,14 @@ import type { DiscontinuityProvider } from './tradingTimeScale.js';
 
 /** The calendar grain a run of tick anchors is bucketed to. */
 export type TickGranularity =
+  | 'second1'
+  | 'second5'
+  | 'second15'
+  | 'second30'
+  | 'minute1'
+  | 'minute5'
+  | 'minute15'
+  | 'minute30'
   | 'hour1'
   | 'hour3'
   | 'hour6'
@@ -29,15 +37,31 @@ export type TickGranularity =
   | 'quarter'
   | 'year';
 
+const SEC_MS = 1_000;
+const MIN_MS = 60_000;
 const HOUR_MS = 3_600_000;
 
-/** The sub-day rungs, finest first, with their clock step. */
-const HOUR_GRAINS: ReadonlyArray<{ g: TickGranularity; step: number }> = [
+/** The sub-day rungs, finest first, with their clock step — the 1/5/15/30
+ *  second and minute steps terminals use, then the hour steps. */
+const SUB_DAY_GRAINS: ReadonlyArray<{ g: TickGranularity; step: number }> = [
+  { g: 'second1', step: 1 * SEC_MS },
+  { g: 'second5', step: 5 * SEC_MS },
+  { g: 'second15', step: 15 * SEC_MS },
+  { g: 'second30', step: 30 * SEC_MS },
+  { g: 'minute1', step: 1 * MIN_MS },
+  { g: 'minute5', step: 5 * MIN_MS },
+  { g: 'minute15', step: 15 * MIN_MS },
+  { g: 'minute30', step: 30 * MIN_MS },
   { g: 'hour1', step: 1 * HOUR_MS },
   { g: 'hour3', step: 3 * HOUR_MS },
   { g: 'hour6', step: 6 * HOUR_MS },
   { g: 'hour12', step: 12 * HOUR_MS },
 ];
+
+/** Whether `g` is one of the sub-day (clock-step) rungs. */
+function isSubDay(g: TickGranularity): boolean {
+  return g !== 'day' && SUB_DAY_GRAINS.some((r) => r.g === g);
+}
 
 /**
  * The local-time bucket key for `t` at grain `g` — two instants in the same
@@ -49,13 +73,9 @@ const HOUR_GRAINS: ReadonlyArray<{ g: TickGranularity; step: number }> = [
  * anchor is its own tick), so they key by identity.
  */
 export function bucketKey(t: number, g: TickGranularity): number {
+  if (isSubDay(g)) return t;
   const d = new Date(t);
   switch (g) {
-    case 'hour1':
-    case 'hour3':
-    case 'hour6':
-    case 'hour12':
-      return t;
     case 'day':
       return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     case 'week': {
@@ -73,6 +93,8 @@ export function bucketKey(t: number, g: TickGranularity): number {
       return d.getFullYear() * 4 + Math.floor(d.getMonth() / 3);
     case 'year':
       return d.getFullYear();
+    default:
+      return t;
   }
 }
 
@@ -161,7 +183,7 @@ function nextAligned(t: number, stepMs: number): number {
  * new provider surface is needed. Bails once `cap` is exceeded (the caller
  * only needs to know the grain doesn't fit).
  */
-function hourAnchors(
+function stepAnchors(
   provider: DiscontinuityProvider,
   opens: readonly number[],
   domainEnd: number,
@@ -185,8 +207,9 @@ function hourAnchors(
 
 /**
  * The full-ladder grain selection: given the provider, the domain, and the
- * width-derived `cap`, walk hour1 → hour3 → hour6 → hour12 → day → week →
- * month → quarter → year (then decimate) and return the first rung that fits.
+ * width-derived `cap`, walk the clock rungs (1s … 30s, 1m … 30m, 1h … 12h)
+ * then day → week → month → quarter → year (then decimate) and return the
+ * first rung that fits.
  * `opens` are the session-open anchors (`[domain start, ...boundaries]`) the
  * caller already has. Sub-day rungs are only reachable when the opens
  * themselves fit — a year of daily sessions never wastes time generating hour
@@ -200,11 +223,11 @@ export function buildTicks(
 ): { ticks: number[]; granularity: TickGranularity } {
   const result = ((): { ticks: number[]; granularity: TickGranularity } => {
     if (opens.length <= cap) {
-      for (const { g, step } of HOUR_GRAINS) {
-        const ticks = hourAnchors(provider, opens, domainEnd, step, cap);
-        // An hour rung must earn its clock labels: if it adds no intraday
-        // anchor beyond the opens themselves, it's really day grain (a row of
-        // "09:30"s under every session is a worse day axis, not an hour axis).
+      for (const { g, step } of SUB_DAY_GRAINS) {
+        const ticks = stepAnchors(provider, opens, domainEnd, step, cap);
+        // A clock rung must earn its labels: if it adds no intraday anchor
+        // beyond the opens themselves, it's really day grain (a row of
+        // "09:30"s under every session is a worse day axis, not a clock axis).
         if (ticks.length <= cap && ticks.length > opens.length)
           return { ticks, granularity: g };
       }
@@ -239,19 +262,15 @@ export function buildTicks(
 export function boundaryGrainFor(
   g: TickGranularity,
 ): TickGranularity | undefined {
+  if (isSubDay(g)) return 'day';
   switch (g) {
-    case 'hour1':
-    case 'hour3':
-    case 'hour6':
-    case 'hour12':
-      return 'day';
     case 'day':
     case 'week':
       return 'month';
     case 'month':
     case 'quarter':
       return 'year';
-    case 'year':
+    default:
       return undefined;
   }
 }
@@ -259,6 +278,15 @@ export function boundaryGrainFor(
 /** d3 time-format specifier for the **major** (first-row) label at grain `g`. */
 export function majorFormatFor(g: TickGranularity): string {
   switch (g) {
+    case 'second1':
+    case 'second5':
+    case 'second15':
+    case 'second30':
+      return '%H:%M:%S';
+    case 'minute1':
+    case 'minute5':
+    case 'minute15':
+    case 'minute30':
     case 'hour1':
     case 'hour3':
     case 'hour6':

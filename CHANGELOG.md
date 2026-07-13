@@ -46,8 +46,8 @@ and type-level changes; patch bumps are strictly additive.
 ### Added
 
 - **charts:** the time axis now walks a **logical tick ladder** — clock/calendar
-  units (1H / 3H / 6H / 12H / day / week / month / quarter / year), picking the
-  finest grain that fits the width-derived cap — and renders **two-tier labels**:
+  units (1s…30s, 1m…30m, 1H…12H, day / week / month / quarter / year), picking
+  the finest grain that fits the width-derived cap — and renders **two-tier labels**:
   a first row at the tick grain (`14:00`, `Feb 02`, `Feb`, `2026`) plus a
   **boundary row** carrying the coarser context the first row omits (the date
   under hours, `Jan 2026` under days, the year under months), shown once under

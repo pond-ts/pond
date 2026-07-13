@@ -1642,9 +1642,9 @@ independently built the same `calendar.bars → BoundedSequence` seam.
     (`feat/two-tier-axis-ticks`, unreleased)** — a Tidal screenshot (year of
     daily data, continuous axis) showed d3's multi-scale default mixing
     `"Jun 23"` / bare `"Sep"` labels; owner directed a proper ladder instead of
-    a format patch. `tickLadder.ts` walks hour1→hour3→hour6→hour12→day→week→
-    month→quarter→year, finest grain fitting the width-derived cap; hour
-    anchors generate in **live** time (clock-aligned per session, never in a
+    a format patch. `tickLadder.ts` walks second/minute/hour clock rungs
+    (1s…30s, 1m…30m, 1h…12h) →day→week→month→quarter→year, finest grain
+    fitting the width-derived cap; clock anchors generate in **live** time (clock-aligned per session, never in a
     collapsed gap / lunch break / early close, no new provider surface).
     Labels are **two rows**: first row at the tick grain (`14:00` / `Feb 02` /
     `Feb` / `2026`), second **boundary row** carrying the omitted coarser unit

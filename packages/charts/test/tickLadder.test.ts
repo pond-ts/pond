@@ -188,6 +188,30 @@ describe('buildTicks — the grain matrix over (span, cap)', () => {
     expect(buildTicks(prov, opens2, to, 13).ticks[0]).toBe(from2);
   });
 
+  it('a sub-hour continuous domain descends to minute grain, never one day tick', () => {
+    // A ~40-minute window (the annotation-story shape) must tick on minutes —
+    // before the second/minute rungs existed it collapsed to a single
+    // day-grain tick at the domain start.
+    const prov = identityProvider();
+    const from = new Date(2026, 0, 1, 5, 10).getTime();
+    const to = new Date(2026, 0, 1, 5, 50).getTime();
+    const { granularity, ticks } = buildTicks(prov, [from], to, 10);
+    expect(granularity).toBe('minute5');
+    expect(ticks.length).toBeGreaterThan(3);
+    expect(
+      ticks.slice(1).every((t) => new Date(t).getMinutes() % 5 === 0),
+    ).toBe(true);
+  });
+
+  it('a seconds-wide domain descends to second grain', () => {
+    const prov = identityProvider();
+    const from = new Date(2026, 0, 1, 5, 10, 2).getTime();
+    const to = from + 60_000; // one minute
+    const { granularity, ticks } = buildTicks(prov, [from], to, 8);
+    expect(granularity).toBe('second15');
+    expect(ticks.length).toBeGreaterThan(2);
+  });
+
   it('an intraday continuous domain gets clock-aligned hour ticks', () => {
     const prov = identityProvider();
     const from = new Date(2026, 0, 5, 9, 13).getTime(); // an arbitrary instant
