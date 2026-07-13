@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 tag, so this file covers them all. Pre-1.0: minor bumps may include new features
 and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.44.0...HEAD
+[Unreleased]: https://github.com/pjm17971/pond-ts/compare/v0.44.1...HEAD
+[0.44.1]: https://github.com/pjm17971/pond-ts/compare/v0.44.0...v0.44.1
 [0.44.0]: https://github.com/pjm17971/pond-ts/compare/v0.43.0...v0.44.0
 [0.43.0]: https://github.com/pjm17971/pond-ts/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/pjm17971/pond-ts/compare/v0.41.0...v0.42.0
@@ -41,6 +42,13 @@ and type-level changes; patch bumps are strictly additive.
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
 
 ## [Unreleased]
+
+## [0.44.1] — 2026-07-13
+
+A `@pond-ts/charts` patch: fixes trading-time axis tick density. `pond-ts`,
+`@pond-ts/react`, `@pond-ts/fit`, and `@pond-ts/financial` carry no code
+changes — republished in lock-step; their `^0.44.0` peer ranges already
+admit this patch.
 
 ### Fixed
 
