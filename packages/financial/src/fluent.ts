@@ -18,6 +18,17 @@
  * standalone {@link sma}/{@link ema}/{@link bollinger} functions bound to
  * `this`; this file adds no new behaviour, only the calling style. (Same
  * prototype-augmentation pattern core uses to mount the column methods.)
+ *
+ * **Caveats (prototype augmentation):**
+ * - Import it for its **runtime** side effect, not only its types. The
+ *   `declare module` merge is compilation-global (once any file imports this,
+ *   `.sma()` type-checks everywhere), but the methods only exist at runtime in a
+ *   program that actually loaded this module — so `import '@pond-ts/financial/fluent'`
+ *   in your entry, not just where the types are handy.
+ * - **ESM only.** The `./fluent` subpath ships no CJS build; `require()` can't
+ *   opt in. Use the standalone functions from a CJS context.
+ * - If core ever adds a `TimeSeries` method named `sma`/`ema`/`bollinger`, this
+ *   would shadow it — a deliberate, reviewable collision, not a silent surprise.
  */
 import { TimeSeries } from 'pond-ts';
 import type {
