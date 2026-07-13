@@ -11,11 +11,29 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import { TimeSeries } from 'pond-ts';
-import { sma, ema, bollinger } from '../src/index.js';
+import {
+  sma,
+  ema,
+  bollinger,
+  rollingStdev,
+  rollingMin,
+  rollingMax,
+  rollingPercentile,
+  zScore,
+  envelope,
+  percentChange,
+} from '../src/index.js';
 
 interface OracleCase {
-  study: 'sma' | 'ema' | 'bollinger';
-  params: { period: number; stdDev?: number };
+  study: string;
+  params: {
+    period?: number;
+    stdDev?: number;
+    q?: number;
+    percent?: number;
+    periods?: number;
+    maType?: 'sma' | 'ema';
+  };
   expected: Record<string, Array<number | null>>;
 }
 interface Oracle {
@@ -44,13 +62,31 @@ function series(): TimeSeries<never> {
 }
 
 function run(c: OracleCase): unknown {
+  const p = c.params;
   switch (c.study) {
     case 'sma':
-      return sma(series(), c.params);
+      return sma(series(), p as { period: number });
     case 'ema':
-      return ema(series(), c.params);
+      return ema(series(), p as { period: number });
     case 'bollinger':
-      return bollinger(series(), c.params);
+      return bollinger(series(), p as { period: number; stdDev?: number });
+    case 'rollingStdev':
+      return rollingStdev(series(), p as { period: number });
+    case 'rollingMin':
+      return rollingMin(series(), p as { period: number });
+    case 'rollingMax':
+      return rollingMax(series(), p as { period: number });
+    case 'rollingPercentile':
+      return rollingPercentile(series(), p as { period: number; q: number });
+    case 'zScore':
+      return zScore(series(), p as { period: number });
+    case 'envelope':
+      return envelope(
+        series(),
+        p as { period: number; percent?: number; maType?: 'sma' | 'ema' },
+      );
+    case 'percentChange':
+      return percentChange(series(), p as { periods?: number });
     default:
       // A fixture case whose study has no dispatch here must fail loudly, not
       // silently skip — the guard for future fan-out studies.
