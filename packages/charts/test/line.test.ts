@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { drawLine, yExtent } from '../src/line.js';
+import { drawLine, sessionRuns, yExtent } from '../src/line.js';
 import { resolveCurve } from '../src/curve.js';
 import { recordingContext, type CtxCall } from './canvas-mock.js';
 import type { ChartSeries } from '../src/data.js';
@@ -367,6 +367,140 @@ describe('drawLine gap modes', () => {
       'dashed',
     );
     // The solid line draws (6→7), but there's no dashed bridge pass.
+    expect(calls.some((c) => c.name === 'setLineDash')).toBe(false);
+    expect(calls.filter((c) => c.name === 'stroke')).toHaveLength(1);
+  });
+});
+
+/**
+ * `sessionRuns` cuts the index space wherever a boundary lands in `(x[i-1],
+ * x[i]]` — the pure geometry behind `<LineChart sessionBreaks>` (a trading-axis
+ * session close→open). A point exactly on a boundary starts the new run.
+ */
+describe('sessionRuns', () => {
+  const x = (...v: number[]) => Float64Array.from(v);
+
+  it('one run over the whole series when no boundary falls inside', () => {
+    expect(sessionRuns(x(0, 1, 2, 3), 4, [])).toEqual([[0, 4]]);
+    expect(sessionRuns(x(0, 1, 2, 3), 4, [100])).toEqual([[0, 4]]);
+  });
+
+  it('breaks between the two points a boundary sits between', () => {
+    // boundary 1.5 ∈ (1, 2] → cut before index 2.
+    expect(sessionRuns(x(0, 1, 2, 3), 4, [1.5])).toEqual([
+      [0, 2],
+      [2, 4],
+    ]);
+  });
+
+  it('a point exactly on a boundary starts the new run (the open)', () => {
+    // boundary == x[2] → x[2] begins the next run.
+    expect(sessionRuns(x(0, 1, 2, 3), 4, [2])).toEqual([
+      [0, 2],
+      [2, 4],
+    ]);
+  });
+
+  it('collapses several boundaries between one pair into a single break', () => {
+    // a whole weekend (3 boundaries) between Fri-close (x=1) and Mon-open (x=10).
+    expect(sessionRuns(x(0, 1, 10, 11), 4, [3, 5, 7])).toEqual([
+      [0, 2],
+      [2, 4],
+    ]);
+  });
+
+  it('handles three sessions → three runs', () => {
+    expect(sessionRuns(x(0, 1, 2, 3, 4, 5), 6, [1.5, 3.5])).toEqual([
+      [0, 2],
+      [2, 4],
+      [4, 6],
+    ]);
+  });
+});
+
+/**
+ * `sessionBreaks` (the `boundaries` arg to `drawLine`) breaks the solid path at
+ * a trading-axis discontinuity even though a point sits on each side — the line
+ * ends at the close and re-starts at the open. A *scale* break, composable with
+ * the NaN *data* gaps, and it suppresses any inferred bridge across it.
+ */
+describe('drawLine sessionBreaks (boundaries)', () => {
+  const pen = (calls: CtxCall[]) =>
+    calls
+      .filter((c) => c.name === 'moveTo' || c.name === 'lineTo')
+      .map((c) => c.name);
+
+  it('breaks the line at a boundary between two finite points (re-moves)', () => {
+    const { ctx, calls } = recordingContext();
+    // 4 points, boundary 1.5 → run [0,2) then run [2,4): two moveTos.
+    drawLine(
+      ctx,
+      cs([0, 1, 2, 3], [5, 6, 7, 8]),
+      identity,
+      identity,
+      style,
+      undefined,
+      'empty',
+      undefined,
+      [1.5],
+    );
+    expect(pen(calls)).toEqual(['moveTo', 'lineTo', 'moveTo', 'lineTo']);
+    // the break is a pen-up, not a lineTo across the collapsed gap.
+    const lines = calls.filter((c) => c.name === 'lineTo').map((c) => c.args);
+    expect(lines).not.toContainEqual([2, 7]); // no close(1,6)→open(2,7) connector
+  });
+
+  it('no boundary in range ⇒ identical to a plain single-pass draw', () => {
+    const { ctx, calls } = recordingContext();
+    drawLine(
+      ctx,
+      cs([0, 1, 2], [5, 6, 7]),
+      identity,
+      identity,
+      style,
+      undefined,
+      'empty',
+      undefined,
+      [100],
+    );
+    const seq = calls.filter((c) => c.type === 'call').map((c) => c.name);
+    expect(seq).toEqual(['beginPath', 'moveTo', 'lineTo', 'lineTo', 'stroke']);
+  });
+
+  it('composes with a NaN data gap inside a run', () => {
+    const { ctx, calls } = recordingContext();
+    // NaN at index 1 (data gap) AND a session break at 2.5 (scale gap).
+    drawLine(
+      ctx,
+      cs([0, 1, 2, 3], [5, NaN, 7, 8]),
+      identity,
+      identity,
+      style,
+      undefined,
+      'empty',
+      undefined,
+      [2.5],
+    );
+    // 5→move; NaN→pen up; 7→re-move (data gap); 8 in its own run→re-move.
+    expect(pen(calls)).toEqual(['moveTo', 'moveTo', 'moveTo']);
+  });
+
+  it('suppresses an inferred bridge that would span a session break', () => {
+    const { ctx, calls } = recordingContext();
+    // A NaN run (index 1,2) straddling the boundary 1.5 → split into a trailing
+    // gap in run [0,2) and a leading gap in run [2,4): neither is an interior
+    // gap, so `dashed` draws no bridge across the break.
+    drawLine(
+      ctx,
+      cs([0, 1, 2, 3], [5, NaN, NaN, 8]),
+      identity,
+      identity,
+      style,
+      undefined,
+      'dashed',
+      undefined,
+      [1.5],
+    );
     expect(calls.some((c) => c.name === 'setLineDash')).toBe(false);
     expect(calls.filter((c) => c.name === 'stroke')).toHaveLength(1);
   });

@@ -55,6 +55,16 @@ and type-level changes; patch bumps are strictly additive.
   (`minSamples: N` gives the conventional first-`N-1`-rows-`undefined` warmup);
   per-row output only (not supported with a sequence). Same amortized-O(1)-per-
   row sweep as the duration path.
+- **charts:** `<LineChart sessionBreaks>` breaks the line at each trading-axis
+  discontinuity (a session / day / lunch close→open) instead of connecting the
+  prior close straight to the next open across the collapsed gap. For intraday
+  data on a `discontinuities` / `calendar` axis this gives the terminal look —
+  the line ends at the close and re-starts at the open, so one session's price
+  doesn't visually flow into the next. It's a **scale** break (driven by the
+  axis's collapsed gaps), orthogonal to `gaps` (a **data** break, a NaN run) —
+  set both independently. Default `false`; a no-op on a continuous axis or a
+  provider without `boundaries`. New `Charts/TradingTimeAxis/SessionBreaks`
+  story (connected vs broken) + `sessionRuns` / `gappingTicks` helpers.
 
 ## [0.44.1] — 2026-07-13
 

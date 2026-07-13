@@ -195,6 +195,28 @@ export function ticks(
   return new TimeSeries({ name: 'ticks', schema: tickSchema, rows });
 }
 
+/** Intraday ticks with an **overnight gap**: each session opens at a distinct
+ *  base level (a gap up from the prior close) while the intraday wiggle stays
+ *  smooth. So a session boundary is a real price jump — the connected line shows
+ *  a near-vertical bridge across the collapsed gap, `sessionBreaks` a clean
+ *  pen-up. (Plain {@link ticks} walks continuously across sessions, so close ≈
+ *  next open and the break is invisible — this is the fixture that shows it.) */
+export function gappingTicks(
+  sessions: Session[],
+  stepMs: number,
+): TimeSeries<typeof tickSchema> {
+  const rows: Array<[number, number]> = [];
+  let i = 0;
+  sessions.forEach((s, si) => {
+    const base = 100 + si * 6; // each session gaps ~6 above the last
+    for (let t = s.open; t < s.close; t += stepMs, i++) {
+      const price = base + 4 * Math.sin(i / 18) + 1.5 * Math.sin(i / 3.5);
+      rows.push([t, price]);
+    }
+  });
+  return new TimeSeries({ name: 'ticks', schema: tickSchema, rows });
+}
+
 export const OHLC = {
   open: { from: 'price', using: 'first' },
   high: { from: 'price', using: 'max' },
