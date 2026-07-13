@@ -981,7 +981,8 @@ Phases (each independently shippable, ends with a docs deploy):
         (`website/docs/learn-charts/`), one running server-metrics
         example threaded throughout: ch1 the four-primitive minimal
         chart, ch2 dual-axis/two-row layout + the prop-identity
-        caution, ch3 `fromJSON` + temporal keys (point vs. interval) + the data-contract idea, ch4 (the centerpiece) `aggregate` →
+        caution, ch3 `fromJSON` + temporal keys (point vs. interval)
+        + the data-contract idea, ch4 (the centerpiece) `aggregate` →
         bars, `rolling`+`baseline` → smoothed line + `BandChart`
         envelope, `partitionBy` → per-host multi-series, `byColumn` →
         value-axis histogram, ch5 the `as`-role styling pipeline +
@@ -1014,8 +1015,8 @@ Phases (each independently shippable, ends with a docs deploy):
         forming-bar pattern) — that's still P3's flagship guide.
         Real bug caught in self-review before the PR even opened: the
         `responsive-width` demo measured its own padded/bordered box
-        and hand the _outer_ (padded) width to `ChartContainer`, which
-        then rendered inside the _inner_ (unpadded) space — silently
+        and hand the *outer* (padded) width to `ChartContainer`, which
+        then rendered inside the *inner* (unpadded) space — silently
         clipped by the demo's `overflow: hidden`. Fixed by splitting
         the styled outer box from a plain, unstyled inner box that's
         the one actually measured; documented as a new gotcha in the
@@ -1045,8 +1046,8 @@ Phases (each independently shippable, ends with a docs deploy):
         example doesn't exist anywhere in the stories, so ch8 uses a
         single live series instead of claiming a pattern that was
         never actually vetted. Two real bugs caught by `npm run
-    typecheck` (not just eyeballing): `TimeSeries.timeRange()`
-        returns a `TimeRange` _class_ (`.begin()`/`.end()`), not a
+        typecheck` (not just eyeballing): `TimeSeries.timeRange()`
+        returns a `TimeRange` *class* (`.begin()`/`.end()`), not a
         plain tuple — two new examples had array-indexed it directly.
         `learn-08-live-value.tsx`'s `createLiveValue` pill was verified
         live-updating by finding its actual DOM node (a plain styled
@@ -1626,17 +1627,17 @@ independently built the same `calendar.bars → BoundedSequence` seam.
       the collapsed close/open share a pixel, so `snapToGuides` picks the side by
       pointer position (left → close, right → open).
   - ✅ **Width-derived tick count (PR #447, unreleased)** — Tidal 0.44 friction
-    report: the trading scale's `ticks(count)` caps **calendar buckets**, so
-    the fixed count of 5 coarsened a 1-year daily view to year grain (2 ticks
-    on a 900px plot). The container now derives the x-side count from plot
-    width on a trading axis (~65px/tick → month grain at 900px) and shares one
-    `xTickCount` through the frame — `<XAxis>`, x gridlines, session dividers,
-    and `formatTime` agree by construction (previously three hardcoded 5s by
-    convention, and `formatTime` got _no_ count, anchoring labels at grain 10
-    vs ticks at 5 — the report's date-labelled year ticks). Continuous axes
-    keep the fixed 5. **Deliberately no `tickCount` prop** — the failure was
-    the default; a knob waits for real friction (the vol-smile `YAxis`
-    tickCount itch is the sibling to watch).
+    report: the trading scale's `ticks(count)` caps **calendar buckets**, so the
+    fixed count of 5 coarsened a 1-year daily view to year grain (2 ticks on a
+    900px plot). The container now derives the x-side count from plot width on a
+    trading axis (~65px/tick → month grain at 900px) and shares one `xTickCount`
+    through the frame — `<XAxis>`, x gridlines, session dividers, and
+    `formatTime` agree by construction (previously three hardcoded 5s by
+    convention, and `formatTime` got _no_ count, anchoring labels at grain 10 vs
+    ticks at 5 — the report's date-labelled year ticks). Continuous axes keep
+    the fixed 5. **Deliberately no `tickCount` prop** — the failure was the
+    default; a knob waits for real friction (the vol-smile `YAxis` tickCount
+    itch is the sibling to watch).
   - **Still deferred (documented, none blocking):** `neighbourSpans` point-key slot
     widths on the discontinuous axis (interval-keyed bars from
     `aggregate(barSequence)` — the primary path — are immune); exact **exchange-tz**
