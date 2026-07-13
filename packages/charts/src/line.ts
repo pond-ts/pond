@@ -165,9 +165,15 @@ export function drawLine(
  * cutting wherever a `boundaries` instant falls in `(x[i-1], x[i]]` — i.e. a
  * discontinuity (a trading session / day / lunch close→open) sits between two
  * consecutive points. A point that lands exactly on a boundary starts the new
- * run (the open). `boundaries` must be **ascending**. No boundary inside the
- * data (or an empty list) ⇒ a single run over the whole series. This is what
- * turns `<LineChart sessionBreaks>` into a per-session polyline. Pure + O(N).
+ * run (the open). No boundary inside the data (or an empty list) ⇒ a single run
+ * over the whole series. This is what turns `<LineChart sessionBreaks>` into a
+ * per-session polyline. Pure + O(N).
+ *
+ * The sweep relies on **ascending** boundaries; the `DiscontinuityProvider`
+ * contract doesn't guarantee order, so an unsorted list is sorted defensively
+ * (a copy, so the caller's array isn't mutated) rather than silently dropping a
+ * break. The list is tiny — one entry per session boundary — so the sort is
+ * negligible next to the row sweep.
  */
 export function sessionRuns(
   x: Float64Array,
@@ -175,6 +181,8 @@ export function sessionRuns(
   boundaries: readonly number[],
 ): Array<[number, number]> {
   if (boundaries.length === 0 || length === 0) return [[0, length]];
+  const bounds =
+    boundaries.length > 1 ? [...boundaries].sort((a, b) => a - b) : boundaries;
   const runs: Array<[number, number]> = [];
   let start = 0;
   let bi = 0;
@@ -182,12 +190,12 @@ export function sessionRuns(
     const prev = x[i - 1]!;
     const cur = x[i]!;
     // Skip boundaries at or before the previous point (already behind the pen).
-    while (bi < boundaries.length && boundaries[bi]! <= prev) bi += 1;
-    if (bi < boundaries.length && boundaries[bi]! <= cur) {
+    while (bi < bounds.length && bounds[bi]! <= prev) bi += 1;
+    if (bi < bounds.length && bounds[bi]! <= cur) {
       // A boundary sits in (prev, cur] → break the run before point i.
       runs.push([start, i]);
       start = i;
-      while (bi < boundaries.length && boundaries[bi]! <= cur) bi += 1;
+      while (bi < bounds.length && bounds[bi]! <= cur) bi += 1;
     }
   }
   runs.push([start, length]);

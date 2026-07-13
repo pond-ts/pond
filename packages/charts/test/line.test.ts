@@ -416,6 +416,16 @@ describe('sessionRuns', () => {
       [4, 6],
     ]);
   });
+
+  it('sorts unordered boundaries defensively (no silently-dropped break)', () => {
+    // The provider contract does not guarantee ascending order; an unsorted
+    // list must still cut every break, not skip the out-of-order one.
+    expect(sessionRuns(x(0, 1, 2, 3, 4, 5), 6, [3.5, 1.5])).toEqual([
+      [0, 2],
+      [2, 4],
+      [4, 6],
+    ]);
+  });
 });
 
 /**
