@@ -3257,10 +3257,22 @@ export class TimeSeries<S extends SeriesSchema> {
    * Computes sequence-driven rolling aggregations and returns an interval-keyed series on the
    * supplied grid.
    *
-   * Rolling windows are anchored either at each event's `begin()` time or at the sample point of
-   * each sequence bucket. Membership is determined from source event `begin()` times.
+   * Example: `series.rolling({ count: 20 }, { close: "avg" }, { minSamples: 20 })`.
+   * A **count-based** window of the last `N` *rows* (bars), keyed on row
+   * position not time. `{ count: N }` in place of a duration reduces, for each
+   * row, the `N` rows in its index window — so an "N-bar" study (SMA-20,
+   * Bollinger-20, rolling stdev) stays correct across session gaps (weekends,
+   * overnight) where a duration window silently spans the wrong number of bars.
+   * Honours `alignment` and `minSamples` exactly like a duration window
+   * (`minSamples: N` gives the conventional warmup — the first `N-1` rows emit
+   * `undefined`). Per-row output only; not supported with a sequence.
    *
-   * Supported alignments:
+   * Rolling windows are anchored either at each event's `begin()` time or at the sample point of
+   * each sequence bucket. Membership is determined from source event `begin()` times (a duration
+   * window) or from row position (a `{ count }` window).
+   *
+   * Supported alignments (a `{ count: N }` window applies the same shape in row-index space, with
+   * a centered window biased one row toward `leading` when `N` is even):
    * - `"trailing"`: `(t - window, t]`
    * - `"leading"`: `[t, t + window)`
    * - `"centered"`: `[t - window/2, t + window/2)`
@@ -3296,7 +3308,7 @@ export class TimeSeries<S extends SeriesSchema> {
    * (number / string / boolean) are unaffected (value semantics).
    */
   rolling<const Mapping extends ValidatedAggregateMap<S, Mapping>>(
-    window: DurationInput,
+    window: DurationInput | { count: number },
     mapping: Mapping,
     options?: { alignment?: RollingAlignment; minSamples?: number },
   ): TimeSeries<RollingSchema<S, Mapping>>;
@@ -3312,7 +3324,7 @@ export class TimeSeries<S extends SeriesSchema> {
     },
   ): TimeSeries<AggregateSchema<S, Mapping>>;
   rolling(
-    sequenceOrWindow: SequenceLike | DurationInput,
+    sequenceOrWindow: SequenceLike | DurationInput | { count: number },
     windowOrMapping: DurationInput | AggregateMap<S>,
     mappingOrOptions?:
       | AggregateMap<S>
@@ -3337,7 +3349,7 @@ export class TimeSeries<S extends SeriesSchema> {
       minSamples?: number;
     };
     let sequence: SequenceLike | undefined;
-    let window: DurationInput;
+    let window: DurationInput | { count: number };
 
     if (
       sequenceOrWindow instanceof Sequence ||
@@ -3385,7 +3397,27 @@ export class TimeSeries<S extends SeriesSchema> {
       required: false as const,
     }));
 
-    const windowMs = parseDuration(window);
+    // A `{ count: N }` window reduces the last/next/centered `N` rows by index
+    // rather than a time span — the count-based (N-bar) window. Detected here so
+    // the duration is never parsed for it.
+    const countWindow =
+      typeof window === 'object' && window !== null && 'count' in window
+        ? window.count
+        : null;
+    if (countWindow !== null) {
+      if (!Number.isInteger(countWindow) || countWindow < 1) {
+        throw new TypeError(
+          'rolling { count } must be a positive integer (row count)',
+        );
+      }
+      if (sequence) {
+        throw new TypeError(
+          'rolling count windows ({ count }) are not supported with a sequence',
+        );
+      }
+    }
+    const windowMs =
+      countWindow === null ? parseDuration(window as DurationInput) : 0;
     const alignment = options.alignment ?? 'trailing';
     // Default 0 disables the gate — preserves prior behavior where
     // empty windows still invoke the reducer (custom reducers may
@@ -3519,7 +3551,43 @@ export class TimeSeries<S extends SeriesSchema> {
       }
     };
 
-    if (alignment === 'trailing') {
+    if (countWindow !== null) {
+      // Count-based window: for each row, the `N` rows in its index window (not
+      // a time span). `lo`/`hi` are both monotonic non-decreasing in the row
+      // index for every alignment, so the same reducer add/remove sweep stays
+      // amortized O(1) per row — each row enters and leaves the window once.
+      // Rows are the unit (no equal-timestamp grouping — `N` counts bars), and a
+      // centered even `N` biases one row toward the leading side.
+      const n = countWindow;
+      const leftSpan = Math.floor((n - 1) / 2);
+      const rightSpan = n - 1 - leftSpan;
+      for (let index = 0; index < rowCount; index++) {
+        let lo: number;
+        let hi: number;
+        if (alignment === 'trailing') {
+          lo = index - n + 1 < 0 ? 0 : index - n + 1;
+          hi = index;
+        } else if (alignment === 'leading') {
+          lo = index;
+          hi = index + n - 1 < rowCount ? index + n - 1 : rowCount - 1;
+        } else {
+          lo = index - leftSpan < 0 ? 0 : index - leftSpan;
+          hi = index + rightSpan < rowCount ? index + rightSpan : rowCount - 1;
+        }
+        while (windowEnd <= hi) {
+          addEvent(windowEnd);
+          windowEnd += 1;
+        }
+        while (windowStart < lo) {
+          removeEvent(windowStart);
+          windowStart += 1;
+        }
+        const aggregated = snapshotWindow();
+        for (let c = 0; c < outValues.length; c++) {
+          outValues[c]![index] = aggregated[c];
+        }
+      }
+    } else if (alignment === 'trailing') {
       for (let groupStart = 0; groupStart < rowCount; ) {
         const anchor = beginTimes[groupStart]!;
         let groupEnd = groupStart + 1;

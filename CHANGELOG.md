@@ -43,6 +43,19 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **core:** `TimeSeries.rolling` accepts a **count-based** window —
+  `rolling({ count: N }, mapping, opts?)` reduces the last / next / centered
+  `N` _rows_ (bars) by position instead of a time span. Unlike a duration
+  window, an N-bar window stays correct across session gaps (weekends,
+  overnight) where `N` bars do not equal `N × barSize` of time — the load-
+  bearing primitive for financial N-bar studies (SMA-20, Bollinger-20, rolling
+  stdev). Honours `alignment` and `minSamples` exactly like a duration window
+  (`minSamples: N` gives the conventional first-`N-1`-rows-`undefined` warmup);
+  per-row output only (not supported with a sequence). Same amortized-O(1)-per-
+  row sweep as the duration path.
+
 ## [0.44.1] — 2026-07-13
 
 A `@pond-ts/charts` patch: fixes trading-time axis tick density. `pond-ts`,
