@@ -163,6 +163,7 @@ export type {
   RekeySchema,
   RowForSchema,
   AppendColumn,
+  OptionalNumberColumn,
   ArrayValue,
   ColumnValue,
   ScalarKind,

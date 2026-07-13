@@ -57,6 +57,19 @@ describe('TimeSeries.withColumn — attach', () => {
     expect(s2.schema).toHaveLength(3); // + cumDist
     expect(s2.schema[2]).toMatchObject({ name: 'cumDist', kind: 'number' });
   });
+
+  it('appends an OPTIONAL column, so a later strict-intake rebuild tolerates its gaps', () => {
+    // Regression: withColumn used to mark the column `required`, so a gap
+    // (undefined) packed via trusted construction crashed the next operator
+    // that rebuilds rows through strict intake (`smooth`) — breaking a column
+    // with a warm-up (a rolling study fed into an EMA). The column is optional.
+    const withGap = base().withColumn('g', [1, undefined, 3, undefined]);
+    expect(withGap.schema[2]).toMatchObject({ required: false });
+    // The strict-intake rebuild no longer throws on the gapped column…
+    const smoothed = withGap.smooth('lat', 'ema', { alpha: 0.5, output: 'e' });
+    expect(colOf(smoothed, 'g')).toEqual([1, undefined, 3, undefined]); // preserved
+    expect(smoothed.at(0)!.get('e')).toBe(10); // ema still computed
+  });
 });
 
 describe('TimeSeries.withColumn — composition (the F-geo-1 seam)', () => {
