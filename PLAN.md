@@ -1022,12 +1022,46 @@ Phases (each independently shippable, ends with a docs deploy):
         the one actually measured; documented as a new gotcha in the
         recipe itself, since it's a realistic mistake the next reader
         would make too.
-- [ ] **P2 — interaction + doc-debt burn-down**: Learn 6–9,
-      Interaction section, Annotations & indicators section, Financial
-      charts hub (+ TradingView vocabulary bridge), Missing data &
-      gaps page, **value-axis docs** (the Documentation backlog's
-      highest-priority item), prop-identity recipe, story-coverage
-      fill for the groups these pages source from.
+- [ ] **P2 — interaction + doc-debt burn-down** (in progress; 1/7 shipped):
+  - [x] Learn chapters 6–9 (#446) — completes the nine-chapter tutorial
+        track. Ch6 reading/selecting values: the five `cursor` modes
+        via a live mode-switcher demo, `onTrackerChanged` for an
+        off-chart readout, the `cursor="region"` → `onRegionSelect` →
+        controlled `range` select-to-zoom loop. Ch7 marking up charts:
+        `Region`/`Marker`/`Baseline` + a static `YAxisIndicator` pill,
+        the two-register hue law. Ch8 live charts: `LiveSeries` →
+        `useSnapshot` → chart (push faster than the throttle to make
+        the re-render-on-snapshot-cadence model visible), the
+        prop-identity caution one level up (memoize what `useSnapshot`
+        feeds into), `createLiveValue` for an isolated-repaint pill,
+        the live-data-is-append-only honesty note. Ch9 beyond the time
+        axis: `byValue` → a linear value axis, `transposeRow` → a
+        category axis, reuses #445's calendar-aware candlestick demo
+        for the trading-time axis slot. Every API call (cursor modes,
+        `onTrackerChanged`/`cursorTime`/`trackerPosition`,
+        `onRegionSelect`, `LiveSeries`, `useSnapshot`, `createLiveValue`,
+        `byValue`, `transposeRow`) verified against source via a
+        research subagent before writing example code — one correction
+        surfaced: the plan's remembered "partitioned per host" live
+        example doesn't exist anywhere in the stories, so ch8 uses a
+        single live series instead of claiming a pattern that was
+        never actually vetted. Two real bugs caught by `npm run
+        typecheck` (not just eyeballing): `TimeSeries.timeRange()`
+        returns a `TimeRange` *class* (`.begin()`/`.end()`), not a
+        plain tuple — two new examples had array-indexed it directly.
+        `learn-08-live-value.tsx`'s `createLiveValue` pill was verified
+        live-updating by finding its actual DOM node (a plain styled
+        `<div>` chip, not canvas/SVG) after a canvas-byte-diff check
+        wrongly suggested it was frozen — `YAxisIndicator` doesn't
+        paint to canvas at all.
+  - [ ] Interaction reference section
+  - [ ] Annotations & indicators reference section
+  - [ ] Financial charts hub (+ TradingView vocabulary bridge)
+  - [ ] Missing data & gaps page
+  - [ ] **value-axis docs** (the Documentation backlog's
+        highest-priority item)
+  - [ ] prop-identity recipe + story-coverage fill for the groups
+        these pages source from
 - [ ] **P3 — reference fan-out + flagship guide**: per-chart-type
       pages, Axes & layout, Theming, Data adapters, Cheat sheet,
       Rendering & performance (measured perf envelope — the accepted

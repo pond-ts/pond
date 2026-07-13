@@ -129,6 +129,10 @@ const sidebars: SidebarsConfig = {
             'learn-charts/feeding-charts-pond-data',
             'learn-charts/shaping-data-to-chart',
             'learn-charts/styling-and-theming',
+            'learn-charts/cursors-readouts-zoom',
+            'learn-charts/marking-up-charts',
+            'learn-charts/live-charts',
+            'learn-charts/beyond-the-time-axis',
           ],
         },
         {

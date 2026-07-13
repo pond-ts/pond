@@ -7,7 +7,7 @@ sidebar_position: 0
 
 # Learn charts
 
-A five-chapter tutorial track for `@pond-ts/charts` — start here if you're
+A nine-chapter tutorial track for `@pond-ts/charts` — start here if you're
 new to the library, not just looking something up (that's the
 [Overview](../charts/index.mdx) and the [Gallery](../charts/gallery)).
 
@@ -34,10 +34,23 @@ and a second row to.
 5. [**Styling and theming**](./styling-and-theming) — the styling
    pipeline in one sentence, and which of three theming approaches fits
    your app.
+6. [**Reading and selecting values**](./cursors-readouts-zoom) — the five
+   `cursor` modes, reading the hovered value outside the chart, and the
+   select-to-zoom loop.
+7. [**Marking up charts**](./marking-up-charts) — `Region`, `Marker`,
+   `Baseline`, and a live `YAxisIndicator` pill — the annotation register,
+   deliberately never the same hue as your data.
+8. [**Live charts**](./live-charts) — `LiveSeries` → `useSnapshot` →
+   chart, the re-render model, and `createLiveValue` for a pill that skips
+   the chart entirely.
+9. [**Beyond the time axis**](./beyond-the-time-axis) — the x axis is
+   inferred from your data: a linear value axis, a category axis, or a
+   session-aware trading-time axis.
 
-Chapters on cursors/zoom, annotations, live charts, and non-time axes are
-on the roadmap — see [PLAN.md](https://github.com/pjm17971/pond-ts/blob/main/PLAN.md)'s
-"Docs site wave" for what's shipped and what's next. Until then, the
+That's the whole track. A dedicated reference section for interaction and
+annotations (deeper than this track's tour) is on the roadmap — see
+[PLAN.md](https://github.com/pjm17971/pond-ts/blob/main/PLAN.md)'s "Docs
+site wave" for what's shipped and what's next. Until then, the
 [Cursors & readouts](pathname:///storybook/?path=/story/charts-cursors-scenarios--in-context)
 and [Annotations](pathname:///storybook/?path=/story/charts-annotations-scenarios--in-context)
 Storybook groups cover that ground directly.

@@ -1,0 +1,118 @@
+---
+title: 6. Reading and selecting values
+sidebar_label: 6. Reading and selecting values
+sidebar_position: 6
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import LearnCursorModes from '@site/src/examples/learn-06-cursor-modes';
+import LearnTrackerReadout from '@site/src/examples/learn-06-tracker-readout';
+import LearnZoom from '@site/src/examples/learn-06-zoom';
+
+# Reading and selecting values: cursors, readouts, zoom
+
+:::info[You will learn]
+
+- The five `cursor` modes, and when to reach for each
+- `onTrackerChanged` — reading the hovered value outside the chart
+- The select-to-zoom loop: `cursor="region"` → `onRegionSelect` → `range`
+  :::
+
+Every chart in this track has had a cursor without you setting one —
+`cursor` defaults to `'line'`, the synced vertical line you've been
+hovering since chapter 1. This chapter is the rest of that knob.
+
+## Five modes, one prop
+
+<ChartExample name="learn-06-cursor-modes" height={280}>
+  <LearnCursorModes />
+</ChartExample>
+
+```tsx
+<ChartContainer cursor="crosshair" /* or 'line' | 'point' | 'inline' | 'flag' */>
+```
+
+- **`line`** (default) — a synced vertical line across every row.
+- **`point`** — a dot on the series itself, no line.
+- **`inline`** — an in-chart value readout drawn near the cursor.
+- **`flag`** — an in-chart readout in a flag-shaped chip.
+- **`crosshair`** — a vertical **and** horizontal line, with axis-pill
+  readouts on both axes. Snaps to the nearest data point by default
+  (`crosshairSnap={false}` for a free reticle).
+
+There's a sixth value, `'none'`, and a seventh, `'region'` — that one is
+this chapter's payoff, below.
+
+## Reading the value outside the chart
+
+`onTrackerChanged` fires with the hovered value(s) — or `null` when the
+cursor leaves — so you can drive a readout that lives anywhere on the
+page, not just inside the chart:
+
+<ChartExample name="learn-06-tracker-readout" height={260}>
+  <LearnTrackerReadout />
+</ChartExample>
+
+```tsx
+const [info, setInfo] = useState<TrackerInfo | null>(null);
+
+<ChartContainer cursor="line" onTrackerChanged={setInfo}>
+  {/* rows */}
+</ChartContainer>;
+
+{
+  info === null ? 'hover the chart' : info.values.map((v) => v.value);
+}
+```
+
+`TrackerInfo` carries `time` plus one `TrackerSample` (`x`, `value`,
+`color`, `label`) per series under the cursor — the same data every
+in-chart readout draws from, just handed to you instead. `cursorTime`
+(a boolean on `ChartContainer`) shows the cursor's time atop an in-chart
+`flag`/`inline` readout, if you want it there too. For programmatic
+control rather than mouse-driven — highlighting a specific instant from
+outside, say a table row hover — a controlled `trackerPosition` (epoch
+ms, or `null` to hide) drives the same cursor without a real pointer
+event.
+
+## The payoff: select-to-zoom
+
+`cursor="region"` turns the cursor into a **drag-to-select** tool.
+Combine it with `onRegionSelect` and a bit of state, and you have the
+whole zoom loop in about a dozen lines:
+
+<ChartExample name="learn-06-zoom" height={260}>
+  <LearnZoom />
+</ChartExample>
+
+```tsx
+const fullRange = series.timeRange();
+const [range, setRange] = useState(fullRange);
+
+<ChartContainer
+  range={range}
+  cursor="region"
+  onRegionSelect={(r) => setRange(r)}
+>
+  {/* rows */}
+</ChartContainer>;
+
+<button onClick={() => setRange(fullRange)}>Reset zoom</button>;
+```
+
+`onRegionSelect` hands back a neutral `[lo, hi]` pair — the container
+never zooms itself, your `setRange` closes the loop by feeding the
+selection straight back into `range`. A "reset" button is just
+`setRange(fullRange)`. This is the same `range` prop every chart in this
+track has passed a static value to since chapter 1 — controlling it is
+nothing new, just a new source for the value.
+
+## Recap
+
+Five cursor modes cover reading a hovered value in five different visual
+styles; `onTrackerChanged` moves that same reading outside the chart;
+`cursor="region"` turns the cursor into a drag-to-select tool, and
+`onRegionSelect` + a controlled `range` is the whole zoom loop.
+
+**Next: [Marking up charts](./marking-up-charts)** — placing a mark
+_on_ a chart, rather than just reading what's there.

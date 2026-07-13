@@ -1,0 +1,131 @@
+---
+title: 8. Live charts
+sidebar_label: 8. Live charts
+sidebar_position: 8
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import LearnLiveSeries from '@site/src/examples/learn-08-live-series';
+import LearnLiveValue from '@site/src/examples/learn-08-live-value';
+
+# Live charts
+
+:::info[You will learn]
+
+- The one indirection every live chart needs: `LiveSeries` → snapshot →
+  chart
+- Why a chart re-renders on **snapshot cadence**, not event cadence
+- `createLiveValue` for a pill that updates without re-rendering the chart
+  :::
+
+Every chart in this track so far has drawn a fixed `series`. This chapter
+is what changes when the data keeps arriving.
+
+A doc that shows `live.on('event') → chart` teaches the wrong model — a
+chart re-rendering on every single push doesn't scale, and React state
+updates aren't supposed to fire at push cadence anyway. The real shape has
+one indirection in the middle:
+
+<ChartExample name="learn-08-live-series" height={250}>
+  <LearnLiveSeries />
+</ChartExample>
+
+```tsx
+import { LiveSeries } from 'pond-ts';
+import { useSnapshot } from '@pond-ts/react';
+
+const live = new LiveSeries({
+  name: 'live-cpu',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'cpu', kind: 'number' },
+  ] as const,
+  retention: { maxEvents: 60 },
+});
+
+// elsewhere, on an interval or a socket message:
+live.push([Date.now(), reading]);
+
+// in the component:
+const snapshot = useSnapshot(live, { throttle: 400 });
+if (snapshot === null || snapshot.length === 0) return <Skeleton />;
+
+<ChartContainer range={snapshot.timeRange()} width={560}>
+  <ChartRow height={220}>
+    <Layers>
+      <LineChart series={snapshot} column="cpu" axis="pct" />
+    </Layers>
+    <YAxis id="pct" side="right" format=".0%" />
+  </ChartRow>
+</ChartContainer>;
+```
+
+`LiveSeries` is a mutable, growing store — you `.push()` rows onto it from
+wherever your data arrives (a socket handler, an interval, a poll).
+`useSnapshot` is the bridge: it hands your component an **immutable**
+`TimeSeries` — the exact same type every chart in this track has drawn —
+and re-renders **on a throttle**, not on every push. The chart in this
+example pushes a new reading every 150ms but only repaints at most every
+400ms; several pushes coalesce into one snapshot, one re-render. That's
+the whole model: the chart never touches `LiveSeries` directly, it only
+ever draws the latest snapshot.
+
+`retention: { maxEvents: 60 }` caps how much history `LiveSeries` keeps —
+without a policy it would grow forever. The full eviction/windowing model
+is [LiveSeries](../pond-ts/live/live-series).
+
+:::caution[Memoize what useSnapshot feeds into]
+`snapshot` is a fresh `TimeSeries` reference on every throttled re-render
+— any projection you derive from it (`.select(...)`, a `.rolling(...)`
+pass, a filtered view) recomputes every time too, unless you memoize it.
+This is chapter 2's prop-identity caution again, one level up: there it
+was an inline `format` function re-allocating; here it's a whole
+derived series. `useMemo(() => snapshot.select('cpu'), [snapshot])` is
+the fix once a projection stops being free.
+:::
+
+## A pill that skips the chart entirely
+
+Sometimes you don't want a whole chart re-render for a fast-moving number
+— a live price tag, a current-value readout. `createLiveValue` builds a
+store `YAxisIndicator` can subscribe to directly, bypassing React
+re-renders for the rest of the chart:
+
+<ChartExample name="learn-08-live-value" height={250}>
+  <LearnLiveValue />
+</ChartExample>
+
+```tsx
+import { createLiveValue, YAxisIndicator } from '@pond-ts/charts';
+
+const live = createLiveValue(0.4); // create once, e.g. in a ref
+live.set(newReading); // updates the pill only — no chart re-render
+
+<YAxisIndicator source={live} axis="pct" />;
+```
+
+`YAxisIndicator` takes **either** a static `value` (chapter 7 — re-renders
+with its parent, fine for occasional changes) **or** a `source` — the
+high-frequency path, isolated from the rest of the tree.
+
+## Live data is append-only
+
+One honesty note before you build a real feed: `LiveSeries` is
+**append-only** — there's no snapshot-replace. A "forming candle" that
+keeps changing until its bar closes isn't a live edit to one event; it's
+**re-aggregation** — you push raw ticks and re-run `aggregate` over the
+open bucket, you don't mutate a pushed row after the fact. See the
+[@pond-ts/financial](../financial/) section for the calendar-aware side
+of that shape.
+
+## Recap
+
+Live charts run through one indirection: `LiveSeries.push()` on one side,
+`useSnapshot` on the other, throttled so the chart repaints on its own
+schedule rather than the feed's. `createLiveValue` skips the chart
+re-render entirely for a single fast-moving number. And a live source
+only ever grows — updating what's already there is a re-aggregation, not
+a mutation.
+
+**Next: [Beyond the time axis](./beyond-the-time-axis)** — every chart in
+this track has had time on the x axis. It isn't the only one.
