@@ -83,6 +83,17 @@ and type-level changes; patch bumps are strictly additive.
   provider without `boundaries`. New `Charts/TradingTimeAxis/SessionBreaks`
   story (connected vs broken) + `sessionRuns` / `gappingTicks` helpers.
 
+### Fixed
+
+- **core:** `TimeSeries.withColumn` now appends an **optional** column
+  (`required: false`) rather than a required one. It already accepted
+  `(number | undefined)[]`, but marking the column required meant a later
+  strict-intake rebuild (`smooth`, any row reconstruction) threw on the gaps —
+  so a column with a warm-up (a rolling study fed into an EMA, e.g.
+  `ema(sma(bars, …), …)`) crashed. The appended column's type is now
+  `number | undefined`, matching `smooth`'s optional append. (`OptionalNumberColumn`
+  is exported for the widened return type.)
+
 ## [0.44.1] — 2026-07-13
 
 A `@pond-ts/charts` patch: fixes trading-time axis tick density. `pond-ts`,

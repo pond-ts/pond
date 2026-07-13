@@ -52,6 +52,19 @@ describe('sma', () => {
     expect(col(twice, 'fastfast')[4]).toBeCloseTo((12.5 + 13.5) / 2, 10);
   });
 
+  it('stacks sma → ema → bollinger without a strict-intake crash on the warmup gaps', () => {
+    // Regression: chaining a rolling study (sma, undefined warmup) into ema
+    // (which rebuilds rows via strict intake) crashed while withColumn marked
+    // the sma column required. All three now stack on one series.
+    let s = sma(bars([10, 11, 12, 13, 14, 15]), { period: 3 });
+    s = ema(s, { period: 3 });
+    s = bollinger(s, { period: 3 });
+    const last = s.events.at(-1)!.data();
+    expect(typeof last.sma).toBe('number');
+    expect(typeof last.ema).toBe('number');
+    expect(typeof last.bbMiddle).toBe('number');
+  });
+
   it('throws on a bad period or an output collision', () => {
     expect(() => sma(bars([1, 2]), { period: 0 })).toThrow(/positive integer/);
     expect(() => sma(bars([1, 2]), { period: 1, output: 'close' })).toThrow(

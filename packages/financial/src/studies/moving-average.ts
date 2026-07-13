@@ -1,5 +1,4 @@
 import type {
-  AppendColumn,
   NumericColumnNameForSchema,
   SeriesSchema,
   SmoothAppendSchema,
@@ -36,10 +35,7 @@ export interface MovingAverageOptions<
 export function sma<
   S extends SeriesSchema,
   const Output extends string = 'sma',
->(
-  series: TimeSeries<S>,
-  options: MovingAverageOptions<S, Output>,
-): TimeSeries<AppendColumn<S, Output, 'number'>> {
+>(series: TimeSeries<S>, options: MovingAverageOptions<S, Output>) {
   assertPeriod(options.period);
   const column = (options.column ?? DEFAULT_SOURCE) as string;
   const output = (options.output ?? 'sma') as Output;

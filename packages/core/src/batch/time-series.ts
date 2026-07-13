@@ -15,6 +15,7 @@ import type {
   AggregateMap,
   AggregateSchema,
   AppendColumn,
+  OptionalNumberColumn,
   CollapseSchema,
   EventDataForSchema,
   EventForSchema,
@@ -4573,7 +4574,9 @@ export class TimeSeries<S extends SeriesSchema> {
   withColumn<const Name extends string>(
     name: Name,
     values: ReadonlyArray<number | undefined> | Float64Array,
-  ): TimeSeries<AppendColumn<S, Name, 'number'>> {
+  ): TimeSeries<
+    readonly [S[0], ...ValueColumnsForSchema<S>, OptionalNumberColumn<Name>]
+  > {
     if (values.length !== this.length) {
       throw new RangeError(
         `withColumn: values length ${values.length} does not match series length ${this.length}`,
@@ -4597,15 +4600,23 @@ export class TimeSeries<S extends SeriesSchema> {
       name as string,
       column,
     );
+    // The appended column is **optional** (`required: false`): `values` may
+    // carry `undefined` (a missing cell), so the column can have gaps. Marking
+    // it required would make a later strict-intake rebuild (`smooth`, a row
+    // reconstruction) reject those gaps — breaking composition on a column with
+    // a warm-up (e.g. a rolling study fed into an EMA). Matches `smooth`'s
+    // `OptionalNumberColumn` append.
     const resultSchema = Object.freeze([
       ...this.schema,
-      { name, kind: 'number' },
+      { name, kind: 'number', required: false },
     ]) as unknown as SeriesSchema;
     return TimeSeries.#fromTrustedStore(
       this.name,
       resultSchema,
       reshaped,
-    ) as unknown as TimeSeries<AppendColumn<S, Name, 'number'>>;
+    ) as unknown as TimeSeries<
+      readonly [S[0], ...ValueColumnsForSchema<S>, OptionalNumberColumn<Name>]
+    >;
   }
 
   /** Example: `series.collapse(["in", "out"], "avg", fn)`. Collapses selected payload fields into a single derived field across each event in the series. */
