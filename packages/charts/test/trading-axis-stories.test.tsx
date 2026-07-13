@@ -29,6 +29,7 @@ describe('TradingTimeAxis stories render', () => {
       'HalfDay',
       'HolidayGap',
       'IntradaySessions',
+      'SessionBreaks',
       'SpacingProportionalVsUniform',
       'WeekendSkip',
       'YearDaily',

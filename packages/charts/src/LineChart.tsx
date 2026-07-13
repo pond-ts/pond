@@ -63,11 +63,29 @@ export interface LineChartProps<
    */
   gaps?: GapMode;
   /**
+   * Break the line at each **trading-axis discontinuity** (a session / day /
+   * lunch close→open) when the container renders on a trading-time axis (a
+   * `discontinuities` / `calendar` provider). **Omitted ⇒ `false`**: the line
+   * connects the last pre-close point straight to the next open across the
+   * collapsed gap (the near-vertical connector). `true` ends the line at the
+   * close and re-starts it at the open — the intraday look, where a session's
+   * price shouldn't visually flow into the next.
+   *
+   * This is a **scale** break (driven by the axis's collapsed gaps), orthogonal
+   * to {@link gaps} (a **data** break, a NaN run) — set both independently. A
+   * no-op on a continuous axis (no provider) or a provider without `boundaries`.
+   */
+  sessionBreaks?: boolean;
+  /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
    */
   index?: number;
 }
+
+/** Stable empty boundary list — so `sessionBreaks={false}` keeps a referentially
+ *  constant array and the layer entry isn't rebuilt every render. */
+const NO_BREAKS: readonly number[] = [];
 
 /**
  * A line draw layer. Reads `column` from `series` into a {@link ChartSeries}
@@ -85,6 +103,7 @@ export function LineChart<
   axis,
   curve,
   gaps = DEFAULT_GAP_MODE,
+  sessionBreaks = false,
   index = 0,
 }: LineChartProps<S, VS>) {
   const container = useContext(ContainerContext);
@@ -114,6 +133,17 @@ export function LineChart<
   // falling back to the shared default so a theme without it still renders faint.
   const gapConnectorOpacity =
     container.theme.gap?.connectorOpacity ?? DEFAULT_GAP_CONNECTOR_OPACITY;
+  // Trading-axis session breaks: the collapse instants inside this series' span
+  // (session/day/lunch opens the axis skips). Data instants, not pixels — so the
+  // set is view-independent (pan/zoom reuse it). Only computed when opted in and
+  // the container carries a boundary-reporting discontinuity provider.
+  const sessionBreakInstants = useMemo<readonly number[]>(() => {
+    const provider = container.discontinuities;
+    if (!sessionBreaks || provider?.boundaries === undefined || cs.length < 2) {
+      return NO_BREAKS;
+    }
+    return provider.boundaries(cs.x[0]!, cs.x[cs.length - 1]!);
+  }, [sessionBreaks, container.discontinuities, cs]);
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
@@ -160,6 +190,7 @@ export function LineChart<
             curveFactory,
             gaps,
             gapConnectorOpacity,
+            sessionBreakInstants,
           ),
       },
       axisId: axis,
@@ -174,6 +205,7 @@ export function LineChart<
       curveFactory,
       gaps,
       gapConnectorOpacity,
+      sessionBreakInstants,
       axis,
       index,
     ],
