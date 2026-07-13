@@ -55,11 +55,13 @@ describe('sma', () => {
   it('stacks sma → ema → bollinger without a strict-intake crash on the warmup gaps', () => {
     // Regression: chaining a rolling study (sma, undefined warmup) into ema
     // (which rebuilds rows via strict intake) crashed while withColumn marked
-    // the sma column required. All three now stack on one series.
-    let s = sma(bars([10, 11, 12, 13, 14, 15]), { period: 3 });
-    s = ema(s, { period: 3 });
-    s = bollinger(s, { period: 3 });
-    const last = s.events.at(-1)!.data();
+    // the sma column required. All three now stack on one series. (Separate
+    // `const` bindings — each study widens the schema type, so a reassigned
+    // `let` wouldn't typecheck.)
+    const withSma = sma(bars([10, 11, 12, 13, 14, 15]), { period: 3 });
+    const withEma = ema(withSma, { period: 3 });
+    const withBands = bollinger(withEma, { period: 3 });
+    const last = withBands.events.at(-1)!.data();
     expect(typeof last.sma).toBe('number');
     expect(typeof last.ema).toBe('number');
     expect(typeof last.bbMiddle).toBe('number');
