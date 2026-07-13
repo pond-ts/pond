@@ -1,0 +1,120 @@
+---
+title: 9. Beyond the time axis
+sidebar_label: 9. Beyond the time axis
+sidebar_position: 9
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import LearnValueAxis from '@site/src/examples/learn-09-value-axis';
+import LearnCategoryAxis from '@site/src/examples/learn-09-category-axis';
+import FinancialCalendarChart from '@site/src/examples/financial-calendar-chart';
+
+# Beyond the time axis
+
+:::info[You will learn]
+
+- The x axis is **inferred from your data**, never declared
+- `byValue`/`fromColumns` → a linear value axis
+- `transposeRow` → a category axis
+- A `TradingCalendar` → a session-aware time axis
+  :::
+
+Every chart in this track has drawn against a time axis, because every
+example handed `<ChartContainer>` a `TimeSeries`. That's not a setting you
+picked — it's what the container inferred from the data. Hand it a
+different kind of series and the axis changes with it.
+
+## A linear value axis
+
+`TimeSeries.byValue(column)` projects onto a **`ValueSeries`** — keyed by
+one of its own numeric columns instead of time. The column must be
+defined, finite, and non-decreasing at every row (think distance in a
+pace curve, or strike in a vol smile — anything that only goes one
+direction). Every draw layer reads it exactly like a `TimeSeries`:
+
+<ChartExample name="learn-09-value-axis" height={230}>
+  <LearnValueAxis />
+</ChartExample>
+
+```ts
+const byElapsed = series
+  .withColumn('elapsed', elapsedMinutes)
+  .byValue('elapsed');
+```
+
+```tsx
+<ChartContainer range={[0, 89]} width={560}>
+  <ChartRow height={200}>
+    <Layers>
+      <LineChart series={byElapsed} column="cpu" axis="pct" />
+    </Layers>
+    <YAxis id="pct" side="right" format=".0%" />
+  </ChartRow>
+</ChartContainer>
+```
+
+If your data is natively value-keyed and never had a time key at all —
+struct-of-arrays samples along a value axis — `ValueSeries.fromColumns`
+builds one directly, the value-axis counterpart of chapter 3's
+`TimeSeries.fromColumns`.
+
+## A category axis
+
+`transposeRow` reads **one row** of a wide series (a column per category)
+and turns it into `CategoryDatum[]` — a bar per category on an ordinal
+axis, new in pond-ts 0.43:
+
+<ChartExample name="learn-09-category-axis" height={230}>
+  <LearnCategoryAxis />
+</ChartExample>
+
+```ts
+// one row, one column per host
+const data = transposeRow(latestCpuByHost(), { at: 'last' });
+// [{ label: 'api-1', value: 0.34 }, { label: 'api-2', value: 0.48 }, …]
+```
+
+```tsx
+<ChartContainer width={560}>
+  <ChartRow height={200}>
+    <Layers>
+      <BarChart categories={data} gap={8} />
+    </Layers>
+    <YAxis id="pct" side="right" format=".0%" min={0} />
+  </ChartRow>
+</ChartContainer>
+```
+
+`BarChart` also accepts a hand-built `CategoryDatum[]` directly — reach
+for `transposeRow` specifically when you already have a wide rollup row
+and want its columns read off automatically instead of restating them.
+
+## A session-aware time axis
+
+This one you've already met — chapter 4's `TradingCalendar` is a **time**
+axis too, just one with closed-market time collapsed out of it:
+
+<ChartExample name="financial-calendar-chart" height={280}>
+  <FinancialCalendarChart />
+</ChartExample>
+
+Full walkthrough: [@pond-ts/financial](../financial/).
+
+## Recap
+
+The x axis follows the data, not a prop you set: a `TimeSeries` draws a
+time axis, `byValue`/`fromColumns` draws a linear value axis,
+`transposeRow` draws a category axis, and a `TimeSeries` paired with a
+`TradingCalendar` draws a session-aware time axis. Every draw layer works
+identically across all four — nothing about `LineChart` or `BarChart`
+changes; only what you hand `<ChartContainer>` does.
+
+That's the whole core vocabulary — nine chapters, one running example,
+every primitive in `@pond-ts/charts`. From here:
+
+- **[Chart types](../charts/index.mdx#the-minimal-api-set--compact-cut)**
+  and the **[Gallery](../charts/gallery)** — `ScatterChart`, `BoxPlot`,
+  and `Candlestick` never starred in this track; that's where you'll meet
+  them.
+- **[Storybook](pathname:///storybook/)** — the systematic, per-prop
+  reference for everything this track only had room to tour.

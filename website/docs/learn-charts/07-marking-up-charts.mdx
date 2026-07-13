@@ -1,0 +1,75 @@
+---
+title: 7. Marking up charts
+sidebar_label: 7. Marking up charts
+sidebar_position: 7
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import LearnAnnotations from '@site/src/examples/learn-07-annotations';
+
+# Marking up charts: annotations and indicators
+
+:::info[You will learn]
+
+- The three annotation primitives: `Region`, `Marker`, `Baseline`
+- Why annotations render in a deliberately different register than data
+- `YAxisIndicator` — a live value pill pinned to an axis edge
+  :::
+
+Everything drawn so far has been **data** — a series, read straight off a
+`column`. This chapter is about marks **you place**: an incident window, a
+deploy instant, a target line.
+
+<ChartExample name="learn-07-annotations" height={280}>
+  <LearnAnnotations />
+</ChartExample>
+
+```tsx
+<Layers>
+  <LineChart series={series} column="cpu" axis="pct" />
+  <Region from={busyStart} to={busyEnd} label="busy" />
+  <Marker at={deployInstant} label="deploy" />
+  <Baseline value={0.4} axis="pct" label="target" />
+  <YAxisIndicator value={latestCpu} axis="pct" />
+</Layers>
+```
+
+- **`<Region from={} to={}>`** — a shaded x-span. An incident window, a
+  trading session, any range you want to call out.
+- **`<Marker at={}>`** — a vertical line at one x. A deploy, an alert fire,
+  any instant.
+- **`<Baseline value={}>`** — a horizontal line at one y. A target, a
+  threshold, an SLA.
+- **`<YAxisIndicator value={}>`** — not an annotation on the plot; a
+  pinned pill at the axis edge showing one live number. Chapter 8 pairs it
+  with a `source` prop for the high-frequency case — a live price tag that
+  updates without re-rendering the whole chart.
+
+All four live inside `<Layers>`, alongside the data layers — annotations
+are just more things in the z-stack, drawn in the order you write them
+(chapter 2).
+
+## Two registers, never mixed
+
+Every annotation renders in the theme's dedicated `annotation` colour — a
+hue **deliberately different** from every data role (`primary`,
+`secondary`, and the rest). The rule: **data and the marks you place never
+share a hue family**, so a placed mark is never mistaken for a series at a
+glance, and a series is never mistaken for something you annotated. Look
+back at the chart above — the cpu line and the three marks read as two
+unmistakably different registers, not four colours competing for
+attention.
+
+## Recap
+
+`Region`/`Marker`/`Baseline` are the three ways to mark a chart up —
+a span, an instant, a threshold — plus `YAxisIndicator` for a pinned live
+value. All four are `Layers` children like any draw layer. Selection,
+depth, and interactively editing or creating marks are deeper topics than
+this chapter covers — see the
+[`Charts/Annotations`](pathname:///storybook/?path=/story/charts-annotations-scenarios--selectable)
+Storybook group for that ground today; a dedicated reference section is
+on the roadmap.
+
+**Next: [Live charts](./live-charts)** — the running example, finally
+live.
