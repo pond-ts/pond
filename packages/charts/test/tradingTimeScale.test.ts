@@ -120,8 +120,12 @@ describe('scaleTradingTime', () => {
     // extra ticks are clock-aligned instants inside a live session — none in
     // the collapsed gap.
     const dense = scale.ticks(10);
-    expect(dense).toContain(S0);
+    // S1 (a mid-domain session open) is always an anchor; S0 may be dropped
+    // as a cramped lead when the runtime-local clock puts the first aligned
+    // instant under half a step away — the first tick still sits in session 0.
     expect(dense).toContain(S1);
+    expect(dense[0]!).toBeGreaterThanOrEqual(S0);
+    expect(dense[0]!).toBeLessThan(S0 + 6 * H);
     expect(dense.length).toBeGreaterThan(2);
     expect(dense.length).toBeLessThanOrEqual(10);
     for (const t of dense) {
@@ -155,9 +159,11 @@ describe('scaleTradingTime', () => {
   });
 
   it('tickFormat labels ticks at the chosen grain; the boundary row carries the rest', () => {
-    // Real session instants so the formats are legible.
-    const jan = Date.UTC(2026, 0, 5, 9, 30);
-    const feb = Date.UTC(2026, 1, 2, 9, 30);
+    // Real session instants so the formats are legible — built in *local*
+    // time, since the ladder buckets and labels by the runtime-local calendar
+    // (a UTC-built 09:30 would be a different local date west of UTC-9:30).
+    const jan = new Date(2026, 0, 5, 9, 30).getTime();
+    const feb = new Date(2026, 1, 2, 9, 30).getTime();
     const cal = segmentProvider([
       [jan, jan + 6 * H],
       [feb, feb + 6 * H],
@@ -185,7 +191,7 @@ describe('scaleTradingTime', () => {
     // cap of 9. The first tick carries the year, the January tick carries the
     // new year, and no other tick repeats it.
     const DAY = 24 * H;
-    const start = Date.UTC(2025, 8, 1) + 14 * H; // Sep 2025 … Apr 2026
+    const start = new Date(2025, 8, 1, 14).getTime(); // Sep 2025 … Apr 2026 (local)
     const daily = segmentProvider(
       Array.from({ length: 240 }, (_, i) => [
         start + i * DAY,

@@ -5,6 +5,7 @@ import {
   boundaryTicks,
   buildTicks,
   majorFormatFor,
+  type TickGranularity,
 } from './tickLadder.js';
 
 /**
@@ -174,9 +175,24 @@ export function scaleTradingTime(
   const hasCalendar = (): boolean => provider.boundaries !== undefined;
 
   /** The ladder result for this domain at `count` — the single source `ticks`,
-   *  `tickFormat`, and `tickBoundaries` all derive from, so the three agree. */
-  const resolved = (count: number) =>
-    buildTicks(provider, sessionOpens(), domain[1], count);
+   *  `tickFormat`, and `tickBoundaries` all derive from, so the three agree.
+   *  Memoized on `(domain, count)`: the three callers (plus gridlines /
+   *  dividers) hit the same resolution per render, and on a wide continuous
+   *  domain re-walking every day-open is the expensive part. */
+  let laddered: {
+    key: string;
+    value: { ticks: number[]; granularity: TickGranularity };
+  } | null = null;
+  const resolved = (count: number) => {
+    const key = `${domain[0]}:${domain[1]}:${count}`;
+    if (laddered?.key !== key) {
+      laddered = {
+        key,
+        value: buildTicks(provider, sessionOpens(), domain[1], count),
+      };
+    }
+    return laddered.value;
+  };
 
   scale.ticks = (count = 10): number[] => {
     const live = totalLive();

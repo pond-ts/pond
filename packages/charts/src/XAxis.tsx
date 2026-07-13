@@ -219,13 +219,14 @@ export function XAxis({
   // The boundary (second) label row — the coarser calendar unit the first-row
   // label omits (the year under month ticks, the month-and-year under day
   // ticks, the date under hour ticks), placed under the first tick of each new
-  // period. Only a ladder-driven time scale supplies it; explicit `ticks` and
-  // an explicit `format` opt out (a custom format may already carry the
-  // context, and custom ticks have no grain).
+  // period. Only a ladder-driven time scale supplies it; explicit `ticks`, an
+  // explicit axis `format`, and a container-level `timeFormat` all opt out (a
+  // custom format owns the whole label, and custom ticks have no grain).
   const boundaryOf =
     xKind === 'time' &&
     customTicks === undefined &&
     format === undefined &&
+    !container.xFormatCustom &&
     'tickBoundaries' in xScale
       ? (xScale as TradingTimeScale).tickBoundaries(xTickCount)
       : undefined;

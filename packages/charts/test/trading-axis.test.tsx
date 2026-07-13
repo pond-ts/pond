@@ -340,6 +340,21 @@ describe('trading-axis tick density derives from plot width', () => {
     expect(boundaries).toEqual(['2025', '2026']);
   });
 
+  it('a container-level timeFormat suppresses the boundary row', () => {
+    // An explicit format owns the whole label — the ladder must not add a
+    // second line under it (same opt-out as an <XAxis format> override).
+    const sessions = yearSessions();
+    const { container: dom } = render(
+      <ChartContainer
+        range={[sessions[0]!.open, sessions[sessions.length - 1]!.close]}
+        width={900}
+        discontinuities={sessionsProvider(sessions)}
+        timeFormat="%Y-%m-%d"
+      />,
+    );
+    expect(dom.querySelectorAll('[data-boundary-label]')).toHaveLength(0);
+  });
+
   it('formatTime labels year-grain ticks with the year — count shared with ticks', () => {
     // ~2 years of dailies at a narrow width → year grain. Before the count was
     // shared, ticks coarsened at 5 (year grain) while formatTime anchored at

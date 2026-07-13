@@ -138,7 +138,10 @@ export function coarsenCalendar(
 
 /** The first clock-aligned `stepMs` multiple at or after `t`, relative to `t`'s
  *  own local midnight — so a 3-hour step lands on 00:00 / 03:00 / 06:00 local,
- *  whatever the session open was. */
+ *  whatever the session open was. Fixed-ms stepping from midnight, so on a DST
+ *  transition day the later anchors drift off the wall-clock grid by the shift
+ *  (labels stay truthful — they format the real instant); exchange-tz grain is
+ *  the already-deferred refinement. */
 function nextAligned(t: number, stepMs: number): number {
   const d = new Date(t);
   const midnight = new Date(
@@ -150,8 +153,9 @@ function nextAligned(t: number, stepMs: number): number {
 }
 
 /**
- * The sub-day anchors at `stepMs`: every session open, plus each clock-aligned
- * step instant strictly inside that session's **live** span. An instant is
+ * The sub-day anchors at `stepMs`: each session open, plus each clock-aligned
+ * step instant strictly inside that session's **live** span. (The caller may
+ * still drop the very first anchor as a cramped lead — see {@link buildTicks}.) An instant is
  * in-session iff live distance-then-offset round-trips it — so a lunch-break
  * gap, an early close, or a collapsed overnight never gets an anchor, and no
  * new provider surface is needed. Bails once `cap` is exceeded (the caller
