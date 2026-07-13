@@ -1699,6 +1699,14 @@ independently built the same `calendar.bars → BoundedSequence` seam.
     returns name their appended column (typed composition — a study over another
     study's output). 8 tests. Adds `@pond-ts/financial` public API + a core type
     export → human-approval gate.
+  - ✅ **Pandas oracle — cross-validation harness (unreleased):** every study is
+    checked bar-for-bar against a **pandas** reference (`scripts/oracle/generate.py`
+    → committed golden `test/fixtures/study-oracle.json` → `study-oracle.test.ts`).
+    CI needs no Python (JSON is committed; regenerate via a venv on definition
+    change). Conventions pinned to match (ema `adjust=False`; Bollinger σ `ddof=0`
+    = population, TA-Lib's). **Phase-2 named indicators (RSI/MACD/ATR) add TA-Lib**
+    to the same harness, documenting deltas (vendor bar-parity is a non-goal).
+    This is the "fully trust the numbers" gate for the whole studies track.
   - **Next (fan-out):** the rest of the #449 first batch — MA-envelope, z-score,
     rolling stdev/min/max/percentile, percent-change — mechanical on the same
     kernel. Then assessment §7.4 Phase-1 breadth (RSI, MACD, ATR, stochastics,
