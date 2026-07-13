@@ -143,6 +143,12 @@ const COARSENING_LADDER: readonly TickGranularity[] = [
  * `count` buckets and returns the first open in each; beyond yearly it decimates
  * every-nth so the axis never crowds. Exported so the container can draw session
  * dividers at the same instants the axis labels.
+ *
+ * `count` is a **cap**, not a target: grains jump by 4–12× up the ladder, so a
+ * small fixed count over-coarsens long spans (a mid-year-anchored 12-month daily
+ * run spans 6 quarter buckets — capped at 5 it collapses to year grain, 2
+ * ticks). Callers size the cap to the room the labels have — the container
+ * derives it from plot width — rather than passing a small constant.
  */
 export function coarsenCalendar(
   opens: readonly number[],

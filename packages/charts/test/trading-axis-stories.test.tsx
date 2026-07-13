@@ -31,6 +31,8 @@ describe('TradingTimeAxis stories render', () => {
       'IntradaySessions',
       'SpacingProportionalVsUniform',
       'WeekendSkip',
+      'YearDaily',
+      'YearDailyNarrow',
     ]);
   });
 

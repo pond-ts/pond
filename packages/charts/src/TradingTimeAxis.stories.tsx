@@ -185,6 +185,57 @@ export const DailyMonths: Story = {
   },
 };
 
+/** A full year of daily candles on a wide (900px) plot — the tick count is
+ *  **width-derived** on a trading axis, so the year lands on **month grain**
+ *  (~12 date labels with dividers under each). At a fixed count of 5 this view
+ *  coarsened to 2–5 ticks regardless of width (the 0.44 Tidal report). */
+export const YearDaily: Story = {
+  render: () => {
+    const s = weekdaySessions(252); // one trading year
+    const bars = candles(s, sessionSeq(s), 60 * MIN);
+    return (
+      <ChartContainer
+        width={900}
+        range={rangeOf(s)}
+        discontinuities={provider(s)}
+        theme={docsTheme}
+      >
+        <ChartRow height={260}>
+          <YAxis id="p" />
+          <Layers>
+            <Candlestick series={bars} axis="p" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/** The same year of daily candles on a narrow (420px) plot — fewer labels fit,
+ *  so the width-derived count steps the grain up the ladder to **quarters**.
+ *  Density follows the room the labels have, not a constant. */
+export const YearDailyNarrow: Story = {
+  render: () => {
+    const s = weekdaySessions(252);
+    const bars = candles(s, sessionSeq(s), 60 * MIN);
+    return (
+      <ChartContainer
+        width={420}
+        range={rangeOf(s)}
+        discontinuities={provider(s)}
+        theme={docsTheme}
+      >
+        <ChartRow height={260}>
+          <YAxis id="p" />
+          <Layers>
+            <Candlestick series={bars} axis="p" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
 /** The `spacing` prop over the `calendar` sugar: **proportional** (top — the
  *  last session is a half-day, so its block is proportionally narrower) vs
  *  **uniform** (bottom — every session is equal width, the TradingView look).

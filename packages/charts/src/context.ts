@@ -160,6 +160,17 @@ export interface ContainerFrame {
    *  shared by `<TimeAxis>` and the cursor-time readout. */
   readonly formatTime: (epochMs: number) => string;
   /**
+   * The shared **x-side tick count** — the `count` every x-side `ticks()` /
+   * `tickFormat()` call passes (`<XAxis>` labels, the canvas x gridlines and
+   * session dividers, {@link formatTime}), so labels, grid, and dividers all
+   * derive from the same instants. A fixed default on a continuous axis;
+   * **width-derived on a trading-time axis**, where the count caps how many
+   * calendar buckets `coarsenCalendar` may keep — a fixed small count would
+   * coarsen any long daily view to year grain (2 ticks) no matter how wide
+   * the plot is.
+   */
+  readonly xTickCount: number;
+  /**
    * Register a draw layer as a tracker source so the container can fan in every
    * series' value at the cursor for `onTrackerChanged`. Keyed by the layer's
    * per-instance slot key; unregister on unmount.

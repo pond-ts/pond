@@ -56,8 +56,10 @@ interface TimeTickable {
  * - a **function** → used as-is (called with epoch ms);
  * - a **specifier string** → `scale.tickFormat(count, specifier)` (one format for
  *   every value), wrapped to take epoch ms;
- * - **`undefined`** → `scale.tickFormat()` — d3's **multi-scale** time format (the
- *   time axis's default; no `count` so it matches `<TimeAxis>` exactly).
+ * - **`undefined`** → `scale.tickFormat(count)` — the scale's default. On a d3
+ *   `scaleTime` that is the **multi-scale** time format (which ignores `count`);
+ *   a trading-time scale picks its **anchor grain** from `count`, so passing the
+ *   axis's count here is what keeps the labels on the same grain as the ticks.
  *
  * The cursor time is epoch ms, so the resolved formatter wraps the d3 `Date`
  * formatter in `new Date(ms)`.
@@ -69,6 +71,8 @@ export function resolveTimeFormat(
 ): (epochMs: number) => string {
   if (typeof format === 'function') return format;
   const tf =
-    format !== undefined ? scale.tickFormat(count, format) : scale.tickFormat();
+    format !== undefined
+      ? scale.tickFormat(count, format)
+      : scale.tickFormat(count);
   return (ms) => tf(new Date(ms));
 }

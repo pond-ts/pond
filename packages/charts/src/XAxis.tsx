@@ -12,7 +12,6 @@ import {
 const TICK_STRIP = 22;
 /** Extra height reserved for an axis `label` line. */
 const LABEL_STRIP = 16;
-const TICK_COUNT = 5;
 
 /** One placed tick — its plot-pixel x and the text to draw. */
 interface PlacedTick {
@@ -116,7 +115,18 @@ export function XAxis({
   if (container === null) {
     throw new Error('<XAxis> must be rendered inside a <ChartContainer>');
   }
-  const { xScale, plotWidth, leftGutter, theme, formatTime, xKind } = container;
+  // `xTickCount` is the container's shared x-side count — the same value the x
+  // gridlines and `formatTime` use, so labels and grid stay on the same instants
+  // (width-derived on a trading-time axis).
+  const {
+    xScale,
+    plotWidth,
+    leftGutter,
+    theme,
+    formatTime,
+    xKind,
+    xTickCount,
+  } = container;
 
   // The crosshair's x-time pill: when the container cursor is `'crosshair'` and a
   // cursor is live in-bounds, pin the hovered time to this axis (covering the
@@ -145,12 +155,12 @@ export function XAxis({
       : xKind === 'time'
         ? resolveTimeFormat(
             xScale as ScaleTime<number, number>,
-            TICK_COUNT,
+            xTickCount,
             format,
           )
         : resolveAxisFormat(
             xScale as ScaleLinear<number, number>,
-            TICK_COUNT,
+            xTickCount,
             format,
           );
 
@@ -203,7 +213,7 @@ export function XAxis({
 
   const rawTicks: PlacedTick[] = customTicks
     ? customTicks.map((t) => ({ x: xScale(t.at), label: t.label }))
-    : (xScale.ticks(TICK_COUNT) as ReadonlyArray<number | Date>).map((d) => ({
+    : (xScale.ticks(xTickCount) as ReadonlyArray<number | Date>).map((d) => ({
         x: xScale(d as number),
         label: fmt(+d),
       }));

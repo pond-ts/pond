@@ -39,9 +39,19 @@ import {
 import { TimeAxis } from './TimeAxis.js';
 import { defaultTheme, type ChartTheme } from './theme.js';
 
-/** Time-axis tick count — matches `<TimeAxis>` so the cursor-time formatter is
- *  calibrated as the time-axis labels are. */
+/** Tick count for a **continuous** (non-trading) x axis — the `ticks(count)`
+ *  request `<TimeAxis>`, the x gridlines, and the cursor-time formatter share
+ *  (as the frame's `xTickCount`). */
 const TIME_TICK_COUNT = 5;
+
+/** Target px of plot width per tick on a **trading-time** axis. That scale's
+ *  `ticks(count)` treats `count` as a **cap on calendar buckets** (see
+ *  `coarsenCalendar` — it picks the finest grain that fits), so the count must
+ *  scale with the room the labels actually have: a fixed 5 coarsens any
+ *  ≳6-month daily view to year grain — 2 ticks on a 900px plot. ~65px fits a
+ *  `%b %d` anchor label at the default font plus breathing room, so a ~900px
+ *  year-long daily view lands on month grain. */
+const TRADING_TICK_PX = 65;
 
 /**
  * Normalize the `range` prop — a `[begin, end]` tuple or a `TimeRange` — to a
@@ -707,6 +717,16 @@ export function ChartContainer({
   );
   const xDiscontinuities =
     resolvedKind === 'time' ? (discontinuities ?? calendarProvider) : undefined;
+  // The shared x-side tick count — labels, x gridlines, session dividers, and
+  // `formatTime` all pass this one value, so they derive from the same instants
+  // (the alignment previously held by three hardcoded constants agreeing).
+  // Trading axis: width-derived, since the trading scale's `count` caps its
+  // calendar buckets rather than targeting a tick total; floored at 2 so a
+  // pre-layout zero width still requests a drawable tick set.
+  const xTickCount =
+    xDiscontinuities !== undefined
+      ? Math.max(2, Math.floor(plotWidth / TRADING_TICK_PX))
+      : TIME_TICK_COUNT;
   const { xScale, formatTime } = useMemo(() => {
     if (resolvedKind === 'category') {
       // Ordinal column-domain axis: a band scale over the category slots. The
@@ -723,24 +743,26 @@ export function ChartContainer({
       const s = scaleLinear().domain([d0, d1]).range([0, plotWidth]);
       return {
         xScale: s,
-        formatTime: resolveAxisFormat(s, TIME_TICK_COUNT, timeFormat),
+        formatTime: resolveAxisFormat(s, xTickCount, timeFormat),
       };
     }
     if (xDiscontinuities !== undefined) {
       // Trading-time axis: closed-market gaps collapse, time proportional within
       // sessions. Same tickFormat surface as scaleTime, so the readout is shared.
+      // `xTickCount` reaches `tickFormat` too: the trading scale picks its anchor
+      // grain from the count, so labels sit on the exact instants the ticks do.
       const s = scaleTradingTime(xDiscontinuities)
         .domain([d0, d1])
         .range([0, plotWidth]);
       return {
         xScale: s,
-        formatTime: resolveTimeFormat(s, TIME_TICK_COUNT, timeFormat),
+        formatTime: resolveTimeFormat(s, xTickCount, timeFormat),
       };
     }
     const s = scaleTime().domain([d0, d1]).range([0, plotWidth]);
     return {
       xScale: s,
-      formatTime: resolveTimeFormat(s, TIME_TICK_COUNT, timeFormat),
+      formatTime: resolveTimeFormat(s, xTickCount, timeFormat),
     };
   }, [
     resolvedKind,
@@ -750,6 +772,7 @@ export function ChartContainer({
     plotWidth,
     timeFormat,
     xDiscontinuities,
+    xTickCount,
   ]);
 
   // The crosshair pixel (see resolveCursorX). A stored hoverX is a *plot* pixel;
@@ -871,6 +894,7 @@ export function ChartContainer({
       onHoverAnnotation,
       onEditAnnotation,
       formatTime,
+      xTickCount,
       registerTrackerSource,
       unregisterTrackerSource,
       registerSelectable,
@@ -925,6 +949,7 @@ export function ChartContainer({
       onHoverAnnotation,
       onEditAnnotation,
       formatTime,
+      xTickCount,
       registerTrackerSource,
       unregisterTrackerSource,
       registerSelectable,

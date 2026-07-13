@@ -320,4 +320,48 @@ describe('coarsenCalendar', () => {
     // …and every divider coincides with a labelled tick (alignment).
     expect(dividers.every((d) => tickSet.has(d))).toBe(true);
   });
+
+  // The Tidal 1-year daily view (charts 0.44 friction report): `count` caps the
+  // calendar buckets, and grains jump 4–12× up the ladder, so a small fixed
+  // count over-coarsens long daily runs. The container now sizes the cap from
+  // plot width instead of passing a constant 5.
+  describe('cap semantics on a year of weekday opens (mid-year anchored)', () => {
+    /** `n` weekday opens (14:00 UTC) from Mon 2025-06-23 — mid-year anchored,
+     *  as a "1Y back from today" trading view is. */
+    const openRun = (n: number): number[] => {
+      const start = Date.UTC(2025, 5, 23);
+      const out: number[] = [];
+      for (let d = 0; out.length < n; d++) {
+        const day = start + d * DAY;
+        const dow = new Date(day).getUTCDay();
+        if (dow !== 0 && dow !== 6) out.push(day + 14 * H);
+      }
+      return out;
+    };
+
+    it('a small cap (the old fixed 5) collapses a year-and-change to 2 year-grain ticks', () => {
+      // ~13 months — what "1 year back from today" renders as in a real UI:
+      // 6 quarter buckets > 5, so a cap of 5 falls through to year grain —
+      // the report's 2-tick axis.
+      const { ticks, granularity } = coarsenCalendar(openRun(280), 5);
+      expect(granularity).toBe('year');
+      expect(ticks.length).toBe(2);
+    });
+
+    it('a width-sized cap keeps a 1-year daily view at month grain', () => {
+      // floor(900px / 65px-per-tick) = 13 — what the container derives for the
+      // report's ~900px repro. A 12-month run spans 13 month buckets
+      // (Jun'25…Jun'26 inclusive), which fit exactly.
+      const { ticks, granularity } = coarsenCalendar(openRun(260), 13);
+      expect(granularity).toBe('month');
+      expect(ticks.length).toBeGreaterThanOrEqual(12);
+      expect(ticks.length).toBeLessThanOrEqual(13);
+      // Each tick is the first open of a distinct local month.
+      const monthOf = (t: number) => {
+        const dd = new Date(t);
+        return dd.getFullYear() * 12 + dd.getMonth();
+      };
+      expect(new Set(ticks.map(monthOf)).size).toBe(ticks.length);
+    });
+  });
 });
