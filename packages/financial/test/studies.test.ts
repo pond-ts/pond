@@ -58,6 +58,17 @@ describe('sma', () => {
       /collides/,
     );
   });
+
+  it('period larger than the series → every row undefined, length kept', () => {
+    const r = sma(bars([10, 20, 30]), { period: 5 });
+    expect(r.length).toBe(3);
+    expect(col(r, 'sma')).toEqual([undefined, undefined, undefined]);
+  });
+
+  it('period 1 on a single bar is that bar', () => {
+    const r = sma(bars([42]), { period: 1 });
+    expect(col(r, 'sma')).toEqual([42]);
+  });
 });
 
 describe('ema', () => {

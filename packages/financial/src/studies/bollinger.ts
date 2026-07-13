@@ -7,7 +7,7 @@ import { DEFAULT_SOURCE } from '../contract/columns.js';
 import {
   assertNoColumn,
   assertPeriod,
-  rollingValues,
+  rollingColumns,
 } from '../kernels/rolling.js';
 
 export interface BollingerOptions<
@@ -52,8 +52,17 @@ export function bollinger<
     assertNoColumn(wide, name);
   }
 
-  const middle = rollingValues(wide, column, 'avg', options.period);
-  const sd = rollingValues(wide, column, 'stdev', options.period);
+  // One rolling pass reduces both the middle (avg) and the band width (stdev).
+  const rolled = rollingColumns(
+    wide,
+    {
+      middle: { from: column, using: 'avg' },
+      sd: { from: column, using: 'stdev' },
+    },
+    options.period,
+  );
+  const middle = rolled['middle']!;
+  const sd = rolled['sd']!;
   // σ = 0 (a flat window) has no meaningful band — emit undefined, matching
   // `TimeSeries.baseline`, so downstream "outside the band" tests don't fire on
   // every bar of a flat stretch.

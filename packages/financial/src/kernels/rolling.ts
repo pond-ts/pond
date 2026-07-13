@@ -38,11 +38,36 @@ export function assertNoColumn(
 }
 
 /**
- * Row-aligned values of a trailing **count-window** reducer over `column` — an
- * N-bar rolling statistic, one value per input row, `undefined` for the first
- * `period - 1` warm-up rows (the length-preserving convention). Reuses core's
- * `rolling({ count })`; the bar-count window is correct across session gaps
- * where a duration window would span the wrong number of bars.
+ * Row-aligned columns from a **single** trailing count-window pass: each named
+ * spec (`{ from, using }`) becomes an array of one value per input row,
+ * `undefined` for the first `period - 1` warm-up rows (length-preserving). One
+ * `rolling` scan for all specs (so a multi-output study like Bollinger reduces
+ * avg + stdev in one pass); the bar-count window is correct across session gaps.
+ */
+export function rollingColumns(
+  series: TimeSeries<SeriesSchema>,
+  specs: Record<string, { from: string; using: RollingReducer }>,
+  period: number,
+): Record<string, Array<number | undefined>> {
+  const rolled = series.rolling(
+    { count: period },
+    specs as AggregateOutputMap<SeriesSchema>,
+    { minSamples: period },
+  );
+  const events = rolled.events;
+  const out: Record<string, Array<number | undefined>> = {};
+  for (const name of Object.keys(specs)) {
+    out[name] = events.map((event) => {
+      const v = (event.data() as Record<string, unknown>)[name];
+      return typeof v === 'number' ? v : undefined;
+    });
+  }
+  return out;
+}
+
+/**
+ * Row-aligned values of a single trailing count-window reducer over `column` —
+ * the one-column case of {@link rollingColumns} (SMA, rolling stdev/min/max/…).
  */
 export function rollingValues(
   series: TimeSeries<SeriesSchema>,
@@ -50,15 +75,9 @@ export function rollingValues(
   reducer: RollingReducer,
   period: number,
 ): Array<number | undefined> {
-  const rolled = series.rolling(
-    { count: period },
-    {
-      value: { from: column, using: reducer },
-    } as AggregateOutputMap<SeriesSchema>,
-    { minSamples: period },
-  );
-  return rolled.events.map((event) => {
-    const v = (event.data() as Record<string, unknown>)['value'];
-    return typeof v === 'number' ? v : undefined;
-  });
+  return rollingColumns(
+    series,
+    { value: { from: column, using: reducer } },
+    period,
+  )['value']!;
 }
