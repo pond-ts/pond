@@ -246,6 +246,20 @@ describe('boundaryTicks — the second-row flags', () => {
     expect(boundaryTicks(ticks, 'hour3')).toEqual([day1, day2]);
   });
 
+  it('day/week grain boundaries on the year, not the month (no repeated unit)', () => {
+    // A `Jan 05` label already carries the month — the boundary row adds only
+    // the year, and only when it changes (plus the first tick).
+    expect(boundaryGrainFor('day')).toBe('year');
+    expect(boundaryGrainFor('week')).toBe('year');
+    const ticks = [
+      new Date(2025, 11, 30, 9, 30).getTime(),
+      new Date(2025, 11, 31, 9, 30).getTime(),
+      new Date(2026, 0, 2, 9, 30).getTime(),
+      new Date(2026, 0, 5, 9, 30).getTime(),
+    ];
+    expect(boundaryTicks(ticks, 'day')).toEqual([ticks[0], ticks[2]]);
+  });
+
   it('year grain has no boundary row', () => {
     expect(boundaryGrainFor('year')).toBeUndefined();
     const ticks = [

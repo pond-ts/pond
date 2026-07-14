@@ -50,7 +50,8 @@ and type-level changes; patch bumps are strictly additive.
   the finest grain that fits the width-derived cap — and renders **two-tier labels**:
   a first row at the tick grain (`14:00`, `Feb 02`, `Feb`, `2026`) plus a
   **boundary row** carrying the coarser context the first row omits (the date
-  under hours, `Jan 2026` under days, the year under months), shown once under
+  under clock ticks, the year under day/week/month ticks — never a unit the
+  first row already shows), shown once under
   the first tick of each new period. Hour anchors are generated in **live**
   trading time, so none lands in a collapsed gap, an early close, or a lunch
   break. `TradingTimeScale` gains `tickBoundaries(count)`; a cramped leading
