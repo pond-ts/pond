@@ -12,15 +12,15 @@ import { story, waitForCanvasPaint } from './support.js';
  * are panel- and time-driven, so they're intentionally not baselined.
  */
 const cases: ReadonlyArray<readonly [id: string, file: string]> = [
-  ['charts-cursors-scenarios--cursor-sync', 'interactions-cursor-sync.png'], // line (default)
-  ['charts-cursors-scenarios--point-cursor', 'interactions-point-cursor.png'], // point
-  ['charts-cursors-scenarios--flag-readout', 'interactions-flag-readout.png'], // flag
+  ['cursors-scenarios--cursor-sync', 'interactions-cursor-sync.png'], // line (default)
+  ['cursors-scenarios--point-cursor', 'interactions-point-cursor.png'], // point
+  ['cursors-scenarios--flag-readout', 'interactions-flag-readout.png'], // flag
   [
-    'charts-cursors-scenarios--inline-readout',
+    'cursors-scenarios--inline-readout',
     'interactions-inline-readout.png',
   ], // inline
-  ['charts-cursors-scenarios--formats', 'interactions-formats.png'], // format → readout (multi)
-  ['charts-cursors-scenarios--cursor-time', 'interactions-cursor-time.png'], // time atop readout
+  ['cursors-scenarios--formats', 'interactions-formats.png'], // format → readout (multi)
+  ['cursors-scenarios--cursor-time', 'interactions-cursor-time.png'], // time atop readout
 ];
 
 test.describe('Charts/Cursors/Scenarios', () => {
@@ -73,7 +73,7 @@ test.describe('Charts/Cursors/Scenarios', () => {
     page.on('console', (m) => {
       if (m.type() === 'error') errors.push(m.text());
     });
-    await page.goto(story('charts-cursors-scenarios--controlled-cursor'));
+    await page.goto(story('cursors-scenarios--controlled-cursor'));
     // The cursor's SVG marks render from the controlled position (zero-width
     // line ⇒ gate on 'attached', not the default 'visible').
     await page

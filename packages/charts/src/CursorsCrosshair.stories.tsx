@@ -35,7 +35,7 @@ const PIN = BASE + 40 * STEP;
 const s = twoSeries();
 
 const meta = {
-  title: 'Charts/Cursors/Crosshair',
+  title: 'Cursors/Crosshair',
   parameters: { layout: 'centered' },
 } satisfies Meta;
 export default meta;

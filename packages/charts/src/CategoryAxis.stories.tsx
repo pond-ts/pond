@@ -18,7 +18,7 @@ import type { SelectInfo } from './context.js';
  * once per category. Colour per category with `binColors`.
  */
 const meta = {
-  title: 'Charts/CategoryAxis',
+  title: 'Axes/CategoryAxis',
   parameters: { layout: 'centered' },
 } satisfies Meta;
 

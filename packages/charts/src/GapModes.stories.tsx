@@ -40,7 +40,7 @@ function sineWithGap() {
 }
 
 const meta = {
-  title: 'Charts/GapModes',
+  title: 'Gaps',
   parameters: { layout: 'centered' },
 } satisfies Meta;
 

@@ -36,7 +36,7 @@ function Chart({ children }: { children: ReactNode }) {
 }
 
 const meta = {
-  title: 'Charts/Annotations/Marker',
+  title: 'Annotations/Marker',
   parameters: { layout: 'centered' },
 } satisfies Meta;
 export default meta;

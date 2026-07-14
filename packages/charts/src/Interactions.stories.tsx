@@ -39,7 +39,7 @@ function demo(phase = 0, amp = 40, mid = 50) {
  * a value flag stacked near the top.
  */
 const meta = {
-  title: 'Charts/Cursors/Scenarios',
+  title: 'Cursors/Scenarios',
   parameters: { layout: 'centered' },
 } satisfies Meta;
 

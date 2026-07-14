@@ -30,7 +30,7 @@ import { docsTheme } from './docs-theme.fixture.js';
  */
 
 const meta = {
-  title: 'Charts/TradingTimeAxis',
+  title: 'Axes/TradingTimeAxis',
   parameters: { layout: 'centered' },
 } satisfies Meta;
 export default meta;

@@ -21,7 +21,7 @@ import { docsTheme } from './docs-theme.fixture.js';
 const W = 620;
 
 const meta = {
-  title: 'Charts/Indicators/Y Axis',
+  title: 'Indicators/Y Axis',
   parameters: { layout: 'centered' },
 } satisfies Meta;
 export default meta;

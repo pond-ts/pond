@@ -32,7 +32,7 @@ import { docsTheme } from './docs-theme.fixture.js';
  */
 
 const meta = {
-  title: 'Charts/TimeAxisTicks',
+  title: 'Axes/TimeAxisTicks',
   parameters: { layout: 'centered' },
 } satisfies Meta;
 export default meta;

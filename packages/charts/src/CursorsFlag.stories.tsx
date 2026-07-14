@@ -53,7 +53,7 @@ function Chart({
 }
 
 const meta = {
-  title: 'Charts/Cursors/Flag',
+  title: 'Cursors/Flag',
   parameters: { layout: 'centered' },
 } satisfies Meta;
 export default meta;

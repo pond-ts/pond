@@ -34,7 +34,7 @@ function Chart({ children }: { children: ReactNode }) {
 }
 
 const meta = {
-  title: 'Charts/Annotations/Region',
+  title: 'Annotations/Region',
   parameters: { layout: 'centered' },
 } satisfies Meta;
 export default meta;

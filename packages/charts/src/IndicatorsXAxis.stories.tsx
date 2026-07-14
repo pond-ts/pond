@@ -33,7 +33,7 @@ const W = 620;
 const at = (i: number) => BASE + i * STEP;
 
 const meta = {
-  title: 'Charts/Indicators/X Axis',
+  title: 'Indicators/X Axis',
   parameters: { layout: 'centered' },
 } satisfies Meta;
 export default meta;

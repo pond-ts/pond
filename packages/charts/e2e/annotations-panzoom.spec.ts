@@ -20,7 +20,7 @@ import { story, waitForCanvasPaint } from './support.js';
  * capture must not swallow the select.
  */
 
-const STORY = 'charts-annotations-scenarios--pan-zoom-select';
+const STORY = 'annotations-scenarios--pan-zoom-select';
 // Marker is at index 32 of 40 (fraction 0.8); the region spans 14..24 (centre 19
 // → 0.475). 0.9 is clear of both marks (empty plot). Vertically centred.
 const MARKER_FRAC = 32 / 40;

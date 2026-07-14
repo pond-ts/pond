@@ -17,7 +17,7 @@ const W = 560;
 const s = twoSeries();
 
 const meta = {
-  title: 'Charts/Cursors/Point',
+  title: 'Cursors/Point',
   parameters: { layout: 'centered' },
 } satisfies Meta;
 export default meta;

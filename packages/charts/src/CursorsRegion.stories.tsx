@@ -30,7 +30,7 @@ import {
  * collapses and it crops to the live session(s). **Hover the plot** to see it.
  */
 const meta = {
-  title: 'Charts/Cursors/Region',
+  title: 'Cursors/Region',
   parameters: { layout: 'centered' },
 } satisfies Meta;
 export default meta;

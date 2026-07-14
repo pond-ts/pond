@@ -110,7 +110,7 @@ function CssVarThemedChart() {
 }
 
 const meta = {
-  title: 'Charts/Theming',
+  title: 'Theming',
   parameters: { layout: 'padded' },
 } satisfies Meta;
 
