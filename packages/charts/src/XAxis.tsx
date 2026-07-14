@@ -1,5 +1,7 @@
 import { Fragment, useContext } from 'react';
+import { scaleLinear } from 'd3-scale';
 import type { ScaleLinear, ScaleTime } from 'd3-scale';
+import { derivedTicks, type AxisTransform } from './derivedTicks.js';
 import { ContainerContext } from './context.js';
 import { axisPillStyle } from './chip.js';
 import type { TradingTimeScale } from './tradingTimeScale.js';
@@ -15,6 +17,10 @@ const TICK_STRIP = 22;
 const LABEL_STRIP = 16;
 /** Extra height reserved for the boundary (second) label row. */
 const BOUNDARY_STRIP = 15;
+/** Minimum pixel gap between derived-unit (`transform`) ticks — the room a
+ *  short numeric label needs plus breathing space, in the spirit of the
+ *  ladder's per-tick budget (a hair tighter: derived labels are short). */
+const TRANSFORM_TICK_PX = 48;
 
 /** One placed tick — its plot-pixel x, the text to draw, and (on a time axis)
  *  the boundary-row text under it when this tick opens a new coarser period. */
@@ -84,6 +90,23 @@ export interface XAxisProps {
    */
   ticks?: ReadonlyArray<{ readonly at: number; readonly label: string }>;
   /**
+   * Relabel this axis into a **derived unit on the same scale** — a second
+   * tick layout, not a second scale (the pixel mapping never changes). E.g. a
+   * BS-delta strip under a std-moneyness chart (`transform={{ to: sigmaToDelta,
+   * from: deltaToSigma }}`) or a moneyness axis over a strike chart
+   * (`transform={{ to: (k) => k / spot, from: (m) => m * spot }}`). `to`/`from`
+   * are monotonic inverses (either direction); they may be **nonlinear** —
+   * ticks are nice derived-unit values at mixed 1-2-5 step sizes, admitted
+   * wherever they keep pixel room, so a span the transform compresses gets
+   * coarser ticks and a span it stretches gets finer ones. `format` (or the
+   * d3 number default) formats the derived values; the cursor pill and marker
+   * indicators on this axis read in the derived unit too. Ignored on a
+   * category axis; explicit {@link ticks} win. Typically used on a second
+   * `<XAxis>` stacked with the primary one — declaration order places the
+   * strips; gridlines stay on the container's own (primary) ticks.
+   */
+  transform?: AxisTransform;
+  /**
    * Horizontal placement of each tick label relative to its tick.
    * - **`'center'` (default)** — every label centred on its tick. Note the
    *   first/last labels can then extend past the plot edges (the strip doesn't
@@ -114,6 +137,7 @@ export function XAxis({
   side = 'bottom',
   height,
   ticks: customTicks,
+  transform,
   align = 'center',
 }: XAxisProps = {}) {
   const container = useContext(ContainerContext);
@@ -147,27 +171,58 @@ export function XAxis({
 
   const annotationColor = theme.annotation?.color ?? '#0d9488';
 
+  // Derived-unit (`transform`) layout: nice ticks in the derived unit at
+  // mixed step sizes, admitted where they keep pixel room (see derivedTicks).
+  // Explicit `ticks` win; a category axis has no numeric unit to derive from.
+  const derived =
+    transform !== undefined && xKind !== 'category' && customTicks === undefined
+      ? derivedTicks(
+          transform,
+          (xScale as { domain(): number[] }).domain() as [number, number],
+          (v) => xScale(v),
+          plotWidth,
+          TRANSFORM_TICK_PX,
+        )
+      : null;
+  // Formatter for derived-unit values — `format` resolved against a u-space
+  // linear scale (so `'+.2f'` and the d3 number default both work).
+  const uFmt: ((u: number) => string) | null =
+    transform !== undefined && xKind !== 'category'
+      ? (() => {
+          const [d0, d1] = (xScale as { domain(): number[] }).domain() as [
+            number,
+            number,
+          ];
+          const u = [transform.to(d0), transform.to(d1)].sort((a, b) => a - b);
+          return resolveAxisFormat(scaleLinear().domain(u), xTickCount, format);
+        })()
+      : null;
+
   // Tick formatter: an explicit `format` is resolved against the axis kind
   // (a time specifier through the time scale, a number specifier through the
   // value scale); otherwise the container's shared formatter — the one the
-  // cursor readout uses, so a tick and the cursor read identically.
+  // cursor readout uses, so a tick and the cursor read identically. On a
+  // transformed axis every readout (cursor pill, marker indicator) speaks the
+  // **derived unit** — the axis's own language.
   const fmt: (value: number) => string =
-    // A category axis labels by name (the container's `formatTime` = the band
-    // scale's label lookup); a d3 number/time `format` can't name a category, so
-    // it's ignored here (customize the labels in the `categories` data instead).
-    format === undefined || xKind === 'category'
-      ? formatTime
-      : xKind === 'time'
-        ? resolveTimeFormat(
-            xScale as ScaleTime<number, number>,
-            xTickCount,
-            format,
-          )
-        : resolveAxisFormat(
-            xScale as ScaleLinear<number, number>,
-            xTickCount,
-            format,
-          );
+    transform !== undefined && uFmt !== null && xKind !== 'category'
+      ? (v) => uFmt(transform.to(v))
+      : // A category axis labels by name (the container's `formatTime` = the band
+        // scale's label lookup); a d3 number/time `format` can't name a category, so
+        // it's ignored here (customize the labels in the `categories` data instead).
+        format === undefined || xKind === 'category'
+        ? formatTime
+        : xKind === 'time'
+          ? resolveTimeFormat(
+              xScale as ScaleTime<number, number>,
+              xTickCount,
+              format,
+            )
+          : resolveAxisFormat(
+              xScale as ScaleLinear<number, number>,
+              xTickCount,
+              format,
+            );
 
   // Marker annotations that opted into an axis indicator (`<Marker indicator>`)
   // pin their **time** to this shared x-axis — a pill at `at`, in the annotation
@@ -225,19 +280,46 @@ export function XAxis({
   const boundaryOf =
     xKind === 'time' &&
     customTicks === undefined &&
+    transform === undefined &&
     format === undefined &&
     !container.xFormatCustom &&
     'tickBoundaries' in xScale
       ? (xScale as TradingTimeScale).tickBoundaries(xTickCount)
       : undefined;
 
+  // Derived ticks pass a **label-honesty filter**: the fill can descend below
+  // the format's resolution (a delta tick at u = 0.498 renders as "+0.50" under
+  // `+.2f` — a lie about its position), so a tick survives only when its
+  // formatted label parses back to a value that maps to (±1px of) the tick's
+  // own pixel. This also caps density at the format's precision and drops
+  // would-be duplicate labels. Non-numeric labels (a custom format function)
+  // are trusted as-is.
+  const honestDerived = (): PlacedTick[] => {
+    const out: PlacedTick[] = [];
+    const seen = new Set<string>();
+    for (const t of derived!) {
+      const text = uFmt!(t.u);
+      if (seen.has(text)) continue;
+      const back = parseFloat(text.replace(/\u2212/g, '-').replace(/,/g, ''));
+      if (Number.isFinite(back)) {
+        const bx = xScale(transform!.from(back));
+        if (!Number.isFinite(bx) || Math.abs(bx - t.x) > 1) continue;
+      }
+      seen.add(text);
+      out.push({ x: t.x, label: text });
+    }
+    return out;
+  };
+
   const rawTicks: PlacedTick[] = customTicks
     ? customTicks.map((t) => ({ x: xScale(t.at), label: t.label }))
-    : (xScale.ticks(xTickCount) as ReadonlyArray<number | Date>).map((d) => ({
-        x: xScale(d as number),
-        label: fmt(+d),
-        boundary: boundaryOf?.(+d),
-      }));
+    : derived !== null
+      ? honestDerived()
+      : (xScale.ticks(xTickCount) as ReadonlyArray<number | Date>).map((d) => ({
+          x: xScale(d as number),
+          label: fmt(+d),
+          boundary: boundaryOf?.(+d),
+        }));
   // A category axis ticks once per category; thin + truncate its labels when they
   // crowd (an explicit `customTicks` axis keeps its labels verbatim).
   const placed: PlacedTick[] =

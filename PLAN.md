@@ -1664,6 +1664,24 @@ independently built the same `calendar.bars → BoundedSequence` seam.
     where coarser context lives, so month boundaries format `%b %Y`.
     Systematic story matrix `Charts/TimeAxisTicks` (one story per rung,
     trading + continuous, narrow variants).
+  - ✅ **Dual x-axes — two tick layouts on one shared scale
+    (`feat/dual-x-axes`, unreleased).** Owner-directed (Tidal / legacy
+    ChartTool parity, reference screenshots 2026-07-14): a second `<XAxis>`
+    stacks by declaration order (proven + pinned — was supported by
+    construction but never exercised), and the new `transform` prop
+    (`{ to, from }` monotonic inverses, may be **nonlinear**) relabels an
+    axis into a derived unit: strike↔moneyness top axis, BS-delta strip
+    under a σ chart. Tick selection = pixel-aware multi-resolution fill
+    (`derivedTicks.ts`): 1-2-5 steps coarsest→finest, admitted where ≥48px
+    of room remains — a compressed span gets coarse ticks, a stretched span
+    finer ones (delta wings pick up 0.45/0.48 while the middle stays at
+    0.10). Design rules: **label honesty** (a tick whose formatted label
+    parses back to a different pixel is dropped — the fill may descend past
+    the format's resolution, and "+0.50" at u=0.498 is a lie), an empty
+    ladder level does NOT stop the walk (nonlinear gaps have tiny u-spans;
+    three consecutive empty levels do), gridlines stay on the primary axis,
+    one domain so pan/zoom moves both layouts for free. Resolves the
+    vol-smile relabelled-axis friction item.
   - **Still deferred (documented, none blocking):** `neighbourSpans` point-key slot
     widths on the discontinuous axis (interval-keyed bars from
     `aggregate(barSequence)` — the primary path — are immune); exact **exchange-tz**

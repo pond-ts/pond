@@ -44,6 +44,21 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts:** **dual x-axes** — two tick layouts on one shared scale. A second
+  `<XAxis>` stacks by declaration order (above/below the plot, either side,
+  same side twice); the new **`transform`** prop (`{ to, from }`, exported
+  `AxisTransform`) relabels an axis into a derived unit: strike ↔ moneyness on
+  a top axis, or a nonlinear BS-delta strip under a std-moneyness chart. Ticks
+  are nice derived-unit values chosen by a pixel-aware multi-resolution fill
+  (1-2-5 steps, coarsest first, admitted where they keep room), so a span the
+  transform compresses gets coarse ticks and a stretched span picks up finer
+  ones — and a label-honesty filter drops any tick whose formatted label would
+  lie about its position. Gridlines stay on the container's primary ticks; the
+  cursor pill on a transformed axis reads in the derived unit. Stories under
+  `Charts/Axes/DualX`.
+
 ### Fixed
 
 - **charts:** annotation label chips now clip to the plot: a marker whose pole
