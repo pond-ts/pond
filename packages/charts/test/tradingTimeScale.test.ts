@@ -180,7 +180,10 @@ describe('scaleTradingTime', () => {
     const fmt = s.tickFormat(10);
     expect(fmt(new Date(jan))).toMatch(/^\d{2}:\d{2}$/);
     const boundary = s.tickBoundaries(10);
-    expect(boundary(jan)).toMatch(/Jan 05/);
+    // The first tick is not a crossing — the left-edge context is pinned via
+    // boundaryContext (a property of the domain start, not of any tick).
+    expect(boundary(jan)).toBeUndefined();
+    expect(s.boundaryContext(10)).toMatch(/Jan 05/);
     expect(boundary(feb)).toMatch(/Feb 02/);
     const midSession = dense.find((t) => t !== jan && t < jan + 6 * H)!;
     expect(boundary(midSession)).toBeUndefined();
@@ -205,9 +208,10 @@ describe('scaleTradingTime', () => {
     const boundary = s.tickBoundaries(9);
     expect(s.tickFormat(9)(new Date(ticks[1]!))).toMatch(/^[A-Z][a-z]{2}$/);
     const labels = ticks.map((t) => boundary(t));
-    expect(labels[0]).toBe('2025'); // the first tick always carries context
+    expect(labels[0]).toBeUndefined(); // context is pinned, not on the tick
+    expect(s.boundaryContext(9)).toBe('2025'); // the domain start's year
     expect(labels.filter((l) => l === '2026')).toHaveLength(1); // the year turn
-    expect(labels.filter((l) => l !== undefined)).toHaveLength(2);
+    expect(labels.filter((l) => l !== undefined)).toHaveLength(1);
   });
 
   it('a fractional pan/zoom domain still labels every tick at the grain', () => {

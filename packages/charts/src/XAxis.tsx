@@ -295,6 +295,15 @@ export function XAxis({
     'tickBoundaries' in xScale
       ? (xScale as TradingTimeScale).tickBoundaries(xTickCount)
       : undefined;
+  // The pinned left-edge **context** label — what period the domain starts in
+  // (`Jan 01` over an intraday axis, the year over a month axis). A property
+  // of the domain, not of any tick: anchoring it to the first tick made it
+  // hop tick-to-tick on a live sliding window. Crossing labels ride their
+  // ticks and **push it off** the left edge as they approach (below).
+  const boundaryContext =
+    boundaryOf !== undefined && 'boundaryContext' in xScale
+      ? (xScale as TradingTimeScale).boundaryContext(xTickCount)
+      : undefined;
 
   // Derived ticks pass a **label-honesty filter**: the fill can descend below
   // the format's resolution (a delta tick at u = 0.498 renders as "+0.50" under
@@ -343,7 +352,34 @@ export function XAxis({
   // Per-lane vertical step for stacked pills; grow the strip to fit the stack.
   const PILL_LANE_H = theme.font.size + 6;
   // Any boundary label in view grows the strip by one row (like pill lanes do).
-  const hasBoundary = placed.some((t) => t.boundary !== undefined);
+  const hasBoundary =
+    boundaryContext !== undefined ||
+    placed.some((t) => t.boundary !== undefined);
+  // The pinned context anchors at the plot's left edge (the y-axis line) with
+  // the SAME alignment as the tick labels — centred on it in `center` mode
+  // (exactly where a first-tick label at x=0 sat, half into the gutter by the
+  // same documented rule), left-anchored in `auto`, beside the line in
+  // `right`. As the leftmost crossing label slides toward the edge it would
+  // collide, so the context CULLS once the crossing label's left edge reaches
+  // the context's right edge (plus a gap) — no overlap, and nothing slides
+  // loose into the gutter. Widths from the same rough glyph metric the pills
+  // use; the crossing's label is centred on its tick.
+  const charW = theme.font.size * 0.62;
+  const contextWidth = (boundaryContext?.length ?? 0) * charW;
+  const contextRight =
+    align === 'center'
+      ? contextWidth / 2
+      : align === 'right'
+        ? 4 + contextWidth
+        : contextWidth;
+  const firstCrossing = placed.find((t) => t.boundary !== undefined);
+  const crossingLeft = firstCrossing
+    ? align === 'right'
+      ? firstCrossing.x + 4
+      : firstCrossing.x - (firstCrossing.boundary!.length * charW) / 2
+    : Infinity;
+  const showContext =
+    boundaryContext !== undefined && crossingLeft > contextRight + 6;
   const stripHeight =
     (height ?? TICK_STRIP + (label ? LABEL_STRIP : 0)) +
     (hasBoundary ? BOUNDARY_STRIP : 0) +
@@ -424,6 +460,23 @@ export function XAxis({
           </Fragment>
         );
       })}
+      {showContext && (
+        <div
+          data-boundary-label
+          data-boundary-context
+          style={{
+            position: 'absolute',
+            left: `${align === 'right' ? 4 : 0}px`,
+            [onTop ? 'bottom' : 'top']:
+              `${(align === 'right' ? 2 : 6) + theme.font.size + 3}px`,
+            transform: align === 'center' ? 'translateX(-50%)' : 'none',
+            whiteSpace: 'nowrap',
+            opacity: 0.75,
+          }}
+        >
+          {boundaryContext}
+        </div>
+      )}
       {label !== undefined && (
         <div
           style={{

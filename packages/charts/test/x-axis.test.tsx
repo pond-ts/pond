@@ -236,6 +236,65 @@ describe('<XAxis> — the placeable x axis', () => {
     expect(mark.style.background).toBe('rgb(76, 143, 189)');
   });
 
+  it('the boundary context pins to the left edge; an approaching crossing culls it', () => {
+    // Mid-day window: context "Jan 05" pinned at 0 (no crossing in view).
+    const midday = render(
+      <ChartContainer
+        range={[
+          new Date(2026, 0, 5, 9, 0).getTime(),
+          new Date(2026, 0, 5, 15, 0).getTime(),
+        ]}
+        width={480}
+        showAxis={false}
+      >
+        <ChartRow height={120}>
+          <Layers>
+            <LineChart series={timeSeries()} column="v" />
+          </Layers>
+        </ChartRow>
+        <XAxis />
+      </ChartContainer>,
+    );
+    const ctx1 = midday.container.querySelector(
+      '[data-boundary-context]',
+    ) as HTMLElement;
+    expect(ctx1.textContent).toBe('Jan 05');
+    // Same alignment as the tick labels: centred on the y-axis line in the
+    // default `center` mode.
+    expect(ctx1.style.left).toBe('0px');
+    expect(ctx1.style.transform).toBe('translateX(-50%)');
+    midday.unmount();
+    // Window straddling midnight with the crossing tick near the left edge:
+    // the crossing's "Jan 06" label pushes the pinned "Jan 05" context off.
+    const straddle = render(
+      <ChartContainer
+        range={[
+          new Date(2026, 0, 5, 23, 55).getTime(),
+          new Date(2026, 0, 6, 4, 0).getTime(),
+        ]}
+        width={480}
+        showAxis={false}
+      >
+        <ChartRow height={120}>
+          <Layers>
+            <LineChart series={timeSeries()} column="v" />
+          </Layers>
+        </ChartRow>
+        <XAxis />
+      </ChartContainer>,
+    );
+    // The crossing's "Jan 06" label sits nearly on the edge — rendering the
+    // context would collide, so it CULLS (nothing slides into the gutter).
+    expect(
+      straddle.container.querySelector('[data-boundary-context]'),
+    ).toBeNull();
+    const crossing = Array.from(
+      straddle.container.querySelectorAll('[data-boundary-label]'),
+    ).find((el) => !el.hasAttribute('data-boundary-context')) as HTMLElement;
+    expect(crossing.textContent).toBe('Jan 06');
+    straddle.unmount();
+  });
+
   it('a decreasing transform still places ticks left-to-right', () => {
     const { container } = render(
       <ChartContainer range={[0, 100]} width={480} showAxis={false}>

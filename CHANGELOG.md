@@ -44,6 +44,18 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **charts:** the boundary (second-row) axis label's **context** now pins to
+  the plot's left edge instead of riding the first tick: it shows the period
+  the *domain start* is in, and a crossing label sliding toward the edge
+  pushes it off (the sticky-header behavior). On a live sliding window the
+  old first-tick anchoring made `Jan 01` hop tick-to-tick as ticks scrolled
+  out; pinned, it stays put until the period actually changes. Crossing
+  labels (day/year turns) still ride their ticks — including a first tick
+  whose period differs from the domain start's. `TradingTimeScale` gains
+  `boundaryContext(count)`; `tickBoundaries` now labels crossings only.
+
 ### Fixed
 
 - **charts:** a live (sliding-window) time axis no longer flickers between two

@@ -329,23 +329,33 @@ export function boundaryFormatFor(g: TickGranularity): string {
 }
 
 /**
- * Which of `ticks` (at grain `granularity`) carry a boundary label: the first
- * tick always (the reader needs context immediately), then every tick whose
- * boundary-grain bucket differs from the previous tick's — i.e. the first tick
- * of each new day / year. Returns the boundary-flagged tick values;
- * empty when the grain has no boundary row (year grain).
+ * Which of `ticks` (at grain `granularity`) carry a boundary label: every tick
+ * whose boundary-grain bucket differs from the previous tick's — i.e. a
+ * **crossing**, the first tick of a new day / year. The first tick is *not*
+ * automatically flagged: the reader's left-edge context is the pinned
+ * {@link TradingTimeScale.boundaryContext} label (a property of the domain
+ * start, not of any tick — anchoring it to the first tick made it hop
+ * tick-to-tick on a live sliding window). Empty when the grain has no
+ * boundary row (year grain).
  */
 export function boundaryTicks(
   ticks: readonly number[],
   granularity: TickGranularity,
+  domainStart?: number,
 ): number[] {
   const bg = boundaryGrainFor(granularity);
   if (bg === undefined) return [];
   const out: number[] = [];
-  let prev: number | undefined;
+  // Seed with the domain start's bucket when given: a first tick in a
+  // different period than the left edge IS a crossing (a 23:55-anchored
+  // window whose cramped 23:55 lead was dropped still marks 00:00 as the
+  // day turn); a first tick in the same period is not (no tick-hopping
+  // context on a live window).
+  let prev: number | undefined =
+    domainStart !== undefined ? bucketKey(domainStart, bg) : undefined;
   for (const t of ticks) {
     const k = bucketKey(t, bg);
-    if (prev === undefined || k !== prev) out.push(t);
+    if (prev !== undefined && k !== prev) out.push(t);
     prev = k;
   }
   return out;

@@ -1709,7 +1709,15 @@ independently built the same `calendar.bars → BoundedSequence` seam.
     intraday anchors beyond the opens (else it's day grain); boundary row is
     where coarser context lives, so month boundaries format `%b %Y`.
     Systematic story matrix `Charts/TimeAxisTicks` (one story per rung,
-    trading + continuous, narrow variants).
+    trading + continuous, narrow variants). **Boundary context pinned to the
+    left edge (2026-07-14, owner-directed after the live-window walk):** the
+    original owner-confirmed first-tick anchoring made the context label hop
+    tick-to-tick on a live sliding window, so it now pins at x=0 showing the
+    *domain start's* period, with crossing labels pushing it off as they
+    approach (sticky-header behavior; no knob — first-tick anchoring is
+    strictly worse live and near-identical static). Crossing detection seeds
+    from the domain start's bucket so a first tick past a period turn still
+    flags, even when the cramped-lead drop removed its predecessor.
   - ✅ **Dual x-axes — two tick layouts on one shared scale
     (`feat/dual-x-axes`, unreleased).** Owner-directed (Tidal / legacy
     ChartTool parity, reference screenshots 2026-07-14): a second `<XAxis>`

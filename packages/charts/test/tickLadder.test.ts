@@ -262,22 +262,23 @@ describe('grain stability under a sliding live window', () => {
 });
 
 describe('boundaryTicks — the second-row flags', () => {
-  it('flags the first tick and each bucket change, once each', () => {
-    // Month-grain ticks straddling a year turn: Nov, Dec, Jan, Feb.
+  it('flags crossings only — never the first tick (context is pinned, not ridden)', () => {
+    // Month-grain ticks straddling a year turn: Nov, Dec, Jan, Feb. Only the
+    // Jan tick is a crossing; the left-edge context is boundaryContext's job.
     const ticks = [
       new Date(2025, 10, 3).getTime(),
       new Date(2025, 11, 1).getTime(),
       new Date(2026, 0, 2).getTime(),
       new Date(2026, 1, 2).getTime(),
     ];
-    expect(boundaryTicks(ticks, 'month')).toEqual([ticks[0], ticks[2]]);
+    expect(boundaryTicks(ticks, 'month')).toEqual([ticks[2]]);
   });
 
   it('flags every day change under an hour grain', () => {
     const day1 = new Date(2026, 0, 5, 10).getTime();
     const day2 = new Date(2026, 0, 6, 10).getTime();
     const ticks = [day1, day1 + 3 * H, day2, day2 + 3 * H];
-    expect(boundaryTicks(ticks, 'hour3')).toEqual([day1, day2]);
+    expect(boundaryTicks(ticks, 'hour3')).toEqual([day2]);
   });
 
   it('day/week grain boundaries on the year, not the month (no repeated unit)', () => {
@@ -291,7 +292,7 @@ describe('boundaryTicks — the second-row flags', () => {
       new Date(2026, 0, 2, 9, 30).getTime(),
       new Date(2026, 0, 5, 9, 30).getTime(),
     ];
-    expect(boundaryTicks(ticks, 'day')).toEqual([ticks[0], ticks[2]]);
+    expect(boundaryTicks(ticks, 'day')).toEqual([ticks[2]]);
   });
 
   it('year grain has no boundary row', () => {
