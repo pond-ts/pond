@@ -44,6 +44,14 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **charts:** a live (sliding-window) time axis no longer flickers between two
+  tick grains: the clock-rung choice now derives from the window's live span
+  (constant while sliding) instead of the enumerated anchor count, which
+  oscillates ±1 with the window's phase and flipped the grain for single
+  frames whenever it sat exactly at the width-derived cap.
+
 ### Added
 
 - **charts:** **dual x-axes** — two tick layouts on one shared scale. A second
