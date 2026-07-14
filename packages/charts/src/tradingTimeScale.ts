@@ -86,12 +86,21 @@ export interface TradingTimeScale {
   /**
    * The **second-row** (boundary) label for a tick value, or `undefined` for
    * ticks that don't open a new boundary period. Same grain selection as
-   * {@link ticks} at the same `count`, so the rows agree: the first tick and
-   * each tick starting a new day / year (whichever is the next-coarser
-   * unit the first-row label omits) carry the label; year-grain ticks have no
-   * second row.
+   * {@link ticks} at the same `count`, so the rows agree: each tick starting
+   * a new day / year (whichever is the next-coarser unit the first-row label
+   * omits) carries the label — a **crossing**. The left-edge context (what
+   * period the domain starts in) is {@link boundaryContext}, pinned by the
+   * axis rather than riding a tick; year-grain ticks have no second row.
    */
   tickBoundaries(count?: number): (value: number) => string | undefined;
+  /**
+   * The boundary-row label for the **domain start** — the reader's left-edge
+   * context (`Jan 01` over an intraday axis, the year over a month axis),
+   * rendered pinned at the plot's left edge. A property of the domain, not of
+   * any tick — so it stays put on a live sliding window instead of hopping
+   * from tick to tick. `undefined` when the grain has no boundary row.
+   */
+  boundaryContext(count?: number): string | undefined;
   domain(): [number, number];
   domain(next: readonly [number, number]): TradingTimeScale;
   range(): [number, number];
@@ -233,10 +242,19 @@ export function scaleTradingTime(
     if (bg === undefined) return () => undefined;
     const fmt = base.tickFormat(count, boundaryFormatFor(bg));
     const labelled = new Map<number, string>();
-    for (const t of boundaryTicks(ticks, granularity)) {
+    for (const t of boundaryTicks(ticks, granularity, domain[0])) {
       labelled.set(t, fmt(new Date(t)));
     }
     return (value: number) => labelled.get(value);
+  };
+
+  scale.boundaryContext = (count = 10) => {
+    if (!hasCalendar()) return undefined;
+    const { granularity } = resolved(count);
+    const bg = boundaryGrainFor(granularity);
+    if (bg === undefined) return undefined;
+    const fmt = base.tickFormat(count, boundaryFormatFor(bg));
+    return fmt(new Date(domain[0]));
   };
 
   function domainFn(): [number, number];

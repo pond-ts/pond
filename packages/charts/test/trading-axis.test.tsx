@@ -332,12 +332,16 @@ describe('trading-axis tick density derives from plot width', () => {
       /^[A-Z][a-z]{2}$/.test(el.textContent ?? ''),
     );
     expect(labels.length).toBeGreaterThanOrEqual(10);
-    // …and the boundary (second) row carries the year: once under the first
-    // tick, once where the year turns — never on every tick.
+    // …and the boundary (second) row carries the year: the domain start's
+    // year pinned at the left edge (the context label), plus the crossing
+    // tick where the year turns — never on every tick.
     const boundaries = Array.from(
       dom.querySelectorAll('[data-boundary-label]'),
     ).map((el) => el.textContent);
-    expect(boundaries).toEqual(['2025', '2026']);
+    expect(boundaries.sort()).toEqual(['2025', '2026']);
+    const context = dom.querySelector('[data-boundary-context]') as HTMLElement;
+    expect(context.textContent).toBe('2025');
+    expect(parseFloat(context.style.left)).toBeLessThanOrEqual(0);
   });
 
   it('a container-level timeFormat suppresses the boundary row', () => {
