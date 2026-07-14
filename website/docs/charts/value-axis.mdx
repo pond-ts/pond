@@ -38,9 +38,9 @@ registered under it (`LineChart`, `AreaChart`, `BarChart`, `ScatterChart`,
 handed. The container adopts the first kind it sees and **throws if a later
 layer disagrees**:
 
-> `ChartContainer: rows mix x-axis kinds ('time' and 'value'). All layers in
-a container must share one axis kind (all time-keyed, all value-keyed, or
-all category).`
+> `ChartContainer: rows mix x-axis kinds ('time' and 'value'). A container
+has one shared x axis — every row must plot the same kind (all
+time-keyed, all value-keyed, or all category).`
 
 This is a hard error, not a warning, because there is exactly **one shared
 x scale** per container — mixing kinds would mean mixing scales, which
