@@ -10,8 +10,8 @@ import { story, waitForCanvasPaint } from './support.js';
  * axes — and gates on the first canvas having painted.
  */
 const cases: ReadonlyArray<readonly [id: string, file: string]> = [
-  ['charts-gapmodes--line', 'gap-modes-line.png'],
-  ['charts-gapmodes--area', 'gap-modes-area.png'],
+  ['gaps--line', 'gap-modes-line.png'],
+  ['gaps--area', 'gap-modes-area.png'],
 ];
 
 test.describe('GapModes', () => {
