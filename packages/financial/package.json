@@ -1,8 +1,8 @@
 {
   "name": "@pond-ts/financial",
-  "version": "0.44.1",
+  "version": "0.45.0",
   "private": false,
-  "description": "Financial-market domain library on pond-ts — trading calendars, session-aligned bar building, and market analytics",
+  "description": "Financial-market domain library on pond-ts \u2014 trading calendars, session-aligned bar building, and market analytics",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -44,7 +44,7 @@
     "@js-temporal/polyfill": "^0.5.1"
   },
   "peerDependencies": {
-    "pond-ts": "^0.44.0"
+    "pond-ts": "^0.45.0"
   },
   "devDependencies": {
     "typescript": "^5.6.3",

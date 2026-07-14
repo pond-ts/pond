@@ -1,8 +1,8 @@
 {
   "name": "@pond-ts/fit",
-  "version": "0.44.1",
+  "version": "0.45.0",
   "private": false,
-  "description": "Fitness & activity domain library on pond-ts — quantities, canonical activity series, and analytics (geo, power, zones, splits)",
+  "description": "Fitness & activity domain library on pond-ts \u2014 quantities, canonical activity series, and analytics (geo, power, zones, splits)",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -37,7 +37,7 @@
     "verify": "npm run format:check && npm run build && npm test"
   },
   "peerDependencies": {
-    "pond-ts": "^0.44.0"
+    "pond-ts": "^0.45.0"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
