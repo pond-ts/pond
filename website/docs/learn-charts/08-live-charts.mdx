@@ -6,6 +6,7 @@ sidebar_position: 8
 
 import ChartExample from '@site/src/components/ChartExample';
 import LearnLiveSeries from '@site/src/examples/learn-08-live-series';
+import LearnLivePipeline from '@site/src/examples/learn-08-live-pipeline';
 import LearnLiveValue from '@site/src/examples/learn-08-live-value';
 
 # Live charts
@@ -15,6 +16,8 @@ import LearnLiveValue from '@site/src/examples/learn-08-live-value';
 - The one indirection every live chart needs: `LiveSeries` → snapshot →
   chart
 - Why a chart re-renders on **snapshot cadence**, not event cadence
+- Deriving many views (scatter, curve, bars) from one live stream with the
+  batch operators you already know
 - `createLiveValue` for a pill that updates without re-rendering the chart
   :::
 
@@ -84,6 +87,25 @@ derived series. `useMemo(() => snapshot.select('cpu'), [snapshot])` is
 the fix once a projection stops being free.
 :::
 
+## One stream, many views
+
+That memoized-derivation move is where live charts get fun. A snapshot is
+just a `TimeSeries`, so every batch operator you already know works on it —
+and re-runs each frame over the current window. Here **one** `LiveSeries` of
+raw points drives three layers: the points themselves as a **scatter**, a
+moving-average **curve** threaded through them (`withColumn`), and
+2-second-average **bars** (`aggregate`) — each `useMemo`'d on the snapshot so
+it only recomputes when new data lands:
+
+<ChartExample name="learn-08-live-pipeline" height={340}>
+  <LearnLivePipeline />
+</ChartExample>
+
+Nothing here is a special "live" API beyond `useSnapshot` — the curve and the
+bars are the same `withColumn` and `aggregate` from chapters 3 and 4, run
+against the latest window. The bars re-form as points stream in because each
+snapshot **re-aggregates** the whole window, which is the next point.
+
 ## A pill that skips the chart entirely
 
 Sometimes you don't want a whole chart re-render for a fast-moving number
@@ -114,9 +136,11 @@ One honesty note before you build a real feed: `LiveSeries` is
 **append-only** — there's no snapshot-replace. A "forming candle" that
 keeps changing until its bar closes isn't a live edit to one event; it's
 **re-aggregation** — you push raw ticks and re-run `aggregate` over the
-open bucket, you don't mutate a pushed row after the fact. See the
-[@pond-ts/financial](../financial/) section for the calendar-aware side
-of that shape.
+open bucket, you don't mutate a pushed row after the fact. That's exactly
+what the rightmost bar in the demo above is doing: it isn't being edited,
+its 2-second window is being re-aggregated every snapshot until it fills.
+See the [@pond-ts/financial](../financial/) section for the calendar-aware
+side of that shape.
 
 ## Recap
 
