@@ -37,8 +37,11 @@ function mulberry32(seed: number): () => number {
  *  window, which is exactly how a "forming" bar stays correct. */
 export default function LearnLivePipeline() {
   const theme = useSiteChartTheme();
+  // Retain more than we show (WINDOW_MS): the extra left buffer means the bar
+  // straddling the left edge is still inside the aggregation range, so it's
+  // drawn (clipped) and slides out cleanly instead of popping.
   const live = useRef(
-    new LiveSeries({ name: 'signal', schema, retention: { maxAge: '12s' } }),
+    new LiveSeries({ name: 'signal', schema, retention: { maxAge: '18s' } }),
   ).current;
   const rand = useRef(mulberry32(19)).current;
   const tick = useRef(0);
@@ -85,20 +88,30 @@ export default function LearnLivePipeline() {
     return raw.withColumn('smooth', smooth);
   }, [raw]);
 
-  const bars = useMemo(
-    () =>
-      raw === null || raw.length === 0
-        ? null
-        : raw.aggregate(Sequence.every('2s'), { signal: 'avg' }),
-    [raw],
-  );
+  const bars = useMemo(() => {
+    if (raw === null || raw.length === 0) return null;
+    // During the first couple of seconds every point can still fall inside one
+    // leading bucket that `aggregate` doesn't emit (its start precedes the
+    // data) — so the result can be empty until a bucket completes.
+    const b = raw.aggregate(Sequence.every('2s'), { signal: 'avg' });
+    return b.length === 0 ? null : b;
+  }, [raw]);
 
   if (raw === null || withCurve === null || bars === null) {
     return <div style={{ height: 340 }} />;
   }
 
+  // A fixed-width window that slides with the latest point — both edges track
+  // `end`, so the domain never changes width (no smoosh) and scrolls smoothly.
+  // Clamped on the left only during warm-up, before a full window has arrived.
+  const WINDOW_MS = 12_000;
+  const span = raw.timeRange()!;
+  const end = span.end();
+  const start = Math.max(end - WINDOW_MS, span.begin());
+  const view: [number, number] = [start, end];
+
   return (
-    <ChartContainer range={raw.timeRange()} width={560} theme={theme}>
+    <ChartContainer range={view} width={560} theme={theme}>
       <ChartRow height={200}>
         <YAxis id="pct" side="right" format=".0%" min={0} max={1} />
         <Layers>
