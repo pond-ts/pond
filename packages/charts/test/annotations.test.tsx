@@ -96,6 +96,44 @@ describe('annotation label opt-out (label={false} / "")', () => {
     expect(hasChip(<Marker at={2} label="lap 3" />, 'lap 3')).toBe(true);
   });
 
+  it('culls a marker chip whose pole has panned off-plot', () => {
+    // The staff is SVG-clipped; the DOM chip must not float in the gutter.
+    expect(hasChip(<Marker at={-2} label="mark" />, 'mark')).toBe(false);
+    expect(hasChip(<Marker at={9} label="mark" />, 'mark')).toBe(false);
+    expect(hasChip(<Marker at={2} label="mark" />, 'mark')).toBe(true);
+  });
+
+  it('clamps a partially visible region chip to the plot edge; culls fully off-plot', () => {
+    // Fully off-plot (either side) → no chip.
+    expect(hasChip(<Region from={-4} to={-1} label="zone" />, 'zone')).toBe(
+      false,
+    );
+    expect(hasChip(<Region from={6} to={9} label="zone" />, 'zone')).toBe(
+      false,
+    );
+    // Left edge off-plot but the region still visible → chip present, anchored
+    // at the plot's left edge (x clamped to 0 → left = FLAG_GAP px).
+    const { container, unmount } = render(
+      <ChartContainer
+        range={[0, 4]}
+        width={300}
+        showAxis={false}
+        timeFormat={() => 'X'}
+      >
+        <ChartRow height={80}>
+          <YAxis id="v" min={0} max={100} />
+          <Layers>
+            <LineChart series={series} column="v" axis="v" />
+          </Layers>
+          <Region from={-2} to={2} label="zone" />
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const chip = within(container).getByText('zone');
+    expect(chip.style.left).toBe('4px'); // FLAG_GAP right of the clamped pole
+    unmount();
+  });
+
   it('Baseline: omit → auto-label value; false / "" → no chip; string → chip', () => {
     expect(hasChip(<Baseline value={37} />, '37')).toBe(true);
     expect(hasChip(<Baseline value={37} label={false} />, '37')).toBe(false);

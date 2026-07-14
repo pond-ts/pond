@@ -741,7 +741,10 @@ export function Marker({
           />
         )}
       </svg>
-      {chipLabel && (
+      {/* The staff is SVG (clipped by the plot's viewport), but the chip is
+          DOM — cull it when the pole pans off-plot, or it floats orphaned in
+          the axis gutter. */}
+      {chipLabel && x >= 0 && x <= container.plotWidth && (
         <Chip
           theme={container.theme}
           color={ann.color}
@@ -1225,13 +1228,17 @@ export function Region({
           </>
         )}
       </svg>
-      {text && (
+      {/* The fill/edges are SVG (clipped by the plot's viewport), but the chip
+          is DOM — anchor it to the *visible* part of the region (clamped to the
+          plot's left edge while any of the region shows), and cull it entirely
+          once the region pans fully off-plot. */}
+      {text && left <= container.plotWidth && left + spanW >= 0 && (
         <Chip
           theme={container.theme}
           color={ann.color}
           style={{
             top: `${FLAG_TOP + lane * LANE_H}px`,
-            ...flagChipX(left, container.plotWidth),
+            ...flagChipX(Math.max(left, 0), container.plotWidth),
           }}
         >
           {text}

@@ -44,6 +44,14 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **charts:** annotation label chips now clip to the plot: a marker whose pole
+  pans off-plot no longer leaves its chip floating in the axis gutter, and a
+  partially visible region's chip clamps to the plot's left edge (culled only
+  when the region is entirely out of view). The lines/fills were already
+  SVG-clipped — only the DOM chips escaped.
+
 ## [0.45.0] — 2026-07-14
 
 ### Added
