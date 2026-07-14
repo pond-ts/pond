@@ -3,6 +3,11 @@ title: Region · Baseline · Marker
 sidebar_position: 2
 ---
 
+import ChartExample from '@site/src/components/ChartExample';
+import ChartsAnnotationRegion from '@site/src/examples/charts-annotation-region';
+import ChartsAnnotationMarker from '@site/src/examples/charts-annotation-marker';
+import ChartsAnnotationBaseline from '@site/src/examples/charts-annotation-baseline';
+
 # Region · Baseline · Marker
 
 The three annotation primitives, with their full prop surface. All render as
@@ -13,13 +18,17 @@ each primitive's **geometry and labelling** props. For the shared model
 (registers, depth, the indicator law) see
 [The annotation model](./the-annotation-model.mdx).
 
-`Marker` and `Baseline` are near-duals — a vertical line at an x, a horizontal
-line at a y — and share most of their surface; `Region` is the shaded span.
+`Baseline` and `Marker` are near-duals — a horizontal line at a y, a vertical
+line at an x — and share most of their surface; `Region` is the shaded span.
 
 ## `Region`
 
 A shaded span over an x range — a lap, a zone, a selected interval. Its label
 flies as a flag off the left edge.
+
+<ChartExample name="charts-annotation-region" height={240}>
+  <ChartsAnnotationRegion />
+</ChartExample>
 
 | Prop       | Type                                           | Default | Purpose                                                                                      |
 | ---------- | ---------------------------------------------- | ------- | -------------------------------------------------------------------------------------------- |
@@ -32,25 +41,14 @@ flies as a flag off the left edge.
 Plus the shared interaction props (`id`, `selected`, `selectable`, `hovered`,
 `editing`).
 
-## `Marker`
-
-A vertical line at an x position (a time, a distance, a lap boundary).
-
-| Prop        | Type                   | Default | Purpose                                                                                     |
-| ----------- | ---------------------- | ------- | ------------------------------------------------------------------------------------------- |
-| `at`        | `number`               | —       | x position in axis units — epoch ms on a time axis, the value on a value axis.              |
-| `label`     | `string \| false`      | auto    | Chip label. Omit ⇒ auto-label with the shared x formatter; `false`/`''` ⇒ no chip.          |
-| `indicator` | `boolean`              | `false` | Also pin `at` to the **x-axis** as an on-axis pill (the axis-edge counterpart of the chip). |
-| `onChange`  | `(at: number) => void` | —       | Editable: drag the line to report a new `at` (controlled — wire it back).                   |
-
-Plus the shared interaction props. Note the [indicator law](./the-annotation-model.mdx#pills-vs-flags--the-indicator-law):
-the `indicator` pill always shows the formatted `at`, never the custom `label`
-(which stays the near-line chip).
-
 ## `Baseline`
 
 A horizontal line at a y value, scaled against one row axis. Its label anchors
 at the line's height.
+
+<ChartExample name="charts-annotation-baseline" height={240}>
+  <ChartsAnnotationBaseline />
+</ChartExample>
 
 | Prop            | Type                      | Default     | Purpose                                                                               |
 | --------------- | ------------------------- | ----------- | ------------------------------------------------------------------------------------- |
@@ -64,6 +62,25 @@ at the line's height.
 
 Plus the shared interaction props. Like `Marker`, the `indicator` pill shows
 the formatted `value`, never the `label`.
+
+## `Marker`
+
+A vertical line at an x position (a time, a distance, a lap boundary).
+
+<ChartExample name="charts-annotation-marker" height={240}>
+  <ChartsAnnotationMarker />
+</ChartExample>
+
+| Prop        | Type                   | Default | Purpose                                                                                     |
+| ----------- | ---------------------- | ------- | ------------------------------------------------------------------------------------------- |
+| `at`        | `number`               | —       | x position in axis units — epoch ms on a time axis, the value on a value axis.              |
+| `label`     | `string \| false`      | auto    | Chip label. Omit ⇒ auto-label with the shared x formatter; `false`/`''` ⇒ no chip.          |
+| `indicator` | `boolean`              | `false` | Also pin `at` to the **x-axis** as an on-axis pill (the axis-edge counterpart of the chip). |
+| `onChange`  | `(at: number) => void` | —       | Editable: drag the line to report a new `at` (controlled — wire it back).                   |
+
+Plus the shared interaction props. Note the [indicator law](./the-annotation-model.mdx#pills-vs-flags--the-indicator-law):
+the `indicator` pill always shows the formatted `at`, never the custom `label`
+(which stays the near-line chip).
 
 ## Auto-labels and suppression
 

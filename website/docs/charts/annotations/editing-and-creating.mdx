@@ -3,6 +3,9 @@ title: Editing & creating annotations
 sidebar_position: 3
 ---
 
+import ChartExample from '@site/src/components/ChartExample';
+import ChartsAnnotationEditing from '@site/src/examples/charts-annotation-editing';
+
 # Editing & creating annotations
 
 Annotations go from static marks to an editable layer through props on the
@@ -10,6 +13,14 @@ mark plus orchestration props on `<ChartContainer>`. This page is the
 interactive surface: selecting, hovering, editing one mark, and the create
 gesture. For the primitives' geometry props see
 [Region · Baseline · Marker](./region-baseline-marker.mdx).
+
+The container is in `editAnnotations` mode below, and all three marks are
+**controlled** (each `onChange` writes back to state). Drag the region's body
+or its edges, the marker's line, or the baseline up and down:
+
+<ChartExample name="charts-annotation-editing" height={260}>
+  <ChartsAnnotationEditing />
+</ChartExample>
 
 ## The shared interaction props
 

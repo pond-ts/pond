@@ -3,6 +3,9 @@ title: Axis indicators & live values
 sidebar_position: 4
 ---
 
+import ChartExample from '@site/src/components/ChartExample';
+import ChartsIndicatorLive from '@site/src/examples/charts-indicator-live';
+
 # Axis indicators & live values
 
 An **indicator** is a value pinned to an axis edge as a pill — the ChartIQ /
@@ -10,6 +13,14 @@ Yahoo-Finance live price tag. Unlike an annotation, it always reads the axis
 coordinate (never a custom label): an indicator is a tick you placed. This
 page covers `YAxisIndicator`, the `createLiveValue` high-frequency path, and
 the x-axis pills produced by `<Marker indicator>`.
+
+Crosshair the chart to read any sample; meanwhile the pill at the right jiggles
+live, driven by `createLiveValue` and coloured to match the line — only the
+pill repaints on each tick, not the chart:
+
+<ChartExample name="charts-indicator-live" height={260}>
+  <ChartsIndicatorLive />
+</ChartExample>
 
 ## `YAxisIndicator`
 
