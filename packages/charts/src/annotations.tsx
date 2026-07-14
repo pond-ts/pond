@@ -219,6 +219,7 @@ export function computeLabelLanes(
   annotations: readonly AnnotationSpec[],
   toPixel: (axisX: number) => number,
   draggingKey?: symbol | null,
+  plotWidth?: number,
 ): Map<symbol, LabelPlacement> {
   const out = new Map<symbol, LabelPlacement>();
   const byRow = new Map<symbol, AnnotationSpec[]>();
@@ -251,23 +252,34 @@ export function computeLabelLanes(
         if (g) g.push(a);
         else markerGroups.set(a.xs[0]!, [a]);
       } else {
+        // Lane-pack at the position the chip will *render*: a region panned
+        // half off-plot renders clamped to the plot's left edge, and a fully
+        // off-plot region's chip is culled — so it must not hold a lane.
         const ax =
           a.kind === 'region' ? Math.min(a.xs[0]!, a.xs[1]!) : a.xs[0]!;
+        const bx =
+          a.kind === 'region' ? Math.max(a.xs[0]!, a.xs[1]!) : a.xs[0]!;
+        const rawLeft = toPixel(ax);
+        if (plotWidth !== undefined && (rawLeft > plotWidth || toPixel(bx) < 0))
+          continue;
         flags.push({
           rep: a.key,
           members: [a.key],
-          left: toPixel(ax),
+          left: plotWidth === undefined ? rawLeft : Math.max(rawLeft, 0),
           width: labelWidth(a.label),
           label: a.label,
         });
       }
     }
     for (const [x, group] of markerGroups) {
+      // A culled off-plot marker chip must not hold a lane either.
+      const px = toPixel(x);
+      if (plotWidth !== undefined && (px < 0 || px > plotWidth)) continue;
       const label = group.map((g) => g.label).join(', ');
       flags.push({
         rep: group[0]!.key,
         members: group.map((g) => g.key),
-        left: toPixel(x),
+        left: px,
         width: labelWidth(label),
         label,
       });
@@ -741,7 +753,10 @@ export function Marker({
           />
         )}
       </svg>
-      {chipLabel && (
+      {/* The staff is SVG (clipped by the plot's viewport), but the chip is
+          DOM — cull it when the pole pans off-plot, or it floats orphaned in
+          the axis gutter. */}
+      {chipLabel && x >= 0 && x <= container.plotWidth && (
         <Chip
           theme={container.theme}
           color={ann.color}
@@ -1225,13 +1240,17 @@ export function Region({
           </>
         )}
       </svg>
-      {text && (
+      {/* The fill/edges are SVG (clipped by the plot's viewport), but the chip
+          is DOM — anchor it to the *visible* part of the region (clamped to the
+          plot's left edge while any of the region shows), and cull it entirely
+          once the region pans fully off-plot. */}
+      {text && left <= container.plotWidth && left + spanW >= 0 && (
         <Chip
           theme={container.theme}
           color={ann.color}
           style={{
             top: `${FLAG_TOP + lane * LANE_H}px`,
-            ...flagChipX(left, container.plotWidth),
+            ...flagChipX(Math.max(left, 0), container.plotWidth),
           }}
         >
           {text}
