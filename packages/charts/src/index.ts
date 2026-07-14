@@ -30,6 +30,9 @@ export { YAxis } from './YAxis.js';
 export type { YAxisProps } from './YAxis.js';
 export { XAxis } from './XAxis.js';
 export type { XAxisProps } from './XAxis.js';
+// The derived-unit relabeling an `<XAxis transform>` takes (strike↔moneyness,
+// σ↔delta) — exported so consumers can name/share their transforms.
+export type { AxisTransform } from './derivedTicks.js';
 export { TimeAxis } from './TimeAxis.js';
 export { CategoryAxis } from './CategoryAxis.js';
 export type { AxisFormat } from './format.js';
