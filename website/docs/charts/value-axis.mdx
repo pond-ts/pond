@@ -1,0 +1,153 @@
+---
+title: Value axis
+sidebar_position: 3
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryHistogram from '@site/src/examples/gallery-histogram';
+import ChartsValueAxisNative from '@site/src/examples/charts-value-axis-native';
+import ChartsValueAxisDual from '@site/src/examples/charts-value-axis-dual';
+
+# Value axis
+
+`@pond-ts/charts` draws whatever axis your data implies — it is never a prop
+you set. Hand `<ChartContainer>` a `TimeSeries` and you get a time axis; hand
+it a `ValueSeries` (from [`byValue`](../pond-ts/transforms/aggregation#byvalue)
+or [`ValueSeries.fromColumns`](../start-here/creating#columnar-ingest)) and
+every draw layer in that row draws against a **linear value axis** instead —
+same `LineChart`, `ScatterChart`, `BoxPlot`, `BarChart` components, no
+axis-type prop anywhere.
+
+This page is the chart-level reference: how the axis kind is inferred, how
+each draw layer behaves once it's on a value axis, and how to run two label
+systems over one shared scale. For the series-level foundations — what a
+`ValueSeries` is, `byValue` vs `byColumn`, why `scan` builds the axis — see
+[the value-axis concept page](../start-here/concepts/value-axis) and
+[the design RFC](https://github.com/pjm17971/pond-ts/blob/main/docs/rfcs/value-axis.md). For a guided first pass with
+a running example, see
+[Learn charts, chapter 9](../learn-charts/beyond-the-time-axis). For the
+exhaustive per-prop walk, see the Storybook groups linked throughout this
+page.
+
+## Kind inference
+
+A `<ChartContainer>` never takes an axis-type prop. Instead, every layer
+registered under it (`LineChart`, `AreaChart`, `BarChart`, `ScatterChart`,
+`BoxPlot`, `Candlestick`, …) reports its own **x-axis kind** — `'time'`,
+`'value'`, or `'category'` — read straight off the series or data it was
+handed. The container adopts the first kind it sees and **throws if a later
+layer disagrees**:
+
+> `ChartContainer: rows mix x-axis kinds ('time' and 'value'). A container
+has one shared x axis — every row must plot the same kind (all
+time-keyed, all value-keyed, or all category).`
+
+This is a hard error, not a warning, because there is exactly **one shared
+x scale** per container — mixing kinds would mean mixing scales, which
+`@pond-ts/charts` deliberately doesn't support (see
+[Dual x-axes](#two-label-systems-one-scale) below for the feature that looks
+similar but isn't: relabeling, not rescaling). A container with no layers yet
+defaults to `'time'`.
+
+| Kind         | What produces it                                                                                  | Draw layers                          |
+| ------------ | ------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `'time'`     | A `TimeSeries` (the default — every layer without an explicit `ValueSeries` or `categories` prop) | all chart types                      |
+| `'value'`    | A `ValueSeries` — via `byValue` (projected) or `ValueSeries.fromColumns` (native)                 | all chart types except `Candlestick` |
+| `'category'` | A `CategoryDatum[]` array — typically from `transposeRow`                                         | `BarChart`                           |
+
+## Two ways onto a value axis
+
+**Projected** — start with a `TimeSeries` you already have and re-key it onto
+one of its own numeric columns with `byValue`. This is the common case: an
+elapsed-time series becomes a pace curve, a tick series becomes a vol smile
+once you compute strike as a column. Chapter 9 of Learn charts walks this
+version end to end with a live embed — see
+[Learn charts: a linear value axis](../learn-charts/beyond-the-time-axis#a-linear-value-axis).
+
+**Native** — when the data was never time-keyed at all (an options chain
+keyed by strike, with no timestamp on any row), skip the projection and
+construct the `ValueSeries` directly with `ValueSeries.fromColumns` — the
+value-axis counterpart of `TimeSeries.fromColumns`:
+
+<ChartExample name="charts-value-axis-native" height={260}>
+  <ChartsValueAxisNative />
+</ChartExample>
+
+Both `LineChart` and `ScatterChart` read the same `ValueSeries` here with no
+special-casing — every draw layer treats a value axis exactly like a time
+axis once it's handed one.
+
+## Aggregating onto a value axis: `byColumn`
+
+Not every value-axis chart is a `ValueSeries`. [`byColumn`](../pond-ts/transforms/aggregation#bycolumn)
+bins a numeric column and returns plain bin records
+(`{ start, end, ...aggregates }`) — a value-axis **histogram**, not a series.
+`BarChart` reads those bins directly via its `bins` prop, inferring a
+`'value'` axis kind from the bin boundaries the same way it infers `'time'`
+from a time-bucketed aggregate:
+
+<ChartExample name="gallery-histogram" height={260}>
+  <GalleryHistogram width={560} />
+</ChartExample>
+
+Reach for `byValue` (above) when you want to keep the full-resolution channel
+and plot or cursor it against a value; reach for `byColumn` when you want to
+collapse it into bins. See
+[`byValue` vs `byColumn`](../start-here/concepts/value-axis#closed-vs-projected-out-byvalue-vs-bycolumn)
+for the full distinction, including the `split = scan + byColumn` composition
+for stateful per-bin metrics.
+
+## Category axis
+
+`transposeRow` reads one row of a wide series and turns it into
+`CategoryDatum[]` — an ordinal axis, one bar per category, inferred the same
+way a value or time axis is: from what `BarChart` was handed, not from a
+prop. Chapter 9 has the live walkthrough:
+[Learn charts: a category axis](../learn-charts/beyond-the-time-axis#a-category-axis).
+For the systematic prop-by-prop reference — high-cardinality labeling,
+selection, signed values, scrubbing a transposed row live — see the
+[`Axes/CategoryAxis`](pathname:///storybook/?path=/story/axes-categoryaxis--tickers)
+Storybook group.
+
+## Two label systems, one scale
+
+A value (or time) axis can carry a **second `<XAxis>`** that relabels the
+same shared scale into a derived unit via `transform` — one pixel mapping,
+two tick layouts, never two scales. Declaration order stacks the strips:
+before `<ChartRow>` renders above the plot, after renders below.
+
+<ChartExample name="charts-value-axis-dual" height={280}>
+  <ChartsValueAxisDual />
+</ChartExample>
+
+Here `transform` is the linear `strike → strike / spot` map, so the top
+strip's ticks land evenly too — the degenerate, easiest-to-read case. A
+`transform` doesn't have to be linear: the
+[`Axes/DualX`](pathname:///storybook/?path=/story/axes-dualx--sigma-with-delta-strip)
+Storybook group has a nonlinear std-moneyness-to-delta example, where the
+derived strip's ticks compress and expand as σ-space stretches unevenly
+across delta.
+
+## Interacting with a value axis
+
+Cursors, region-select, and annotations all work identically on a value axis
+— they read positions off the shared scale, and a value scale is just
+another continuous scale to them. Nothing about `cursor="region"`,
+`onRegionSelect`, `<Region>`, `<Marker>`, or `<Baseline>` changes; only the
+units on the x axis do. See the
+[`Cursors/Region`](pathname:///storybook/?path=/story/cursors-region--value-axis-select)
+and [`Annotations/Scenarios`](pathname:///storybook/?path=/story/annotations-scenarios--value-axis)
+Storybook stories for both on a `.byValue()` series.
+
+## See also
+
+- [Value axis (concept)](../start-here/concepts/value-axis) — the series-level
+  model: `ValueSeries`, `byValue`, `byColumn`, `scan`, and why the algebra
+  stays closed.
+- [Value axis RFC](https://github.com/pjm17971/pond-ts/blob/main/docs/rfcs/value-axis.md) — the design rationale and
+  shipped-status history.
+- [Learn charts, chapter 9](../learn-charts/beyond-the-time-axis) — a
+  guided first pass across all four axis kinds (time, value, category,
+  session-aware time) with one running example.
+- [Gallery](./gallery) — the value-axis histogram above is one of eight
+  live cards there.

@@ -1022,7 +1022,7 @@ Phases (each independently shippable, ends with a docs deploy):
         the one actually measured; documented as a new gotcha in the
         recipe itself, since it's a realistic mistake the next reader
         would make too.
-- [ ] **P2 — interaction + doc-debt burn-down** (in progress; 1/7 shipped):
+- [ ] **P2 — interaction + doc-debt burn-down** (in progress; 2/7 shipped):
   - [x] Learn chapters 6–9 (#446) — completes the nine-chapter tutorial
         track. Ch6 reading/selecting values: the five `cursor` modes
         via a live mode-switcher demo, `onTrackerChanged` for an
@@ -1058,10 +1058,56 @@ Phases (each independently shippable, ends with a docs deploy):
   - [ ] Annotations & indicators reference section
   - [ ] Financial charts hub (+ TradingView vocabulary bridge)
   - [ ] Missing data & gaps page
-  - [ ] **value-axis docs** (the Documentation backlog's
-        highest-priority item)
+  - [x] **value-axis docs** (the Documentation backlog's
+        highest-priority item) — closes B5 at reference level (the
+        series-level concept page landed earlier via #382/#383/#421;
+        Learn ch. 9 closed the tutorial level via #446). New page
+        `website/docs/charts/value-axis.mdx`, added to the
+        `@pond-ts/charts` sidebar between Learn charts and the
+        generated API link: kind-inference reference (the
+        `'time'`/`'value'`/`'category'` table + the container's
+        mixing-throws invariant, quoted from `ChartContainer.tsx`'s
+        actual error string), the two ways onto a value axis
+        (`byValue` projection, linked out to ch. 9's live embed rather
+        than restated — content-ownership rule — plus a new native
+        `ValueSeries.fromColumns` live embed since ch. 9 only covers
+        the projected case), `byColumn` as a value-axis histogram
+        (reuses the Gallery's existing `gallery-histogram` example
+        component directly — single-source, no duplicated fixture),
+        category axis (links ch. 9 + the `Axes/CategoryAxis` Storybook
+        group rather than re-embedding, since Storybook is already the
+        systematic per-prop reference), a new dual-x-axes live embed
+        (`charts-value-axis-dual.tsx`, the linear
+        strike-to-moneyness `transform` case — simpler than the
+        shipped σ-to-delta nonlinear story, chosen so the docs example
+        stays readable; shares its synthetic smile chain with the
+        native-`fromColumns` example via a new
+        `lib/value-axis-fixtures.ts`, the same shared-fixture
+        convention `gallery-fixtures.ts` already established), and an
+        interaction section linking the
+        `Cursors/Region` + `Annotations/Scenarios` value-axis stories
+        without a new embed. Cross-linked from the concept page's
+        "Plotting" bullet, ch. 9's recap, and `charts/index.mdx`'s
+        "Where to go next". `docusaurus build` (with `onBrokenLinks:
+        'throw'`) passed clean, and both new live embeds were checked
+        in-browser in light + dark mode (the theme retunes live via
+        the `data-theme` `MutationObserver` bridge, no reload needed).
+        Placement note: the content-ownership table in the docs-site
+        plan slots chart-level value-axis content under a not-yet-built
+        "X-axes page" inside P3's "Axes & layout" fan-out; this page is
+        that content pulled forward to close P2's backlog item now —
+        P3 should absorb/link it rather than duplicate when the Axes &
+        layout section is built.
   - [ ] prop-identity recipe + story-coverage fill for the groups
-        these pages source from
+        these pages source from. **Partial prep landed:** #464
+        promoted the axis/annotation/cursor/indicator/gap story
+        groups scattered through `Charts/` to top-level Storybook
+        groups (`Axes/`, `Annotations/`, `Cursors/`, `Indicators/`,
+        `Gaps/`), leaving `Charts/` holding only chart-type
+        primitives — a second tree-normalization pass (title-only,
+        no story renders changed, e2e spec IDs + docs-site Storybook
+        links updated). This is scaffolding for the coverage fill,
+        not the fill itself — no new stories landed.
 - [ ] **P3 — reference fan-out + flagship guide**: per-chart-type
       pages, Axes & layout, Theming, Data adapters, Cheat sheet,
       Rendering & performance (measured perf envelope — the accepted
@@ -7161,7 +7207,13 @@ deployment" / "observability" surface in one place.
   release so the npm version's docs match its surface.
   **→ Adopted into the Docs site wave, P2** (see the "Docs site wave"
   section above) — the wave's Learn ch. 9 + reference pages are the
-  venue.
+  venue. **✅ Shipped:** the core operator reference (`byValue`,
+  `byColumn`, `scan`, cross-linked to RFC #279) and the series-level
+  concept page landed earlier (#382/#383/#421); Learn ch. 9 closed the
+  tutorial level (#446); the chart-level reference page
+  (`website/docs/charts/value-axis.mdx` — kind inference, `byColumn`
+  histograms, category axis, dual x-axes) closes the reference level.
+  Backlog item complete.
 
 - **`pushMany` is the throughput-critical primitive** — call this
   out explicitly in `live-series.mdx`'s push section. Apps forwarding
