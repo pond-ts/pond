@@ -121,3 +121,35 @@ describe('<YAxis ticks> — explicit y ticks', () => {
     }
   });
 });
+
+describe('<YAxis color> — per-instance axis colour', () => {
+  it('colours the tick labels and the title, overriding the theme', () => {
+    const stub = stubCanvasContext();
+    try {
+      const { getByText } = render(
+        <ChartContainer range={[0, 2]} width={480} showAxis={false}>
+          <ChartRow height={120}>
+            <YAxis
+              id="v"
+              min={0}
+              max={100}
+              label="Value"
+              labelPlacement="top"
+              color="rgb(225, 29, 72)"
+            />
+            <Layers>
+              <LineChart series={series()} column="v" axis="v" />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>,
+      );
+      // The strip (tick labels inherit from it) and the title both take it.
+      const title = getByText('Value') as HTMLElement;
+      expect(title.style.color).toBe('rgb(225, 29, 72)');
+      const tick = getByText('40').parentElement as HTMLElement;
+      expect(tick.style.color).toBe('rgb(225, 29, 72)');
+    } finally {
+      stub.restore();
+    }
+  });
+});
