@@ -261,6 +261,46 @@ describe('grain stability under a sliding live window', () => {
   });
 });
 
+describe('near-cap multi-session enumeration (the #465 truncation edge)', () => {
+  it('every session keeps its ticks when each session gains a phase tick at a near-cap estimate', () => {
+    // 16 sessions of 08:59–15:01: each spans 6h02m, so the span estimate
+    // counts 6 hour-marks per session (16 + 96 = 112 total), but the real
+    // enumeration lands 7 aligned marks in each (09:00 … 15:00 — a phase
+    // tick gained per session). At cap 112 the hour1 rung is admitted with
+    // the estimate exactly at the cap while the real count is 128; the old
+    // `cap + 4` enumeration bail truncated mid-array yet still passed the
+    // earns-its-labels acceptance, so the final sessions were returned with
+    // no ticks at all (the lopsided axis from the PR #465 spot-check).
+    const d0 = new Date(2026, 0, 5).getTime(); // Mon Jan 5 2026, local
+    const sessions = Array.from(
+      { length: 16 },
+      (_, i) =>
+        [
+          d0 + i * DAY + 8 * H + 59 * 60_000,
+          d0 + i * DAY + 15 * H + 60_000,
+        ] as const,
+    );
+    const prov = segmentProvider(sessions);
+    const domainEnd = sessions[sessions.length - 1]![1];
+    const opens = [
+      sessions[0]![0],
+      ...prov.boundaries!(sessions[0]![0], domainEnd),
+    ];
+    expect(opens).toHaveLength(16);
+    const { ticks, granularity } = buildTicks(prov, opens, domainEnd, 112);
+    expect(granularity).toBe('hour1');
+    // Complete enumeration: 16 opens + 16 × 7 marks, minus the cramped
+    // 08:59 lead (1min from the 09:00 mark) that buildTicks always drops.
+    expect(ticks).toHaveLength(127);
+    // Every session is represented — in particular the final ones, which
+    // the truncated array cut off entirely.
+    for (const open of opens.slice(1)) expect(ticks).toContain(open);
+    expect(ticks[ticks.length - 1]).toBe(
+      sessions[sessions.length - 1]![0] + 60_000 + 6 * H, // final 15:00 mark
+    );
+  });
+});
+
 describe('boundaryTicks — the second-row flags', () => {
   it('flags crossings only — never the first tick (context is pinned, not ridden)', () => {
     // Month-grain ticks straddling a year turn: Nov, Dec, Jan, Feb. Only the

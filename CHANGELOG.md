@@ -45,6 +45,18 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **charts:** a multi-session time axis near the tick cap can no longer come
+  back lopsided — with several sessions each gaining a phase tick while the
+  span estimate sat within a few ticks of the cap, clock-rung enumeration hit
+  its internal bail and the truncated tick array was returned, leaving the
+  final sessions with no ticks at all. The enumeration budget now covers the
+  estimate's per-session undercount (`cap + opens.length + slack`) so
+  enumeration completes, and a still-truncated result is rejected in favor of
+  a coarser rung instead of being returned. (Follow-up to the v0.46.0
+  sliding-window grain-stability fix, flagged in its release spot-check.)
+
 ## [0.46.0] — 2026-07-14
 
 ### Changed
