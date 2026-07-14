@@ -138,7 +138,39 @@ export const SigmaWithDeltaStrip: Story = {
           transform={sigmaToDelta}
           format="+.2f"
           label="Std Moneyness · BS xDe"
+          color="#4c8fbd"
         />
+      </ChartContainer>
+    );
+  },
+};
+
+/** The multi-axis convention: each **y axis coloured to match its series**
+ *  (`<YAxis color>` — busy, but standard on dual-axis charts), with the
+ *  derived x strip coloured too. Every axis instance takes its own `color`. */
+export const SeriesColoredAxes: Story = {
+  render: () => {
+    const series = sigmaSmile();
+    return (
+      <ChartContainer showAxis={false} width={700} theme={docsTheme}>
+        <ChartRow height={220}>
+          {/* Each y axis takes its series' colour — the theme's primary /
+              secondary role colours, matched by hand. */}
+          <YAxis id="iv" label="Volatility" format=".1f" color="#0e8f86" />
+          <YAxis
+            id="iv2"
+            side="right"
+            label="IV (again)"
+            format=".2f"
+            color="#3d6fd9"
+          />
+          <Layers>
+            <LineChart series={series} column="iv" axis="iv" as="primary" />
+            <LineChart series={series} column="iv" axis="iv2" as="secondary" />
+          </Layers>
+        </ChartRow>
+        <XAxis format={(s) => `${s.toFixed(1)}σ`} />
+        <XAxis transform={sigmaToDelta} format="+.2f" color="#4c8fbd" />
       </ChartContainer>
     );
   },

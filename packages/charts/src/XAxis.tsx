@@ -107,6 +107,14 @@ export interface XAxisProps {
    */
   transform?: AxisTransform;
   /**
+   * This axis instance's colour — tick marks, labels, the plot-facing rule,
+   * and the `label` title all take it, overriding the theme's `axis.label` /
+   * `axis.grid` / `axis.title.color`. The lever that distinguishes stacked
+   * dual axes (a blue derived-unit strip under a grey primary). Cursor and
+   * marker pills keep their own colours. Omit for the theme's axis colours.
+   */
+  color?: string;
+  /**
    * Horizontal placement of each tick label relative to its tick.
    * - **`'center'` (default)** — every label centred on its tick. Note the
    *   first/last labels can then extend past the plot edges (the strip doesn't
@@ -138,6 +146,7 @@ export function XAxis({
   height,
   ticks: customTicks,
   transform,
+  color,
   align = 'center',
 }: XAxisProps = {}) {
   const container = useContext(ContainerContext);
@@ -348,10 +357,11 @@ export function XAxis({
         width: `${plotWidth}px`,
         height: `${stripHeight}px`,
         // The plot-facing edge carries the rule; a top axis rules its bottom.
-        [onTop ? 'borderBottom' : 'borderTop']: `1px solid ${theme.axis.grid}`,
+        [onTop ? 'borderBottom' : 'borderTop']:
+          `1px solid ${color ?? theme.axis.grid}`,
         fontFamily: theme.font.family,
         fontSize: `${theme.font.size}px`,
-        color: theme.axis.label,
+        color: color ?? theme.axis.label,
       }}
     >
       {placed.map((t, i) => {
@@ -381,7 +391,7 @@ export function XAxis({
                 [onTop ? 'bottom' : 'top']: 0,
                 width: '1px',
                 height: `${tickHeight}px`,
-                background: theme.axis.grid,
+                background: color ?? theme.axis.grid,
               }}
             />
             <div
@@ -424,7 +434,7 @@ export function XAxis({
             [onTop ? 'top' : 'bottom']: 0,
             // Themeable axis-title text (shared with the rotated y-axis title).
             fontSize: `${theme.axis.title?.size ?? theme.font.size + 1}px`,
-            color: theme.axis.title?.color ?? theme.axis.label,
+            color: color ?? theme.axis.title?.color ?? theme.axis.label,
             opacity: theme.axis.title?.opacity ?? 0.85,
             whiteSpace: 'nowrap',
           }}

@@ -212,6 +212,30 @@ describe('<XAxis> — the placeable x axis', () => {
     }
   });
 
+  it('a per-axis color overrides the theme for labels, ticks, rule, and title', () => {
+    const { container, getByText } = render(
+      <ChartContainer range={[0, 5000]} width={480} showAxis={false}>
+        <ChartRow height={120}>
+          <Layers>
+            <LineChart series={rideByDistance()} column="hr" />
+          </Layers>
+        </ChartRow>
+        <XAxis format=",.0f" label="Distance" color="rgb(76, 143, 189)" />
+      </ChartContainer>,
+    );
+    const strip = getByText('Distance').parentElement as HTMLElement;
+    expect(strip.style.color).toBe('rgb(76, 143, 189)');
+    expect(strip.style.borderTop).toContain('rgb(76, 143, 189)');
+    expect((getByText('Distance') as HTMLElement).style.color).toBe(
+      'rgb(76, 143, 189)',
+    );
+    // Tick marks (1px-wide divs) take it too.
+    const mark = Array.from(container.querySelectorAll('div')).find(
+      (el) => (el as HTMLElement).style.width === '1px',
+    ) as HTMLElement;
+    expect(mark.style.background).toBe('rgb(76, 143, 189)');
+  });
+
   it('a decreasing transform still places ticks left-to-right', () => {
     const { container } = render(
       <ChartContainer range={[0, 100]} width={480} showAxis={false}>

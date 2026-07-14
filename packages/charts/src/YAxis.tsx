@@ -72,6 +72,14 @@ export interface YAxisProps {
   /** Gutter width in CSS pixels (default 50). */
   width?: number;
   /**
+   * This axis instance's colour — tick labels and the axis title take it,
+   * overriding the theme's `axis.label` / `axis.title.color`. The multi-axis
+   * convention of colouring each y axis to match its series (`color`
+   * matching the layer's) — busy, but standard. Omit for the theme's axis
+   * colours. Presentation-only: it never re-registers the axis.
+   */
+  color?: string;
+  /**
    * @internal Declaration position among the row's children, injected by
    * `ChartRow` so the first-declared axis stays the default. Do not set.
    */
@@ -101,6 +109,7 @@ export function YAxis({
   boundaryLabels = true,
   width = DEFAULT_WIDTH,
   labelPlacement = 'rotated',
+  color,
   index = 0,
 }: YAxisProps) {
   const container = useContext(ContainerContext);
@@ -177,7 +186,7 @@ export function YAxis({
           height: `${row.height}px`,
           fontFamily: theme.font.family,
           fontSize: `${theme.font.size}px`,
-          color: theme.axis.label,
+          color: color ?? theme.axis.label,
         }}
       >
         {yScale &&
@@ -224,7 +233,7 @@ export function YAxis({
               // labels' alignment, rather than floating at the outer gutter edge.
               [side === 'left' ? 'right' : 'left']: '4px',
               fontSize: `${theme.axis.title?.size ?? theme.font.size + 1}px`,
-              color: theme.axis.title?.color ?? theme.axis.label,
+              color: color ?? theme.axis.title?.color ?? theme.axis.label,
               opacity: theme.axis.title?.opacity ?? 0.85,
               whiteSpace: 'nowrap',
               pointerEvents: 'none',
@@ -244,7 +253,7 @@ export function YAxis({
               alignItems: 'center',
               justifyContent: 'center',
               fontSize: `${theme.axis.title?.size ?? theme.font.size + 1}px`,
-              color: theme.axis.title?.color ?? theme.axis.label,
+              color: color ?? theme.axis.title?.color ?? theme.axis.label,
               opacity: theme.axis.title?.opacity ?? 0.85,
               pointerEvents: 'none',
             }}
