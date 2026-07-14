@@ -298,9 +298,9 @@ describe('trading-axis tick density derives from plot width', () => {
     const ticks = tickList(f);
     expect(ticks.length).toBeGreaterThanOrEqual(10); // month grain, not year
     expect(ticks.length).toBeLessThanOrEqual(f.xTickCount);
-    // …and the shared formatter labels those ticks as month-start dates on the
-    // same grain (`%b %d`), so labels sit on the exact instants the ticks do.
-    expect(f.formatTime(ticks[1]!)).toMatch(/^[A-Z][a-z]{2} \d{2}$/);
+    // …and the shared formatter labels those ticks as bare months (`%b`) on
+    // the same grain — the year lives on the boundary (second) row.
+    expect(f.formatTime(ticks[1]!)).toMatch(/^[A-Z][a-z]{2}$/);
   });
 
   it('a narrower view of the same data coarsens the grain (fewer ticks)', () => {
@@ -311,10 +311,11 @@ describe('trading-axis tick density derives from plot width', () => {
     expect(tickList(narrow).length).toBeLessThanOrEqual(narrow.xTickCount);
   });
 
-  it('a continuous time axis keeps the fixed default count', () => {
-    // No provider → plain d3 scaleTime; density is unchanged by this feature.
+  it('a continuous time axis derives its count from width too (shared ladder)', () => {
+    // No provider → the identity-provider trading scale; a plain time axis
+    // runs the same logical ladder, so its cap is width-derived as well.
     const f = frameOf({});
-    expect(f.xTickCount).toBe(5);
+    expect(f.xTickCount).toBe(Math.max(2, Math.floor(f.plotWidth / 65)));
   });
 
   it('the auto-rendered axis shows the dense labels (DOM, not just the scale)', () => {
@@ -326,11 +327,32 @@ describe('trading-axis tick density derives from plot width', () => {
         discontinuities={sessionsProvider(sessions)}
       />,
     );
-    // One label div per tick, text like "Jul 01" (`%b %d` anchors).
+    // One label div per tick, text like "Jul" (`%b` month-grain anchors).
     const labels = Array.from(dom.querySelectorAll('div')).filter((el) =>
-      /^[A-Z][a-z]{2} \d{2}$/.test(el.textContent ?? ''),
+      /^[A-Z][a-z]{2}$/.test(el.textContent ?? ''),
     );
     expect(labels.length).toBeGreaterThanOrEqual(10);
+    // …and the boundary (second) row carries the year: once under the first
+    // tick, once where the year turns — never on every tick.
+    const boundaries = Array.from(
+      dom.querySelectorAll('[data-boundary-label]'),
+    ).map((el) => el.textContent);
+    expect(boundaries).toEqual(['2025', '2026']);
+  });
+
+  it('a container-level timeFormat suppresses the boundary row', () => {
+    // An explicit format owns the whole label — the ladder must not add a
+    // second line under it (same opt-out as an <XAxis format> override).
+    const sessions = yearSessions();
+    const { container: dom } = render(
+      <ChartContainer
+        range={[sessions[0]!.open, sessions[sessions.length - 1]!.close]}
+        width={900}
+        discontinuities={sessionsProvider(sessions)}
+        timeFormat="%Y-%m-%d"
+      />,
+    );
+    expect(dom.querySelectorAll('[data-boundary-label]')).toHaveLength(0);
   });
 
   it('formatTime labels year-grain ticks with the year — count shared with ticks', () => {

@@ -7,8 +7,9 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { scaleLinear, scaleTime } from 'd3-scale';
+import { scaleLinear } from 'd3-scale';
 import {
+  identityProvider,
   scaleTradingTime,
   type DiscontinuityProvider,
   type TradingCalendarLike,
@@ -720,11 +721,12 @@ export function ChartContainer({
   // The shared x-side tick count — labels, x gridlines, session dividers, and
   // `formatTime` all pass this one value, so they derive from the same instants
   // (the alignment previously held by three hardcoded constants agreeing).
-  // Trading axis: width-derived, since the trading scale's `count` caps its
-  // calendar buckets rather than targeting a tick total; floored at 2 so a
-  // pre-layout zero width still requests a drawable tick set.
+  // Time axis (trading or plain — both run the logical tick ladder):
+  // width-derived, since the ladder's `count` caps its calendar buckets rather
+  // than targeting a tick total; floored at 2 so a pre-layout zero width still
+  // requests a drawable tick set. Value/category axes keep the d3 target count.
   const xTickCount =
-    xDiscontinuities !== undefined
+    resolvedKind === 'time'
       ? Math.max(2, Math.floor(plotWidth / TRADING_TICK_PX))
       : TIME_TICK_COUNT;
   const { xScale, formatTime } = useMemo(() => {
@@ -759,7 +761,15 @@ export function ChartContainer({
         formatTime: resolveTimeFormat(s, xTickCount, timeFormat),
       };
     }
-    const s = scaleTime().domain([d0, d1]).range([0, plotWidth]);
+    // Plain continuous time axis: the same trading-time scale over the
+    // gap-free identity provider, so it runs the same logical tick ladder
+    // (month starts over a year, clock-aligned hours over an afternoon) —
+    // never d3's mixed multi-scale default. Interactions stay on continuous
+    // time math: the frame's `discontinuities` remains undefined, and identity
+    // distance/offset are plain subtraction/addition anyway.
+    const s = scaleTradingTime(identityProvider())
+      .domain([d0, d1])
+      .range([0, plotWidth]);
     return {
       xScale: s,
       formatTime: resolveTimeFormat(s, xTickCount, timeFormat),
@@ -894,6 +904,7 @@ export function ChartContainer({
       onHoverAnnotation,
       onEditAnnotation,
       formatTime,
+      xFormatCustom: timeFormat !== undefined,
       xTickCount,
       registerTrackerSource,
       unregisterTrackerSource,
@@ -949,6 +960,7 @@ export function ChartContainer({
       onHoverAnnotation,
       onEditAnnotation,
       formatTime,
+      timeFormat,
       xTickCount,
       registerTrackerSource,
       unregisterTrackerSource,

@@ -159,6 +159,10 @@ export interface ContainerFrame {
   /** Format an epoch-ms instant the same way the time axis labels its ticks —
    *  shared by `<TimeAxis>` and the cursor-time readout. */
   readonly formatTime: (epochMs: number) => string;
+  /** Whether an explicit container `timeFormat` shaped {@link formatTime}. The
+   *  x axis suppresses its boundary (second) label row when it's set — a
+   *  custom format owns the whole label, so the ladder mustn't second-line it. */
+  readonly xFormatCustom: boolean;
   /**
    * The shared **x-side tick count** — the `count` every x-side `ticks()` /
    * `tickFormat()` call passes (`<XAxis>` labels, the canvas x gridlines and

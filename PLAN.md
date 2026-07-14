@@ -1638,6 +1638,30 @@ independently built the same `calendar.bars → BoundedSequence` seam.
     the fixed 5. **Deliberately no `tickCount` prop** — the failure was the
     default; a knob waits for real friction (the vol-smile `YAxis` tickCount
     itch is the sibling to watch).
+  - ✅ **Logical tick ladder + two-tier axis labels
+    (`feat/two-tier-axis-ticks`, unreleased)** — a Tidal screenshot (year of
+    daily data, continuous axis) showed d3's multi-scale default mixing
+    `"Jun 23"` / bare `"Sep"` labels; owner directed a proper ladder instead of
+    a format patch. `tickLadder.ts` walks second/minute/hour clock rungs
+    (1s…30s, 1m…30m, 1h…12h) →day→week→month→quarter→year, finest grain
+    fitting the width-derived cap; clock anchors generate in **live** time (clock-aligned per session, never in a
+    collapsed gap / lunch break / early close, no new provider surface).
+    Labels are **two rows**: first row at the tick grain (`14:00` / `Feb 02` /
+    `Feb` / `2026`), second **boundary row** carrying the omitted coarser unit
+    (`Jan 05` under hours, `Jan 2026` under days, `2026` under months) under
+    the first tick of each period + the first tick shown (owner-confirmed
+    anchoring). **Plain continuous time axes now run the same ladder** through
+    an internal gap-free `identityProvider()` (calendar days as sessions) —
+    one algorithm, both axis kinds; the frame's `discontinuities` stays
+    undefined so pan/zoom keep continuous math. `TradingTimeScale.tickBoundaries(count)`
+    is the new scale surface; `coarsenCalendar` moved to `tickLadder.ts`
+    ('session' grain renamed 'day'). A cramped leading partial-period anchor
+    (< half a period from the next tick, in live time) is dropped — the
+    screenshot's `"Jun 23Jul 07"` pile-up. Design rules: an hour rung must add
+    intraday anchors beyond the opens (else it's day grain); boundary row is
+    where coarser context lives, so month boundaries format `%b %Y`.
+    Systematic story matrix `Charts/TimeAxisTicks` (one story per rung,
+    trading + continuous, narrow variants).
   - **Still deferred (documented, none blocking):** `neighbourSpans` point-key slot
     widths on the discontinuous axis (interval-keyed bars from
     `aggregate(barSequence)` — the primary path — are immune); exact **exchange-tz**

@@ -2,6 +2,7 @@ import { Fragment, useContext } from 'react';
 import type { ScaleLinear, ScaleTime } from 'd3-scale';
 import { ContainerContext } from './context.js';
 import { axisPillStyle } from './chip.js';
+import type { TradingTimeScale } from './tradingTimeScale.js';
 import {
   resolveAxisFormat,
   resolveTimeFormat,
@@ -12,11 +13,15 @@ import {
 const TICK_STRIP = 22;
 /** Extra height reserved for an axis `label` line. */
 const LABEL_STRIP = 16;
+/** Extra height reserved for the boundary (second) label row. */
+const BOUNDARY_STRIP = 15;
 
-/** One placed tick — its plot-pixel x and the text to draw. */
+/** One placed tick — its plot-pixel x, the text to draw, and (on a time axis)
+ *  the boundary-row text under it when this tick opens a new coarser period. */
 interface PlacedTick {
   readonly x: number;
   readonly label: string;
+  readonly boundary?: string;
 }
 
 /**
@@ -211,11 +216,27 @@ export function XAxis({
   }
   const maxPillLane = Math.max(0, pillLaneEnds.length - 1);
 
+  // The boundary (second) label row — the coarser calendar unit the first-row
+  // label omits (the year under month ticks, the month-and-year under day
+  // ticks, the date under hour ticks), placed under the first tick of each new
+  // period. Only a ladder-driven time scale supplies it; explicit `ticks`, an
+  // explicit axis `format`, and a container-level `timeFormat` all opt out (a
+  // custom format owns the whole label, and custom ticks have no grain).
+  const boundaryOf =
+    xKind === 'time' &&
+    customTicks === undefined &&
+    format === undefined &&
+    !container.xFormatCustom &&
+    'tickBoundaries' in xScale
+      ? (xScale as TradingTimeScale).tickBoundaries(xTickCount)
+      : undefined;
+
   const rawTicks: PlacedTick[] = customTicks
     ? customTicks.map((t) => ({ x: xScale(t.at), label: t.label }))
     : (xScale.ticks(xTickCount) as ReadonlyArray<number | Date>).map((d) => ({
         x: xScale(d as number),
         label: fmt(+d),
+        boundary: boundaryOf?.(+d),
       }));
   // A category axis ticks once per category; thin + truncate its labels when they
   // crowd (an explicit `customTicks` axis keeps its labels verbatim).
@@ -230,8 +251,11 @@ export function XAxis({
   const pillOffset = align === 'right' ? 2 : 6;
   // Per-lane vertical step for stacked pills; grow the strip to fit the stack.
   const PILL_LANE_H = theme.font.size + 6;
+  // Any boundary label in view grows the strip by one row (like pill lanes do).
+  const hasBoundary = placed.some((t) => t.boundary !== undefined);
   const stripHeight =
     (height ?? TICK_STRIP + (label ? LABEL_STRIP : 0)) +
+    (hasBoundary ? BOUNDARY_STRIP : 0) +
     maxPillLane * PILL_LANE_H;
 
   return (
@@ -289,6 +313,22 @@ export function XAxis({
             >
               {t.label}
             </div>
+            {t.boundary !== undefined && (
+              <div
+                data-boundary-label
+                style={{
+                  position: 'absolute',
+                  left: `${labelLeft}px`,
+                  [onTop ? 'bottom' : 'top']:
+                    `${labelOffset + theme.font.size + 3}px`,
+                  transform: labelTransform,
+                  whiteSpace: 'nowrap',
+                  opacity: 0.75,
+                }}
+              >
+                {t.boundary}
+              </div>
+            )}
           </Fragment>
         );
       })}

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render } from '@testing-library/react';
 import * as stories from '../src/TradingTimeAxis.stories.js';
 import * as interactions from '../src/TradingTimeAxisInteractions.stories.js';
+import * as ladder from '../src/TimeAxisTicks.stories.js';
 import type { StoryObj } from '@storybook/react-vite';
 
 afterEach(cleanup);
@@ -62,6 +63,40 @@ describe('TradingTimeAxis interaction stories render', () => {
       'PanZoom',
       'RegionAcrossSessions',
       'Snapping',
+    ]);
+  });
+
+  for (const [name, story] of entries) {
+    it(`${name} mounts without throwing`, () => {
+      const el = (story.render as () => ReactElement)();
+      expect(() => render(el)).not.toThrow();
+    });
+  }
+});
+
+/**
+ * The tick-ladder matrix (`TimeAxisTicks.stories.tsx`) — one story per grain
+ * rung across trading and plain-continuous axes. Smoke-mounted the same way;
+ * the grain/format behavior itself is pinned in `tickLadder.test.ts` and
+ * `tradingTimeScale.test.ts` (story widths are only *typical* for a grain —
+ * the exact rung can vary with the runner's time zone).
+ */
+describe('TimeAxisTicks (tick-ladder) stories render', () => {
+  const entries = storyEntries(ladder);
+
+  it('exposes the expected ladder-matrix stories', () => {
+    expect(entries.map(([n]) => n).sort()).toEqual([
+      'ContinuousIntraday',
+      'ContinuousYear',
+      'IntradayHourly',
+      'IntradayThreeHour',
+      'MonthWeekly',
+      'MultiYearNarrow',
+      'MultiYearQuarterly',
+      'QuarterDaily',
+      'WeekDaily',
+      'YearMonthly',
+      'YearMonthlyNarrow',
     ]);
   });
 
