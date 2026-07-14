@@ -138,6 +138,7 @@ export const SigmaWithDeltaStrip: Story = {
           transform={sigmaToDelta}
           format="+.2f"
           label="Std Moneyness · BS xDe"
+          color="#4c8fbd"
         />
       </ChartContainer>
     );

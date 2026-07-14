@@ -57,7 +57,9 @@ and type-level changes; patch bumps are strictly additive.
   ones — and a label-honesty filter drops any tick whose formatted label would
   lie about its position. Gridlines stay on the container's primary ticks; the
   cursor pill on a transformed axis reads in the derived unit. Stories under
-  `Charts/Axes/DualX`.
+  `Charts/Axes/DualX`. Each `<XAxis>` also takes a per-instance **`color`**
+  (labels, tick marks, rule, title) — the lever that distinguishes stacked
+  strips (a blue delta strip under a grey primary).
 
 ### Fixed
 
