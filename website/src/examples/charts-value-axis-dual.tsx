@@ -27,7 +27,7 @@ export default function ChartsValueAxisDual() {
         label="Moneyness"
       />
       <ChartRow height={220}>
-        <YAxis id="iv" label="implied vol" format=".1%" />
+        <YAxis id="iv" label="implied vol" format=".1%" width={60} />
         <Layers>
           <LineChart series={chain} column="fair" curve="natural" />
           <ScatterChart series={chain} column="fair" id="fair" />
