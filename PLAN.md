@@ -1022,7 +1022,7 @@ Phases (each independently shippable, ends with a docs deploy):
         the one actually measured; documented as a new gotcha in the
         recipe itself, since it's a realistic mistake the next reader
         would make too.
-- [ ] **P2 — interaction + doc-debt burn-down** (in progress; 2/7 shipped):
+- [ ] **P2 — interaction + doc-debt burn-down** (in progress; 4/7 shipped):
   - [x] Learn chapters 6–9 (#446) — completes the nine-chapter tutorial
         track. Ch6 reading/selecting values: the five `cursor` modes
         via a live mode-switcher demo, `onTrackerChanged` for an
@@ -1054,8 +1054,47 @@ Phases (each independently shippable, ends with a docs deploy):
         `<div>` chip, not canvas/SVG) after a canvas-byte-diff check
         wrongly suggested it was frozen — `YAxisIndicator` doesn't
         paint to canvas at all.
-  - [ ] Interaction reference section
-  - [ ] Annotations & indicators reference section
+  - [x] **Interaction reference section** — new `Interaction`
+        sub-category under `@pond-ts/charts` (3 pages, matching the
+        docs-plan §3 IA): `cursors-and-readouts` (all seven
+        `CursorMode` values incl. `none`/`region` in a complete table
+        — ch. 6 only tours five; `onTrackerChanged` +
+        `TrackerInfo`/`TrackerSample` shapes; `trackerPosition`,
+        `cursorTime`, `crosshairSnap`; reuses the `learn-06-cursor-modes`
+        + `learn-06-tracker-readout` embeds), `selection-and-hover`
+        (`selected`/`onSelect`/`hovered`/`onHover` + `SelectInfo`; the
+        id-gates-selectability rule; single-select honesty; distinct
+        from annotation selection — no existing embed, links the real
+        `Bar`/`Scatter` selection stories), `pan-zoom-and-range-selection`
+        (`cursor="region"` + `cursorSequence` + `onRegionSelect`; the
+        select-to-zoom loop via `learn-06-zoom`; `panZoom` +
+        `onTimeRangeChange` + `minDuration`; the "container never zooms
+        itself" contract). All props verified against
+        `ChartContainer.tsx`/`context.ts` source.
+  - [x] **Annotations & indicators reference section** — new
+        `Annotations & indicators` sub-category (4 pages, the docs-plan's
+        "ONE section" mandate): `the-annotation-model` (two registers,
+        3 depth levels, 3 interaction modes, the indicator law;
+        `learn-07-annotations` hero embed), `region-baseline-marker`
+        (full geometry/label prop tables for all three — `Region`
+        `from/to/edges`, `Marker` `at/indicator`, `Baseline`
+        `value/axis/labelSide/labelPosition/indicator`; from
+        `annotations.tsx`), `editing-and-creating` (shared
+        `id/selectable/selected/hovered/editing` + per-primitive
+        `onChange`; container `onSelectAnnotation`/`onHoverAnnotation`/
+        `onEditAnnotation`/`editAnnotations`/`snap`; `creating` +
+        `CreateSpec` union; snap-is-guideline-only honesty),
+        `axis-indicators-and-live-values` (`YAxisIndicator` full props;
+        `createLiveValue`/`LiveValue` isolated-repaint path, linked —
+        not restated — to ch. 8 + the react hooks page; "no standalone
+        `XAxisIndicator` — it's `<Marker indicator>`"; the pill-location
+        table). Both sections: `docusaurus build` (`onBrokenLinks:
+        'throw'`) clean after a cache-clear; reused live embeds checked
+        in-browser (canvases render, no console errors). Storybook
+        deep-links point at real story export names (verified against
+        the `.stories.tsx` files). Content-ownership rule followed:
+        reference pages give the complete prop/mode tables and link the
+        Learn chapters (6, 7, 8) for narrative rather than restating.
   - [ ] Financial charts hub (+ TradingView vocabulary bridge)
   - [ ] Missing data & gaps page
   - [x] **value-axis docs** (the Documentation backlog's

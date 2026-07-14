@@ -1,0 +1,84 @@
+---
+title: Selection & hover
+sidebar_position: 2
+---
+
+# Selection & hover
+
+Separate from the [hover readout](./cursors-and-readouts.mdx), a chart can
+report **which data mark was clicked or hovered** — a bar, a scatter point —
+so you can drive a detail panel, a linked list, or a cross-highlight. This is
+_data-mark_ selection; the annotation counterpart (selecting a `Region` /
+`Marker` / `Baseline`) lives on the
+[annotations pages](../annotations/the-annotation-model.mdx).
+
+Chapter 6 doesn't cover this; it's reference-only. The mechanics are four
+props on `<ChartContainer>` and one payload type.
+
+## Identity gates selectability
+
+A layer is **selectable only when it carries an `id`** — the stable series
+identity. `BarChart` and `ScatterChart` match the selection against their
+`id` (the series) and the sample's `key`, so two series sharing a timestamp
+don't both light up, and a pinned selection survives a data update (it keys
+on the stable `id`, not the sample index). A layer with **no `id`** still
+renders and reads out under the cursor, but can't be selected.
+
+If you set `selected`/`onSelect` but no layer has an `id`, a dev-time warning
+notes that nothing is selectable.
+
+## The props
+
+| Prop       | Type                    | Purpose                                                                                                                                                                                 |
+| ---------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `selected` | `SelectInfo \| null`    | **Controlled** selection (echo the `onSelect` arg back). Omit ⇒ uncontrolled — a click manages it internally; pass `null` to force nothing selected.                                    |
+| `onSelect` | `(hit \| null) => void` | Fires on click with the hit mark, or `null` when a click misses every mark. Notification only — works controlled or uncontrolled.                                                       |
+| `hovered`  | `SelectInfo \| null`    | **Controlled** hover-highlight — pin a lit mark from outside (e.g. hovering a legend row lights the matching bar). Only layers with a hover-highlight (currently `BarChart`) render it. |
+| `onHover`  | `(hit \| null) => void` | Fires when the pointer enters a mark (the hit) or leaves every mark (`null`). Deduped by `key` + `label` — fires on mark transitions, not every pointer move.                           |
+
+`SelectInfo` is the payload for all four:
+
+```ts
+interface SelectInfo {
+  id: string; // the layer's id — the SELECTION IDENTITY, stable across updates
+  key: number; // the clicked sample's key (epoch ms) — provenance, not identity
+  value: number; // the clicked sample's plotted value — provenance
+  color: string; // the mark's resolved colour
+  label: string; // display label (as ?? column ?? id)
+  mark?: string; // stable per-mark handle within the layer — a category's column
+  //          name on a categorical axis, where every bar shares the layer id
+}
+```
+
+## Controlled vs. uncontrolled
+
+Omit `selected` and a click manages selection internally — enough for a
+self-contained chart. Pass `selected` (echoing `onSelect` back) when the
+selection is **shared state**: a URL param, a sibling detail view, a
+selection that should survive a re-render driven from elsewhere. `hovered`
+works the same way for the transient highlight — pass it to light a mark from
+an out-of-band hover (a legend, a table row), pairing with `onHover` to sync
+both directions.
+
+## Sharp edges
+
+- **Single-select only.** There is no multi-select or range-select of data
+  marks — `selected` holds one `SelectInfo` or `null`.
+- **Not every layer participates.** Selection is on `BarChart` and
+  `ScatterChart` today (they carry `id`); hover-highlight is `BarChart` only.
+  Line/area layers read out under the cursor but aren't click-selectable.
+- **`onHover` dedupes on `key` + `label`,** not `value` — on a live chart
+  where a hovered bar's value changes, it won't re-fire. Read the current
+  value from your series, not the last `onHover` payload.
+- **Mouse-only,** like every interaction in the library today.
+
+## See also
+
+- [Cursors & readouts](./cursors-and-readouts.mdx) — the hover _readout_
+  (value under the pointer), distinct from clicking a mark.
+- [The annotation model](../annotations/the-annotation-model.mdx) — selecting
+  annotations (`onSelectAnnotation`), the parallel system for marks _you_ add.
+- Storybook: [`Charts/BarChart` → HoverSelect](pathname:///storybook/?path=/story/charts-barchart--hover-select)
+  and [ControlledSelection](pathname:///storybook/?path=/story/charts-barchart--controlled-selection),
+  [`Charts/ScatterChart` → ControlledSelect](pathname:///storybook/?path=/story/charts-scatterchart--controlled-select)
+  exercise data-mark selection.

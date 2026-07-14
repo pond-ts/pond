@@ -1,0 +1,112 @@
+---
+title: Pan, zoom & range selection
+sidebar_position: 3
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import LearnZoom from '@site/src/examples/learn-06-zoom';
+
+# Pan, zoom & range selection
+
+Three related mechanisms move the **view range** — the slice of the x axis a
+chart shows. They compose but are independent: drag-to-select a range, wire
+that into a controlled zoom, and/or enable free pan/zoom. All of them speak
+the same neutral range contract: a `[start, end]` pair in axis units.
+
+Chapter 6 teaches the select-to-zoom loop as a payoff; this page is the full
+prop reference. See
+[Learn charts, chapter 6](../../learn-charts/cursors-readouts-zoom) for
+the narrative and the [`Cursors/Region`](pathname:///storybook/?path=/story/cursors-region--drag-to-select)
+Storybook group for the per-variant walk.
+
+## Range selection — `cursor="region"`
+
+Setting `cursor="region"` and providing `onRegionSelect` makes the region
+cursor **draggable**: the user drags across the plot and, on release, you get
+the selected range once.
+
+```ts
+cursor="region"
+cursorSequence?: Sequence | BoundedSequence; // bucket snapping (time axis only)
+onRegionSelect?: (range: readonly [number, number]) => void; // [lo, hi] on release
+```
+
+- **`onRegionSelect` fires once, on release,** with `[lo, hi]` — always
+  ordered low-to-high regardless of drag direction. Providing it is what turns
+  the region cursor draggable; it's a **notification** — the container never
+  zooms itself in response.
+- **`cursorSequence`** snaps the shaded band to buckets (whole minutes, whole
+  sessions) as the drag extends, and is **time-axis only** — a "minute" is
+  meaningless on a value axis. With no `cursorSequence` the region cursor is
+  the degenerate free-drag case (pixel-precise, no snapping), which is what a
+  value-axis selection uses.
+- Range selection works on a **time or value** x axis; it's excluded on a
+  category axis.
+
+## The select-to-zoom loop
+
+Zooming is `onRegionSelect` → your state → controlled `range`. The container
+draws whatever `range` you give it; the selection callback proposes a new one;
+you decide whether to apply it. A "reset" is just setting `range` back to the
+full extent.
+
+```tsx
+const [range, setRange] = useState(full);
+
+<ChartContainer
+  range={range}
+  cursor="region"
+  onRegionSelect={(r) => setRange(r)}
+>
+  {/* … */}
+</ChartContainer>;
+```
+
+<ChartExample name="learn-06-zoom" height={280}>
+  <LearnZoom />
+</ChartExample>
+
+Because the container never zooms on its own, the same `onRegionSelect` can
+drive anything a range means in your app — a filter, a fetch, a linked chart —
+not only a zoom.
+
+## Free pan & zoom — `panZoom`
+
+Separately from range-select, `panZoom` enables **direct manipulation**: drag
+the plot to pan, wheel to zoom around the cursor.
+
+| Prop                | Type                            | Default | Purpose                                                                                           |
+| ------------------- | ------------------------------- | ------- | ------------------------------------------------------------------------------------------------- |
+| `panZoom`           | `boolean`                       | `false` | Drag-to-pan + wheel-to-zoom. Off by default so it doesn't capture drag/scroll unless asked.       |
+| `onTimeRangeChange` | `([start, end]) => void`        | —       | Fires on pan/zoom with the new range. Wire back to `range` for controlled; omit for uncontrolled. |
+| `minDuration`       | `number`                        | `1`     | Zoom-in floor — the minimum visible duration in ms.                                               |
+| `range`             | `[number, number] \| TimeRange` | —       | The controlled view range (shared by all three mechanisms).                                       |
+
+**Controlled vs. uncontrolled matters here.** Uncontrolled (`panZoom` on, no
+`onTimeRangeChange`), the container holds the view internally and seeds it from
+`range` whenever it isn't actively holding one — but later `range` changes are
+then ignored so they can't fight the user's pan. To drive the range externally
+— or to **follow a live sliding window** — use controlled mode: handle
+`onTimeRangeChange` and feed `range` yourself.
+
+## Sharp edges
+
+- **The container never zooms itself.** `onRegionSelect` and
+  `onTimeRangeChange` are notifications; a controlled `range` is the only thing
+  that actually changes what's shown. This is deliberate — a range means
+  different things in different apps.
+- **`cursorSequence` is time-axis only.** Bucket snapping needs a temporal
+  grid; value-axis and category selections don't take one.
+- **Uncontrolled `panZoom` stops tracking `range`** once the user grabs it —
+  if you need the view to follow live data, go controlled.
+- **Mouse-only** — pan is drag, zoom is wheel; no keyboard or touch gestures
+  yet.
+
+## See also
+
+- [Learn charts, chapter 6](../../learn-charts/cursors-readouts-zoom) —
+  the select-to-zoom loop taught end to end.
+- [Cursors & readouts](./cursors-and-readouts.mdx) — the other six cursor
+  modes (the readouts, as opposed to `region`'s selection).
+- Storybook: [`Cursors/Region`](pathname:///storybook/?path=/story/cursors-region--drag-to-select)
+  — `DragToSelect`, `Freeform`, `Sessions`, `ValueAxisSelect`, `PanAndSelect`.
