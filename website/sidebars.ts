@@ -135,6 +135,7 @@ const sidebars: SidebarsConfig = {
             'learn-charts/beyond-the-time-axis',
           ],
         },
+        'charts/value-axis',
         {
           type: 'link',
           label: 'API reference (charts)',
