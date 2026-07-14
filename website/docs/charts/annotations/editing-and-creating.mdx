@@ -1,0 +1,101 @@
+---
+title: Editing & creating annotations
+sidebar_position: 3
+---
+
+# Editing & creating annotations
+
+Annotations go from static marks to an editable layer through props on the
+mark plus orchestration props on `<ChartContainer>`. This page is the
+interactive surface: selecting, hovering, editing one mark, and the create
+gesture. For the primitives' geometry props see
+[Region · Baseline · Marker](./region-baseline-marker.mdx).
+
+## The shared interaction props
+
+Every annotation (`Region`, `Marker`, `Baseline`) carries the same five
+interaction props:
+
+| Prop         | Type      | Default | Purpose                                                                                                         |
+| ------------ | --------- | ------- | --------------------------------------------------------------------------------------------------------------- |
+| `id`         | `string`  | —       | Stable consumer id — a click reports it via `onSelectAnnotation`.                                               |
+| `selectable` | `boolean` | `true`  | Whether the mark responds to hover + selection. `false` ⇒ inert background (drawn behind, no interaction).      |
+| `selected`   | `boolean` | `false` | **Controlled** selection — brightens to the front (level 1). Ignored if not `selectable`.                       |
+| `hovered`    | `boolean` | `false` | **Controlled** hover (OR'd with pointer hover) — light the mark from a legend row.                              |
+| `editing`    | `boolean` | `false` | Put **this one** mark into single-annotation edit — handles out, draggable, level 1 — while others stay static. |
+
+The geometry callback (`onChange`) is per-primitive (see the previous page):
+`Region` reports `{ from, to }`, `Marker` reports `at`, `Baseline` reports
+`value`. Editing is **controlled** — wire the reported value back to the
+mark's geometry prop.
+
+## Container orchestration
+
+Selection and hover are reported by the container, which knows which mark the
+pointer hit. You hold the state and echo it back to each mark's props:
+
+| Prop                 | Type                           | Default | Purpose                                                                                                    |
+| -------------------- | ------------------------------ | ------- | ---------------------------------------------------------------------------------------------------------- |
+| `onSelectAnnotation` | `(id: string \| null) => void` | —       | An annotation was clicked (its `id`), the plot was clicked empty (`null`), or a region was double-clicked. |
+| `onHoverAnnotation`  | `(id: string \| null) => void` | —       | The pointer entered a mark (`id`) or left it (`null`) — mirror to a controlled `hovered`.                  |
+| `onEditAnnotation`   | `(id: string) => void`         | —       | A mark was **double-clicked** — the request to edit just that one (set its `editing`).                     |
+| `editAnnotations`    | `boolean`                      | `false` | Global edit mode — suppresses the data cursor and turns on editable marks' handles.                        |
+| `snap`               | `boolean`                      | `true`  | Snap a dragged mark to other marks' guidelines (alignment). See below.                                     |
+
+The selection pattern is: hold `selectedId`, set each mark's
+`selected={mark.id === selectedId}`, and update it from `onSelectAnnotation`.
+Single-mark editing is the same shape with `editingId` and `editing` driven by
+`onEditAnnotation` (double-click). Global `editAnnotations` is the mode toggle
+that gets the data cursor out of the way and lights up every editable mark's
+affordances at once.
+
+## Creating annotations
+
+Arm a creation tool and the plot captures the next gesture:
+
+| Prop       | Type                         | Purpose                                                                                              |
+| ---------- | ---------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `creating` | `AnnotationKind \| null`     | The armed tool — `'region'`, `'marker'`, or `'baseline'`; `null` = idle. Requires `editAnnotations`. |
+| `onCreate` | `(spec: CreateSpec) => void` | Fires on gesture release with the new mark's geometry.                                               |
+
+`CreateSpec` is a discriminated union matching the armed kind:
+
+```ts
+type AnnotationKind = 'region' | 'marker' | 'baseline';
+
+type CreateSpec =
+  | { kind: 'marker'; at: number }
+  | { kind: 'baseline'; value: number; axis: string }
+  | { kind: 'region'; from: number; to: number };
+```
+
+The flow is spring-loaded: arm `creating`, the user drags a preview, `onCreate`
+fires, you add the mark to your list, disarm (`creating={null}`), and select
+the new mark. Keep `creating` set to place several in a row.
+
+## Snapping
+
+`snap` (default `true`) snaps a **dragged mark to other marks' guidelines** —
+their x-positions, within a few pixels — so spans line up. Turn it off for
+free placement.
+
+**Snapping to the nearest data sample is not implemented** — alignment is
+mark-to-mark only. An annotation lands where you drop it (or on a neighbour's
+guide), never auto-attached to a data point.
+
+## Sharp edges
+
+- **Editing is controlled.** `onChange` reports the new geometry; the mark
+  doesn't move until you feed it back. Same for `selected` / `editing`.
+- **Single-select, single-edit.** One selected mark, one editing mark at a
+  time — `editing` is per-mark but the double-click flow targets one.
+- **Snap is guideline-only,** not data-sample-aware (above).
+- **Mouse-only** — drag to move/resize, double-click to edit.
+
+## See also
+
+- [Region · Baseline · Marker](./region-baseline-marker.mdx) — the geometry props and per-primitive `onChange`.
+- [The annotation model](./the-annotation-model.mdx) — depth/brightness levels and the three interaction modes.
+- [Selection & hover](../interaction/selection-and-hover.mdx) — the parallel system for _data_ marks.
+- Storybook: [`Annotations/Scenarios` → Editable](pathname:///storybook/?path=/story/annotations-scenarios--editable)
+  and [Create](pathname:///storybook/?path=/story/annotations-scenarios--create).

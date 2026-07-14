@@ -1,0 +1,90 @@
+---
+title: The annotation model
+sidebar_position: 1
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import LearnAnnotations from '@site/src/examples/learn-07-annotations';
+
+# The annotation model
+
+Annotations are the marks **you** add to a chart to call out meaning — an
+incident window, a deploy, an SLA line. `@pond-ts/charts` has three
+primitives, all rendered as `<Layers>` children alongside the data:
+[`Region`](./region-baseline-marker.mdx#region) (a shaded x span),
+[`Marker`](./region-baseline-marker.mdx#marker) (a vertical line at an x), and
+[`Baseline`](./region-baseline-marker.mdx#baseline) (a horizontal line at a
+y). This page is the shared mental model; the next pages are the per-primitive
+props, the editing/creating surface, and axis indicators.
+
+Chapter 7 teaches placing them; this section is the reference. See
+[Learn charts, chapter 7](../../learn-charts/marking-up-charts) for the
+tutorial and the [`Annotations/Scenarios`](pathname:///storybook/?path=/story/annotations-scenarios--in-context)
+Storybook group for worked scenarios.
+
+<ChartExample name="learn-07-annotations" height={260}>
+  <LearnAnnotations />
+</ChartExample>
+
+## Two registers
+
+A chart draws in two colour registers, and annotations live in the second:
+
+- **Data** uses the series palette (the theme's `viz` roles).
+- **Annotations** use the theme's dedicated `annotation` hue — never a data
+  hue. This is deliberate: a mark you added should never be mistaken for a
+  series. Don't override an annotation's colour to match a series; that
+  collapses the two registers.
+
+## Depth and brightness
+
+Marks sort into three depth levels, so the one you're interacting with reads
+in front:
+
+- **Level 1 (front)** — the selected or editing mark, brightened.
+- **Level 2** — normal interactive marks.
+- **Level 3 (back)** — inert context (`selectable={false}`), always drawn
+  behind the data-facing marks.
+
+You don't set levels directly; they follow from `selected` / `editing` /
+`selectable` (see [Editing & creating](./editing-and-creating.mdx)).
+
+## Three interaction modes
+
+Every annotation is in one of three modes, set by its props:
+
+| Mode           | Props                          | Behaviour                                                            |
+| -------------- | ------------------------------ | -------------------------------------------------------------------- |
+| **Inert**      | `selectable={false}`           | Background context — no hover, no select, no edit; drawn at level 3. |
+| **Selectable** | default (`selectable` omitted) | Hover-highlights, click reports via `onSelectAnnotation`.            |
+| **Editing**    | `editing` (+ `onChange`)       | Draggable handles out; reports its new geometry as you drag.         |
+
+## Pills vs. flags — the indicator law
+
+A mark has two kinds of label:
+
+- A **near-line chip** (a flag off the line) — its `label`, free text.
+- An **on-axis pill** — enabled with `indicator`, pinned to the axis edge like
+  a tick.
+
+The **indicator law**: an on-axis pill **always shows the formatted axis
+coordinate**, never a custom label. A name belongs on the near-line chip; the
+axis pill reads like a tick. This is why `YAxisIndicator` (a pure pill) has no
+`label` prop at all — see
+[Axis indicators & live values](./axis-indicators-and-live-values.mdx).
+
+## Sharp edges
+
+- **Annotations don't snap to data samples.** Dragging snaps to other marks'
+  guidelines (alignment), not to the nearest data point — see
+  [Editing & creating](./editing-and-creating.mdx#snapping).
+- **Selection is single.** One annotation is selected at a time (as with
+  [data-mark selection](../interaction/selection-and-hover.mdx)).
+- **Colour is the annotation register.** Don't repaint a mark to a series hue.
+
+## See also
+
+- [Region · Baseline · Marker](./region-baseline-marker.mdx) — the per-primitive props.
+- [Editing & creating annotations](./editing-and-creating.mdx) — the interactive surface.
+- [Axis indicators & live values](./axis-indicators-and-live-values.mdx) — pinned pills and the live path.
+- [Learn charts, chapter 7](../../learn-charts/marking-up-charts) — the tutorial.

@@ -137,6 +137,25 @@ const sidebars: SidebarsConfig = {
         },
         'charts/value-axis',
         {
+          type: 'category',
+          label: 'Interaction',
+          items: [
+            'charts/interaction/cursors-and-readouts',
+            'charts/interaction/selection-and-hover',
+            'charts/interaction/pan-zoom-and-range-selection',
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Annotations & indicators',
+          items: [
+            'charts/annotations/the-annotation-model',
+            'charts/annotations/region-baseline-marker',
+            'charts/annotations/editing-and-creating',
+            'charts/annotations/axis-indicators-and-live-values',
+          ],
+        },
+        {
           type: 'link',
           label: 'API reference (charts)',
           href: 'pathname:///generated-api/charts/',

@@ -1,0 +1,108 @@
+---
+title: Axis indicators & live values
+sidebar_position: 4
+---
+
+# Axis indicators & live values
+
+An **indicator** is a value pinned to an axis edge as a pill — the ChartIQ /
+Yahoo-Finance live price tag. Unlike an annotation, it always reads the axis
+coordinate (never a custom label): an indicator is a tick you placed. This
+page covers `YAxisIndicator`, the `createLiveValue` high-frequency path, and
+the x-axis pills produced by `<Marker indicator>`.
+
+## `YAxisIndicator`
+
+A value pill pinned to a y-axis edge, rendered as a child of `<Layers>` so it
+shares the plot's coordinate space:
+
+```tsx
+<Layers>
+  <LineChart series={price} axis="usd" />
+  <YAxisIndicator
+    source={liveLast}
+    axis="usd"
+    color="#4af"
+    format=",.2f"
+    line
+  />
+</Layers>
+```
+
+| Prop      | Type                | Default            | Purpose                                                                                                                       |
+| --------- | ------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `value`   | `number`            | —                  | A static value to pin. Pass this **or** `source`.                                                                             |
+| `source`  | `LiveValue`         | —                  | A `LiveValue` to subscribe to — the high-frequency path. Takes precedence over `value`.                                       |
+| `axis`    | `string`            | row default        | Which `<YAxis>` (by id) to position against.                                                                                  |
+| `side`    | `'left' \| 'right'` | `'right'`          | Which edge the pill hugs (independent of the axis's side).                                                                    |
+| `color`   | `string`            | `theme.axis.label` | Pill hue — the colour of the series it tracks.                                                                                |
+| `format`  | `AxisFormat`        | axis formatter     | d3 specifier or `(value) => string`. Omit to read exactly like a tick; set for finer precision (a live price wants `',.2f'`). |
+| `line`    | `boolean`           | `false`            | Draw a thin dashed guide line across the plot (the "price line").                                                             |
+| `pointer` | `boolean`           | `false`            | Add a small triangle on the plot-facing edge, pointing at the value.                                                          |
+
+**There is no `label` prop** — by the
+[indicator law](./the-annotation-model.mdx#pills-vs-flags--the-indicator-law),
+an indicator always shows the axis value. A name belongs on a
+[`Baseline`](./region-baseline-marker.mdx#baseline)'s near-line chip, not on
+the pill.
+
+## Live values — `createLiveValue`
+
+`YAxisIndicator`'s `value` re-renders with its parent — fine for an occasional
+change. For a **high-frequency tick** (a streaming price), use `source` with a
+`LiveValue` so only the pill repaints, not the chart:
+
+```ts
+const liveLast = createLiveValue(0);
+// on each tick:
+liveLast.set(nextPrice); // moves + relabels the pill, no chart re-render
+```
+
+```ts
+interface LiveValue {
+  set(value: number): void; // no-op if unchanged
+  subscribe(onStoreChange: () => void): () => void;
+  getSnapshot(): number;
+}
+```
+
+`createLiveValue(initial)` returns a handle backed by `useSyncExternalStore` on
+the subscribing indicator: `.set(v)` moves and relabels the pill **without
+re-rendering the chart**. This is the isolated-repaint path — the same
+motivation as the live-render model in
+[Learn charts, chapter 8](../../learn-charts/live-charts) and the
+[`@pond-ts/react` hooks](../../react/hooks); this page doesn't restate
+throttling/snapshot cadence, only the indicator hook-up.
+
+## X-axis indicators
+
+There is **no standalone `XAxisIndicator` component**. An on-axis pill on the
+**x** axis comes from [`<Marker indicator>`](./region-baseline-marker.mdx#marker)
+— a marker at an `at` with its value pinned to the x-axis edge as a pill. The
+y-axis near-line counterpart is [`<Baseline indicator>`](./region-baseline-marker.mdx#baseline).
+So the full picture:
+
+| Want a pill on…                         | Use                          |
+| --------------------------------------- | ---------------------------- |
+| the **y** axis edge                     | `YAxisIndicator` (pure pill) |
+| the **y** axis, tied to a labelled line | `<Baseline indicator>`       |
+| the **x** axis edge                     | `<Marker indicator>`         |
+
+All three obey the indicator law: the pill shows the formatted axis
+coordinate, and any custom `label` stays on the near-line chip.
+
+## Sharp edges
+
+- **`source` beats `value`.** Pass one; if you pass both, `source` wins.
+- **No label on a pill** — indicators show the axis value only, by design.
+- **The live path repaints the pill, not the chart** — that's the point of
+  `createLiveValue`; don't route a high-frequency price through `value` (it
+  re-renders the whole container each tick).
+
+## See also
+
+- [The annotation model](./the-annotation-model.mdx) — the indicator law and pills-vs-flags.
+- [Region · Baseline · Marker](./region-baseline-marker.mdx) — `<Marker indicator>` / `<Baseline indicator>`.
+- [Learn charts, chapter 8](../../learn-charts/live-charts) — the live-render model this builds on.
+- Storybook: [`Indicators/Y Axis`](pathname:///storybook/?path=/story/indicators-y-axis--live-value-tag)
+  and [`Indicators/X Axis`](pathname:///storybook/?path=/story/indicators-x-axis--marker-pill).
