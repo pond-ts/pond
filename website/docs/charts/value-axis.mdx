@@ -58,23 +58,69 @@ defaults to `'time'`.
 ## Data shapes
 
 Three different things read as "a value axis" to a draw layer, and only one
-of them is actually a series. Concrete shapes, using the same field names as
-the live examples on this page:
+of them is actually a series. Here is what each one looks like as data,
+using the same field names (and roughly the same values) as this page's
+live examples.
 
-| What you hand the layer                 | Shape                                                                                                                     | Example row                                |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| `ValueSeries` (`byValue`/`fromColumns`) | Columnar — one axis value + N value columns, read per-row via `.axisAt(i)` / `.column(name).read(i)`, never a plain array | conceptually `{ strike: 100, fair: 0.24 }` |
-| `byColumn`/`rollingByColumn` bins       | `Array<{ start: number, end: number, ...aggregates }>` — a real array, index directly                                     | `{ start: 100, end: 110, count: 320 }`     |
-| `CategoryDatum[]` (`transposeRow`)      | `Array<{ label: string, value: number }>` — a real array, index directly                                                  | `{ label: 'api-1', value: 0.34 }`          |
+### `ValueSeries` — columnar, axis + value columns
 
-The distinction matters in practice: a `ValueSeries` is **not** an array of
-row objects you can `.map()` over — it's the same columnar storage as
-`TimeSeries`, just keyed by a value instead of time, and every draw layer
-reads it through the same per-row accessors. `byColumn` bins and
-`CategoryDatum[]` are both plain arrays because they've already left the
-series algebra — see
+What the smile-chain examples below hand `LineChart`/`ScatterChart`. The
+first column is the **axis** (the key — monotonic, non-nullable); every
+other column is an ordinary value column:
+
+| `strike` (axis) | `fair` |
+| --------------: | -----: |
+|            80.0 |  0.440 |
+|            82.5 |  0.397 |
+|               ⋯ |      ⋯ |
+|           100.0 |  0.240 |
+|               ⋯ |      ⋯ |
+|           120.0 |  0.376 |
+
+A `ValueSeries` is **not** an array of row objects you can `.map()` over —
+it's the same columnar storage as `TimeSeries`, just keyed by a value
+instead of time. Rows are read through per-row accessors:
+`series.axisAt(i)` for the key, `series.column('fair').read(i)` for a
+value. `byValue('strike')` produces this shape from a `TimeSeries` that has
+a `strike` column; `ValueSeries.fromColumns` builds it directly from
+columnar arrays.
+
+### `byColumn` bins — a plain array of records
+
+What the histogram example hands `BarChart bins={...}`. Each record is one
+bin: `start`/`end` are the bin's edges **in axis units** (here: ms of
+response time), and every other field is an aggregate you asked for:
+
+| `start` | `end` | `count` |
+| ------: | ----: | ------: |
+|      90 |   100 |     128 |
+|     100 |   110 |     235 |
+|     110 |   120 |     320 |
+|     120 |   130 |     292 |
+|       ⋯ |     ⋯ |       ⋯ |
+
+This is a real `Array<{ start, end, ...aggregates }>` — index it, `.map()`
+it, slice it. The x axis is inferred from the `start`/`end` edges.
+
+### `CategoryDatum[]` — a plain array of labelled values
+
+What `transposeRow` produces and `BarChart categories={...}` consumes. One
+entry per category; `label` becomes the tick, order becomes the axis order:
+
+| `label`    | `value` |
+| ---------- | ------: |
+| `api-1`    |    0.34 |
+| `api-2`    |    0.48 |
+| `worker-1` |    0.61 |
+
+Also a real array — hand-build it if you don't have a wide series to
+transpose.
+
+Why the split: the `ValueSeries` stays **inside** the series algebra
+(sliceable, cursor-able, full resolution), while bins and categories have
+already **left** it as plain records — see
 [closed vs. projected-out](../start-here/concepts/value-axis#closed-vs-projected-out-byvalue-vs-bycolumn)
-for why.
+for the reasoning.
 
 ## Two ways onto a value axis
 
