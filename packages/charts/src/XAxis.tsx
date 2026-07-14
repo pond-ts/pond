@@ -355,17 +355,31 @@ export function XAxis({
   const hasBoundary =
     boundaryContext !== undefined ||
     placed.some((t) => t.boundary !== undefined);
-  // Push-off: as the leftmost crossing label slides toward the left edge, it
-  // shoves the pinned context label off rather than overlapping it (the
-  // sticky-section-header behavior). Width from the same rough glyph metric
-  // the pills use.
-  const contextWidth =
-    (boundaryContext?.length ?? 0) * theme.font.size * 0.62 + 8;
-  const firstCrossingX = placed.find((t) => t.boundary !== undefined)?.x;
-  const contextLeft =
-    firstCrossingX !== undefined
-      ? Math.min(0, firstCrossingX - contextWidth)
-      : 0;
+  // The pinned context anchors at the plot's left edge (the y-axis line) with
+  // the SAME alignment as the tick labels — centred on it in `center` mode
+  // (exactly where a first-tick label at x=0 sat, half into the gutter by the
+  // same documented rule), left-anchored in `auto`, beside the line in
+  // `right`. As the leftmost crossing label slides toward the edge it would
+  // collide, so the context CULLS once the crossing label's left edge reaches
+  // the context's right edge (plus a gap) — no overlap, and nothing slides
+  // loose into the gutter. Widths from the same rough glyph metric the pills
+  // use; the crossing's label is centred on its tick.
+  const charW = theme.font.size * 0.62;
+  const contextWidth = (boundaryContext?.length ?? 0) * charW;
+  const contextRight =
+    align === 'center'
+      ? contextWidth / 2
+      : align === 'right'
+        ? 4 + contextWidth
+        : contextWidth;
+  const firstCrossing = placed.find((t) => t.boundary !== undefined);
+  const crossingLeft = firstCrossing
+    ? align === 'right'
+      ? firstCrossing.x + 4
+      : firstCrossing.x - (firstCrossing.boundary!.length * charW) / 2
+    : Infinity;
+  const showContext =
+    boundaryContext !== undefined && crossingLeft > contextRight + 6;
   const stripHeight =
     (height ?? TICK_STRIP + (label ? LABEL_STRIP : 0)) +
     (hasBoundary ? BOUNDARY_STRIP : 0) +
@@ -446,15 +460,16 @@ export function XAxis({
           </Fragment>
         );
       })}
-      {boundaryContext !== undefined && (
+      {showContext && (
         <div
           data-boundary-label
           data-boundary-context
           style={{
             position: 'absolute',
-            left: `${contextLeft}px`,
+            left: `${align === 'right' ? 4 : 0}px`,
             [onTop ? 'bottom' : 'top']:
               `${(align === 'right' ? 2 : 6) + theme.font.size + 3}px`,
+            transform: align === 'center' ? 'translateX(-50%)' : 'none',
             whiteSpace: 'nowrap',
             opacity: 0.75,
           }}

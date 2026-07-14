@@ -236,7 +236,7 @@ describe('<XAxis> — the placeable x axis', () => {
     expect(mark.style.background).toBe('rgb(76, 143, 189)');
   });
 
-  it('the boundary context pins to the left edge; an approaching crossing pushes it off', () => {
+  it('the boundary context pins to the left edge; an approaching crossing culls it', () => {
     // Mid-day window: context "Jan 05" pinned at 0 (no crossing in view).
     const midday = render(
       <ChartContainer
@@ -259,7 +259,10 @@ describe('<XAxis> — the placeable x axis', () => {
       '[data-boundary-context]',
     ) as HTMLElement;
     expect(ctx1.textContent).toBe('Jan 05');
+    // Same alignment as the tick labels: centred on the y-axis line in the
+    // default `center` mode.
     expect(ctx1.style.left).toBe('0px');
+    expect(ctx1.style.transform).toBe('translateX(-50%)');
     midday.unmount();
     // Window straddling midnight with the crossing tick near the left edge:
     // the crossing's "Jan 06" label pushes the pinned "Jan 05" context off.
@@ -280,11 +283,11 @@ describe('<XAxis> — the placeable x axis', () => {
         <XAxis />
       </ChartContainer>,
     );
-    const ctx2 = straddle.container.querySelector(
-      '[data-boundary-context]',
-    ) as HTMLElement;
-    expect(ctx2.textContent).toBe('Jan 05');
-    expect(parseFloat(ctx2.style.left)).toBeLessThan(0); // pushed off
+    // The crossing's "Jan 06" label sits nearly on the edge — rendering the
+    // context would collide, so it CULLS (nothing slides into the gutter).
+    expect(
+      straddle.container.querySelector('[data-boundary-context]'),
+    ).toBeNull();
     const crossing = Array.from(
       straddle.container.querySelectorAll('[data-boundary-label]'),
     ).find((el) => !el.hasAttribute('data-boundary-context')) as HTMLElement;
