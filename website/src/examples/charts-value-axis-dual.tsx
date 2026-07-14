@@ -7,28 +7,8 @@ import {
   XAxis,
   YAxis,
 } from '@pond-ts/charts';
-import { ValueSeries } from 'pond-ts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
-
-const SPOT = 100;
-
-function smileChain() {
-  const strikes: number[] = [];
-  const fair: number[] = [];
-  for (let k = 80; k <= 120; k += 2.5) {
-    const m = k - SPOT;
-    strikes.push(k);
-    fair.push(0.24 + 0.00042 * m * m - 0.0016 * m);
-  }
-  return ValueSeries.fromColumns({
-    name: 'smile',
-    schema: [
-      { name: 'strike', kind: 'value' },
-      { name: 'fair', kind: 'number' },
-    ] as const,
-    columns: { strike: strikes, fair },
-  });
-}
+import { SPOT, smileChain } from './lib/value-axis-fixtures';
 
 export default function ChartsValueAxisDual() {
   const theme = useSiteChartTheme();

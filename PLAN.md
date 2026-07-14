@@ -1080,7 +1080,11 @@ Phases (each independently shippable, ends with a docs deploy):
         (`charts-value-axis-dual.tsx`, the linear
         strike-to-moneyness `transform` case — simpler than the
         shipped σ-to-delta nonlinear story, chosen so the docs example
-        stays readable), and an interaction section linking the
+        stays readable; shares its synthetic smile chain with the
+        native-`fromColumns` example via a new
+        `lib/value-axis-fixtures.ts`, the same shared-fixture
+        convention `gallery-fixtures.ts` already established), and an
+        interaction section linking the
         `Cursors/Region` + `Annotations/Scenarios` value-axis stories
         without a new embed. Cross-linked from the concept page's
         "Plotting" bullet, ch. 9's recap, and `charts/index.mdx`'s

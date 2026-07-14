@@ -6,32 +6,12 @@ import {
   ScatterChart,
   YAxis,
 } from '@pond-ts/charts';
-import { ValueSeries } from 'pond-ts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
+import { smileChain } from './lib/value-axis-fixtures';
 
-// An options chain: rows are naturally keyed by strike, never by time. There
-// is no time column to project from — ValueSeries.fromColumns builds the
-// value-keyed series directly, the value-axis counterpart of
-// TimeSeries.fromColumns.
-function smileChain() {
-  const spot = 100;
-  const strikes: number[] = [];
-  const fair: number[] = [];
-  for (let k = 80; k <= 120; k += 2.5) {
-    const m = k - spot;
-    strikes.push(k);
-    fair.push(0.24 + 0.00042 * m * m - 0.0016 * m);
-  }
-  return ValueSeries.fromColumns({
-    name: 'smile',
-    schema: [
-      { name: 'strike', kind: 'value' },
-      { name: 'fair', kind: 'number' },
-    ] as const,
-    columns: { strike: strikes, fair },
-  });
-}
-
+/** An options chain natively keyed by strike (`ValueSeries.fromColumns`,
+ *  never time-keyed) — `LineChart` and `ScatterChart` read it exactly like
+ *  a `TimeSeries`, no special-casing. */
 export default function ChartsValueAxisNative() {
   const theme = useSiteChartTheme();
   const chain = smileChain();
