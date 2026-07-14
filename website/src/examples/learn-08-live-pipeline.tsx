@@ -46,18 +46,20 @@ export default function LearnLivePipeline() {
   useEffect(() => {
     const id = setInterval(() => {
       const i = tick.current++;
-      // a clear wave the eye can follow, plus scatter noise around it
-      const wave = 0.5 + 0.3 * Math.sin(i / 7);
+      // a clear wave the eye can follow, plus scatter noise around it.
+      // Phase step halved vs. the push rate so faster points don't make the
+      // wave itself busier — same shape, twice the density.
+      const wave = 0.5 + 0.3 * Math.sin(i / 14);
       const value = Math.max(
         0.05,
         Math.min(0.95, wave + (rand() - 0.5) * 0.16),
       );
       live.push([Date.now(), value]);
-    }, 120);
+    }, 60);
     return () => clearInterval(id);
   }, [live, rand]);
 
-  const raw = useSnapshot(live, { throttle: 300 });
+  const raw = useSnapshot(live, { throttle: 150 });
 
   // Re-derive the curve + bars from the current window each snapshot.
   const withCurve = useMemo(() => {
@@ -65,15 +67,20 @@ export default function LearnLivePipeline() {
     const n = raw.length;
     const col = raw.column('signal');
     const smooth = new Float64Array(n);
-    const k = 8; // trailing moving-average window (~1s at 120ms/point)
+    const k = 14; // trailing moving-average window (~0.8s at 60ms/point)
     for (let i = 0; i < n; i++) {
       let sum = 0;
       let count = 0;
       for (let j = Math.max(0, i - k + 1); j <= i; j++) {
-        sum += col?.read(j) ?? 0;
-        count++;
+        const v = col?.read(j);
+        // Skip gaps entirely — a missing sample shouldn't drag the average
+        // toward zero (it isn't a zero reading, it's no reading).
+        if (v !== undefined && Number.isFinite(v)) {
+          sum += v;
+          count++;
+        }
       }
-      smooth[i] = sum / count;
+      smooth[i] = count > 0 ? sum / count : NaN;
     }
     return raw.withColumn('smooth', smooth);
   }, [raw]);
