@@ -65,8 +65,8 @@ export interface TradingCalendarLike {
  * for days/weeks, `%b` for months/quarters, `%Y` for years) while formatting
  * any other instant (the cursor readout) with the d3 multi-scale default. The
  * coarser context a label drops lives on `.tickBoundaries` — the second-row
- * boundary labels (the date over an hour axis, `Jul 2026` over a day axis, the
- * year over a month axis), one per boundary crossing plus the first tick.
+ * boundary labels (the date over a clock axis, the year over a day / week /
+ * month axis), one per boundary crossing plus the first tick.
  * Without a provider `boundaries` method it falls back to interior even-spaced
  * time ticks.
  *
@@ -87,7 +87,7 @@ export interface TradingTimeScale {
    * The **second-row** (boundary) label for a tick value, or `undefined` for
    * ticks that don't open a new boundary period. Same grain selection as
    * {@link ticks} at the same `count`, so the rows agree: the first tick and
-   * each tick starting a new day / month / year (whichever is the next-coarser
+   * each tick starting a new day / year (whichever is the next-coarser
    * unit the first-row label omits) carry the label; year-grain ticks have no
    * second row.
    */

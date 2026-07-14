@@ -25,8 +25,8 @@ import { docsTheme } from './docs-theme.fixture.js';
  * that naturally lands on it, plus narrow variants proving the grain coarsens
  * (never crowds) as room shrinks. Every story shows the **two-tier** labels:
  * the first row at the tick grain, the second (boundary) row carrying the
- * coarser context the first row omits — the date under hours, `Jan 2026`
- * under days, the year under months — once per boundary crossing plus the
+ * coarser context the first row omits — the date under clock ticks, the
+ * year under everything coarser — once per boundary crossing plus the
  * first tick. The `Continuous…` stories are the same ladder on a **plain**
  * (gap-free) time axis: no calendar wiring needed.
  */
@@ -116,11 +116,11 @@ export const IntradayHourly = tradingStory(1, WIDTH, 30);
 export const IntradayThreeHour = tradingStory(3, WIDTH, 30);
 
 /** A week of sessions at a modest width → **day** grain: one date per
- *  session (`%b %d`), the month-and-year on the boundary row once. */
+ *  session (`%b %d`), the year on the boundary row once. */
 export const WeekDaily = tradingDailyStory(5, 420);
 
 /** ~6 trading weeks at a narrow width → **week** grain: Monday-anchored
- *  dates, month-and-year context on the boundary row. */
+ *  dates, the year on the boundary row. */
 export const MonthWeekly = tradingDailyStory(28, 420);
 
 /** ~3 trading months of dailies → **month** grain: bare month names, the

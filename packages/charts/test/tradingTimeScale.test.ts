@@ -210,6 +210,27 @@ describe('scaleTradingTime', () => {
     expect(labels.filter((l) => l !== undefined)).toHaveLength(2);
   });
 
+  it('a fractional pan/zoom domain still labels every tick at the grain', () => {
+    // Pan/zoom domains come from `scale.invert(pixel)` — fractional ms. A
+    // fractional anchor used to miss its own anchor set after the formatter's
+    // `new Date(ms)` truncation, so ticks fell through to the d3 multi-scale
+    // default and rendered as bare millisecond labels (".259").
+    const jan = new Date(2026, 0, 5, 9, 30).getTime();
+    const cal = segmentProvider([[jan, jan + 6 * H]]);
+    const s = scaleTradingTime(cal)
+      .domain([jan + 17 * 60_000 + 0.259, jan + 5 * H + 0.741])
+      .range([0, 720]);
+    const ticks = s.ticks(10);
+    const fmt = s.tickFormat(10);
+    expect(ticks.length).toBeGreaterThan(2);
+    for (const t of ticks) {
+      expect(Number.isInteger(t)).toBe(true);
+      // Every tick is an anchor labelled at the clock grain — never the d3
+      // default's millisecond/second fallthrough.
+      expect(fmt(new Date(t))).toMatch(/^\d{2}:\d{2}$/);
+    }
+  });
+
   it('domain/range are getter/setters and copy is independent', () => {
     const s = scaleTradingTime(provider);
     expect(s.domain([10, 20])).toBe(s); // setter returns the scale (chainable)

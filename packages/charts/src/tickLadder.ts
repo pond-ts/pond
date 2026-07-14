@@ -235,6 +235,13 @@ export function buildTicks(
     }
     return coarsenCalendar(opens, cap);
   })();
+  // Round anchors to integer milliseconds: a pan/zoom domain comes from
+  // `scale.invert(pixel)` and is fractional, and a fractional anchor breaks
+  // the label pipeline — formatters pass through `new Date(ms)`, which
+  // truncates, so the instant no longer matches its own anchor set and the
+  // label falls through to the d3 multi-scale default (a bare `.259`
+  // millisecond tick). Sub-ms precision is invisible at any ladder grain.
+  result.ticks = result.ticks.map((t) => Math.round(t));
   // Drop a cramped **leading partial-period** anchor: the first tick is the
   // domain start, which usually sits mid-period (a "1Y back from today" view
   // starts mid-month), so it can land arbitrarily close to the first full
@@ -255,9 +262,9 @@ export function buildTicks(
 /**
  * The **boundary grain** for ticks at grain `g` — the next-coarser unit a
  * tick's own label doesn't already carry, rendered as the axis's second label
- * row. Hour labels (`14:00`) need the date; day/week labels (`Feb 02`) need
- * the month-and-year; month/quarter labels (`Feb`) need the year; a year label
- * already says everything.
+ * row. Clock labels (`14:00`) need the date; day/week labels (`Feb 02`)
+ * already carry the month, so they need only the year — as do month/quarter
+ * labels (`Feb`); a year label already says everything.
  */
 export function boundaryGrainFor(
   g: TickGranularity,
@@ -266,7 +273,6 @@ export function boundaryGrainFor(
   switch (g) {
     case 'day':
     case 'week':
-      return 'month';
     case 'month':
     case 'quarter':
       return 'year';
@@ -304,26 +310,18 @@ export function majorFormatFor(g: TickGranularity): string {
 }
 
 /** d3 time-format specifier for the **boundary** (second-row) label at the
- *  boundary grain `g`. A month boundary carries the year (`Jul 2026`) — the
- *  second row is where the coarser context lives, so it must be complete. */
+ *  boundary grain `g` — a date under clock ticks, the bare year under
+ *  everything else. Never repeat a unit the first row already shows
+ *  (`Jan 2026` under a `Jan 05` tick reads as noise). */
 export function boundaryFormatFor(g: TickGranularity): string {
-  switch (g) {
-    case 'day':
-      return '%b %d';
-    case 'month':
-      return '%b %Y';
-    case 'year':
-      return '%Y';
-    default:
-      return '%Y';
-  }
+  return g === 'day' ? '%b %d' : '%Y';
 }
 
 /**
  * Which of `ticks` (at grain `granularity`) carry a boundary label: the first
  * tick always (the reader needs context immediately), then every tick whose
  * boundary-grain bucket differs from the previous tick's — i.e. the first tick
- * of each new day / month / year. Returns the boundary-flagged tick values;
+ * of each new day / year. Returns the boundary-flagged tick values;
  * empty when the grain has no boundary row (year grain).
  */
 export function boundaryTicks(

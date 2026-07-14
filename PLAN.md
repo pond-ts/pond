@@ -1648,7 +1648,9 @@ independently built the same `calendar.bars → BoundedSequence` seam.
     collapsed gap / lunch break / early close, no new provider surface).
     Labels are **two rows**: first row at the tick grain (`14:00` / `Feb 02` /
     `Feb` / `2026`), second **boundary row** carrying the omitted coarser unit
-    (`Jan 05` under hours, `Jan 2026` under days, `2026` under months) under
+    (`Jan 05` under clock ticks, `2026` under day/week/month ticks — never a
+    unit the first row already shows; owner flagged `Jan 2026` under a
+    `Jan 05` tick as redundant, 2026-07-14) under
     the first tick of each period + the first tick shown (owner-confirmed
     anchoring). **Plain continuous time axes now run the same ladder** through
     an internal gap-free `identityProvider()` (calendar days as sessions) —

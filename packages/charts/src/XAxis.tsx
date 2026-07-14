@@ -217,8 +217,8 @@ export function XAxis({
   const maxPillLane = Math.max(0, pillLaneEnds.length - 1);
 
   // The boundary (second) label row — the coarser calendar unit the first-row
-  // label omits (the year under month ticks, the month-and-year under day
-  // ticks, the date under hour ticks), placed under the first tick of each new
+  // label omits (the year under day / week / month ticks, the date under
+  // clock ticks), placed under the first tick of each new
   // period. Only a ladder-driven time scale supplies it; explicit `ticks`, an
   // explicit axis `format`, and a container-level `timeFormat` all opt out (a
   // custom format owns the whole label, and custom ticks have no grain).
