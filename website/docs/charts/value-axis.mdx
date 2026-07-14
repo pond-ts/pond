@@ -55,6 +55,27 @@ defaults to `'time'`.
 | `'value'`    | A `ValueSeries` — via `byValue` (projected) or `ValueSeries.fromColumns` (native)                 | all chart types except `Candlestick` |
 | `'category'` | A `CategoryDatum[]` array — typically from `transposeRow`                                         | `BarChart`                           |
 
+## Data shapes
+
+Three different things read as "a value axis" to a draw layer, and only one
+of them is actually a series. Concrete shapes, using the same field names as
+the live examples on this page:
+
+| What you hand the layer                 | Shape                                                                                                                     | Example row                                |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `ValueSeries` (`byValue`/`fromColumns`) | Columnar — one axis value + N value columns, read per-row via `.axisAt(i)` / `.column(name).read(i)`, never a plain array | conceptually `{ strike: 100, fair: 0.24 }` |
+| `byColumn`/`rollingByColumn` bins       | `Array<{ start: number, end: number, ...aggregates }>` — a real array, index directly                                     | `{ start: 100, end: 110, count: 320 }`     |
+| `CategoryDatum[]` (`transposeRow`)      | `Array<{ label: string, value: number }>` — a real array, index directly                                                  | `{ label: 'api-1', value: 0.34 }`          |
+
+The distinction matters in practice: a `ValueSeries` is **not** an array of
+row objects you can `.map()` over — it's the same columnar storage as
+`TimeSeries`, just keyed by a value instead of time, and every draw layer
+reads it through the same per-row accessors. `byColumn` bins and
+`CategoryDatum[]` are both plain arrays because they've already left the
+series algebra — see
+[closed vs. projected-out](../start-here/concepts/value-axis#closed-vs-projected-out-byvalue-vs-bycolumn)
+for why.
+
 ## Two ways onto a value axis
 
 **Projected** — start with a `TimeSeries` you already have and re-key it onto
