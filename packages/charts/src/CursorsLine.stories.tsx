@@ -25,7 +25,7 @@ const s = twoSeries();
 const hr = hrSeries();
 
 const meta = {
-  title: 'Charts/Cursors/Line',
+  title: 'Cursors/Line',
   parameters: { layout: 'centered' },
 } satisfies Meta;
 export default meta;

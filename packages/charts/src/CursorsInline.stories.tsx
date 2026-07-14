@@ -54,7 +54,7 @@ function Chart({
 }
 
 const meta = {
-  title: 'Charts/Cursors/Inline',
+  title: 'Cursors/Inline',
   parameters: { layout: 'centered' },
 } satisfies Meta;
 export default meta;

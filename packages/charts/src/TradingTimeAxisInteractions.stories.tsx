@@ -28,7 +28,7 @@ import { docsTheme } from './docs-theme.fixture.js';
  * provider from `tradingAxis.fixture.ts`.
  */
 const meta = {
-  title: 'Charts/TradingTimeAxis/Interactions',
+  title: 'Axes/TradingTimeAxis/Interactions',
   parameters: { layout: 'centered' },
 } satisfies Meta;
 export default meta;

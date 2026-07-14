@@ -19,7 +19,7 @@ import { docsTheme } from './docs-theme.fixture.js';
  */
 
 const meta = {
-  title: 'Charts/Axes/DualX',
+  title: 'Axes/DualX',
   parameters: { layout: 'centered' },
 } satisfies Meta;
 export default meta;

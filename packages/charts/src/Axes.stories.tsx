@@ -44,7 +44,7 @@ function demo() {
 }
 
 const meta = {
-  title: 'Charts/Axes',
+  title: 'Axes',
   parameters: { layout: 'padded' },
 } satisfies Meta;
 

@@ -35,7 +35,7 @@ function Chart({ children }: { children: ReactNode }) {
 }
 
 const meta = {
-  title: 'Charts/Annotations/Baseline',
+  title: 'Annotations/Baseline',
   parameters: { layout: 'centered' },
 } satisfies Meta;
 export default meta;
