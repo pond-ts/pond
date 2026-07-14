@@ -105,8 +105,9 @@ export default function LearnLivePipeline() {
   // `end`, so the domain never changes width (no smoosh) and scrolls smoothly.
   // Clamped on the left only during warm-up, before a full window has arrived.
   const WINDOW_MS = 12_000;
-  const end = raw.timeRange()!.end();
-  const start = Math.max(end - WINDOW_MS, raw.timeRange()!.begin());
+  const span = raw.timeRange()!;
+  const end = span.end();
+  const start = Math.max(end - WINDOW_MS, span.begin());
   const view: [number, number] = [start, end];
 
   return (
