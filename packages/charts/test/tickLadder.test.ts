@@ -227,6 +227,40 @@ describe('buildTicks — the grain matrix over (span, cap)', () => {
   });
 });
 
+describe('grain stability under a sliding live window', () => {
+  it('a fixed-span window keeps one grain at every slide phase (no flicker)', () => {
+    // The LiveSine bug: a 240s window sliding 1s/frame holds 8 or 9 aligned
+    // 30s marks depending on phase; with a cap of 8 the exact count flipped
+    // the grain second30 ↔ minute1 for single frames. Selection now uses the
+    // span estimate, which is constant while sliding.
+    const prov = identityProvider();
+    const span = 239_000; // 240 × 1s points
+    const start = new Date(2026, 0, 1, 12, 0, 0).getTime();
+    const grains = new Set<string>();
+    for (let slide = 0; slide < 180; slide++) {
+      const from = start + slide * 1_000;
+      const to = from + span;
+      const opens = [from, ...prov.boundaries!(from, to)];
+      grains.add(buildTicks(prov, opens, to, 8).granularity);
+    }
+    expect([...grains]).toHaveLength(1);
+  });
+
+  it('the stable grain matches the density budget (count may exceed cap by ~1)', () => {
+    const prov = identityProvider();
+    const start = new Date(2026, 0, 1, 12, 0, 0).getTime();
+    const { ticks, granularity } = buildTicks(
+      prov,
+      [start],
+      start + 239_000,
+      8,
+    );
+    expect(granularity).toBe('second30');
+    expect(ticks.length).toBeGreaterThanOrEqual(8);
+    expect(ticks.length).toBeLessThanOrEqual(10);
+  });
+});
+
 describe('boundaryTicks — the second-row flags', () => {
   it('flags the first tick and each bucket change, once each', () => {
     // Month-grain ticks straddling a year turn: Nov, Dec, Jan, Feb.

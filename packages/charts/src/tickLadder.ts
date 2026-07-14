@@ -223,13 +223,24 @@ export function buildTicks(
 ): { ticks: number[]; granularity: TickGranularity } {
   const result = ((): { ticks: number[]; granularity: TickGranularity } => {
     if (opens.length <= cap) {
+      // Pick the clock rung from the **live-span estimate**, not the
+      // enumerated anchor count. On a live chart the domain slides every
+      // frame, and the number of aligned marks inside a sliding window
+      // oscillates ±1 with its phase — an exact count sitting at the cap
+      // flips the grain back and forth for single frames (the LiveSine
+      // flicker). The span is constant while sliding, so the estimate is
+      // stable; the enumerated count may then exceed the cap by a tick or
+      // two at some phases, which the per-tick pixel budget absorbs.
+      const liveSpan = provider.distance(opens[0]!, domainEnd);
       for (const { g, step } of SUB_DAY_GRAINS) {
-        const ticks = stepAnchors(provider, opens, domainEnd, step, cap);
+        if (opens.length + Math.floor(liveSpan / step) > cap) continue;
+        const ticks = stepAnchors(provider, opens, domainEnd, step, cap + 4);
         // A clock rung must earn its labels: if it adds no intraday anchor
         // beyond the opens themselves, it's really day grain (a row of
-        // "09:30"s under every session is a worse day axis, not a clock axis).
-        if (ticks.length <= cap && ticks.length > opens.length)
-          return { ticks, granularity: g };
+        // "09:30"s under every session is a worse day axis, not a clock
+        // axis) — and every coarser rung would earn even less.
+        if (ticks.length > opens.length) return { ticks, granularity: g };
+        break;
       }
       return { ticks: [...opens], granularity: 'day' };
     }
