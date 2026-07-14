@@ -234,7 +234,20 @@ export function buildTicks(
       const liveSpan = provider.distance(opens[0]!, domainEnd);
       for (const { g, step } of SUB_DAY_GRAINS) {
         if (opens.length + Math.floor(liveSpan / step) > cap) continue;
-        const ticks = stepAnchors(provider, opens, domainEnd, step, cap + 4);
+        // The estimate can undercount the real anchor count by up to one
+        // phase tick per session (each session's aligned marks can exceed
+        // floor(sessionSpan/step) by one, and per-session floors sum below
+        // the floor of the sum), so the enumeration budget must cover
+        // cap + opens.length or a near-cap multi-session window truncates.
+        // A truncated array must never be returned: it passes the
+        // earns-its-labels check below while leaving the later sessions
+        // with no ticks at all (a lopsided axis) — if the budget is still
+        // exceeded (multiple live segments per session can add further
+        // phase ticks), try the coarser rungs, whose smaller estimates
+        // leave the budget room to finish.
+        const budget = cap + opens.length + 4;
+        const ticks = stepAnchors(provider, opens, domainEnd, step, budget);
+        if (ticks.length > budget) continue;
         // A clock rung must earn its labels: if it adds no intraday anchor
         // beyond the opens themselves, it's really day grain (a row of
         // "09:30"s under every session is a worse day axis, not a clock
