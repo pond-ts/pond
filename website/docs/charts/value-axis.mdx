@@ -80,10 +80,10 @@ other column is an ordinary value column:
 A `ValueSeries` is **not** an array of row objects you can `.map()` over —
 it's the same columnar storage as `TimeSeries`, just keyed by a value
 instead of time. Rows are read through per-row accessors:
-`series.axisAt(i)` for the key, `series.column('fair').read(i)` for a
-value. `byValue('strike')` produces this shape from a `TimeSeries` that has
-a `strike` column; `ValueSeries.fromColumns` builds it directly from
-columnar arrays.
+`series.axisAt(i)` for the key, `series.column('fair')` for the value column
+(each column reads via `.read(i)` / `.values()`). `byValue('strike')`
+produces this shape from a `TimeSeries` that has a `strike` column;
+`ValueSeries.fromColumns` builds it directly from columnar arrays.
 
 ### `byColumn` bins — a plain array of records
 
@@ -93,6 +93,7 @@ response time), and every other field is an aggregate you asked for:
 
 | `start` | `end` | `count` |
 | ------: | ----: | ------: |
+|       ⋯ |     ⋯ |       ⋯ |
 |      90 |   100 |     128 |
 |     100 |   110 |     235 |
 |     110 |   120 |     320 |
