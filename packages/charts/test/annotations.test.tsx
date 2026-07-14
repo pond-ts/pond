@@ -134,6 +134,43 @@ describe('annotation label opt-out (label={false} / "")', () => {
     unmount();
   });
 
+  it('lane packing matches the rendered chips: culled chips hold no lane, clamped regions pack at the edge', () => {
+    // With plotWidth: an off-plot marker frees lane 0 for the visible one, and
+    // a clamped region packs at 0 — colliding with an edge marker → lane 1.
+    const spec = (
+      kind: 'marker' | 'region',
+      xs: number[],
+      label: string,
+    ): AnnotationSpec => ({
+      key: Symbol(label),
+      rowKey: ROW,
+      kind,
+      xs,
+      label,
+      indicator: false,
+      id: undefined,
+      selected: false,
+      editing: false,
+      selectable: false,
+    });
+    const ROW = Symbol('row');
+    const px = (v: number) => v * 100; // 100px per axis unit, plot 300px wide
+    // Off-plot marker at -1 would (raw) sit left of the visible marker at 0.2
+    // and steal lane 0 from underneath it.
+    const off = spec('marker', [-1], 'gone');
+    const near = spec('marker', [0.2], 'near');
+    const lanes = computeLabelLanes([off, near], px, null, 300);
+    expect(lanes.get(off.key)).toBeUndefined(); // culled → no lane held
+    expect(lanes.get(near.key)?.lane).toBe(0);
+    // A region straddling the left edge packs at its rendered (clamped) 0 —
+    // overlapping the near marker → the later flag drops to lane 1.
+    const zone = spec('region', [-2, 1], 'zone');
+    const lanes2 = computeLabelLanes([zone, near], px, null, 300);
+    const zl = lanes2.get(zone.key)?.lane;
+    const nl = lanes2.get(near.key)?.lane;
+    expect(new Set([zl, nl]).size).toBe(2); // they no longer share a lane
+  });
+
   it('Baseline: omit → auto-label value; false / "" → no chip; string → chip', () => {
     expect(hasChip(<Baseline value={37} />, '37')).toBe(true);
     expect(hasChip(<Baseline value={37} label={false} />, '37')).toBe(false);

@@ -219,6 +219,7 @@ export function computeLabelLanes(
   annotations: readonly AnnotationSpec[],
   toPixel: (axisX: number) => number,
   draggingKey?: symbol | null,
+  plotWidth?: number,
 ): Map<symbol, LabelPlacement> {
   const out = new Map<symbol, LabelPlacement>();
   const byRow = new Map<symbol, AnnotationSpec[]>();
@@ -251,23 +252,34 @@ export function computeLabelLanes(
         if (g) g.push(a);
         else markerGroups.set(a.xs[0]!, [a]);
       } else {
+        // Lane-pack at the position the chip will *render*: a region panned
+        // half off-plot renders clamped to the plot's left edge, and a fully
+        // off-plot region's chip is culled — so it must not hold a lane.
         const ax =
           a.kind === 'region' ? Math.min(a.xs[0]!, a.xs[1]!) : a.xs[0]!;
+        const bx =
+          a.kind === 'region' ? Math.max(a.xs[0]!, a.xs[1]!) : a.xs[0]!;
+        const rawLeft = toPixel(ax);
+        if (plotWidth !== undefined && (rawLeft > plotWidth || toPixel(bx) < 0))
+          continue;
         flags.push({
           rep: a.key,
           members: [a.key],
-          left: toPixel(ax),
+          left: plotWidth === undefined ? rawLeft : Math.max(rawLeft, 0),
           width: labelWidth(a.label),
           label: a.label,
         });
       }
     }
     for (const [x, group] of markerGroups) {
+      // A culled off-plot marker chip must not hold a lane either.
+      const px = toPixel(x);
+      if (plotWidth !== undefined && (px < 0 || px > plotWidth)) continue;
       const label = group.map((g) => g.label).join(', ');
       flags.push({
         rep: group[0]!.key,
         members: group.map((g) => g.key),
-        left: toPixel(x),
+        left: px,
         width: labelWidth(label),
         label,
       });

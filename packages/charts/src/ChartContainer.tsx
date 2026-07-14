@@ -862,7 +862,8 @@ export function ChartContainer({
   // Pack overlapping top-flag labels (markers + regions) into stacked lanes so
   // close-in-x labels don't collide; chips read their lane back off the frame.
   const labelLanes = useMemo(
-    () => computeLabelLanes(annotations, (v) => xScale(v), draggingKey),
+    () =>
+      computeLabelLanes(annotations, (v) => xScale(v), draggingKey, plotWidth),
     [annotations, xScale, draggingKey],
   );
 
