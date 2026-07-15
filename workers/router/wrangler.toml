@@ -1,0 +1,17 @@
+# Router Worker for pond-ts.org — see ./index.js and /MIGRATION.md.
+#
+# Deploy from this directory once the zone is on Cloudflare:
+#   npx wrangler deploy
+#
+# The `routes` below bind the Worker to the apex (and www). They require the
+# pond-ts.org DNS zone to be active on Cloudflare (full zone, not a CNAME
+# partial setup) — see MIGRATION.md step for moving nameservers.
+
+name = "pond-ts-router"
+main = "index.js"
+compatibility_date = "2024-11-01"
+
+routes = [
+  { pattern = "pond-ts.org/*", zone_name = "pond-ts.org" },
+  { pattern = "www.pond-ts.org/*", zone_name = "pond-ts.org" },
+]

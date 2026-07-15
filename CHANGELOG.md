@@ -45,6 +45,15 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **Docs hosting.** The documentation site has moved from GitHub Pages
+  (`pjm17971.github.io/pond-ts`) to Cloudflare Pages under the custom domain
+  **<https://pond-ts.org>**. Storybook now deploys as its own project served at
+  `pond-ts.org/storybook/` (via a small routing Worker, `workers/router/`),
+  rather than nested into the docs build. Doc links in the README are repointed;
+  the deploy workflow keeps the same `v*`-tag gate. See `MIGRATION.md`.
+
 ### Fixed
 
 - **charts:** a multi-session time axis near the tick cap can no longer come
@@ -63,7 +72,7 @@ and type-level changes; patch bumps are strictly additive.
 
 - **charts:** the boundary (second-row) axis label's **context** now pins to
   the plot's left edge instead of riding the first tick: it shows the period
-  the *domain start* is in, and a crossing label sliding toward the edge
+  the _domain start_ is in, and a crossing label sliding toward the edge
   pushes it off (the sticky-header behavior). On a live sliding window the
   old first-tick anchoring made `Jan 01` hop tick-to-tick as ticks scrolled
   out; pinned, it stays put until the period actually changes. Crossing
@@ -153,7 +162,7 @@ and type-level changes; patch bumps are strictly additive.
   values while **keeping the row count** — mirroring `rolling`'s `minSamples`,
   the one warm-up convention studies use so a smoothed line aligns on its
   source's time axis. (The existing `warmup` option is unchanged — it still
-  *drops* the head rows; `minSamples` is the length-preserving counterpart.)
+  _drops_ the head rows; `minSamples` is the length-preserving counterpart.)
 - **core:** `TimeSeries.rolling` accepts a **count-based** window —
   `rolling({ count: N }, mapping, opts?)` reduces the last / next / centered
   `N` _rows_ (bars) by position instead of a time span. Unlike a duration
