@@ -1,0 +1,130 @@
+---
+id: charts-axes-index
+title: Axes
+sidebar_position: 1
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import DualAxis from '@site/src/examples/learn-02-dual-axis';
+import ChartsValueAxisDual from '@site/src/examples/charts-value-axis-dual';
+
+# Axes
+
+A chart has two kinds of axis, owned at two different levels. The **x axis**
+is shared by the whole `<ChartContainer>` — one scale every row draws against,
+so cursors and ranges line up across stacked plots. Each `<ChartRow>` owns its
+own **y axis (or axes)**, so rows with different units stack cleanly.
+
+This page is the reference for declaring and binding axes. The three axis
+_kinds_ that change what the x axis means each get their own page:
+
+- **[Value axis](./value-axis.mdx)** — key by a monotonic quantity (distance,
+  strike) instead of time.
+- **[Category axis](./category-axis.mdx)** — an ordinal axis, one slot per
+  category.
+- **[Trading-time axis](./trading-time-axis.mdx)** — a session-aware time axis
+  with closed-market gaps collapsed.
+
+## Y axes
+
+A y axis is a `<YAxis>` inside a `<ChartRow>`. A draw layer binds to it by
+`id` through its `axis` prop — `id` picks the **scale**, while `as` picks the
+**style** (they're separate channels). Declare several with distinct `id`s and
+`side`s for a dual-axis row; **placement follows `side`, not JSX order**, and
+the **first-declared axis is the row's default** for any layer that names none.
+
+<ChartExample name="learn-02-dual-axis" height={260}>
+  <DualAxis />
+</ChartExample>
+
+```tsx
+<ChartRow height={200}>
+  <YAxis id="pct" side="left" format=".0%" />
+  <YAxis id="ms" side="right" format=",.0f" />
+  <Layers>
+    <LineChart series={s} column="cpu" axis="pct" />
+    <LineChart series={s} column="latency" axis="ms" />
+  </Layers>
+</ChartRow>
+```
+
+If a row has no `<YAxis>` at all, the layers still draw against an implicit
+auto-fitting axis — you just get no gutter or ticks.
+
+### `<YAxis>` props
+
+| Prop             | Type                                           | Default       | Purpose                                                                 |
+| ---------------- | ---------------------------------------------- | ------------- | ----------------------------------------------------------------------- |
+| `id`             | `string`                                       | — (required)  | The scale id a layer binds to via `axis`. First-declared = row default. |
+| `side`           | `'left' \| 'right'`                            | `'left'`      | Which gutter the axis sits in.                                          |
+| `label`          | `string`                                       | `id`          | Axis title / unit.                                                      |
+| `labelPlacement` | `'rotated' \| 'top'`                           | `'rotated'`   | `rotated` = vertical strip on the outer edge; `top` = horizontal atop.  |
+| `min` / `max`    | `number`                                       | auto-fit      | Explicit domain bounds; omit to fit the bound layers.                   |
+| `pad`            | `number`                                       | `0`           | Fractional headroom added each side of the resolved domain.             |
+| `format`         | `AxisFormat` (d3 specifier or `(v) => string`) | scale default | Tick-label **and** cursor-readout formatting. Hoist an inline function. |
+| `ticks`          | `ReadonlyArray<{ at: number; label: string }>` | auto          | Explicit ticks — drives both labels **and** gridlines. `[]` draws none. |
+| `boundaryLabels` | `boolean`                                      | `true`        | `false` drops just the top & bottom extreme labels (gridlines stay).    |
+| `width`          | `number`                                       | `50`          | Gutter width in CSS px.                                                 |
+| `color`          | `string`                                       | theme         | This axis's tick + title colour (presentation-only).                    |
+
+`format` is the one prop whose inline **function** form must be hoisted or
+`useCallback`'d — it's the only prop the layout's structural change-detection
+can't value-compare, so a fresh function each render re-registers the axis.
+
+## The x axis
+
+You don't declare the x axis to get one: `<ChartContainer>` renders a
+`<TimeAxis>` at the bottom automatically (`showAxis` defaults to `true`). Set
+`showAxis={false}` for a bare plot, or to place your own `<XAxis>` — for a top
+axis, a label, custom ticks, or a second (transformed) strip.
+
+Its **kind is inferred from the data**, never set by a prop: a `TimeSeries`
+gives a time axis, a `ValueSeries` a [value axis](./value-axis.mdx), and
+`BarChart categories` a [category axis](./category-axis.mdx). Every layer in a
+container must agree on the kind — a mix throws. `<TimeAxis>` and
+`<CategoryAxis>` are both just `<XAxis>` presets; the kind follows the data
+regardless of which you render.
+
+### `<XAxis>` props
+
+| Prop        | Type                                           | Default        | Purpose                                                                 |
+| ----------- | ---------------------------------------------- | -------------- | ----------------------------------------------------------------------- |
+| `side`      | `'top' \| 'bottom'`                            | `'bottom'`     | Which edge. Declaration order stacks multiple strips.                   |
+| `label`     | `string`                                       | —              | Centred axis title.                                                     |
+| `format`    | `AxisFormat`                                   | container's    | Tick/cursor formatting, resolved against the axis kind.                 |
+| `ticks`     | `ReadonlyArray<{ at: number; label: string }>` | auto           | Explicit ticks in axis-value units.                                     |
+| `transform` | `{ to(v): number; from(u): number }`           | —              | Relabel the **same scale** into a derived unit (a second tick layout).  |
+| `align`     | `'auto' \| 'center' \| 'right'`                | `'center'`     | Horizontal tick-label placement.                                        |
+| `color`     | `string`                                       | theme          | Tick / label / rule / title colour — the lever for a stacked dual axis. |
+| `height`    | `number`                                       | fit-to-content | Strip height in px.                                                     |
+
+### Dual x-axes — `transform`
+
+A second `<XAxis>` with a `transform` relabels the same pixel scale into a
+derived unit — **one scale, two tick layouts**, never two scales. The `to` /
+`from` pair are monotonic inverses and may be nonlinear:
+
+<ChartExample name="charts-value-axis-dual" height={280}>
+  <ChartsValueAxisDual />
+</ChartExample>
+
+Declaration order stacks the strips (before `<ChartRow>` → above the plot,
+after → below); gridlines always follow the container's primary ticks. This is
+_relabeling_, not the axis-kind mixing that throws — the scale is unchanged.
+
+### Time formatting
+
+`ChartContainer`'s `timeFormat` is the shared formatter for both the auto axis
+labels and the cursor-time readout (omit it for d3's multi-scale time default).
+A per-instance `<XAxis format>` overrides just that axis's labels. Either opts
+the axis out of the two-row boundary-label layout.
+
+## See also
+
+- [Value axis](./value-axis.mdx) · [Category axis](./category-axis.mdx) ·
+  [Trading-time axis](./trading-time-axis.mdx) — the three x-axis kinds.
+- Storybook: [`Axes`](pathname:///storybook/?path=/story/axes--dual-axis)
+  (every Y/X prop and state) and
+  [`Axes/DualX`](pathname:///storybook/?path=/story/axes-dualx--sigma-with-delta-strip).
+- The generated [API reference](pathname:///generated-api/charts/) for the
+  exhaustive `YAxisProps` / `XAxisProps` types.

@@ -1,0 +1,106 @@
+---
+title: Trading-time axis
+sidebar_position: 4
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import FinancialCalendarChart from '@site/src/examples/financial-calendar-chart';
+
+# Trading-time axis
+
+A **trading-time axis** is still a time axis — but it renders in _trading_
+time: closed-market spans (overnight, weekends, holidays) collapse out, and
+pixels are proportional to time _within_ each session. A gap-free intraday
+candle chart, no dead space between sessions.
+
+<ChartExample name="financial-calendar-chart" height={280}>
+  <FinancialCalendarChart />
+</ChartExample>
+
+For the tutorial framing see
+[Learn charts, chapter 9](../../learn-charts/beyond-the-time-axis#a-session-aware-time-axis);
+the full financial walkthrough is the
+[@pond-ts/financial](../../financial/) section.
+
+## Getting one — the `calendar` prop
+
+Hand `<ChartContainer>` a **`calendar`** and the axis becomes session-aware.
+`calendar` is the high-level sugar: the container derives the gap model from it
+itself. A `@pond-ts/financial` `TradingCalendar` is the usual source:
+
+```tsx
+import { TradingCalendar } from '@pond-ts/financial';
+
+const cal = TradingCalendar.fromRules(
+  { timeZone: 'America/New_York', open: '09:30', close: '16:00' },
+  { from: '2026-01-05', to: '2026-02-13' },
+);
+
+<ChartContainer calendar={cal} range={view} width={560}>
+  <ChartRow height={220}>
+    <YAxis id="price" side="right" format="$,.0f" />
+    <Layers>
+      <Candlestick series={bars} />
+    </Layers>
+  </ChartRow>
+</ChartContainer>;
+```
+
+`TradingCalendar.fromRules(rules, range)` is the minimal path — `rules` is a
+`{ timeZone, open, close }` (plus optional `weekmask`, `breaks`, `holidays`,
+`earlyCloses`), and the second `range` is `{ from, to }` (the calendar's own
+span). The chart's `view` range is a separate `[start, end]` you choose;
+`cal.sessions()` gives you the session bounds to derive it from.
+For irregular sessions, `TradingCalendar.fromSessions(...)` takes an explicit
+session list.
+
+**`@pond-ts/charts` never imports `@pond-ts/financial`.** The `calendar` prop
+is typed against a structural `TradingCalendarLike` shape (anything with a
+`.discontinuities()` method), so the charts package stays free of the financial
+dependency — you supply the calendar.
+
+:::caution[Memoize the calendar]
+Build the calendar (or provider) **once** and pass a stable reference — the x
+scale and frame rebuild whenever its identity changes. Construct it in a
+`useMemo`/`useRef`, never inline in the render.
+:::
+
+## Tuning — `spacing` and `discontinuities`
+
+| Prop              | Type                          | Default          | Purpose                                                                                                                                |
+| ----------------- | ----------------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `calendar`        | `TradingCalendarLike`         | —                | High-level: the container derives the gap model from it.                                                                               |
+| `spacing`         | `'proportional' \| 'uniform'` | `'proportional'` | `proportional` = true time within a session; `uniform` = equal width per session (the TradingView ordinal look). Only with `calendar`. |
+| `discontinuities` | `DiscontinuityProvider`       | —                | Low-level: pass the gap model yourself (`calendar.discontinuities(...)`). **Takes precedence over `calendar`.**                        |
+
+Most charts want `calendar` + the default `proportional` spacing. Reach for
+`discontinuities` only when you're constructing the provider some other way, or
+need `uniform` bar-width spacing over a custom period.
+
+All three are **time-axis only** — they're ignored on a value or category axis.
+
+## What changes on the axis
+
+- **Gaps collapse.** Closed-market spans have zero pixel width; the axis walks
+  a session-aware tick ladder (hour → day → week → … → year) rather than raw
+  wall-clock ticks.
+- **A second boundary row.** The axis adds a boundary-context row — the date
+  over intraday ticks, the year over daily/monthly ticks — plus a pinned
+  left-edge label so you always know the enclosing period.
+- **Session dividers.** The container draws a divider at each session boundary
+  (from the calendar's `boundaries()`).
+- **Line breaks at sessions.** A `LineChart` (or area) can set `breakGaps` to
+  break the line across each session discontinuity instead of connecting
+  across the collapsed gap.
+
+## See also
+
+- [@pond-ts/financial](../../financial/) — constructing a `TradingCalendar`,
+  the calendar-aware side of this axis.
+- [Axes overview](./index.mdx) — the shared axis mechanics.
+- [Learn charts, chapter 9](../../learn-charts/beyond-the-time-axis#a-session-aware-time-axis)
+  — the tutorial.
+- Storybook: [`Axes/TradingTimeAxis`](pathname:///storybook/?path=/story/axes-tradingtimeaxis--weekend-skip)
+  (`WeekendSkip`, `HolidayGap`, `HalfDay`, `SessionBreaks`,
+  `SpacingProportionalVsUniform`, …) and
+  [`Axes/TradingTimeAxis/Interactions`](pathname:///storybook/?path=/story/axes-tradingtimeaxis-interactions--region-across-sessions).
