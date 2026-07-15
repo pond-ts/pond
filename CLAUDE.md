@@ -314,6 +314,32 @@ covering 5 scenarios, two optimizations identified and shipped
 full multi-host pipeline), all results pinned in the commit
 message.
 
+## `@pond-ts/financial` studies: oracle-verified, one shape
+
+Studies (SMA, RSI, Bollinger, …) are a **vocabulary package** — thin,
+uniformly-shaped wrappers over a small kernel, not new math. When
+adding one, follow the checklist in
+[`packages/financial/src/studies/README.md`](packages/financial/src/studies/README.md).
+The load-bearing rules:
+
+- **Uniform shape.** Every study takes `column` (source, default
+  `'close'`) + `output` (or a `prefix` for a multi-column family),
+  **bar-count** periods, and a **length-preserving** warm-up
+  (`undefined` head, row count kept). Compose on the kernel
+  (`rollingValues` / `rollingColumns` / `columnValues` / `emaValues`)
+  — don't hand-roll event loops.
+- **A pandas oracle case is REQUIRED.** No study merges without one:
+  add it to `scripts/oracle/generate.py`, regenerate the committed
+  fixture, and wire the dispatch in `test/study-oracle.test.ts`. The
+  oracle is how we trust the numbers; conventions must match exactly
+  (`ddof=0`, `ewm(adjust=False)`, linear `quantile`, …) — see
+  `packages/financial/scripts/oracle/README.md`. Named indicators
+  (RSI/MACD/ATR) add **TA-Lib** to the oracle and **document any
+  definition delta** (bar-for-bar vendor parity is a non-goal).
+- **Each study also gets a fluent method** (opt-in
+  `@pond-ts/financial/fluent`) so it composes as
+  `bars.sma({…}).rsi({…})`.
+
 ## PR review (don't self-merge)
 
 A PR author is the same mind that wrote the code — unlikely to catch
