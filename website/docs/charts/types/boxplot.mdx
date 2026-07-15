@@ -1,0 +1,80 @@
+---
+title: BoxPlot
+sidebar_position: 7
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryBoxplot from '@site/src/examples/gallery-boxplot';
+
+# BoxPlot
+
+Box-and-whisker per bucket, drawn from **pre-computed quantile columns**. For a
+distribution over time (a latency percentile fan) or over a value axis.
+
+<ChartExample name="gallery-boxplot" height={230}>
+  <GalleryBoxplot width={560} />
+</ChartExample>
+
+## Data contract
+
+Takes a `TimeSeries` or `ValueSeries` whose columns are **already** the
+quantiles — the chart does **not** compute them (feed a `rolling` / `aggregate`
+percentile pass). `lower` and `upper` are required; `q1` + `q3` (both or
+neither) and `median` are optional. A full box is five columns; a range-only box
+is just `lower` / `upper`. The box's x-span is the interval key `[begin, end)`
+or neighbour spacing. Adapter: `boxFromTimeSeries(series, { lower, q1, median,
+q3, upper })` / `boxFromValueSeries`.
+
+## Props
+
+| Prop         | Type                             | Default        | Purpose                                                             |
+| ------------ | -------------------------------- | -------------- | ------------------------------------------------------------------- |
+| `series`     | `TimeSeries \| ValueSeries`      | — (req)        | The source series.                                                  |
+| `lower`      | `string`                         | — (req)        | Lower whisker column (e.g. `p5` / `min`).                           |
+| `upper`      | `string`                         | — (req)        | Upper whisker column (e.g. `p95` / `max`).                          |
+| `q1`         | `string`                         | —              | Box bottom (Q1). Both-or-neither with `q3`.                         |
+| `q3`         | `string`                         | —              | Box top (Q3).                                                       |
+| `median`     | `string`                         | —              | Median line column; omit for no centre line.                        |
+| `as`         | `string`                         | `'default'`    | Style role → `theme.box[as]`.                                       |
+| `axis`       | `string`                         | row default    | Which `<YAxis id>` to scale against.                                |
+| `shape`      | `'whisker' \| 'solid' \| 'none'` | `'whisker'`    | Box presentation (see variants).                                    |
+| `showMedian` | `boolean`                        | `true`         | Draw the median line (no-op without a `median` column).             |
+| `gap`        | `number`                         | `0`            | Total horizontal inset px.                                          |
+| `capWidth`   | `number`                         | half box width | Whisker cap width (`whisker` shape only).                           |
+| `offset`     | `number`                         | `0`            | Pixel x-shift — only the draw shifts, not the readout (keep small). |
+
+## Variants
+
+- **`shape`** — `'whisker'` (default: stems + caps), `'solid'` (candlestick
+  look: outer bar + darker `q1`→`q3` inner, no stems), `'none'` (the `q1`→`q3`
+  box only).
+- **Full box vs range-only** — omit `q1` + `q3` for a min/max range box.
+- **`showMedian`** — hide the centre line even when a `median` column is
+  present.
+
+## Interaction & theming
+
+- **Cursor:** reads the box **under** the cursor (span containment) and shows a
+  single consolidated flag at the box top with every quantile in one row, each
+  coloured to its piece. This **opts the box out** of the crosshair reticle
+  x-snap (unlike [Candlestick](./candlestick.mdx), which opts in).
+- **Selection:** not selectable.
+- **Theming:** the `theme.box` slot (`BoxStyle` with fill / stroke / median /
+  whisker).
+
+## Cautions
+
+- **The chart doesn't compute quantiles** — supply them from a percentile
+  rollup.
+- **`q1` / `q3` are both-or-neither** — passing one throws.
+- **Range-only + `shape='none'` draws nothing** — use `'whisker'` or `'solid'`.
+- **`offset` shifts only the draw**, not the readout — keep it small.
+
+## See also
+
+- [Candlestick](./candlestick.mdx) — the OHLC counterpart (supersedes
+  `shape='solid'` for price bars).
+- Storybook: [`Charts/BoxPlot`](pathname:///storybook/?path=/story/charts-boxplot--percentiles)
+  — `Percentiles`, `Solid`, `WithGap`, the vol-smile variants.
+- The generated [API reference](pathname:///generated-api/charts/) — the full
+  `BoxPlotProps` type.

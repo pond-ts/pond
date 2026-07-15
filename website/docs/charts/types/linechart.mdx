@@ -1,0 +1,72 @@
+---
+title: LineChart
+sidebar_position: 2
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import FirstChart from '@site/src/examples/first-chart';
+
+# LineChart
+
+A gap-aware line through one numeric column. The default draw layer for a
+continuous series — over time, or over a [value axis](../axes/value-axis.mdx).
+
+<ChartExample name="first-chart" height={260}>
+  <FirstChart />
+</ChartExample>
+
+## Data contract
+
+Takes a `TimeSeries` or `ValueSeries` and one numeric `column` (the y value);
+x comes from the series key (time) or axis (value). A `NaN` run is a **gap** —
+how it renders is the `gaps` prop. The explicit adapter is
+`fromTimeSeries(series, column)` / `fromValueSeries(series, column)`.
+
+## Props
+
+| Prop            | Type                        | Default     | Purpose                                                 |
+| --------------- | --------------------------- | ----------- | ------------------------------------------------------- |
+| `series`        | `TimeSeries \| ValueSeries` | — (req)     | The source series.                                      |
+| `column`        | `string`                    | — (req)     | Numeric column to plot as y.                            |
+| `as`            | `string`                    | `'default'` | Style role → `theme.line[as]`.                          |
+| `axis`          | `string`                    | row default | Which `<YAxis id>` to scale against.                    |
+| `curve`         | `Curve`                     | `'linear'`  | Path interpolation (see variants).                      |
+| `gaps`          | `GapMode`                   | `'empty'`   | How a `NaN` run renders.                                |
+| `sessionBreaks` | `boolean`                   | `false`     | Break the line at trading-axis session discontinuities. |
+
+## Variants
+
+- **`curve`** — `'linear'` (default), `'monotone'`, `'natural'`, `'basis'`,
+  `'step'`. A view concern only; denoise the _data_ with pond's `smooth()`, not
+  the curve.
+- **`gaps`** — `'empty'` (default: break at the gap), `'none'` (bridge across),
+  `'dashed'` / `'step'` / `'fade'` (faint connectors over the break). A `NaN` in
+  the column is the gap; the mode is how it draws.
+- **`sessionBreaks`** — a **scale** break (at session boundaries on a
+  [trading-time axis](../axes/trading-time-axis.mdx)), orthogonal to `gaps` (a
+  **data** break); set both independently.
+
+## Interaction & theming
+
+- **Cursor:** participates in every readout mode (line/point/inline/flag/
+  crosshair) — the dot rides the line at the cursor, no readout past the data
+  span.
+- **Selection:** not selectable (no `id`); it's a display + readout layer.
+- **Theming:** the `theme.line` slot (`LineStyle` = `{ color, width, dash? }`).
+  A dashed line for a _modeled_ series comes from the theme role's `dash`, not a
+  prop.
+
+## Cautions
+
+- **No per-component colour/width** — style is the `as` role only, by design
+  (style and scale are separate channels).
+- **`curve` smooths the drawing, not the data** — for denoised values use
+  `smooth()` upstream so the readout matches the line.
+
+## See also
+
+- [Axes](../axes/index.mdx) · [Layout](../layout.mdx) — scale binding and rows.
+- Storybook: [`Charts/LineChart`](pathname:///storybook/?path=/story/charts-linechart--line-styles)
+  — `WithGap`, `LineStyles`, `GapAwareSmooth`, the value-axis variants.
+- The generated [API reference](pathname:///generated-api/charts/) — the full
+  `LineChartProps` type.
