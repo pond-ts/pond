@@ -145,6 +145,7 @@ const sidebars: SidebarsConfig = {
             'charts/axes/trading-time-axis',
           ],
         },
+        'charts/layout',
         {
           type: 'category',
           label: 'Interaction',
