@@ -88,10 +88,11 @@ All three are **time-axis only** — they're ignored on a value or category axis
   over intraday ticks, the year over daily/monthly ticks — plus a pinned
   left-edge label so you always know the enclosing period.
 - **Session dividers.** The container draws a divider at each session boundary
-  (from the calendar's `boundaries()`).
-- **Line breaks at sessions.** A `LineChart` (or area) can set `breakGaps` to
-  break the line across each session discontinuity instead of connecting
-  across the collapsed gap.
+  (the discontinuity provider's session boundaries).
+- **Line breaks at sessions.** A `LineChart` can set `sessionBreaks` to break
+  the line at each session discontinuity instead of connecting across the
+  collapsed gap. This is a **scale** break (driven by the axis's collapsed
+  gaps), orthogonal to `gaps` (a data break) — set both independently.
 
 ## See also
 
