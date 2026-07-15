@@ -1,0 +1,122 @@
+---
+title: Layout
+sidebar_position: 3
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import TwoRow from '@site/src/examples/learn-02-two-row';
+
+# Layout
+
+A chart is composed from three nested primitives, each owning one part of the
+layout:
+
+- **`<ChartContainer>`** — the whole chart's **width** and the shared x axis.
+  Holds one or more rows, stacked vertically.
+- **`<ChartRow>`** — one horizontal band with its own **height** and y axes.
+  Owns the left-to-right layout (axes around the plot).
+- **`<Layers>`** — the z-stack inside a row; children draw back-to-front in
+  author order.
+
+The x axis is shared by the container; each row owns its y axis. This page is
+the reference for arranging rows and sizing the frame — for the axes
+themselves, see [Axes](./axes/index.mdx).
+
+## Rows stack; the x axis is shared
+
+Give the container multiple `<ChartRow>`s and they stack top to bottom, all
+drawing against the **one** shared x axis (rendered once, under the last row).
+Each row sets its own `height`; a `rowGap` on the container adds vertical space
+between them:
+
+<ChartExample name="learn-02-two-row" height={280}>
+  <TwoRow />
+</ChartExample>
+
+```tsx
+<ChartContainer range={s.timeRange()} width={560} rowGap={8}>
+  <ChartRow height={140}>
+    <YAxis id="pct" side="right" format=".0%" />
+    <Layers>
+      <LineChart series={s} column="cpu" axis="pct" />
+    </Layers>
+  </ChartRow>
+  <ChartRow height={100}>
+    <YAxis id="ms" side="right" format=",.0f" />
+    <Layers>
+      <LineChart series={s} column="latency" axis="ms" />
+    </Layers>
+  </ChartRow>
+</ChartContainer>
+```
+
+Because the x axis is shared, a cursor or a selected range lines up across
+every row — hovering the top panel moves the cursor on the bottom one too.
+
+## Horizontal layout within a row
+
+Inside a row, each axis sits in the gutter its **`side`** names — left axes in
+the left gutter, right axes in the right, with `<Layers>` (the plot area)
+between. Placement follows `side`, not JSX position; author them in that order
+anyway (`side="left"` before `<Layers>`, `side="right"` after) so the markup
+reads the way it lays out. Declaring several `<YAxis>` gives a dual-axis row —
+see [Axes](./axes/index.mdx#y-axes) for binding layers to axes by `id`.
+
+### Gutters align across rows
+
+Rows can have different axis gutters (a wide left label on one, none on
+another) and their **plot areas still left-align**. Each row reports its
+per-slot gutter widths; the container reserves the max width for each slot and
+pads the rows that don't use it. You don't manage this — it's why a
+multi-panel stack lines up on the x axis without hand-tuning widths.
+
+## Sizing the frame
+
+`width` is a **required pixel number**, not `"100%"` — the canvas renderer
+needs real pixels to lay out ticks and slots before it draws. To fill a
+container that resizes (a flex column, a grid cell, the window), wrap it in a
+`ResizeObserver`: the [responsive-width recipe](../recipes/responsive-width) is
+that pattern, one hook.
+
+For a full-height split with a **draggable divider** between panels (the
+price-over-indicator financial shape), the
+[resizable multi-panel recipe](../recipes/resizable-panels) works it end to
+end on these same primitives.
+
+## Props
+
+### `<ChartContainer>` — layout-relevant
+
+| Prop       | Type      | Default | Purpose                                                                                               |
+| ---------- | --------- | ------- | ----------------------------------------------------------------------------------------------------- |
+| `width`    | `number`  | — (req) | Overall chart width in CSS px. Real pixels, never `"100%"`.                                           |
+| `rowGap`   | `number`  | `0`     | Vertical space between stacked rows in px (not under the axis).                                       |
+| `showAxis` | `boolean` | `true`  | Auto-render the shared x axis under the rows. `false` for a bare plot or to place your own `<XAxis>`. |
+
+(`range`, `theme`, `cursor`, and the axis-kind props are covered under
+[Axes](./axes/index.mdx) and [Interaction](./interaction/cursors-and-readouts.mdx).)
+
+### `<ChartRow>`
+
+| Prop       | Type         | Default   | Purpose                                                      |
+| ---------- | ------------ | --------- | ------------------------------------------------------------ |
+| `height`   | `number`     | — (req)   | Row height in CSS px.                                        |
+| `cursor`   | `CursorMode` | container | Cursor presentation for this row, overriding the container.  |
+| `children` | `ReactNode`  | —         | `<YAxis>` (left) · `<Layers>` · `<YAxis>` (right), in order. |
+
+## Sharp edges
+
+- **`width` is pixels, not percent** — wrap in a `ResizeObserver` to fill a
+  fluid box (recipe linked above).
+- **`Layers` is mandatory** — draw layers must be inside a `<Layers>`, not
+  direct children of the row; it's the z-stack boundary.
+- **Author order is layout order** — left axes before `Layers`, right axes
+  after; within `Layers`, children draw back-to-front.
+
+## See also
+
+- [Axes](./axes/index.mdx) — y-axis binding, dual axes, the x-axis kinds.
+- [Responsive width](../recipes/responsive-width) · [Resizable panels](../recipes/resizable-panels) — the two layout recipes.
+- Storybook: [`Layout`](pathname:///storybook/?path=/story/layout--multi-row)
+  — `SingleRow`, `MultiRow`, `DifferentHeights`, `RowGap`, `VaryingGutters`,
+  `EstelaShaped`, and the multi-axis variants.
