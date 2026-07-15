@@ -15,8 +15,10 @@ and the router Worker is bound to `pond-ts.org/*`:
 - `www.pond-ts.org` → 301 to apex
 
 The first deploy was done manually via `wrangler` from a local `wrangler login`.
-**Remaining:** wire the GitHub Actions secrets (below) so future release-tag
-pushes auto-deploy, and optionally decommission old GitHub Pages.
+The GitHub Actions secrets (`CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`)
+are set, so future release-tag pushes auto-deploy via `.github/workflows/docs.yml`.
+**Remaining (optional):** decommission old GitHub Pages so it stops serving a
+stale copy.
 
 ## Target topology
 

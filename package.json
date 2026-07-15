@@ -5,7 +5,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/pjm17971/pond-ts.git"
+    "url": "git+https://github.com/pond-ts/pond.git"
   },
   "workspaces": [
     "packages/core",
