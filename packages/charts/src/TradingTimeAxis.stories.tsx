@@ -1,4 +1,6 @@
+import { useMemo, useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import { TimeSeries } from 'pond-ts';
 import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
@@ -7,6 +9,8 @@ import { LineChart } from './LineChart.js';
 import { TimeAxis } from './TimeAxis.js';
 import { YAxis } from './YAxis.js';
 import {
+  DAY,
+  H,
   MIN,
   WIDTH,
   barSeq,
@@ -16,6 +20,7 @@ import {
   provider,
   rangeOf,
   sessionSeq,
+  tickSchema,
   weekdaySessions,
   withHalfDay,
 } from './tradingAxis.fixture.js';
@@ -375,6 +380,136 @@ export const DateStyleIntraday: Story = {
       </div>
     );
   },
+};
+
+/**
+ * The whole ladder, interactive. **Pan** (drag) and **zoom** (wheel) a plain
+ * continuous axis all the way from a 3-year span down to seconds, and flip the
+ * **`dateStyle`** toggle live. The preset buttons jump between scales; drag /
+ * wheel explore from there. Watch the flat row relabel as you go — years →
+ * months → days → clock → seconds — each boundary promoted inline (the year at
+ * a year turn, the month at a month turn, the date at a midnight), versus the
+ * stacked two-row layout on the same view.
+ *
+ * The line is a synthetic multi-octave signal on a 30-minute grid, so it
+ * smooths out below ~30 minutes; the **axis** keeps laddering down to
+ * one-second ticks regardless of the data behind it.
+ */
+const PANZOOM_START = new Date(2024, 0, 1).getTime();
+// A deliberately mid-period right edge (not on a year/month/day boundary): every
+// preset anchors here, so each scale contains an *interior* boundary — a midnight
+// inside the 1D view, a month-start inside the 1M view, year turns inside the
+// full view — where the flat style shows its inline promotion. Anchoring on a
+// boundary would push that label onto the clipped right edge and hide it.
+const PANZOOM_END = new Date(2026, 10, 20, 14, 30).getTime();
+const SEC = 1_000;
+
+/** A deterministic ~3-year price line: 14 octaves of sine (self-similar-ish
+ *  detail from the full span down to ~30 min) sampled on a 30-minute grid. */
+function fractalLine(): TimeSeries<typeof tickSchema> {
+  const span = PANZOOM_END - PANZOOM_START;
+  const rows: Array<[number, number]> = [];
+  for (let t = PANZOOM_START; t <= PANZOOM_END; t += 30 * MIN) {
+    let v = 100;
+    let amp = 32;
+    let freq = (2 * Math.PI) / span;
+    for (let o = 0; o < 14; o++) {
+      v += amp * Math.sin(freq * (t - PANZOOM_START) + o * 1.7);
+      amp *= 0.62;
+      freq *= 2.3;
+    }
+    rows.push([t, v]);
+  }
+  return new TimeSeries({ name: 'px', schema: tickSchema, rows });
+}
+
+/** Scale presets (anchored at the right edge), one per rung of the ladder. */
+const PANZOOM_PRESETS: Array<[string, number]> = [
+  ['Max', PANZOOM_END - PANZOOM_START],
+  ['6M', 182 * DAY],
+  ['1M', 30 * DAY],
+  ['1W', 7 * DAY],
+  ['1D', DAY],
+  ['3H', 3 * H],
+  ['30m', 30 * MIN],
+  ['5m', 5 * MIN],
+  ['30s', 30 * SEC],
+];
+
+function DateStylePanZoomDemo() {
+  const series = useMemo(fractalLine, []);
+  const [style, setStyle] = useState<'flat' | 'stacked'>('flat');
+  const [range, setRange] = useState<[number, number]>([
+    PANZOOM_START,
+    PANZOOM_END,
+  ]);
+  const btn = (active: boolean) => ({
+    padding: '3px 10px',
+    fontSize: 12,
+    borderRadius: 4,
+    border: `1px solid ${docsTheme.axis.grid}`,
+    background: active ? '#3b82f6' : 'transparent',
+    color: active ? '#fff' : docsTheme.axis.label,
+    cursor: 'pointer',
+  });
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div
+        style={{
+          display: 'flex',
+          gap: 16,
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          fontFamily: docsTheme.font.family,
+        }}
+      >
+        <div style={{ display: 'flex', gap: 4 }}>
+          {(['flat', 'stacked'] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              style={btn(style === s)}
+              onClick={() => setStyle(s)}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {PANZOOM_PRESETS.map(([label, dur]) => (
+            <button
+              key={label}
+              type="button"
+              style={btn(false)}
+              onClick={() => setRange([PANZOOM_END - dur, PANZOOM_END])}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <ChartContainer
+        width={WIDTH}
+        range={range}
+        theme={docsTheme}
+        panZoom
+        onTimeRangeChange={setRange}
+        minDuration={5 * SEC}
+        showAxis={false}
+      >
+        <ChartRow height={260}>
+          <YAxis id="p" side="right" />
+          <Layers>
+            <LineChart series={series} column="price" axis="p" />
+          </Layers>
+        </ChartRow>
+        <TimeAxis dateStyle={style} />
+      </ChartContainer>
+    </div>
+  );
+}
+export const DateStylePanZoom: Story = {
+  render: () => <DateStylePanZoomDemo />,
 };
 
 /** The `spacing` prop over the `calendar` sugar: **proportional** (top — the

@@ -29,6 +29,7 @@ describe('TradingTimeAxis stories render', () => {
       'DailyMonths',
       'DateStyleDaily',
       'DateStyleIntraday',
+      'DateStylePanZoom',
       'HalfDay',
       'HolidayGap',
       'IntradaySessions',
