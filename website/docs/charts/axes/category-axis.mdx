@@ -1,0 +1,105 @@
+---
+title: Category axis
+sidebar_position: 3
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import LearnCategoryAxis from '@site/src/examples/learn-09-category-axis';
+
+# Category axis
+
+A **category axis** is ordinal: one slot per named category, in order, instead
+of a continuous time or value scale. You get one by handing `BarChart` a
+`categories` array — the container infers the `'category'` kind the same way it
+infers time or value, from the data, never a prop.
+
+For the tutorial pass see
+[Learn charts, chapter 9](../../learn-charts/beyond-the-time-axis#a-category-axis);
+for the systematic prop-by-prop walk see the
+[`Axes/CategoryAxis`](pathname:///storybook/?path=/story/axes-categoryaxis--tickers)
+Storybook group.
+
+<ChartExample name="learn-09-category-axis" height={230}>
+  <LearnCategoryAxis />
+</ChartExample>
+
+## The data shape — `CategoryDatum[]`
+
+`BarChart categories` takes an array of `{ label, value }`:
+
+```ts
+interface CategoryDatum {
+  label: string; // the category name — the stable identity; must be unique
+  value: number; // the bar height (may be negative)
+}
+```
+
+`label` is both the tick and the selection identity, so labels must be unique.
+Order is presentation order — the axis lays out slots left to right in array
+order.
+
+You can hand-build the array, or derive it. `transposeRow` reads **one row** of
+a wide `TimeSeries` (a column per category) across into `CategoryDatum[]` —
+reach for it when you already have a wide rollup row and want its columns read
+off automatically:
+
+```ts
+const data = transposeRow(latestCpuByHost(), { at: 'last' });
+// [{ label: 'api-1', value: 0.34 }, { label: 'api-2', value: 0.48 }, …]
+```
+
+`at` defaults to `'last'` (the newest row); pass `'first'`, an index, or a
+`{ time }` to read a different row, and `columns` to pick/order a subset.
+
+## Rendering the axis
+
+You usually don't render an axis element at all — the auto x-axis becomes
+categorical once a category layer registers, drawing each `label` under its
+slot. `<CategoryAxis>` is a thin `<XAxis>` preset; render it only for a label,
+`side="top"`, or a custom height:
+
+```tsx
+<ChartContainer width={560}>
+  <ChartRow height={200}>
+    <YAxis id="pct" side="right" format=".0%" min={0} />
+    <Layers>
+      <BarChart categories={data} gap={8} />
+    </Layers>
+  </ChartRow>
+</ChartContainer>
+```
+
+A d3 `format` doesn't apply on a category axis — the labels come from the data,
+so customize them via each `CategoryDatum.label`.
+
+## Under the hood — the band scale
+
+The category axis is a **band scale** (`scaleBand`) with a deliberately
+numeric domain: slot `i` spans `[i, i+1]`, so the pixel mapping stays linear
+and every continuous-axis mechanism (cursor, selection, `barSpanPx`) works
+unchanged. The category-ness lives only in the scale's `ticks()` (band centres
+at `i + 0.5`), `invert()` (snap to the nearest centre), and `label(v)` (slot →
+name). You rarely touch `scaleBand` directly; it's what makes an ordinal axis
+reuse the whole continuous-axis machinery.
+
+## Sharp edges
+
+- **Labels must be unique** — `label` is the selection/identity key; duplicates
+  collide.
+- **One category layer per container** — all category rows must agree on the
+  same ordered slot list (a mismatch throws, like the axis-kind mix).
+- **No `format` on the axis** — style the names at the data level
+  (`CategoryDatum.label`), not with a d3 specifier.
+- **`categories` is one of `BarChart`'s three input modes** (`series` / `bins`
+  / `categories`) — pass exactly one.
+
+## See also
+
+- [Axes overview](./index.mdx) — declaring and binding axes.
+- [Learn charts, chapter 9](../../learn-charts/beyond-the-time-axis#a-category-axis)
+  — the tutorial.
+- The [categorical charts guide](../../how-to-guides/categorical-charts) — a
+  worked end-to-end build.
+- Storybook: [`Axes/CategoryAxis`](pathname:///storybook/?path=/story/axes-categoryaxis--tickers)
+  — `Tickers`, `HighCardinality`, `CrowdedLabels`, `Select`, `Signed`,
+  `Transpose`, `TransposeScrub`.

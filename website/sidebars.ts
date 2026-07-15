@@ -135,7 +135,16 @@ const sidebars: SidebarsConfig = {
             'learn-charts/beyond-the-time-axis',
           ],
         },
-        'charts/value-axis',
+        {
+          type: 'category',
+          label: 'Axes',
+          link: { type: 'doc', id: 'charts/axes/charts-axes-index' },
+          items: [
+            'charts/axes/value-axis',
+            'charts/axes/category-axis',
+            'charts/axes/trading-time-axis',
+          ],
+        },
         {
           type: 'category',
           label: 'Interaction',

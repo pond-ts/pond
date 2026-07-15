@@ -1153,6 +1153,29 @@ Phases (each independently shippable, ends with a docs deploy):
       #395 docs deliverable), Design philosophy (2 pages),
       Accessibility, Troubleshooting, Coming-from-RTC migration page,
       the financial end-to-end guide.
+  - **Structure agreed 2026-07-15 (user-directed), building top-to-bottom
+    as one PR per section.** Final `@pond-ts/charts` nav order: Gallery,
+    Learn charts, **Axes**, **Layout**, **Chart types**, Interaction,
+    Annotations & indicators, **Missing data & gaps**, **Financial
+    charts**, API reference (generated link). Divergences from the
+    docs-plan §3 IA, on purpose: (a) **Axes and Layout are split** into
+    two separate sections (plan had a combined "Axes & layout"); (b)
+    **Axes leads** (before Chart types), and the shipped
+    `charts/value-axis` page **relocates under it** →
+    `charts/axes/value-axis` (update the 3 doc cross-links —
+    `charts/index.mdx`, `start-here/concepts/value-axis.mdx`,
+    `learn-charts/09-…` — plus sidebars.ts). **Axes section = 4 pages**
+    (full scope): overview (Y & X axes) · Value axis (moved) · Category
+    axis · Trading-time axis (charts scale + financial calendar).
+    **Chart-type pages** use a *middle-tier* template (lighter than the
+    plan's 9-section one): live hero + when-to-use → minimal snippet →
+    data contract → compact props table → a few key variants w/ embeds →
+    interaction/theming/cautions → footer link to the generated typedoc
+    page. One page per draw layer: LineChart, AreaChart, BandChart,
+    ScatterChart, BarChart, BoxPlot, Candlestick (Histogram is a
+    BarChart mode, not its own page). Each links out to the generated
+    reference for exhaustive types — "something in the middle" between
+    Learn and typedoc, matching the Interaction/Annotations pages.
 - [ ] **P4 — guides library completion**: ops-dashboard, annotation
       workflows, and value-axis guides + remaining recipes.
 
