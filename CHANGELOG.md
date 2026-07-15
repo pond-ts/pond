@@ -45,6 +45,28 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts:** `<TimeAxis>` / `<XAxis>` gain a **`dateStyle`** prop
+  (`'flat' | 'stacked'`). `'flat'` — the new default — lays the date context
+  out on a **single row** the TradingView way: each tick that opens a coarser
+  calendar period is relabelled **inline** to it (the month at a month turn,
+  the year at a year turn, the date at a day turn under an intraday grain),
+  every other tick a terse label (`5`, `Feb`, `14:00`). `'stacked'` restores
+  the previous two-row layout (a `%b %d` / `%H:%M` major row plus a boundary
+  row carrying the coarser unit, with a pinned left-edge context).
+  `TradingTimeScale` gains `flatFormat(count)` (the single-row label lookup;
+  non-tick instants — the cursor readout — still read a full timestamp).
+
+### Changed
+
+- **charts:** the time axis now renders the **flat** single-row date style by
+  default (previously the two-row stacked layout). Every time chart — trading
+  or plain continuous, auto-rendered or explicit `<TimeAxis>` — picks this up.
+  Pass `dateStyle="stacked"` to keep the old two-row look. (An explicit
+  `format` / container `timeFormat`, a `transform`, or explicit `ticks` opt out
+  of both styles as before.)
+
 ### Fixed
 
 - **charts:** a multi-session time axis near the tick cap can no longer come
@@ -63,7 +85,7 @@ and type-level changes; patch bumps are strictly additive.
 
 - **charts:** the boundary (second-row) axis label's **context** now pins to
   the plot's left edge instead of riding the first tick: it shows the period
-  the *domain start* is in, and a crossing label sliding toward the edge
+  the _domain start_ is in, and a crossing label sliding toward the edge
   pushes it off (the sticky-header behavior). On a live sliding window the
   old first-tick anchoring made `Jan 01` hop tick-to-tick as ticks scrolled
   out; pinned, it stays put until the period actually changes. Crossing
@@ -153,7 +175,7 @@ and type-level changes; patch bumps are strictly additive.
   values while **keeping the row count** — mirroring `rolling`'s `minSamples`,
   the one warm-up convention studies use so a smoothed line aligns on its
   source's time axis. (The existing `warmup` option is unchanged — it still
-  *drops* the head rows; `minSamples` is the length-preserving counterpart.)
+  _drops_ the head rows; `minSamples` is the length-preserving counterpart.)
 - **core:** `TimeSeries.rolling` accepts a **count-based** window —
   `rolling({ count: N }, mapping, opts?)` reduces the last / next / centered
   `N` _rows_ (bars) by position instead of a time span. Unlike a duration

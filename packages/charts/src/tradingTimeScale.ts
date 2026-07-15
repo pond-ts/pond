@@ -4,6 +4,7 @@ import {
   boundaryGrainFor,
   boundaryTicks,
   buildTicks,
+  flatFormats,
   majorFormatFor,
   type TickGranularity,
 } from './tickLadder.js';
@@ -65,8 +66,10 @@ export interface TradingCalendarLike {
  * for days/weeks, `%b` for months/quarters, `%Y` for years) while formatting
  * any other instant (the cursor readout) with the d3 multi-scale default. The
  * coarser context a label drops lives on `.tickBoundaries` — the second-row
- * boundary labels (the date over a clock axis, the year over a day / week /
- * month axis), one per boundary crossing plus the first tick.
+ * boundary labels of the **stacked** date style (the date over a clock axis,
+ * the year over a day / week / month axis), one per boundary crossing plus the
+ * first tick. `.flatFormat` is the **flat** (default) alternative: that context
+ * promoted inline into a single row, the TradingView look.
  * Without a provider `boundaries` method it falls back to interior even-spaced
  * time ticks.
  *
@@ -93,6 +96,18 @@ export interface TradingTimeScale {
    * axis rather than riding a tick; year-grain ticks have no second row.
    */
   tickBoundaries(count?: number): (value: number) => string | undefined;
+  /**
+   * **Flat**-style single-row labels: the coarsest calendar unit each tick
+   * opens (year / month / date) promoted **inline** into the one row, its terse
+   * base label (bare day-of-month, month abbrev, clock time) otherwise — the
+   * TradingView default axis, the alternative to the two-row {@link tickFormat}
+   * + {@link tickBoundaries} stack. Same grain selection as {@link ticks} at the
+   * same `count`, so the labels sit on the tick instants. A non-tick value (the
+   * cursor readout) formats with the d3 multi-scale default, like
+   * {@link tickFormat} — so ticks read terse while the crosshair reads a full
+   * timestamp.
+   */
+  flatFormat(count?: number): (value: number) => string;
   /**
    * The boundary-row label for the **domain start** — the reader's left-edge
    * context (`Jan 01` over an intraday axis, the year over a month axis),
@@ -246,6 +261,30 @@ export function scaleTradingTime(
       labelled.set(t, fmt(new Date(t)));
     }
     return (value: number) => labelled.get(value);
+  };
+
+  scale.flatFormat = (count = 10) => {
+    // A non-tick instant (the cursor readout) always uses the d3 multi-scale
+    // default — same as tickFormat, so the crosshair reads a full timestamp
+    // while the ticks read terse. Without a calendar there are no ladder
+    // anchors, so every value falls through to the default.
+    const defFmt = base.tickFormat(count);
+    if (!hasCalendar()) return (value: number) => defFmt(new Date(value));
+    const { ticks, granularity } = resolved(count);
+    const specs = flatFormats(ticks, granularity, domain[0]);
+    // One d3 formatter per distinct specifier; most ticks share the base one.
+    const bySpec = new Map<string, (d: Date) => string>();
+    const fmtFor = (spec: string) => {
+      let f = bySpec.get(spec);
+      if (f === undefined) {
+        f = base.tickFormat(count, spec);
+        bySpec.set(spec, f);
+      }
+      return f;
+    };
+    const labelled = new Map<number, string>();
+    ticks.forEach((t, i) => labelled.set(t, fmtFor(specs[i]!)(new Date(t))));
+    return (value: number) => labelled.get(value) ?? defFmt(new Date(value));
   };
 
   scale.boundaryContext = (count = 10) => {

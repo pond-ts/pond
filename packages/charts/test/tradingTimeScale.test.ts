@@ -214,6 +214,51 @@ describe('scaleTradingTime', () => {
     expect(labels.filter((l) => l !== undefined)).toHaveLength(1);
   });
 
+  it('flatFormat promotes the year inline on a month-grain axis (no second row)', () => {
+    // Same ~8-month straddle as the stacked test above: the January tick reads
+    // the *year* inline, every other tick the bare month — the single row.
+    const DAY = 24 * H;
+    const start = new Date(2025, 8, 1, 14).getTime(); // Sep 2025 … Apr 2026
+    const daily = segmentProvider(
+      Array.from({ length: 240 }, (_, i) => [
+        start + i * DAY,
+        start + i * DAY + 6 * H,
+      ]),
+    );
+    const s = scaleTradingTime(daily)
+      .domain([start, start + 240 * DAY])
+      .range([0, 1200]);
+    const ticks = s.ticks(9);
+    const flat = s.flatFormat(9);
+    const labels = ticks.map((t) => flat(t));
+    // Exactly one tick carries the year; it is the January tick.
+    const years = labels.filter((l) => /^\d{4}$/.test(l));
+    expect(years).toEqual(['2026']);
+    const janTick = ticks.find((t) => new Date(t).getMonth() === 0)!;
+    expect(flat(janTick)).toBe('2026');
+    // Every other in-view tick reads a bare month abbrev.
+    for (const t of ticks) {
+      if (t === janTick) continue;
+      expect(flat(t)).toMatch(/^[A-Z][a-z]{2}$/);
+    }
+  });
+
+  it('flatFormat reads clock ticks terse but the cursor a full timestamp', () => {
+    // A single 6.5h session → hour grain. Ticks read `HH:MM`; a non-tick
+    // instant (the crosshair readout) still gets the d3 multi-scale default.
+    const jan = new Date(2026, 0, 5, 9, 30).getTime();
+    const cal = segmentProvider([[jan, jan + 6.5 * H]]);
+    const s = scaleTradingTime(cal)
+      .domain([jan, jan + 6.5 * H])
+      .range([0, 1200]);
+    const flat = s.flatFormat(10);
+    const hourTick = s.ticks(10).find((t) => t !== jan)!;
+    expect(flat(hourTick)).toMatch(/^\d{2}:\d{2}$/);
+    // A between-ticks instant is not in the anchor set → the fuller default.
+    const between = jan + 37 * 60_000 + 12_345; // 10:07:12.345-ish, off-grid
+    expect(flat(between)).not.toMatch(/^\d{2}:\d{2}$/);
+  });
+
   it('a fractional pan/zoom domain still labels every tick at the grain', () => {
     // Pan/zoom domains come from `scale.invert(pixel)` — fractional ms. A
     // fractional anchor used to miss its own anchor set after the formatter's

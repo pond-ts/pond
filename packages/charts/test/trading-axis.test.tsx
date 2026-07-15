@@ -6,6 +6,7 @@ import { ChartContainer } from '../src/ChartContainer.js';
 import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
 import { LineChart } from '../src/LineChart.js';
+import { TimeAxis } from '../src/TimeAxis.js';
 import { YAxis } from '../src/YAxis.js';
 import { defaultTheme } from '../src/theme.js';
 import { ContainerContext, type ContainerFrame } from '../src/context.js';
@@ -318,7 +319,7 @@ describe('trading-axis tick density derives from plot width', () => {
     expect(f.xTickCount).toBe(Math.max(2, Math.floor(f.plotWidth / 65)));
   });
 
-  it('the auto-rendered axis shows the dense labels (DOM, not just the scale)', () => {
+  it('the auto-rendered (flat default) axis shows month labels with the year turn inline', () => {
     const sessions = yearSessions();
     const { container: dom } = render(
       <ChartContainer
@@ -332,9 +333,33 @@ describe('trading-axis tick density derives from plot width', () => {
       /^[A-Z][a-z]{2}$/.test(el.textContent ?? ''),
     );
     expect(labels.length).toBeGreaterThanOrEqual(10);
-    // …and the boundary (second) row carries the year: the domain start's
-    // year pinned at the left edge (the context label), plus the crossing
-    // tick where the year turns — never on every tick.
+    // Flat: no second (boundary) row and no pinned context — the year turn is
+    // promoted *inline* onto the January tick instead.
+    expect(dom.querySelectorAll('[data-boundary-label]')).toHaveLength(0);
+    expect(dom.querySelector('[data-boundary-context]')).toBeNull();
+    const years = Array.from(dom.querySelectorAll('div'))
+      .map((el) => el.textContent ?? '')
+      .filter((t) => /^\d{4}$/.test(t));
+    // Only the year *turn* shows (2026); the domain-start year 2025 has no
+    // pinned label in flat mode.
+    expect(years).toEqual(['2026']);
+  });
+
+  it('dateStyle="stacked" restores the two-row boundary + pinned context', () => {
+    const sessions = yearSessions();
+    const { container: dom } = render(
+      <ChartContainer
+        range={[sessions[0]!.open, sessions[sessions.length - 1]!.close]}
+        width={900}
+        discontinuities={sessionsProvider(sessions)}
+        showAxis={false}
+      >
+        <TimeAxis dateStyle="stacked" />
+      </ChartContainer>,
+    );
+    // The boundary (second) row carries the year: the domain start's year
+    // pinned at the left edge (context), plus the crossing tick where the year
+    // turns — never on every tick.
     const boundaries = Array.from(
       dom.querySelectorAll('[data-boundary-label]'),
     ).map((el) => el.textContent);

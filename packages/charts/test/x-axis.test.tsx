@@ -236,7 +236,7 @@ describe('<XAxis> — the placeable x axis', () => {
     expect(mark.style.background).toBe('rgb(76, 143, 189)');
   });
 
-  it('the boundary context pins to the left edge; an approaching crossing culls it', () => {
+  it('stacked: the boundary context pins to the left edge; an approaching crossing culls it', () => {
     // Mid-day window: context "Jan 05" pinned at 0 (no crossing in view).
     const midday = render(
       <ChartContainer
@@ -252,7 +252,7 @@ describe('<XAxis> — the placeable x axis', () => {
             <LineChart series={timeSeries()} column="v" />
           </Layers>
         </ChartRow>
-        <XAxis />
+        <XAxis dateStyle="stacked" />
       </ChartContainer>,
     );
     const ctx1 = midday.container.querySelector(
@@ -280,7 +280,7 @@ describe('<XAxis> — the placeable x axis', () => {
             <LineChart series={timeSeries()} column="v" />
           </Layers>
         </ChartRow>
-        <XAxis />
+        <XAxis dateStyle="stacked" />
       </ChartContainer>,
     );
     // The crossing's "Jan 06" label sits nearly on the edge — rendering the
@@ -293,6 +293,39 @@ describe('<XAxis> — the placeable x axis', () => {
     ).find((el) => !el.hasAttribute('data-boundary-context')) as HTMLElement;
     expect(crossing.textContent).toBe('Jan 06');
     straddle.unmount();
+  });
+
+  it('flat (default): one row, the day turn promoted inline, no boundary row', () => {
+    // A window straddling midnight into Jan 06 — the flat default relabels the
+    // midnight tick to its date inline and draws no second (boundary) row.
+    const { container } = render(
+      <ChartContainer
+        range={[
+          new Date(2026, 0, 5, 23, 55).getTime(),
+          new Date(2026, 0, 6, 4, 0).getTime(),
+        ]}
+        width={480}
+        showAxis={false}
+      >
+        <ChartRow height={120}>
+          <Layers>
+            <LineChart series={timeSeries()} column="v" />
+          </Layers>
+        </ChartRow>
+        <XAxis />
+      </ChartContainer>,
+    );
+    // No stacked chrome: neither the second-row crossing labels nor the pinned
+    // context exist in flat mode.
+    expect(container.querySelectorAll('[data-boundary-label]')).toHaveLength(0);
+    expect(container.querySelector('[data-boundary-context]')).toBeNull();
+    // The midnight tick reads its date inline (`%b %-d` → "Jan 6"), among the
+    // terse clock labels for the other ticks.
+    const texts = Array.from(container.querySelectorAll('div')).map(
+      (el) => el.textContent ?? '',
+    );
+    expect(texts).toContain('Jan 6');
+    expect(texts.some((t) => /^\d{2}:\d{2}$/.test(t))).toBe(true);
   });
 
   it('a decreasing transform still places ticks left-to-right', () => {

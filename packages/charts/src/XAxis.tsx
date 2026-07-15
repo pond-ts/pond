@@ -127,6 +127,21 @@ export interface XAxisProps {
    *   for dense or wide labels that would collide when centred.
    */
   align?: 'auto' | 'center' | 'right';
+  /**
+   * How a **time** axis lays out its date context (ignored on value / category
+   * axes, and whenever a custom `format`, `transform`, or explicit `ticks`
+   * owns the labels).
+   * - **`'flat'` (default)** — one row: each tick that opens a coarser
+   *   calendar period is relabelled **inline** to it (the month at a month
+   *   turn, the year at a year turn, the date at a day turn under an intraday
+   *   grain), every other tick a terse label (`5`, `Feb`, `14:00`). The
+   *   TradingView look — the row reads `… 30 31 Feb 2 3 …`.
+   * - `'stacked'` — two rows: a `%b %d` / `%H:%M` major row, plus a second row
+   *   under it carrying the coarser unit the major label omits (the year under
+   *   day / month ticks, the date under clock ticks) once per crossing, with a
+   *   pinned left-edge context label.
+   */
+  dateStyle?: 'flat' | 'stacked';
 }
 
 /**
@@ -148,6 +163,7 @@ export function XAxis({
   transform,
   color,
   align = 'center',
+  dateStyle = 'flat',
 }: XAxisProps = {}) {
   const container = useContext(ContainerContext);
   if (container === null) {
@@ -207,12 +223,35 @@ export function XAxis({
         })()
       : null;
 
+  // Whether this axis draws **ladder-derived** date context (flat promotions or
+  // the stacked boundary row). Only a ladder-driven time scale supplies it;
+  // explicit `ticks`, an explicit axis `format`, and a container-level
+  // `timeFormat` all opt out (a custom format owns the whole label, and custom
+  // ticks have no grain).
+  const laddered =
+    xKind === 'time' &&
+    customTicks === undefined &&
+    transform === undefined &&
+    format === undefined &&
+    !container.xFormatCustom &&
+    'tickBoundaries' in xScale;
+  // The flat-style single-row label formatter — the coarsest calendar period
+  // each tick opens promoted inline, terse base labels otherwise (the
+  // TradingView default `dateStyle`). Replaces the shared `formatTime` for the
+  // tick labels; a non-tick instant (the cursor pill) still reads a full
+  // timestamp through it. `undefined` for the stacked style / a custom format.
+  const flatFmt =
+    laddered && dateStyle === 'flat' && 'flatFormat' in xScale
+      ? (xScale as TradingTimeScale).flatFormat(xTickCount)
+      : undefined;
+
   // Tick formatter: an explicit `format` is resolved against the axis kind
   // (a time specifier through the time scale, a number specifier through the
   // value scale); otherwise the container's shared formatter — the one the
-  // cursor readout uses, so a tick and the cursor read identically. On a
-  // transformed axis every readout (cursor pill, marker indicator) speaks the
-  // **derived unit** — the axis's own language.
+  // cursor readout uses, so a tick and the cursor read identically (except a
+  // flat time axis, whose ticks read terse while the cursor reads full — see
+  // `flatFmt`). On a transformed axis every readout (cursor pill, marker
+  // indicator) speaks the **derived unit** — the axis's own language.
   const fmt: (value: number) => string =
     transform !== undefined && uFmt !== null && xKind !== 'category'
       ? (v) => uFmt(transform.to(v))
@@ -220,7 +259,10 @@ export function XAxis({
         // scale's label lookup); a d3 number/time `format` can't name a category, so
         // it's ignored here (customize the labels in the `categories` data instead).
         format === undefined || xKind === 'category'
-        ? formatTime
+        ? // Flat time axis: promoted single-row labels (falls back to the
+          // shared `formatTime` for a stacked axis, a category axis, or a
+          // scale without the flat surface).
+          (flatFmt ?? formatTime)
         : xKind === 'time'
           ? resolveTimeFormat(
               xScale as ScaleTime<number, number>,
@@ -280,19 +322,13 @@ export function XAxis({
   }
   const maxPillLane = Math.max(0, pillLaneEnds.length - 1);
 
-  // The boundary (second) label row — the coarser calendar unit the first-row
-  // label omits (the year under day / week / month ticks, the date under
-  // clock ticks), placed under the first tick of each new
-  // period. Only a ladder-driven time scale supplies it; explicit `ticks`, an
-  // explicit axis `format`, and a container-level `timeFormat` all opt out (a
-  // custom format owns the whole label, and custom ticks have no grain).
+  // The stacked boundary (second) label row — the coarser calendar unit the
+  // first-row label omits (the year under day / week / month ticks, the date
+  // under clock ticks), placed under the first tick of each new period. Only in
+  // the `'stacked'` date style; `'flat'` promotes that context inline instead
+  // (via `flatFmt`, computed with `fmt` above) and draws no second row.
   const boundaryOf =
-    xKind === 'time' &&
-    customTicks === undefined &&
-    transform === undefined &&
-    format === undefined &&
-    !container.xFormatCustom &&
-    'tickBoundaries' in xScale
+    laddered && dateStyle === 'stacked'
       ? (xScale as TradingTimeScale).tickBoundaries(xTickCount)
       : undefined;
   // The pinned left-edge **context** label — what period the domain starts in

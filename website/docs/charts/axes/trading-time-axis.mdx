@@ -84,9 +84,15 @@ All three are **time-axis only** — they're ignored on a value or category axis
 - **Gaps collapse.** Closed-market spans have zero pixel width; the axis walks
   a session-aware tick ladder (hour → day → week → … → year) rather than raw
   wall-clock ticks.
-- **A second boundary row.** The axis adds a boundary-context row — the date
-  over intraday ticks, the year over daily/monthly ticks — plus a pinned
-  left-edge label so you always know the enclosing period.
+- **Inline date context (the `dateStyle` prop).** By default (`dateStyle="flat"`)
+  the axis is a **single row** the TradingView way: each tick that opens a
+  coarser calendar period is relabelled **inline** to it — the month at a month
+  turn, the year at a year turn, the date at a day turn under an intraday grain
+  — while every other tick stays terse (`5`, `Feb`, `14:00`). Pass
+  `dateStyle="stacked"` for the alternative **two-row** layout: a `%b %d` /
+  `%H:%M` major row plus a boundary row carrying the coarser unit (the date
+  over intraday ticks, the year over daily/monthly ticks) and a pinned
+  left-edge context label.
 - **Session dividers.** The container draws a divider at each session boundary
   (the discontinuity provider's session boundaries).
 - **Line breaks at sessions.** A `LineChart` can set `sessionBreaks` to break

@@ -14,7 +14,14 @@ import type { DiscontinuityProvider } from './tradingTimeScale.js';
  * label doesn't carry (hours → the date, days/weeks → the month, months →
  * the year). The axis renders that as a second label row, once per boundary
  * crossing, so a month row reads `Dec Jan Feb …` with `2026` appearing exactly
- * where the year turns.
+ * where the year turns — the **stacked** date style.
+ *
+ * The **flat** date style (the default, the TradingView look) drops the second
+ * row: each tick that *opens* a coarser calendar period is relabelled **inline**
+ * to that period — the year at a year turn, the month at a month turn, the date
+ * at a day turn under an intraday grain — while every other tick keeps a terse
+ * base label (bare day-of-month, month abbrev, clock time). {@link flatFormats}
+ * computes the per-tick format specifiers for that single row.
  */
 
 /** The calendar grain a run of tick anchors is bucketed to. */
@@ -372,4 +379,116 @@ export function boundaryTicks(
     prev = k;
   }
   return out;
+}
+
+/**
+ * The calendar units a **flat**-style tick can be promoted to, coarsest first —
+ * the levels coarser than a tick's own label that a single-row axis relabels an
+ * opening tick to. A sub-day tick can open a date / month / year; a day or week
+ * tick a month / year; a month or quarter tick a year; a year tick nothing.
+ */
+function flatPromotionLevels(g: TickGranularity): TickGranularity[] {
+  if (isSubDay(g)) return ['year', 'month', 'day'];
+  switch (g) {
+    case 'day':
+    case 'week':
+      return ['year', 'month'];
+    case 'month':
+    case 'quarter':
+      return ['year'];
+    default:
+      // 'year' (and, unreachably, the sub-day grains handled above).
+      return [];
+  }
+}
+
+/**
+ * The terse **base** (non-promoted) flat label format for grain `g` — the label
+ * a tick carries when it opens no coarser period: the clock time for a sub-day
+ * grain, a bare day-of-month for day / week (`5`, not `Jan 5` — the month rides
+ * the promoted month-start tick), the month abbrev for month / quarter, the
+ * year for year. Terser than {@link majorFormatFor} (which carries the month on
+ * every day tick) because the flat row leans on inline promotions for context.
+ */
+export function flatBaseFormatFor(g: TickGranularity): string {
+  if (isSubDay(g)) {
+    return g.startsWith('second') ? '%H:%M:%S' : '%H:%M';
+  }
+  switch (g) {
+    case 'day':
+    case 'week':
+      return '%-d';
+    case 'month':
+    case 'quarter':
+      return '%b';
+    default:
+      // 'year' (sub-day grains are handled by the isSubDay branch above).
+      return '%Y';
+  }
+}
+
+/**
+ * The flat label format for a tick **promoted** to calendar level `level`. A
+ * day turn keeps its month (`Jan 5`) so an intraday day boundary reads
+ * unambiguously among clock ticks; a month turn shows the bare month, a year
+ * turn the year. Only `day` / `month` / `year` are produced by
+ * {@link flatPromotionLevels}; other levels fall back to their major format.
+ */
+function flatPromotionFormatFor(level: TickGranularity): string {
+  switch (level) {
+    case 'day':
+      return '%b %-d';
+    case 'month':
+      return '%b';
+    case 'year':
+      return '%Y';
+    default:
+      return majorFormatFor(level);
+  }
+}
+
+/**
+ * The **flat** (single-row) label format specifier for each tick, parallel to
+ * `ticks` (already at grain `granularity`). Each tick shows the coarsest
+ * calendar period it *opens* — a year / month / date promotion — and its terse
+ * {@link flatBaseFormatFor} label otherwise, so the one row reads
+ * `… 30 31 Feb 2 3 …` with `Feb` where the month turns and the year where it
+ * turns. A tick "opens" level L when its L-bucket differs from the previous
+ * tick's; the coarsest changed level wins (a Jan-1 tick promotes to the year,
+ * not the month).
+ *
+ * `domainStart` seeds the walk (like {@link boundaryTicks}): the first tick is
+ * promoted only if it crosses a period relative to the domain's left edge, so a
+ * window opening mid-month doesn't falsely promote its first tick and a live
+ * sliding window doesn't flicker the leftmost label. Without it the first tick
+ * is never promoted.
+ */
+export function flatFormats(
+  ticks: readonly number[],
+  granularity: TickGranularity,
+  domainStart?: number,
+): string[] {
+  const base = flatBaseFormatFor(granularity);
+  const levels = flatPromotionLevels(granularity);
+  // Last-seen bucket per level; seeded from the domain start so a first tick
+  // sharing the edge's period isn't a crossing.
+  const prev = new Map<TickGranularity, number>();
+  if (domainStart !== undefined) {
+    for (const L of levels) prev.set(L, bucketKey(domainStart, L));
+  }
+  return ticks.map((t) => {
+    let spec = base;
+    let promoted = false;
+    for (const L of levels) {
+      const k = bucketKey(t, L);
+      // Coarsest changed level wins; still update every level's bucket so a
+      // year turn (which also turns the month/day) leaves them all current.
+      if (!promoted && prev.has(L) && prev.get(L) !== k) {
+        spec = flatPromotionFormatFor(L);
+        promoted = true;
+      }
+      prev.set(L, k);
+    }
+    return spec;
+  });
 }

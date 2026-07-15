@@ -4,6 +4,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { Candlestick } from './Candlestick.js';
 import { LineChart } from './LineChart.js';
+import { TimeAxis } from './TimeAxis.js';
 import { YAxis } from './YAxis.js';
 import {
   MIN,
@@ -279,6 +280,99 @@ export const YearDailyNarrow: Story = {
           </Layers>
         </ChartRow>
       </ChartContainer>
+    );
+  },
+};
+
+/**
+ * `dateStyle` — how the time axis lays out its date context. **`'flat'`
+ * (default, top)** promotes the coarsest calendar unit each tick opens
+ * **inline** into one row (the month at a month turn, the year at a year turn),
+ * every other tick terse — the TradingView look. **`'stacked'` (bottom)** keeps
+ * the two-row layout: a `%b %d` major row plus a boundary row underneath
+ * carrying the year, with a pinned left-edge context. Here: ~4 months of daily
+ * candles, so flat reads `Jul … Sep … Nov 2026 Feb` on one row while stacked
+ * reads dates with the year underneath.
+ */
+export const DateStyleDaily: Story = {
+  render: () => {
+    const s = weekdaySessions(85);
+    const bars = candles(s, sessionSeq(s), 60 * MIN);
+    const row = (
+      <ChartRow height={150}>
+        <YAxis id="p" />
+        <Layers>
+          <Candlestick series={bars} axis="p" />
+        </Layers>
+      </ChartRow>
+    );
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <ChartContainer
+          width={WIDTH}
+          range={rangeOf(s)}
+          discontinuities={provider(s)}
+          theme={docsTheme}
+          showAxis={false}
+        >
+          {row}
+          <TimeAxis /> {/* dateStyle="flat" is the default */}
+        </ChartContainer>
+        <ChartContainer
+          width={WIDTH}
+          range={rangeOf(s)}
+          discontinuities={provider(s)}
+          theme={docsTheme}
+          showAxis={false}
+        >
+          {row}
+          <TimeAxis dateStyle="stacked" />
+        </ChartContainer>
+      </div>
+    );
+  },
+};
+
+/**
+ * `dateStyle` on an **intraday** axis: flat (top) shows clock times with the
+ * session's date promoted inline at each midnight/open; stacked (bottom) pins
+ * the date to the boundary row. Three 30-minute-candle sessions.
+ */
+export const DateStyleIntraday: Story = {
+  render: () => {
+    const s = weekdaySessions(3);
+    const bars = candles(s, barSeq(s, 30 * MIN), 5 * MIN);
+    const row = (
+      <ChartRow height={150}>
+        <YAxis id="p" />
+        <Layers>
+          <Candlestick series={bars} axis="p" />
+        </Layers>
+      </ChartRow>
+    );
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <ChartContainer
+          width={WIDTH}
+          range={rangeOf(s)}
+          discontinuities={provider(s)}
+          theme={docsTheme}
+          showAxis={false}
+        >
+          {row}
+          <TimeAxis />
+        </ChartContainer>
+        <ChartContainer
+          width={WIDTH}
+          range={rangeOf(s)}
+          discontinuities={provider(s)}
+          theme={docsTheme}
+          showAxis={false}
+        >
+          {row}
+          <TimeAxis dateStyle="stacked" />
+        </ChartContainer>
+      </div>
     );
   },
 };

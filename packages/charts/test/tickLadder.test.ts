@@ -5,6 +5,8 @@ import {
   buildTicks,
   bucketKey,
   coarsenCalendar,
+  flatBaseFormatFor,
+  flatFormats,
   type TickGranularity,
 } from '../src/tickLadder.js';
 import { identityProvider } from '../src/tradingTimeScale.js';
@@ -350,6 +352,122 @@ describe('boundaryTicks — the second-row flags', () => {
     const c = new Date(2026, 0, 6, 9, 30).getTime();
     expect(bucketKey(a, 'day')).toBe(bucketKey(b, 'day'));
     expect(bucketKey(a, 'day')).not.toBe(bucketKey(c, 'day'));
+  });
+});
+
+describe('flatFormats — the single-row inline promotions', () => {
+  const at = (y: number, m: number, d: number, h = 0) =>
+    new Date(y, m, d, h).getTime();
+
+  it('day grain: bare day-of-month, month name at the month turn', () => {
+    // … 30 31 Feb 2 3 — Feb 01 promotes to the month, the rest stay terse.
+    const ticks = [
+      at(2026, 0, 30),
+      at(2026, 0, 31),
+      at(2026, 1, 1),
+      at(2026, 1, 2),
+      at(2026, 1, 3),
+    ];
+    expect(flatFormats(ticks, 'day', at(2026, 0, 29))).toEqual([
+      '%-d',
+      '%-d',
+      '%b',
+      '%-d',
+      '%-d',
+    ]);
+  });
+
+  it('day grain: the year wins over the month at Jan 01 (coarsest promotion)', () => {
+    const ticks = [
+      at(2025, 11, 30),
+      at(2025, 11, 31),
+      at(2026, 0, 1),
+      at(2026, 0, 2),
+    ];
+    expect(flatFormats(ticks, 'day', at(2025, 11, 29))).toEqual([
+      '%-d',
+      '%-d',
+      '%Y', // not '%b' — Jan 01 opens the year, the coarser period
+      '%-d',
+    ]);
+  });
+
+  it('month grain: month abbrev, the year at January', () => {
+    // Nov Dec 2026 Feb Mar — the January tick carries the year.
+    const ticks = [
+      at(2025, 10, 1),
+      at(2025, 11, 1),
+      at(2026, 0, 1),
+      at(2026, 1, 1),
+      at(2026, 2, 1),
+    ];
+    expect(flatFormats(ticks, 'month', at(2025, 9, 1))).toEqual([
+      '%b',
+      '%b',
+      '%Y',
+      '%b',
+      '%b',
+    ]);
+  });
+
+  it('sub-day grain: clock time, the date at a plain midnight', () => {
+    // 22:00 23:00 [Feb 3] 01:00 — the day turn promotes to `%b %-d`, keeping
+    // its month so the date reads unambiguously among clock ticks.
+    const ticks = [
+      at(2026, 1, 2, 22),
+      at(2026, 1, 2, 23),
+      at(2026, 1, 3, 0),
+      at(2026, 1, 3, 1),
+    ];
+    expect(flatFormats(ticks, 'hour1', at(2026, 1, 2, 21))).toEqual([
+      '%H:%M',
+      '%H:%M',
+      '%b %-d',
+      '%H:%M',
+    ]);
+  });
+
+  it('sub-day grain: the year at a midnight that is also Jan 01', () => {
+    const ticks = [at(2025, 11, 31, 23), at(2026, 0, 1, 0), at(2026, 0, 1, 1)];
+    expect(flatFormats(ticks, 'hour1', at(2025, 11, 31, 22))).toEqual([
+      '%H:%M',
+      '%Y', // day + month + year all turn; the year wins
+      '%H:%M',
+    ]);
+  });
+
+  it('second grain shows seconds in its base label', () => {
+    expect(flatBaseFormatFor('second15')).toBe('%H:%M:%S');
+    expect(flatBaseFormatFor('minute5')).toBe('%H:%M');
+    expect(flatBaseFormatFor('hour3')).toBe('%H:%M');
+  });
+
+  it('year grain never promotes — every tick is the bare year', () => {
+    const ticks = [at(2024, 0, 1), at(2025, 0, 1), at(2026, 0, 1)];
+    expect(flatFormats(ticks, 'year', at(2023, 0, 1))).toEqual([
+      '%Y',
+      '%Y',
+      '%Y',
+    ]);
+  });
+
+  it('seeds from the domain start: a first tick crossing the edge promotes', () => {
+    // Domain opens Dec 31; the first tick Jan 01 IS a crossing → year.
+    expect(
+      flatFormats([at(2026, 0, 1), at(2026, 0, 2)], 'day', at(2025, 11, 31)),
+    ).toEqual(['%Y', '%-d']);
+    // A first tick sharing the edge's period is not a crossing (no flicker on
+    // a live window opening mid-month).
+    expect(
+      flatFormats([at(2026, 0, 15), at(2026, 0, 16)], 'day', at(2026, 0, 14)),
+    ).toEqual(['%-d', '%-d']);
+  });
+
+  it('without a domain start the first tick is never promoted', () => {
+    expect(flatFormats([at(2026, 0, 1), at(2026, 0, 2)], 'day')).toEqual([
+      '%-d',
+      '%-d',
+    ]);
   });
 });
 
