@@ -1,0 +1,73 @@
+---
+title: Candlestick
+sidebar_position: 8
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryFinancial from '@site/src/examples/gallery-financial';
+
+# Candlestick
+
+First-class OHLC candles. Pairs with the
+[trading-time axis](../axes/trading-time-axis.mdx) for a gap-free session view.
+
+<ChartExample name="gallery-financial" height={230}>
+  <GalleryFinancial width={560} />
+</ChartExample>
+
+## Data contract
+
+Takes a `TimeSeries` (only — no `ValueSeries`) with four OHLC columns, default
+names `open` / `high` / `low` / `close` (all overridable). Point-keyed raw daily
+bars feed straight in; an interval key is an aggregate rollup (weekly / monthly).
+A candle with any of the four prices missing draws nothing. Adapter:
+`ohlcFromTimeSeries(series, { open, high, low, close })`.
+
+## Props
+
+| Prop                              | Type                            | Default       | Purpose                                                      |
+| --------------------------------- | ------------------------------- | ------------- | ------------------------------------------------------------ |
+| `series`                          | `TimeSeries`                    | — (req)       | OHLCV source (`TimeSeries` only).                            |
+| `open` / `high` / `low` / `close` | `string`                        | those names   | The four price columns (override if named differently).      |
+| `as`                              | `string`                        | `'default'`   | Style role → `theme.candle[as]`; also the close-pill label.  |
+| `axis`                            | `string`                        | row default   | Which `<YAxis id>` to scale against.                         |
+| `variant`                         | `'candle' \| 'bar' \| 'hollow'` | `'candle'`    | Candle presentation (see variants).                          |
+| `colorBy`                         | `'direction' \| 'series'`       | `'direction'` | Colour by rising/falling/doji, or one series colour.         |
+| `showOHLC`                        | `boolean`                       | `false`       | Fan full O/H/L/C to the readout (4 pills) vs a single close. |
+| `gap`                             | `number`                        | `0`           | Horizontal inset px.                                         |
+
+## Variants
+
+- **`variant`** — `'candle'` (default: filled body + wick), `'bar'` (OHLC tick
+  bar), `'hollow'` (rising hollow, falling filled).
+- **`colorBy`** — `'direction'` (rising / falling / doji off open vs close) or
+  `'series'` (one colour, no direction split).
+- **`showOHLC`** — a 4-pill quote readout instead of the single close pill.
+
+## Interaction & theming
+
+- **Cursor:** **participates in the crosshair x-snap** — the reticle lands on
+  candles (unlike [BoxPlot](./boxplot.mdx)). The readout is `close` by default,
+  or four O/H/L/C pills with `showOHLC`.
+- **Selection:** not selectable.
+- **Theming:** the `theme.candle` slot (`CandleStyle` with `rising` / `falling`
+  / optional `neutral` body+wick). The shipped default pair is **neutral, not
+  market green/red** — supply your palette via `cssVarTheme`.
+
+## Cautions
+
+- **Doji is exact equality** — the `neutral` colour applies only when
+  `open === close` (under `colorBy='direction'`).
+- **Draws only** — windowing / aggregation stay upstream; the chart derives the
+  body extents itself (no `withColumn` precompute).
+- **Any of the four prices missing → the candle draws nothing.**
+
+## See also
+
+- [Trading-time axis](../axes/trading-time-axis.mdx) — the session-aware axis
+  candles usually pair with.
+- [@pond-ts/financial](../../financial/) — building the calendar + OHLC rollups.
+- Storybook: [`Charts/Candlestick`](pathname:///storybook/?path=/story/charts-candlestick--candle)
+  — `Candle`, `Bar`, `Hollow`, `MarketColors`, `Doji`, `ShowOHLC`.
+- The generated [API reference](pathname:///generated-api/charts/) — the full
+  `CandlestickProps` type.

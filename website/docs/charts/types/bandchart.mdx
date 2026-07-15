@@ -1,0 +1,64 @@
+---
+title: BandChart
+sidebar_position: 4
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryBand from '@site/src/examples/gallery-band';
+
+# BandChart
+
+A filled envelope between two columns — a variance or confidence band. Pair it
+with a centre line for the classic percentile fan.
+
+<ChartExample name="gallery-band" height={230}>
+  <GalleryBand width={560} />
+</ChartExample>
+
+## Data contract
+
+Takes a `TimeSeries` or `ValueSeries` and **two fixed columns**, `lower` and
+`upper` (typically a `rollingByColumn` percentile pass — `p25` / `p75`). A
+sample fills only where **both** edges are finite. Adapter:
+`bandFromTimeSeries(series, lower, upper)` / `bandFromValueSeries`.
+
+## Props
+
+| Prop     | Type                        | Default     | Purpose                              |
+| -------- | --------------------------- | ----------- | ------------------------------------ |
+| `series` | `TimeSeries \| ValueSeries` | — (req)     | The source series.                   |
+| `lower`  | `string`                    | — (req)     | Column for the band's lower edge.    |
+| `upper`  | `string`                    | — (req)     | Column for the band's upper edge.    |
+| `as`     | `string`                    | `'default'` | Style role → `theme.band[as]`.       |
+| `axis`   | `string`                    | row default | Which `<YAxis id>` to scale against. |
+| `curve`  | `Curve`                     | `'linear'`  | Both edges drawn with this curve.    |
+
+## Variants
+
+- **`curve`** — prefer a **symmetric** curve (`'natural'` / `'basis'`) for a
+  sparse envelope; `'monotone'` smooths the two edges asymmetrically.
+- **Two-tone spread** — not a prop: compose a wider `outer` band, then a
+  narrower `inner` one, then a line on top (what the hero above does).
+
+## Interaction & theming
+
+- **Cursor:** the readout shows **both** edge values (labelled by column name),
+  in the band's fill colour; nothing where either edge is non-finite.
+- **Selection:** not selectable.
+- **Theming:** the `theme.band` slot (`BandStyle` = `{ fill, opacity }`);
+  default roles `default` / `outer` / `inner`.
+
+## Cautions
+
+- **A band always breaks on a gap** — a gap on _either_ edge leaves no fill or
+  readout there; it never bridges.
+- **No baseline** — a band is the region _between two edges_, not a fill to a
+  floor (that's [AreaChart](./areachart.mdx)).
+
+## See also
+
+- [AreaChart](./areachart.mdx) — a fill to a baseline, not between two edges.
+- Storybook: [`Charts/BandChart`](pathname:///storybook/?path=/story/charts-bandchart--rolling-percentiles)
+  — `RollingPercentiles`, `TwoTone`, `WithGap`.
+- The generated [API reference](pathname:///generated-api/charts/) — the full
+  `BandChartProps` type.

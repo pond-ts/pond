@@ -1,0 +1,75 @@
+---
+title: ScatterChart
+sidebar_position: 5
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryScatter from '@site/src/examples/gallery-scatter';
+
+# ScatterChart
+
+Points, with optional data-driven **radius** and **colour**. For discrete
+events, or a two-encoding cloud (a vol smile keyed by strike on a
+[value axis](../axes/value-axis.mdx)).
+
+<ChartExample name="gallery-scatter" height={230}>
+  <GalleryScatter width={560} />
+</ChartExample>
+
+## Data contract
+
+Takes a `TimeSeries` or `ValueSeries` and one numeric `column` (the y); x comes
+from the key/axis. Points may share an x. Adapter: `fromTimeSeries` /
+`fromValueSeries`; the `radius` / `color` encodings read their own columns.
+
+## Props
+
+| Prop     | Type                            | Default     | Purpose                                                              |
+| -------- | ------------------------------- | ----------- | -------------------------------------------------------------------- |
+| `series` | `TimeSeries \| ValueSeries`     | — (req)     | The source series.                                                   |
+| `column` | `string`                        | — (req)     | Numeric column → each point's y.                                     |
+| `as`     | `string`                        | `'default'` | Style role → `theme.scatter[as]`.                                    |
+| `id`     | `string`                        | —           | Stable identity — **gates selection + hover**. Unique per layer.     |
+| `axis`   | `string`                        | row default | Which `<YAxis id>` to scale against.                                 |
+| `radius` | `number \| { column, range }`   | style base  | Fixed px, or data-driven size from a column's extent → `[min, max]`. |
+| `color`  | `{ column, range: [hex, hex] }` | style base  | Data-driven colour ramp between two hex stops.                       |
+| `label`  | `string \| boolean`             | none        | Per-point text: a column name, or `true` for the plotted value.      |
+| `offset` | `number`                        | `0`         | Pixel x-shift (zoom-stable) for pairing nudges.                      |
+
+## Variants
+
+- **`radius`** — a fixed number, or `{ column, range: [minR, maxR] }` to size
+  each point from a numeric column.
+- **`color`** — `{ column, range: [hex, hex] }` to colour each point along a
+  two-stop ramp.
+- **`id` present vs absent** — with `id`, points are selectable and hover-lit;
+  without it, the layer is display-only.
+
+## Interaction & theming
+
+- **Cursor:** the tracker dot snaps to the nearest drawn point; its swatch uses
+  the point's **encoded** colour, matching the mark.
+- **Selection:** **id-gated** — set `id` to make points clickable
+  (`onSelect`) and hover-highlightable. One of only two selectable layers (with
+  `BarChart`).
+- **Theming:** the `theme.scatter` slot (`ScatterStyle` with base
+  `color`/`radius`/`outline` + selected-outline).
+
+## Cautions
+
+- **Data-driven `radius`/`color` are column + range only** — the deliberate,
+  signed-off exception to one-channel styling; there's no per-datum callback.
+- **Ramp stops must be CSS hex** — a non-hex stop disables interpolation for
+  that point.
+- **Keep `label` sparse** — a label per point on a dense scatter is noise.
+
+## See also
+
+- [Value axis](../axes/value-axis.mdx) — a natively value-keyed scatter (vol
+  smile).
+- [Selection & hover](../interaction/selection-and-hover.mdx) — the id-gated
+  selection model.
+- Storybook: [`Charts/ScatterChart`](pathname:///storybook/?path=/story/charts-scatterchart--encoded)
+  — `Encoded`, `Labelled`, `ControlledSelect`, the value-axis variants.
+- The generated [API reference](pathname:///generated-api/charts/) — the full
+  `ScatterChartProps` type.

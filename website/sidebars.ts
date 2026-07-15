@@ -148,6 +148,20 @@ const sidebars: SidebarsConfig = {
         'charts/layout',
         {
           type: 'category',
+          label: 'Chart types',
+          link: { type: 'doc', id: 'charts/types/charts-types-index' },
+          items: [
+            'charts/types/linechart',
+            'charts/types/areachart',
+            'charts/types/bandchart',
+            'charts/types/scatterchart',
+            'charts/types/barchart',
+            'charts/types/boxplot',
+            'charts/types/candlestick',
+          ],
+        },
+        {
+          type: 'category',
           label: 'Interaction',
           items: [
             'charts/interaction/cursors-and-readouts',

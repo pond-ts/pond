@@ -1,0 +1,45 @@
+---
+id: charts-types-index
+title: Chart types
+sidebar_position: 1
+---
+
+# Chart types
+
+The seven draw layers. Each is a React component you render inside `<Layers>`,
+handed a pond series and told which `column` to read. They share one shape:
+
+- **`series` + `column`** — the data and the numeric column to draw. Some
+  layers read fixed column sets instead (`lower`/`upper`, OHLC).
+- **`as`** — the **style** channel (a `theme.<kind>` role lookup). Never a
+  per-component colour/width prop.
+- **`axis`** — the **scale** channel (which `<YAxis id>` to measure against).
+
+Style and scale are separate on purpose. For the axis and layout mechanics see
+[Axes](../axes/index.mdx) and [Layout](../layout.mdx); each page below links the
+generated typedoc for the exhaustive prop types.
+
+| Layer                              | Draws                                              | Reach for it when                                  |
+| ---------------------------------- | -------------------------------------------------- | -------------------------------------------------- |
+| [LineChart](./linechart.mdx)       | A gap-aware line through one column                | A continuous series over time or a value axis      |
+| [AreaChart](./areachart.mdx)       | A filled area to a baseline                        | Volume / magnitude, or an above-below split        |
+| [BandChart](./bandchart.mdx)       | A filled envelope between two columns              | A variance / confidence band (percentile fan)      |
+| [ScatterChart](./scatterchart.mdx) | Points, with data-driven radius / colour           | Discrete events; a 2-encoding cloud (vol smile)    |
+| [BarChart](./barchart.mdx)         | Bars — buckets, **histograms**, stacks, categories | Aggregated buckets, distributions, category totals |
+| [BoxPlot](./boxplot.mdx)           | Box-and-whisker from pre-computed quantiles        | A distribution per bucket (five quantile columns)  |
+| [Candlestick](./candlestick.mdx)   | OHLC candles                                       | Financial price bars                               |
+
+Every layer draws identically across a **time**, **value**, or (for `BarChart`)
+**category** x axis — the kind follows the data, not the component. `BarChart`
+in its `bins` mode _is_ the histogram; there's no separate `Histogram`
+component.
+
+## Data adapters
+
+Most layers accept a pond `series` directly and shape it internally. The
+`from*` / `stacksFrom*` adapters in the package (`fromTimeSeries`,
+`bandFromTimeSeries`, `boxFromTimeSeries`, `ohlcFromTimeSeries`,
+`stacksFromColumns`, `categoryStack`, `transposeRow`, …) are the same shaping
+made explicit — reach for them when you're building the series shape yourself.
+Each page's **Data contract** section names the adapter and columns its layer
+reads.

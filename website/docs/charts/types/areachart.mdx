@@ -1,0 +1,70 @@
+---
+title: AreaChart
+sidebar_position: 3
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryActivity from '@site/src/examples/gallery-activity';
+
+# AreaChart
+
+A filled area from a baseline up to one column. Reach for it for magnitude /
+volume, or an above-below split around a fixed line.
+
+<ChartExample name="gallery-activity" height={230}>
+  <GalleryActivity width={560} />
+</ChartExample>
+
+## Data contract
+
+Takes a `TimeSeries` or `ValueSeries` and one numeric `column` (the fill value);
+the fill runs from `baseline` up to it. Adapter: `fromTimeSeries` /
+`fromValueSeries`, the same `ChartSeries` a `LineChart` uses.
+
+## Props
+
+| Prop       | Type                        | Default          | Purpose                                                          |
+| ---------- | --------------------------- | ---------------- | ---------------------------------------------------------------- |
+| `series`   | `TimeSeries \| ValueSeries` | — (req)          | The source series.                                               |
+| `column`   | `string`                    | — (req)          | Numeric column to fill from.                                     |
+| `as`       | `string`                    | `'default'`      | Style role → `theme.area[as]` (outline + graded fill).           |
+| `axis`     | `string`                    | row default      | Which `<YAxis id>` to scale against.                             |
+| `baseline` | `number`                    | axis lower bound | The floor the fill rests on. A fixed number is auto-fit-visible. |
+| `curve`    | `Curve`                     | `'linear'`       | Outline + fill-edge interpolation.                               |
+| `gaps`     | `GapMode`                   | `'empty'`        | Gap rendering (fill/outline coupled — see cautions).             |
+
+## Variants
+
+- **`baseline`** — omit it for the **elevation** form (fill rests on the axis
+  floor); pass `0` (or any number) for the **above-below** form (positive up,
+  negative down). The two-colour traffic look is two `<AreaChart>`s with `in` /
+  `out` roles, each `baseline={0}`.
+- **`curve`** — `'linear'` (default) / `'monotone'` / `'natural'` / `'basis'` /
+  `'step'`.
+- **`gaps`** — `'empty'` (default) / `'none'` / `'dashed'` / `'step'` /
+  `'fade'`.
+
+## Interaction & theming
+
+- **Cursor:** the readout dot rides the value edge (not the baseline), coloured
+  by the outline stroke; no readout in gaps.
+- **Selection:** not selectable.
+- **Theming:** the `theme.area` slot (`AreaStyle` =
+  `{ color, width, fill, fillOpacity }`); default roles `default` / `in` /
+  `out`.
+
+## Cautions
+
+- **Gaps couple fill and outline:** `'empty'` breaks both; `'none'` bridges
+  both; `'dashed'` / `'step'` / `'fade'` keep the **fill** broken and only
+  connect the **outline** (`'fade'` drops the outline to this area's baseline).
+- **`fill` must be CSS hex** (`#rgb` / `#rrggbb`) so the transparent gradient
+  stop can be derived — a non-hex fill falls back to flat.
+
+## See also
+
+- [LineChart](./linechart.mdx) — the unfilled counterpart.
+- Storybook: [`Charts/AreaChart`](pathname:///storybook/?path=/story/charts-areachart--elevation)
+  — `Elevation`, `AboveBelowAxis`, `TrafficAreas`.
+- The generated [API reference](pathname:///generated-api/charts/) — the full
+  `AreaChartProps` type.

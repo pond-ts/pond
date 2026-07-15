@@ -1,0 +1,94 @@
+---
+title: BarChart
+sidebar_position: 6
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryHistogram from '@site/src/examples/gallery-histogram';
+
+# BarChart
+
+Bars — buckets, **histograms**, stacks, and categories. One component with
+three input modes; the histogram is `BarChart` in its `bins` mode, not a
+separate component.
+
+<ChartExample name="gallery-histogram" height={230}>
+  <GalleryHistogram width={560} />
+</ChartExample>
+
+## Data contract
+
+Provide **exactly one** of:
+
+- **`series`** — a `TimeSeries` / `ValueSeries` (interval-keyed; each `[begin,
+end)` is a bar's span) with `column`, or a wide series with `columns` (stacked
+  segments), or a `Map<group, TimeSeries>` with `column` (a series per group).
+- **`bins`** — `byColumn` records `{ start, end, ...aggregates }` — the
+  value-axis **histogram**.
+- **`categories`** — `CategoryDatum[]` (`{ label, value }`) → an ordinal
+  [category axis](../axes/category-axis.mdx), vertical only.
+
+Adapters: `barsFromTimeSeries` / `barsFromValueSeries` (single),
+`stacksFromColumns` / `stacksFromGroups` / `stacksFromBins` (stacked),
+`categoryStack` (categories), `transposeRow` (a wide row → `categories`).
+
+## Props
+
+| Prop          | Type                                           | Default          | Purpose                                                        |
+| ------------- | ---------------------------------------------- | ---------------- | -------------------------------------------------------------- |
+| `series`      | `TimeSeries \| ValueSeries \| Map<string, TS>` | one-of           | Source (single, stacked-by-`columns`, or per-group Map).       |
+| `bins`        | `BinRecord[]`                                  | one-of           | `byColumn` bins — the histogram mode.                          |
+| `categories`  | `CategoryDatum[]`                              | one-of           | Ordinal category bars (vertical only).                         |
+| `column`      | `string`                                       | with series/bins | Value column (single). `column` **xor** `columns`.             |
+| `columns`     | `readonly string[]`                            | —                | Stacked segment columns, bottom → top.                         |
+| `as`          | `string`                                       | `'default'`      | Style role (single series only — **ignored on stacks**).       |
+| `colors`      | `Record<string, string>`                       | —                | Per-**group** fill override for stacks.                        |
+| `binColors`   | `readonly (string \| undefined)[]`             | —                | Per-**bin** fill for a single-series zone chart.               |
+| `orientation` | `'vertical' \| 'horizontal'`                   | `'vertical'`     | Bar direction.                                                 |
+| `ordinal`     | `boolean`                                      | `false`          | For `bins`: uniform `[i, i+1]` slots instead of numeric edges. |
+| `id`          | `string`                                       | —                | Stable identity — **gates selection + hover**.                 |
+| `axis`        | `string`                                       | row default      | Which `<YAxis id>` to scale against.                           |
+| `gap`         | `number`                                       | theme (`1`)      | Px gap between bars.                                           |
+
+## Variants
+
+- **Data mode** — `series` (single / stacked / Map) vs `bins` (histogram) vs
+  `categories` (ordinal). This is the axis-behaviour fork.
+- **`orientation`** — `'vertical'` (default) or `'horizontal'`.
+- **`column` vs `columns`** — a single value column, or stacked segments.
+- **`colors`** (per-group stacks) vs **`binColors`** (per-bin single-series
+  zones).
+- **`ordinal`** — `bins` on a uniform ordinal band instead of their numeric
+  spans.
+
+## Interaction & theming
+
+- **Cursor:** the in-chart value cursor (flag / crosshair) is **single-series
+  vertical only** — stacked and horizontal bars don't report a per-point
+  readout.
+- **Selection:** **id-gated** — set `id` for clickable / hover-lit bars (a
+  stack segment's identity is `(id, key, group)`).
+- **Theming:** the `theme.bar` slot (`BarStyle`); stacks colour per group via
+  `colors`, so `as` is single-series only.
+
+## Cautions
+
+- **Histogram is a mode, not a component** — `bins` + `orientation`.
+- **Stacks baseline from 0** — the value axis must include `0`; a `<YAxis min>`
+  above 0 is unsupported for stacks. Negative/zero segments are skipped
+  (diverging stacks are out of scope).
+- **Horizontal puts value on x** (x-kind `'value'`) — a horizontal histogram
+  **can't share a `<ChartContainer>`** with time-series rows; it stands alone.
+- **Exactly one of `series` / `bins` / `categories`**, and `column` **xor**
+  `columns` — violations throw.
+
+## See also
+
+- [Category axis](../axes/category-axis.mdx) — the `categories` mode's axis.
+- [Histograms guide](../../how-to-guides/histograms) ·
+  [Categorical charts guide](../../how-to-guides/categorical-charts) — worked builds.
+- Storybook: [`Charts/BarChart`](pathname:///storybook/?path=/story/charts-barchart--buckets)
+  and [`Charts/Histogram`](pathname:///storybook/?path=/story/charts-histogram--power-distribution)
+  — buckets, stacks, zones, horizontal, selection.
+- The generated [API reference](pathname:///generated-api/charts/) — the full
+  `BarChartProps` type.
