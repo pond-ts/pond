@@ -180,21 +180,21 @@ npm run build && node packages/core/bench/vs-pondjs.cjs
 
 ## Documentation
 
-The full guide is at **<https://pjm17971.github.io/pond-ts/>**.
+The full guide is at **<https://pond-ts.org/>**.
 
-- **[Start here](https://pjm17971.github.io/pond-ts/docs/)**
+- **[Start here](https://pond-ts.org/docs/)**
   — five-minute walkthrough with batch, live, and React examples.
-- **[Concepts](https://pjm17971.github.io/pond-ts/docs/start-here/concepts)**
+- **[Concepts](https://pond-ts.org/docs/start-here/concepts)**
   — temporal keys, sequences, windowing, partitioning, triggers, late
   data.
-- **[Transforms reference](https://pjm17971.github.io/pond-ts/docs/pond-ts/transforms/queries)**
+- **[Transforms reference](https://pond-ts.org/docs/pond-ts/transforms/queries)**
   — every batch operator (queries, aggregation, alignment, rolling,
   smoothing, sampling, cleaning, reshape, anomaly detection).
-- **[Live reference](https://pjm17971.github.io/pond-ts/docs/pond-ts/live/live-series)**
+- **[Live reference](https://pond-ts.org/docs/pond-ts/live/live-series)**
   — `LiveSeries`, live transforms, triggering.
-- **[How-to guides](https://pjm17971.github.io/pond-ts/docs/how-to-guides)**
+- **[How-to guides](https://pond-ts.org/docs/how-to-guides)**
   — building a dashboard, ingesting messy data.
-- **[API reference (auto-generated)](https://pjm17971.github.io/pond-ts/generated-api/core/)**
+- **[API reference (auto-generated)](https://pond-ts.org/generated-api/core/)**
   — TypeDoc output, every public class and method.
 - **[CHANGELOG](./CHANGELOG.md)** — what shipped in each release.
 
