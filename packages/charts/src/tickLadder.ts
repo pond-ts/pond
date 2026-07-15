@@ -129,14 +129,37 @@ const COARSENING_LADDER: readonly TickGranularity[] = [
   'year',
 ];
 
+/** Day-of-month "round day" thinning steps, finest first — the intermediate
+ *  rungs between labelling *every* session and jumping to weekly. Without them
+ *  the day count first exceeding the cap cliffs ~7× straight to weekly (12 daily
+ *  ticks → 2), which reads as the axis breaking on a small zoom. */
+const DAY_OF_MONTH_STEPS: readonly number[] = [2, 5];
+
+/** The opens whose local day-of-month is the 1st (a month start) or a multiple
+ *  of `step` — the "mark at round days" habit (`5 10 15 20 25`, plus the month
+ *  start). Still day grain: labels stay bare day-of-month with the month / year
+ *  promoted at their turns, so this only changes *which* days are labelled, not
+ *  how. */
+function everyNthDayOfMonth(opens: readonly number[], step: number): number[] {
+  return opens.filter((t) => {
+    const d = new Date(t).getDate();
+    return d === 1 || d % step === 0;
+  });
+}
+
 /**
  * Thin an ascending run of **session opens** down to about `count` axis ticks by
- * **calendar grain** — the trading-terminal habit of labelling week / month /
- * year starts rather than an arbitrary every-nth session. Picks the finest grain
- * on the ladder (day → week → month → quarter → year) that yields at most
- * `count` buckets and returns the first open in each; beyond yearly it decimates
- * every-nth so the axis never crowds. Exported so the container can draw session
- * dividers at the same instants the axis labels.
+ * **calendar grain** — the trading-terminal habit of labelling round-day / week /
+ * month / year starts rather than an arbitrary every-nth session. Picks the
+ * finest rung that yields at most `count` ticks: every session → every-other /
+ * every-fifth day-of-month (the `5 10 15` fill, still day grain) → week → month
+ * → quarter → year; beyond yearly it decimates every-nth so the axis never
+ * crowds. Exported so the container can draw session dividers at the same
+ * instants the axis labels.
+ *
+ * The day-of-month rungs exist to kill a density **cliff**: without them the day
+ * count first exceeding the cap dropped straight to weekly — a 7× collapse (12
+ * daily ticks → 2) that looked like the axis breaking on a small zoom.
  *
  * `count` is a **cap**, not a target: grains jump by 4–12× up the ladder, so a
  * small fixed count over-coarsens long spans (a mid-year-anchored 12-month daily
@@ -152,6 +175,14 @@ export function coarsenCalendar(
   count: number,
 ): { ticks: number[]; granularity: TickGranularity } {
   if (opens.length <= count) return { ticks: [...opens], granularity: 'day' };
+  // Between every-day and weekly, thin to round days-of-month (still day grain)
+  // so density degrades gently instead of cliffing ~7× to weekly.
+  for (const step of DAY_OF_MONTH_STEPS) {
+    const ticks = everyNthDayOfMonth(opens, step);
+    if (ticks.length > 0 && ticks.length <= count) {
+      return { ticks, granularity: 'day' };
+    }
+  }
   for (const g of COARSENING_LADDER) {
     const ticks = firstOfEachBucket(opens, g);
     if (ticks.length <= count) return { ticks, granularity: g };

@@ -104,9 +104,32 @@ describe('buildTicks — the grain matrix over (span, cap)', () => {
     expect(grainOf(week, 12).granularity).toBe('hour6');
   });
 
-  it('a month of sessions coarsens to weeks', () => {
+  it('a month of sessions thins to round days-of-month, not a cliff to weekly', () => {
+    // 28 days over a cap of 8: the day count exceeds the cap, but rather than
+    // dropping ~7× straight to weekly (the old density cliff), it thins to
+    // round days-of-month — still day grain, ~cap ticks. Every tick is a 1st
+    // or a multiple of 5.
     const month = dailySessions(d0, 28);
-    expect(grainOf(month, 8).granularity).toBe('week');
+    const { granularity, count } = grainOf(month, 8);
+    expect(granularity).toBe('day');
+    expect(count).toBeGreaterThan(4); // not the 4-tick weekly collapse
+    expect(count).toBeLessThanOrEqual(8);
+    const prov = segmentProvider(month);
+    const opens = [
+      month[0]![0],
+      ...prov.boundaries!(month[0]![0], month[27]![1]),
+    ];
+    for (const t of buildTicks(prov, opens, month[27]![1], 8).ticks) {
+      const dom = new Date(t).getDate();
+      expect(dom === 1 || dom % 5 === 0).toBe(true);
+    }
+  });
+
+  it('a longer run still reaches week grain once round-days overflow', () => {
+    // ~8 weeks of daily sessions at a cap of 8: even the coarsest day-of-month
+    // step (every 5th) exceeds the cap, so it falls through to weekly.
+    const eightWeeks = dailySessions(d0, 56);
+    expect(grainOf(eightWeeks, 8).granularity).toBe('week');
   });
 
   it('a year of sessions coarsens to months', () => {
@@ -514,5 +537,21 @@ describe('coarsenCalendar (day-and-coarser compat surface)', () => {
       ticks: opens,
       granularity: 'day',
     });
+  });
+
+  it('thins to round days-of-month before weekly (the anti-cliff rungs)', () => {
+    // 40 consecutive days over a cap of 10: too many for every-day, but the
+    // round-day thinning keeps it at day grain instead of collapsing to weekly.
+    const start = new Date(2026, 0, 1).getTime();
+    const opens = Array.from({ length: 40 }, (_, i) => start + i * DAY);
+    const { ticks, granularity } = coarsenCalendar(opens, 10);
+    expect(granularity).toBe('day');
+    expect(ticks.length).toBeGreaterThan(4); // denser than the weekly collapse
+    expect(ticks.length).toBeLessThanOrEqual(10);
+    // Every labelled day is a 1st or a multiple of 5 (5 10 15 20 25 …).
+    for (const t of ticks) {
+      const d = new Date(t).getDate();
+      expect(d === 1 || d % 5 === 0).toBe(true);
+    }
   });
 });

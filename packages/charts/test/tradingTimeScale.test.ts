@@ -360,12 +360,14 @@ describe('coarsenCalendar', () => {
   });
 
   it('steps to week grain — one tick per Monday-anchored week', () => {
-    // ~4 weeks of opens, count 6 → week grain (session count 28 > 6, weeks ~5).
-    const month = daily.slice(0, 28);
-    const { ticks, granularity } = coarsenCalendar(month, 6);
+    // 6 weeks of opens, count 6 → week grain: the day count (42) and even the
+    // round-day thinning (~9 at every-5th) overflow the cap, but the 6
+    // Monday-anchored weeks fit exactly.
+    const sixWeeks = daily.slice(0, 42);
+    const { ticks, granularity } = coarsenCalendar(sixWeeks, 6);
     expect(granularity).toBe('week');
     // First tick is the run's start; each subsequent is a new local week.
-    expect(ticks[0]).toBe(month[0]);
+    expect(ticks[0]).toBe(sixWeeks[0]);
     const weekOf = (t: number) => {
       const d = new Date(t);
       const dow = (d.getDay() + 6) % 7;
