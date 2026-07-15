@@ -12,6 +12,10 @@ TypeScript studies over the same input and asserts bar-for-bar agreement.
 generator when a study's definition changes (and the fixture diff should be
 reviewed as carefully as the code).
 
+> **Adding a study?** An oracle case here is a **required** step, not an
+> afterthought — see the full checklist in
+> [`../../src/studies/README.md`](../../src/studies/README.md).
+
 ## Regenerate
 
 ```sh
