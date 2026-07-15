@@ -55,11 +55,12 @@ every row — hovering the top panel moves the cursor on the bottom one too.
 
 ## Horizontal layout within a row
 
-Inside a row, children lay out **left to right in author order**:
-`<YAxis side="left">` before `<Layers>`, `<YAxis side="right">` after. `Layers`
-is the plot area between the gutters. Declaring several `<YAxis>` gives a
-dual-axis row — see [Axes](./axes/index.mdx#y-axes) for binding layers to axes
-by `id`.
+Inside a row, each axis sits in the gutter its **`side`** names — left axes in
+the left gutter, right axes in the right, with `<Layers>` (the plot area)
+between. Placement follows `side`, not JSX position; author them in that order
+anyway (`side="left"` before `<Layers>`, `side="right"` after) so the markup
+reads the way it lays out. Declaring several `<YAxis>` gives a dual-axis row —
+see [Axes](./axes/index.mdx#y-axes) for binding layers to axes by `id`.
 
 ### Gutters align across rows
 
