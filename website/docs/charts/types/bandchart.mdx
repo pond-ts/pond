@@ -51,7 +51,8 @@ sample fills only where **both** edges are finite. Adapter:
 ## Cautions
 
 - **A band always breaks on a gap** — a gap on _either_ edge leaves no fill or
-  readout there; it never bridges.
+  readout there; it never bridges (bands have no `gaps` mode by design — see
+  [Missing data & gaps](../gaps.mdx)).
 - **No baseline** — a band is the region _between two edges_, not a fill to a
   floor (that's [AreaChart](./areachart.mdx)).
 

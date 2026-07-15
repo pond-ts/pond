@@ -179,6 +179,7 @@ const sidebars: SidebarsConfig = {
             'charts/annotations/axis-indicators-and-live-values',
           ],
         },
+        'charts/gaps',
         {
           type: 'link',
           label: 'API reference (charts)',
