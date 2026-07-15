@@ -245,13 +245,15 @@ export function XAxis({
       ? (xScale as TradingTimeScale).flatFormat(xTickCount)
       : undefined;
 
-  // Tick formatter: an explicit `format` is resolved against the axis kind
-  // (a time specifier through the time scale, a number specifier through the
-  // value scale); otherwise the container's shared formatter — the one the
-  // cursor readout uses, so a tick and the cursor read identically (except a
-  // flat time axis, whose ticks read terse while the cursor reads full — see
-  // `flatFmt`). On a transformed axis every readout (cursor pill, marker
-  // indicator) speaks the **derived unit** — the axis's own language.
+  // Tick / readout formatter: an explicit `format` is resolved against the axis
+  // kind (a time specifier through the time scale, a number specifier through
+  // the value scale); otherwise the container's shared formatter — the one the
+  // cursor readout uses, so a tick and the cursor read identically. On a
+  // transformed axis every readout (cursor pill, marker indicator) speaks the
+  // **derived unit** — the axis's own language. NOTE: the flat date style
+  // applies *only* to the rendered tick labels (`tickFmt` below), never to this
+  // `fmt` — the cursor pill and marker indicators keep reading a full timestamp
+  // rather than a terse/promoted axis label.
   const fmt: (value: number) => string =
     transform !== undefined && uFmt !== null && xKind !== 'category'
       ? (v) => uFmt(transform.to(v))
@@ -259,10 +261,7 @@ export function XAxis({
         // scale's label lookup); a d3 number/time `format` can't name a category, so
         // it's ignored here (customize the labels in the `categories` data instead).
         format === undefined || xKind === 'category'
-        ? // Flat time axis: promoted single-row labels (falls back to the
-          // shared `formatTime` for a stacked axis, a category axis, or a
-          // scale without the flat surface).
-          (flatFmt ?? formatTime)
+        ? formatTime
         : xKind === 'time'
           ? resolveTimeFormat(
               xScale as ScaleTime<number, number>,
@@ -274,6 +273,11 @@ export function XAxis({
               xTickCount,
               format,
             );
+  // The formatter for the rendered **tick labels** specifically: the flat-style
+  // promoted single-row labels when active, else the shared `fmt`. Split from
+  // `fmt` so a flat axis's terse tick labels never leak into the cursor / marker
+  // readouts, which stay full timestamps.
+  const tickFmt = flatFmt ?? fmt;
 
   // Marker annotations that opted into an axis indicator (`<Marker indicator>`)
   // pin their **time** to this shared x-axis — a pill at `at`, in the annotation
@@ -371,7 +375,7 @@ export function XAxis({
       ? honestDerived()
       : (xScale.ticks(xTickCount) as ReadonlyArray<number | Date>).map((d) => ({
           x: xScale(d as number),
-          label: fmt(+d),
+          label: tickFmt(+d),
           boundary: boundaryOf?.(+d),
         }));
   // A category axis ticks once per category; thin + truncate its labels when they

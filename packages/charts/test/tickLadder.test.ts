@@ -427,6 +427,40 @@ describe('flatFormats — the single-row inline promotions', () => {
     ]);
   });
 
+  it('week grain: bare day-of-month, the month at the first week of a new month', () => {
+    // Monday-anchored week ticks; the first week landing in February promotes
+    // to the month, the rest read their bare day-of-month.
+    const ticks = [
+      at(2026, 0, 19),
+      at(2026, 0, 26),
+      at(2026, 1, 2),
+      at(2026, 1, 9),
+    ];
+    expect(flatFormats(ticks, 'week', at(2026, 0, 12))).toEqual([
+      '%-d',
+      '%-d',
+      '%b',
+      '%-d',
+    ]);
+  });
+
+  it('sub-day grain: the month (not the date) at a midnight that opens a month', () => {
+    // Feb 01 00:00 turns both the day and the month; the coarser month wins, so
+    // it reads the bare month (`%b`), not the day-turn `%b %-d`.
+    const ticks = [
+      at(2026, 0, 31, 22),
+      at(2026, 0, 31, 23),
+      at(2026, 1, 1, 0),
+      at(2026, 1, 1, 1),
+    ];
+    expect(flatFormats(ticks, 'hour1', at(2026, 0, 31, 21))).toEqual([
+      '%H:%M',
+      '%H:%M',
+      '%b',
+      '%H:%M',
+    ]);
+  });
+
   it('sub-day grain: the year at a midnight that is also Jan 01', () => {
     const ticks = [at(2025, 11, 31, 23), at(2026, 0, 1, 0), at(2026, 0, 1, 1)];
     expect(flatFormats(ticks, 'hour1', at(2025, 11, 31, 22))).toEqual([

@@ -468,6 +468,44 @@ describe('annotation indicators', () => {
     expect(chips(container).length).toBe(0);
   });
 
+  it('a flat time axis keeps the marker pill a full timestamp (not a promoted label)', () => {
+    // Day-grain window straddling the year turn: the Jan 01 *tick label* reads
+    // "2026" (the flat inline promotion), but a marker indicator pinned to that
+    // same instant must still read the full date — the flat style applies only
+    // to the axis's own tick labels, not to the on-axis readout pills.
+    const jan1 = new Date(2026, 0, 1).getTime();
+    const { container } = render(
+      <ChartContainer
+        range={[
+          new Date(2025, 11, 27).getTime(),
+          new Date(2026, 0, 8).getTime(),
+        ]}
+        width={900}
+      >
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={100} />
+          <Layers>
+            <LineChart series={series} column="v" axis="a" />
+            <Marker at={jan1} indicator label={false} />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    // The Jan 01 tick label promotes to the bare year inline…
+    const tickLabels = Array.from(container.querySelectorAll('div')).map(
+      (d) => d.textContent ?? '',
+    );
+    expect(tickLabels).toContain('2026');
+    // …but the marker pill (the chip with a translateX transform) reads the
+    // full date, never "2026".
+    const xPill = chips(container).find((d) =>
+      (d.style.transform ?? '').includes('X'),
+    );
+    expect(xPill).toBeDefined();
+    expect(xPill!.textContent).toMatch(/Jan/);
+    expect(xPill!.textContent).not.toBe('2026');
+  });
+
   it('the axis pill always shows the formatted value, never the custom label', () => {
     // An indicator reads like a tick: even with a custom `label` (the in-plot
     // chip), the x-axis pill shows the formatted time (sentinel `VAL`).
