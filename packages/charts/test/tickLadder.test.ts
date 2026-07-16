@@ -118,7 +118,10 @@ describe('buildTicks — the grain matrix over (span, cap)', () => {
     expect(granularity).toBe('day');
     expect(count).toBeGreaterThan(4); // not the 4-tick weekly collapse
     const prov = segmentProvider(month);
-    const opens = [feb, ...prov.boundaries!(feb, month[27]![1])];
+    // Domain starts at the first session's OPEN (the `rangeOf` convention) —
+    // a session open, so it indexes as the month's session 0.
+    const first = month[0]![0];
+    const opens = [first, ...prov.boundaries!(first, month[27]![1])];
     const ticks = buildTicks(prov, opens, month[27]![1], 8).ticks;
     // The month start (Feb 1) is pinned as a mark.
     expect(ticks.some((t) => new Date(t).getDate() === 1)).toBe(true);
@@ -129,6 +132,45 @@ describe('buildTicks — the grain matrix over (span, cap)', () => {
       .map((t, i) => Math.round((t - ticks[i]!) / DAY_MS));
     expect(Math.max(...gaps) - Math.min(...gaps)).toBeLessThanOrEqual(1);
     expect(Math.min(...gaps)).toBeGreaterThan(1); // actually thinned
+  });
+
+  it('with a session calendar, marks land on even session indices (screen-even)', () => {
+    // Weekday-only sessions, Mon Jan 5 … Fri Feb 27 2026 (20 sessions per
+    // month). Subdivision runs in session-INDEX space: marks sit an equal
+    // number of sessions apart — evenly spaced pixels on a collapsed axis —
+    // with no weekend snapping (Feb 1 is a Sunday; the month anchors on
+    // Monday Feb 2, its first session, index 0).
+    const weekdays: Array<readonly [number, number]> = [];
+    for (let t = d0; weekdays.length < 40; t += DAY) {
+      const dow = new Date(t).getDay();
+      if (dow !== 0 && dow !== 6) weekdays.push([t + 9.5 * H, t + 16 * H]);
+    }
+    const prov = segmentProvider(weekdays);
+    const domainEnd = weekdays[39]![1];
+    const first = weekdays[0]![0];
+    const opens = [first, ...prov.boundaries!(first, domainEnd)];
+    const day = (t: number) =>
+      `${new Date(t).getMonth() + 1}/${new Date(t).getDate()}`;
+    // Cap 8 → each month's start + its session-midpoint: every 10th session,
+    // which on a 5-day week means Mondays two weeks apart.
+    const at8 = buildTicks(prov, opens, domainEnd, 8);
+    expect(at8.granularity).toBe('day');
+    expect(at8.ticks.map(day)).toEqual(['1/5', '1/19', '2/2', '2/16']);
+    // Cap 16 → one level deeper: the quarter points appear BETWEEN the marks
+    // above, which all survive unchanged (nesting) — every 5th session, all
+    // Mondays.
+    const at16 = buildTicks(prov, opens, domainEnd, 16);
+    expect(at16.ticks.map(day)).toEqual([
+      '1/5',
+      '1/12',
+      '1/19',
+      '1/26',
+      '2/2',
+      '2/9',
+      '2/16',
+      '2/23',
+    ]);
+    for (const t of at8.ticks) expect(at16.ticks).toContain(t);
   });
 
   it('a longer run coarsens to month grain once a month is down to one mark', () => {

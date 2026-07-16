@@ -129,9 +129,11 @@ export const IntradayThreeHour = tradingStory(3, WIDTH, 30);
 export const WeekDaily = tradingDailyStory(5, 420);
 
 /** ~6 trading weeks at a narrow width → still **day** grain, thinned by
- *  per-month midpoint subdivision: month starts + their midpoints (snapped to
- *  the nearest session), the year on the boundary row. (There is no separate
- *  week grain — the subdivision band owns everything down to month grain.) */
+ *  per-month midpoint subdivision in **session-index** space: marks an equal
+ *  number of sessions apart (evenly spaced pixels — Mondays, on a weekday
+ *  calendar), anchored at each month's first session, the year on the
+ *  boundary row. (There is no separate week grain — the subdivision band owns
+ *  everything down to month grain.) */
 export const MultiWeekDaily = tradingDailyStory(28, 420);
 
 /** ~3 trading months of dailies → **month** grain: bare month names, the

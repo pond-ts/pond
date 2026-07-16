@@ -83,9 +83,11 @@ All three are **time-axis only** — they're ignored on a value or category axis
 
 - **Gaps collapse.** Closed-market spans have zero pixel width; the axis walks
   a session-aware tick ladder (hour → day → month → quarter → year, with the
-  day grain thinned by per-month **midpoint subdivision** — zoom levels nest,
-  so zooming in only inserts marks between the ones already shown) rather than
-  raw wall-clock ticks.
+  day grain thinned by per-month **midpoint subdivision in session-index
+  space** — marks sit an equal number of sessions apart, so they're evenly
+  spaced in pixels on the collapsed axis, and zoom levels nest: zooming in
+  only inserts marks between the ones already shown) rather than raw
+  wall-clock ticks.
 - **Inline date context (the `dateStyle` prop).** By default (`dateStyle="flat"`)
   the axis is a **single row** the TradingView way: each tick that opens a
   coarser calendar period is relabelled **inline** to it — the month at a month

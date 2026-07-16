@@ -67,15 +67,20 @@ and type-level changes; patch bumps are strictly additive.
   `format` / container `timeFormat`, a `transform`, or explicit `ticks` opt out
   of both styles as before.)
 - **charts:** the time-axis tick ladder's sub-month density now **subdivides
-  each month by midpoint halving** — month start → + midpoint (`May … 16 …
-Jun`) → + quarter points (`May 8 16 24 Jun`) → … → every day — the
-  TradingView behaviour. Zoom levels **nest**: zooming in only inserts marks
-  between the ones already shown (and zooming out removes the in-between
-  level), so the surviving labels are the same numbers at every zoom; month /
-  year starts stay pinned to their true instants; pans never reshuffle the
-  marks (density derives from the domain span, not the fluctuating
-  visible-open count). On a trading calendar a subdivision day with no session
-  (weekend / holiday) snaps to the next session. Replaces the old day → weekly
+  each month by midpoint halving in session-index space** — month start → +
+  midpoint (`May … 16 … Jun`) → + quarter points (`May 8 16 24 Jun`) → … →
+  every session — the TradingView behaviour. Marks sit an equal number of
+  _bars_ apart, so on a collapsed trading axis they are **evenly spaced in
+  pixels** (a weekday calendar marks e.g. every 10th session — Mondays — at
+  identical pixel gaps), with no weekend snapping: a month opening on a
+  weekend anchors on its first session. Zoom levels **nest**: zooming in only
+  inserts marks between the ones already shown (and zooming out removes the
+  in-between level), so the surviving labels are the same numbers at every
+  zoom; month / year starts stay pinned; pans never reshuffle the marks
+  (indices are queried per full calendar month, never per window). Each month
+  subdivides at a depth from its own calendar extent, so a stub live-edge
+  month earns proportionally fewer marks. Without a calendar provider the
+  subdivision falls back to day-of-month space. Replaces the old day → weekly
   ~7× density cliff; the separate Monday-anchored week grain was removed — the
   subdivision band covers everything between every-session and month grain.
 

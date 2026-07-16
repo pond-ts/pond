@@ -143,67 +143,186 @@ function daysInLocalMonth(d: Date): number {
 }
 
 /**
- * The days-of-month marked at subdivision `depth` for a month of `monthLen`
- * days — **midpoint halving** of the [month start, next month start) interval:
- * depth 0 is just the 1st, and each deeper level adds the (floor) midpoint of
- * every existing gap, saturating at every day. So successive depths **nest**:
- * `dyadicDays(L, k) ⊆ dyadicDays(L, k+1)` — a zoom-in only inserts marks
- * between the ones already shown, never relocates them. Cached by
- * `(monthLen, depth)` — 4 month lengths × 7 depths.
+ * Midpoint-halving subdivision of the index interval `[0, span)`: depth 0 is
+ * index 0 alone, and each deeper level adds the (floor) midpoint of every
+ * existing gap, saturating at every index. Successive depths **nest**:
+ * `dyadicIndices(n, k) ⊆ dyadicIndices(n, k+1)` — the zoom-stability property
+ * (zooming in only inserts marks between the ones already shown, never
+ * relocates them). The span is a month's length in days or in sessions (≤ 31);
+ * cached by `(span, depth)`.
  */
 const dyadicCache = new Map<number, Set<number>>();
-function dyadicDays(monthLen: number, depth: number): Set<number> {
-  const key = monthLen * 8 + depth;
-  let days = dyadicCache.get(key);
-  if (days === undefined) {
-    const set = new Set<number>([1]);
+function dyadicIndices(span: number, depth: number): Set<number> {
+  const key = span * 8 + depth;
+  let set = dyadicCache.get(key);
+  if (set === undefined) {
+    const s = new Set<number>([0]);
     const halve = (a: number, b: number, d: number): void => {
       if (d <= 0 || b - a <= 1) return;
       const mid = Math.floor((a + b) / 2);
-      set.add(mid);
+      s.add(mid);
       halve(a, mid, d - 1);
       halve(mid, b, d - 1);
     };
-    halve(1, monthLen + 1, depth);
-    dyadicCache.set(key, set);
-    days = set;
+    halve(0, span, depth);
+    dyadicCache.set(key, s);
+    set = s;
   }
-  return days;
+  return set;
 }
 
 /**
- * Thin `opens` to the sessions on each month's {@link dyadicDays} at `depth` —
- * the TradingView subdivision behaviour. The month start is always level 0, so
- * month / year starts stay **pinned** at every zoom (promoted to `%b` / `%Y` by
- * {@link flatFormats}); deeper levels insert the midpoint, then the quarter
- * points, … between marks that never move. On a trading calendar a dyadic day
- * with no session (a weekend / holiday) **snaps to the next session**: an open
- * is marked when any dyadic day lies in `(previous session's date, its own
- * date]` — so `Feb 1` on a Sunday marks Monday the 2nd, exactly as month grain
- * would. Membership depends only on dates and `depth`, never the window, so a
+ * Day-of-month subdivision — the **no-provider fallback** for direct
+ * {@link coarsenCalendar} calls: each month's dyadic marks land on calendar
+ * days (`dyadicIndices` over `[0, monthLen)`, day `1` = index 0), under the
+ * identity assumption that every calendar day is a session (where day-space
+ * and session-space coincide). A dyadic day with no open in the list **snaps
+ * to the next open**: a mark is taken when any dyadic day lies in `(previous
+ * open's date, own date]`. Membership depends only on dates and `depth`, so a
  * pan cannot reshuffle the marks. (The window's first open has no known
  * predecessor and marks only on its own exact day — a snapped edge mark would
  * appear/disappear with the pan phase.)
  */
-function subdivideMonths(opens: readonly number[], depth: number): number[] {
+function subdivideMonthsByDay(
+  opens: readonly number[],
+  depth: number,
+): number[] {
   const out: number[] = [];
   let prev: { month: number; dom: number } | null = null;
   for (const t of opens) {
     const d = new Date(t);
     const month = d.getFullYear() * 12 + d.getMonth();
     const dom = d.getDate();
-    const days = dyadicDays(daysInLocalMonth(d), depth);
-    // Scan window: same month → since the previous session's date; the first
-    // session of a new month → from day 1 (a weekend month-start snaps here);
+    const days = dyadicIndices(daysInLocalMonth(d), depth);
+    // Scan window: same month → since the previous open's date; the first
+    // open of a new month → from day 1 (a weekend month-start snaps here);
     // the window's first open → its own exact day only (see doc above).
     const from = prev === null ? dom - 1 : prev.month === month ? prev.dom : 0;
     prev = { month, dom };
     for (let g = from + 1; g <= dom; g++) {
-      if (days.has(g)) {
+      if (days.has(g - 1)) {
         out.push(t);
         break;
       }
     }
+  }
+  return out;
+}
+
+/**
+ * **Session-index** subdivision — the TradingView behaviour, used whenever the
+ * provider can enumerate the calendar. Each month's sessions are indexed
+ * `0…M−1` from the month's first session, and the dyadic marks land on session
+ * **indices** — so marks sit an equal number of *bars* apart, which on a
+ * collapsed (and especially a uniform) trading axis means **evenly spaced
+ * pixels**, with no weekend/holiday snapping at all: non-sessions simply
+ * aren't indices, and a month whose 1st is a Sunday anchors on Monday-the-2nd
+ * (index 0). Rosters are queried over each **full calendar month**
+ * (`boundaries(monthStart−1ms, nextMonthStart)`), so an index is a property of
+ * the calendar, never of the window — pans cannot reshuffle marks, and the
+ * trailing partially-visible month subdivides exactly as it will when fully
+ * in view.
+ *
+ * Each month subdivides at its **own depth**, from the calendar-day extent its
+ * roster covers (`floor(log2(extentDays / gapDays))`): a full month lands on
+ * the global density, while a stub month — the live edge, a fixture that ends
+ * mid-month — earns proportionally fewer marks instead of squeezing a full
+ * month's quota into its stub.
+ *
+ * The window's left edge (`opens[0]`) is indexed via two point queries: the
+ * count of its month's sessions opening strictly before it, and whether it is
+ * itself exactly a session open — only then is it markable (a mid-gap edge has
+ * no honest index and would ride the pan).
+ */
+function subdivideMonthsBySession(
+  opens: readonly number[],
+  gapDays: number,
+  provider: DiscontinuityProvider,
+): number[] {
+  const monthKeyOf = (t: number): number => {
+    const d = new Date(t);
+    return d.getFullYear() * 12 + d.getMonth();
+  };
+  const monthStartOf = (key: number): number =>
+    new Date(Math.floor(key / 12), key % 12, 1).getTime();
+  const depthOf = (extentDays: number): number =>
+    Math.max(
+      0,
+      Math.min(MAX_SUBDIV_DEPTH, Math.floor(Math.log2(extentDays / gapDays))),
+    );
+  // Full-month roster: session count + the per-month depth its calendar-day
+  // extent affords. Cached per call; ≤ (visible months + 1) provider queries,
+  // and the whole resolution is memoized upstream per (domain, count).
+  const rosters = new Map<number, { count: number; depth: number }>();
+  const rosterOf = (key: number): { count: number; depth: number } => {
+    let r = rosters.get(key);
+    if (r === undefined) {
+      const sessions = provider.boundaries!(
+        monthStartOf(key) - 1,
+        monthStartOf(key + 1),
+      );
+      const count = Math.max(1, sessions.length);
+      const extentDays =
+        sessions.length === 0
+          ? 0
+          : new Date(sessions[sessions.length - 1]!).getDate() -
+            new Date(sessions[0]!).getDate() +
+            1;
+      r = { count, depth: depthOf(extentDays) };
+      rosters.set(key, r);
+    }
+    return r;
+  };
+  const out: number[] = [];
+  let curKey = -1;
+  let idx = 0;
+  for (let i = 0; i < opens.length; i++) {
+    const t = opens[i]!;
+    const key = monthKeyOf(t);
+    if (i === 0) {
+      // Index the window's left edge within its month (see doc above).
+      curKey = key;
+      const monthStart = monthStartOf(key);
+      const sessions = provider.boundaries!(
+        monthStart - 1,
+        monthStartOf(key + 1),
+      );
+      const pre = provider.boundaries!(monthStart - 1, t).length;
+      const exact = provider.boundaries!(t - 1, t + 1).length > 0;
+      // The calendar's **absolute start**: its first session follows no
+      // collapsed gap, so a provider may not report it as a boundary — the
+      // roster misses it and the domain edge IS that session. Detect: nothing
+      // of this month opens before it, it isn't reported, yet live time flows
+      // from it (a gap edge has none) — then it's the month's session 0 and
+      // the roster is one short.
+      const worldStart =
+        !exact && pre === 0 && provider.distance(t, t + MIN_MS) > 0;
+      const count = Math.max(1, sessions.length + (worldStart ? 1 : 0));
+      const rosterFirstDom =
+        sessions.length > 0 ? new Date(sessions[0]!).getDate() : 31;
+      const firstDom = worldStart
+        ? Math.min(new Date(t).getDate(), rosterFirstDom)
+        : rosterFirstDom;
+      const lastDom =
+        sessions.length > 0
+          ? new Date(sessions[sessions.length - 1]!).getDate()
+          : new Date(t).getDate();
+      const depth = depthOf(lastDom - firstDom + 1);
+      rosters.set(key, { count, depth });
+      if ((exact || worldStart) && dyadicIndices(count, depth).has(pre)) {
+        out.push(t);
+      }
+      idx = exact || worldStart ? pre + 1 : pre;
+      continue;
+    }
+    if (key !== curKey) {
+      // A month transition: this open is its month's first session, index 0.
+      curKey = key;
+      idx = 0;
+    }
+    const { count, depth } = rosterOf(key);
+    if (dyadicIndices(count, depth).has(idx)) out.push(t);
+    idx++;
   }
   return out;
 }
@@ -215,13 +334,17 @@ function subdivideMonths(opens: readonly number[], depth: number): number[] {
  * yearly it decimates every-nth so the axis never crowds. Exported so the
  * container can draw session dividers at the same instants the axis labels.
  *
- * The day band **subdivides each month by midpoint halving** ({@link
- * dyadicDays}): depth 1 marks the month start + its midpoint (`May … 16 …
- * Jun`), depth 2 adds the quarter points (`May 8 16 24 Jun`), and so on down
- * to every day. Successive depths nest, so a zoom only inserts marks between
+ * The day band **subdivides each month by midpoint halving**: depth 1 marks
+ * the month start + its midpoint (`May … 16 … Jun`), depth 2 adds the quarter
+ * points (`May 8 16 24 Jun`), and so on down to every session. Successive
+ * depths nest ({@link dyadicIndices}), so a zoom only inserts marks between
  * the ones already shown (or removes the in-between level) — the surviving
  * labels are the *same numbers* at every zoom, and month / year starts stay
- * pinned to their true instants. The depth comes from the span-derived
+ * pinned. With a `provider` the subdivision runs in **session-index space**
+ * ({@link subdivideMonthsBySession}): marks sit an equal number of bars apart
+ * — evenly spaced pixels on a collapsed axis, the TradingView behaviour —
+ * with no weekend snapping. Without one it falls back to day-of-month space
+ * ({@link subdivideMonthsByDay}). Density derives from the span-derived
  * per-month budget (`spanDays / count`), constant at a fixed zoom, so a pan
  * never reshuffles the marks either. Two flat-spacing schemes were tried and
  * rejected: a global even day-stride can't pin month starts (the `Feb` label
@@ -245,14 +368,16 @@ export function coarsenCalendar(
   opens: readonly number[],
   count: number,
   spanDays?: number,
+  provider?: DiscontinuityProvider,
 ): { ticks: number[]; granularity: TickGranularity } {
   if (opens.length <= count) return { ticks: [...opens], granularity: 'day' };
-  // Per-month midpoint subdivision. The depth is the deepest whose ≈2^depth
-  // marks/month fit the span-derived budget (floor, so the density never
-  // exceeds the width-derived cap; between doublings marks spread out, then
-  // halve — the dyadic behaviour). Depth 0 means a month is down to one mark,
-  // which *is* month grain — the bucket ladder below. Gated to daily-dense
-  // opens: a synthetic run of month/year starts has no days to subdivide.
+  // Per-month midpoint subdivision. The gate depth is the deepest whose
+  // ≈2^depth marks per nominal month fit the span-derived budget (floor, so
+  // the density never exceeds the width-derived cap; between doublings marks
+  // spread out, then halve — the dyadic behaviour). Depth 0 means a month is
+  // down to one mark, which *is* month grain — the bucket ladder below. Gated
+  // to daily-dense opens: a synthetic run of month/year starts has no days to
+  // subdivide.
   const openSpanDays =
     (opens[opens.length - 1]! - opens[0]!) / DAY_MS || Infinity;
   const dailyDense = opens.length >= 0.5 * openSpanDays;
@@ -262,7 +387,10 @@ export function coarsenCalendar(
     Math.floor(Math.log2(DAYS_PER_MONTH / gapDays)),
   );
   if (dailyDense && depth >= 1) {
-    const ticks = subdivideMonths(opens, depth);
+    const ticks =
+      provider?.boundaries !== undefined
+        ? subdivideMonthsBySession(opens, gapDays, provider)
+        : subdivideMonthsByDay(opens, depth);
     if (ticks.length > 0) return { ticks, granularity: 'day' };
   }
   for (const g of COARSENING_LADDER) {
@@ -381,7 +509,14 @@ export function buildTicks(
     // so the day-stride is picked from a quantity that's constant at a fixed
     // zoom — panning slides the window but never changes it, so the marks stay
     // put instead of reshuffling when the enumerated open count wobbles ±1.
-    return coarsenCalendar(opens, cap, (domainEnd - opens[0]!) / DAY_MS);
+    // The provider routes the day band to session-index space (screen-even
+    // marks; see subdivideMonthsBySession).
+    return coarsenCalendar(
+      opens,
+      cap,
+      (domainEnd - opens[0]!) / DAY_MS,
+      provider,
+    );
   })();
   // Round anchors to integer milliseconds: a pan/zoom domain comes from
   // `scale.invert(pixel)` and is fractional, and a fractional anchor breaks
