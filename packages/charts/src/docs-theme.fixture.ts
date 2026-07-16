@@ -72,11 +72,13 @@ const dark = {
   vizDown: '#ff6e68',
 } as const;
 
-/** `color` at `alpha` opacity, as an rgba() string — for the grid/divider
- *  pair the spec derives from `muted` rather than naming outright
- *  ("Gridlines/dividers: --pond-muted at ~40% opacity. No new neutral
- *  tokens needed."). Session dividers read "one step stronger than
- *  gridlines," so they get a higher alpha off the same base colour. */
+/** `color` at `alpha` opacity, as an rgba() string — the grid derives from
+ *  `muted` rather than naming a new neutral (spec: "Gridlines: --pond-muted
+ *  at low opacity"), lightened to 28% so the calendar grid reads as ground,
+ *  not content. Session dividers switched base: they mark *structure* (a
+ *  collapse seam), so they take a light wash of the warm `vizMark` accent —
+ *  visually distinct from both the neutral grid and the cool data hues
+ *  (owner-directed, 2026-07-16). */
 function withAlpha(hex: string, alpha: number): string {
   const n = parseInt(hex.slice(1), 16);
   const r = (n >> 16) & 255;
@@ -186,9 +188,9 @@ function buildDocsTheme(c: Ramp): ChartTheme {
     },
     axis: {
       label: c.body,
-      grid: withAlpha(c.muted, 0.4),
+      grid: withAlpha(c.muted, 0.28),
       gridDash: [], // solid hairlines — the terminal register
-      sessionDivider: withAlpha(c.muted, 0.65), // a step stronger than grid
+      sessionDivider: withAlpha(c.vizMark, 0.5), // structural — the warm accent, light
       title: { color: c.ink },
     },
     font: FONT,
@@ -214,13 +216,13 @@ function buildDocsTheme(c: Ramp): ChartTheme {
 export const docsPalette = {
   light: {
     ...light,
-    grid: withAlpha(light.muted, 0.4),
-    divider: withAlpha(light.muted, 0.65),
+    grid: withAlpha(light.muted, 0.28),
+    divider: withAlpha(light.vizMark, 0.5),
   },
   dark: {
     ...dark,
-    grid: withAlpha(dark.muted, 0.4),
-    divider: withAlpha(dark.muted, 0.65),
+    grid: withAlpha(dark.muted, 0.28),
+    divider: withAlpha(dark.vizMark, 0.5),
   },
 } as const;
 
