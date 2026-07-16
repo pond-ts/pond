@@ -308,6 +308,29 @@ describe('buildTicks — the grain matrix over (span, cap)', () => {
     expect(segTicks[0]).toBe(open);
   });
 
+  it('genuineness is judged on the ROUNDED edge tick, not the raw fractional start', () => {
+    // A pan/zoom domain start is fractional (scale.invert). The edge tick is
+    // Math.round(start); the genuineness test must probe that rounded instant,
+    // not the raw fraction — else a start 0.4ms above a midnight (which rounds
+    // ONTO the midnight) would be judged un-aligned and the real grain tick
+    // dropped. Regression for the L2 review's rounded-vs-raw finding (#479).
+    const prov = identityProvider();
+    const midnight = new Date(2026, 2, 2).getTime();
+    const opens = [
+      midnight + 0.4,
+      ...prov.boundaries!(midnight + 0.4, midnight + 9 * DAY),
+    ];
+    const { ticks, granularity } = buildTicks(
+      prov,
+      opens,
+      midnight + 9 * DAY,
+      15,
+    );
+    expect(granularity).toBe('day');
+    // The rounded edge IS the midnight, so it's a genuine day anchor and stays.
+    expect(ticks[0]).toBe(midnight);
+  });
+
   it('a sub-hour continuous domain descends to minute grain, never one day tick', () => {
     // A ~40-minute window (the annotation-story shape) must tick on minutes —
     // before the second/minute rungs existed it collapsed to a single

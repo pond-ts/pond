@@ -630,25 +630,29 @@ export function buildTicks(
   // label falls through to the d3 multi-scale default (a bare `.259`
   // millisecond tick). Sub-ms precision is invisible at any ladder grain.
   result.ticks = result.ticks.map((t) => Math.round(t));
-  // Drop the **window-edge rider**: `opens[0]` is the raw domain start, which
-  // is a calendar anchor only when it happens to BE one. A mid-period edge
-  // otherwise becomes a tick pinned at x=0 that relabels itself as the window
-  // pans (`8 → 9 → 10` mid-day, a `15:23` under an hour grain) — sticky and
-  // misleading (owner, 2026-07-16); TradingView never labels the window edge.
-  // Genuine ⇔ the instant is **live** and either a true session open (dead
-  // time immediately before — incl. the calendar's absolute start) or sits
-  // **exactly on a calendar instant of the chosen grain** (a midnight at day
-  // grain, a month start at month grain, a clock multiple on an hour rung) —
-  // the latter is how a gap-free continuous axis, which has no dead time to
-  // probe, keeps a window cut exactly on a boundary (a Jan-1-to-Jan-1 year
-  // fixture keeps its `2026`).
+  // Drop the **window-edge rider**: the first tick is `opens[0]` (the raw
+  // domain start), which is a calendar anchor only when it happens to BE one.
+  // A mid-period edge otherwise becomes a tick pinned at x=0 that relabels
+  // itself as the window pans (`8 → 9 → 10` mid-day, a `15:23` under an hour
+  // grain) — sticky and misleading (owner, 2026-07-16); TradingView never
+  // labels the window edge. Genuine ⇔ the instant is **live** and either a
+  // true session open (dead time immediately before — incl. the calendar's
+  // absolute start) or sits **exactly on a calendar instant of the chosen
+  // grain** (a midnight at day grain, a month start at month grain, a clock
+  // multiple on an hour rung) — the latter is how a gap-free continuous axis,
+  // which has no dead time to probe, keeps a window cut exactly on a boundary
+  // (a Jan-1-to-Jan-1 year fixture keeps its `2026`). Probe the **rounded**
+  // tick `edge` (what actually renders), not the raw fractional `opens[0]`:
+  // a fractional pan/zoom start that rounds onto a grain instant is aligned
+  // by the value the reader sees, and the two agree exactly on the integer-ms
+  // instants that aren't pan/zoom-derived.
   const t = result.ticks;
   if (t.length > 0 && t[0] === Math.round(opens[0]!)) {
-    const o = opens[0]!;
+    const edge = t[0]!;
     const genuine =
-      provider.distance(o, o + 1) > 0 && // live (a dead edge never ticks)
-      (provider.distance(o - 1, o) === 0 || // a session open, or…
-        alignedToGrain(o, result.granularity)); // …exactly on the grain
+      provider.distance(edge, edge + 1) > 0 && // live (a dead edge never ticks)
+      (provider.distance(edge - 1, edge) === 0 || // a session open, or…
+        alignedToGrain(edge, result.granularity)); // …exactly on the grain
     if (!genuine) t.shift();
   }
   // Drop a cramped **leading partial-period** anchor: a genuine first tick
