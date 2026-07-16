@@ -2,11 +2,11 @@
   "name": "@pond-ts/financial",
   "version": "0.46.0",
   "private": false,
-  "description": "Financial-market domain library on pond-ts \u2014 trading calendars, session-aligned bar building, and market analytics",
+  "description": "Financial-market domain library on pond-ts — trading calendars, session-aligned bar building, and market analytics",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/pjm17971/pond-ts.git",
+    "url": "git+https://github.com/pond-ts/pond.git",
     "directory": "packages/financial"
   },
   "type": "module",

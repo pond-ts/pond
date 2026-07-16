@@ -65,15 +65,9 @@ and type-level changes; patch bumps are strictly additive.
   `grid={false}` plot is actually clean by default and a contiguous-sessions
   calendar seams only where days were excised. `TradingTimeScale` gains
   **`gridLevels(minGapPx)`** (the nested per-grain populations + nominal
-  spacing behind it).
-  `grid={false}` drops the reference gridlines for a clean backdrop; the two
-  divider modes beyond the default draw a session separator at _every_ boundary
-  in view (`'all'` — the TradingView session-separator look) or suppress them
-  (`'none'`). Dividers are independent of the grid, so a trading axis can show
-  session structure on a grid-free plot. In `'all'` mode, crowding lines fade
-  on a quadratic ramp (full ≥ 28 px apart, gone ≤ 6 px), so zooming out
-  dissolves them to a clean plot — the falloff must outrun line density, or
-  the plot pins a permanent gray wash instead of clearing.
+  spacing behind it). In `'all'` mode, crowding session-divider lines fade on
+  a quadratic ramp (full ≥ 28 px apart, gone ≤ 6 px) so zooming out dissolves
+  them to a clean plot rather than a permanent gray wash.
 - **charts:** `<TimeAxis>` / `<XAxis>` gain a **`dateStyle`** prop
   (`'flat' | 'stacked'`). `'flat'` — the new default — lays the date context
   out on a **single row** the TradingView way: each tick that opens a coarser
@@ -93,6 +87,12 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **Docs hosting.** The documentation site has moved from GitHub Pages
+  (`pjm17971.github.io/pond-ts`) to Cloudflare Pages under the custom domain
+  **<https://pond-ts.org>**. Storybook now deploys as its own project served at
+  `pond-ts.org/storybook/` (via a small routing Worker, `workers/router/`),
+  rather than nested into the docs build. Doc links in the README are repointed;
+  the deploy workflow keeps the same `v*`-tag gate. See `MIGRATION.md`.
 - **charts:** the time axis now renders the **flat** single-row date style by
   default (previously the two-row stacked layout). Every time chart — trading
   or plain continuous, auto-rendered or explicit `<TimeAxis>` — picks this up.

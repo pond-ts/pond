@@ -2,11 +2,11 @@
   "name": "@pond-ts/fit",
   "version": "0.46.0",
   "private": false,
-  "description": "Fitness & activity domain library on pond-ts \u2014 quantities, canonical activity series, and analytics (geo, power, zones, splits)",
+  "description": "Fitness & activity domain library on pond-ts — quantities, canonical activity series, and analytics (geo, power, zones, splits)",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/pjm17971/pond-ts.git",
+    "url": "git+https://github.com/pond-ts/pond.git",
     "directory": "packages/fit"
   },
   "type": "module",

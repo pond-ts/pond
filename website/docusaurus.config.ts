@@ -9,10 +9,10 @@ const config: Config = {
   future: {
     v4: true,
   },
-  url: 'https://pjm17971.github.io',
-  baseUrl: '/pond-ts/',
-  organizationName: 'pjm17971',
-  projectName: 'pond-ts',
+  url: 'https://pond-ts.org',
+  baseUrl: '/',
+  organizationName: 'pond-ts',
+  projectName: 'pond',
   onBrokenLinks: 'throw',
   markdown: {
     hooks: {
@@ -29,7 +29,7 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/pjm17971/pond-ts/tree/main/website/',
+          editUrl: 'https://github.com/pond-ts/pond/tree/main/website/',
         },
         blog: false,
         theme: {
@@ -95,7 +95,7 @@ const config: Config = {
           position: 'right',
         },
         {
-          href: 'https://github.com/pjm17971/pond-ts',
+          href: 'https://github.com/pond-ts/pond',
           label: 'GitHub',
           position: 'right',
         },
@@ -130,7 +130,7 @@ const config: Config = {
             },
             {
               label: 'GitHub',
-              href: 'https://github.com/pjm17971/pond-ts',
+              href: 'https://github.com/pond-ts/pond',
             },
           ],
         },

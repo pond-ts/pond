@@ -4,6 +4,10 @@ on:
   # Docs publish only on release tags so the live site always reflects
   # the latest *published* version on npm, not in-flight work on main.
   # Use workflow_dispatch for a preview deploy off an unreleased commit.
+  #
+  # NB: we deploy via wrangler-from-Actions rather than Cloudflare's native
+  # Git integration precisely to keep this tag gate — native auto-build would
+  # deploy every push to main.
   push:
     tags:
       - 'v*'
@@ -11,15 +15,13 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: docs-deploy
   cancel-in-progress: true
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
@@ -34,9 +36,6 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             website/package-lock.json
-
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
 
       - name: Install library dependencies
         run: npm ci
@@ -56,27 +55,23 @@ jobs:
         run: npm run build
 
       - name: Build Storybook
-        # The docs site's interactive reference surface (docs plan, "Storybook
-        # = the disciplined API-adjacent knob walk"). Vite's Storybook builder
-        # emits relative asset paths, so it's safe to nest under any subpath —
-        # no baseUrl config needed. Runs after the website build so it can
-        # land straight into the artifact tree.
+        # Deployed as its own Cloudflare Pages project (pond-storybook) and
+        # served at pond-ts.org/storybook/ via the router Worker. Vite's
+        # Storybook builder emits relative asset paths, so it serves cleanly
+        # from the project root behind the prefix-stripping proxy route.
         working-directory: packages/charts
-        run: npm run build-storybook -- --quiet -o ../../website/build/storybook
+        run: npm run build-storybook -- --quiet -o storybook-static
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Deploy docs to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
         with:
-          path: website/build
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy website/build --project-name=pond-docs --branch=main
 
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
-
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Deploy Storybook to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy packages/charts/storybook-static --project-name=pond-storybook --branch=main
