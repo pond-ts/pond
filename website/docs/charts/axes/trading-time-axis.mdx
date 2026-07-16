@@ -98,8 +98,25 @@ All three are **time-axis only** — they're ignored on a value or category axis
   `%H:%M` major row plus a boundary row carrying the coarser unit (the date
   over intraday ticks, the year over daily/monthly ticks) and a pinned
   left-edge context label.
-- **Session dividers.** The container draws a divider at each session boundary
-  (the discontinuity provider's session boundaries).
+- **Calendar grid.** The vertical gridlines are the **full grain populations**
+  — every day, month, and aligned clock instant in view, not just the labelled
+  ticks (the labels decorate the grid; they don't define it). Each grain fades
+  as a unit by its **calendar density**, so zooming out dissolves the fine
+  grain (days) into the coarser one (months) with no pop when the label grain
+  switches — a map-style hierarchical grid. Because the metric is calendar
+  density rather than on-screen spacing, hiding weekends draws _fewer_ day
+  lines at the _same_ weight, not brighter ones. `grid={false}` drops the grid
+  for a clean backdrop. (This applies to any time axis, but is most visible
+  here, where collapsed sessions pack the day grain tightly.)
+- **Session dividers (the `sessionDividers` prop).** Optional solid verticals
+  at collapse **seams** — the boundaries where closed time was actually removed
+  (on a real exchange calendar, every session open; on a contiguous-session
+  calendar, only where days/hours were excised). **Default `'none'`** — the
+  calendar grid already marks the structure, so dividers are opt-in emphasis:
+  `'all'` draws one at every seam in view (the TradingView session-separator
+  look, crowding lines fading out), `'labeled'` only at the seams the axis also
+  labels. Independent of `grid` — `sessionDividers="all"` with `grid={false}`
+  is separators on a clean plot.
 - **Line breaks at sessions.** A `LineChart` can set `sessionBreaks` to break
   the line at each session discontinuity instead of connecting across the
   collapsed gap. This is a **scale** break (driven by the axis's collapsed
@@ -114,5 +131,6 @@ All three are **time-axis only** — they're ignored on a value or category axis
   — the tutorial.
 - Storybook: [`Axes/TradingTimeAxis`](pathname:///storybook/?path=/story/axes-tradingtimeaxis--weekend-skip)
   (`WeekendSkip`, `HolidayGap`, `HalfDay`, `SessionBreaks`,
-  `SpacingProportionalVsUniform`, …) and
+  `SpacingProportionalVsUniform`, `DateStylePanZoom` — the interactive grid /
+  divider / pan-zoom showcase, …) and
   [`Axes/TradingTimeAxis/Interactions`](pathname:///storybook/?path=/story/axes-tradingtimeaxis-interactions--region-across-sessions).
