@@ -8,6 +8,7 @@ import { Candlestick } from './Candlestick.js';
 import { LineChart } from './LineChart.js';
 import { TimeAxis } from './TimeAxis.js';
 import { YAxis } from './YAxis.js';
+import type { DiscontinuityProvider } from './tradingTimeScale.js';
 import {
   DAY,
   H,
@@ -383,19 +384,26 @@ export const DateStyleIntraday: Story = {
 };
 
 /**
- * The whole ladder, interactive. **Pan** (drag) and **zoom** (wheel) a plain
- * continuous axis all the way from a 3-year span down to seconds, and flip the
- * **`dateStyle`** toggle live. The preset buttons jump between scales; drag /
- * wheel explore from there. Watch the flat row relabel as you go — years →
- * months → days → clock → seconds — each boundary promoted inline (the year at
- * a year turn, the month at a month turn, the date at a midnight), versus the
- * stacked two-row layout on the same view.
+ * The whole ladder, interactive. **Pan** (drag) and **zoom** (wheel) all the
+ * way from a 3-year span down to seconds, and flip the **`dateStyle`** toggle
+ * live. The preset buttons jump between scales; drag / wheel explore from
+ * there. Watch the flat row relabel as you go — years → months → days → clock
+ * → seconds — each boundary promoted inline (the year at a year turn, the
+ * month at a month turn, the date at a midnight), versus the stacked two-row
+ * layout on the same view.
+ *
+ * The **hide weekends** toggle swaps in a weekend-excising discontinuity
+ * provider (full-day Mon–Fri sessions, Sat+Sun collapsed) — the checker for
+ * the session-index tick stride on a gappy calendar: marks stay an equal
+ * number of *sessions* apart (even pixels), a month whose 1st lands on a
+ * weekend anchors on its first session, and dividers land under the date
+ * labels.
  *
  * The line is a synthetic multi-octave signal on a 30-minute grid, so it
  * smooths out below ~30 minutes; the **axis** keeps laddering down to
  * one-second ticks regardless of the data behind it.
  */
-const PANZOOM_START = new Date(2024, 0, 1).getTime();
+const PANZOOM_START = new Date(2024, 0, 1).getTime(); // a local-midnight Monday
 // A deliberately mid-period right edge (not on a year/month/day boundary): every
 // preset anchors here, so each scale contains an *interior* boundary — a midnight
 // inside the 1D view, a month-start inside the 1M view, year turns inside the
@@ -404,9 +412,9 @@ const PANZOOM_START = new Date(2024, 0, 1).getTime();
 const PANZOOM_END = new Date(2026, 10, 20, 14, 30).getTime();
 const SEC = 1_000;
 
-/** A deterministic ~3-year price line: 14 octaves of sine (self-similar-ish
+/** A deterministic ~3-year price walk: 14 octaves of sine (self-similar-ish
  *  detail from the full span down to ~30 min) sampled on a 30-minute grid. */
-function fractalLine(): TimeSeries<typeof tickSchema> {
+function fractalRows(): Array<[number, number]> {
   const span = PANZOOM_END - PANZOOM_START;
   const rows: Array<[number, number]> = [];
   for (let t = PANZOOM_START; t <= PANZOOM_END; t += 30 * MIN) {
@@ -420,7 +428,60 @@ function fractalLine(): TimeSeries<typeof tickSchema> {
     }
     rows.push([t, v]);
   }
-  return new TimeSeries({ name: 'px', schema: tickSchema, rows });
+  return rows;
+}
+
+const isWeekday = (t: number): boolean => {
+  const dow = new Date(t).getDay();
+  return dow !== 0 && dow !== 6;
+};
+
+/**
+ * A weekend-excising {@link DiscontinuityProvider} for the checker toggle:
+ * Mon–Fri are live full-day sessions, Sat+Sun collapse. O(1) fixed-ms week
+ * math anchored at {@link PANZOOM_START} (a local-midnight Monday) — cheap
+ * enough for per-point scale calls, at the cost of the excision edge drifting
+ * an hour off local midnight across a DST week (a demo simplification; real
+ * calendars come from `@pond-ts/financial`). `boundaries` reports weekday
+ * local midnights Date-stepped (DST-correct) — the session opens the ladder
+ * anchors on.
+ */
+function weekendSkip(): DiscontinuityProvider {
+  const WEEK = 7 * DAY;
+  const WORK = 5 * DAY;
+  const liveMs = (t: number): number => {
+    const dt = t - PANZOOM_START;
+    const w = Math.floor(dt / WEEK);
+    return w * WORK + Math.min(dt - w * WEEK, WORK);
+  };
+  const weekOf = (t: number): number => Math.floor((t - PANZOOM_START) / WEEK);
+  const inWeekend = (t: number): boolean =>
+    t - PANZOOM_START - weekOf(t) * WEEK >= WORK;
+  const self: DiscontinuityProvider = {
+    distance: (from, to) => liveMs(to) - liveMs(from),
+    offset: (v, amount) => {
+      const live = liveMs(v) + amount;
+      const w = Math.floor(live / WORK);
+      return PANZOOM_START + w * WEEK + (live - w * WORK);
+    },
+    clampUp: (t) => (inWeekend(t) ? PANZOOM_START + (weekOf(t) + 1) * WEEK : t),
+    clampDown: (t) =>
+      inWeekend(t) ? PANZOOM_START + weekOf(t) * WEEK + WORK : t,
+    copy: () => self,
+    boundaries: (from, to) => {
+      const out: number[] = [];
+      const d = new Date(from);
+      let cur = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
+      while (cur.getTime() < to) {
+        if (isWeekday(cur.getTime()) && cur.getTime() > from) {
+          out.push(cur.getTime());
+        }
+        cur = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() + 1);
+      }
+      return out;
+    },
+  };
+  return self;
 }
 
 /** Scale presets (anchored at the right edge), one per rung of the ladder. */
@@ -437,8 +498,25 @@ const PANZOOM_PRESETS: Array<[string, number]> = [
 ];
 
 function DateStylePanZoomDemo() {
-  const series = useMemo(fractalLine, []);
+  const rows = useMemo(fractalRows, []);
+  const series = useMemo(
+    () => new TimeSeries({ name: 'px', schema: tickSchema, rows }),
+    [rows],
+  );
+  // The weekend-hiding variant drops Sat/Sun rows too — otherwise two days of
+  // points pile up on the collapse seam as a vertical smear.
+  const weekdaySeries = useMemo(
+    () =>
+      new TimeSeries({
+        name: 'px',
+        schema: tickSchema,
+        rows: rows.filter(([t]) => isWeekday(t)),
+      }),
+    [rows],
+  );
+  const skipProvider = useMemo(weekendSkip, []);
   const [style, setStyle] = useState<'flat' | 'stacked'>('flat');
+  const [hideWeekends, setHideWeekends] = useState(false);
   const [range, setRange] = useState<[number, number]>([
     PANZOOM_START,
     PANZOOM_END,
@@ -487,6 +565,15 @@ function DateStylePanZoomDemo() {
             </button>
           ))}
         </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button
+            type="button"
+            style={btn(hideWeekends)}
+            onClick={() => setHideWeekends((v) => !v)}
+          >
+            hide weekends
+          </button>
+        </div>
       </div>
       <ChartContainer
         width={WIDTH}
@@ -496,11 +583,16 @@ function DateStylePanZoomDemo() {
         onTimeRangeChange={setRange}
         minDuration={5 * SEC}
         showAxis={false}
+        discontinuities={hideWeekends ? skipProvider : undefined}
       >
         <ChartRow height={260}>
           <YAxis id="p" side="right" />
           <Layers>
-            <LineChart series={series} column="price" axis="p" />
+            <LineChart
+              series={hideWeekends ? weekdaySeries : series}
+              column="price"
+              axis="p"
+            />
           </Layers>
         </ChartRow>
         <TimeAxis dateStyle={style} />
