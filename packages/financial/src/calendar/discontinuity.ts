@@ -32,12 +32,16 @@ export interface DiscontinuityProvider {
   /** Return an independent copy of this provider. */
   copy(): DiscontinuityProvider;
   /**
-   * The domain positions of **collapsed gaps** strictly inside `(from, to)` —
-   * each is the far edge of a removed gap (a session/day open, a post-break
-   * re-open), i.e. where two non-adjacent times become adjacent on the axis.
-   * A chart draws a session divider at each. **Optional** — a provider that
-   * can't enumerate its gaps omits it, and the axis just collapses silently.
-   * Ascending; excludes any boundary at the very domain start (no gap precedes it).
+   * The **session roster** strictly inside `(from, to)` — each session/day
+   * open, ascending. Charts consume it two ways: the tick ladder and the
+   * calendar grid treat every entry as a **date anchor**, while session
+   * dividers draw only at entries that are true collapse *seams* (removed
+   * time immediately precedes them, detected via {@link distance}) — for a
+   * provider built from real exchange segments (this one) the two coincide,
+   * since every reported start follows a real gap. **Optional** — a provider
+   * that can't enumerate its sessions omits it, and the axis just collapses
+   * silently. Excludes any boundary at the very domain start (no gap
+   * precedes it).
    */
   boundaries?(from: number, to: number): number[];
 }

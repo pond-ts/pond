@@ -5,6 +5,7 @@ import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { Candlestick } from './Candlestick.js';
 import { LineChart } from './LineChart.js';
+import { TimeAxis } from './TimeAxis.js';
 import { YAxis } from './YAxis.js';
 import {
   MIN,
@@ -21,13 +22,17 @@ import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * The logical tick ladder, walked rung by rung — one story per grain
- * (hours → days → weeks → months → quarters → years), each at a span/width
- * that naturally lands on it, plus narrow variants proving the grain coarsens
- * (never crowds) as room shrinks. Every story shows the **two-tier** labels:
- * the first row at the tick grain, the second (boundary) row carrying the
- * coarser context the first row omits — the date under clock ticks, the
- * year under everything coarser — once per boundary crossing plus the
- * first tick. The `Continuous…` stories are the same ladder on a **plain**
+ * (hours → days → months → quarters → years; the day grain also thins by
+ * a per-month uniform session stride before reaching month grain — there is no
+ * separate week rung), each at a span/width that naturally lands on it, plus
+ * narrow variants proving the grain coarsens
+ * (never crowds) as room shrinks. Every story pins `dateStyle="stacked"` to
+ * show the **two-tier** labels: the first row at the tick grain, the second
+ * (boundary) row carrying the coarser context the first row omits — the date
+ * under clock ticks, the year under everything coarser — once per boundary
+ * crossing plus the first tick. (The shipped default is the single-row `flat`
+ * style — see `Axes/TradingTimeAxis` → `DateStyle…` for the flat-vs-stacked
+ * comparison.) The `Continuous…` stories are the same ladder on a **plain**
  * (gap-free) time axis: no calendar wiring needed.
  */
 
@@ -68,6 +73,7 @@ function tradingStory(
           range={rangeOf(s)}
           discontinuities={provider(s)}
           theme={docsTheme}
+          showAxis={false}
         >
           <ChartRow height={220}>
             <YAxis id="p" />
@@ -75,6 +81,7 @@ function tradingStory(
               <Candlestick series={bars} axis="p" />
             </Layers>
           </ChartRow>
+          <TimeAxis dateStyle="stacked" />
         </ChartContainer>
       );
     },
@@ -92,6 +99,7 @@ function tradingDailyStory(sessionCount: number, width: number): Story {
           range={rangeOf(s)}
           discontinuities={provider(s)}
           theme={docsTheme}
+          showAxis={false}
         >
           <ChartRow height={220}>
             <YAxis id="p" />
@@ -99,6 +107,7 @@ function tradingDailyStory(sessionCount: number, width: number): Story {
               <Candlestick series={bars} axis="p" />
             </Layers>
           </ChartRow>
+          <TimeAxis dateStyle="stacked" />
         </ChartContainer>
       );
     },
@@ -119,9 +128,13 @@ export const IntradayThreeHour = tradingStory(3, WIDTH, 30);
  *  session (`%b %d`), the year on the boundary row once. */
 export const WeekDaily = tradingDailyStory(5, 420);
 
-/** ~6 trading weeks at a narrow width → **week** grain: Monday-anchored
- *  dates, the year on the boundary row. */
-export const MonthWeekly = tradingDailyStory(28, 420);
+/** ~6 trading weeks at a narrow width → still **day** grain, thinned by
+ *  a per-month uniform stride in **session-index** space: marks an equal
+ *  number of sessions apart (evenly spaced pixels — Mondays, on a weekday
+ *  calendar), anchored at each month's first session, the year on the
+ *  boundary row. (There is no separate week grain — the subdivision band owns
+ *  everything down to month grain.) */
+export const MultiWeekDaily = tradingDailyStory(28, 420);
 
 /** ~3 trading months of dailies → **month** grain: bare month names, the
  *  year underneath at the first tick (and again only if it turns). */
@@ -155,13 +168,14 @@ export const ContinuousYear: Story = {
     const start = new Date(2025, 5, 23).getTime();
     const series = continuousSeries(start, 365, 24 * 60 * MIN);
     return (
-      <ChartContainer width={900} theme={docsTheme}>
+      <ChartContainer width={900} theme={docsTheme} showAxis={false}>
         <ChartRow height={220}>
           <YAxis id="p" />
           <Layers>
             <LineChart series={series} column="price" axis="p" />
           </Layers>
         </ChartRow>
+        <TimeAxis dateStyle="stacked" />
       </ChartContainer>
     );
   },
@@ -174,13 +188,14 @@ export const ContinuousIntraday: Story = {
     const start = new Date(2026, 0, 5, 9, 13).getTime();
     const series = continuousSeries(start, 460, MIN);
     return (
-      <ChartContainer width={WIDTH} theme={docsTheme}>
+      <ChartContainer width={WIDTH} theme={docsTheme} showAxis={false}>
         <ChartRow height={220}>
           <YAxis id="p" />
           <Layers>
             <LineChart series={series} column="price" axis="p" />
           </Layers>
         </ChartRow>
+        <TimeAxis dateStyle="stacked" />
       </ChartContainer>
     );
   },

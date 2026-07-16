@@ -3,8 +3,11 @@ import {
   boundaryFormatFor,
   boundaryGrainFor,
   boundaryTicks,
+  buildGridLevels,
   buildTicks,
+  flatFormats,
   majorFormatFor,
+  nominalStepMs,
   type TickGranularity,
 } from './tickLadder.js';
 
@@ -26,10 +29,16 @@ export interface DiscontinuityProvider {
   offset(value: number, amount: number): number;
   copy(): DiscontinuityProvider;
   /**
-   * Optional: the domain positions of collapsed gaps strictly inside `(from,
-   * to)` — session/day opens where closed time was removed. The container draws
-   * a **session divider** at each; a provider that omits it just collapses the
-   * axis silently. (A `TradingCalendar.discontinuities()` provider supplies it.)
+   * Optional: the **session roster** strictly inside `(from, to)` — each
+   * session/day open, in ascending order. Consumed two ways: the tick ladder
+   * and the calendar grid treat every entry as a **date anchor** (so a
+   * provider whose sessions are contiguous — the gap-free identity provider,
+   * a full-day-sessions demo — still reports every open); the container's
+   * **session dividers** draw only at the entries that are true collapse
+   * *seams* (removed time immediately precedes them — detected via
+   * {@link distance}), which on a real exchange calendar is all of them.
+   * A provider that omits this just collapses the axis silently. (A
+   * `TradingCalendar.discontinuities()` provider supplies it.)
    */
   boundaries?(from: number, to: number): number[];
 }
@@ -59,14 +68,17 @@ export interface TradingCalendarLike {
  * wherever the container's `xScale` goes.
  *
  * Ticks are **calendar-aware** when the provider enumerates its gaps: `.ticks`
- * walks the logical ladder (hour1 → hour3 → hour6 → hour12 → day → week →
- * month → quarter → year) and returns the finest rung that fits `count`, and
+ * walks the logical ladder (hour1 → hour3 → hour6 → hour12 → day → month →
+ * quarter → year; the day rung also thins by per-month midpoint subdivision before
+ * month grain) and returns the finest rung that fits `count`, and
  * `.tickFormat` labels each anchor at that grain (`%H:%M` for hours, `%b %d`
  * for days/weeks, `%b` for months/quarters, `%Y` for years) while formatting
  * any other instant (the cursor readout) with the d3 multi-scale default. The
  * coarser context a label drops lives on `.tickBoundaries` — the second-row
- * boundary labels (the date over a clock axis, the year over a day / week /
- * month axis), one per boundary crossing plus the first tick.
+ * boundary labels of the **stacked** date style (the date over a clock axis,
+ * the year over a day / week / month axis), one per boundary crossing plus the
+ * first tick. `.flatFormat` is the **flat** (default) alternative: that context
+ * promoted inline into a single row, the TradingView look.
  * Without a provider `boundaries` method it falls back to interior even-spaced
  * time ticks.
  *
@@ -94,6 +106,18 @@ export interface TradingTimeScale {
    */
   tickBoundaries(count?: number): (value: number) => string | undefined;
   /**
+   * **Flat**-style single-row labels: the coarsest calendar unit each tick
+   * opens (year / month / date) promoted **inline** into the one row, its terse
+   * base label (bare day-of-month, month abbrev, clock time) otherwise — the
+   * TradingView default axis, the alternative to the two-row {@link tickFormat}
+   * + {@link tickBoundaries} stack. Same grain selection as {@link ticks} at the
+   * same `count`, so the labels sit on the tick instants. A non-tick value (the
+   * cursor readout) formats with the d3 multi-scale default, like
+   * {@link tickFormat} — so ticks read terse while the crosshair reads a full
+   * timestamp.
+   */
+  flatFormat(count?: number): (value: number) => string;
+  /**
    * The boundary-row label for the **domain start** — the reader's left-edge
    * context (`Jan 01` over an intraday axis, the year over a month axis),
    * rendered pinned at the plot's left edge. A property of the domain, not of
@@ -101,6 +125,33 @@ export interface TradingTimeScale {
    * from tick to tick. `undefined` when the grain has no boundary row.
    */
   boundaryContext(count?: number): string | undefined;
+  /**
+   * The **grid populations** — one level per ladder rung that fits the plot,
+   * finest first, each carrying its FULL anchor population in the domain
+   * (every aligned clock instant / session open / month / quarter / year
+   * start, strictly after the domain start — the window's left edge is not a
+   * calendar boundary). Where {@link ticks} thins one rung down to *labels*,
+   * these are the calendar structure the labels sit on: the container draws
+   * every anchor and fades each level as a unit by its `spacing`, so a
+   * crowding level dissolves while the coarser ones persist (the map-style
+   * hierarchical grid). Levels nest — de-duplicate coarsest-first.
+   *
+   * `spacing` is the level's **nominal** spacing in px — `width × the grain's
+   * wall-clock step / the domain's wall span` — i.e. its spacing on a gap-free
+   * axis. Keying the fade off calendar density rather than the measured
+   * on-screen gaps makes the look **mode-invariant**: collapsing weekends
+   * draws fewer day lines at the same strength, instead of wider-spaced day
+   * lines that jump to full opacity at the same zoom.
+   *
+   * `minGapPx` is the spacing at which a level's lines have fully faded; a
+   * level denser than that is omitted outright. Empty without a calendar
+   * (a provider that can't enumerate `boundaries`).
+   */
+  gridLevels(minGapPx?: number): Array<{
+    granularity: TickGranularity;
+    values: number[];
+    spacing: number;
+  }>;
   domain(): [number, number];
   domain(next: readonly [number, number]): TradingTimeScale;
   range(): [number, number];
@@ -173,10 +224,19 @@ export function scaleTradingTime(
   };
 
   /** The session-open instants in the domain — the first session's open (the
-   *  left edge) plus each collapsed-gap boundary — the axis's date anchors. */
+   *  left edge) plus each collapsed-gap boundary — the axis's date anchors.
+   *  Memoized per domain: both the label ladder ({@link resolved}) and the
+   *  grid populations ({@link TradingTimeScale.gridLevels}) walk these every
+   *  frame of a pan, and on a wide continuous domain the enumeration (one
+   *  Date per day) is the expensive part. */
+  let opensMemo: { key: string; value: number[] } | null = null;
   const sessionOpens = (): number[] => {
-    const bounds = provider.boundaries?.(domain[0], domain[1]) ?? [];
-    return [domain[0], ...bounds];
+    const key = `${domain[0]}:${domain[1]}`;
+    if (opensMemo?.key !== key) {
+      const bounds = provider.boundaries?.(domain[0], domain[1]) ?? [];
+      opensMemo = { key, value: [domain[0], ...bounds] };
+    }
+    return opensMemo.value;
   };
 
   /** Whether the provider has calendar structure to ladder on. Without a
@@ -248,6 +308,39 @@ export function scaleTradingTime(
     return (value: number) => labelled.get(value);
   };
 
+  scale.flatFormat = (count = 10) => {
+    // A non-tick instant (the cursor readout) always uses the d3 multi-scale
+    // default — same as tickFormat, so the crosshair reads a full timestamp
+    // while the ticks read terse. Without a calendar there are no ladder
+    // anchors, so every value falls through to the default.
+    const defFmt = base.tickFormat(count);
+    if (!hasCalendar()) return (value: number) => defFmt(new Date(value));
+    const { ticks, granularity } = resolved(count);
+    // Seed the promotion walk from the previous **live** instant before the
+    // domain start (clampDown; identity on a continuous axis): a domain that
+    // opens exactly on a month's first session then promotes that tick to the
+    // month (`apr 8 14 …`, not `1 8 14 …`) — the previous session was in
+    // March — while a mid-session start still suppresses the false promotion.
+    const specs = flatFormats(
+      ticks,
+      granularity,
+      provider.clampDown(domain[0] - 1),
+    );
+    // One d3 formatter per distinct specifier; most ticks share the base one.
+    const bySpec = new Map<string, (d: Date) => string>();
+    const fmtFor = (spec: string) => {
+      let f = bySpec.get(spec);
+      if (f === undefined) {
+        f = base.tickFormat(count, spec);
+        bySpec.set(spec, f);
+      }
+      return f;
+    };
+    const labelled = new Map<number, string>();
+    ticks.forEach((t, i) => labelled.set(t, fmtFor(specs[i]!)(new Date(t))));
+    return (value: number) => labelled.get(value) ?? defFmt(new Date(value));
+  };
+
   scale.boundaryContext = (count = 10) => {
     if (!hasCalendar()) return undefined;
     const { granularity } = resolved(count);
@@ -255,6 +348,43 @@ export function scaleTradingTime(
     if (bg === undefined) return undefined;
     const fmt = base.tickFormat(count, boundaryFormatFor(bg));
     return fmt(new Date(domain[0]));
+  };
+
+  /** Memoized like {@link resolved}: the draw pass asks once per frame, and
+   *  the populations only change with the domain / width / fade floor. */
+  let gridMemo: {
+    key: string;
+    value: Array<{
+      granularity: TickGranularity;
+      values: number[];
+      spacing: number;
+    }>;
+  } | null = null;
+  scale.gridLevels = (minGapPx = 4) => {
+    if (!hasCalendar()) return [];
+    const width = Math.abs(range[1] - range[0]);
+    const wallSpan = domain[1] - domain[0];
+    if (wallSpan <= 0 || width <= 0) return [];
+    const cap = Math.max(1, Math.floor(width / Math.max(1, minGapPx)));
+    const key = `${domain[0]}:${domain[1]}:${width}:${minGapPx}`;
+    if (gridMemo?.key !== key) {
+      gridMemo = {
+        key,
+        value: buildGridLevels(provider, sessionOpens(), domain[1], cap)
+          .map((l) => ({
+            granularity: l.granularity,
+            // The first open is the domain start itself — a window edge, not
+            // a boundary (and mid-period in general). Grid lines are the
+            // strictly-interior anchors.
+            values: l.values.filter((v) => v > domain[0]),
+            // Nominal (gap-free) spacing — the fade metric; see the
+            // interface doc for why it isn't the measured on-screen gap.
+            spacing: (width * nominalStepMs(l.granularity)) / wallSpan,
+          }))
+          .filter((l) => l.values.length > 0 && l.spacing > minGapPx),
+      };
+    }
+    return gridMemo.value;
   };
 
   function domainFn(): [number, number];

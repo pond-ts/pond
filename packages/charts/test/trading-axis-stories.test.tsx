@@ -27,6 +27,9 @@ describe('TradingTimeAxis stories render', () => {
     expect(entries.map(([n]) => n).sort()).toEqual([
       'ContinuousVsTrading',
       'DailyMonths',
+      'DateStyleDaily',
+      'DateStyleIntraday',
+      'DateStylePanZoom',
       'HalfDay',
       'HolidayGap',
       'IntradaySessions',
@@ -90,7 +93,7 @@ describe('TimeAxisTicks (tick-ladder) stories render', () => {
       'ContinuousYear',
       'IntradayHourly',
       'IntradayThreeHour',
-      'MonthWeekly',
+      'MultiWeekDaily',
       'MultiYearNarrow',
       'MultiYearQuarterly',
       'QuarterDaily',

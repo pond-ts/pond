@@ -91,8 +91,11 @@ export interface ChartContainerProps {
    * this prop's identity changes, so memoize it — `const disc = useMemo(() =>
    * calendar.discontinuities(), [calendar])` — rather than calling
    * `.discontinuities()` inline in JSX, which would rebuild every render.
+   *
+   * Accepts an explicit `undefined` (a `cond ? provider : undefined` toggle
+   * under `exactOptionalPropertyTypes`), same as omitting it.
    */
-  discontinuities?: DiscontinuityProvider;
+  discontinuities?: DiscontinuityProvider | undefined;
   /**
    * The **high-level** sugar for {@link discontinuities}: a trading calendar the
    * container derives the provider from itself (`calendar.discontinuities({
@@ -115,6 +118,31 @@ export interface ChartContainerProps {
    * carries its own metric).
    */
   spacing?: 'proportional' | 'uniform';
+  /**
+   * Draw the reference gridlines behind the data. On a calendar (time) axis
+   * the verticals are the **full grain populations** — every day / month /
+   * aligned clock instant in view, each grain fading by its calendar density
+   * — not just the labelled ticks (the labels decorate the grid; they don't
+   * define it). **Default `true`.** Set `false` for a clean backdrop —
+   * session dividers (below) are independent and still draw when enabled.
+   */
+  grid?: boolean;
+  /**
+   * Where to draw **session dividers** — the solid verticals at a trading
+   * calendar's collapse **seams**: boundaries that removed (closed-market)
+   * time actually precedes, not every session roll (only with a
+   * `discontinuities` / `calendar` provider). On a real exchange calendar
+   * every session open follows an overnight gap, so seams = session opens; a
+   * calendar of contiguous full-day sessions has seams only where days were
+   * excised (the weekend). **Default `'none'`** — the hierarchical grid
+   * already marks the calendar structure at every zoom, so dividers are
+   * opt-in emphasis: `'all'` draws one at *every* seam in view (the
+   * TradingView session-separator look, crowding lines fading out),
+   * `'labeled'` only at seams the axis also labels. Dividers are independent
+   * of {@link grid} — `'all'` + `grid={false}` is the
+   * separators-on-a-clean-plot look.
+   */
+  sessionDividers?: 'labeled' | 'all' | 'none';
   /** Total width in CSS pixels (plot + axis gutters). */
   width: number;
   /** Vertical space between rows in CSS pixels (not under the axis). Default 0. */
@@ -376,6 +404,8 @@ export function ChartContainer({
   discontinuities,
   calendar,
   spacing,
+  grid = true,
+  sessionDividers = 'none',
   children,
 }: ChartContainerProps) {
   // The explicit base domain from `range` (a tuple or a TimeRange). `undefined`
@@ -918,6 +948,8 @@ export function ChartContainer({
       xScale,
       xKind: resolvedKind,
       discontinuities: xDiscontinuities,
+      grid,
+      sessionDividers,
       panZoom,
       minDuration,
       applyRange,
@@ -974,6 +1006,8 @@ export function ChartContainer({
       xScale,
       resolvedKind,
       xDiscontinuities,
+      grid,
+      sessionDividers,
       panZoom,
       minDuration,
       applyRange,

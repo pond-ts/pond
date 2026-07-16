@@ -87,16 +87,17 @@ regardless of which you render.
 
 ### `<XAxis>` props
 
-| Prop        | Type                                           | Default        | Purpose                                                                 |
-| ----------- | ---------------------------------------------- | -------------- | ----------------------------------------------------------------------- |
-| `side`      | `'top' \| 'bottom'`                            | `'bottom'`     | Which edge. Declaration order stacks multiple strips.                   |
-| `label`     | `string`                                       | —              | Centred axis title.                                                     |
-| `format`    | `AxisFormat`                                   | container's    | Tick/cursor formatting, resolved against the axis kind.                 |
-| `ticks`     | `ReadonlyArray<{ at: number; label: string }>` | auto           | Explicit ticks in axis-value units.                                     |
-| `transform` | `{ to(v): number; from(u): number }`           | —              | Relabel the **same scale** into a derived unit (a second tick layout).  |
-| `align`     | `'auto' \| 'center' \| 'right'`                | `'center'`     | Horizontal tick-label placement.                                        |
-| `color`     | `string`                                       | theme          | Tick / label / rule / title colour — the lever for a stacked dual axis. |
-| `height`    | `number`                                       | fit-to-content | Strip height in px.                                                     |
+| Prop        | Type                                           | Default        | Purpose                                                                                                                                                                                                 |
+| ----------- | ---------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `side`      | `'top' \| 'bottom'`                            | `'bottom'`     | Which edge. Declaration order stacks multiple strips.                                                                                                                                                   |
+| `label`     | `string`                                       | —              | Centred axis title.                                                                                                                                                                                     |
+| `format`    | `AxisFormat`                                   | container's    | Tick/cursor formatting, resolved against the axis kind.                                                                                                                                                 |
+| `ticks`     | `ReadonlyArray<{ at: number; label: string }>` | auto           | Explicit ticks in axis-value units.                                                                                                                                                                     |
+| `transform` | `{ to(v): number; from(u): number }`           | —              | Relabel the **same scale** into a derived unit (a second tick layout).                                                                                                                                  |
+| `align`     | `'auto' \| 'center' \| 'right'`                | `'center'`     | Horizontal tick-label placement.                                                                                                                                                                        |
+| `dateStyle` | `'flat' \| 'stacked'`                          | `'flat'`       | Time axis only: `flat` promotes date context inline on one row (the TradingView look); `stacked` uses a second boundary row. See [Trading-time axis](./trading-time-axis.mdx#what-changes-on-the-axis). |
+| `color`     | `string`                                       | theme          | Tick / label / rule / title colour — the lever for a stacked dual axis.                                                                                                                                 |
+| `height`    | `number`                                       | fit-to-content | Strip height in px.                                                                                                                                                                                     |
 
 ### Dual x-axes — `transform`
 

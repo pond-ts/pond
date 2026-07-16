@@ -5,6 +5,10 @@ on:
     branches:
       - main
   pull_request:
+  # Manual trigger — lets `verify` be run on demand (e.g. when push/PR event
+  # delivery is disrupted, as after the pond-ts/pond org transfer). Mirrors the
+  # workflow_dispatch the charts-e2e workflow already has.
+  workflow_dispatch:
 
 jobs:
   verify:

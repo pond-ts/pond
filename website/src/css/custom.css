@@ -42,10 +42,11 @@
   --pond-viz-mark: #c2790f; /* annotations — never a data hue */
   --pond-viz-up: #1f9d63; /* candle up/down — the conventional exception */
   --pond-viz-down: #d8473f;
-  /* muted @ 40%/65% opacity — computed to match docsTheme's axis.grid /
-     axis.sessionDivider exactly (see docs-theme.fixture.ts withAlpha) */
-  --pond-viz-grid: rgba(139, 163, 161, 0.4);
-  --pond-viz-divider: rgba(139, 163, 161, 0.65);
+  /* grid: muted @ 28%; divider: vizMark (the warm accent) @ 50% — computed
+     to match docsTheme's axis.grid / axis.sessionDivider exactly (see
+     docs-theme.fixture.ts withAlpha) */
+  --pond-viz-grid: rgba(139, 163, 161, 0.28);
+  --pond-viz-divider: rgba(194, 121, 15, 0.5);
 
   /* ---- site chrome (Infima), light ---- */
   --ifm-color-primary: #0e8f86;
@@ -101,8 +102,8 @@ html[data-theme='dark'] {
   --pond-viz-mark: #f2b94a;
   --pond-viz-up: #3ddc8f;
   --pond-viz-down: #ff6e68;
-  --pond-viz-grid: rgba(107, 129, 128, 0.4);
-  --pond-viz-divider: rgba(107, 129, 128, 0.65);
+  --pond-viz-grid: rgba(107, 129, 128, 0.28);
+  --pond-viz-divider: rgba(242, 185, 74, 0.5);
 
   /* ---- site chrome (Infima), dark ---- */
   --ifm-color-primary: #34d3c0;

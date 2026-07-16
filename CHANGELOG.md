@@ -45,6 +45,46 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts:** `<ChartContainer>` gains **`grid`** (default `true`) and
+  **`sessionDividers`** (`'labeled' | 'all' | 'none'`, default `'none'`).
+  On a calendar (time) axis the vertical gridlines are the **full grain
+  populations** — every day / month / aligned clock instant in view, not just
+  the thinned instants the labels chose (the labels decorate the grid; they
+  don't define it). Each grain fades as a unit by its **calendar density**
+  (nominal gap-free spacing: full ≥ 15 px, gone ≤ 5 px, quadratic), so
+  zooming out dissolves the fine grain into the coarser one — a map-style
+  hierarchical grid with no pop when the label algorithm switches rung — and
+  collapsing weekends draws _fewer_ day lines at the _same_ strength, not
+  wider-spaced lines that jump to full opacity. Session dividers are opt-in
+  emphasis over that grid, and draw only at true collapse **seams** —
+  boundaries that removed time actually precedes, not every session roll
+  (`'all'` = every seam, the TradingView separator look, crowding lines
+  fading out; `'labeled'` = only seams the axis also labels) — so a
+  `grid={false}` plot is actually clean by default and a contiguous-sessions
+  calendar seams only where days were excised. `TradingTimeScale` gains
+  **`gridLevels(minGapPx)`** (the nested per-grain populations + nominal
+  spacing behind it). In `'all'` mode, crowding session-divider lines fade on
+  a quadratic ramp (full ≥ 28 px apart, gone ≤ 6 px) so zooming out dissolves
+  them to a clean plot rather than a permanent gray wash.
+- **charts:** `<TimeAxis>` / `<XAxis>` gain a **`dateStyle`** prop
+  (`'flat' | 'stacked'`). `'flat'` — the new default — lays the date context
+  out on a **single row** the TradingView way: each tick that opens a coarser
+  calendar period is relabelled **inline** to it (the month at a month turn,
+  the year at a year turn, the date at a day turn under an intraday grain),
+  every other tick a terse label (`5`, `Feb`, `14:00`). `'stacked'` restores
+  the previous two-row layout (a `%b %d` / `%H:%M` major row plus a boundary
+  row carrying the coarser unit, with a pinned left-edge context).
+  `TradingTimeScale` gains `flatFormat(count)` (the single-row label lookup;
+  non-tick instants — the cursor readout — still read a full timestamp).
+  The **window edge is never ticked** unless it is a genuine grain anchor (a
+  true session open, or an instant exactly on the grain — a midnight at day
+  grain, a month start at month grain): a mid-period edge tick sat pinned at
+  x=0 relabelling itself as the window panned (a sticky `8` at half-spacing, a
+  `15:23` under an hour grain) — misleading, and not something TradingView
+  draws. The first real calendar anchor now leads the axis.
+
 ### Changed
 
 - **Docs hosting.** The documentation site has moved from GitHub Pages
@@ -53,6 +93,32 @@ and type-level changes; patch bumps are strictly additive.
   `pond-ts.org/storybook/` (via a small routing Worker, `workers/router/`),
   rather than nested into the docs build. Doc links in the README are repointed;
   the deploy workflow keeps the same `v*`-tag gate. See `MIGRATION.md`.
+- **charts:** the time axis now renders the **flat** single-row date style by
+  default (previously the two-row stacked layout). Every time chart — trading
+  or plain continuous, auto-rendered or explicit `<TimeAxis>` — picks this up.
+  Pass `dateStyle="stacked"` to keep the old two-row look. (An explicit
+  `format` / container `timeFormat`, a `transform`, or explicit `ticks` opt out
+  of both styles as before.)
+- **charts:** the time-axis tick ladder's sub-month density now thins each
+  month in **session-index space** — the reverse-engineered TradingView
+  algorithm, validated label-for-label against its output on the 2026 NYSE
+  calendar. Marks sit an equal number of _bars_ apart, so on a collapsed
+  trading axis they are **evenly spaced in pixels**, with no weekend snapping:
+  a month opening on a weekend anchors on its first session. Two regimes per
+  month: at dense zooms, a **uniform anchored stride** (the month's first
+  session, then every k-th, truncated so the gap to the next month label
+  stays ≥ the stride — the slack lands at the month end); at coarse zooms
+  (≤ 3 marks per month, where a truncated stride would leave a hole of up to
+  ~2 strides before the month label and each ±1 stride change would crawl the
+  labels), a **balanced division** — mid-month, then thirds — whose marks
+  hold still across every zoom that maps to the same density. Month / year
+  starts stay pinned at every zoom; pans never reshuffle marks (indices are
+  queried per full calendar month, never per window); a stub live-edge month
+  earns proportionally fewer marks. Without a calendar provider the same
+  scheme runs in day-of-month space. Replaces the old day → weekly ~7×
+  density cliff; the separate Monday-anchored week grain was removed — the
+  session-stride band covers everything between every-session and month
+  grain.
 
 ### Fixed
 

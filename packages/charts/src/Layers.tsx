@@ -16,7 +16,7 @@ import {
   type ReactNode,
 } from 'react';
 import { Canvas } from './Canvas.js';
-import { drawGrid, drawDividers, thinPixels } from './grid.js';
+import { drawGrid, drawDividers, dividerAlphas, thinPixels } from './grid.js';
 import { cursorParts, bandRect, regionSpan } from './tracker.js';
 import { resolveSelection } from './select.js';
 import {
@@ -40,9 +40,31 @@ import {
  *  container's shared `xTickCount` (as `<XAxis>` and `formatTime` do), which is
  *  width-derived on a trading-time axis. */
 const GRID_TICKS = 5;
-/** Minimum px between session dividers — thins dense collapse points (e.g. a
- *  daily chart where every candle is a new session) so the axis never crowds. */
+/** Minimum px between `'labeled'` session dividers — thins dense collapse
+ *  points (e.g. a daily chart where every candle is a new session) so the axis
+ *  never crowds. (`'all'` mode fades instead of thinning — see below.) */
 const MIN_DIVIDER_PX = 40;
+/** Calendar gridlines (one per day / month / aligned hour — the full grain
+ *  populations, `TradingTimeScale.gridLevels`) are full-strength while their
+ *  **nominal** spacing (`level.spacing` — calendar density, gap-free; NOT the
+ *  measured on-screen gaps, so hiding weekends doesn't brighten the grid) is
+ *  at least this — a day grain reaches full at a ~1.5-month window on a
+ *  default-width plot, in either mode. Dashed faint lines tolerate more
+ *  density than the solid session dividers, hence the tighter pair. */
+const GRID_LINE_FULL_PX = 15;
+/** …and fully faded once nominal spacing falls to this (the same quadratic
+ *  wash-aware ramp as the session lines — alpha `t²`, so total ink → 0).
+ *  Also the enumeration floor: a grain denser than this is skipped
+ *  outright. */
+const GRID_LINE_GONE_PX = 5;
+/** `'all'`-mode session lines are full-strength while spaced at least this
+ *  far apart (the ~1M-view session width on a default-width plot). */
+const SESSION_LINE_FULL_PX = 28;
+/** …and fully invisible once spacing falls to this — a smooth quadratic
+ *  falloff between the two, so nothing pops in/out as you pan/zoom (a hard
+ *  drop keyed to pixel clusters shifts phase with the window) and the plot
+ *  zooms out to *clean*, not to a gray wash (see `dividerAlphas`). */
+const SESSION_LINE_GONE_PX = 6;
 
 /** Wheel-zoom sensitivity: `factor = exp(deltaY * k)` (one ~100px notch ≈ ±15%). */
 const ZOOM_SENSITIVITY = 0.0015;
@@ -118,27 +140,117 @@ export function Layers({ children }: LayersProps) {
       // centre reads as noise; the bars are the structure.
       const xTickVals =
         container.xKind === 'category' ? [] : xScale.ticks(xTickCount);
-      const xTicks = xTickVals.map((d) => xScale(+d));
-      const yTicks = gridY
-        ? (explicitY ?? gridY.ticks(GRID_TICKS)).map((t) => gridY(t))
-        : [];
-      drawGrid(ctx, xTicks, yTicks, w, h, gridColor, gridDash);
+      // The reference grid — behind the data, opt-out via `grid={false}` for
+      // a clean backdrop (session dividers below stay independent of it).
+      if (container.grid) {
+        const yTicks = gridY
+          ? (explicitY ?? gridY.ticks(GRID_TICKS)).map((t) => gridY(t))
+          : [];
+        // On a calendar axis the verticals are the FULL grain populations —
+        // every day in the month, every month in the year, every aligned
+        // clock instant — not just the thinned instants the labels chose:
+        // the labels decorate the grid, they don't define it. Each grain
+        // fades AS A UNIT by its **nominal** (gap-free, calendar-density)
+        // spacing — `level.spacing`, the same wash-aware quadratic ramp as
+        // the session lines — so zooming out dissolves the fine grain into
+        // the coarser one instead of popping when the label algorithm
+        // switches rung, and collapsing weekends draws *fewer* day lines at
+        // the *same* strength (not wider-spaced lines that jump to full —
+        // the owner's same-zoom, different-weight complaint). Levels nest,
+        // so walk coarsest→finest and let the first (widest-spaced,
+        // strongest) claim shared anchors — a month start draws once, at
+        // month strength, never dimmed by the day crowd around it.
+        const levels =
+          container.xKind === 'time' && 'gridLevels' in xScale
+            ? xScale.gridLevels(GRID_LINE_GONE_PX)
+            : [];
+        if (levels.length > 0) {
+          const xs: number[] = [];
+          const alphas: number[] = [];
+          const claimed = new Set<number>();
+          for (let i = levels.length - 1; i >= 0; i--) {
+            const { values, spacing } = levels[i]!;
+            const t = Math.max(
+              0,
+              Math.min(
+                1,
+                (spacing - GRID_LINE_GONE_PX) /
+                  (GRID_LINE_FULL_PX - GRID_LINE_GONE_PX),
+              ),
+            );
+            const alpha = t * t;
+            if (alpha <= 0.02) continue;
+            for (const v of values) {
+              if (claimed.has(v)) continue;
+              claimed.add(v);
+              xs.push(xScale(v));
+              alphas.push(alpha);
+            }
+          }
+          drawGrid(ctx, xs, yTicks, w, h, gridColor, gridDash, alphas);
+        } else {
+          // Value axis / no-calendar provider: verticals at the labelled
+          // ticks, the pre-hierarchical behavior.
+          const xTicks = xTickVals.map((d) => xScale(+d));
+          drawGrid(ctx, xTicks, yTicks, w, h, gridColor, gridDash);
+        }
+      }
       // Session dividers: solid verticals at the trading calendar's collapse
-      // points (session/day opens), where closed time was removed from the axis.
-      // Draw them at the axis ticks that are collapse points — the same
-      // calendar-coarsened instants the axis labels — so a divider sits under
-      // each date/month/year label, not at every session (which crowds).
+      // SEAMS — where closed time was actually removed from the axis. Opt-in
+      // emphasis over the grid (default 'none' — the grid's grain populations
+      // already mark the calendar): `'all'` draws one at every seam in view
+      // (the TradingView separator look, crowding lines fading out);
+      // `'labeled'` only at the axis ticks that are seams.
       const disc = container.discontinuities;
-      if (disc?.boundaries) {
+      if (disc?.boundaries && container.sessionDividers !== 'none') {
         const [d0, d1] = container.timeRange;
         // Call as a method (not a detached reference) so a class-based provider
         // whose `boundaries` reads `this` keeps its receiver.
-        const collapse = new Set(disc.boundaries(d0, d1));
-        const bx = xTickVals
-          .filter((t) => collapse.has(+t))
-          .map((t) => xScale(+t));
+        //
+        // `boundaries` is the provider's session ROSTER — the tick ladder and
+        // the grid consume every session open as a date anchor. A divider,
+        // though, marks removed time, and a roster entry that no gap precedes
+        // (a demo calendar's contiguous 24h weekday "sessions", a seamless
+        // session roll) is roster structure, not a seam — the owner's "why
+        // session lines on every day when only weekends are removed?"
+        // (2026-07-16). Keep exactly the true seams: `b` is one iff the
+        // instant just before it has zero live width. For a real exchange
+        // calendar every open follows an overnight gap, so this keeps all.
+        //
+        // Test `<= 0`, not a positive tolerance: a collapsed gap makes
+        // `distance(b-1, b)` **exactly** 0 (both instants map to the same live
+        // position), so no epsilon is needed — and a positive tolerance is
+        // **unit-dependent**. Under `spacing: 'uniform'` distance is measured
+        // in session-units, where a contiguous (non-seam) boundary reads a
+        // tiny fraction (`1 / sessionMs`) that a `< 0.5` test would misread as
+        // a seam. Exact zero matches the semantic contract in either spacing,
+        // and agrees with the same probe in `buildTicks` (Codex review, #479).
+        const seams = disc
+          .boundaries(d0, d1)
+          .filter((b) => disc.distance(b - 1, b) <= 0);
+        const marks =
+          container.sessionDividers === 'all'
+            ? seams
+            : ((): number[] => {
+                const collapse = new Set(seams);
+                return xTickVals.map((v) => +v).filter((t) => collapse.has(t));
+              })();
+        const bx = marks.map((t) => xScale(t));
         const dividerColor = container.theme.axis.sessionDivider ?? gridColor;
-        drawDividers(ctx, thinPixels(bx, MIN_DIVIDER_PX), h, dividerColor);
+        if (container.sessionDividers === 'all') {
+          // Draw every boundary — no thinning (dropping a phase-dependent
+          // subset makes lines jump as the window slides). Crowding lines fade
+          // instead, so density falls off smoothly toward a clean plot.
+          drawDividers(
+            ctx,
+            bx,
+            h,
+            dividerColor,
+            dividerAlphas(bx, SESSION_LINE_GONE_PX, SESSION_LINE_FULL_PX),
+          );
+        } else {
+          drawDividers(ctx, thinPixels(bx, MIN_DIVIDER_PX), h, dividerColor);
+        }
       }
       for (const entry of layers) {
         const yScale = yScales.get(entry.axisId ?? defaultAxisId);
