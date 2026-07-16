@@ -16,7 +16,7 @@ import {
   type ReactNode,
 } from 'react';
 import { Canvas } from './Canvas.js';
-import { drawGrid, drawDividers, thinPixels } from './grid.js';
+import { drawGrid, drawDividers, dividerAlphas, thinPixels } from './grid.js';
 import { cursorParts, bandRect, regionSpan } from './tracker.js';
 import { resolveSelection } from './select.js';
 import {
@@ -40,9 +40,14 @@ import {
  *  container's shared `xTickCount` (as `<XAxis>` and `formatTime` do), which is
  *  width-derived on a trading-time axis. */
 const GRID_TICKS = 5;
-/** Minimum px between session dividers — thins dense collapse points (e.g. a
- *  daily chart where every candle is a new session) so the axis never crowds. */
+/** Minimum px between `'labeled'` session dividers — thins dense collapse
+ *  points (e.g. a daily chart where every candle is a new session) so the axis
+ *  never crowds. (`'all'` mode fades instead of thinning — see below.) */
 const MIN_DIVIDER_PX = 40;
+/** `'all'`-mode session lines fade to invisible as their spacing drops below
+ *  this — a smooth density falloff, so nothing pops in/out as you pan/zoom
+ *  (a hard drop keyed to pixel clusters shifts phase with the window). */
+const SESSION_LINE_FADE_PX = 6;
 
 /** Wheel-zoom sensitivity: `factor = exp(deltaY * k)` (one ~100px notch ≈ ±15%). */
 const ZOOM_SENSITIVITY = 0.0015;
@@ -149,7 +154,20 @@ export function Layers({ children }: LayersProps) {
               })();
         const bx = marks.map((t) => xScale(t));
         const dividerColor = container.theme.axis.sessionDivider ?? gridColor;
-        drawDividers(ctx, thinPixels(bx, MIN_DIVIDER_PX), h, dividerColor);
+        if (container.sessionDividers === 'all') {
+          // Draw every boundary — no thinning (dropping a phase-dependent
+          // subset makes lines jump as the window slides). Crowding lines fade
+          // instead, so density falls off smoothly toward a clean plot.
+          drawDividers(
+            ctx,
+            bx,
+            h,
+            dividerColor,
+            dividerAlphas(bx, SESSION_LINE_FADE_PX),
+          );
+        } else {
+          drawDividers(ctx, thinPixels(bx, MIN_DIVIDER_PX), h, dividerColor);
+        }
       }
       for (const entry of layers) {
         const yScale = yScales.get(entry.axisId ?? defaultAxisId);

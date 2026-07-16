@@ -247,9 +247,12 @@ describe('ChartContainer discontinuities → trading-time axis', () => {
           c.args[0] === dividerColor,
       );
       if (i < 0) return 0;
+      // Count divider lines from the divider-colour set until drawDividers'
+      // `restore` — one `moveTo` per line. ('labeled' draws one path; 'all'
+      // draws a path per line for per-line fade — both counted the same way.)
       let n = 0;
       for (let j = i + 1; j < calls.length; j++) {
-        if (calls[j]!.name === 'stroke') break;
+        if (calls[j]!.name === 'restore') break;
         if (calls[j]!.name === 'moveTo') n++;
       }
       return n;

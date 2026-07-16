@@ -440,37 +440,55 @@ const isWeekday = (t: number): boolean => {
   return dow !== 0 && dow !== 6;
 };
 
+const midnightOf = (t: number): number => {
+  const d = new Date(t);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+};
+
 /**
  * A weekend-excising {@link DiscontinuityProvider} for the checker toggle:
- * Mon–Fri are live full-day sessions, Sat+Sun collapse. O(1) fixed-ms week
- * math anchored at {@link PANZOOM_START} (a local-midnight Monday) — cheap
- * enough for per-point scale calls, at the cost of the excision edge drifting
- * an hour off local midnight across a DST week (a demo simplification; real
- * calendars come from `@pond-ts/financial`). `boundaries` reports weekday
- * local midnights Date-stepped (DST-correct) — the session opens the ladder
- * anchors on.
+ * Mon–Fri are live full-day sessions, Sat+Sun collapse. **Calendar-day
+ * aligned** — live position is `(whole weekdays before this day) + (time into
+ * the day)`, both anchored to *local midnight* — so sessions sit exactly on
+ * local days with no drift (an earlier fixed-ms-week version drifted an hour
+ * off midnight across DST, which put tick marks inside the collapsed weekend
+ * and piled their date labels on the seam). O(1) via the closed-form weekday
+ * count; DST-robust through `Math.round` on the day index. A demo stand-in —
+ * real calendars come from `@pond-ts/financial`.
  */
 function weekendSkip(): DiscontinuityProvider {
-  const WEEK = 7 * DAY;
-  const WORK = 5 * DAY;
-  const liveMs = (t: number): number => {
-    const dt = t - PANZOOM_START;
-    const w = Math.floor(dt / WEEK);
-    return w * WORK + Math.min(dt - w * WEEK, WORK);
+  // Signed day index from PANZOOM_START (a local-midnight Monday).
+  const dayIndex = (t: number): number =>
+    Math.round((midnightOf(t) - PANZOOM_START) / DAY);
+  // Mon–Fri days in [0, di) — closed form (di may be negative).
+  const weekdaysBefore = (di: number): number => {
+    const w = Math.floor(di / 7);
+    return w * 5 + Math.min(di - w * 7, 5);
   };
-  const weekOf = (t: number): number => Math.floor((t - PANZOOM_START) / WEEK);
-  const inWeekend = (t: number): boolean =>
-    t - PANZOOM_START - weekOf(t) * WEEK >= WORK;
+  const liveMs = (t: number): number => {
+    const base = weekdaysBefore(dayIndex(t)) * DAY;
+    return isWeekday(t) ? base + (t - midnightOf(t)) : base;
+  };
+  const stepToWeekday = (t: number, dir: 1 | -1): number => {
+    let d = new Date(midnightOf(t));
+    do {
+      d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + dir);
+    } while (!isWeekday(d.getTime()));
+    return d.getTime();
+  };
   const self: DiscontinuityProvider = {
     distance: (from, to) => liveMs(to) - liveMs(from),
     offset: (v, amount) => {
       const live = liveMs(v) + amount;
-      const w = Math.floor(live / WORK);
-      return PANZOOM_START + w * WEEK + (live - w * WORK);
+      const ld = Math.floor(live / DAY); // whole live weekdays
+      const weeks = Math.floor(ld / 5);
+      const calDi = weeks * 7 + (ld - weeks * 5); // → calendar day index
+      return PANZOOM_START + calDi * DAY + (live - ld * DAY);
     },
-    clampUp: (t) => (inWeekend(t) ? PANZOOM_START + (weekOf(t) + 1) * WEEK : t),
+    // Weekend → forward to next Monday open / back to Friday's close (= Sat 00:00).
+    clampUp: (t) => (isWeekday(t) ? t : stepToWeekday(t, 1)),
     clampDown: (t) =>
-      inWeekend(t) ? PANZOOM_START + weekOf(t) * WEEK + WORK : t,
+      isWeekday(t) ? t : midnightOf(stepToWeekday(t, -1)) + DAY,
     copy: () => self,
     boundaries: (from, to) => {
       const out: number[] = [];
