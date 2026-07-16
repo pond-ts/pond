@@ -93,7 +93,7 @@ describe('TimeAxisTicks (tick-ladder) stories render', () => {
       'ContinuousYear',
       'IntradayHourly',
       'IntradayThreeHour',
-      'MonthWeekly',
+      'MultiWeekDaily',
       'MultiYearNarrow',
       'MultiYearQuarterly',
       'QuarterDaily',

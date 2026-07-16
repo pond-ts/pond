@@ -149,9 +149,10 @@ describe('scaleTradingTime', () => {
     const s = scaleTradingTime(daily)
       .domain([start, start + 90 * DAY])
       .range([0, 1200]);
-    const ticks = s.ticks(6);
+    // A tight cap of 4 → each month is down to one mark → month grain.
+    const ticks = s.ticks(4);
     // Three calendar months spanned → about three ticks (never the ~90 sessions).
-    expect(ticks.length).toBeLessThanOrEqual(6);
+    expect(ticks.length).toBeLessThanOrEqual(4);
     expect(ticks.length).toBeGreaterThanOrEqual(3);
     // Each tick is the first session of a distinct local month.
     const months = ticks.map((t) => new Date(t).getMonth());
@@ -359,29 +360,24 @@ describe('coarsenCalendar', () => {
     });
   });
 
-  it('steps to week grain — one tick per Monday-anchored week', () => {
-    // 6 weeks of opens, count 6 → week grain: the day count (42) and even the
-    // round-day thinning (~9 at every-5th) overflow the cap, but the 6
-    // Monday-anchored weeks fit exactly.
+  it('divides the month over ~6 weeks of daily opens (day grain, month pinned)', () => {
+    // 6 weeks of daily opens, count 6 → the day band: still day grain, dividing
+    // each month into near-even marks. There is no week rung; the month start
+    // in range (Feb 01) is pinned as a mark.
     const sixWeeks = daily.slice(0, 42);
     const { ticks, granularity } = coarsenCalendar(sixWeeks, 6);
-    expect(granularity).toBe('week');
-    // First tick is the run's start; each subsequent is a new local week.
-    expect(ticks[0]).toBe(sixWeeks[0]);
-    const weekOf = (t: number) => {
-      const d = new Date(t);
-      const dow = (d.getDay() + 6) % 7;
-      return new Date(
-        d.getFullYear(),
-        d.getMonth(),
-        d.getDate() - dow,
-      ).getTime();
-    };
-    expect(new Set(ticks.map(weekOf)).size).toBe(ticks.length);
+    expect(granularity).toBe('day');
+    expect(ticks.some((t) => new Date(t).getDate() === 1)).toBe(true);
+    // Real thinning — consecutive gaps are multiple days, not every open.
+    const gaps = ticks
+      .slice(1)
+      .map((t, i) => Math.round((t - ticks[i]!) / DAY));
+    expect(Math.min(...gaps)).toBeGreaterThan(1);
   });
 
   it('steps to month grain over a quarter of daily opens', () => {
-    const { ticks, granularity } = coarsenCalendar(daily.slice(0, 90), 6);
+    // A tight cap of 4 → each month down to one mark → month grain.
+    const { ticks, granularity } = coarsenCalendar(daily.slice(0, 90), 4);
     expect(granularity).toBe('month');
     const months = ticks.map((t) => new Date(t).getMonth());
     expect(new Set(months).size).toBe(months.length); // distinct months

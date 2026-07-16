@@ -22,8 +22,10 @@ import { docsTheme } from './docs-theme.fixture.js';
 
 /**
  * The logical tick ladder, walked rung by rung — one story per grain
- * (hours → days → weeks → months → quarters → years), each at a span/width
- * that naturally lands on it, plus narrow variants proving the grain coarsens
+ * (hours → days → months → quarters → years; the day grain also thins by
+ * per-month even division before reaching month grain — there is no separate
+ * week rung), each at a span/width that naturally lands on it, plus narrow
+ * variants proving the grain coarsens
  * (never crowds) as room shrinks. Every story pins `dateStyle="stacked"` to
  * show the **two-tier** labels: the first row at the tick grain, the second
  * (boundary) row carrying the coarser context the first row omits — the date
@@ -126,9 +128,11 @@ export const IntradayThreeHour = tradingStory(3, WIDTH, 30);
  *  session (`%b %d`), the year on the boundary row once. */
 export const WeekDaily = tradingDailyStory(5, 420);
 
-/** ~6 trading weeks at a narrow width → **week** grain: Monday-anchored
- *  dates, the year on the boundary row. */
-export const MonthWeekly = tradingDailyStory(28, 420);
+/** ~6 trading weeks at a narrow width → still **day** grain, thinned by
+ *  per-month even division: a handful of near-evenly-spaced dates with the
+ *  month start pinned, the year on the boundary row. (There is no separate
+ *  week grain — the day band owns everything down to month grain.) */
+export const MultiWeekDaily = tradingDailyStory(28, 420);
 
 /** ~3 trading months of dailies → **month** grain: bare month names, the
  *  year underneath at the first tick (and again only if it turns). */

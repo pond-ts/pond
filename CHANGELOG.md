@@ -66,6 +66,15 @@ and type-level changes; patch bumps are strictly additive.
   Pass `dateStyle="stacked"` to keep the old two-row look. (An explicit
   `format` / container `timeFormat`, a `transform`, or explicit `ticks` opt out
   of both styles as before.)
+- **charts:** the time-axis tick ladder's sub-month density now **divides each
+  month into evenly-spaced marks with the month start pinned** to its true
+  instant, instead of jumping day → weekly (a ~7× density cliff on a small
+  zoom) or snapping to round day-of-month numbers. Marks stay put as you pan
+  (spacing derives from the domain span, not the fluctuating visible-open
+  count) and month/year labels no longer drift relative to the data across a
+  zoom. The separate Monday-anchored week grain was removed — the day band now
+  covers everything between every-session and month grain (it has the same
+  can't-pin-the-month behaviour a week rung would).
 
 ### Fixed
 

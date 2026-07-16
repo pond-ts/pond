@@ -124,61 +124,70 @@ function firstOfEachBucket(
 }
 
 const COARSENING_LADDER: readonly TickGranularity[] = [
-  'week',
   'month',
   'quarter',
   'year',
 ];
 
-/** The coarsest even day-stride (every 6th day ≈ weekly). Beyond it the
- *  Monday-anchored week rung takes over. The finer strides (every 2nd…6th day)
- *  fill the gap between labelling *every* session and weekly, so density
- *  degrades gently instead of cliffing ~7× straight to weekly (12 daily ticks →
- *  2), which reads as the axis breaking on a small zoom. */
-const MAX_DAY_STRIDE = 6;
+/** Nominal days per month — used only to decide when a month still earns ≥ ~2
+ *  marks (so the day band applies) vs when it's down to one (month grain). */
+const DAYS_PER_MONTH = 30.44;
 
-/** A stable per-local-day integer (days since the epoch, in local time) — the
- *  anchor for even day striding. Stable across pan/zoom: a day's index never
- *  depends on the visible window, so strided marks scroll *with* the data
- *  instead of crawling/reshuffling as the domain slides (the flicker that
- *  striding by position in the `opens` array would cause). */
-function localDayIndex(t: number): number {
-  const d = new Date(t);
-  return Math.round(
-    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 86_400_000,
-  );
+/** Days in the local month containing `d`. */
+function daysInLocalMonth(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
 }
 
-/** Thin `opens` to every `stride`-th **day** by absolute day-index — an evenly
- *  spaced run (exactly uniform in pixels on a continuous axis; uniform in
- *  day-index, so ≈uniform, on a gappy session axis), labelled by whatever date
- *  lands under each mark rather than snapped to round day numbers. Still day
- *  grain: the month / year are promoted at their turns by {@link flatFormats} /
- *  {@link boundaryTicks} on the first mark of each new period. */
-function everyNthDay(opens: readonly number[], stride: number): number[] {
-  return opens.filter((t) => localDayIndex(t) % stride === 0);
+/**
+ * Thin `opens` by dividing **each local month** into marks spaced ≈`gapDays`
+ * apart, starting at the 1st. So the month start is **always** kept — pinned to
+ * its true instant (never drifting as the stride changes with zoom) and
+ * promoted to the month / year by {@link flatFormats} — and the interior marks
+ * split the month into equal parts. Per-month division (rather than one global
+ * day-stride) is what pins the boundaries: a uniform day-grid can't land on
+ * every 28–31-day month start, so it would either drift the month label or
+ * bunch marks against it. `round(i·L/div)` distributes the day rounding so the
+ * gap into the next month stays ≈`gapDays` too (no cramped cluster). Stable
+ * across pan: a day's membership depends only on its date and `gapDays` (from
+ * the domain span), never on the window.
+ */
+function divideMonths(opens: readonly number[], gapDays: number): number[] {
+  return opens.filter((t) => {
+    const d = new Date(t);
+    const L = daysInLocalMonth(d);
+    const div = Math.max(1, Math.round(L / gapDays));
+    const dom = d.getDate();
+    for (let i = 0; i < div; i++) {
+      if (Math.round((i * L) / div) + 1 === dom) return true;
+    }
+    return false;
+  });
 }
 
 /**
  * Thin an ascending run of **session opens** down to about `count` axis ticks.
- * Picks the finest rung that yields at most `count` ticks: every session →
- * every 2nd…6th day (evenly spaced, still day grain) → week → month → quarter →
- * year; beyond yearly it decimates every-nth so the axis never crowds. Exported
- * so the container can draw session dividers at the same instants the axis
- * labels.
+ * Picks the finest rung: every session → **per-month even division** (still day
+ * grain, month starts pinned) → month → quarter → year; beyond yearly it
+ * decimates every-nth so the axis never crowds. Exported so the container can
+ * draw session dividers at the same instants the axis labels.
  *
- * The even day-stride rungs exist to kill a density **cliff**: without them the
- * day count first exceeding the cap dropped straight to weekly — a 7× collapse
- * (12 daily ticks → 2) that looked like the axis breaking on a small zoom. They
- * space marks uniformly (not snapped to round day-of-month numbers, which
- * bunched unevenly around month starts); the day / month / year under each mark
- * is whatever the label reads.
+ * The day band divides each month into ≈`count/months` marks rather than
+ * labelling every session — filling the gap to month grain gently (no ~7×
+ * cliff to a bare few ticks). Marks are spaced ≈evenly (`gapDays` from the
+ * domain span, so a pan never reshuffles them) while the **month / year starts
+ * stay pinned to their true instants** (they don't drift as the density
+ * changes with zoom). A uniform global day-grid was rejected precisely because
+ * it can't do both — it drifts the month label or bunches marks at the
+ * boundary. There is deliberately no week rung: a Monday-anchored week has the
+ * same can't-pin-the-month drift, so the day band owns everything between
+ * every-session and month grain.
  *
- * `count` is a **cap**, not a target: grains jump by 4–12× up the ladder, so a
- * small fixed count over-coarsens long spans (a mid-year-anchored 12-month daily
- * run spans 6 quarter buckets — capped at 5 it collapses to year grain, 2
- * ticks). Callers size the cap to the room the labels have — the container
- * derives it from plot width — rather than passing a small constant.
+ * `count` is a **cap**, not a target: coarser grains jump by 3–4× (month →
+ * quarter → year), so a small fixed count over-coarsens long spans. Callers
+ * size the cap to the room the labels have — the container derives it from plot
+ * width — rather than passing a small constant. `spanDays` is the domain's
+ * calendar-day span from the caller (stable at a fixed zoom); absent (a direct
+ * call), it falls back to the opens' own span.
  *
  * This is the day-and-coarser half of the ladder; {@link buildTicks} adds the
  * sub-day rungs.
@@ -189,26 +198,16 @@ export function coarsenCalendar(
   spanDays?: number,
 ): { ticks: number[]; granularity: TickGranularity } {
   if (opens.length <= count) return { ticks: [...opens], granularity: 'day' };
-  // Between every-day and weekly, thin to an even day-stride (still day grain)
-  // so density degrades gently instead of cliffing ~7× to weekly.
-  //
-  // The stride is `ceil(days / count)` — derived from the calendar-day **span**,
-  // NOT the enumerated open count. The open count wobbles ±1 as a pan slides
-  // the window past a day boundary, and a stride chosen from it would flip
-  // (`/5 ↔ /6`) on that wobble, reshuffling every mark. The span is constant at
-  // a fixed zoom, so the stride — and the absolute-day-index marks it selects —
-  // stay put while panning. `spanDays` is the domain span from the caller;
-  // absent (a direct call), fall back to the opens' own span.
-  //
-  // Only when the opens are actually daily-dense (avg gap ≤ ~2 days, as real
-  // session opens always are): sparser anchors (a synthetic run of month / year
-  // starts) have no days to stride and belong on the calendar-bucket ladder.
+  // Per-month even division — used only while a nominal month still earns ≥ ~2
+  // marks (`gapDays ≲ 20`); coarser than that a month is down to one mark, which
+  // *is* month grain, handled by the bucket ladder below. Gated to daily-dense
+  // opens: a synthetic run of month/year starts has no days to divide.
   const openSpanDays =
     (opens[opens.length - 1]! - opens[0]!) / DAY_MS || Infinity;
   const dailyDense = opens.length >= 0.5 * openSpanDays;
-  const stride = Math.ceil((spanDays ?? openSpanDays) / count);
-  if (dailyDense && stride >= 2 && stride <= MAX_DAY_STRIDE) {
-    const ticks = everyNthDay(opens, stride);
+  const gapDays = (spanDays ?? openSpanDays) / count;
+  if (dailyDense && DAYS_PER_MONTH / gapDays >= 1.5) {
+    const ticks = divideMonths(opens, gapDays);
     if (ticks.length > 0) return { ticks, granularity: 'day' };
   }
   for (const g of COARSENING_LADDER) {
@@ -274,8 +273,8 @@ function stepAnchors(
 /**
  * The full-ladder grain selection: given the provider, the domain, and the
  * width-derived `cap`, walk the clock rungs (1s … 30s, 1m … 30m, 1h … 12h)
- * then day → week → month → quarter → year (then decimate) and return the
- * first rung that fits.
+ * then day (thinned by per-month even division) → month → quarter → year
+ * (then decimate) and return the first rung that fits.
  * `opens` are the session-open anchors (`[domain start, ...boundaries]`) the
  * caller already has. Sub-day rungs are only reachable when the opens
  * themselves fit — a year of daily sessions never wastes time generating hour

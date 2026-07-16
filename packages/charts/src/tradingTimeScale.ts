@@ -60,8 +60,9 @@ export interface TradingCalendarLike {
  * wherever the container's `xScale` goes.
  *
  * Ticks are **calendar-aware** when the provider enumerates its gaps: `.ticks`
- * walks the logical ladder (hour1 → hour3 → hour6 → hour12 → day → week →
- * month → quarter → year) and returns the finest rung that fits `count`, and
+ * walks the logical ladder (hour1 → hour3 → hour6 → hour12 → day → month →
+ * quarter → year; the day rung also thins by per-month even division before
+ * month grain) and returns the finest rung that fits `count`, and
  * `.tickFormat` labels each anchor at that grain (`%H:%M` for hours, `%b %d`
  * for days/weeks, `%b` for months/quarters, `%Y` for years) while formatting
  * any other instant (the cursor readout) with the d3 multi-scale default. The

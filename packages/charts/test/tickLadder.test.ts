@@ -82,7 +82,10 @@ function grainOf(
     ...prov.boundaries!(segments[0]![0], domainEnd),
   ];
   const { ticks, granularity } = buildTicks(prov, opens, domainEnd, cap);
-  expect(ticks.length).toBeLessThanOrEqual(Math.max(cap, 1));
+  // The cap is soft for the per-month day band: pinning every month start and
+  // dividing evenly can land a couple of extra marks over partial end months
+  // (still ≈one-per-pixel-slot). Bucket grains stay strictly within the cap.
+  expect(ticks.length).toBeLessThanOrEqual(Math.max(cap, 1) + 2);
   expect(ticks).toEqual([...ticks].sort((a, b) => a - b));
   return { granularity, count: ticks.length };
 }
@@ -104,36 +107,35 @@ describe('buildTicks — the grain matrix over (span, cap)', () => {
     expect(grainOf(week, 12).granularity).toBe('hour6');
   });
 
-  it('a month of sessions thins to an even day-stride, not a cliff to weekly', () => {
-    // 28 contiguous days over a cap of 8: the day count exceeds the cap, but
-    // rather than dropping ~7× straight to weekly (the old density cliff), it
-    // thins to an evenly spaced day-stride — still day grain, ~cap ticks, with
-    // a single uniform gap between marks (no round-number bias).
-    const month = dailySessions(d0, 28);
+  it('a month of sessions thins by per-month division, not a cliff to weekly', () => {
+    // 28 contiguous days from a Feb 1 start over a cap of 8: the day count
+    // exceeds the cap, but rather than dropping ~7× straight to a bare few ticks
+    // (the old density cliff), it divides the month into ≈cap near-even marks —
+    // still day grain, the month start pinned, gaps within ±1 day of each other.
+    const feb = new Date(2026, 1, 1).getTime();
+    const month = dailySessions(feb, 28);
     const { granularity, count } = grainOf(month, 8);
     expect(granularity).toBe('day');
     expect(count).toBeGreaterThan(4); // not the 4-tick weekly collapse
-    expect(count).toBeLessThanOrEqual(8);
     const prov = segmentProvider(month);
-    const opens = [
-      month[0]![0],
-      ...prov.boundaries!(month[0]![0], month[27]![1]),
-    ];
+    const opens = [feb, ...prov.boundaries!(feb, month[27]![1])];
     const ticks = buildTicks(prov, opens, month[27]![1], 8).ticks;
-    // Uniform spacing: every consecutive gap is the same whole number of days.
+    // The month start (Feb 1) is pinned as a mark.
+    expect(ticks.some((t) => new Date(t).getDate() === 1)).toBe(true);
+    // Near-even: consecutive gaps differ by at most a day.
     const DAY_MS = 24 * H;
     const gaps = ticks
       .slice(1)
       .map((t, i) => Math.round((t - ticks[i]!) / DAY_MS));
-    expect(new Set(gaps).size).toBe(1);
-    expect(gaps[0]).toBeGreaterThan(1); // actually thinned, not every day
+    expect(Math.max(...gaps) - Math.min(...gaps)).toBeLessThanOrEqual(1);
+    expect(Math.min(...gaps)).toBeGreaterThan(1); // actually thinned
   });
 
-  it('a longer run still reaches week grain once the day-stride overflows', () => {
-    // ~8 weeks of daily sessions at a cap of 8: even the coarsest day-stride
-    // (every 6th) exceeds the cap, so it falls through to weekly.
-    const eightWeeks = dailySessions(d0, 56);
-    expect(grainOf(eightWeeks, 8).granularity).toBe('week');
+  it('a longer run coarsens to month grain once a month is down to one mark', () => {
+    // ~6.5 months of daily sessions at a cap of 8: each month would earn < ~1.5
+    // marks, so the day band yields to month grain (one tick per month start).
+    const halfYear = dailySessions(d0, 200);
+    expect(grainOf(halfYear, 8).granularity).toBe('month');
   });
 
   it('a year of sessions coarsens to months', () => {
@@ -289,35 +291,34 @@ describe('grain stability under a sliding live window', () => {
     expect(ticks.length).toBeLessThanOrEqual(10);
   });
 
-  it('the day-stride is fixed and its marks never reshuffle across a pan', () => {
-    // Panning a fixed-span day-grain window must not flip the stride (e.g.
-    // /5 ↔ /6) as the enumerated open count wobbles ±1 at the edges — that flip
-    // reshuffles every mark. The stride comes from the (constant) span, and the
-    // marks sit on absolute day-index multiples, so interior marks stay on the
-    // same instants at every phase; only the edges gain/lose one.
+  it('day-band marks are pinned and never reshuffle across a pan', () => {
+    // Panning a fixed-span day-grain window must not shift where the marks land:
+    // the month start stays pinned to its true instant (the "Feb moved in time"
+    // bug), and the interior marks — derived from the constant span, not the
+    // wobbling open count — stay on the same days as the window slides.
     const prov = identityProvider();
-    const span = 48 * DAY;
-    const base = new Date(2026, 2, 14).getTime();
-    const strides = new Set<number>();
-    const lattice = new Set<number>();
+    const span = 40 * DAY; // straddles Feb 1
+    const base = new Date(2026, 0, 15).getTime();
+    const feb1 = new Date(2026, 1, 1).getTime();
+    const marks = new Set<number>();
     for (let slide = 0; slide < 48; slide++) {
       const from = base + slide * (DAY / 24); // pan 1 hour per step
       const to = from + span;
       const opens = [from, ...prov.boundaries!(from, to)];
       const ticks = buildTicks(prov, opens, to, 11).ticks;
-      const gaps = ticks
-        .slice(1)
-        .map((t, i) => Math.round((t - ticks[i]!) / DAY));
-      for (const g of gaps) strides.add(g);
-      // Every mark sits on the same day-index residue class mod the stride —
-      // the fixed lattice. A stride flip (or index-based striding) would land
-      // marks on a different residue, so more than one class here = a reshuffle.
-      for (const t of ticks) lattice.add(Math.round(t / DAY) % 5);
+      // Feb 1 is in view at every phase and is always exactly a mark — the
+      // month start is pinned, it never drifts (the "Feb moved in time" bug).
+      expect(ticks).toContain(feb1);
+      // Pool the interior marks — drop the two edges (the domain-start tick
+      // sits at a fractional time and the last one scrolls in/out).
+      for (const t of ticks.slice(1, -1)) marks.add(Math.round(t / DAY));
     }
-    // One uniform gap, the same at every phase (no /5↔/6 flip).
-    expect([...strides]).toEqual([5]);
-    // All marks, at all 48 pan phases, on one fixed lattice — no reshuffle.
-    expect(lattice.size).toBe(1);
+    // No reshuffle: pooling every interior mark seen across all 48 pan phases,
+    // no two land closer than a gap apart. A stride flip / index-based striding
+    // would drop marks on new in-between days, leaving a sub-gap of 1–2.
+    const days = [...marks].sort((a, b) => a - b);
+    const gaps = days.slice(1).map((d, i) => d - days[i]!);
+    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(3);
   });
 });
 
@@ -574,21 +575,23 @@ describe('coarsenCalendar (day-and-coarser compat surface)', () => {
     });
   });
 
-  it('thins to an even day-stride before weekly (the anti-cliff rungs)', () => {
-    // 40 consecutive days over a cap of 10: too many for every-day, but an even
-    // day-stride keeps it at day grain instead of collapsing to weekly — and
-    // the marks are uniformly spaced, not snapped to round day numbers.
+  it('divides each month into near-even marks before month grain (anti-cliff)', () => {
+    // 40 consecutive days from Jan 1 over a cap of 10: too many for every-day,
+    // but per-month division keeps it at day grain (not a collapse to a few
+    // ticks). Jan 01 and Feb 01 are pinned; the gaps are near-even, not snapped
+    // to round day numbers.
     const start = new Date(2026, 0, 1).getTime();
     const opens = Array.from({ length: 40 }, (_, i) => start + i * DAY);
     const { ticks, granularity } = coarsenCalendar(opens, 10);
     expect(granularity).toBe('day');
-    expect(ticks.length).toBeGreaterThan(4); // denser than the weekly collapse
-    expect(ticks.length).toBeLessThanOrEqual(10);
-    // One uniform gap between every consecutive mark (even spacing).
+    expect(ticks.length).toBeGreaterThan(4); // denser than a bucket collapse
+    // Both month starts in range are pinned as marks.
+    expect(ticks.filter((t) => new Date(t).getDate() === 1)).toHaveLength(2);
+    // Near-even: consecutive gaps differ by at most a day, and are real thinning.
     const gaps = ticks
       .slice(1)
       .map((t, i) => Math.round((t - ticks[i]!) / DAY));
-    expect(new Set(gaps).size).toBe(1);
-    expect(gaps[0]).toBeGreaterThan(1);
+    expect(Math.max(...gaps) - Math.min(...gaps)).toBeLessThanOrEqual(1);
+    expect(Math.min(...gaps)).toBeGreaterThan(1);
   });
 });

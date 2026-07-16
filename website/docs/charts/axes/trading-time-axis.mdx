@@ -82,8 +82,9 @@ All three are **time-axis only** — they're ignored on a value or category axis
 ## What changes on the axis
 
 - **Gaps collapse.** Closed-market spans have zero pixel width; the axis walks
-  a session-aware tick ladder (hour → day → week → … → year) rather than raw
-  wall-clock ticks.
+  a session-aware tick ladder (hour → day → month → quarter → year, with the
+  day grain thinned by per-month even division) rather than raw wall-clock
+  ticks.
 - **Inline date context (the `dateStyle` prop).** By default (`dateStyle="flat"`)
   the axis is a **single row** the TradingView way: each tick that opens a
   coarser calendar period is relabelled **inline** to it — the month at a month
