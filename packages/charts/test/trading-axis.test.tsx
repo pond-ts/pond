@@ -408,6 +408,92 @@ describe('ChartContainer discontinuities → trading-time axis', () => {
     }
   });
 
+  it('seam test is exact (<= 0), not a positive tolerance — a uniform provider does not false-seam a contiguous roster boundary', () => {
+    // Codex review (#479): the seam filter must test `distance(b-1,b) <= 0`,
+    // not `< 0.5`. Under uniform spacing, distance is session-units, so a
+    // *contiguous* roster boundary reads a tiny fraction (1/sessionMs) — a
+    // `< 0.5` test would misread it as a removed-time seam and draw a false
+    // divider. This provider reports BOTH a contiguous open (D, no gap before)
+    // and a true seam (3D, gap [2D,3D) removed); only the seam may divide.
+    const D = 24 * 3_600_000;
+    const uniform: DiscontinuityProvider = (() => {
+      // Session-unit live space: S0 [0,D), S1 [D,2D) contiguous, S2 [3D,4D)
+      // after a removed gap. Each session is one unit wide.
+      const liveMs = (t: number): number => {
+        if (t <= 0) return 0;
+        if (t < D) return t / D;
+        if (t < 2 * D) return 1 + (t - D) / D;
+        if (t < 3 * D) return 2; // in the removed gap → clamps to S1 end
+        if (t < 4 * D) return 2 + (t - 3 * D) / D;
+        return 3;
+      };
+      const instantFor = (L: number): number => {
+        if (L <= 0) return 0;
+        if (L < 1) return L * D;
+        if (L < 2) return D + (L - 1) * D;
+        if (L < 3) return 3 * D + (L - 2) * D;
+        return 4 * D;
+      };
+      const self: DiscontinuityProvider = {
+        distance: (a, b) => liveMs(b) - liveMs(a),
+        offset: (v, amt) => instantFor(liveMs(v) + amt),
+        clampUp: (t) => t,
+        clampDown: (t) => t,
+        copy: () => self,
+        boundaries: () => [D, 3 * D], // the full roster: contiguous open + seam
+      };
+      return self;
+    })();
+    const px = new TimeSeries({
+      name: 's',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number' },
+      ] as const,
+      rows: [
+        [D / 2, 1],
+        [1.5 * D, 2],
+        [3.5 * D, 1],
+      ] as [number, number][],
+    });
+    const stub = stubCanvasContext();
+    try {
+      render(
+        <ChartContainer
+          range={[0, 4 * D]}
+          width={600}
+          discontinuities={uniform}
+          sessionDividers="all"
+          showAxis={false}
+        >
+          <ChartRow height={120}>
+            <YAxis id="a" min={0} max={3} />
+            <Layers>
+              <LineChart series={px} column="v" axis="a" />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>,
+      );
+      const dividerColor = defaultTheme.axis.sessionDivider!;
+      const i = stub.calls.findIndex(
+        (c) =>
+          c.type === 'set' &&
+          c.name === 'strokeStyle' &&
+          c.args[0] === dividerColor,
+      );
+      let n = 0;
+      for (let j = i + 1; i >= 0 && j < stub.calls.length; j++) {
+        if (stub.calls[j]!.name === 'restore') break;
+        if (stub.calls[j]!.name === 'moveTo') n++;
+      }
+      // Only 3D (the true seam) divides; the contiguous D boundary does not.
+      // With the old `< 0.5` tolerance this was 2.
+      expect(n).toBe(1);
+    } finally {
+      stub.restore();
+    }
+  });
+
   it('draws a session divider at each boundary (strokes the divider color)', () => {
     const schema = [
       { name: 'time', kind: 'time' },

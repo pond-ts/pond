@@ -216,9 +216,18 @@ export function Layers({ children }: LayersProps) {
         // (2026-07-16). Keep exactly the true seams: `b` is one iff the
         // instant just before it has zero live width. For a real exchange
         // calendar every open follows an overnight gap, so this keeps all.
+        //
+        // Test `<= 0`, not a positive tolerance: a collapsed gap makes
+        // `distance(b-1, b)` **exactly** 0 (both instants map to the same live
+        // position), so no epsilon is needed — and a positive tolerance is
+        // **unit-dependent**. Under `spacing: 'uniform'` distance is measured
+        // in session-units, where a contiguous (non-seam) boundary reads a
+        // tiny fraction (`1 / sessionMs`) that a `< 0.5` test would misread as
+        // a seam. Exact zero matches the semantic contract in either spacing,
+        // and agrees with the same probe in `buildTicks` (Codex review, #479).
         const seams = disc
           .boundaries(d0, d1)
-          .filter((b) => disc.distance(b - 1, b) < 0.5);
+          .filter((b) => disc.distance(b - 1, b) <= 0);
         const marks =
           container.sessionDividers === 'all'
             ? seams

@@ -487,6 +487,16 @@ export function nominalStepMs(g: TickGranularity): number {
  * as {@link nextAligned}) on the sub-day rungs. The window-edge genuineness
  * test in {@link buildTicks} — the only way a **continuous** axis's edge tick
  * survives, since a gap-free provider has no dead time to probe.
+ *
+ * The sub-day test shares {@link nextAligned}'s **fixed-elapsed-ms** rung
+ * convention **by design** — so an edge tick is judged aligned iff it is one
+ * of the instants {@link stepAnchors} would actually generate. On the two DST
+ * transition days a wall-clock `03:00` is then *not* "aligned" to `hour3`
+ * (only 2h elapsed since midnight) while `04:00` is — the same drift the
+ * anchors themselves take, and the already-deferred exchange-tz grain
+ * refinement (see `nextAligned`), not a fresh inconsistency. It only decides
+ * whether the *window-edge* tick is kept on those days — nil practical impact
+ * (Codex review, #479).
  */
 function alignedToGrain(t: number, g: TickGranularity): boolean {
   const d = new Date(t);

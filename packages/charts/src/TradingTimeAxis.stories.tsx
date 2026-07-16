@@ -456,8 +456,15 @@ const midnightOf = (t: number): number => {
  * local days with no drift (an earlier fixed-ms-week version drifted an hour
  * off midnight across DST, which put tick marks inside the collapsed weekend
  * and piled their date labels on the seam). O(1) via the closed-form weekday
- * count; DST-robust through `Math.round` on the day index. A demo stand-in —
- * real calendars come from `@pond-ts/financial`.
+ * count; DST-robust through `Math.round` on the day index.
+ *
+ * A demo stand-in — real calendars come from `@pond-ts/financial`. It assumes
+ * a fixed 24h per weekday, so it only fully inverts (`offset` ∘ `distance`)
+ * when DST transitions fall inside the excised Sat/Sun — true for US/EU zones
+ * (Sunday transitions) but not, e.g., `Asia/Jerusalem`, whose Friday
+ * spring-forward is a 23h *live* day the fixed bucket can't represent (Codex
+ * review, #479). A real trading calendar measures each session's true
+ * duration and has no such assumption; this fixture isn't the place to.
  */
 function weekendSkip(): DiscontinuityProvider {
   // Signed day index from PANZOOM_START (a local-midnight Monday).
