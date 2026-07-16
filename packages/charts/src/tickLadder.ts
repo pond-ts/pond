@@ -47,6 +47,7 @@ export type TickGranularity =
 const SEC_MS = 1_000;
 const MIN_MS = 60_000;
 const HOUR_MS = 3_600_000;
+const DAY_MS = 86_400_000;
 
 /** The sub-day rungs, finest first, with their clock step — the 1/5/15/30
  *  second and minute steps terminals use, then the hour steps. */
@@ -185,23 +186,30 @@ function everyNthDay(opens: readonly number[], stride: number): number[] {
 export function coarsenCalendar(
   opens: readonly number[],
   count: number,
+  spanDays?: number,
 ): { ticks: number[]; granularity: TickGranularity } {
   if (opens.length <= count) return { ticks: [...opens], granularity: 'day' };
   // Between every-day and weekly, thin to an even day-stride (still day grain)
-  // so density degrades gently instead of cliffing ~7× to weekly. Finest stride
-  // that fits wins — uniform spacing, no round-number bias. Only when the opens
-  // are actually daily-dense (avg gap ≤ ~2 days, as real session opens always
-  // are): sparser anchors (a synthetic run of month/year starts) have no days
-  // to stride and belong on the calendar-bucket ladder below.
-  const spanDays =
-    (opens[opens.length - 1]! - opens[0]!) / 86_400_000 || Infinity;
-  if (opens.length >= 0.5 * spanDays) {
-    for (let stride = 2; stride <= MAX_DAY_STRIDE; stride++) {
-      const ticks = everyNthDay(opens, stride);
-      if (ticks.length > 0 && ticks.length <= count) {
-        return { ticks, granularity: 'day' };
-      }
-    }
+  // so density degrades gently instead of cliffing ~7× to weekly.
+  //
+  // The stride is `ceil(days / count)` — derived from the calendar-day **span**,
+  // NOT the enumerated open count. The open count wobbles ±1 as a pan slides
+  // the window past a day boundary, and a stride chosen from it would flip
+  // (`/5 ↔ /6`) on that wobble, reshuffling every mark. The span is constant at
+  // a fixed zoom, so the stride — and the absolute-day-index marks it selects —
+  // stay put while panning. `spanDays` is the domain span from the caller;
+  // absent (a direct call), fall back to the opens' own span.
+  //
+  // Only when the opens are actually daily-dense (avg gap ≤ ~2 days, as real
+  // session opens always are): sparser anchors (a synthetic run of month / year
+  // starts) have no days to stride and belong on the calendar-bucket ladder.
+  const openSpanDays =
+    (opens[opens.length - 1]! - opens[0]!) / DAY_MS || Infinity;
+  const dailyDense = opens.length >= 0.5 * openSpanDays;
+  const stride = Math.ceil((spanDays ?? openSpanDays) / count);
+  if (dailyDense && stride >= 2 && stride <= MAX_DAY_STRIDE) {
+    const ticks = everyNthDay(opens, stride);
+    if (ticks.length > 0) return { ticks, granularity: 'day' };
   }
   for (const g of COARSENING_LADDER) {
     const ticks = firstOfEachBucket(opens, g);
@@ -315,7 +323,11 @@ export function buildTicks(
       }
       return { ticks: [...opens], granularity: 'day' };
     }
-    return coarsenCalendar(opens, cap);
+    // Pass the domain's **calendar-day span** (wall time, domain start → end)
+    // so the day-stride is picked from a quantity that's constant at a fixed
+    // zoom — panning slides the window but never changes it, so the marks stay
+    // put instead of reshuffling when the enumerated open count wobbles ±1.
+    return coarsenCalendar(opens, cap, (domainEnd - opens[0]!) / DAY_MS);
   })();
   // Round anchors to integer milliseconds: a pan/zoom domain comes from
   // `scale.invert(pixel)` and is fractional, and a fractional anchor breaks

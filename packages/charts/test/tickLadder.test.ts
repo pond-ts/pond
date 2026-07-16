@@ -288,6 +288,37 @@ describe('grain stability under a sliding live window', () => {
     expect(ticks.length).toBeGreaterThanOrEqual(8);
     expect(ticks.length).toBeLessThanOrEqual(10);
   });
+
+  it('the day-stride is fixed and its marks never reshuffle across a pan', () => {
+    // Panning a fixed-span day-grain window must not flip the stride (e.g.
+    // /5 ↔ /6) as the enumerated open count wobbles ±1 at the edges — that flip
+    // reshuffles every mark. The stride comes from the (constant) span, and the
+    // marks sit on absolute day-index multiples, so interior marks stay on the
+    // same instants at every phase; only the edges gain/lose one.
+    const prov = identityProvider();
+    const span = 48 * DAY;
+    const base = new Date(2026, 2, 14).getTime();
+    const strides = new Set<number>();
+    const lattice = new Set<number>();
+    for (let slide = 0; slide < 48; slide++) {
+      const from = base + slide * (DAY / 24); // pan 1 hour per step
+      const to = from + span;
+      const opens = [from, ...prov.boundaries!(from, to)];
+      const ticks = buildTicks(prov, opens, to, 11).ticks;
+      const gaps = ticks
+        .slice(1)
+        .map((t, i) => Math.round((t - ticks[i]!) / DAY));
+      for (const g of gaps) strides.add(g);
+      // Every mark sits on the same day-index residue class mod the stride —
+      // the fixed lattice. A stride flip (or index-based striding) would land
+      // marks on a different residue, so more than one class here = a reshuffle.
+      for (const t of ticks) lattice.add(Math.round(t / DAY) % 5);
+    }
+    // One uniform gap, the same at every phase (no /5↔/6 flip).
+    expect([...strides]).toEqual([5]);
+    // All marks, at all 48 pan phases, on one fixed lattice — no reshuffle.
+    expect(lattice.size).toBe(1);
+  });
 });
 
 describe('near-cap multi-session enumeration (the #465 truncation edge)', () => {
