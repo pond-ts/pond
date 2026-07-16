@@ -104,11 +104,11 @@ describe('buildTicks — the grain matrix over (span, cap)', () => {
     expect(grainOf(week, 12).granularity).toBe('hour6');
   });
 
-  it('a month of sessions thins to round days-of-month, not a cliff to weekly', () => {
-    // 28 days over a cap of 8: the day count exceeds the cap, but rather than
-    // dropping ~7× straight to weekly (the old density cliff), it thins to
-    // round days-of-month — still day grain, ~cap ticks. Every tick is a 1st
-    // or a multiple of 5.
+  it('a month of sessions thins to an even day-stride, not a cliff to weekly', () => {
+    // 28 contiguous days over a cap of 8: the day count exceeds the cap, but
+    // rather than dropping ~7× straight to weekly (the old density cliff), it
+    // thins to an evenly spaced day-stride — still day grain, ~cap ticks, with
+    // a single uniform gap between marks (no round-number bias).
     const month = dailySessions(d0, 28);
     const { granularity, count } = grainOf(month, 8);
     expect(granularity).toBe('day');
@@ -119,15 +119,19 @@ describe('buildTicks — the grain matrix over (span, cap)', () => {
       month[0]![0],
       ...prov.boundaries!(month[0]![0], month[27]![1]),
     ];
-    for (const t of buildTicks(prov, opens, month[27]![1], 8).ticks) {
-      const dom = new Date(t).getDate();
-      expect(dom === 1 || dom % 5 === 0).toBe(true);
-    }
+    const ticks = buildTicks(prov, opens, month[27]![1], 8).ticks;
+    // Uniform spacing: every consecutive gap is the same whole number of days.
+    const DAY_MS = 24 * H;
+    const gaps = ticks
+      .slice(1)
+      .map((t, i) => Math.round((t - ticks[i]!) / DAY_MS));
+    expect(new Set(gaps).size).toBe(1);
+    expect(gaps[0]).toBeGreaterThan(1); // actually thinned, not every day
   });
 
-  it('a longer run still reaches week grain once round-days overflow', () => {
-    // ~8 weeks of daily sessions at a cap of 8: even the coarsest day-of-month
-    // step (every 5th) exceeds the cap, so it falls through to weekly.
+  it('a longer run still reaches week grain once the day-stride overflows', () => {
+    // ~8 weeks of daily sessions at a cap of 8: even the coarsest day-stride
+    // (every 6th) exceeds the cap, so it falls through to weekly.
     const eightWeeks = dailySessions(d0, 56);
     expect(grainOf(eightWeeks, 8).granularity).toBe('week');
   });
@@ -539,19 +543,21 @@ describe('coarsenCalendar (day-and-coarser compat surface)', () => {
     });
   });
 
-  it('thins to round days-of-month before weekly (the anti-cliff rungs)', () => {
-    // 40 consecutive days over a cap of 10: too many for every-day, but the
-    // round-day thinning keeps it at day grain instead of collapsing to weekly.
+  it('thins to an even day-stride before weekly (the anti-cliff rungs)', () => {
+    // 40 consecutive days over a cap of 10: too many for every-day, but an even
+    // day-stride keeps it at day grain instead of collapsing to weekly — and
+    // the marks are uniformly spaced, not snapped to round day numbers.
     const start = new Date(2026, 0, 1).getTime();
     const opens = Array.from({ length: 40 }, (_, i) => start + i * DAY);
     const { ticks, granularity } = coarsenCalendar(opens, 10);
     expect(granularity).toBe('day');
     expect(ticks.length).toBeGreaterThan(4); // denser than the weekly collapse
     expect(ticks.length).toBeLessThanOrEqual(10);
-    // Every labelled day is a 1st or a multiple of 5 (5 10 15 20 25 …).
-    for (const t of ticks) {
-      const d = new Date(t).getDate();
-      expect(d === 1 || d % 5 === 0).toBe(true);
-    }
+    // One uniform gap between every consecutive mark (even spacing).
+    const gaps = ticks
+      .slice(1)
+      .map((t, i) => Math.round((t - ticks[i]!) / DAY));
+    expect(new Set(gaps).size).toBe(1);
+    expect(gaps[0]).toBeGreaterThan(1);
   });
 });

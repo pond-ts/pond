@@ -129,37 +129,49 @@ const COARSENING_LADDER: readonly TickGranularity[] = [
   'year',
 ];
 
-/** Day-of-month "round day" thinning steps, finest first — the intermediate
- *  rungs between labelling *every* session and jumping to weekly. Without them
- *  the day count first exceeding the cap cliffs ~7× straight to weekly (12 daily
- *  ticks → 2), which reads as the axis breaking on a small zoom. */
-const DAY_OF_MONTH_STEPS: readonly number[] = [2, 5];
+/** The coarsest even day-stride (every 6th day ≈ weekly). Beyond it the
+ *  Monday-anchored week rung takes over. The finer strides (every 2nd…6th day)
+ *  fill the gap between labelling *every* session and weekly, so density
+ *  degrades gently instead of cliffing ~7× straight to weekly (12 daily ticks →
+ *  2), which reads as the axis breaking on a small zoom. */
+const MAX_DAY_STRIDE = 6;
 
-/** The opens whose local day-of-month is the 1st (a month start) or a multiple
- *  of `step` — the "mark at round days" habit (`5 10 15 20 25`, plus the month
- *  start). Still day grain: labels stay bare day-of-month with the month / year
- *  promoted at their turns, so this only changes *which* days are labelled, not
- *  how. */
-function everyNthDayOfMonth(opens: readonly number[], step: number): number[] {
-  return opens.filter((t) => {
-    const d = new Date(t).getDate();
-    return d === 1 || d % step === 0;
-  });
+/** A stable per-local-day integer (days since the epoch, in local time) — the
+ *  anchor for even day striding. Stable across pan/zoom: a day's index never
+ *  depends on the visible window, so strided marks scroll *with* the data
+ *  instead of crawling/reshuffling as the domain slides (the flicker that
+ *  striding by position in the `opens` array would cause). */
+function localDayIndex(t: number): number {
+  const d = new Date(t);
+  return Math.round(
+    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 86_400_000,
+  );
+}
+
+/** Thin `opens` to every `stride`-th **day** by absolute day-index — an evenly
+ *  spaced run (exactly uniform in pixels on a continuous axis; uniform in
+ *  day-index, so ≈uniform, on a gappy session axis), labelled by whatever date
+ *  lands under each mark rather than snapped to round day numbers. Still day
+ *  grain: the month / year are promoted at their turns by {@link flatFormats} /
+ *  {@link boundaryTicks} on the first mark of each new period. */
+function everyNthDay(opens: readonly number[], stride: number): number[] {
+  return opens.filter((t) => localDayIndex(t) % stride === 0);
 }
 
 /**
- * Thin an ascending run of **session opens** down to about `count` axis ticks by
- * **calendar grain** — the trading-terminal habit of labelling round-day / week /
- * month / year starts rather than an arbitrary every-nth session. Picks the
- * finest rung that yields at most `count` ticks: every session → every-other /
- * every-fifth day-of-month (the `5 10 15` fill, still day grain) → week → month
- * → quarter → year; beyond yearly it decimates every-nth so the axis never
- * crowds. Exported so the container can draw session dividers at the same
- * instants the axis labels.
+ * Thin an ascending run of **session opens** down to about `count` axis ticks.
+ * Picks the finest rung that yields at most `count` ticks: every session →
+ * every 2nd…6th day (evenly spaced, still day grain) → week → month → quarter →
+ * year; beyond yearly it decimates every-nth so the axis never crowds. Exported
+ * so the container can draw session dividers at the same instants the axis
+ * labels.
  *
- * The day-of-month rungs exist to kill a density **cliff**: without them the day
- * count first exceeding the cap dropped straight to weekly — a 7× collapse (12
- * daily ticks → 2) that looked like the axis breaking on a small zoom.
+ * The even day-stride rungs exist to kill a density **cliff**: without them the
+ * day count first exceeding the cap dropped straight to weekly — a 7× collapse
+ * (12 daily ticks → 2) that looked like the axis breaking on a small zoom. They
+ * space marks uniformly (not snapped to round day-of-month numbers, which
+ * bunched unevenly around month starts); the day / month / year under each mark
+ * is whatever the label reads.
  *
  * `count` is a **cap**, not a target: grains jump by 4–12× up the ladder, so a
  * small fixed count over-coarsens long spans (a mid-year-anchored 12-month daily
@@ -175,12 +187,20 @@ export function coarsenCalendar(
   count: number,
 ): { ticks: number[]; granularity: TickGranularity } {
   if (opens.length <= count) return { ticks: [...opens], granularity: 'day' };
-  // Between every-day and weekly, thin to round days-of-month (still day grain)
-  // so density degrades gently instead of cliffing ~7× to weekly.
-  for (const step of DAY_OF_MONTH_STEPS) {
-    const ticks = everyNthDayOfMonth(opens, step);
-    if (ticks.length > 0 && ticks.length <= count) {
-      return { ticks, granularity: 'day' };
+  // Between every-day and weekly, thin to an even day-stride (still day grain)
+  // so density degrades gently instead of cliffing ~7× to weekly. Finest stride
+  // that fits wins — uniform spacing, no round-number bias. Only when the opens
+  // are actually daily-dense (avg gap ≤ ~2 days, as real session opens always
+  // are): sparser anchors (a synthetic run of month/year starts) have no days
+  // to stride and belong on the calendar-bucket ladder below.
+  const spanDays =
+    (opens[opens.length - 1]! - opens[0]!) / 86_400_000 || Infinity;
+  if (opens.length >= 0.5 * spanDays) {
+    for (let stride = 2; stride <= MAX_DAY_STRIDE; stride++) {
+      const ticks = everyNthDay(opens, stride);
+      if (ticks.length > 0 && ticks.length <= count) {
+        return { ticks, granularity: 'day' };
+      }
     }
   }
   for (const g of COARSENING_LADDER) {
