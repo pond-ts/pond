@@ -151,26 +151,43 @@ describe('buildTicks — the grain matrix over (span, cap)', () => {
     const opens = [first, ...prov.boundaries!(first, domainEnd)];
     const day = (t: number) =>
       `${new Date(t).getMonth() + 1}/${new Date(t).getDate()}`;
-    // Cap 8 → each month's start + its session-midpoint: every 10th session,
-    // which on a 5-day week means Mondays two weeks apart.
+    // Cap 8 → stride 6 affords only m=3 whole intervals per 20-session month,
+    // so the coarse regime divides each month into balanced thirds (session
+    // indices 0/7/13) — no truncation hole before the next month label, and
+    // the marks hold still across every stride that maps to m=3.
     const at8 = buildTicks(prov, opens, domainEnd, 8);
     expect(at8.granularity).toBe('day');
-    expect(at8.ticks.map(day)).toEqual(['1/5', '1/19', '2/2', '2/16']);
-    // Cap 16 → one level deeper: the quarter points appear BETWEEN the marks
-    // above, which all survive unchanged (nesting) — every 5th session, all
-    // Mondays.
+    expect(at8.ticks.map(day)).toEqual([
+      '1/5',
+      '1/14',
+      '1/22',
+      '2/2',
+      '2/11',
+      '2/19',
+    ]);
+    // Cap 16 → stride 3 (zooming steps the stride through the integers; the
+    // month anchors are pinned, interior marks re-space — the decoded
+    // TradingView behaviour, deliberately not nested).
     const at16 = buildTicks(prov, opens, domainEnd, 16);
     expect(at16.ticks.map(day)).toEqual([
       '1/5',
-      '1/12',
-      '1/19',
+      '1/8',
+      '1/13',
+      '1/16',
+      '1/21',
       '1/26',
       '2/2',
-      '2/9',
-      '2/16',
+      '2/5',
+      '2/10',
+      '2/13',
+      '2/18',
       '2/23',
     ]);
-    for (const t of at8.ticks) expect(at16.ticks).toContain(t);
+    // Month anchors (each month's first session) are pinned at every zoom.
+    for (const anchor of ['1/5', '2/2']) {
+      expect(at8.ticks.map(day)).toContain(anchor);
+      expect(at16.ticks.map(day)).toContain(anchor);
+    }
   });
 
   it('a longer run coarsens to month grain once a month is down to one mark', () => {
@@ -623,45 +640,52 @@ describe('coarsenCalendar (day-and-coarser compat surface)', () => {
     });
   });
 
-  it('subdivides each month by midpoint halving before month grain (anti-cliff)', () => {
-    // 40 consecutive days from Jan 1 over a cap of 10: too many for every-day,
-    // but per-month subdivision keeps it at day grain (not a collapse to a few
-    // ticks). Jan 01 and Feb 01 are pinned; interior marks sit on the dyadic
-    // midpoints (near-even gaps), not on round day numbers.
+  it('strides each month uniformly before month grain (anti-cliff, slack at end)', () => {
+    // 40 consecutive days from Jan 1 over a cap of 10 → stride 4: too many for
+    // every-day, but the per-month stride keeps it at day grain (not a
+    // collapse to a few ticks). Jan 01 and Feb 01 are pinned; interior gaps
+    // are perfectly uniform, and the one irregular gap is the month-END slack
+    // (Jan 25 → Feb 1 = 7 ≥ the stride) — never a cramped tick before the
+    // month label.
     const start = new Date(2026, 0, 1).getTime();
     const opens = Array.from({ length: 40 }, (_, i) => start + i * DAY);
     const { ticks, granularity } = coarsenCalendar(opens, 10);
     expect(granularity).toBe('day');
-    expect(ticks.length).toBeGreaterThan(4); // denser than a bucket collapse
-    // Both month starts in range are pinned as marks.
-    expect(ticks.filter((t) => new Date(t).getDate() === 1)).toHaveLength(2);
-    // Near-even: consecutive gaps differ by at most a day, and are real thinning.
+    expect(ticks.map((t) => new Date(t).getDate())).toEqual([
+      1, 5, 9, 13, 17, 21, 25, 1, 5, 9,
+    ]);
     const gaps = ticks
       .slice(1)
       .map((t, i) => Math.round((t - ticks[i]!) / DAY));
-    expect(Math.max(...gaps) - Math.min(...gaps)).toBeLessThanOrEqual(1);
-    expect(Math.min(...gaps)).toBeGreaterThan(1);
+    // Uniform stride everywhere except the single month-end slack gap, which
+    // is the maximum.
+    expect(gaps).toEqual([4, 4, 4, 4, 4, 4, 7, 4, 4]);
   });
 
-  it('zoom levels NEST: zooming in only inserts marks between the existing ones', () => {
-    // The TradingView subdivision behaviour: at each zoom-in the mark set gains
-    // in-between days but every surviving mark is the SAME day — first the
-    // month starts + midpoints, then the quarter points between those, and so
-    // on. Growing the cap over a fixed window must therefore produce nested
-    // tick sets (no relocation, no reshuffle — the survivors are identical).
+  it('zooming re-densifies; month anchors pinned; no coarse-level hole', () => {
+    // Zooming steps the density; interior marks may re-space (the decoded
+    // TradingView behaviour — a ~one-bar change, not a reshuffle) while the
+    // month starts never move. At the coarsest level (≤3 marks per month) the
+    // month is divided into balanced parts, so there is no giant truncation
+    // hole before the next month label.
     const start = new Date(2026, 0, 15).getTime();
     const opens = Array.from({ length: 40 }, (_, i) => start + i * DAY);
     const feb1 = new Date(2026, 1, 1).getTime();
-    let prev: number[] | null = null;
+    let prevLen = 0;
     for (const count of [5, 10, 20]) {
       const { ticks, granularity } = coarsenCalendar(opens, count, 40);
       expect(granularity).toBe('day');
-      expect(ticks).toContain(feb1); // the month start pinned at every depth
-      if (prev !== null) {
-        for (const t of prev) expect(ticks).toContain(t); // nesting
-        expect(ticks.length).toBeGreaterThan(prev.length); // and real gain
-      }
-      prev = ticks;
+      expect(ticks).toContain(feb1); // the month start pinned at every level
+      expect(ticks.length).toBeGreaterThan(prevLen); // real density gain
+      prevLen = ticks.length;
     }
+    // The coarsest level divides each month into balanced thirds: every gap
+    // within a whole calendar month is near-equal — no `17 ……… Apr` hole.
+    const coarse = coarsenCalendar(opens, 5, 40).ticks;
+    expect(coarse.map((t) => new Date(t).getDate())).toEqual([22, 1, 10, 20]);
+    const gaps = coarse
+      .slice(1)
+      .map((t, i) => Math.round((t - coarse[i]!) / DAY));
+    expect(Math.max(...gaps) - Math.min(...gaps)).toBeLessThanOrEqual(1);
   });
 });

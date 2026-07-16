@@ -272,7 +272,16 @@ export function scaleTradingTime(
     const defFmt = base.tickFormat(count);
     if (!hasCalendar()) return (value: number) => defFmt(new Date(value));
     const { ticks, granularity } = resolved(count);
-    const specs = flatFormats(ticks, granularity, domain[0]);
+    // Seed the promotion walk from the previous **live** instant before the
+    // domain start (clampDown; identity on a continuous axis): a domain that
+    // opens exactly on a month's first session then promotes that tick to the
+    // month (`apr 8 14 …`, not `1 8 14 …`) — the previous session was in
+    // March — while a mid-session start still suppresses the false promotion.
+    const specs = flatFormats(
+      ticks,
+      granularity,
+      provider.clampDown(domain[0] - 1),
+    );
     // One d3 formatter per distinct specifier; most ticks share the base one.
     const bySpec = new Map<string, (d: Date) => string>();
     const fmtFor = (spec: string) => {

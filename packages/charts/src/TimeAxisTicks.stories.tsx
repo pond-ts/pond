@@ -23,7 +23,7 @@ import { docsTheme } from './docs-theme.fixture.js';
 /**
  * The logical tick ladder, walked rung by rung — one story per grain
  * (hours → days → months → quarters → years; the day grain also thins by
- * per-month midpoint subdivision before reaching month grain — there is no
+ * a per-month uniform session stride before reaching month grain — there is no
  * separate week rung), each at a span/width that naturally lands on it, plus
  * narrow variants proving the grain coarsens
  * (never crowds) as room shrinks. Every story pins `dateStyle="stacked"` to
@@ -129,7 +129,7 @@ export const IntradayThreeHour = tradingStory(3, WIDTH, 30);
 export const WeekDaily = tradingDailyStory(5, 420);
 
 /** ~6 trading weeks at a narrow width → still **day** grain, thinned by
- *  per-month midpoint subdivision in **session-index** space: marks an equal
+ *  a per-month uniform stride in **session-index** space: marks an equal
  *  number of sessions apart (evenly spaced pixels — Mondays, on a weekday
  *  calendar), anchored at each month's first session, the year on the
  *  boundary row. (There is no separate week grain — the subdivision band owns

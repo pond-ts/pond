@@ -66,23 +66,26 @@ and type-level changes; patch bumps are strictly additive.
   Pass `dateStyle="stacked"` to keep the old two-row look. (An explicit
   `format` / container `timeFormat`, a `transform`, or explicit `ticks` opt out
   of both styles as before.)
-- **charts:** the time-axis tick ladder's sub-month density now **subdivides
-  each month by midpoint halving in session-index space** — month start → +
-  midpoint (`May … 16 … Jun`) → + quarter points (`May 8 16 24 Jun`) → … →
-  every session — the TradingView behaviour. Marks sit an equal number of
-  _bars_ apart, so on a collapsed trading axis they are **evenly spaced in
-  pixels** (a weekday calendar marks e.g. every 10th session — Mondays — at
-  identical pixel gaps), with no weekend snapping: a month opening on a
-  weekend anchors on its first session. Zoom levels **nest**: zooming in only
-  inserts marks between the ones already shown (and zooming out removes the
-  in-between level), so the surviving labels are the same numbers at every
-  zoom; month / year starts stay pinned; pans never reshuffle the marks
-  (indices are queried per full calendar month, never per window). Each month
-  subdivides at a depth from its own calendar extent, so a stub live-edge
-  month earns proportionally fewer marks. Without a calendar provider the
-  subdivision falls back to day-of-month space. Replaces the old day → weekly
-  ~7× density cliff; the separate Monday-anchored week grain was removed — the
-  subdivision band covers everything between every-session and month grain.
+- **charts:** the time-axis tick ladder's sub-month density now thins each
+  month in **session-index space** — the reverse-engineered TradingView
+  algorithm, validated label-for-label against its output on the 2026 NYSE
+  calendar. Marks sit an equal number of _bars_ apart, so on a collapsed
+  trading axis they are **evenly spaced in pixels**, with no weekend snapping:
+  a month opening on a weekend anchors on its first session. Two regimes per
+  month: at dense zooms, a **uniform anchored stride** (the month's first
+  session, then every k-th, truncated so the gap to the next month label
+  stays ≥ the stride — the slack lands at the month end); at coarse zooms
+  (≤ 3 marks per month, where a truncated stride would leave a hole of up to
+  ~2 strides before the month label and each ±1 stride change would crawl the
+  labels), a **balanced division** — mid-month, then thirds — whose marks
+  hold still across every zoom that maps to the same density. Month / year
+  starts stay pinned at every zoom; pans never reshuffle marks (indices are
+  queried per full calendar month, never per window); a stub live-edge month
+  earns proportionally fewer marks. Without a calendar provider the same
+  scheme runs in day-of-month space. Replaces the old day → weekly ~7×
+  density cliff; the separate Monday-anchored week grain was removed — the
+  session-stride band covers everything between every-session and month
+  grain.
 
 ### Fixed
 
