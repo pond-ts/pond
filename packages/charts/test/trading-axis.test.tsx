@@ -266,17 +266,24 @@ describe('ChartContainer discontinuities → trading-time axis', () => {
           (c.args[0] as number[]).join() === gridDash.join(),
       );
     // Render each mode under a fresh stub; read the counts before restoring.
+    let byDefault = 0;
     let labeled = 0;
     let all = 0;
-    let none = 0;
     let gridDashedWithGrid = false;
     let gridDashedNoGrid = false;
     let dividersNoGrid = 0;
     {
       const stub = stubCanvasContext();
-      render(tree({})); // default: sessionDividers 'labeled', grid on
-      labeled = dividerCount(stub.calls);
+      render(tree({})); // default: sessionDividers 'none', grid on
+      byDefault = dividerCount(stub.calls);
       gridDashedWithGrid = gridDashed(stub.calls);
+      stub.restore();
+      cleanup();
+    }
+    {
+      const stub = stubCanvasContext();
+      render(tree({ sessionDividers: 'labeled' }));
+      labeled = dividerCount(stub.calls);
       stub.restore();
       cleanup();
     }
@@ -289,28 +296,116 @@ describe('ChartContainer discontinuities → trading-time axis', () => {
     }
     {
       const stub = stubCanvasContext();
-      render(tree({ sessionDividers: 'none' }));
-      none = dividerCount(stub.calls);
-      stub.restore();
-      cleanup();
-    }
-    {
-      const stub = stubCanvasContext();
-      render(tree({ grid: false }));
+      render(tree({ grid: false, sessionDividers: 'labeled' }));
       dividersNoGrid = dividerCount(stub.calls);
       gridDashedNoGrid = gridDashed(stub.calls);
       stub.restore();
       cleanup();
     }
 
-    expect(none).toBe(0); // 'none' suppresses dividers
-    expect(labeled).toBeGreaterThan(0); // default draws some (at labels)
+    // Default is 'none': the hierarchical grid marks the calendar structure;
+    // dividers are opt-in emphasis (the owner's grid-off-but-lines-remain
+    // confusion, 2026-07-16).
+    expect(byDefault).toBe(0);
+    expect(labeled).toBeGreaterThan(0); // 'labeled' draws some (at labels)
     expect(all).toBeGreaterThan(labeled); // 'all' draws every boundary — denser
     // Grid gate is independent of dividers: `grid={false}` drops the dashed
-    // gridlines but the (default 'labeled') dividers still draw.
+    // gridlines but explicitly-enabled dividers still draw.
     expect(gridDashedWithGrid).toBe(true);
     expect(gridDashedNoGrid).toBe(false);
     expect(dividersNoGrid).toBeGreaterThan(0);
+  });
+
+  it("dividers mark collapse SEAMS, not every roster boundary — contiguous sessions don't seam", () => {
+    const H = 3_600_000;
+    const DAY = 24 * H;
+    // A weekendSkip-style demo calendar: contiguous full-day Mon–Fri
+    // sessions (nothing removed overnight), Sat+Sun excised. Its `boundaries`
+    // is the session ROSTER — every weekday midnight — which the ticks and
+    // grid need; but only the Monday opens follow removed time.
+    const t0 = Date.UTC(2026, 0, 5); // a Monday, UTC math throughout
+    const days = 14;
+    const isWeekday = (t: number) => {
+      const dow = new Date(t).getUTCDay();
+      return dow !== 0 && dow !== 6;
+    };
+    const weekdaysBefore = (di: number) => {
+      const w = Math.floor(di / 7);
+      return w * 5 + Math.min(di - w * 7, 5);
+    };
+    const liveMs = (t: number) => {
+      const di = Math.floor((t - t0) / DAY);
+      const rem = t - t0 - di * DAY;
+      return weekdaysBefore(di) * DAY + (isWeekday(t0 + di * DAY) ? rem : 0);
+    };
+    const demo: DiscontinuityProvider = {
+      distance: (a, b) => liveMs(b) - liveMs(a),
+      offset: (v, amt) => {
+        const live = liveMs(v) + amt;
+        const ld = Math.floor(live / DAY);
+        const weeks = Math.floor(ld / 5);
+        return t0 + (weeks * 7 + (ld - weeks * 5)) * DAY + (live - ld * DAY);
+      },
+      clampUp: (t) => t,
+      clampDown: (t) => t,
+      copy: () => demo,
+      boundaries: (from, to) => {
+        const out: number[] = [];
+        for (let d = 1; d < days; d++) {
+          const t = t0 + d * DAY;
+          if (isWeekday(t) && t > from && t < to) out.push(t);
+        }
+        return out;
+      },
+    };
+    const px = new TimeSeries({
+      name: 's',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number' },
+      ] as const,
+      rows: [
+        [t0, 1],
+        [t0 + (days - 1) * DAY, 2],
+      ] as [number, number][],
+    });
+    const stub = stubCanvasContext();
+    try {
+      render(
+        <ChartContainer
+          range={[t0, t0 + days * DAY]}
+          width={900}
+          discontinuities={demo}
+          sessionDividers="all"
+          showAxis={false}
+        >
+          <ChartRow height={120}>
+            <YAxis id="a" min={0} max={3} />
+            <Layers>
+              <LineChart series={px} column="v" axis="a" />
+            </Layers>
+          </ChartRow>
+        </ChartContainer>,
+      );
+      const dividerColor = defaultTheme.axis.sessionDivider!;
+      const i = stub.calls.findIndex(
+        (c) =>
+          c.type === 'set' &&
+          c.name === 'strokeStyle' &&
+          c.args[0] === dividerColor,
+      );
+      let n = 0;
+      for (let j = i + 1; i >= 0 && j < stub.calls.length; j++) {
+        if (stub.calls[j]!.name === 'restore') break;
+        if (stub.calls[j]!.name === 'moveTo') n++;
+      }
+      // 14 days from a Monday: 9 interior weekday midnights in the roster,
+      // but only ONE follows removed time — the second Monday (after the
+      // excised first weekend). That is the only divider.
+      expect(n).toBe(1);
+    } finally {
+      stub.restore();
+    }
   });
 
   it('draws a session divider at each boundary (strokes the divider color)', () => {
@@ -340,7 +435,7 @@ describe('ChartContainer discontinuities → trading-time axis', () => {
 
     const withStub = stubCanvasContext();
     try {
-      render(tree({ discontinuities: provider }));
+      render(tree({ discontinuities: provider, sessionDividers: 'labeled' }));
       const stroked = withStub.calls.some(
         (c) =>
           c.type === 'set' &&
@@ -353,10 +448,10 @@ describe('ChartContainer discontinuities → trading-time axis', () => {
     }
     cleanup();
 
-    // Control: no provider → no divider color stroked.
+    // Control: no provider → no divider color stroked (even asked for).
     const noStub = stubCanvasContext();
     try {
-      render(tree({}));
+      render(tree({ sessionDividers: 'labeled' }));
       const stroked = noStub.calls.some(
         (c) =>
           c.type === 'set' &&

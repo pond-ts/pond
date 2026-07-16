@@ -405,6 +405,112 @@ export function coarsenCalendar(
   };
 }
 
+/**
+ * The **grid populations** behind {@link buildTicks}' labels: every ladder rung
+ * that fits `cap` lines, each carrying its FULL anchor population — every
+ * aligned clock instant, every session open, every month / quarter / year
+ * start — finest rung first. The axis *labels* are a thinned subset of one
+ * rung; the grid is the calendar structure itself, so the container draws
+ * every anchor of each returned level and fades a level's lines by their pixel
+ * spacing (a crowding level dissolves while the coarser ones persist — the
+ * map-style hierarchical grid). Levels **nest** (a month start is a session
+ * open; an aligned hour sits inside its session; there is no week rung), so a
+ * consumer de-duplicates shared anchors coarsest-first and each line draws
+ * once, at its coarsest membership's (widest-spaced, so strongest) alpha.
+ *
+ * `cap` is the max lines per level — the caller derives it from plot width ÷
+ * the fade-out spacing, so a level too dense to be visible at all is simply
+ * absent rather than enumerated and thrown away. Sub-day rungs are gated on
+ * the live-span estimate first (like {@link buildTicks}) and skipped when they
+ * add no anchor beyond the session opens themselves (that is the day level).
+ */
+export function buildGridLevels(
+  provider: DiscontinuityProvider,
+  opens: readonly number[],
+  domainEnd: number,
+  cap: number,
+): Array<{ granularity: TickGranularity; values: number[] }> {
+  const out: Array<{ granularity: TickGranularity; values: number[] }> = [];
+  if (cap < 1 || opens.length === 0) return out;
+  const liveSpan = provider.distance(opens[0]!, domainEnd);
+  for (const { g, step } of SUB_DAY_GRAINS) {
+    if (opens.length + Math.floor(liveSpan / step) > cap) continue;
+    const budget = cap + opens.length + 4;
+    const anchors = stepAnchors(provider, opens, domainEnd, step, budget);
+    if (anchors.length > budget) continue;
+    if (anchors.length > opens.length) {
+      out.push({ granularity: g, values: anchors });
+    }
+  }
+  if (opens.length <= cap) {
+    out.push({ granularity: 'day', values: [...opens] });
+  }
+  for (const g of COARSENING_LADDER) {
+    const values = firstOfEachBucket(opens, g);
+    if (values.length <= cap) out.push({ granularity: g, values });
+  }
+  return out;
+}
+
+/**
+ * The **nominal wall-clock step** of grain `g` in ms — the calendar time one
+ * grid cell of that grain covers (a day is a day whether or not its weekend
+ * neighbours are drawn; a month is ~30.44 days). This is what the grid's
+ * density fade keys off: `width × step / wallSpan` is a grain's spacing on a
+ * gap-free axis, and using it (rather than the measured on-screen gaps) makes
+ * the fade **mode-invariant** — collapsing weekends draws fewer day lines at
+ * the *same* strength, instead of wider-spaced lines that jump to full
+ * opacity at the same zoom.
+ */
+export function nominalStepMs(g: TickGranularity): number {
+  const sub = SUB_DAY_GRAINS.find((r) => r.g === g);
+  if (sub !== undefined) return sub.step;
+  switch (g) {
+    case 'day':
+      return DAY_MS;
+    case 'week':
+      return 7 * DAY_MS;
+    case 'month':
+      return DAYS_PER_MONTH * DAY_MS;
+    case 'quarter':
+      return 3 * DAYS_PER_MONTH * DAY_MS;
+    default:
+      // 'year' (the sub-day grains are handled above).
+      return 365.25 * DAY_MS;
+  }
+}
+
+/**
+ * Whether `t` sits exactly on a calendar instant of grain `g` — a local
+ * midnight at day grain, a month / quarter / year start, a clock-aligned
+ * step multiple (relative to `t`'s own local midnight, the same convention
+ * as {@link nextAligned}) on the sub-day rungs. The window-edge genuineness
+ * test in {@link buildTicks} — the only way a **continuous** axis's edge tick
+ * survives, since a gap-free provider has no dead time to probe.
+ */
+function alignedToGrain(t: number, g: TickGranularity): boolean {
+  const d = new Date(t);
+  const midnight = new Date(
+    d.getFullYear(),
+    d.getMonth(),
+    d.getDate(),
+  ).getTime();
+  const sub = SUB_DAY_GRAINS.find((r) => r.g === g);
+  if (sub !== undefined) return (t - midnight) % sub.step === 0;
+  if (t !== midnight) return false;
+  switch (g) {
+    case 'month':
+      return d.getDate() === 1;
+    case 'quarter':
+      return d.getDate() === 1 && d.getMonth() % 3 === 0;
+    case 'year':
+      return d.getDate() === 1 && d.getMonth() === 0;
+    default:
+      // 'day' (and the unreachable 'week' — there is no week rung).
+      return true;
+  }
+}
+
 /** The first clock-aligned `stepMs` multiple at or after `t`, relative to `t`'s
  *  own local midnight — so a 3-hour step lands on 00:00 / 03:00 / 06:00 local,
  *  whatever the session open was. Fixed-ms stepping from midnight, so on a DST
@@ -524,14 +630,34 @@ export function buildTicks(
   // label falls through to the d3 multi-scale default (a bare `.259`
   // millisecond tick). Sub-ms precision is invisible at any ladder grain.
   result.ticks = result.ticks.map((t) => Math.round(t));
-  // Drop a cramped **leading partial-period** anchor: the first tick is the
-  // domain start, which usually sits mid-period (a "1Y back from today" view
-  // starts mid-month), so it can land arbitrarily close to the first full
-  // period start and the two labels collide (the classic "Jun 23Jul 07"
-  // pile-up). When the lead gap is under half a typical period (in **live**
-  // time, so a collapsed weekend doesn't fake a gap), the partial anchor
-  // isn't earning its label — the boundary row moves to the next tick.
+  // Drop the **window-edge rider**: `opens[0]` is the raw domain start, which
+  // is a calendar anchor only when it happens to BE one. A mid-period edge
+  // otherwise becomes a tick pinned at x=0 that relabels itself as the window
+  // pans (`8 → 9 → 10` mid-day, a `15:23` under an hour grain) — sticky and
+  // misleading (owner, 2026-07-16); TradingView never labels the window edge.
+  // Genuine ⇔ the instant is **live** and either a true session open (dead
+  // time immediately before — incl. the calendar's absolute start) or sits
+  // **exactly on a calendar instant of the chosen grain** (a midnight at day
+  // grain, a month start at month grain, a clock multiple on an hour rung) —
+  // the latter is how a gap-free continuous axis, which has no dead time to
+  // probe, keeps a window cut exactly on a boundary (a Jan-1-to-Jan-1 year
+  // fixture keeps its `2026`).
   const t = result.ticks;
+  if (t.length > 0 && t[0] === Math.round(opens[0]!)) {
+    const o = opens[0]!;
+    const genuine =
+      provider.distance(o, o + 1) > 0 && // live (a dead edge never ticks)
+      (provider.distance(o - 1, o) === 0 || // a session open, or…
+        alignedToGrain(o, result.granularity)); // …exactly on the grain
+    if (!genuine) t.shift();
+  }
+  // Drop a cramped **leading partial-period** anchor: a genuine first tick
+  // (a "1Y back from today" view starting exactly on a mid-month session)
+  // can still land arbitrarily close to the first full period start and the
+  // two labels collide (the classic "Jun 23Jul 07" pile-up). When the lead
+  // gap is under half a typical period (in **live** time, so a collapsed
+  // weekend doesn't fake a gap), the partial anchor isn't earning its label —
+  // the boundary row moves to the next tick.
   if (
     t.length >= 3 &&
     provider.distance(t[0]!, t[1]!) < 0.5 * provider.distance(t[1]!, t[2]!)

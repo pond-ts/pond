@@ -390,18 +390,21 @@ export const DateStyleIntraday: Story = {
  * there. Watch the flat row relabel as you go — years → months → days → clock
  * → seconds — each boundary promoted inline (the year at a year turn, the
  * month at a month turn, the date at a midnight), versus the stacked two-row
- * layout on the same view.
+ * layout on the same view. The **labels** control flips tick-label alignment
+ * (`align`): centred on the tick, or left-aligned beside it.
  *
- * The **hide weekends** toggle swaps in a weekend-excising discontinuity
- * provider (full-day Mon–Fri sessions, Sat+Sun collapsed) — the checker for
- * the session-index tick stride on a gappy calendar: marks stay an equal
- * number of *sessions* apart (even pixels), a month whose 1st lands on a
- * weekend anchors on its first session, and dividers land under the date
- * labels. **no grid** drops the reference gridlines and **session lines**
- * draws a divider at *every* session boundary (`sessionDividers="all"`) — the
- * two together give the clean, session-separated backdrop to compare directly
- * against TradingView. (Session lines need the calendar, so turn on hide
- * weekends to see them.)
+ * The switches below the chart drive the public container props. **Sessions**
+ * swaps in a weekend-excising discontinuity provider (full-day Mon–Fri
+ * sessions, Sat+Sun collapsed) — the checker for the session-index tick
+ * stride on a gappy calendar: marks stay an equal number of *sessions* apart
+ * (even pixels), and a month whose 1st lands on a weekend anchors on its
+ * first session. **Grid** gates the reference gridlines (`grid`), and
+ * **Session markers** draws a divider at every collapse *seam*
+ * (`sessionDividers="all"`) — with this calendar's contiguous 24h weekday
+ * sessions, that is exactly the excised weekends (one line per Monday open),
+ * not every day roll; a real exchange calendar with overnight gaps would
+ * seam at every session open. (Markers need the calendar, so turn on
+ * Sessions to see them.)
  *
  * The line is a synthetic multi-octave signal on a 30-minute grid, so it
  * smooths out below ~30 minutes; the **axis** keeps laddering down to
@@ -460,6 +463,14 @@ function weekendSkip(): DiscontinuityProvider {
   // Signed day index from PANZOOM_START (a local-midnight Monday).
   const dayIndex = (t: number): number =>
     Math.round((midnightOf(t) - PANZOOM_START) / DAY);
+  // Local midnight of calendar day `di` — through the local calendar (the Date
+  // ctor normalizes day overflow), NOT `PANZOOM_START + di * DAY`: that raw form
+  // lands 01:00 local on the far side of a DST change, and the +1h it injected
+  // per `offset()` round-trip made every pan/zoom step drift the window
+  // (`offset` must invert `distance` — the provider contract the viewport
+  // math leans on).
+  const localMidnight = (di: number): number =>
+    new Date(2024, 0, 1 + di).getTime();
   // Mon–Fri days in [0, di) — closed form (di may be negative).
   const weekdaysBefore = (di: number): number => {
     const w = Math.floor(di / 7);
@@ -483,7 +494,7 @@ function weekendSkip(): DiscontinuityProvider {
       const ld = Math.floor(live / DAY); // whole live weekdays
       const weeks = Math.floor(ld / 5);
       const calDi = weeks * 7 + (ld - weeks * 5); // → calendar day index
-      return PANZOOM_START + calDi * DAY + (live - ld * DAY);
+      return localMidnight(calDi) + (live - ld * DAY);
     },
     // Weekend → forward to next Monday open / back to Friday's close (= Sat 00:00).
     clampUp: (t) => (isWeekday(t) ? t : stepToWeekday(t, 1)),
@@ -519,13 +530,70 @@ const PANZOOM_PRESETS: Array<[string, number]> = [
   ['30s', 30 * SEC],
 ];
 
+/** A small labelled switch — the story-control look for the public boolean
+ *  props ( ●) . */
+function Toggle({
+  on,
+  onClick,
+  label,
+}: {
+  on: boolean;
+  onClick: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        background: 'transparent',
+        border: 'none',
+        padding: 0,
+        cursor: 'pointer',
+        color: docsTheme.axis.label,
+        fontSize: 12,
+        fontFamily: docsTheme.font.family,
+      }}
+    >
+      <span
+        style={{
+          width: 28,
+          height: 16,
+          borderRadius: 8,
+          background: on ? '#3b82f6' : '#cbd5e1',
+          position: 'relative',
+          transition: 'background 120ms',
+          flex: 'none',
+        }}
+      >
+        <span
+          style={{
+            position: 'absolute',
+            top: 2,
+            left: on ? 14 : 2,
+            width: 12,
+            height: 12,
+            borderRadius: 6,
+            background: '#fff',
+            transition: 'left 120ms',
+          }}
+        />
+      </span>
+      {label}
+    </button>
+  );
+}
+
 function DateStylePanZoomDemo() {
   const rows = useMemo(fractalRows, []);
   const series = useMemo(
     () => new TimeSeries({ name: 'px', schema: tickSchema, rows }),
     [rows],
   );
-  // The weekend-hiding variant drops Sat/Sun rows too — otherwise two days of
+  // The session-axis variant drops Sat/Sun rows too — otherwise two days of
   // points pile up on the collapse seam as a vertical smear.
   const weekdaySeries = useMemo(
     () =>
@@ -538,9 +606,10 @@ function DateStylePanZoomDemo() {
   );
   const skipProvider = useMemo(weekendSkip, []);
   const [style, setStyle] = useState<'flat' | 'stacked'>('flat');
-  const [hideWeekends, setHideWeekends] = useState(false);
-  const [showGrid, setShowGrid] = useState(true);
-  const [sessionLines, setSessionLines] = useState(false);
+  const [labels, setLabels] = useState<'center' | 'left'>('center');
+  const [grid, setGrid] = useState(true);
+  const [sessions, setSessions] = useState(false);
+  const [markers, setMarkers] = useState(false);
   const [range, setRange] = useState<[number, number]>([
     PANZOOM_START,
     PANZOOM_END,
@@ -589,28 +658,20 @@ function DateStylePanZoomDemo() {
             </button>
           ))}
         </div>
-        <div style={{ display: 'flex', gap: 4 }}>
-          <button
-            type="button"
-            style={btn(hideWeekends)}
-            onClick={() => setHideWeekends((v) => !v)}
-          >
-            hide weekends
-          </button>
-          <button
-            type="button"
-            style={btn(!showGrid)}
-            onClick={() => setShowGrid((v) => !v)}
-          >
-            no grid
-          </button>
-          <button
-            type="button"
-            style={btn(sessionLines)}
-            onClick={() => setSessionLines((v) => !v)}
-          >
-            session lines
-          </button>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <span style={{ fontSize: 12, color: docsTheme.axis.label }}>
+            labels
+          </span>
+          {(['center', 'left'] as const).map((a) => (
+            <button
+              key={a}
+              type="button"
+              style={btn(labels === a)}
+              onClick={() => setLabels(a)}
+            >
+              {a}
+            </button>
+          ))}
         </div>
       </div>
       <ChartContainer
@@ -621,22 +682,45 @@ function DateStylePanZoomDemo() {
         onTimeRangeChange={setRange}
         minDuration={5 * SEC}
         showAxis={false}
-        discontinuities={hideWeekends ? skipProvider : undefined}
-        grid={showGrid}
-        sessionDividers={sessionLines ? 'all' : 'labeled'}
+        discontinuities={sessions ? skipProvider : undefined}
+        grid={grid}
+        sessionDividers={markers ? 'all' : 'none'}
       >
         <ChartRow height={260}>
           <YAxis id="p" side="right" />
           <Layers>
             <LineChart
-              series={hideWeekends ? weekdaySeries : series}
+              series={sessions ? weekdaySeries : series}
               column="price"
               axis="p"
             />
           </Layers>
         </ChartRow>
-        <TimeAxis dateStyle={style} />
+        <TimeAxis
+          dateStyle={style}
+          align={labels === 'left' ? 'right' : 'center'}
+        />
       </ChartContainer>
+      <div
+        style={{
+          display: 'flex',
+          gap: 20,
+          alignItems: 'center',
+          fontFamily: docsTheme.font.family,
+        }}
+      >
+        <Toggle on={grid} onClick={() => setGrid((v) => !v)} label="Grid" />
+        <Toggle
+          on={sessions}
+          onClick={() => setSessions((v) => !v)}
+          label="Sessions"
+        />
+        <Toggle
+          on={markers}
+          onClick={() => setMarkers((v) => !v)}
+          label="Session markers"
+        />
+      </div>
     </div>
   );
 }

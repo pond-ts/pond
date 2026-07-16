@@ -48,12 +48,32 @@ and type-level changes; patch bumps are strictly additive.
 ### Added
 
 - **charts:** `<ChartContainer>` gains **`grid`** (default `true`) and
-  **`sessionDividers`** (`'labeled' | 'all' | 'none'`, default `'labeled'`).
+  **`sessionDividers`** (`'labeled' | 'all' | 'none'`, default `'none'`).
+  On a calendar (time) axis the vertical gridlines are the **full grain
+  populations** — every day / month / aligned clock instant in view, not just
+  the thinned instants the labels chose (the labels decorate the grid; they
+  don't define it). Each grain fades as a unit by its **calendar density**
+  (nominal gap-free spacing: full ≥ 15 px, gone ≤ 5 px, quadratic), so
+  zooming out dissolves the fine grain into the coarser one — a map-style
+  hierarchical grid with no pop when the label algorithm switches rung — and
+  collapsing weekends draws _fewer_ day lines at the _same_ strength, not
+  wider-spaced lines that jump to full opacity. Session dividers are opt-in
+  emphasis over that grid, and draw only at true collapse **seams** —
+  boundaries that removed time actually precedes, not every session roll
+  (`'all'` = every seam, the TradingView separator look, crowding lines
+  fading out; `'labeled'` = only seams the axis also labels) — so a
+  `grid={false}` plot is actually clean by default and a contiguous-sessions
+  calendar seams only where days were excised. `TradingTimeScale` gains
+  **`gridLevels(minGapPx)`** (the nested per-grain populations + nominal
+  spacing behind it).
   `grid={false}` drops the reference gridlines for a clean backdrop; the two
   divider modes beyond the default draw a session separator at _every_ boundary
   in view (`'all'` — the TradingView session-separator look) or suppress them
   (`'none'`). Dividers are independent of the grid, so a trading axis can show
-  session structure on a grid-free plot.
+  session structure on a grid-free plot. In `'all'` mode, crowding lines fade
+  on a quadratic ramp (full ≥ 28 px apart, gone ≤ 6 px), so zooming out
+  dissolves them to a clean plot — the falloff must outrun line density, or
+  the plot pins a permanent gray wash instead of clearing.
 - **charts:** `<TimeAxis>` / `<XAxis>` gain a **`dateStyle`** prop
   (`'flat' | 'stacked'`). `'flat'` — the new default — lays the date context
   out on a **single row** the TradingView way: each tick that opens a coarser
@@ -64,6 +84,12 @@ and type-level changes; patch bumps are strictly additive.
   row carrying the coarser unit, with a pinned left-edge context).
   `TradingTimeScale` gains `flatFormat(count)` (the single-row label lookup;
   non-tick instants — the cursor readout — still read a full timestamp).
+  The **window edge is never ticked** unless it is a genuine grain anchor (a
+  true session open, or an instant exactly on the grain — a midnight at day
+  grain, a month start at month grain): a mid-period edge tick sat pinned at
+  x=0 relabelling itself as the window panned (a sticky `8` at half-spacing, a
+  `15:23` under an hour grain) — misleading, and not something TradingView
+  draws. The first real calendar anchor now leads the axis.
 
 ### Changed
 

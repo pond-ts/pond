@@ -259,10 +259,11 @@ describe('buildTicks — the grain matrix over (span, cap)', () => {
     }
   });
 
-  it('drops a cramped leading partial-period anchor (the "Jun 23Jul 07" pile-up)', () => {
-    // A year of continuous days starting Jun 23 — the domain-start tick sits
-    // ~8 live days from the Jul 01 month tick (< half a month), so it's
-    // dropped rather than colliding with it.
+  it('never ticks the window edge unless it is a genuine grain anchor (the sticky lead label)', () => {
+    // A year of continuous days starting Jun 23 — the domain start is not a
+    // month anchor, so the first tick is Jul 01 (TradingView never labels the
+    // window edge; a mid-period edge tick would ride the pan, relabelling
+    // itself at x=0).
     const prov = identityProvider();
     const from = new Date(2025, 5, 23).getTime();
     const to = new Date(2026, 5, 23).getTime();
@@ -271,11 +272,40 @@ describe('buildTicks — the grain matrix over (span, cap)', () => {
     expect(granularity).toBe('month');
     expect(ticks[0]).not.toBe(from);
     expect(new Date(ticks[0]!).getDate()).toBe(1); // Jul 01, a full period
-    // A start near a period boundary keeps its lead anchor: from Jun 2 the
-    // lead gap (~29 live days) is nearly a full month.
+    // Mid-month is not month-aligned either — Jun 2 drops the same way even
+    // though it has nearly a month of room (room isn't the point; honesty is).
     const from2 = new Date(2025, 5, 2).getTime();
     const opens2 = [from2, ...prov.boundaries!(from2, to)];
-    expect(buildTicks(prov, opens2, to, 13).ticks[0]).toBe(from2);
+    expect(new Date(buildTicks(prov, opens2, to, 13).ticks[0]!).getDate()).toBe(
+      1,
+    );
+    // A window cut exactly ON the grain keeps its edge tick: a continuous
+    // axis has no dead time to probe, so exact alignment is its genuineness.
+    const from3 = new Date(2025, 6, 1).getTime(); // Jul 01 00:00
+    const opens3 = [from3, ...prov.boundaries!(from3, to)];
+    expect(buildTicks(prov, opens3, to, 13).ticks[0]).toBe(from3);
+  });
+
+  it('a mid-day window edge never ticks at day grain; a session-open edge does', () => {
+    // The owner's screenshot: day-grain labels `8 9 10 11 12 15 16` with a
+    // half-gap "8" pinned at the left edge — the domain start mid-day-8.
+    const prov = identityProvider();
+    const from = new Date(2026, 8, 8, 4, 37).getTime(); // mid-day Sep 8
+    const to = new Date(2026, 8, 16).getTime();
+    const opens = [from, ...prov.boundaries!(from, to)];
+    const { ticks, granularity } = buildTicks(prov, opens, to, 12);
+    expect(granularity).toBe('day');
+    expect(ticks[0]).toBe(new Date(2026, 8, 9).getTime()); // Sep 9, not the edge
+    // A trading fixture whose domain starts exactly at a session open keeps
+    // its lead tick — dead time before + live after = a genuine anchor.
+    const open = new Date(2026, 8, 8, 9, 30).getTime();
+    const close = new Date(2026, 8, 8, 16, 0).getTime();
+    const seg = segmentProvider([
+      [open, close],
+      [open + DAY, close + DAY],
+    ]);
+    const segTicks = buildTicks(seg, [open, open + DAY], close + DAY, 10).ticks;
+    expect(segTicks[0]).toBe(open);
   });
 
   it('a sub-hour continuous domain descends to minute grain, never one day tick', () => {
@@ -309,11 +339,10 @@ describe('buildTicks — the grain matrix over (span, cap)', () => {
     const opens = [from, ...prov.boundaries!(from, to)];
     const { granularity, ticks } = buildTicks(prov, opens, to, 10);
     expect(granularity).toBe('hour1');
-    // The domain start, then 10:00, 11:00, … — aligned to the clock.
-    expect(ticks[0]).toBe(from);
-    expect(ticks.slice(1).every((t) => new Date(t).getMinutes() === 0)).toBe(
-      true,
-    );
+    // 10:00, 11:00, … — aligned to the clock. The 09:13 window edge is NOT
+    // ticked (it would ride the pan as a sticky x=0 label).
+    expect(ticks[0]).toBe(new Date(2026, 0, 5, 10, 0).getTime());
+    expect(ticks.every((t) => new Date(t).getMinutes() === 0)).toBe(true);
   });
 });
 

@@ -18,6 +18,35 @@ describe('drawGrid', () => {
     expect(pen).toEqual(Array(5).fill(['moveTo', 'lineTo']).flat());
   });
 
+  it('with xAlphas: full-alpha lines batch into the main path, faded ones stroke per-line, near-zero skipped', () => {
+    const { ctx, calls } = recordingContext();
+    drawGrid(
+      ctx,
+      [10, 30, 50, 70],
+      [20],
+      100,
+      80,
+      '#ccc',
+      [],
+      [1, 0.5, 0.01, 1],
+    );
+    // Main path: the two alpha-1 verticals + the horizontal = 3 segments,
+    // then one per-line path for the 0.5 line; the 0.01 line never draws.
+    const strokes = calls.filter((c) => c.name === 'stroke').length;
+    expect(strokes).toBe(2);
+    const moves = calls.filter((c) => c.name === 'moveTo').map((c) => c.args);
+    expect(moves).toEqual([
+      [10.5, 0],
+      [70.5, 0],
+      [0, 20.5],
+      [30.5, 0],
+    ]);
+    const alphaSets = calls
+      .filter((c) => c.type === 'set' && c.name === 'globalAlpha')
+      .map((c) => c.args[0]);
+    expect(alphaSets).toEqual([0.5]);
+  });
+
   it('snaps each stroke to a crisp half-pixel (round + 0.5) at the tick', () => {
     const { ctx, calls } = recordingContext();
     drawGrid(ctx, [10.4], [20.6], 100, 50, '#ccc', []);
@@ -111,19 +140,38 @@ describe('drawDividers', () => {
 });
 
 describe('dividerAlphas', () => {
-  it('is full where lines are far apart, fading as they converge', () => {
-    // fadePx 6: gaps ≥ 6 → 1; a 3px gap → 0.5; a 0px gap → 0.
-    expect(dividerAlphas([0, 40, 80], 6)).toEqual([1, 1, 1]);
-    expect(dividerAlphas([0, 3, 6], 6)).toEqual([0.5, 0.5, 0.5]);
+  it('is full at fullPx+ gaps, zero at gonePx and below, ramping between', () => {
+    // gone 6 / full 26: gaps ≥ 26 → 1; gaps ≤ 6 → 0; 16px (midpoint) → 0.25 (t²).
+    expect(dividerAlphas([0, 40, 80], 6, 26)).toEqual([1, 1, 1]);
+    expect(dividerAlphas([0, 6, 12], 6, 26)).toEqual([0, 0, 0]);
+    expect(dividerAlphas([0, 16, 32], 6, 26)).toEqual([0.25, 0.25, 0.25]);
   });
 
   it('keys each line off its NEAREST neighbour (min of both gaps)', () => {
-    // Middle line is 2px from its left neighbour, 20 from its right → 2 wins.
-    const [, mid] = dividerAlphas([0, 2, 22], 8);
-    expect(mid).toBeCloseTo(2 / 8, 5);
+    // Middle line is 8px from its left neighbour, 40 from its right → 8 wins.
+    const [, mid] = dividerAlphas([0, 8, 48], 4, 12);
+    expect(mid).toBeCloseTo(0.25, 5); // t = (8-4)/8 = 0.5 → t² = 0.25
   });
 
   it('an isolated single line is full opacity', () => {
-    expect(dividerAlphas([50], 6)).toEqual([1]);
+    expect(dividerAlphas([50], 6, 26)).toEqual([1]);
+  });
+
+  it('total ink (alpha × density) falls toward 0 as uniform lines crowd — the plot clears instead of holding a gray wash', () => {
+    // The regression this curve exists for: with the old linear ramp,
+    // alpha/gap was CONSTANT below the threshold, so zooming out left a
+    // permanent veil. Halve the gap repeatedly; the summed alpha over a fixed
+    // width must strictly fall once inside the fade window, and reach 0.
+    const width = 640;
+    const ink = (gap: number): number => {
+      const xs = [];
+      for (let x = 0; x <= width; x += gap) xs.push(x);
+      return dividerAlphas(xs, 6, 26).reduce((s, a) => s + a, 0);
+    };
+    const washes = [24, 16, 10, 6].map((g) => ink(g));
+    for (let i = 1; i < washes.length; i++) {
+      expect(washes[i]!).toBeLessThan(washes[i - 1]!);
+    }
+    expect(washes[washes.length - 1]).toBe(0); // fully clean, not just dimmer
   });
 });

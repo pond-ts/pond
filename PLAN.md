@@ -981,8 +981,7 @@ Phases (each independently shippable, ends with a docs deploy):
         (`website/docs/learn-charts/`), one running server-metrics
         example threaded throughout: ch1 the four-primitive minimal
         chart, ch2 dual-axis/two-row layout + the prop-identity
-        caution, ch3 `fromJSON` + temporal keys (point vs. interval)
-        + the data-contract idea, ch4 (the centerpiece) `aggregate` →
+        caution, ch3 `fromJSON` + temporal keys (point vs. interval) + the data-contract idea, ch4 (the centerpiece) `aggregate` →
         bars, `rolling`+`baseline` → smoothed line + `BandChart`
         envelope, `partitionBy` → per-host multi-series, `byColumn` →
         value-axis histogram, ch5 the `as`-role styling pipeline +
@@ -1015,8 +1014,8 @@ Phases (each independently shippable, ends with a docs deploy):
         forming-bar pattern) — that's still P3's flagship guide.
         Real bug caught in self-review before the PR even opened: the
         `responsive-width` demo measured its own padded/bordered box
-        and hand the *outer* (padded) width to `ChartContainer`, which
-        then rendered inside the *inner* (unpadded) space — silently
+        and hand the _outer_ (padded) width to `ChartContainer`, which
+        then rendered inside the _inner_ (unpadded) space — silently
         clipped by the demo's `overflow: hidden`. Fixed by splitting
         the styled outer box from a plain, unstyled inner box that's
         the one actually measured; documented as a new gotcha in the
@@ -1046,8 +1045,8 @@ Phases (each independently shippable, ends with a docs deploy):
         example doesn't exist anywhere in the stories, so ch8 uses a
         single live series instead of claiming a pattern that was
         never actually vetted. Two real bugs caught by `npm run
-        typecheck` (not just eyeballing): `TimeSeries.timeRange()`
-        returns a `TimeRange` *class* (`.begin()`/`.end()`), not a
+typecheck` (not just eyeballing): `TimeSeries.timeRange()`
+        returns a `TimeRange` _class_ (`.begin()`/`.end()`), not a
         plain tuple — two new examples had array-indexed it directly.
         `learn-08-live-value.tsx`'s `createLiveValue` pill was verified
         live-updating by finding its actual DOM node (a plain styled
@@ -1060,8 +1059,7 @@ Phases (each independently shippable, ends with a docs deploy):
         `CursorMode` values incl. `none`/`region` in a complete table
         — ch. 6 only tours five; `onTrackerChanged` +
         `TrackerInfo`/`TrackerSample` shapes; `trackerPosition`,
-        `cursorTime`, `crosshairSnap`; reuses the `learn-06-cursor-modes`
-        + `learn-06-tracker-readout` embeds), `selection-and-hover`
+        `cursorTime`, `crosshairSnap`; reuses the `learn-06-cursor-modes` + `learn-06-tracker-readout` embeds), `selection-and-hover`
         (`selected`/`onSelect`/`hovered`/`onHover` + `SelectInfo`; the
         id-gates-selectability rule; single-select honesty; distinct
         from annotation selection — no existing embed, links the real
@@ -1089,7 +1087,7 @@ Phases (each independently shippable, ends with a docs deploy):
         not restated — to ch. 8 + the react hooks page; "no standalone
         `XAxisIndicator` — it's `<Marker indicator>`"; the pill-location
         table). Both sections: `docusaurus build` (`onBrokenLinks:
-        'throw'`) clean after a cache-clear; reused live embeds checked
+'throw'`) clean after a cache-clear; reused live embeds checked
         in-browser (canvases render, no console errors). Storybook
         deep-links point at real story export names (verified against
         the `.stories.tsx` files). Content-ownership rule followed:
@@ -1128,7 +1126,7 @@ Phases (each independently shippable, ends with a docs deploy):
         without a new embed. Cross-linked from the concept page's
         "Plotting" bullet, ch. 9's recap, and `charts/index.mdx`'s
         "Where to go next". `docusaurus build` (with `onBrokenLinks:
-        'throw'`) passed clean, and both new live embeds were checked
+'throw'`) passed clean, and both new live embeds were checked
         in-browser in light + dark mode (the theme retunes live via
         the `data-theme` `MutationObserver` bridge, no reload needed).
         Placement note: the content-ownership table in the docs-site
@@ -1167,7 +1165,7 @@ Phases (each independently shippable, ends with a docs deploy):
     `learn-charts/09-…` — plus sidebars.ts). **Axes section = 4 pages**
     (full scope): overview (Y & X axes) · Value axis (moved) · Category
     axis · Trading-time axis (charts scale + financial calendar).
-    **Chart-type pages** use a *middle-tier* template (lighter than the
+    **Chart-type pages** use a _middle-tier_ template (lighter than the
     plan's 9-section one): live hero + when-to-use → minimal snippet →
     data contract → compact props table → a few key variants w/ embeds →
     interaction/theming/cautions → footer link to the generated typedoc
@@ -1775,7 +1773,7 @@ independently built the same `calendar.bars → BoundedSequence` seam.
     left edge (2026-07-14, owner-directed after the live-window walk):** the
     original owner-confirmed first-tick anchoring made the context label hop
     tick-to-tick on a live sliding window, so it now pins at x=0 showing the
-    *domain start's* period, with crossing labels pushing it off as they
+    _domain start's_ period, with crossing labels pushing it off as they
     approach (sticky-header behavior; no knob — first-tick anchoring is
     strictly worse live and near-identical static). Crossing detection seeds
     from the domain start's bucket so a first tick past a period turn still
@@ -1798,6 +1796,74 @@ independently built the same `calendar.bars → BoundedSequence` seam.
     three consecutive empty levels do), gridlines stay on the primary axis,
     one domain so pan/zoom moves both layouts for free. Resolves the
     vol-smile relabelled-axis friction item.
+  - ✅ **Pan/zoom + grid polish (2026-07-16, owner-driven live walk of the
+    DateStylePanZoom story; uncommitted on `worktree-flat-time-axis`).** Three
+    fixes, each verified live in Storybook:
+    1. **Zoom drift with weekends hidden** — the story's demo `weekendSkip`
+       provider broke the `offset`-inverts-`distance` contract across DST
+       (`liveMs` anchored to local midnights, `offset` mapped back with raw
+       `START + di·DAY` = 01:00 local in summer): +1h per offset round-trip →
+       ~1.6h window drift per wheel tick in Apr–Oct regions. Fixed by
+       constructing the local midnight through the calendar. Library providers
+       were never affected (they derive both directions from shared helpers) —
+       the provider contract is what the viewport math leans on.
+    2. **Session-line fade curve** — the `'all'`-divider linear fade
+       (`alpha = gap/6`) mathematically cannot clear: perceived wash =
+       `alpha/gap` = constant, so zooming out pinned a permanent gray veil
+       (plus alpha-stacking on shared pixel columns). Now a two-anchor
+       quadratic ramp (full ≥ 28px, gone ≤ 6px) whose wash → 0; regression
+       test pins "total ink strictly falls and reaches exactly 0".
+    3. **Hierarchical fading calendar grid** (owner-directed design): vertical
+       gridlines are now the **full grain populations** — every day / month /
+       aligned clock instant in view — not the label algorithm's thinned picks
+       ("the labels decorate the grid, they don't define it"). Each grain
+       fades **as a unit by its calendar density** — nominal gap-free spacing
+       `width × grainStep / wallSpan`, NOT the measured on-screen gaps — on
+       the same wash-aware quadratic ramp (full ≥ 15px ≈ day lines at a
+       ~1.5-month window, gone ≤ 5px). Zoom-out dissolves fine grain into
+       coarse with no pop at label-rung switches, and the look is
+       **mode-invariant**: collapsing weekends draws fewer day lines at the
+       same strength (owner's same-zoom, different-weight screenshots —
+       measured-gap fading had jumped the surviving lines to full). New scale
+       surface `TradingTimeScale.gridLevels(minGapPx)` (nested populations +
+       nominal spacing, memoized, enumeration capped at width/gone so
+       over-dense grains are never built); levels nest (no week rung),
+       consumers dedupe coarsest-first.
+    4. **`sessionDividers` default `'labeled'` → `'none'`** (owner report:
+       with weekends hidden, labeled-tick dividers rendered as quasi-grid
+       even with `grid={false}`, "layer on top and confuse things"). The
+       hierarchical grid now owns calendar structure at every zoom; dividers
+       are opt-in emphasis (`'all'` = TradingView separators; `'labeled'` =
+       only under labelled collapse points). The label stride is a rendering
+       choice, not calendar structure — solid lines shouldn't ride it by
+       default.
+    5. **Dividers mark collapse _seams_, not the session roster** (owner:
+       "why are session lines on each day when we're removing the
+       weekends?"). `boundaries()` is overloaded by design — the tick ladder
+       and grid consume every session open as a date anchor (the identity
+       provider even reports every midnight), while a divider means _time was
+       removed here_. The two coincide on real exchange calendars (every
+       open follows an overnight gap) but diverge on contiguous-session
+       calendars (the story's 24h weekday demo). The draw path now keeps
+       only true seams — `distance(b−1, b) ≈ 0` — so the demo seams only at
+       Monday opens; real calendars are unchanged. Contract docs updated on
+       both `DiscontinuityProvider.boundaries` declarations (charts +
+       financial) to name the roster/seam dual role.
+    6. **The window edge is never ticked unless genuine** (owner: "remove
+       the sticky one at the end on flat mode… sort of misleading"). The
+       ladder injected `opens[0]` (the raw domain start) as an anchor, so a
+       mid-period edge became a tick pinned at x=0 relabelling itself as the
+       window panned (a half-spaced `8`, a `15:23` under an hour grain); the
+       old cramped-lead heuristic only dropped it when crowded. Now the lead
+       tick survives only when **live** and either a true session open
+       (dead-before/live-after probe — includes the calendar's absolute
+       start) or **exactly on a grain instant** (`alignedToGrain`: midnight /
+       month start / clock multiple) — the alignment arm is how a gap-free
+       continuous axis, with no dead time to probe, keeps a window cut
+       exactly on a boundary (a Jan-1 year fixture keeps its `2026`).
+       TradingView-matching: the first real calendar anchor leads. Story
+       controls also reworked (Grid / Sessions / Session markers switches
+       below the chart, `labels center|left` control on the `align` prop).
   - **Still deferred (documented, none blocking):** `neighbourSpans` point-key slot
     widths on the discontinuous axis (interval-keyed bars from
     `aggregate(barSequence)` — the primary path — are immune); exact **exchange-tz**

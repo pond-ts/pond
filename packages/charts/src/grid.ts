@@ -1,8 +1,16 @@
 /**
  * Stroke the plot's gridlines: a vertical line at each `xTicks` pixel and a
- * horizontal line at each `yTicks` pixel, faint and dashed. Drawn behind the
- * data layers from the same tick positions the axes label, so grid and labels
- * line up. `+0.5` aligns each 1px stroke to the device grid for a crisp line.
+ * horizontal line at each `yTicks` pixel, faint and dashed. On a calendar
+ * axis the verticals are the **full grain populations** (every day / month /
+ * aligned hour in view — see `TradingTimeScale.gridLevels`), not just the
+ * labelled ticks. `+0.5` aligns each 1px stroke to the device grid for a
+ * crisp line.
+ *
+ * `xAlphas` (parallel to `xTicks`) fades individual verticals — the
+ * hierarchical density falloff: a crowding grain's lines dim toward invisible
+ * while coarser grains hold full strength. Full-alpha lines (and all the
+ * horizontals) batch into one path; only the fading remainder pays a
+ * per-line stroke. A near-zero alpha is skipped.
  *
  * `save`/`restore` brackets the dash + stroke state so it doesn't leak into the
  * data layers that draw next.
@@ -15,14 +23,16 @@ export function drawGrid(
   height: number,
   color: string,
   dash: readonly number[],
+  xAlphas?: readonly number[],
 ): void {
   ctx.save();
   ctx.strokeStyle = color;
   ctx.lineWidth = 1;
   ctx.setLineDash([...dash]);
   ctx.beginPath();
-  for (const x of xTicks) {
-    const px = Math.round(x) + 0.5;
+  for (let i = 0; i < xTicks.length; i++) {
+    if (xAlphas !== undefined && (xAlphas[i] ?? 1) < 1) continue;
+    const px = Math.round(xTicks[i]!) + 0.5;
     ctx.moveTo(px, 0);
     ctx.lineTo(px, height);
   }
@@ -32,6 +42,18 @@ export function drawGrid(
     ctx.lineTo(width, py);
   }
   ctx.stroke();
+  if (xAlphas !== undefined) {
+    for (let i = 0; i < xTicks.length; i++) {
+      const a = xAlphas[i] ?? 1;
+      if (a >= 1 || a <= 0.02) continue;
+      ctx.globalAlpha = a;
+      const px = Math.round(xTicks[i]!) + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(px, 0);
+      ctx.lineTo(px, height);
+      ctx.stroke();
+    }
+  }
   ctx.restore();
 }
 
@@ -99,15 +121,28 @@ export function drawDividers(
 }
 
 /**
- * Per-line opacity for {@link drawDividers} in `'all'` mode: each line fades in
- * proportion to its gap to the nearest neighbour, full at `fadePx`+ and ramping
- * to 0 as lines converge. So as a zoom-out crowds the session lines they dim
- * together toward a clean plot — no hard drop that pops on pan. `xs` ascending.
+ * Per-line opacity for {@link drawDividers} in `'all'` mode: each line keys off
+ * the gap to its nearest neighbour — full at `fullPx`+, **zero** at `gonePx`
+ * and below, a quadratic ramp between. So as a zoom-out crowds the session
+ * lines they dim toward a clean plot — no hard drop that pops on pan.
+ *
+ * The curve must fall **superlinearly** in the gap: the veil a reader sees is
+ * `alpha × density = alpha / gap`, so the earlier linear ramp (`alpha = gap/f`)
+ * cancelled the density growth exactly and pinned a constant gray wash over the
+ * whole plot no matter how far out you zoomed. Quadratic-to-a-floor makes the
+ * wash itself → 0 as lines converge: alpha `t²` with
+ * `t = (gap − gonePx) / (fullPx − gonePx)`. `xs` ascending.
  */
-export function dividerAlphas(xs: readonly number[], fadePx: number): number[] {
+export function dividerAlphas(
+  xs: readonly number[],
+  gonePx: number,
+  fullPx: number,
+): number[] {
   return xs.map((x, i) => {
     const left = i > 0 ? x - xs[i - 1]! : Infinity;
     const right = i < xs.length - 1 ? xs[i + 1]! - x : Infinity;
-    return Math.max(0, Math.min(1, Math.min(left, right) / fadePx));
+    const gap = Math.min(left, right);
+    const t = Math.max(0, Math.min(1, (gap - gonePx) / (fullPx - gonePx)));
+    return t * t;
   });
 }

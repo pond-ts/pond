@@ -218,9 +218,10 @@ export interface ContainerFrame {
   /** Draw the reference gridlines behind the data (default `true`; the
    *  container's `grid` prop). Session dividers are independent of this. */
   readonly grid: boolean;
-  /** Where session dividers draw on a trading axis: `'labeled'` (under each
-   *  labelled collapse point, the default), `'all'` (every session boundary in
-   *  view — the TradingView separator look), or `'none'`. */
+  /** Where session dividers draw on a trading axis: `'none'` (the default —
+   *  the hierarchical grid already marks calendar structure), `'all'` (every
+   *  session boundary in view — the TradingView separator look), or
+   *  `'labeled'` (only under labelled collapse points). */
   readonly sessionDividers: 'labeled' | 'all' | 'none';
   /**
    * The resolved kind of the shared x scale — `'time'` (a `scaleTime`),

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   coarsenCalendar,
+  identityProvider,
   scaleTradingTime,
   type DiscontinuityProvider,
 } from '../src/tradingTimeScale.js';
@@ -480,5 +481,137 @@ describe('coarsenCalendar', () => {
       };
       expect(new Set(ticks.map(monthOf)).size).toBe(ticks.length);
     });
+  });
+});
+
+describe('gridLevels', () => {
+  const DAY = 86_400_000;
+  const HOUR = 3_600_000;
+
+  /** Local-midnight day sessions, `identityProvider`-style but bounded — the
+   *  plain continuous calendar over `[start, start + days)`. */
+  const t0 = new Date(2026, 0, 5).getTime(); // a local-midnight Monday
+
+  it('the day level is EVERY day in view, a superset of the labelled ticks', () => {
+    const days = 60;
+    const s = scaleTradingTime(identityProvider())
+      .domain([t0, t0 + days * DAY])
+      .range([0, 900]);
+    const levels = s.gridLevels(5);
+    const day = levels.find((l) => l.granularity === 'day');
+    expect(day).toBeDefined();
+    // Every interior local midnight — not the handful the label ladder picked.
+    expect(day!.values.length).toBeGreaterThanOrEqual(days - 1);
+    const labels = s.ticks(10).map((t) => +t);
+    expect(labels.length).toBeLessThan(day!.values.length);
+    const population = new Set(day!.values);
+    for (const t of labels) {
+      if (t > t0) expect(population.has(t)).toBe(true);
+    }
+  });
+
+  it('levels nest: year ⊆ quarter ⊆ month ⊆ day, and all sit strictly inside the domain', () => {
+    // Start mid-day so the window edge is not a boundary.
+    const start = t0 + 11 * HOUR;
+    const s = scaleTradingTime(identityProvider())
+      .domain([start, start + 500 * DAY])
+      .range([0, 4000]); // wide enough that the day grain qualifies
+    const levels = s.gridLevels(5);
+    const byGrain = new Map(levels.map((l) => [l.granularity, l.values]));
+    for (const [fine, coarse] of [
+      ['day', 'month'],
+      ['month', 'quarter'],
+      ['quarter', 'year'],
+    ] as const) {
+      const fineSet = new Set(byGrain.get(fine));
+      for (const v of byGrain.get(coarse) ?? []) {
+        expect(fineSet.has(v)).toBe(true);
+      }
+    }
+    for (const l of levels) {
+      expect(l.values.every((v) => v > start)).toBe(true);
+      expect(l.values.every((v) => v <= start + 500 * DAY)).toBe(true);
+    }
+  });
+
+  it('a grain too dense for the fade floor is omitted outright', () => {
+    // 3 years on 900px: days are ~0.8px apart — absent; months+ survive.
+    const s = scaleTradingTime(identityProvider())
+      .domain([t0, t0 + 1100 * DAY])
+      .range([0, 900]);
+    const grains = s.gridLevels(5).map((l) => l.granularity);
+    expect(grains).not.toContain('day');
+    expect(grains).toContain('month');
+    expect(grains).toContain('year');
+  });
+
+  it('sub-day rungs populate an intraday window with aligned clock anchors', () => {
+    // A 6-hour mid-day window: no midnights in view, hour rungs carry the grid.
+    const start = t0 + 9 * HOUR;
+    const s = scaleTradingTime(identityProvider())
+      .domain([start, start + 6 * HOUR])
+      .range([0, 900]);
+    const levels = s.gridLevels(5);
+    expect(levels.length).toBeGreaterThan(0);
+    expect(levels.some((l) => l.granularity.startsWith('minute'))).toBe(true);
+    // Anchors are clock-aligned (whole minutes) and strictly interior.
+    for (const l of levels) {
+      expect(l.values.every((v) => v % 60_000 === 0 && v > start)).toBe(true);
+    }
+    expect(levels.some((l) => l.granularity === 'day')).toBe(false);
+  });
+
+  it('is empty without calendar structure (no boundaries method)', () => {
+    const s = scaleTradingTime(singleSpanProvider(0, 1000))
+      .domain([0, 1000])
+      .range([0, 900]);
+    expect(s.gridLevels(5)).toEqual([]);
+  });
+
+  it('on a trading calendar the day level is the session opens (weekends absent)', () => {
+    // Two weeks of weekday sessions via the segment provider.
+    const segs: Array<readonly [number, number]> = [];
+    for (let d = 0; d < 14; d++) {
+      const day = t0 + d * DAY;
+      const dow = new Date(day).getDay();
+      if (dow === 0 || dow === 6) continue;
+      segs.push([day + 9.5 * HOUR, day + 16 * HOUR]);
+    }
+    const s = scaleTradingTime(segmentProvider(segs))
+      .domain([segs[0]![0], segs[segs.length - 1]![1]])
+      .range([0, 900]);
+    const day = s.gridLevels(5).find((l) => l.granularity === 'day');
+    expect(day).toBeDefined();
+    // 10 sessions; the first open IS the domain start (filtered) → 9 interior.
+    expect(day!.values).toEqual(segs.slice(1).map((seg) => seg[0]));
+  });
+
+  it('spacing keys off CALENDAR density — hiding weekends draws fewer day lines, not stronger ones', () => {
+    // The owner's same-zoom, different-weight report (2026-07-16): at the
+    // same wall span + width, a weekend-collapsing axis must report the SAME
+    // day-level spacing (the fade input) as the continuous axis, while its
+    // population is only the weekday sessions. Keying off measured on-screen
+    // gaps instead made the surviving lines ~40% wider apart, jumping them to
+    // full opacity at a zoom where the continuous grid was still faint.
+    const days = 63; // ~9 weeks
+    const width = 670;
+    const domain: [number, number] = [t0, t0 + days * DAY];
+    const cont = scaleTradingTime(identityProvider())
+      .domain(domain)
+      .range([0, width]);
+    const segs: Array<readonly [number, number]> = [];
+    for (let d = 0; d < days; d++) {
+      const day = t0 + d * DAY;
+      const dow = new Date(day).getDay();
+      if (dow === 0 || dow === 6) continue;
+      segs.push([day + 9.5 * HOUR, day + 16 * HOUR]);
+    }
+    const trad = scaleTradingTime(segmentProvider(segs))
+      .domain(domain)
+      .range([0, width]);
+    const dayC = cont.gridLevels(5).find((l) => l.granularity === 'day')!;
+    const dayT = trad.gridLevels(5).find((l) => l.granularity === 'day')!;
+    expect(dayT.spacing).toBeCloseTo(dayC.spacing, 6); // same fade strength
+    expect(dayT.values.length).toBeLessThan(dayC.values.length); // fewer lines
   });
 });
