@@ -107,10 +107,10 @@ describe('buildTicks — the grain matrix over (span, cap)', () => {
     expect(grainOf(week, 12).granularity).toBe('hour6');
   });
 
-  it('a month of sessions thins by per-month division, not a cliff to weekly', () => {
+  it('a month of sessions thins by per-month subdivision, not a cliff to weekly', () => {
     // 28 contiguous days from a Feb 1 start over a cap of 8: the day count
     // exceeds the cap, but rather than dropping ~7× straight to a bare few ticks
-    // (the old density cliff), it divides the month into ≈cap near-even marks —
+    // (the old density cliff), it subdivides the month by midpoint halving —
     // still day grain, the month start pinned, gaps within ±1 day of each other.
     const feb = new Date(2026, 1, 1).getTime();
     const month = dailySessions(feb, 28);
@@ -554,6 +554,12 @@ describe('flatFormats — the single-row inline promotions', () => {
     expect(
       flatFormats([at(2026, 0, 15), at(2026, 0, 16)], 'day', at(2026, 0, 14)),
     ).toEqual(['%-d', '%-d']);
+    // A domain starting EXACTLY on a period boundary still promotes that tick
+    // — it truly is the period's first instant (a window opening at May 1
+    // midnight reads `May 16`, not `1 16`).
+    expect(
+      flatFormats([at(2026, 4, 1), at(2026, 4, 16)], 'day', at(2026, 4, 1)),
+    ).toEqual(['%b', '%-d']);
   });
 
   it('without a domain start the first tick is never promoted', () => {
@@ -575,11 +581,11 @@ describe('coarsenCalendar (day-and-coarser compat surface)', () => {
     });
   });
 
-  it('divides each month into near-even marks before month grain (anti-cliff)', () => {
+  it('subdivides each month by midpoint halving before month grain (anti-cliff)', () => {
     // 40 consecutive days from Jan 1 over a cap of 10: too many for every-day,
-    // but per-month division keeps it at day grain (not a collapse to a few
-    // ticks). Jan 01 and Feb 01 are pinned; the gaps are near-even, not snapped
-    // to round day numbers.
+    // but per-month subdivision keeps it at day grain (not a collapse to a few
+    // ticks). Jan 01 and Feb 01 are pinned; interior marks sit on the dyadic
+    // midpoints (near-even gaps), not on round day numbers.
     const start = new Date(2026, 0, 1).getTime();
     const opens = Array.from({ length: 40 }, (_, i) => start + i * DAY);
     const { ticks, granularity } = coarsenCalendar(opens, 10);
@@ -593,5 +599,27 @@ describe('coarsenCalendar (day-and-coarser compat surface)', () => {
       .map((t, i) => Math.round((t - ticks[i]!) / DAY));
     expect(Math.max(...gaps) - Math.min(...gaps)).toBeLessThanOrEqual(1);
     expect(Math.min(...gaps)).toBeGreaterThan(1);
+  });
+
+  it('zoom levels NEST: zooming in only inserts marks between the existing ones', () => {
+    // The TradingView subdivision behaviour: at each zoom-in the mark set gains
+    // in-between days but every surviving mark is the SAME day — first the
+    // month starts + midpoints, then the quarter points between those, and so
+    // on. Growing the cap over a fixed window must therefore produce nested
+    // tick sets (no relocation, no reshuffle — the survivors are identical).
+    const start = new Date(2026, 0, 15).getTime();
+    const opens = Array.from({ length: 40 }, (_, i) => start + i * DAY);
+    const feb1 = new Date(2026, 1, 1).getTime();
+    let prev: number[] | null = null;
+    for (const count of [5, 10, 20]) {
+      const { ticks, granularity } = coarsenCalendar(opens, count, 40);
+      expect(granularity).toBe('day');
+      expect(ticks).toContain(feb1); // the month start pinned at every depth
+      if (prev !== null) {
+        for (const t of prev) expect(ticks).toContain(t); // nesting
+        expect(ticks.length).toBeGreaterThan(prev.length); // and real gain
+      }
+      prev = ticks;
+    }
   });
 });

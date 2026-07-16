@@ -360,10 +360,10 @@ describe('coarsenCalendar', () => {
     });
   });
 
-  it('divides the month over ~6 weeks of daily opens (day grain, month pinned)', () => {
-    // 6 weeks of daily opens, count 6 → the day band: still day grain, dividing
-    // each month into near-even marks. There is no week rung; the month start
-    // in range (Feb 01) is pinned as a mark.
+  it('subdivides the month over ~6 weeks of daily opens (day grain, month pinned)', () => {
+    // 6 weeks of daily opens, count 6 → the day band: still day grain,
+    // subdividing each month by midpoint halving. There is no week rung; the
+    // month start in range (Feb 01) is pinned as a mark.
     const sixWeeks = daily.slice(0, 42);
     const { ticks, granularity } = coarsenCalendar(sixWeeks, 6);
     expect(granularity).toBe('day');

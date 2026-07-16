@@ -61,7 +61,7 @@ export interface TradingCalendarLike {
  *
  * Ticks are **calendar-aware** when the provider enumerates its gaps: `.ticks`
  * walks the logical ladder (hour1 → hour3 → hour6 → hour12 → day → month →
- * quarter → year; the day rung also thins by per-month even division before
+ * quarter → year; the day rung also thins by per-month midpoint subdivision before
  * month grain) and returns the finest rung that fits `count`, and
  * `.tickFormat` labels each anchor at that grain (`%H:%M` for hours, `%b %d`
  * for days/weeks, `%b` for months/quarters, `%Y` for years) while formatting

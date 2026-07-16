@@ -66,15 +66,18 @@ and type-level changes; patch bumps are strictly additive.
   Pass `dateStyle="stacked"` to keep the old two-row look. (An explicit
   `format` / container `timeFormat`, a `transform`, or explicit `ticks` opt out
   of both styles as before.)
-- **charts:** the time-axis tick ladder's sub-month density now **divides each
-  month into evenly-spaced marks with the month start pinned** to its true
-  instant, instead of jumping day → weekly (a ~7× density cliff on a small
-  zoom) or snapping to round day-of-month numbers. Marks stay put as you pan
-  (spacing derives from the domain span, not the fluctuating visible-open
-  count) and month/year labels no longer drift relative to the data across a
-  zoom. The separate Monday-anchored week grain was removed — the day band now
-  covers everything between every-session and month grain (it has the same
-  can't-pin-the-month behaviour a week rung would).
+- **charts:** the time-axis tick ladder's sub-month density now **subdivides
+  each month by midpoint halving** — month start → + midpoint (`May … 16 …
+Jun`) → + quarter points (`May 8 16 24 Jun`) → … → every day — the
+  TradingView behaviour. Zoom levels **nest**: zooming in only inserts marks
+  between the ones already shown (and zooming out removes the in-between
+  level), so the surviving labels are the same numbers at every zoom; month /
+  year starts stay pinned to their true instants; pans never reshuffle the
+  marks (density derives from the domain span, not the fluctuating
+  visible-open count). On a trading calendar a subdivision day with no session
+  (weekend / holiday) snaps to the next session. Replaces the old day → weekly
+  ~7× density cliff; the separate Monday-anchored week grain was removed — the
+  subdivision band covers everything between every-session and month grain.
 
 ### Fixed
 

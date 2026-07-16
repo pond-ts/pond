@@ -129,9 +129,13 @@ const COARSENING_LADDER: readonly TickGranularity[] = [
   'year',
 ];
 
-/** Nominal days per month — used only to decide when a month still earns ≥ ~2
- *  marks (so the day band applies) vs when it's down to one (month grain). */
+/** Nominal days per month — sets the subdivision depth from the span-derived
+ *  per-mark day budget (how many marks a month can afford). */
 const DAYS_PER_MONTH = 30.44;
+
+/** Deepest subdivision level: 2^6 = 64 > 31, so depth 6 saturates every month
+ *  at every-day (the recursion stops on 1-day intervals anyway). */
+const MAX_SUBDIV_DEPTH = 6;
 
 /** Days in the local month containing `d`. */
 function daysInLocalMonth(d: Date): number {
@@ -139,46 +143,91 @@ function daysInLocalMonth(d: Date): number {
 }
 
 /**
- * Thin `opens` by dividing **each local month** into marks spaced ≈`gapDays`
- * apart, starting at the 1st. So the month start is **always** kept — pinned to
- * its true instant (never drifting as the stride changes with zoom) and
- * promoted to the month / year by {@link flatFormats} — and the interior marks
- * split the month into equal parts. Per-month division (rather than one global
- * day-stride) is what pins the boundaries: a uniform day-grid can't land on
- * every 28–31-day month start, so it would either drift the month label or
- * bunch marks against it. `round(i·L/div)` distributes the day rounding so the
- * gap into the next month stays ≈`gapDays` too (no cramped cluster). Stable
- * across pan: a day's membership depends only on its date and `gapDays` (from
- * the domain span), never on the window.
+ * The days-of-month marked at subdivision `depth` for a month of `monthLen`
+ * days — **midpoint halving** of the [month start, next month start) interval:
+ * depth 0 is just the 1st, and each deeper level adds the (floor) midpoint of
+ * every existing gap, saturating at every day. So successive depths **nest**:
+ * `dyadicDays(L, k) ⊆ dyadicDays(L, k+1)` — a zoom-in only inserts marks
+ * between the ones already shown, never relocates them. Cached by
+ * `(monthLen, depth)` — 4 month lengths × 7 depths.
  */
-function divideMonths(opens: readonly number[], gapDays: number): number[] {
-  return opens.filter((t) => {
+const dyadicCache = new Map<number, Set<number>>();
+function dyadicDays(monthLen: number, depth: number): Set<number> {
+  const key = monthLen * 8 + depth;
+  let days = dyadicCache.get(key);
+  if (days === undefined) {
+    const set = new Set<number>([1]);
+    const halve = (a: number, b: number, d: number): void => {
+      if (d <= 0 || b - a <= 1) return;
+      const mid = Math.floor((a + b) / 2);
+      set.add(mid);
+      halve(a, mid, d - 1);
+      halve(mid, b, d - 1);
+    };
+    halve(1, monthLen + 1, depth);
+    dyadicCache.set(key, set);
+    days = set;
+  }
+  return days;
+}
+
+/**
+ * Thin `opens` to the sessions on each month's {@link dyadicDays} at `depth` —
+ * the TradingView subdivision behaviour. The month start is always level 0, so
+ * month / year starts stay **pinned** at every zoom (promoted to `%b` / `%Y` by
+ * {@link flatFormats}); deeper levels insert the midpoint, then the quarter
+ * points, … between marks that never move. On a trading calendar a dyadic day
+ * with no session (a weekend / holiday) **snaps to the next session**: an open
+ * is marked when any dyadic day lies in `(previous session's date, its own
+ * date]` — so `Feb 1` on a Sunday marks Monday the 2nd, exactly as month grain
+ * would. Membership depends only on dates and `depth`, never the window, so a
+ * pan cannot reshuffle the marks. (The window's first open has no known
+ * predecessor and marks only on its own exact day — a snapped edge mark would
+ * appear/disappear with the pan phase.)
+ */
+function subdivideMonths(opens: readonly number[], depth: number): number[] {
+  const out: number[] = [];
+  let prev: { month: number; dom: number } | null = null;
+  for (const t of opens) {
     const d = new Date(t);
-    const L = daysInLocalMonth(d);
-    const div = Math.max(1, Math.round(L / gapDays));
+    const month = d.getFullYear() * 12 + d.getMonth();
     const dom = d.getDate();
-    for (let i = 0; i < div; i++) {
-      if (Math.round((i * L) / div) + 1 === dom) return true;
+    const days = dyadicDays(daysInLocalMonth(d), depth);
+    // Scan window: same month → since the previous session's date; the first
+    // session of a new month → from day 1 (a weekend month-start snaps here);
+    // the window's first open → its own exact day only (see doc above).
+    const from = prev === null ? dom - 1 : prev.month === month ? prev.dom : 0;
+    prev = { month, dom };
+    for (let g = from + 1; g <= dom; g++) {
+      if (days.has(g)) {
+        out.push(t);
+        break;
+      }
     }
-    return false;
-  });
+  }
+  return out;
 }
 
 /**
  * Thin an ascending run of **session opens** down to about `count` axis ticks.
- * Picks the finest rung: every session → **per-month even division** (still day
- * grain, month starts pinned) → month → quarter → year; beyond yearly it
- * decimates every-nth so the axis never crowds. Exported so the container can
- * draw session dividers at the same instants the axis labels.
+ * Picks the finest rung: every session → **per-month midpoint subdivision**
+ * (still day grain, month starts pinned) → month → quarter → year; beyond
+ * yearly it decimates every-nth so the axis never crowds. Exported so the
+ * container can draw session dividers at the same instants the axis labels.
  *
- * The day band divides each month into ≈`count/months` marks rather than
- * labelling every session — filling the gap to month grain gently (no ~7×
- * cliff to a bare few ticks). Marks are spaced ≈evenly (`gapDays` from the
- * domain span, so a pan never reshuffles them) while the **month / year starts
- * stay pinned to their true instants** (they don't drift as the density
- * changes with zoom). A uniform global day-grid was rejected precisely because
- * it can't do both — it drifts the month label or bunches marks at the
- * boundary. There is deliberately no week rung: a Monday-anchored week has the
+ * The day band **subdivides each month by midpoint halving** ({@link
+ * dyadicDays}): depth 1 marks the month start + its midpoint (`May … 16 …
+ * Jun`), depth 2 adds the quarter points (`May 8 16 24 Jun`), and so on down
+ * to every day. Successive depths nest, so a zoom only inserts marks between
+ * the ones already shown (or removes the in-between level) — the surviving
+ * labels are the *same numbers* at every zoom, and month / year starts stay
+ * pinned to their true instants. The depth comes from the span-derived
+ * per-month budget (`spanDays / count`), constant at a fixed zoom, so a pan
+ * never reshuffles the marks either. Two flat-spacing schemes were tried and
+ * rejected: a global even day-stride can't pin month starts (the `Feb` label
+ * drifted as zoom changed the stride), and `round(i·L/div)` division beats
+ * against the month length (uneven 2-vs-3-day gaps) and doesn't nest across
+ * zooms. There is deliberately no week rung: a Monday-anchored week has the
  * same can't-pin-the-month drift, so the day band owns everything between
  * every-session and month grain.
  *
@@ -198,16 +247,22 @@ export function coarsenCalendar(
   spanDays?: number,
 ): { ticks: number[]; granularity: TickGranularity } {
   if (opens.length <= count) return { ticks: [...opens], granularity: 'day' };
-  // Per-month even division — used only while a nominal month still earns ≥ ~2
-  // marks (`gapDays ≲ 20`); coarser than that a month is down to one mark, which
-  // *is* month grain, handled by the bucket ladder below. Gated to daily-dense
-  // opens: a synthetic run of month/year starts has no days to divide.
+  // Per-month midpoint subdivision. The depth is the deepest whose ≈2^depth
+  // marks/month fit the span-derived budget (floor, so the density never
+  // exceeds the width-derived cap; between doublings marks spread out, then
+  // halve — the dyadic behaviour). Depth 0 means a month is down to one mark,
+  // which *is* month grain — the bucket ladder below. Gated to daily-dense
+  // opens: a synthetic run of month/year starts has no days to subdivide.
   const openSpanDays =
     (opens[opens.length - 1]! - opens[0]!) / DAY_MS || Infinity;
   const dailyDense = opens.length >= 0.5 * openSpanDays;
   const gapDays = (spanDays ?? openSpanDays) / count;
-  if (dailyDense && DAYS_PER_MONTH / gapDays >= 1.5) {
-    const ticks = divideMonths(opens, gapDays);
+  const depth = Math.min(
+    MAX_SUBDIV_DEPTH,
+    Math.floor(Math.log2(DAYS_PER_MONTH / gapDays)),
+  );
+  if (dailyDense && depth >= 1) {
+    const ticks = subdivideMonths(opens, depth);
     if (ticks.length > 0) return { ticks, granularity: 'day' };
   }
   for (const g of COARSENING_LADDER) {
@@ -273,7 +328,7 @@ function stepAnchors(
 /**
  * The full-ladder grain selection: given the provider, the domain, and the
  * width-derived `cap`, walk the clock rungs (1s … 30s, 1m … 30m, 1h … 12h)
- * then day (thinned by per-month even division) → month → quarter → year
+ * then day (thinned by per-month midpoint subdivision) → month → quarter → year
  * (then decimate) and return the first rung that fits.
  * `opens` are the session-open anchors (`[domain start, ...boundaries]`) the
  * caller already has. Sub-day rungs are only reachable when the opens
@@ -520,10 +575,13 @@ function flatPromotionFormatFor(level: TickGranularity): string {
  * not the month).
  *
  * `domainStart` seeds the walk (like {@link boundaryTicks}): the first tick is
- * promoted only if it crosses a period relative to the domain's left edge, so a
- * window opening mid-month doesn't falsely promote its first tick and a live
- * sliding window doesn't flicker the leftmost label. Without it the first tick
- * is never promoted.
+ * promoted only if it crosses a period relative to the instant just *before*
+ * the domain's left edge — so a window opening mid-month doesn't falsely
+ * promote its first tick (and a live sliding window doesn't flicker the
+ * leftmost label), while a domain starting *exactly* on a boundary still
+ * promotes the boundary tick (it truly is the period's first instant: a window
+ * opening at May 1 midnight reads `May 16 …`, not `1 16 …`). Without
+ * `domainStart` the first tick is never promoted.
  */
 export function flatFormats(
   ticks: readonly number[],
@@ -532,11 +590,12 @@ export function flatFormats(
 ): string[] {
   const base = flatBaseFormatFor(granularity);
   const levels = flatPromotionLevels(granularity);
-  // Last-seen bucket per level; seeded from the domain start so a first tick
-  // sharing the edge's period isn't a crossing.
+  // Last-seen bucket per level; seeded from just before the domain start so a
+  // first tick sharing the edge's period isn't a crossing, but one exactly ON
+  // the period boundary is.
   const prev = new Map<TickGranularity, number>();
   if (domainStart !== undefined) {
-    for (const L of levels) prev.set(L, bucketKey(domainStart, L));
+    for (const L of levels) prev.set(L, bucketKey(domainStart - 1, L));
   }
   return ticks.map((t) => {
     let spec = base;
