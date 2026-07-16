@@ -215,6 +215,13 @@ export interface ContainerFrame {
    * rather than raw wall-clock ms.
    */
   readonly discontinuities?: DiscontinuityProvider | undefined;
+  /** Draw the reference gridlines behind the data (default `true`; the
+   *  container's `grid` prop). Session dividers are independent of this. */
+  readonly grid: boolean;
+  /** Where session dividers draw on a trading axis: `'labeled'` (under each
+   *  labelled collapse point, the default), `'all'` (every session boundary in
+   *  view — the TradingView separator look), or `'none'`. */
+  readonly sessionDividers: 'labeled' | 'all' | 'none';
   /**
    * The resolved kind of the shared x scale — `'time'` (a `scaleTime`),
    * `'value'` (a `scaleLinear`), or `'category'` (a {@link ScaleBand}: an ordinal

@@ -397,7 +397,11 @@ export const DateStyleIntraday: Story = {
  * the session-index tick stride on a gappy calendar: marks stay an equal
  * number of *sessions* apart (even pixels), a month whose 1st lands on a
  * weekend anchors on its first session, and dividers land under the date
- * labels.
+ * labels. **no grid** drops the reference gridlines and **session lines**
+ * draws a divider at *every* session boundary (`sessionDividers="all"`) — the
+ * two together give the clean, session-separated backdrop to compare directly
+ * against TradingView. (Session lines need the calendar, so turn on hide
+ * weekends to see them.)
  *
  * The line is a synthetic multi-octave signal on a 30-minute grid, so it
  * smooths out below ~30 minutes; the **axis** keeps laddering down to
@@ -517,6 +521,8 @@ function DateStylePanZoomDemo() {
   const skipProvider = useMemo(weekendSkip, []);
   const [style, setStyle] = useState<'flat' | 'stacked'>('flat');
   const [hideWeekends, setHideWeekends] = useState(false);
+  const [showGrid, setShowGrid] = useState(true);
+  const [sessionLines, setSessionLines] = useState(false);
   const [range, setRange] = useState<[number, number]>([
     PANZOOM_START,
     PANZOOM_END,
@@ -573,6 +579,20 @@ function DateStylePanZoomDemo() {
           >
             hide weekends
           </button>
+          <button
+            type="button"
+            style={btn(!showGrid)}
+            onClick={() => setShowGrid((v) => !v)}
+          >
+            no grid
+          </button>
+          <button
+            type="button"
+            style={btn(sessionLines)}
+            onClick={() => setSessionLines((v) => !v)}
+          >
+            session lines
+          </button>
         </div>
       </div>
       <ChartContainer
@@ -584,6 +604,8 @@ function DateStylePanZoomDemo() {
         minDuration={5 * SEC}
         showAxis={false}
         discontinuities={hideWeekends ? skipProvider : undefined}
+        grid={showGrid}
+        sessionDividers={sessionLines ? 'all' : 'labeled'}
       >
         <ChartRow height={260}>
           <YAxis id="p" side="right" />

@@ -118,25 +118,36 @@ export function Layers({ children }: LayersProps) {
       // centre reads as noise; the bars are the structure.
       const xTickVals =
         container.xKind === 'category' ? [] : xScale.ticks(xTickCount);
-      const xTicks = xTickVals.map((d) => xScale(+d));
-      const yTicks = gridY
-        ? (explicitY ?? gridY.ticks(GRID_TICKS)).map((t) => gridY(t))
-        : [];
-      drawGrid(ctx, xTicks, yTicks, w, h, gridColor, gridDash);
+      // The reference grid (dashed verticals at the ticks, horizontals at the
+      // y ticks) — behind the data, opt-out via `grid={false}` for a clean
+      // backdrop (session dividers below stay independent of it).
+      if (container.grid) {
+        const xTicks = xTickVals.map((d) => xScale(+d));
+        const yTicks = gridY
+          ? (explicitY ?? gridY.ticks(GRID_TICKS)).map((t) => gridY(t))
+          : [];
+        drawGrid(ctx, xTicks, yTicks, w, h, gridColor, gridDash);
+      }
       // Session dividers: solid verticals at the trading calendar's collapse
       // points (session/day opens), where closed time was removed from the axis.
-      // Draw them at the axis ticks that are collapse points — the same
-      // calendar-coarsened instants the axis labels — so a divider sits under
-      // each date/month/year label, not at every session (which crowds).
+      // `'labeled'` (default) draws them only at the axis ticks that are collapse
+      // points — one under each date/month/year label, so they don't crowd;
+      // `'all'` draws one at every session boundary in view (the TradingView
+      // separator look); `'none'` suppresses them.
       const disc = container.discontinuities;
-      if (disc?.boundaries) {
+      if (disc?.boundaries && container.sessionDividers !== 'none') {
         const [d0, d1] = container.timeRange;
         // Call as a method (not a detached reference) so a class-based provider
         // whose `boundaries` reads `this` keeps its receiver.
-        const collapse = new Set(disc.boundaries(d0, d1));
-        const bx = xTickVals
-          .filter((t) => collapse.has(+t))
-          .map((t) => xScale(+t));
+        const boundaries = disc.boundaries(d0, d1);
+        const marks =
+          container.sessionDividers === 'all'
+            ? boundaries
+            : ((): number[] => {
+                const collapse = new Set(boundaries);
+                return xTickVals.map((v) => +v).filter((t) => collapse.has(t));
+              })();
+        const bx = marks.map((t) => xScale(t));
         const dividerColor = container.theme.axis.sessionDivider ?? gridColor;
         drawDividers(ctx, thinPixels(bx, MIN_DIVIDER_PX), h, dividerColor);
       }

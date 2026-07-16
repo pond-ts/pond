@@ -196,6 +196,120 @@ describe('ChartContainer discontinuities → trading-time axis', () => {
     expect(f.discontinuities).toBeUndefined(); // gated off
   });
 
+  it('grid / sessionDividers props: grid gate, and labeled vs all vs none', () => {
+    const H = 3_600_000;
+    const DAY = 24 * H;
+    // ~40 weekday sessions from Mon 2026-01-05 → many session boundaries, only
+    // a handful of which are labelled ticks.
+    const sessions: Array<{ date: string; open: number; close: number }> = [];
+    for (let d = 0; sessions.length < 40; d++) {
+      const day = Date.UTC(2026, 0, 5) + d * DAY;
+      const dow = new Date(day).getUTCDay();
+      if (dow === 0 || dow === 6) continue;
+      sessions.push({ date: '', open: day + 9.5 * H, close: day + 16 * H });
+    }
+    const prov = sessionsProvider(sessions);
+    const px = new TimeSeries({
+      name: 's',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number' },
+      ] as const,
+      rows: sessions.map((s) => [s.open, 1]) as [number, number][],
+    });
+    const dividerColor = defaultTheme.axis.sessionDivider!;
+    const gridDash = defaultTheme.axis.gridDash as number[];
+    const tree = (props: Record<string, unknown>) => (
+      <ChartContainer
+        range={[sessions[0]!.open, sessions[39]!.close]}
+        width={900}
+        discontinuities={prov}
+        showAxis={false}
+        {...props}
+      >
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={2} />
+          <Layers>
+            <LineChart series={px} column="v" axis="a" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+    // Dividers draw as one path: `moveTo` per line between the divider-colour
+    // `strokeStyle` set and the following `stroke()`. Count them.
+    const dividerCount = (
+      calls: ReturnType<typeof stubCanvasContext>['calls'],
+    ) => {
+      const i = calls.findIndex(
+        (c) =>
+          c.type === 'set' &&
+          c.name === 'strokeStyle' &&
+          c.args[0] === dividerColor,
+      );
+      if (i < 0) return 0;
+      let n = 0;
+      for (let j = i + 1; j < calls.length; j++) {
+        if (calls[j]!.name === 'stroke') break;
+        if (calls[j]!.name === 'moveTo') n++;
+      }
+      return n;
+    };
+    const gridDashed = (calls: ReturnType<typeof stubCanvasContext>['calls']) =>
+      calls.some(
+        (c) =>
+          c.type === 'call' &&
+          c.name === 'setLineDash' &&
+          Array.isArray(c.args[0]) &&
+          (c.args[0] as number[]).join() === gridDash.join(),
+      );
+    // Render each mode under a fresh stub; read the counts before restoring.
+    let labeled = 0;
+    let all = 0;
+    let none = 0;
+    let gridDashedWithGrid = false;
+    let gridDashedNoGrid = false;
+    let dividersNoGrid = 0;
+    {
+      const stub = stubCanvasContext();
+      render(tree({})); // default: sessionDividers 'labeled', grid on
+      labeled = dividerCount(stub.calls);
+      gridDashedWithGrid = gridDashed(stub.calls);
+      stub.restore();
+      cleanup();
+    }
+    {
+      const stub = stubCanvasContext();
+      render(tree({ sessionDividers: 'all' }));
+      all = dividerCount(stub.calls);
+      stub.restore();
+      cleanup();
+    }
+    {
+      const stub = stubCanvasContext();
+      render(tree({ sessionDividers: 'none' }));
+      none = dividerCount(stub.calls);
+      stub.restore();
+      cleanup();
+    }
+    {
+      const stub = stubCanvasContext();
+      render(tree({ grid: false }));
+      dividersNoGrid = dividerCount(stub.calls);
+      gridDashedNoGrid = gridDashed(stub.calls);
+      stub.restore();
+      cleanup();
+    }
+
+    expect(none).toBe(0); // 'none' suppresses dividers
+    expect(labeled).toBeGreaterThan(0); // default draws some (at labels)
+    expect(all).toBeGreaterThan(labeled); // 'all' draws every boundary — denser
+    // Grid gate is independent of dividers: `grid={false}` drops the dashed
+    // gridlines but the (default 'labeled') dividers still draw.
+    expect(gridDashedWithGrid).toBe(true);
+    expect(gridDashedNoGrid).toBe(false);
+    expect(dividersNoGrid).toBeGreaterThan(0);
+  });
+
   it('draws a session divider at each boundary (strokes the divider color)', () => {
     const schema = [
       { name: 'time', kind: 'time' },

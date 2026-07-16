@@ -115,6 +115,22 @@ export interface ChartContainerProps {
    * carries its own metric).
    */
   spacing?: 'proportional' | 'uniform';
+  /**
+   * Draw the reference gridlines (dashed verticals at the x ticks, horizontals
+   * at the default y-axis ticks) behind the data. **Default `true`.** Set
+   * `false` for a clean backdrop — session dividers (below) still draw, so a
+   * trading axis can show session structure without the price grid.
+   */
+  grid?: boolean;
+  /**
+   * Where to draw **session dividers** — the solid verticals at a trading
+   * calendar's collapse points (session/day opens; only with a
+   * `discontinuities` / `calendar` provider). **Default `'labeled'`** — one
+   * under each date/month/year the axis labels (a collapse point that is also a
+   * tick), so they don't crowd. `'all'` draws one at *every* session boundary
+   * in view (the TradingView session-separator look). `'none'` suppresses them.
+   */
+  sessionDividers?: 'labeled' | 'all' | 'none';
   /** Total width in CSS pixels (plot + axis gutters). */
   width: number;
   /** Vertical space between rows in CSS pixels (not under the axis). Default 0. */
@@ -376,6 +392,8 @@ export function ChartContainer({
   discontinuities,
   calendar,
   spacing,
+  grid = true,
+  sessionDividers = 'labeled',
   children,
 }: ChartContainerProps) {
   // The explicit base domain from `range` (a tuple or a TimeRange). `undefined`
@@ -918,6 +936,8 @@ export function ChartContainer({
       xScale,
       xKind: resolvedKind,
       discontinuities: xDiscontinuities,
+      grid,
+      sessionDividers,
       panZoom,
       minDuration,
       applyRange,
@@ -974,6 +994,8 @@ export function ChartContainer({
       xScale,
       resolvedKind,
       xDiscontinuities,
+      grid,
+      sessionDividers,
       panZoom,
       minDuration,
       applyRange,

@@ -47,6 +47,13 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts:** `<ChartContainer>` gains **`grid`** (default `true`) and
+  **`sessionDividers`** (`'labeled' | 'all' | 'none'`, default `'labeled'`).
+  `grid={false}` drops the reference gridlines for a clean backdrop; the two
+  divider modes beyond the default draw a session separator at _every_ boundary
+  in view (`'all'` — the TradingView session-separator look) or suppress them
+  (`'none'`). Dividers are independent of the grid, so a trading axis can show
+  session structure on a grid-free plot.
 - **charts:** `<TimeAxis>` / `<XAxis>` gain a **`dateStyle`** prop
   (`'flat' | 'stacked'`). `'flat'` — the new default — lays the date context
   out on a **single row** the TradingView way: each tick that opens a coarser
