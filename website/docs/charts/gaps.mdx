@@ -1,0 +1,114 @@
+---
+title: Missing data & gaps
+sidebar_position: 5
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import ChartsGapModes from '@site/src/examples/charts-gap-modes';
+
+# Missing data & gaps
+
+A **gap** is a run of missing samples — a dropout, a coasted sensor, an empty
+aggregation bucket. pond represents it as a non-finite value (`NaN`), and the
+chart layers render it honestly by default. Handling a gap is a two-part
+pipeline: **upstream** you decide which gaps to fill and which to leave;
+**downstream** each layer decides how to draw what's left.
+
+## The gap contract — `NaN`, not `null`
+
+A gap is a `NaN` on the numeric column (`Number.isFinite` is the test), never
+`null` or `undefined`. Missing cells are `undefined` in the pond store; they
+surface as `NaN` on the `Float64` column the charts read. So "is this a gap?"
+is always `!Number.isFinite(value)` — one contract across every layer.
+
+## Upstream — creating and bounding gaps
+
+Gaps enter a series two ways, both in core (`pond-ts`):
+
+- **`materialize(sequence)`** regularizes onto a time grid; an **empty bucket
+  emits a row with `undefined` value columns**. This is the usual way a gap
+  appears — a minute with no data becomes a hole.
+- **`aggregate(...)` over an empty bucket** reduces to nothing (non-finite),
+  which reads as a gap.
+
+Then **`fill(strategy, { limit?, maxGap? })`** decides which of those gaps to
+bridge and which to keep:
+
+```ts
+series
+  .materialize(Sequence.every('1m')) // regularize → undefined for empty minutes
+  .fill({ cpu: 'linear' }, { maxGap: '3m' }); // fill short gaps, keep long ones
+```
+
+- **`strategy`** — `'hold'` (forward-fill), `'bfill'`, `'linear'`, `'zero'`, a
+  literal, or a per-column object.
+- **`maxGap` / `limit`** cap filling **all-or-nothing per gap**: a gap whose
+  temporal span exceeds `maxGap` (or whose length exceeds `limit` cells) is left
+  **fully unfilled** — a real absence you don't want to invent data across. What
+  `fill` leaves behind is the `NaN` gap the chart then renders.
+
+The split is deliberate: **filling is a data decision** (do I believe a value
+here?), made upstream with pond; **rendering is a view decision** (how do I show
+what I chose to leave), made on the layer.
+
+## Downstream — `GapMode` on the line and area
+
+`LineChart` and `AreaChart` take a **`gaps`** prop — a `GapMode` — for how a
+`NaN` run draws. Switch it below on one fixed gap:
+
+<ChartExample name="charts-gap-modes" height={280}>
+  <ChartsGapModes />
+</ChartExample>
+
+| `gaps`     | What it draws                                                                                                                                                                                       |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `'empty'`  | **Default.** Break — end the line at the gap, restart after it. A gap reads as a gap.                                                                                                               |
+| `'none'`   | Bridge straight across (linear interpolation). The **only non-honest mode** — for an artefact you want to ignore, not a real absence. A leading/trailing gap still breaks (nothing to bridge from). |
+| `'dashed'` | Break, **plus** a faint dashed line bridging each gap straight (last-good → next-good).                                                                                                             |
+| `'step'`   | Break, **plus** a faint flat dashed line at the **average** of the two edge values — flatter and less committal than `dashed`.                                                                      |
+| `'fade'`   | The line fades to the baseline at each gap edge (opaque at the line, transparent at the floor) and fades back in on the far side.                                                                   |
+
+`'dashed'` and `'step'` are **inferred connectors** — drawn fainter than the
+solid line (`theme.gap.connectorOpacity`) so a guessed bridge reads as secondary
+to measured data. In every mode except `'none'`, an `AreaChart`'s **fill stays
+broken** — only the outline gets the connector (and `'fade'` drops the outline
+to the area's own baseline).
+
+## Per-layer behaviour
+
+Only the line and area negotiate a gap's appearance. The other layers have one
+honest behaviour each:
+
+| Layer          | Missing-value behaviour                                                |
+| -------------- | ---------------------------------------------------------------------- |
+| `LineChart`    | `gaps` prop — all five modes.                                          |
+| `AreaChart`    | `gaps` prop — fill and outline both break (see the coupling above).    |
+| `BandChart`    | **No `gaps` prop — always breaks** at a gap on either edge, by design. |
+| `ScatterChart` | A `NaN` point isn't drawn (a scatter has nothing to bridge).           |
+| `BarChart`     | A `NaN` bucket draws no bar.                                           |
+| `BoxPlot`      | A box missing any present quantile draws nothing.                      |
+| `Candlestick`  | A candle missing any of O/H/L/C draws nothing.                         |
+
+Bands have no gap mode on purpose — a filled envelope's break wants its own
+treatment (sharp vs. blurred), still to be designed; until then a band breaks
+honestly.
+
+## Sharp edges
+
+- **A gap is `NaN`, checked with `Number.isFinite`** — not `null`/`undefined`.
+  If your data uses `null` for missing, it must become `NaN` before the chart.
+- **`'none'` is the one dishonest mode** — it invents values across the gap.
+  Reach for it only when the gap is a sampling artefact, not a real absence;
+  otherwise cap the fill upstream with `maxGap`.
+- **Fill is upstream, render is downstream** — don't try to express "fill gaps
+  under 3 minutes" with a `GapMode`; that's a `fill({ maxGap })` decision on the
+  data.
+
+## See also
+
+- [LineChart](./types/linechart.mdx) · [AreaChart](./types/areachart.mdx) —
+  the two layers with a `gaps` prop.
+- [Trading-time axis](./axes/trading-time-axis.mdx) — `sessionBreaks` is a
+  _scale_ break (at session boundaries), orthogonal to a _data_ gap.
+- Storybook: [`Gaps`](pathname:///storybook/?path=/story/gaps--line) — all five
+  modes on a line and an area, side by side.
