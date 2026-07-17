@@ -65,19 +65,24 @@ scale and frame rebuild whenever its identity changes. Construct it in a
 `useMemo`/`useRef`, never inline in the render.
 :::
 
-## Tuning — `spacing` and `discontinuities`
+## Tuning
 
-| Prop              | Type                          | Default          | Purpose                                                                                                                                |
-| ----------------- | ----------------------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `calendar`        | `TradingCalendarLike`         | —                | High-level: the container derives the gap model from it.                                                                               |
-| `spacing`         | `'proportional' \| 'uniform'` | `'proportional'` | `proportional` = true time within a session; `uniform` = equal width per session (the TradingView ordinal look). Only with `calendar`. |
-| `discontinuities` | `DiscontinuityProvider`       | —                | Low-level: pass the gap model yourself (`calendar.discontinuities(...)`). **Takes precedence over `calendar`.**                        |
+All of these are `<ChartContainer>` props, and all are **time-axis only** —
+ignored on a value or category axis.
+
+| Prop              | Type                           | Default          | Purpose                                                                                                                                  |
+| ----------------- | ------------------------------ | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `calendar`        | `TradingCalendarLike`          | —                | High-level: the container derives the gap model from it.                                                                                 |
+| `spacing`         | `'proportional' \| 'uniform'`  | `'proportional'` | `proportional` = true time within a session; `uniform` = equal width per session (the TradingView ordinal look). Only with `calendar`.   |
+| `discontinuities` | `DiscontinuityProvider`        | —                | Low-level: pass the gap model yourself (`calendar.discontinuities(...)`). **Takes precedence over `calendar`.**                          |
+| `sessionDividers` | `'none' \| 'labeled' \| 'all'` | `'none'`         | Solid verticals at collapse **seams** (see below). `'all'` = every seam (the TradingView separators), `'labeled'` = only labelled seams. |
 
 Most charts want `calendar` + the default `proportional` spacing. Reach for
 `discontinuities` only when you're constructing the provider some other way, or
-need `uniform` bar-width spacing over a custom period.
-
-All three are **time-axis only** — they're ignored on a value or category axis.
+need `uniform` bar-width spacing over a custom period. The `dateStyle` (on
+`<XAxis>`) and `grid` (on `<ChartContainer>`) props also shape this axis — see
+[What changes on the axis](#what-changes-on-the-axis) below and
+[Axes](./index.mdx#the-x-axis) / [Layout](../layout.mdx).
 
 ## What changes on the axis
 
