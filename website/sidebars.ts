@@ -180,6 +180,7 @@ const sidebars: SidebarsConfig = {
           ],
         },
         'charts/gaps',
+        'charts/financial',
         {
           type: 'link',
           label: 'API reference (charts)',
