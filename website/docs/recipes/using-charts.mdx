@@ -50,7 +50,7 @@ Charts redraw when handed a **new `theme` reference** (and, of course, new
 data). The same reference doesn't repaint — so if you compute a theme yourself,
 memoize it, and if you build one from CSS tokens, let `useChartTheme` manage the
 reference (it returns a new one only when the resolved theme actually changed).
-Full detail in [Theming charts](./theming).
+Full detail in [Theming charts](../charts/theming).
 
 ## Co-developing against unreleased charts
 
@@ -69,5 +69,5 @@ CI-resolvable; your machine picks up the local build.
 
 ## See also
 
-- [Theming charts](./theming) — the `ChartTheme` model and the CSS-token bridge.
+- [Theming charts](../charts/theming) — the `ChartTheme` model and the CSS-token bridge.
 - [Resizable multi-panel layout](./resizable-panels) — a full chart layout.

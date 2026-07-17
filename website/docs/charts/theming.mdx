@@ -1,12 +1,28 @@
 ---
-sidebar_position: 45
+title: Theming
+sidebar_position: 7
 ---
 
-# Theming charts
+# Theming
 
 How `@pond-ts/charts` is styled: one typed theme object, semantic identifiers
 that map a series to a style, and — for apps with a design system — a bridge
 from CSS custom properties that follows a dark/light toggle.
+
+## Choosing an entry point
+
+There are three ways to supply a theme. Pick by how your app manages colour:
+
+| You have…                                              | Use                        | How                                                              |
+| ------------------------------------------------------ | -------------------------- | ---------------------------------------------------------------- |
+| A fixed palette / no design-system tokens              | a **literal `ChartTheme`** | Spread `defaultTheme`, override slots, pass `theme={…}`.         |
+| CSS custom properties, but a **static** read is enough | **`cssVarTheme`**          | `cssVarTheme(base, v => ({ … }))` reads tokens off the DOM once. |
+| CSS tokens **and** a runtime dark/light toggle         | **`useChartTheme`**        | The hook re-resolves on a `data-theme` / `class` flip.           |
+
+All three produce the same thing — one typed `ChartTheme` object — and all obey
+the same [repaint contract](#the-repaint-contract). The docs site itself runs on
+`useChartTheme` (see [`useSiteChartTheme`](https://github.com/pond-ts/pond/blob/main/website/src/theme/useSiteChartTheme.ts)),
+so every live chart on this site re-themes when you flip the theme toggle above.
 
 ## One styling channel
 
@@ -65,6 +81,30 @@ The discipline is **a handful of roles, not a hue per channel** — map many
 identifiers onto a few shared styles rather than inventing a colour per series.
 `as` picks the _style_; the separate `axis` prop picks _which `YAxis` scale_ a
 mark draws against — two different concerns.
+
+## The `ChartTheme` slots
+
+A `ChartTheme` has one **role-keyed** slot per draw layer (the `as` lookup) plus
+a set of fixed slots for chrome. Each layer slot resolves `slot[as] ?? slot.default`,
+so a chart always renders even for an unnamed identifier.
+
+| Slot                                                         | Role-keyed? | Style shape                                                                                                                    |
+| ------------------------------------------------------------ | ----------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `line`                                                       | yes         | `{ color, width, dash? }`                                                                                                      |
+| `area`                                                       | yes         | `{ color, width, fill, fillOpacity }` (`fill` must be **CSS hex**)                                                             |
+| `band`                                                       | yes         | `{ fill, opacity }`                                                                                                            |
+| `scatter`                                                    | yes         | `{ color, radius, outline, outlineWidth, selectedOutline, selectedWidth, label }`                                              |
+| `bar`                                                        | yes         | `{ fill, opacity, highlight, gap, minWidth, outlineWidth }`                                                                    |
+| `box`                                                        | yes         | `{ fill, fillOpacity, stroke, strokeWidth, median, medianWidth, whisker, whiskerWidth }`                                       |
+| `candle`                                                     | yes         | `{ rising:{body,wick}, falling:{body,wick}, neutral?:{…}, bodyWidth?, wickWidth }` — a direction **pair**, not a single colour |
+| `axis`                                                       | no          | `{ label, grid, gridDash, sessionDivider?, band?, title? }`                                                                    |
+| `font`                                                       | no          | `{ family, size }`                                                                                                             |
+| `background?` / `cursor?` / `chip?` / `gap?` / `annotation?` | no          | `string` / `string` / `{ background }` / `{ connectorOpacity }` / `{ color, fillOpacity, depth:[n,n,n] }`                      |
+
+Two built-ins ship: **`defaultTheme`** (a neutral light base) and
+**`estelaTheme`** (`@estela/ui`'s palette on a dark ground — the "restyle by
+swapping the object" proof). Override only the slots you care about; the rest
+falls through to the base.
 
 ## A custom theme
 
@@ -208,7 +248,13 @@ theme keeps a stable reference and doesn't force redraws.
 
 ## See also
 
-- [Resizable multi-panel layout](./resizable-panels) — a full chart layout the
-  theme applies to.
-- `Charts/Theming → CssVars` and `Charts/LineChart → LineStyles` Storybook
-  stories — the live dark/light toggle and the dash patterns.
+- [Layout](./layout.mdx) · [Resizable multi-panel layout](../recipes/resizable-panels)
+  — chart layouts the theme applies to.
+- [`useSiteChartTheme`](https://github.com/pond-ts/pond/blob/main/website/src/theme/useSiteChartTheme.ts)
+  — this site's live `useChartTheme` bridge (the dogfood).
+- Storybook: [`Theming → CssVars`](pathname:///storybook/?path=/story/theming--css-vars)
+  (the live dark/light toggle) and
+  [`Charts/LineChart → LineStyles`](pathname:///storybook/?path=/story/charts-linechart--line-styles)
+  (the `dash` patterns).
+- The generated [API reference](pathname:///generated-api/charts/) — the full
+  `ChartTheme` type and every style interface.
