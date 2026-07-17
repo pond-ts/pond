@@ -25,6 +25,14 @@ we deliberately didn't build.
 Update it when you change a layer boundary, add a new class to one of
 the layers, or introduce a new recurring pattern.
 
+## API map
+
+**Read [API.md](API.md) to locate any public export quickly.** It maps
+every package's export surface (name → purpose → source file) so you
+don't crawl `src/` to find the right primitive. Each package's
+`src/index.ts` is the authority; when a PR adds, removes, or renames a
+public export, update the matching API.md row in that PR.
+
 ## Strategic RFCs
 
 `docs/rfcs/` holds strategic planning notes — multi-section design
@@ -213,7 +221,7 @@ Run `npx prettier --write .` before committing. Unformatted code will fail revie
 with a user-facing change (new/changed API, behaviour shift, notable fix) adds
 its entry under the **`## [Unreleased]`** section of `CHANGELOG.md` as part of
 that PR, grouped `Added` / `Changed` / `Fixed` / `Deprecated`. The release bump
-then just *promotes* `[Unreleased]` to the new version — it does not have to
+then just _promotes_ `[Unreleased]` to the new version — it does not have to
 reconstruct the changelog from `git log`, which is how a landed feature gets
 shipped undocumented (e.g. histograms rode into v0.42.0 with no entry because the
 release bump only covered the concurrent trading-calendar wave). A feature that
