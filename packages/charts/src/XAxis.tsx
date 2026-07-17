@@ -15,19 +15,22 @@ import {
 const TICK_STRIP = 22;
 /** Extra height reserved for an axis `label` line. */
 const LABEL_STRIP = 16;
-/** Extra height reserved for the boundary (second) label row. */
-const BOUNDARY_STRIP = 15;
+/** Extra height reserved for the stacked **band** (second) row. */
+const BAND_STRIP = 20;
 /** Minimum pixel gap between derived-unit (`transform`) ticks — the room a
  *  short numeric label needs plus breathing space, in the spirit of the
  *  ladder's per-tick budget (a hair tighter: derived labels are short). */
 const TRANSFORM_TICK_PX = 48;
 
-/** One placed tick — its plot-pixel x, the text to draw, and (on a time axis)
- *  the boundary-row text under it when this tick opens a new coarser period. */
+/** One placed tick — its plot-pixel x, the text to draw, and (stacked band
+ *  style) whether it sits on a band turn and renders emphasized. */
 interface PlacedTick {
   readonly x: number;
   readonly label: string;
-  readonly boundary?: string;
+  /** This tick opens a coarser calendar period (a day/month/year turn), so it
+   *  renders emphasized (bold): a band turn in stacked, an inline promotion in
+   *  flat — the same boundaries in both styles. */
+  readonly bold?: boolean;
 }
 
 /**
@@ -136,10 +139,12 @@ export interface XAxisProps {
    *   turn, the year at a year turn, the date at a day turn under an intraday
    *   grain), every other tick a terse label (`5`, `Feb`, `14:00`). The
    *   TradingView look — the row reads `… 30 31 Feb 2 3 …`.
-   * - `'stacked'` — two rows: a `%b %d` / `%H:%M` major row, plus a second row
-   *   under it carrying the coarser unit the major label omits (the year under
-   *   day / month ticks, the date under clock ticks) once per crossing, with a
-   *   pinned left-edge context label.
+   * - `'stacked'` — two rows: a terse top row (the grain's bare unit — `14:00`,
+   *   `12`, `Feb`) over a segmented **band** row of the next-coarser period
+   *   (day bands under intraday ticks, month bands under day ticks, year bands
+   *   under month/quarter ticks). Each band is a left-aligned label + a divider
+   *   at its turn, zebra-shaded by the band's calendar parity; the top-row tick
+   *   on each turn is emphasized and joins its divider as one boundary line.
    */
   dateStyle?: 'flat' | 'stacked';
 }
@@ -245,6 +250,35 @@ export function XAxis({
       ? (xScale as TradingTimeScale).flatFormat(xTickCount)
       : undefined;
 
+  // The **stacked** date style renders a segmented **band** row (the coarser
+  // calendar period as zebra-shaded cells with left-aligned labels + dividers)
+  // beneath a terse top row, with the band-turn tick emphasized. The top row
+  // reads `baseFormat` (the grain's bare unit, no inline promotion — the
+  // context lives in the band), and `bands` are the segments.
+  const stacked = laddered && dateStyle === 'stacked' && 'bands' in xScale;
+  // The terse base label (the grain's bare unit, no promotion): the stacked
+  // top row, and — in flat — the yardstick for detecting which ticks were
+  // *promoted* to a coarser period, so those can be emphasized to match the
+  // stacked band turns (a period boundary reads the same in both styles).
+  const baseFmt =
+    laddered && 'baseFormat' in xScale
+      ? (xScale as TradingTimeScale).baseFormat(xTickCount)
+      : undefined;
+  const bands = stacked ? (xScale as TradingTimeScale).bands(xTickCount) : [];
+  // Pixel positions where a band **divider** is drawn — the interior band
+  // starts (a start at/left of the plot edge maps to px ≤ 0 and draws no
+  // divider). A top-row tick landing on one is the band turn: it renders bold
+  // and in the divider colour, so tick + divider read as one continuous
+  // boundary line. Matched by **pixel**, not by instant, because on a trading
+  // axis the turn tick is the session OPEN sitting at the collapsed-midnight
+  // seam — the same pixel as the midnight band-start, but a different instant.
+  const dividerXs = new Set(
+    bands
+      .map((b) => xScale(b.start))
+      .filter((px) => px > 0) // same threshold the band border uses (startPx > 0)
+      .map((px) => Math.round(px)),
+  );
+
   // Tick / readout formatter: an explicit `format` is resolved against the axis
   // kind (a time specifier through the time scale, a number specifier through
   // the value scale); otherwise the container's shared formatter — the one the
@@ -273,11 +307,11 @@ export function XAxis({
               xTickCount,
               format,
             );
-  // The formatter for the rendered **tick labels** specifically: the flat-style
-  // promoted single-row labels when active, else the shared `fmt`. Split from
-  // `fmt` so a flat axis's terse tick labels never leak into the cursor / marker
-  // readouts, which stay full timestamps.
-  const tickFmt = flatFmt ?? fmt;
+  // The formatter for the rendered **tick labels** specifically: flat-style
+  // promoted labels, stacked-style terse base labels, else the shared `fmt`.
+  // Split from `fmt` so an axis's terse tick labels never leak into the cursor /
+  // marker readouts, which stay full timestamps.
+  const tickFmt = flatFmt ?? (stacked ? baseFmt : undefined) ?? fmt;
 
   // Marker annotations that opted into an axis indicator (`<Marker indicator>`)
   // pin their **time** to this shared x-axis — a pill at `at`, in the annotation
@@ -326,24 +360,10 @@ export function XAxis({
   }
   const maxPillLane = Math.max(0, pillLaneEnds.length - 1);
 
-  // The stacked boundary (second) label row — the coarser calendar unit the
-  // first-row label omits (the year under day / week / month ticks, the date
-  // under clock ticks), placed under the first tick of each new period. Only in
-  // the `'stacked'` date style; `'flat'` promotes that context inline instead
-  // (via `flatFmt`, computed with `fmt` above) and draws no second row.
-  const boundaryOf =
-    laddered && dateStyle === 'stacked'
-      ? (xScale as TradingTimeScale).tickBoundaries(xTickCount)
-      : undefined;
-  // The pinned left-edge **context** label — what period the domain starts in
-  // (`Jan 01` over an intraday axis, the year over a month axis). A property
-  // of the domain, not of any tick: anchoring it to the first tick made it
-  // hop tick-to-tick on a live sliding window. Crossing labels ride their
-  // ticks and **push it off** the left edge as they approach (below).
-  const boundaryContext =
-    boundaryOf !== undefined && 'boundaryContext' in xScale
-      ? (xScale as TradingTimeScale).boundaryContext(xTickCount)
-      : undefined;
+  // (The `'stacked'` date style's coarser context is the segmented **band**
+  // row — `bands`, computed above — not a per-tick boundary label. The old
+  // ride-a-tick boundary row + pinned context are retired; the scale still
+  // exposes `tickBoundaries` / `boundaryContext` for any external consumer.)
 
   // Derived ticks pass a **label-honesty filter**: the fill can descend below
   // the format's resolution (a delta tick at u = 0.498 renders as "+0.50" under
@@ -376,7 +396,16 @@ export function XAxis({
       : (xScale.ticks(xTickCount) as ReadonlyArray<number | Date>).map((d) => ({
           x: xScale(d as number),
           label: tickFmt(+d),
-          boundary: boundaryOf?.(+d),
+          // A **period turn** renders emphasized (bold), consistently across
+          // styles: in stacked, a tick on a band divider (matched by pixel);
+          // in flat, a tick whose label was *promoted* to a coarser period
+          // (its flat label differs from the terse base) — the same boundaries,
+          // so `Feb` / `2026` read as strong in flat just as the band turns do.
+          bold: stacked
+            ? dividerXs.has(Math.round(xScale(d as number)))
+            : flatFmt !== undefined &&
+              baseFmt !== undefined &&
+              flatFmt(+d) !== baseFmt(+d),
         }));
   // A category axis ticks once per category; thin + truncate its labels when they
   // crowd (an explicit `customTicks` axis keeps its labels verbatim).
@@ -391,38 +420,22 @@ export function XAxis({
   const pillOffset = align === 'right' ? 2 : 6;
   // Per-lane vertical step for stacked pills; grow the strip to fit the stack.
   const PILL_LANE_H = theme.font.size + 6;
-  // Any boundary label in view grows the strip by one row (like pill lanes do).
-  const hasBoundary =
-    boundaryContext !== undefined ||
-    placed.some((t) => t.boundary !== undefined);
-  // The pinned context anchors at the plot's left edge (the y-axis line) with
-  // the SAME alignment as the tick labels — centred on it in `center` mode
-  // (exactly where a first-tick label at x=0 sat, half into the gutter by the
-  // same documented rule), left-anchored in `auto`, beside the line in
-  // `right`. As the leftmost crossing label slides toward the edge it would
-  // collide, so the context CULLS once the crossing label's left edge reaches
-  // the context's right edge (plus a gap) — no overlap, and nothing slides
-  // loose into the gutter. Widths from the same rough glyph metric the pills
-  // use; the crossing's label is centred on its tick.
-  const charW = theme.font.size * 0.62;
-  const contextWidth = (boundaryContext?.length ?? 0) * charW;
-  const contextRight =
-    align === 'center'
-      ? contextWidth / 2
-      : align === 'right'
-        ? 4 + contextWidth
-        : contextWidth;
-  const firstCrossing = placed.find((t) => t.boundary !== undefined);
-  const crossingLeft = firstCrossing
-    ? align === 'right'
-      ? firstCrossing.x + 4
-      : firstCrossing.x - (firstCrossing.boundary!.length * charW) / 2
-    : Infinity;
-  const showContext =
-    boundaryContext !== undefined && crossingLeft > contextRight + 6;
+  // The stacked **band** row grows the strip by one band-height row (like pill
+  // lanes do). Only when the stacked style actually has bands (not at year
+  // grain / on a non-ladder axis).
+  const hasBands = stacked && bands.length > 0;
+  // Band-row colours (themeable via `theme.axis.band`): the zebra shade fill,
+  // the turn divider, and the label ink. A per-axis `color` override wins for
+  // divider + label (the fill stays the band's own shade).
+  const bandTheme = theme.axis.band;
+  const bandFill =
+    bandTheme?.fill ?? theme.chip?.background ?? 'rgba(0,0,0,0.04)';
+  const bandDivider = color ?? bandTheme?.divider ?? theme.axis.grid;
+  const bandLabelColor =
+    color ?? bandTheme?.label ?? theme.axis.title?.color ?? theme.axis.label;
   const stripHeight =
     (height ?? TICK_STRIP + (label ? LABEL_STRIP : 0)) +
-    (hasBoundary ? BOUNDARY_STRIP : 0) +
+    (hasBands ? BAND_STRIP : 0) +
     maxPillLane * PILL_LANE_H;
 
   return (
@@ -454,8 +467,19 @@ export function XAxis({
               : align === 'auto' && isLast
                 ? 'translateX(-100%)'
                 : 'translateX(-50%)';
-        // `right` drops a longer tick alongside the label; others keep the 4px stub.
-        const tickHeight = align === 'right' ? theme.font.size + 4 : 4;
+        // Stacked band mode: every tick runs the full tick-row height to *meet*
+        // the inter-row rule, so the boundary reads as one line continuing into
+        // the band divider below. `right` drops a longer tick beside the label;
+        // otherwise a 4px stub.
+        const tickHeight = hasBands
+          ? stripHeight - BAND_STRIP
+          : align === 'right'
+            ? theme.font.size + 4
+            : 4;
+        // The band-turn tick takes the divider colour so tick + divider read as
+        // one continuous boundary; minor ticks stay the faint grid colour.
+        const tickColor =
+          hasBands && t.bold ? bandDivider : (color ?? theme.axis.grid);
         const labelLeft = align === 'right' ? t.x + 4 : t.x;
         const labelOffset = align === 'right' ? 2 : 6;
         return (
@@ -467,7 +491,7 @@ export function XAxis({
                 [onTop ? 'bottom' : 'top']: 0,
                 width: '1px',
                 height: `${tickHeight}px`,
-                background: color ?? theme.axis.grid,
+                background: tickColor,
               }}
             />
             <div
@@ -477,44 +501,67 @@ export function XAxis({
                 [onTop ? 'bottom' : 'top']: `${labelOffset}px`,
                 transform: labelTransform,
                 whiteSpace: 'nowrap',
+                // Stacked band style bolds the tick sitting on a band turn
+                // (the day/month/year start) — the emphasized boundary tick.
+                fontWeight: t.bold ? 700 : undefined,
               }}
             >
               {t.label}
             </div>
-            {t.boundary !== undefined && (
-              <div
-                data-boundary-label
-                style={{
-                  position: 'absolute',
-                  left: `${labelLeft}px`,
-                  [onTop ? 'bottom' : 'top']:
-                    `${labelOffset + theme.font.size + 3}px`,
-                  transform: labelTransform,
-                  whiteSpace: 'nowrap',
-                  opacity: 0.75,
-                }}
-              >
-                {t.boundary}
-              </div>
-            )}
           </Fragment>
         );
       })}
-      {showContext && (
+      {hasBands && (
         <div
-          data-boundary-label
-          data-boundary-context
           style={{
             position: 'absolute',
-            left: `${align === 'right' ? 4 : 0}px`,
-            [onTop ? 'bottom' : 'top']:
-              `${(align === 'right' ? 2 : 6) + theme.font.size + 3}px`,
-            transform: align === 'center' ? 'translateX(-50%)' : 'none',
-            whiteSpace: 'nowrap',
-            opacity: 0.75,
+            left: 0,
+            width: `${plotWidth}px`,
+            [onTop ? 'top' : 'bottom']: 0,
+            height: `${BAND_STRIP}px`,
+            // The rule between the terse tick row and the band row.
+            [onTop ? 'borderBottom' : 'borderTop']:
+              `1px solid ${color ?? theme.axis.grid}`,
+            overflow: 'hidden',
           }}
         >
-          {boundaryContext}
+          {bands.map((b, i) => {
+            // Each band spans [its start, the next band's start) in pixels,
+            // clamped to the plot. The first (partial) band starts off-screen
+            // left, so its label pins at x=0; interior bands carry a divider
+            // at their start. Shaded bands paint the zebra fill.
+            const startPx = xScale(b.start);
+            const left = Math.max(0, startPx);
+            const nextPx =
+              i + 1 < bands.length ? xScale(bands[i + 1]!.start) : plotWidth;
+            const width = Math.max(0, Math.min(plotWidth, nextPx) - left);
+            if (width <= 0) return null;
+            return (
+              <div
+                key={b.start}
+                data-band-label
+                style={{
+                  position: 'absolute',
+                  left: `${left}px`,
+                  top: 0,
+                  bottom: 0,
+                  width: `${width}px`,
+                  boxSizing: 'border-box',
+                  background: b.shaded ? bandFill : 'transparent',
+                  borderLeft: startPx > 0 ? `1px solid ${bandDivider}` : 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  paddingLeft: '8px',
+                  color: bandLabelColor,
+                  fontWeight: 600,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                }}
+              >
+                {b.label}
+              </div>
+            );
+          })}
         </div>
       )}
       {label !== undefined && (

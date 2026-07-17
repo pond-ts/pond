@@ -93,11 +93,13 @@ All three are **time-axis only** — they're ignored on a value or category axis
   the axis is a **single row** the TradingView way: each tick that opens a
   coarser calendar period is relabelled **inline** to it — the month at a month
   turn, the year at a year turn, the date at a day turn under an intraday grain
-  — while every other tick stays terse (`5`, `Feb`, `14:00`). Pass
-  `dateStyle="stacked"` for the alternative **two-row** layout: a `%b %d` /
-  `%H:%M` major row plus a boundary row carrying the coarser unit (the date
-  over intraday ticks, the year over daily/monthly ticks) and a pinned
-  left-edge context label.
+  — while every other tick stays terse (`5`, `Feb`, `14:00`); a promoted tick
+  renders **bold**. Pass `dateStyle="stacked"` for the two-row layout: the same
+  terse top row over a segmented **band** row of the next-coarser period — day
+  bands under intraday ticks, month bands under day ticks, year bands under
+  month/quarter ticks. Each band left-aligns its label with a divider at its
+  turn, **zebra-shaded** by the band's calendar parity; the top-row turn tick
+  joins its divider as one boundary line. Themeable via `theme.axis.band`.
 - **Calendar grid.** The vertical gridlines are the **full grain populations**
   — every day, month, and aligned clock instant in view, not just the labelled
   ticks (the labels decorate the grid; they don't define it). Each grain fades

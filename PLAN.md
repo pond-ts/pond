@@ -1864,6 +1864,32 @@ independently built the same `calendar.bars → BoundedSequence` seam.
        TradingView-matching: the first real calendar anchor leads. Story
        controls also reworked (Grid / Sessions / Session markers switches
        below the chart, `labels center|left` control on the `align` prop).
+  - ✅ **Stacked date style → segmented band row (`feat/stacked-band-axis`,
+    2026-07-16, owner design from reference frames).** Redesigned
+    `dateStyle="stacked"` from the ride-a-tick boundary row + pinned context
+    into a **segmented band row**: a terse top row (the grain's bare unit) over
+    zebra-shaded bands of the **next-coarser** period — day bands under
+    intraday ticks, **month** bands under day ticks (one step finer than the
+    old day→year boundary jump), year bands under month/quarter ticks. Each
+    band left-aligns its label, draws a divider at its turn, and the partial
+    left band pins its label at x=0 (replacing `boundaryContext`). **Zebra by
+    absolute calendar parity** (year %2, months-since-epoch %2, UTC-day %2 —
+    pan/zoom-stable, DST-immune), not a live/current-cell rule (owner
+    correction: "it does zebra"). The top-row **turn tick** is bold + takes the
+    divider colour so tick + rule + divider read as one boundary line — matched
+    by **pixel**, not instant, so on a trading axis the session-open tick at the
+    collapsed-midnight seam is the one emphasized. New scale surface
+    `TradingTimeScale.bands(count)` + `baseFormat(count)`; new `bandGrainFor` /
+    `bandShaded` / `bandStartOf` / `bandNext` ladder helpers; new
+    `theme.axis.band` tokens (`fill` / `divider` / `label` — the shade is a
+    themeable background, "could be a background color for some people"). **Flat
+    (the shipped default) also picks up the boundary emphasis** (owner: "style
+    the band boundary in the non-layered case too, so it matches"): a tick
+    whose label was promoted to a coarser period (`Feb`, `2026`) now renders
+    **bold**, so a period boundary reads the same in flat and stacked — a
+    default-path behaviour shift, pinned by a test. The old
+    `tickBoundaries` / `boundaryContext` scale methods stay for external
+    consumers but the axis no longer renders them.
   - **Still deferred (documented, none blocking):** `neighbourSpans` point-key slot
     widths on the discontinuous axis (interval-keyed bars from
     `aggregate(barSequence)` — the primary path — are immune); exact **exchange-tz**

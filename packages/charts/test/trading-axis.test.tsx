@@ -643,7 +643,7 @@ describe('trading-axis tick density derives from plot width', () => {
     expect(years).toEqual(['2026']);
   });
 
-  it('dateStyle="stacked" restores the two-row boundary + pinned context', () => {
+  it('dateStyle="stacked" renders the segmented year-band row (zebra, partial first band pinned)', () => {
     const sessions = yearSessions();
     const { container: dom } = render(
       <ChartContainer
@@ -655,21 +655,24 @@ describe('trading-axis tick density derives from plot width', () => {
         <TimeAxis dateStyle="stacked" />
       </ChartContainer>,
     );
-    // The boundary (second) row carries the year: the domain start's year
-    // pinned at the left edge (context), plus the crossing tick where the year
-    // turns — never on every tick.
-    const boundaries = Array.from(
-      dom.querySelectorAll('[data-boundary-label]'),
-    ).map((el) => el.textContent);
-    expect(boundaries.sort()).toEqual(['2025', '2026']);
-    const context = dom.querySelector('[data-boundary-context]') as HTMLElement;
-    expect(context.textContent).toBe('2025');
-    expect(parseFloat(context.style.left)).toBeLessThanOrEqual(0);
+    // Month-grain ticks over ~a year → YEAR bands: 2025 (partial, from the
+    // mid-2025 domain start) then 2026, left-aligned labels.
+    const bands = Array.from(
+      dom.querySelectorAll('[data-band-label]'),
+    ) as HTMLElement[];
+    expect(bands.map((b) => b.textContent)).toEqual(['2025', '2026']);
+    // The 2025 band is partial — its label pins at the left edge, no turn divider.
+    expect(bands[0]!.style.left).toBe('0px');
+    expect(bands[0]!.style.borderLeftStyle).not.toBe('solid');
+    // The 2026 band carries the year-turn divider.
+    expect(bands[1]!.style.borderLeftStyle).toBe('solid');
+    // Zebra: adjacent bands differ in fill.
+    expect(bands[0]!.style.background).not.toBe(bands[1]!.style.background);
   });
 
-  it('a container-level timeFormat suppresses the boundary row', () => {
+  it('a container-level timeFormat suppresses the band row', () => {
     // An explicit format owns the whole label — the ladder must not add a
-    // second line under it (same opt-out as an <XAxis format> override).
+    // band (second) row under it (same opt-out as an <XAxis format> override).
     const sessions = yearSessions();
     const { container: dom } = render(
       <ChartContainer
@@ -677,9 +680,12 @@ describe('trading-axis tick density derives from plot width', () => {
         width={900}
         discontinuities={sessionsProvider(sessions)}
         timeFormat="%Y-%m-%d"
-      />,
+        showAxis={false}
+      >
+        <TimeAxis dateStyle="stacked" />
+      </ChartContainer>,
     );
-    expect(dom.querySelectorAll('[data-boundary-label]')).toHaveLength(0);
+    expect(dom.querySelectorAll('[data-band-label]')).toHaveLength(0);
   });
 
   it('formatTime labels year-grain ticks with the year — count shared with ticks', () => {
