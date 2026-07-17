@@ -78,7 +78,7 @@ method)` (EMA / Butterworth / Savitzky-Golay), `align(method, opts)`
   (rolling avg/sd/bands), `outliers()` (deviation from baseline)
 - **Join/pivot**: `join(other, opts)`, `pivotByGroup(group, opts)`
 
-### Columnar layer
+### Columnar layer & support
 
 | Export                                                                                         | Purpose                                    | Source                                         |
 | ---------------------------------------------------------------------------------------------- | ------------------------------------------ | ---------------------------------------------- |
@@ -86,6 +86,7 @@ method)` (EMA / Butterworth / Savitzky-Golay), `align(method, opts)`
 | `ChunkedFloat64Column` / `ChunkedStringColumn` / `ChunkedBooleanColumn` / `ChunkedArrayColumn` | Chunked variants (variable-length buffers) | `packages/core/src/columnar/chunked-column.ts` |
 | `TimeKeyColumn` / `TimeRangeKeyColumn` / `IntervalKeyColumn` / `ValueKeyColumn`                | Key-column storage per key kind            | `packages/core/src/columnar/key-column.ts`     |
 | `top`                                                                                          | Reducer factory: top-N values              | `packages/core/src/reducers/top.ts`            |
+| `ValidationError`                                                                              | Error class thrown on invalid input        | `packages/core/src/core/errors.ts`             |
 
 ### Key exported types (batch)
 
@@ -112,6 +113,7 @@ runtime (`packages/core/src/schema/public.ts`).
 | `LiveSeries`                  | Bounded in-memory buffer of time-keyed events with retention | `packages/core/src/live/live-series.ts`                    |
 | `LiveView`                    | Stateful transformation view over a live source              | `packages/core/src/live/live-view.ts`                      |
 | `LivePartitionedSeries`       | Routes events into per-partition sub-buffers by column value | `packages/core/src/live/live-partitioned-series.ts`        |
+| `LivePartitionedView`         | Derived per-partition view over a partitioned series         | `packages/core/src/live/live-partitioned-series.ts`        |
 | `LiveAggregation`             | Emits aggregated buckets when `Sequence` boundaries cross    | `packages/core/src/live/live-aggregation.ts`               |
 | `LiveRollingAggregation`      | Single-window rolling aggregation, configurable trigger      | `packages/core/src/live/live-rolling-aggregation.ts`       |
 | `LiveFusedRolling`            | Multi-window rolling, shared deque, single ingest pass       | `packages/core/src/live/live-fused-rolling.ts`             |
@@ -128,7 +130,8 @@ runtime (`packages/core/src/schema/public.ts`).
 
 ### Methods
 
-- **`LiveSeries`** — ingest: `push()`, `pushMany()`, `pushJson()`; query: same
+- **`LiveSeries`** — static: `LiveSeries.fromJSON()`; ingest: `push()`,
+  `pushMany()`, `pushJson()`; query: same
   key-query set as `TimeSeries` (`at`/`first`/`last`/`find`/`bisect`/
   `atOrBefore`/`atOrAfter`/…); operators: `window()`, `aggregate()`,
   `rolling()`, `reduce()`, `diff()`, `rate()`, `pctChange()`, `fill()`,
@@ -257,6 +260,8 @@ Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 | `CursorMode`                            | `'none' \| 'line' \| 'point' \| 'inline' \| 'flag' \| 'crosshair' \| 'region'`  | `packages/charts/src/context.ts`          |
 | `TrackerInfo` / `TrackerSample`         | Hover readout payload (`onTrackerChanged`)                                      | `packages/charts/src/context.ts`          |
 | `AnnotationKind` / `CreateSpec`         | Annotation identity + draw-gesture payload (`onCreate`)                         | `packages/charts/src/context.ts`          |
+| `SelectInfo`                            | Selection/hover payload (`ChartContainer` `onSelect`/`onHover`)                 | `packages/charts/src/context.ts`          |
+| `TimeGrain`                             | Coarse time unit for grain-aware formatting                                     | `packages/charts/src/tickLadder.ts`       |
 | `Curve`                                 | Path interpolation: `'linear' \| 'monotone' \| 'natural' \| 'basis' \| 'step'`  | `packages/charts/src/curve.ts`            |
 | `RadiusEncoding` / `ColorEncoding`      | Data-driven scatter size/colour                                                 | `packages/charts/src/encoding.ts`         |
 | `CandleVariant` / `ColorBy`             | OHLC mark shape / colouring strategy                                            | `packages/charts/src/ohlc.ts`             |
@@ -291,19 +296,20 @@ shape + pandas oracle case + fluent method are all REQUIRED).
 
 ### Trading calendars & sessions
 
-| Export                                           | Purpose                                                                                                                                                                              | Source                             |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------- |
-| `TradingCalendar`                                | Query API: `.sessions()`, `.sessionOn()`, `.isTradingDay()`, `.isOpen()`, `.sessionsInRange()`, `.sessionSequence()`, `.barSequence(period)`, `.tagSessions()`, `.discontinuities()` | `packages/financial/src/calendar/` |
-| `generateSessions`                               | `Session[]` from `SessionRules` over a date range (DST-correct)                                                                                                                      | `packages/financial/src/calendar/` |
-| `normalizeSessions`                              | Validate + sort an explicit session list                                                                                                                                             | `packages/financial/src/calendar/` |
-| `identityDiscontinuity` / `segmentDiscontinuity` | `DiscontinuityProvider`s for the trading-time axis                                                                                                                                   | `packages/financial/src/calendar/` |
-| Types                                            | `Session`, `SessionBreak`, `SessionRules`, `DateRange`, `InstantRange`, `TaggedSchema`, `LiveSegment`, `DiscontinuityProvider`                                                       | `packages/financial/src/calendar/` |
+| Export                                                           | Purpose                                                                                                                                                                              | Source                             |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------- |
+| `TradingCalendar`                                                | Query API: `.sessions()`, `.sessionOn()`, `.isTradingDay()`, `.isOpen()`, `.sessionsInRange()`, `.sessionSequence()`, `.barSequence(period)`, `.tagSessions()`, `.discontinuities()` | `packages/financial/src/calendar/` |
+| `generateSessions`                                               | `Session[]` from `SessionRules` over a date range (DST-correct)                                                                                                                      | `packages/financial/src/calendar/` |
+| `normalizeSessions`                                              | Validate + sort an explicit session list                                                                                                                                             | `packages/financial/src/calendar/` |
+| `identityDiscontinuity` / `segmentDiscontinuity` / `weekendSkip` | `DiscontinuityProvider`s for the trading-time axis                                                                                                                                   | `packages/financial/src/calendar/` |
+| Types                                                            | `Session`, `SessionBreak`, `SessionRules`, `DateRange`, `InstantRange`, `TaggedSchema`, `LiveSegment`, `DiscontinuityProvider`                                                       | `packages/financial/src/calendar/` |
 
 ### Contract & constants
 
 `OhlcvColumns` (column-name contract), `DEFAULT_OHLCV`
-(`{ open, high, low, close, volume }`), `DEFAULT_SOURCE` (`'close'`),
-`RollingReducer` — `packages/financial/src/contract/`.
+(`{ open, high, low, close, volume }`), `DEFAULT_SOURCE` (`'close'`) —
+`packages/financial/src/contract/`. `RollingReducer` (reducer-name union used
+by studies) — `packages/financial/src/kernels/rolling.ts`.
 
 ---
 
