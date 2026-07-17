@@ -87,11 +87,12 @@ end on these same primitives.
 
 ### `<ChartContainer>` — layout-relevant
 
-| Prop       | Type      | Default | Purpose                                                                                               |
-| ---------- | --------- | ------- | ----------------------------------------------------------------------------------------------------- |
-| `width`    | `number`  | — (req) | Overall chart width in CSS px. Real pixels, never `"100%"`.                                           |
-| `rowGap`   | `number`  | `0`     | Vertical space between stacked rows in px (not under the axis).                                       |
-| `showAxis` | `boolean` | `true`  | Auto-render the shared x axis under the rows. `false` for a bare plot or to place your own `<XAxis>`. |
+| Prop       | Type      | Default | Purpose                                                                                                          |
+| ---------- | --------- | ------- | ---------------------------------------------------------------------------------------------------------------- |
+| `width`    | `number`  | — (req) | Overall chart width in CSS px. Real pixels, never `"100%"`.                                                      |
+| `rowGap`   | `number`  | `0`     | Vertical space between stacked rows in px (not under the axis).                                                  |
+| `showAxis` | `boolean` | `true`  | Auto-render the shared x axis under the rows. `false` for a bare plot or to place your own `<XAxis>`.            |
+| `grid`     | `boolean` | `true`  | Draw the vertical gridlines (a calendar-density hierarchical grid on a time axis). `false` for a clean backdrop. |
 
 (`range`, `theme`, `cursor`, and the axis-kind props are covered under
 [Axes](./axes/index.mdx) and [Interaction](./interaction/cursors-and-readouts.mdx).)
