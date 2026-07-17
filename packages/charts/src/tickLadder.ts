@@ -766,6 +766,36 @@ export function bandGrainFor(g: TickGranularity): TickGranularity | undefined {
   }
 }
 
+/**
+ * d3 specifier for the **cursor / marker readout** at grain `g` — a hovered
+ * instant formatted at the axis's own granularity, never finer. A day-or-coarser
+ * axis reads a **date** (no time-of-day), so a daily bar at a foreign-tz
+ * midnight can't render as `02 AM`; a sub-day axis reads date **+** clock. This
+ * is the grain-aware default that replaces d3's multi-scale default for the
+ * readout (a `cursorFormat` override, when given, wins over it). Unambiguous by
+ * design — the readout carries the year / date the terse tick labels omit.
+ */
+export function readoutFormatFor(g: TickGranularity): string {
+  if (
+    g === 'second1' ||
+    g === 'second5' ||
+    g === 'second15' ||
+    g === 'second30'
+  )
+    return '%b %-d, %H:%M:%S';
+  if (isSubDay(g)) return '%b %-d, %H:%M';
+  switch (g) {
+    case 'day':
+    case 'week':
+      return '%b %-d, %Y';
+    case 'month':
+    case 'quarter':
+      return '%b %Y';
+    default:
+      return '%Y'; // year
+  }
+}
+
 /** d3 specifier for a **band** label at band grain `g`: the date for a day band
  *  (`Jan 12`), the full month for a month band (`January`), the year for a year
  *  band (`2031`). Left-aligned in the band by the renderer. */

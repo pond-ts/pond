@@ -716,3 +716,41 @@ describe('bands + baseFormat (stacked date-band row)', () => {
     expect(bf(new Date(2026, 0, 11, 9, 37).getTime())).toMatch(/09:37/);
   });
 });
+
+describe('readoutFormat (grain-aware cursor/marker readout)', () => {
+  it('a day-grain axis reads a DATE, never a time-of-day (the 02 AM fix)', () => {
+    // ~60 daily days → day grain. A hovered instant that is NOT a local
+    // midnight (e.g. a UTC-midnight bar rendered +2h in a UTC+ zone) must read
+    // as a date, not "02:00".
+    const s = scaleTradingTime(identityProvider())
+      .domain([new Date(2026, 0, 5).getTime(), new Date(2026, 2, 6).getTime()])
+      .range([0, 900]);
+    const out = s.readoutFormat(12)(new Date(2026, 0, 20, 2, 0).getTime());
+    expect(out).toMatch(/^[A-Z][a-z]{2} \d{1,2}, \d{4}$/); // "Jan 20, 2026"
+    expect(out).not.toMatch(/\d{1,2}:\d{2}/); // no clock time
+  });
+
+  it('a sub-day axis reads date + clock', () => {
+    const s = scaleTradingTime(identityProvider())
+      .domain([
+        new Date(2026, 0, 5, 9).getTime(),
+        new Date(2026, 0, 5, 17).getTime(),
+      ])
+      .range([0, 900]);
+    const out = s.readoutFormat(10)(new Date(2026, 0, 5, 14, 32).getTime());
+    expect(out).toMatch(/14:32/); // the clock
+    expect(out).toMatch(/Jan 5/); // and the date
+  });
+
+  it('a month-grain axis reads month + year', () => {
+    const s = scaleTradingTime(identityProvider())
+      .domain([
+        new Date(2026, 0, 1).getTime(),
+        new Date(2026, 11, 31).getTime(),
+      ])
+      .range([0, 900]);
+    expect(s.readoutFormat(10)(new Date(2026, 5, 15).getTime())).toMatch(
+      /^[A-Z][a-z]{2} \d{4}$/,
+    );
+  });
+});

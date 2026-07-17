@@ -13,6 +13,7 @@ import {
   scaleTradingTime,
   type DiscontinuityProvider,
   type TradingCalendarLike,
+  type TradingTimeScale,
 } from './tradingTimeScale.js';
 import { scaleBand } from './bandScale.js';
 import { Sequence, BoundedSequence } from 'pond-ts';
@@ -352,12 +353,26 @@ export interface ChartContainerProps {
    */
   snap?: boolean;
   /**
-   * Time-axis value formatting — a d3 time specifier string (e.g. `'%H:%M'`) or a
-   * `(epochMs) => string` function ({@link AxisFormat}); applies to both the time
-   * axis labels and the cursor-time readout. **Omitted ⇒ d3's multi-scale time
-   * format** (`12 PM`, `12:10`, …).
+   * Time-axis **label** formatting — a d3 time specifier string (e.g. `'%H:%M'`)
+   * or a `(epochMs) => string` function ({@link AxisFormat}). A custom format
+   * **owns the labels**, so it opts the axis out of the `dateStyle` ladder
+   * (flat / stacked) by design. **Omitted ⇒ the flat/stacked date style.** To
+   * shape only the cursor readout while keeping a date style, use
+   * {@link cursorFormat} instead. (For back-compat this also shapes the readout
+   * when `cursorFormat` is absent.)
    */
   timeFormat?: AxisFormat;
+  /**
+   * The **cursor / marker readout** format — the crosshair time pill, marker
+   * axis indicators, and annotation auto-labels — **independent of the tick
+   * labels**, so it does **not** disqualify the `dateStyle` ladder. A d3 time
+   * specifier or `(epochMs) => string`. **Omitted ⇒ a grain-aware default**:
+   * the readout formats at the axis's own granularity, so a day-or-coarser axis
+   * reads a **date** (never a time-of-day) and a sub-day axis reads date + clock
+   * — a daily bar at a foreign-tz midnight no longer renders as `02 AM`. This is
+   * the independent readout channel; {@link timeFormat} owns the labels.
+   */
+  cursorFormat?: AxisFormat;
   /** Visual theme for all rows; defaults to {@link defaultTheme}. */
   theme?: ChartTheme;
   children?: ReactNode;
@@ -400,6 +415,7 @@ export function ChartContainer({
   onEditAnnotation,
   snap = true,
   timeFormat,
+  cursorFormat,
   theme,
   discontinuities,
   calendar,
@@ -778,6 +794,18 @@ export function ChartContainer({
         formatTime: resolveAxisFormat(s, xTickCount, timeFormat),
       };
     }
+    // The cursor / marker / annotation **readout** formatter. `cursorFormat`
+    // wins (the independent readout channel — it never disqualifies the date
+    // style); else a container `timeFormat` (back-compat: shapes the readout
+    // too, and already opts labels out of the ladder); else the scale's
+    // **grain-aware** default (a day-or-coarser axis reads a date, not a
+    // time-of-day — the F-charts-7 `02 AM` fix), never d3's multi-scale default.
+    const timeReadout = (s: TradingTimeScale): ((v: number) => string) =>
+      cursorFormat !== undefined
+        ? resolveTimeFormat(s, xTickCount, cursorFormat)
+        : timeFormat !== undefined
+          ? resolveTimeFormat(s, xTickCount, timeFormat)
+          : s.readoutFormat(xTickCount);
     if (xDiscontinuities !== undefined) {
       // Trading-time axis: closed-market gaps collapse, time proportional within
       // sessions. Same tickFormat surface as scaleTime, so the readout is shared.
@@ -786,10 +814,7 @@ export function ChartContainer({
       const s = scaleTradingTime(xDiscontinuities)
         .domain([d0, d1])
         .range([0, plotWidth]);
-      return {
-        xScale: s,
-        formatTime: resolveTimeFormat(s, xTickCount, timeFormat),
-      };
+      return { xScale: s, formatTime: timeReadout(s) };
     }
     // Plain continuous time axis: the same trading-time scale over the
     // gap-free identity provider, so it runs the same logical tick ladder
@@ -800,10 +825,7 @@ export function ChartContainer({
     const s = scaleTradingTime(identityProvider())
       .domain([d0, d1])
       .range([0, plotWidth]);
-    return {
-      xScale: s,
-      formatTime: resolveTimeFormat(s, xTickCount, timeFormat),
-    };
+    return { xScale: s, formatTime: timeReadout(s) };
   }, [
     resolvedKind,
     categories,
@@ -811,6 +833,7 @@ export function ChartContainer({
     d1,
     plotWidth,
     timeFormat,
+    cursorFormat,
     xDiscontinuities,
     xTickCount,
   ]);

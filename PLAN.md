@@ -1890,6 +1890,24 @@ independently built the same `calendar.bars → BoundedSequence` seam.
     default-path behaviour shift, pinned by a test. The old
     `tickBoundaries` / `boundaryContext` scale methods stay for external
     consumers but the axis no longer renders them.
+  - ✅ **Grain-aware cursor readout + `cursorFormat` channel
+    (`fix/cursor-readout-grain`, 2026-07-17, Tidal F-charts-7 escalation via
+    PR #484).** 0.47.0's flat default regressed the crosshair x-pill to a bare
+    time-of-day (`02 AM`) on daily bars: the readout fell to d3's multi-scale
+    default, and the only prior fix — a day-floor `timeFormat` — disqualifies
+    the `dateStyle` ladder by design ("a custom format owns the labels"). One
+    knob, two concerns. Fix, per the owner's steer (grain-aware default **+**
+    independent per-channel control, RTC-style): (1) **default** cursor /
+    marker / annotation readout now formats at the axis **grain**
+    (`TradingTimeScale.readoutFormat` / `readoutFormatFor`) — day-or-coarser →
+    a date, sub-day → date + clock, never a foreign-tz time-of-day; (2) a new
+    **`cursorFormat`** container prop shapes _only_ the readout, independent of
+    the label `timeFormat` / `format`, and does **not** set `xFormatCustom`, so
+    a consumer keeps flat/stacked **and** shapes the pill. Tick labels
+    unchanged. **Timezone control is the deferred follow-on** the owner
+    flagged — the grain-aware default sidesteps the common daily-bar case, but
+    true exchange-/display-tz handling (cf. the deferred exchange-tz tick
+    grain) is its own conversation, not attempted here.
   - **Still deferred (documented, none blocking):** `neighbourSpans` point-key slot
     widths on the discontinuous axis (interval-keyed bars from
     `aggregate(barSequence)` — the primary path — are immune); exact **exchange-tz**
