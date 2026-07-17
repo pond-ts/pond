@@ -35,7 +35,7 @@ export type { XAxisProps } from './XAxis.js';
 export type { AxisTransform } from './derivedTicks.js';
 export { TimeAxis } from './TimeAxis.js';
 export { CategoryAxis } from './CategoryAxis.js';
-export type { AxisFormat } from './format.js';
+export type { AxisFormat, CursorFormat } from './format.js';
 export { LineChart } from './LineChart.js';
 export type { LineChartProps } from './LineChart.js';
 export { BandChart } from './BandChart.js';
@@ -55,6 +55,7 @@ export { scaleTradingTime } from './tradingTimeScale.js';
 export type {
   TradingTimeScale,
   DiscontinuityProvider,
+  TimeGrain,
 } from './tradingTimeScale.js';
 // The ordinal category (band) scale — the transpose view's "columns on x" axis.
 export { scaleBand } from './bandScale.js';

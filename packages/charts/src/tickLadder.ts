@@ -44,6 +44,31 @@ export type TickGranularity =
   | 'quarter'
   | 'year';
 
+/**
+ * The **coarse calendar unit** of a resolved grain — the public grain a
+ * `cursorFormat` callback branches on, with the internal 1/5/15/30 strides
+ * collapsed to their unit (`hour1|3|6|12` → `hour`). Stable across zoom steps
+ * within a unit, so a consumer's `grain === 'hour'` check doesn't churn as the
+ * stride changes.
+ */
+export type TimeGrain =
+  | 'year'
+  | 'quarter'
+  | 'month'
+  | 'week'
+  | 'day'
+  | 'hour'
+  | 'minute'
+  | 'second';
+
+/** Collapse a {@link TickGranularity} to its coarse {@link TimeGrain} unit. */
+export function coarseUnitOf(g: TickGranularity): TimeGrain {
+  if (g.startsWith('second')) return 'second';
+  if (g.startsWith('minute')) return 'minute';
+  if (g.startsWith('hour')) return 'hour';
+  return g as TimeGrain; // 'day' | 'week' | 'month' | 'quarter' | 'year'
+}
+
 const SEC_MS = 1_000;
 const MIN_MS = 60_000;
 const HOUR_MS = 3_600_000;
@@ -763,6 +788,36 @@ export function bandGrainFor(g: TickGranularity): TickGranularity | undefined {
       return 'year';
     default:
       return undefined; // year — no coarser band
+  }
+}
+
+/**
+ * d3 specifier for the **cursor / marker readout** at grain `g` — a hovered
+ * instant formatted at the axis's own granularity, never finer. A day-or-coarser
+ * axis reads a **date** (no time-of-day), so a daily bar at a foreign-tz
+ * midnight can't render as `02 AM`; a sub-day axis reads date **+** clock. This
+ * is the grain-aware default that replaces d3's multi-scale default for the
+ * readout (a `cursorFormat` override, when given, wins over it). Unambiguous by
+ * design — the readout carries the year / date the terse tick labels omit.
+ */
+export function readoutFormatFor(g: TickGranularity): string {
+  if (
+    g === 'second1' ||
+    g === 'second5' ||
+    g === 'second15' ||
+    g === 'second30'
+  )
+    return '%b %-d, %H:%M:%S';
+  if (isSubDay(g)) return '%b %-d, %H:%M';
+  switch (g) {
+    case 'day':
+    case 'week':
+      return '%b %-d, %Y';
+    case 'month':
+    case 'quarter':
+      return '%b %Y';
+    default:
+      return '%Y'; // year
   }
 }
 

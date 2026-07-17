@@ -83,6 +83,45 @@ describe('ChartContainer discontinuities → trading-time axis', () => {
     expect(gapPx).toBeGreaterThan(50);
   });
 
+  it('cursorFormat shapes the readout independently — no date-style disqualification (F-charts-7)', () => {
+    const at = new Date(2026, 0, 6).getTime();
+    // cursorFormat: the ladder is NOT disqualified (xFormatCustom stays false),
+    // and the readout takes the custom format — a consumer keeps flat + shapes
+    // the pill (the fix for Tidal's "one knob, two concerns").
+    const withCursor = frameOf({
+      discontinuities: provider,
+      cursorFormat: '%Y-%m-%d',
+    });
+    expect(withCursor.xFormatCustom).toBe(false);
+    expect(withCursor.formatTime(at)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // timeFormat, by contrast, owns the labels and DOES opt out of the ladder.
+    const withTime = frameOf({ discontinuities: provider, timeFormat: '%Y' });
+    expect(withTime.xFormatCustom).toBe(true);
+    // Default (neither): grain-aware readout, and the ladder stays on.
+    expect(frameOf({ discontinuities: provider }).xFormatCustom).toBe(false);
+  });
+
+  it('cursorFormat function receives the resolved coarse grain + the grain-aware default text', () => {
+    const seen: Array<{ grain: string; defaultText: string }> = [];
+    // The two-session gap provider resolves to day grain at this width; the
+    // callback gets grain='day' and a date default it can pass through.
+    const f = frameOf({
+      discontinuities: provider,
+      cursorFormat: (
+        _ms: number,
+        ctx: { grain: string; defaultText: string },
+      ) => {
+        seen.push(ctx);
+        return ctx.grain === 'day' ? `D:${ctx.defaultText}` : ctx.defaultText;
+      },
+    });
+    expect(f.xFormatCustom).toBe(false); // still no ladder disqualification
+    const out = f.formatTime(new Date(2026, 0, 6).getTime());
+    expect(seen[0]!.grain).toBe('day'); // the resolved coarse grain, handed in
+    expect(seen[0]!.defaultText).toMatch(/2026/); // grain-aware default (a date)
+    expect(out).toBe(`D:${seen[0]!.defaultText}`); // branch on grain, wrap default
+  });
+
   it('drops the provider on a value axis so pan/zoom stay continuous (Codex P1)', () => {
     // A value-keyed (distance) row makes this a value axis; the trading provider
     // must be gated off the frame so interactions use continuous value math.
@@ -597,9 +636,11 @@ describe('trading-axis tick density derives from plot width', () => {
     const ticks = tickList(f);
     expect(ticks.length).toBeGreaterThanOrEqual(10); // month grain, not year
     expect(ticks.length).toBeLessThanOrEqual(f.xTickCount);
-    // …and the shared formatter labels those ticks as bare months (`%b`) on
-    // the same grain — the year lives on the boundary (second) row.
-    expect(f.formatTime(ticks[1]!)).toMatch(/^[A-Z][a-z]{2}$/);
+    // `formatTime` is the grain-aware **readout** (cursor / marker), not the
+    // tick label: at month grain it reads month + year (`Aug 2025`) — an
+    // unambiguous readout, never a bare time-of-day. (The tick labels
+    // themselves read the terse `%b` via the axis's flat/base formatters.)
+    expect(f.formatTime(ticks[1]!)).toMatch(/^[A-Z][a-z]{2} \d{4}$/);
   });
 
   it('a narrower view of the same data coarsens the grain (fewer ticks)', () => {

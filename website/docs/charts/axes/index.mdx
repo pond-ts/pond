@@ -115,10 +115,14 @@ _relabeling_, not the axis-kind mixing that throws — the scale is unchanged.
 
 ### Time formatting
 
-`ChartContainer`'s `timeFormat` is the shared formatter for both the auto axis
-labels and the cursor-time readout (omit it for d3's multi-scale time default).
-A per-instance `<XAxis format>` overrides just that axis's labels. Either opts
-the axis out of the two-row boundary-label layout.
+Two independent channels. **Labels:** `ChartContainer`'s `timeFormat` (or a
+per-instance `<XAxis format>`) shapes the tick labels; a custom label format
+_owns the labels_, so it opts the axis out of the `dateStyle` date styles
+(flat / stacked). **Readout:** `ChartContainer`'s `cursorFormat` shapes the
+crosshair pill, marker indicators, and annotation auto-labels _independently_,
+and does **not** disqualify a date style. Omit both and the readout defaults to
+a **grain-aware** format — a day-or-coarser axis reads a date, a sub-day axis
+date + clock — so a daily bar never reads a foreign-timezone time-of-day.
 
 ## See also
 

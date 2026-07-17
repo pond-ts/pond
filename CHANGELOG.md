@@ -46,6 +46,32 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts:** `<ChartContainer>` gains **`cursorFormat`** — an independent
+  format for the **cursor / marker readout** (the crosshair time pill, marker
+  axis indicators, annotation auto-labels), separate from the tick-label
+  `timeFormat` / `format`. Unlike `timeFormat` (which _owns the labels_ and so
+  opts the axis out of the `dateStyle` ladder by design), `cursorFormat` shapes
+  only the readout and **keeps the flat / stacked date style** — resolving the
+  "one knob, two concerns" bind where the only way to fix the pill was to give
+  up the styled axis. A d3 specifier **string** formats uniformly; a
+  **function** `(epochMs, { grain, defaultText }) => string` is handed the
+  axis's resolved coarse **`TimeGrain`** (`year` … `second`) and the
+  grain-aware default text, so it can branch on zoom and pass the default
+  through — no re-deriving the grain from the range. New public types
+  **`CursorFormat`** / **`TimeGrain`**; `TradingTimeScale` gains
+  `readoutFormat(count)` and `grain(count)`.
+
+### Fixed
+
+- **charts:** the cursor / marker time readout now formats at the axis's
+  **own grain** by default instead of d3's multi-scale default — a
+  day-or-coarser axis reads a **date** (`Sep 14, 2026`), a sub-day axis reads
+  date + clock. Fixes the 0.47.0 flat-axis regression where a daily bar at a
+  foreign-timezone midnight rendered as a bare time-of-day (`02 AM`) in the
+  crosshair pill (Tidal F-charts-7). Tick labels are unchanged.
+
 ## [0.47.0] — 2026-07-17
 
 ### Added

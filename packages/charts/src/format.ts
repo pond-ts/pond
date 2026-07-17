@@ -7,12 +7,36 @@
  * back to the scale's default `tickFormat`.
  */
 
+import type { TimeGrain } from './tickLadder.js';
+
 /**
  * How to format an axis's values — a d3 [format specifier]
  * (https://github.com/d3/d3-format#locale_format) string, or a custom
  * `(value) => string` function. Omit for the scale's d3 default.
  */
 export type AxisFormat = string | ((value: number) => string);
+
+/**
+ * How to format the **cursor / marker readout** on a time axis
+ * ({@link ChartContainerProps.cursorFormat}). Either:
+ *
+ * - a d3 time specifier **string** (e.g. `'%b %-d'`) applied uniformly at every
+ *   zoom; or
+ * - a **function** `(epochMs, ctx) => string`, where `ctx.grain` is the axis's
+ *   resolved coarse {@link TimeGrain} (`year` … `second`) and `ctx.defaultText`
+ *   is the library's grain-aware default readout for that instant — so a
+ *   consumer can branch on the zoom level (`grain === 'year' ? … : …`) and
+ *   pass `defaultText` through for the grains they don't want to override.
+ *
+ * The library hands you the grain because it already resolved it — you never
+ * re-derive it from the range.
+ */
+export type CursorFormat =
+  | string
+  | ((
+      epochMs: number,
+      ctx: { readonly grain: TimeGrain; readonly defaultText: string },
+    ) => string);
 
 /** The slice of a d3 scale {@link resolveAxisFormat} needs — `tickFormat` with an
  *  optional specifier. A d3 `ScaleLinear` / `ScaleTime` satisfies it. */
