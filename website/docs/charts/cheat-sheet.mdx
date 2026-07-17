@@ -1,0 +1,94 @@
+---
+title: Cheat sheet
+sidebar_position: 8
+---
+
+# Cheat sheet
+
+One-screen reference for the whole `@pond-ts/charts` surface — the data each
+layer takes, what it can do, and the container/axis knobs. For the narrative,
+follow the links; this page is the scan.
+
+## Draw layers — data contract
+
+What each layer reads, the adapter that shapes it, its theme slot, and its one
+sharp edge.
+
+| Layer                                    | Series / input                                                       | Key columns                                   | Adapter                                       | Theme slot      | Sharp edge                                                             |
+| ---------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------- | --------------------------------------------- | --------------- | ---------------------------------------------------------------------- |
+| [LineChart](./types/linechart.mdx)       | `TimeSeries` \| `ValueSeries`                                        | one numeric `column`                          | `fromTimeSeries` / `fromValueSeries`          | `theme.line`    | `curve` smooths the drawing, not the data — denoise with `smooth()`.   |
+| [AreaChart](./types/areachart.mdx)       | `TimeSeries` \| `ValueSeries`                                        | one `column`, fill from `baseline`            | `fromTimeSeries` / `fromValueSeries`          | `theme.area`    | Gaps couple fill+outline; `fill` must be CSS hex.                      |
+| [BandChart](./types/bandchart.mdx)       | `TimeSeries` \| `ValueSeries`                                        | **two** columns `lower` + `upper`             | `bandFromTimeSeries` / `…ValueSeries`         | `theme.band`    | Always breaks on a gap (no `gaps` prop, by design).                    |
+| [ScatterChart](./types/scatterchart.mdx) | `TimeSeries` \| `ValueSeries`                                        | `column` (y) + optional `radius`/`color` cols | `fromTimeSeries` / `fromValueSeries`          | `theme.scatter` | Data-driven radius/colour are column+range only; ramp stops hex.       |
+| [BarChart](./types/barchart.mdx)         | `TimeSeries`/`ValueSeries`/`Map` **xor** `bins` **xor** `categories` | `column` **xor** `columns[]`                  | `barsFrom*` / `stacksFrom*` / `categoryStack` | `theme.bar`     | One-of series/bins/categories & `column` xor `columns` — else throws.  |
+| [BoxPlot](./types/boxplot.mdx)           | `TimeSeries` \| `ValueSeries`                                        | `lower`+`upper` req; `q1`/`q3`/`median` opt   | `boxFromTimeSeries` / `…ValueSeries`          | `theme.box`     | Doesn't compute quantiles; `q1`/`q3` both-or-neither throws.           |
+| [Candlestick](./types/candlestick.mdx)   | `TimeSeries` **only**                                                | `open`/`high`/`low`/`close`                   | `ohlcFromTimeSeries`                          | `theme.candle`  | Any price missing ⇒ no candle; default pair is neutral, not red/green. |
+
+## Capability matrix
+
+Which x-axis kinds each layer supports, whether it reads out under the cursor,
+whether its marks are selectable, and how it handles a `NaN` gap.
+
+| Layer        | X-axis kinds            | Cursor readout                          | Selection       | Gap handling                             |
+| ------------ | ----------------------- | --------------------------------------- | --------------- | ---------------------------------------- |
+| LineChart    | time · value            | ✅ all modes                            | —               | `gaps` prop — all 5 modes                |
+| AreaChart    | time · value            | ✅ (rides the value edge)               | —               | `gaps` prop — fill+outline coupled       |
+| BandChart    | time · value            | ✅ (both edge values)                   | —               | always breaks (no `gaps` prop)           |
+| ScatterChart | time · value            | ✅ (snaps to nearest point)             | ✅ **id-gated** | `NaN` point not drawn                    |
+| BarChart     | time · value · category | ⚠️ single-series vertical only          | ✅ **id-gated** | `NaN` bucket → no bar                    |
+| BoxPlot      | time · value            | ✅ but **opts out** of crosshair x-snap | —               | box missing a present quantile → nothing |
+| Candlestick  | **time only**           | ✅ **participates** in crosshair x-snap | —               | candle missing any OHLC → nothing        |
+
+Only **ScatterChart** and **BarChart** are selectable (both gated on an `id`).
+The **BoxPlot-opts-out / Candlestick-opts-in** crosshair asymmetry is the one to
+remember. `category` axis is **BarChart-only** (its `categories` mode).
+
+## Container, row & axis knobs
+
+The composition props, one line each. Full detail on [Axes](./axes/index.mdx),
+[Layout](./layout.mdx), and [Interaction](./interaction/cursors-and-readouts.mdx).
+
+### `<ChartContainer>`
+
+| Prop              | Default        | What                                                                 |
+| ----------------- | -------------- | -------------------------------------------------------------------- |
+| `width`           | — (req)        | Total width in CSS px (plot + gutters). Real pixels, not `%`.        |
+| `range`           | auto-fit       | Shared x domain `[begin, end]` or `TimeRange`.                       |
+| `theme`           | `defaultTheme` | The one `ChartTheme` — see [Theming](./theming.mdx).                 |
+| `cursor`          | `'line'`       | In-chart cursor mode (line/point/inline/flag/crosshair/region/none). |
+| `calendar`        | —              | Trading-time axis from a `TradingCalendar` (+ `spacing`).            |
+| `sessionDividers` | `'none'`       | Session-seam verticals: `'labeled'` / `'all'` / `'none'`.            |
+| `grid`            | `true`         | Reference gridlines behind the data.                                 |
+| `rowGap`          | `0`            | Vertical space between stacked rows (px).                            |
+| `showAxis`        | `true`         | Auto-render the shared x axis under the rows.                        |
+| `timeFormat`      | d3 multi-scale | Time-axis + cursor-time formatting.                                  |
+| `panZoom`         | `false`        | Drag-to-pan + wheel-to-zoom.                                         |
+
+### `<ChartRow>`
+
+| Prop     | Default  | What                                           |
+| -------- | -------- | ---------------------------------------------- |
+| `height` | — (req)  | Row height in CSS px.                          |
+| `cursor` | inherits | Per-row override of the container cursor mode. |
+
+### `<YAxis>` / `<XAxis>`
+
+| Prop          | On      | What                                                                 |
+| ------------- | ------- | -------------------------------------------------------------------- |
+| `id`          | YAxis   | Scale id a layer binds to via `axis`; first-declared = row default.  |
+| `side`        | YAxis   | `'left'` (default) / `'right'`.                                      |
+| `min` / `max` | YAxis   | Explicit domain bounds; omit to auto-fit.                            |
+| `format`      | Y/XAxis | d3 specifier or `(v) => string`; hoist an inline function.           |
+| `dateStyle`   | XAxis   | Time axis: `'flat'` (default) inline periods / `'stacked'` band row. |
+| `transform`   | XAxis   | Relabel the same scale into a derived unit (dual x-axis).            |
+
+## Also
+
+- **Studies** (financial indicators) — the [Financial charts](./financial.mdx)
+  hub (`sma`, `ema`, `bollinger`, …).
+- **Annotations** (`Region` / `Marker` / `Baseline`, indicators) — the
+  [Annotations & indicators](./annotations/the-annotation-model.mdx) section.
+- **Live data** — a `LiveSeries` renders through the same layers; see
+  [Learn charts ch. 8](../learn-charts/live-charts).
+- The generated [API reference](pathname:///generated-api/charts/) for every
+  prop and type.
