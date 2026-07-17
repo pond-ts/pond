@@ -785,9 +785,14 @@ export function bandFormatFor(g: TickGranularity): string {
  * when the band is shaded. A stable, pan/zoom-invariant flag derived from the
  * band's own calendar identity: the year number, the months-since-epoch, or
  * the **UTC**-day index (UTC so a DST shift never flips a band's shade). Odd
- * index → shaded, matching the reference frames (2031 / 2033 grey). Consecutive
- * bands always differ (each index steps by exactly one), so the row alternates
- * cleanly across every month / year boundary.
+ * index → shaded, matching the reference frames (2031 / 2033 grey).
+ *
+ * Parity is **absolute** (per calendar period), not per-visible-position — the
+ * price of pan-stability. Calendar-consecutive bands always differ, and
+ * collapsed **weekends** stay clean (Fri→Mon is a 3-index step, odd), but a
+ * lone skipped weekday — a single **holiday**, a 2-index step — can place two
+ * same-shade day-bands side by side on a gappy calendar. A rare, cosmetic
+ * consequence of keeping the shade fixed to the date rather than the slot.
  */
 export function bandShaded(t: number, g: TickGranularity): boolean {
   const d = new Date(t);

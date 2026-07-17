@@ -15,10 +15,7 @@ const cases: ReadonlyArray<readonly [id: string, file: string]> = [
   ['cursors-scenarios--cursor-sync', 'interactions-cursor-sync.png'], // line (default)
   ['cursors-scenarios--point-cursor', 'interactions-point-cursor.png'], // point
   ['cursors-scenarios--flag-readout', 'interactions-flag-readout.png'], // flag
-  [
-    'cursors-scenarios--inline-readout',
-    'interactions-inline-readout.png',
-  ], // inline
+  ['cursors-scenarios--inline-readout', 'interactions-inline-readout.png'], // inline
   ['cursors-scenarios--formats', 'interactions-formats.png'], // format → readout (multi)
   ['cursors-scenarios--cursor-time', 'interactions-cursor-time.png'], // time atop readout
 ];

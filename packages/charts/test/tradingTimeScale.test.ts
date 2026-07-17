@@ -647,6 +647,27 @@ describe('bands + baseFormat (stacked date-band row)', () => {
     expect(byYear.get('2031')).toBe(true); // odd → shaded
   });
 
+  it('month bands under day-grain ticks (the day→month jump)', () => {
+    // ~2 months of daily density → day grain, so the band is the MONTH (one
+    // step finer than the old day→year boundary jump).
+    const s = scaleTradingTime(identityProvider())
+      .domain([
+        new Date(2026, 0, 15).getTime(),
+        new Date(2026, 2, 10).getTime(),
+      ])
+      .range([0, 700]);
+    const bands = s.bands(12);
+    expect(bands.map((b) => b.label)).toEqual(['January', 'February', 'March']);
+    // First band is the partial January (starts Jan 1, before the Jan 15 domain).
+    expect(bands[0]!.start).toBe(new Date(2026, 0, 1).getTime());
+    expect(bands[0]!.start).toBeLessThanOrEqual(
+      new Date(2026, 0, 15).getTime(),
+    );
+    // Zebra alternates across the three months.
+    expect(bands[0]!.shaded).not.toBe(bands[1]!.shaded);
+    expect(bands[1]!.shaded).not.toBe(bands[2]!.shaded);
+  });
+
   it('zebra parity is pan/zoom-invariant — a year holds its shade across views', () => {
     const shadeOf = (a: number, b: number, yr: string): boolean | undefined =>
       scaleTradingTime(identityProvider())

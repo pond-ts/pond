@@ -1882,8 +1882,12 @@ independently built the same `calendar.bars → BoundedSequence` seam.
     `TradingTimeScale.bands(count)` + `baseFormat(count)`; new `bandGrainFor` /
     `bandShaded` / `bandStartOf` / `bandNext` ladder helpers; new
     `theme.axis.band` tokens (`fill` / `divider` / `label` — the shade is a
-    themeable background, "could be a background color for some people"). Flat
-    is untouched (deferred as a possible follow-on). The old
+    themeable background, "could be a background color for some people"). **Flat
+    (the shipped default) also picks up the boundary emphasis** (owner: "style
+    the band boundary in the non-layered case too, so it matches"): a tick
+    whose label was promoted to a coarser period (`Feb`, `2026`) now renders
+    **bold**, so a period boundary reads the same in flat and stacked — a
+    default-path behaviour shift, pinned by a test. The old
     `tickBoundaries` / `boundaryContext` scale methods stay for external
     consumers but the axis no longer renders them.
   - **Still deferred (documented, none blocking):** `neighbourSpans` point-key slot

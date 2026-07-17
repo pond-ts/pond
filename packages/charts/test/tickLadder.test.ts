@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  bandGrainFor,
+  bandShaded,
   boundaryGrainFor,
   boundaryTicks,
   buildTicks,
@@ -739,5 +741,42 @@ describe('coarsenCalendar (day-and-coarser compat surface)', () => {
       .slice(1)
       .map((t, i) => Math.round((t - coarse[i]!) / DAY));
     expect(Math.max(...gaps) - Math.min(...gaps)).toBeLessThanOrEqual(1);
+  });
+});
+
+describe('band helpers (stacked band row)', () => {
+  it('bandGrainFor: next-coarser unit (day→month, month→year), year→none', () => {
+    expect(bandGrainFor('hour1')).toBe('day');
+    expect(bandGrainFor('minute5')).toBe('day');
+    expect(bandGrainFor('day')).toBe('month');
+    expect(bandGrainFor('week')).toBe('month');
+    expect(bandGrainFor('month')).toBe('year');
+    expect(bandGrainFor('quarter')).toBe('year');
+    expect(bandGrainFor('year')).toBeUndefined();
+  });
+
+  it('bandShaded: odd calendar index shaded (matches the reference frames)', () => {
+    expect(bandShaded(new Date(2030, 0, 1).getTime(), 'year')).toBe(false);
+    expect(bandShaded(new Date(2031, 0, 1).getTime(), 'year')).toBe(true);
+    expect(bandShaded(new Date(2032, 0, 1).getTime(), 'year')).toBe(false);
+    // Consecutive months / days always alternate.
+    const m = (mo: number) =>
+      bandShaded(new Date(2026, mo, 1).getTime(), 'month');
+    expect(m(0)).not.toBe(m(1));
+    expect(m(1)).not.toBe(m(2));
+  });
+
+  it('bandShaded day parity is DST-immune — keyed on the calendar date, not elapsed ms', () => {
+    // US spring-forward is 2026-03-08 (a 23h local day). Consecutive calendar
+    // days must still alternate — the parity uses the UTC Y/M/D index, so the
+    // short day cannot double a shade.
+    const day = (d: number) =>
+      bandShaded(new Date(2026, 2, d).getTime(), 'day');
+    expect(day(7)).not.toBe(day(8)); // across the DST boundary
+    expect(day(8)).not.toBe(day(9));
+    // Fall-back 2026-11-01 (a 25h local day) — same.
+    const nov = (d: number) =>
+      bandShaded(new Date(2026, 10, d).getTime(), 'day');
+    expect(nov(1)).not.toBe(nov(2));
   });
 });

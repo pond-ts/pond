@@ -273,7 +273,10 @@ export function XAxis({
   // axis the turn tick is the session OPEN sitting at the collapsed-midnight
   // seam — the same pixel as the midnight band-start, but a different instant.
   const dividerXs = new Set(
-    bands.map((b) => Math.round(xScale(b.start))).filter((px) => px > 0),
+    bands
+      .map((b) => xScale(b.start))
+      .filter((px) => px > 0) // same threshold the band border uses (startPx > 0)
+      .map((px) => Math.round(px)),
   );
 
   // Tick / readout formatter: an explicit `format` is resolved against the axis
