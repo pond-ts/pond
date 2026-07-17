@@ -66,6 +66,8 @@ and type-level changes; patch bumps are strictly additive.
   foreign-timezone midnight rendered as a bare time-of-day (`02 AM`) in the
   crosshair pill (Tidal F-charts-7). Tick labels are unchanged.
 
+## [0.47.0] — 2026-07-17
+
 ### Added
 
 - **charts:** `<ChartContainer>` gains **`grid`** (default `true`) and
