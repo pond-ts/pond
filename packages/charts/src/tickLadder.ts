@@ -44,6 +44,31 @@ export type TickGranularity =
   | 'quarter'
   | 'year';
 
+/**
+ * The **coarse calendar unit** of a resolved grain — the public grain a
+ * `cursorFormat` callback branches on, with the internal 1/5/15/30 strides
+ * collapsed to their unit (`hour1|3|6|12` → `hour`). Stable across zoom steps
+ * within a unit, so a consumer's `grain === 'hour'` check doesn't churn as the
+ * stride changes.
+ */
+export type TimeGrain =
+  | 'year'
+  | 'quarter'
+  | 'month'
+  | 'week'
+  | 'day'
+  | 'hour'
+  | 'minute'
+  | 'second';
+
+/** Collapse a {@link TickGranularity} to its coarse {@link TimeGrain} unit. */
+export function coarseUnitOf(g: TickGranularity): TimeGrain {
+  if (g.startsWith('second')) return 'second';
+  if (g.startsWith('minute')) return 'minute';
+  if (g.startsWith('hour')) return 'hour';
+  return g as TimeGrain; // 'day' | 'week' | 'month' | 'quarter' | 'year'
+}
+
 const SEC_MS = 1_000;
 const MIN_MS = 60_000;
 const HOUR_MS = 3_600_000;

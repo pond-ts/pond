@@ -55,7 +55,13 @@ and type-level changes; patch bumps are strictly additive.
   opts the axis out of the `dateStyle` ladder by design), `cursorFormat` shapes
   only the readout and **keeps the flat / stacked date style** — resolving the
   "one knob, two concerns" bind where the only way to fix the pill was to give
-  up the styled axis. `TradingTimeScale` gains `readoutFormat(count)`.
+  up the styled axis. A d3 specifier **string** formats uniformly; a
+  **function** `(epochMs, { grain, defaultText }) => string` is handed the
+  axis's resolved coarse **`TimeGrain`** (`year` … `second`) and the
+  grain-aware default text, so it can branch on zoom and pass the default
+  through — no re-deriving the grain from the range. New public types
+  **`CursorFormat`** / **`TimeGrain`**; `TradingTimeScale` gains
+  `readoutFormat(count)` and `grain(count)`.
 
 ### Fixed
 

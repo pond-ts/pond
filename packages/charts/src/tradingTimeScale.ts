@@ -10,12 +10,14 @@ import {
   boundaryTicks,
   buildGridLevels,
   buildTicks,
+  coarseUnitOf,
   flatBaseFormatFor,
   flatFormats,
   majorFormatFor,
   nominalStepMs,
   readoutFormatFor,
   type TickGranularity,
+  type TimeGrain,
 } from './tickLadder.js';
 
 /**
@@ -180,6 +182,14 @@ export interface TradingTimeScale {
    */
   readoutFormat(count?: number): (value: number) => string;
   /**
+   * The axis's resolved **coarse grain** ({@link TimeGrain}) at `count` — the
+   * unit the ticks currently sit on (`year` … `second`), strides collapsed. A
+   * `cursorFormat` callback receives this so it can branch on the zoom level
+   * (return a year when zoomed out, a clock when zoomed in) without
+   * re-deriving the ladder the axis already ran.
+   */
+  grain(count?: number): TimeGrain;
+  /**
    * The **date bands** — the segmented second row of the stacked style. One
    * entry per next-coarser calendar period touching the domain (day bands
    * under intraday ticks, month bands under day ticks, year bands under
@@ -204,7 +214,7 @@ export interface TradingTimeScale {
 // Grain selection lives in `tickLadder.ts` (the full hour1…year ladder plus
 // the boundary-row helpers); re-exported here so existing imports keep working.
 export { coarsenCalendar } from './tickLadder.js';
-export type { TickGranularity } from './tickLadder.js';
+export type { TickGranularity, TimeGrain } from './tickLadder.js';
 
 /**
  * The trivial gap-free {@link DiscontinuityProvider}: live time **is** wall
@@ -406,6 +416,9 @@ export function scaleTradingTime(
     );
     return (value: number) => fmt(new Date(value));
   };
+
+  scale.grain = (count = 10) =>
+    hasCalendar() ? coarseUnitOf(resolved(count).granularity) : 'day';
 
   scale.bands = (count = 10) => {
     if (!hasCalendar()) return [];

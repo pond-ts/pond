@@ -1904,7 +1904,14 @@ independently built the same `calendar.bars → BoundedSequence` seam.
     **`cursorFormat`** container prop shapes _only_ the readout, independent of
     the label `timeFormat` / `format`, and does **not** set `xFormatCustom`, so
     a consumer keeps flat/stacked **and** shapes the pill. Tick labels
-    unchanged. **Timezone control is the deferred follow-on** the owner
+    unchanged. **Callback shape (owner-decided pre-merge, "do I know the
+    grain?"):** the function form is `(epochMs, { grain, defaultText }) =>
+string` — the library hands over the resolved coarse **`TimeGrain`**
+    (`year`…`second`, strides collapsed via `coarseUnitOf`; new
+    `TradingTimeScale.grain(count)`) and the grain-aware default text, so a
+    consumer branches on zoom and passes the default through rather than
+    re-deriving the ladder from the range. New public types `CursorFormat` /
+    `TimeGrain`. **Timezone control is the deferred follow-on** the owner
     flagged — the grain-aware default sidesteps the common daily-bar case, but
     true exchange-/display-tz handling (cf. the deferred exchange-tz tick
     grain) is its own conversation, not attempted here.

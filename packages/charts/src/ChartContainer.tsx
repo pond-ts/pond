@@ -37,6 +37,7 @@ import {
   resolveAxisFormat,
   resolveTimeFormat,
   type AxisFormat,
+  type CursorFormat,
 } from './format.js';
 import { TimeAxis } from './TimeAxis.js';
 import { defaultTheme, type ChartTheme } from './theme.js';
@@ -365,14 +366,21 @@ export interface ChartContainerProps {
   /**
    * The **cursor / marker readout** format — the crosshair time pill, marker
    * axis indicators, and annotation auto-labels — **independent of the tick
-   * labels**, so it does **not** disqualify the `dateStyle` ladder. A d3 time
-   * specifier or `(epochMs) => string`. **Omitted ⇒ a grain-aware default**:
-   * the readout formats at the axis's own granularity, so a day-or-coarser axis
-   * reads a **date** (never a time-of-day) and a sub-day axis reads date + clock
-   * — a daily bar at a foreign-tz midnight no longer renders as `02 AM`. This is
-   * the independent readout channel; {@link timeFormat} owns the labels.
+   * labels**, so it does **not** disqualify the `dateStyle` ladder.
+   * **Omitted ⇒ a grain-aware default**: the readout formats at the axis's own
+   * granularity, so a day-or-coarser axis reads a **date** (never a
+   * time-of-day) and a sub-day axis reads date + clock — a daily bar at a
+   * foreign-tz midnight no longer renders as `02 AM`.
+   *
+   * A d3 time-specifier **string** formats uniformly at every zoom; a
+   * **function** `(epochMs, { grain, defaultText }) => string` receives the
+   * axis's resolved coarse {@link TimeGrain} and the grain-aware default text,
+   * so it can branch on the zoom level and pass `defaultText` through for
+   * grains it doesn't override (no re-deriving the grain from the range). See
+   * {@link CursorFormat}. This is the independent readout channel;
+   * {@link timeFormat} owns the labels.
    */
-  cursorFormat?: AxisFormat;
+  cursorFormat?: CursorFormat;
   /** Visual theme for all rows; defaults to {@link defaultTheme}. */
   theme?: ChartTheme;
   children?: ReactNode;
@@ -800,12 +808,24 @@ export function ChartContainer({
     // too, and already opts labels out of the ladder); else the scale's
     // **grain-aware** default (a day-or-coarser axis reads a date, not a
     // time-of-day — the F-charts-7 `02 AM` fix), never d3's multi-scale default.
-    const timeReadout = (s: TradingTimeScale): ((v: number) => string) =>
-      cursorFormat !== undefined
-        ? resolveTimeFormat(s, xTickCount, cursorFormat)
-        : timeFormat !== undefined
-          ? resolveTimeFormat(s, xTickCount, timeFormat)
-          : s.readoutFormat(xTickCount);
+    const timeReadout = (s: TradingTimeScale): ((v: number) => string) => {
+      // A `cursorFormat` **function** gets the axis's resolved coarse grain and
+      // the grain-aware default text per instant, so it can branch on zoom and
+      // pass the default through. A **string** formats uniformly (d3 specifier).
+      if (typeof cursorFormat === 'function') {
+        const grain = s.grain(xTickCount);
+        const def = s.readoutFormat(xTickCount);
+        return (v) => cursorFormat(v, { grain, defaultText: def(v) });
+      }
+      if (cursorFormat !== undefined) {
+        return resolveTimeFormat(s, xTickCount, cursorFormat);
+      }
+      // No cursorFormat: a container timeFormat still shapes the readout
+      // (back-compat); else the scale's grain-aware default.
+      return timeFormat !== undefined
+        ? resolveTimeFormat(s, xTickCount, timeFormat)
+        : s.readoutFormat(xTickCount);
+    };
     if (xDiscontinuities !== undefined) {
       // Trading-time axis: closed-market gaps collapse, time proportional within
       // sessions. Same tickFormat surface as scaleTime, so the readout is shared.

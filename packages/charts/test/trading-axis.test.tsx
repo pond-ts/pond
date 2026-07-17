@@ -101,6 +101,27 @@ describe('ChartContainer discontinuities → trading-time axis', () => {
     expect(frameOf({ discontinuities: provider }).xFormatCustom).toBe(false);
   });
 
+  it('cursorFormat function receives the resolved coarse grain + the grain-aware default text', () => {
+    const seen: Array<{ grain: string; defaultText: string }> = [];
+    // The two-session gap provider resolves to day grain at this width; the
+    // callback gets grain='day' and a date default it can pass through.
+    const f = frameOf({
+      discontinuities: provider,
+      cursorFormat: (
+        _ms: number,
+        ctx: { grain: string; defaultText: string },
+      ) => {
+        seen.push(ctx);
+        return ctx.grain === 'day' ? `D:${ctx.defaultText}` : ctx.defaultText;
+      },
+    });
+    expect(f.xFormatCustom).toBe(false); // still no ladder disqualification
+    const out = f.formatTime(new Date(2026, 0, 6).getTime());
+    expect(seen[0]!.grain).toBe('day'); // the resolved coarse grain, handed in
+    expect(seen[0]!.defaultText).toMatch(/2026/); // grain-aware default (a date)
+    expect(out).toBe(`D:${seen[0]!.defaultText}`); // branch on grain, wrap default
+  });
+
   it('drops the provider on a value axis so pan/zoom stay continuous (Codex P1)', () => {
     // A value-keyed (distance) row makes this a value axis; the trading provider
     // must be gated off the frame so interactions use continuous value math.
