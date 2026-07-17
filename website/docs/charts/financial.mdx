@@ -1,0 +1,148 @@
+---
+title: Financial charts
+sidebar_position: 6
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import ChartsFinancialStudies from '@site/src/examples/charts-financial-studies';
+import GalleryFinancial from '@site/src/examples/gallery-financial';
+
+# Financial charts
+
+Financial charting in pond is two things that meet on the plot: a **library of
+studies** (technical indicators, built on pond as plain series transforms) and
+the **chart assembly** that draws them — candles, a volume pane, a session-aware
+axis, an OHLC readout. This page leads with the studies, then assembles the
+chart around them.
+
+<ChartExample name="charts-financial-studies" height={280}>
+  <ChartsFinancialStudies width={560} />
+</ChartExample>
+
+Above: daily candles with a **Bollinger band** and an **EMA** overlaid — each
+one a study that appended its columns to the bar series, drawn as an ordinary
+`BandChart` / `LineChart` layer.
+
+## The studies library
+
+A **study** is a pure function `(series, options) => series` that **appends one
+or more columns** to a bar `TimeSeries` and returns the widened series. They're
+thin assemblies over a small rolling kernel — they add _vocabulary_, not new
+math — and each is checked against an independent reference (a pandas/TA-Lib
+"oracle") before it ships.
+
+Three conventions make the corpus uniform and composable:
+
+- **`column`** — which field to read (default `'close'`). No study hard-codes
+  `close`, so a study can run over any numeric column — including **another
+  study's output** (ChartIQ's "Field" idea).
+- **`output` / `prefix`** — what to name the result column(s), so overlays don't
+  collide.
+- **Bar-count periods, length-preserving warm-up** — `period` is a number of
+  bars; the first `period − 1` rows are `undefined` (the chart renders that as a
+  clean gap, so a moving average simply starts once it has enough history).
+
+```ts
+import { bollinger, ema } from '@pond-ts/financial';
+
+// each study appends columns; they compose left to right
+const bars = ema(bollinger(candles, { period: 20 }), { period: 10 });
+// bars now has bbUpper / bbMiddle / bbLower (from bollinger) + ema (from ema)
+```
+
+Every study is also a **fluent method** on `TimeSeries` once you opt in with
+`import '@pond-ts/financial/fluent'` — `candles.bollinger({ period: 20 }).ema({ period: 10 })`.
+
+### What's here today
+
+The library is **growing** — this is the first batch. Each is a batch
+transform (`TimeSeries → TimeSeries + columns`):
+
+| Study               | Appends                               | Computes                                                |
+| ------------------- | ------------------------------------- | ------------------------------------------------------- |
+| `sma`               | `sma`                                 | Simple moving average (mean of the last `period` bars). |
+| `ema`               | `ema`                                 | Exponential moving average (`α = 2/(period+1)`).        |
+| `bollinger`         | `bbMiddle` / `bbUpper` / `bbLower`    | SMA ± `stdDev`×population σ (default 2).                |
+| `envelope`          | `envMiddle` / `envUpper` / `envLower` | Moving-average envelope, `middle × (1 ± percent/100)`.  |
+| `rollingStdev`      | `stdev`                               | Rolling population standard deviation.                  |
+| `rollingMin`        | `min`                                 | Rolling minimum (Donchian lower).                       |
+| `rollingMax`        | `max`                                 | Rolling maximum (Donchian upper).                       |
+| `rollingPercentile` | `p{q}`                                | Rolling `q`-th percentile (linear interpolation).       |
+| `zScore`            | `zscore`                              | `(value − SMA) / σ`, standardized deviation.            |
+| `percentChange`     | `pctChange`                           | Rate of change vs `periods` bars ago, in percent.       |
+
+Overlay a moving average or a band as chart layers (the hero above); read a
+scalar study like `zScore` or `pctChange` off a second row, or through the
+cursor.
+
+### What's coming
+
+The corpus assessment maps ~124 ChartIQ studies onto ~11 rolling kernels, so
+the library extends cheaply. The **next batch** (Phase 1 breadth) adds the
+oscillators and volume studies most charts reach for: **RSI, MACD, ATR (+ATR
+bands), stochastics, Williams %R, Donchian channel, OBV, VWAP, historical
+volatility, and momentum / ROC**. A later phase covers the stateful ones
+(PSAR, SuperTrend, ATR trailing stop, ZigZag) and session-anchored studies
+(pivot points, session-reset VWAP). Adding one is a short, oracle-verified
+assembly — see the `studies/README.md` pattern in the package.
+
+## Assembling the chart
+
+The chart around the studies is the standard `@pond-ts/charts` composition —
+there's no separate "financial mode", just the pieces:
+
+<ChartExample name="gallery-financial" height={250}>
+  <GalleryFinancial width={560} />
+</ChartExample>
+
+- **Candles** — [`<Candlestick>`](./types/candlestick.mdx) reads the four OHLC
+  columns; `showOHLC` fans the full open/high/low/close to the readout.
+- **Crosshair** — `cursor="crosshair"` on `<ChartContainer>` gives the
+  trading-terminal reticle with on-axis pills.
+- **A volume pane** — a second `<ChartRow>` with a `<BarChart>` on the `volume`
+  column and its own axis:
+
+  ```tsx
+  <ChartRow height={110}>
+    <YAxis id="vol" side="right" format=",.0s" />
+    <Layers>
+      <BarChart series={bars} column="volume" axis="vol" />
+    </Layers>
+  </ChartRow>
+  ```
+
+- **A session-aware axis** — hand `<ChartContainer>` a `calendar` and
+  closed-market gaps collapse; see the
+  [Trading-time axis](./axes/trading-time-axis.mdx).
+- **A live price pill** — a `YAxisIndicator` driven by `createLiveValue` pins
+  the last price to the axis edge without re-rendering the chart; see
+  [Axis indicators & live values](./annotations/axis-indicators-and-live-values.mdx).
+
+## Coming from TradingView
+
+If you're arriving from TradingView / ChartIQ, the vocabulary maps like this:
+
+| TradingView / ChartIQ           | pond-ts                                                             |
+| ------------------------------- | ------------------------------------------------------------------- |
+| Indicator / Study               | the [studies library](#the-studies-library) (`sma`, `bollinger`, …) |
+| Field (indicator input)         | the `column` option on every study                                  |
+| Candles / OHLC bars             | [`<Candlestick>`](./types/candlestick.mdx)                          |
+| Bar / Candle / Hollow style     | `<Candlestick variant>`                                             |
+| Volume sub-pane                 | a second `<ChartRow>` with `<BarChart column="volume">`             |
+| Pane / sub-chart                | a `<ChartRow>` ([Layout](./layout.mdx))                             |
+| Crosshair                       | `cursor="crosshair"`                                                |
+| OHLC legend / data window       | `<Candlestick showOHLC>`                                            |
+| Last-price line / label         | `YAxisIndicator` + `createLiveValue`                                |
+| Session separator               | `sessionDividers` on `<ChartContainer>`                             |
+| Regular trading hours (no gaps) | the `calendar` prop + a `TradingCalendar`                           |
+
+## See also
+
+- [@pond-ts/financial](../financial/) — constructing a `TradingCalendar` and
+  the studies API surface (the package side).
+- [Candlestick](./types/candlestick.mdx) · [Trading-time axis](./axes/trading-time-axis.mdx)
+  — the two primitives this hub assembles.
+- Storybook: [`Charts/Candlestick` → ScenarioPriceVolume](pathname:///storybook/?path=/story/charts-candlestick--scenario-price-volume)
+  — the price + volume two-row scenario.
+- The generated [API reference](pathname:///generated-api/financial/) — every
+  study's full signature.
