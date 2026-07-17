@@ -739,6 +739,98 @@ export function boundaryFormatFor(g: TickGranularity): string {
   return g === 'day' ? '%b %d' : '%Y';
 }
 
+// --- Stacked date **bands** (the segmented second row; owner design 2026-07-16) ---
+//
+// The stacked style's second row is a strip of segmented **bands** — one per
+// next-coarser calendar period, labelled at its left edge, zebra-shaded, with a
+// divider at each turn. `bandGrainFor` is the band grain, one step finer than
+// {@link boundaryGrainFor}'s day→year jump: sub-day ticks band by DAY, day/week
+// ticks by MONTH (not year), month/quarter ticks by YEAR. The matching top row
+// reads the terse unit ({@link flatBaseFormatFor}) with the band-turn tick
+// emphasized; a year-grain axis has no band row (nothing coarser to show here).
+
+/** The **band grain** under `g`-grain ticks (the segmented stacked second row):
+ *  the next coarser unit — sub-day → day, day/week → month, month/quarter →
+ *  year, year → none. */
+export function bandGrainFor(g: TickGranularity): TickGranularity | undefined {
+  if (isSubDay(g)) return 'day';
+  switch (g) {
+    case 'day':
+    case 'week':
+      return 'month';
+    case 'month':
+    case 'quarter':
+      return 'year';
+    default:
+      return undefined; // year — no coarser band
+  }
+}
+
+/** d3 specifier for a **band** label at band grain `g`: the date for a day band
+ *  (`Jan 12`), the full month for a month band (`January`), the year for a year
+ *  band (`2031`). Left-aligned in the band by the renderer. */
+export function bandFormatFor(g: TickGranularity): string {
+  switch (g) {
+    case 'day':
+      return '%b %-d';
+    case 'month':
+      return '%B';
+    default:
+      return '%Y'; // year (band grains are only day / month / year)
+  }
+}
+
+/**
+ * The **zebra parity** of the band starting at `t` (band grain `g`) — `true`
+ * when the band is shaded. A stable, pan/zoom-invariant flag derived from the
+ * band's own calendar identity: the year number, the months-since-epoch, or
+ * the **UTC**-day index (UTC so a DST shift never flips a band's shade). Odd
+ * index → shaded, matching the reference frames (2031 / 2033 grey). Consecutive
+ * bands always differ (each index steps by exactly one), so the row alternates
+ * cleanly across every month / year boundary.
+ */
+export function bandShaded(t: number, g: TickGranularity): boolean {
+  const d = new Date(t);
+  let index: number;
+  switch (g) {
+    case 'day':
+      // UTC of the local Y/M/D — an integer calendar-day count, DST-immune.
+      index = Math.floor(
+        Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86_400_000,
+      );
+      break;
+    case 'month':
+      index = d.getFullYear() * 12 + d.getMonth();
+      break;
+    default: // year
+      index = d.getFullYear();
+  }
+  return ((index % 2) + 2) % 2 === 1;
+}
+
+/** The local-time start of the band grain `g` containing `t` (the band's left
+ *  edge): local midnight, month start, or Jan 1. Through the Date ctor so DST
+ *  and month/year overflow normalize correctly. */
+export function bandStartOf(t: number, g: TickGranularity): number {
+  const d = new Date(t);
+  if (g === 'day')
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  if (g === 'month')
+    return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+  return new Date(d.getFullYear(), 0, 1).getTime(); // year
+}
+
+/** The start of the band grain `g` **after** the one containing `t` — the next
+ *  local midnight / month start / Jan 1. */
+export function bandNext(t: number, g: TickGranularity): number {
+  const d = new Date(t);
+  if (g === 'day')
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
+  if (g === 'month')
+    return new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime();
+  return new Date(d.getFullYear() + 1, 0, 1).getTime(); // year
+}
+
 /**
  * Which of `ticks` (at grain `granularity`) carry a boundary label: every tick
  * whose boundary-grain bucket differs from the previous tick's — i.e. a

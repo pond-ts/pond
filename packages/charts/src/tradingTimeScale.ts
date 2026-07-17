@@ -1,10 +1,16 @@
 import { scaleTime } from 'd3-scale';
 import {
+  bandFormatFor,
+  bandGrainFor,
+  bandNext,
+  bandShaded,
+  bandStartOf,
   boundaryFormatFor,
   boundaryGrainFor,
   boundaryTicks,
   buildGridLevels,
   buildTicks,
+  flatBaseFormatFor,
   flatFormats,
   majorFormatFor,
   nominalStepMs,
@@ -152,6 +158,30 @@ export interface TradingTimeScale {
     values: number[];
     spacing: number;
   }>;
+  /**
+   * The **terse base** label for each tick — the grain's bare unit with **no**
+   * inline promotion (`14:00`, `12`, `Feb`, `2026`), the top row of the
+   * **stacked band** date style. Same anchor set as {@link ticks}; a non-tick
+   * instant (the cursor) falls through to the d3 multi-scale default. This is
+   * `flatFormat` without the promotions — the coarser context lives in the
+   * band row ({@link bands}) instead of inline.
+   */
+  baseFormat(count?: number): (value: number) => string;
+  /**
+   * The **date bands** — the segmented second row of the stacked style. One
+   * entry per next-coarser calendar period touching the domain (day bands
+   * under intraday ticks, month bands under day ticks, year bands under
+   * month/quarter ticks), each `{ start, label, shaded }`: the period's start
+   * instant (the first band's `start` may precede the domain — its label pins
+   * at the left edge), the left-aligned label, and a stable zebra `shaded`
+   * flag keyed to the band's calendar identity (pan/zoom-invariant). The
+   * renderer draws a divider at each interior `start`, fills shaded bands, and
+   * emphasizes the top-row tick sitting at each `start`. Empty at year grain
+   * (nothing coarser to band) and without a calendar provider.
+   */
+  bands(
+    count?: number,
+  ): Array<{ start: number; label: string; shaded: boolean }>;
   domain(): [number, number];
   domain(next: readonly [number, number]): TradingTimeScale;
   range(): [number, number];
@@ -339,6 +369,41 @@ export function scaleTradingTime(
     const labelled = new Map<number, string>();
     ticks.forEach((t, i) => labelled.set(t, fmtFor(specs[i]!)(new Date(t))));
     return (value: number) => labelled.get(value) ?? defFmt(new Date(value));
+  };
+
+  scale.baseFormat = (count = 10) => {
+    // The terse top row of the stacked band style: the grain's bare unit, no
+    // inline promotion (that context lives in the band row). Anchors get the
+    // grain's flat base format; a non-tick instant (the cursor) reads the d3
+    // multi-scale default, so the crosshair still shows a full timestamp.
+    const defFmt = base.tickFormat(count);
+    if (!hasCalendar()) return (value: number) => defFmt(new Date(value));
+    const { ticks, granularity } = resolved(count);
+    const anchors = new Set(ticks);
+    const terse = base.tickFormat(count, flatBaseFormatFor(granularity));
+    return (value: number) =>
+      anchors.has(value) ? terse(new Date(value)) : defFmt(new Date(value));
+  };
+
+  scale.bands = (count = 10) => {
+    if (!hasCalendar()) return [];
+    const bg = bandGrainFor(resolved(count).granularity);
+    if (bg === undefined) return []; // year grain — nothing coarser to band
+    const fmt = base.tickFormat(count, bandFormatFor(bg));
+    const out: Array<{ start: number; label: string; shaded: boolean }> = [];
+    // First band starts at (or before) the domain start — the partial left
+    // band whose label the renderer pins at x=0; step to each next period
+    // start still inside the domain. Bounded loop as a runaway guard.
+    let s = bandStartOf(domain[0], bg);
+    for (let i = 0; i < 100_000 && s < domain[1]; i++) {
+      out.push({
+        start: s,
+        label: fmt(new Date(s)),
+        shaded: bandShaded(s, bg),
+      });
+      s = bandNext(s, bg);
+    }
+    return out;
   };
 
   scale.boundaryContext = (count = 10) => {

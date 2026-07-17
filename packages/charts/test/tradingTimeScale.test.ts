@@ -615,3 +615,83 @@ describe('gridLevels', () => {
     expect(dayT.values.length).toBeLessThan(dayC.values.length); // fewer lines
   });
 });
+
+describe('bands + baseFormat (stacked date-band row)', () => {
+  const DAY = 86_400_000;
+  const H = 3_600_000;
+
+  it('day bands under intraday ticks: local-midnight starts, date labels, zebra', () => {
+    const d0 = new Date(2026, 0, 11, 6, 0).getTime(); // Jan 11 06:00
+    const s = scaleTradingTime(identityProvider())
+      .domain([d0, new Date(2026, 0, 13).getTime()])
+      .range([0, 900]);
+    const bands = s.bands(10);
+    expect(bands.length).toBe(2);
+    // First band starts at (or before) the domain start — the partial left band.
+    expect(bands[0]!.start).toBe(new Date(2026, 0, 11).getTime());
+    expect(bands[0]!.start).toBeLessThanOrEqual(d0);
+    expect(bands[1]!.start).toBe(new Date(2026, 0, 12).getTime());
+    expect(bands.map((b) => b.label)).toEqual(['Jan 11', 'Jan 12']);
+    // Zebra: adjacent bands differ.
+    expect(bands[0]!.shaded).not.toBe(bands[1]!.shaded);
+  });
+
+  it('year bands under month/quarter ticks: odd years shaded (matches the frames)', () => {
+    const s = scaleTradingTime(identityProvider())
+      .domain([new Date(2030, 9, 1).getTime(), new Date(2031, 7, 1).getTime()])
+      .range([0, 900]);
+    const bands = s.bands(12);
+    expect(bands.map((b) => b.label)).toEqual(['2030', '2031']);
+    const byYear = new Map(bands.map((b) => [b.label, b.shaded]));
+    expect(byYear.get('2030')).toBe(false); // even → white
+    expect(byYear.get('2031')).toBe(true); // odd → shaded
+  });
+
+  it('zebra parity is pan/zoom-invariant — a year holds its shade across views', () => {
+    const shadeOf = (a: number, b: number, yr: string): boolean | undefined =>
+      scaleTradingTime(identityProvider())
+        .domain([a, b])
+        .range([0, 900])
+        .bands(12)
+        .find((band) => band.label === yr)?.shaded;
+    const v1 = shadeOf(
+      new Date(2030, 9, 1).getTime(),
+      new Date(2031, 7, 1).getTime(),
+      '2031',
+    );
+    const v2 = shadeOf(
+      new Date(2031, 0, 1).getTime(),
+      new Date(2031, 9, 1).getTime(),
+      '2031',
+    );
+    expect(v1).toBe(true);
+    expect(v2).toBe(true); // same band, same shade regardless of window
+  });
+
+  it('empty at year grain (nothing coarser) and without a calendar', () => {
+    const wide = scaleTradingTime(identityProvider())
+      .domain([new Date(2000, 0, 1).getTime(), new Date(2040, 0, 1).getTime()])
+      .range([0, 900]);
+    expect(wide.bands(10)).toEqual([]); // year-grain ticks → no band row
+    const noCal = scaleTradingTime(singleSpanProvider(0, 1000))
+      .domain([0, 1000])
+      .range([0, 900]);
+    expect(noCal.bands(10)).toEqual([]);
+  });
+
+  it('baseFormat is terse — the grain unit with no inline promotion', () => {
+    // Intraday: bare clock, never a promoted date.
+    const intraday = scaleTradingTime(identityProvider())
+      .domain([
+        new Date(2026, 0, 11, 6).getTime(),
+        new Date(2026, 0, 12).getTime(),
+      ])
+      .range([0, 900]);
+    const bf = intraday.baseFormat(10);
+    expect(intraday.ticks(10).every((t) => /^\d{2}:\d{2}$/.test(bf(t)))).toBe(
+      true,
+    );
+    // A non-tick instant (the cursor) still reads a full timestamp.
+    expect(bf(new Date(2026, 0, 11, 9, 37).getTime())).toMatch(/09:37/);
+  });
+});

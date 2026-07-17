@@ -236,8 +236,9 @@ describe('<XAxis> — the placeable x axis', () => {
     expect(mark.style.background).toBe('rgb(76, 143, 189)');
   });
 
-  it('stacked: the boundary context pins to the left edge; an approaching crossing culls it', () => {
-    // Mid-day window: context "Jan 05" pinned at 0 (no crossing in view).
+  it('stacked: segmented date bands — left-aligned labels, a divider + bold tick at the turn, zebra', () => {
+    // Mid-day window entirely within Jan 5: a single day band, its label pinned
+    // at the left edge (the partial band starts off-screen left).
     const midday = render(
       <ChartContainer
         range={[
@@ -255,21 +256,19 @@ describe('<XAxis> — the placeable x axis', () => {
         <XAxis dateStyle="stacked" />
       </ChartContainer>,
     );
-    const ctx1 = midday.container.querySelector(
-      '[data-boundary-context]',
-    ) as HTMLElement;
-    expect(ctx1.textContent).toBe('Jan 05');
-    // Same alignment as the tick labels: centred on the y-axis line in the
-    // default `center` mode.
-    expect(ctx1.style.left).toBe('0px');
-    expect(ctx1.style.transform).toBe('translateX(-50%)');
+    const bands1 = Array.from(
+      midday.container.querySelectorAll('[data-band-label]'),
+    ) as HTMLElement[];
+    expect(bands1.map((b) => b.textContent)).toEqual(['Jan 5']);
+    expect(bands1[0]!.style.left).toBe('0px'); // partial band pinned at the edge
+    expect(bands1[0]!.style.borderLeftStyle).not.toBe('solid'); // no turn divider
     midday.unmount();
-    // Window straddling midnight with the crossing tick near the left edge:
-    // the crossing's "Jan 06" label pushes the pinned "Jan 05" context off.
+    // Window straddling midnight into Jan 6: two bands, a divider at the turn,
+    // zebra fills, and the top-row 00:00 tick bold.
     const straddle = render(
       <ChartContainer
         range={[
-          new Date(2026, 0, 5, 23, 55).getTime(),
+          new Date(2026, 0, 5, 20, 0).getTime(),
           new Date(2026, 0, 6, 4, 0).getTime(),
         ]}
         width={480}
@@ -283,15 +282,20 @@ describe('<XAxis> — the placeable x axis', () => {
         <XAxis dateStyle="stacked" />
       </ChartContainer>,
     );
-    // The crossing's "Jan 06" label sits nearly on the edge — rendering the
-    // context would collide, so it CULLS (nothing slides into the gutter).
-    expect(
-      straddle.container.querySelector('[data-boundary-context]'),
-    ).toBeNull();
-    const crossing = Array.from(
-      straddle.container.querySelectorAll('[data-boundary-label]'),
-    ).find((el) => !el.hasAttribute('data-boundary-context')) as HTMLElement;
-    expect(crossing.textContent).toBe('Jan 06');
+    const bands2 = Array.from(
+      straddle.container.querySelectorAll('[data-band-label]'),
+    ) as HTMLElement[];
+    expect(bands2.map((b) => b.textContent)).toEqual(['Jan 5', 'Jan 6']);
+    // The second (Jan 6) band carries the turn divider; the first (partial) does not.
+    expect(bands2[0]!.style.borderLeftStyle).not.toBe('solid');
+    expect(bands2[1]!.style.borderLeftStyle).toBe('solid');
+    // Zebra: adjacent bands differ in fill (one shaded, one transparent).
+    expect(bands2[0]!.style.background).not.toBe(bands2[1]!.style.background);
+    // The 00:00 turn tick in the top row renders bold.
+    const bold = Array.from(straddle.container.querySelectorAll('div')).filter(
+      (el) => (el as HTMLElement).style.fontWeight === '700',
+    );
+    expect(bold.length).toBeGreaterThan(0);
     straddle.unmount();
   });
 
@@ -315,17 +319,22 @@ describe('<XAxis> — the placeable x axis', () => {
         <XAxis />
       </ChartContainer>,
     );
-    // No stacked chrome: neither the second-row crossing labels nor the pinned
-    // context exist in flat mode.
-    expect(container.querySelectorAll('[data-boundary-label]')).toHaveLength(0);
-    expect(container.querySelector('[data-boundary-context]')).toBeNull();
+    // No stacked chrome: the band (second) row doesn't exist in flat mode.
+    expect(container.querySelectorAll('[data-band-label]')).toHaveLength(0);
     // The midnight tick reads its date inline (`%b %-d` → "Jan 6"), among the
     // terse clock labels for the other ticks.
-    const texts = Array.from(container.querySelectorAll('div')).map(
-      (el) => el.textContent ?? '',
-    );
+    const divs = Array.from(container.querySelectorAll('div')) as HTMLElement[];
+    const texts = divs.map((el) => el.textContent ?? '');
     expect(texts).toContain('Jan 6');
     expect(texts.some((t) => /^\d{2}:\d{2}$/.test(t))).toBe(true);
+    // The promoted turn label is **bold** (matching the stacked band turn); a
+    // terse clock label is not — a period boundary reads the same in both styles.
+    const promoted = divs.find((el) => el.textContent === 'Jan 6')!;
+    const clock = divs.find((el) =>
+      /^\d{2}:\d{2}$/.test(el.textContent ?? ''),
+    )!;
+    expect(promoted.style.fontWeight).toBe('700');
+    expect(clock.style.fontWeight).not.toBe('700');
   });
 
   it('a decreasing transform still places ticks left-to-right', () => {

@@ -294,11 +294,12 @@ export const YearDailyNarrow: Story = {
  * `dateStyle` — how the time axis lays out its date context. **`'flat'`
  * (default, top)** promotes the coarsest calendar unit each tick opens
  * **inline** into one row (the month at a month turn, the year at a year turn),
- * every other tick terse — the TradingView look. **`'stacked'` (bottom)** keeps
- * the two-row layout: a `%b %d` major row plus a boundary row underneath
- * carrying the year, with a pinned left-edge context. Here: ~4 months of daily
- * candles, so flat reads `Jul … Sep … Nov 2026 Feb` on one row while stacked
- * reads dates with the year underneath.
+ * every other tick terse — the TradingView look. **`'stacked'` (bottom)** is
+ * the two-row layout: a terse top row (bare day-of-month) over a segmented
+ * **band** row of the next-coarser period — here **months** (`January`,
+ * `February`, …) — each a left-aligned label with a divider at its turn,
+ * zebra-shaded. So ~4 months of daily candles reads `5 19 2 16 …` up top with
+ * `January | February | March | April` banded beneath.
  */
 export const DateStyleDaily: Story = {
   render: () => {
@@ -341,8 +342,10 @@ export const DateStyleDaily: Story = {
 
 /**
  * `dateStyle` on an **intraday** axis: flat (top) shows clock times with the
- * session's date promoted inline at each midnight/open; stacked (bottom) pins
- * the date to the boundary row. Three 30-minute-candle sessions.
+ * session's date promoted inline at each open; stacked (bottom) keeps the clock
+ * times terse and carries the date in a segmented **day band** below, one cell
+ * per session (`Jan 5 | Jan 6 | Jan 7`), zebra-shaded with the open tick
+ * emphasized at each turn. Three 30-minute-candle sessions.
  */
 export const DateStyleIntraday: Story = {
   render: () => {
@@ -389,9 +392,10 @@ export const DateStyleIntraday: Story = {
  * live. The preset buttons jump between scales; drag / wheel explore from
  * there. Watch the flat row relabel as you go — years → months → days → clock
  * → seconds — each boundary promoted inline (the year at a year turn, the
- * month at a month turn, the date at a midnight), versus the stacked two-row
- * layout on the same view. The **labels** control flips tick-label alignment
- * (`align`): centred on the tick, or left-aligned beside it.
+ * month at a month turn, the date at a midnight), versus the stacked band row
+ * on the same view — a terse top row over segmented, zebra-shaded bands of the
+ * next-coarser period (day / month / year as you zoom out). The **labels**
+ * control flips tick-label alignment (`align`): centred, or left-aligned.
  *
  * The switches below the chart drive the public container props. **Sessions**
  * swaps in a weekend-excising discontinuity provider (full-day Mon–Fri

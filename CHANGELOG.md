@@ -73,11 +73,19 @@ and type-level changes; patch bumps are strictly additive.
   out on a **single row** the TradingView way: each tick that opens a coarser
   calendar period is relabelled **inline** to it (the month at a month turn,
   the year at a year turn, the date at a day turn under an intraday grain),
-  every other tick a terse label (`5`, `Feb`, `14:00`). `'stacked'` restores
-  the previous two-row layout (a `%b %d` / `%H:%M` major row plus a boundary
-  row carrying the coarser unit, with a pinned left-edge context).
-  `TradingTimeScale` gains `flatFormat(count)` (the single-row label lookup;
-  non-tick instants — the cursor readout — still read a full timestamp).
+  every other tick a terse label (`5`, `Feb`, `14:00`). `'stacked'` is the
+  two-row layout: a terse top row (the grain's bare unit) over a segmented
+  **band** row of the next-coarser period — **day** bands under intraday
+  ticks, **month** bands under day ticks, **year** bands under month/quarter
+  ticks — each a left-aligned label with a divider at its turn, **zebra-shaded**
+  by the band's calendar parity (pan/zoom-stable). The turn tick up top is
+  emphasized and joins its divider as one continuous boundary line; the partial
+  left band pins its label at the plot edge. Themeable via **`theme.axis.band`**
+  (`fill` — the shaded cell, "could be a background color"; `divider`; `label`).
+  `TradingTimeScale` gains `flatFormat(count)` (the flat single-row lookup),
+  `baseFormat(count)` (the terse stacked top row), and `bands(count)` (the band
+  segments); non-tick instants — the cursor readout — still read a full
+  timestamp.
   The **window edge is never ticked** unless it is a genuine grain anchor (a
   true session open, or an instant exactly on the grain — a midnight at day
   grain, a month start at month grain): a mid-period edge tick sat pinned at

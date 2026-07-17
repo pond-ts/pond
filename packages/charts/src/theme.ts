@@ -112,6 +112,19 @@ export interface ChartTheme {
      */
     readonly sessionDivider?: string;
     /**
+     * The stacked date style's **band** row (the segmented second row: zebra
+     * date/month/year cells with left-aligned labels + dividers). `fill` is the
+     * shaded (odd-parity) cell background — "could be a background color" per
+     * the design; `divider` the turn line (falls back to {@link grid}); `label`
+     * the band-label ink (falls back to {@link title}.color → {@link label}).
+     * Optional; the whole band row is stacked-only.
+     */
+    readonly band?: {
+      readonly fill: string;
+      readonly divider?: string;
+      readonly label?: string;
+    };
+    /**
      * Typography for the axis **title** — the rotated y-axis unit strip and the
      * x-axis label (distinct from the per-tick `label` colour above). Omit a
      * field to fall back: `color` → `label`, `size` → `font.size + 1` (a touch
@@ -400,6 +413,11 @@ export const defaultTheme: ChartTheme = {
     grid: '#e2e8f0',
     gridDash: [2, 2],
     sessionDivider: '#cbd5e1', // slate-300 — a step stronger than the gridlines
+    band: {
+      fill: '#f8fafc', // slate-50 — the zebra shade on the stacked band row
+      divider: '#cbd5e1', // slate-300 turn line
+      label: '#334155', // slate-700 ink for band labels
+    },
   },
   font: {
     family: 'system-ui, -apple-system, sans-serif',

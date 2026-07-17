@@ -191,6 +191,11 @@ function buildDocsTheme(c: Ramp): ChartTheme {
       grid: withAlpha(c.muted, 0.28),
       gridDash: [], // solid hairlines — the terminal register
       sessionDivider: withAlpha(c.vizMark, 0.5), // structural — the warm accent, light
+      band: {
+        fill: withAlpha(c.muted, 0.12), // the zebra shade — a faint neutral wash
+        divider: withAlpha(c.muted, 0.4), // turn line, a touch stronger than the grid
+        label: c.ink, // band labels read as strong chrome
+      },
       title: { color: c.ink },
     },
     font: FONT,
