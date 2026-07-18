@@ -1755,6 +1755,44 @@ describe('TimeSeries', () => {
     expect(smoothed.at(4)?.get('valueLoess')).toBeLessThan(42);
   });
 
+  it('loess is numerically stable and shift-invariant on epoch-ms anchors', () => {
+    // Regression: the local regression must be conditioned on centred x. With
+    // absolute epoch-ms anchors (~1.7e12) the un-centred normal equations lost
+    // all precision to floating-point cancellation, so the fit overshot wildly
+    // (well outside the data range) instead of smoothing. The fitted trend must
+    // not depend on the absolute time origin, only on the spacing + values.
+    const schema = [
+      { name: 'time', kind: 'time' },
+      { name: 'value', kind: 'number' },
+    ] as const;
+
+    const values = Array.from({ length: 60 }, (_, i) =>
+      Math.round(50 + 30 * Math.sin(i / 5) + (i % 7) - 3),
+    );
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+
+    const build = (base: number) =>
+      new TimeSeries({
+        name: 's',
+        schema,
+        rows: values.map((v, i) => [base + i * 86_400_000, v]),
+      }).smooth('value', 'loess', { span: 0.3, output: 'loess' });
+
+    const small = build(0);
+    const epoch = build(Date.UTC(2026, 0, 1));
+
+    for (let i = 0; i < values.length; i++) {
+      const s = small.at(i)?.get('loess') as number;
+      const e = epoch.at(i)?.get('loess') as number;
+      // Shift-invariant to the absolute origin (was off by >0.5 before the fix).
+      expect(Math.abs(s - e)).toBeLessThan(1e-6);
+      // And a genuine local mean — never outside the data range.
+      expect(e).toBeGreaterThanOrEqual(min - 1);
+      expect(e).toBeLessThanOrEqual(max + 1);
+    }
+  });
+
   it('supports sum, count and last aggregations', () => {
     const schema = [
       { name: 'time', kind: 'time' },
