@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ChartContainer,
   ChartRow,
@@ -6,11 +6,12 @@ import {
   ScatterChart,
   YAxis,
 } from '@pond-ts/charts';
-import { TimeSeries } from 'pond-ts';
+import { LiveSeries } from 'pond-ts';
+import { useSnapshot } from '@pond-ts/react';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import {
   ConceptControls,
-  SegmentedControl,
+  PlayButton,
   Slider,
 } from '@site/src/components/ConceptViz';
 
@@ -60,35 +61,18 @@ function useMeasuredWidth<T extends HTMLElement>() {
   return [ref, width] as const;
 }
 
-// A fixed source series — built once, never streamed.
-const N_POINTS = 240;
+const PUSH_MS = 45;
+const WINDOW_MS = 11_000;
+const MAX_EVENTS = 240;
 const HEIGHT = 220;
-const source = (() => {
-  const rand = mulberry32(7);
-  const BASE = Date.UTC(2026, 0, 1, 0, 0, 0);
-  const rows: Array<[number, number]> = [];
-  for (let i = 0; i < N_POINTS; i++) {
-    const wave = 0.5 + 0.3 * Math.sin(i / 18);
-    const v = Math.max(0.03, Math.min(0.97, wave + (rand() - 0.5) * 0.24));
-    rows.push([BASE + i * 400, v]);
-  }
-  return TimeSeries.fromJSON({ name: 'source', schema, rows });
-})();
-const RANGE = source.timeRange()!;
-
-type Method = 'stride' | 'reservoir';
-const METHODS = [
-  { value: 'stride' as const, label: 'stride' },
-  { value: 'reservoir' as const, label: 'reservoir' },
-];
 
 /**
- * Batch `sample` on a **static** `TimeSeries` — the faint dots are the whole
- * source, the teal dots the kept subset, straight from `source.sample(...)`.
- * `stride` keeps every Nth event (evenly spaced); `reservoir` draws a random
- * K-of-N (Algorithm R). Nothing streams, so the draw is steady.
+ * Live stride sampling. Points stream into a `LiveSeries`; `live.sample({
+ * stride })` is a `LiveView` with a per-instance counter, so the kept subset
+ * (teal) is **stable** — a kept point stays kept as it scrolls, only new
+ * arrivals are decided. Live ships stride only; reservoir stays a snapshot op.
  */
-export default function CoreSampling() {
+export default function CoreSamplingLive() {
   const base = useSiteChartTheme();
   const theme = useMemo(() => {
     const faint = mix(
@@ -111,23 +95,58 @@ export default function CoreSampling() {
   }, [base]);
 
   const [boxRef, width] = useMeasuredWidth<HTMLDivElement>();
-  const [method, setMethod] = useState<Method>('stride');
-  const [stride, setStride] = useState(4);
-  const [size, setSize] = useState(60);
+  const live = useRef(
+    new LiveSeries({
+      name: 'raw',
+      schema,
+      retention: { maxEvents: MAX_EVENTS },
+    }),
+  ).current;
+  const rand = useRef(mulberry32(9)).current;
+  const tick = useRef(0);
 
-  const sampled = useMemo(
-    () =>
-      method === 'stride'
-        ? source.sample({ stride })
-        : source.sample({ reservoir: { size } }),
-    [method, stride, size],
-  );
+  const [stride, setStride] = useState(4);
+  const [playing, setPlaying] = useState(true);
+
+  useEffect(() => {
+    if (!playing) return;
+    const id = setInterval(() => {
+      const i = tick.current++;
+      const wave = 0.5 + 0.3 * Math.sin(i / 22);
+      const v = Math.max(0.03, Math.min(0.97, wave + (rand() - 0.5) * 0.24));
+      live.push([Date.now(), v]);
+    }, PUSH_MS);
+    return () => clearInterval(id);
+  }, [live, rand, playing]);
+
+  // A fresh stride view per stride value — it backfills the current window and
+  // mirrors eviction, so the kept subset is right immediately. Dispose the old.
+  const viewRef = useRef<{ dispose(): void } | null>(null);
+  const strided = useMemo(() => {
+    viewRef.current?.dispose();
+    const v = live.sample({ stride });
+    viewRef.current = v;
+    return v;
+  }, [live, stride]);
+  useEffect(() => () => viewRef.current?.dispose(), []);
+
+  const raw = useSnapshot(live, { throttle: 250 });
+  const kept = useSnapshot(strided, { throttle: 250 });
+
+  const ready = raw !== null && kept !== null && width > 0;
+  const view: [number, number] = ready
+    ? (() => {
+        const span = raw!.timeRange()!;
+        const end = span.end();
+        return [Math.max(end - WINDOW_MS, span.begin()), end];
+      })()
+    : [0, 1];
 
   return (
     <>
       <div ref={boxRef} style={{ width: '100%' }}>
-        {width > 0 ? (
-          <ChartContainer range={RANGE} width={width} theme={theme}>
+        {ready ? (
+          <ChartContainer range={view} width={width} theme={theme}>
             <ChartRow height={HEIGHT}>
               <YAxis
                 id="val"
@@ -140,14 +159,14 @@ export default function CoreSampling() {
               />
               <Layers>
                 <ScatterChart
-                  series={source}
+                  series={raw!}
                   column="value"
                   axis="val"
                   as="secondary"
                   radius={1.7}
                 />
                 <ScatterChart
-                  series={sampled}
+                  series={kept!}
                   column="value"
                   axis="val"
                   radius={3.4}
@@ -160,32 +179,15 @@ export default function CoreSampling() {
         )}
       </div>
       <ConceptControls>
-        <SegmentedControl
-          label="strategy"
-          options={METHODS}
-          value={method}
-          onChange={setMethod}
+        <Slider
+          label="stride"
+          min={2}
+          max={16}
+          value={stride}
+          onChange={setStride}
+          display={`1-in-${stride}`}
         />
-        {method === 'stride' ? (
-          <Slider
-            label="stride"
-            min={2}
-            max={16}
-            value={stride}
-            onChange={setStride}
-            display={`1-in-${stride}`}
-          />
-        ) : (
-          <Slider
-            label="keep"
-            min={10}
-            max={160}
-            step={5}
-            value={size}
-            onChange={setSize}
-            display={String(size)}
-          />
-        )}
+        <PlayButton playing={playing} onToggle={() => setPlaying((p) => !p)} />
       </ConceptControls>
     </>
   );
