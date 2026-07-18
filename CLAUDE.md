@@ -33,6 +33,14 @@ don't crawl `src/` to find the right primitive. Each package's
 `src/index.ts` is the authority; when a PR adds, removes, or renames a
 public export, update the matching API.md row in that PR.
 
+This is CI-enforced, not honor-system: the `API map` workflow
+(`.github/workflows/api-map.yml`) fails any PR that touches a public
+export entry point (`packages/*/src/index.ts`, core's
+`schema/public.ts`, financial's `fluent.ts`) without also changing
+API.md. If an entry-point change genuinely doesn't alter the export
+surface (comments, formatting), apply the `api-map-exempt` label to
+the PR instead.
+
 ## Strategic RFCs
 
 `docs/rfcs/` holds strategic planning notes — multi-section design
@@ -377,6 +385,9 @@ look for:
   names must describe what the code does
 - **Sharp edges the PR body glosses over** — document every one you
   know about, even if not fixing
+- **API.md row** — if the diff adds, removes, or renames a public
+  export, is the matching API.md row updated? (CI enforces this via
+  the `API map` workflow, but fix it here rather than on the red X)
 - **Perf check** — for any new operator or non-trivial impl change
   that walks events or allocates per-event, did you do the perf
   check (analytical complexity + `scripts/perf-<operator>.mjs` +
