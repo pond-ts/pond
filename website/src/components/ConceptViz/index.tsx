@@ -95,6 +95,55 @@ export function SegmentedControl<T extends string>({
   );
 }
 
+interface ToggleChipsProps<T extends string> {
+  /** The core option / family this control drives (shown as the label). */
+  label: string;
+  options: readonly { value: T; label: string; color: string }[];
+  /** The currently-on values. */
+  selected: readonly T[];
+  onToggle: (value: T) => void;
+}
+
+/**
+ * A row of independently on/off chips, each with a colored swatch matching the
+ * series it toggles. Unlike {@link SegmentedControl} (single-select), any subset
+ * can be on — for overlaying/hiding comparison series over a shared source.
+ */
+export function ToggleChips<T extends string>({
+  label,
+  options,
+  selected,
+  onToggle,
+}: ToggleChipsProps<T>): ReactNode {
+  return (
+    <div className={styles.segmentedWrap}>
+      <span className={styles.controlLabel}>{label}</span>
+      <div className={styles.chips} role="group" aria-label={label}>
+        {options.map((opt) => {
+          const on = selected.includes(opt.value);
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              className={styles.chip}
+              aria-pressed={on}
+              data-on={on ? '' : undefined}
+              onClick={() => onToggle(opt.value)}
+            >
+              <span
+                className={styles.chipSwatch}
+                style={{ background: opt.color, opacity: on ? 1 : 0.25 }}
+                aria-hidden="true"
+              />
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /** Play / pause toggle for the autoplay stream. */
 export function PlayButton({
   playing,
