@@ -2,6 +2,10 @@
 sidebar_position: 16
 ---
 
+import ConceptViz from '@site/src/components/ConceptViz';
+import CoreSampling from '@site/src/examples/core-sampling';
+import CoreSamplingLive from '@site/src/examples/core-sampling-live';
+
 # Sampling
 
 `sample({ stride })` and `sample({ reservoir })` thin a `TimeSeries` to a
@@ -15,6 +19,21 @@ two questions:
   uniformly drawn. The right pick for visualization (uncorrelated
   scatter points without aggregation's grid collapse) and population
   summaries.
+
+<ConceptViz
+  height={220}
+  caption={
+    <>
+      A static <code>TimeSeries</code> — the faint dots are the whole source,
+      the teal dots the <strong>kept</strong> subset from{' '}
+      <code>source.sample(...)</code>. <code>stride</code> keeps every Nth
+      (evenly spaced); <code>reservoir</code> draws a random K-of-N. Slide the
+      value to keep more or fewer.
+    </>
+  }
+>
+  <CoreSampling />
+</ConceptViz>
 
 What's covered:
 
@@ -162,6 +181,21 @@ and `LivePartitionedView.sample` accept `{ stride: N }` and return a
 ships **stride only** on the live side; reservoir is queued for a
 later release once the streaming RFC's exact-removal eviction channel
 lands.
+
+<ConceptViz
+  height={220}
+  caption={
+    <>
+      Live stride: points stream in and{' '}
+      <code>live.sample(&#123; stride &#125;)</code> keeps every Nth. The kept
+      subset (teal) is <strong>stable</strong> — a kept point stays kept as it
+      scrolls, only new arrivals get a keep/drop decision (the per-instance
+      counter).
+    </>
+  }
+>
+  <CoreSamplingLive />
+</ConceptViz>
 
 ```ts
 // Live: per-host stride feeding per-host rolling

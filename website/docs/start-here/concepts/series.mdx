@@ -2,6 +2,12 @@
 sidebar_position: 3
 ---
 
+import {
+  EventAnatomy,
+  TimeSeriesTable,
+  LiveSeriesBuffer,
+} from '@site/src/components/ConceptFigures';
+
 # Series
 
 A pond series is a **schema-typed, ordered collection of events**.
@@ -23,8 +29,7 @@ shape, not by which operators you need.
 The building block. An `Event<K, D>` is a temporal key plus a typed
 data payload.
 
-![Event: a temporal key plus a typed payload — key (Time, TimeRange,
-or Interval) on the left, schema-typed data on the right](/img/concepts-events.png)
+<EventAnatomy />
 
 ```ts
 import { Event, Time } from 'pond-ts';
@@ -57,8 +62,7 @@ An ordered, immutable, schema-typed collection of events. Built from
 a row array or via JSON; queried, transformed, and reduced through
 method chains.
 
-![TimeSeries: a named, schema-typed, ordered, immutable table of
-events; one row extractable as an Event](/img/concepts-timeseries.png)
+<TimeSeriesTable />
 
 ```ts
 import { TimeSeries } from 'pond-ts';
@@ -92,9 +96,7 @@ A bounded, append-optimized buffer with the same schema as
 the buffer holds a configurable retention window, subscribers react
 to new events.
 
-![LiveSeries: a mutable, append-optimized buffer; events arrive over
-time, retention bounds the buffer, subscribers fan out on every
-push](/img/concepts-liveseries.png)
+<LiveSeriesBuffer />
 
 ```ts
 import { LiveSeries } from 'pond-ts';

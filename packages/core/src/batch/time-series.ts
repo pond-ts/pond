@@ -405,10 +405,16 @@ function loessAt(
   let sumWXX = 0;
   let sumWXY = 0;
 
+  // Regress in local coordinates centred on the query point (`dx = pointX - x`).
+  // Anchors are typically absolute epoch-ms (~1.7e12), so accumulating
+  // `pointX * pointX` (~3e24) into the normal equations loses all precision to
+  // floating-point cancellation and the fit overshoots wildly. Centring keeps
+  // every term small; the fitted value at the query point is then just the
+  // intercept, since `dx = 0` there.
   for (let index = start; index < end; index++) {
-    const pointX = anchors[index]!;
+    const dx = anchors[index]! - x;
     const pointY = values[index]!;
-    const distance = Math.abs(pointX - x);
+    const distance = Math.abs(dx);
     const ratio = distance / bandwidth;
     const weight = ratio >= 1 ? 0 : (1 - ratio ** 3) ** 3;
     if (weight === 0) {
@@ -416,10 +422,10 @@ function loessAt(
     }
     weightedCount += 1;
     sumW += weight;
-    sumWX += weight * pointX;
+    sumWX += weight * dx;
     sumWY += weight * pointY;
-    sumWXX += weight * pointX * pointX;
-    sumWXY += weight * pointX * pointY;
+    sumWXX += weight * dx * dx;
+    sumWXY += weight * dx * pointY;
   }
 
   if (weightedCount === 0 || sumW === 0) {
@@ -431,9 +437,8 @@ function loessAt(
     return sumWY / sumW;
   }
 
-  const intercept = (sumWY * sumWXX - sumWX * sumWXY) / denominator;
-  const slope = (sumW * sumWXY - sumWX * sumWY) / denominator;
-  return intercept + slope * x;
+  // Value at the query point: intercept + slope * dx, with dx = 0.
+  return (sumWY * sumWXX - sumWX * sumWXY) / denominator;
 }
 
 function lowerBound(values: ReadonlyArray<number>, target: number): number {

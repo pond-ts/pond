@@ -2,6 +2,9 @@
 sidebar_position: 9
 ---
 
+import ConceptViz from '@site/src/components/ConceptViz';
+import CoreByValue from '@site/src/examples/core-byvalue';
+
 # Value axis
 
 Most of pond-ts keys events by **time**. But nothing in the series
@@ -49,6 +52,23 @@ because a "minute" is meaningless on a distance axis.
 
 `series.byValue(axis)` re-keys a `TimeSeries` onto one of its numeric
 columns and returns a closed `ValueSeries`:
+
+<ConceptViz
+  height={268}
+  caption={
+    <>
+      A run's <strong>elevation</strong> (area) and <strong>pace</strong> (line,
+      faster up — so it dips on the climb), re-keyed. On the{' '}
+      <strong>time</strong> axis a climb looks gradual — you slowed down, so
+      it's spread across many samples; <code>byValue('distance')</code>{' '}
+      re-spaces the x-axis and it snaps <strong>short and steep</strong>. Same
+      rows, same order, a different axis — and your <strong>splits</strong>{' '}
+      re-bucket with it (by time vs by distance).
+    </>
+  }
+>
+  <CoreByValue />
+</ConceptViz>
 
 ```ts
 // Re-key a ride onto cumulative distance. `cumDist` becomes the axis

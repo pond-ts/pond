@@ -13,10 +13,19 @@ something rather than transform it.
 ```ts
 const cpu = TimeSeries.fromJSON({ name, schema, rows });
 cpu.length; // 5
-cpu.first()?.get('cpu'); // 0.31
-cpu.timeRange(); // TimeRange { start, end }
+cpu.first()?.get('cpu'); // 0.31 — one row, via an Event
+cpu.column('cpu').mean(); // 0.476 — a whole column, no per-row Events
+cpu.timeRange(); // TimeRange — .begin() / .end() in epoch ms
 cpu.tail('30s').reduce({ cpu: 'avg' }); // current state
 ```
+
+Two ways to read: the **row API** (`Event`s — `first()`, `at(i)`,
+`get('cpu')`, iteration) for per-event logic, and the **column API**
+(`column('cpu')` — reductions and typed-array access) for throughput.
+The columnar backing (added in v0.18.0) made the column path first-class;
+the row API is unchanged. This page covers reading via rows; the column
+path is its own page ([Columns](../advanced/columns)), summarized under
+[Reading columns](#reading-columns) below.
 
 ## Counts and bounds
 
@@ -30,21 +39,30 @@ series.length; // number
 
 ### `timeRange()`
 
-Overall extent, `undefined` for an empty series.
+Overall extent as a `TimeRange`, or `undefined` for an empty series.
+It's a `TimeRange` instance — `.begin()` / `.end()` return the bounds in
+epoch milliseconds (not `.start` / `.end` fields):
 
 ```ts
-series.timeRange();
-// TimeRange | undefined
+const r = series.timeRange(); // TimeRange | undefined
+r?.begin(); // number (epoch ms)
+r?.end();
 ```
 
 ### `events`
 
-The underlying readonly array. Useful when you need an `Array.map` /
-`Array.find` shape rather than the `TimeSeries` API:
+The rows as an array of `Event` objects — for when you need an
+`Array.map` / `Array.find` shape rather than the `TimeSeries` API:
 
 ```ts
 series.events; // ReadonlyArray<EventForSchema<S>>
 ```
+
+A `TimeSeries` is backed by typed **columns**, not `Event` objects, so
+`events` **materializes** one `Event` per row on first access (lazily,
+then memoized). That's fine for row-shaped logic, but for a scan or a
+reduction over a single field, read the column instead — see
+[Reading columns](#reading-columns).
 
 ## Single events
 
@@ -72,6 +90,32 @@ First event matching a predicate, like `Array.prototype.find`.
 ```ts
 const spike = series.find((e) => (e.get('cpu') ?? 0) > 0.9);
 ```
+
+## Reading columns
+
+To read _values_ rather than events, go through a **column** instead of
+materializing an `Event` per row. `series.column(name)` returns a typed,
+read-only view of one field, narrowed by the schema:
+
+```ts
+const cpu = series.column('cpu'); // Float64Column (number kind)
+cpu.mean(); // number | undefined — one validity-aware pass
+cpu.minMax(); // [min, max] | undefined — the Y-extent, one scan
+cpu.at(5); // number | undefined — the value at row 5
+cpu.toFloat64Array(); // dense Float64Array for a canvas / WebGL loop
+```
+
+Numeric columns carry the scalar reductions (`min` / `max` / `sum` /
+`mean` / `stdev` / `median` / `percentile` / `count` / `minMax`); string
+columns have `uniqueCount()`, boolean columns `all()` / `any()` /
+`none()`. `series.keyColumn()` is the same idea for the time axis. The
+column API (added with the columnar backing in v0.18.0) is the
+throughput path — no per-row `Event` — while the row methods above stay
+the default for per-event logic.
+
+This is the short version; the full column surface (missing-value
+handling, `bin`, `scan`, chunked columns) is on the
+[Columns](../advanced/columns) page.
 
 ## Key-based lookups
 
@@ -107,6 +151,16 @@ The nearest event that doesn't overshoot the key. Common pattern:
 ```ts
 const previous = series.atOrBefore(Date.now());
 const next = series.atOrAfter(Date.now());
+```
+
+### `nearest(key)`
+
+The single event closest to the key by `begin()` distance, either side
+(vs `atOrBefore`/`atOrAfter`, which pick a direction). `undefined` for
+an empty series:
+
+```ts
+series.nearest(Date.now()); // the closest reading to now
 ```
 
 ## Predicates over the series
@@ -180,6 +234,29 @@ either edge:
 const clipped = series.trim(reportingWindow);
 ```
 
+## Column projection
+
+Where the selectors above narrow the **rows**, these narrow the
+**columns** — both return a new `TimeSeries` (with a narrowed schema),
+zero-copy, source untouched.
+
+### `select(...keys)`
+
+Keep the key column plus the named value columns; drop the rest. The
+result type narrows to just those fields:
+
+```ts
+series.select('cpu', 'healthy'); // TimeSeries with only cpu + healthy
+```
+
+### `rename(mapping)`
+
+Relabel columns:
+
+```ts
+series.rename({ cpu: 'load' }); // 'cpu' column becomes 'load'
+```
+
 ## Range predicates
 
 These return a `boolean` or a `TimeRange`, not a series.
@@ -222,10 +299,13 @@ for (const event of series) {
 const all = [...series]; // ReadonlyArray<EventForSchema<S>>
 ```
 
-If you want array methods directly, reach for `series.events`:
+For array methods over the `Event` rows, reach for `series.events`. But
+for a reduction over a single column, the column API is the one-pass,
+validity-aware path — and skips materializing `Event`s entirely:
 
 ```ts
-const sum = series.events.reduce((s, e) => s + (e.get('cpu') ?? 0), 0);
+series.events.reduce((s, e) => s + (e.get('cpu') ?? 0), 0); // row API
+series.column('cpu').sum(); // same result, one column pass
 ```
 
 ## Output forms
@@ -238,7 +318,14 @@ in a different shape, without producing a new `TimeSeries`.
 | `toJSON({ rowFormat })` | JSON-friendly payload accepted by `TimeSeries.fromJSON(...)`                      |
 | `toRows()`              | Array of normalized row tuples — same shape that `new TimeSeries({ rows })` takes |
 | `toObjects()`           | Array of objects keyed by schema column name                                      |
-| `toPoints()`            | Wide `{ ts, ...values }[]` rows for charting                                      |
+| `toPoints()`            | Wide `{ ts, ...values }[]` rows for charting (`ts` is `event.begin()`)            |
+| `toArray()`             | Shallow, mutable copy of the `Event` array (like `events`, but not readonly)      |
+
+Every form here **materializes** row / `Event` objects — they're the
+row-API boundary. For a dense typed array of a single field (the canvas
+/ WebGL path), stay columnar with
+`series.column('cpu').toFloat64Array()` — see
+[Reading columns](#reading-columns).
 
 `toPoints` is the chart-bridge — see
 [Charting](../advanced/charting). `toJSON` and friends are the

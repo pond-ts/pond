@@ -2,6 +2,8 @@
 sidebar_position: 2
 ---
 
+import { SequenceGrid } from '@site/src/components/ConceptFigures';
+
 # Sequences
 
 A `Sequence` defines a **grid over the timeline** — a set of equally
@@ -14,10 +16,7 @@ Unix epoch. Operators that consume a sequence either intersect it
 with the data (`aggregate(seq, mapping)`) or with an explicit range
 to produce a finite slice.
 
-![Time-keyed cpu events bucketed by Sequence.every('5m'); aggregate
-produces one Interval-keyed event per bucket. Buckets are
-half-open [start, end), so an event at exactly the boundary lands
-in the later bucket](/img/concepts-sequence.png)
+<SequenceGrid />
 
 ## `Sequence.every(duration)` — fixed-step
 

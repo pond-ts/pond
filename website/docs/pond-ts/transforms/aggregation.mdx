@@ -2,6 +2,12 @@
 sidebar_position: 14
 ---
 
+import ConceptViz from '@site/src/components/ConceptViz';
+import CoreAggregate from '@site/src/examples/core-aggregate';
+import CoreAggregatePonds from '@site/src/examples/core-aggregate-ponds';
+import CoreReduce from '@site/src/examples/core-reduce';
+import CoreByColumn from '@site/src/examples/core-bycolumn';
+
 # Aggregation
 
 `aggregate(seq, mapping)` collapses events onto a
@@ -32,6 +38,22 @@ For partition-by-column (`groupBy`) and long-to-wide reshape
 (`pivotByGroup`), see [Reshaping](./reshape) — those are
 shape-changing ops, not value collapses.
 
+<ConceptViz
+  height={230}
+  caption={
+    <>
+      Points stream in; each box is the <strong>middle 50%</strong> of its
+      window (p25–p75) inside a lighter <strong>min–max</strong> band, with the{' '}
+      <strong>median</strong> line — and the newest box re-forms as its bucket
+      fills. Change the <code>window</code> and the buckets coarsen — that is{' '}
+      <code>aggregate</code>, live. (This is the concept only; see{' '}
+      <a href="/docs/charts/">@pond-ts/charts</a> for how the chart is built.)
+    </>
+  }
+>
+  <CoreAggregate />
+</ConceptViz>
+
 :::note[Coming from pondjs?]
 
 - pondjs `Aggregator` → `aggregate()` for batch, `LiveAggregation`
@@ -44,10 +66,20 @@ shape-changing ops, not value collapses.
 
 ## `aggregate` \{#aggregate\}
 
-![aggregate over a 5-minute grid with a sum reducer: irregularly-
-spaced request events land in three sequence buckets; each bucket
-emits one output event whose value is the reducer applied to every
-source event inside](/img/aggregate-mental-model.png)
+<ConceptViz
+  height={214}
+  caption={
+    <>
+      Each request event is a drop falling into its bucket — a little{' '}
+      <strong>aggregation pond</strong>. The pond's level is the{' '}
+      <code>reducer</code> over the drops inside it (computed for real by pond's{' '}
+      <code>reduce</code>). Change the <code>reducer</code> and watch the same
+      drops settle to a different level.
+    </>
+  }
+>
+  <CoreAggregatePonds />
+</ConceptViz>
 
 ```ts
 import { Sequence, TimeSeries } from 'pond-ts';
@@ -165,6 +197,20 @@ Empty buckets in the padded range emit `0` for `count` and `sum`,
 Whole-series → scalar or record. Same reducer vocabulary as
 `aggregate`, same empty-bucket behavior.
 
+<ConceptViz
+  height={214}
+  caption={
+    <>
+      Same drops, one pond: <code>reduce</code> is "bucket size, all of it" —
+      every event falls into a single <strong>aggregation pond</strong> spanning
+      the whole series, whose level is the <code>reducer</code> over everything.
+      Change the <code>reducer</code> and the single value settles differently.
+    </>
+  }
+>
+  <CoreReduce />
+</ConceptViz>
+
 ```ts
 // Single-column form — wide return type.
 const avgRaw = series.reduce('cpu', 'avg'); // ColumnValue | undefined
@@ -206,6 +252,22 @@ for the full narrowing story.
 **value column**. Same reducer mapping, but each output row is one
 _value-bin_ — per-kilometre splits over cumulative distance, a power
 histogram, time-in-zone over heart-rate edges.
+
+<ConceptViz
+  height={230}
+  caption={
+    <>
+      Points stream in and are binned by their <strong>value</strong> (not
+      time):{' '}
+      <code>byColumn('value', &#123; width &#125;, &#123; count &#125;)</code>{' '}
+      counts each bin, and the bars grow into the distribution — a value-axis
+      histogram. Change the bin <code>width</code> and the bars re-bin coarser
+      or finer.
+    </>
+  }
+>
+  <CoreByColumn />
+</ConceptViz>
 
 ```ts
 // Per-kilometre elevation gain and average speed over a ride.

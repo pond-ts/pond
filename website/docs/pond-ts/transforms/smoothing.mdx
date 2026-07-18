@@ -2,6 +2,9 @@
 sidebar_position: 17
 ---
 
+import ConceptViz from '@site/src/components/ConceptViz';
+import CoreSmoothing from '@site/src/examples/core-smoothing';
+
 # Smoothing
 
 `smooth()` extracts a trend line from a noisy numeric column.
@@ -12,6 +15,33 @@ pond-ts ships three algorithms; this page is the place to figure out
 const trend = cpu.smooth('cpu', 'ema', { alpha: 0.3, output: 'cpuTrend' });
 // trend.schema gains { cpuTrend, number? } — source 'cpu' passes through.
 ```
+
+<ConceptViz
+  height={240}
+  caption={
+    <>
+      A real noisy source — 600 days of sunspot counts (grey) — smoothed three
+      ways over the same data:{' '}
+      <span style={{ color: 'var(--pond-viz-2)' }}>
+        <strong>EMA</strong>
+      </span>{' '}
+      (reactive, lags),{' '}
+      <span style={{ color: 'var(--pond-viz-3)' }}>
+        <strong>moving average</strong>
+      </span>{' '}
+      (centered, stable, but rounds the peaks), and{' '}
+      <span style={{ color: 'var(--pond-viz-1)' }}>
+        <strong>LOESS</strong>
+      </span>{' '}
+      (follows the shape). Toggle each on or off; slide to smooth more or less.
+      Watch a sharp peak: LOESS tracks it, the others round it off. Source:{' '}
+      <a href="https://www.sidc.be/SILSO/">SILSO</a>, Royal Observatory of
+      Belgium.
+    </>
+  }
+>
+  <CoreSmoothing />
+</ConceptViz>
 
 ## The three algorithms
 

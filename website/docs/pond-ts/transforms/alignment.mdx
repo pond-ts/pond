@@ -2,6 +2,9 @@
 sidebar_position: 13
 ---
 
+import ConceptViz from '@site/src/components/ConceptViz';
+import CoreAlign from '@site/src/examples/core-align';
+
 # Alignment
 
 `align(seq, opts)` resamples a `TimeSeries` onto a
@@ -18,11 +21,24 @@ of every event inside this bucket?", reach for
 
 ## Mental model
 
-![align(seq, options) over a 5-minute grid: three Time-keyed cpu
-events on a timeline are bucketed by Sequence.every('5m'); align
-emits one interval-keyed output per bucket. Six sub-views show the
-begin/center/end × hold/linear option combinations and how each picks
-the value at its sample point](/img/align-mental-model.png)
+<ConceptViz
+  height={230}
+  caption={
+    <>
+      The grid splits time into <strong>steps</strong> — the regions between the
+      orange lines. <code>sample</code> picks{' '}
+      <strong>where in each step</strong> to read: its <code>begin</code>,{' '}
+      <code>center</code>, or <code>end</code>. At that read-line,{' '}
+      <code>hold</code> takes the previous sample (to its <strong>left</strong>
+      ); <code>linear</code> interpolates the two samples{' '}
+      <strong>around</strong> it. The teal dots are the real <code>align</code>{' '}
+      output there; the faint lines are the construction. (See{' '}
+      <a href="/docs/charts/">@pond-ts/charts</a> for how the chart is built.)
+    </>
+  }
+>
+  <CoreAlign />
+</ConceptViz>
 
 For each grid point, `align` picks a single source value through
 two settings: **`sample`** (where inside the grid step to read) and

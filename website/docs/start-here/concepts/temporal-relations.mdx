@@ -2,6 +2,8 @@
 sidebar_position: 4
 ---
 
+import { SelectionRelations } from '@site/src/components/ConceptFigures';
+
 # Temporal relations
 
 How an event's temporal key relates to a query range determines
@@ -22,10 +24,7 @@ Given a query `range = [start, end)` and an event with key extent
 | **overlapping** | `event.begin() < range.end` AND `event.end() > range.start`      | Keep straddling events with original extents |
 | **trim**        | Same as overlapping, then **clip** the event's extent to `range` | Keep straddling events with clipped extents  |
 
-![Five test events (a–e) against a query range from 02:00 to 05:00:
-within keeps b and d; overlapping keeps b, c, d, e; trim keeps b
-unchanged, clips c to 02:00–02:30, leaves d unchanged, and clips e
-to 04:30–05:00](/img/concepts-selection.png)
+<SelectionRelations />
 
 ```ts
 import { TimeRange } from 'pond-ts';
