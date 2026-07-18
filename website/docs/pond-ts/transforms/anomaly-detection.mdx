@@ -2,11 +2,33 @@
 sidebar_position: 18
 ---
 
+import ConceptViz from '@site/src/components/ConceptViz';
+import CoreAnomalyLive from '@site/src/examples/core-anomaly-live';
+
 # Anomaly Detection
 
 Two methods, one pattern: rolling baseline + threshold. For each
 event, compute a rolling average and standard deviation; if the
 event's value is more than `sigma * sd` away from the mean, flag it.
+
+<ConceptViz
+  height={240}
+  caption={
+    <>
+      A live stream with a real rolling{' '}
+      <code>baseline('value', &#123; window, sigma &#125;)</code>: the shaded
+      band is <code>avg ± sigma·sd</code>, and the{' '}
+      <span style={{ color: 'var(--pond-viz-mark)' }}>
+        <strong>orange dots</strong>
+      </span>{' '}
+      are the events that fall outside it (<code>bands.filter(…)</code>). Drag{' '}
+      <strong>sigma</strong> — tighten the band and more points flag as
+      anomalies; widen it and they fall back inside.
+    </>
+  }
+>
+  <CoreAnomalyLive />
+</ConceptViz>
 
 - [**`baseline(col, opts)`**](#baseline) — appends `avg` / `sd` /
   `upper` / `lower` columns to the source schema. Drives band charts
