@@ -5,6 +5,7 @@ sidebar_position: 14
 import ConceptViz from '@site/src/components/ConceptViz';
 import CoreAggregate from '@site/src/examples/core-aggregate';
 import CoreAggregatePonds from '@site/src/examples/core-aggregate-ponds';
+import CoreReduce from '@site/src/examples/core-reduce';
 
 # Aggregation
 
@@ -65,7 +66,7 @@ shape-changing ops, not value collapses.
 ## `aggregate` \{#aggregate\}
 
 <ConceptViz
-  height={300}
+  height={214}
   caption={
     <>
       Each request event is a drop falling into its bucket — a little{' '}
@@ -194,6 +195,20 @@ Empty buckets in the padded range emit `0` for `count` and `sum`,
 
 Whole-series → scalar or record. Same reducer vocabulary as
 `aggregate`, same empty-bucket behavior.
+
+<ConceptViz
+  height={214}
+  caption={
+    <>
+      Same drops, one pond: <code>reduce</code> is "bucket size, all of it" —
+      every event falls into a single <strong>aggregation pond</strong> spanning
+      the whole series, whose level is the <code>reducer</code> over everything.
+      Change the <code>reducer</code> and the single value settles differently.
+    </>
+  }
+>
+  <CoreReduce />
+</ConceptViz>
 
 ```ts
 // Single-column form — wide return type.

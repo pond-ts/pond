@@ -7,11 +7,11 @@ import {
 } from '@site/src/components/ConceptViz';
 
 /**
- * The `aggregate` mental model: request events fall as drops into three
- * buckets — little ponds — and each pond's level is the reducer over the
- * drops inside it, computed for real by pond (`reduce('req', reducer)`). The
- * one control is a pond core option — the reducer — never a chart prop. A
- * looping, deterministic illustration (plan §3a); replaces the static PNG.
+ * The `reduce` mental model — the same drops as the aggregate pond figure, but
+ * "bucket size: all of it": every event falls into **one** pond spanning the
+ * whole timeline, whose level is the reducer over the entire series (computed
+ * for real by pond, `reduce('req', reducer)`). The one control is a pond core
+ * option — the reducer. A looping, deterministic illustration (plan §3a).
  */
 
 const SCHEMA = [
@@ -27,7 +27,7 @@ const REDUCERS = [
 ];
 type Reducer = (typeof REDUCERS)[number]['value'];
 
-// --- layout (SVG user units) ---
+// --- layout (SVG user units) — one pond, compact ---
 const W = 560;
 const H = 214;
 const X0 = 54;
@@ -37,12 +37,9 @@ const RIM_Y = 100;
 const FLOOR_Y = 188;
 const MAXH = FLOOR_Y - RIM_Y;
 const MINUTES = 15;
-const BUCKET = 5;
-const NB = 3;
 const mToX = (m: number) => X0 + (m / MINUTES) * (X1 - X0);
 
-// Fixed drop schedule (sorted by minute → release order === index order).
-// The middle pond is denser, echoing the original diagram.
+// Same fixed drop schedule as the aggregate figure (sorted by minute).
 const DROPS = [
   { min: 1.2, v: 3 },
   { min: 2.4, v: 5 },
@@ -53,17 +50,12 @@ const DROPS = [
   { min: 8.8, v: 5 },
   { min: 11.5, v: 5 },
   { min: 13.6, v: 4 },
-].map((d, i) => ({
-  ...d,
-  i,
-  x: mToX(d.min),
-  bucket: Math.floor(d.min / BUCKET),
-}));
+].map((d, i) => ({ ...d, i, x: mToX(d.min) }));
 type Drop = (typeof DROPS)[number];
 
 // timings (ms)
-const REL_STEP = 520;
-const FALL = 560;
+const REL_STEP = 460;
+const FALL = 540;
 const HOLD = 1600;
 const LOOP = (DROPS.length - 1) * REL_STEP + FALL + HOLD;
 
@@ -75,8 +67,8 @@ const rOf = (v: number) => 3.4 + ((v - V_MIN) / (V_MAX - V_MIN)) * 4.2;
 // solid, light, brand-teal water — theme-aware via color-mix over the surface
 const WATER = 'color-mix(in srgb, var(--pond-viz-1) 26%, var(--pond-surface))';
 
-/** Reduce one pond's landed drops with pond itself — the real number. */
-function pondValue(drops: Drop[], reducer: Reducer): number {
+/** Reduce the landed drops with pond itself — the real number. */
+function reduceValue(drops: Drop[], reducer: Reducer): number {
   if (drops.length === 0) return 0;
   const ts = TimeSeries.fromJSON({
     name: 'req',
@@ -86,34 +78,24 @@ function pondValue(drops: Drop[], reducer: Reducer): number {
   return (ts.reduce('req', reducer) as number | undefined) ?? 0;
 }
 
-const bucketBounds = (b: number) => ({
-  l: mToX(b * BUCKET) + 5,
-  r: mToX((b + 1) * BUCKET) - 5,
-});
-
 const fmt = (v: number, reducer: Reducer) =>
   reducer === 'avg' ? v.toFixed(1) : String(Math.round(v));
 
-export default function CoreAggregatePonds() {
+const POND_L = X0;
+const POND_R = X1;
+
+export default function CoreReduce() {
   const [reducer, setReducer] = useState<Reducer>('sum');
   const [playing, setPlaying] = useState(true);
   const [, setFrame] = useState(0);
 
   const elapsed = useRef(0);
-  const levels = useRef<number[]>([0, 0, 0]); // eased water heights (px)
+  const level = useRef(0); // eased water height (px)
 
   useEffect(() => {
     let raf = 0;
     let last: number | null = null;
-    const denom = Math.max(
-      1,
-      ...[0, 1, 2].map((b) =>
-        pondValue(
-          DROPS.filter((d) => d.bucket === b),
-          reducer,
-        ),
-      ),
-    );
+    const denom = Math.max(1, reduceValue(DROPS, reducer));
     const step = (ts: number) => {
       if (last === null) last = ts;
       const dt = Math.min(48, ts - last);
@@ -127,17 +109,9 @@ export default function CoreAggregatePonds() {
         (d) => d.i * REL_STEP + FALL <= e,
       ).length;
       const landed = DROPS.slice(0, landedCount);
-      for (let b = 0; b < NB; b++) {
-        const target =
-          (pondValue(
-            landed.filter((d) => d.bucket === b),
-            reducer,
-          ) /
-            denom) *
-          MAXH;
-        const k = Math.min(1, dt / 150);
-        levels.current[b] += (target - levels.current[b]) * k;
-      }
+      const target = (reduceValue(landed, reducer) / denom) * MAXH;
+      const k = Math.min(1, dt / 150);
+      level.current += (target - level.current) * k;
       setFrame((f) => (f + 1) & 0xffff);
       raf = requestAnimationFrame(step);
     };
@@ -148,13 +122,10 @@ export default function CoreAggregatePonds() {
   const e = elapsed.current;
   const landedCount = DROPS.filter((d) => d.i * REL_STEP + FALL <= e).length;
   const landed = DROPS.slice(0, landedCount);
-  const displayValues = [0, 1, 2].map((b) =>
-    pondValue(
-      landed.filter((d) => d.bucket === b),
-      reducer,
-    ),
-  );
+  const displayValue = reduceValue(landed, reducer);
 
+  const surfaceY = FLOOR_Y - level.current;
+  const cx = (POND_L + POND_R) / 2;
   const body = { fill: 'var(--pond-body)' };
   const ink = { fill: 'var(--pond-ink)' };
 
@@ -176,23 +147,18 @@ export default function CoreAggregatePonds() {
         viewBox={`0 0 ${W} ${H}`}
         style={{ width: '100%', height: 'auto', display: 'block' }}
         role="img"
-        aria-label="Request events falling as drops into three aggregation buckets"
+        aria-label="Request events falling as drops into one pond spanning the whole series"
       >
         <defs>
-          {[0, 1, 2].map((b) => {
-            const { l, r } = bucketBounds(b);
-            return (
-              <clipPath id={`pond-clip-${b}`} key={b}>
-                <rect
-                  x={l}
-                  y={RIM_Y - 2}
-                  width={r - l}
-                  height={FLOOR_Y - RIM_Y + 2}
-                  rx={9}
-                />
-              </clipPath>
-            );
-          })}
+          <clipPath id="reduce-clip">
+            <rect
+              x={POND_L}
+              y={RIM_Y - 2}
+              width={POND_R - POND_L}
+              height={FLOOR_Y - RIM_Y + 2}
+              rx={9}
+            />
+          </clipPath>
         </defs>
 
         {/* timeline */}
@@ -227,72 +193,61 @@ export default function CoreAggregatePonds() {
           </g>
         ))}
 
-        {/* ponds — flat, solid, light */}
-        {[0, 1, 2].map((b) => {
-          const { l, r } = bucketBounds(b);
-          const surfaceY = FLOOR_Y - levels.current[b];
-          const cx = (l + r) / 2;
-          const filled = levels.current[b] > 0.5;
-          return (
-            <g key={b}>
-              <rect
-                x={l}
-                y={RIM_Y - 2}
-                width={r - l}
-                height={FLOOR_Y - RIM_Y + 2}
-                rx={9}
-                style={{ fill: 'var(--pond-surface-2)' }}
-              />
-              {filled && (
-                <g clipPath={`url(#pond-clip-${b})`}>
-                  <rect
-                    x={l}
-                    y={surfaceY}
-                    width={r - l}
-                    height={FLOOR_Y - surfaceY}
-                    style={{ fill: WATER }}
-                  />
-                  <line
-                    x1={l}
-                    y1={surfaceY}
-                    x2={r}
-                    y2={surfaceY}
-                    style={{ stroke: 'var(--pond-viz-1)' }}
-                    strokeWidth={2}
-                  />
-                </g>
-              )}
-              <rect
-                x={l}
-                y={RIM_Y - 2}
-                width={r - l}
-                height={FLOOR_Y - RIM_Y + 2}
-                rx={9}
-                fill="none"
-                style={{ stroke: 'var(--pond-viz-grid)' }}
-                strokeWidth={1.25}
-              />
-              <text
-                x={cx}
-                y={FLOOR_Y + 20}
-                textAnchor="middle"
-                fontSize={13}
-                fontFamily="var(--ifm-font-family-monospace)"
-                style={ink}
-              >
-                <tspan style={body}>{reducer} = </tspan>
-                {fmt(displayValues[b], reducer)}
-              </text>
-            </g>
-          );
-        })}
+        {/* the single pond — the whole series */}
+        <rect
+          x={POND_L}
+          y={RIM_Y - 2}
+          width={POND_R - POND_L}
+          height={FLOOR_Y - RIM_Y + 2}
+          rx={9}
+          style={{ fill: 'var(--pond-surface-2)' }}
+        />
+        {level.current > 0.5 && (
+          <g clipPath="url(#reduce-clip)">
+            <rect
+              x={POND_L}
+              y={surfaceY}
+              width={POND_R - POND_L}
+              height={FLOOR_Y - surfaceY}
+              style={{ fill: WATER }}
+            />
+            <line
+              x1={POND_L}
+              y1={surfaceY}
+              x2={POND_R}
+              y2={surfaceY}
+              style={{ stroke: 'var(--pond-viz-1)' }}
+              strokeWidth={2}
+            />
+          </g>
+        )}
+        <rect
+          x={POND_L}
+          y={RIM_Y - 2}
+          width={POND_R - POND_L}
+          height={FLOOR_Y - RIM_Y + 2}
+          rx={9}
+          fill="none"
+          style={{ stroke: 'var(--pond-viz-grid)' }}
+          strokeWidth={1.25}
+        />
+        <text
+          x={cx}
+          y={FLOOR_Y + 20}
+          textAnchor="middle"
+          fontSize={13}
+          fontFamily="var(--ifm-font-family-monospace)"
+          style={ink}
+        >
+          <tspan style={body}>{reducer} = </tspan>
+          {fmt(displayValue, reducer)}
+        </text>
 
         {/* drops — flat circles, sized by value */}
         {DROPS.map((d) => {
           const rel = d.i * REL_STEP;
           const t = (e - rel) / FALL;
           const r = rOf(d.v);
-          const surfaceY = FLOOR_Y - levels.current[d.bucket];
           if (e < rel) {
             return (
               <circle
