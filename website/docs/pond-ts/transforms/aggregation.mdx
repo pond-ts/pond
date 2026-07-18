@@ -6,6 +6,7 @@ import ConceptViz from '@site/src/components/ConceptViz';
 import CoreAggregate from '@site/src/examples/core-aggregate';
 import CoreAggregatePonds from '@site/src/examples/core-aggregate-ponds';
 import CoreReduce from '@site/src/examples/core-reduce';
+import CoreByColumn from '@site/src/examples/core-bycolumn';
 
 # Aggregation
 
@@ -251,6 +252,22 @@ for the full narrowing story.
 **value column**. Same reducer mapping, but each output row is one
 _value-bin_ — per-kilometre splits over cumulative distance, a power
 histogram, time-in-zone over heart-rate edges.
+
+<ConceptViz
+  height={230}
+  caption={
+    <>
+      Points stream in and are binned by their <strong>value</strong> (not
+      time):{' '}
+      <code>byColumn('value', &#123; width &#125;, &#123; count &#125;)</code>{' '}
+      counts each bin, and the bars grow into the distribution — a value-axis
+      histogram. Change the bin <code>width</code> and the bars re-bin coarser
+      or finer.
+    </>
+  }
+>
+  <CoreByColumn />
+</ConceptViz>
 
 ```ts
 // Per-kilometre elevation gain and average speed over a ride.
