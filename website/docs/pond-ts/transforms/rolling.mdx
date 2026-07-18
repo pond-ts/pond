@@ -2,6 +2,9 @@
 sidebar_position: 16
 ---
 
+import ConceptViz from '@site/src/components/ConceptViz';
+import CoreRolling from '@site/src/examples/core-rolling';
+
 # Rolling Windows
 
 Sliding-window computations over ordered events. For each event in
@@ -24,20 +27,23 @@ see [Concepts → Windowing](../../start-here/concepts/windowing).
 What "nearby" means is the alignment. Pick the one that matches the
 question:
 
-:::note[Diagram candidate]
-ASCII first pass; Excalidraw replacement welcome.
-
-```
-source events  ● ● ● ● ● ● ● ● ● ● ● ● ● ● ● ●
-Timeline ─────────────────────────────────────▶
-                            ^ anchor event
-
-trailing (default):    [────window────] anchor
-centered:                   [── anchor ──]
-leading:                            anchor [────window────]
-```
-
-:::
+<ConceptViz
+  height={244}
+  caption={
+    <>
+      Raw samples (blue); a sliding <strong>window</strong> (orange) anchored at
+      the <strong>anchor</strong> (the marker) reduces the samples inside it,
+      tracing the <strong>rolling line</strong> (teal, the real{' '}
+      <code>rolling</code> output). <code>anchor</code> picks what the window
+      rides on — each <strong>event</strong> or a regular{' '}
+      <strong>sequence</strong>; <code>alignment</code> places the window
+      trailing / centered / leading around the anchor. (See{' '}
+      <a href="/docs/charts/">@pond-ts/charts</a> for how the chart is built.)
+    </>
+  }
+>
+  <CoreRolling />
+</ConceptViz>
 
 - **`'trailing'`** (default) — "what's the average of what I've seen
   up to now."
