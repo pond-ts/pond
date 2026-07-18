@@ -176,8 +176,11 @@ aggregate at that point.
       Live: points stream into a <code>LiveSeries</code> (blue), the trailing{' '}
       <strong>window</strong> (orange) rides the newest point, and the rolling
       average traces the teal line — updating as data arrives. Change the{' '}
-      <code>window</code> to smooth more or less. (See{' '}
-      <a href="/docs/charts/">@pond-ts/charts</a> for how the chart is built.)
+      <code>window</code> to smooth more or less. Live rolling is{' '}
+      <strong>trailing-only</strong>: with no future events to average, the
+      window can only look back, so the anchor always sits at its leading edge.
+      (See <a href="/docs/charts/">@pond-ts/charts</a> for how the chart is
+      built.)
     </>
   }
 >

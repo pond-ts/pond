@@ -67,6 +67,10 @@ type Window = (typeof WINDOWS)[number]['value'];
 
 const PUSH_MS = 160;
 const VISIBLE_MS = 14_000;
+// Headroom to the right of the newest point so the anchor marker at the
+// window's leading edge renders *inside* the plot (a visible gold line, the
+// same anchor style as the batch figure) instead of flush against the border.
+const HEADROOM_MS = 1_400;
 const HEIGHT = 210;
 
 export default function CoreRollingLive() {
@@ -119,7 +123,7 @@ export default function CoreRollingLive() {
     ? (() => {
         const span = raw!.timeRange()!;
         const end = span.end();
-        return [Math.max(end - VISIBLE_MS, span.begin()), end];
+        return [Math.max(end - VISIBLE_MS, span.begin()), end + HEADROOM_MS];
       })()
     : [0, 1];
   const end = ready ? raw!.timeRange()!.end() : 0;
