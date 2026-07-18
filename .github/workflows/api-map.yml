@@ -34,7 +34,7 @@ jobs:
             echo "No public export entry points changed — guard passes."
             exit 0
           fi
-          if echo "$changed" | grep -qx 'API.md'; then
+          if grep -Fxq 'API.md' <<<"$changed"; then
             echo "Export entry point(s) changed and API.md was updated — guard passes."
             exit 0
           fi
