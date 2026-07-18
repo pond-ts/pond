@@ -170,7 +170,7 @@ export default function CoreRolling() {
               <Layers>
                 {/* the sliding window + its anchor */}
                 <Region from={wLo} to={wHi} label="window" />
-                <Marker at={a} />
+                <Marker at={a} label={false} />
                 {/* raw samples, then the rolling output line + current point */}
                 <ScatterChart
                   series={source}

@@ -135,7 +135,7 @@ export default function CoreRollingLive() {
               <Layers>
                 {/* the trailing window + its anchor, riding the newest point */}
                 <Region from={wLo} to={end} label="window" />
-                <Marker at={end} />
+                <Marker at={end} label={false} />
                 <ScatterChart
                   series={raw!}
                   column="value"
