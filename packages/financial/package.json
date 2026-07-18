@@ -1,6 +1,6 @@
 {
   "name": "@pond-ts/financial",
-  "version": "0.48.0",
+  "version": "0.48.1",
   "private": false,
   "description": "Financial-market domain library on pond-ts — trading calendars, session-aligned bar building, and market analytics",
   "license": "MIT",
