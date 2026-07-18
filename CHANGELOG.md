@@ -51,12 +51,13 @@ and type-level changes; patch bumps are strictly additive.
 
 - `smooth(column, 'loess', …)` is now numerically stable on absolute epoch-ms
   timestamps. The local weighted regression is now conditioned on `x` centred at
-  the query point; previously the un-centred normal equations lost all precision
-  to floating-point cancellation (anchors ~1.7e12 → `x²` terms ~3e24), so on
-  real timestamped series the fit overshot wildly outside the data range instead
-  of smoothing. Output is now shift-invariant to the time origin. Series built
-  from small integer anchors (e.g. in unit tests) were unaffected, which is why
-  this hid.
+  the query point; previously the un-centred normal equations lost precision to
+  floating-point cancellation (anchors ~1.7e12 → `x²` terms ~3e24). Severity
+  scales with (anchor magnitude / window width)²: on finely-spaced series
+  (second-level cadence) the fit overshot wildly outside the data range instead
+  of smoothing, while coarser day-spaced series erred only subtly. Output is now
+  shift-invariant to the time origin. Series built from small integer anchors
+  (e.g. in unit tests) were unaffected, which is why this hid.
 
 ## [0.48.0] — 2026-07-17
 

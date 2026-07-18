@@ -1761,6 +1761,11 @@ describe('TimeSeries', () => {
     // all precision to floating-point cancellation, so the fit overshot wildly
     // (well outside the data range) instead of smoothing. The fitted trend must
     // not depend on the absolute time origin, only on the spacing + values.
+    //
+    // The spacing matters: cancellation severity scales with
+    // (anchor magnitude / window width)², so second-spaced anchors (old-code
+    // error ~81, fits far outside the data range) pin the bug where day-spaced
+    // anchors (~6e-7) would slip under the assertion and pass on the old code.
     const schema = [
       { name: 'time', kind: 'time' },
       { name: 'value', kind: 'number' },
@@ -1776,7 +1781,7 @@ describe('TimeSeries', () => {
       new TimeSeries({
         name: 's',
         schema,
-        rows: values.map((v, i) => [base + i * 86_400_000, v]),
+        rows: values.map((v, i) => [base + i * 1000, v]),
       }).smooth('value', 'loess', { span: 0.3, output: 'loess' });
 
     const small = build(0);
