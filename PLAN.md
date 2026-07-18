@@ -1021,7 +1021,7 @@ Phases (each independently shippable, ends with a docs deploy):
         the one actually measured; documented as a new gotcha in the
         recipe itself, since it's a realistic mistake the next reader
         would make too.
-- [ ] **P2 — interaction + doc-debt burn-down** (in progress; 4/7 shipped):
+- [ ] **P2 — interaction + doc-debt burn-down** (in progress; 6/7 shipped):
   - [x] Learn chapters 6–9 (#446) — completes the nine-chapter tutorial
         track. Ch6 reading/selecting values: the five `cursor` modes
         via a live mode-switcher demo, `onTrackerChanged` for an
@@ -1093,8 +1093,28 @@ typecheck` (not just eyeballing): `TimeSeries.timeRange()`
         the `.stories.tsx` files). Content-ownership rule followed:
         reference pages give the complete prop/mode tables and link the
         Learn chapters (6, 7, 8) for narrative rather than restating.
-  - [ ] Financial charts hub (+ TradingView vocabulary bridge)
-  - [ ] Missing data & gaps page
+  - [x] **Financial charts hub (+ TradingView vocabulary bridge)** —
+        `charts/financial` (#483). Leads with the **studies library**
+        (per the package's headline direction — a growing studies library):
+        the study contract (pure `(series, options) => series` appending
+        oracle-verified columns; `column`/`output`/bar-count-period +
+        length-preserving warm-up), the fluent surface, a table of the
+        **10 studies shipped today** (sma, ema, bollinger, envelope,
+        rollingStdev/Min/Max/Percentile, zScore, percentChange), and a
+        "what's coming" note (Phase-1 breadth: RSI/MACD/ATR/VWAP/…).
+        Then chart assembly (candles + volume pane + trading-time axis +
+        crosshair/OHLC + live pill) and a Coming-from-TradingView
+        vocabulary table. New Bollinger-band + EMA overlay embed
+        (`charts-financial-studies.tsx`), study pipeline verified in
+        Node. Studies table + embed columns + cross-links verified vs
+        source (Layer 2, high confidence).
+  - [x] **Missing data & gaps page** — `charts/gaps` (#477), the
+        canonical gap-semantics owner: the NaN contract (not
+        null/undefined), the upstream (`materialize` empty buckets →
+        `fill(strategy, { maxGap, limit })`, all-or-nothing per gap) vs
+        downstream (`GapMode` on Line/Area: empty/none/dashed/step/fade)
+        split, the per-layer matrix (band always-breaks; scatter/bar/
+        box/candle no-draw). New interactive gap-mode switcher embed.
   - [x] **value-axis docs** (the Documentation backlog's
         highest-priority item) — closes B5 at reference level (the
         series-level concept page landed earlier via #382/#383/#421;
@@ -1174,6 +1194,16 @@ typecheck` (not just eyeballing): `TimeSeries.timeRange()`
     BarChart mode, not its own page). Each links out to the generated
     reference for exhaustive types — "something in the middle" between
     Learn and typedoc, matching the Interaction/Annotations pages.
+  - **Shipped (2026-07):** Axes section (#474), Layout (#475), Chart
+    types 8 pages (#476), Missing data & gaps (#477, counted under P2),
+    Financial charts hub (#483, P2). Reconcile after #479/#481 axis
+    rendering changes: `grid` + `sessionDividers` container props
+    tabulated (#482). **Repo transferred to `pond-ts/pond`** mid-wave
+    (#480 hosting migration → Cloudflare/pond-ts.org); local remote
+    updated. **Remaining P3 reference pages:** Theming, Data adapters,
+    Cheat sheet (canonical owner of the capability matrices), Rendering
+    & performance, Design philosophy (2), Accessibility, Troubleshooting,
+    Coming-from-RTC migration, the financial end-to-end guide.
 - [ ] **P4 — guides library completion**: ops-dashboard, annotation
       workflows, and value-axis guides + remaining recipes.
 
@@ -1890,6 +1920,31 @@ independently built the same `calendar.bars → BoundedSequence` seam.
     default-path behaviour shift, pinned by a test. The old
     `tickBoundaries` / `boundaryContext` scale methods stay for external
     consumers but the axis no longer renders them.
+  - ✅ **Grain-aware cursor readout + `cursorFormat` channel
+    (`fix/cursor-readout-grain`, 2026-07-17, Tidal F-charts-7 escalation via
+    PR #484).** 0.47.0's flat default regressed the crosshair x-pill to a bare
+    time-of-day (`02 AM`) on daily bars: the readout fell to d3's multi-scale
+    default, and the only prior fix — a day-floor `timeFormat` — disqualifies
+    the `dateStyle` ladder by design ("a custom format owns the labels"). One
+    knob, two concerns. Fix, per the owner's steer (grain-aware default **+**
+    independent per-channel control, RTC-style): (1) **default** cursor /
+    marker / annotation readout now formats at the axis **grain**
+    (`TradingTimeScale.readoutFormat` / `readoutFormatFor`) — day-or-coarser →
+    a date, sub-day → date + clock, never a foreign-tz time-of-day; (2) a new
+    **`cursorFormat`** container prop shapes _only_ the readout, independent of
+    the label `timeFormat` / `format`, and does **not** set `xFormatCustom`, so
+    a consumer keeps flat/stacked **and** shapes the pill. Tick labels
+    unchanged. **Callback shape (owner-decided pre-merge, "do I know the
+    grain?"):** the function form is `(epochMs, { grain, defaultText }) =>
+string` — the library hands over the resolved coarse **`TimeGrain`**
+    (`year`…`second`, strides collapsed via `coarseUnitOf`; new
+    `TradingTimeScale.grain(count)`) and the grain-aware default text, so a
+    consumer branches on zoom and passes the default through rather than
+    re-deriving the ladder from the range. New public types `CursorFormat` /
+    `TimeGrain`. **Timezone control is the deferred follow-on** the owner
+    flagged — the grain-aware default sidesteps the common daily-bar case, but
+    true exchange-/display-tz handling (cf. the deferred exchange-tz tick
+    grain) is its own conversation, not attempted here.
   - **Still deferred (documented, none blocking):** `neighbourSpans` point-key slot
     widths on the discontinuous axis (interval-keyed bars from
     `aggregate(barSequence)` — the primary path — are immune); exact **exchange-tz**

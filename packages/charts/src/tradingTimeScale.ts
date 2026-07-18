@@ -10,11 +10,14 @@ import {
   boundaryTicks,
   buildGridLevels,
   buildTicks,
+  coarseUnitOf,
   flatBaseFormatFor,
   flatFormats,
   majorFormatFor,
   nominalStepMs,
+  readoutFormatFor,
   type TickGranularity,
+  type TimeGrain,
 } from './tickLadder.js';
 
 /**
@@ -79,7 +82,8 @@ export interface TradingCalendarLike {
  * month grain) and returns the finest rung that fits `count`, and
  * `.tickFormat` labels each anchor at that grain (`%H:%M` for hours, `%b %d`
  * for days/weeks, `%b` for months/quarters, `%Y` for years) while formatting
- * any other instant (the cursor readout) with the d3 multi-scale default. The
+ * any other instant with the d3 multi-scale default (the cursor readout uses
+ * `.readoutFormat`, a grain-aware date/clock format, not this). The
  * coarser context a label drops lives on `.tickBoundaries` — the second-row
  * boundary labels of the **stacked** date style (the date over a clock axis,
  * the year over a day / week / month axis), one per boundary crossing plus the
@@ -117,10 +121,10 @@ export interface TradingTimeScale {
    * base label (bare day-of-month, month abbrev, clock time) otherwise — the
    * TradingView default axis, the alternative to the two-row {@link tickFormat}
    * + {@link tickBoundaries} stack. Same grain selection as {@link ticks} at the
-   * same `count`, so the labels sit on the tick instants. A non-tick value (the
-   * cursor readout) formats with the d3 multi-scale default, like
-   * {@link tickFormat} — so ticks read terse while the crosshair reads a full
-   * timestamp.
+   * same `count`, so the labels sit on the tick instants. A non-tick value
+   * formats with the d3 multi-scale default, like {@link tickFormat}; the
+   * cursor readout itself uses {@link readoutFormat} (grain-aware), so ticks
+   * read terse while the crosshair reads an unambiguous date/clock.
    */
   flatFormat(count?: number): (value: number) => string;
   /**
@@ -168,6 +172,24 @@ export interface TradingTimeScale {
    */
   baseFormat(count?: number): (value: number) => string;
   /**
+   * The **cursor / marker readout** formatter — a hovered instant formatted at
+   * the axis's own grain, never finer (a day-or-coarser axis reads a **date**,
+   * so a daily bar at a foreign-tz midnight never renders as a time-of-day like
+   * `02 AM`; a sub-day axis reads date **+** clock). This is the grain-aware
+   * default the crosshair pill, marker indicators, and annotation auto-labels
+   * use — replacing d3's multi-scale default, which showed local time-of-day
+   * for any off-local-midnight instant. A container `cursorFormat` overrides it.
+   */
+  readoutFormat(count?: number): (value: number) => string;
+  /**
+   * The axis's resolved **coarse grain** ({@link TimeGrain}) at `count` — the
+   * unit the ticks currently sit on (`year` … `second`), strides collapsed. A
+   * `cursorFormat` callback receives this so it can branch on the zoom level
+   * (return a year when zoomed out, a clock when zoomed in) without
+   * re-deriving the ladder the axis already ran.
+   */
+  grain(count?: number): TimeGrain;
+  /**
    * The **date bands** — the segmented second row of the stacked style. One
    * entry per next-coarser calendar period touching the domain (day bands
    * under intraday ticks, month bands under day ticks, year bands under
@@ -192,7 +214,7 @@ export interface TradingTimeScale {
 // Grain selection lives in `tickLadder.ts` (the full hour1…year ladder plus
 // the boundary-row helpers); re-exported here so existing imports keep working.
 export { coarsenCalendar } from './tickLadder.js';
-export type { TickGranularity } from './tickLadder.js';
+export type { TickGranularity, TimeGrain } from './tickLadder.js';
 
 /**
  * The trivial gap-free {@link DiscontinuityProvider}: live time **is** wall
@@ -339,9 +361,9 @@ export function scaleTradingTime(
   };
 
   scale.flatFormat = (count = 10) => {
-    // A non-tick instant (the cursor readout) always uses the d3 multi-scale
-    // default — same as tickFormat, so the crosshair reads a full timestamp
-    // while the ticks read terse. Without a calendar there are no ladder
+    // A non-tick instant always uses the d3 multi-scale default — same as
+    // tickFormat. (The cursor readout doesn't route through here; it uses
+    // readoutFormat, grain-aware.) Without a calendar there are no ladder
     // anchors, so every value falls through to the default.
     const defFmt = base.tickFormat(count);
     if (!hasCalendar()) return (value: number) => defFmt(new Date(value));
@@ -384,6 +406,19 @@ export function scaleTradingTime(
     return (value: number) =>
       anchors.has(value) ? terse(new Date(value)) : defFmt(new Date(value));
   };
+
+  scale.readoutFormat = (count = 10) => {
+    const defFmt = base.tickFormat(count);
+    if (!hasCalendar()) return (value: number) => defFmt(new Date(value));
+    const fmt = base.tickFormat(
+      count,
+      readoutFormatFor(resolved(count).granularity),
+    );
+    return (value: number) => fmt(new Date(value));
+  };
+
+  scale.grain = (count = 10) =>
+    hasCalendar() ? coarseUnitOf(resolved(count).granularity) : 'day';
 
   scale.bands = (count = 10) => {
     if (!hasCalendar()) return [];

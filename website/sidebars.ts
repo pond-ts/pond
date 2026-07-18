@@ -180,6 +180,9 @@ const sidebars: SidebarsConfig = {
           ],
         },
         'charts/gaps',
+        'charts/financial',
+        'charts/theming',
+        'charts/cheat-sheet',
         {
           type: 'link',
           label: 'API reference (charts)',
@@ -211,7 +214,6 @@ const sidebars: SidebarsConfig = {
         'recipes/responsive-width',
         'recipes/resizable-panels',
         'recipes/using-charts',
-        'recipes/theming',
       ],
     },
     {

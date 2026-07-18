@@ -1,0 +1,44 @@
+# Guard: a PR that changes a public export surface must update API.md in the
+# same PR (see CLAUDE.md → "API map"). The guarded entry points are each
+# package's `src/index.ts` plus the two subpath entries (`pond-ts/types` →
+# core `schema/public.ts`, `@pond-ts/financial/fluent` → `fluent.ts`).
+#
+# Escape hatch: if the entry-point change doesn't alter the export surface
+# (comments, formatting, re-export shuffles), apply the `api-map-exempt`
+# label to the PR — the `labeled`/`unlabeled` triggers re-run the check.
+name: API map
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.pull_request.labels.*.name, 'api-map-exempt')"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: API.md updated when the export surface changes
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          changed=$(git diff --name-only "origin/${BASE_REF}...HEAD")
+          entry_re='^packages/[^/]+/src/index\.ts$|^packages/core/src/schema/public\.ts$|^packages/financial/src/fluent\.ts$'
+          touched=$(echo "$changed" | grep -E "$entry_re" || true)
+          if [ -z "$touched" ]; then
+            echo "No public export entry points changed — guard passes."
+            exit 0
+          fi
+          if grep -Fxq 'API.md' <<<"$changed"; then
+            echo "Export entry point(s) changed and API.md was updated — guard passes."
+            exit 0
+          fi
+          echo "::error file=API.md::A public export entry point changed but API.md was not updated. Update the matching API.md row(s) in this PR (CLAUDE.md → 'API map'), or apply the 'api-map-exempt' label if the export surface is genuinely unchanged."
+          echo "Changed entry points:"
+          echo "$touched"
+          exit 1
