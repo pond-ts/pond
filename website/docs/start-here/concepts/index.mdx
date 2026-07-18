@@ -2,6 +2,8 @@
 sidebar_position: 0
 ---
 
+import { MentalModel } from '@site/src/components/ConceptFigures';
+
 # Concepts
 
 pond-ts is an in-memory TypeScript time series library covering
@@ -15,11 +17,7 @@ A **series** is a schema-typed, ordered collection of events.
 **Events** carry a temporal key plus a typed payload. Operators
 transform series into series; reducers compress events into values.
 
-![Mental model: a TimeSeries / LiveSeries flows through grid-
-preserving transforms (filter, map, rolling, smooth, ...) into
-another TimeSeries / accumulator, then through grid-changing
-windowing (aggregate, rolling, reduce) into a bucketed series or
-scalar record](/img/concepts-mental-model.png)
+<MentalModel />
 
 The schema `S` carries through every transform — the type system
 narrows column shapes correctly without `as` casts.
