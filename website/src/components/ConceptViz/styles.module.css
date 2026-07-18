@@ -91,3 +91,22 @@
 .playButton:hover {
   background: var(--ifm-color-emphasis-100);
 }
+
+.sliderWrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.slider {
+  width: 130px;
+  accent-color: var(--pond-viz-1, var(--ifm-color-primary));
+  cursor: pointer;
+}
+
+.sliderValue {
+  min-width: 2.4rem;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.78rem;
+  color: var(--ifm-color-emphasis-800);
+}

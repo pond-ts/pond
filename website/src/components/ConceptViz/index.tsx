@@ -114,3 +114,43 @@ export function PlayButton({
     </button>
   );
 }
+
+interface SliderProps {
+  /** The core option this drives (shown as the label). */
+  label: string;
+  min: number;
+  max: number;
+  step?: number;
+  value: number;
+  onChange: (value: number) => void;
+  /** Optional formatted value to show (defaults to the raw number). */
+  display?: string;
+}
+
+/** A labeled range slider for a continuous/discrete core option. */
+export function Slider({
+  label,
+  min,
+  max,
+  step = 1,
+  value,
+  onChange,
+  display,
+}: SliderProps): ReactNode {
+  return (
+    <div className={styles.sliderWrap}>
+      <span className={styles.controlLabel}>{label}</span>
+      <input
+        type="range"
+        className={styles.slider}
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        aria-label={label}
+      />
+      <span className={styles.sliderValue}>{display ?? value}</span>
+    </div>
+  );
+}

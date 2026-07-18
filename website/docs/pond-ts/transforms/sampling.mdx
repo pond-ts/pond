@@ -2,6 +2,9 @@
 sidebar_position: 16
 ---
 
+import ConceptViz from '@site/src/components/ConceptViz';
+import CoreSampling from '@site/src/examples/core-sampling';
+
 # Sampling
 
 `sample({ stride })` and `sample({ reservoir })` thin a `TimeSeries` to a
@@ -15,6 +18,21 @@ two questions:
   uniformly drawn. The right pick for visualization (uncorrelated
   scatter points without aggregation's grid collapse) and population
   summaries.
+
+<ConceptViz
+  height={240}
+  caption={
+    <>
+      A live source streams a <strong>crowded</strong> scatter of raw points;
+      the highlighted teal dots are the <strong>kept</strong> subset.{' '}
+      <code>stride</code> keeps every Nth (evenly spaced);{' '}
+      <code>reservoir</code> keeps a random K-of-N (re-drawn each frame). Slide
+      the value to keep more or fewer.
+    </>
+  }
+>
+  <CoreSampling />
+</ConceptViz>
 
 What's covered:
 
