@@ -54,14 +54,16 @@ because a "minute" is meaningless on a distance axis.
 columns and returns a closed `ValueSeries`:
 
 <ConceptViz
-  height={230}
+  height={268}
   caption={
     <>
-      The same elevation samples, re-keyed. On the <strong>time</strong> axis
-      the climb looks gradual — you slowed down, so it's spread across many
-      samples.
-      <code>byValue('distance')</code> re-spaces the x-axis and the climb snaps{' '}
-      <strong>short and steep</strong>: same rows, same order, a different axis.
+      A ride's <strong>elevation</strong> (area) and <strong>pace</strong>{' '}
+      (line), re-keyed. On the <strong>time</strong> axis a climb looks gradual
+      — you slowed down, so it's spread across many samples;{' '}
+      <code>byValue('distance')</code> re-spaces the x-axis and it snaps{' '}
+      <strong>short and steep</strong>. Same rows, same order, a different axis
+      — and your <strong>splits</strong> re-bucket with it (by time vs by
+      distance).
     </>
   }
 >

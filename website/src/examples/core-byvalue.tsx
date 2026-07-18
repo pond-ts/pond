@@ -1,5 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
-import { TimeSeries } from 'pond-ts';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  AreaChart,
+  BarChart,
+  ChartContainer,
+  ChartRow,
+  Layers,
+  LineChart,
+  YAxis,
+} from '@pond-ts/charts';
+import { Sequence, TimeSeries } from 'pond-ts';
+import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import {
   ConceptControls,
   PlayButton,
@@ -7,20 +17,59 @@ import {
 } from '@site/src/components/ConceptViz';
 
 /**
- * The `byValue` mental model — the confusing one, because it's a **projection**,
- * not an aggregation. `byValue('dist')` re-keys the series onto a monotonic
- * value axis: same rows, same order, but the x-axis becomes **distance** instead
- * of **time**. A climb you took slowly is spread out over time yet short and
- * steep over distance — so the profile re-spaces horizontally when you flip the
- * axis. The one control is the pond core option: which column to project onto.
+ * The `byValue` hero (value-axis concept page) — built with the real charts, so
+ * it's an honest demo, not a hand-drawn look-alike. A ride's elevation (area) +
+ * pace (line) plot against **time**; flipping to **distance** re-renders them
+ * from `ride.byValue('dist')` — same rows, re-keyed, so a slow climb that looked
+ * gradual over time is short and steep over distance. The splits row underneath
+ * comes from the real value-axis aggregators: `aggregate` (time) vs `byColumn`
+ * (distance). The control is the pond core option: which axis to project onto.
  */
 
 const SCHEMA = [
   { name: 'time', kind: 'time' },
   { name: 'dist', kind: 'number' },
   { name: 'ele', kind: 'number' },
+  { name: 'pace', kind: 'number' },
 ] as const;
 const BASE = Date.UTC(2026, 0, 1, 0, 0, 0);
+const N = 60; // one sample per second → a 60 s ride
+const SPLITS = 6;
+
+const hill = (u: number, c: number, w: number) =>
+  Math.exp(-((u - c) ** 2) / (2 * w * w));
+// Smooth base drives speed (→ pace); texture is display-only.
+const eleBase = (u: number) =>
+  0.24 + 0.42 * hill(u, 0.4, 0.11) + 0.18 * hill(u, 0.73, 0.06);
+const eleFn = (u: number) => eleBase(u) + 0.02 * Math.sin(u * 18);
+
+// The ride: sampled evenly in TIME (like GPS), slow uphill so distance accrues
+// unevenly. This is the whole reason byValue is interesting.
+function buildRide() {
+  const rows: Array<[number, number, number, number]> = [];
+  let d = 0;
+  const du = 1 / (N - 1);
+  for (let i = 0; i < N; i++) {
+    const u = i * du;
+    const grad = (eleBase(u + 0.006) - eleBase(u - 0.006)) / 0.012;
+    const speed = 0.9 - 0.5 * Math.tanh(1.3 * grad); // smooth, no hard clamp
+    rows.push([BASE + i * 1000, d, eleFn(u), 1 / speed]);
+    d += speed * du;
+  }
+  return { rows, distMax: d };
+}
+const { rows, distMax } = buildRide();
+
+const ride = TimeSeries.fromJSON({ name: 'ride', schema: SCHEMA, rows });
+const rideByDist = ride.byValue('dist'); // the projection — throws if not monotonic
+const timeSplits = ride.aggregate(Sequence.every('10s'), {
+  pace: { from: 'pace', using: 'avg' },
+});
+const distSplits = ride.byColumn(
+  'dist',
+  { width: distMax / SPLITS },
+  { pace: { from: 'pace', using: 'avg' } },
+);
 
 const AXES = [
   { value: 'time' as const, label: 'time' },
@@ -28,59 +77,31 @@ const AXES = [
 ];
 type AxisKind = (typeof AXES)[number]['value'];
 
-// --- layout (SVG user units) ---
-const W = 560;
-const H = 230;
-const PAD_L = 46;
-const PAD_R = 28;
-const TOP = 28;
-const BOT = 172;
-const AXIS_Y = BOT + 6;
-const N = 40;
+const TOTAL_H = 268;
+const FLIP_MS = 3800;
 
-const smoothstep = (a: number, b: number, x: number) => {
-  const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
-  return t * t * (3 - 2 * t);
-};
-const mapX = (u: number) => PAD_L + u * (W - PAD_L - PAD_R);
-const mapY = (ele: number) => BOT - ele * (BOT - TOP);
-
-// Build the route: evenly sampled in TIME, but slow through the climb so
-// distance accrues unevenly — the whole point of byValue.
-function buildRoute() {
-  const rows: Array<[number, number, number]> = [];
-  let dist = 0;
-  const raw: { t: number; dist: number; ele: number }[] = [];
-  for (let i = 0; i < N; i++) {
-    const u = i / (N - 1); // even in time
-    const climb = Math.exp(-((u - 0.48) ** 2) / 0.012); // slow zone ~ the climb
-    const speed = 1 - 0.82 * climb;
-    dist += speed;
-    const ele = 0.18 + 0.64 * smoothstep(0.34, 0.62, u);
-    raw.push({ t: u, dist, ele });
-    rows.push([BASE + i * 1000, dist, ele]);
-  }
-  const distMax = raw[raw.length - 1].dist;
-  // Dogfood the projection: byValue re-keys onto the monotonic `dist` axis
-  // (throws if it isn't non-decreasing — it is). Positions === the dist keys.
-  TimeSeries.fromJSON({ name: 'route', schema: SCHEMA, rows }).byValue('dist');
-  return raw.map((p) => ({
-    xTime: mapX(p.t),
-    xDist: mapX(p.dist / distMax),
-    y: mapY(p.ele),
-  }));
+function useMeasuredWidth<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null);
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () =>
+      setWidth(Math.round(el.getBoundingClientRect().width));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, width] as const;
 }
-const POINTS = buildRoute();
-
-const FLIP_MS = 2600;
 
 export default function CoreByValue() {
+  const theme = useSiteChartTheme();
+  const [boxRef, width] = useMeasuredWidth<HTMLDivElement>();
   const [axis, setAxis] = useState<AxisKind>('time');
   const [playing, setPlaying] = useState(true);
-  const [, setFrame] = useState(0);
-  const dispX = useRef<number[]>(POINTS.map((p) => p.xTime));
 
-  // Auto-flip between the two projections so the figure demonstrates itself.
   useEffect(() => {
     if (!playing) return;
     const id = setInterval(
@@ -90,112 +111,81 @@ export default function CoreByValue() {
     return () => clearInterval(id);
   }, [playing]);
 
-  // Ease each point's x toward its target projection.
-  useEffect(() => {
-    let raf = 0;
-    let last: number | null = null;
-    const step = (ts: number) => {
-      if (last === null) last = ts;
-      const dt = Math.min(48, ts - last);
-      last = ts;
-      const k = Math.min(1, dt / 130);
-      for (let i = 0; i < POINTS.length; i++) {
-        const target = axis === 'dist' ? POINTS[i].xDist : POINTS[i].xTime;
-        dispX.current[i] += (target - dispX.current[i]) * k;
-      }
-      setFrame((f) => (f + 1) & 0xffff);
-      raf = requestAnimationFrame(step);
-    };
-    raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
-  }, [axis]);
+  const chart = (isTime: boolean) => {
+    const top = isTime ? ride : rideByDist;
+    const range: readonly [number, number] | ReturnType<typeof ride.timeRange> =
+      isTime ? ride.timeRange() : [0, distMax];
+    return (
+      <ChartContainer range={range} width={width} theme={theme}>
+        <ChartRow height={150}>
+          <YAxis id="ele" side="left" label="elevation" pad={0.08} />
+          <YAxis id="pace" side="right" label="pace" pad={0.15} />
+          <Layers>
+            <AreaChart series={top} column="ele" axis="ele" />
+            <LineChart series={top} column="pace" axis="pace" as="secondary" />
+          </Layers>
+        </ChartRow>
+        <ChartRow height={80}>
+          <YAxis id="sp" side="left" label="avg pace" min={0} width={44} />
+          <Layers>
+            {isTime ? (
+              <BarChart series={timeSplits} column="pace" axis="sp" gap={6} />
+            ) : (
+              <BarChart bins={distSplits} column="pace" axis="sp" gap={6} />
+            )}
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  };
 
-  const xs = dispX.current;
-  const linePts = POINTS.map((p, i) => `${xs[i].toFixed(1)},${p.y.toFixed(1)}`);
-  const areaPath =
-    `M ${xs[0].toFixed(1)} ${BOT} ` +
-    POINTS.map((p, i) => `L ${xs[i].toFixed(1)} ${p.y.toFixed(1)}`).join(' ') +
-    ` L ${xs[xs.length - 1].toFixed(1)} ${BOT} Z`;
-
-  const body = { fill: 'var(--pond-body)' };
-
-  const controls = (
-    <ConceptControls>
-      <SegmentedControl
-        label="x-axis"
-        options={AXES}
-        value={axis}
-        onChange={(v) => {
-          setAxis(v);
-          setPlaying(false); // hand control to the reader
-        }}
-      />
-      <PlayButton playing={playing} onToggle={() => setPlaying((p) => !p)} />
-    </ConceptControls>
-  );
+  const isTime = axis === 'time';
 
   return (
     <>
-      <svg
-        viewBox={`0 0 ${W} ${H}`}
-        style={{ width: '100%', height: 'auto', display: 'block' }}
-        role="img"
-        aria-label="An elevation profile re-projected from the time axis onto the distance axis"
+      <div
+        ref={boxRef}
+        style={{ position: 'relative', width: '100%', height: TOTAL_H }}
       >
-        {/* elevation area + line */}
-        <path
-          d={areaPath}
-          style={{
-            fill: 'color-mix(in srgb, var(--pond-viz-1) 20%, var(--pond-surface))',
+        {width > 0 && (
+          <>
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                opacity: isTime ? 1 : 0,
+                transition: 'opacity 0.5s ease',
+                pointerEvents: isTime ? 'auto' : 'none',
+              }}
+            >
+              {chart(true)}
+            </div>
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                opacity: isTime ? 0 : 1,
+                transition: 'opacity 0.5s ease',
+                pointerEvents: isTime ? 'none' : 'auto',
+              }}
+            >
+              {chart(false)}
+            </div>
+          </>
+        )}
+      </div>
+      <ConceptControls>
+        <SegmentedControl
+          label="x-axis"
+          options={AXES}
+          value={axis}
+          onChange={(v) => {
+            setAxis(v);
+            setPlaying(false);
           }}
         />
-        <polyline
-          points={linePts.join(' ')}
-          fill="none"
-          style={{ stroke: 'var(--pond-viz-1)' }}
-          strokeWidth={2}
-        />
-        {POINTS.map((p, i) => (
-          <circle
-            key={i}
-            cx={xs[i]}
-            cy={p.y}
-            r={3}
-            style={{ fill: 'var(--pond-viz-1)' }}
-          />
-        ))}
-
-        {/* x-axis + its (changing) label */}
-        <line
-          x1={PAD_L}
-          y1={AXIS_Y}
-          x2={W - PAD_R}
-          y2={AXIS_Y}
-          style={{ stroke: 'var(--pond-body)' }}
-          strokeWidth={1.5}
-        />
-        <text
-          x={(PAD_L + (W - PAD_R)) / 2}
-          y={AXIS_Y + 22}
-          textAnchor="middle"
-          fontSize={13}
-          fontFamily="var(--ifm-font-family-monospace)"
-          style={body}
-        >
-          {axis === 'dist' ? 'ele  vs  distance' : 'ele  vs  time'}
-        </text>
-        <text
-          x={PAD_L - 8}
-          y={TOP + 6}
-          textAnchor="end"
-          fontSize={12}
-          fontFamily="var(--ifm-font-family-monospace)"
-          style={body}
-        >
-          ele
-        </text>
-      </svg>
-      {controls}
+        <PlayButton playing={playing} onToggle={() => setPlaying((p) => !p)} />
+      </ConceptControls>
     </>
   );
 }
