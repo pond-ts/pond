@@ -4,6 +4,7 @@ sidebar_position: 16
 
 import ConceptViz from '@site/src/components/ConceptViz';
 import CoreRolling from '@site/src/examples/core-rolling';
+import CoreRollingLive from '@site/src/examples/core-rolling-live';
 
 # Rolling Windows
 
@@ -167,6 +168,21 @@ identity (whole series). Composes with every method, not just
 The streaming counterpart. Maintains a sliding window incrementally;
 each source event produces an output event with the rolling
 aggregate at that point.
+
+<ConceptViz
+  height={244}
+  caption={
+    <>
+      Live: points stream into a <code>LiveSeries</code> (blue), the trailing{' '}
+      <strong>window</strong> (orange) rides the newest point, and the rolling
+      average traces the teal line — updating as data arrives. Change the{' '}
+      <code>window</code> to smooth more or less. (See{' '}
+      <a href="/docs/charts/">@pond-ts/charts</a> for how the chart is built.)
+    </>
+  }
+>
+  <CoreRollingLive />
+</ConceptViz>
 
 ```ts
 import { LiveSeries } from 'pond-ts';
