@@ -1255,6 +1255,13 @@ site components — **centered on the primitives** (core: `Time`,
 `TimeRange`, … `TimeSeries`, `LiveSeries`; charts: one page per
 React component, docstring first then props).
 
+- **Right-sidebar TOC shipped:** every API page exports a computed
+  `toc` from its model (the MDX loader honors an explicit `export
+const toc`, so the theme's own right-rail renders it — no swizzle):
+  classes list constructor / properties / static methods before
+  instance methods, components list their props, function pages their
+  functions. SSR'd like any docs page (`TimeSeries` carries 86
+  entries).
 - **Functions tranche + /api swap-over shipped:** function-group
   pages (`ApiFunctionsPage` — several free functions per page, indexed
   and anchored, grouped the way API.md groups them): core

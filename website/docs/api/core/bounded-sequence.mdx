@@ -3,7 +3,9 @@ title: BoundedSequence
 hide_title: true
 ---
 
-import { ApiClassPage } from '@site/src/components/ApiDoc';
+import { ApiClassPage, classToc } from '@site/src/components/ApiDoc';
 import page from '@site/src/api-model/core/bounded-sequence.json';
+
+export const toc = classToc(page.model);
 
 <ApiClassPage model={page.model} types={page.types} />

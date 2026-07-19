@@ -3,7 +3,9 @@ title: PartitionedTimeSeries
 hide_title: true
 ---
 
-import { ApiClassPage } from '@site/src/components/ApiDoc';
+import { ApiClassPage, classToc } from '@site/src/components/ApiDoc';
 import page from '@site/src/api-model/core/partitioned-time-series.json';
+
+export const toc = classToc(page.model);
 
 <ApiClassPage model={page.model} types={page.types} />
