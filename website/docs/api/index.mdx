@@ -2,11 +2,11 @@
 sidebar_position: 0
 ---
 
-# API reference (in-site pilot)
+# API reference
 
-A new home for the API reference, rendered **inside the site** from the
-TypeScript source: docstring first, centered on the core primitives rather
-than alphabetical declaration lists. Everything here is extracted at build
+The API reference, rendered **inside the site** from the TypeScript
+source: docstring first, centered on the primitives rather than
+alphabetical declaration lists. Everything here is extracted at build
 time (`typedoc --json` → curated model → site components), so it cannot
 drift from the code — and referenced type names in the type chips carry
 **hover cards** with their definition and doc.
@@ -29,10 +29,9 @@ drift from the code — and referenced type names in the type chips carry
 [`LivePartitionedSeries`](./core/live-partitioned-series),
 [`LivePartitionedView`](./core/live-partitioned-view).
 
-## @pond-ts/charts
+**Functions** — [`toTimeRange`, `top`](./core/functions).
 
-Every React component, docstring first then props — referenced types
-carry hover cards.
+## @pond-ts/charts
 
 **Structure** — [`<ChartContainer>`](./charts/chart-container),
 [`<ChartRow>`](./charts/chart-row), [`<Layers>`](./charts/layers),
@@ -52,6 +51,16 @@ carry hover cards.
 [`<Marker>`](./charts/marker), [`<Region>`](./charts/region),
 [`<YAxisIndicator>`](./charts/y-axis-indicator).
 
-Not yet covered here: data adapters, hooks, and scales (they are
-functions, not components — a different page shape). The
-[generated reference](/api) still covers the full surface.
+**Functions** — [data adapters](./charts/data-adapters),
+[theming](./charts/theming),
+[scales & live values](./charts/scales-and-live).
+
+## Other packages
+
+`@pond-ts/react`, `@pond-ts/fit`, and `@pond-ts/financial` aren't in
+the in-site reference yet — their full generated references remain
+available:
+
+- [@pond-ts/react](pathname:///generated-api/react/)
+- [@pond-ts/fit](pathname:///generated-api/fit/)
+- [@pond-ts/financial](pathname:///generated-api/financial/)

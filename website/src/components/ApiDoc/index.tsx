@@ -62,6 +62,12 @@ export interface ComponentModel {
   props: { name: string; type: string; optional: boolean; doc: string }[];
 }
 
+export interface FunctionsModel {
+  name: string;
+  package: string;
+  functions: MethodModel[];
+}
+
 export interface TypeRefEntry {
   kind: 'type' | 'interface' | 'class';
   package: string;
@@ -366,6 +372,42 @@ export function ApiComponentPage({
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** A function-group page: several free functions, each with signatures. */
+export function ApiFunctionsPage({
+  model,
+  types,
+}: {
+  model: FunctionsModel;
+  types?: TypeDict;
+}): ReactNode {
+  void types; // signatures render as plain highlighted TS for now
+  return (
+    <div className={styles.page}>
+      <Header title={model.name} pkg={model.package} kind="functions" />
+      <nav className={styles.memberIndex} aria-label="functions">
+        {model.functions.map((f) => (
+          <a key={f.name} href={`#${f.name}`}>
+            {f.name}
+          </a>
+        ))}
+      </nav>
+      {model.functions.map((f) => (
+        <div className={styles.member} id={f.name} key={f.name}>
+          <h3 className={styles.memberName}>
+            <a className={styles.anchor} href={`#${f.name}`}>
+              {f.name}
+            </a>
+            <SourceLink url={f.sourceUrl} />
+          </h3>
+          {f.signatures.map((sig) => (
+            <Signature key={sig.text} sig={sig} />
+          ))}
+        </div>
+      ))}
     </div>
   );
 }
