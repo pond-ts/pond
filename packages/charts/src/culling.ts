@@ -123,6 +123,21 @@ export function visibleWindow(
  * byte-identical to the pre-culling pass. Otherwise the returned view is a
  * zero-copy `subarray` of the source buffers (the source is immutable by
  * contract, so aliasing is safe).
+ *
+ * **Gap-mode neutrality.** After the pixel bisect, each boundary is walked
+ * outward past any non-finite (`NaN` gap) run until the slice's first and last
+ * samples are **finite** (or the buffer end is hit). Without this, a gap wider
+ * than `margin` straddling a plot edge would drop the finite anchor sitting
+ * >`margin` points off-screen, turning an *interior* gap into a *leading /
+ * trailing* one inside the slice — which `bridgeGaps` and `collectGapEdges` both
+ * leave broken (they only bridge gaps with a finite sample on *both* sides). The
+ * `none` / `dashed` / `step` / `fade` connector that crossed the edge would then
+ * vanish (a notch under pan). Re-including the anchor keeps the boundary gap
+ * *interior*, so every mode draws exactly as it does un-culled. Cost is one
+ * `isFinite` check per side in the common (finite-boundary) case; the walk only
+ * runs for an edge-straddling gap and is bounded by that gap's width. (The
+ * default `empty` mode breaks at gaps regardless, so it is unaffected either
+ * way — this makes the guarantee hold for *all* modes.)
  */
 export function cullChartSeries(
   cs: ChartSeries,
@@ -132,7 +147,11 @@ export function cullChartSeries(
   if (cs.length === 0) return cs;
   const dom = scaleDomain(xScale);
   if (dom === null) return cs;
-  const [start, end] = visibleWindow(cs.x, cs.length, dom[0], dom[1], margin);
+  let [start, end] = visibleWindow(cs.x, cs.length, dom[0], dom[1], margin);
+  // Extend each boundary to the nearest finite y-anchor so a gap straddling the
+  // edge stays interior (see "Gap-mode neutrality" above).
+  while (start > 0 && !Number.isFinite(cs.y[start]!)) start -= 1;
+  while (end < cs.length && !Number.isFinite(cs.y[end - 1]!)) end += 1;
   if (start === 0 && end === cs.length) return cs; // whole series in view
   return {
     x: cs.x.subarray(start, end),
@@ -146,6 +165,12 @@ export function cullChartSeries(
  * `lower`/`upper` edges culled in lockstep with the shared `x` axis, so the
  * envelope stays aligned. Same identity-preserving fast path and zero-copy
  * `subarray` view as {@link cullChartSeries}.
+ *
+ * Unlike {@link cullChartSeries} this needs **no** finite-anchor boundary walk:
+ * a band has no gap-bridge mode (`drawBand` always breaks the fill at a gap, it
+ * never interpolates one), so a gap straddling a plot edge is a hole on both
+ * sides of the cut — there is no crossing fill to lose. The `margin` entry/exit
+ * sample is enough for a gap-free envelope that spans the edge.
  */
 export function cullBandSeries(
   band: BandSeries,

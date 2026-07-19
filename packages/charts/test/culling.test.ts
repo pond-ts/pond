@@ -131,6 +131,34 @@ describe('cullChartSeries', () => {
     const empty = cs([], []);
     expect(cullChartSeries(empty, scale(0, 10))).toBe(empty);
   });
+
+  it('extends the left boundary past an edge gap to the nearest finite anchor', () => {
+    // Finite 0/10, then a NaN run 20/30/40, finite from 50. View [35, 60] would
+    // bisect the slice to start at x=30 (NaN); the anchor at x=10 is 3 points
+    // off-screen. The extension must walk back to include it so the boundary
+    // gap stays interior (else 'none'/'dashed' break at the edge).
+    const gappy = cs(
+      [0, 10, 20, 30, 40, 50, 60],
+      [0, 10, NaN, NaN, NaN, 50, 60],
+    );
+    const view = cullChartSeries(gappy, scale(35, 60));
+    // Slice starts at the finite anchor x=10, not the NaN at x=30.
+    expect(view.x[0]).toBe(10);
+    expect(Number.isFinite(view.y[0]!)).toBe(true);
+  });
+
+  it('extends the right boundary past a trailing edge gap to the next finite anchor', () => {
+    const gappy = cs(
+      [0, 10, 20, 30, 40, 50, 60, 70],
+      [0, 10, 20, NaN, NaN, NaN, 60, 70],
+    );
+    const view = cullChartSeries(gappy, scale(0, 25));
+    // A genuine partial slice (x=70 stops the walk): it ends on the finite
+    // anchor x=60, not the NaN run at 30/40/50.
+    expect(view.length).toBeLessThan(gappy.length);
+    expect(view.x[view.length - 1]).toBe(60);
+    expect(Number.isFinite(view.y[view.length - 1]!)).toBe(true);
+  });
 });
 
 describe('cullBandSeries', () => {

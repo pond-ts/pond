@@ -566,4 +566,76 @@ describe('drawLine — viewport culling (Phase 2)', () => {
     expect(Array.from(series.x)).toEqual(before);
     expect(series.length).toBe(10);
   });
+
+  // Gap-mode neutrality (the Layer-2 finding): a gap WIDER than the margin
+  // straddling a plot edge must stay an *interior* gap in the slice, so 'none'
+  // bridges it and 'dashed' draws its connector exactly as un-culled. Series:
+  // finite 0/10, a 3-wide NaN run at 20/30/40, finite from 50 on. The left
+  // anchor (x=10) sits 3 points off-screen of a left edge at x=35, so a bare
+  // margin=1 cull would drop it and break the bridge.
+  const leftEdgeGap = (): ChartSeries =>
+    cs(
+      [0, 10, 20, 30, 40, 50, 60, 70, 80],
+      [0, 10, NaN, NaN, NaN, 50, 60, 70, 80],
+    );
+
+  it("'none' bridges a gap straddling the left edge — anchor re-included", () => {
+    const { ctx, calls } = recordingContext();
+    // View [35, 75] → bisect starts the slice at x=30 (NaN); the fix walks back
+    // to the finite anchor x=10 so 20/30/40 is interior and bridgeGaps spans it.
+    drawLine(
+      ctx,
+      leftEdgeGap(),
+      domainScale(35, 75),
+      (v) => v,
+      style,
+      undefined,
+      'none',
+    );
+    // First point stroked is the re-included anchor (x=10), and the bridge makes
+    // one continuous subpath. Bare margin=1 would start at x=50 instead (a notch).
+    expect(calls.find((c) => c.name === 'moveTo')?.args).toEqual([10, 10]);
+    expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(1);
+  });
+
+  it("'dashed' keeps a left-edge gap's connector after culling", () => {
+    const { ctx, calls } = recordingContext();
+    drawLine(
+      ctx,
+      leftEdgeGap(),
+      domainScale(35, 75),
+      (v) => v,
+      style,
+      undefined,
+      'dashed',
+    );
+    // The inferred dashed bridge draws only for an interior gap — its presence
+    // proves the left anchor survived the cull (setLineDash on the bridge pass).
+    expect(calls.some((c) => c.name === 'setLineDash')).toBe(true);
+  });
+
+  it("'none' bridges a gap straddling the right edge — anchor re-included", () => {
+    // Mirror: finite 0/10/20/30, NaN at 40/50/60, finite 70/80. Right edge at
+    // x=45 → the right anchor (x=70) is >1 point out; the fix walks end forward.
+    const rightEdgeGap = cs(
+      [0, 10, 20, 30, 40, 50, 60, 70, 80],
+      [0, 10, 20, 30, NaN, NaN, NaN, 70, 80],
+    );
+    const { ctx, calls } = recordingContext();
+    drawLine(
+      ctx,
+      rightEdgeGap,
+      domainScale(-5, 45),
+      (v) => v,
+      style,
+      undefined,
+      'none',
+    );
+    // The bridge reaches the re-included right anchor at x=70 (bare margin=1
+    // would end the line at x=30, a right-edge notch).
+    expect(calls.some((c) => c.name === 'lineTo' && c.args[0] === 70)).toBe(
+      true,
+    );
+    expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(1);
+  });
 });
