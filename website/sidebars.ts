@@ -222,6 +222,12 @@ const sidebars: SidebarsConfig = {
       link: { type: 'doc', id: 'reference/reference-index' },
       items: ['reference/benchmarks'],
     },
+    {
+      type: 'category',
+      label: 'API (pilot)',
+      link: { type: 'doc', id: 'api/index' },
+      items: ['api/core/time', 'api/charts/line-chart'],
+    },
   ],
 };
 

@@ -29,3 +29,7 @@ yarn-error.log*
 /static/img/undraw_docusaurus_mountain.svg
 /static/img/undraw_docusaurus_react.svg
 /static/img/undraw_docusaurus_tree.svg
+
+# generated API models (build:api-model)
+.api-json/
+src/api-model/

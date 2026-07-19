@@ -1,0 +1,20 @@
+---
+sidebar_position: 0
+---
+
+# API reference (in-site pilot)
+
+A new home for the API reference, rendered **inside the site** from the
+TypeScript source: docstring first, centered on the core primitives rather
+than alphabetical declaration lists. Two pilot pages so far — the rest of
+the surface still lives in the [generated reference](/api) while this
+builds out.
+
+- [`Time`](./core/time) — a core temporal-key primitive, docstring +
+  constructor + members.
+- [`<LineChart>`](./charts/line-chart) — a charts component, docstring +
+  props.
+
+Everything on these pages is extracted from the source at build time
+(`typedoc --json` → curated model → site components), so it cannot drift
+from the code.

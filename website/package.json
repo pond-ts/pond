@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
+    "build:api-model": "node scripts/build-api-model.mjs",
     "build:api": "npm run build:api:core && npm run build:api:react && npm run build:api:fit && npm run build:api:charts && npm run build:api:financial",
     "build:api:fit": "typedoc --options typedoc.fit.json",
     "build:api:financial": "typedoc --options typedoc.financial.json",
@@ -10,12 +11,12 @@
     "build:api:react": "typedoc --options typedoc.react.json",
     "build:api:charts": "typedoc --options typedoc.charts.json",
     "docusaurus": "docusaurus",
-    "prestart": "npm run build:api",
+    "prestart": "npm run build:api && npm run build:api-model",
     "start": "docusaurus start",
-    "prebuild": "npm run build:api",
+    "prebuild": "npm run build:api && npm run build:api-model",
     "build": "docusaurus build",
     "swizzle": "docusaurus swizzle",
-    "predeploy": "npm run build:api",
+    "predeploy": "npm run build:api && npm run build:api-model",
     "deploy": "docusaurus deploy",
     "clear": "docusaurus clear",
     "serve": "docusaurus serve",
@@ -40,7 +41,8 @@
     "pond-ts": "file:../packages/core",
     "prism-react-renderer": "^2.3.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0"
   },
   "devDependencies": {
     "@docusaurus/module-type-aliases": "3.10.0",
