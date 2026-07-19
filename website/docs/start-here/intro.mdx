@@ -3,15 +3,22 @@ slug: /
 sidebar_position: 1
 ---
 
+import LayerMap from '@site/src/components/LayerMap';
+
 # pond-ts
 
-Typed time-series primitives for TypeScript. Schema-driven events,
-composable transforms, a live-ingest mode, and an optional React
-integration — all strict TS end to end, all immutable.
+A **time-series platform** for TypeScript: a typed analytics core,
+canvas charts that consume it directly, domain vocabularies built on
+top, and React glue for live apps — all strict TS end to end, all
+immutable. You can adopt one layer or the whole stack; each layer has
+one job, and every card below is a door.
+
+<LayerMap />
 
 ```sh
-npm install pond-ts                 # core
+npm install pond-ts                 # the analytics core
 npm install @pond-ts/react          # React hooks (optional)
+npm install @pond-ts/charts         # canvas charts (optional; peer-deps @pond-ts/react + react)
 ```
 
 ## First example: batch

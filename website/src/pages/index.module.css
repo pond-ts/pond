@@ -87,6 +87,47 @@ html[data-theme='dark'] .heroPill {
   color: var(--ifm-color-primary-light);
 }
 
+/* The hero's live chart — a real CoreAnomalyLive mount in a card frame. */
+.heroChart {
+  width: 100%;
+  max-width: 860px;
+  margin-top: 2.4rem;
+  padding: 1rem 1.1rem 0.6rem;
+  border: 1px solid var(--site-surface-border);
+  border-radius: 14px;
+  background: var(--ifm-background-surface-color);
+  box-shadow: 0 18px 44px rgba(14, 143, 134, 0.1);
+  text-align: left;
+}
+
+.heroChartCaption {
+  margin: 0.7rem 0.2rem 0.4rem;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--ifm-color-emphasis-600);
+}
+
+.section {
+  padding: 3.25rem 0;
+}
+
+.sectionAlt {
+  background: var(--ifm-background-surface-color);
+  border-top: 1px solid var(--ifm-color-emphasis-200);
+}
+
+.sectionTitle {
+  text-align: center;
+  margin-bottom: 0.6rem;
+}
+
+.sectionLead {
+  max-width: 44rem;
+  margin: 0 auto 1.8rem;
+  text-align: center;
+  color: var(--ifm-color-emphasis-700);
+}
+
 @media screen and (max-width: 996px) {
   .heroBanner {
     padding: 4rem 1rem 3rem;

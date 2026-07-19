@@ -1,0 +1,138 @@
+/* ---- LayerMap: the stack of door-cards ---- */
+
+.map {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+  gap: 0.9rem;
+  align-items: stretch;
+  margin: 1.5rem 0;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.glueRail {
+  display: flex;
+}
+
+.glueRail .card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.card {
+  position: relative;
+  padding: 0.9rem 1.1rem;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  border-left: 4px solid var(--pond-viz-1);
+  border-radius: 10px;
+  background: var(--pond-surface, var(--ifm-background-surface-color));
+  transition: border-color 0.15s ease;
+}
+
+.card_domain {
+  border-left-color: var(--pond-viz-3);
+}
+
+.card_visualization {
+  border-left-color: var(--pond-viz-2);
+}
+
+.card_foundation {
+  border-left-color: var(--pond-viz-1);
+}
+
+.card_react {
+  border-left-color: var(--pond-viz-4);
+}
+
+.role {
+  display: block;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ifm-color-emphasis-600);
+  margin-bottom: 0.25rem;
+}
+
+.packages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.9rem;
+  margin-bottom: 0.3rem;
+}
+
+.pkg {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 1.02rem;
+  font-weight: 600;
+  color: var(--pond-ink, var(--ifm-heading-color));
+}
+
+.pkg:hover {
+  color: var(--ifm-color-primary);
+  text-decoration: none;
+}
+
+.job {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--ifm-color-emphasis-700);
+}
+
+@media (max-width: 768px) {
+  .map {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---- LayerLocator: the "you are here" header ---- */
+
+.locator {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin: 0.4rem 0 1.3rem;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  border-radius: 8px;
+  background: var(--pond-surface-2, var(--ifm-color-emphasis-100));
+  font-size: 0.85rem;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.locatorText strong {
+  color: var(--pond-ink, var(--ifm-heading-color));
+}
+
+.miniStack {
+  display: inline-grid;
+  grid-template-columns: 14px 5px;
+  grid-template-rows: repeat(3, 5px);
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.miniLayer {
+  grid-column: 1;
+  border-radius: 1.5px;
+  background: var(--ifm-color-emphasis-300);
+}
+
+.miniGlue {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  border-radius: 1.5px;
+  background: var(--ifm-color-emphasis-300);
+}
+
+.miniActive {
+  background: var(--pond-viz-1);
+}

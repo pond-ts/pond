@@ -4,12 +4,37 @@ title: pond-ts (core)
 sidebar_position: 1
 ---
 
+import ConceptViz from '@site/src/components/ConceptViz';
+import { LayerLocator } from '@site/src/components/LayerMap';
+import CoreAnomalyLive from '@site/src/examples/core-anomaly-live';
+
 # pond-ts
+
+<LayerLocator layer="foundation" />
 
 The core package — TypeScript-first time series primitives. Batch
 transforms (`filter`, `aggregate`, `rolling`, `smooth`, `reduce`),
 array-column support, JSON round-trip, and the live-series / live-view
 model for streaming-style updates.
+
+The foundation's job is the **analytics**; here is one running live —
+a rolling `baseline()` band over a streaming series, outliers flagged
+as they cross it, with `sigma` as the knob:
+
+<ConceptViz
+  height={240}
+  caption={
+    <>
+      Real <code>baseline('value', &#123; window, sigma &#125;)</code> on a live
+      stream — the core computes the band, <code>@pond-ts/charts</code> draws
+      it. Full story on the{' '}
+      <a href="/docs/pond-ts/transforms/anomaly-detection">Anomaly Detection</a>{' '}
+      page.
+    </>
+  }
+>
+  <CoreAnomalyLive />
+</ConceptViz>
 
 This section walks through the library in order:
 

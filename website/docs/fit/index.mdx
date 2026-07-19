@@ -4,7 +4,26 @@ title: '@pond-ts/fit'
 sidebar_position: 1
 ---
 
+import ConceptViz from '@site/src/components/ConceptViz';
+import { LayerLocator } from '@site/src/components/LayerMap';
+import FitLandingActivity from '@site/src/examples/fit-landing-activity';
+
 # @pond-ts/fit
+
+<LayerLocator layer="domain" />
+
+<ConceptViz
+  height={200}
+  caption={
+    <>
+      A ride's elevation profile — <code>@pond-ts/fit</code> slices activities
+      into pond <code>TimeSeries</code>; <code>@pond-ts/charts</code> draws
+      them.
+    </>
+  }
+>
+  <FitLandingActivity />
+</ConceptViz>
 
 A **fitness / activity domain library** on pond-ts. The name reads _fitness_
 (with the happy bonus that it parses `.fit` files); it is **not** a FIT-_format_
