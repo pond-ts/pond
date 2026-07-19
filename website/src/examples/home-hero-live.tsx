@@ -121,7 +121,7 @@ export default function HomeHeroLive() {
   const nextValue = () => {
     const i = tick.current++;
     const mean = 52 + 15 * Math.sin(i / 30) + 6 * Math.sin(i / 9.5);
-    const noise = (rand() - 0.5) * 9;
+    const noise = (rand() - 0.5) * 20;
     const spike =
       rand() < 0.045 ? (rand() < 0.5 ? -1 : 1) * (24 + rand() * 12) : 0;
     return Math.max(2, Math.min(98, mean + noise + spike));
@@ -153,7 +153,7 @@ export default function HomeHeroLive() {
   // and stays draggable (drags are converted back to offsets on change).
   const [regionOff, setRegionOff] = useState({
     left: WINDOW_MS / 5,
-    right: 0,
+    right: 300, // a nudge in from the plot edge so the handle isn't clipped
   });
   // A draggable marker in the same riding frame: one offset back from now.
   const [markerOff, setMarkerOff] = useState(WINDOW_MS * 0.55);
@@ -372,7 +372,7 @@ export default function HomeHeroLive() {
           options={[
             {
               value: 'clip',
-              label: 'clip outliers',
+              label: 'outliers',
               color: 'var(--pond-viz-down)',
             },
           ]}
