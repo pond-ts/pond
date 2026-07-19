@@ -61,10 +61,12 @@ function HomepageHeader(): ReactNode {
           </BrowserOnly>
           <p className={styles.heroChartCaption}>
             Live, right now: raw points stream in and a real{' '}
-            <code>smooth()</code> draws the trend through them. Flip{' '}
-            <strong>clip</strong> — a <code>baseline()</code> pass filters the
-            outliers out of the line, leaving them behind as red dots. Both are
-            pond analytics calls; the chart just redraws.{' '}
+            <code>smooth()</code> draws the trend through them — drag{' '}
+            <strong>smooth</strong> to tune it. The shaded bands are a rolling{' '}
+            <code>baseline()</code> at 1σ and at the <strong>sigma</strong> you
+            pick; flip <strong>clip</strong> and the outliers beyond it drop out
+            of the line, left behind as red dots. All pond analytics options;
+            the chart just redraws.{' '}
             <Link to="/docs/pond-ts/transforms/anomaly-detection">
               How it works →
             </Link>

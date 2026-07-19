@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
+  BandChart,
   ChartContainer,
   ChartRow,
   Layers,
@@ -13,6 +14,7 @@ import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import {
   ConceptControls,
   PlayButton,
+  Slider,
   ToggleChips,
 } from '@site/src/components/ConceptViz';
 
@@ -69,12 +71,14 @@ const HEIGHT = 260;
 
 /**
  * The homepage hero. Raw points stream in (blue); a real
- * `smooth('value', 'movingAverage', …)` draws the trend line through them.
- * The **clip** toggle runs the platform's whole pitch in one flip: a
- * `baseline()` pass finds the outliers, `filter()` drops them from the line's
- * input, and the dropped points stay behind as red dots — analytics options,
- * not chart props. The view scrolls on a rAF clock (end = now), so motion is
- * smooth regardless of the data's arrival rate.
+ * `smooth('value', 'movingAverage', …)` draws the trend line through them,
+ * with the **smooth** slider setting the window. With clip off, the rolling
+ * `baseline()` band shows at two levels — 1σ (darker) and the adjustable
+ * **sigma** (lighter). Flipping **clip** runs the platform's whole pitch in
+ * one gesture: the outliers beyond sigma are `filter()`ed out of the line's
+ * input and stay behind as red dots — every control is a pond analytics
+ * option, not a chart prop. The view scrolls on a rAF clock (end = now), so
+ * motion is smooth regardless of the data's arrival rate.
  */
 export default function HomeHeroLive() {
   const base = useSiteChartTheme();
@@ -90,6 +94,11 @@ export default function HomeHeroLive() {
       line: {
         ...base.line,
         trend: { color: blue, width: 2 },
+      },
+      band: {
+        ...base.band,
+        outer: { fill: blue, opacity: 0.08 },
+        inner: { fill: blue, opacity: 0.18 },
       },
       scatter: {
         ...base.scatter,
@@ -111,6 +120,8 @@ export default function HomeHeroLive() {
   const tick = useRef(0);
 
   const [clip, setClip] = useState(false);
+  const [sigma, setSigma] = useState(2.5);
+  const [smoothing, setSmoothing] = useState(800); // smooth() window, ms
   const [playing, setPlaying] = useState(true);
 
   // One rAF loop drives both the data and the scroll. Pushes are scheduled
@@ -158,13 +169,20 @@ export default function HomeHeroLive() {
   const raw = useSnapshot(live, { throttle: 120 });
 
   // Real pond ops, recomputed per snapshot: a rolling baseline finds the
-  // outliers; with clip on they're filtered out of the smoothing input and
-  // drawn as their own (red) series.
+  // outliers (at the slider's sigma); with clip off the band itself is shown
+  // at two levels (1 sigma darker, the adjustable sigma lighter); with clip
+  // on the outliers are filtered out of the smoothing input and drawn as
+  // their own (red) series.
   const parts = useMemo(() => {
     if (!raw || raw.length < 2) return null;
     const bands = raw.baseline('value', {
       window: '4s',
-      sigma: 2.6,
+      sigma,
+      minSamples: 8,
+    });
+    const inner = raw.baseline('value', {
+      window: '4s',
+      sigma: 1,
       minSamples: 8,
     });
     const outliers = bands.filter((e) => {
@@ -180,15 +198,15 @@ export default function HomeHeroLive() {
       return v == null || lo == null || hi == null || (v <= hi && v >= lo);
     });
     const trendSource = clip ? clean : bands;
-    // Light smoothing on purpose: with clip off, a spike visibly tugs the
+    // Light smoothing by default: with clip off, a spike visibly tugs the
     // line toward it; flipping clip on is what makes the line let go.
     const trend = trendSource.smooth('value', 'movingAverage', {
-      window: '800ms',
+      window: `${smoothing}ms`,
       alignment: 'centered',
       output: 'trend',
     });
-    return { outliers, trend };
-  }, [raw, clip]);
+    return { bands, inner, outliers, trend };
+  }, [raw, clip, sigma, smoothing]);
 
   const ready = raw !== null && parts !== null && width > 0;
   const end = pausedAt.current ?? Date.now();
@@ -203,13 +221,30 @@ export default function HomeHeroLive() {
               <YAxis
                 id="v"
                 side="left"
-                label="value"
                 min={0}
                 max={100}
-                width={40}
+                width={0}
                 format={() => ''}
               />
               <Layers>
+                {!clip ? (
+                  <>
+                    <BandChart
+                      series={parts!.bands}
+                      lower="lower"
+                      upper="upper"
+                      as="outer"
+                      axis="v"
+                    />
+                    <BandChart
+                      series={parts!.inner}
+                      lower="lower"
+                      upper="upper"
+                      as="inner"
+                      axis="v"
+                    />
+                  </>
+                ) : null}
                 <ScatterChart
                   series={raw!}
                   column="value"
@@ -251,6 +286,28 @@ export default function HomeHeroLive() {
           ]}
           selected={clip ? ['clip'] : []}
           onToggle={() => setClip((c) => !c)}
+        />
+        <Slider
+          label="sigma"
+          min={1.5}
+          max={4}
+          step={0.25}
+          value={sigma}
+          onChange={setSigma}
+          display={`${sigma.toFixed(2)}σ`}
+        />
+        <Slider
+          label="smooth"
+          min={200}
+          max={3000}
+          step={100}
+          value={smoothing}
+          onChange={setSmoothing}
+          display={
+            smoothing >= 1000
+              ? `${(smoothing / 1000).toFixed(1)}s`
+              : `${smoothing}ms`
+          }
         />
         <PlayButton playing={playing} onToggle={() => setPlaying((p) => !p)} />
       </ConceptControls>
