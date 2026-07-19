@@ -10,7 +10,8 @@
 // listed here, and the script FAILS if a listed symbol disappears from the
 // export surface, so the pages can't silently go stale.
 //
-// Output: src/api-model/<pkg>.json (gitignored; rebuilt by prestart/prebuild).
+// Output: src/api-model/<pkg>/<slug>.json — one file per page, each with its
+// page-local hover dictionary (gitignored; rebuilt by prestart/prebuild).
 
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -172,7 +173,9 @@ function printType(t) {
       return `{ ${ro}[${t.parameter} in ${printType(t.parameterType)}${as}]${opt}: ${printType(t.templateType)} }`;
     }
     case 'inferred':
-      return `infer ${t.name}`;
+      return t.constraint
+        ? `infer ${t.name} extends ${printType(t.constraint)}`
+        : `infer ${t.name}`;
     case 'rest':
       return `...${printType(t.elementType)}`;
     case 'conditional':
@@ -449,7 +452,11 @@ for (const entry of CHART_COMPONENTS) {
 }
 
 if (warnings.length) {
-  console.warn(`[api-model] ${warnings.length} type-printer warnings:`);
-  for (const w of [...new Set(warnings)]) console.warn(`  - ${w}`);
+  console.error(`[api-model] ${warnings.length} type-printer failures:`);
+  for (const w of [...new Set(warnings)]) console.error(`  - ${w}`);
+  // Fail loudly: an unhandled type kind means a page would silently render
+  // `unknown` where the source has a real type — same discipline as the
+  // curation-map guard above.
+  process.exit(1);
 }
 console.log(`[api-model] wrote ${pageCount} page model(s) to src/api-model/`);
