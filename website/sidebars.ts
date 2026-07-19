@@ -260,6 +260,8 @@ const sidebars: SidebarsConfig = {
                 'api/charts/x-axis',
                 'api/charts/y-axis',
                 'api/charts/canvas',
+                'api/charts/time-axis',
+                'api/charts/category-axis',
               ],
             },
             {

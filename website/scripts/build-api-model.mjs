@@ -53,6 +53,9 @@ const CHART_COMPONENTS = [
   { component: 'XAxis', props: 'XAxisProps', slug: 'x-axis' },
   { component: 'YAxis', props: 'YAxisProps', slug: 'y-axis' },
   { component: 'Canvas', props: 'CanvasProps', slug: 'canvas' },
+  // thin axis wrappers — both forward XAxisProps verbatim
+  { component: 'TimeAxis', props: 'XAxisProps', slug: 'time-axis' },
+  { component: 'CategoryAxis', props: 'XAxisProps', slug: 'category-axis' },
   // draw layers
   { component: 'LineChart', props: 'LineChartProps', slug: 'line-chart' },
   { component: 'AreaChart', props: 'AreaChartProps', slug: 'area-chart' },
