@@ -226,7 +226,32 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'API (pilot)',
       link: { type: 'doc', id: 'api/index' },
-      items: ['api/core/time', 'api/charts/line-chart'],
+      items: [
+        {
+          type: 'category',
+          label: 'pond-ts (core)',
+          items: [
+            'api/core/time',
+            'api/core/time-range',
+            'api/core/interval',
+            'api/core/event',
+            'api/core/sequence',
+            'api/core/bounded-sequence',
+            'api/core/time-series',
+            'api/core/partitioned-time-series',
+            'api/core/value-series',
+            'api/core/live-series',
+            'api/core/live-view',
+            'api/core/live-partitioned-series',
+            'api/core/live-partitioned-view',
+          ],
+        },
+        {
+          type: 'category',
+          label: '@pond-ts/charts',
+          items: ['api/charts/line-chart'],
+        },
+      ],
     },
   ],
 };

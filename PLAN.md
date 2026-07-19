@@ -1255,6 +1255,21 @@ site components — **centered on the primitives** (core: `Time`,
 `TimeRange`, … `TimeSeries`, `LiveSeries`; charts: one page per
 React component, docstring first then props).
 
+- **Core rollout shipped:** all 13 core-primitive pages — the three
+  temporal keys (`Time`, `TimeRange`, `Interval`), `Event`,
+  `Sequence` / `BoundedSequence`, the batch series (`TimeSeries`,
+  `PartitionedTimeSeries`, `ValueSeries`), and the live layer
+  (`LiveSeries`, `LiveView`, `LivePartitionedSeries`,
+  `LivePartitionedView`) — under a grouped sidebar. Models emit one
+  JSON per page (page-local hover dictionary), so a page loads only
+  its own chunk (`TimeSeries` alone is ~150 KB). Type printer covers
+  the full real surface with zero warnings (added
+  namedTupleMember / mapped / inferred / rest). Referenced-type
+  **hover cards** (kind badge, package, printed definition,
+  first-paragraph doc) resolve across both package JSONs.
+  `TimeSeries` / `LiveSeries` / `LiveView` lack class-level
+  docstrings in source (pages faithfully show none) — flagged as a
+  library docs chore.
 - **Pilot shipped:** `website/scripts/build-api-model.mjs`
   (`typedoc --json` → curated model in `src/api-model/`, gitignored,
   wired into prestart/prebuild; fails the build if a curated symbol

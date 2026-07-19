@@ -6,15 +6,31 @@ sidebar_position: 0
 
 A new home for the API reference, rendered **inside the site** from the
 TypeScript source: docstring first, centered on the core primitives rather
-than alphabetical declaration lists. Two pilot pages so far — the rest of
-the surface still lives in the [generated reference](/api) while this
-builds out.
+than alphabetical declaration lists. Everything here is extracted at build
+time (`typedoc --json` → curated model → site components), so it cannot
+drift from the code — and referenced type names in the type chips carry
+**hover cards** with their definition and doc.
 
-- [`Time`](./core/time) — a core temporal-key primitive, docstring +
-  constructor + members.
-- [`<LineChart>`](./charts/line-chart) — a charts component, docstring +
-  props.
+## pond-ts (core)
 
-Everything on these pages is extracted from the source at build time
-(`typedoc --json` → curated model → site components), so it cannot drift
-from the code.
+**Temporal keys** — [`Time`](./core/time),
+[`TimeRange`](./core/time-range), [`Interval`](./core/interval) — and
+[`Event`](./core/event), the key + payload pair.
+
+**Grids** — [`Sequence`](./core/sequence),
+[`BoundedSequence`](./core/bounded-sequence).
+
+**Batch series** — [`TimeSeries`](./core/time-series),
+[`PartitionedTimeSeries`](./core/partitioned-time-series),
+[`ValueSeries`](./core/value-series).
+
+**Live series** — [`LiveSeries`](./core/live-series),
+[`LiveView`](./core/live-view),
+[`LivePartitionedSeries`](./core/live-partitioned-series),
+[`LivePartitionedView`](./core/live-partitioned-view).
+
+## @pond-ts/charts
+
+[`<LineChart>`](./charts/line-chart) — docstring + props. The remaining
+chart components follow in the next tranche; until then the
+[generated reference](/api) still covers the full surface.

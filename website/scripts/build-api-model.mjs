@@ -24,9 +24,25 @@ const OUT_DIR = join(ROOT, 'src', 'api-model');
 // ---- curation maps (the pilot set) -----------------------------------------
 
 /** Core classes rendered as primitive pages, in sidebar order. */
-const CORE_CLASSES = ['Time'];
+const CORE_CLASSES = [
+  { name: 'Time', slug: 'time' },
+  { name: 'TimeRange', slug: 'time-range' },
+  { name: 'Interval', slug: 'interval' },
+  { name: 'Event', slug: 'event' },
+  { name: 'Sequence', slug: 'sequence' },
+  { name: 'BoundedSequence', slug: 'bounded-sequence' },
+  { name: 'TimeSeries', slug: 'time-series' },
+  { name: 'PartitionedTimeSeries', slug: 'partitioned-time-series' },
+  { name: 'ValueSeries', slug: 'value-series' },
+  { name: 'LiveSeries', slug: 'live-series' },
+  { name: 'LiveView', slug: 'live-view' },
+  { name: 'LivePartitionedSeries', slug: 'live-partitioned-series' },
+  { name: 'LivePartitionedView', slug: 'live-partitioned-view' },
+];
 /** Chart components rendered as docstring + props pages. */
-const CHART_COMPONENTS = [{ component: 'LineChart', props: 'LineChartProps' }];
+const CHART_COMPONENTS = [
+  { component: 'LineChart', props: 'LineChartProps', slug: 'line-chart' },
+];
 
 // ---- typedoc JSON helpers --------------------------------------------------
 
@@ -137,6 +153,28 @@ function printType(t) {
         .join('');
       return '`' + t.head + parts + '`';
     }
+    case 'namedTupleMember':
+      return `${t.name}${t.isOptional ? '?' : ''}: ${printType(t.element)}`;
+    case 'mapped': {
+      const ro =
+        t.readonlyModifier === '+'
+          ? 'readonly '
+          : t.readonlyModifier === '-'
+            ? '-readonly '
+            : '';
+      const opt =
+        t.optionalModifier === '+'
+          ? '?'
+          : t.optionalModifier === '-'
+            ? '-?'
+            : '';
+      const as = t.nameType ? ` as ${printType(t.nameType)}` : '';
+      return `{ ${ro}[${t.parameter} in ${printType(t.parameterType)}${as}]${opt}: ${printType(t.templateType)} }`;
+    }
+    case 'inferred':
+      return `infer ${t.name}`;
+    case 'rest':
+      return `...${printType(t.elementType)}`;
     case 'conditional':
       return `${printType(t.checkType)} extends ${printType(t.extendsType)} ? ${printType(t.trueType)} : ${printType(t.falseType)}`;
     case 'reflection': {
@@ -383,33 +421,35 @@ const PACKAGES = [
   { json: charts, pkgName: '@pond-ts/charts' },
 ];
 
-referencedNames.clear();
-const coreModel = { classes: {} };
-for (const name of CORE_CLASSES) {
-  coreModel.classes[name] = distillClass(core, name, 'pond-ts');
+// One JSON file per page, each carrying its own page-local hover dictionary —
+// webpack then loads only the visited page's model, which matters once
+// TimeSeries-scale pages exist.
+let pageCount = 0;
+function writePage(dir, slug, model) {
+  const types = buildTypeDict(PACKAGES);
+  mkdirSync(join(OUT_DIR, dir), { recursive: true });
+  writeFileSync(
+    join(OUT_DIR, dir, `${slug}.json`),
+    JSON.stringify({ model, types }, null, 1),
+  );
+  pageCount += 1;
 }
-coreModel.types = buildTypeDict(PACKAGES);
-writeFileSync(join(OUT_DIR, 'core.json'), JSON.stringify(coreModel, null, 1));
 
-referencedNames.clear();
-const chartsModel = { components: {} };
+for (const { name, slug } of CORE_CLASSES) {
+  referencedNames.clear();
+  writePage('core', slug, distillClass(core, name, 'pond-ts'));
+}
 for (const entry of CHART_COMPONENTS) {
-  chartsModel.components[entry.component] = distillComponent(
-    charts,
-    entry,
-    '@pond-ts/charts',
+  referencedNames.clear();
+  writePage(
+    'charts',
+    entry.slug,
+    distillComponent(charts, entry, '@pond-ts/charts'),
   );
 }
-chartsModel.types = buildTypeDict(PACKAGES);
-writeFileSync(
-  join(OUT_DIR, 'charts.json'),
-  JSON.stringify(chartsModel, null, 1),
-);
 
 if (warnings.length) {
   console.warn(`[api-model] ${warnings.length} type-printer warnings:`);
   for (const w of [...new Set(warnings)]) console.warn(`  - ${w}`);
 }
-console.log(
-  `[api-model] wrote ${Object.keys(coreModel.classes).length} core page(s), ${Object.keys(chartsModel.components).length} charts page(s) to src/api-model/`,
-);
+console.log(`[api-model] wrote ${pageCount} page model(s) to src/api-model/`);
