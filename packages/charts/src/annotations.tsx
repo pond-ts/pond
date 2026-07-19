@@ -670,6 +670,34 @@ export function Marker({
     (container.editAnnotations || editing) &&
     container.creating === null &&
     onChange !== undefined;
+  // An active drag lives in **plot-pixel space** (same contract as Region):
+  // the held pointer's px is re-derived against the current scale on every
+  // render, so the marker stays glued to the pointer while a live chart's
+  // range advances underneath — instead of riding away with the data between
+  // pointer events. Converges via the same half-pixel guard.
+  const activeDrag = useRef<{ pointerPx: number } | null>(null);
+  const lastEmit = useRef<number | null>(null);
+  const emitFromDrag = (fromEffect = false) => {
+    const d = activeDrag.current;
+    if (d === null || onChange === undefined) return;
+    const next =
+      snapToGuides(container, selfKey, d.pointerPx) ??
+      +container.xScale.invert(d.pointerPx);
+    const l = lastEmit.current;
+    if (l !== null && l === next) return;
+    if (
+      fromEffect &&
+      l !== null &&
+      Math.abs(container.xScale(next) - container.xScale(l)) < 0.5
+    ) {
+      return;
+    }
+    lastEmit.current = next;
+    onChange(next);
+  };
+  useLayoutEffect(() => {
+    emitFromDrag(true);
+  });
   const xs = useMemo(() => [at], [at]);
   // `label === false` (or '') ⇒ no chip; omitted ⇒ auto-label off the x formatter.
   const text = label === false ? '' : (label ?? container.formatTime(at));
@@ -744,13 +772,22 @@ export function Marker({
             onHover={reportHover}
             onSelect={select}
             onEdit={edit}
-            onDragActive={(a) => container.setDragging(a ? selfKey : null)}
-            onDrag={(px) =>
-              onChange?.(
-                snapToGuides(container, selfKey, px) ??
-                  +container.xScale.invert(px),
-              )
-            }
+            onDragActive={(a) => {
+              if (!a) {
+                activeDrag.current = null;
+                lastEmit.current = null;
+              }
+              container.setDragging(a ? selfKey : null);
+            }}
+            onDragStart={(px) => {
+              activeDrag.current = { pointerPx: px };
+            }}
+            onDrag={(px) => {
+              const d = activeDrag.current;
+              if (d === null) return;
+              d.pointerPx = px;
+              emitFromDrag();
+            }}
           />
         )}
       </svg>

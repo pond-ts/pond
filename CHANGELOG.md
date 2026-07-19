@@ -50,13 +50,13 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
-- **charts:** `<Region>` editing now works on a live, scrolling chart. An
-  active drag is held in **plot-pixel space** (grab offset, width, and the
-  resize pivot are captured as pixels at press) and re-emitted against the
-  current scale **every frame** — so the grabbed edge stays glued to the
-  pointer while the range advances underneath, instead of riding away with
-  the data between pointer events and lurching by the accumulated scroll on
-  the next move. On a static chart the behaviour is unchanged (a rigid
+- **charts:** `<Region>` and `<Marker>` editing now works on a live,
+  scrolling chart. An active drag is held in **plot-pixel space** (the
+  pointer, grab offset, width, and resize pivot are captured as pixels) and
+  re-emitted against the current scale **every frame** — so the grabbed mark
+  stays glued to the pointer while the range advances underneath, instead of
+  riding away with the data between pointer events and lurching by the
+  accumulated scroll on the next move. On a static chart the behaviour is unchanged (a rigid
   pixel-space move was already the semantics, and it is what stays correct
   across discontinuous trading-time gaps). The per-frame re-emit converges
   via a half-pixel guard, so consumers that derive their range from the wall
