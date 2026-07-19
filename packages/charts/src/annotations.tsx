@@ -1,6 +1,7 @@
 import {
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -1071,18 +1072,81 @@ export function Region({
     rampAt(FILL_MULT, bodyLevel(selectable, editable, hovering, selected));
   const showHandles = editable && (editing || hovering);
   const lane = container.labelLanes.get(selfKey)?.lane ?? 0;
-  // Body move-drag: capture the start position + pointer on press, then move by
-  // the TOTAL delta from there, so the *raw* position accumulates from a fixed
-  // origin. Snap is applied only to the output — never fed back into this
-  // accumulator — so once you drag past SNAP_PX the region releases cleanly
-  // instead of re-snapping on every small move.
-  const dragRef = useRef<{ from: number; to: number; startPx: number } | null>(
-    null,
-  );
-  // Edge resize pivots around the OPPOSITE edge, captured on press so it stays put
-  // even after the dragged edge crosses it — {@link orderRegion} then re-opens the
-  // region the other way instead of dead-ending at zero width.
-  const edgeRef = useRef<number | null>(null);
+  // An active drag lives entirely in **plot-pixel space**: the grab offset,
+  // width, and resize pivot are all captured as pixels at press, and every
+  // emit re-derives axis values against the *current* scale. On a static
+  // chart this is identical to a value-space drag; on a live chart whose
+  // range advances every frame it is what makes editing possible at all —
+  // the grabbed mark stays glued to the pointer while the scale slides
+  // underneath, instead of riding away with the data between pointer events.
+  // Snap is applied only to the output — never fed back into this state — so
+  // once you drag past SNAP_PX the region releases cleanly instead of
+  // re-snapping on every small move. The pivot is captured at drag-start so
+  // it stays fixed (on screen) even as the emitted bounds swap on cross —
+  // {@link orderRegion} re-opens the region the other way.
+  const activeDrag = useRef<
+    | { kind: 'body'; pointerPx: number; grabOffsetPx: number; widthPx: number }
+    | { kind: 'edge'; pointerPx: number; pivotPx: number }
+    | null
+  >(null);
+  const lastEmit = useRef<{ from: number; to: number } | null>(null);
+  const emitFromDrag = (fromEffect = false) => {
+    const d = activeDrag.current;
+    if (d === null || onChange === undefined) return;
+    let next: { from: number; to: number };
+    if (d.kind === 'body') {
+      const leftPx = d.pointerPx - d.grabOffsetPx;
+      const rightPx = leftPx + d.widthPx;
+      // Snap either edge to a guideline, shifting BOTH by the same pixel
+      // correction so the box keeps its width.
+      const sf = snapToGuides(container, selfKey, leftPx);
+      const st = snapToGuides(container, selfKey, rightPx);
+      const corr =
+        sf !== null
+          ? container.xScale(sf) - leftPx
+          : st !== null
+            ? container.xScale(st) - rightPx
+            : 0;
+      next = {
+        from: +container.xScale.invert(leftPx + corr),
+        to: +container.xScale.invert(rightPx + corr),
+      };
+    } else {
+      next = orderRegion(
+        snapToGuides(container, selfKey, d.pointerPx) ??
+          +container.xScale.invert(d.pointerPx),
+        +container.xScale.invert(d.pivotPx),
+      );
+    }
+    const l = lastEmit.current;
+    if (l !== null && l.from === next.from && l.to === next.to) return;
+    // The effect-driven re-emit must converge even when the consumer derives
+    // its range from the wall clock (each commit shifts the scale by ~1ms and
+    // the raw values never repeat exactly). Compare in *pixels* on the current
+    // scale: sub-half-pixel drift is settling noise — skip it; real
+    // frame-to-frame scroll (≥ half a pixel) re-pins. Pointer-event emits stay
+    // unconditional so the drag itself is never damped.
+    if (fromEffect && l !== null) {
+      const df = Math.abs(
+        container.xScale(next.from) - container.xScale(l.from),
+      );
+      const dt = Math.abs(container.xScale(next.to) - container.xScale(l.to));
+      if (df < 0.5 && dt < 0.5) return;
+    }
+    lastEmit.current = next;
+    onChange(next);
+  };
+  // A live chart advances its scale between pointer events — re-emit from the
+  // held pointer position on every render so the drag tracks the current
+  // scale, not just the last pointermove. The pixel-epsilon guard in
+  // emitFromDrag makes this converge instead of looping.
+  useLayoutEffect(() => {
+    emitFromDrag(true);
+  });
+  const endDrag = () => {
+    activeDrag.current = null;
+    lastEmit.current = null;
+  };
   const edge = (atX: number) => (
     <line
       x1={atX}
@@ -1141,40 +1205,27 @@ export function Region({
               onHover={reportHover}
               onSelect={select}
               onEdit={edit}
-              onDragActive={(a) => container.setDragging(a ? selfKey : null)}
+              onDragActive={(a) => {
+                if (!a) endDrag();
+                container.setDragging(a ? selfKey : null);
+              }}
               onDragStart={(px) => {
-                dragRef.current = { from, to, startPx: px };
+                // Rigid pixel-space move: each edge shifts the same pixels
+                // through the scale, so the box holds its shape even across a
+                // collapsed (trading-time) gap — and stays glued to the
+                // pointer on a scrolling scale.
+                activeDrag.current = {
+                  kind: 'body',
+                  pointerPx: px,
+                  grabOffsetPx: px - left,
+                  widthPx: spanW,
+                };
               }}
               onDrag={(px) => {
-                const s = dragRef.current;
-                if (s === null) return;
-                // Rigid move by the TOTAL pointer *pixel* delta from the press
-                // origin — each edge shifts the same pixels through the scale, so
-                // the box holds its shape even across a collapsed gap (a shared
-                // value-delta would drift the edges apart there).
-                const moved = moveRegionByPixels(
-                  container.xScale,
-                  s.from,
-                  s.to,
-                  px - s.startPx,
-                );
-                // Snap either edge to a guideline, shifting BOTH by the same pixel
-                // correction so the box keeps its width; snap-independent, so a
-                // drag past SNAP_PX releases cleanly.
-                const fpx = container.xScale(moved.from);
-                const tpx = container.xScale(moved.to);
-                const sf = snapToGuides(container, selfKey, fpx);
-                const st = snapToGuides(container, selfKey, tpx);
-                const d =
-                  sf !== null
-                    ? container.xScale(sf) - fpx
-                    : st !== null
-                      ? container.xScale(st) - tpx
-                      : 0;
-                onChange?.({
-                  from: +container.xScale.invert(fpx + d),
-                  to: +container.xScale.invert(tpx + d),
-                });
+                const d = activeDrag.current;
+                if (d === null) return;
+                d.pointerPx = px;
+                emitFromDrag();
               }}
             />
             {editable && (
@@ -1193,21 +1244,25 @@ export function Region({
                   onHover={reportHover}
                   onSelect={select}
                   onEdit={edit}
-                  onDragActive={(a) =>
-                    container.setDragging(a ? selfKey : null)
-                  }
-                  onDragStart={() => {
-                    edgeRef.current = to; // the fixed pivot = the far edge
+                  onDragActive={(a) => {
+                    if (!a) endDrag();
+                    container.setDragging(a ? selfKey : null);
                   }}
-                  onDrag={(px) =>
-                    onChange?.(
-                      orderRegion(
-                        snapToGuides(container, selfKey, px) ??
-                          +container.xScale.invert(px),
-                        edgeRef.current ?? to,
-                      ),
-                    )
-                  }
+                  onDragStart={(px) => {
+                    // Pivot = the far edge, captured in *pixels* — on a
+                    // scrolling scale it holds its screen position.
+                    activeDrag.current = {
+                      kind: 'edge',
+                      pointerPx: px,
+                      pivotPx: xb,
+                    };
+                  }}
+                  onDrag={(px) => {
+                    const d = activeDrag.current;
+                    if (d === null) return;
+                    d.pointerPx = px;
+                    emitFromDrag();
+                  }}
                 />
                 <DragArea
                   x={xb - EDGE_GRAB / 2}
@@ -1219,21 +1274,23 @@ export function Region({
                   onHover={reportHover}
                   onSelect={select}
                   onEdit={edit}
-                  onDragActive={(a) =>
-                    container.setDragging(a ? selfKey : null)
-                  }
-                  onDragStart={() => {
-                    edgeRef.current = from; // the fixed pivot = the near edge
+                  onDragActive={(a) => {
+                    if (!a) endDrag();
+                    container.setDragging(a ? selfKey : null);
                   }}
-                  onDrag={(px) =>
-                    onChange?.(
-                      orderRegion(
-                        snapToGuides(container, selfKey, px) ??
-                          +container.xScale.invert(px),
-                        edgeRef.current ?? from,
-                      ),
-                    )
-                  }
+                  onDragStart={(px) => {
+                    activeDrag.current = {
+                      kind: 'edge',
+                      pointerPx: px,
+                      pivotPx: xa,
+                    };
+                  }}
+                  onDrag={(px) => {
+                    const d = activeDrag.current;
+                    if (d === null) return;
+                    d.pointerPx = px;
+                    emitFromDrag();
+                  }}
                 />
               </>
             )}
