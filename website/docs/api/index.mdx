@@ -31,6 +31,26 @@ drift from the code — and referenced type names in the type chips carry
 
 ## @pond-ts/charts
 
-[`<LineChart>`](./charts/line-chart) — docstring + props. The remaining
-chart components follow in the next tranche; until then the
+Every React component, docstring first then props — referenced types
+carry hover cards.
+
+**Structure** — [`<ChartContainer>`](./charts/chart-container),
+[`<ChartRow>`](./charts/chart-row), [`<Layers>`](./charts/layers),
+[`<XAxis>`](./charts/x-axis), [`<YAxis>`](./charts/y-axis),
+[`<Canvas>`](./charts/canvas).
+
+**Draw layers** — [`<LineChart>`](./charts/line-chart),
+[`<AreaChart>`](./charts/area-chart),
+[`<BandChart>`](./charts/band-chart),
+[`<BarChart>`](./charts/bar-chart),
+[`<ScatterChart>`](./charts/scatter-chart),
+[`<BoxPlot>`](./charts/box-plot),
+[`<Candlestick>`](./charts/candlestick).
+
+**Annotations** — [`<Baseline>`](./charts/baseline),
+[`<Marker>`](./charts/marker), [`<Region>`](./charts/region),
+[`<YAxisIndicator>`](./charts/y-axis-indicator).
+
+Not yet covered here: `CategoryAxis` / `TimeAxis` (inline prop types —
+next tranche), data adapters, hooks, and scales. The
 [generated reference](/api) still covers the full surface.
