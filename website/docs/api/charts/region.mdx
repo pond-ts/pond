@@ -3,7 +3,9 @@ title: Region
 hide_title: true
 ---
 
-import { ApiComponentPage } from '@site/src/components/ApiDoc';
+import { ApiComponentPage, componentToc } from '@site/src/components/ApiDoc';
 import page from '@site/src/api-model/charts/region.json';
+
+export const toc = componentToc(page.model);
 
 <ApiComponentPage model={page.model} types={page.types} />

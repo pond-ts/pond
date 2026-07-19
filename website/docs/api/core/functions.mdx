@@ -3,7 +3,9 @@ title: Functions
 hide_title: true
 ---
 
-import { ApiFunctionsPage } from '@site/src/components/ApiDoc';
+import { ApiFunctionsPage, functionsToc } from '@site/src/components/ApiDoc';
 import page from '@site/src/api-model/core/functions.json';
+
+export const toc = functionsToc(page.model);
 
 <ApiFunctionsPage model={page.model} types={page.types} />

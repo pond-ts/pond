@@ -411,3 +411,60 @@ export function ApiFunctionsPage({
     </div>
   );
 }
+
+/** A Docusaurus TOC entry (mirrors the shape the MDX loader emits). */
+export interface TocItem {
+  value: string;
+  id: string;
+  level: 2 | 3;
+}
+
+const code = (name: string) => `<code>${name}</code>`;
+
+/**
+ * Right-sidebar TOC for a class page, mirroring render order: constructor,
+ * properties, then static methods before instance methods. Ids match the
+ * anchors the page components render.
+ */
+export function classToc(model: ClassModel): TocItem[] {
+  const toc: TocItem[] = [];
+  if (model.constructorSigs.length) {
+    toc.push({ value: 'Constructor', id: 'constructor', level: 2 });
+  }
+  if (model.properties.length) {
+    toc.push({ value: 'Properties', id: 'properties', level: 2 });
+    for (const p of model.properties) {
+      toc.push({ value: code(p.name), id: p.name, level: 3 });
+    }
+  }
+  if (model.staticMethods.length) {
+    toc.push({ value: 'Static methods', id: 'static-methods', level: 2 });
+    for (const m of model.staticMethods) {
+      toc.push({ value: code(m.name), id: m.name, level: 3 });
+    }
+  }
+  if (model.methods.length) {
+    toc.push({ value: 'Methods', id: 'methods', level: 2 });
+    for (const m of model.methods) {
+      toc.push({ value: code(m.name), id: m.name, level: 3 });
+    }
+  }
+  return toc;
+}
+
+/** TOC for a component page: the props, one entry each. */
+export function componentToc(model: ComponentModel): TocItem[] {
+  return [
+    { value: 'Props', id: 'props', level: 2 },
+    ...model.props.map(
+      (p): TocItem => ({ value: code(p.name), id: `prop-${p.name}`, level: 3 }),
+    ),
+  ];
+}
+
+/** TOC for a function-group page: one entry per function. */
+export function functionsToc(model: FunctionsModel): TocItem[] {
+  return model.functions.map(
+    (f): TocItem => ({ value: code(f.name), id: f.name, level: 2 }),
+  );
+}
