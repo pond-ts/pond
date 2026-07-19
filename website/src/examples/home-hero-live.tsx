@@ -5,10 +5,11 @@ import {
   ChartRow,
   Layers,
   LineChart,
+  Region,
   ScatterChart,
   YAxis,
 } from '@pond-ts/charts';
-import { LiveSeries } from 'pond-ts';
+import { LiveSeries, TimeRange } from 'pond-ts';
 import { useSnapshot } from '@pond-ts/react';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import {
@@ -123,6 +124,13 @@ export default function HomeHeroLive() {
   const [sigma, setSigma] = useState(2.5);
   const [smoothing, setSmoothing] = useState(800); // smooth() window, ms
   const [playing, setPlaying] = useState(true);
+  // The percentile region rides the live edge: its edges are stored as
+  // *offsets back from now*, so it holds its place while the window scrolls
+  // and stays draggable (drags are converted back to offsets on change).
+  const [regionOff, setRegionOff] = useState({
+    left: WINDOW_MS / 5,
+    right: 0,
+  });
 
   // One rAF loop drives both the data and the scroll. Pushes are scheduled
   // against the wall clock with catch-up (`nextPush`), not setInterval —
@@ -212,6 +220,25 @@ export default function HomeHeroLive() {
   const end = pausedAt.current ?? Date.now();
   const view: [number, number] = [end - WINDOW_MS, end];
 
+  // Live percentile readout over the region — real pond ops per render:
+  // within() slices the events under the region, reduce() runs the
+  // percentile reducers.
+  const regionFrom = end - regionOff.left;
+  const regionTo = end - regionOff.right;
+  let regionLabel = 'p25 – · p50 – · p75 –';
+  if (raw && raw.length > 0 && regionFrom < regionTo) {
+    const slice = raw.within(
+      new TimeRange({ start: regionFrom, end: regionTo }),
+    );
+    if (slice.length > 0) {
+      const fmt = (q: 'p25' | 'p50' | 'p75') => {
+        const v = slice.reduce('value', q) as number | undefined;
+        return v == null ? '–' : String(Math.round(v));
+      };
+      regionLabel = `p25 ${fmt('p25')} · p50 ${fmt('p50')} · p75 ${fmt('p75')}`;
+    }
+  }
+
   return (
     <>
       <div ref={boxRef} style={{ width: '100%' }}>
@@ -228,22 +255,22 @@ export default function HomeHeroLive() {
               />
               <Layers>
                 {!clip ? (
-                  <>
-                    <BandChart
-                      series={parts!.bands}
-                      lower="lower"
-                      upper="upper"
-                      as="outer"
-                      axis="v"
-                    />
-                    <BandChart
-                      series={parts!.inner}
-                      lower="lower"
-                      upper="upper"
-                      as="inner"
-                      axis="v"
-                    />
-                  </>
+                  <BandChart
+                    series={parts!.bands}
+                    lower="lower"
+                    upper="upper"
+                    as="outer"
+                    axis="v"
+                  />
+                ) : null}
+                {!clip ? (
+                  <BandChart
+                    series={parts!.inner}
+                    lower="lower"
+                    upper="upper"
+                    as="inner"
+                    axis="v"
+                  />
                 ) : null}
                 <ScatterChart
                   series={raw!}
@@ -267,6 +294,28 @@ export default function HomeHeroLive() {
                     radius={4}
                   />
                 ) : null}
+                <Region
+                  id="percentiles"
+                  from={regionFrom}
+                  to={regionTo}
+                  label={regionLabel}
+                  editing
+                  onChange={(next) => {
+                    // Clamp into the window, order-safe: right ∈ [0, W-600],
+                    // left ∈ [right+600, W] — a drag past either window edge
+                    // can never invert the span.
+                    const nowEnd = pausedAt.current ?? Date.now();
+                    const right = Math.min(
+                      Math.max(0, nowEnd - next.to),
+                      WINDOW_MS - 600,
+                    );
+                    const left = Math.min(
+                      Math.max(nowEnd - next.from, right + 600),
+                      WINDOW_MS,
+                    );
+                    setRegionOff({ left, right });
+                  }}
+                />
               </Layers>
             </ChartRow>
           </ChartContainer>

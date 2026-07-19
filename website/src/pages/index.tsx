@@ -65,8 +65,9 @@ function HomepageHeader(): ReactNode {
             <strong>smooth</strong> to tune it. The shaded bands are a rolling{' '}
             <code>baseline()</code> at 1σ and at the <strong>sigma</strong> you
             pick; flip <strong>clip</strong> and the outliers beyond it drop out
-            of the line, left behind as red dots. All pond analytics options;
-            the chart just redraws.{' '}
+            of the line, left behind as red dots. The shaded region reads live
+            percentiles over its span — grab an edge and hold it, even while the
+            stream runs. All pond analytics options; the chart just redraws.{' '}
             <Link to="/docs/pond-ts/transforms/anomaly-detection">
               How it works →
             </Link>
