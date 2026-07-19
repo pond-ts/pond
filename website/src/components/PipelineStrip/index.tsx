@@ -127,7 +127,9 @@ export default function PipelineStrip(): ReactNode {
         <code className={styles.chip}>
           series.baseline('cpu', &#123;
           <br />
-          &nbsp;&nbsp;window: '30s', sigma: 2 &#125;)
+          &nbsp;&nbsp;window: '30s', sigma: 2,
+          <br />
+          &nbsp;&nbsp;minSamples: 10 &#125;)
         </code>
       </div>
       <Arrow />
