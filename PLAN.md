@@ -1200,9 +1200,11 @@ typecheck` (not just eyeballing): `TimeSeries.timeRange()`
     rendering changes: `grid` + `sessionDividers` container props
     tabulated (#482). **Repo transferred to `pond-ts/pond`** mid-wave
     (#480 hosting migration → Cloudflare/pond-ts.org); local remote
-    updated. **Remaining P3 reference pages:** Theming, Data adapters,
-    Cheat sheet (canonical owner of the capability matrices), Rendering
-    & performance, Design philosophy (2), Accessibility, Troubleshooting,
+    updated. Theming (re-homed + expanded) and Cheat sheet (canonical
+    owner of the capability matrices) shipped in #487; API.md
+    agent-facing API map (#488) + CI guard (#489) landed alongside.
+    **Remaining P3 reference pages:** Data adapters, Rendering &
+    performance, Design philosophy (2), Accessibility, Troubleshooting,
     Coming-from-RTC migration, the financial end-to-end guide.
 - [ ] **P4 — guides library completion**: ops-dashboard, annotation
       workflows, and value-axis guides + remaining recipes.
