@@ -5,11 +5,12 @@ import {
   ChartRow,
   Layers,
   LineChart,
+  Marker,
   Region,
   ScatterChart,
   YAxis,
 } from '@pond-ts/charts';
-import { LiveSeries, TimeRange } from 'pond-ts';
+import { LiveSeries, Time, TimeRange } from 'pond-ts';
 import { useSnapshot } from '@pond-ts/react';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import {
@@ -131,6 +132,8 @@ export default function HomeHeroLive() {
     left: WINDOW_MS / 5,
     right: 0,
   });
+  // A draggable marker in the same riding frame: one offset back from now.
+  const [markerOff, setMarkerOff] = useState(WINDOW_MS * 0.55);
 
   // One rAF loop drives both the data and the scroll. Pushes are scheduled
   // against the wall clock with catch-up (`nextPush`), not setInterval —
@@ -225,6 +228,15 @@ export default function HomeHeroLive() {
   // percentile reducers.
   const regionFrom = end - regionOff.left;
   const regionTo = end - regionOff.right;
+  const markerAt = end - markerOff;
+  // The chip reads the smoothed trend under the marker — atOrBefore() is the
+  // real lookup a cursor readout would use.
+  const markerEvent =
+    parts !== null ? parts.trend.atOrBefore(new Time(markerAt)) : undefined;
+  const markerVal = markerEvent?.get('trend') as number | undefined;
+  const markerLabel =
+    markerVal == null ? 'trend –' : `trend ${Math.round(markerVal)}`;
+
   let regionLabel = 'p25 – · p50 – · p75 –';
   if (raw && raw.length > 0 && regionFrom < regionTo) {
     const slice = raw.within(
@@ -294,6 +306,18 @@ export default function HomeHeroLive() {
                     radius={4}
                   />
                 ) : null}
+                <Marker
+                  id="trend-readout"
+                  at={markerAt}
+                  label={markerLabel}
+                  editing
+                  onChange={(next) => {
+                    const nowEnd = pausedAt.current ?? Date.now();
+                    setMarkerOff(
+                      Math.min(Math.max(nowEnd - next, 0), WINDOW_MS),
+                    );
+                  }}
+                />
                 <Region
                   id="percentiles"
                   from={regionFrom}
