@@ -16,7 +16,9 @@ import type {
  *
  * Both arrays are length `length`. `x` is a zero-copy view of the key column's
  * `begin` buffer (immutable by contract — do not mutate); `y` is the value
- * column materialized to a `Float64Array`.
+ * column materialized to a `Float64Array`. `x` is **monotonically ascending**
+ * (a series' key column is sorted) — the draw layers and the viewport bisect
+ * (`culling.ts`) rely on it, as `sessionRuns` already does.
  */
 export interface ChartSeries {
   readonly x: Float64Array;
