@@ -57,7 +57,10 @@ const config: Config = {
       {
         // Standing rule (docs plan §4): re-homed pages keep or redirect
         // their slugs. Entries accumulate as pages move.
-        redirects: [],
+        redirects: [
+          // The API reference moved in-site (docs/api/); /api bookmarks live on.
+          { from: '/api', to: '/docs/api/' },
+        ],
       },
     ],
     './plugins/llms-txt.js',
