@@ -9,7 +9,7 @@ import ThemedImage from '@theme/ThemedImage';
 import Heading from '@theme/Heading';
 import LayerMap from '@site/src/components/LayerMap';
 import PipelineStrip from '@site/src/components/PipelineStrip';
-import CoreAnomalyLive from '@site/src/examples/core-anomaly-live';
+import HomeHeroLive from '@site/src/examples/home-hero-live';
 import styles from './index.module.css';
 
 function HomepageHeader(): ReactNode {
@@ -50,20 +50,21 @@ function HomepageHeader(): ReactNode {
             Explore an example
           </Link>
         </div>
-        {/* The first thing a visitor touches is a real pond chart: a live
-            stream, a rolling baseline() band, outliers flagged as they cross
-            it — the sigma control is a pond core option, not a chart prop. */}
+        {/* The first thing a visitor touches is a real pond chart: raw points
+            stream in, smooth() draws the trend, and the clip toggle filters
+            outliers via baseline() — analytics options, not chart props. */}
         <div className={styles.heroChart}>
           <BrowserOnly
             fallback={<div style={{ height: 300 }} aria-hidden="true" />}
           >
-            {() => <CoreAnomalyLive />}
+            {() => <HomeHeroLive />}
           </BrowserOnly>
           <p className={styles.heroChartCaption}>
-            Live, right now: a rolling <code>baseline()</code> band over a
-            streaming series, outliers flagged as they cross it. Drag{' '}
-            <strong>sigma</strong> — the control is a pond analytics option, the
-            chart just redraws.{' '}
+            Live, right now: raw points stream in and a real{' '}
+            <code>smooth()</code> draws the trend through them. Flip{' '}
+            <strong>clip</strong> — a <code>baseline()</code> pass filters the
+            outliers out of the line, leaving them behind as red dots. Both are
+            pond analytics calls; the chart just redraws.{' '}
             <Link to="/docs/pond-ts/transforms/anomaly-detection">
               How it works →
             </Link>
