@@ -152,6 +152,100 @@
   display: inline;
 }
 
+.typeRef {
+  position: relative;
+  cursor: help;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--pond-viz-1) 65%, transparent);
+}
+
+.typeRef:hover,
+.typeRef:focus-visible {
+  color: var(--pond-viz-1);
+}
+
+.typePop {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 40;
+  width: max-content;
+  max-width: 380px;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 10px;
+  background: var(--pond-surface, var(--ifm-background-surface-color));
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.14);
+  white-space: normal;
+  text-align: left;
+  font-family: var(--ifm-font-family-base);
+  font-weight: 400;
+}
+
+.typeRef:hover .typePop,
+.typeRef:focus-visible .typePop,
+.typeRef:focus-within .typePop {
+  display: block;
+}
+
+.typePopHead {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.35rem;
+}
+
+.typePopName {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--pond-ink);
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.typePopKind {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.7rem;
+  padding: 0.08rem 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--pond-viz-1) 12%, var(--pond-surface));
+  color: var(--pond-viz-1);
+  border: 1px solid color-mix(in srgb, var(--pond-viz-1) 40%, transparent);
+}
+
+.typePopPkg {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.72rem;
+  color: var(--pond-body);
+}
+
+.typePopDef {
+  display: block;
+  margin: 0.25rem 0 0.35rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 7px;
+  font-size: 0.78rem;
+  background: var(--pond-surface-2);
+  border: 1px solid var(--ifm-color-emphasis-200);
+  color: var(--pond-ink);
+  overflow-wrap: anywhere;
+}
+
+.typePopDoc {
+  display: block;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--pond-body);
+}
+
+.typePopDoc :global(p) {
+  margin: 0 0 0.3rem;
+}
+
 .returnsDoc {
   font-size: 0.88rem;
   color: var(--pond-body);

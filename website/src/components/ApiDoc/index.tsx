@@ -62,6 +62,69 @@ export interface ComponentModel {
   props: { name: string; type: string; optional: boolean; doc: string }[];
 }
 
+export interface TypeRefEntry {
+  kind: 'type' | 'interface' | 'class';
+  package: string;
+  definition?: string;
+  doc?: string;
+  sourceUrl?: string;
+}
+
+export type TypeDict = Record<string, TypeRefEntry>;
+
+/**
+ * A printed type string with known names turned into hover cards — the
+ * IDE-hover experience for references like `GapMode` inside a prop's type.
+ * Names come from the distiller's `types` dictionary; anything unknown
+ * (type params, external libs) renders as plain text.
+ */
+function TypeStr({
+  text,
+  types,
+}: {
+  text: string;
+  types?: TypeDict;
+}): ReactNode {
+  const names = types ? Object.keys(types) : [];
+  if (!names.length) return <>{text}</>;
+  const pattern = new RegExp(
+    `\\b(${names
+      .sort((a, b) => b.length - a.length)
+      .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('|')})\\b`,
+    'g',
+  );
+  const segments = text.split(pattern);
+  return (
+    <>
+      {segments.map((seg, i) => {
+        const entry = types?.[seg];
+        if (!entry) return <span key={i}>{seg}</span>;
+        return (
+          <span key={i} className={styles.typeRef} tabIndex={0}>
+            {seg}
+            <span className={styles.typePop} role="tooltip">
+              <span className={styles.typePopHead}>
+                <code className={styles.typePopName}>{seg}</code>
+                <span className={styles.typePopKind}>{entry.kind}</span>
+                <span className={styles.typePopPkg}>{entry.package}</span>
+              </span>
+              {entry.definition ? (
+                <code className={styles.typePopDef}>{entry.definition}</code>
+              ) : null}
+              {entry.doc ? (
+                <span className={styles.typePopDoc}>
+                  <Markdown>{entry.doc}</Markdown>
+                </span>
+              ) : null}
+            </span>
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
 /** Docstring prose — markdown, in the site's body style. */
 function Doc({ md }: { md: string }): ReactNode {
   if (!md) return null;
@@ -184,7 +247,13 @@ function MemberIndex({ model }: { model: ClassModel }): ReactNode {
 }
 
 /** A core primitive page: class docstring, constructor, members. */
-export function ApiClassPage({ model }: { model: ClassModel }): ReactNode {
+export function ApiClassPage({
+  model,
+  types,
+}: {
+  model: ClassModel;
+  types?: TypeDict;
+}): ReactNode {
   return (
     <div className={styles.page}>
       <Header
@@ -219,7 +288,9 @@ export function ApiClassPage({ model }: { model: ClassModel }): ReactNode {
                 <a className={styles.anchor} href={`#${p.name}`}>
                   <code className={styles.propName}>{p.name}</code>
                 </a>
-                <code className={styles.propType}>{p.type}</code>
+                <code className={styles.propType}>
+                  <TypeStr text={p.type} types={types} />
+                </code>
                 {p.readonly ? (
                   <span className={styles.staticBadge}>readonly</span>
                 ) : null}
@@ -259,8 +330,10 @@ export function ApiClassPage({ model }: { model: ClassModel }): ReactNode {
 /** A charts component page: docstring first, then the props as cards. */
 export function ApiComponentPage({
   model,
+  types,
 }: {
   model: ComponentModel;
+  types?: TypeDict;
 }): ReactNode {
   return (
     <div className={styles.page}>
@@ -282,7 +355,9 @@ export function ApiComponentPage({
               <a className={styles.anchor} href={`#prop-${p.name}`}>
                 <code className={styles.propName}>{p.name}</code>
               </a>
-              <code className={styles.propType}>{p.type}</code>
+              <code className={styles.propType}>
+                <TypeStr text={p.type} types={types} />
+              </code>
               {p.optional ? null : (
                 <span className={styles.requiredBadge}>required</span>
               )}

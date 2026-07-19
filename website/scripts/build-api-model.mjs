@@ -96,6 +96,8 @@ function splitComment(comment) {
 // ---- type printer ----------------------------------------------------------
 
 const warnings = [];
+/** Type names referenced while printing — feeds the hover-card dictionary. */
+const referencedNames = new Set();
 
 function printType(t) {
   if (!t) return 'unknown';
@@ -103,6 +105,7 @@ function printType(t) {
     case 'intrinsic':
       return t.name;
     case 'reference': {
+      referencedNames.add(t.name);
       const args = t.typeArguments?.length
         ? `<${t.typeArguments.map(printType).join(', ')}>`
         : '';
@@ -285,6 +288,69 @@ function distillComponent(pkgJson, { component, props }, pkgName) {
   return model;
 }
 
+// ---- type-reference hover dictionary ---------------------------------------
+
+const TYPE_ALIAS_KIND = 2097152;
+
+/**
+ * Resolve the type names collected during printing into hover-card entries.
+ * Looks the name up across every provided package JSON (a charts page's
+ * `TimeSeries<S>` resolves from core), keeping only exported aliases,
+ * interfaces, and classes — unresolved names (type params like `S`, external
+ * libs) simply get no hover.
+ */
+function buildTypeDict(packages) {
+  const dict = {};
+  const cap = (text) => (text.length > 240 ? `${text.slice(0, 240)}…` : text);
+  // Hover cards are glances, not pages: first paragraph of the doc only.
+  const firstPara = (md) => {
+    const para = md.split(/\n\s*\n/)[0].trim();
+    return para.length > 360 ? `${para.slice(0, 360)}…` : para;
+  };
+  for (const name of [...referencedNames].sort()) {
+    for (const { json, pkgName } of packages) {
+      const node = child(json, name);
+      if (!node) continue;
+      const doc = firstPara(partsToMd(node.comment?.summary).trim());
+      if (node.kind === TYPE_ALIAS_KIND) {
+        dict[name] = {
+          kind: 'type',
+          package: pkgName,
+          definition: cap(printType(node.type)),
+          doc,
+          sourceUrl: sourceUrl(node),
+        };
+      } else if (node.kind === KIND.interface) {
+        const members = (node.children ?? [])
+          .filter((c) => !hasModifier(c.comment, '@internal'))
+          .map(
+            (c) =>
+              `${c.name}${c.flags?.isOptional ? '?' : ''}: ${printType(c.type)}`,
+          )
+          .join('; ');
+        dict[name] = {
+          kind: 'interface',
+          package: pkgName,
+          definition: cap(`{ ${members} }`),
+          doc,
+          sourceUrl: sourceUrl(node),
+        };
+      } else if (node.kind === KIND.class) {
+        dict[name] = {
+          kind: 'class',
+          package: pkgName,
+          doc,
+          sourceUrl: sourceUrl(node),
+        };
+      } else {
+        continue;
+      }
+      break;
+    }
+  }
+  return dict;
+}
+
 // ---- main ------------------------------------------------------------------
 
 function generateTypedocJson(pkg) {
@@ -312,12 +378,20 @@ mkdirSync(OUT_DIR, { recursive: true });
 const core = generateTypedocJson('core');
 const charts = generateTypedocJson('charts');
 
+const PACKAGES = [
+  { json: core, pkgName: 'pond-ts' },
+  { json: charts, pkgName: '@pond-ts/charts' },
+];
+
+referencedNames.clear();
 const coreModel = { classes: {} };
 for (const name of CORE_CLASSES) {
   coreModel.classes[name] = distillClass(core, name, 'pond-ts');
 }
+coreModel.types = buildTypeDict(PACKAGES);
 writeFileSync(join(OUT_DIR, 'core.json'), JSON.stringify(coreModel, null, 1));
 
+referencedNames.clear();
 const chartsModel = { components: {} };
 for (const entry of CHART_COMPONENTS) {
   chartsModel.components[entry.component] = distillComponent(
@@ -326,6 +400,7 @@ for (const entry of CHART_COMPONENTS) {
     '@pond-ts/charts',
   );
 }
+chartsModel.types = buildTypeDict(PACKAGES);
 writeFileSync(
   join(OUT_DIR, 'charts.json'),
   JSON.stringify(chartsModel, null, 1),
