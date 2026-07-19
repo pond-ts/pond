@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { scaleLinear } from 'd3-scale';
 import { bandExtent, drawBand } from '../src/band.js';
 import { recordingContext } from './canvas-mock.js';
 import type { BandSeries } from '../src/data.js';
+import type { Scale } from '../src/line.js';
 
 const bs = (x: number[], lower: number[], upper: number[]): BandSeries => ({
   x: Float64Array.from(x),
@@ -108,5 +110,36 @@ describe('drawBand', () => {
       'fill',
       'restore',
     ]);
+  });
+});
+
+describe('drawBand — viewport culling (Phase 2)', () => {
+  const domainScale = (lo: number, hi: number): Scale =>
+    scaleLinear().domain([lo, hi]).range([lo, hi]) as unknown as Scale;
+  // 10 samples at x = 0,10,…,90.
+  const ramp = (): BandSeries =>
+    bs(
+      Array.from({ length: 10 }, (_, i) => i * 10),
+      Array.from({ length: 10 }, (_, i) => i),
+      Array.from({ length: 10 }, (_, i) => i + 5),
+    );
+
+  it('fills only the visible slice + one entry/exit point', () => {
+    const { ctx, calls } = recordingContext();
+    // view [25, 55] → 5 samples (entry 20 … exit 60). d3 area on 5 samples
+    // draws the upper edge (5 pen ops) + the lower edge back — far fewer than
+    // the 10-sample full band.
+    drawBand(ctx, ramp(), domainScale(25, 55), (v) => v, style);
+    const pen = calls.filter((c) => c.name === 'moveTo' || c.name === 'lineTo');
+    // Upper edge: 1 moveTo + 4 lineTo = 5; lower edge back: 5 lineTo; = 10 total
+    // for 5 samples, vs 20 for the full 10-sample band.
+    expect(pen.length).toBe(10);
+  });
+
+  it('draws the whole band when the view covers it', () => {
+    const { ctx, calls } = recordingContext();
+    drawBand(ctx, ramp(), domainScale(-100, 1000), (v) => v, style);
+    const pen = calls.filter((c) => c.name === 'moveTo' || c.name === 'lineTo');
+    expect(pen.length).toBe(20); // 10 samples, both edges
   });
 });

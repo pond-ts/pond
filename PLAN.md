@@ -388,9 +388,18 @@ best-effort.
     fix (#363, `bd8e1cf`); both share one `reduceFloat64ByBounds` engine. OHLC
     candlestick re-aggregation reuses `minMaxFirstLast` per column (Tidal
     consumer). `binBy` is the machinery the value axis later exposes as
-    `binByAxis`. **Remaining → chart-side (Phases 2–5), bench-ordered:**
-    viewport culling **first** (#256 failing metric), then the per-layer
-    decimator stage (device-pixel edges + gap-edge union + interaction
+    `binByAxis`. **Phase 2 (chart-side viewport culling) DONE:** line / area /
+    band layers clip to the visible slice (+1 entry/exit point) before path work
+    via `src/culling.ts` (`visibleWindow` bisect + `cullChartSeries` /
+    `cullBandSeries`), so a pan repaint is O(visible) not O(N) — the #256 failing
+    metric. Measured (`scripts/perf-culling.mjs`, JS path-gen cost): a 1M-point
+    line zoomed in drops from ~29 ms/frame (over the 60 fps budget) to ~0.06 ms;
+    fully-visible draws no-op (byte-identical). §2.3 interaction-reads-source
+    holds by construction (culling is draw-path only). Area keeps its fill
+    gradient over the full series so the cull is behavior-neutral. Scatter
+    (index-keyed accessors need an offset) + interval-keyed bar/candle/box are a
+    fast-follow. **Remaining → chart-side (Phases 3–5), bench-ordered:** the
+    per-layer decimator stage (device-pixel edges + gap-edge union + interaction
     invariant), then re-bench, then candlestick with Tidal; Path2D cache
     (M4.4) only if the pan bench still misses. `plot_width` + visible slice
     live in the chart; reducer math in pond (unifies with geo F-geo-2). **M4

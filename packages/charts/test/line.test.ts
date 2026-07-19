@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { scaleLinear } from 'd3-scale';
 import { drawLine, sessionRuns, yExtent } from '../src/line.js';
 import { resolveCurve } from '../src/curve.js';
 import { recordingContext, type CtxCall } from './canvas-mock.js';
 import type { ChartSeries } from '../src/data.js';
+import type { Scale } from '../src/line.js';
 
 const cs = (x: number[], y: number[]): ChartSeries => ({
   x: Float64Array.from(x),
@@ -513,5 +515,55 @@ describe('drawLine sessionBreaks (boundaries)', () => {
     );
     expect(calls.some((c) => c.name === 'setLineDash')).toBe(false);
     expect(calls.filter((c) => c.name === 'stroke')).toHaveLength(1);
+  });
+});
+
+describe('drawLine — viewport culling (Phase 2)', () => {
+  // A d3 linear scale carries `.domain()`, so drawLine culls against it (a bare
+  // `identity` function has none, so the other tests draw the whole series).
+  const domainScale = (lo: number, hi: number): Scale =>
+    scaleLinear().domain([lo, hi]).range([lo, hi]) as unknown as Scale;
+  // x = 0,10,…,90 (10 points), y = the same x so pixels are assertable.
+  const ramp = (): ChartSeries =>
+    cs(
+      Array.from({ length: 10 }, (_, i) => i * 10),
+      Array.from({ length: 10 }, (_, i) => i * 10),
+    );
+  const penOps = (calls: CtxCall[]) =>
+    calls.filter((c) => c.name === 'moveTo' || c.name === 'lineTo');
+
+  it('strokes only the visible slice + one entry/exit point', () => {
+    const { ctx, calls } = recordingContext();
+    // view [25, 55] → in-range 30,40,50; entry 20 + exit 60 → 5 points drawn.
+    drawLine(ctx, ramp(), domainScale(25, 55), (v) => v, style);
+    // 1 moveTo + 4 lineTo for 5 contiguous points.
+    expect(penOps(calls).map((c) => c.name)).toEqual([
+      'moveTo',
+      'lineTo',
+      'lineTo',
+      'lineTo',
+      'lineTo',
+    ]);
+    // The entry point (20) is the first stroked — off the left edge, so the
+    // crossing segment still draws.
+    expect(calls.find((c) => c.name === 'moveTo')?.args).toEqual([20, 20]);
+  });
+
+  it('draws every point when the view covers the whole series', () => {
+    const { ctx, calls } = recordingContext();
+    drawLine(ctx, ramp(), domainScale(-100, 1000), (v) => v, style);
+    // 10 points → 1 moveTo + 9 lineTo, none culled.
+    expect(penOps(calls)).toHaveLength(10);
+  });
+
+  it('interaction reads the source, not the culled view (§2.3 invariant)', () => {
+    // The cull is internal to drawLine; the ChartSeries the caller holds — the
+    // one sampleAt/hitTest read — is never mutated by a draw.
+    const series = ramp();
+    const before = Array.from(series.x);
+    const { ctx } = recordingContext();
+    drawLine(ctx, series, domainScale(25, 55), (v) => v, style);
+    expect(Array.from(series.x)).toEqual(before);
+    expect(series.length).toBe(10);
   });
 });

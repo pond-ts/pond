@@ -1,6 +1,7 @@
 import { line as d3line, curveLinear, type CurveFactory } from 'd3-shape';
 import type { ChartSeries } from './data.js';
 import type { LineStyle } from './theme.js';
+import { cullChartSeries } from './culling.js';
 import {
   bridgeGaps,
   collectGapEdges,
@@ -89,6 +90,14 @@ export function drawLine(
   gapConnectorOpacity: number = DEFAULT_GAP_CONNECTOR_OPACITY,
   boundaries: readonly number[] = [],
 ): void {
+  // Viewport culling (Phase 2): clip to the visible slice (+1 entry/exit point)
+  // before any path work, so a pan repaint strokes O(visible), not O(N). A no-op
+  // — the same `cs` object back — when the whole series is in view or `xScale`
+  // exposes no domain (a bare test stub), keeping the fully-visible hot path
+  // byte-identical. Everything below indexes `cs` relatively, so the zero-copy
+  // subarray view drops in transparently; `boundaries` are absolute instants that
+  // `sessionRuns` bisects by value, so they still cut the slice correctly.
+  cs = cullChartSeries(cs, xScale);
   // Split into independent index runs at each boundary; no boundary inside the
   // data ⇒ one run over the whole series (the hot path — no slicing, so the draw
   // is byte-identical to the pre-boundary single pass).
