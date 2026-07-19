@@ -134,6 +134,12 @@ function Signature({ sig }: { sig: SigModel }): ReactNode {
             ))}
         </ul>
       ) : null}
+      {sig.returnsDoc ? (
+        <div className={styles.returnsDoc}>
+          <span className={styles.returnsLabel}>Returns</span>{' '}
+          <Markdown>{sig.returnsDoc}</Markdown>
+        </div>
+      ) : null}
       {sig.examples?.map((ex) => (
         <CodeBlock key={ex.slice(0, 24)} language="ts">
           {ex}

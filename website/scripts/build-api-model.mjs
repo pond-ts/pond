@@ -230,6 +230,20 @@ function distillClass(pkgJson, name, pkgName) {
         doc: pdoc,
         example: pex,
       });
+    } else if (c.kind === KIND.accessor) {
+      // Getters render as properties (their read shape); a getter without a
+      // setter is readonly. Dropping these silently would lose members on
+      // accessor-bearing classes even though the pilot classes have none.
+      const get = c.getSignature;
+      if (!get || hasModifier(get.comment, '@internal')) continue;
+      const { doc: pdoc, example: pex } = splitComment(get.comment);
+      model.properties.push({
+        name: c.name,
+        type: printType(get.type),
+        readonly: !c.setSignature,
+        doc: pdoc,
+        example: pex,
+      });
     }
   }
   return model;
