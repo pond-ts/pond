@@ -84,6 +84,15 @@ type TimeKeyOnly<S extends SeriesSchema> =
     ? KeyColumnForSchema<S>
     : 'LiveView.keyColumn() supports time-keyed views only — use toTimeSeries() for other key kinds';
 
+/**
+ * A derived, subscribable live projection — the result of chainable live
+ * operators such as `filter`, `map`, `select`, `fill`, `diff`, and `rate`.
+ * A view subscribes to its source `LiveSource`, runs each event through
+ * its process function as it arrives (emitting a transformed event or
+ * skipping it), and mirrors source eviction — you obtain one from an
+ * operator rather than constructing it directly. Example:
+ * `live.filter((e) => (e.get('value') as number) > 5)`.
+ */
 export class LiveView<S extends SeriesSchema> implements LiveSource<S> {
   /** @internal */
   readonly [EMITS_EVICT] = true as const;
