@@ -1211,6 +1211,39 @@ Content-ownership rule (review-checklist item for every docs PR in
 this wave): every cross-cutting concept has one canonical page;
 everything else links — see the ownership table in the plan note §3a.
 
+## Core docs & landing wave — concept figures (kicked off 2026-07-17; first tranche shipped in #490, v0.48.1)
+
+Companion wave to the charts buildout, aimed at the **core-transform
+docs pages and landing story**: the thesis is "analytics AND
+visualization platform", so each core page gets a **codeless embedded
+concept figure** whose controls bind to **pond core options** (window,
+reducer, method, stride, sigma, smoothing strength) — never chart
+props — and every figure dogfoods real pond operators through real
+`@pond-ts/charts` primitives. Full plan:
+[docs/notes/core-and-landing-docs-plan-2026-07.md](docs/notes/core-and-landing-docs-plan-2026-07.md).
+Built by two agents sharing one branch/worktree; landed as one PR
+(#490) to keep the interleaved history, then released as **v0.48.1**.
+
+- **Shipped (#490):** `ConceptViz` shell (`BrowserOnly` mount,
+  `SegmentedControl` / `Slider` / `ToggleChips` / `PlayButton`);
+  figures on aggregate + reduce (water-drop ponds), byColumn (live
+  value-axis histogram), byValue (run-pace hero), align
+  (grid-construction, semantics verified against source), sampling
+  (static stride/reservoir + live stride with stable kept-subset),
+  smoothing (EMA/MA/LOESS over real SILSO sunspot data, one
+  bandwidth-matched strength slider), anomaly detection (live
+  `baseline()` band + out-of-band scatter, live sigma), rolling
+  (batch + live window figures — rolling-page agent); Queries page
+  columnar refresh; all seven Concepts-page Excalidraw PNGs redrawn
+  as theme-aware SVG components (`ConceptFigures/`).
+- **Dogfooding payoff:** building the smoothing figure surfaced a
+  real core bug — `smooth(…, 'loess')` was numerically unstable on
+  epoch-ms anchors (un-centred normal equations, cancellation).
+  Fixed + regression-pinned (second-spaced anchors; test verified to
+  fail on pre-fix code) in the same wave; released as v0.48.1.
+- **Remaining:** landing-page story + any core pages the plan note
+  lists beyond the transforms set (see note for the roster).
+
 ---
 
 ## Active experiments
@@ -4599,8 +4632,7 @@ retention`). Currently Path B (own deque); same API, perf
 
      ```ts
      type DurationString =
-       | `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`
-       | 'buffer';
+       `${number}${'ms' | 's' | 'm' | 'h' | 'd'}` | 'buffer';
 
      type FusedMapping<S extends SeriesSchema> = Readonly<
        Record<DurationString, FusedMappingValue<S>>
