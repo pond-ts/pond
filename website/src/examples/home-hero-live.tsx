@@ -68,6 +68,11 @@ function useMeasuredWidth<T extends HTMLElement>() {
 
 const PUSH_MS = 140;
 const WINDOW_MS = 14_000;
+// The view's right edge trails the true live edge by this much, so new data
+// lands off-screen and *flows into* view already smoothed and banded — no
+// pop-in, and the centered smooth() tail (max window 3s ⇒ 1.5s of future)
+// is fully settled by the time it becomes visible.
+const LEAD_MS = 1_600;
 const MAX_EVENTS = 220;
 const HEIGHT = 260;
 
@@ -111,15 +116,33 @@ export default function HomeHeroLive() {
   }, [base, blue, red]);
 
   const [boxRef, width] = useMeasuredWidth<HTMLDivElement>();
-  const live = useRef(
-    new LiveSeries({
+  const rand = useRef(mulberry32(17)).current;
+  const tick = useRef(0);
+  const nextValue = () => {
+    const i = tick.current++;
+    const mean = 52 + 15 * Math.sin(i / 30) + 6 * Math.sin(i / 9.5);
+    const noise = (rand() - 0.5) * 9;
+    const spike =
+      rand() < 0.045 ? (rand() < 0.5 ? -1 : 1) * (24 + rand() * 12) : 0;
+    return Math.max(2, Math.min(98, mean + noise + spike));
+  };
+  // Lazy one-time init, pre-filled with a full window of history (plus the
+  // lead) so the page loads mid-stream instead of watching the chart fill.
+  const liveRef = useRef<LiveSeries<typeof schema> | null>(null);
+  if (liveRef.current === null) {
+    const l = new LiveSeries({
       name: 'stream',
       schema,
       retention: { maxEvents: MAX_EVENTS },
-    }),
-  ).current;
-  const rand = useRef(mulberry32(17)).current;
-  const tick = useRef(0);
+    });
+    const n = Math.ceil((WINDOW_MS + LEAD_MS + 1000) / PUSH_MS);
+    const start = Date.now() - n * PUSH_MS;
+    for (let k = 0; k < n; k++) {
+      l.push([start + k * PUSH_MS, nextValue()]);
+    }
+    liveRef.current = l;
+  }
+  const live = liveRef.current;
 
   const [clip, setClip] = useState(false);
   const [sigma, setSigma] = useState(2.5);
@@ -160,13 +183,7 @@ export default function HomeHeroLive() {
         nextPush.current = now;
       }
       while (nextPush.current !== null && now >= nextPush.current) {
-        const i = tick.current++;
-        const mean = 52 + 15 * Math.sin(i / 30) + 6 * Math.sin(i / 9.5);
-        const noise = (rand() - 0.5) * 9;
-        const spike =
-          rand() < 0.045 ? (rand() < 0.5 ? -1 : 1) * (24 + rand() * 12) : 0;
-        const v = Math.max(2, Math.min(98, mean + noise + spike));
-        live.push([nextPush.current, v]);
+        live.push([nextPush.current, nextValue()]);
         nextPush.current += PUSH_MS;
       }
       setFrame((f) => (f + 1) & 0xffff);
@@ -220,7 +237,9 @@ export default function HomeHeroLive() {
   }, [raw, clip, sigma, smoothing]);
 
   const ready = raw !== null && parts !== null && width > 0;
-  const end = pausedAt.current ?? Date.now();
+  // Everything — view, region, marker — anchors to the *visible* right edge,
+  // which trails the true live edge by LEAD_MS.
+  const end = (pausedAt.current ?? Date.now()) - LEAD_MS;
   const view: [number, number] = [end - WINDOW_MS, end];
 
   // Live percentile readout over the region — real pond ops per render:
@@ -312,7 +331,7 @@ export default function HomeHeroLive() {
                   label={markerLabel}
                   editing
                   onChange={(next) => {
-                    const nowEnd = pausedAt.current ?? Date.now();
+                    const nowEnd = (pausedAt.current ?? Date.now()) - LEAD_MS;
                     setMarkerOff(
                       Math.min(Math.max(nowEnd - next, 0), WINDOW_MS),
                     );
@@ -328,7 +347,7 @@ export default function HomeHeroLive() {
                     // Clamp into the window, order-safe: right ∈ [0, W-600],
                     // left ∈ [right+600, W] — a drag past either window edge
                     // can never invert the span.
-                    const nowEnd = pausedAt.current ?? Date.now();
+                    const nowEnd = (pausedAt.current ?? Date.now()) - LEAD_MS;
                     const right = Math.min(
                       Math.max(0, nowEnd - next.to),
                       WINDOW_MS - 600,
