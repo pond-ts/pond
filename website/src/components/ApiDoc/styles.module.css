@@ -1,0 +1,195 @@
+.page {
+  max-width: 780px;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 2rem;
+  color: var(--pond-ink);
+}
+
+.kindBadge,
+.pkgBadge,
+.staticBadge,
+.requiredBadge {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.72rem;
+  padding: 0.14rem 0.5rem;
+  border-radius: 999px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.kindBadge {
+  background: color-mix(in srgb, var(--pond-viz-1) 12%, var(--pond-surface));
+  color: var(--pond-viz-1);
+  border: 1px solid color-mix(in srgb, var(--pond-viz-1) 40%, transparent);
+}
+
+.pkgBadge {
+  background: var(--pond-surface-2);
+  color: var(--pond-body);
+  border: 1px solid var(--ifm-color-emphasis-200);
+}
+
+.staticBadge {
+  background: color-mix(in srgb, var(--pond-viz-3) 10%, var(--pond-surface));
+  color: var(--pond-viz-3);
+  border: 1px solid color-mix(in srgb, var(--pond-viz-3) 35%, transparent);
+}
+
+.requiredBadge {
+  background: color-mix(in srgb, var(--pond-viz-mark) 12%, var(--pond-surface));
+  color: var(--pond-viz-mark);
+  border: 1px solid color-mix(in srgb, var(--pond-viz-mark) 40%, transparent);
+}
+
+.sourceLink {
+  font-size: 0.8rem;
+  color: var(--pond-body);
+  text-decoration: underline dotted;
+}
+
+.doc {
+  color: var(--ifm-font-color-base);
+  line-height: 1.6;
+}
+
+.doc p:last-child {
+  margin-bottom: 0.4rem;
+}
+
+.exampleChip {
+  margin: 0.35rem 0 0.8rem;
+}
+
+.exampleChip code {
+  display: inline-block;
+  padding: 0.3rem 0.65rem;
+  border-radius: 7px;
+  background: var(--pond-surface-2);
+  border: 1px solid var(--ifm-color-emphasis-200);
+  color: var(--pond-ink);
+  font-size: 0.82rem;
+}
+
+.memberIndex {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.8rem;
+  margin: 1rem 0 0.5rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  border-radius: 10px;
+  background: var(--pond-surface, var(--ifm-background-surface-color));
+}
+
+.memberIndex a {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.8rem;
+  color: var(--pond-body);
+}
+
+.memberIndex a:hover {
+  color: var(--pond-viz-1);
+}
+
+.sectionHead {
+  margin-top: 2.2rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--ifm-color-emphasis-200);
+  font-size: 1.25rem;
+}
+
+.member {
+  margin: 1.4rem 0 1.8rem;
+  scroll-margin-top: 80px;
+}
+
+.memberName {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 1.02rem;
+  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.anchor {
+  color: var(--pond-ink);
+}
+
+.anchor:hover {
+  color: var(--pond-viz-1);
+  text-decoration: none;
+}
+
+.signature {
+  margin-bottom: 0.6rem;
+}
+
+.signature :global(.theme-code-block) {
+  margin-bottom: 0.6rem;
+  box-shadow: none;
+  border: 1px solid var(--ifm-color-emphasis-200);
+}
+
+.paramList {
+  font-size: 0.88rem;
+  color: var(--pond-body);
+}
+
+.paramList li > :global(p) {
+  display: inline;
+}
+
+.propCards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  margin-top: 1rem;
+}
+
+.propCard {
+  padding: 0.85rem 1rem 0.6rem;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  border-radius: 10px;
+  background: var(--pond-surface, var(--ifm-background-surface-color));
+  scroll-margin-top: 80px;
+}
+
+.propHead {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 0.45rem;
+}
+
+.propName {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--pond-viz-1);
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.propType {
+  font-size: 0.8rem;
+  color: var(--pond-body);
+  background: var(--pond-surface-2);
+  border: 1px solid var(--ifm-color-emphasis-200);
+  border-radius: 6px;
+  padding: 0.1rem 0.45rem;
+  overflow-wrap: anywhere;
+}

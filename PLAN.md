@@ -1246,6 +1246,31 @@ Built by two agents sharing one branch/worktree; landed as one PR
 - **Remaining:** landing-page story + any core pages the plan note
   lists beyond the transforms set (see note for the roster).
 
+## In-site API reference (pilot; kicked off 2026-07-19)
+
+**Direction (pjm17971):** replace the typedoc HTML sub-sites under
+`/generated-api/*` with reference pages that are fully part of the
+site — extract TS → JSON, distill to a curated model, render with
+site components — **centered on the primitives** (core: `Time`,
+`TimeRange`, … `TimeSeries`, `LiveSeries`; charts: one page per
+React component, docstring first then props).
+
+- **Pilot shipped:** `website/scripts/build-api-model.mjs`
+  (`typedoc --json` → curated model in `src/api-model/`, gitignored,
+  wired into prestart/prebuild; fails the build if a curated symbol
+  vanishes from the export surface), `ApiDoc` components
+  (`ApiClassPage` / `ApiComponentPage` — docstring-first, house
+  "Example:" split into code chips, member index, prop cards), and
+  two pages under an "API (pilot)" sidebar group: `Time` (class) and
+  `<LineChart>` (component). Docstrings render as markdown
+  (react-markdown); signatures as highlighted TS.
+- **Known pilot limits (the rollout backlog):** `{@link}` renders as
+  code, not resolved cross-page links; type printer covers the
+  common tree kinds with an `unknown` fallback + build warning;
+  `TimeSeries`-scale pages need collapsed generics + grouped method
+  categories; typedoc sub-sites stay live until parity, then `/api`
+  swaps over.
+
 ---
 
 ## Active experiments
@@ -4634,7 +4659,8 @@ retention`). Currently Path B (own deque); same API, perf
 
      ```ts
      type DurationString =
-       `${number}${'ms' | 's' | 'm' | 'h' | 'd'}` | 'buffer';
+       | `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`
+       | 'buffer';
 
      type FusedMapping<S extends SeriesSchema> = Readonly<
        Record<DurationString, FusedMappingValue<S>>
