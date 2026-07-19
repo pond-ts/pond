@@ -781,6 +781,14 @@ type TrustedStoreInput<S extends SeriesSchema> = {
   readonly [TRUSTED_STORE_SENTINEL]: SeriesStore<S>;
 };
 
+/**
+ * An immutable, schema-typed, ordered collection of events — the batch
+ * layer's core primitive. A series is constructed whole from complete data
+ * and never mutated: every transform (`filter`, `align`, `rollup`, …)
+ * returns a new `TimeSeries`, so the full analytical surface can sort,
+ * scan, or index freely. Example:
+ * `new TimeSeries({ name, schema, rows })`.
+ */
 export class TimeSeries<S extends SeriesSchema> {
   readonly name: string;
   readonly schema: S;

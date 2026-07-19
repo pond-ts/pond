@@ -214,6 +214,14 @@ type EvictListener<S extends SeriesSchema> = (
 
 // ── LiveSeries ──────────────────────────────────────────────────
 
+/**
+ * A mutable, append-optimized event buffer for live ingestion — the entry
+ * point to the live layer. `push` validates rows against the same schema
+ * as `TimeSeries`, retention (`maxEvents` / `maxAge`) bounds the buffer,
+ * and subscribers react on the `'event'`, `'batch'`, and `'evict'`
+ * channels; snapshot to the batch layer at any time with `toTimeSeries()`.
+ * Example: `new LiveSeries({ name, schema, retention: { maxEvents: 10_000 } })`.
+ */
 export class LiveSeries<S extends SeriesSchema> {
   /** @internal */
   readonly [EMITS_EVICT] = true as const;
