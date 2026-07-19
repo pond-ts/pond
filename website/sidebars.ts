@@ -70,7 +70,7 @@ const sidebars: SidebarsConfig = {
         {
           type: 'link',
           label: 'API reference (core)',
-          href: 'pathname:///generated-api/core/',
+          href: '/docs/api/',
         },
       ],
     },
@@ -186,7 +186,7 @@ const sidebars: SidebarsConfig = {
         {
           type: 'link',
           label: 'API reference (charts)',
-          href: 'pathname:///generated-api/charts/',
+          href: '/docs/api/',
         },
       ],
     },
