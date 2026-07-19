@@ -1255,6 +1255,19 @@ site components — **centered on the primitives** (core: `Time`,
 `TimeRange`, … `TimeSeries`, `LiveSeries`; charts: one page per
 React component, docstring first then props).
 
+- **Functions tranche + /api swap-over shipped:** function-group
+  pages (`ApiFunctionsPage` — several free functions per page, indexed
+  and anchored, grouped the way API.md groups them): core
+  `Functions` (`toTimeRange`, `top`); charts `Data adapters` (the 10
+  `*FromTimeSeries` / stacks / category helpers), `Theming`
+  (`useChartTheme`, `cssVarTheme`), `Scales & live values`
+  (`scaleTradingTime`, `scaleBand`, `createLiveValue`). **`/api` now
+  redirects to the in-site reference**; navbar/footer repointed; the
+  13 doc-page deep links into `/generated-api/charts|core/` rewritten
+  to in-site pages; the core and charts typedoc HTML sub-sites
+  retired from the build chain (react / fit / financial sub-sites
+  remain, linked from the API index, until their own tranches).
+  Sidebar label dropped "(pilot)".
 - **Charts rollout shipped:** all 17 React components with Props
   interfaces, grouped Structure (`ChartContainer`, `ChartRow`,
   `Layers`, `XAxis`, `YAxis`, `Canvas`) / Draw layers (the seven

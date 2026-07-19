@@ -70,7 +70,7 @@ const sidebars: SidebarsConfig = {
         {
           type: 'link',
           label: 'API reference (core)',
-          href: 'pathname:///generated-api/core/',
+          href: '/docs/api/',
         },
       ],
     },
@@ -186,7 +186,7 @@ const sidebars: SidebarsConfig = {
         {
           type: 'link',
           label: 'API reference (charts)',
-          href: 'pathname:///generated-api/charts/',
+          href: '/docs/api/',
         },
       ],
     },
@@ -224,7 +224,7 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'API (pilot)',
+      label: 'API reference',
       link: { type: 'doc', id: 'api/index' },
       items: [
         {
@@ -244,6 +244,7 @@ const sidebars: SidebarsConfig = {
             'api/core/live-view',
             'api/core/live-partitioned-series',
             'api/core/live-partitioned-view',
+            'api/core/functions',
           ],
         },
         {
@@ -285,6 +286,15 @@ const sidebars: SidebarsConfig = {
                 'api/charts/marker',
                 'api/charts/region',
                 'api/charts/y-axis-indicator',
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Functions',
+              items: [
+                'api/charts/data-adapters',
+                'api/charts/theming',
+                'api/charts/scales-and-live',
               ],
             },
           ],

@@ -79,6 +79,49 @@ const CHART_COMPONENTS = [
   },
 ];
 
+/**
+ * Function-group pages: free functions rendered several-to-a-page, grouped
+ * the way API.md groups them (adapters / theming / scales), not one page per
+ * tiny function.
+ */
+const FUNCTION_PAGES = [
+  {
+    pkg: 'core',
+    slug: 'functions',
+    title: 'Functions',
+    functions: ['toTimeRange', 'top'],
+  },
+  {
+    pkg: 'charts',
+    slug: 'data-adapters',
+    title: 'Data adapters',
+    functions: [
+      'fromTimeSeries',
+      'bandFromTimeSeries',
+      'barsFromTimeSeries',
+      'boxFromTimeSeries',
+      'ohlcFromTimeSeries',
+      'stacksFromGroups',
+      'stacksFromColumns',
+      'stacksFromBins',
+      'categoryStack',
+      'transposeRow',
+    ],
+  },
+  {
+    pkg: 'charts',
+    slug: 'theming',
+    title: 'Theming',
+    functions: ['useChartTheme', 'cssVarTheme'],
+  },
+  {
+    pkg: 'charts',
+    slug: 'scales-and-live',
+    title: 'Scales & live values',
+    functions: ['scaleTradingTime', 'scaleBand', 'createLiveValue'],
+  },
+];
+
 // ---- typedoc JSON helpers --------------------------------------------------
 
 const KIND = {
@@ -363,6 +406,32 @@ function distillComponent(pkgJson, { component, props }, pkgName) {
   return model;
 }
 
+function distillFunctionPage(pkgJson, page, pkgName) {
+  const model = {
+    name: page.title,
+    package: pkgName,
+    kind: 'functions',
+    functions: [],
+  };
+  for (const name of page.functions) {
+    const fn = child(pkgJson, name);
+    if (!fn || fn.kind !== KIND.function) {
+      throw new Error(
+        `curated function ${name} not found in ${pkgName} exports`,
+      );
+    }
+    if (hasModifier(fn.signatures?.[0]?.comment, '@internal')) continue;
+    model.functions.push({
+      name,
+      sourceUrl: sourceUrl(fn),
+      signatures: (fn.signatures ?? []).map((sig) =>
+        distillSignature(sig, { name }),
+      ),
+    });
+  }
+  return model;
+}
+
 // ---- type-reference hover dictionary ---------------------------------------
 
 const TYPE_ALIAS_KIND = 2097152;
@@ -483,6 +552,14 @@ for (const entry of CHART_COMPONENTS) {
     entry.slug,
     distillComponent(charts, entry, '@pond-ts/charts'),
   );
+}
+for (const page of FUNCTION_PAGES) {
+  referencedNames.clear();
+  const { json, pkgName } =
+    page.pkg === 'core'
+      ? { json: core, pkgName: 'pond-ts' }
+      : { json: charts, pkgName: '@pond-ts/charts' };
+  writePage(page.pkg, page.slug, distillFunctionPage(json, page, pkgName));
 }
 
 if (warnings.length) {
