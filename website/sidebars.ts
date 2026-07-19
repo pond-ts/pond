@@ -249,7 +249,45 @@ const sidebars: SidebarsConfig = {
         {
           type: 'category',
           label: '@pond-ts/charts',
-          items: ['api/charts/line-chart'],
+          items: [
+            {
+              type: 'category',
+              label: 'Structure',
+              items: [
+                'api/charts/chart-container',
+                'api/charts/chart-row',
+                'api/charts/layers',
+                'api/charts/x-axis',
+                'api/charts/y-axis',
+                'api/charts/canvas',
+                'api/charts/time-axis',
+                'api/charts/category-axis',
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Draw layers',
+              items: [
+                'api/charts/line-chart',
+                'api/charts/area-chart',
+                'api/charts/band-chart',
+                'api/charts/bar-chart',
+                'api/charts/scatter-chart',
+                'api/charts/box-plot',
+                'api/charts/candlestick',
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Annotations',
+              items: [
+                'api/charts/baseline',
+                'api/charts/marker',
+                'api/charts/region',
+                'api/charts/y-axis-indicator',
+              ],
+            },
+          ],
         },
       ],
     },

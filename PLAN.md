@@ -1255,6 +1255,15 @@ site components — **centered on the primitives** (core: `Time`,
 `TimeRange`, … `TimeSeries`, `LiveSeries`; charts: one page per
 React component, docstring first then props).
 
+- **Charts rollout shipped:** all 17 React components with Props
+  interfaces, grouped Structure (`ChartContainer`, `ChartRow`,
+  `Layers`, `XAxis`, `YAxis`, `Canvas`) / Draw layers (the seven
+  chart types) / Annotations (`Baseline`, `Marker`, `Region`,
+  `YAxisIndicator`). `TimeAxis` / `CategoryAxis` ride along as
+  thin `XAxisProps` wrappers (Layer 2 catch — they were mislabelled
+  "inline prop types"). Not yet covered: data adapters, hooks,
+  scales (functions, not components — a different page shape) — the
+  remaining gap before `/api` can swap over.
 - **Core rollout shipped:** all 13 core-primitive pages — the three
   temporal keys (`Time`, `TimeRange`, `Interval`), `Event`,
   `Sequence` / `BoundedSequence`, the batch series (`TimeSeries`,

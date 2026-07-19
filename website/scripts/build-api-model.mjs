@@ -42,7 +42,41 @@ const CORE_CLASSES = [
 ];
 /** Chart components rendered as docstring + props pages. */
 const CHART_COMPONENTS = [
+  // structure
+  {
+    component: 'ChartContainer',
+    props: 'ChartContainerProps',
+    slug: 'chart-container',
+  },
+  { component: 'ChartRow', props: 'ChartRowProps', slug: 'chart-row' },
+  { component: 'Layers', props: 'LayersProps', slug: 'layers' },
+  { component: 'XAxis', props: 'XAxisProps', slug: 'x-axis' },
+  { component: 'YAxis', props: 'YAxisProps', slug: 'y-axis' },
+  { component: 'Canvas', props: 'CanvasProps', slug: 'canvas' },
+  // thin axis wrappers — both forward XAxisProps verbatim
+  { component: 'TimeAxis', props: 'XAxisProps', slug: 'time-axis' },
+  { component: 'CategoryAxis', props: 'XAxisProps', slug: 'category-axis' },
+  // draw layers
   { component: 'LineChart', props: 'LineChartProps', slug: 'line-chart' },
+  { component: 'AreaChart', props: 'AreaChartProps', slug: 'area-chart' },
+  { component: 'BandChart', props: 'BandChartProps', slug: 'band-chart' },
+  { component: 'BarChart', props: 'BarChartProps', slug: 'bar-chart' },
+  {
+    component: 'ScatterChart',
+    props: 'ScatterChartProps',
+    slug: 'scatter-chart',
+  },
+  { component: 'BoxPlot', props: 'BoxPlotProps', slug: 'box-plot' },
+  { component: 'Candlestick', props: 'CandlestickProps', slug: 'candlestick' },
+  // annotations
+  { component: 'Baseline', props: 'BaselineProps', slug: 'baseline' },
+  { component: 'Marker', props: 'MarkerProps', slug: 'marker' },
+  { component: 'Region', props: 'RegionProps', slug: 'region' },
+  {
+    component: 'YAxisIndicator',
+    props: 'YAxisIndicatorProps',
+    slug: 'y-axis-indicator',
+  },
 ];
 
 // ---- typedoc JSON helpers --------------------------------------------------
