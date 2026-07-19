@@ -23,6 +23,39 @@
   margin: 0;
 }
 
+.group {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--ifm-color-emphasis-200);
+}
+
+.group:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
+.groupHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.groupLayer {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ifm-color-emphasis-600);
+}
+
+.groupBlurb {
+  font-size: 0.88rem;
+  color: var(--pond-body);
+}
+
 .buttons {
   display: flex;
   flex-wrap: wrap;

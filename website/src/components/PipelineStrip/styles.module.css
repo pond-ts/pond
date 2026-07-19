@@ -1,0 +1,89 @@
+.strip {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.1rem 1.25rem;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  border-radius: 12px;
+  background: var(--pond-surface, var(--ifm-background-surface-color));
+}
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.stage_chart {
+  composes: stage;
+  flex: 1;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.stageLabel {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ifm-color-emphasis-600);
+}
+
+.rows {
+  border-collapse: collapse;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.76rem;
+  color: var(--pond-ink, var(--ifm-font-color-base));
+  display: table;
+  margin: 0;
+}
+
+.rows td {
+  border: none;
+  padding: 0.05rem 0.5rem 0.05rem 0;
+  background: transparent;
+}
+
+.rows tr {
+  border: none;
+  background: transparent !important;
+}
+
+.chip {
+  display: inline-block;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  border-radius: 8px;
+  background: var(--pond-surface-2, var(--ifm-color-emphasis-100));
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--pond-ink, var(--ifm-font-color-base));
+}
+
+.chartBox {
+  width: 100%;
+  min-width: 180px;
+}
+
+.arrow {
+  font-size: 1.3rem;
+  color: var(--pond-viz-1, var(--ifm-color-primary));
+  flex-shrink: 0;
+}
+
+@media (max-width: 860px) {
+  .strip {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .arrow {
+    align-self: center;
+    transform: rotate(90deg);
+  }
+
+  .stage_chart {
+    width: 100%;
+  }
+}

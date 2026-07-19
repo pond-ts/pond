@@ -4,7 +4,8 @@ import { pondCodeTheme } from './src/prism-pond-theme';
 
 const config: Config = {
   title: 'Pond',
-  tagline: 'Typed time series primitives for modern TypeScript projects',
+  tagline:
+    'Time-series analytics and live visualization for TypeScript — one typed platform',
   favicon: 'img/pond-favicon.svg',
   future: {
     v4: true,
