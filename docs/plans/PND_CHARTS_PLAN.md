@@ -116,15 +116,19 @@ Deferred-until-a-design-call items, none blocking: scatter `inline`
 **2D-nearest** readout (needs the pointer's y — a cursor-model change);
 scatter flag staff from the dot's top for large encoded marks; the "‹ VAL"
 callout; chip-vs-chip de-overlap (inline, and box+line in one row);
-**tracker-label-by-`as`** on Band/Box/Candle (friction F-charts-8 §3 —
-`sampleAt` hardcodes column names; prerequisite for the candlestick legend
-merge); the **y-oriented region cursor** for horizontal histograms
+the **y-oriented region cursor** for horizontal histograms
 ([docs/notes/y-oriented-region-cursor-2026-07.md](../notes/y-oriented-region-cursor-2026-07.md),
 parked until a real consumer needs it); the **`pointercancel` clear-only
 fix** — the region cursor currently commits the span on `pointercancel`
 (pre-existing; should clear instead — Layer-2 follow-up from #509). Timezone
 control for the cursor readout is tracked with the trading-time work
 ([PND-TCAL] in [PND_FINANCIAL_PLAN.md](PND_FINANCIAL_PLAN.md)).
+
+**Done from this backlog:** tracker-label-by-`as` (F-charts-8 §3) shipped in
+#511 — BandChart edges and Candlestick `showOHLC` pills adopted BoxPlot's
+`"<as> <role>"` qLabel convention (`iv lower`, `SPY high`), so readout/legend
+merge keys are the series identity; no-`as` labels unchanged. This was the
+[PND-LEGEND] label-source prerequisite.
 
 ### [PND-AXES] — Axis backlog + value-axis naming follow-up
 

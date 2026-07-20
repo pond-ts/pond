@@ -61,8 +61,8 @@ gate that flips the first publish. Plan:
 - **[PND-YTICKS]** — `YAxis` height-derived tick density + explicit
   `tickCount` override (#508 item 4; the width-derived-x precedent). Small.
 - **[PND-CURSOR]** — Cursor/readout polish backlog (scatter 2D-nearest,
-  chip de-overlap, tracker-label-by-`as`, y-oriented region cursor,
-  `pointercancel` clear-only fix).
+  chip de-overlap, y-oriented region cursor, `pointercancel` clear-only
+  fix).
 - **[PND-AXES]** — Axis backlog (label align, relative time, custom ticks,
   scale variety) + the deferred value-axis naming follow-up.
 - **[PND-VALAX]** — Value axis: widen Box/Candlestick x; grow the

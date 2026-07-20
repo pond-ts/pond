@@ -479,7 +479,10 @@ export interface TrackerSample {
   readonly value: number;
   /** Dot / label colour — the layer's resolved style colour. */
   readonly color: string;
-  /** Series identity (`as` ?? column) — labels the value in a readout. */
+  /** Labels the value in a readout: the series identity (`as` ?? column) for a
+   *  single-value mark; a multi-value mark (band edges, box quantiles, an OHLC
+   *  quote) emits `"<as> <role>"` composites (`iv lower`, `SPY high`) when its
+   *  `as` is set, else the raw column / role word. */
   readonly label: string;
 }
 
