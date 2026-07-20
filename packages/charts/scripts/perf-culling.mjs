@@ -20,8 +20,30 @@
 
 import { performance } from 'node:perf_hooks';
 import { drawLine } from '../dist/line.js';
+import { drawBars } from '../dist/bars.js';
 
 const style = { color: '#000', width: 1 };
+const barStyle = {
+  fill: '#abc',
+  opacity: 0.85,
+  highlight: '#fff',
+  gap: 0,
+  minWidth: 1,
+  outlineWidth: 2,
+};
+
+/** A BarSeries of `n` contiguous interval bars on a uniform 1s grid. */
+function makeBars(n) {
+  const begin = new Float64Array(n);
+  const end = new Float64Array(n);
+  const y = new Float64Array(n);
+  for (let i = 0; i < n; i += 1) {
+    begin[i] = i * 1000;
+    end[i] = i * 1000 + 1000;
+    y[i] = 50 + 35 * Math.sin(i / 5_000);
+  }
+  return { begin, end, y, length: n };
+}
 
 /** A ChartSeries of `n` points on a uniform 1s grid, sine values. */
 function makeSeries(n) {
@@ -105,6 +127,54 @@ for (const n of [100_000, 500_000, 1_000_000]) {
   results.push(
     benchmark(`N=${n} zoomed (~${visible} visible, culled)`, () => {
       drawLine(ctx, cs, zoomScale, (v) => v, style);
+    }),
+  );
+}
+
+// Interval-keyed marks (bars) — the span-overlap cull path. One representative
+// size; candles / boxes share the same visibleSpanRange loop-bound cull.
+{
+  const n = 500_000;
+  const bars = makeBars(n);
+  const ctx = stubContext();
+  const lo = bars.begin[0];
+  const hi = bars.end[n - 1];
+  const span = hi - lo;
+  const fullScale = scale(lo, hi, PLOT_WIDTH);
+  results.push(
+    benchmark(`bars N=${n} full-view (no cull)`, () => {
+      drawBars(
+        ctx,
+        bars,
+        fullScale,
+        (v) => v,
+        barStyle,
+        0,
+        0,
+        undefined,
+        null,
+        null,
+      );
+    }),
+  );
+  const zLo = lo + span * 0.4;
+  const zHi = zLo + span * 0.002;
+  const zoomScale = scale(zLo, zHi, PLOT_WIDTH);
+  const visible = Math.round(n * 0.002);
+  results.push(
+    benchmark(`bars N=${n} zoomed (~${visible} visible, culled)`, () => {
+      drawBars(
+        ctx,
+        bars,
+        zoomScale,
+        (v) => v,
+        barStyle,
+        0,
+        0,
+        undefined,
+        null,
+        null,
+      );
     }),
   );
 }

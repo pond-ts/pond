@@ -2,6 +2,7 @@ import type { OhlcSeries } from './data.js';
 import type { Scale } from './line.js';
 import type { CandleStyle } from './theme.js';
 import { barSpanPx } from './range.js';
+import { visibleSpanRange } from './culling.js';
 
 /**
  * How an OHLC mark renders (pjm17971's fork 2 — bundled as one component, like
@@ -133,7 +134,16 @@ export function drawCandles(
   minWidthPx = 1,
 ): void {
   const bodyFraction = style.bodyWidth ?? DEFAULT_BODY_WIDTH;
-  for (let i = 0; i < ohlc.length; i += 1) {
+  // Viewport culling (Phase 2): draw only the candles whose span overlaps the
+  // visible x-window (+1 each side); the loop keeps the original index `i`. Full
+  // range when `xScale` has no domain (a test stub).
+  const [vStart, vEnd] = visibleSpanRange(
+    ohlc.x,
+    ohlc.xEnd,
+    ohlc.length,
+    xScale,
+  );
+  for (let i = vStart; i < vEnd; i += 1) {
     if (!isFiniteOhlc(ohlc, i)) continue;
     const open = ohlc.open[i]!;
     const close = ohlc.close[i]!;

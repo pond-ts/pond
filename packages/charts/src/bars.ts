@@ -2,6 +2,7 @@ import { barSpanPx } from './range.js';
 import type { BarSeries, StackedBarSeries } from './data.js';
 import type { Scale } from './line.js';
 import type { BarStyle } from './theme.js';
+import { visibleSpanRange } from './culling.js';
 
 /**
  * Bar growth direction — the histogram orientation. `'vertical'` bars grow **up**
@@ -130,7 +131,13 @@ export function drawBars(
 ): void {
   ctx.save();
   ctx.globalAlpha = style.opacity;
-  for (let i = 0; i < cs.length; i += 1) {
+  // Viewport culling (Phase 2): draw only the bars whose span overlaps the
+  // visible x-window (+1 each side). The loop keeps the original index `i`, so
+  // the `begin[i]` selection/hover match stays correct; full range when `xScale`
+  // has no domain (a test stub). A selected/hovered bar off-screen isn't drawn
+  // (its highlight would be off-screen anyway).
+  const [vStart, vEnd] = visibleSpanRange(cs.begin, cs.end, cs.length, xScale);
+  for (let i = vStart; i < vEnd; i += 1) {
     const rect = barRect(
       cs,
       i,

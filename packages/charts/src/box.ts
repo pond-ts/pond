@@ -2,6 +2,7 @@ import type { BoxSeries } from './data.js';
 import type { Scale } from './line.js';
 import type { BoxStyle } from './theme.js';
 import { barSpanPx } from './range.js';
+import { visibleSpanRange } from './culling.js';
 
 /** Fraction of the box width the whisker end-caps span (centred on the stem). */
 const WHISKER_CAP_FRACTION = 0.5;
@@ -105,7 +106,12 @@ export function drawBox(
   // solid bar) runs the full lower→upper. Flags default true (a full box).
   const hasBox = box.hasBox !== false;
   const drawMedian = showMedian && box.hasMedian !== false;
-  for (let i = 0; i < box.length; i += 1) {
+  // Viewport culling (Phase 2): draw only the boxes whose span overlaps the
+  // visible x-window (+1 each side); the loop keeps the original index `i`. Full
+  // range when `xScale` has no domain (a test stub). `offsetPx` is a small pixel
+  // nudge the ±1 margin absorbs.
+  const [vStart, vEnd] = visibleSpanRange(box.x, box.xEnd, box.length, xScale);
+  for (let i = vStart; i < vEnd; i += 1) {
     if (!isFiniteBox(box, i)) continue;
     const [span0, span1] = barSpanPx(
       box.x[i]!,

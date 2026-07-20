@@ -61,8 +61,17 @@ and type-level changes; patch bumps are strictly additive.
   Phase 3 M4 decimator addresses). Interaction is unaffected: `sampleAt` /
   `hitTest` read the full source series, so a hover readout or selection never
   shifts when the window resizes (the decimator RFC §2.3 invariant). Culling is
-  automatic and internal — no API change. Scatter and the interval-keyed bar /
-  candle / box layers are a follow-up.
+  automatic and internal — no API change.
+- **charts:** Viewport culling extended to the **per-mark** layers — scatter,
+  bars, candles, and boxes. These loop over independent marks with index-keyed
+  accessors (a scatter's `colorAt(i)`, a bar's `begin[i]` selection match), so
+  rather than a subarray view they cull by **restricting the draw loop to the
+  visible index range** (the original `i` is preserved, so every accessor and
+  selection/hover match stays correct). Point marks (scatter) use the same
+  entry/exit window as lines; interval marks (bars / candles / boxes) use a
+  span-overlap window that keeps a wide mark crossing a plot edge. Same
+  automatic, internal, interaction-safe behaviour — a 500k-bar chart zoomed in
+  drops from ~23 ms/frame to ~0.16 ms.
 
 ## [0.48.1] — 2026-07-19
 
