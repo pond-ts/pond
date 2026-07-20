@@ -51,10 +51,6 @@ gate that flips the first publish. Plan:
   px `offset` for same-x pairs, line-only shape, join the cursor x-snap, and
   selection `id` via rect-containment `hitTest` (#508 item 5; Candlestick
   takes the same geometry helper).
-- **[PND-LEGEND]** — `<Legend>` wave (#508 item 2, design sketch accepted):
-  per-layer resolved swatches, zero-config placement, `theme.legend` slot,
-  hover echo + id-gated select toggle. Sequenced behind
-  tracker-label-by-`as` ([PND-CURSOR]).
 - **[PND-ANROLE]** — Per-annotation colour as a theme role map
   (`theme.annotation.roles` + `role` prop on the three marks; #508 item 3;
   inline per-mark colour rejected).

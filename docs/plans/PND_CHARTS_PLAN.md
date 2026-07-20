@@ -82,18 +82,24 @@ id-gated discrete contract (rect-containment `hitTest` like Bar, not the
 still-RFC continuous-layer threshold model); Candlestick takes the same
 geometry helper in the pass so the interval marks don't fork the contract.
 
-### [PND-LEGEND] — `<Legend>` wave
+### [PND-LEGEND] — `<Legend>` wave — DONE
 
-#508 item 2, accepted as one scoped wave; the sender's design sketch (on the
-issue) is the basis: per-layer resolved `SwatchSpec` at registration,
-zero-config `<Legend placement>`, dedup + per-layer `legend={false | 'name'}`
-opt-out, `theme.legend` slot, hover echo + id-gated select toggle via the
-existing frame contract; show/hide stays consumer-side. **Deltas from the
-sketch:** row identity keys `id ?? label` (the A2.2 selection model demoted
-`as` — a theme role can repeat), and the wave is **sequenced behind
-tracker-label-by-`as`** (F-charts-8 §3, in [PND-CURSOR] — the label-source
-prerequisite already flagged for the candlestick legend merge). Not
-RFC-worthy — the interaction semantics were red-teamed in the selection RFC.
+Shipped (#512, after the #511 label prerequisite): the sender's #508 design
+sketch built as specced — per-layer resolved `SwatchSpec` registration on all
+seven marks (line/area/band/scatter/box/bar/candle; a **stacked bar registers
+one row per group** with its resolved fill), container-level registry +
+`rowOrder`, zero-config `<Legend placement>` card over the rows block,
+`legend={false | 'name'}` per-layer opt-out/rename, optional `theme.legend`
+slot (token-derived fallback — no theme type break, unlike the required
+`candle` slot's gate), `items` escape hatch (standalone mode included).
+**Deltas held:** row identity keys `id ?? label` (A2.2), interactions id-gated
+via the shipped frame contract (hover echo + select toggle; the legend's
+series-scoped `SelectInfo` carries `NaN` provenance, documented), show/hide
+stays consumer-side (`onRowClick` is the override hook). Decisions of note:
+the swatch/helpers module is `swatch.ts` (a `legend.ts` beside `Legend.tsx`
+collides on case-insensitive filesystems); a one-group stacked shape
+(horizontal single, categorical) registers under the layer identity, not the
+`categoryStack` `'value'` sentinel.
 
 ### [PND-ANROLE] — Per-annotation colour via theme role map
 
