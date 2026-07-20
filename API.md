@@ -257,6 +257,7 @@ Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 | `DiscontinuityProvider`                 | Gap topology consumed by the trading-time scale                                 | `packages/charts/src/tradingTimeScale.ts` |
 | `scaleBand` / `ScaleBand`               | Ordinal slot scale for the category axis                                        | `packages/charts/src/bandScale.ts`        |
 | `GapMode`                               | `'none' \| 'empty' \| 'dashed' \| 'step' \| 'fade'` (Line/Area `gaps` prop)     | `packages/charts/src/gaps.ts`             |
+| `DecimateOption`                        | `<LineChart decimate>` — M4 viewport decimation (`bool \| { threshold }`)       | `packages/charts/src/decimate.ts`         |
 | `CursorMode`                            | `'none' \| 'line' \| 'point' \| 'inline' \| 'flag' \| 'crosshair' \| 'region'`  | `packages/charts/src/context.ts`          |
 | `TrackerInfo` / `TrackerSample`         | Hover readout payload (`onTrackerChanged`)                                      | `packages/charts/src/context.ts`          |
 | `AnnotationKind` / `CreateSpec`         | Annotation identity + draw-gesture payload (`onCreate`)                         | `packages/charts/src/context.ts`          |

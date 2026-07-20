@@ -404,9 +404,22 @@ best-effort.
     span-overlap window that keeps a wide edge-crossing mark — for the
     interval-keyed bar/candle/box), preserving every accessor's `i`. Verified on
     a candlestick `TradingTimeScale` under pan+zoom; bars 500k drop ~23 → 0.16
-    ms/frame. **Remaining → chart-side (Phases 3–5), bench-ordered:** the
-    per-layer decimator stage (device-pixel edges + gap-edge union + interaction
-    invariant), then re-bench, then candlestick with Tidal; Path2D cache
+    ms/frame. **Phase 3 (M4 line decimator) SPINE DONE:** `src/decimate.ts`
+    (`decimateM4`) reads W = device-pixel columns off `ctx.canvas.width` + DPR off
+    `ctx.getTransform().a` (no layer-signature change), builds pixel-column edges,
+    calls `Float64Column.binBy(cs.x, edges, 'minMaxFirstLast')` (the Phase-1
+    reducer — confirmed to survive the charts bundle), and emits the
+    first/min/max/last-per-column M4 polyline back into `drawLine`. Auto-on above
+    ~2 samples/px with `<LineChart decimate={false | {threshold}}>`
+    (`DecimateOption`). Gated to the honest default (empty gaps, linear curve, no
+    session breaks). Verified **pixel-identical** (e2e diff decimated vs full) +
+    **spike-preserving** (1-in-200k anomaly kept) in the browser; 1M fully-visible
+    ~34 → 3.4 ms/frame. §2.3 interaction-reads-source holds (decimation is
+    draw-only). **Phase 3 remainder:** the §2.2 **gap-edge union** for the
+    inferred gap modes (dashed/step/fade/none decimation — today they draw
+    full-res), and area/band decimation hints; scatter stays `preserveSparse`
+    (cull only). **Remaining → chart-side (Phases 4–5), bench-ordered:** re-bench,
+    then candlestick with Tidal; Path2D cache
     (M4.4) only if the pan bench still misses. `plot_width` + visible slice
     live in the chart; reducer math in pond (unifies with geo F-geo-2). **M4
     is the auto-on default; LTTB an explicit opt-in** (§2.5 — one consumer's

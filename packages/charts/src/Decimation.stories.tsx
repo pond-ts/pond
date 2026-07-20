@@ -1,0 +1,89 @@
+import type { Meta, StoryObj } from '@storybook/react-vite';
+import { TimeSeries } from 'pond-ts';
+import { ChartContainer } from './ChartContainer.js';
+import { ChartRow } from './ChartRow.js';
+import { Layers } from './Layers.js';
+import { LineChart } from './LineChart.js';
+import { XAxis } from './XAxis.js';
+import { docsTheme } from './docs-theme.fixture.js';
+
+const BASE = Date.UTC(2026, 0, 1, 12, 0, 0);
+const STEP = 1_000; // 1s grid
+
+/**
+ * A large noisy series — `n` points of a slow sine carrying fast noise, so the
+ * min/max envelope per pixel column is wide (the case M4 exists to render
+ * faithfully). One deterministic single-sample **spike** at `spikeAt` (value
+ * `spikeTo`) so a story can show M4 preserves anomalies LTTB would drop.
+ */
+function bigSeries(n: number, spikeAt = -1, spikeTo = 0) {
+  const rows: Array<[number, number]> = new Array(n);
+  for (let i = 0; i < n; i += 1) {
+    const base = 50 + 35 * Math.sin(i / (n / 20)) + 8 * Math.sin(i / 3.1);
+    rows[i] = [BASE + i * STEP, i === spikeAt ? spikeTo : base];
+  }
+  return new TimeSeries({
+    name: 'big',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'v', kind: 'number' },
+    ] as const,
+    rows,
+  });
+}
+
+const meta: Meta<typeof LineChart> = {
+  title: 'Performance/Decimation',
+  component: LineChart,
+  parameters: { layout: 'centered' },
+};
+export default meta;
+type Story = StoryObj<typeof LineChart>;
+
+const N = 200_000;
+const series = bigSeries(N);
+const spiky = bigSeries(N, Math.floor(N / 2), 130);
+
+/** Auto-decimation (default) — 200k points drawn from the per-pixel M4 buckets. */
+export const Default: Story = {
+  render: () => (
+    <ChartContainer width={720} theme={docsTheme} panZoom>
+      <ChartRow height={260}>
+        <Layers>
+          <LineChart series={series} column="v" as="power" />
+        </Layers>
+      </ChartRow>
+      <XAxis />
+    </ChartContainer>
+  ),
+};
+
+/** Same 200k series with decimation OFF — the full-resolution draw, for a
+ *  side-by-side visual check that auto-decimation is lossless. */
+export const Off: Story = {
+  render: () => (
+    <ChartContainer width={720} theme={docsTheme} panZoom>
+      <ChartRow height={260}>
+        <Layers>
+          <LineChart series={series} column="v" as="power" decimate={false} />
+        </Layers>
+      </ChartRow>
+      <XAxis />
+    </ChartContainer>
+  ),
+};
+
+/** A single-sample spike in a 200k series — M4's min/max buckets keep it, so the
+ *  anomaly still reads (the property that rules LTTB out as the default). */
+export const SpikePreserved: Story = {
+  render: () => (
+    <ChartContainer width={720} theme={docsTheme} panZoom>
+      <ChartRow height={260}>
+        <Layers>
+          <LineChart series={spiky} column="v" as="power" />
+        </Layers>
+      </ChartRow>
+      <XAxis />
+    </ChartContainer>
+  ),
+};

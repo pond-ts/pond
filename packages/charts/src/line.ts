@@ -2,6 +2,7 @@ import { line as d3line, curveLinear, type CurveFactory } from 'd3-shape';
 import type { ChartSeries } from './data.js';
 import type { LineStyle } from './theme.js';
 import { cullChartSeries } from './culling.js';
+import { decimateM4, type DecimateOption } from './decimate.js';
 import {
   bridgeGaps,
   collectGapEdges,
@@ -89,6 +90,7 @@ export function drawLine(
   gaps: GapMode = DEFAULT_GAP_MODE,
   gapConnectorOpacity: number = DEFAULT_GAP_CONNECTOR_OPACITY,
   boundaries: readonly number[] = [],
+  decimate: DecimateOption = true,
 ): void {
   // Viewport culling (Phase 2): clip to the visible slice (+1 entry/exit point)
   // before any path work, so a pan repaint strokes O(visible), not O(N). A no-op
@@ -98,6 +100,25 @@ export function drawLine(
   // subarray view drops in transparently; `boundaries` are absolute instants that
   // `sessionRuns` bisects by value, so they still cut the slice correctly.
   cs = cullChartSeries(cs, xScale);
+  // M4 decimation (Phase 3): once the culled slice is still denser than ~2
+  // samples per device pixel, replace it with the pixel-dense M4 polyline
+  // ({@link decimateM4}) — O(devicePlotWidth) points that rasterize identically.
+  // Gated to the **honest default path**: `'empty'` gaps (the inferred
+  // dashed/step/fade/none modes need the §2.2 gap-edge union, still to come), a
+  // **linear** curve (a smoothing curve would distort the 4-points-per-column
+  // polyline), and **no session breaks** (the M4 output is already one geometry,
+  // not per-session runs). Off (`decimate === false`) or any of those unmet ⇒
+  // the full culled slice draws, unchanged. `decimateM4` itself no-ops on a
+  // sparse slice or a domainless test scale, so this stays byte-identical there.
+  if (
+    decimate !== false &&
+    gaps === 'empty' &&
+    curve === curveLinear &&
+    boundaries.length === 0
+  ) {
+    const k = typeof decimate === 'object' ? decimate.threshold : undefined;
+    cs = decimateM4(cs, xScale, ctx, k);
+  }
   // Split into independent index runs at each boundary; no boundary inside the
   // data ⇒ one run over the whole series (the hot path — no slicing, so the draw
   // is byte-identical to the pre-boundary single pass).
