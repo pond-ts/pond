@@ -57,12 +57,17 @@ function makeSeries(n) {
 }
 
 /**
- * A callable value→pixel scale that also carries `.domain()` (the real d3 shape
- * culling reads). Maps the domain `[d0, d1]` across `[0, width]`.
+ * A callable value→pixel scale carrying the surface the draw path reads: culling
+ * uses `.domain()`; the M4 decimator additionally needs `.range()` (the CSS pixel
+ * width) and `.invert()` (to build pixel-aligned bucket edges). Maps `[d0, d1]`
+ * across `[0, width]`. (Omitting range/invert makes `decimateM4` bail — which is
+ * exactly the bug that once silently disabled the decimation cases.)
  */
 function scale(d0, d1, width) {
   const f = (v) => ((v - d0) / (d1 - d0)) * width;
   f.domain = () => [d0, d1];
+  f.range = () => [0, width];
+  f.invert = (px) => d0 + (px / width) * (d1 - d0);
   return f;
 }
 
