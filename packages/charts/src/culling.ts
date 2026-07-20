@@ -100,7 +100,7 @@ function upperBound(x: Float64Array, n: number, v: number): number {
  * - **Series entirely right of the view** (`lo > x[last]`) — `[0, 1]`, likewise.
  * - **Empty series** — `[0, 0]`.
  */
-export function visibleWindow(
+export function visiblePointWindow(
   x: Float64Array,
   length: number,
   lo: number,
@@ -147,7 +147,13 @@ export function cullChartSeries(
   if (cs.length === 0) return cs;
   const dom = scaleDomain(xScale);
   if (dom === null) return cs;
-  let [start, end] = visibleWindow(cs.x, cs.length, dom[0], dom[1], margin);
+  let [start, end] = visiblePointWindow(
+    cs.x,
+    cs.length,
+    dom[0],
+    dom[1],
+    margin,
+  );
   // Extend each boundary to the nearest finite y-anchor so a gap straddling the
   // edge stays interior (see "Gap-mode neutrality" above).
   while (start > 0 && !Number.isFinite(cs.y[start]!)) start -= 1;
@@ -180,7 +186,7 @@ export function cullBandSeries(
   if (band.length === 0) return band;
   const dom = scaleDomain(xScale);
   if (dom === null) return band;
-  const [start, end] = visibleWindow(
+  const [start, end] = visiblePointWindow(
     band.x,
     band.length,
     dom[0],
@@ -194,4 +200,92 @@ export function cullBandSeries(
     upper: band.upper.subarray(start, end),
     length: end - start,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Index-range culling for **per-mark** layers (scatter, bars, candles, boxes).
+//
+// Unlike the line/area/band draws — which stroke one continuous path and take a
+// zero-copy `subarray` view — these layers loop over *independent* marks with
+// **index-keyed accessors** (a scatter's `colorAt(i)` / `keyAt(i)`, a bar's
+// `begin[i]` selection match). A subarray would renumber `i` and break those, so
+// the fit is instead a visible `[start, end)` **index range** the draw loop runs
+// over (`for (i = start; i < end; …)`), leaving every accessor's `i` intact and
+// the source arrays untouched (the §2.3 interaction-reads-source invariant holds
+// the same way — hit-tests still scan the full arrays).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The index range `[start, end)` of **interval marks** — each spanning
+ * `[begin[i], end[i]]` on a **monotonically ascending** `begin` axis — whose span
+ * overlaps the visible `[lo, hi]`, plus `margin` marks on each side. A mark is
+ * visible iff `end[i] >= lo && begin[i] <= hi`.
+ *
+ * - **Right:** `begin[i] <= hi` ⇒ everything below `upperBound(begin, hi)`; a
+ *   mark starting past the right edge is off-screen. Exact — no bisect on `end`
+ *   needed.
+ * - **Left:** a mark with `begin[i] < lo` is still visible if its span reaches
+ *   `lo` (`end[i] >= lo`) — a wide bar crossing the left edge. `begin` bisects
+ *   the first in-range mark; from there the scan walks back while the previous
+ *   mark's `end` still reaches `lo`. For sorted non-overlapping marks (the bar /
+ *   candle / box contract) `end` is ascending, so the walk stops at the first
+ *   mark clear of the edge — typically one step.
+ *
+ * Pure, O(log length + crossing marks). `margin` (default 1) pads each side for
+ * a mark whose drawn rect is nudged by `gapPx` / `minWidth` / a pixel `offsetPx`
+ * the data-space window can't see.
+ */
+export function visibleSpanWindow(
+  begin: Float64Array,
+  end: Float64Array,
+  length: number,
+  lo: number,
+  hi: number,
+  margin = 1,
+): [number, number] {
+  if (length === 0) return [0, 0];
+  const right = upperBound(begin, length, hi); // first begin > hi
+  let start = lowerBound(begin, length, lo); // first begin >= lo
+  // Walk back to include earlier marks whose span still crosses into [lo, …].
+  while (start > 0 && end[start - 1]! >= lo) start -= 1;
+  return [Math.max(0, start - margin), Math.min(length, right + margin)];
+}
+
+/**
+ * The visible `[start, end)` index range of a **point** layer (scatter) against
+ * `xScale` — a thin wrapper over {@link visiblePointWindow} that reads the scale's
+ * domain. Returns the **full** range `[0, length]` when the scale exposes no
+ * numeric domain (a bare test stub / category axis) or the series is empty, so a
+ * caller loops over everything and the draw is unchanged there.
+ */
+export function visiblePointRange(
+  x: Float64Array,
+  length: number,
+  xScale: Scale,
+  margin = 1,
+): [number, number] {
+  if (length === 0) return [0, 0];
+  const dom = scaleDomain(xScale);
+  if (dom === null) return [0, length];
+  return visiblePointWindow(x, length, dom[0], dom[1], margin);
+}
+
+/**
+ * The visible `[start, end)` index range of an **interval** layer (bars,
+ * candles, boxes) against `xScale` — a thin wrapper over
+ * {@link visibleSpanWindow} that reads the scale's domain. Returns the **full**
+ * range `[0, length]` when the scale exposes no numeric domain or the series is
+ * empty (the draw is unchanged there — a bare stub / category axis draws all).
+ */
+export function visibleSpanRange(
+  begin: Float64Array,
+  end: Float64Array,
+  length: number,
+  xScale: Scale,
+  margin = 1,
+): [number, number] {
+  if (length === 0) return [0, 0];
+  const dom = scaleDomain(xScale);
+  if (dom === null) return [0, length];
+  return visibleSpanWindow(begin, end, length, dom[0], dom[1], margin);
 }

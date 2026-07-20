@@ -439,3 +439,37 @@ describe('range-only box (hasBox / hasMedian false)', () => {
     );
   });
 });
+
+describe('drawBox — viewport culling (Phase 2)', () => {
+  const scaleWithDomain = (lo: number, hi: number): ((v: number) => number) => {
+    const f = (v: number) => v;
+    (f as unknown as { domain: () => number[] }).domain = () => [lo, hi];
+    return f;
+  };
+  // 6 contiguous boxes: x = 0,10,…,50; xEnd = x + 10.
+  const ramp = () =>
+    bx(
+      [0, 10, 20, 30, 40, 50],
+      {
+        lower: [1, 1, 1, 1, 1, 1],
+        q1: [2, 2, 2, 2, 2, 2],
+        median: [3, 3, 3, 3, 3, 3],
+        q3: [4, 4, 4, 4, 4, 4],
+        upper: [5, 5, 5, 5, 5, 5],
+      },
+      [10, 20, 30, 40, 50, 60],
+    );
+
+  it('draws only boxes whose span overlaps the visible window (+1 each side)', () => {
+    const { ctx, calls } = recordingContext();
+    // view [22, 38] → +1 → [1,5) → 4 boxes. A full box strokes one body rect.
+    drawBox(ctx, ramp(), scaleWithDomain(22, 38), identity, style);
+    expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(4);
+  });
+
+  it('draws all boxes when the scale has no domain (test stub)', () => {
+    const { ctx, calls } = recordingContext();
+    drawBox(ctx, ramp(), identity, identity, style);
+    expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(6);
+  });
+});

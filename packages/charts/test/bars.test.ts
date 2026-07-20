@@ -346,3 +346,54 @@ describe('barAt', () => {
     expect(barAt(g, 12, 25, identity, identity, 0, 0, 1)).toEqual([1, 10, 50]);
   });
 });
+
+describe('drawBars — viewport culling (Phase 2)', () => {
+  // 6 contiguous unit bars: begin 0,10,…,50; end = begin+10.
+  const ramp = () =>
+    bars([0, 10, 20, 30, 40, 50], [10, 20, 30, 40, 50, 60], [1, 2, 3, 4, 5, 6]);
+
+  it('fills only the bars whose span overlaps the visible window (+1 each side)', () => {
+    const { ctx, calls } = recordingContext();
+    // view [22, 38] → spans [20,30] and [30,40] overlap; +1 margin → indices [1,5)
+    // → 4 bars of 6.
+    drawBars(
+      ctx,
+      ramp(),
+      scaleWithDomain(22, 38),
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      null,
+      null,
+    );
+    expect(calls.filter((c) => c.name === 'fillRect')).toHaveLength(4);
+  });
+
+  it('matches selection by the original begin key after culling', () => {
+    const { ctx, calls } = recordingContext();
+    // Select the bar at begin=30 (index 3). Within the culled window it must
+    // still light up (highlight fill + outline stroke), keyed on its real begin.
+    drawBars(
+      ctx,
+      ramp(),
+      scaleWithDomain(22, 55),
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      { key: 30, id: 'count' },
+      null,
+    );
+    // The selected bar strokes an outline; a mis-keyed cull would miss it.
+    expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(1);
+  });
+
+  it('fills all bars when the scale has no domain (test stub)', () => {
+    const { ctx, calls } = recordingContext();
+    drawBars(ctx, ramp(), identity, identity, style, 0, 0, 'count', null, null);
+    expect(calls.filter((c) => c.name === 'fillRect')).toHaveLength(6);
+  });
+});

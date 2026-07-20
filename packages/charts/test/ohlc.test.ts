@@ -395,3 +395,38 @@ describe('ohlcFromTimeSeries', () => {
     );
   });
 });
+
+describe('drawCandles — viewport culling (Phase 2)', () => {
+  // A d3-style identity scale carrying `.domain()` so drawCandles culls.
+  const scaleWithDomain = (lo: number, hi: number): ((v: number) => number) => {
+    const f = (v: number) => v;
+    (f as unknown as { domain: () => number[] }).domain = () => [lo, hi];
+    return f;
+  };
+  // 6 contiguous candles: x = 0,10,…,50; xEnd = x + 10.
+  const ramp = () =>
+    oh(
+      [0, 10, 20, 30, 40, 50],
+      {
+        open: [1, 1, 1, 1, 1, 1],
+        high: [3, 3, 3, 3, 3, 3],
+        low: [0, 0, 0, 0, 0, 0],
+        close: [2, 2, 2, 2, 2, 2],
+      },
+      [10, 20, 30, 40, 50, 60],
+    );
+
+  it('draws only candles whose span overlaps the visible window (+1 each side)', () => {
+    const { ctx, calls } = recordingContext();
+    // view [22, 38] → spans [20,30] and [30,40] overlap; +1 → [1,5) → 4 candles.
+    // Each candle strokes one wick (a single moveTo); count them.
+    drawCandles(ctx, ramp(), scaleWithDomain(22, 38), flipY, style);
+    expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(4);
+  });
+
+  it('draws all candles when the scale has no domain (test stub)', () => {
+    const { ctx, calls } = recordingContext();
+    drawCandles(ctx, ramp(), identity, flipY, style);
+    expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(6);
+  });
+});

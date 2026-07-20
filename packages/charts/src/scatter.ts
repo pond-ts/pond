@@ -3,6 +3,7 @@ import type { Scale } from './line.js';
 import type { ScatterStyle } from './theme.js';
 import type { ResolvedEncoding } from './encoding.js';
 import type { SelectInfo } from './context.js';
+import { visiblePointRange } from './culling.js';
 
 /**
  * Scatter geometry + the canvas draw — pure, like {@link drawLine} /
@@ -143,7 +144,26 @@ export function drawScatter(
   let selR = 0;
   let selHit = false;
 
-  for (let i = 0; i < cs.length; i += 1) {
+  // Viewport culling (Phase 2): draw only the marks in the visible x-window
+  // (+1 each side). The loop keeps the **original** index `i`, so the index-keyed
+  // accessors (`colorAt`/`radiusAt`/`keyAt`/`labelAt`) and the selection match
+  // stay correct — a subarray would renumber them. Full range when `xScale` has
+  // no domain (a test stub). A selected point outside the window isn't drawn (its
+  // ring would be off-screen anyway). `offsetPx` is a small pixel nudge the ±1
+  // margin absorbs.
+  //
+  // Sharp edge: the ±1 margin is in *index* space, so a mark's **radius** can
+  // reach the plot from further out — a dense scatter of visible-size bubbles may
+  // drop an edge bubble whose centre is >1 sample off-screen (a subtle flicker at
+  // the very edge under pan). Fine for the common small-radius case; a
+  // pixel-radius-aware pad (widen the data window by the max drawn radius via
+  // `xScale.invert`) is the follow-up if a bubble-chart consumer hits it. The
+  // interval marks (bars/candles/boxes) barely feel this — their width *is* their
+  // span (`visibleSpanRange` captures it exactly); only the sub-pixel
+  // `minWidth`/`gapPx` rounding can poke past the edge, which the ±1 margin
+  // absorbs and which only bites when zoomed out (where culling barely narrows).
+  const [vStart, vEnd] = visiblePointRange(cs.x, cs.length, xScale);
+  for (let i = vStart; i < vEnd; i += 1) {
     if (!isPoint(cs, i)) continue;
     // `offsetPx` nudges the whole scatter in pixel space (zoom-stable) — for
     // pairing same-key marks (call/put at one strike) beside each other.
@@ -183,7 +203,7 @@ export function drawScatter(
     ctx.fillStyle = style.label;
     ctx.font = `${font.size}px ${font.family}`;
     ctx.textBaseline = 'middle';
-    for (let i = 0; i < cs.length; i += 1) {
+    for (let i = vStart; i < vEnd; i += 1) {
       if (!isPoint(cs, i)) continue;
       const text = labelAt(i);
       if (text === undefined || text === '') continue;

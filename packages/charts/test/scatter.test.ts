@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { scaleLinear } from 'd3-scale';
 import {
   drawScatter,
   hitTestScatter,
@@ -10,6 +11,7 @@ import type { ChartSeries } from '../src/data.js';
 import type { ResolvedEncoding } from '../src/encoding.js';
 import type { ScatterStyle } from '../src/theme.js';
 import type { SelectInfo } from '../src/context.js';
+import type { Scale } from '../src/line.js';
 
 const cs = (x: number[], y: number[]): ChartSeries => ({
   x: Float64Array.from(x),
@@ -472,5 +474,83 @@ describe('hitTestScatter', () => {
     );
     expect(hit).not.toBeNull();
     expect(hit!.key).toBe(10); // identity is still the un-shifted data key
+  });
+});
+
+describe('drawScatter — viewport culling (Phase 2)', () => {
+  const domainScale = (lo: number, hi: number): Scale =>
+    scaleLinear().domain([lo, hi]).range([lo, hi]) as unknown as Scale;
+  // 10 points at x = 0,10,…,90.
+  const ramp = () =>
+    cs(
+      Array.from({ length: 10 }, (_, i) => i * 10),
+      Array.from({ length: 10 }, (_, i) => i),
+    );
+
+  it('draws only the marks in the visible window (+1 each side)', () => {
+    const { ctx, calls } = recordingContext();
+    const s = ramp();
+    // view [25, 55] → in-range 30/40/50; entry 20 + exit 60 → 5 arcs (of 10).
+    drawScatter(
+      ctx,
+      s,
+      domainScale(25, 55),
+      (v) => v,
+      style,
+      fixed(4),
+      keyAt(s),
+      undefined,
+      font,
+      null,
+      'v',
+    );
+    expect(calls.filter((c) => c.name === 'arc')).toHaveLength(5);
+  });
+
+  it('keeps index-keyed colour/key accessors correct after culling', () => {
+    // colorAt(i) returns a per-index colour; the visible marks must fill with
+    // the colours of their ORIGINAL indices (2..6), proving `i` is not renumbered.
+    const { ctx, calls } = recordingContext();
+    const s = ramp();
+    const enc: ResolvedEncoding = {
+      radiusAt: () => 4,
+      colorAt: (i) => `c${i}`,
+    };
+    drawScatter(
+      ctx,
+      s,
+      domainScale(25, 55),
+      (v) => v,
+      style,
+      enc,
+      keyAt(s),
+      undefined,
+      font,
+      null,
+      'v',
+    );
+    const fills = calls
+      .filter((c) => c.type === 'set' && c.name === 'fillStyle')
+      .map((c) => c.args[0]);
+    expect(fills).toEqual(['c2', 'c3', 'c4', 'c5', 'c6']);
+  });
+
+  it('draws all marks when the scale has no domain (test stub)', () => {
+    const { ctx, calls } = recordingContext();
+    const s = ramp();
+    drawScatter(
+      ctx,
+      s,
+      identity,
+      identity,
+      style,
+      fixed(4),
+      keyAt(s),
+      undefined,
+      font,
+      null,
+      'v',
+    );
+    expect(calls.filter((c) => c.name === 'arc')).toHaveLength(10);
   });
 });

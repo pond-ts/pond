@@ -396,9 +396,15 @@ best-effort.
     line zoomed in drops from ~29 ms/frame (over the 60 fps budget) to ~0.06 ms;
     fully-visible draws no-op (byte-identical). §2.3 interaction-reads-source
     holds by construction (culling is draw-path only). Area keeps its fill
-    gradient over the full series so the cull is behavior-neutral. Scatter
-    (index-keyed accessors need an offset) + interval-keyed bar/candle/box are a
-    fast-follow. **Remaining → chart-side (Phases 3–5), bench-ordered:** the
+    gradient over the full series so the cull is behavior-neutral. **Marks
+    fast-follow DONE:** scatter / bars / candles / boxes cull too — they loop
+    over index-keyed marks (a scatter's `colorAt(i)`, a bar's `begin[i]`
+    selection), so instead of a subarray they restrict the draw loop to a visible
+    index range (`visiblePointRange` for scatter, `visibleSpanRange` — a
+    span-overlap window that keeps a wide edge-crossing mark — for the
+    interval-keyed bar/candle/box), preserving every accessor's `i`. Verified on
+    a candlestick `TradingTimeScale` under pan+zoom; bars 500k drop ~23 → 0.16
+    ms/frame. **Remaining → chart-side (Phases 3–5), bench-ordered:** the
     per-layer decimator stage (device-pixel edges + gap-edge union + interaction
     invariant), then re-bench, then candlestick with Tidal; Path2D cache
     (M4.4) only if the pan bench still misses. `plot_width` + visible slice

@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { scaleLinear } from 'd3-scale';
 import {
   scaleDomain,
-  visibleWindow,
+  visiblePointWindow,
+  visibleSpanWindow,
+  visiblePointRange,
+  visibleSpanRange,
   cullChartSeries,
   cullBandSeries,
 } from '../src/culling.js';
@@ -52,57 +55,57 @@ describe('scaleDomain', () => {
   });
 });
 
-describe('visibleWindow', () => {
+describe('visiblePointWindow', () => {
   // x = [0,10,20,30,40,50,60,70,80,90], length 10
   const x = Float64Array.from({ length: 10 }, (_, i) => i * 10);
 
   it('includes one entry + one exit point around the visible range', () => {
     // view [25, 55] → in-range indices 3(30),4(40),5(50); +1 each side → [2, 7)
-    expect(visibleWindow(x, 10, 25, 55)).toEqual([2, 7]);
+    expect(visiblePointWindow(x, 10, 25, 55)).toEqual([2, 7]);
   });
 
   it('keeps the exit point when the range ends exactly on a sample', () => {
     // view [25, 50] → in-range 3,4,5 (50 included via >= is upperBound of 50 = 6);
     // +1 → start 2, end 7
-    expect(visibleWindow(x, 10, 25, 50)).toEqual([2, 7]);
+    expect(visiblePointWindow(x, 10, 25, 50)).toEqual([2, 7]);
   });
 
   it('keeps the entry point when the range starts exactly on a sample', () => {
     // view [30, 55] → lowerBound(30)=3 → start 2; upperBound(55)=6 → end 7
-    expect(visibleWindow(x, 10, 30, 55)).toEqual([2, 7]);
+    expect(visiblePointWindow(x, 10, 30, 55)).toEqual([2, 7]);
   });
 
   it('returns the whole series when the view covers it', () => {
-    expect(visibleWindow(x, 10, -100, 1000)).toEqual([0, 10]);
+    expect(visiblePointWindow(x, 10, -100, 1000)).toEqual([0, 10]);
   });
 
   it('clamps the entry margin at the left edge', () => {
     // view [0, 25] → lowerBound(0)=0 → start max(0,-1)=0; upperBound(25)=3 → end 4
-    expect(visibleWindow(x, 10, 0, 25)).toEqual([0, 4]);
+    expect(visiblePointWindow(x, 10, 0, 25)).toEqual([0, 4]);
   });
 
   it('clamps the exit margin at the right edge', () => {
     // view [75, 90] → lowerBound(75)=8 → start 7; upperBound(90)=10 → end 10
-    expect(visibleWindow(x, 10, 75, 90)).toEqual([7, 10]);
+    expect(visiblePointWindow(x, 10, 75, 90)).toEqual([7, 10]);
   });
 
   it('yields a one-point off-screen slice when the series is entirely left of view', () => {
     // hi < x[0]: everything left → [length-1, length]
-    expect(visibleWindow(x, 10, 200, 300)).toEqual([9, 10]);
+    expect(visiblePointWindow(x, 10, 200, 300)).toEqual([9, 10]);
   });
 
   it('yields a one-point off-screen slice when the series is entirely right of view', () => {
     // lo > x[last]: everything right → [0, 1]
-    expect(visibleWindow(x, 10, -300, -200)).toEqual([0, 1]);
+    expect(visiblePointWindow(x, 10, -300, -200)).toEqual([0, 1]);
   });
 
   it('handles an empty series', () => {
-    expect(visibleWindow(new Float64Array(0), 0, 0, 100)).toEqual([0, 0]);
+    expect(visiblePointWindow(new Float64Array(0), 0, 0, 100)).toEqual([0, 0]);
   });
 
   it('honours a wider margin', () => {
     // view [45, 55] margin 2 → in-range 5; ±2 → start 3, end 8
-    expect(visibleWindow(x, 10, 45, 55, 2)).toEqual([3, 8]);
+    expect(visiblePointWindow(x, 10, 45, 55, 2)).toEqual([3, 8]);
   });
 });
 
@@ -174,5 +177,78 @@ describe('cullBandSeries', () => {
 
   it('returns the same object when fully visible', () => {
     expect(cullBandSeries(bs, scale(-10, 100))).toBe(bs);
+  });
+});
+
+describe('visibleSpanWindow', () => {
+  // 6 contiguous unit-width marks: begin 0,10,…,50, end = begin+10.
+  const begin = Float64Array.from([0, 10, 20, 30, 40, 50]);
+  const end = Float64Array.from([10, 20, 30, 40, 50, 60]);
+
+  it('includes marks whose span overlaps the view, +1 margin', () => {
+    // view [22, 38] → marks [20,30] and [30,40] overlap; +1 margin → [1, 5)
+    expect(visibleSpanWindow(begin, end, 6, 22, 38)).toEqual([1, 5]);
+  });
+
+  it('keeps a wide bar that starts left of the view but reaches into it', () => {
+    // A single wide mark spanning [0, 100] plus narrow ones after.
+    const b = Float64Array.from([0, 100, 110, 120]);
+    const e = Float64Array.from([100, 110, 120, 130]);
+    // view [40, 60] → only the wide [0,100] mark overlaps; its begin (0) is 1
+    // mark left of lowerBound(40)=1, so the end-walk pulls it in. +1 margin
+    // clamps at 0 on the left. right: upperBound(60)=1 → +1 → 2.
+    expect(visibleSpanWindow(b, e, 4, 40, 60)).toEqual([0, 2]);
+  });
+
+  it('excludes a mark starting past the right edge', () => {
+    // view [-5, 15] → marks [0,10] and [10,20] overlap. upperBound(15)=2,
+    // +1 → 3; left lowerBound(-5)=0, -1 margin clamp → 0.
+    expect(visibleSpanWindow(begin, end, 6, -5, 15)).toEqual([0, 3]);
+  });
+
+  it('returns the whole set when the view covers it', () => {
+    expect(visibleSpanWindow(begin, end, 6, -100, 1000)).toEqual([0, 6]);
+  });
+
+  it('handles an empty series', () => {
+    expect(
+      visibleSpanWindow(new Float64Array(0), new Float64Array(0), 0, 0, 9),
+    ).toEqual([0, 0]);
+  });
+});
+
+describe('visiblePointRange', () => {
+  const x = Float64Array.from([0, 10, 20, 30, 40, 50]);
+
+  it('returns the visible index window against a domain scale', () => {
+    // view [22, 38] → in-range 30; entry 20 + exit 40 → [2, 5)
+    expect(visiblePointRange(x, 6, scale(22, 38))).toEqual([2, 5]);
+  });
+
+  it('returns the full range when the scale has no domain (test stub)', () => {
+    expect(visiblePointRange(x, 6, ((v: number) => v) as Scale)).toEqual([
+      0, 6,
+    ]);
+  });
+
+  it('returns [0,0] for an empty series', () => {
+    expect(visiblePointRange(new Float64Array(0), 0, scale(0, 9))).toEqual([
+      0, 0,
+    ]);
+  });
+});
+
+describe('visibleSpanRange', () => {
+  const begin = Float64Array.from([0, 10, 20, 30, 40, 50]);
+  const end = Float64Array.from([10, 20, 30, 40, 50, 60]);
+
+  it('returns the visible span window against a domain scale', () => {
+    expect(visibleSpanRange(begin, end, 6, scale(22, 38))).toEqual([1, 5]);
+  });
+
+  it('returns the full range when the scale has no domain (test stub)', () => {
+    expect(
+      visibleSpanRange(begin, end, 6, ((v: number) => v) as Scale),
+    ).toEqual([0, 6]);
   });
 });
