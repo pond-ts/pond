@@ -166,7 +166,9 @@ export interface BarChartProps<
    * one-group stack) registers one row named by the layer identity
    * (`as` ?? `column` ?? `id`); a **multi-group stack registers one row per
    * group** (stack order, each group's resolved fill), where a rename string
-   * is ignored — group names come from the data.
+   * is ignored — group names come from the data. A per-bin-coloured histogram
+   * (`binColors`) is one series: its single row's swatch shows the group's
+   * base fill, not the per-bin palette.
    */
   legend?: boolean | string;
   /**

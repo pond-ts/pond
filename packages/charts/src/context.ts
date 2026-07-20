@@ -2,7 +2,7 @@ import { createContext } from 'react';
 import type { ScaleLinear, ScaleTime } from 'd3-scale';
 import type { ChartTheme } from './theme.js';
 import type { AxisFormat } from './format.js';
-// Type-only (erased at runtime): legend.ts imports RowContext from here, so a
+// Type-only (erased at runtime): swatch.ts imports RowContext from here, so a
 // value import in this direction would be a cycle; a type import is not.
 import type { LegendItemSpec } from './swatch.js';
 import type { Interval } from 'pond-ts';
@@ -207,7 +207,7 @@ export interface ContainerFrame {
    * Register this layer's **legend row** — its display label + resolved
    * {@link SwatchSpec} (and selection `id` when it has one) — keyed by the
    * layer's per-instance slot; unregister on unmount (see
-   * {@link useLegendItem}). `<Legend>` renders this registry in
+   * {@link useLegendItems}). `<Legend>` renders this registry in
    * {@link rowOrder}-then-declaration order, deduped by `id ?? label`; a layer
    * that opted out (`legend={false}`) simply never registers.
    */
@@ -563,9 +563,13 @@ export interface SelectInfo {
   /**
    * The clicked sample's key as epoch ms (its event's `begin`) — click
    * **provenance**, informational. NOT the selection identity (that is {@link id}).
+   * A **series-scoped** selection with no sample under it (a `<Legend>` row's
+   * default hover/select) carries `NaN` here and in {@link value} — check
+   * `Number.isFinite` before treating them as a sample.
    */
   readonly key: number;
-  /** The clicked sample's value (the plotted column) — provenance. */
+  /** The clicked sample's value (the plotted column) — provenance. `NaN` for a
+   *  series-scoped selection (see {@link key}). */
   readonly value: number;
   /** The mark's resolved style colour. */
   readonly color: string;

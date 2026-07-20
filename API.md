@@ -264,7 +264,7 @@ Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 | `AnnotationKind` / `CreateSpec`         | Annotation identity + draw-gesture payload (`onCreate`)                         | `packages/charts/src/context.ts`          |
 | `SelectInfo`                            | Selection/hover payload (`ChartContainer` `onSelect`/`onHover`)                 | `packages/charts/src/context.ts`          |
 | `TimeGrain`                             | Coarse time unit for grain-aware formatting                                     | `packages/charts/src/tickLadder.ts`       |
-| `SwatchSpec` / `LegendRowInput`         | Legend swatch vocabulary + explicit-rows input (`<Legend items>`)               | `packages/charts/src/legend.ts`           |
+| `SwatchSpec` / `LegendRowInput`         | Legend swatch vocabulary + explicit-rows input (`<Legend items>`)               | `packages/charts/src/swatch.ts`           |
 | `LegendPlacement`                       | `'top-left' \| 'top-right' \| 'bottom-left' \| 'bottom-right'`                  | `packages/charts/src/Legend.tsx`          |
 | `Curve`                                 | Path interpolation: `'linear' \| 'monotone' \| 'natural' \| 'basis' \| 'step'`  | `packages/charts/src/curve.ts`            |
 | `RadiusEncoding` / `ColorEncoding`      | Data-driven scatter size/colour                                                 | `packages/charts/src/encoding.ts`         |

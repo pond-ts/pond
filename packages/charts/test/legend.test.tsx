@@ -147,6 +147,58 @@ describe('<Legend> — zero-config enumeration', () => {
     expect(labels).toEqual(['v', 'w']);
   });
 
+  it('a stacked bar WITH an id keeps one row per group (dedup is per stack position)', () => {
+    const { container } = renderChart(
+      <ChartContainer range={[0, 2000]} width={400}>
+        <ChartRow height={100}>
+          <YAxis id="a" min={0} max={20} />
+          <Layers>
+            <BarChart
+              series={series()}
+              columns={['v', 'w']}
+              id="stack"
+              axis="a"
+            />
+          </Layers>
+        </ChartRow>
+        <Legend />
+      </ChartContainer>,
+    );
+    const card = legendCard(container);
+    const labels = Array.from(card.querySelectorAll('span')).map(
+      (s) => s.textContent,
+    );
+    // Pre-fix, the shared layer id collapsed the groups to one row.
+    expect(labels).toEqual(['v', 'w']);
+  });
+
+  it('an unmounted layer unregisters its row', () => {
+    const stub = stubCanvasContext();
+    try {
+      const chart = (both: boolean) => (
+        <ChartContainer range={[0, 2000]} width={400}>
+          <ChartRow height={100}>
+            <YAxis id="a" min={0} max={10} />
+            <Layers>
+              <LineChart series={series()} column="v" as="foam" axis="a" />
+              {both ? (
+                <LineChart series={series()} column="w" as="swell" axis="a" />
+              ) : null}
+            </Layers>
+          </ChartRow>
+          <Legend />
+        </ChartContainer>
+      );
+      const { container, rerender } = render(chart(true));
+      expect(within(legendCard(container)).getByText('swell')).toBeTruthy();
+      rerender(chart(false));
+      expect(within(legendCard(container)).queryByText('swell')).toBeNull();
+      expect(within(legendCard(container)).getByText('foam')).toBeTruthy();
+    } finally {
+      stub.restore();
+    }
+  });
+
   it('renders nothing with no registered rows', () => {
     const { container } = renderChart(
       <ChartContainer range={[0, 2000]} width={400}>
@@ -233,6 +285,43 @@ describe('<Legend> — id-gated interactions', () => {
     // A row without an id is inert by default.
     act(() => within(card).getByText('foam').click());
     expect(onSelect).toHaveBeenCalledTimes(2);
+  });
+
+  it('hovering an id-bearing row echoes into the container hovered channel', () => {
+    const onHover = vi.fn();
+    const { container } = renderChart(
+      <ChartContainer range={[0, 2000]} width={400} onHover={onHover}>
+        <ChartRow height={100}>
+          <YAxis id="a" min={0} max={10} />
+          <Layers>
+            <ScatterChart
+              series={series()}
+              column="v"
+              id="pts"
+              as="dots"
+              axis="a"
+            />
+          </Layers>
+        </ChartRow>
+        <Legend />
+      </ChartContainer>,
+    );
+    const card = legendCard(container);
+    const row = within(card).getByText('dots').parentElement!;
+    // React derives onPointerEnter/Leave from the bubbling over/out pair.
+    act(() => {
+      row.dispatchEvent(
+        new PointerEvent('pointerover', { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(onHover).toHaveBeenCalledTimes(1);
+    expect(onHover.mock.calls[0]![0]).toMatchObject({ id: 'pts' });
+    act(() => {
+      row.dispatchEvent(
+        new PointerEvent('pointerout', { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(onHover).toHaveBeenLastCalledWith(null);
   });
 
   it('onRowClick takes over the default select behavior', () => {
