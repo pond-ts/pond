@@ -3,6 +3,7 @@ import type { BandSeries } from './data.js';
 import type { Scale } from './line.js';
 import type { BandStyle } from './theme.js';
 import { cullBandSeries } from './culling.js';
+import { decimateBand, type DecimateOption } from './decimate.js';
 
 /**
  * The `[min, max]` vertical extent of the **drawn** band — the lowest `lower`
@@ -49,12 +50,23 @@ export function drawBand(
   yScale: Scale,
   style: BandStyle,
   curve: CurveFactory = curveLinear,
+  decimate: DecimateOption = true,
 ): void {
   // Viewport culling (Phase 2): clip the envelope to the visible slice (+1 each
   // side) before filling, so a pan strokes O(visible). The solid fill has no
   // cross-point state, so a zero-copy subarray view is exact; a no-op (same
   // object) when fully in view or the scale has no domain (a test stub).
   band = cullBandSeries(band, xScale);
+  // M4 band decimation (Phase 3): once the culled envelope is denser than ~2
+  // samples per device pixel, replace it with the per-column min-lower / max-upper
+  // envelope ({@link decimateBand}) — O(plot width) points that cover the same
+  // pixels. Gated off a smoothing `curve` (which would distort the per-column
+  // envelope) and `decimate === false`; `decimateBand` itself no-ops on a sparse
+  // envelope or a domainless test scale, so this stays byte-identical there.
+  if (decimate !== false && curve === curveLinear) {
+    const k = typeof decimate === 'object' ? decimate.threshold : undefined;
+    band = decimateBand(band, xScale, ctx, k);
+  }
   const gen = d3area<number>()
     .defined(
       (_, i) =>

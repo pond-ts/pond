@@ -431,9 +431,14 @@ best-effort.
     so the gap becomes its own empty (`NaN`) bucket with exact pre/post-gap values
     — the `'empty'` gate is gone and **all gap modes decimate** (`'none'` bridges,
     dashed/step/fade draw their connectors across the gap; verified in the browser
-    on a gappy dashed 200k line). **Phase 3 remainder:** area/band decimation hints
-    only (still gated off non-linear curve + session breaks; scatter stays
-    `preserveSparse`, cull only). **Remaining → chart-side (Phases 4–5), bench-ordered:** re-bench,
+    on a gappy dashed 200k line). **Area + band decimation DONE:** `<AreaChart>`
+    reuses the line M4 on its outline (gap-union included) with the fill under the
+    full-series gradient; `<BandChart>` decimates to the per-column min-lower /
+    max-upper envelope (`decimateBand` — never inverts, §2.5; the win is the fill
+    raster, ≈W verts vs every sample). Both `decimate={false|{threshold}}`, gated
+    off non-linear curve; verified in the browser (200k Area + Band stories). **So
+    Phase 3 is complete** except: non-linear curves + session breaks still draw
+    full-res; scatter stays `preserveSparse` (cull only). **Remaining → chart-side (Phases 4–5), bench-ordered:** re-bench,
     then candlestick with Tidal; Path2D cache
     (M4.4) only if the pan bench still misses. `plot_width` + visible slice
     live in the chart; reducer math in pond (unifies with geo F-geo-2). **M4

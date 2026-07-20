@@ -4,6 +4,8 @@ import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
+import { AreaChart } from './AreaChart.js';
+import { BandChart } from './BandChart.js';
 import { XAxis } from './XAxis.js';
 import { docsTheme } from './docs-theme.fixture.js';
 
@@ -66,6 +68,27 @@ function gappyBig(n: number) {
 }
 const gappy = gappyBig(N);
 
+/** A large series with a noisy variance envelope (lower/upper) for band + area. */
+function bigBand(n: number) {
+  const rows: Array<[number, number, number, number]> = new Array(n);
+  for (let i = 0; i < n; i += 1) {
+    const mid = 50 + 30 * Math.sin(i / (n / 20));
+    const spread = 8 + 6 * Math.sin(i / 3.1) ** 2;
+    rows[i] = [BASE + i * STEP, mid, mid - spread, mid + spread];
+  }
+  return new TimeSeries({
+    name: 'bandbig',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'mid', kind: 'number' },
+      { name: 'lo', kind: 'number' },
+      { name: 'hi', kind: 'number' },
+    ] as const,
+    rows,
+  });
+}
+const bandSeries = bigBand(N);
+
 /** Auto-decimation (default) — 200k points drawn from the per-pixel M4 buckets. */
 export const Default: Story = {
   render: () => (
@@ -118,6 +141,37 @@ export const GappyDashed: Story = {
       <ChartRow height={260}>
         <Layers>
           <LineChart series={gappy} column="v" as="power" gaps="dashed" />
+        </Layers>
+      </ChartRow>
+      <XAxis />
+    </ChartContainer>
+  ),
+};
+
+/** A 200k-point filled area, auto-decimated (the outline is M4-decimated; the
+ *  fill follows it under the full-series gradient). */
+export const Area: Story = {
+  render: () => (
+    <ChartContainer width={720} theme={docsTheme} panZoom>
+      <ChartRow height={260}>
+        <Layers>
+          <AreaChart series={series} column="v" as="power" />
+        </Layers>
+      </ChartRow>
+      <XAxis />
+    </ChartContainer>
+  ),
+};
+
+/** A 200k-point variance band, auto-decimated to the per-column min-lower /
+ *  max-upper envelope, with the median line over it. */
+export const Band: Story = {
+  render: () => (
+    <ChartContainer width={720} theme={docsTheme} panZoom>
+      <ChartRow height={260}>
+        <Layers>
+          <BandChart series={bandSeries} lower="lo" upper="hi" />
+          <LineChart series={bandSeries} column="mid" as="power" />
         </Layers>
       </ChartRow>
       <XAxis />

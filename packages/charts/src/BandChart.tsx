@@ -4,6 +4,7 @@ import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
 import { bandFromTimeSeries, bandFromValueSeries } from './data.js';
 import { bandExtent, drawBand } from './band.js';
 import { resolveCurve, type Curve } from './curve.js';
+import type { DecimateOption } from './decimate.js';
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
 import { useSlotKey } from './use-slot-key.js';
 
@@ -49,6 +50,15 @@ export interface BandChartProps<
    */
   curve?: Curve;
   /**
+   * **M4 viewport decimation** (charts decimator wave). **Omitted ⇒ `true`**:
+   * once the visible envelope is denser than ~2 samples per device pixel, it is
+   * drawn from the per-pixel-column **min(lower) / max(upper)** — the widest band
+   * the samples span, so it covers the same pixels from O(plot width) points.
+   * Applies with a linear `curve`; pass `false` to always fill every sample, or
+   * `{ threshold }` to tune. Shares {@link LineChart}'s `DecimateOption`.
+   */
+  decimate?: DecimateOption;
+  /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
    */
@@ -82,6 +92,7 @@ export function BandChart<
   as: semantic,
   axis,
   curve,
+  decimate = true,
   index = 0,
 }: BandChartProps<S, VS>) {
   const container = useContext(ContainerContext);
@@ -156,12 +167,12 @@ export function BandChart<
           ];
         },
         draw: (ctx, xScale, yScale) =>
-          drawBand(ctx, bs, xScale, yScale, style, curveFactory),
+          drawBand(ctx, bs, xScale, yScale, style, curveFactory, decimate),
       },
       axisId: axis,
       index,
     }),
-    [bs, series, lower, upper, style, curveFactory, axis, index],
+    [bs, series, lower, upper, style, curveFactory, decimate, axis, index],
   );
   // Stable per-instance slot (see useSlotKey): keeps this band's z-position +
   // identity across prop updates; the injected index drives the sort.

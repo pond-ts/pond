@@ -14,6 +14,7 @@ import {
   type GapMode,
 } from './gaps.js';
 import { cullChartSeries } from './culling.js';
+import { decimateM4, type DecimateOption } from './decimate.js';
 
 /**
  * The `[min, max]` vertical extent an area occupies — the finite values of
@@ -94,6 +95,7 @@ export function drawArea(
   curve: CurveFactory = curveLinear,
   gaps: GapMode = DEFAULT_GAP_MODE,
   gapConnectorOpacity: number = DEFAULT_GAP_CONNECTOR_OPACITY,
+  decimate: DecimateOption = true,
 ): void {
   const baselinePx = yScale(baselineValue);
   // The fill gradient's vertical extent is computed from the **full** series (a
@@ -111,6 +113,15 @@ export function drawArea(
   // fully in view or `xScale` has no domain (a test stub), keeping that hot path
   // byte-identical.
   cs = cullChartSeries(cs, xScale);
+  // M4 decimation (Phase 3): the outline is a line, so the same {@link decimateM4}
+  // pre-pass shrinks the fill + outline + gap-bridge work to O(plot width) once
+  // dense — with the §2.2 gap-edge union so every gap mode composes. The gradient
+  // above is over the FULL series, so the decimated fill paints identical pixels
+  // under it. Gated off a smoothing `curve`; a no-op on a sparse slice / test scale.
+  if (decimate !== false && curve === curveLinear) {
+    const k = typeof decimate === 'object' ? decimate.threshold : undefined;
+    cs = decimateM4(cs, xScale, ctx, k);
+  }
   // `none` interpolates interior gaps so the fill + outline bridge them; every
   // other mode keeps NaN so d3 breaks both (the inferred line bridge, if any, is
   // a separate overlay pass below).
