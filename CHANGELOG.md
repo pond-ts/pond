@@ -48,6 +48,19 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **charts:** **Tracker labels key on `as` across the multi-value marks**
+  (F-charts-8 §3, the `<Legend>` label-source prerequisite). With a semantic
+  `as`, a `<BandChart>`'s edge samples now read `"<as> lower"` / `"<as>
+upper"` and a `<Candlestick showOHLC>`'s quote pills read `"<as> high"` /
+  `"<as> open"` / … — the series-name + role convention `<BoxPlot>` already
+  shipped (`iv upper`) — so readout/legend merge keys are the series
+  identity, not raw column names or bare role words. Without an `as`,
+  labels are unchanged (column names / role words). Consumers keying
+  `onTrackerChanged` readouts on the old labels while setting `as` should
+  key on the new `"<as> <role>"` form.
+
 ### Added
 
 - **charts:** **`cursorFormat` reaches value axes** (#508 item 1, Tidal

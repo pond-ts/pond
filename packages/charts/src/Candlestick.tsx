@@ -172,11 +172,16 @@ export function Candlestick<S extends SeriesSchema>({
           }
           // Opt-in full quote: four value pills (body colour for open/close, wick
           // colour for the high/low extremes). Each is a value-only axis pill.
+          // With a semantic `as`, each reads under the series name + role
+          // (`SPY high`) — BoxPlot's qLabel convention, so two quoted series
+          // don't merge readout keys on the bare role words (F-charts-8 §3).
+          const role = (r: string): string =>
+            semantic !== undefined ? `${semantic} ${r}` : r;
           const samples: TrackerSample[] = [
-            { x: at, value: ohlc.high[i]!, color: wick, label: 'high' },
-            { x: at, value: ohlc.open[i]!, color: body, label: 'open' },
-            { x: at, value: ohlc.close[i]!, color: body, label: 'close' },
-            { x: at, value: ohlc.low[i]!, color: wick, label: 'low' },
+            { x: at, value: ohlc.high[i]!, color: wick, label: role('high') },
+            { x: at, value: ohlc.open[i]!, color: body, label: role('open') },
+            { x: at, value: ohlc.close[i]!, color: body, label: role('close') },
+            { x: at, value: ohlc.low[i]!, color: wick, label: role('low') },
           ];
           return samples;
         },
@@ -186,7 +191,18 @@ export function Candlestick<S extends SeriesSchema>({
       axisId: axis,
       index,
     }),
-    [ohlc, style, label, variant, colorBy, gap, showOHLC, axis, index],
+    [
+      ohlc,
+      style,
+      label,
+      semantic,
+      variant,
+      colorBy,
+      gap,
+      showOHLC,
+      axis,
+      index,
+    ],
   );
   // Stable per-instance slot (see useSlotKey): keeps this candle layer's
   // z-position + identity across prop updates; the injected index drives the sort.

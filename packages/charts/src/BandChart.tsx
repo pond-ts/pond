@@ -116,6 +116,15 @@ export function BandChart<
   const style =
     (semantic !== undefined ? band[semantic] : undefined) ?? band.default;
   const curveFactory = resolveCurve(curve);
+  // Readout label per edge: with a semantic `as`, an edge reads under the series
+  // name + role (`iv lower`, `iv upper`) — the `as ?? column` convention Line /
+  // Scatter use and the exact shape BoxPlot's qLabel ships — so two bands (or a
+  // band and its centre line) merge readout keys by series, not by raw column
+  // names (F-charts-8 §3). With no `as`, the column name stands (self-evident).
+  const edgeLabel = useMemo(() => {
+    return (col: string, role: 'lower' | 'upper'): string =>
+      semantic !== undefined ? `${semantic} ${role}` : col;
+  }, [semantic]);
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
@@ -140,8 +149,18 @@ export function BandChart<
             const hi = bs.upper[i]!;
             if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [];
             return [
-              { x: bs.x[i]!, value: lo, color: style.fill, label: lower },
-              { x: bs.x[i]!, value: hi, color: style.fill, label: upper },
+              {
+                x: bs.x[i]!,
+                value: lo,
+                color: style.fill,
+                label: edgeLabel(lower, 'lower'),
+              },
+              {
+                x: bs.x[i]!,
+                value: hi,
+                color: style.fill,
+                label: edgeLabel(upper, 'upper'),
+              },
             ];
           }
           const e = series.nearest(x);
@@ -159,11 +178,22 @@ export function BandChart<
           ) {
             return [];
           }
-          // Both edges, labelled by their column (e.g. p25 / p75), in the band's
-          // fill colour. A gap on either edge yields no readout (like the fill).
+          // Both edges, labelled by series + role under an `as` (else by their
+          // column, e.g. p25 / p75), in the band's fill colour. A gap on either
+          // edge yields no readout (like the fill).
           return [
-            { x: e.begin(), value: lo, color: style.fill, label: lower },
-            { x: e.begin(), value: hi, color: style.fill, label: upper },
+            {
+              x: e.begin(),
+              value: lo,
+              color: style.fill,
+              label: edgeLabel(lower, 'lower'),
+            },
+            {
+              x: e.begin(),
+              value: hi,
+              color: style.fill,
+              label: edgeLabel(upper, 'upper'),
+            },
           ];
         },
         draw: (ctx, xScale, yScale) =>
@@ -172,7 +202,18 @@ export function BandChart<
       axisId: axis,
       index,
     }),
-    [bs, series, lower, upper, style, curveFactory, decimate, axis, index],
+    [
+      bs,
+      series,
+      lower,
+      upper,
+      style,
+      curveFactory,
+      decimate,
+      axis,
+      index,
+      edgeLabel,
+    ],
   );
   // Stable per-instance slot (see useSlotKey): keeps this band's z-position +
   // identity across prop updates; the injected index drives the sort.
