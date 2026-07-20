@@ -4,6 +4,8 @@ import {
   deviceBucketCount,
   shouldDecimate,
   pixelEdges,
+  gapKeyEdges,
+  mergeGapEdges,
   m4Polyline,
   decimateM4,
 } from '../src/decimate.js';
@@ -75,6 +77,47 @@ describe('pixelEdges', () => {
     const e = pixelEdges(invert, 100, 4);
     // px 0,25,50,75,100 → key 0,5,10,410,810 (not a uniform 0..810 split).
     expect(Array.from(e)).toEqual([0, 5, 10, 410, 810]);
+  });
+});
+
+describe('gapKeyEdges', () => {
+  it('emits (first-NaN, first-finite-after) for a wide interior gap', () => {
+    // x 0..6; NaN at 2,3,4 → interior gap bounded by x[1]=1 and x[5]=5.
+    const s = cs([0, 1, 2, 3, 4, 5, 6], [0, 1, NaN, NaN, NaN, 5, 6]);
+    // minSpan 1: the gap (x[5]-x[1] = 4) qualifies → edges [x[2]=2, x[5]=5].
+    expect(gapKeyEdges(s, 1)).toEqual([2, 5]);
+  });
+
+  it('skips a gap narrower than one pixel column', () => {
+    // Same single-NaN gap but minSpan 10 → x[3]-x[1] = 2 < 10 → no edges.
+    const s = cs([0, 1, 2, 3], [0, 1, NaN, 3]);
+    expect(gapKeyEdges(s, 10)).toEqual([]);
+  });
+
+  it('skips leading and trailing NaN runs (no bridge to preserve)', () => {
+    const s = cs([0, 1, 2, 3, 4], [NaN, NaN, 2, 3, NaN]);
+    expect(gapKeyEdges(s, 1)).toEqual([]);
+  });
+});
+
+describe('mergeGapEdges', () => {
+  const pixels = Float64Array.from([0, 10, 20, 30]);
+
+  it('folds in-range gap boundaries into the sorted, deduped edge list', () => {
+    expect(Array.from(mergeGapEdges(pixels, [12, 18], 0, 30))).toEqual([
+      0, 10, 12, 18, 20, 30,
+    ]);
+  });
+
+  it('drops gap boundaries outside (lo, hi) and dedupes coincident ones', () => {
+    // -5 and 40 are out of range; 20 coincides with a pixel edge → deduped.
+    expect(Array.from(mergeGapEdges(pixels, [-5, 20, 40], 0, 30))).toEqual([
+      0, 10, 20, 30,
+    ]);
+  });
+
+  it('returns the same array (no allocation) when no gap boundary is in range', () => {
+    expect(mergeGapEdges(pixels, [], 0, 30)).toBe(pixels);
   });
 });
 

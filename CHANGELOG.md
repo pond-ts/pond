@@ -62,11 +62,14 @@ and type-level changes; patch bumps are strictly additive.
   scale's pixel range inverted back to key space, so each bucket is one pixel
   column on **any** scale, including a non-affine `TradingTimeScale`. Auto-on with
   an opt-out / tuning prop
-  `decimate={false | { threshold }}` (new `DecimateOption` export). Applies to the
-  honest default draw — solid `gaps="empty"`, linear `curve`, no `sessionBreaks`;
-  the inferred gap modes (the §2.2 gap-edge union) and area/band are the Phase-3
-  remainder. Interaction reads the source series (§2.3), so readouts/selection are
-  unaffected.
+  `decimate={false | { threshold }}` (new `DecimateOption` export). **All gap
+  modes** decimate: a §2.2 **gap-edge union** folds each ≥1-pixel interior gap's
+  boundaries into the bucket edges, so the gap reduces to its own empty (`NaN`)
+  bucket with exact pre/post-gap values — `'empty'` breaks precisely, `'none'`
+  bridges, and the `dashed`/`step`/`fade` connectors still draw across the gap.
+  Still gated off a non-linear `curve` and `sessionBreaks` (they draw full-res);
+  area/band decimation is the remaining Phase-3 work. Interaction reads the source
+  series (§2.3), so readouts/selection are unaffected.
 - **charts:** **Viewport culling** (charts decimator wave, Phase 2). Line, area,
   and band layers now clip to the **visible slice** of their key column — plus
   one entry/exit point each side so the segment crossing each plot edge still

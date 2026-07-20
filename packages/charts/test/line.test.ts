@@ -695,19 +695,27 @@ describe('drawLine — M4 decimation (Phase 3)', () => {
     expect(penCount(calls)).toBe(1000);
   });
 
-  it('skips decimation for a non-empty gap mode (needs the §2.2 gap union)', () => {
-    const { ctx, calls } = sizedCtx(10);
+  it('decimates a non-empty gap mode too, preserving the connector (§2.2 union)', () => {
+    const { ctx, calls } = sizedCtx(10); // W=10, column width 500 over [0,5000]
+    // Dense 5000 with a ~700-wide gap (> 1 column) at index 2000..2699, so the
+    // gap-edge union isolates it into empty buckets.
+    const x = Array.from({ length: 5000 }, (_, i) => i);
+    const y = x.map((i) => (i >= 2000 && i < 2700 ? NaN : i));
     drawLine(
       ctx,
-      dense(5000),
+      cs(x, y),
       domainScale(0, 5000),
       (v) => v,
       style,
       undefined,
       'dashed',
     );
-    // 'dashed' is not decimated → the full 5000-point solid pass still runs.
-    expect(penCount(calls)).toBeGreaterThan(4000);
+    // Decimated: far fewer than the 5000-point full-res draw.
+    expect(penCount(calls)).toBeLessThan(100);
+    expect(penCount(calls)).toBeGreaterThan(0);
+    // The gap survived the union (its own empty bucket) → the inferred dashed
+    // connector still draws (setLineDash on the bridge pass).
+    expect(calls.some((c) => c.name === 'setLineDash')).toBe(true);
   });
 
   it('skips decimation when session breaks split the line', () => {

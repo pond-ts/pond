@@ -426,10 +426,14 @@ best-effort.
     **visually lossless** (e2e bounds decimated-vs-full to a thin sub-pixel AA
     seam, ~1.8%) + **spike-preserving** (1-in-200k anomaly kept) in the browser;
     1M fully-visible ~34 → 3.4 ms/frame. §2.3 interaction-reads-source holds
-    (decimation is draw-only). **Phase 3 remainder:** the §2.2 **gap-edge union**
-    for the inferred gap modes (dashed/step/fade/none decimation — today they draw
-    full-res), and area/band decimation hints; scatter stays `preserveSparse`
-    (cull only). **Remaining → chart-side (Phases 4–5), bench-ordered:** re-bench,
+    (decimation is draw-only). **§2.2 gap-edge union DONE:** `gapKeyEdges` folds
+    each ≥1-pixel interior gap's boundaries into the bucket edges (`mergeGapEdges`),
+    so the gap becomes its own empty (`NaN`) bucket with exact pre/post-gap values
+    — the `'empty'` gate is gone and **all gap modes decimate** (`'none'` bridges,
+    dashed/step/fade draw their connectors across the gap; verified in the browser
+    on a gappy dashed 200k line). **Phase 3 remainder:** area/band decimation hints
+    only (still gated off non-linear curve + session breaks; scatter stays
+    `preserveSparse`, cull only). **Remaining → chart-side (Phases 4–5), bench-ordered:** re-bench,
     then candlestick with Tidal; Path2D cache
     (M4.4) only if the pan bench still misses. `plot_width` + visible slice
     live in the chart; reducer math in pond (unifies with geo F-geo-2). **M4

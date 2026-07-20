@@ -18,10 +18,18 @@
  * by the value-only reducer), so the edge antialiases a fraction of a pixel
  * differently than the full line (the e2e bounds the whole-plot difference at a
  * low single-digit %; a broken M4 diffs a large area). An empty column (a gap
- * with no samples) reduces to `NaN`
- * on all four channels — the canvas sub-path-break sentinel — so `'empty'`-mode
- * gaps fall out for free (the gap-edge union for the *inferred* gap modes is the
- * §2.2 follow-up).
+ * with no samples) reduces to `NaN` on all four channels — the canvas
+ * sub-path-break sentinel — so a gap becomes a break for free.
+ *
+ * **Gaps (§2.2 gap-edge union).** A `binBy` bucket straddling a gap *edge* is
+ * validity-blind (min/max/first/last see only the finite samples), so it would
+ * silently bridge a gap `'empty'` must break and rob the dashed/step/fade
+ * connectors of exact edge values. {@link gapKeyEdges} folds every ≥1-column
+ * interior gap's boundaries into the bucket-edge list, so each gap reduces to its
+ * own empty (NaN) bucket and the bordering buckets carry the exact pre/post-gap
+ * values — the decimated series then feeds the *unchanged* gap-mode machinery in
+ * `drawLine` (`'none'` bridges the breaks, dashed/step/fade draw their inferred
+ * connectors from `collectGapEdges`).
  *
  * **Reads the frame geometry off the canvas + scale**, not the layer signature:
  * the bucket count `W` is the backing buffer width `ctx.canvas.width` (already
@@ -116,8 +124,9 @@ function scaleInvert(xScale: Scale): ((px: number) => number) | null {
  * within a session). `invert` is monotonic, so the edges ascend; the last is the
  * domain max (`invert(plotWidthCss)`), inclusive in `binBy`.
  *
- * `plotWidthCss` is the CSS-pixel plot width (`W / dpr` — `W` counts *device*
- * columns), so the inverted positions land on the scale's CSS-pixel range.
+ * `plotWidthCss` is the scale's CSS-pixel range width (`xScale.range()` max);
+ * `W` counts *device* columns (`plotWidthCss × DPR`), so the `W` inverted
+ * positions land at device-pixel resolution across the CSS range.
  */
 export function pixelEdges(
   invert: (px: number) => number,
@@ -127,6 +136,69 @@ export function pixelEdges(
   const edges = new Float64Array(W + 1);
   for (let b = 0; b <= W; b += 1) edges[b] = invert((plotWidthCss * b) / W);
   return edges;
+}
+
+/**
+ * Key-space bucket boundaries that isolate each **interior gap** — a `NaN` run in
+ * `y` with a finite sample on both sides — that spans at least one pixel column
+ * (`minSpan`). This is the §2.2 gap-edge union: without it a `binBy` bucket
+ * straddling a gap edge is *validity-blind* (min/max/first/last see only the
+ * finite samples), so it silently bridges a gap `'empty'` mode must break and the
+ * `dashed`/`step`/`fade` connectors lose their exact edge values. For a gap
+ * bounded by finite `x[a]` (last before) and `x[c]` (first after), with the first
+ * `NaN` at `x[a+1]`, two edges are emitted:
+ *
+ * - `x[a+1]` — so `x[a]` stays the **last** finite sample of the prior bucket
+ *   (its `last` channel = the exact pre-gap edge value); and
+ * - `x[c]` — so `x[c]` **starts** the next bucket (its `first` = the exact
+ *   post-gap edge value).
+ *
+ * The `[x[a+1], x[c])` bucket between them is then all-`NaN` → an empty bucket →
+ * the `NaN` break. Only gaps at least one pixel column wide (`x[c] − x[a] ≥
+ * minSpan`) are emitted — a sub-pixel dropout is invisible and left to the
+ * plain empty-bucket convention, which also bounds the extra-edge count. Emitted
+ * ascending (`x` is). Leading / trailing `NaN` runs are skipped (no bridge to
+ * preserve — the first/last live bucket handles the end).
+ */
+export function gapKeyEdges(cs: ChartSeries, minSpan: number): number[] {
+  const { x, y, length } = cs;
+  const out: number[] = [];
+  let prevFinite = -1;
+  for (let i = 0; i < length; i += 1) {
+    if (!Number.isFinite(y[i]!)) continue;
+    if (
+      prevFinite >= 0 &&
+      i - prevFinite > 1 &&
+      x[i]! - x[prevFinite]! >= minSpan
+    ) {
+      out.push(x[prevFinite + 1]!); // first NaN key
+      out.push(x[i]!); // first finite key after the gap
+    }
+    prevFinite = i;
+  }
+  return out;
+}
+
+/**
+ * Merge the pixel-column `edges` with the interior-gap boundaries `gaps` (both
+ * ascending) into one ascending, duplicate-free edge list, keeping only gap
+ * boundaries strictly inside the domain `(lo, hi)` so the pixel span isn't
+ * extended. Returns the original `edges` untouched when there are no in-range gap
+ * boundaries (the gapless hot path allocates nothing).
+ */
+export function mergeGapEdges(
+  edges: Float64Array,
+  gaps: number[],
+  lo: number,
+  hi: number,
+): Float64Array {
+  const inRange = gaps.filter((g) => g > lo && g < hi);
+  if (inRange.length === 0) return edges;
+  const all = [...edges, ...inRange].sort((a, b) => a - b);
+  const out: number[] = [];
+  for (const e of all)
+    if (out.length === 0 || e > out[out.length - 1]!) out.push(e);
+  return Float64Array.from(out);
 }
 
 /**
@@ -161,7 +233,19 @@ export function decimateM4(
   // `W` device columns inverted across the scale's CSS-pixel range → key-space
   // edges, so each bucket is exactly one pixel column on **any** scale (affine
   // or trading-time — see {@link pixelEdges}).
-  const edges = pixelEdges(invert, plotWidthCss, W);
+  const pixels = pixelEdges(invert, plotWidthCss, W);
+  // §2.2 gap-edge union: fold in the boundaries of every ≥1-column interior gap
+  // so no bucket straddles a gap edge — the gap reduces to its own empty (NaN)
+  // bucket and the bordering buckets carry the exact pre/post-gap edge values
+  // (so `'empty'` breaks precisely and the dashed/step/fade connectors land
+  // right). A gapless slice returns `pixels` unchanged (no allocation).
+  const edges = mergeGapEdges(
+    pixels,
+    gapKeyEdges(cs, (dom[1] - dom[0]) / W),
+    dom[0],
+    dom[1],
+  );
+  const buckets = edges.length - 1;
   // Bin the value channel against the pixel-column edges over the key axis. A
   // fresh Float64Column wraps the already-materialized `cs.y` (zero-copy — it
   // reads, never mutates); `cs.x` is the monotonic key.
@@ -172,7 +256,7 @@ export function decimateM4(
     first,
     last,
   } = col.binBy(cs.x, edges, 'minMaxFirstLast');
-  return m4Polyline(edges, mn, mx, first, last, W);
+  return m4Polyline(edges, mn, mx, first, last, buckets);
 }
 
 /**

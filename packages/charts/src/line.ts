@@ -103,19 +103,16 @@ export function drawLine(
   // M4 decimation (Phase 3): once the culled slice is still denser than ~2
   // samples per device pixel, replace it with the pixel-dense M4 polyline
   // ({@link decimateM4}) — O(devicePlotWidth) points that rasterize identically.
-  // Gated to the **honest default path**: `'empty'` gaps (the inferred
-  // dashed/step/fade/none modes need the §2.2 gap-edge union, still to come), a
-  // **linear** curve (a smoothing curve would distort the 4-points-per-column
-  // polyline), and **no session breaks** (the M4 output is already one geometry,
-  // not per-session runs). Off (`decimate === false`) or any of those unmet ⇒
-  // the full culled slice draws, unchanged. `decimateM4` itself no-ops on a
-  // sparse slice or a domainless test scale, so this stays byte-identical there.
-  if (
-    decimate !== false &&
-    gaps === 'empty' &&
-    curve === curveLinear &&
-    boundaries.length === 0
-  ) {
+  // The gap-edge union ({@link gapKeyEdges}) makes the decimated series break at
+  // exactly the real gaps with exact edge values, so **every** gap mode composes:
+  // the runs/solid pass below and the dashed/step/fade overlay run on it
+  // unchanged. Still gated off a **linear** curve (a smoothing curve would
+  // distort the 4-points-per-column polyline) and **no session breaks** (the M4
+  // output is already one geometry, not per-session runs) — those draw
+  // full-resolution. Off (`decimate === false`) or either unmet ⇒ the full culled
+  // slice draws. `decimateM4` itself no-ops on a sparse slice or a domainless
+  // test scale, so this stays byte-identical there.
+  if (decimate !== false && curve === curveLinear && boundaries.length === 0) {
     const k = typeof decimate === 'object' ? decimate.threshold : undefined;
     cs = decimateM4(cs, xScale, ctx, k);
   }
