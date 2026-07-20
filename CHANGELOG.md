@@ -67,9 +67,16 @@ and type-level changes; patch bumps are strictly additive.
   boundaries into the bucket edges, so the gap reduces to its own empty (`NaN`)
   bucket with exact pre/post-gap values — `'empty'` breaks precisely, `'none'`
   bridges, and the `dashed`/`step`/`fade` connectors still draw across the gap.
-  Still gated off a non-linear `curve` and `sessionBreaks` (they draw full-res);
-  area/band decimation is the remaining Phase-3 work. Interaction reads the source
-  series (§2.3), so readouts/selection are unaffected.
+  Still gated off a non-linear `curve` and `sessionBreaks` (they draw full-res).
+  Interaction reads the source series (§2.3), so readouts/selection are unaffected.
+- **charts:** M4 decimation extended to **`<AreaChart>` and `<BandChart>`** (same
+  auto-on `decimate={false | { threshold }}` prop). An **area** reuses the line M4
+  on its outline (gap-edge union included) with the fill following under the
+  full-series gradient — so a dense filled area shrinks its fill + outline work to
+  O(plot width). A **band** decimates to the per-pixel-column **min(`lower`) /
+  max(`upper`)** — the widest envelope the samples span, so it can never invert
+  (§2.5) and covers the same pixels; the win is the canvas fill (≈W vertices vs
+  every sample). Both gated off a non-linear `curve`; interaction unaffected.
 - **charts:** **Viewport culling** (charts decimator wave, Phase 2). Line, area,
   and band layers now clip to the **visible slice** of their key column — plus
   one entry/exit point each side so the segment crossing each plot edge still

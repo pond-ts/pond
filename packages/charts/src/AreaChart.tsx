@@ -3,6 +3,7 @@ import { ValueSeries } from 'pond-ts';
 import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
 import { fromTimeSeries, fromValueSeries } from './data.js';
 import { areaExtent, drawArea } from './area.js';
+import type { DecimateOption } from './decimate.js';
 import { resolveCurve, type Curve } from './curve.js';
 import {
   DEFAULT_GAP_MODE,
@@ -79,6 +80,16 @@ export interface AreaChartProps<
    */
   gaps?: GapMode;
   /**
+   * **M4 viewport decimation** (charts decimator wave). **Omitted ⇒ `true`**:
+   * once the visible data is denser than ~2 samples per device pixel, the fill +
+   * outline are drawn from the per-pixel-column M4 buckets (a visually-lossless
+   * polyline of O(plot width) points) instead of every sample. Applies with a
+   * linear `curve`; pass `false` to always draw every point, or `{ threshold }`
+   * to tune the samples-per-pixel factor. Shares {@link LineChart}'s
+   * `DecimateOption`.
+   */
+  decimate?: DecimateOption;
+  /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
    */
@@ -126,6 +137,7 @@ export function AreaChart<
   baseline,
   curve,
   gaps = DEFAULT_GAP_MODE,
+  decimate = true,
   index = 0,
 }: AreaChartProps<S, VS>) {
   const container = useContext(ContainerContext);
@@ -207,6 +219,7 @@ export function AreaChart<
             curveFactory,
             gaps,
             gapConnectorOpacity,
+            decimate,
           ),
       },
       axisId: axis,
@@ -222,6 +235,7 @@ export function AreaChart<
       curveFactory,
       gaps,
       gapConnectorOpacity,
+      decimate,
       axis,
       index,
     ],

@@ -8,13 +8,20 @@ import {
   mergeGapEdges,
   m4Polyline,
   decimateM4,
+  decimateBand,
 } from '../src/decimate.js';
-import type { ChartSeries } from '../src/data.js';
+import type { ChartSeries, BandSeries } from '../src/data.js';
 import type { Scale } from '../src/line.js';
 
 const cs = (x: number[], y: number[]): ChartSeries => ({
   x: Float64Array.from(x),
   y: Float64Array.from(y),
+  length: x.length,
+});
+const band = (x: number[], lower: number[], upper: number[]): BandSeries => ({
+  x: Float64Array.from(x),
+  lower: Float64Array.from(lower),
+  upper: Float64Array.from(upper),
   length: x.length,
 });
 
@@ -190,5 +197,51 @@ describe('decimateM4', () => {
     // Column 3 covers [6000,8000]: first/min 6000, max/last 7999 (edge inclusive).
     expect(out.y[13]).toBe(6000); // min of column 3
     expect(out.y[14]).toBe(7999); // max of column 3
+  });
+});
+
+describe('decimateBand', () => {
+  it('returns the same object when the band is already sparse', () => {
+    const b = band([0, 1, 2], [0, 1, 2], [5, 6, 7]);
+    expect(decimateBand(b, pxScale(0, 2), stubCtx(800))).toBe(b);
+  });
+
+  it('bins to one point per column: min(lower) / max(upper) — the widest envelope', () => {
+    // 8000 samples on [0,8000); W=4 → each column spans 2000 samples.
+    // lower[i]=i (min at column start), upper[i]=i+1000 (max at column end).
+    const n = 8000;
+    const x = Array.from({ length: n }, (_, i) => i);
+    const b = band(
+      x,
+      x.map((i) => i),
+      x.map((i) => i + 1000),
+    );
+    const out = decimateBand(b, pxScale(0, n), stubCtx(4), 2); // W=4
+    expect(out.length).toBe(4);
+    // Column 0 covers [0,2000): min lower = 0, max upper = 1999+1000 = 2999.
+    expect(out.lower[0]).toBe(0);
+    expect(out.upper[0]).toBe(2999);
+    // Column 3 covers [6000,8000]: min lower = 6000, max upper = 7999+1000 = 8999.
+    expect(out.lower[3]).toBe(6000);
+    expect(out.upper[3]).toBe(8999);
+    // Envelope never inverts — upper ≥ lower per column.
+    for (let c = 0; c < out.length; c += 1) {
+      expect(out.upper[c]!).toBeGreaterThanOrEqual(out.lower[c]!);
+    }
+  });
+
+  it('emits NaN on an empty column (a gap → the fill break)', () => {
+    // A gap: no samples in the middle of the key range. W=4 over [0,40];
+    // samples only at 0..5 and 35..40, so the middle columns are empty.
+    const x = [0, 1, 2, 3, 4, 5, 35, 36, 37, 38, 39, 40];
+    const b = band(
+      x,
+      x.map(() => 1),
+      x.map(() => 2),
+    );
+    const out = decimateBand(b, pxScale(0, 40), stubCtx(4), 1); // W=4, colWidth 10
+    // Column 1 [10,20) and column 2 [20,30) have no samples → NaN edges.
+    expect(Number.isNaN(out.lower[1]!)).toBe(true);
+    expect(Number.isNaN(out.upper[2]!)).toBe(true);
   });
 });

@@ -47,7 +47,7 @@
  */
 
 import { Float64Column } from 'pond-ts';
-import type { ChartSeries } from './data.js';
+import type { ChartSeries, BandSeries } from './data.js';
 import type { Scale } from './line.js';
 import { scaleDomain } from './culling.js';
 
@@ -83,20 +83,30 @@ function scaleRangeWidth(xScale: Scale): number | null {
 }
 
 /**
- * Whether an M4 decimation of `cs` would pay off at the current frame width:
- * `true` once the visible point count exceeds `k ×` the device-pixel column
- * count (default `k = 2` — below ~2 samples per pixel the min/max buckets barely
- * shrink the point set, so plain drawing is cheaper than the bin walk). Returns
- * `false` when the canvas has no measurable width (a test ctx) so those draws
- * stay full-resolution and byte-identical.
+ * Whether decimating a series of `length` samples would pay off at the current
+ * frame width: `true` once `length` exceeds `k ×` the device-pixel column count
+ * (default `k = 2` — below ~2 samples per pixel the min/max buckets barely shrink
+ * the point set, so plain drawing is cheaper than the bin walk). Returns `false`
+ * when the canvas has no measurable width (a test ctx) so those draws stay
+ * full-resolution and byte-identical. Shared by the line ({@link shouldDecimate})
+ * and band decimators.
  */
+export function shouldDecimateCount(
+  length: number,
+  ctx: CanvasRenderingContext2D,
+  k = 2,
+): boolean {
+  const W = deviceBucketCount(ctx);
+  return W > 0 && length > k * W;
+}
+
+/** {@link shouldDecimateCount} for a {@link ChartSeries} (the line / area case). */
 export function shouldDecimate(
   cs: ChartSeries,
   ctx: CanvasRenderingContext2D,
   k = 2,
 ): boolean {
-  const W = deviceBucketCount(ctx);
-  return W > 0 && cs.length > k * W;
+  return shouldDecimateCount(cs.length, ctx, k);
 }
 
 /**
@@ -318,4 +328,60 @@ export function m4Polyline(
   // draw — drop it so the point count is exact.
   if (n > 0 && Number.isNaN(y[n - 1]!)) n -= 1;
   return { x: x.subarray(0, n), y: y.subarray(0, n), length: n };
+}
+
+/**
+ * Decimate a {@link BandSeries} (a filled variance envelope) to one sample per
+ * device-pixel column: per column the **min of `lower`** and the **max of
+ * `upper`** — the *widest* envelope the dense samples span, so a decimated band
+ * covers exactly the pixels the full band's silhouette would (decimator
+ * assessment §2.5: paired min-lower / max-upper, so the envelope can never
+ * invert — `max(upper) ≥ min(lower)` for any valid band). Returns the **same
+ * object** when decimation doesn't apply (sparse band, domainless / non-invertible
+ * scale, no canvas width).
+ *
+ * Uses the same pixel-aligned edges as the line decimator ({@link pixelEdges} —
+ * correct on non-affine scales too), binning `lower` with `'min'` and `upper`
+ * with `'max'`. An empty column (no samples) reduces to `NaN` on both edges — the
+ * `drawBand` `.defined` break. Unlike the line path this needs **no gap-edge
+ * union**: a band has no inferred-connector modes (`drawBand` always breaks the
+ * fill at a gap, never bridges), so a sub-pixel gap edge folding into a boundary
+ * bucket is invisible — there is no connector to misplace. Assumes `lower` /
+ * `upper` are finite **together** per sample (the paired-percentile shape bands
+ * are built from); a column where only one edge has finite samples would bin a
+ * band segment that no single sample carried.
+ */
+export function decimateBand(
+  band: BandSeries,
+  xScale: Scale,
+  ctx: CanvasRenderingContext2D,
+  k = 2,
+): BandSeries {
+  if (!shouldDecimateCount(band.length, ctx, k)) return band;
+  const dom = scaleDomain(xScale);
+  if (dom === null || dom[1] <= dom[0]) return band;
+  const invert = scaleInvert(xScale);
+  const plotWidthCss = scaleRangeWidth(xScale);
+  if (invert === null || plotWidthCss === null) return band;
+  const W = deviceBucketCount(ctx);
+  const edges = pixelEdges(invert, plotWidthCss, W);
+  const lowerMin = new Float64Column(band.lower, band.length).binBy(
+    band.x,
+    edges,
+    'min',
+  );
+  const upperMax = new Float64Column(band.upper, band.length).binBy(
+    band.x,
+    edges,
+    'max',
+  );
+  const x = new Float64Array(W);
+  const lower = new Float64Array(W);
+  const upper = new Float64Array(W);
+  for (let b = 0; b < W; b += 1) {
+    x[b] = (edges[b]! + edges[b + 1]!) / 2; // column centre
+    lower[b] = lowerMin[b]!; // NaN on an empty column → the fill break
+    upper[b] = upperMax[b]!;
+  }
+  return { x, lower, upper, length: W };
 }

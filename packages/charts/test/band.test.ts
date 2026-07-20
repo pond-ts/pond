@@ -143,3 +143,46 @@ describe('drawBand — viewport culling (Phase 2)', () => {
     expect(pen.length).toBe(20); // 10 samples, both edges
   });
 });
+
+describe('drawBand — M4 decimation (Phase 3)', () => {
+  const pxScale = (lo: number, hi: number): Scale =>
+    scaleLinear().domain([lo, hi]).range([lo, hi]) as unknown as Scale;
+  const sizedCtx = (widthPx: number) => {
+    const { ctx, calls } = recordingContext();
+    (ctx as unknown as { canvas: { width: number } }).canvas = {
+      width: widthPx,
+    };
+    return { ctx, calls };
+  };
+  const denseBand = (n: number): BandSeries =>
+    bs(
+      Array.from({ length: n }, (_, i) => i),
+      Array.from({ length: n }, (_, i) => i),
+      Array.from({ length: n }, (_, i) => i + 100),
+    );
+  const penCount = (calls: { name: string }[]) =>
+    calls.filter((c) => c.name === 'moveTo' || c.name === 'lineTo').length;
+
+  it('decimates a dense envelope to one point per column', () => {
+    const { ctx, calls } = sizedCtx(10); // W=10 → 10 upper + 10 lower verts
+    drawBand(ctx, denseBand(5000), pxScale(0, 5000), (v) => v, style);
+    // W points per edge → ~20 pen ops, vs ~10000 full-res.
+    expect(penCount(calls)).toBeLessThanOrEqual(20);
+    expect(penCount(calls)).toBeGreaterThan(0);
+  });
+
+  it('fills every sample when decimate is off', () => {
+    const { ctx, calls } = sizedCtx(10);
+    drawBand(
+      ctx,
+      denseBand(300),
+      pxScale(0, 300),
+      (v) => v,
+      style,
+      undefined,
+      false,
+    );
+    // 300 samples × 2 edges = 600 verts, not decimated.
+    expect(penCount(calls)).toBe(600);
+  });
+});

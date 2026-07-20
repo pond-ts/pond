@@ -425,3 +425,48 @@ describe('drawArea — viewport culling (Phase 2)', () => {
     expect(Math.min(y0!, y1!)).toBe(0);
   });
 });
+
+describe('drawArea — M4 decimation (Phase 3)', () => {
+  const pxScale = (lo: number, hi: number): Scale =>
+    scaleLinear().domain([lo, hi]).range([lo, hi]) as unknown as Scale;
+  const sizedCtx = (widthPx: number) => {
+    const c = areaContext();
+    (c.ctx as unknown as { canvas: { width: number } }).canvas = {
+      width: widthPx,
+    };
+    return c;
+  };
+  const dense = (n: number): ChartSeries =>
+    cs(
+      Array.from({ length: n }, (_, i) => i),
+      Array.from({ length: n }, (_, i) => i),
+    );
+  const penCount = (calls: CtxCall[]) =>
+    calls.filter((c) => c.name === 'moveTo' || c.name === 'lineTo').length;
+
+  it('decimates the fill + outline of a dense area', () => {
+    const { ctx, calls } = sizedCtx(10); // W=10
+    // 5000 points → decimate; fill polygon + outline over ≤4·10 columns.
+    drawArea(ctx, dense(5000), pxScale(0, 5000), (v) => v, style, 0);
+    expect(penCount(calls)).toBeLessThan(200); // vs ~15000 full-res
+    expect(penCount(calls)).toBeGreaterThan(0);
+  });
+
+  it('draws full-resolution when decimate is off', () => {
+    const { ctx, calls } = sizedCtx(10);
+    drawArea(
+      ctx,
+      dense(300),
+      pxScale(0, 300),
+      (v) => v,
+      style,
+      0,
+      undefined,
+      'empty',
+      undefined,
+      false,
+    );
+    // 300 points → full fill + outline (well over the decimated bound).
+    expect(penCount(calls)).toBeGreaterThan(300);
+  });
+});

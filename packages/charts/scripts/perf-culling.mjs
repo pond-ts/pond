@@ -235,4 +235,12 @@ for (const n of [100_000, 500_000, 1_000_000]) {
   }
 }
 
+// NB: no band/area decimation case here — this harness measures JS path-gen
+// against a NO-OP context, and a *fill*'s cost is canvas rasterization (a
+// 1M-vertex polygon vs ~W), which a no-op ctx can't see. Band decimation's two
+// binBy walks even *add* JS here; the real win (a trivial fill) is browser-side
+// (verified in the Performance/Decimation Area + Band stories), not measurable
+// in this harness. The line cases above are representative because a line's cost
+// *is* the JS path-gen.
+
 console.log(JSON.stringify({ plotWidth: PLOT_WIDTH, results }, null, 2));
