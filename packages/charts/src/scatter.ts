@@ -12,11 +12,13 @@ import { visiblePointRange } from './culling.js';
  *
  * A scatter plots one mark per finite point at `(xScale(x), yScale(y))`, sized
  * + coloured by the resolved {@link ResolvedEncoding} (data-driven radius /
- * colour) over the style's base. All three of `drawScatter`, `scatterExtent`,
- * and {@link hitTestScatter} are **O(N)** in the point count (a single pass; no
- * spatial index — a chart row holds far fewer points than a dense line, and a
- * click happens at human cadence). If a scatter ever needs 100k+ points this is
- * the place to add a coarse x-bucket index; today the linear walk is the right
+ * colour) over the style's base. `drawScatter` culls to the visible x-window
+ * first (Phase 2 — see the draw loop), so a pan/zoom repaint is O(visible), not
+ * O(N); `scatterExtent` and {@link hitTestScatter} still walk the full series
+ * (**O(N)** — the y-extent must see every point and a click happens at human
+ * cadence). No spatial index — a chart row holds far fewer points than a dense
+ * line. If a scatter ever needs 100k+ points *and* a hot hit-test this is the
+ * place to add a coarse x-bucket index; today the linear walk is the right
  * tradeoff.
  */
 
