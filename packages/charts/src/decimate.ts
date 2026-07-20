@@ -156,9 +156,17 @@ export function pixelEdges(
  * The `[x[a+1], x[c])` bucket between them is then all-`NaN` → an empty bucket →
  * the `NaN` break. Only gaps at least one pixel column wide (`x[c] − x[a] ≥
  * minSpan`) are emitted — a sub-pixel dropout is invisible and left to the
- * plain empty-bucket convention, which also bounds the extra-edge count. Emitted
- * ascending (`x` is). Leading / trailing `NaN` runs are skipped (no bridge to
- * preserve — the first/last live bucket handles the end).
+ * plain empty-bucket convention, which also **bounds the edge count** (disjoint
+ * gaps each ≥ `minSpan` ⇒ ≤ `W` of them ⇒ ≤ `3W` total edges). Emitted ascending
+ * (`x` is). Leading / trailing `NaN` runs are skipped (no bridge to preserve —
+ * the first/last live bucket handles the end).
+ *
+ * `minSpan` is the caller's mean per-column key width (`domainSpan / W`) — exact
+ * on an affine scale, an **approximation** on a `TradingTimeScale` (where a
+ * column's key width varies across compressed gaps). A misfire there is benign:
+ * a real ≥1px gap it skips still breaks in its fully-empty interior columns; only
+ * the ~1px gap *edges* bridge (and session-break charts gate decimation off
+ * entirely). A per-gap pixel-width measure is the follow-up if a consumer hits it.
  */
 export function gapKeyEdges(cs: ChartSeries, minSpan: number): number[] {
   const { x, y, length } = cs;
@@ -183,8 +191,8 @@ export function gapKeyEdges(cs: ChartSeries, minSpan: number): number[] {
  * Merge the pixel-column `edges` with the interior-gap boundaries `gaps` (both
  * ascending) into one ascending, duplicate-free edge list, keeping only gap
  * boundaries strictly inside the domain `(lo, hi)` so the pixel span isn't
- * extended. Returns the original `edges` untouched when there are no in-range gap
- * boundaries (the gapless hot path allocates nothing).
+ * extended. Returns the **same** `edges` array (identity — no allocation) when
+ * `gaps` is empty, so the gapless hot path is untouched.
  */
 export function mergeGapEdges(
   edges: Float64Array,
@@ -192,6 +200,7 @@ export function mergeGapEdges(
   lo: number,
   hi: number,
 ): Float64Array {
+  if (gaps.length === 0) return edges; // gapless hot path — identity, no alloc
   const inRange = gaps.filter((g) => g > lo && g < hi);
   if (inRange.length === 0) return edges;
   const all = [...edges, ...inRange].sort((a, b) => a - b);
