@@ -17,16 +17,23 @@ import type { TimeGrain } from './tickLadder.js';
 export type AxisFormat = string | ((value: number) => string);
 
 /**
- * How to format the **cursor / marker readout** on a time axis
- * ({@link ChartContainerProps.cursorFormat}). Either:
+ * How to format the **cursor / marker readout** on the x axis
+ * ({@link ChartContainerProps.cursorFormat}) — time or value kind. Either:
  *
- * - a d3 time specifier **string** (e.g. `'%b %-d'`) applied uniformly at every
- *   zoom; or
- * - a **function** `(epochMs, ctx) => string`, where `ctx.grain` is the axis's
- *   resolved coarse {@link TimeGrain} (`year` … `second`) and `ctx.defaultText`
- *   is the library's grain-aware default readout for that instant — so a
- *   consumer can branch on the zoom level (`grain === 'year' ? … : …`) and
- *   pass `defaultText` through for the grains they don't want to override.
+ * - a d3 specifier **string** applied uniformly: a [time specifier]
+ *   (https://github.com/d3/d3-time-format#locale_format) on a time axis
+ *   (e.g. `'%b %-d'`), a [number specifier]
+ *   (https://github.com/d3/d3-format#locale_format) on a value axis
+ *   (e.g. `'+.2f'`); or
+ * - a **function** `(value, ctx) => string` — `value` is epoch ms on a time
+ *   axis, the data-unit x value on a value axis. On a **time** axis
+ *   `ctx.grain` is the axis's resolved coarse {@link TimeGrain}
+ *   (`year` … `second`) and `ctx.defaultText` is the library's grain-aware
+ *   default readout for that instant — so a consumer can branch on the zoom
+ *   level (`grain === 'year' ? … : …`) and pass `defaultText` through for the
+ *   grains they don't want to override. On a **value** axis there is no time
+ *   grain — `ctx.grain` is `undefined` and `ctx.defaultText` is the axis's
+ *   default (tick-formatter) text.
  *
  * The library hands you the grain because it already resolved it — you never
  * re-derive it from the range.
@@ -34,8 +41,11 @@ export type AxisFormat = string | ((value: number) => string);
 export type CursorFormat =
   | string
   | ((
-      epochMs: number,
-      ctx: { readonly grain: TimeGrain; readonly defaultText: string },
+      value: number,
+      ctx: {
+        readonly grain: TimeGrain | undefined;
+        readonly defaultText: string;
+      },
     ) => string);
 
 /** The slice of a d3 scale {@link resolveAxisFormat} needs — `tickFormat` with an

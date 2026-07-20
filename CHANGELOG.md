@@ -50,6 +50,21 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts:** **`cursorFormat` reaches value axes** (#508 item 1, Tidal
+  vol-surface friction) — the container's readout channel now applies on a
+  value x axis exactly as on a time axis: a **string** is a d3 _number_
+  specifier there, a **function** receives
+  `(value, { grain: undefined, defaultText })` (no time grain to hand over;
+  `defaultText` is the axis-default text). The readout also gains its
+  documented precedence on the axis strip on **every** axis kind:
+  `cursorFormat → axis format → container`, so an explicit `<XAxis format>`
+  keeps ticks terse while `cursorFormat` makes the cursor pill / marker
+  indicators / annotation auto-labels precise (`+2.0σ` ticks, `+1.83σ` pill).
+  A `transform`ed axis is exempt (its pill speaks the derived unit); a
+  category axis reads names and ignores `cursorFormat`. Type change:
+  `CursorFormat`'s function form widens `ctx.grain` from `TimeGrain` to
+  `TimeGrain | undefined`; the frame gains an optional `formatReadout`
+  channel (see Fixed below for the `formatTime` clarification).
 - **charts:** **M4 line decimation** (charts decimator wave, Phase 3) — the
   `<LineChart>` now draws from the per-device-pixel-column min/max/first/last
   (pond's `binBy(…, 'minMaxFirstLast')`) once the visible data exceeds ~2 samples
@@ -109,6 +124,30 @@ and type-level changes; patch bumps are strictly additive.
   mark that can paint into the plot is kept. Small-radius scatters are unaffected
   (they re-expand by a few pixels — usually the same window). Interval marks
   (bars / candles / boxes) don't need this — their width _is_ their x-span.
+
+### Fixed
+
+- **charts:** **`cursorFormat` no longer leaks into tick labels** — setting
+  `timeFormat` _and_ `cursorFormat` together on a time axis rendered the
+  **tick labels** with `cursorFormat` (the ladder was disqualified by
+  `timeFormat`, and the tick fallback read the merged readout formatter).
+  The frame now carries two channels: `formatTime` is the label channel
+  (`timeFormat`-shaped, never `cursorFormat` — restoring its documented
+  meaning), and the new optional `formatReadout` carries `cursorFormat` to
+  the readout consumers (crosshair pill + in-plot cursor time, marker
+  indicators, annotation auto-labels). Frame consumers that read
+  `ContainerFrame.formatTime` for a readout should use
+  `formatReadout ?? formatTime`.
+- **charts:** **Region drag-select no longer races the pointer stream**
+  (#508 item 7) — the drag anchor was container **state** read back through
+  the rendered frame at `pointerup`, so a batched/untrusted pointer stream
+  (automation, jsdom — plausibly a very fast flick under load) could deliver
+  `down→up` before the anchor committed: the select was **silently dropped**
+  and the late-committing anchor **leaked**, leaving the band stuck.
+  Human-paced trusted input hid this (React flushes trusted discrete events
+  synchronously). Gesture logic now reads a ref (the same ref+state
+  discipline the annotation-create drag already used); the state stays
+  paint-only. Deterministic regression tests cover both pacings.
 
 ## [0.48.1] — 2026-07-19
 
