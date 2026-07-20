@@ -77,6 +77,39 @@ stem-without-caps `shape` variant, and reconciling the `cursorFlag` x-snap
 exclusion so crosshairs grab box plots (Candlestick never opted out; this
 remains BoxPlot-only).
 
+Added by the #508 triage (item 5): **selection `id`** — extends the shipped
+id-gated discrete contract (rect-containment `hitTest` like Bar, not the
+still-RFC continuous-layer threshold model); Candlestick takes the same
+geometry helper in the pass so the interval marks don't fork the contract.
+
+### [PND-LEGEND] — `<Legend>` wave
+
+#508 item 2, accepted as one scoped wave; the sender's design sketch (on the
+issue) is the basis: per-layer resolved `SwatchSpec` at registration,
+zero-config `<Legend placement>`, dedup + per-layer `legend={false | 'name'}`
+opt-out, `theme.legend` slot, hover echo + id-gated select toggle via the
+existing frame contract; show/hide stays consumer-side. **Deltas from the
+sketch:** row identity keys `id ?? label` (the A2.2 selection model demoted
+`as` — a theme role can repeat), and the wave is **sequenced behind
+tracker-label-by-`as`** (F-charts-8 §3, in [PND-CURSOR] — the label-source
+prerequisite already flagged for the candlestick legend merge). Not
+RFC-worthy — the interaction semantics were red-teamed in the selection RFC.
+
+### [PND-ANROLE] — Per-annotation colour via theme role map
+
+#508 item 3. Inline per-mark colour rejected (same discipline as the per-box
+red/green reject: colour = theme role, not call-site). Shape:
+`theme.annotation.roles?: Record<string, { color; fillOpacity? }>` + a
+`role?: string` prop on the three marks, resolving `roles[role] ??
+annotation`; the depth ramp applies within the role's hue. `cssVarTheme` role
+mapping lands in the same pass.
+
+### [PND-YTICKS] — `YAxis` tick density
+
+#508 item 4. Height-derived default tick count + an explicit `tickCount`
+override (the 0.44.1 width-derived-x precedent); explicit `ticks` still wins.
+Small.
+
 ### [PND-CURSOR] — Cursor/readout polish backlog
 
 Deferred-until-a-design-call items, none blocking: scatter `inline`
@@ -87,9 +120,11 @@ callout; chip-vs-chip de-overlap (inline, and box+line in one row);
 `sampleAt` hardcodes column names; prerequisite for the candlestick legend
 merge); the **y-oriented region cursor** for horizontal histograms
 ([docs/notes/y-oriented-region-cursor-2026-07.md](../notes/y-oriented-region-cursor-2026-07.md),
-parked until a real consumer needs it). Timezone control for the cursor
-readout is tracked with the trading-time work ([PND-TCAL] in
-[PND_FINANCIAL_PLAN.md](PND_FINANCIAL_PLAN.md)).
+parked until a real consumer needs it); the **`pointercancel` clear-only
+fix** — the region cursor currently commits the span on `pointercancel`
+(pre-existing; should clear instead — Layer-2 follow-up from #509). Timezone
+control for the cursor readout is tracked with the trading-time work
+([PND-TCAL] in [PND_FINANCIAL_PLAN.md](PND_FINANCIAL_PLAN.md)).
 
 ### [PND-AXES] — Axis backlog + value-axis naming follow-up
 
@@ -140,6 +175,14 @@ augmentation + validity-aware `toFloat64Array({ missing })` (F-1, two
 consumers), `hasAnyDefined()`/`allMissing()`, the protobuf columnar wire
 ([PND-WIRE]), and `fromColumns({ onOutOfOrder })` clamp-on-ingest
 ([PND-INGEST] there).
+
+## Open bug candidates (needs-repro)
+
+- **Canvas async-width first mount** (#508 item 6): does NOT reproduce at the
+  React/jsdom level (identical draw-op sequences on a ParentSize-style mount,
+  plain + StrictMode; pin test landed in #510). Cause is below React or
+  consumer-side; next step is Tidal's minimal browser repro (offered in the
+  report).
 
 ## Parking lot (deferred, needs a second signal)
 

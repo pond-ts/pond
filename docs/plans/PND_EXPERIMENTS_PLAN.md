@@ -14,7 +14,13 @@
   `@pond-ts/charts`) — the most active loop. Adopted candlesticks +
   trading-time axis cleanly; drives the studies track
   ([PND-STUDY](PND_FINANCIAL_PLAN.md)) and the friction stream (cursor
-  grain #484, width-derived ticks #447, …). The charts npm publish
+  grain #484, width-derived ticks #447, …). Latest: the **0.48.1
+  vol-surface dogfood report** (issue #508, 7 items, triaged 2026-07-20) —
+  items 1+7 shipped same-day (#510 value-axis `cursorFormat`, #509
+  region-select anchor race); the queued rest became
+  [PND-LEGEND] / [PND-ANROLE] / [PND-YTICKS] and the [PND-BOXPLT] extension
+  ([PND_CHARTS_PLAN.md](PND_CHARTS_PLAN.md)); Canvas async-width stays
+  needs-repro awaiting Tidal's browser repro. The charts npm publish
   auto-wakes its adoption agent via the CHANGELOG — keep CHANGELOG entries
   wave-shaped; they're a machine-read payload.
 - **estela** (geo + power; drove `@pond-ts/fit`) — `@pond-ts/fit` landed on

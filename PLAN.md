@@ -48,9 +48,21 @@ gate that flips the first publish. Plan:
 - **[PND-DECIM]** — Decimator Phase 5: candlestick decimation with Tidal;
   Path2D cache only if the pan bench misses.
 - **[PND-BOXPLT]** — Finish BoxPlot: ValueSeries widening, range-only mode,
-  px `offset` for same-x pairs, line-only shape, join the cursor x-snap.
+  px `offset` for same-x pairs, line-only shape, join the cursor x-snap, and
+  selection `id` via rect-containment `hitTest` (#508 item 5; Candlestick
+  takes the same geometry helper).
+- **[PND-LEGEND]** — `<Legend>` wave (#508 item 2, design sketch accepted):
+  per-layer resolved swatches, zero-config placement, `theme.legend` slot,
+  hover echo + id-gated select toggle. Sequenced behind
+  tracker-label-by-`as` ([PND-CURSOR]).
+- **[PND-ANROLE]** — Per-annotation colour as a theme role map
+  (`theme.annotation.roles` + `role` prop on the three marks; #508 item 3;
+  inline per-mark colour rejected).
+- **[PND-YTICKS]** — `YAxis` height-derived tick density + explicit
+  `tickCount` override (#508 item 4; the width-derived-x precedent). Small.
 - **[PND-CURSOR]** — Cursor/readout polish backlog (scatter 2D-nearest,
-  chip de-overlap, tracker-label-by-`as`, y-oriented region cursor).
+  chip de-overlap, tracker-label-by-`as`, y-oriented region cursor,
+  `pointercancel` clear-only fix).
 - **[PND-AXES]** — Axis backlog (label align, relative time, custom ticks,
   scale variety) + the deferred value-axis naming follow-up.
 - **[PND-VALAX]** — Value axis: widen Box/Candlestick x; grow the

@@ -765,6 +765,15 @@ theme.bar[group] ?? default` (theme-role + ad-hoc-palette, the single styling
     cursor for **horizontal** histograms (bins on y) — a coherent but moderate
     lift (per-row y-band vs the shared-x cursor), parked until a real consumer
     needs horizontal-histogram selection.
+  - **Region-select anchor race — FIXED (#509, [Unreleased]; #508 item 7,
+    Tidal vol-surface report).** The drag anchor was container state read back
+    through the rendered frame at `pointerup`; a **batched** pointer stream
+    (automation/jsdom, plausibly a fast flick under load) delivered `down→up`
+    before the anchor committed — silent no-select + the late anchor leaking
+    (band stuck). Gesture logic now reads a row-local `regionAnchorRef` (the
+    `drawFromRef` discipline); state stays paint-only. Deterministic jsdom
+    regression tests pin batched + paced pacings — the suite's first
+    jsdom-level pointer-gesture coverage (interactions were e2e-only).
 - **Categorical axis — Phase 1 (ADOPTED from `docs/rfcs/categorical-axis.md`,
   building 2026-07-10).** The RFC's Phase 1 — a first-class **ordinal
   column-domain x-axis** (the transpose view's "columns on x"; closes the categorical-charts report's
