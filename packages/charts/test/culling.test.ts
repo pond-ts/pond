@@ -219,20 +219,52 @@ describe('visibleSpanWindow', () => {
 
 describe('visiblePointRange', () => {
   const x = Float64Array.from([0, 10, 20, 30, 40, 50]);
+  // A 1px == 1 data-unit scale (range mirrors domain) so a pixel `padPx` maps
+  // straight to data units and the arithmetic is legible.
+  const px1 = (lo: number, hi: number): Scale =>
+    scaleLinear().domain([lo, hi]).range([lo, hi]) as unknown as Scale;
 
   it('returns the visible index window against a domain scale', () => {
     // view [22, 38] → in-range 30; entry 20 + exit 40 → [2, 5)
     expect(visiblePointRange(x, 6, scale(22, 38))).toEqual([2, 5]);
   });
 
+  it('widens the window by padPx pixels, converted to data via invert', () => {
+    // view [25, 35], no pad → [2, 5) (x=20,30,40). An 8px radius pad (⇒ 8 data
+    // units on this 1:1 scale) reaches x=10 and x=50 → [1, 6). This is the fat-
+    // edge-mark case: the disc overlaps the plot though the centre is a further
+    // sample out.
+    expect(visiblePointRange(x, 6, px1(25, 35))).toEqual([2, 5]);
+    expect(visiblePointRange(x, 6, px1(25, 35), 8)).toEqual([1, 6]);
+  });
+
+  it('honours the px→data ratio of a non-1:1 scale', () => {
+    // scale(25, 35): domain span 10 over a 100px range ⇒ 0.1 data/px, so 8px is
+    // only 0.8 data units — too small to reach a neighbour, window stays [2, 5).
+    // 80px ⇒ 8 data units reaches x=10 and x=50 → [1, 6). Proves the pad is
+    // converted through the scale, not taken as raw data units.
+    expect(visiblePointRange(x, 6, scale(25, 35), 8)).toEqual([2, 5]);
+    expect(visiblePointRange(x, 6, scale(25, 35), 80)).toEqual([1, 6]);
+  });
+
+  it('skips the pad (keeps the domain window) when the scale has no invert', () => {
+    // A domain-bearing stub with no `.invert()` — the pad can't be converted, so
+    // it degrades to the plain index window, never a dropped mark.
+    const noInvert = Object.assign((v: number) => v, {
+      domain: () => [25, 35],
+    }) as unknown as Scale;
+    expect(visiblePointRange(x, 6, noInvert, 8)).toEqual([2, 5]);
+  });
+
   it('returns the full range when the scale has no domain (test stub)', () => {
-    expect(visiblePointRange(x, 6, ((v: number) => v) as Scale)).toEqual([
+    // The pad is irrelevant with no domain — the whole series draws.
+    expect(visiblePointRange(x, 6, ((v: number) => v) as Scale, 8)).toEqual([
       0, 6,
     ]);
   });
 
   it('returns [0,0] for an empty series', () => {
-    expect(visiblePointRange(new Float64Array(0), 0, scale(0, 9))).toEqual([
+    expect(visiblePointRange(new Float64Array(0), 0, scale(0, 9), 8)).toEqual([
       0, 0,
     ]);
   });

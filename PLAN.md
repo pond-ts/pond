@@ -404,21 +404,30 @@ best-effort.
     span-overlap window that keeps a wide edge-crossing mark — for the
     interval-keyed bar/candle/box), preserving every accessor's `i`. Verified on
     a candlestick `TradingTimeScale` under pan+zoom; bars 500k drop ~23 → 0.16
-    ms/frame. **Phase 3 (M4 line decimator) SPINE DONE:** `src/decimate.ts`
-    (`decimateM4`) reads W = device-pixel columns off `ctx.canvas.width` + DPR off
-    `ctx.getTransform().a` (no layer-signature change), builds pixel-column edges,
-    calls `Float64Column.binBy(cs.x, edges, 'minMaxFirstLast')` (the Phase-1
-    reducer — confirmed to survive the charts bundle), and emits the
+    ms/frame. **Scatter radius-aware pad DONE (the follow-up #499 flagged):** a
+    scatter mark's disc has a pixel radius independent of sample spacing, so a
+    dense scatter of fat marks could drop an edge bubble whose centre is >1 sample
+    off-screen while its disc overlaps the plot edge (flicker under pan).
+    `visiblePointRange` gained an optional `padPx` that widens the data window by
+    that many pixels (via `xScale.invert`) before the bisect; `drawScatter` does
+    two window calls — pass 1 finds the max drawn radius over the plain window,
+    pass 2 re-expands by `maxRadius + |offsetPx|`. Interval marks don't need it
+    (width _is_ span). **Phase 3 (M4 line decimator) SPINE DONE:** `src/decimate.ts`
+    (`decimateM4`) reads W = device-pixel columns off `ctx.canvas.width` (no
+    layer-signature change), builds pixel-column edges, calls
+    `Float64Column.binBy(cs.x, edges, 'minMaxFirstLast')` (the Phase-1 reducer —
+    confirmed to survive the charts bundle), and emits the
     first/min/max/last-per-column M4 polyline back into `drawLine`. Edges are the
-    scale's pixel range inverted to key space (via `xScale.invert`), so buckets
-    stay one pixel column wide on **non-affine** scales too (trading-time — the
-    Layer-2 find). Auto-on above ~2 samples/px with `<LineChart decimate={false |
-{threshold}}>` (`DecimateOption`). Gated to the honest default (empty gaps,
-    linear curve, no session breaks). Verified **visually lossless** (e2e bounds
-    decimated-vs-full to a thin sub-pixel AA seam, ~1.8%) + **spike-preserving**
-    (1-in-200k anomaly kept) in the browser; 1M fully-visible ~34 → 3.4 ms/frame. §2.3 interaction-reads-source holds (decimation is
-    draw-only). **Phase 3 remainder:** the §2.2 **gap-edge union** for the
-    inferred gap modes (dashed/step/fade/none decimation — today they draw
+    scale's pixel range (`xScale.range()`) inverted to key space (via
+    `xScale.invert`), so buckets stay one pixel column wide on **non-affine**
+    scales too (trading-time — the Layer-2 find). Auto-on above ~2 samples/px with
+    `<LineChart decimate={false | {threshold}}>` (`DecimateOption`). Gated to the
+    honest default (empty gaps, linear curve, no session breaks). Verified
+    **visually lossless** (e2e bounds decimated-vs-full to a thin sub-pixel AA
+    seam, ~1.8%) + **spike-preserving** (1-in-200k anomaly kept) in the browser;
+    1M fully-visible ~34 → 3.4 ms/frame. §2.3 interaction-reads-source holds
+    (decimation is draw-only). **Phase 3 remainder:** the §2.2 **gap-edge union**
+    for the inferred gap modes (dashed/step/fade/none decimation — today they draw
     full-res), and area/band decimation hints; scatter stays `preserveSparse`
     (cull only). **Remaining → chart-side (Phases 4–5), bench-ordered:** re-bench,
     then candlestick with Tidal; Path2D cache
