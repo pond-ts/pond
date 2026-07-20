@@ -670,8 +670,12 @@ export function Marker({
     container.creating === null &&
     onChange !== undefined;
   const xs = useMemo(() => [at], [at]);
-  // `label === false` (or '') ⇒ no chip; omitted ⇒ auto-label off the x formatter.
-  const text = label === false ? '' : (label ?? container.formatTime(at));
+  // `label === false` (or '') ⇒ no chip; omitted ⇒ auto-label off the readout
+  // channel (else the x label formatter).
+  const text =
+    label === false
+      ? ''
+      : (label ?? (container.formatReadout ?? container.formatTime)(at));
   useRegisterAnnotation(
     container,
     selfKey,
@@ -1028,11 +1032,10 @@ export function Region({
     container.creating === null &&
     onChange !== undefined;
   const xs = useMemo(() => [from, to], [from, to]);
-  // `label === false` (or '') ⇒ no chip; omitted ⇒ auto-label the `from–to` span.
-  const text =
-    label === false
-      ? ''
-      : (label ?? `${container.formatTime(from)}–${container.formatTime(to)}`);
+  // `label === false` (or '') ⇒ no chip; omitted ⇒ auto-label the `from–to`
+  // span off the readout channel (else the x label formatter).
+  const fmtX = container.formatReadout ?? container.formatTime;
+  const text = label === false ? '' : (label ?? `${fmtX(from)}–${fmtX(to)}`);
   useRegisterAnnotation(
     container,
     selfKey,

@@ -1239,7 +1239,7 @@ export function Layers({ children }: LayersProps) {
               color: cursorColor,
             }}
           >
-            {formatTime(cursorTime)}
+            {(container.formatReadout ?? formatTime)(cursorTime)}
           </div>
         )}
         {parts.chip === 'inline' &&

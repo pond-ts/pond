@@ -312,6 +312,14 @@ export function XAxis({
   // Split from `fmt` so an axis's terse tick labels never leak into the cursor /
   // marker readouts, which stay full timestamps.
   const tickFmt = flatFmt ?? (stacked ? baseFmt : undefined) ?? fmt;
+  // The **readout** formatter — the cursor pill + marker indicator pills. A
+  // container `cursorFormat` wins even over an explicit axis `format` (pill
+  // precedence `cursorFormat → axis format → container`): the readout is its
+  // own channel, so precise-pill-over-terse-ticks works on any axis kind. A
+  // `transform`ed axis is exempt — its pill speaks the derived unit, which a
+  // data-unit `cursorFormat` can't address.
+  const readoutFmt =
+    transform === undefined ? (container.formatReadout ?? fmt) : fmt;
 
   // Marker annotations that opted into an axis indicator (`<Marker indicator>`)
   // pin their **time** to this shared x-axis — a pill at `at`, in the annotation
@@ -335,7 +343,7 @@ export function XAxis({
         key: a.key,
         id: a.id ?? `marker-at-${at}`,
         x: xScale(at),
-        text: fmt(at),
+        text: readoutFmt(at),
       };
     })
     .filter((t) => t.x >= 0 && t.x <= plotWidth);
@@ -641,7 +649,7 @@ export function XAxis({
               zIndex: 3,
             }}
           >
-            {fmt(+xScale.invert(cursorX!))}
+            {readoutFmt(+xScale.invert(cursorX!))}
           </div>
         </Fragment>
       )}
