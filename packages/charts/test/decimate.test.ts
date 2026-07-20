@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { scaleLinear } from 'd3-scale';
 import {
-  contextDpr,
   deviceBucketCount,
   shouldDecimate,
   pixelEdges,
@@ -17,28 +16,23 @@ const cs = (x: number[], y: number[]): ChartSeries => ({
   length: x.length,
 });
 
-/** A d3 linear scale carrying `.domain()`, mapping the domain onto itself. */
-const domainScale = (lo: number, hi: number): Scale =>
-  scaleLinear().domain([lo, hi]).range([lo, hi]) as unknown as Scale;
+/** A d3 linear scale over `[lo, hi]` → CSS-pixel range `[0, widthCss]` (the real
+ *  chart shape — a value→px map, invertible), so `decimateM4` reads its range +
+ *  invert. `widthCss` defaults to the domain span (an identity map). */
+const pxScale = (lo: number, hi: number, widthCss = hi - lo): Scale =>
+  scaleLinear().domain([lo, hi]).range([0, widthCss]) as unknown as Scale;
 
-/** A minimal ctx stub: a backing width (device px) + a DPR transform. */
-const stubCtx = (widthPx: number, dpr = 1): CanvasRenderingContext2D =>
-  ({
-    canvas: { width: widthPx },
-    getTransform: () => ({ a: dpr }),
-  }) as unknown as CanvasRenderingContext2D;
+/** A minimal ctx stub: just a backing width (device-pixel bucket count). */
+const stubCtx = (widthPx: number): CanvasRenderingContext2D =>
+  ({ canvas: { width: widthPx } }) as unknown as CanvasRenderingContext2D;
 
-describe('contextDpr / deviceBucketCount', () => {
-  it('reads DPR off the transform and W off the canvas width', () => {
-    const ctx = stubCtx(1600, 2);
-    expect(contextDpr(ctx)).toBe(2);
-    expect(deviceBucketCount(ctx)).toBe(1600);
+describe('deviceBucketCount', () => {
+  it('reads W off the canvas backing width', () => {
+    expect(deviceBucketCount(stubCtx(1600))).toBe(1600);
   });
 
-  it('falls back to dpr=1 and W=0 for a bare ctx', () => {
-    const bare = {} as CanvasRenderingContext2D;
-    expect(contextDpr(bare)).toBe(1);
-    expect(deviceBucketCount(bare)).toBe(0);
+  it('falls back to W=0 for a bare ctx', () => {
+    expect(deviceBucketCount({} as CanvasRenderingContext2D)).toBe(0);
   });
 });
 
@@ -64,9 +58,23 @@ describe('shouldDecimate', () => {
 });
 
 describe('pixelEdges', () => {
-  it('spans [lo, hi] with W+1 ascending edges, last pinned to hi', () => {
-    const e = pixelEdges(0, 100, 4);
-    expect(Array.from(e)).toEqual([0, 25, 50, 75, 100]);
+  it('inverts uniform pixel positions to key space — affine scale', () => {
+    // An affine invert `px => px*8` over a 100px range → key edges 0..800,
+    // uniform (an affine scale's uniform pixel columns ARE a uniform key split).
+    const e = pixelEdges((px) => px * 8, 100, 4);
+    expect(Array.from(e)).toEqual([0, 200, 400, 600, 800]);
+  });
+
+  it('follows a NON-affine scale so buckets stay one pixel wide', () => {
+    // A piecewise invert: the first half of the pixel range maps into a *narrow*
+    // key band [0,10], the second half into a *wide* one [10,810] (a
+    // trading-time-style compressed gap). Uniform key edges would misalign; the
+    // inverted edges track the scale, so each stays one pixel column.
+    const invert = (px: number) =>
+      px <= 50 ? (px / 50) * 10 : 10 + (px - 50) * 16;
+    const e = pixelEdges(invert, 100, 4);
+    // px 0,25,50,75,100 → key 0,5,10,410,810 (not a uniform 0..810 split).
+    expect(Array.from(e)).toEqual([0, 5, 10, 410, 810]);
   });
 });
 
@@ -109,7 +117,7 @@ describe('m4Polyline', () => {
 describe('decimateM4', () => {
   it('returns the same object when the series is already sparse', () => {
     const s = cs([0, 1, 2], [5, 6, 7]);
-    expect(decimateM4(s, domainScale(0, 2), stubCtx(800))).toBe(s);
+    expect(decimateM4(s, pxScale(0, 2), stubCtx(800))).toBe(s);
   });
 
   it('returns the same object when the scale has no domain', () => {
@@ -129,7 +137,7 @@ describe('decimateM4', () => {
       Array.from({ length: n }, (_, i) => i),
       Array.from({ length: n }, (_, i) => i),
     );
-    const out = decimateM4(s, domainScale(0, n), stubCtx(4), 2); // W=4
+    const out = decimateM4(s, pxScale(0, n), stubCtx(4), 2); // W=4
     // 4 live columns × 4 points = 16, far fewer than 8000.
     expect(out.length).toBe(16);
     // Each column emits [first, min, max, last]; column b at y[4b..4b+3].

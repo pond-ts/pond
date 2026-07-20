@@ -1,7 +1,7 @@
 /**
  * M4 line decimation (charts decimator wave, Phase 3). Reduces an
- * already-viewport-culled visible slice to a **pixel-dense** polyline that
- * rasterizes identically to the full line at the current plot width + DPR, from
+ * already-viewport-culled visible slice to a **pixel-dense** polyline that is
+ * **visually lossless** vs the full line at the current plot width + DPR, from
  * O(devicePlotWidth) points instead of O(visible) — the win that lifts the
  * *fully-visible* draw ceiling Phase 2 culling deliberately left in place (a
  * dense series that fills the plot still strokes every point).
@@ -10,20 +10,27 @@
  * one bucket per device pixel column; per column keep the **min**, **max**,
  * **first**, and **last** value (the four channels of `Float64Column.binBy(…,
  * 'minMaxFirstLast')` — the pond-side reducer math from PR #362/#363). Drawing
- * first → min → max → last per column reproduces, pixel-for-pixel, what the full
- * line would rasterize there: the vertical extent (min→max) is exactly the band
- * of pixels the dense samples cover, and first/last carry the slope to the
- * neighbouring columns. An empty column (a gap with no samples) reduces to `NaN`
+ * first → min → max → last per column reproduces what the full line rasterizes
+ * there: the vertical extent (min→max) is the exact band of pixels the dense
+ * samples cover, and first/last carry the slope to the neighbouring columns. It
+ * is lossless to within a **sub-pixel AA seam** along the envelope edges — the
+ * min/max are placed at the column *centre* (their true sub-pixel x isn't carried
+ * by the value-only reducer), so the edge antialiases a fraction of a pixel
+ * differently than the full line (the e2e bounds the whole-plot difference at a
+ * low single-digit %; a broken M4 diffs a large area). An empty column (a gap
+ * with no samples) reduces to `NaN`
  * on all four channels — the canvas sub-path-break sentinel — so `'empty'`-mode
  * gaps fall out for free (the gap-edge union for the *inferred* gap modes is the
  * §2.2 follow-up).
  *
- * **Reads the frame geometry off the canvas**, not the layer signature: the
- * bucket count `W` is the backing buffer width `ctx.canvas.width` (already
- * `plotWidth × DPR` — see `Canvas`), and the DPR is the transform's horizontal
- * scale `ctx.getTransform().a` (Canvas applies `setTransform(dpr, …)`), so the
- * grid is at **device-pixel** resolution — at 2× DPR that is twice the columns,
- * which is what keeps extremes from flat-topping (decimator assessment §2.6).
+ * **Reads the frame geometry off the canvas + scale**, not the layer signature:
+ * the bucket count `W` is the backing buffer width `ctx.canvas.width` (already
+ * `plotWidthCss × DPR` — see `Canvas`), so the grid is at **device-pixel**
+ * resolution — twice the columns at 2× DPR, which keeps extremes from
+ * flat-topping (decimator assessment §2.6). The bucket **edges** are the scale's
+ * CSS-pixel range (`xScale.range()`) inverted back to key space at those `W`
+ * positions (see {@link pixelEdges}) — so each bucket is exactly one column on
+ * **any** scale, including a non-affine `TradingTimeScale`.
  *
  * The output is a plain {@link ChartSeries} in **key space**, so it feeds
  * straight back into the existing `drawLine` path (which maps x through the same
@@ -47,21 +54,24 @@ import { scaleDomain } from './culling.js';
  */
 export type DecimateOption = boolean | { readonly threshold?: number };
 
-/** The device-pixel ratio baked into the canvas transform (Canvas sets
- *  `setTransform(dpr, …)`), or 1 when unavailable (a test / detached ctx). */
-export function contextDpr(ctx: CanvasRenderingContext2D): number {
-  const t = (
-    ctx as unknown as { getTransform?: () => { a: number } }
-  ).getTransform?.();
-  return t !== undefined && t.a > 0 ? t.a : 1;
-}
-
 /** The device-pixel bucket count for `ctx` — the backing buffer width, i.e.
- *  `plotWidth × DPR`. Falls back to `0` when there is no sized canvas (a
- *  headless test ctx), which the caller reads as "can't decimate". */
+ *  `plotWidthCss × DPR` (so buckets land at device-pixel resolution). Falls back
+ *  to `0` when there is no sized canvas (a headless test ctx), which the caller
+ *  reads as "can't decimate". */
 export function deviceBucketCount(ctx: CanvasRenderingContext2D): number {
   const w = (ctx as unknown as { canvas?: { width?: number } }).canvas?.width;
   return typeof w === 'number' && w > 0 ? Math.floor(w) : 0;
+}
+
+/** The scale's CSS-pixel range span (`range()[last]`), or `null` when the scale
+ *  exposes no numeric range. This is the pixel width the {@link pixelEdges}
+ *  columns are inverted across — read through a localized cast, like
+ *  {@link scaleDomain}. */
+function scaleRangeWidth(xScale: Scale): number | null {
+  const r = (xScale as unknown as { range?: () => number[] }).range?.();
+  if (r === undefined || r.length < 2) return null;
+  const w = +r[r.length - 1]!;
+  return Number.isFinite(w) && w > 0 ? w : null;
 }
 
 /**
@@ -82,16 +92,40 @@ export function shouldDecimate(
 }
 
 /**
- * The `W + 1` pixel-column **edges** in key space spanning the visible domain
- * `[lo, hi]` — `edges[b] = lo + (hi − lo) · b / W`, with the last edge pinned to
- * `hi` so a sample exactly at the max lands in the final bucket (`binBy`'s upper
- * edge is inclusive). Ascending by construction.
+ * The `key`-space (`(px) => value`) inverse of a chart scale, or `null` when the
+ * scale exposes none. Every continuous chart x scale (`scaleLinear`, `scaleTime`,
+ * `TradingTimeScale`) carries `.invert`; a category `ScaleBand` doesn't (and a
+ * line never sits on one). Read through a localized cast, like {@link scaleDomain}.
  */
-export function pixelEdges(lo: number, hi: number, W: number): Float64Array {
+function scaleInvert(xScale: Scale): ((px: number) => number) | null {
+  const inv = (xScale as unknown as { invert?: (px: number) => number }).invert;
+  return typeof inv === 'function'
+    ? (px: number) => +inv.call(xScale, px)
+    : null;
+}
+
+/**
+ * The `W + 1` pixel-column **edges** in key space — built by **inverting uniform
+ * pixel positions** through the scale (`edges[b] = invert(b/W · plotWidthCss)`),
+ * NOT by partitioning the key domain uniformly. The distinction is load-bearing:
+ * "one bucket per pixel column" means uniform in *pixel* space, which equals a
+ * uniform *key* partition only when the scale is **affine** (`scaleLinear` /
+ * `scaleTime`). A `TradingTimeScale` compresses closed-market gaps — its key→px
+ * map is piecewise-linear — so inverting pixel positions is what keeps each
+ * bucket exactly one column wide there too (else the min/max envelope would thin
+ * within a session). `invert` is monotonic, so the edges ascend; the last is the
+ * domain max (`invert(plotWidthCss)`), inclusive in `binBy`.
+ *
+ * `plotWidthCss` is the CSS-pixel plot width (`W / dpr` — `W` counts *device*
+ * columns), so the inverted positions land on the scale's CSS-pixel range.
+ */
+export function pixelEdges(
+  invert: (px: number) => number,
+  plotWidthCss: number,
+  W: number,
+): Float64Array {
   const edges = new Float64Array(W + 1);
-  const span = hi - lo;
-  for (let b = 0; b < W; b += 1) edges[b] = lo + (span * b) / W;
-  edges[W] = hi;
+  for (let b = 0; b <= W; b += 1) edges[b] = invert((plotWidthCss * b) / W);
   return edges;
 }
 
@@ -118,10 +152,16 @@ export function decimateM4(
   if (!shouldDecimate(cs, ctx, k)) return cs;
   const dom = scaleDomain(xScale);
   if (dom === null) return cs;
-  const [lo, hi] = dom;
-  if (hi <= lo) return cs;
+  if (dom[1] <= dom[0]) return cs;
+  const invert = scaleInvert(xScale);
+  const plotWidthCss = scaleRangeWidth(xScale);
+  // No inverse / range ⇒ can't align buckets to pixel columns; draw full-res.
+  if (invert === null || plotWidthCss === null) return cs;
   const W = deviceBucketCount(ctx);
-  const edges = pixelEdges(lo, hi, W);
+  // `W` device columns inverted across the scale's CSS-pixel range → key-space
+  // edges, so each bucket is exactly one pixel column on **any** scale (affine
+  // or trading-time — see {@link pixelEdges}).
+  const edges = pixelEdges(invert, plotWidthCss, W);
   // Bin the value channel against the pixel-column edges over the key axis. A
   // fresh Float64Column wraps the already-materialized `cs.y` (zero-copy — it
   // reads, never mutates); `cs.x` is the monotonic key.

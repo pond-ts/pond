@@ -409,12 +409,14 @@ best-effort.
     `ctx.getTransform().a` (no layer-signature change), builds pixel-column edges,
     calls `Float64Column.binBy(cs.x, edges, 'minMaxFirstLast')` (the Phase-1
     reducer — confirmed to survive the charts bundle), and emits the
-    first/min/max/last-per-column M4 polyline back into `drawLine`. Auto-on above
-    ~2 samples/px with `<LineChart decimate={false | {threshold}}>`
-    (`DecimateOption`). Gated to the honest default (empty gaps, linear curve, no
-    session breaks). Verified **pixel-identical** (e2e diff decimated vs full) +
-    **spike-preserving** (1-in-200k anomaly kept) in the browser; 1M fully-visible
-    ~34 → 3.4 ms/frame. §2.3 interaction-reads-source holds (decimation is
+    first/min/max/last-per-column M4 polyline back into `drawLine`. Edges are the
+    scale's pixel range inverted to key space (via `xScale.invert`), so buckets
+    stay one pixel column wide on **non-affine** scales too (trading-time — the
+    Layer-2 find). Auto-on above ~2 samples/px with `<LineChart decimate={false |
+{threshold}}>` (`DecimateOption`). Gated to the honest default (empty gaps,
+    linear curve, no session breaks). Verified **visually lossless** (e2e bounds
+    decimated-vs-full to a thin sub-pixel AA seam, ~1.8%) + **spike-preserving**
+    (1-in-200k anomaly kept) in the browser; 1M fully-visible ~34 → 3.4 ms/frame. §2.3 interaction-reads-source holds (decimation is
     draw-only). **Phase 3 remainder:** the §2.2 **gap-edge union** for the
     inferred gap modes (dashed/step/fade/none decimation — today they draw
     full-res), and area/band decimation hints; scatter stays `preserveSparse`
