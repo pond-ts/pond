@@ -15,6 +15,10 @@ import {
   type GapMode,
 } from './gaps.js';
 
+/** Shared empty boundary list — passed to `sessionRuns` when a decimated series
+ *  already carries its session breaks as baked-in `NaN` points. */
+const EMPTY_BOUNDARIES: readonly number[] = [];
+
 /** Maps a data value to a pixel coordinate (a d3 scale is assignable to this). */
 export type Scale = (value: number) => number;
 
@@ -111,14 +115,25 @@ export function drawLine(
   // polyline) — that draws full-resolution. Off (`decimate === false`) or a curve
   // set ⇒ the full culled slice draws. `decimateM4` itself no-ops on a sparse
   // slice or a domainless test scale, so this stays byte-identical there.
+  let decimated = false;
   if (decimate !== false && curve === curveLinear) {
     const k = typeof decimate === 'object' ? decimate.threshold : undefined;
+    const before = cs;
     cs = decimateM4(cs, xScale, ctx, k, boundaries);
+    decimated = cs !== before;
   }
   // Split into independent index runs at each boundary; no boundary inside the
   // data ⇒ one run over the whole series (the hot path — no slicing, so the draw
-  // is byte-identical to the pre-boundary single pass).
-  const runs = sessionRuns(cs.x, cs.length, boundaries);
+  // is byte-identical to the pre-boundary single pass). When the series was
+  // decimated, `decimateM4` already baked the session breaks in as `NaN` points
+  // (aligned to the break instants), so re-cutting here with `boundaries` would
+  // mis-attribute the boundary points — pass `[]` and let the baked-in breaks split
+  // the sessions.
+  const runs = sessionRuns(
+    cs.x,
+    cs.length,
+    decimated ? EMPTY_BOUNDARIES : boundaries,
+  );
   const singleRun = runs.length === 1;
 
   // Solid pass: one path across every run. Each run's generator opens with its

@@ -270,9 +270,16 @@ export function decimateM4(
   //    separate, so `sessionRuns` in `drawLine` cuts the decimated series cleanly.
   // A gapless, boundary-free slice returns `pixels` unchanged (no allocation).
   const extra = gapKeyEdges(cs, (dom[1] - dom[0]) / W);
+  // Session-break instants inside the visible domain — unioned into the edges AND
+  // marked as explicit break points so the decimated series breaks (not connects)
+  // there. `mergeGapEdges` keeps their exact values, so the set matches the edges.
+  const breaks =
+    boundaries.length > 0
+      ? boundaries.filter((b) => b > dom[0] && b < dom[1])
+      : [];
   const edges = mergeGapEdges(
     pixels,
-    boundaries.length > 0 ? [...extra, ...boundaries] : extra,
+    breaks.length > 0 ? [...extra, ...breaks] : extra,
     dom[0],
     dom[1],
   );
@@ -287,8 +294,19 @@ export function decimateM4(
     first,
     last,
   } = col.binBy(cs.x, edges, 'minMaxFirstLast');
-  return m4Polyline(edges, mn, mx, first, last, buckets);
+  return m4Polyline(
+    edges,
+    mn,
+    mx,
+    first,
+    last,
+    buckets,
+    breaks.length > 0 ? new Set(breaks) : undefined,
+  );
 }
+
+/** Shared empty break-set for the common (no session-break) case. */
+const NO_BREAKS: ReadonlySet<number> = new Set();
 
 /**
  * Assemble the M4 polyline {@link ChartSeries} from the four binned channels.
@@ -296,6 +314,14 @@ export function decimateM4(
  * directly. Per column `b`: an empty bucket (`first[b]` non-finite ⇒ all four
  * are) emits one `NaN` break; a live bucket emits
  * `(left, first) (mid, min) (mid, max) (right, last)`.
+ *
+ * `breakAt` holds bucket-edge keys (session-break instants, already unioned into
+ * `edges`) at which the line must **break** rather than connect: a bucket whose
+ * left edge is in `breakAt` emits a `NaN` **before** its points. This makes a
+ * session split explicit in the geometry — clean regardless of whether the break
+ * fell exactly on a pixel edge (where otherwise the closing bucket's `last` and
+ * the opening bucket's `first` would sit at the same x and connect with a
+ * spurious vertical stub).
  */
 export function m4Polyline(
   edges: Float64Array,
@@ -304,13 +330,23 @@ export function m4Polyline(
   first: Float64Array,
   last: Float64Array,
   W: number,
+  breakAt: ReadonlySet<number> = NO_BREAKS,
 ): ChartSeries {
-  // Upper bound 4 points/column + a break slot each; trimmed to the real count.
-  const x = new Float64Array(W * 4);
-  const y = new Float64Array(W * 4);
+  // Upper bound: 4 points/column + a break slot each (empty buckets and each
+  // session break); trimmed to the real count.
+  const cap = W * 4 + breakAt.size;
+  const x = new Float64Array(cap);
+  const y = new Float64Array(cap);
   let n = 0;
   let brokenLast = false; // avoid emitting consecutive NaN breaks
   for (let b = 0; b < W; b += 1) {
+    // Explicit session break: this bucket opens a new session → pen up first.
+    if (b > 0 && !brokenLast && n > 0 && breakAt.has(edges[b]!)) {
+      x[n] = edges[b]!;
+      y[n] = NaN;
+      n += 1;
+      brokenLast = true;
+    }
     if (!Number.isFinite(first[b]!)) {
       if (!brokenLast && n > 0) {
         x[n] = edges[b]!;

@@ -162,6 +162,27 @@ describe('m4Polyline', () => {
     // exactly one break (no doubled NaN).
     expect(Array.from(out.y).filter((v) => Number.isNaN(v))).toHaveLength(1);
   });
+
+  it('breaks before a bucket whose left edge is a session-break instant', () => {
+    // 3 live columns; a break at edges[1]=10 must pen up between col0 and col1
+    // (a session split) even though both columns are live.
+    const edges = Float64Array.from([0, 10, 20, 30]);
+    const out = m4Polyline(
+      edges,
+      Float64Array.from([1, 3, 5]),
+      Float64Array.from([2, 4, 6]),
+      Float64Array.from([1, 3, 5]),
+      Float64Array.from([2, 4, 6]),
+      3,
+      new Set([10]),
+    );
+    // col0 (4) → NaN break at x=10 (1) → col1 (4) → col2 (4) = 13 points.
+    expect(out.length).toBe(13);
+    expect(out.x[4]).toBe(10);
+    expect(Number.isNaN(out.y[4]!)).toBe(true);
+    // Only the one session break (col1→col2 connects — no break there).
+    expect(Array.from(out.y).filter((v) => Number.isNaN(v))).toHaveLength(1);
+  });
 });
 
 describe('decimateM4', () => {
@@ -255,11 +276,17 @@ describe('decimateM4 — session-break edge union', () => {
       Array.from({ length: n }, (_, i) => i),
     );
     const noBreak = decimateM4(s, pxScale(0, n), stubCtx(4), 2);
-    // A break at 3000 splits [2000,4000) into two buckets → one extra bucket →
-    // 4 more emitted points (first/min/max/last), so the sessions never merge.
+    // A break at 3000 splits [2000,4000) into two buckets (one extra bucket = 4
+    // more first/min/max/last points) AND emits one explicit NaN break before the
+    // opening session's bucket — so the sessions never merge: +5 points total.
     const withBreak = decimateM4(s, pxScale(0, n), stubCtx(4), 2, [3000]);
-    expect(withBreak.length).toBe(noBreak.length + 4);
-    // A break outside the visible domain is dropped (no extra edge).
+    expect(withBreak.length).toBe(noBreak.length + 5);
+    // The split is a real pen-up: exactly one NaN point sits at the break key.
+    const breakPts = Array.from(withBreak.x).filter(
+      (v, i) => Number.isNaN(withBreak.y[i]!) && v === 3000,
+    );
+    expect(breakPts).toHaveLength(1);
+    // A break outside the visible domain is dropped (no edge, no NaN).
     const outside = decimateM4(s, pxScale(0, n), stubCtx(4), 2, [-100]);
     expect(outside.length).toBe(noBreak.length);
   });
