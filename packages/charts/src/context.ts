@@ -147,7 +147,8 @@ export interface ContainerFrame {
    *  a row may override it via its own `cursor`. */
   readonly cursor: CursorMode;
   /** Show the cursor's time atop the in-chart readout (when a row's cursor draws
-   *  one), formatted by {@link formatTime} to match the time axis. */
+   *  one), formatted by {@link formatReadout} (else {@link formatTime}, matching
+   *  the time axis). */
   readonly cursorTime: boolean;
   /**
    * Whether the chart is in **annotation-edit mode** — suppresses the data cursor
@@ -157,8 +158,18 @@ export interface ContainerFrame {
    */
   readonly editAnnotations: boolean;
   /** Format an epoch-ms instant the same way the time axis labels its ticks —
-   *  shared by `<TimeAxis>` and the cursor-time readout. */
+   *  shared by `<TimeAxis>` and (absent {@link formatReadout}) the cursor-time
+   *  readout. Shaped by the container `timeFormat` only, never `cursorFormat`. */
   readonly formatTime: (epochMs: number) => string;
+  /**
+   * The **readout** channel — defined only when the container's `cursorFormat`
+   * is set (time or value axis; a category axis reads names). Readout
+   * consumers — the crosshair x pill and in-plot cursor time, marker axis
+   * indicators, annotation auto-labels — read `formatReadout ?? <their label
+   * formatter>`, so the readout can be shaped (or made more precise than the
+   * tick labels) without moving them.
+   */
+  readonly formatReadout?: ((value: number) => string) | undefined;
   /** Whether an explicit container `timeFormat` shaped {@link formatTime}. The
    *  x axis suppresses its boundary (second) label row when it's set — a
    *  custom format owns the whole label, so the ladder mustn't second-line it. */

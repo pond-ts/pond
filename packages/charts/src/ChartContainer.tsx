@@ -364,21 +364,31 @@ export interface ChartContainerProps {
    */
   timeFormat?: AxisFormat;
   /**
-   * The **cursor / marker readout** format — the crosshair time pill, marker
+   * The **cursor / marker readout** format — the crosshair x pill, marker
    * axis indicators, and annotation auto-labels — **independent of the tick
-   * labels**, so it does **not** disqualify the `dateStyle` ladder.
-   * **Omitted ⇒ a grain-aware default**: the readout formats at the axis's own
-   * granularity, so a day-or-coarser axis reads a **date** (never a
-   * time-of-day) and a sub-day axis reads date + clock — a daily bar at a
-   * foreign-tz midnight no longer renders as `02 AM`.
+   * labels** on both axis kinds: it does **not** disqualify the `dateStyle`
+   * ladder (time), and it never moves the tick labels (value). It beats an
+   * explicit `<XAxis format>` for the **readout only** — pill precedence is
+   * `cursorFormat → axis format → container` — so terse ticks can pair with a
+   * precise readout (`+2.0σ` labels, `+1.83σ` pill).
    *
-   * A d3 time-specifier **string** formats uniformly at every zoom; a
-   * **function** `(epochMs, { grain, defaultText }) => string` receives the
-   * axis's resolved coarse {@link TimeGrain} and the grain-aware default text,
-   * so it can branch on the zoom level and pass `defaultText` through for
-   * grains it doesn't override (no re-deriving the grain from the range). See
-   * {@link CursorFormat}. This is the independent readout channel;
-   * {@link timeFormat} owns the labels.
+   * **Omitted ⇒ the axis's own formatter.** On a time axis that default is
+   * grain-aware: the readout formats at the axis's granularity, so a
+   * day-or-coarser axis reads a **date** (never a time-of-day) and a sub-day
+   * axis reads date + clock — a daily bar at a foreign-tz midnight no longer
+   * renders as `02 AM`. On a value axis it is the tick formatter
+   * ({@link timeFormat}-shaped, else the d3 default).
+   *
+   * A d3 specifier **string** formats uniformly (time specifier on a time
+   * axis, number specifier on a value axis); a **function**
+   * `(value, { grain, defaultText }) => string` receives the axis's resolved
+   * coarse {@link TimeGrain} (`undefined` on a value axis) and the default
+   * readout text, so it can branch on the zoom level and pass `defaultText`
+   * through for grains it doesn't override (no re-deriving the grain from the
+   * range). See {@link CursorFormat}. This is the independent readout channel;
+   * {@link timeFormat} owns the labels. (A category axis reads names, and a
+   * `transform`ed axis's pill speaks its derived unit — neither consults
+   * `cursorFormat`.)
    */
   cursorFormat?: CursorFormat;
   /** Visual theme for all rows; defaults to {@link defaultTheme}. */
@@ -744,13 +754,19 @@ export function ChartContainer({
   const [d0, d1] =
     explicitDomain !== undefined ? [t0, t1] : (autoExtent ?? [0, 1]);
 
-  // The shared x scale + the formatter for its ticks / cursor readout, built
-  // together so each branch keeps its concrete scale type (no casts): a value
-  // axis is a `scaleLinear` formatted by `resolveAxisFormat`, time is a
-  // `scaleTime` formatted by d3's multi-scale `resolveTimeFormat`. `formatTime`
-  // is the one formatter <TimeAxis> + the cursor readout share, so a tick and
-  // the cursor read identically. (The `formatTime` name predates the value axis
-  // — on a value axis it formats the value, not a time.)
+  // The shared x scale + its two formatting channels, built together so each
+  // branch keeps its concrete scale type (no casts): a value axis is a
+  // `scaleLinear` formatted by `resolveAxisFormat`, time is a `scaleTime`
+  // formatted by d3's multi-scale `resolveTimeFormat`.
+  //
+  // - `formatTime` is the **label** channel — what `<XAxis>` ticks fall back to
+  //   — shaped by `timeFormat` only, never `cursorFormat` (so a readout format
+  //   can't move the tick labels). (The name predates the value axis — on a
+  //   value axis it formats the value, not a time.)
+  // - `formatReadout` is the **readout** channel — the crosshair pill, marker
+  //   indicators, and annotation auto-labels — defined only when `cursorFormat`
+  //   is set; consumers read `formatReadout ?? <their label formatter>`, which
+  //   is how "the readout matches the axis" stays the default.
   // The trading-time provider only applies to a **time** axis — a value axis is
   // always a plain `scaleLinear`. Gate it once here so the scale branch AND the
   // frame (which pan/zoom read) agree: on a value axis the provider is dropped,
@@ -783,35 +799,57 @@ export function ChartContainer({
     resolvedKind === 'time'
       ? Math.max(2, Math.floor(plotWidth / TRADING_TICK_PX))
       : TIME_TICK_COUNT;
-  const { xScale, formatTime } = useMemo(() => {
+  const { xScale, formatTime, formatReadout } = useMemo(() => {
     if (resolvedKind === 'category') {
       // Ordinal column-domain axis: a band scale over the category slots. The
       // domain is **always** `[0, n]` (one unit slot per category) — NOT the
       // resolved `[d0, d1]`: a category axis ignores an explicit `range` (its
       // slots are absolute `0..n`, matching `categoryStack`), so an out-of-`[0,n]`
       // range can't silently offset the labels from the bars. The pixel mapping
-      // stays linear; the formatter is the category-name lookup.
+      // stays linear; the formatter is the category-name lookup. A category
+      // reads by **name** — `cursorFormat` has nothing to format, so the
+      // readout channel stays unset.
       const cats = categories ?? [];
       const s = scaleBand(cats).domain([0, cats.length]).range([0, plotWidth]);
-      return { xScale: s, formatTime: (v: number) => s.label(v) };
+      return {
+        xScale: s,
+        formatTime: (v: number) => s.label(v),
+        formatReadout: undefined,
+      };
     }
     if (resolvedKind === 'value') {
       const s = scaleLinear().domain([d0, d1]).range([0, plotWidth]);
-      return {
-        xScale: s,
-        formatTime: resolveAxisFormat(s, xTickCount, timeFormat),
-      };
+      const labels = resolveAxisFormat(s, xTickCount, timeFormat);
+      // The value-axis readout channel: a `cursorFormat` **string** is a d3
+      // *number* specifier here (resolved through the linear scale, exactly as
+      // a tick format would be); a **function** gets `grain: undefined` (no
+      // time grain to hand over) and the label formatter's text as its
+      // pass-through default.
+      const readout =
+        typeof cursorFormat === 'function'
+          ? (v: number) =>
+              cursorFormat(v, { grain: undefined, defaultText: labels(v) })
+          : cursorFormat !== undefined
+            ? resolveAxisFormat(s, xTickCount, cursorFormat)
+            : undefined;
+      return { xScale: s, formatTime: labels, formatReadout: readout };
     }
-    // The cursor / marker / annotation **readout** formatter. `cursorFormat`
-    // wins (the independent readout channel — it never disqualifies the date
-    // style); else a container `timeFormat` (back-compat: shapes the readout
-    // too, and already opts labels out of the ladder); else the scale's
-    // **grain-aware** default (a day-or-coarser axis reads a date, not a
-    // time-of-day — the F-charts-7 `02 AM` fix), never d3's multi-scale default.
-    const timeReadout = (s: TradingTimeScale): ((v: number) => string) => {
-      // A `cursorFormat` **function** gets the axis's resolved coarse grain and
-      // the grain-aware default text per instant, so it can branch on zoom and
-      // pass the default through. A **string** formats uniformly (d3 specifier).
+    // Time axis, label channel: a container `timeFormat` when set (it owns the
+    // labels and opts them out of the ladder); else the scale's **grain-aware**
+    // default (a day-or-coarser axis reads a date, not a time-of-day — the
+    // F-charts-7 `02 AM` fix), never d3's multi-scale default.
+    const timeLabels = (s: TradingTimeScale): ((v: number) => string) =>
+      timeFormat !== undefined
+        ? resolveTimeFormat(s, xTickCount, timeFormat)
+        : s.readoutFormat(xTickCount);
+    // Time axis, readout channel — only when `cursorFormat` is set (otherwise
+    // the readout falls back to the label channel at the consumer). A
+    // **function** gets the axis's resolved coarse grain and the grain-aware
+    // default text per instant, so it can branch on zoom and pass the default
+    // through. A **string** formats uniformly (d3 time specifier).
+    const timeReadout = (
+      s: TradingTimeScale,
+    ): ((v: number) => string) | undefined => {
       if (typeof cursorFormat === 'function') {
         const grain = s.grain(xTickCount);
         const def = s.readoutFormat(xTickCount);
@@ -820,11 +858,7 @@ export function ChartContainer({
       if (cursorFormat !== undefined) {
         return resolveTimeFormat(s, xTickCount, cursorFormat);
       }
-      // No cursorFormat: a container timeFormat still shapes the readout
-      // (back-compat); else the scale's grain-aware default.
-      return timeFormat !== undefined
-        ? resolveTimeFormat(s, xTickCount, timeFormat)
-        : s.readoutFormat(xTickCount);
+      return undefined;
     };
     if (xDiscontinuities !== undefined) {
       // Trading-time axis: closed-market gaps collapse, time proportional within
@@ -834,7 +868,11 @@ export function ChartContainer({
       const s = scaleTradingTime(xDiscontinuities)
         .domain([d0, d1])
         .range([0, plotWidth]);
-      return { xScale: s, formatTime: timeReadout(s) };
+      return {
+        xScale: s,
+        formatTime: timeLabels(s),
+        formatReadout: timeReadout(s),
+      };
     }
     // Plain continuous time axis: the same trading-time scale over the
     // gap-free identity provider, so it runs the same logical tick ladder
@@ -845,7 +883,11 @@ export function ChartContainer({
     const s = scaleTradingTime(identityProvider())
       .domain([d0, d1])
       .range([0, plotWidth]);
-    return { xScale: s, formatTime: timeReadout(s) };
+    return {
+      xScale: s,
+      formatTime: timeLabels(s),
+      formatReadout: timeReadout(s),
+    };
   }, [
     resolvedKind,
     categories,
@@ -978,6 +1020,7 @@ export function ChartContainer({
       onHoverAnnotation,
       onEditAnnotation,
       formatTime,
+      formatReadout,
       xFormatCustom: timeFormat !== undefined,
       xTickCount,
       registerTrackerSource,
@@ -1036,6 +1079,7 @@ export function ChartContainer({
       onHoverAnnotation,
       onEditAnnotation,
       formatTime,
+      formatReadout,
       timeFormat,
       xTickCount,
       registerTrackerSource,

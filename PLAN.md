@@ -1830,6 +1830,11 @@ commitment).
   overnight gaps for intraday bars) — a non-wall-clock x adjacent to the value-axis
   machinery, so the very first axis requirement already pushes past a naive
   continuous `TimeAxis`. **Now an RFC + active build wave — see below.**
+  (3) the **0.48.1 vol-surface dogfood report** (issue #508, 7 items, triaged
+  2026-07-20): items 1 + 7 fixed same-day (#510 value-axis `cursorFormat` +
+  channel split; #509 region-select anchor race); legend / annotation-roles /
+  y-density / BoxPlot-id queued into PLAN (see the #508 triage block in the
+  charts section); Canvas async-width first-mount stays open needs-repro.
 
 #### Trading-calendar wave — ADOPTED (RFC `docs/rfcs/trading-calendar.md`)
 
@@ -2118,6 +2123,24 @@ string` — the library hands over the resolved coarse **`TimeGrain`**
     flagged — the grain-aware default sidesteps the common daily-bar case, but
     true exchange-/display-tz handling (cf. the deferred exchange-tz tick
     grain) is its own conversation, not attempted here.
+  - ✅ **`cursorFormat` → value axes + readout/label channel split (#510,
+    [Unreleased]; #508 item 1, Tidal vol-surface report).** The 0.48.0 channel
+    stopped at time axes (the value branch returned the timeFormat-shaped
+    formatter before the readout machinery) and an explicit `<XAxis format>`
+    owned the pill. The frame now carries **two channels**: `formatTime` = the
+    label channel (timeFormat only — its documented meaning, restored) and a
+    new optional `formatReadout` = the readout channel (defined iff
+    `cursorFormat` set), read `formatReadout ?? <label formatter>` by the
+    pill / in-plot cursor time / marker indicators / annotation auto-labels.
+    Pill precedence is uniform on every axis kind: `cursorFormat → axis format
+→ container`. Value-axis string = d3 _number_ specifier; function form
+    gets `(value, { grain: undefined, defaultText })`. `transform`ed axes keep
+    the derived-unit pill; category axes read names. **Also fixed the latent
+    0.48.0 leak the split surfaced:** timeFormat + cursorFormat together put
+    cursorFormat into the _tick labels_ (ladder disqualified → tick fallback
+    read the merged formatter). **Type changes (human-approval gate):**
+    `CursorFormat` ctx `grain` widens to `TimeGrain | undefined`;
+    `ContainerFrame.formatTime` no longer carries `cursorFormat`.
   - **Still deferred (documented, none blocking):** `neighbourSpans` point-key slot
     widths on the discontinuous axis (interval-keyed bars from
     `aggregate(barSequence)` — the primary path — are immune); exact **exchange-tz**
@@ -2130,6 +2153,49 @@ string` — the library hands over the resolved coarse **`TimeGrain`**
     [[npm new-package publish bootstrap]]), then the `v0.42.0` tag OIDC-published all
     five (financial's first OIDC release). The charts publish auto-wakes the Tidal
     adoption agent via the CHANGELOG.
+- **#508 vol-surface report triage (0.48.1 dogfood, triaged 2026-07-20).**
+  Tidal's SVI-smile consumer filed 7 items ([report] issue #508); triage posted
+  on the issue and grounded in a spike (branch
+  `worktree-spike-508-vol-surface-friction`) that verified claims in code
+  before dispositioning. **Dispositions:**
+  - **Item 1 (`cursorFormat` value axes)** — → PLAN, **shipped #510** (see the
+    ✅ entry under the readout work above; includes the bonus tick-leak fix).
+  - **Item 2 (`<Legend>`)** — → PLAN, accepted as one scoped wave; the
+    sender's design sketch (on the issue) is the basis: per-layer resolved
+    `SwatchSpec` at registration, zero-config `<Legend placement>`, dedup +
+    per-layer `legend={false | 'name'}` opt-out, `theme.legend` slot, hover
+    echo + id-gated select toggle via the existing frame contract; show/hide
+    stays consumer-side. **Deltas:** row identity keys `id ?? label` (the A2.2
+    selection model demoted `as` — a theme role can repeat), and the wave is
+    **sequenced behind tracker-label-by-`as`** (F-charts-8 §3, the queued
+    label-source prerequisite already flagged for the candlestick legend
+    merge). Not RFC-worthy — interaction semantics were red-teamed in the
+    selection RFC.
+  - **Item 3 (per-annotation colour)** — → PLAN as a **theme role map**;
+    inline per-mark colour rejected (same discipline as the per-box red/green
+    reject: colour = theme role, not call-site).
+    `theme.annotation.roles?: Record<string, { color; fillOpacity? }>` +
+    `role?: string` on the three marks, resolving `roles[role] ?? annotation`;
+    the depth ramp applies within the role's hue. `cssVarTheme` role mapping
+    in the same pass.
+  - **Item 4 (`YAxis` tick density)** — → PLAN: height-derived default +
+    explicit `tickCount` override (the 0.44.1 width-derived x precedent);
+    explicit `ticks` still wins. Small.
+  - **Item 5 (`BoxPlot` selection `id`)** — → PLAN: extends the **shipped**
+    id-gated discrete contract (rect-containment `hitTest` like Bar — not the
+    still-RFC continuous-layer threshold model). Folded into the queued
+    BoxPlot follow-on wave; Candlestick takes the same geometry helper in
+    that pass so the interval marks don't fork the contract.
+  - **Item 6 (Canvas async-width first mount)** — open bug candidate,
+    **needs-repro**: does NOT reproduce at the React/jsdom level (identical
+    draw-op sequences on a ParentSize-style mount, plain + StrictMode; no
+    layout-measurement deps in the draw path — pin test landed in #510).
+    Cause is below React or consumer-side; next step is Tidal's minimal
+    browser repro (offered in the report).
+  - **Item 7 (region-select anchor race)** — → PLAN, **shipped #509** (see
+    the ✅ entry under the region-cursor work above). Layer-2 follow-up
+    spawned: `pointercancel` currently commits the span (pre-existing;
+    should be clear-only).
 - **Indicator / studies track — the `@pond-ts/financial` analytics layer.**
   Grounded in the corpus assessment
   (`docs/notes/financial-indicators-assessment-2026-07.md`): 124 ChartIQ studies

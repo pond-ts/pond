@@ -93,7 +93,11 @@ describe('ChartContainer discontinuities → trading-time axis', () => {
       cursorFormat: '%Y-%m-%d',
     });
     expect(withCursor.xFormatCustom).toBe(false);
-    expect(withCursor.formatTime(at)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(withCursor.formatReadout!(at)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // …and the label channel does NOT pick it up — cursorFormat can never
+    // move the tick labels (the #508 leak: timeFormat + cursorFormat together
+    // used to render cursorFormat-shaped ticks).
+    expect(withCursor.formatTime(at)).not.toMatch(/^\d{4}-\d{2}-\d{2}$/);
     // timeFormat, by contrast, owns the labels and DOES opt out of the ladder.
     const withTime = frameOf({ discontinuities: provider, timeFormat: '%Y' });
     expect(withTime.xFormatCustom).toBe(true);
@@ -116,7 +120,7 @@ describe('ChartContainer discontinuities → trading-time axis', () => {
       },
     });
     expect(f.xFormatCustom).toBe(false); // still no ladder disqualification
-    const out = f.formatTime(new Date(2026, 0, 6).getTime());
+    const out = f.formatReadout!(new Date(2026, 0, 6).getTime());
     expect(seen[0]!.grain).toBe('day'); // the resolved coarse grain, handed in
     expect(seen[0]!.defaultText).toMatch(/2026/); // grain-aware default (a date)
     expect(out).toBe(`D:${seen[0]!.defaultText}`); // branch on grain, wrap default
