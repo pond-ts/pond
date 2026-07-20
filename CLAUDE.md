@@ -4,15 +4,20 @@ TypeScript time series library. Successor to pondjs / react-timeseries-charts.
 
 ## Plan
 
-**Read [PLAN.md](PLAN.md) at the start of every session.** It is the single
-source of truth for what has shipped, what is next, and the design decisions
-behind each phase.
+**Read [PLAN.md](PLAN.md) at the start of every session.** It is the binding
+roadmap of **future work only**, organized into work sections whose tasks are
+named `[PND-XXXXXX]`. Each section links a breakout plan in
+`docs/plans/PND_*_PLAN.md` that carries the full per-task context. Shipped
+history lives in [CHANGELOG.md](CHANGELOG.md) and the frozen wave/phase logs
+in `docs/archive/`; evergreen design rules in
+`docs/notes/design-principles.md`.
 
-**Update PLAN.md when meaningful work lands.** If you complete a task, add a
-feature, fix a bug, or make a design decision that affects upcoming work, update
-the relevant section of PLAN.md in the same pass. Move items from "remaining" to
-"completed", add new design notes, or adjust phase scope as needed. Do not defer
-this — a lost session should not erase the current state of the project.
+**Update PLAN.md when meaningful work lands.** If you complete a task, remove
+it from PLAN.md and record the outcome (decision + reasoning) in its breakout
+plan in the same pass; if new work surfaces, add a `[PND-XXXXXX]` task with a
+1–5 sentence summary here and the longer write-up in the breakout plan. Do
+not defer this — a lost session should not erase the current state of the
+project.
 
 ## Architecture
 
@@ -106,9 +111,11 @@ friction reports, and the library iterates. The discipline:
   `ingesting-messy-data.mdx` (CSV-cleaner) and `dashboard-guide.mdx`
   (dashboard) are the templates.
 - **Active experiments are tracked in PLAN.md** under the "Active
-  experiments" section. That section is the canonical roster of who
-  is working on what, what each has driven into the library so far,
-  and where each track is now.
+  experiments" section — the canonical roster of who is working on
+  what and where each track is now. Per-track detail lives in
+  `docs/plans/PND_EXPERIMENTS_PLAN.md`; full histories (what each
+  drove into the library, milestone by milestone) in
+  `docs/archive/experiments-2026.md`.
 
 ### Context preservation across sessions
 
@@ -122,8 +129,10 @@ deferred-but-considered alternative, blind-alley walked-back), the
 _reasoning_ must end up in a committed artifact so future sessions
 can recover it without the transcript:
 
-- **PLAN.md "Shipped:" and "Deferred from this wave" sections** are
-  the load-bearing artifact for library-level decisions.
+- **The relevant `docs/plans/PND_*_PLAN.md` breakout plan** is the
+  load-bearing artifact for library-level decisions (record shipped
+  outcomes and deferred-but-considered alternatives there; the frozen
+  pre-reorg history is in `docs/archive/`).
 - **Experiment milestone files** (`experiments/<exp>/M*.md`) capture
   per-milestone friction notes and library carry-forwards.
 - **PR comment trail** (Layer 2 adversarial review + author response)
