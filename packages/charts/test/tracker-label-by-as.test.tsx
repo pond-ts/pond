@@ -16,7 +16,7 @@ import { Layers } from '../src/Layers.js';
 import { BandChart } from '../src/BandChart.js';
 import { Candlestick } from '../src/Candlestick.js';
 import { YAxis } from '../src/YAxis.js';
-import type { TrackerInfo } from '../src/ChartContainer.js';
+import type { TrackerInfo, TrackerSample } from '../src/context.js';
 import { stubCanvasContext } from './canvas-mock.js';
 
 afterEach(cleanup);
@@ -72,7 +72,7 @@ function labelsOf(child: React.ReactNode): string[] {
       </ChartContainer>,
     );
     const last = seen.filter(Boolean).at(-1);
-    return (last?.values ?? []).map((v) => v.label);
+    return (last?.values ?? []).map((v: TrackerSample) => v.label);
   } finally {
     stub.restore();
   }
