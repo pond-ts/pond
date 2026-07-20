@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { scaleLinear } from 'd3-scale';
 import {
   scaleDomain,
-  visibleWindow,
+  visiblePointWindow,
   visibleSpanWindow,
   visiblePointRange,
   visibleSpanRange,
@@ -55,57 +55,57 @@ describe('scaleDomain', () => {
   });
 });
 
-describe('visibleWindow', () => {
+describe('visiblePointWindow', () => {
   // x = [0,10,20,30,40,50,60,70,80,90], length 10
   const x = Float64Array.from({ length: 10 }, (_, i) => i * 10);
 
   it('includes one entry + one exit point around the visible range', () => {
     // view [25, 55] → in-range indices 3(30),4(40),5(50); +1 each side → [2, 7)
-    expect(visibleWindow(x, 10, 25, 55)).toEqual([2, 7]);
+    expect(visiblePointWindow(x, 10, 25, 55)).toEqual([2, 7]);
   });
 
   it('keeps the exit point when the range ends exactly on a sample', () => {
     // view [25, 50] → in-range 3,4,5 (50 included via >= is upperBound of 50 = 6);
     // +1 → start 2, end 7
-    expect(visibleWindow(x, 10, 25, 50)).toEqual([2, 7]);
+    expect(visiblePointWindow(x, 10, 25, 50)).toEqual([2, 7]);
   });
 
   it('keeps the entry point when the range starts exactly on a sample', () => {
     // view [30, 55] → lowerBound(30)=3 → start 2; upperBound(55)=6 → end 7
-    expect(visibleWindow(x, 10, 30, 55)).toEqual([2, 7]);
+    expect(visiblePointWindow(x, 10, 30, 55)).toEqual([2, 7]);
   });
 
   it('returns the whole series when the view covers it', () => {
-    expect(visibleWindow(x, 10, -100, 1000)).toEqual([0, 10]);
+    expect(visiblePointWindow(x, 10, -100, 1000)).toEqual([0, 10]);
   });
 
   it('clamps the entry margin at the left edge', () => {
     // view [0, 25] → lowerBound(0)=0 → start max(0,-1)=0; upperBound(25)=3 → end 4
-    expect(visibleWindow(x, 10, 0, 25)).toEqual([0, 4]);
+    expect(visiblePointWindow(x, 10, 0, 25)).toEqual([0, 4]);
   });
 
   it('clamps the exit margin at the right edge', () => {
     // view [75, 90] → lowerBound(75)=8 → start 7; upperBound(90)=10 → end 10
-    expect(visibleWindow(x, 10, 75, 90)).toEqual([7, 10]);
+    expect(visiblePointWindow(x, 10, 75, 90)).toEqual([7, 10]);
   });
 
   it('yields a one-point off-screen slice when the series is entirely left of view', () => {
     // hi < x[0]: everything left → [length-1, length]
-    expect(visibleWindow(x, 10, 200, 300)).toEqual([9, 10]);
+    expect(visiblePointWindow(x, 10, 200, 300)).toEqual([9, 10]);
   });
 
   it('yields a one-point off-screen slice when the series is entirely right of view', () => {
     // lo > x[last]: everything right → [0, 1]
-    expect(visibleWindow(x, 10, -300, -200)).toEqual([0, 1]);
+    expect(visiblePointWindow(x, 10, -300, -200)).toEqual([0, 1]);
   });
 
   it('handles an empty series', () => {
-    expect(visibleWindow(new Float64Array(0), 0, 0, 100)).toEqual([0, 0]);
+    expect(visiblePointWindow(new Float64Array(0), 0, 0, 100)).toEqual([0, 0]);
   });
 
   it('honours a wider margin', () => {
     // view [45, 55] margin 2 → in-range 5; ±2 → start 3, end 8
-    expect(visibleWindow(x, 10, 45, 55, 2)).toEqual([3, 8]);
+    expect(visiblePointWindow(x, 10, 45, 55, 2)).toEqual([3, 8]);
   });
 });
 

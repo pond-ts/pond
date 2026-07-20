@@ -158,8 +158,10 @@ export function drawScatter(
   // the very edge under pan). Fine for the common small-radius case; a
   // pixel-radius-aware pad (widen the data window by the max drawn radius via
   // `xScale.invert`) is the follow-up if a bubble-chart consumer hits it. The
-  // interval marks (bars/candles/boxes) have no such gap — their width *is* their
-  // span, which `visibleSpanRange` captures exactly.
+  // interval marks (bars/candles/boxes) barely feel this — their width *is* their
+  // span (`visibleSpanRange` captures it exactly); only the sub-pixel
+  // `minWidth`/`gapPx` rounding can poke past the edge, which the ±1 margin
+  // absorbs and which only bites when zoomed out (where culling barely narrows).
   const [vStart, vEnd] = visiblePointRange(cs.x, cs.length, xScale);
   for (let i = vStart; i < vEnd; i += 1) {
     if (!isPoint(cs, i)) continue;

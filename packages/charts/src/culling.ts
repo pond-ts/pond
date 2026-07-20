@@ -100,7 +100,7 @@ function upperBound(x: Float64Array, n: number, v: number): number {
  * - **Series entirely right of the view** (`lo > x[last]`) — `[0, 1]`, likewise.
  * - **Empty series** — `[0, 0]`.
  */
-export function visibleWindow(
+export function visiblePointWindow(
   x: Float64Array,
   length: number,
   lo: number,
@@ -147,7 +147,13 @@ export function cullChartSeries(
   if (cs.length === 0) return cs;
   const dom = scaleDomain(xScale);
   if (dom === null) return cs;
-  let [start, end] = visibleWindow(cs.x, cs.length, dom[0], dom[1], margin);
+  let [start, end] = visiblePointWindow(
+    cs.x,
+    cs.length,
+    dom[0],
+    dom[1],
+    margin,
+  );
   // Extend each boundary to the nearest finite y-anchor so a gap straddling the
   // edge stays interior (see "Gap-mode neutrality" above).
   while (start > 0 && !Number.isFinite(cs.y[start]!)) start -= 1;
@@ -180,7 +186,7 @@ export function cullBandSeries(
   if (band.length === 0) return band;
   const dom = scaleDomain(xScale);
   if (dom === null) return band;
-  const [start, end] = visibleWindow(
+  const [start, end] = visiblePointWindow(
     band.x,
     band.length,
     dom[0],
@@ -247,7 +253,7 @@ export function visibleSpanWindow(
 
 /**
  * The visible `[start, end)` index range of a **point** layer (scatter) against
- * `xScale` — a thin wrapper over {@link visibleWindow} that reads the scale's
+ * `xScale` — a thin wrapper over {@link visiblePointWindow} that reads the scale's
  * domain. Returns the **full** range `[0, length]` when the scale exposes no
  * numeric domain (a bare test stub / category axis) or the series is empty, so a
  * caller loops over everything and the draw is unchanged there.
@@ -261,7 +267,7 @@ export function visiblePointRange(
   if (length === 0) return [0, 0];
   const dom = scaleDomain(xScale);
   if (dom === null) return [0, length];
-  return visibleWindow(x, length, dom[0], dom[1], margin);
+  return visiblePointWindow(x, length, dom[0], dom[1], margin);
 }
 
 /**
