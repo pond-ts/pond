@@ -404,7 +404,15 @@ best-effort.
     span-overlap window that keeps a wide edge-crossing mark — for the
     interval-keyed bar/candle/box), preserving every accessor's `i`. Verified on
     a candlestick `TradingTimeScale` under pan+zoom; bars 500k drop ~23 → 0.16
-    ms/frame. **Remaining → chart-side (Phases 3–5), bench-ordered:** the
+    ms/frame. **Scatter radius-aware pad DONE (the follow-up #499 flagged):** a
+    scatter mark's disc has a pixel radius independent of sample spacing, so a
+    dense scatter of fat marks could drop an edge bubble whose centre is >1 sample
+    off-screen while its disc overlaps the plot edge (flicker under pan).
+    `visiblePointRange` gained an optional `padPx` that widens the data window by
+    that many pixels (via `xScale.invert`) before the bisect; `drawScatter` does
+    two window calls — pass 1 finds the max drawn radius over the plain window,
+    pass 2 re-expands by `maxRadius + |offsetPx|`. Interval marks don't need it
+    (width _is_ span). **Remaining → chart-side (Phases 3–5), bench-ordered:** the
     per-layer decimator stage (device-pixel edges + gap-edge union + interaction
     invariant), then re-bench, then candlestick with Tidal; Path2D cache
     (M4.4) only if the pan bench still misses. `plot_width` + visible slice

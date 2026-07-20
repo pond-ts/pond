@@ -269,6 +269,89 @@ describe('drawScatter', () => {
   });
 });
 
+describe('drawScatter radius-aware culling', () => {
+  // A 1px == 1 data-unit scale carrying `.domain()` + `.invert()` (the bare
+  // `identity` stub used above has no domain, so it draws the whole series and
+  // never exercises the cull). Visible plot px range == data range [lo, hi].
+  const windowScale = (lo: number, hi: number): Scale =>
+    Object.assign((v: number) => v, {
+      domain: () => [lo, hi],
+      invert: (px: number) => px,
+    }) as unknown as Scale;
+
+  // Only x=40 falls inside the [20, 80] plot. x=15 is the 1st sample left of the
+  // plot (the ±1 entry margin keeps it); x=10 is the 2nd sample out (a bare index
+  // margin drops it); x=5 the 3rd. 85/90 sit right of the plot.
+  const s = cs([5, 10, 15, 40, 85, 90], [1, 1, 1, 1, 1, 1]);
+  const arcXs = (calls: { name: string; args: unknown[] }[]) =>
+    calls.filter((c) => c.name === 'arc').map((c) => c.args[0]);
+
+  it('keeps a fat edge mark whose centre is 2+ samples off-screen but whose disc overlaps the plot', () => {
+    const { ctx, calls } = recordingContext();
+    // r=12: x=10 sits 10px left of the plot edge (20), disc reaches 10+12=22 —
+    // past the edge, so it must draw despite being 2 samples out. x=5's disc
+    // (5+12=17) is short of the edge but the ±1 margin off x=10 still keeps it.
+    drawScatter(
+      ctx,
+      s,
+      windowScale(20, 80),
+      identity,
+      style,
+      fixed(12),
+      keyAt(s),
+      undefined,
+      font,
+      null,
+      'v',
+    );
+    const xs = arcXs(calls);
+    expect(xs).toContain(10); // the 2-samples-off edge bubble survives the cull
+    expect(xs).toHaveLength(6); // every disc can touch → whole series drawn
+  });
+
+  it('still culls a small edge mark 2+ samples off-screen (plain ±1 margin)', () => {
+    const { ctx, calls } = recordingContext();
+    // r=3: x=10's disc reaches only 10+3=13, short of the edge (20). The window
+    // is the ±1 entry/exit margin: x=15 (entry), x=40 (visible), x=85 (exit).
+    drawScatter(
+      ctx,
+      s,
+      windowScale(20, 80),
+      identity,
+      style,
+      fixed(3),
+      keyAt(s),
+      undefined,
+      font,
+      null,
+      'v',
+    );
+    expect(arcXs(calls)).toEqual([15, 40, 85]);
+  });
+
+  it('folds |offsetPx| into the pad so a shifted edge mark still draws', () => {
+    const { ctx, calls } = recordingContext();
+    // r=3 alone would cull x=10 (previous test). offset=+12 nudges every mark
+    // right in pixel space, so x=10 lands at px=22 (inside the plot) — the pad
+    // must fold in the offset or the mark is culled before it's drawn.
+    drawScatter(
+      ctx,
+      s,
+      windowScale(20, 80),
+      identity,
+      style,
+      fixed(3),
+      keyAt(s),
+      undefined,
+      font,
+      null,
+      'v',
+      12, // offsetPx
+    );
+    expect(arcXs(calls)).toContain(22); // arc centre is px = x + offset = 10 + 12
+  });
+});
+
 describe('hitTestScatter', () => {
   const s = cs([0, 10, 20], [0, 0, 0]); // points on a line at y=0
   it('hits a point when the click is within its radius', () => {

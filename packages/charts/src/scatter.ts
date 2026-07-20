@@ -149,20 +149,33 @@ export function drawScatter(
   // accessors (`colorAt`/`radiusAt`/`keyAt`/`labelAt`) and the selection match
   // stay correct — a subarray would renumber them. Full range when `xScale` has
   // no domain (a test stub). A selected point outside the window isn't drawn (its
-  // ring would be off-screen anyway). `offsetPx` is a small pixel nudge the ±1
-  // margin absorbs.
+  // ring would be off-screen anyway).
   //
-  // Sharp edge: the ±1 margin is in *index* space, so a mark's **radius** can
-  // reach the plot from further out — a dense scatter of visible-size bubbles may
-  // drop an edge bubble whose centre is >1 sample off-screen (a subtle flicker at
-  // the very edge under pan). Fine for the common small-radius case; a
-  // pixel-radius-aware pad (widen the data window by the max drawn radius via
-  // `xScale.invert`) is the follow-up if a bubble-chart consumer hits it. The
-  // interval marks (bars/candles/boxes) barely feel this — their width *is* their
-  // span (`visibleSpanRange` captures it exactly); only the sub-pixel
+  // Radius-aware pad (the follow-up #499 flagged): the ±1 margin is in *index*
+  // space, but a mark's **radius** can reach the plot from further out — a dense
+  // scatter of visible-size bubbles would otherwise drop an edge bubble whose
+  // centre is >1 sample off-screen while its disc overlaps the edge (a flicker
+  // under pan). So we make two window calls: pass 1 is the plain window; scan it
+  // for the max drawn radius; pass 2 re-expands by that radius plus `|offsetPx|`
+  // (the pixel nudge shifts marks in px space, so it widens the reach too). The
+  // common small-radius frame re-expands by a few pixels — usually the same
+  // window. Interval marks (bars/candles/boxes) don't need this — their width
+  // *is* their x-span (`visibleSpanRange` captures it exactly); only sub-pixel
   // `minWidth`/`gapPx` rounding can poke past the edge, which the ±1 margin
   // absorbs and which only bites when zoomed out (where culling barely narrows).
-  const [vStart, vEnd] = visiblePointRange(cs.x, cs.length, xScale);
+  const [w0Start, w0End] = visiblePointRange(cs.x, cs.length, xScale);
+  let maxR = 0;
+  for (let i = w0Start; i < w0End; i += 1) {
+    if (isPoint(cs, i)) {
+      const r = encoding.radiusAt(i);
+      if (r > maxR) maxR = r;
+    }
+  }
+  const pad = maxR + Math.abs(offsetPx);
+  const [vStart, vEnd] =
+    pad > 0
+      ? visiblePointRange(cs.x, cs.length, xScale, pad)
+      : [w0Start, w0End];
   for (let i = vStart; i < vEnd; i += 1) {
     if (!isPoint(cs, i)) continue;
     // `offsetPx` nudges the whole scatter in pixel space (zoom-stable) — for

@@ -72,6 +72,16 @@ and type-level changes; patch bumps are strictly additive.
   span-overlap window that keeps a wide mark crossing a plot edge. Same
   automatic, internal, interaction-safe behaviour — a 500k-bar chart zoomed in
   drops from ~23 ms/frame to ~0.16 ms.
+- **charts:** Scatter culling is now **radius-aware**. The per-mark index margin
+  above measures neighbours in sample count, but a scatter mark's disc has a
+  pixel radius independent of sample spacing — so a dense scatter of fat marks
+  could drop an edge bubble whose _centre_ sits several samples off-screen while
+  its _disc_ still overlaps the plot edge (a subtle flicker under pan). The
+  scatter draw now widens the visible window by its max drawn radius (converted
+  px→data through the scale, plus any `offsetPx` nudge) before culling, so every
+  mark that can paint into the plot is kept. Small-radius scatters are unaffected
+  (they re-expand by a few pixels — usually the same window). Interval marks
+  (bars / candles / boxes) don't need this — their width _is_ their x-span.
 
 ## [0.48.1] — 2026-07-19
 
