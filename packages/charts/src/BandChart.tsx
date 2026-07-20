@@ -33,7 +33,9 @@ export interface BandChartProps<
    * p5/p95 envelope, `inner` for p25/p75). The theme maps it to a
    * {@link BandStyle} (`theme.band[as] ?? theme.band.default`). **Omitted ⇒ the
    * `default` band style** — no per-component fill/opacity override (restyle via
-   * the theme, the single styling channel).
+   * the theme, the single styling channel). It's also the series identity for
+   * the tracker readout: with an `as`, the edge samples read `"<as> lower"` /
+   * `"<as> upper"` (else the raw column names).
    */
   as?: string;
   /**
