@@ -32,8 +32,10 @@ export type AxisFormat = string | ((value: number) => string);
  *   default readout for that instant — so a consumer can branch on the zoom
  *   level (`grain === 'year' ? … : …`) and pass `defaultText` through for the
  *   grains they don't want to override. On a **value** axis there is no time
- *   grain — `ctx.grain` is `undefined` and `ctx.defaultText` is the axis's
- *   default (tick-formatter) text.
+ *   grain — `ctx.grain` is `undefined` and `ctx.defaultText` is the
+ *   **container's** label-formatter text (`timeFormat`-shaped, else the d3
+ *   default; an explicit `<XAxis format>` shapes only that axis's own
+ *   channel, never this default).
  *
  * The library hands you the grain because it already resolved it — you never
  * re-derive it from the range.

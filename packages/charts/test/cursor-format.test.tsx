@@ -156,6 +156,50 @@ describe('axis-strip pill precedence: cursorFormat → axis format → container
     const { container } = markerPill({ axisFormat: '+.1f' });
     expect(within(container).getByText('+530.0')).toBeTruthy();
   });
+
+  it('the same precedence holds on a TIME axis: cursorFormat beats the explicit axis format for the pill', () => {
+    const day = 86400_000;
+    const t = new TimeSeries({
+      name: 't',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number' },
+      ] as const,
+      rows: [
+        [Date.UTC(2026, 0, 1), 1],
+        [Date.UTC(2026, 0, 20), 2],
+      ],
+    });
+    const chart = (cursorFormat?: string) => (
+      <ChartContainer
+        range={[Date.UTC(2026, 0, 1), Date.UTC(2026, 0, 1) + 20 * day]}
+        width={640}
+        showAxis={false}
+        {...(cursorFormat !== undefined ? { cursorFormat } : {})}
+      >
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={10} />
+          <Layers>
+            <LineChart series={t} column="v" axis="a" />
+            {/* An off-tick instant so the pill never collides with a label. */}
+            <Marker at={Date.UTC(2026, 0, 6, 13, 37)} label={false} indicator />
+          </Layers>
+        </ChartRow>
+        <XAxis format="%d" />
+      </ChartContainer>
+    );
+    // cursorFormat set: the pill reads it; the '%d' ticks are unmoved.
+    const withCursor = render(chart('%Y-%m-%d'));
+    expect(within(withCursor.container).getByText('2026-01-06')).toBeTruthy();
+    withCursor.unmount();
+    // cursorFormat unset: the pill agrees with the explicit axis format
+    // (getAllByText — a '%d' tick can share the pill's text).
+    const without = render(chart());
+    expect(within(without.container).getAllByText('06').length).toBeGreaterThan(
+      0,
+    );
+    expect(within(without.container).queryByText('2026-01-06')).toBeNull();
+  });
 });
 
 describe('annotation auto-labels read the readout channel', () => {
