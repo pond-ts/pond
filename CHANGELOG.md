@@ -50,6 +50,23 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts:** **M4 line decimation** (charts decimator wave, Phase 3) — the
+  `<LineChart>` now draws from the per-device-pixel-column min/max/first/last
+  (pond's `binBy(…, 'minMaxFirstLast')`) once the visible data exceeds ~2 samples
+  per pixel, so a **fully-visible** dense series (which viewport culling can't
+  help) draws from O(plot width) points instead of every sample: a 1M-point line
+  drops from ~34 ms/frame to ~3.4 ms, under the 60 fps budget. It is **visually
+  lossless** (an e2e pixel-diff bounds the decimated-vs-full difference to a thin
+  sub-pixel AA seam) and **preserves single-sample anomalies** (the min/max
+  channel keeps the spike M4 is chosen over LTTB to keep). Bucket edges are the
+  scale's pixel range inverted back to key space, so each bucket is one pixel
+  column on **any** scale, including a non-affine `TradingTimeScale`. Auto-on with
+  an opt-out / tuning prop
+  `decimate={false | { threshold }}` (new `DecimateOption` export). Applies to the
+  honest default draw — solid `gaps="empty"`, linear `curve`, no `sessionBreaks`;
+  the inferred gap modes (the §2.2 gap-edge union) and area/band are the Phase-3
+  remainder. Interaction reads the source series (§2.3), so readouts/selection are
+  unaffected.
 - **charts:** **Viewport culling** (charts decimator wave, Phase 2). Line, area,
   and band layers now clip to the **visible slice** of their key column — plus
   one entry/exit point each side so the segment crossing each plot edge still

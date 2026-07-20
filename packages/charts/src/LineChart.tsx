@@ -3,6 +3,7 @@ import { ValueSeries } from 'pond-ts';
 import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
 import { fromTimeSeries, fromValueSeries } from './data.js';
 import { drawLine, yExtent } from './line.js';
+import type { DecimateOption } from './decimate.js';
 import { resolveCurve, type Curve } from './curve.js';
 import {
   DEFAULT_GAP_MODE,
@@ -77,6 +78,18 @@ export interface LineChartProps<
    */
   sessionBreaks?: boolean;
   /**
+   * **M4 viewport decimation** (charts decimator wave). **Omitted ⇒ `true`**:
+   * once the visible data is denser than ~2 samples per device pixel, the line
+   * is drawn from the per-pixel-column min/max/first/last (a pixel-identical
+   * polyline of O(plot width) points) instead of every sample — so a 1M-point
+   * series pans at interactive rates. It is **visually lossless** (a perf knob,
+   * not a style), and applies only to the honest default draw: a solid line with
+   * `gaps="empty"`, a linear `curve`, and no `sessionBreaks` (other modes draw
+   * full-resolution until later phases wire them). Pass `false` to always draw
+   * every point, or `{ threshold }` to tune the samples-per-pixel factor.
+   */
+  decimate?: DecimateOption;
+  /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
    */
@@ -104,6 +117,7 @@ export function LineChart<
   curve,
   gaps = DEFAULT_GAP_MODE,
   sessionBreaks = false,
+  decimate = true,
   index = 0,
 }: LineChartProps<S, VS>) {
   const container = useContext(ContainerContext);
@@ -191,6 +205,7 @@ export function LineChart<
             gaps,
             gapConnectorOpacity,
             sessionBreakInstants,
+            decimate,
           ),
       },
       axisId: axis,
@@ -206,6 +221,7 @@ export function LineChart<
       gaps,
       gapConnectorOpacity,
       sessionBreakInstants,
+      decimate,
       axis,
       index,
     ],

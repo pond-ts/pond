@@ -78,6 +78,23 @@ function stubContext() {
   );
 }
 
+/**
+ * A no-op ctx with a sized backing buffer + DPR transform, so `drawLine`'s M4
+ * decimation gate fires (`ctx.canvas.width` = device columns, `getTransform().a`
+ * = DPR). `widthPx` is the device-pixel width (= plotWidth × DPR).
+ */
+function sizedStubContext(widthPx, dpr = 1) {
+  const noop = () => {};
+  return new Proxy(
+    { canvas: { width: widthPx }, getTransform: () => ({ a: dpr }) },
+    {
+      get: (t, p) =>
+        p in t ? t[p] : p === 'measureText' ? () => ({ width: 0 }) : noop,
+      set: () => true,
+    },
+  );
+}
+
 function median(values) {
   const sorted = [...values].sort((a, b) => a - b);
   const m = Math.floor(sorted.length / 2);
@@ -177,6 +194,45 @@ for (const n of [100_000, 500_000, 1_000_000]) {
       );
     }),
   );
+}
+
+// M4 decimation — the FULLY-VISIBLE dense case culling can't help (every point
+// is on screen). Compares a full-resolution draw against the auto-decimated one
+// at plotWidth=800, DPR=2 (W=1600 device columns).
+{
+  const dpr = 2;
+  const W = PLOT_WIDTH * dpr;
+  for (const n of [200_000, 1_000_000]) {
+    const cs = makeSeries(n);
+    const lo = cs.x[0];
+    const hi = cs.x[n - 1];
+    const fullScale = scale(lo, hi, PLOT_WIDTH);
+    // decimate:false forces the full-resolution draw (the baseline).
+    const plain = stubContext();
+    results.push(
+      benchmark(`decimate N=${n} full-res (off)`, () => {
+        drawLine(
+          plain,
+          cs,
+          fullScale,
+          (v) => v,
+          style,
+          undefined,
+          'empty',
+          undefined,
+          [],
+          false,
+        );
+      }),
+    );
+    // Auto-decimation on a sized ctx → ~4·W points.
+    const sized = sizedStubContext(W, dpr);
+    results.push(
+      benchmark(`decimate N=${n} M4 (on, W=${W})`, () => {
+        drawLine(sized, cs, fullScale, (v) => v, style);
+      }),
+    );
+  }
 }
 
 console.log(JSON.stringify({ plotWidth: PLOT_WIDTH, results }, null, 2));

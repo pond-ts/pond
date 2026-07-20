@@ -639,3 +639,90 @@ describe('drawLine — viewport culling (Phase 2)', () => {
     expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(1);
   });
 });
+
+describe('drawLine — M4 decimation (Phase 3)', () => {
+  const domainScale = (lo: number, hi: number): Scale =>
+    scaleLinear().domain([lo, hi]).range([lo, hi]) as unknown as Scale;
+  // A recording ctx with a sized backing buffer (device px) + DPR transform, so
+  // drawLine's decimation gate fires (a bare recordingContext has no canvas).
+  const sizedCtx = (widthPx: number, dpr = 1) => {
+    const { ctx, calls } = recordingContext();
+    (ctx as unknown as { canvas: { width: number } }).canvas = {
+      width: widthPx,
+    };
+    (ctx as unknown as { getTransform: () => { a: number } }).getTransform =
+      () => ({ a: dpr });
+    return { ctx, calls };
+  };
+  // A dense ramp: `n` points, value = index.
+  const dense = (n: number): ChartSeries =>
+    cs(
+      Array.from({ length: n }, (_, i) => i),
+      Array.from({ length: n }, (_, i) => i),
+    );
+  const penCount = (calls: CtxCall[]) =>
+    calls.filter((c) => c.name === 'moveTo' || c.name === 'lineTo').length;
+
+  it('decimates a dense series to ~4 points per device column', () => {
+    const { ctx, calls } = sizedCtx(10); // W=10 columns
+    // 5000 points ≫ 2×10 → decimate; ≤ 4·10 = 40 pen ops (vs 5000 full-res).
+    drawLine(ctx, dense(5000), domainScale(0, 5000), (v) => v, style);
+    expect(penCount(calls)).toBeLessThanOrEqual(40);
+    expect(penCount(calls)).toBeGreaterThan(0);
+  });
+
+  it('draws full-resolution when decimate is off', () => {
+    const { ctx, calls } = sizedCtx(10);
+    drawLine(
+      ctx,
+      dense(200),
+      domainScale(0, 200),
+      (v) => v,
+      style,
+      undefined,
+      'empty',
+      undefined,
+      [],
+      false,
+    );
+    // 200 contiguous points → 1 moveTo + 199 lineTo, not decimated.
+    expect(penCount(calls)).toBe(200);
+  });
+
+  it('does not decimate below the ~2 samples/pixel threshold', () => {
+    const { ctx, calls } = sizedCtx(800); // W=800; 1000 pts < 2×800
+    drawLine(ctx, dense(1000), domainScale(0, 1000), (v) => v, style);
+    expect(penCount(calls)).toBe(1000);
+  });
+
+  it('skips decimation for a non-empty gap mode (needs the §2.2 gap union)', () => {
+    const { ctx, calls } = sizedCtx(10);
+    drawLine(
+      ctx,
+      dense(5000),
+      domainScale(0, 5000),
+      (v) => v,
+      style,
+      undefined,
+      'dashed',
+    );
+    // 'dashed' is not decimated → the full 5000-point solid pass still runs.
+    expect(penCount(calls)).toBeGreaterThan(4000);
+  });
+
+  it('skips decimation when session breaks split the line', () => {
+    const { ctx, calls } = sizedCtx(10);
+    drawLine(
+      ctx,
+      dense(5000),
+      domainScale(0, 5000),
+      (v) => v,
+      style,
+      undefined,
+      'empty',
+      undefined,
+      [2500],
+    );
+    expect(penCount(calls)).toBeGreaterThan(4000);
+  });
+});
