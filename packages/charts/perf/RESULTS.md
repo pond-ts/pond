@@ -187,6 +187,43 @@ static curve exposes; it does not address the data-side one. A clean live-append
 result here is necessary, not sufficient — "perf solved" needs both ceilings,
 and only one is measured here.
 
+## Re-bench — after the decimator wave (Phase 4)
+
+The wave shipped: **viewport culling** (Phase 2) + **M4 decimation** (Phase 3,
+auto-on, all gap modes + session breaks). Re-running the same static harness with
+decimation on collapses the collapse — the `panFps` cliff at 100k is gone and 1M
+stays interactive.
+
+> **Cross-machine caveat.** This re-bench ran on a **different, weaker** machine
+> than the Phase-1 baseline above (10-core vs the M4 Pro's 14, Node v22.15). So
+> the columns are **not** apples-to-apples in absolute ms — but the **shape**
+> change is machine-independent and is the whole point: an 8 fps → 118 fps pan
+> at 100k is not explained by a CPU delta. (`baseline.json` now holds this run;
+> the Phase-1 tables above are the pre-decimation "before".)
+
+**Pan FPS — before (no decimation, M4 Pro) → after (decimation on, 10-core):**
+
+| Points    | line before → after | three before → after | band before → after |
+| --------- | ------------------- | -------------------- | ------------------- |
+| 100,000   | **8 → 118**         | **2.9 → 44**         | **4.8 → 120**       |
+| 500,000   | frozen → **90**     | frozen → **8**       | frozen → **54**     |
+| 1,000,000 | frozen → **91**     | frozen → **24**      | frozen → **88**     |
+
+**Initial render at 1M also drops** (the first heavy-draw frame): line
+6,976 ms → **69 ms**, three 16,287 ms → **139 ms**, band 3,048 ms → **30 ms** —
+the first frame now decimates instead of stroking every point. (The lone
+first-frame `panMaxFrameGap` ~34 ms at line 1M is the initial full-series `binBy`
+walk; sustained frames are ≤17 ms.)
+
+**Reading it.** `line` and `band` hold **90–120 fps to 1M** — decimation makes
+the draw ceiling effectively flat in the point count (cost is ~plot-width, not
+N). `three` (3 overlaid lines) is the floor: 3× the per-frame decimation walk
+_and_ 3× the data-side snapshot cost, so 500k dips to 8 fps and 1M to 24 —
+interactive but the weakest, and the reminder from "The two ceilings" that the
+**data-side** cost (snapshot rebuild + React commit) is the next lever, not the
+render one. Path2D caching (Phase 4-deferred) is the follow-up only if a real
+consumer needs `three`-at-1M above 24 fps.
+
 ## How to re-run
 
 ```sh
