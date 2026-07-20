@@ -436,9 +436,15 @@ best-effort.
     full-series gradient; `<BandChart>` decimates to the per-column min-lower /
     max-upper envelope (`decimateBand` — never inverts, §2.5; the win is the fill
     raster, ≈W verts vs every sample). Both `decimate={false|{threshold}}`, gated
-    off non-linear curve; verified in the browser (200k Area + Band stories). **So
-    Phase 3 is complete** except: non-linear curves + session breaks still draw
-    full-res; scatter stays `preserveSparse` (cull only). **Remaining → chart-side (Phases 4–5), bench-ordered:** re-bench,
+    off non-linear curve; verified in the browser (200k Area + Band stories).
+    **`sessionBreaks` decimation DONE:** `decimateM4` unions the session-break
+    instants into the bucket edges (alongside the gap edges) so no bucket merges
+    two sessions; `sessionRuns` then splits the decimated series per session —
+    verified on a ~40k-point trading-time line (Tidal case: decimates + clean
+    per-session pen-ups). **So Phase 3 is complete** except **non-linear curves**
+    (backlogged + documented — a smoothing curve would distort the
+    4-points-per-column polyline); scatter stays `preserveSparse` (cull only).
+    **Remaining → chart-side (Phases 4–5), bench-ordered:** re-bench,
     then candlestick with Tidal; Path2D cache
     (M4.4) only if the pan bench still misses. `plot_width` + visible slice
     live in the chart; reducer math in pond (unifies with geo F-geo-2). **M4
