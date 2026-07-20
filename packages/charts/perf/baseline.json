@@ -2,131 +2,131 @@
   "machine": {
     "platform": "darwin",
     "arch": "arm64",
-    "cpus": 14,
-    "node": "v22.22.2",
-    "recordedAt": "2026-06-20T16:07:05.729Z",
+    "cpus": 10,
+    "node": "v22.15.0",
+    "recordedAt": "2026-07-20T11:39:27.940Z",
     "note": "Directional, machine-recorded — numbers are relative, never absolute. The durable signal is the shape of the curve (where draw-everything tops out, on which metric). Heap via Chrome performance.memory (--enable-precise-memory-info set in playwright.config); directional."
   },
   "static": [
     {
       "scenario": "line",
       "size": 1000,
-      "initialRenderMs": 2569.7,
+      "initialRenderMs": 20.7,
       "panFps": 120.7,
-      "panMaxFrameGapMs": 16.4,
-      "zoomFps": 120.9
+      "panMaxFrameGapMs": 17.2,
+      "zoomFps": 120.5
     },
     {
       "scenario": "line",
       "size": 10000,
-      "initialRenderMs": 40.8,
-      "panFps": 119.8,
-      "panMaxFrameGapMs": 16.8,
-      "zoomFps": 120.7
+      "initialRenderMs": 4590.2,
+      "panFps": 120.7,
+      "panMaxFrameGapMs": 16.9,
+      "zoomFps": 120.4
     },
     {
       "scenario": "line",
       "size": 100000,
-      "initialRenderMs": 665.9,
-      "panFps": 8,
-      "panMaxFrameGapMs": 333.1,
-      "zoomFps": 8.1
+      "initialRenderMs": 59.5,
+      "panFps": 118.3,
+      "panMaxFrameGapMs": 16.7,
+      "zoomFps": 120.5
     },
     {
       "scenario": "line",
       "size": 500000,
-      "initialRenderMs": 1914.8,
-      "panFps": null,
-      "panMaxFrameGapMs": null,
-      "zoomFps": 2.2
+      "initialRenderMs": 61.5,
+      "panFps": 89.8,
+      "panMaxFrameGapMs": 33.3,
+      "zoomFps": 100.5
     },
     {
       "scenario": "line",
       "size": 1000000,
-      "initialRenderMs": 6976.4,
-      "panFps": null,
-      "panMaxFrameGapMs": null,
-      "zoomFps": null
+      "initialRenderMs": 68.8,
+      "panFps": 91.3,
+      "panMaxFrameGapMs": 34.3,
+      "zoomFps": 98.6
     },
     {
       "scenario": "three",
       "size": 1000,
-      "initialRenderMs": 1093.5,
-      "panFps": 121,
-      "panMaxFrameGapMs": 10.2,
-      "zoomFps": 120.2
-    },
-    {
-      "scenario": "three",
-      "size": 10000,
-      "initialRenderMs": 81.7,
-      "panFps": 86.4,
-      "panMaxFrameGapMs": 50.3,
-      "zoomFps": 100.9
-    },
-    {
-      "scenario": "three",
-      "size": 100000,
-      "initialRenderMs": 1763.9,
-      "panFps": 2.9,
-      "panMaxFrameGapMs": 874.7,
-      "zoomFps": 3
-    },
-    {
-      "scenario": "three",
-      "size": 500000,
-      "initialRenderMs": 5629.2,
-      "panFps": null,
-      "panMaxFrameGapMs": null,
-      "zoomFps": null
-    },
-    {
-      "scenario": "three",
-      "size": 1000000,
-      "initialRenderMs": 16287.4,
-      "panFps": null,
-      "panMaxFrameGapMs": null,
-      "zoomFps": null
-    },
-    {
-      "scenario": "band",
-      "size": 1000,
-      "initialRenderMs": 3649.3,
-      "panFps": 120.6,
-      "panMaxFrameGapMs": 17.7,
+      "initialRenderMs": 15.8,
+      "panFps": 121.3,
+      "panMaxFrameGapMs": 9.4,
       "zoomFps": 120.6
     },
     {
+      "scenario": "three",
+      "size": 10000,
+      "initialRenderMs": 34.2,
+      "panFps": 118.2,
+      "panMaxFrameGapMs": 26.1,
+      "zoomFps": 119.9
+    },
+    {
+      "scenario": "three",
+      "size": 100000,
+      "initialRenderMs": 76.7,
+      "panFps": 44,
+      "panMaxFrameGapMs": 66.7,
+      "zoomFps": 70.6
+    },
+    {
+      "scenario": "three",
+      "size": 500000,
+      "initialRenderMs": 382.2,
+      "panFps": 8,
+      "panMaxFrameGapMs": 282.9,
+      "zoomFps": 9.2
+    },
+    {
+      "scenario": "three",
+      "size": 1000000,
+      "initialRenderMs": 139.3,
+      "panFps": 24.4,
+      "panMaxFrameGapMs": 109.3,
+      "zoomFps": 28.9
+    },
+    {
+      "scenario": "band",
+      "size": 1000,
+      "initialRenderMs": 16.2,
+      "panFps": 120.7,
+      "panMaxFrameGapMs": 17.5,
+      "zoomFps": 121
+    },
+    {
       "scenario": "band",
       "size": 10000,
-      "initialRenderMs": 3987.9,
-      "panFps": 119.4,
-      "panMaxFrameGapMs": 17.2,
-      "zoomFps": 119.7
+      "initialRenderMs": 16.9,
+      "panFps": 120.7,
+      "panMaxFrameGapMs": 17.6,
+      "zoomFps": 120.5
     },
     {
       "scenario": "band",
       "size": 100000,
-      "initialRenderMs": 1151.8,
-      "panFps": 4.8,
-      "panMaxFrameGapMs": 533.3,
-      "zoomFps": 7
+      "initialRenderMs": 37.6,
+      "panFps": 119.6,
+      "panMaxFrameGapMs": 17.4,
+      "zoomFps": 120.4
     },
     {
       "scenario": "band",
       "size": 500000,
-      "initialRenderMs": 2810,
-      "panFps": null,
-      "panMaxFrameGapMs": null,
-      "zoomFps": null
+      "initialRenderMs": 101.5,
+      "panFps": 53.8,
+      "panMaxFrameGapMs": 57.3,
+      "zoomFps": 59.7
     },
     {
       "scenario": "band",
       "size": 1000000,
-      "initialRenderMs": 3048.2,
-      "panFps": null,
-      "panMaxFrameGapMs": null,
-      "zoomFps": null
+      "initialRenderMs": 30.3,
+      "panFps": 87.6,
+      "panMaxFrameGapMs": 41.6,
+      "zoomFps": 97.8
     }
   ],
   "live": [
@@ -135,54 +135,54 @@
       "windowSize": 1500,
       "pushMs": 20,
       "batch": 100,
-      "fps": 51.7,
-      "maxFrameGapMs": 26.7,
+      "fps": 30.5,
+      "maxFrameGapMs": 42.6,
       "heapSamples": [
-        49228537,
-        76783953,
-        24650264,
-        60320221,
-        61563905,
-        58849881,
-        48567485
+        47393999,
+        20087599,
+        87938567,
+        51284647,
+        55955003,
+        62909667,
+        65917743
       ],
-      "heapSlopeBytesPerSample": -33488
+      "heapSlopeBytesPerSample": 3901136
     },
     {
       "scenario": "line",
       "windowSize": 1500,
       "pushMs": 100,
       "batch": 100,
-      "fps": 107.8,
-      "maxFrameGapMs": 25.3,
+      "fps": 100.4,
+      "maxFrameGapMs": 26,
       "heapSamples": [
-        12944812,
-        17548055,
-        21074398,
-        16891003,
-        16603984,
-        16608332,
-        16625336
+        14121433,
+        14161529,
+        17359926,
+        22023537,
+        17764945,
+        17415094,
+        22081453
       ],
-      "heapSlopeBytesPerSample": 167561
+      "heapSlopeBytesPerSample": 1099722
     },
     {
       "scenario": "three",
       "windowSize": 1500,
       "pushMs": 20,
       "batch": 100,
-      "fps": 29,
-      "maxFrameGapMs": 42.9,
+      "fps": 18.5,
+      "maxFrameGapMs": 67.3,
       "heapSamples": [
-        32639300,
-        46261636,
-        30949776,
-        44618136,
-        62850304,
-        43155336,
-        58123684
+        58352190,
+        50417610,
+        29329030,
+        52766074,
+        38287898,
+        50396154,
+        79061438
       ],
-      "heapSlopeBytesPerSample": 3647896
+      "heapSlopeBytesPerSample": 2537275
     }
   ]
 }

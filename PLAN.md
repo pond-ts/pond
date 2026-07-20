@@ -444,9 +444,15 @@ best-effort.
     per-session pen-ups). **So Phase 3 is complete** except **non-linear curves**
     (backlogged + documented — a smoothing curve would distort the
     4-points-per-column polyline); scatter stays `preserveSparse` (cull only).
-    **Remaining → chart-side (Phases 4–5), bench-ordered:** re-bench,
-    then candlestick with Tidal; Path2D cache
-    (M4.4) only if the pan bench still misses. `plot_width` + visible slice
+    **Phase 4 re-bench DONE:** the #256 Playwright pan-FPS harness re-run with
+    decimation on (`perf/baseline.json` + RESULTS.md "Re-bench" section) — the
+    100k `panFps` cliff is gone: line/band hold **90–120 fps to 1M** (was 8/4.8
+    fps at 100k, frozen at 1M), `three` 24 fps at 1M (the weak floor — 3× walk +
+    data-side cost). Initial render at 1M line 6,976 → 69 ms. **Remaining → Phase
+    5, bench-ordered:** candlestick decimation with Tidal; Path2D cache
+    (M4.4) only if the pan bench still misses (it doesn't, except `three`-at-1M).
+    **Backlog (documented):** non-linear-`curve` decimation (a smoothing curve
+    distorts the 4-pts-per-column polyline; fix = decimate then re-smooth). `plot_width` + visible slice
     live in the chart; reducer math in pond (unifies with geo F-geo-2). **M4
     is the auto-on default; LTTB an explicit opt-in** (§2.5 — one consumer's
     anomaly-detection rejection was consumer-scoped, not global).
