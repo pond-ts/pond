@@ -420,6 +420,16 @@ export function Layers({ children }: LayersProps) {
   );
   const [drawFrom, setDrawFrom] = useState<number | null>(null);
   const drawFromRef = useRef<number | null>(null);
+  // The region-select drag anchor, mirrored for the gesture handlers (the same
+  // ref+state discipline as `drawFromRef`): the container's `regionAnchor`
+  // STATE is only how the rows paint the band; the gesture logic must never
+  // read it back, because a batched pointer stream (automation, jsdom, a very
+  // fast flick under load) delivers down→up before the down's setState commits
+  // — the up would see `regionAnchor === null`, silently drop the select, and
+  // the late-committing anchor would then stick (#508 item 7). Trusted
+  // human-paced input hides this (React flushes trusted discrete events
+  // synchronously); the ref is correct under both.
+  const regionAnchorRef = useRef<number | null>(null);
 
   const handlePointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -462,7 +472,8 @@ export function Layers({ children }: LayersProps) {
               e.clientX - e.currentTarget.getBoundingClientRect().left,
             ),
           );
-          c.setRegionAnchor(+c.xScale.invert(px));
+          regionAnchorRef.current = +c.xScale.invert(px);
+          c.setRegionAnchor(regionAnchorRef.current); // paint-only mirror
           c.setHoverX(px);
           try {
             e.currentTarget.setPointerCapture(e.pointerId);
@@ -507,8 +518,9 @@ export function Layers({ children }: LayersProps) {
         return;
       }
       // Region drag in progress: just track the pointer x (the band spans from the
-      // anchor bucket to here); no pan, no hover hit-test.
-      if (c.regionAnchor !== null) {
+      // anchor bucket to here); no pan, no hover hit-test. Gesture truth is the
+      // ref — the state mirror may not have committed yet (see regionAnchorRef).
+      if (regionAnchorRef.current !== null) {
         const rect = e.currentTarget.getBoundingClientRect();
         c.setHoverX(Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left)));
         return;
@@ -603,7 +615,12 @@ export function Layers({ children }: LayersProps) {
       const c = containerRef.current;
       // End a region drag: commit the anchor→pointer span as a one-shot range,
       // then clear the anchor (the cursor reverts to the single-bucket highlight).
-      if (c.regionAnchor !== null) {
+      // The anchor is read from the ref, never the state mirror — under a batched
+      // pointer stream the state hasn't committed yet and the select would be
+      // silently dropped (and the anchor stuck). See regionAnchorRef.
+      if (regionAnchorRef.current !== null) {
+        const anchor = regionAnchorRef.current;
+        regionAnchorRef.current = null;
         const px = Math.max(
           0,
           Math.min(
@@ -613,7 +630,7 @@ export function Layers({ children }: LayersProps) {
         );
         const span = regionSpan(
           c.cursorBuckets ?? [],
-          c.regionAnchor,
+          anchor,
           +c.xScale.invert(px),
         );
         c.setRegionAnchor(null);
@@ -692,6 +709,7 @@ export function Layers({ children }: LayersProps) {
     }
     // Cancel a region-drag on leave (no commit) — a safety net for the rare case
     // where the pointer capture didn't take, so the anchor can't get stuck.
+    regionAnchorRef.current = null;
     if (c.regionAnchor !== null) c.setRegionAnchor(null);
     c.setHoverX(null);
     c.setHoverY(null, null);

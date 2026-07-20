@@ -115,6 +115,19 @@ and type-level changes; patch bumps are strictly additive.
   (they re-expand by a few pixels — usually the same window). Interval marks
   (bars / candles / boxes) don't need this — their width _is_ their x-span.
 
+### Fixed
+
+- **charts:** **Region drag-select no longer races the pointer stream**
+  (#508 item 7) — the drag anchor was container **state** read back through
+  the rendered frame at `pointerup`, so a batched/untrusted pointer stream
+  (automation, jsdom — plausibly a very fast flick under load) could deliver
+  `down→up` before the anchor committed: the select was **silently dropped**
+  and the late-committing anchor **leaked**, leaving the band stuck.
+  Human-paced trusted input hid this (React flushes trusted discrete events
+  synchronously). Gesture logic now reads a ref (the same ref+state
+  discipline the annotation-create drag already used); the state stays
+  paint-only. Deterministic regression tests cover both pacings.
+
 ## [0.48.1] — 2026-07-19
 
 ### Fixed
