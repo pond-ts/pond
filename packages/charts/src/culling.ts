@@ -257,17 +257,48 @@ export function visibleSpanWindow(
  * domain. Returns the **full** range `[0, length]` when the scale exposes no
  * numeric domain (a bare test stub / category axis) or the series is empty, so a
  * caller loops over everything and the draw is unchanged there.
+ *
+ * **Radius-aware widening (`padPx`).** The `margin` is in *index* space, but a
+ * point mark's **disc** has a pixel radius independent of sample spacing — so a
+ * dense scatter of fat marks can put an edge bubble's *centre* several samples
+ * off-screen while its disc still overlaps the plot edge, which a bare index
+ * margin would drop (a subtle flicker under pan — the sharp edge #499 flagged as
+ * a follow-up). Passing `padPx` widens the data window by that many **pixels** on
+ * each side — converted px→data through `xScale.invert` — before the bisect, so
+ * every mark whose disc can paint into the plot is kept. Scatter passes its max
+ * drawn radius (plus any pixel offset); interval marks ({@link visibleSpanRange})
+ * don't need it — their width *is* their x-span.
+ *
+ * The pad is skipped (the plain domain window still applies) when `padPx <= 0` or
+ * the scale carries no `invert` (a real domain-bearing runtime scale always has
+ * one; only a partial stub lacks it, and it degrades to the index window — a
+ * slightly tighter cull, never a dropped mark, since over-padding only *adds*
+ * marks). `padPx` converts as `|invert(padPx) − invert(0)|`, the data span of
+ * `padPx` pixels: exact for the linear `scaleTime`/`scaleLinear` regardless of
+ * range offset, a local estimate for a non-linear axis, and the `Math.abs` keeps
+ * it a *widening* even under a reversed scale.
  */
 export function visiblePointRange(
   x: Float64Array,
   length: number,
   xScale: Scale,
+  padPx = 0,
   margin = 1,
 ): [number, number] {
   if (length === 0) return [0, 0];
   const dom = scaleDomain(xScale);
   if (dom === null) return [0, length];
-  return visiblePointWindow(x, length, dom[0], dom[1], margin);
+  let [lo, hi] = dom;
+  if (padPx > 0) {
+    const invert = (xScale as unknown as { invert?: (px: number) => number })
+      .invert;
+    if (typeof invert === 'function') {
+      const dataPad = Math.abs(invert(padPx) - invert(0));
+      lo -= dataPad;
+      hi += dataPad;
+    }
+  }
+  return visiblePointWindow(x, length, lo, hi, margin);
 }
 
 /**
