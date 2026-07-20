@@ -718,8 +718,10 @@ describe('drawLine — M4 decimation (Phase 3)', () => {
     expect(calls.some((c) => c.name === 'setLineDash')).toBe(true);
   });
 
-  it('skips decimation when session breaks split the line', () => {
+  it('decimates AND splits into per-session subpaths at a session break', () => {
     const { ctx, calls } = sizedCtx(10);
+    // A session-break instant at x=2500 (mid-range). The union aligns a bucket
+    // edge to it, so `sessionRuns` cuts the decimated series into two subpaths.
     drawLine(
       ctx,
       dense(5000),
@@ -731,6 +733,10 @@ describe('drawLine — M4 decimation (Phase 3)', () => {
       undefined,
       [2500],
     );
-    expect(penCount(calls)).toBeGreaterThan(4000);
+    // Decimated — far fewer than the 5000-point full-res draw.
+    expect(penCount(calls)).toBeLessThan(100);
+    // Split into two per-session runs → each opens with its own moveTo (a clean
+    // pen-up at the break, not a connector across it).
+    expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(2);
   });
 });

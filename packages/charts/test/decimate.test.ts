@@ -245,3 +245,22 @@ describe('decimateBand', () => {
     expect(Number.isNaN(out.upper[2]!)).toBe(true);
   });
 });
+
+describe('decimateM4 — session-break edge union', () => {
+  it('unions boundary instants into the bucket edges (splits the straddling bucket)', () => {
+    // 8000 samples, W=4 → buckets [0,2000),[2000,4000),[4000,6000),[6000,8000].
+    const n = 8000;
+    const s = cs(
+      Array.from({ length: n }, (_, i) => i),
+      Array.from({ length: n }, (_, i) => i),
+    );
+    const noBreak = decimateM4(s, pxScale(0, n), stubCtx(4), 2);
+    // A break at 3000 splits [2000,4000) into two buckets → one extra bucket →
+    // 4 more emitted points (first/min/max/last), so the sessions never merge.
+    const withBreak = decimateM4(s, pxScale(0, n), stubCtx(4), 2, [3000]);
+    expect(withBreak.length).toBe(noBreak.length + 4);
+    // A break outside the visible domain is dropped (no extra edge).
+    const outside = decimateM4(s, pxScale(0, n), stubCtx(4), 2, [-100]);
+    expect(outside.length).toBe(noBreak.length);
+  });
+});

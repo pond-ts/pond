@@ -103,18 +103,17 @@ export function drawLine(
   // M4 decimation (Phase 3): once the culled slice is still denser than ~2
   // samples per device pixel, replace it with the pixel-dense M4 polyline
   // ({@link decimateM4}) — O(devicePlotWidth) points that rasterize identically.
-  // The gap-edge union ({@link gapKeyEdges}) makes the decimated series break at
-  // exactly the real gaps with exact edge values, so **every** gap mode composes:
-  // the runs/solid pass below and the dashed/step/fade overlay run on it
-  // unchanged. Still gated off a **linear** curve (a smoothing curve would
-  // distort the 4-points-per-column polyline) and **no session breaks** (the M4
-  // output is already one geometry, not per-session runs) — those draw
-  // full-resolution. Off (`decimate === false`) or either unmet ⇒ the full culled
-  // slice draws. `decimateM4` itself no-ops on a sparse slice or a domainless
-  // test scale, so this stays byte-identical there.
-  if (decimate !== false && curve === curveLinear && boundaries.length === 0) {
+  // The edge union makes the decimated series break at exactly the real gaps
+  // (gap-mode connectors compose unchanged) **and** aligns a bucket edge to each
+  // session break in `boundaries`, so `sessionRuns` below still splits the
+  // decimated series into clean per-session subpaths. Only a non-linear **curve**
+  // stays gated (a smoothing curve would distort the 4-points-per-column
+  // polyline) — that draws full-resolution. Off (`decimate === false`) or a curve
+  // set ⇒ the full culled slice draws. `decimateM4` itself no-ops on a sparse
+  // slice or a domainless test scale, so this stays byte-identical there.
+  if (decimate !== false && curve === curveLinear) {
     const k = typeof decimate === 'object' ? decimate.threshold : undefined;
-    cs = decimateM4(cs, xScale, ctx, k);
+    cs = decimateM4(cs, xScale, ctx, k, boundaries);
   }
   // Split into independent index runs at each boundary; no boundary inside the
   // data ⇒ one run over the whole series (the hot path — no slicing, so the draw

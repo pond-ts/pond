@@ -67,8 +67,13 @@ and type-level changes; patch bumps are strictly additive.
   boundaries into the bucket edges, so the gap reduces to its own empty (`NaN`)
   bucket with exact pre/post-gap values — `'empty'` breaks precisely, `'none'`
   bridges, and the `dashed`/`step`/`fade` connectors still draw across the gap.
-  Still gated off a non-linear `curve` and `sessionBreaks` (they draw full-res).
-  Interaction reads the source series (§2.3), so readouts/selection are unaffected.
+  **`sessionBreaks` decimate too** — the same union folds each trading-axis
+  session-break instant into the bucket edges so no bucket merges two sessions'
+  extremes across the discontinuity, and `sessionRuns` then splits the decimated
+  series into clean per-session subpaths (a dense intraday line on a trading-time
+  axis decimates _and_ breaks at each session open). Still gated off only a
+  non-linear `curve` (documented backlog). Interaction reads the source series
+  (§2.3), so readouts/selection are unaffected.
 - **charts:** M4 decimation extended to **`<AreaChart>` and `<BandChart>`** (same
   auto-on `decimate={false | { threshold }}` prop). An **area** reuses the line M4
   on its outline (gap-edge union included) with the fill following under the

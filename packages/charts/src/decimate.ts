@@ -233,12 +233,18 @@ export function mergeGapEdges(
  * 1px column), and a single `NaN` break per empty column. The classic M4 render
  * — the min→max vertical is the exact pixel band the dense samples cover, and
  * first/last carry the inter-column slope.
+ *
+ * `boundaries` are trading-axis session-break instants: their keys are unioned
+ * into the bucket edges so no bucket straddles a break (which would merge two
+ * sessions' extremes). The caller's `sessionRuns` then splits the returned
+ * series into per-session subpaths at exactly those instants.
  */
 export function decimateM4(
   cs: ChartSeries,
   xScale: Scale,
   ctx: CanvasRenderingContext2D,
   k = 2,
+  boundaries: readonly number[] = [],
 ): ChartSeries {
   if (!shouldDecimate(cs, ctx, k)) return cs;
   const dom = scaleDomain(xScale);
@@ -253,14 +259,20 @@ export function decimateM4(
   // edges, so each bucket is exactly one pixel column on **any** scale (affine
   // or trading-time — see {@link pixelEdges}).
   const pixels = pixelEdges(invert, plotWidthCss, W);
-  // §2.2 gap-edge union: fold in the boundaries of every ≥1-column interior gap
-  // so no bucket straddles a gap edge — the gap reduces to its own empty (NaN)
-  // bucket and the bordering buckets carry the exact pre/post-gap edge values
-  // (so `'empty'` breaks precisely and the dashed/step/fade connectors land
-  // right). A gapless slice returns `pixels` unchanged (no allocation).
+  // Edge union — fold two families of boundaries into the bucket edges so no
+  // bucket ever straddles one:
+  //  - §2.2 gap edges: every ≥1-column interior gap → its own empty (NaN) bucket
+  //    with exact pre/post-gap values (so `'empty'` breaks precisely and the
+  //    dashed/step/fade connectors land right).
+  //  - session-break instants (`boundaries`, a trading-time close→open): a bucket
+  //    that spanned a break would merge the two sessions' min/max across the
+  //    discontinuity. Aligning a bucket edge to each break keeps the sessions
+  //    separate, so `sessionRuns` in `drawLine` cuts the decimated series cleanly.
+  // A gapless, boundary-free slice returns `pixels` unchanged (no allocation).
+  const extra = gapKeyEdges(cs, (dom[1] - dom[0]) / W);
   const edges = mergeGapEdges(
     pixels,
-    gapKeyEdges(cs, (dom[1] - dom[0]) / W),
+    boundaries.length > 0 ? [...extra, ...boundaries] : extra,
     dom[0],
     dom[1],
   );

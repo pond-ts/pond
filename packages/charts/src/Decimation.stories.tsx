@@ -7,7 +7,15 @@ import { LineChart } from './LineChart.js';
 import { AreaChart } from './AreaChart.js';
 import { BandChart } from './BandChart.js';
 import { XAxis } from './XAxis.js';
+import { YAxis } from './YAxis.js';
 import { docsTheme } from './docs-theme.fixture.js';
+import {
+  WIDTH,
+  provider,
+  gappingTicks,
+  weekdaySessions,
+  rangeOf,
+} from './tradingAxis.fixture.js';
 
 const BASE = Date.UTC(2026, 0, 1, 12, 0, 0);
 const STEP = 1_000; // 1s grid
@@ -175,6 +183,40 @@ export const Band: Story = {
         </Layers>
       </ChartRow>
       <XAxis />
+    </ChartContainer>
+  ),
+};
+
+// A dense line on a TRADING-TIME axis (collapsed overnight gaps) with
+// `sessionBreaks` — the Tidal case: ~40k points over 5 sessions, each opening a
+// price jump above the last. Decimation unions the session-break instants into
+// the bucket edges, so it decimates AND breaks cleanly per session.
+const tradingSessions = weekdaySessions(5);
+const tradingLine = gappingTicks(tradingSessions, 3_000); // 3s ticks
+
+/** ~40k-point line on a trading-time axis with `sessionBreaks`, decimated —
+ *  breaks cleanly at each session open (no connector across the collapsed gap). */
+export const TradingSessionBreaks: Story = {
+  render: () => (
+    <ChartContainer
+      width={WIDTH}
+      range={rangeOf(tradingSessions)}
+      discontinuities={provider(tradingSessions)}
+      theme={docsTheme}
+      panZoom
+    >
+      <ChartRow height={260}>
+        <YAxis id="p" side="right" />
+        <Layers>
+          <LineChart
+            series={tradingLine}
+            column="price"
+            as="power"
+            axis="p"
+            sessionBreaks
+          />
+        </Layers>
+      </ChartRow>
     </ChartContainer>
   ),
 };
