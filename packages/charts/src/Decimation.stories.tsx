@@ -44,6 +44,28 @@ const N = 200_000;
 const series = bigSeries(N);
 const spiky = bigSeries(N, Math.floor(N / 2), 130);
 
+/** A large series with a wide **gap** (a NaN run) in the middle third, so the
+ *  §2.2 gap-edge union is exercised under decimation (the gap must break, and the
+ *  `dashed` connector must still bridge it). */
+function gappyBig(n: number) {
+  const rows: Array<[number, number | undefined]> = new Array(n);
+  const gapFrom = Math.floor(n * 0.45);
+  const gapTo = Math.floor(n * 0.55);
+  for (let i = 0; i < n; i += 1) {
+    const v = 50 + 35 * Math.sin(i / (n / 20)) + 8 * Math.sin(i / 3.1);
+    rows[i] = [BASE + i * STEP, i >= gapFrom && i < gapTo ? undefined : v];
+  }
+  return new TimeSeries({
+    name: 'gappy',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'v', kind: 'number', required: false },
+    ] as const,
+    rows: rows as never,
+  });
+}
+const gappy = gappyBig(N);
+
 /** Auto-decimation (default) — 200k points drawn from the per-pixel M4 buckets. */
 export const Default: Story = {
   render: () => (
@@ -81,6 +103,21 @@ export const SpikePreserved: Story = {
       <ChartRow height={260}>
         <Layers>
           <LineChart series={spiky} column="v" as="power" />
+        </Layers>
+      </ChartRow>
+      <XAxis />
+    </ChartContainer>
+  ),
+};
+
+/** A 200k series with a wide gap + `gaps="dashed"`, decimated — the §2.2 gap-edge
+ *  union makes the gap break precisely and the dashed connector still bridges it. */
+export const GappyDashed: Story = {
+  render: () => (
+    <ChartContainer width={720} theme={docsTheme} panZoom>
+      <ChartRow height={260}>
+        <Layers>
+          <LineChart series={gappy} column="v" as="power" gaps="dashed" />
         </Layers>
       </ChartRow>
       <XAxis />
