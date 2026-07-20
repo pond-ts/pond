@@ -51,6 +51,10 @@ export type { BarChartProps } from './BarChart.js';
 export { Candlestick } from './Candlestick.js';
 export type { CandlestickProps } from './Candlestick.js';
 export type { CandleVariant, ColorBy } from './ohlc.js';
+// The series key: rows enumerate the registered layers' resolved styles.
+export { Legend } from './Legend.js';
+export type { LegendProps, LegendPlacement } from './Legend.js';
+export type { SwatchSpec, LegendRowInput } from './swatch.js';
 export { scaleTradingTime } from './tradingTimeScale.js';
 export type {
   TradingTimeScale,

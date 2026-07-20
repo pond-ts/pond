@@ -176,6 +176,17 @@ export interface ChartTheme {
     readonly fillOpacity: number;
     readonly depth: readonly [number, number, number];
   };
+  /**
+   * The **`<Legend>` card** — background, border, and label text of the
+   * in-chart series key. **Optional**: when absent the legend derives from
+   * existing tokens (`chip.background`, `axis.grid`, `axis.label`), so a
+   * hand-built theme keeps compiling and reads coherently without opting in.
+   */
+  readonly legend?: {
+    readonly background: string;
+    readonly border: string;
+    readonly text: string;
+  };
 }
 
 /** A resolved line style: stroke colour + width (px). */
@@ -432,6 +443,12 @@ export const defaultTheme: ChartTheme = {
     fillOpacity: 0.1,
     depth: [1, 0.7, 0.4],
   },
+  // The in-chart series key: chip-white card, gridline border, axis-label text.
+  legend: {
+    background: '#ffffff',
+    border: '#e2e8f0',
+    text: '#64748b',
+  },
 };
 
 /**
@@ -572,5 +589,11 @@ export const estelaTheme: ChartTheme = {
     color: '#7FE2D2', // --es-reef
     fillOpacity: 0.1,
     depth: [1, 0.7, 0.4],
+  },
+  // The in-chart series key on the dark ground: deep panel, abyss-line border.
+  legend: {
+    background: '#0B4E58', // --es-deep (the chip panel)
+    border: '#1B6B75',
+    text: '#B7D9DD',
   },
 };

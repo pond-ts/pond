@@ -16,6 +16,11 @@ import {
   type LayerEntry,
   type TrackerSample,
 } from './context.js';
+import {
+  legendLabelFor,
+  useLegendItems,
+  type LegendRowInput,
+} from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
 export interface BoxPlotProps<
@@ -109,6 +114,13 @@ export interface BoxPlotProps<
    */
   capWidth?: number;
   /**
+   * This layer's `<Legend>` row: `false` ⇒ no row (opt out), a string ⇒ the
+   * row's display name. **Omitted ⇒ a row named by the layer's readout
+   * identity** (`as`, else `"<lower>–<upper>"`). The swatch is the resolved
+   * whisker style.
+   */
+  legend?: boolean | string;
+  /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
    */
@@ -166,6 +178,7 @@ export function BoxPlot<
   showMedian = true,
   offset = 0,
   capWidth,
+  legend,
   index = 0,
 }: BoxPlotProps<S, VS>) {
   const container = useContext(ContainerContext);
@@ -312,6 +325,25 @@ export function BoxPlot<
   useEffect(() => {
     registerTrackerSource(slot, entry.layer);
   }, [registerTrackerSource, slot, entry.layer]);
+
+  // And a legend row: the series identity (`as`, else the range columns as a
+  // span) + the resolved whisker style, so a `<Legend>` swatch can never drift.
+  const legendRows = useMemo<readonly LegendRowInput[] | null>(() => {
+    const name = legendLabelFor(legend, semantic ?? `${lower}–${upper}`);
+    return name === null
+      ? null
+      : [
+          {
+            label: name,
+            swatch: {
+              kind: 'box',
+              whisker: style.whisker,
+              whiskerWidth: style.whiskerWidth,
+            },
+          },
+        ];
+  }, [legend, semantic, lower, upper, style]);
+  useLegendItems(container, slot, index, legendRows);
 
   return null;
 }

@@ -32,6 +32,11 @@ import {
   type LayerEntry,
   type SelectInfo,
 } from './context.js';
+import {
+  legendLabelFor,
+  useLegendItems,
+  type LegendRowInput,
+} from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
 export interface BarChartProps<
@@ -156,6 +161,17 @@ export interface BarChartProps<
    */
   gap?: number;
   /**
+   * This layer's `<Legend>` row(s): `false` ⇒ none (opt out), a string ⇒ the
+   * display name of a **one-row** layer. **Omitted ⇒** the single path (and a
+   * one-group stack) registers one row named by the layer identity
+   * (`as` ?? `column` ?? `id`); a **multi-group stack registers one row per
+   * group** (stack order, each group's resolved fill), where a rename string
+   * is ignored — group names come from the data. A per-bin-coloured histogram
+   * (`binColors`) is one series: its single row's swatch shows the group's
+   * base fill, not the per-bin palette.
+   */
+  legend?: boolean | string;
+  /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
    */
@@ -230,6 +246,7 @@ export function BarChart<
   id,
   axis,
   gap,
+  legend,
   index = 0,
 }: BarChartProps<S, VS>) {
   const container = useContext(ContainerContext);
@@ -630,6 +647,39 @@ export function BarChart<
     registerSelectable(slot);
     return () => unregisterSelectable(slot);
   }, [registerSelectable, unregisterSelectable, slot, id]);
+
+  // Legend rows: a genuinely multi-group layer (a stack) registers **one row
+  // per group** in stack order, each with the same per-group fill resolution
+  // the canvas draws with; everything else — the single path, a one-group
+  // stack (horizontal single, categorical) — registers one row under the
+  // layer's identity. A `legend` string renames only a one-row layer (a
+  // multi-group layer has no single name to give); `legend={false}` opts all
+  // out. The layer's `id` rides every row (selection identity is the layer).
+  const legendRows = useMemo<readonly LegendRowInput[] | null>(() => {
+    if (legend === false) return null;
+    if (groups !== undefined && groups.length > 1) {
+      return groups.map((g, i) => ({
+        label: g,
+        id,
+        swatch: { kind: 'bar' as const, fill: stackStyle.fills[i]! },
+      }));
+    }
+    const name = legendLabelFor(legend, label);
+    return name === null
+      ? null
+      : [
+          {
+            label: name,
+            id,
+            swatch: {
+              kind: 'bar' as const,
+              fill:
+                groups !== undefined ? stackStyle.fills[0]! : singleStyle.fill,
+            },
+          },
+        ];
+  }, [legend, groups, stackStyle, label, id, singleStyle]);
+  useLegendItems(container, slot, index, legendRows);
 
   return null;
 }

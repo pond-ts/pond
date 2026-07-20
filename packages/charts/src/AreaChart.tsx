@@ -11,6 +11,11 @@ import {
   type GapMode,
 } from './gaps.js';
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
+import {
+  legendLabelFor,
+  useLegendItems,
+  type LegendRowInput,
+} from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
 export interface AreaChartProps<
@@ -90,6 +95,12 @@ export interface AreaChartProps<
    */
   decimate?: DecimateOption;
   /**
+   * This layer's `<Legend>` row: `false` ⇒ no row (opt out), a string ⇒ the
+   * row's display name. **Omitted ⇒ a row named by the layer's readout
+   * identity** (`as` ?? `column`). The swatch is the resolved area style.
+   */
+  legend?: boolean | string;
+  /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
    */
@@ -138,6 +149,7 @@ export function AreaChart<
   curve,
   gaps = DEFAULT_GAP_MODE,
   decimate = true,
+  legend,
   index = 0,
 }: AreaChartProps<S, VS>) {
   const container = useContext(ContainerContext);
@@ -258,6 +270,26 @@ export function AreaChart<
   useEffect(() => {
     registerTrackerSource(slot, entry.layer);
   }, [registerTrackerSource, slot, entry.layer]);
+
+  // And a legend row: the readout identity + the resolved area style (top line
+  // over the translucent fill), so a `<Legend>` swatch can never drift.
+  const legendRows = useMemo<readonly LegendRowInput[] | null>(() => {
+    const name = legendLabelFor(legend, label);
+    return name === null
+      ? null
+      : [
+          {
+            label: name,
+            swatch: {
+              kind: 'area',
+              line: style.color,
+              fill: style.fill,
+              fillOpacity: style.fillOpacity,
+            },
+          },
+        ];
+  }, [legend, label, style]);
+  useLegendItems(container, slot, index, legendRows);
 
   return null;
 }

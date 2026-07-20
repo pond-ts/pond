@@ -2,6 +2,9 @@ import { createContext } from 'react';
 import type { ScaleLinear, ScaleTime } from 'd3-scale';
 import type { ChartTheme } from './theme.js';
 import type { AxisFormat } from './format.js';
+// Type-only (erased at runtime): swatch.ts imports RowContext from here, so a
+// value import in this direction would be a cycle; a type import is not.
+import type { LegendItemSpec } from './swatch.js';
 import type { Interval } from 'pond-ts';
 import type {
   TradingTimeScale,
@@ -200,6 +203,25 @@ export interface ContainerFrame {
    */
   registerSelectable(key: symbol): void;
   unregisterSelectable(key: symbol): void;
+  /**
+   * Register this layer's **legend row** — its display label + resolved
+   * {@link SwatchSpec} (and selection `id` when it has one) — keyed by the
+   * layer's per-instance slot; unregister on unmount (see
+   * {@link useLegendItems}). `<Legend>` renders this registry in
+   * {@link rowOrder}-then-declaration order, deduped by `id ?? label`; a layer
+   * that opted out (`legend={false}`) simply never registers.
+   */
+  registerLegendItem(key: symbol, item: LegendItemSpec): void;
+  unregisterLegendItem(key: symbol): void;
+  /** The registered legend rows, keyed by layer slot (see
+   *  {@link registerLegendItem}). */
+  readonly legendItems: ReadonlyMap<symbol, LegendItemSpec>;
+  /**
+   * The chart rows' keys in **display (top-to-bottom) order** — mount order,
+   * exactly the ordering {@link firstRowKey} is head of. `<Legend>` sorts its
+   * rows by this so a two-row chart lists the top row's series first.
+   */
+  readonly rowOrder: readonly symbol[];
   /**
    * Shared x→pixel scale, range `[0, plotWidth]`. A d3 `scaleTime` (default) so
    * ticks land on wall-clock boundaries, or a `scaleLinear` when the data is
@@ -541,9 +563,13 @@ export interface SelectInfo {
   /**
    * The clicked sample's key as epoch ms (its event's `begin`) — click
    * **provenance**, informational. NOT the selection identity (that is {@link id}).
+   * A **series-scoped** selection with no sample under it (a `<Legend>` row's
+   * default hover/select) carries `NaN` here and in {@link value} — check
+   * `Number.isFinite` before treating them as a sample.
    */
   readonly key: number;
-  /** The clicked sample's value (the plotted column) — provenance. */
+  /** The clicked sample's value (the plotted column) — provenance. `NaN` for a
+   *  series-scoped selection (see {@link key}). */
   readonly value: number;
   /** The mark's resolved style colour. */
   readonly color: string;

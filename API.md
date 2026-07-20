@@ -198,15 +198,16 @@ All take `series` plus an `as?` style identifier (theme lookup) and `axis?`
 scale id — style and scale are separate channels; there are no per-component
 color props (see Theming).
 
-| Component      | Data props                                                     | Purpose                                     | Source                                 |
-| -------------- | -------------------------------------------------------------- | ------------------------------------------- | -------------------------------------- |
-| `LineChart`    | `column`, `gaps?`, `sessionBreaks?`                            | Gap-aware line                              | `packages/charts/src/LineChart.tsx`    |
-| `AreaChart`    | `column`, `baseline?`, `gaps?`                                 | Filled area                                 | `packages/charts/src/AreaChart.tsx`    |
-| `BandChart`    | `lower`, `upper`                                               | Variance-band envelope                      | `packages/charts/src/BandChart.tsx`    |
-| `ScatterChart` | `column`, `id?` (selection), radius/color encodings            | Points; data-driven size/colour             | `packages/charts/src/ScatterChart.tsx` |
-| `BarChart`     | `column` \| `columns` \| `bins` \| `categories`, `horizontal?` | Bars, stacked bars, histograms, categorical | `packages/charts/src/BarChart.tsx`     |
-| `BoxPlot`      | `lower`/`q1?`/`median?`/`q3?`/`upper`, `shape?`                | Box-and-whisker from quantile columns       | `packages/charts/src/BoxPlot.tsx`      |
-| `Candlestick`  | OHLC columns, `variant?`, `colorBy?`, `showOHLC?`              | First-class OHLC candles (TimeSeries only)  | `packages/charts/src/Candlestick.tsx`  |
+| Component      | Data props                                                     | Purpose                                            | Source                                 |
+| -------------- | -------------------------------------------------------------- | -------------------------------------------------- | -------------------------------------- |
+| `LineChart`    | `column`, `gaps?`, `sessionBreaks?`                            | Gap-aware line                                     | `packages/charts/src/LineChart.tsx`    |
+| `AreaChart`    | `column`, `baseline?`, `gaps?`                                 | Filled area                                        | `packages/charts/src/AreaChart.tsx`    |
+| `BandChart`    | `lower`, `upper`                                               | Variance-band envelope                             | `packages/charts/src/BandChart.tsx`    |
+| `ScatterChart` | `column`, `id?` (selection), radius/color encodings            | Points; data-driven size/colour                    | `packages/charts/src/ScatterChart.tsx` |
+| `BarChart`     | `column` \| `columns` \| `bins` \| `categories`, `horizontal?` | Bars, stacked bars, histograms, categorical        | `packages/charts/src/BarChart.tsx`     |
+| `BoxPlot`      | `lower`/`q1?`/`median?`/`q3?`/`upper`, `shape?`                | Box-and-whisker from quantile columns              | `packages/charts/src/BoxPlot.tsx`      |
+| `Candlestick`  | OHLC columns, `variant?`, `colorBy?`, `showOHLC?`              | First-class OHLC candles (TimeSeries only)         | `packages/charts/src/Candlestick.tsx`  |
+| `Legend`       | `placement?`, `items?`, `onRowClick?`, `onRowHover?`           | Series key from registered layers' resolved styles | `packages/charts/src/Legend.tsx`       |
 
 ### Components — annotations & indicators
 
@@ -263,6 +264,8 @@ Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 | `AnnotationKind` / `CreateSpec`         | Annotation identity + draw-gesture payload (`onCreate`)                         | `packages/charts/src/context.ts`          |
 | `SelectInfo`                            | Selection/hover payload (`ChartContainer` `onSelect`/`onHover`)                 | `packages/charts/src/context.ts`          |
 | `TimeGrain`                             | Coarse time unit for grain-aware formatting                                     | `packages/charts/src/tickLadder.ts`       |
+| `SwatchSpec` / `LegendRowInput`         | Legend swatch vocabulary + explicit-rows input (`<Legend items>`)               | `packages/charts/src/swatch.ts`           |
+| `LegendPlacement`                       | `'top-left' \| 'top-right' \| 'bottom-left' \| 'bottom-right'`                  | `packages/charts/src/Legend.tsx`          |
 | `Curve`                                 | Path interpolation: `'linear' \| 'monotone' \| 'natural' \| 'basis' \| 'step'`  | `packages/charts/src/curve.ts`            |
 | `RadiusEncoding` / `ColorEncoding`      | Data-driven scatter size/colour                                                 | `packages/charts/src/encoding.ts`         |
 | `CandleVariant` / `ColorBy`             | OHLC mark shape / colouring strategy                                            | `packages/charts/src/ohlc.ts`             |
