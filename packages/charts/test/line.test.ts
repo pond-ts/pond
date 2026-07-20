@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { scaleLinear } from 'd3-scale';
 import { drawLine, sessionRuns, yExtent } from '../src/line.js';
 import { resolveCurve } from '../src/curve.js';
 import { recordingContext, type CtxCall } from './canvas-mock.js';
 import type { ChartSeries } from '../src/data.js';
+import type { Scale } from '../src/line.js';
 
 const cs = (x: number[], y: number[]): ChartSeries => ({
   x: Float64Array.from(x),
@@ -513,5 +515,127 @@ describe('drawLine sessionBreaks (boundaries)', () => {
     );
     expect(calls.some((c) => c.name === 'setLineDash')).toBe(false);
     expect(calls.filter((c) => c.name === 'stroke')).toHaveLength(1);
+  });
+});
+
+describe('drawLine — viewport culling (Phase 2)', () => {
+  // A d3 linear scale carries `.domain()`, so drawLine culls against it (a bare
+  // `identity` function has none, so the other tests draw the whole series).
+  const domainScale = (lo: number, hi: number): Scale =>
+    scaleLinear().domain([lo, hi]).range([lo, hi]) as unknown as Scale;
+  // x = 0,10,…,90 (10 points), y = the same x so pixels are assertable.
+  const ramp = (): ChartSeries =>
+    cs(
+      Array.from({ length: 10 }, (_, i) => i * 10),
+      Array.from({ length: 10 }, (_, i) => i * 10),
+    );
+  const penOps = (calls: CtxCall[]) =>
+    calls.filter((c) => c.name === 'moveTo' || c.name === 'lineTo');
+
+  it('strokes only the visible slice + one entry/exit point', () => {
+    const { ctx, calls } = recordingContext();
+    // view [25, 55] → in-range 30,40,50; entry 20 + exit 60 → 5 points drawn.
+    drawLine(ctx, ramp(), domainScale(25, 55), (v) => v, style);
+    // 1 moveTo + 4 lineTo for 5 contiguous points.
+    expect(penOps(calls).map((c) => c.name)).toEqual([
+      'moveTo',
+      'lineTo',
+      'lineTo',
+      'lineTo',
+      'lineTo',
+    ]);
+    // The entry point (20) is the first stroked — off the left edge, so the
+    // crossing segment still draws.
+    expect(calls.find((c) => c.name === 'moveTo')?.args).toEqual([20, 20]);
+  });
+
+  it('draws every point when the view covers the whole series', () => {
+    const { ctx, calls } = recordingContext();
+    drawLine(ctx, ramp(), domainScale(-100, 1000), (v) => v, style);
+    // 10 points → 1 moveTo + 9 lineTo, none culled.
+    expect(penOps(calls)).toHaveLength(10);
+  });
+
+  it('interaction reads the source, not the culled view (§2.3 invariant)', () => {
+    // The cull is internal to drawLine; the ChartSeries the caller holds — the
+    // one sampleAt/hitTest read — is never mutated by a draw.
+    const series = ramp();
+    const before = Array.from(series.x);
+    const { ctx } = recordingContext();
+    drawLine(ctx, series, domainScale(25, 55), (v) => v, style);
+    expect(Array.from(series.x)).toEqual(before);
+    expect(series.length).toBe(10);
+  });
+
+  // Gap-mode neutrality (the Layer-2 finding): a gap WIDER than the margin
+  // straddling a plot edge must stay an *interior* gap in the slice, so 'none'
+  // bridges it and 'dashed' draws its connector exactly as un-culled. Series:
+  // finite 0/10, a 3-wide NaN run at 20/30/40, finite from 50 on. The left
+  // anchor (x=10) sits 3 points off-screen of a left edge at x=35, so a bare
+  // margin=1 cull would drop it and break the bridge.
+  const leftEdgeGap = (): ChartSeries =>
+    cs(
+      [0, 10, 20, 30, 40, 50, 60, 70, 80],
+      [0, 10, NaN, NaN, NaN, 50, 60, 70, 80],
+    );
+
+  it("'none' bridges a gap straddling the left edge — anchor re-included", () => {
+    const { ctx, calls } = recordingContext();
+    // View [35, 75] → bisect starts the slice at x=30 (NaN); the fix walks back
+    // to the finite anchor x=10 so 20/30/40 is interior and bridgeGaps spans it.
+    drawLine(
+      ctx,
+      leftEdgeGap(),
+      domainScale(35, 75),
+      (v) => v,
+      style,
+      undefined,
+      'none',
+    );
+    // First point stroked is the re-included anchor (x=10), and the bridge makes
+    // one continuous subpath. Bare margin=1 would start at x=50 instead (a notch).
+    expect(calls.find((c) => c.name === 'moveTo')?.args).toEqual([10, 10]);
+    expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(1);
+  });
+
+  it("'dashed' keeps a left-edge gap's connector after culling", () => {
+    const { ctx, calls } = recordingContext();
+    drawLine(
+      ctx,
+      leftEdgeGap(),
+      domainScale(35, 75),
+      (v) => v,
+      style,
+      undefined,
+      'dashed',
+    );
+    // The inferred dashed bridge draws only for an interior gap — its presence
+    // proves the left anchor survived the cull (setLineDash on the bridge pass).
+    expect(calls.some((c) => c.name === 'setLineDash')).toBe(true);
+  });
+
+  it("'none' bridges a gap straddling the right edge — anchor re-included", () => {
+    // Mirror: finite 0/10/20/30, NaN at 40/50/60, finite 70/80. Right edge at
+    // x=45 → the right anchor (x=70) is >1 point out; the fix walks end forward.
+    const rightEdgeGap = cs(
+      [0, 10, 20, 30, 40, 50, 60, 70, 80],
+      [0, 10, 20, 30, NaN, NaN, NaN, 70, 80],
+    );
+    const { ctx, calls } = recordingContext();
+    drawLine(
+      ctx,
+      rightEdgeGap,
+      domainScale(-5, 45),
+      (v) => v,
+      style,
+      undefined,
+      'none',
+    );
+    // The bridge reaches the re-included right anchor at x=70 (bare margin=1
+    // would end the line at x=30, a right-edge notch).
+    expect(calls.some((c) => c.name === 'lineTo' && c.args[0] === 70)).toBe(
+      true,
+    );
+    expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(1);
   });
 });

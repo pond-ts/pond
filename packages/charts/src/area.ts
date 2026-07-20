@@ -13,6 +13,7 @@ import {
   DEFAULT_GAP_CONNECTOR_OPACITY,
   type GapMode,
 } from './gaps.js';
+import { cullChartSeries } from './culling.js';
 
 /**
  * The `[min, max]` vertical extent an area occupies — the finite values of
@@ -95,6 +96,21 @@ export function drawArea(
   gapConnectorOpacity: number = DEFAULT_GAP_CONNECTOR_OPACITY,
 ): void {
   const baselinePx = yScale(baselineValue);
+  // The fill gradient's vertical extent is computed from the **full** series (a
+  // vertical, position-anchored gradient spanning the data's whole pixel extent)
+  // so viewport culling stays behavior-neutral: the culled path below paints the
+  // exact same visible pixels under the same gradient. This is a cheap O(N)
+  // min/max scan; the expensive per-point path work (fill + outline) culls. (Cull
+  // the region too and the shade would drift under pan as off-screen extrema
+  // enter/leave — a visible change culling must not make.)
+  const fullYs = gaps === 'none' ? bridgeGaps(cs.y, cs.length) : cs.y;
+  const fill = buildGradient(ctx, fullYs, cs.length, yScale, baselinePx, style);
+
+  // Viewport culling (Phase 2): the path, outline, and gap bridges walk the
+  // visible slice (+1 entry/exit point) only. A no-op — the same `cs` back — when
+  // fully in view or `xScale` has no domain (a test stub), keeping that hot path
+  // byte-identical.
+  cs = cullChartSeries(cs, xScale);
   // `none` interpolates interior gaps so the fill + outline bridge them; every
   // other mode keeps NaN so d3 breaks both (the inferred line bridge, if any, is
   // a separate overlay pass below).
@@ -110,9 +126,9 @@ export function drawArea(
   ctx.save();
   // The fill: a vertical gradient anchored at the baseline pixel, opaque at the
   // line and transparent at the baseline (see buildGradient — handles both the
-  // one-sided elevation form and the two-sided above/below form). The gradient
-  // spans the drawn region; `ys` (gap-bridged for `none`) is what's drawn.
-  ctx.fillStyle = buildGradient(ctx, ys, cs.length, yScale, baselinePx, style);
+  // one-sided elevation form and the two-sided above/below form). Spans the full
+  // data region (above), so the culled `ys` paints identical pixels under it.
+  ctx.fillStyle = fill;
   ctx.globalAlpha = style.fillOpacity;
   ctx.beginPath();
   gen(ys);

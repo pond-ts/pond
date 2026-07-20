@@ -48,6 +48,22 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts:** **Viewport culling** (charts decimator wave, Phase 2). Line, area,
+  and band layers now clip to the **visible slice** of their key column — plus
+  one entry/exit point each side so the segment crossing each plot edge still
+  draws — before any path work, so a pan/zoom repaint costs O(visible) instead
+  of O(N). On a large series zoomed in, the per-frame `drawLine` path-generation
+  cost drops from ~29 ms at 1M points (over the 16.67 ms/60 fps budget — the
+  cause of the #256 pan-FPS collapse) to ~0.06 ms; a fully-visible series is
+  unchanged (culling no-ops, keeping that draw byte-identical — the baseline the
+  Phase 3 M4 decimator addresses). Interaction is unaffected: `sampleAt` /
+  `hitTest` read the full source series, so a hover readout or selection never
+  shifts when the window resizes (the decimator RFC §2.3 invariant). Culling is
+  automatic and internal — no API change. Scatter and the interval-keyed bar /
+  candle / box layers are a follow-up.
+
 ## [0.48.1] — 2026-07-19
 
 ### Fixed

@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { scaleLinear } from 'd3-scale';
 import { areaExtent, drawArea } from '../src/area.js';
 import { resolveCurve } from '../src/curve.js';
 import { recordingContext, type CtxCall } from './canvas-mock.js';
 import type { ChartSeries } from '../src/data.js';
 import type { AreaStyle } from '../src/theme.js';
+import type { Scale } from '../src/line.js';
 
 const cs = (x: number[], y: number[]): ChartSeries => ({
   x: Float64Array.from(x),
@@ -375,5 +377,51 @@ describe('drawArea gap modes', () => {
     expect(
       calls.filter((c) => c.name === 'closePath').length,
     ).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('drawArea — viewport culling (Phase 2)', () => {
+  const domainScale = (lo: number, hi: number): Scale =>
+    scaleLinear().domain([lo, hi]).range([lo, hi]) as unknown as Scale;
+  const ramp = (): ChartSeries =>
+    cs(
+      Array.from({ length: 10 }, (_, i) => i * 10),
+      Array.from({ length: 10 }, (_, i) => i * 10),
+    );
+
+  it('fills only the visible slice + one entry/exit point', () => {
+    const { ctx, calls, gradients } = areaContext();
+    // view [25, 55] → in-range 30,40,50; entry 20 + exit 60 → 5 points.
+    drawArea(ctx, ramp(), domainScale(25, 55), (v) => v, style, 0);
+    // Per drawn point the area emits 3 pen ops: the fill polygon walks the top
+    // edge forward + the baseline back (2N), then the outline re-walks the top
+    // edge (N). 5 drawn points → 15 pen ops, vs 30 for the full 10-point series.
+    const penOps = calls.filter(
+      (c) => c.name === 'moveTo' || c.name === 'lineTo',
+    );
+    expect(penOps.length).toBe(15);
+    // Fill still rendered (a gradient was built for it).
+    expect(gradients.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('the fill gradient anchors to the FULL series, not the culled view', () => {
+    // The gradient extent is behavior-neutral under culling: it must span the
+    // whole data's pixel range so the visible fill shades identically. Capture
+    // the createLinearGradient(x0,y0,x1,y1) anchor coords.
+    const { ctx } = recordingContext();
+    const anchors: number[][] = [];
+    (
+      ctx as unknown as { createLinearGradient: (...a: number[]) => unknown }
+    ).createLinearGradient = (...args: number[]) => {
+      anchors.push(args);
+      return { addColorStop: () => {} };
+    };
+    // y = x, yScale = identity, baseline 0. Full series y spans 0..90 → the
+    // gradient's vertical anchor must reach 90 even though the view is [25,55].
+    drawArea(ctx, ramp(), domainScale(25, 55), (v) => v, style, 0);
+    // First gradient is the fill; its y-anchors span the full [0, 90] extent.
+    const [, y0, , y1] = anchors[0]!;
+    expect(Math.max(y0!, y1!)).toBe(90);
+    expect(Math.min(y0!, y1!)).toBe(0);
   });
 });

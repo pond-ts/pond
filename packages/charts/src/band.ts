@@ -2,6 +2,7 @@ import { area as d3area, curveLinear, type CurveFactory } from 'd3-shape';
 import type { BandSeries } from './data.js';
 import type { Scale } from './line.js';
 import type { BandStyle } from './theme.js';
+import { cullBandSeries } from './culling.js';
 
 /**
  * The `[min, max]` vertical extent of the **drawn** band — the lowest `lower`
@@ -49,6 +50,11 @@ export function drawBand(
   style: BandStyle,
   curve: CurveFactory = curveLinear,
 ): void {
+  // Viewport culling (Phase 2): clip the envelope to the visible slice (+1 each
+  // side) before filling, so a pan strokes O(visible). The solid fill has no
+  // cross-point state, so a zero-copy subarray view is exact; a no-op (same
+  // object) when fully in view or the scale has no domain (a test stub).
+  band = cullBandSeries(band, xScale);
   const gen = d3area<number>()
     .defined(
       (_, i) =>
