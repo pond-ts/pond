@@ -16,6 +16,11 @@ import {
   type LayerEntry,
   type TrackerSample,
 } from './context.js';
+import {
+  legendLabelFor,
+  useLegendItems,
+  type LegendRowInput,
+} from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
 export interface CandlestickProps<S extends SeriesSchema> {
@@ -75,6 +80,13 @@ export interface CandlestickProps<S extends SeriesSchema> {
    */
   showOHLC?: boolean;
   /**
+   * This layer's `<Legend>` row: `false` ⇒ no row (opt out), a string ⇒ the
+   * row's display name. **Omitted ⇒ a row named by the layer's readout
+   * identity** (`as` ?? the `close` column). The swatch is the resolved
+   * up/down candle pair.
+   */
+  legend?: boolean | string;
+  /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
    */
@@ -120,6 +132,7 @@ export function Candlestick<S extends SeriesSchema>({
   colorBy = 'direction',
   gap = 0,
   showOHLC = false,
+  legend,
   index = 0,
 }: CandlestickProps<S>) {
   const container = useContext(ContainerContext);
@@ -222,6 +235,25 @@ export function Candlestick<S extends SeriesSchema>({
   useEffect(() => {
     registerTrackerSource(slot, entry.layer);
   }, [registerTrackerSource, slot, entry.layer]);
+
+  // And a legend row: the series identity + the resolved up/down pair, so a
+  // `<Legend>` swatch can never drift from the drawn candles.
+  const legendRows = useMemo<readonly LegendRowInput[] | null>(() => {
+    const name = legendLabelFor(legend, label);
+    return name === null
+      ? null
+      : [
+          {
+            label: name,
+            swatch: {
+              kind: 'candle',
+              up: style.rising.body,
+              down: style.falling.body,
+            },
+          },
+        ];
+  }, [legend, label, style]);
+  useLegendItems(container, slot, index, legendRows);
 
   return null;
 }

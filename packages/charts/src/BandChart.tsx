@@ -6,6 +6,11 @@ import { bandExtent, drawBand } from './band.js';
 import { resolveCurve, type Curve } from './curve.js';
 import type { DecimateOption } from './decimate.js';
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
+import {
+  legendLabelFor,
+  useLegendItems,
+  type LegendRowInput,
+} from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
 export interface BandChartProps<
@@ -61,6 +66,13 @@ export interface BandChartProps<
    */
   decimate?: DecimateOption;
   /**
+   * This layer's `<Legend>` row: `false` ⇒ no row (opt out), a string ⇒ the
+   * row's display name. **Omitted ⇒ a row named by the layer's readout
+   * identity** (`as`, else `"<lower>–<upper>"`). The swatch is the resolved
+   * band fill.
+   */
+  legend?: boolean | string;
+  /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
    */
@@ -95,6 +107,7 @@ export function BandChart<
   axis,
   curve,
   decimate = true,
+  legend,
   index = 0,
 }: BandChartProps<S, VS>) {
   const container = useContext(ContainerContext);
@@ -235,6 +248,25 @@ export function BandChart<
   useEffect(() => {
     registerTrackerSource(slot, entry.layer);
   }, [registerTrackerSource, slot, entry.layer]);
+
+  // And a legend row: the series identity (`as`, else the edge columns as a
+  // span) + the resolved band fill, so a `<Legend>` swatch can never drift.
+  const legendRows = useMemo<readonly LegendRowInput[] | null>(() => {
+    const name = legendLabelFor(legend, semantic ?? `${lower}–${upper}`);
+    return name === null
+      ? null
+      : [
+          {
+            label: name,
+            swatch: {
+              kind: 'band',
+              fill: style.fill,
+              opacity: style.opacity,
+            },
+          },
+        ];
+  }, [legend, semantic, lower, upper, style]);
+  useLegendItems(container, slot, index, legendRows);
 
   return null;
 }

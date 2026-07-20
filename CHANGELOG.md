@@ -63,6 +63,26 @@ upper"` and a `<Candlestick showOHLC>`'s quote pills read `"<as> high"` /
 
 ### Added
 
+- **charts:** **`<Legend>` — the series key** (#508 item 2, Tidal vol-surface
+  friction; design per the sender's sketch on the issue). Every draw layer now
+  registers its readout identity (`as ?? column`) plus its **resolved** style
+  as a `SwatchSpec` (line stroke+dash, area fill+line, band envelope, scatter
+  dot, box whisker, bar fill, candle up/down pair), and `<Legend />` renders
+  the registry as a small card anchored to a corner of the rows block
+  (`placement`, default `top-right`) — so the key can never drift from the
+  plot. Rows follow chart-row → declaration order; identities collapse
+  (`id ?? label`, as the tracker readout merges keys); a **stacked bar
+  registers one row per group** with its resolved fill. Per-layer control via
+  a new `legend` prop on all seven marks: `false` opts out, a string renames.
+  Interactions are **id-gated** (the shipped selection contract): rows whose
+  layer has an `id` echo hover into the container and toggle selection on
+  click; `onRowHover` / `onRowClick` take over when provided; series
+  show/hide deliberately stays consumer-side. `<Legend items={…}>` renders
+  explicit rows — inside a container or standalone (a dashboard-side key).
+  New optional `theme.legend` slot (background/border/text; derives from
+  `chip`/`axis` tokens when absent, so hand-built themes keep compiling). New
+  exports: `Legend`, `LegendProps`, `LegendPlacement`, `SwatchSpec`,
+  `LegendRowInput`.
 - **charts:** **`cursorFormat` reaches value axes** (#508 item 1, Tidal
   vol-surface friction) — the container's readout channel now applies on a
   value x axis exactly as on a time axis: a **string** is a d3 _number_
