@@ -29,6 +29,7 @@ import {
   type SelectInfo,
   type TrackerInfo,
   type TrackerSource,
+  type DrawStatsFrame,
 } from './context.js';
 import type { LegendItemSpec } from './swatch.js';
 import { maxSlotWidths, sum } from './slots.js';
@@ -232,6 +233,17 @@ export interface ChartContainerProps {
    */
   onTrackerChanged?: (info: TrackerInfo | null) => void;
   /**
+   * Draw-cost + decimation observability. Fires **once per row-canvas repaint**
+   * with a {@link DrawStatsFrame} — one {@link LayerDrawInfo} per layer in that
+   * row carrying its `as`, `drawMs`, and (for a decimating layer) `sourceCount`
+   * / `drawnCount` / `decimated`. Compare `drawnCount` to `sourceCount` to see
+   * whether M4 engaged; read `drawMs` for per-layer render cost. **Omitted ⇒ no
+   * measurement** — the render loop skips per-layer timing entirely, so this is
+   * zero-overhead when unused. Keep the callback cheap (it runs inside the draw
+   * frame); route it to a ref/store rather than doing React state work per frame.
+   */
+  onDrawStats?: (frame: DrawStatsFrame) => void;
+  /**
    * Controlled selection — the selected mark (echo the `onSelect` arg back), or
    * `null`. **Omitted ⇒ uncontrolled** (a click on a selectable layer manages it
    * internally; pass `null` to force nothing selected). A layer is **selectable
@@ -413,6 +425,7 @@ export function ChartContainer({
   showAxis = true,
   trackerPosition,
   onTrackerChanged,
+  onDrawStats,
   selected,
   onSelect,
   hovered,
@@ -656,6 +669,23 @@ export function ChartContainer({
 
   const onTrackerRef = useRef(onTrackerChanged);
   onTrackerRef.current = onTrackerChanged;
+
+  // Draw-stats sink: hold the latest `onDrawStats` in a ref and expose a *stable*
+  // reporter that reads it, so an inline arrow doesn't re-identify the context
+  // (which would thrash every row's draw memo). The reporter is `undefined` when
+  // there's no subscriber — the signal for `Layers` to skip per-layer timing
+  // entirely (zero overhead when unused). Its identity flips only when the
+  // presence of `onDrawStats` toggles, not on every render.
+  const onDrawStatsRef = useRef(onDrawStats);
+  onDrawStatsRef.current = onDrawStats;
+  const hasDrawStats = onDrawStats !== undefined;
+  const reportDrawStats = useMemo(
+    () =>
+      hasDrawStats
+        ? (frame: DrawStatsFrame) => onDrawStatsRef.current?.(frame)
+        : undefined,
+    [hasDrawStats],
+  );
 
   // Selection: controlled (`selected` prop) or uncontrolled (internal). A click
   // on a selectable layer calls `select()` after hit-testing; `onSelect` notifies
@@ -1024,6 +1054,7 @@ export function ChartContainer({
       regionAnchor,
       setRegionAnchor,
       onRegionSelect,
+      reportDrawStats,
       regionSelectModifier,
       draggingKey,
       setDragging,
@@ -1087,6 +1118,7 @@ export function ChartContainer({
       regionAnchor,
       setRegionAnchor,
       onRegionSelect,
+      reportDrawStats,
       regionSelectModifier,
       draggingKey,
       setDragging,

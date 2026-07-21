@@ -2,6 +2,7 @@ import { area as d3area, curveLinear, type CurveFactory } from 'd3-shape';
 import type { BandSeries } from './data.js';
 import type { Scale } from './line.js';
 import type { BandStyle } from './theme.js';
+import type { LayerDrawStats } from './context.js';
 import { cullBandSeries } from './culling.js';
 import { decimateBand, type DecimateOption } from './decimate.js';
 
@@ -51,7 +52,8 @@ export function drawBand(
   style: BandStyle,
   curve: CurveFactory = curveLinear,
   decimate: DecimateOption = true,
-): void {
+): LayerDrawStats {
+  const sourceCount = band.length; // pre-cull, pre-decimation (for draw stats)
   // Viewport culling (Phase 2): clip the envelope to the visible slice (+1 each
   // side) before filling, so a pan strokes O(visible). The solid fill has no
   // cross-point state, so a zero-copy subarray view is exact; a no-op (same
@@ -63,9 +65,12 @@ export function drawBand(
   // pixels. Gated off a smoothing `curve` (which would distort the per-column
   // envelope) and `decimate === false`; `decimateBand` itself no-ops on a sparse
   // envelope or a domainless test scale, so this stays byte-identical there.
+  let decimated = false;
   if (decimate !== false && curve === curveLinear) {
     const k = typeof decimate === 'object' ? decimate.threshold : undefined;
+    const before = band;
     band = decimateBand(band, xScale, ctx, k);
+    decimated = band !== before;
   }
   const gen = d3area<number>()
     .defined(
@@ -84,4 +89,5 @@ export function drawBand(
   gen(band.lower);
   ctx.fill();
   ctx.restore();
+  return { sourceCount, drawnCount: band.length, decimated };
 }

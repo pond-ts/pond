@@ -1,6 +1,7 @@
 import { line as d3line, curveLinear, type CurveFactory } from 'd3-shape';
 import type { ChartSeries } from './data.js';
 import type { LineStyle } from './theme.js';
+import type { LayerDrawStats } from './context.js';
 import { cullChartSeries } from './culling.js';
 import { decimateM4, type DecimateOption } from './decimate.js';
 import {
@@ -95,7 +96,8 @@ export function drawLine(
   gapConnectorOpacity: number = DEFAULT_GAP_CONNECTOR_OPACITY,
   boundaries: readonly number[] = [],
   decimate: DecimateOption = true,
-): void {
+): LayerDrawStats {
+  const sourceCount = cs.length; // pre-cull, pre-decimation (for draw stats)
   // Viewport culling (Phase 2): clip to the visible slice (+1 entry/exit point)
   // before any path work, so a pan repaint strokes O(visible), not O(N). A no-op
   // — the same `cs` object back — when the whole series is in view or `xScale`
@@ -199,6 +201,9 @@ export function drawLine(
       );
     }
   }
+  // `drawnCount` = points actually stroked (culled slice, or the M4 polyline when
+  // decimation engaged); `sourceCount` = the full series it started from.
+  return { sourceCount, drawnCount: cs.length, decimated };
 }
 
 /**

@@ -250,6 +250,7 @@ export function BoxPlot<
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
+        as: semantic,
         yExtent: () => boxExtent(bx),
         // A ValueSeries plots on a value axis, a TimeSeries on time; the container
         // infers the shared x kind from its layers.

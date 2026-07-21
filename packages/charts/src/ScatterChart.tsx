@@ -255,6 +255,7 @@ export function ScatterChart<
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
+        as: semantic,
         yExtent: () => scatterExtent(cs),
         // The container infers the shared x scale's kind + auto-fit domain from
         // its layers: a ValueSeries scatters on a value axis, a TimeSeries on time.
