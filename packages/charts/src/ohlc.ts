@@ -136,22 +136,25 @@ export function drawCandles(
   decimate: DecimateOption = true,
 ): void {
   const bodyFraction = style.bodyWidth ?? DEFAULT_BODY_WIDTH;
-  // M4 candle decimation (Phase 5): once denser than ~2 candles per device pixel,
-  // replace the visible candles with per-column **aggregate candles** (open=first,
-  // high=max, low=min, close=last — a coarser-timeframe candle; {@link
-  // decimateOhlc}). The whole (already binned-to-visible) result draws; otherwise
-  // viewport culling (Phase 2) draws just the candles whose span overlaps the
-  // window. `decimateOhlc` no-ops (returns the same object) on a sparse series or
-  // a domainless test scale, so that path stays the loop-bound cull.
-  const decimated = decimate !== false ? decimateOhlc(ohlc, xScale, ctx) : ohlc;
-  let vStart: number;
-  let vEnd: number;
+  // Viewport cull first (Phase 2): the [vStart, vEnd) candles whose span overlaps
+  // the window (+1 each side). Full range when `xScale` has no domain (a stub).
+  let [vStart, vEnd] = visibleSpanRange(ohlc.x, ohlc.xEnd, ohlc.length, xScale);
+  // M4 candle decimation (Phase 5): once the *visible* candles are denser than ~2
+  // per device pixel, replace them with per-column **aggregate candles**
+  // (open=first, high=max, low=min, close=last — a coarser-timeframe candle;
+  // {@link decimateOhlc}). Gate on the visible count, NOT `ohlc.length`: a candle's
+  // width is its slot, so decimating when only a handful are on screen (deep zoom
+  // into a large series) would re-slot each to a 1px sliver. `decimateOhlc` no-ops
+  // (returns the same object) below the visible-density threshold or on a
+  // domainless scale, leaving the loop-bound cull above.
+  const decimated =
+    decimate !== false
+      ? decimateOhlc(ohlc, xScale, ctx, 2, vEnd - vStart)
+      : ohlc;
   if (decimated !== ohlc) {
     ohlc = decimated; // aggregate candles are already the visible set
     vStart = 0;
     vEnd = ohlc.length;
-  } else {
-    [vStart, vEnd] = visibleSpanRange(ohlc.x, ohlc.xEnd, ohlc.length, xScale);
   }
   for (let i = vStart; i < vEnd; i += 1) {
     if (!isFiniteOhlc(ohlc, i)) continue;

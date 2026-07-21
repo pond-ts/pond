@@ -341,6 +341,23 @@ describe('decimateOhlc', () => {
     expect(out.close[3]).toBe(8004);
   });
 
+  it('does not decimate when few candles are visible (gates on visible count, not total)', () => {
+    // 5000 candles total (>> W), but the caller reports only 5 in view (a deep
+    // zoom). Decimating here would re-slot 5 candles to 1px slivers, so it must
+    // no-op and return the source for the loop-bound cull to draw at full width.
+    const n = 5000;
+    const x = Array.from({ length: n }, (_, i) => i);
+    const s = oh(x, {
+      open: x.map(() => 1),
+      high: x.map(() => 2),
+      low: x.map(() => 0),
+      close: x.map(() => 1),
+    });
+    expect(decimateOhlc(s, pxScale(0, n), stubCtx(800), 2, 5)).toBe(s);
+    // Same series, same viewport, but reported fully visible → decimates.
+    expect(decimateOhlc(s, pxScale(0, n), stubCtx(800), 2, n)).not.toBe(s);
+  });
+
   it('emits NaN on an empty column (a gap → drawCandles skips it)', () => {
     // candles only at 0..5 and 35..40; W=4 over [0,40] → middle columns empty.
     const x = [0, 1, 2, 3, 4, 5, 35, 36, 37, 38, 39, 40];

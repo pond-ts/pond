@@ -456,8 +456,13 @@ export function decimateOhlc(
   xScale: Scale,
   ctx: CanvasRenderingContext2D,
   k = 2,
+  visibleCount = ohlc.length,
 ): OhlcSeries {
-  if (!shouldDecimateCount(ohlc.length, ctx, k)) return ohlc;
+  // Gate on the number of candles *in view*, not the whole series: a candle's
+  // width is its pixel-column slot, so re-slotting a handful of deep-zoomed
+  // candles to one column each would render them as 1px slivers. Below the
+  // visible-density threshold the loop-bound cull draws them at full width.
+  if (!shouldDecimateCount(visibleCount, ctx, k)) return ohlc;
   const dom = scaleDomain(xScale);
   if (dom === null || dom[1] <= dom[0]) return ohlc;
   const invert = scaleInvert(xScale);

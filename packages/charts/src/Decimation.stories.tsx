@@ -266,6 +266,29 @@ export const Candles: Story = {
   ),
 };
 
+/** The same 60k series zoomed to ~40 visible candles — the deep-zoom path. The
+ *  visible count is below the decimation threshold, so the candles draw at their
+ *  **full slot width** (not 1px slivers). Guards the visible-count gate: the gate
+ *  is on how many candles are *on screen*, not the 60k total. */
+export const CandlesZoomed: Story = {
+  render: () => (
+    <ChartContainer
+      width={720}
+      theme={docsTheme}
+      range={[BASE, BASE + 40 * STEP]}
+      panZoom
+    >
+      <ChartRow height={260}>
+        <YAxis id="p" side="right" />
+        <Layers>
+          <Candlestick series={candleSeries} axis="p" />
+        </Layers>
+      </ChartRow>
+      <XAxis />
+    </ChartContainer>
+  ),
+};
+
 /** The same ~60k candles with decimation OFF — every candle at its own slot
  *  (sub-pixel mush at this density; the reason decimation is the default). */
 export const CandlesOff: Story = {

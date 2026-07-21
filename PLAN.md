@@ -30,7 +30,7 @@ A lost session should never erase the current state of the project.
 
 The canvas wave shipped the rendering spine, seven chart types, interactions,
 the decimator, and the trading-time + categorical axes; the package is
-**published** (`@pond-ts/charts` 0.48.x on npm, `private: false`), though the
+**published** (`@pond-ts/charts` on npm, `private: false`), though the
 decimator wave itself is landed on `main` but **unreleased** (CHANGELOG
 `[Unreleased]`, pending the next version bump). Remaining: land built work,
 Phase-2 RFC slices, and the M5 parity gate for the stable / estela-parity
