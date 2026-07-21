@@ -47,7 +47,7 @@
  */
 
 import { Float64Column } from 'pond-ts';
-import type { ChartSeries, BandSeries, OhlcSeries } from './data.js';
+import type { ChartSeries, BandSeries, OhlcSeries, BoxSeries } from './data.js';
 import type { Scale } from './line.js';
 import { scaleDomain } from './culling.js';
 
@@ -508,5 +508,75 @@ export function decimateOhlc(
     low: lowCh,
     close: closeCh,
     length: W,
+  };
+}
+
+/**
+ * Decimate a {@link BoxSeries} to one **aggregate box per device-pixel column** —
+ * the interval-mark sibling of {@link decimateOhlc}. Each channel is binned over
+ * the column: the whiskers widen to the column's full reach (`lower = min(lower)`,
+ * `upper = max(upper)`, exactly {@link decimateBand}'s envelope), the body to the
+ * column's **IQR envelope** (`q1 = min(q1)`, `q3 = max(q3)`), and the centre line
+ * to the **first** box's `median` in the column (a real median value, not an
+ * average — `binBy` carries no mean; it stays within the aggregate body since the
+ * first box's `[q1, q3]` ⊆ the envelope). So a dense per-x distribution chart
+ * that zooms out reads as fewer, wider boxes summarising each column's spread.
+ *
+ * Gates on the **visible** box count (a box's width is its slot — decimating a
+ * handful of deep-zoomed boxes would render 1px slivers, the same trap the candle
+ * path has). Returns the **same object** when decimation doesn't apply (below the
+ * visible-density threshold, domainless / non-invertible scale, no canvas width).
+ * The `hasBox` / `hasMedian` flags carry through, so a **range-only** box (all-NaN
+ * `q1`/`q3`) stays range-only (its binned body is NaN throughout). An empty column
+ * reduces to `NaN` on every channel — `drawBox` skips it via `isFiniteBox`.
+ */
+export function decimateBox(
+  box: BoxSeries,
+  xScale: Scale,
+  ctx: CanvasRenderingContext2D,
+  k = 2,
+  visibleCount = box.length,
+): BoxSeries {
+  if (!shouldDecimateCount(visibleCount, ctx, k)) return box;
+  const dom = scaleDomain(xScale);
+  if (dom === null || dom[1] <= dom[0]) return box;
+  const invert = scaleInvert(xScale);
+  const plotWidthCss = scaleRangeWidth(xScale);
+  if (invert === null || plotWidthCss === null) return box;
+  const W = deviceBucketCount(ctx);
+  const edges = pixelEdges(invert, plotWidthCss, W);
+  const key = box.x;
+  const n = box.length;
+  // Envelope whiskers + IQR body (scalar min/max); centre line = the first box's
+  // median (only `'minMaxFirstLast'` carries `first`). Five O(n) walks — box
+  // counts are modest, like candles.
+  const lowerCh = new Float64Column(box.lower, n).binBy(key, edges, 'min');
+  const upperCh = new Float64Column(box.upper, n).binBy(key, edges, 'max');
+  const q1Ch = new Float64Column(box.q1, n).binBy(key, edges, 'min');
+  const q3Ch = new Float64Column(box.q3, n).binBy(key, edges, 'max');
+  const medianCh = new Float64Column(box.median, n).binBy(
+    key,
+    edges,
+    'minMaxFirstLast',
+  ).first;
+  const x = new Float64Array(W);
+  const xEnd = new Float64Array(W);
+  for (let b = 0; b < W; b += 1) {
+    x[b] = edges[b]!; // the aggregate box's slot IS its pixel column
+    xEnd[b] = edges[b + 1]!;
+  }
+  return {
+    x,
+    xEnd,
+    lower: lowerCh,
+    q1: q1Ch,
+    median: medianCh,
+    q3: q3Ch,
+    upper: upperCh,
+    length: W,
+    // Carry the flags through so a range-only / no-median box stays that way;
+    // omit (not `undefined`) when unset, per `exactOptionalPropertyTypes`.
+    ...(box.hasBox !== undefined ? { hasBox: box.hasBox } : {}),
+    ...(box.hasMedian !== undefined ? { hasMedian: box.hasMedian } : {}),
   };
 }

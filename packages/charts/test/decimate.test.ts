@@ -10,8 +10,14 @@ import {
   decimateM4,
   decimateBand,
   decimateOhlc,
+  decimateBox,
 } from '../src/decimate.js';
-import type { ChartSeries, BandSeries, OhlcSeries } from '../src/data.js';
+import type {
+  ChartSeries,
+  BandSeries,
+  OhlcSeries,
+  BoxSeries,
+} from '../src/data.js';
 import type { Scale } from '../src/line.js';
 
 const cs = (x: number[], y: number[]): ChartSeries => ({
@@ -370,5 +376,117 @@ describe('decimateOhlc', () => {
     const out = decimateOhlc(s, pxScale(0, 40), stubCtx(4), 1); // W=4, colWidth 10
     expect(Number.isNaN(out.open[1]!)).toBe(true); // column [10,20): no candles
     expect(Number.isNaN(out.high[2]!)).toBe(true); // column [20,30): no candles
+  });
+});
+
+describe('decimateBox', () => {
+  const bx = (
+    x: number[],
+    c: {
+      lower: number[];
+      q1: number[];
+      median: number[];
+      q3: number[];
+      upper: number[];
+    },
+    flags?: { hasBox?: boolean; hasMedian?: boolean },
+  ): BoxSeries => ({
+    x: Float64Array.from(x),
+    xEnd: Float64Array.from(x.map((v) => v + 1)),
+    lower: Float64Array.from(c.lower),
+    q1: Float64Array.from(c.q1),
+    median: Float64Array.from(c.median),
+    q3: Float64Array.from(c.q3),
+    upper: Float64Array.from(c.upper),
+    length: x.length,
+    ...flags,
+  });
+
+  it('returns the same object when the series is already sparse', () => {
+    const s = bx([0, 1, 2], {
+      lower: [0, 0, 0],
+      q1: [1, 1, 1],
+      median: [2, 2, 2],
+      q3: [3, 3, 3],
+      upper: [4, 4, 4],
+    });
+    expect(decimateBox(s, pxScale(0, 2), stubCtx(800))).toBe(s);
+  });
+
+  it('aggregates per column: min(lower)/max(upper) whiskers, min(q1)/max(q3) body, first median', () => {
+    // 8000 boxes on [0,8000); W=4 → each column spans 2000 boxes.
+    const n = 8000;
+    const x = Array.from({ length: n }, (_, i) => i);
+    const s = bx(x, {
+      lower: x.map((i) => -i), // min in column b = -(2000b+1999)
+      q1: x.map((i) => i), // min in column b = 2000b
+      median: x.map((i) => 1000 + i), // first in column b = 1000+2000b
+      q3: x.map((i) => i + 100), // max in column b = (2000b+1999)+100
+      upper: x.map((i) => i + 1000), // max in column b = (2000b+1999)+1000
+    });
+    const out = decimateBox(s, pxScale(0, n), stubCtx(4), 2); // W=4
+    expect(out.length).toBe(4);
+    // Column 0 covers boxes 0..1999.
+    expect(out.lower[0]).toBe(-1999); // min lower
+    expect(out.q1[0]).toBe(0); // min q1
+    expect(out.median[0]).toBe(1000); // first median
+    expect(out.q3[0]).toBe(2099); // max q3 = 1999+100
+    expect(out.upper[0]).toBe(2999); // max upper = 1999+1000
+    // Each aggregate box's slot is its pixel column [2000b, 2000(b+1)].
+    expect(out.x[0]).toBe(0);
+    expect(out.xEnd[0]).toBe(2000);
+    // The centre line stays inside the aggregate body [q1, q3].
+    expect(out.median[0]! >= out.q1[0]! && out.median[0]! <= out.q3[0]!).toBe(
+      true,
+    );
+  });
+
+  it('carries the range-only (hasBox=false) flag through', () => {
+    const n = 8000;
+    const x = Array.from({ length: n }, (_, i) => i);
+    const s = bx(
+      x,
+      {
+        lower: x.map((i) => i),
+        q1: x.map(() => NaN), // range-only: no body
+        median: x.map(() => NaN),
+        q3: x.map(() => NaN),
+        upper: x.map((i) => i + 10),
+      },
+      { hasBox: false, hasMedian: false },
+    );
+    const out = decimateBox(s, pxScale(0, n), stubCtx(4), 2);
+    expect(out.hasBox).toBe(false);
+    expect(out.hasMedian).toBe(false);
+    expect(Number.isNaN(out.q1[0]!)).toBe(true); // body stays absent
+    expect(out.lower[0]).toBe(0); // whisker still aggregates
+  });
+
+  it('does not decimate when few boxes are visible (gates on visible count)', () => {
+    const n = 5000;
+    const x = Array.from({ length: n }, (_, i) => i);
+    const s = bx(x, {
+      lower: x.map(() => 0),
+      q1: x.map(() => 1),
+      median: x.map(() => 2),
+      q3: x.map(() => 3),
+      upper: x.map(() => 4),
+    });
+    expect(decimateBox(s, pxScale(0, n), stubCtx(800), 2, 5)).toBe(s);
+    expect(decimateBox(s, pxScale(0, n), stubCtx(800), 2, n)).not.toBe(s);
+  });
+
+  it('emits NaN on an empty column (a gap → drawBox skips it)', () => {
+    const x = [0, 1, 2, 3, 4, 5, 35, 36, 37, 38, 39, 40];
+    const s = bx(x, {
+      lower: x.map(() => 0),
+      q1: x.map(() => 1),
+      median: x.map(() => 2),
+      q3: x.map(() => 3),
+      upper: x.map(() => 4),
+    });
+    const out = decimateBox(s, pxScale(0, 40), stubCtx(4), 1); // W=4, colWidth 10
+    expect(Number.isNaN(out.lower[1]!)).toBe(true); // column [10,20): no boxes
+    expect(Number.isNaN(out.upper[2]!)).toBe(true); // column [20,30): no boxes
   });
 });

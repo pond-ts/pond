@@ -10,6 +10,7 @@ import {
   isFiniteBox,
   type BoxShape,
 } from './box.js';
+import type { DecimateOption } from './decimate.js';
 import {
   ContainerContext,
   LayersContext,
@@ -126,6 +127,16 @@ export interface BoxPlotProps<
    */
   id?: string;
   /**
+   * **M4 viewport decimation** (charts decimator wave). **Omitted ⇒ `true`**:
+   * once the visible boxes are denser than ~2 per device pixel, they are drawn as
+   * per-pixel-column **aggregate boxes** — whiskers widen to the column's reach
+   * (`min(lower)`/`max(upper)`), the body to its IQR envelope
+   * (`min(q1)`/`max(q3)`), the centre line to the first box's median. Pass `false`
+   * to draw every box at its own slot. Interaction is unaffected (hit-testing
+   * reads the source boxes). Shares {@link LineChart}'s `DecimateOption`.
+   */
+  decimate?: DecimateOption;
+  /**
    * This layer's `<Legend>` row: `false` ⇒ no row (opt out), a string ⇒ the
    * row's display name. **Omitted ⇒ a row named by the layer's readout
    * identity** (`as`, else `"<lower>–<upper>"`). The swatch is the resolved
@@ -191,6 +202,7 @@ export function BoxPlot<
   offset = 0,
   capWidth,
   id,
+  decimate = true,
   legend,
   index = 0,
 }: BoxPlotProps<S, VS>) {
@@ -332,6 +344,7 @@ export function BoxPlot<
             capWidth,
             selectedKey,
             hoveredKey,
+            decimate,
           ),
       },
       axisId: axis,
@@ -357,6 +370,7 @@ export function BoxPlot<
       label,
       selectedKey,
       hoveredKey,
+      decimate,
       axis,
       index,
     ],
