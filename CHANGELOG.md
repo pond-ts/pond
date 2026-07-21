@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 tag, so this file covers them all. Pre-1.0: minor bumps may include new features
 and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.48.1...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.49.0...HEAD
+[0.49.0]: https://github.com/pond-ts/pond/compare/v0.48.1...v0.49.0
 [0.48.1]: https://github.com/pond-ts/pond/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/pond-ts/pond/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/pond-ts/pond/compare/v0.46.0...v0.47.0
@@ -48,6 +49,8 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+## [0.49.0] — 2026-07-21
+
 ### Added
 
 - **charts:** **Annotation theme roles** (#508 item 3, Tidal vol-surface
@@ -84,21 +87,6 @@ and type-level changes; patch bumps are strictly additive.
   formatter, and the row gridlines, so a label / its gridline / its readout
   stay on the same `ticks(count)` (replaces three hardcoded `5`s that agreed
   by convention).
-
-### Changed
-
-- **charts:** **Tracker labels key on `as` across the multi-value marks**
-  (F-charts-8 §3, the `<Legend>` label-source prerequisite). With a semantic
-  `as`, a `<BandChart>`'s edge samples now read `"<as> lower"` / `"<as>
-upper"` and a `<Candlestick showOHLC>`'s quote pills read `"<as> high"` /
-  `"<as> open"` / … — the series-name + role convention `<BoxPlot>` already
-  shipped (`iv upper`) — so readout/legend merge keys are the series
-  identity, not raw column names or bare role words. Without an `as`,
-  labels are unchanged (column names / role words). Consumers keying
-  `onTrackerChanged` readouts on the old labels while setting `as` should
-  key on the new `"<as> <role>"` form.
-
-### Added
 
 - **charts:** **`<Legend>` — the series key** (#508 item 2, Tidal vol-surface
   friction; design per the sender's sketch on the issue). Every draw layer now
@@ -221,6 +209,19 @@ upper"` and a `<Candlestick showOHLC>`'s quote pills read `"<as> high"` /
   mark that can paint into the plot is kept. Small-radius scatters are unaffected
   (they re-expand by a few pixels — usually the same window). Interval marks
   (bars / candles / boxes) don't need this — their width _is_ their x-span.
+
+### Changed
+
+- **charts:** **Tracker labels key on `as` across the multi-value marks**
+  (F-charts-8 §3, the `<Legend>` label-source prerequisite). With a semantic
+  `as`, a `<BandChart>`'s edge samples now read `"<as> lower"` / `"<as>
+upper"` and a `<Candlestick showOHLC>`'s quote pills read `"<as> high"` /
+  `"<as> open"` / … — the series-name + role convention `<BoxPlot>` already
+  shipped (`iv upper`) — so readout/legend merge keys are the series
+  identity, not raw column names or bare role words. Without an `as`,
+  labels are unchanged (column names / role words). Consumers keying
+  `onTrackerChanged` readouts on the old labels while setting `as` should
+  key on the new `"<as> <role>"` form.
 
 ### Fixed
 
