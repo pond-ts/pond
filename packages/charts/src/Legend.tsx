@@ -312,7 +312,11 @@ export function Legend({
           item.id !== undefined && container?.hovered?.id === item.id;
         return (
           <div
-            key={item.id ?? item.label}
+            // Composite key: a multi-group layer (a stack) gives every segment
+            // the SAME `id`, so keying on `id` alone would collide — the group
+            // `label` disambiguates within the shared id (labels are unique
+            // per stack position; a lone id-less layer keys on its label).
+            key={item.id !== undefined ? `${item.id} ${item.label}` : item.label}
             onPointerEnter={() => enter(item)}
             onPointerLeave={() => leave(item)}
             onClick={() => click(item)}

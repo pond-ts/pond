@@ -69,7 +69,9 @@ export default function ChartsLegendHeadless({ width }: { width: number }) {
           const v = valueAt(item.id);
           return (
             <button
-              key={item.id ?? item.label}
+              key={
+                item.id !== undefined ? `${item.id} ${item.label}` : item.label
+              }
               onPointerEnter={() => hover(item)}
               onPointerLeave={() => hover(null)}
               onClick={() => select(item)}

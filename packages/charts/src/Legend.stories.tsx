@@ -324,7 +324,11 @@ export const HeadlessCustomLegend: Story = {
             const v = valueOf(item);
             return (
               <button
-                key={item.id ?? item.label}
+                key={
+                  item.id !== undefined
+                    ? `${item.id} ${item.label}`
+                    : item.label
+                }
                 onPointerEnter={() => hover(item)}
                 onPointerLeave={() => hover(null)}
                 onClick={() => select(item)}

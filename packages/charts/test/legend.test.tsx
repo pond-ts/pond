@@ -148,29 +148,43 @@ describe('<Legend> — zero-config enumeration', () => {
     expect(labels).toEqual(['v', 'w']);
   });
 
-  it('a stacked bar WITH an id keeps one row per group (dedup is per stack position)', () => {
-    const { container } = renderChart(
-      <ChartContainer range={[0, 2000]} width={400}>
-        <ChartRow height={100}>
-          <YAxis id="a" min={0} max={20} />
-          <Layers>
-            <BarChart
-              series={series()}
-              columns={['v', 'w']}
-              id="stack"
-              axis="a"
-            />
-          </Layers>
-        </ChartRow>
-        <Legend />
-      </ChartContainer>,
-    );
+  it('a stacked bar WITH an id keeps one row per group + unique React keys', () => {
+    // The segments share the layer id, so the card must key on (id + label),
+    // not id alone — otherwise React dev-warns on duplicate keys.
+    const errors: unknown[][] = [];
+    const spy = vi
+      .spyOn(console, 'error')
+      .mockImplementation((...args) => errors.push(args));
+    let container: HTMLElement;
+    try {
+      container = renderChart(
+        <ChartContainer range={[0, 2000]} width={400}>
+          <ChartRow height={100}>
+            <YAxis id="a" min={0} max={20} />
+            <Layers>
+              <BarChart
+                series={series()}
+                columns={['v', 'w']}
+                id="stack"
+                axis="a"
+              />
+            </Layers>
+          </ChartRow>
+          <Legend />
+        </ChartContainer>,
+      ).container;
+    } finally {
+      spy.mockRestore();
+    }
     const card = legendCard(container);
     const labels = Array.from(card.querySelectorAll('span')).map(
       (s) => s.textContent,
     );
     // Pre-fix, the shared layer id collapsed the groups to one row.
     expect(labels).toEqual(['v', 'w']);
+    // …and no duplicate-key warning (pre-key-fix both rows keyed "stack").
+    const dupKeyWarned = errors.some((a) => String(a[0]).includes('same key'));
+    expect(dupKeyWarned).toBe(false);
   });
 
   it('an unmounted layer unregisters its row', () => {
