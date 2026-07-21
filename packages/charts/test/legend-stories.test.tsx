@@ -22,6 +22,7 @@ describe('Legend stories render', () => {
     expect(entries.map(([n]) => n).sort()).toEqual([
       'DedupSharedIdentity',
       'Default',
+      'HeadlessCustomLegend',
       'InteractiveSelect',
       'MixedMarkSwatches',
       'MultiRowOrder',
@@ -29,6 +30,7 @@ describe('Legend stories render', () => {
       'PlacementBottomLeft',
       'PlacementBottomRight',
       'PlacementTopLeft',
+      'ScopedPerRow',
       'StackedBarGroups',
       'StandaloneItems',
     ]);

@@ -35,7 +35,7 @@ import {
 import {
   legendLabelFor,
   useLegendItems,
-  type LegendRowInput,
+  type LegendItemInput,
 } from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
@@ -655,7 +655,7 @@ export function BarChart<
   // layer's identity. A `legend` string renames only a one-row layer (a
   // multi-group layer has no single name to give); `legend={false}` opts all
   // out. The layer's `id` rides every row (selection identity is the layer).
-  const legendRows = useMemo<readonly LegendRowInput[] | null>(() => {
+  const legendRows = useMemo<readonly LegendItemInput[] | null>(() => {
     if (legend === false) return null;
     if (groups !== undefined && groups.length > 1) {
       return groups.map((g, i) => ({

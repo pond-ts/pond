@@ -19,7 +19,7 @@ import {
 import {
   legendLabelFor,
   useLegendItems,
-  type LegendRowInput,
+  type LegendItemInput,
 } from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
@@ -328,7 +328,7 @@ export function BoxPlot<
 
   // And a legend row: the series identity (`as`, else the range columns as a
   // span) + the resolved whisker style, so a `<Legend>` swatch can never drift.
-  const legendRows = useMemo<readonly LegendRowInput[] | null>(() => {
+  const legendRows = useMemo<readonly LegendItemInput[] | null>(() => {
     const name = legendLabelFor(legend, semantic ?? `${lower}–${upper}`);
     return name === null
       ? null

@@ -101,6 +101,22 @@ collides on case-insensitive filesystems); a one-group stacked shape
 (horizontal single, categorical) registers under the layer identity, not the
 `categoryStack` `'value'` sentinel.
 
+**Follow-up (design pass, `feat/charts-legend-headless`, [Unreleased]):** a
+**headless `useChartLegend()`** — the same rows as data (`selected`/`hovered`
+state) plus chart-synced `hover`/`select`, the axis `gutters`, and
+`cursorTime` (the values-in-the-legend seam: `series.nearest(cursorTime)`);
+`<Legend>` re-renders through the same `buildChartLegend` core. Card polish
+from the first live review: plot-area-inset placement, selection reads by
+**contrast** (selected bold, others dulled — not a decorated selected row),
+canonical three-dash line swatch, centred rounded bar swatch. **Row-scoping:
+scope follows placement** — a `<Legend>` / `useChartLegend()` inside a
+`<Layers>` scopes to that `<ChartRow>` (rowKey filter via `RowContext`) and
+anchors to that row's plot (the plot cell is already `position: relative`);
+container-level stays all-rows. New docs page
+`website/docs/charts/interaction/legend.mdx` (card + headless live examples;
+one-row-per-group + row-scoping in prose). New exports `useChartLegend` /
+`ChartLegend` / `LegendRow` / `LegendItem` (rows group items by chart row).
+
 ### [PND-ANROLE] — Per-annotation colour via theme role map
 
 #508 item 3. Inline per-mark colour rejected (same discipline as the per-box

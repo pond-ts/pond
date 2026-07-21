@@ -9,7 +9,7 @@ import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
 import {
   legendLabelFor,
   useLegendItems,
-  type LegendRowInput,
+  type LegendItemInput,
 } from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
@@ -251,7 +251,7 @@ export function BandChart<
 
   // And a legend row: the series identity (`as`, else the edge columns as a
   // span) + the resolved band fill, so a `<Legend>` swatch can never drift.
-  const legendRows = useMemo<readonly LegendRowInput[] | null>(() => {
+  const legendRows = useMemo<readonly LegendItemInput[] | null>(() => {
     const name = legendLabelFor(legend, semantic ?? `${lower}–${upper}`);
     return name === null
       ? null

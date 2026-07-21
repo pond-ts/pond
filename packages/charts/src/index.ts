@@ -54,7 +54,12 @@ export type { CandleVariant, ColorBy } from './ohlc.js';
 // The series key: rows enumerate the registered layers' resolved styles.
 export { Legend } from './Legend.js';
 export type { LegendProps, LegendPlacement } from './Legend.js';
-export type { SwatchSpec, LegendRowInput } from './swatch.js';
+export type { SwatchSpec, LegendItemInput } from './swatch.js';
+// The headless legend — the same rows + hover/select sync as data, for
+// consumers who design their own key (horizontal strips, ticker-compare,
+// values-in-the-legend).
+export { useChartLegend } from './useChartLegend.js';
+export type { ChartLegend, LegendRow, LegendItem } from './useChartLegend.js';
 export { scaleTradingTime } from './tradingTimeScale.js';
 export type {
   TradingTimeScale,

@@ -22,7 +22,7 @@ import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
 import {
   legendLabelFor,
   useLegendItems,
-  type LegendRowInput,
+  type LegendItemInput,
 } from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
@@ -361,7 +361,7 @@ export function ScatterChart<
   // `radius` number shows at size; an encoding shows the style's base radius).
   // Carries the layer's `id` so the legend's default interactions are id-gated
   // exactly like the mark's own.
-  const legendRows = useMemo<readonly LegendRowInput[] | null>(() => {
+  const legendRows = useMemo<readonly LegendItemInput[] | null>(() => {
     const name = legendLabelFor(legend, seriesLabel);
     return name === null
       ? null

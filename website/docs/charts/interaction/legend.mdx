@@ -1,0 +1,157 @@
+---
+title: Legend
+sidebar_position: 3
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import ChartsLegend from '@site/src/examples/charts-legend';
+import ChartsLegendHeadless from '@site/src/examples/charts-legend-headless';
+
+# Legend
+
+A **series key** — one row per draw layer, each with a swatch of that layer's
+_resolved_ style and its readout label. Because the swatch is the style the
+canvas actually drew with, the key **can't drift from the plot** — the thing
+an app-side legend only gets by hand-sharing a palette.
+
+`<Legend>` is the batteries-included card. When your legend is a design of its
+own — a horizontal strip, a ticker-compare pair, values-in-the-legend —
+[`useChartLegend()`](#headless-usechartlegend) hands you the same rows as data
+plus the hover/select sync, and you render it.
+
+## The card
+
+Drop `<Legend />` anywhere inside a `<ChartContainer>` (it reads the layer
+registry, not its own position) and it enumerates the registered layers — no
+props required. `placement` anchors it to a corner of the **plot area** (inset
+past the axis gutters, so it never sits over the y-axis labels).
+
+<ChartExample name="charts-legend" height={280}>
+  <ChartsLegend width={560} />
+</ChartExample>
+
+Each row's swatch speaks its mark's own vocabulary — a line's stroke (and
+dash), a band's translucent fill, a scatter dot, a candle's up/down pair. The
+label is the layer's readout identity (`as ?? column`) — the same string the
+[hover readout](./cursors-and-readouts.mdx) shows — so a value under the cursor
+and its legend row always agree. `legend="…"` renames a row (here `p50` →
+"median") without touching its `as` **style** role; `legend={false}` opts a
+layer out entirely.
+
+Rows follow chart-row → declaration order, and two layers sharing an identity
+(`id ?? label`) collapse to one row — exactly as the tracker readout merges
+keys, so a line and its scatter overlay on the same series read as one entry.
+
+A **stacked** `BarChart` is the one layer that contributes **more than one
+row** — it registers one per group (in stack order), each with that group's
+resolved fill, so the key enumerates the segments. The group names come from
+the data, so a `legend="…"` rename doesn't apply there; every other layer is
+one row.
+
+## Interactivity is id-gated
+
+A row whose layer carries an [`id`](./selection-and-hover.mdx#identity-gates-selectability)
+is interactive on the same contract as the marks: **hovering** the row echoes
+into the container's `hovered` channel (lighting the matching mark), and
+**clicking** toggles the container selection. Selection reads by contrast — the
+selected row stays bold at full opacity while every other row dulls (the
+ticker-compare treatment). Series **show/hide is deliberately not** built in
+(a legend mutating what's drawn would be a second styling channel); use
+`onRowClick` to wire your own visibility toggle.
+
+| Prop         | Type                             | Purpose                                                                                     |
+| ------------ | -------------------------------- | ------------------------------------------------------------------------------------------- |
+| `placement`  | `'top-right'` \| 3 other corners | Which plot corner the card anchors to. Default `'top-right'`.                               |
+| `items`      | `LegendItemInput[]`              | **Escape hatch** — render explicit rows instead of the registry; works outside a container. |
+| `onRowClick` | `(row) => void`                  | Override the default select-toggle (e.g. a show/hide handler).                              |
+| `onRowHover` | `(row \| null) => void`          | Override the default hover-echo.                                                            |
+| `theme`      | `ChartTheme`                     | For standalone `items` mode outside a container (no frame to read one from).                |
+
+The card's colours come from an optional `theme.legend` slot
+(background/border/text); absent it, they derive from the `chip` / `axis`
+tokens, so a hand-built theme needs no new fields.
+
+## Scope follows placement
+
+At the container level `<Legend>` lists **every** row. Placed **inside a
+`<Layers>`**, it scopes to that `<ChartRow>` — listing only that row's layers
+and anchoring to that row's plot, the same way an annotation belongs to the
+row it sits in. A per-row legend on a stacked dashboard needs no prop, just
+placement:
+
+```tsx
+<ChartContainer /* … */>
+  <ChartRow height={160}>
+    <YAxis id="px" />
+    <Layers>
+      <LineChart series={price} column="close" as="price" axis="px" />
+      <Legend /> {/* lists only this row */}
+    </Layers>
+  </ChartRow>
+  <ChartRow height={90}>
+    <YAxis id="vol" />
+    <Layers>
+      <BarChart series={price} column="volume" as="volume" axis="vol" />
+      <Legend /> {/* lists only this row */}
+    </Layers>
+  </ChartRow>
+</ChartContainer>
+```
+
+`useChartLegend()` scopes the same way — called inside a `<Layers>` its `rows`
+are that row's.
+
+## Headless — `useChartLegend()`
+
+When the card isn't the design you want, `useChartLegend()` returns the same
+entries as **data** — `rows` (items grouped by chart row; flat is
+`rows.flatMap((r) => r.items)`) plus the verbs already wired to the chart —
+render anything.
+This example is a horizontal chip row above the plot, each chip showing a
+**current-or-cursor value**: the hook hands you `cursorTime` (the cursor's
+instant, or `null` when idle), you look the value up in your own series
+(`series.nearest(cursorTime)`, else the latest sample). Hover the plot and the
+values track the cursor; click a chip to select.
+
+<ChartExample name="charts-legend-headless" height={280}>
+  <ChartsLegendHeadless width={560} />
+</ChartExample>
+
+```ts
+interface ChartLegend {
+  // items grouped by chart row; a flat list is rows.flatMap((r) => r.items)
+  rows: LegendRow[]; // { rowKey, items: LegendItem[] }
+  // LegendItem = { label, swatch, id?, selected, hovered }
+  gutters: { left: number; right: number }; // align a custom layout to the plot
+  cursorTime: number | null; // the cursor's axis instant; null when idle
+  hover(item: LegendItemInput | null): void; // echo into the chart's hovered channel
+  select(item: LegendItemInput): void; // toggle the chart selection
+}
+```
+
+`<Legend>` itself is built on this same core, so the card and a hand-rolled
+legend can never disagree about rows or sync semantics. Because a row's `label`
+matches the tracker's sample labels, folding live `onTrackerChanged` values
+into a custom legend is a label-keyed join — no extra plumbing.
+
+## Sharp edges
+
+- **The swatch is the resolved style, warts and all.** Two layers on the
+  theme's `default` role show the _same_ swatch — because they draw the same.
+  Give them distinct `as` roles and the legend follows automatically.
+- **A per-bin histogram (`binColors`) is one series** — its single row shows
+  the group's base fill, not the per-bin palette.
+- **`useChartLegend()` must be under a `<ChartContainer>`** (it reads the
+  frame). To render your legend _outside_ the chart's DOM box, portal it out —
+  React context flows through portals — or use `<Legend items>` with rows you
+  supply.
+
+## See also
+
+- [Selection & hover](./selection-and-hover.mdx) — the id-gated contract the
+  legend's interactions ride on.
+- [Cursors & readouts](./cursors-and-readouts.mdx) — the hover readout whose
+  labels the legend rows match.
+- [Theming](../theming.mdx) — the `theme.legend` slot and resolved styles.
+- Storybook: [`Legend`](pathname:///storybook/?path=/story/legend--default) —
+  every state (swatch kinds, placements, dedup, opt-out, headless chip row).
