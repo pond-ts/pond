@@ -243,7 +243,19 @@ the second consumer to hit it). The `useMeasuredWidth` `ResizeObserver`
 pattern is documented as a recipe (#445); the library-side question is
 whether `ChartContainer` should own a fill/auto-width mode.
 
-### [PND-DECOBS] — Draw-time + decimation observability
+### [PND-DECOBS] — Draw-time + decimation observability — DONE
+
+**Shipped ([#523], CHANGELOG `[Unreleased]`):** `<ChartContainer onDrawStats>`
+fires a `DrawStatsFrame` per row-canvas repaint (`rowKey` + one `LayerDrawInfo`
+per layer: `{ as, index, drawMs, sourceCount, drawnCount, decimated }`). The
+five decimating draw fns return `LayerDrawStats`; the `Layers` loop times each
+layer only when a consumer is subscribed (`reportDrawStats` is `undefined`
+otherwise ⇒ zero overhead). New exports `DrawStatsFrame` / `LayerDrawInfo`.
+Same PR corrected the stale `index.ts` "chunked Path2D cache" comment that
+seeded the report's reading (b). The design write-up below is kept as the
+_why_.
+
+[#523]: https://github.com/pond-ts/pond/pull/523
 
 **Source:** dashboard-agent friction report (pond-ts-dashboard engine A/B,
 2026-07-21). The dashboard A/B'd the 0.49 `decimate` prop (auto vs off) at

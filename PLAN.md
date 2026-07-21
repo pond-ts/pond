@@ -65,11 +65,6 @@ milestone. Plan:
   naming convention, no new plumbing).
 - **[PND-WIDTH]** — Responsive width/fill for `ChartContainer` (two
   consumers hit the explicit-px requirement).
-- **[PND-DECOBS]** — Draw-time + decimation observability (dashboard A/B
-  friction, 2026-07-21): one per-frame, per-layer draw-stats callback
-  (`{ as, sourceCount, drawnCount, decimated, drawMs }`) so a consumer can
-  see whether M4 engaged and what draw cost. The packaged layer is a black
-  box today; this is the standing 0.48 engine-A/B gap.
 - **[PND-LIVELYR]** — Live-source-aware layer inputs (same report, ask #4):
   charts layers take only `TimeSeries`, forcing a fresh per-tick handle
   (`snapshot.partitionBy().toMap()`) per host. A `LiveView`-aware input — or
