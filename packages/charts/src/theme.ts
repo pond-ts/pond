@@ -175,6 +175,22 @@ export interface ChartTheme {
     readonly color: string;
     readonly fillOpacity: number;
     readonly depth: readonly [number, number, number];
+    /**
+     * **Optional per-role overrides** — a small map from a role name to its
+     * `color` (and optionally `fillOpacity`), so distinct marks can be styled
+     * at once without splitting the whole register: a `<Baseline role="atm">`
+     * green, a `<Marker role="ref">` in another hue, each still drawn through
+     * the shared {@link depth} ramp. A mark's `role` resolves
+     * `roles[role] ?? { color, fillOpacity }` (an unknown/unset role is the
+     * base register). Colour stays a **theme** concern — there is no per-mark
+     * colour prop (the one-styling-channel discipline).
+     */
+    readonly roles?: {
+      readonly [role: string]: {
+        readonly color: string;
+        readonly fillOpacity?: number;
+      };
+    };
   };
   /**
    * The **`<Legend>` card** — background, border, and label text of the

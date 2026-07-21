@@ -51,9 +51,6 @@ gate that flips the first publish. Plan:
   px `offset` for same-x pairs, line-only shape, join the cursor x-snap, and
   selection `id` via rect-containment `hitTest` (#508 item 5; Candlestick
   takes the same geometry helper).
-- **[PND-ANROLE]** — Per-annotation colour as a theme role map
-  (`theme.annotation.roles` + `role` prop on the three marks; #508 item 3;
-  inline per-mark colour rejected).
 - **[PND-CURSOR]** — Cursor/readout polish backlog (scatter 2D-nearest,
   chip de-overlap, y-oriented region cursor, `pointercancel` clear-only
   fix).
