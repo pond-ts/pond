@@ -44,12 +44,14 @@ can place a green ATM baseline, a blue reference marker, and an amber zone at
 once, each still an annotation (shared depth ramp, distinct from data):
 
 ```tsx
-const theme = cssVarTheme(defaultTheme, () => ({
+// `v` resolves each CSS var to a concrete colour at theme-build time — the
+// value becomes an SVG `stroke`, which can't itself resolve `var()`.
+const theme = cssVarTheme(defaultTheme, (v) => ({
   annotation: {
     roles: {
-      atm: { color: 'var(--green)' },
-      ref: { color: 'var(--blue)' },
-      zone: { color: 'var(--amber)', fillOpacity: 0.15 }, // optional per-role fill
+      atm: { color: v('--green') },
+      ref: { color: v('--blue') },
+      zone: { color: v('--amber'), fillOpacity: 0.15 }, // optional per-role fill
     },
   },
 }));
