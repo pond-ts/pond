@@ -50,6 +50,18 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts:** **Annotation theme roles** (#508 item 3, Tidal vol-surface
+  friction). `theme.annotation` gains an optional **`roles`** map (role name →
+  `{ color, fillOpacity? }`), and `<Baseline>` / `<Marker>` / `<Region>` gain a
+  **`role`** prop that recolours that mark from `roles[role]` while keeping the
+  shared depth ramp — so a smile can place a green ATM baseline, a distinct
+  reference marker, and an amber zone at once without the whole register
+  shifting together. Resolves `roles[role] ?? annotation` (an unknown/unset
+  role is the base register). **Colour stays a theme concern** — there is no
+  per-mark colour prop (the one-styling-channel discipline; consistent with the
+  per-box red/green reject). `cssVarTheme` carries the `roles` map through
+  unchanged (deep-merged). `theme.annotation.roles` is optional, so existing
+  themes are unaffected.
 - **charts:** **`<BoxPlot id>` — box selection** (#508 item 5, Tidal
   vol-surface friction). A `BoxPlot` with an `id` is now clickable on the same
   id-gated contract `<BarChart>` / `<ScatterChart>` carry

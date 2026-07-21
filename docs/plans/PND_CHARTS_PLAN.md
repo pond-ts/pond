@@ -127,14 +127,20 @@ container-level stays all-rows. New docs page
 one-row-per-group + row-scoping in prose). New exports `useChartLegend` /
 `ChartLegend` / `LegendRow` / `LegendItem` (rows group items by chart row).
 
-### [PND-ANROLE] — Per-annotation colour via theme role map
+### [PND-ANROLE] — Per-annotation colour via theme role map — DONE
 
-#508 item 3. Inline per-mark colour rejected (same discipline as the per-box
-red/green reject: colour = theme role, not call-site). Shape:
-`theme.annotation.roles?: Record<string, { color; fillOpacity? }>` + a
-`role?: string` prop on the three marks, resolving `roles[role] ??
-annotation`; the depth ramp applies within the role's hue. `cssVarTheme` role
-mapping lands in the same pass.
+Shipped (#508 item 3). `theme.annotation.roles?: { [role]: { color;
+fillOpacity? } }` + a `role?: string` prop on `<Baseline>`/`<Marker>`/
+`<Region>`, resolved in `useAnnotationFrame(name, role)` as `roles[role] ??
+annotation` — the role overrides colour (+ optional fill) only; the depth ramp
+stays shared, so selection/hover/edit levels read identically per role. Inline
+per-mark colour stays **rejected** (same discipline as the per-box red/green
+reject — colour = theme role, not call-site). `cssVarTheme` carries the map
+through unchanged (deep-merge, like `theme.legend`); the slot is optional so
+existing themes are untouched. **Scope note:** cross-row annotation _guides_
+(drawn in `Layers` from the base `annotation.color`) stay the base hue — a
+role recolours the mark, not its faint cross-row reference line; revisit only
+if a consumer needs role-tinted guides.
 
 ### [PND-YTICKS] — `YAxis` tick density — DONE
 

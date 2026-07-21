@@ -82,6 +82,14 @@ Plus the shared interaction props. Note the [indicator law](./the-annotation-mod
 the `indicator` pill always shows the formatted `at`, never the custom `label`
 (which stays the near-line chip).
 
+## Colour: `role`
+
+All three take an optional **`role`** — a name into the theme's
+`annotation.roles` map — to recolour that mark (its `color`, and optionally
+`fillOpacity`) while staying in the annotation register. See
+[Roles within the register](./the-annotation-model.mdx#roles-within-the-register).
+There is no per-mark colour prop; the theme owns the palette.
+
 ## Auto-labels and suppression
 
 All three share the same `label` convention:
