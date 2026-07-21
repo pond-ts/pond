@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { scaleLinear } from 'd3-scale';
 import { TimeSeries } from 'pond-ts';
 import {
   drawCandles,
@@ -428,5 +429,59 @@ describe('drawCandles — viewport culling (Phase 2)', () => {
     const { ctx, calls } = recordingContext();
     drawCandles(ctx, ramp(), identity, flipY, style);
     expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(6);
+  });
+});
+
+describe('drawCandles — M4 decimation (Phase 5)', () => {
+  const pxScale = (lo: number, hi: number) =>
+    scaleLinear().domain([lo, hi]).range([lo, hi]) as unknown as (
+      v: number,
+    ) => number;
+  const sizedCtx = (widthPx: number) => {
+    const { ctx, calls } = recordingContext();
+    (ctx as unknown as { canvas: { width: number } }).canvas = {
+      width: widthPx,
+    };
+    return { ctx, calls };
+  };
+  // `n` contiguous candles at x = 0..n-1 (xEnd = x+1).
+  const dense = (n: number) =>
+    oh(
+      Array.from({ length: n }, (_, i) => i),
+      {
+        open: Array.from({ length: n }, () => 1),
+        high: Array.from({ length: n }, () => 3),
+        low: Array.from({ length: n }, () => 0),
+        close: Array.from({ length: n }, () => 2),
+      },
+      Array.from({ length: n }, (_, i) => i + 1),
+    );
+
+  it('decimates dense candles to ~one aggregate candle per column', () => {
+    const { ctx, calls } = sizedCtx(10); // W=10
+    // 5000 candles → decimate to ≤10 aggregate candles → ≤10 wick moveTos.
+    drawCandles(ctx, dense(5000), pxScale(0, 5000), flipY, style);
+    expect(calls.filter((c) => c.name === 'moveTo').length).toBeLessThanOrEqual(
+      10,
+    );
+    expect(calls.filter((c) => c.name === 'moveTo').length).toBeGreaterThan(0);
+  });
+
+  it('draws every candle when decimate is off', () => {
+    const { ctx, calls } = sizedCtx(10);
+    drawCandles(
+      ctx,
+      dense(40),
+      pxScale(0, 40),
+      flipY,
+      style,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+    );
+    // 40 candles → 40 wicks, not decimated.
+    expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(40);
   });
 });

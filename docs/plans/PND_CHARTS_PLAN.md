@@ -9,10 +9,10 @@
 The canvas wave (kicked off 2026-06-17) shipped the rendering spine, seven
 chart types, the full interaction stack (cursor modes, pan/zoom, selection
 Phase 1, annotations), the M4 decimator (pan-FPS cliff closed to 1M points),
-the trading-time axis, and the categorical axis Phase 1. The package is still
-`"private": true`; what remains is landing the built-but-unmerged work,
-Phase-2 slices of the adopted RFCs, and the M5 parity gate that flips the
-first publish.
+the trading-time axis, and the categorical axis Phase 1. The package is
+**published** (`@pond-ts/charts` on npm, `private: false`); what remains is
+landing the built-but-unmerged work, Phase-2 slices of the adopted RFCs, and
+the M5 parity gate for the stable / estela-parity milestone.
 
 ## Tasks
 
@@ -30,11 +30,12 @@ Deferred beyond Phase 1 (stay RFC-only until adopted): the metric branch
 label rotation. RFC:
 [docs/rfcs/categorical-axis.md](../rfcs/categorical-axis.md).
 
-### [PND-PARITY] — M5 estela parity + first publish
+### [PND-PARITY] — M5 estela parity (stable milestone)
 
 Faithful `DataChart` reproduction on real activity data; prove no-regressions;
-hand the production swap to the estela agent; flip `private: false` and
-publish. Known M5 gates collected along the way:
+hand the production swap to the estela agent (the package already publishes
+pre-parity — this is the stable/parity bar, not the first publish). Known M5
+gates collected along the way:
 
 - **Statistical bands** (named an M5-parity gate in the decimator wave).
 - **Theme tokens required → optional-with-default** so a new chart type isn't
@@ -54,16 +55,58 @@ Phase 1 (series-`id` identity, id-gates-interactivity) shipped. Phase 2, per
 The widen is a breaking public change — human-approval gate; estela's bar is
 the sole external reader (shim for estela only).
 
-### [PND-DECIM] — Decimator Phase 5
+### [PND-DECIM] — Decimator Phase 5 (finish-the-wave)
 
-Bench-ordered remainder of the decimation plan
-([docs/notes/charts-decimator-assessment-2026-07.md](../notes/charts-decimator-assessment-2026-07.md)):
-candlestick decimation with Tidal as the driving consumer; Path2D cache
-(M4.4) only if the pan bench still misses (it doesn't, except `three`-at-1M).
-Backlog, documented: non-linear-`curve` decimation (a smoothing curve distorts
-the 4-points-per-column polyline; fix = decimate then re-smooth). LTTB stays
-an explicit opt-in; M4 is the auto-on default. The one-time competitive
-head-to-head (uPlot + published AG Charts / klishevich) stays optional.
+**Shipped (Phases 2–4), released in v0.49.0:** viewport culling (all layers);
+M4 line/area/band decimation (auto-on, every gap mode, session breaks); the
+pan-FPS re-bench (cliff closed — line/band 90–120 fps to 1M, `three` 24 fps
+floor). Source of truth:
+[docs/notes/charts-decimator-assessment-2026-07.md](../notes/charts-decimator-assessment-2026-07.md).
+**Candlestick decimation** (task 1 below) is landing now, unreleased under
+CHANGELOG `[Unreleased]` (post-v0.49.0).
+
+The remainder is one **Tidal-anchored experiment** (the candle default is the
+thing to red-team against a real financial workload before it hardens), run
+bench-ordered, each step Layer-1 + Layer-2 review-gated:
+
+1. **Candlestick decimation.** OHLC re-aggregation _is_
+   `binBy('minMaxFirstLast')` per pixel column — `open=first, high=max,
+low=min, close=last` — i.e. a faithful **coarser-timeframe aggregate
+   candle**. **Design fork (assessment §2.4):** auto-on (matches every trading
+   UI — candles aggregate on zoom-out) vs. opt-in (a re-bucketed candle is "a
+   statement about the data"; financial-correctness purists pre-aggregate
+   upstream). **Reasoned default: auto-on + opt-out `decimate` prop + prominent
+   doc that decimation aggregates to the pixel-column timeframe** — it is never
+   _wrong_ (it is the exact OHLC of that column's time range), and it matches
+   convention; revisable if Tidal's real usage pushes back (friction-driven).
+   A new `candle` decimate-hint goes in the spec first. Roll the stale PLAN
+   `private` note fix into this first PR.
+2. **Box-plot decimation** (fast-follow). BoxPlot is interval-keyed like the
+   candle (shared geometry, see [PND-BOXPLT]); extend the same interval-mark
+   aggregate — `min(lower)/max(upper)` whiskers + aggregated body.
+3. **`three`-at-1M floor — decide, don't speculatively build.** The static
+   `three` (3 overlaid lines) at 1M pans at 24 fps = 3× the per-frame decimation
+   walk (render, not data-side — a static series has no snapshot rebuild).
+   **Path2D caching does _not_ help pan** (the `(view, width)` cache invalidates
+   every frame as the window moves — assessment's own note), so rung (i)
+   (cull-then-decimate per frame) is terminal here. Document 24 fps as the
+   extreme-case floor + defer Path2D and further `binBy` optimization (narrow
+   case) with this reasoning. No build.
+4. **Release.** Promote CHANGELOG `[Unreleased]` → a version, bump every
+   `packages/*/package.json` lock-step, tag `vX.Y.Z`, push → the workflow
+   publishes. **Human-confirm the version + package set before the tag push**
+   (npm publish is irreversible + covers all five packages).
+5. **How-to guide** — "Rendering large time series in pond" in
+   `website/docs/how-to-guides/`: the real perf work + the **honest** bench
+   numbers (flat line/band curve, the `three` floor, "render ceiling ≠ perf
+   solved — the data-side ceiling hits first for live"). uPlot / AG Charts
+   head-to-head is an optional appendix.
+
+**Explicitly deferred (named, not dropped):** LTTB opt-in (§2.5 — reducer shape
+reserved; build when a smooth-signal consumer pulls); non-linear-`curve`
+decimation (a smoothing curve blobs the 4-points-per-column verticals; fix =
+decimate-then-re-smooth, only on a real driver); WebGL dense-scatter/heatmap
+parity (conceded). M4 stays the auto-on default; LTTB the explicit opt-in.
 
 ### [PND-BOXPLT] — Finish BoxPlot
 

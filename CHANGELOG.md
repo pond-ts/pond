@@ -49,6 +49,19 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts:** M4 decimation extended to **`<Candlestick>`** (same auto-on
+  `decimate` prop). Dense candles are drawn as per-pixel-column **aggregate
+  candles** — `open=first`, `high=max`, `low=min`, `close=last` over the column —
+  i.e. re-bucketed to the pixel-column timeframe, the way a trading chart shows
+  fewer, wider candles as you zoom out (decimator §2.4). It is a faithful OHLC of
+  each column's span, never a distortion; the hover readout still reads the
+  **source** candle at the cursor (§2.3). Decimation gates on the **visible**
+  candle count, so a deep zoom into a large series still draws full-width
+  candles. Pass `decimate={false}` (and pre-aggregate upstream) for
+  fixed-timeframe candles.
+
 ## [0.49.0] — 2026-07-21
 
 ### Added

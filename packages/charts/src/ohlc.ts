@@ -3,6 +3,7 @@ import type { Scale } from './line.js';
 import type { CandleStyle } from './theme.js';
 import { barSpanPx } from './range.js';
 import { visibleSpanRange } from './culling.js';
+import { decimateOhlc, type DecimateOption } from './decimate.js';
 
 /**
  * How an OHLC mark renders (pjm17971's fork 2 — bundled as one component, like
@@ -132,17 +133,29 @@ export function drawCandles(
   colorBy: ColorBy = 'direction',
   gapPx = 0,
   minWidthPx = 1,
+  decimate: DecimateOption = true,
 ): void {
   const bodyFraction = style.bodyWidth ?? DEFAULT_BODY_WIDTH;
-  // Viewport culling (Phase 2): draw only the candles whose span overlaps the
-  // visible x-window (+1 each side); the loop keeps the original index `i`. Full
-  // range when `xScale` has no domain (a test stub).
-  const [vStart, vEnd] = visibleSpanRange(
-    ohlc.x,
-    ohlc.xEnd,
-    ohlc.length,
-    xScale,
-  );
+  // Viewport cull first (Phase 2): the [vStart, vEnd) candles whose span overlaps
+  // the window (+1 each side). Full range when `xScale` has no domain (a stub).
+  let [vStart, vEnd] = visibleSpanRange(ohlc.x, ohlc.xEnd, ohlc.length, xScale);
+  // M4 candle decimation (Phase 5): once the *visible* candles are denser than ~2
+  // per device pixel, replace them with per-column **aggregate candles**
+  // (open=first, high=max, low=min, close=last — a coarser-timeframe candle;
+  // {@link decimateOhlc}). Gate on the visible count, NOT `ohlc.length`: a candle's
+  // width is its slot, so decimating when only a handful are on screen (deep zoom
+  // into a large series) would re-slot each to a 1px sliver. `decimateOhlc` no-ops
+  // (returns the same object) below the visible-density threshold or on a
+  // domainless scale, leaving the loop-bound cull above.
+  const decimated =
+    decimate !== false
+      ? decimateOhlc(ohlc, xScale, ctx, 2, vEnd - vStart)
+      : ohlc;
+  if (decimated !== ohlc) {
+    ohlc = decimated; // aggregate candles are already the visible set
+    vStart = 0;
+    vEnd = ohlc.length;
+  }
   for (let i = vStart; i < vEnd; i += 1) {
     if (!isFiniteOhlc(ohlc, i)) continue;
     const open = ohlc.open[i]!;

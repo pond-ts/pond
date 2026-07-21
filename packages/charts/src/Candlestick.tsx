@@ -1,6 +1,7 @@
 import { useContext, useEffect, useMemo } from 'react';
 import type { SeriesSchema, TimeSeries } from 'pond-ts';
 import { ohlcFromTimeSeries } from './data.js';
+import type { DecimateOption } from './decimate.js';
 import {
   drawCandles,
   isFiniteOhlc,
@@ -80,6 +81,18 @@ export interface CandlestickProps<S extends SeriesSchema> {
    */
   showOHLC?: boolean;
   /**
+   * **M4 viewport decimation** (charts decimator wave). **Omitted ⇒ `true`**:
+   * once the visible candles are denser than ~2 per device pixel, they are drawn
+   * as per-pixel-column **aggregate candles** (`open=first`, `high=max`,
+   * `low=min`, `close=last`) — i.e. re-bucketed to the pixel-column timeframe, the
+   * way a trading chart shows fewer, wider candles as you zoom out. It is a
+   * faithful OHLC of each column's span (never a distortion), just at a coarser
+   * timeframe. Pass `false` to draw every candle at its own slot (and
+   * pre-aggregate upstream if you need a fixed timeframe). Shares
+   * {@link LineChart}'s `DecimateOption`.
+   */
+  decimate?: DecimateOption;
+  /**
    * This layer's `<Legend>` row: `false` ⇒ no row (opt out), a string ⇒ the
    * row's display name. **Omitted ⇒ a row named by the layer's readout
    * identity** (`as` ?? the `close` column). The swatch is the resolved
@@ -132,6 +145,7 @@ export function Candlestick<S extends SeriesSchema>({
   colorBy = 'direction',
   gap = 0,
   showOHLC = false,
+  decimate = true,
   legend,
   index = 0,
 }: CandlestickProps<S>) {
@@ -199,7 +213,18 @@ export function Candlestick<S extends SeriesSchema>({
           return samples;
         },
         draw: (ctx, xScale, yScale) =>
-          drawCandles(ctx, ohlc, xScale, yScale, style, variant, colorBy, gap),
+          drawCandles(
+            ctx,
+            ohlc,
+            xScale,
+            yScale,
+            style,
+            variant,
+            colorBy,
+            gap,
+            undefined,
+            decimate,
+          ),
       },
       axisId: axis,
       index,
@@ -213,6 +238,7 @@ export function Candlestick<S extends SeriesSchema>({
       colorBy,
       gap,
       showOHLC,
+      decimate,
       axis,
       index,
     ],

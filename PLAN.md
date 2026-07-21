@@ -29,24 +29,27 @@ A lost session should never erase the current state of the project.
 ### `@pond-ts/charts`
 
 The canvas wave shipped the rendering spine, seven chart types, interactions,
-the decimator, and the trading-time + categorical axes; the package is still
-`private`. Remaining: land built work, Phase-2 RFC slices, and the M5 parity
-gate that flips the first publish. Plan:
+the decimator (line/area/band M4 + viewport culling, **released in v0.49.0**),
+and the trading-time + categorical axes; the package is **published**
+(`@pond-ts/charts` on npm, `private: false`). Remaining: land built work,
+Phase-2 RFC slices, and the M5 parity gate for the stable / estela-parity
+milestone. Plan:
 [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md) · RFC:
 [charts.md](docs/rfcs/charts.md).
 
 - **[PND-CATAX]** — Land categorical axis Phase 1. Three PRs are built and
   verified on `feat/charts-categorical-axis` but not pushed; land with
   Layer-2 + Codex review, human gate on the `SelectInfo.mark` widening.
-- **[PND-PARITY]** — M5 estela parity. Faithful `DataChart` reproduction on
-  real activity data, no regressions, then `private: false` + first publish.
-  Gates: statistical bands, theme tokens optional-with-default, shared
-  axis-headroom policy.
+- **[PND-PARITY]** — M5 estela parity (the stable milestone; the package
+  already publishes pre-parity). Faithful `DataChart` reproduction on real
+  activity data, no regressions. Gates: statistical bands, theme tokens
+  optional-with-default, shared axis-headroom policy.
 - **[PND-SELECT]** — Selection Phase 2: multi-select widen + `selectionMode`,
   `LineChart.hitTest`, snap-follows-selection prop, theme-referenced dim.
   Breaking widen → human gate. RFC: [selection.md](docs/rfcs/selection.md).
-- **[PND-DECIM]** — Decimator Phase 5: candlestick decimation with Tidal;
-  Path2D cache only if the pan bench misses.
+- **[PND-DECIM]** — Decimator Phase 5 (finish-the-wave): candlestick + box
+  decimation (Tidal-anchored), document the `three`-at-1M render floor
+  (Path2D doesn't help pan), then the "large time series" how-to + release.
 - **[PND-BOXPLT]** — Finish BoxPlot: ValueSeries widening, range-only mode,
   px `offset` for same-x pairs, line-only shape, join the cursor x-snap, and
   selection `id` via rect-containment `hitTest` (#508 item 5; Candlestick

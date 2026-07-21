@@ -9,8 +9,9 @@ import {
   m4Polyline,
   decimateM4,
   decimateBand,
+  decimateOhlc,
 } from '../src/decimate.js';
-import type { ChartSeries, BandSeries } from '../src/data.js';
+import type { ChartSeries, BandSeries, OhlcSeries } from '../src/data.js';
 import type { Scale } from '../src/line.js';
 
 const cs = (x: number[], y: number[]): ChartSeries => ({
@@ -289,5 +290,85 @@ describe('decimateM4 — session-break edge union', () => {
     // A break outside the visible domain is dropped (no edge, no NaN).
     const outside = decimateM4(s, pxScale(0, n), stubCtx(4), 2, [-100]);
     expect(outside.length).toBe(noBreak.length);
+  });
+});
+
+describe('decimateOhlc', () => {
+  const oh = (
+    x: number[],
+    o: { open: number[]; high: number[]; low: number[]; close: number[] },
+  ): OhlcSeries => ({
+    x: Float64Array.from(x),
+    xEnd: Float64Array.from(x.map((v) => v + 1)),
+    open: Float64Array.from(o.open),
+    high: Float64Array.from(o.high),
+    low: Float64Array.from(o.low),
+    close: Float64Array.from(o.close),
+    length: x.length,
+  });
+
+  it('returns the same object when the series is already sparse', () => {
+    const s = oh([0, 1, 2], {
+      open: [1, 1, 1],
+      high: [2, 2, 2],
+      low: [0, 0, 0],
+      close: [1, 1, 1],
+    });
+    expect(decimateOhlc(s, pxScale(0, 2), stubCtx(800))).toBe(s);
+  });
+
+  it('aggregates candles per column: open=first, high=max, low=min, close=last', () => {
+    // 8000 candles on [0,8000); W=4 → each column spans 2000 candles.
+    const n = 8000;
+    const x = Array.from({ length: n }, (_, i) => i);
+    const s = oh(x, {
+      open: x.map((i) => i), // first in column b = 2000b
+      high: x.map((i) => i + 10), // max in column b = (2000b+1999)+10
+      low: x.map((i) => i - 10), // min in column b = 2000b-10
+      close: x.map((i) => i + 5), // last in column b = (2000b+1999)+5
+    });
+    const out = decimateOhlc(s, pxScale(0, n), stubCtx(4), 2); // W=4
+    expect(out.length).toBe(4);
+    // Column 0 covers candles 0..1999.
+    expect(out.open[0]).toBe(0); // first open
+    expect(out.high[0]).toBe(2009); // max high = 1999+10
+    expect(out.low[0]).toBe(-10); // min low = 0-10
+    expect(out.close[0]).toBe(2004); // last close = 1999+5
+    // Each aggregate candle's slot is its pixel column [2000b, 2000(b+1)].
+    expect(out.x[0]).toBe(0);
+    expect(out.xEnd[0]).toBe(2000);
+    // Column 3 (6000..7999): last close = 7999+5.
+    expect(out.close[3]).toBe(8004);
+  });
+
+  it('does not decimate when few candles are visible (gates on visible count, not total)', () => {
+    // 5000 candles total (>> W), but the caller reports only 5 in view (a deep
+    // zoom). Decimating here would re-slot 5 candles to 1px slivers, so it must
+    // no-op and return the source for the loop-bound cull to draw at full width.
+    const n = 5000;
+    const x = Array.from({ length: n }, (_, i) => i);
+    const s = oh(x, {
+      open: x.map(() => 1),
+      high: x.map(() => 2),
+      low: x.map(() => 0),
+      close: x.map(() => 1),
+    });
+    expect(decimateOhlc(s, pxScale(0, n), stubCtx(800), 2, 5)).toBe(s);
+    // Same series, same viewport, but reported fully visible → decimates.
+    expect(decimateOhlc(s, pxScale(0, n), stubCtx(800), 2, n)).not.toBe(s);
+  });
+
+  it('emits NaN on an empty column (a gap → drawCandles skips it)', () => {
+    // candles only at 0..5 and 35..40; W=4 over [0,40] → middle columns empty.
+    const x = [0, 1, 2, 3, 4, 5, 35, 36, 37, 38, 39, 40];
+    const s = oh(x, {
+      open: x.map(() => 1),
+      high: x.map(() => 2),
+      low: x.map(() => 0),
+      close: x.map(() => 1),
+    });
+    const out = decimateOhlc(s, pxScale(0, 40), stubCtx(4), 1); // W=4, colWidth 10
+    expect(Number.isNaN(out.open[1]!)).toBe(true); // column [10,20): no candles
+    expect(Number.isNaN(out.high[2]!)).toBe(true); // column [20,30): no candles
   });
 });
