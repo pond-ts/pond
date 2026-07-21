@@ -58,3 +58,24 @@ from prefix sums/counts, fall back to the event-walked path. Friction-gated.
 
 `unique` / `top` / `samples` / grouped `count` over dictionary-encoded
 columns. Friction-gated.
+
+### [PND-WCNAN] — `withColumn` NaN-canonical `Float64Array` intake
+
+**Source:** dashboard-agent friction report (pond-ts-dashboard engine A/B,
+2026-07-21). `withColumn` rejects NaN today, so a consumer deriving a **gated**
+column (a value that is present for some rows, missing for others) must hand it
+in as a boxed `(number | undefined)[]` rather than a typed array. At density
+that boxing is the dominant adapter cost the report measured — the per-tick
+derivation memo goes 6.3 ms @ 86k → **~25 ms @ 360k**, mostly boxing three
+derived columns per host per tick.
+
+**Ask:** accept a NaN-as-missing `Float64Array` as `withColumn` intake —
+symmetric with what `colToValues` already **emits** (NaN for a missing cell).
+Then a consumer reads columns out as typed arrays, derives into a fresh
+`Float64Array` writing `NaN` for gated-out cells, and hands it straight back —
+allocation-free, no boxing. This is one face of the broader **NaN-vs-`undefined`
+sentinel asymmetry** flagged as friction #3/#4 in the wide-schema report: the
+read side speaks NaN, the write side (`withColumn`) demands `undefined`. Design
+call: whether NaN-intake is a `withColumn` option/overload or the columnar
+substrate canonicalizes the two sentinels end to end. Friction-gated but has a
+named consumer and a measured cost.

@@ -243,6 +243,58 @@ the second consumer to hit it). The `useMeasuredWidth` `ResizeObserver`
 pattern is documented as a recipe (#445); the library-side question is
 whether `ChartContainer` should own a fill/auto-width mode.
 
+### [PND-DECOBS] — Draw-time + decimation observability
+
+**Source:** dashboard-agent friction report (pond-ts-dashboard engine A/B,
+2026-07-21). The dashboard A/B'd the 0.49 `decimate` prop (auto vs off) at
+~360k visible points and found the two **indistinguishable** — but could not
+tell from consumer land whether M4 wasn't engaging on their path or was
+engaging with its win absent on a data-side-bound 1 Hz live tick. The packaged
+layer is a black box; there is no seam to answer "is this layer decimated right
+now, and what did the draw cost?" This is the standing gap from the 0.48
+engine-A/B port (their `chartDraw` HUD channel meters their own canvas engine,
+not ours).
+
+**Investigation (already done, 2026-07-21).** Traced against the shipped draw
+path, both of the report's candidate mechanisms are ruled out: (a) there is
+**no identity- or object-keyed cache** — `decimateM4`/`decimateBand` recompute
+every draw, so a fresh per-snapshot `TimeSeries` cannot defeat decimation; (b)
+there is **no Path2D cache at all** — the `index.ts` header comment claiming a
+"chunked Path2D cache" is stale (Path2D was deferred; [PND-DECIM] floor
+decision), and it likely seeded the report's reading (b). The real silent
+no-op paths are: a **non-linear `curve`** on a layer (`drawLine`/`drawBand`
+only decimate when `curve === curveLinear` — a "smoothed" layer on
+`curveMonotoneX`/`curveBasis` draws full-res both modes), an **x-scale missing
+`.invert()`/`.range()`/`.domain()`** (the #504-class silent bail), and `W = 0`.
+The report's _conclusion_ ("decimation's win is per-rebuild, not per-append") is
+correct and now documented in the [large-series how-to] — on a tick where draw
+is ~1 % of frame time, even fully-engaged decimation is invisible in fps.
+
+**Shape (unify asks #1 + #2 from the report):** one per-frame, per-layer
+draw-stats callback on `ChartContainer` — `onDrawStats?(frame: { layers:
+{ as, sourceCount, drawnCount, decimated, drawMs }[]; totalDrawMs })` (name
+TBD). `drawnCount ≈ sourceCount` ⇒ not engaging (and immediately fingers which
+of the three no-op paths); the per-layer `drawMs` is the draw-cost seam they
+asked for. Dev-mode `console.debug` is the cheap first cut; the callback is the
+durable API. Design question: per-layer `performance.measure` marks vs a
+pushed struct — the struct composes better with their HUD.
+
+[large-series how-to]: ../../website/docs/how-to-guides/rendering-large-series.mdx
+
+### [PND-LIVELYR] — Live-source-aware layer inputs
+
+**Source:** same report (ask #4). Charts layers accept only a `TimeSeries`, so
+a live consumer manufactures a fresh per-tick handle per entity
+(`rollingSnapshot.partitionBy('host').toMap(g => g)` then `withColumn`-append)
+— and their snapshot-vs-`LiveView` A/B (§7) can't extend to the pond engine at
+all, because there is no live input to compare against. A `LiveView`-aware
+layer input — or, cheaper, a **documented cheap-handle idiom** for live charts
+(what the minimal per-tick allocation actually is, and how to avoid re-deriving
+columns every frame) — closes both. Overlaps [PND-PARITY] (estela is the other
+live consumer) and the live layer; sequence behind whichever pulls first. Not a
+standalone build yet — needs the design call on whether layers gain a live
+input or the idiom is just documented.
+
 ### [PND-ANNRFC] — Annotations RFC write-up
 
 The annotations system shipped (#306/#308/#309) and the staffed cursor-flag

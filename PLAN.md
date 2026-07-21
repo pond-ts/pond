@@ -65,6 +65,16 @@ milestone. Plan:
   naming convention, no new plumbing).
 - **[PND-WIDTH]** — Responsive width/fill for `ChartContainer` (two
   consumers hit the explicit-px requirement).
+- **[PND-DECOBS]** — Draw-time + decimation observability (dashboard A/B
+  friction, 2026-07-21): one per-frame, per-layer draw-stats callback
+  (`{ as, sourceCount, drawnCount, decimated, drawMs }`) so a consumer can
+  see whether M4 engaged and what draw cost. The packaged layer is a black
+  box today; this is the standing 0.48 engine-A/B gap.
+- **[PND-LIVELYR]** — Live-source-aware layer inputs (same report, ask #4):
+  charts layers take only `TimeSeries`, forcing a fresh per-tick handle
+  (`snapshot.partitionBy().toMap()`) per host. A `LiveView`-aware input — or
+  a documented cheap-handle idiom for live charts — closes it. Overlaps
+  [PND-PARITY] / the live layer.
 - **[PND-ANNRFC]** — Write the short `docs/rfcs/annotations.md` design
   record the owner asked for (confirm still wanted).
 
@@ -168,6 +178,13 @@ consumer signal. Plan:
 - **[PND-PLANNR]** — Aggregate planner (step 5): friction-gated.
 - **[PND-DICT]** — Dictionary/string reducer adaptation (step 6):
   friction-gated.
+- **[PND-WCNAN]** — `withColumn` NaN-canonical `Float64Array` intake
+  (dashboard A/B friction, 2026-07-21): `withColumn` rejects NaN today, so a
+  consumer deriving gated columns boxes into `(number | undefined)[]` — the
+  dominant adapter cost at density (~25 ms/tick @ 360k). Accept NaN-as-missing
+  typed arrays (symmetric with `colToValues` output) to make derivation
+  allocation-free. Ties to the NaN-vs-`undefined` sentinel asymmetry from the
+  wide-schema report.
 
 ### Core batch + React backlog
 
