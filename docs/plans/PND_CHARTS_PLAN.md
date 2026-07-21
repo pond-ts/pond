@@ -126,11 +126,18 @@ red/green reject: colour = theme role, not call-site). Shape:
 annotation`; the depth ramp applies within the role's hue. `cssVarTheme` role
 mapping lands in the same pass.
 
-### [PND-YTICKS] — `YAxis` tick density
+### [PND-YTICKS] — `YAxis` tick density — DONE
 
-#508 item 4. Height-derived default tick count + an explicit `tickCount`
-override (the 0.44.1 width-derived-x precedent); explicit `ticks` still wins.
-Small.
+Shipped (#508 item 4). `<YAxis tickCount>` pins an explicit auto-tick target;
+omitted, the count is **height-derived** (`resolveYTickCount(height)` ≈ 1
+tick / 48px, floored at 2) so a short strip isn't crushed with a tall row's
+density — the y mirror of the 0.44.1 width-derived x axis. Explicit `ticks`
+still overrides both. **Key design point:** the count is resolved once per
+axis in `ChartRow` (`row.tickCounts`) and read by the `<YAxis>` labels, the
+readout formatter (`formats`), and the `Layers` gridlines — a single source
+replacing the three hardcoded `5`s (`YAxis` `TICK_COUNT`, `ChartRow`
+`AXIS_TICK_COUNT`, `Layers` `GRID_TICKS`) that previously agreed only by
+convention, so label / gridline / readout can no longer drift.
 
 ### [PND-CURSOR] — Cursor/readout polish backlog
 

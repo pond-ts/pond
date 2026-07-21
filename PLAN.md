@@ -54,8 +54,6 @@ gate that flips the first publish. Plan:
 - **[PND-ANROLE]** — Per-annotation colour as a theme role map
   (`theme.annotation.roles` + `role` prop on the three marks; #508 item 3;
   inline per-mark colour rejected).
-- **[PND-YTICKS]** — `YAxis` height-derived tick density + explicit
-  `tickCount` override (#508 item 4; the width-derived-x precedent). Small.
 - **[PND-CURSOR]** — Cursor/readout polish backlog (scatter 2D-nearest,
   chip de-overlap, y-oriented region cursor, `pointercancel` clear-only
   fix).
