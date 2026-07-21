@@ -7,7 +7,8 @@ import { story, waitForCanvasPaint } from './support.js';
  * Unlike `perf.spec.ts` (directional absolute numbers, opt-in), these are
  * robust binary checks chosen so runner noise can't flip them: they assert the
  * renderer doesn't *catastrophically* misbehave, with generous slack, not that
- * it hits a target FPS. The two invariants the RFC names for Phase 1:
+ * it hits a target FPS. The two invariants the RFC names for Phase 1, plus a
+ * third from the 2026-07 uPlot bench comparison:
  *
  *  1. **No heap-growth trend** under sustained live-append over a fixed-size
  *     ring (the gating invariant — a leak shows as unbounded growth; eviction
@@ -15,6 +16,8 @@ import { story, waitForCanvasPaint } from './support.js';
  *  2. **Bounded draw time** at a fixed fixture size — sustained pan must keep
  *     the main thread responsive (no multi-hundred-ms stall, FPS above a low
  *     floor far under the 60 target).
+ *  3. **Hover never repaints the data canvas** — the cursor is a pure
+ *     SVG-overlay concern; a pointer sweep must leave the row canvas untouched.
  *
  * Absolute FPS / timing stays in the directional results writeup, never here.
  * Sparse-marker preservation (a decimation invariant) is N/A in Phase 1 — there
@@ -165,5 +168,101 @@ test.describe('perf invariants (CI-gating)', () => {
     // Responsiveness floor: far below the 60fps target so noise can't trip it,
     // but a draw that blew the budget (single-digit fps) fails.
     expect(stats.fps, `pan fps ${stats.fps.toFixed(1)}`).toBeGreaterThan(20);
+  });
+
+  // INVARIANT 3 — hovering never repaints the data canvas. The cursor is an
+  // SVG/DOM overlay above the data; a pointer sweep across the plot must leave
+  // the row canvas untouched. Regression guard for the frame `timeRange`
+  // identity leak: a fresh `[d0, d1]` array per ContainerFrame rebuild (the
+  // frame rebuilds on every cursor move — cursorX is a frame field) gave the
+  // Layers draw callback a new dep identity per mousemove → the Canvas layout
+  // effect re-fired → full replot including per-layer M4 re-decimation on every
+  // hover frame (measured 105 repaints per 122 mousemove events; ~10 fps hover
+  // with decimation off).
+  //
+  // Repaint counting: a Canvas draw pass calls `ctx.clearRect` exactly once,
+  // it's the only `clearRect` in the render path, and `<Canvas>` is rendered
+  // only by `<Layers>` (the row data canvas) — so clearRect calls ≡ data-canvas
+  // repaints. An init-script patch counts them; the count must not move during
+  // the sweep. Binary and noise-proof: the overlay contract is *zero*, not few.
+  test('hover sweep never repaints the data canvas', async ({ page }) => {
+    await page.addInitScript(() => {
+      const w = window as unknown as { __canvasClears: number };
+      w.__canvasClears = 0;
+      const orig = CanvasRenderingContext2D.prototype.clearRect;
+      CanvasRenderingContext2D.prototype.clearRect = function (
+        ...args: Parameters<typeof orig>
+      ) {
+        w.__canvasClears += 1;
+        return orig.apply(this, args);
+      };
+    });
+    await page.goto(
+      `${story('perf-bench--static')}&args=scenario:line;size:10000`,
+    );
+    const dataCanvas = page.locator('canvas').first();
+    await waitForCanvasPaint(dataCanvas);
+
+    // Wait for mount-time draws to finish (the two-pass extent settle, late
+    // layout) by polling the clear count until it holds still, then zero it —
+    // the invariant covers *hover*, from first plot entry onward.
+    let last = -1;
+    await expect
+      .poll(
+        async () => {
+          const now = await page.evaluate(
+            () =>
+              (window as unknown as { __canvasClears: number }).__canvasClears,
+          );
+          const stable = now === last;
+          last = now;
+          return stable;
+        },
+        { intervals: [400], timeout: 15_000 },
+      )
+      .toBe(true);
+    await page.evaluate(() => {
+      (window as unknown as { __canvasClears: number }).__canvasClears = 0;
+    });
+
+    // Sweep the pointer across the plot at mid-height — right, left, then park
+    // at 2/3 width. `steps` interpolates real mousemove events (~150 total).
+    const box = await dataCanvas.boundingBox();
+    if (box === null) throw new Error('no canvas bounding box');
+    const y = box.y + box.height / 2;
+    await page.mouse.move(box.x + 4, y);
+    await page.mouse.move(box.x + box.width - 4, y, { steps: 60 });
+    await page.mouse.move(box.x + 4, y, { steps: 60 });
+    const parkPlotX = Math.round((box.width * 2) / 3);
+    await page.mouse.move(box.x + parkPlotX, y, { steps: 30 });
+
+    // Liveness gate: the sweep must actually have driven the cursor — the
+    // line-mode cursor draws a full-row-height vertical overlay `<line>` at the
+    // hovered plot pixel (`x1 = x2 = round(cursorX)`, `y1 = 0 → y2 =
+    // row.height`; the data canvas sits at the plot's left edge, so page x −
+    // canvas left ≡ plot x). Without this, a dead event surface would pass the
+    // zero-repaint assertion vacuously. The height floor keeps a short axis
+    // tick mark that happens to sit near the parked x from satisfying the gate.
+    await expect
+      .poll(
+        () =>
+          page.evaluate((expected) => {
+            const lines = document.querySelectorAll('svg line');
+            return Array.from(lines).some((l) => {
+              const x1 = Number(l.getAttribute('x1'));
+              const x2 = Number(l.getAttribute('x2'));
+              const y1 = Number(l.getAttribute('y1'));
+              const y2 = Number(l.getAttribute('y2'));
+              return x1 === x2 && Math.abs(x1 - expected) <= 1 && y2 - y1 >= 50;
+            });
+          }, parkPlotX),
+        { timeout: 5_000 },
+      )
+      .toBe(true);
+
+    const clears = await page.evaluate(
+      () => (window as unknown as { __canvasClears: number }).__canvasClears,
+    );
+    expect(clears, `data-canvas repaints during hover sweep`).toBe(0);
   });
 });

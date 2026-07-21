@@ -50,6 +50,20 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **charts:** hovering no longer repaints the row data canvas on every cursor
+  mousemove. The container frame minted a fresh `timeRange` array identity per
+  rebuild (and the frame rebuilds per cursor move), which the Layers draw
+  callback — depending on `container.timeRange` — read as a domain change:
+  each hover frame re-fired the canvas draw effect, including per-layer M4
+  re-decimation (measured 105 repaints per 122 mousemove events; with
+  `decimate` off, hover fell to ~10 fps). The tuple is now identity-stable on
+  its endpoints, restoring the SVG-overlay cursor contract (0 repaints, full
+  frame rate while hovering). Found running uPlot's bench protocol against
+  pond-charts; guarded by a new hover-sweep perf invariant in
+  `e2e/perf-invariants.spec.ts`.
+
 ## [0.50.0] — 2026-07-21
 
 ### Added

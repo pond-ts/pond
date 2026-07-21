@@ -281,6 +281,10 @@ export function Layers({ children }: LayersProps) {
       gridColor,
       gridDash,
       container.discontinuities,
+      // Identity-stable across cursor moves (memoized tuple in ChartContainer;
+      // e2e `hover sweep never repaints the data canvas` pins this). A fresh
+      // array per frame rebuild here would re-fire the Canvas draw effect —
+      // a full replot per mousemove.
       container.timeRange,
     ],
   );
