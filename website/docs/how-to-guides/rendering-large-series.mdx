@@ -1,0 +1,248 @@
+---
+title: Rendering large time series
+sidebar_position: 5
+---
+
+# Rendering large time series
+
+A guide to drawing **millions of points** with `@pond-ts/charts` without the
+pan-and-zoom cliff — how the built-in **decimator** works, what the bench numbers
+actually say, and (just as important) where it stops helping. Grounded in the
+real perf work of the charts decimator wave and the machine-recorded bench in
+`packages/charts/perf/RESULTS.md`.
+
+The short version: **you don't have to do anything.** Decimation is auto-on. A
+`<LineChart>` over a million points pans at ~90 fps out of the box. The rest of
+this guide is about _why_ that works, when it doesn't, and the honest ceiling
+you'll hit if you push past it.
+
+## The cliff
+
+A canvas time-series chart that strokes every point every frame has a hard
+ceiling, and it's lower than you'd guess. Here's the un-optimized
+draw-everything renderer — the pond charts baseline **before** the decimator —
+panning a single line:
+
+| Points    | Pan FPS  | Worst pan frame |
+| --------- | -------- | --------------- |
+| 10,000    | 120      | 17 ms           |
+| 100,000   | **8**    | 333 ms          |
+| 500,000   | _frozen_ | —               |
+| 1,000,000 | _frozen_ | —               |
+
+Between 10k and 100k the interaction **falls off a cliff** — 120 fps to 8 fps, a
+third of a second frozen per pan step — and by 500k the frame loop can't sample
+at all. Three overlaid lines move the cliff earlier (2.9 fps at 100k); a filled
+band, earlier still (4.8 fps at 100k).
+
+The reason is mechanical: **per-frame cost scales linearly with rendered point
+count, and every pan or zoom re-strokes every point.** A pan frame on a 100k
+line walks and strokes all 100k points through a fresh path generator — ~333 ms
+of main-thread work against a 16 ms budget. Nothing about the data changed; you
+just asked the canvas to redraw it, and it's 20× too slow.
+
+## What decimation does
+
+The fix is to **stop drawing points you can't see.** Two things, both automatic:
+
+1. **Viewport culling** clips each layer to the visible slice of its key column
+   (plus one entry/exit point each side so the segment crossing each plot edge
+   still lands). Zoom in, and a million-point series draws only the few hundred
+   points actually on screen.
+2. **M4 decimation** ([Jugel et al., VLDB 2014](https://www.vldb.org/pvldb/vol7/p797-jugel.pdf))
+   bounds the _zoomed-out_ draw. It divides the plot into one bucket per device
+   pixel column and keeps four points per bucket — the **min, max, first, and
+   last** — so the drawn polyline is ~`4 × plot-width` points regardless of
+   whether the source is 100k or 100M. Because it keeps the per-column min **and**
+   max, a one-sample spike still reaches full height: the envelope is preserved,
+   not smoothed away.
+
+Together they make the draw cost **flat in the point count** — it's proportional
+to plot width, not `N`. Here's the same single-line pan **after** decimation:
+
+| Points    | Pan FPS (before → after) |
+| --------- | ------------------------ |
+| 100,000   | **8 → 118**              |
+| 500,000   | frozen → **90**          |
+| 1,000,000 | frozen → **91**          |
+
+Initial render at 1M drops the same way — a single line goes from **6,976 ms →
+69 ms**, because the first frame now decimates instead of stroking every point.
+
+:::note Numbers are directional, not absolute
+The before/after columns above were recorded on two different machines (the
+"after" run on a weaker box), so don't read them as apples-to-apples
+milliseconds. The **shape** is the signal and it's machine-independent: an
+8 fps → 118 fps pan at 100k is not explained by a CPU delta. Re-run
+`npm run perf` in `packages/charts` to regenerate `perf/baseline.json` on yours.
+:::
+
+## You don't configure it
+
+Decimation is **on by default** on every layer that draws a dense series. There
+is no threshold to tune, no mode to pick, no "enable virtualization" flag:
+
+```tsx
+import {
+  ChartContainer,
+  ChartRow,
+  Layers,
+  LineChart,
+  XAxis,
+} from '@pond-ts/charts';
+
+// `million` is a TimeSeries with ~1,000,000 rows.
+<ChartContainer width={900} panZoom>
+  <ChartRow height={280}>
+    <Layers>
+      <LineChart series={million} column="value" as="signal" />
+    </Layers>
+  </ChartRow>
+  <XAxis />
+</ChartContainer>;
+```
+
+That chart pans at ~90 fps. The decimator kicks in once the visible points are
+denser than ~2 per device pixel and steps back out automatically as you zoom in
+— so a deep zoom draws the real, un-decimated points at full fidelity, and a
+zoomed-out view draws the min/max envelope. You never see the seam.
+
+To turn it **off** — for a chart you know is always sparse, or where you want to
+prove to yourself the draw is identical — pass `decimate={false}`:
+
+```tsx
+<LineChart series={million} column="value" as="signal" decimate={false} />
+```
+
+You can also raise the density threshold if you want decimation to hold off
+longer:
+
+```tsx
+<LineChart series={s} column="v" as="v" decimate={{ threshold: 4 }} />
+```
+
+`decimate` is the same `DecimateOption` prop on every dense layer — `LineChart`,
+`AreaChart`, `BandChart`, `Candlestick`, and `BoxPlot`.
+
+## Every layer, and what its aggregate means
+
+Decimation isn't only for lines. Each layer decimates in the shape that's
+faithful to _that_ mark:
+
+- **`<LineChart>`** — the M4 min/max/first/last polyline. Every gap mode
+  (`empty` / `none` / `dashed` / `step` / `fade`) decimates, and a trading-time
+  axis's `sessionBreaks` still break cleanly at each session open.
+- **`<AreaChart>`** — the outline is the M4 line; the fill follows it.
+- **`<BandChart>`** — the per-column **`min(lower)` / `max(upper)`** envelope, so
+  the decimated band always covers the same pixels the full band did and can
+  never invert.
+- **`<Candlestick>`** — one **aggregate candle per pixel column**: `open=first`,
+  `high=max`, `low=min`, `close=last` over the column. That is exactly an OHLC
+  bar re-bucketed to a coarser timeframe — the way every trading UI shows fewer,
+  wider candles as you zoom out. It is the faithful OHLC of the column's time
+  range, never a distortion.
+- **`<BoxPlot>`** — one **aggregate box per pixel column**: whiskers widen to the
+  column's reach (`min(lower)` / `max(upper)`), the body to its IQR envelope
+  (`min(q1)` / `max(q3)`), the centre line to the first box's median.
+
+For candles and boxes there's a judgment call baked into the default: a
+re-bucketed candle is a _statement_ about the data (this column's OHLC), and a
+purist doing fixed-timeframe analysis may want to pre-aggregate upstream and draw
+every bar. That's what `decimate={false}` is for. The default is auto-on because
+it is never _wrong_ — it's the exact aggregate of the pixel column's span — and
+it matches the convention every charting tool in the space already uses.
+
+## Interaction always reads the source
+
+One invariant worth calling out, because it's the thing that makes auto-on
+decimation safe: **hover, tooltips, and hit-testing read the full source series,
+not the decimated draw.** When you mouse over a decimated candle, the readout is
+the _real_ bar under the cursor — the actual OHLC at that timestamp — not the
+aggregate the pixel column happens to be drawing. Decimation is a **draw-only**
+transform. The number you read is always the number in your data.
+
+A corollary: at decimation density, a per-mark selection highlight (a selected
+box outlined, say) may not paint, because the source mark's key no longer
+matches an aggregate column. That's intentional — a highlight on one of a
+thousand boxes crushed into a pixel column isn't meaningful anyway — and the
+selection itself still resolves against the source on click.
+
+## The honest ceiling
+
+Decimation flattens the **render** curve. It does not make the chart free, and
+for two cases you should know exactly where it stops.
+
+### `three`-at-1M is the render floor
+
+Three overlaid lines at a million points each is the weakest case:
+
+| Points    | line | three  | band |
+| --------- | ---- | ------ | ---- |
+| 100,000   | 118  | 44     | 120  |
+| 500,000   | 90   | 8      | 54   |
+| 1,000,000 | 91   | **24** | 88   |
+
+`line` and `band` hold **90–120 fps to 1M** — the draw ceiling is effectively
+flat. `three` dips to **24 fps at 1M**: it pays 3× the per-frame decimation walk,
+so it's the floor. 24 fps is still interactive, and it's the extreme case (three
+million-point series, all visible, all decimating every frame).
+
+We deliberately **did not** build further optimization for it. The obvious next
+lever — **Path2D path caching** — does not help the case that's actually slow.
+Path2D caching pays when the drawn path is _stable_ across frames; but a **pan**
+moves the viewport every frame, which re-decimates to a new set of points every
+frame, so the cache invalidates every frame. It would help a static redraw (a
+theme change, a resize) that pond charts don't spend their time in. So the 24 fps
+`three`-at-1M number is the terminal render floor for the "cull-then-decimate per
+frame" strategy, and that's a documented decision, not an oversight. If a real
+consumer ever needs `three`-at-1M above 24 fps, the lever is a chunked-path cache
+keyed on the decimation output — but nobody has hit that wall yet, so it stays
+unbuilt.
+
+### For live data, the data-side ceiling hits first
+
+This is the more important caveat, and it's easy to miss because the render curve
+looks so clean. **A flat render curve is not "perf solved."**
+
+The bench above is a _render_ bench — it measures stroke time and frame cadence.
+It does **not** measure the **data-side** cost: rebuilding the snapshot
+`TimeSeries` on every live flush, partition fan-out, and the GC churn from
+per-flush allocation. For a **live-streaming** consumer, that cost hits first.
+In the dashboard use-case traces, chart draw stayed at 50–150 μs even at 256
+series while `view.toTimeSeries()` rebuilds and React commits pegged the CPU.
+
+So the mental model is two independent ceilings:
+
+- **Render ceiling** — how fast you can draw. Decimation lifts this to ~1M points
+  at interactive rates. This guide is about this ceiling.
+- **Data-side ceiling** — how fast you can _produce_ the snapshot to draw. For a
+  batch chart (a fixed `TimeSeries` you pan and zoom) this never bites — the
+  snapshot is built once. For a live chart appending at 5–10 kHz, it's the real
+  limit, and decimation does nothing for it. That's a `LiveSeries` /
+  `useSnapshot` throttling problem — see the
+  [dashboard guide](./dashboard-guide) for the read-side patterns (throttled
+  snapshot reads, bounded windows) that address it.
+
+Put plainly: if you're panning a big historical series, decimation is the whole
+story and you're done. If you're streaming, decimation keeps the draw cheap but
+the snapshot rebuild is your gating invariant, and you tune _that_.
+
+## Checklist
+
+- **Drawing a large batch series?** Do nothing — decimation is on. Confirm by
+  panning; it should stay smooth into the millions.
+- **Chart looks wrong / want the raw points?** `decimate={false}`. If the two
+  look identical (they should, for a line), decimation was lossless.
+- **Fixed-timeframe candles/boxes?** Pre-aggregate upstream and pass
+  `decimate={false}` — the auto-aggregate is a coarser-timeframe bar, which may
+  not be what a fixed-timeframe analysis wants.
+- **Reading a value off a decimated chart?** You're reading the source — the
+  hover readout is always the real datum, never the aggregate.
+- **Live-streaming and still slow?** It's not the draw. Look at the snapshot
+  rebuild / read throttle — the data-side ceiling, covered in the
+  [dashboard guide](./dashboard-guide).
+
+All the numbers above are reproducible: `npm run perf` in `packages/charts`
+regenerates `perf/baseline.json`, and the `Performance/Decimation` Storybook
+group (run `npm run storybook`) has the live before/after stories per layer,
+including the deep-zoom cases where decimation steps back out.
