@@ -50,6 +50,17 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts:** **`<BoxPlot id>` — box selection** (#508 item 5, Tidal
+  vol-surface friction). A `BoxPlot` with an `id` is now clickable on the same
+  id-gated contract `<BarChart>` / `<ScatterChart>` carry
+  (`selected`/`onSelect`, `hovered`/`onHover`): a click anywhere on a box —
+  body or whisker, a range-only bid→ask segment included — selects it via
+  rect-containment (`boxAt`, the interval-mark analog of `barAt`, **not** the
+  continuous nearest-point threshold), and the selected box outlines (hovered
+  fainter, reusing `theme.box.stroke`, no new token). `key` is the box's `x`
+  (its span begin). Without an `id` the box stays display-only. Independent of
+  the box's `cursorFlag` cursor opt-out — selection rides the separate
+  `hitTest` path.
 - **charts:** **`<YAxis tickCount>` + height-derived tick density** (#508
   item 4, Tidal vol-surface friction). The y axis's auto-tick count now
   follows the **row height** by default — a short strip (e.g. a 72px

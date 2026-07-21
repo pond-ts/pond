@@ -3,6 +3,7 @@ import { ValueSeries } from 'pond-ts';
 import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
 import { boxFromTimeSeries, boxFromValueSeries } from './data.js';
 import {
+  boxAt,
   boxExtent,
   boxIndexAtTime,
   drawBox,
@@ -14,6 +15,7 @@ import {
   LayersContext,
   type CursorFlagLine,
   type LayerEntry,
+  type SelectInfo,
   type TrackerSample,
 } from './context.js';
 import {
@@ -114,6 +116,16 @@ export interface BoxPlotProps<
    */
   capWidth?: number;
   /**
+   * Stable series identity — **gates selection + hover**, the same id-gated
+   * contract `<BarChart>` / `<ScatterChart>` carry. With an `id`, a click on a
+   * box (body or whisker — a range-only bid→ask segment included) selects it
+   * (`selected`/`onSelect`) and pointer-over lights it (`hovered`/`onHover`);
+   * the box matching the selection's `(id, key)` outlines. **Omitted ⇒
+   * display-only** (a click resolves to empty space). `key` is the box's `x`
+   * (its `begin`).
+   */
+  id?: string;
+  /**
    * This layer's `<Legend>` row: `false` ⇒ no row (opt out), a string ⇒ the
    * row's display name. **Omitted ⇒ a row named by the layer's readout
    * identity** (`as`, else `"<lower>–<upper>"`). The swatch is the resolved
@@ -178,6 +190,7 @@ export function BoxPlot<
   showMedian = true,
   offset = 0,
   capWidth,
+  id,
   legend,
   index = 0,
 }: BoxPlotProps<S, VS>) {
@@ -210,6 +223,18 @@ export function BoxPlot<
     return (col: string | undefined, role: string): string =>
       semantic !== undefined ? `${semantic} ${role}` : (col ?? role);
   }, [semantic]);
+  // The series identity for selection/legend: the `as` role, else the range
+  // columns as a span (matches the legend row's label).
+  const label = semantic ?? `${lower}–${upper}`;
+  // Current selection / hover narrowed to this layer's box key (its `x`), or
+  // `null` — matched by the series `id`, so a change re-registers the layer and
+  // the canvas repaints the outline. A no-`id` layer never matches.
+  const sel = container.selected;
+  const hov = container.hovered;
+  const selectedKey =
+    id !== undefined && sel !== null && sel.id === id ? sel.key : null;
+  const hoveredKey =
+    id !== undefined && hov !== null && hov.id === id ? hov.key : null;
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
@@ -269,6 +294,29 @@ export function BoxPlot<
             lines,
           };
         },
+        // Selection hit-test (opt-in via `id`, like Bar/Scatter): the first box
+        // whose bounding rect contains the click. A box is a discrete interval
+        // mark, so this is rect-containment (`boxAt`) — not the continuous
+        // nearest-point threshold. `key` is the box's `x`; `value` its `upper`.
+        ...(id === undefined
+          ? {}
+          : {
+              hitTest: (px, py, xScale, yScale): SelectInfo | null => {
+                const hit = boxAt(
+                  bx,
+                  px,
+                  py,
+                  xScale,
+                  yScale,
+                  gap,
+                  MIN_BOX_WIDTH_PX,
+                  offset,
+                );
+                if (hit === null) return null;
+                const [, begin, value] = hit;
+                return { id, key: begin, value, color: style.whisker, label };
+              },
+            }),
         draw: (ctx, xScale, yScale) =>
           drawBox(
             ctx,
@@ -282,6 +330,8 @@ export function BoxPlot<
             showMedian,
             offset,
             capWidth,
+            selectedKey,
+            hoveredKey,
           ),
       },
       axisId: axis,
@@ -303,6 +353,10 @@ export function BoxPlot<
       showMedian,
       offset,
       capWidth,
+      id,
+      label,
+      selectedKey,
+      hoveredKey,
       axis,
       index,
     ],
@@ -314,6 +368,15 @@ export function BoxPlot<
   useEffect(() => {
     layers.registerLayer(slot, entry);
   }, [layers, slot, entry]);
+
+  // Advertise selectability (only when an `id` was given) — powers the
+  // container's "wired but nothing selectable" dev-warn, like Bar/Scatter.
+  const { registerSelectable, unregisterSelectable } = container;
+  useEffect(() => {
+    if (id === undefined) return;
+    registerSelectable(slot);
+    return () => unregisterSelectable(slot);
+  }, [registerSelectable, unregisterSelectable, slot, id]);
 
   // Also a tracker source: the container fans in the box quantiles at the cursor
   // for the (outside-the-chart) readout.

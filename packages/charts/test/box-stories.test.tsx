@@ -23,6 +23,7 @@ describe('BoxPlot stories render', () => {
       'CallPutPair',
       'CursorFlag',
       'Percentiles',
+      'Selectable',
       'Solid',
       'Themed',
       'VolSmile',

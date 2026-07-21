@@ -77,10 +77,20 @@ stem-without-caps `shape` variant, and reconciling the `cursorFlag` x-snap
 exclusion so crosshairs grab box plots (Candlestick never opted out; this
 remains BoxPlot-only).
 
-Added by the #508 triage (item 5): **selection `id`** — extends the shipped
-id-gated discrete contract (rect-containment `hitTest` like Bar, not the
-still-RFC continuous-layer threshold model); Candlestick takes the same
-geometry helper in the pass so the interval marks don't fork the contract.
+**Selection `id` — DONE** (#508 triage item 5). `<BoxPlot id>` extends the
+shipped id-gated discrete contract via `boxAt` — rect-containment (the
+interval-mark analog of `barAt`), not the still-RFC continuous-layer
+threshold — returning a `SelectInfo` keyed on the box's `x` (span begin);
+selected/hovered boxes outline (reusing `theme.box.stroke`, no new token).
+**Scoped to BoxPlot only:** the geometry is a per-mark `boxAt`, consistent
+with the existing `barAt`/`stackAt`/`ohlcIndexAtTime` idiom — the _contract_
+(id-gated `hitTest`→`SelectInfo` + `registerSelectable`) is what's reused, not
+a shared geometry abstraction. Candlestick would add its own `ohlcAt` under
+the same contract when it gains selection (deferred — not requested by the
+report; the earlier "shared geometry helper" framing is superseded by the
+per-mark idiom the codebase already uses). **Still open in this wave:**
+`ValueSeries` widening, range-only mode polish, px `offset`, line-only shape,
+and the `cursorFlag` x-snap reconciliation.
 
 ### [PND-LEGEND] — `<Legend>` wave — DONE
 
