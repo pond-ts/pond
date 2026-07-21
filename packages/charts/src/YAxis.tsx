@@ -62,6 +62,14 @@ export interface YAxisProps {
    */
   ticks?: ReadonlyArray<{ readonly at: number; readonly label: string }>;
   /**
+   * Target number of **auto** ticks — the `count` passed to `scale.ticks()`
+   * (d3 returns nice 1-2-5 values near it, not exactly this many). **Omitted ⇒
+   * derived from the row height** so a short strip isn't crushed with a tall
+   * row's density (mirrors the width-derived x axis). Ignored when explicit
+   * {@link ticks} are given (those set both labels and gridlines directly).
+   */
+  tickCount?: number;
+  /**
    * Render the tick labels at the domain extremes (the top & bottom ticks)?
    * **Default `true`.** `false` drops just those two numbers — the gridlines
    * stay — for when the min/max labels crowd a stacked row's edges and you'd
@@ -87,7 +95,10 @@ export interface YAxisProps {
 }
 
 const DEFAULT_WIDTH = 50;
-const TICK_COUNT = 5;
+/** Fallback tick count before the row has published its resolved count (the
+ *  first render, pre-registration). The row's height-derived value takes over
+ *  immediately after. */
+const DEFAULT_TICK_COUNT = 5;
 
 /**
  * A y-axis for a {@link ChartRow}, rendered as DOM chrome (not canvas) so the
@@ -105,6 +116,7 @@ export function YAxis({
   max,
   format,
   ticks,
+  tickCount,
   pad = 0,
   boundaryLabels = true,
   width = DEFAULT_WIDTH,
@@ -132,9 +144,22 @@ export function YAxis({
       labelPlacement,
       format,
       tickValues: ticks?.map((t) => t.at),
+      tickCount,
       index,
     }),
-    [id, side, width, min, max, pad, labelPlacement, format, ticks, index],
+    [
+      id,
+      side,
+      width,
+      min,
+      max,
+      pad,
+      labelPlacement,
+      format,
+      ticks,
+      tickCount,
+      index,
+    ],
   );
   // A stable per-instance slot (see useSlotKey) keeps this axis in a fixed
   // registry position, so a min/max/side change updates in place rather than
@@ -151,14 +176,19 @@ export function YAxis({
 
   const { theme } = container;
   const yScale = row.yScales.get(id);
+  // The auto-tick count — the row resolves it (explicit `tickCount` else
+  // height-derived) and both this axis's labels AND the row's gridlines read
+  // the same value, so a label and its gridline can't drift apart.
+  const count = row.tickCounts.get(id) ?? DEFAULT_TICK_COUNT;
   // Same formatter the readout uses (resolved per axis on the row), so a tick and
-  // a cursor value read identically.
-  const fmt = yScale ? resolveAxisFormat(yScale, TICK_COUNT, format) : String;
+  // a cursor value read identically. `count` calibrates the default formatter's
+  // precision to the tick density, exactly as the axis is.
+  const fmt = yScale ? resolveAxisFormat(yScale, count, format) : String;
   // Explicit `{ at, label }` ticks render verbatim (each label at its `at`),
   // overriding the auto-picked d3 ticks; otherwise label the scale's ticks via `fmt`.
   const tickList: readonly { value: number; label: string }[] = ticks
     ? ticks.map((t) => ({ value: t.at, label: t.label }))
-    : (yScale ? yScale.ticks(TICK_COUNT) : []).map((t) => ({
+    : (yScale ? yScale.ticks(count) : []).map((t) => ({
         value: t,
         label: fmt(t),
       }));

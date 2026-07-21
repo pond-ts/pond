@@ -235,10 +235,11 @@ describe('cursor overlay (flag, DOM/SVG)', () => {
         trackerPosition={2}
       >
         <ChartRow height={120}>
-          <YAxis id="a" min={0} max={10} />
+          {/* tickCount=5 ⇒ ticks 0/2/4/6/8/10 — so the sampled value 5 is not a
+              tick label and the chip text below is unambiguous. */}
+          <YAxis id="a" min={0} max={10} tickCount={5} />
           <Layers>
-            {/* value 5 at t=2 — not a tick of [0,10] (0,2,4,6,8,10), so the chip
-                text is unambiguous. */}
+            {/* value 5 at t=2 — not a tick, so the chip text is unambiguous. */}
             <LineChart series={mk([1, 3, 5, 7, 9])} column="v" axis="a" />
           </Layers>
         </ChartRow>

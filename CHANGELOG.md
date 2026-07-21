@@ -48,6 +48,20 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts:** **`<YAxis tickCount>` + height-derived tick density** (#508
+  item 4, Tidal vol-surface friction). The y axis's auto-tick count now
+  follows the **row height** by default — a short strip (e.g. a 72px
+  histogram lane) gets fewer ticks than a tall row instead of crushing the
+  same ~5 labels into the space (mirrors the width-derived trading-time x
+  axis). A new **`tickCount`** prop pins an explicit target; explicit
+  `ticks` still overrides both. The count is resolved once per axis on the
+  row (`resolveYTickCount`) and shared by the axis labels, the cursor-readout
+  formatter, and the row gridlines, so a label / its gridline / its readout
+  stay on the same `ticks(count)` (replaces three hardcoded `5`s that agreed
+  by convention).
+
 ### Changed
 
 - **charts:** **Tracker labels key on `as` across the multi-value marks**

@@ -656,6 +656,10 @@ export interface AxisSpec {
   /** Explicit tick values (from `<YAxis ticks>`), driving BOTH the axis labels
    *  and the row's gridlines so they align; `undefined` auto-picks from the scale. */
   readonly tickValues: readonly number[] | undefined;
+  /** Explicit auto-tick **count** (from `<YAxis tickCount>`) — a `ticks(count)`
+   *  target; `undefined` derives the count from the row height (see
+   *  {@link resolveYTickCount}). Ignored when {@link tickValues} is set. */
+  readonly tickCount: number | undefined;
   /**
    * Declaration position among the row's children, injected by `ChartRow`. The
    * row sorts axes by this, so the **first declared** axis is the default
@@ -682,6 +686,11 @@ export interface RowFrame {
    *  that set `<YAxis ticks>` — so `Layers` draws gridlines at the same positions
    *  the axis labels. Absent id ⇒ that axis auto-picks. */
   readonly tickValues: ReadonlyMap<string, readonly number[]>;
+  /** Resolved auto-tick **count** per axis id — the explicit `<YAxis tickCount>`
+   *  or the row-height-derived default ({@link resolveYTickCount}). The single
+   *  source both the `<YAxis>` labels and the `Layers` gridlines read, so a
+   *  label and its gridline stay on the same `ticks(count)`. */
+  readonly tickCounts: ReadonlyMap<string, number>;
   /** The side each axis sits on, keyed by id — so an axis-edge overlay (the
    *  crosshair value pills) hugs the correct gutter. */
   readonly axisSides: ReadonlyMap<string, 'left' | 'right'>;

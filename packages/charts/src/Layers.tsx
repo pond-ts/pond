@@ -33,12 +33,12 @@ import {
   type LayerRegistry,
 } from './context.js';
 
-/** **Y**-gridline tick count. **Must match the y-axis label counts** (`YAxis`
- *  `TICK_COUNT`, `ChartRow` `AXIS_TICK_COUNT`) — horizontal gridlines and the y
- *  labels are both derived from `ticks(count)`, so they only line up while the
- *  counts agree; kept at 5 across all three. The **x** side instead reads the
- *  container's shared `xTickCount` (as `<XAxis>` and `formatTime` do), which is
- *  width-derived on a trading-time axis. */
+/** Fallback **y**-gridline tick count, used only before the row publishes its
+ *  resolved `tickCounts` (pre-registration). Normally the gridlines read the
+ *  default axis's resolved count from `row.tickCounts` — the same value the
+ *  `<YAxis>` labels use — so they line up by construction (was three hardcoded
+ *  `5`s agreeing by convention). The **x** side reads the container's shared
+ *  `xTickCount`, width-derived on a trading-time axis. */
 const GRID_TICKS = 5;
 /** Minimum px between `'labeled'` session dividers — thins dense collapse
  *  points (e.g. a daily chart where every candle is a new session) so the axis
@@ -118,8 +118,15 @@ export function Layers({ children }: LayersProps) {
 
   const background = container.theme.background;
   const { grid: gridColor, gridDash } = container.theme.axis;
-  const { layers, yScales, formats, defaultAxisId, tickValues, axisSides } =
-    row;
+  const {
+    layers,
+    yScales,
+    formats,
+    defaultAxisId,
+    tickValues,
+    tickCounts,
+    axisSides,
+  } = row;
   // x geometry is shared and lives on the container (uniform across rows), and
   // so is the x tick count — vertical gridlines must sit under the `<XAxis>`
   // labels, which pass the same `xTickCount` to the same scale.
@@ -143,8 +150,12 @@ export function Layers({ children }: LayersProps) {
       // The reference grid — behind the data, opt-out via `grid={false}` for
       // a clean backdrop (session dividers below stay independent of it).
       if (container.grid) {
+        // Auto gridlines use the default axis's RESOLVED tick count (the row's
+        // single source, height-derived or an explicit `<YAxis tickCount>`), so
+        // a gridline sits under every `<YAxis>` label and no more.
+        const yCount = tickCounts.get(defaultAxisId) ?? GRID_TICKS;
         const yTicks = gridY
-          ? (explicitY ?? gridY.ticks(GRID_TICKS)).map((t) => gridY(t))
+          ? (explicitY ?? gridY.ticks(yCount)).map((t) => gridY(t))
           : [];
         // On a calendar axis the verticals are the FULL grain populations —
         // every day in the month, every month in the year, every aligned
@@ -265,6 +276,7 @@ export function Layers({ children }: LayersProps) {
       xTickCount,
       defaultAxisId,
       tickValues,
+      tickCounts,
       background,
       gridColor,
       gridDash,
