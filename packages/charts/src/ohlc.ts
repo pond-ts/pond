@@ -3,6 +3,7 @@ import type { Scale } from './line.js';
 import type { CandleStyle } from './theme.js';
 import { barSpanPx } from './range.js';
 import { visibleSpanRange } from './culling.js';
+import { decimateOhlc, type DecimateOption } from './decimate.js';
 
 /**
  * How an OHLC mark renders (pjm17971's fork 2 — bundled as one component, like
@@ -132,17 +133,26 @@ export function drawCandles(
   colorBy: ColorBy = 'direction',
   gapPx = 0,
   minWidthPx = 1,
+  decimate: DecimateOption = true,
 ): void {
   const bodyFraction = style.bodyWidth ?? DEFAULT_BODY_WIDTH;
-  // Viewport culling (Phase 2): draw only the candles whose span overlaps the
-  // visible x-window (+1 each side); the loop keeps the original index `i`. Full
-  // range when `xScale` has no domain (a test stub).
-  const [vStart, vEnd] = visibleSpanRange(
-    ohlc.x,
-    ohlc.xEnd,
-    ohlc.length,
-    xScale,
-  );
+  // M4 candle decimation (Phase 5): once denser than ~2 candles per device pixel,
+  // replace the visible candles with per-column **aggregate candles** (open=first,
+  // high=max, low=min, close=last — a coarser-timeframe candle; {@link
+  // decimateOhlc}). The whole (already binned-to-visible) result draws; otherwise
+  // viewport culling (Phase 2) draws just the candles whose span overlaps the
+  // window. `decimateOhlc` no-ops (returns the same object) on a sparse series or
+  // a domainless test scale, so that path stays the loop-bound cull.
+  const decimated = decimate !== false ? decimateOhlc(ohlc, xScale, ctx) : ohlc;
+  let vStart: number;
+  let vEnd: number;
+  if (decimated !== ohlc) {
+    ohlc = decimated; // aggregate candles are already the visible set
+    vStart = 0;
+    vEnd = ohlc.length;
+  } else {
+    [vStart, vEnd] = visibleSpanRange(ohlc.x, ohlc.xEnd, ohlc.length, xScale);
+  }
   for (let i = vStart; i < vEnd; i += 1) {
     if (!isFiniteOhlc(ohlc, i)) continue;
     const open = ohlc.open[i]!;

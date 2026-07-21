@@ -29,19 +29,22 @@ A lost session should never erase the current state of the project.
 ### `@pond-ts/charts`
 
 The canvas wave shipped the rendering spine, seven chart types, interactions,
-the decimator, and the trading-time + categorical axes; the package is still
-`private`. Remaining: land built work, Phase-2 RFC slices, and the M5 parity
-gate that flips the first publish. Plan:
+the decimator, and the trading-time + categorical axes; the package is
+**published** (`@pond-ts/charts` 0.48.x on npm, `private: false`), though the
+decimator wave itself is landed on `main` but **unreleased** (CHANGELOG
+`[Unreleased]`, pending the next version bump). Remaining: land built work,
+Phase-2 RFC slices, and the M5 parity gate for the stable / estela-parity
+milestone. Plan:
 [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md) · RFC:
 [charts.md](docs/rfcs/charts.md).
 
 - **[PND-CATAX]** — Land categorical axis Phase 1. Three PRs are built and
   verified on `feat/charts-categorical-axis` but not pushed; land with
   Layer-2 + Codex review, human gate on the `SelectInfo.mark` widening.
-- **[PND-PARITY]** — M5 estela parity. Faithful `DataChart` reproduction on
-  real activity data, no regressions, then `private: false` + first publish.
-  Gates: statistical bands, theme tokens optional-with-default, shared
-  axis-headroom policy.
+- **[PND-PARITY]** — M5 estela parity (the stable milestone; the package
+  already publishes pre-parity). Faithful `DataChart` reproduction on real
+  activity data, no regressions. Gates: statistical bands, theme tokens
+  optional-with-default, shared axis-headroom policy.
 - **[PND-SELECT]** — Selection Phase 2: multi-select widen + `selectionMode`,
   `LineChart.hitTest`, snap-follows-selection prop, theme-referenced dim.
   Breaking widen → human gate. RFC: [selection.md](docs/rfcs/selection.md).

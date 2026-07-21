@@ -1,6 +1,7 @@
 import { useContext, useEffect, useMemo } from 'react';
 import type { SeriesSchema, TimeSeries } from 'pond-ts';
 import { ohlcFromTimeSeries } from './data.js';
+import type { DecimateOption } from './decimate.js';
 import {
   drawCandles,
   isFiniteOhlc,
@@ -75,6 +76,18 @@ export interface CandlestickProps<S extends SeriesSchema> {
    */
   showOHLC?: boolean;
   /**
+   * **M4 viewport decimation** (charts decimator wave). **Omitted ⇒ `true`**:
+   * once the visible candles are denser than ~2 per device pixel, they are drawn
+   * as per-pixel-column **aggregate candles** (`open=first`, `high=max`,
+   * `low=min`, `close=last`) — i.e. re-bucketed to the pixel-column timeframe, the
+   * way a trading chart shows fewer, wider candles as you zoom out. It is a
+   * faithful OHLC of each column's span (never a distortion), just at a coarser
+   * timeframe. Pass `false` to draw every candle at its own slot (and
+   * pre-aggregate upstream if you need a fixed timeframe). Shares
+   * {@link LineChart}'s `DecimateOption`.
+   */
+  decimate?: DecimateOption;
+  /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
    */
@@ -120,6 +133,7 @@ export function Candlestick<S extends SeriesSchema>({
   colorBy = 'direction',
   gap = 0,
   showOHLC = false,
+  decimate = true,
   index = 0,
 }: CandlestickProps<S>) {
   const container = useContext(ContainerContext);
@@ -181,12 +195,34 @@ export function Candlestick<S extends SeriesSchema>({
           return samples;
         },
         draw: (ctx, xScale, yScale) =>
-          drawCandles(ctx, ohlc, xScale, yScale, style, variant, colorBy, gap),
+          drawCandles(
+            ctx,
+            ohlc,
+            xScale,
+            yScale,
+            style,
+            variant,
+            colorBy,
+            gap,
+            undefined,
+            decimate,
+          ),
       },
       axisId: axis,
       index,
     }),
-    [ohlc, style, label, variant, colorBy, gap, showOHLC, axis, index],
+    [
+      ohlc,
+      style,
+      label,
+      variant,
+      colorBy,
+      gap,
+      showOHLC,
+      decimate,
+      axis,
+      index,
+    ],
   );
   // Stable per-instance slot (see useSlotKey): keeps this candle layer's
   // z-position + identity across prop updates; the injected index drives the sort.

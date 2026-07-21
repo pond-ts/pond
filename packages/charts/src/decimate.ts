@@ -47,7 +47,7 @@
  */
 
 import { Float64Column } from 'pond-ts';
-import type { ChartSeries, BandSeries } from './data.js';
+import type { ChartSeries, BandSeries, OhlcSeries } from './data.js';
 import type { Scale } from './line.js';
 import { scaleDomain } from './culling.js';
 
@@ -432,4 +432,76 @@ export function decimateBand(
     upper[b] = upperMax[b]!;
   }
   return { x, lower, upper, length: W };
+}
+
+/**
+ * Decimate an {@link OhlcSeries} to one **aggregate candle per device-pixel
+ * column** — `open = first`, `high = max`, `low = min`, `close = last` over the
+ * candles that fall in the column. This is exactly a candle re-bucketed to a
+ * **coarser timeframe** (the pixel-column's time range): it is never *wrong* —
+ * it is the true OHLC of that span — so a dense chart that zooms out reads as
+ * fewer, wider aggregate candles, the trading-UI convention (decimator
+ * assessment §2.4). Auto-on with an opt-out; a consumer wanting fixed-timeframe
+ * candles pre-aggregates upstream and passes `decimate={false}`.
+ *
+ * Returns the **same object** when decimation doesn't apply (sparse series,
+ * domainless / non-invertible scale, no canvas width). The slot of each
+ * aggregate candle is its pixel column `[edges[b], edges[b+1]]`; an empty column
+ * (no candles) reduces to `NaN` on all channels — `drawCandles` skips it. No
+ * session-break union is needed: candles are independent marks (they never
+ * connect), and a trading-axis closed period is simply an empty column.
+ */
+export function decimateOhlc(
+  ohlc: OhlcSeries,
+  xScale: Scale,
+  ctx: CanvasRenderingContext2D,
+  k = 2,
+): OhlcSeries {
+  if (!shouldDecimateCount(ohlc.length, ctx, k)) return ohlc;
+  const dom = scaleDomain(xScale);
+  if (dom === null || dom[1] <= dom[0]) return ohlc;
+  const invert = scaleInvert(xScale);
+  const plotWidthCss = scaleRangeWidth(xScale);
+  if (invert === null || plotWidthCss === null) return ohlc;
+  const W = deviceBucketCount(ctx);
+  const edges = pixelEdges(invert, plotWidthCss, W);
+  // Bin each channel over the candles' (monotonic) left-edge key. open/close need
+  // the first/last channels (only `'minMaxFirstLast'` carries them); high/low are
+  // the scalar max/min. Four O(n) walks — candle counts are modest.
+  const key = ohlc.x;
+  const openCh = new Float64Column(ohlc.open, ohlc.length).binBy(
+    key,
+    edges,
+    'minMaxFirstLast',
+  ).first;
+  const closeCh = new Float64Column(ohlc.close, ohlc.length).binBy(
+    key,
+    edges,
+    'minMaxFirstLast',
+  ).last;
+  const highCh = new Float64Column(ohlc.high, ohlc.length).binBy(
+    key,
+    edges,
+    'max',
+  );
+  const lowCh = new Float64Column(ohlc.low, ohlc.length).binBy(
+    key,
+    edges,
+    'min',
+  );
+  const x = new Float64Array(W);
+  const xEnd = new Float64Array(W);
+  for (let b = 0; b < W; b += 1) {
+    x[b] = edges[b]!; // the aggregate candle's slot IS its pixel column
+    xEnd[b] = edges[b + 1]!;
+  }
+  return {
+    x,
+    xEnd,
+    open: openCh,
+    high: highCh,
+    low: lowCh,
+    close: closeCh,
+    length: W,
+  };
 }

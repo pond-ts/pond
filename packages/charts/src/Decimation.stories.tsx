@@ -6,6 +6,7 @@ import { Layers } from './Layers.js';
 import { LineChart } from './LineChart.js';
 import { AreaChart } from './AreaChart.js';
 import { BandChart } from './BandChart.js';
+import { Candlestick } from './Candlestick.js';
 import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
 import { docsTheme } from './docs-theme.fixture.js';
@@ -217,6 +218,66 @@ export const TradingSessionBreaks: Story = {
           />
         </Layers>
       </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+// A large raw OHLC feed (point-keyed candles) for candle decimation: a **bounded**
+// price (a slow trend riding fast intrabar wiggle — not a cumulative walk, which
+// would drift off-scale), with per-candle high/low wicks, so the per-column
+// aggregate candle has a visible body + wick.
+function bigCandles(n: number) {
+  const rows: Array<[number, number, number, number, number]> = new Array(n);
+  for (let i = 0; i < n; i += 1) {
+    const mid = 120 + 22 * Math.sin(i / (n / 8)); // slow trend, bounded ~98–142
+    const open = mid + 3 * Math.sin(i / 2.3);
+    const close = mid + 3 * Math.sin((i + 1) / 2.3) + 0.8 * Math.cos(i / 5.1);
+    const high = Math.max(open, close) + 1 + Math.abs(Math.sin(i / 1.7));
+    const low = Math.min(open, close) - 1 - Math.abs(Math.cos(i / 1.3));
+    rows[i] = [BASE + i * STEP, open, high, low, close];
+  }
+  return new TimeSeries({
+    name: 'ohlc',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'open', kind: 'number' },
+      { name: 'high', kind: 'number' },
+      { name: 'low', kind: 'number' },
+      { name: 'close', kind: 'number' },
+    ] as const,
+    rows,
+  });
+}
+const candleSeries = bigCandles(60_000);
+
+/** ~60k raw candles, auto-decimated to per-pixel-column aggregate candles
+ *  (open=first, high=max, low=min, close=last — a coarser-timeframe candle). */
+export const Candles: Story = {
+  render: () => (
+    <ChartContainer width={720} theme={docsTheme} panZoom>
+      <ChartRow height={260}>
+        <YAxis id="p" side="right" />
+        <Layers>
+          <Candlestick series={candleSeries} axis="p" />
+        </Layers>
+      </ChartRow>
+      <XAxis />
+    </ChartContainer>
+  ),
+};
+
+/** The same ~60k candles with decimation OFF — every candle at its own slot
+ *  (sub-pixel mush at this density; the reason decimation is the default). */
+export const CandlesOff: Story = {
+  render: () => (
+    <ChartContainer width={720} theme={docsTheme} panZoom>
+      <ChartRow height={260}>
+        <YAxis id="p" side="right" />
+        <Layers>
+          <Candlestick series={candleSeries} axis="p" decimate={false} />
+        </Layers>
+      </ChartRow>
+      <XAxis />
     </ChartContainer>
   ),
 };

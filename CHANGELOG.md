@@ -97,6 +97,14 @@ and type-level changes; patch bumps are strictly additive.
   max(`upper`)** — the widest envelope the samples span, so it can never invert
   (§2.5) and covers the same pixels; the win is the canvas fill (≈W vertices vs
   every sample). Both gated off a non-linear `curve`; interaction unaffected.
+- **charts:** M4 decimation extended to **`<Candlestick>`** (same auto-on
+  `decimate` prop). Dense candles are drawn as per-pixel-column **aggregate
+  candles** — `open=first`, `high=max`, `low=min`, `close=last` over the column —
+  i.e. re-bucketed to the pixel-column timeframe, the way a trading chart shows
+  fewer, wider candles as you zoom out (decimator §2.4). It is a faithful OHLC of
+  each column's span, never a distortion; the hover readout still reads the
+  **source** candle at the cursor (§2.3). Pass `decimate={false}` (and
+  pre-aggregate upstream) for fixed-timeframe candles.
 - **charts:** **Viewport culling** (charts decimator wave, Phase 2). Line, area,
   and band layers now clip to the **visible slice** of their key column — plus
   one entry/exit point each side so the segment crossing each plot edge still
