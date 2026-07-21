@@ -31,6 +31,7 @@ import {
   LayersContext,
   RowContext,
   type LayerRegistry,
+  type LayerDrawInfo,
 } from './context.js';
 
 /** Fallback **y**-gridline tick count, used only before the row publishes its
@@ -263,10 +264,37 @@ export function Layers({ children }: LayersProps) {
           drawDividers(ctx, thinPixels(bx, MIN_DIVIDER_PX), h, dividerColor);
         }
       }
-      for (const entry of layers) {
-        const yScale = yScales.get(entry.axisId ?? defaultAxisId);
-        if (yScale === undefined) continue;
-        entry.layer.draw(ctx, xScale, yScale);
+      // Draw the layers. When a draw-stats consumer is subscribed
+      // (`reportDrawStats` defined), time each layer and collect its reported
+      // {@link LayerDrawStats}; otherwise the plain loop with zero timing
+      // overhead. Fires one {@link DrawStatsFrame} per repaint of THIS row.
+      const report = container.reportDrawStats;
+      if (report === undefined) {
+        for (const entry of layers) {
+          const yScale = yScales.get(entry.axisId ?? defaultAxisId);
+          if (yScale === undefined) continue;
+          entry.layer.draw(ctx, xScale, yScale);
+        }
+      } else {
+        const infos: LayerDrawInfo[] = [];
+        let totalDrawMs = 0;
+        for (const entry of layers) {
+          const yScale = yScales.get(entry.axisId ?? defaultAxisId);
+          if (yScale === undefined) continue;
+          const t0 = performance.now();
+          const stats = entry.layer.draw(ctx, xScale, yScale);
+          const drawMs = performance.now() - t0;
+          totalDrawMs += drawMs;
+          infos.push({
+            as: entry.layer.as,
+            index: entry.index,
+            drawMs,
+            sourceCount: stats?.sourceCount,
+            drawnCount: stats?.drawnCount,
+            decimated: stats?.decimated,
+          });
+        }
+        report({ layers: infos, totalDrawMs });
       }
     },
     [
@@ -282,6 +310,7 @@ export function Layers({ children }: LayersProps) {
       gridDash,
       container.discontinuities,
       container.timeRange,
+      container.reportDrawStats,
     ],
   );
 

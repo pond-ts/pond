@@ -173,6 +173,7 @@ export function LineChart<
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
+        as: semantic,
         yExtent: () => yExtent(cs),
         // The container infers the shared x scale's kind + auto-fit domain from
         // its layers: a ValueSeries plots on a value axis, a TimeSeries on time.

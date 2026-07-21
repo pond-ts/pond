@@ -143,6 +143,7 @@ export function BandChart<
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
+        as: semantic,
         yExtent: () => bandExtent(bs),
         // The container infers the shared x scale's kind from its layers — a
         // ValueSeries plots on a value axis, a TimeSeries on time.

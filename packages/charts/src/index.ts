@@ -3,9 +3,11 @@
  *
  * Canvas-rendered, streaming-first time-series charts with a
  * react-timeseries-charts-style declarative layout. The architecture (hard
- * layers: adapter → typed-array store → decimator → chunked Path2D cache →
- * canvas renderer → React shell) is documented in the charts RFC at
- * `docs/rfcs/charts.md`; the milestone plan lives in `PLAN.md`.
+ * layers: adapter → typed-array store → decimator → canvas renderer → React
+ * shell) is documented in the charts RFC at `docs/rfcs/charts.md`; the
+ * milestone plan lives in `PLAN.md`. (A Path2D path cache was explored and
+ * deferred — it doesn't help the pan case, which re-decimates every frame; see
+ * the [PND-DECIM] floor decision.)
  *
  * **M1 — rendering spine.** The layout shell + the first draw layer:
  * `<ChartContainer>` (time axis) → `<ChartRow>` (y-axis + canvas) →
@@ -156,3 +158,6 @@ export type {
   TrackerSample,
   SelectInfo,
 } from './context.js';
+
+// Draw-stats observability — the `onDrawStats` callback's frame + per-layer line.
+export type { DrawStatsFrame, LayerDrawInfo } from './context.js';

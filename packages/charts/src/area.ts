@@ -2,6 +2,7 @@ import { area as d3area, curveLinear, type CurveFactory } from 'd3-shape';
 import type { ChartSeries } from './data.js';
 import type { Scale } from './line.js';
 import type { AreaStyle } from './theme.js';
+import type { LayerDrawStats } from './context.js';
 import {
   bridgeGaps,
   collectGapEdges,
@@ -96,7 +97,8 @@ export function drawArea(
   gaps: GapMode = DEFAULT_GAP_MODE,
   gapConnectorOpacity: number = DEFAULT_GAP_CONNECTOR_OPACITY,
   decimate: DecimateOption = true,
-): void {
+): LayerDrawStats {
+  const sourceCount = cs.length; // pre-cull, pre-decimation (for draw stats)
   const baselinePx = yScale(baselineValue);
   // The fill gradient's vertical extent is computed from the **full** series (a
   // vertical, position-anchored gradient spanning the data's whole pixel extent)
@@ -118,9 +120,12 @@ export function drawArea(
   // dense — with the §2.2 gap-edge union so every gap mode composes. The gradient
   // above is over the FULL series, so the decimated fill paints identical pixels
   // under it. Gated off a smoothing `curve`; a no-op on a sparse slice / test scale.
+  let decimated = false;
   if (decimate !== false && curve === curveLinear) {
     const k = typeof decimate === 'object' ? decimate.threshold : undefined;
+    const before = cs;
     cs = decimateM4(cs, xScale, ctx, k);
+    decimated = cs !== before;
   }
   // `none` interpolates interior gaps so the fill + outline bridge them; every
   // other mode keeps NaN so d3 breaks both (the inferred line bridge, if any, is
@@ -177,6 +182,7 @@ export function drawArea(
       drawGapFades(ctx, edges, baselinePx, style.color, style.width);
     }
   }
+  return { sourceCount, drawnCount: cs.length, decimated };
 }
 
 /**

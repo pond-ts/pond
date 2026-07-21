@@ -1,6 +1,7 @@
 import type { OhlcSeries } from './data.js';
 import type { Scale } from './line.js';
 import type { CandleStyle } from './theme.js';
+import type { LayerDrawStats } from './context.js';
 import { barSpanPx } from './range.js';
 import { visibleSpanRange } from './culling.js';
 import { decimateOhlc, type DecimateOption } from './decimate.js';
@@ -134,8 +135,9 @@ export function drawCandles(
   gapPx = 0,
   minWidthPx = 1,
   decimate: DecimateOption = true,
-): void {
+): LayerDrawStats {
   const bodyFraction = style.bodyWidth ?? DEFAULT_BODY_WIDTH;
+  const sourceCount = ohlc.length; // pre-cull, pre-decimation (for draw stats)
   // Viewport cull first (Phase 2): the [vStart, vEnd) candles whose span overlaps
   // the window (+1 each side). Full range when `xScale` has no domain (a stub).
   let [vStart, vEnd] = visibleSpanRange(ohlc.x, ohlc.xEnd, ohlc.length, xScale);
@@ -147,12 +149,13 @@ export function drawCandles(
   // into a large series) would re-slot each to a 1px sliver. `decimateOhlc` no-ops
   // (returns the same object) below the visible-density threshold or on a
   // domainless scale, leaving the loop-bound cull above.
-  const decimated =
+  const decimatedOhlc =
     decimate !== false
       ? decimateOhlc(ohlc, xScale, ctx, 2, vEnd - vStart)
       : ohlc;
-  if (decimated !== ohlc) {
-    ohlc = decimated; // aggregate candles are already the visible set
+  const decimated = decimatedOhlc !== ohlc;
+  if (decimated) {
+    ohlc = decimatedOhlc; // aggregate candles are already the visible set
     vStart = 0;
     vEnd = ohlc.length;
   }
@@ -222,4 +225,7 @@ export function drawCandles(
       ctx.fillRect(bx0, top, bodyW, h);
     }
   }
+  // `drawnCount` = candle slots iterated (visible span, or the aggregate set when
+  // decimation engaged); `sourceCount` = the raw candle count it started from.
+  return { sourceCount, drawnCount: vEnd - vStart, decimated };
 }
