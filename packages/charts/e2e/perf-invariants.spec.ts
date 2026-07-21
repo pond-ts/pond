@@ -205,8 +205,12 @@ test.describe('perf invariants (CI-gating)', () => {
 
     // Wait for mount-time draws to finish (the two-pass extent settle, late
     // layout) by polling the clear count until it holds still, then zero it —
-    // the invariant covers *hover*, from first plot entry onward.
+    // the invariant covers *hover*, from first plot entry onward. Two
+    // *consecutive* quiet windows (~800 ms) are required, so a slow runner
+    // with a >400 ms gap between mount draws can't zero early and misread a
+    // straggling mount draw as a hover repaint (Layer 2 review, #524).
     let last = -1;
+    let stableRuns = 0;
     await expect
       .poll(
         async () => {
@@ -214,9 +218,9 @@ test.describe('perf invariants (CI-gating)', () => {
             () =>
               (window as unknown as { __canvasClears: number }).__canvasClears,
           );
-          const stable = now === last;
+          stableRuns = now === last ? stableRuns + 1 : 0;
           last = now;
-          return stable;
+          return stableRuns >= 2;
         },
         { intervals: [400], timeout: 15_000 },
       )
