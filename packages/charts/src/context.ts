@@ -109,6 +109,14 @@ export interface ContainerFrame {
     | ((range: readonly [number, number]) => void)
     | undefined;
   /**
+   * A stable sink for per-repaint {@link DrawStatsFrame}s, or `undefined` when no
+   * `onDrawStats` consumer is subscribed — the `undefined` is the signal for
+   * `Layers` to skip per-layer timing entirely (zero overhead when unused). The
+   * identity is stable while subscribed (it reads a ref), so an inline
+   * `onDrawStats` arrow doesn't thrash the draw memo.
+   */
+  readonly reportDrawStats: ((frame: DrawStatsFrame) => void) | undefined;
+  /**
    * Require a modifier key held to start a region-drag — set to `'shift'` to make
    * plain drag **pan** and **shift**-drag select, when `panZoom` is on. Only
    * enforced while pan is enabled (with no pan there's no gesture to share, so the
@@ -411,12 +419,78 @@ export interface GutterReq {
 export const ContainerContext = createContext<ContainerFrame | null>(null);
 
 /**
+ * What a {@link RowLayer.draw} may return so the container can report render
+ * cost + whether M4 decimation engaged this frame ({@link
+ * ContainerProps.onDrawStats}). Optional — a layer that returns `void` reports
+ * only its `drawMs` (the render loop times every layer regardless).
+ */
+export interface LayerDrawStats {
+  /** Source series length the draw received (pre-cull, pre-decimation). */
+  readonly sourceCount: number;
+  /** Points / marks actually drawn this frame — after viewport culling and, if
+   *  it engaged, M4 decimation. `drawnCount < sourceCount` can come from **either**
+   *  culling (a zoomed-in view drops off-screen points) **or** decimation — read
+   *  `decimated` to tell which; `drawnCount === sourceCount` means everything in
+   *  view was drawn full-resolution. */
+  readonly drawnCount: number;
+  /** Whether M4 decimation engaged (vs. drew the culled slice full-resolution).
+   *  Distinguishes a decimated draw from a merely culled one — both shrink
+   *  `drawnCount`. */
+  readonly decimated: boolean;
+}
+
+/**
+ * One layer's line in a {@link DrawStatsFrame}: its identity + measured draw
+ * time, plus the {@link LayerDrawStats} the layer reported (`undefined` counts
+ * for a layer that returns none — e.g. a non-decimating scatter/bar, which
+ * still contributes its `drawMs`).
+ */
+export interface LayerDrawInfo {
+  /** The layer's `as` role, or `undefined` if it set none. */
+  readonly as: string | undefined;
+  /** Z-order index within the row (the `<Layers>` declaration position). */
+  readonly index: number;
+  /** Wall-clock ms spent in this layer's `draw` this frame. */
+  readonly drawMs: number;
+  readonly sourceCount: number | undefined;
+  readonly drawnCount: number | undefined;
+  readonly decimated: boolean | undefined;
+}
+
+/**
+ * The per-repaint draw-stats frame handed to {@link ContainerProps.onDrawStats}.
+ * Fires **once per row-canvas repaint** (rows repaint independently, so a
+ * multi-row container fires one frame per row that painted), carrying that row's
+ * layers newest-drawn. The seam the dashboard A/B asked for (2026-07-21): read
+ * `drawnCount` vs `sourceCount` to see whether M4 engaged, and `drawMs` for the
+ * per-layer render cost the packaged layer otherwise hides.
+ */
+export interface DrawStatsFrame {
+  /**
+   * Opaque, stable identity of the **row** this frame is for — rows repaint
+   * independently, so a multi-row container fires one frame per row and this is
+   * how a consumer attributes each (group frames by `rowKey`, e.g. as a `Map`
+   * key). Not human-readable; `layers[].as` labels the series within a row.
+   */
+  readonly rowKey: symbol;
+  readonly layers: readonly LayerDrawInfo[];
+  /** Total ms across this row's layer draws this frame. */
+  readonly totalDrawMs: number;
+}
+
+/**
  * A draw layer ({@link LineChart}, …) registered into a {@link Layers}, paired
  * with the id of the axis it scales against. The row computes a y-scale per
  * axis from the union of its linked layers' extents (or the axis's explicit
  * domain); each layer draws with its own axis's scale.
  */
 export interface RowLayer {
+  /**
+   * The layer's `as` role (the series identity), surfaced in {@link
+   * DrawStatsFrame} so a draw-stats consumer can label each line. `undefined`
+   * when the layer was given no `as`.
+   */
+  readonly as?: string | undefined;
   /** This layer's finite-value `[min, max]`, or `null` if it has none. */
   yExtent(): [number, number] | null;
   /**
@@ -485,12 +559,17 @@ export interface RowLayer {
     xScale: (value: number) => number,
     yScale: (value: number) => number,
   ): SelectInfo | null;
-  /** Draw into the plot canvas. `xScale`/`yScale` map data→pixels. */
+  /**
+   * Draw into the plot canvas. `xScale`/`yScale` map data→pixels. May return
+   * {@link LayerDrawStats} (source/drawn counts + whether decimation engaged) so
+   * the container can surface them via {@link ContainerProps.onDrawStats}; a
+   * layer that returns `void` still contributes its measured `drawMs`.
+   */
   draw(
     ctx: CanvasRenderingContext2D,
     xScale: (value: number) => number,
     yScale: (value: number) => number,
-  ): void;
+  ): LayerDrawStats | void;
 }
 
 /** One tracker readout point — a dot + value the overlay draws at the cursor. */

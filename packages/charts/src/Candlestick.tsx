@@ -173,6 +173,7 @@ export function Candlestick<S extends SeriesSchema>({
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
+        as: semantic,
         yExtent: () => ohlcExtent(ohlc),
         xKind: 'time',
         xExtent: () =>

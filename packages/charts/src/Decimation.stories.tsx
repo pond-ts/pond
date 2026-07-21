@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import { useState } from 'react';
 import { TimeSeries } from 'pond-ts';
 import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
@@ -10,6 +11,7 @@ import { Candlestick } from './Candlestick.js';
 import { BoxPlot } from './BoxPlot.js';
 import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
+import type { DrawStatsFrame } from './context.js';
 import { docsTheme } from './docs-theme.fixture.js';
 import {
   WIDTH,
@@ -417,4 +419,81 @@ export const BoxesOff: Story = {
       <XAxis />
     </ChartContainer>
   ),
+};
+
+// A live draw-stats readout: `onDrawStats` fires per repaint with per-layer
+// { as, sourceCount, drawnCount, decimated, drawMs }. This panel shows the
+// latest frame over the 200k-point line — proof the decimator engaged
+// (drawnCount ≪ sourceCount) and what the draw cost.
+function DrawStatsPanel() {
+  const [frame, setFrame] = useState<DrawStatsFrame | null>(null);
+  return (
+    <div>
+      <ChartContainer
+        width={720}
+        theme={docsTheme}
+        onDrawStats={setFrame}
+        panZoom
+      >
+        <ChartRow height={220}>
+          <Layers>
+            <LineChart series={series} column="v" as="power" />
+          </Layers>
+        </ChartRow>
+        <XAxis />
+      </ChartContainer>
+      <table
+        style={{
+          marginTop: 12,
+          borderCollapse: 'collapse',
+          font: '12px ui-monospace, monospace',
+        }}
+      >
+        <thead>
+          <tr>
+            {['as', 'source', 'drawn', 'decimated', 'drawMs'].map((h) => (
+              <th
+                key={h}
+                style={{
+                  textAlign: 'right',
+                  padding: '2px 10px',
+                  opacity: 0.6,
+                }}
+              >
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {(frame?.layers ?? []).map((l) => (
+            <tr key={l.index}>
+              <td style={{ textAlign: 'right', padding: '2px 10px' }}>
+                {l.as ?? `#${l.index}`}
+              </td>
+              <td style={{ textAlign: 'right', padding: '2px 10px' }}>
+                {l.sourceCount ?? '—'}
+              </td>
+              <td style={{ textAlign: 'right', padding: '2px 10px' }}>
+                {l.drawnCount ?? '—'}
+              </td>
+              <td style={{ textAlign: 'right', padding: '2px 10px' }}>
+                {String(l.decimated ?? '—')}
+              </td>
+              <td style={{ textAlign: 'right', padding: '2px 10px' }}>
+                {l.drawMs.toFixed(2)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** `onDrawStats` observability: the 200k line with a live per-layer readout —
+ *  sourceCount 200000 → a far smaller drawnCount, `decimated: true`, and the
+ *  measured per-layer drawMs. Pan/zoom to watch it re-decimate. */
+export const DrawStats: Story = {
+  render: () => <DrawStatsPanel />,
 };

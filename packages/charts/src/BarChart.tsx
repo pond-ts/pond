@@ -463,6 +463,7 @@ export function BarChart<
       const bs = shape.bs;
       return {
         layer: {
+          as: semantic,
           yExtent: () => barExtent(bs),
           xKind: binAxisKind,
           xExtent: () =>
@@ -535,6 +536,7 @@ export function BarChart<
     const vertical = orientation === 'vertical';
     return {
       layer: {
+        as: semantic,
         // Horizontal puts the value on the shared x (always 'value'); vertical
         // keeps the bin axis on x. The bin axis on the *other* side is a linear
         // numeric scale either way (time ms label via <YAxis ticks>).

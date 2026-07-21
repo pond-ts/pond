@@ -50,6 +50,19 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts:** **Draw-cost + decimation observability** — `<ChartContainer
+onDrawStats>` (PND-DECOBS; dashboard A/B friction, 2026-07-21). Fires a
+  `DrawStatsFrame` once per row-canvas repaint (keyed by an opaque `rowKey` for
+  multi-row attribution), one `LayerDrawInfo` per layer carrying its `as`,
+  measured `drawMs`, and — for a decimating layer (line / area / band / candle /
+  box) — `sourceCount` / `drawnCount` / `decimated`.
+  Compare `drawnCount` to `sourceCount` to see whether M4 engaged; read `drawMs`
+  for per-layer render cost. **Zero-overhead when unused** — the render loop
+  skips per-layer timing entirely unless a consumer subscribes. New exports:
+  `DrawStatsFrame`, `LayerDrawInfo`.
+
 ### Fixed
 
 - **charts:** hovering no longer repaints the row data canvas on every cursor
@@ -63,6 +76,10 @@ and type-level changes; patch bumps are strictly additive.
   frame rate while hovering). Found running uPlot's bench protocol against
   pond-charts; guarded by a new hover-sweep perf invariant in
   `e2e/perf-invariants.spec.ts`.
+- **charts:** corrected the `@pond-ts/charts` package-header doc comment, which
+  described a "chunked Path2D cache" render stage that was explored and
+  **deferred**, never built (it doesn't help the pan case, which re-decimates
+  every frame). The stale comment had misled a consumer's perf investigation.
 
 ## [0.50.0] — 2026-07-21
 

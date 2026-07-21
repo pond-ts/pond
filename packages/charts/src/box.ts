@@ -1,6 +1,7 @@
 import type { BoxSeries } from './data.js';
 import type { Scale } from './line.js';
 import type { BoxStyle } from './theme.js';
+import type { LayerDrawStats } from './context.js';
 import { barSpanPx } from './range.js';
 import { visibleSpanRange } from './culling.js';
 import { decimateBox, type DecimateOption } from './decimate.js';
@@ -154,7 +155,8 @@ export function drawBox(
   selectedKey: number | null = null,
   hoveredKey: number | null = null,
   decimate: DecimateOption = true,
-): void {
+): LayerDrawStats {
+  const sourceCount = box.length; // pre-cull, pre-decimation (for draw stats)
   // Viewport cull first (Phase 2): the [vStart, vEnd) boxes whose span overlaps
   // the window (+1 each side). Full range when `xScale` has no domain (a stub);
   // `offsetPx` is a small pixel nudge the ±1 margin absorbs.
@@ -168,10 +170,11 @@ export function drawBox(
   // loop-bound cull above. A selection/hover highlight keyed by the source box's
   // `x` won't match an aggregate column edge — but per-box highlight is
   // meaningless at decimation density, and hit-testing still reads the source.
-  const decimated =
+  const decimatedBox =
     decimate !== false ? decimateBox(box, xScale, ctx, 2, vEnd - vStart) : box;
-  if (decimated !== box) {
-    box = decimated; // aggregate boxes are already the visible set
+  const decimated = decimatedBox !== box;
+  if (decimated) {
+    box = decimatedBox; // aggregate boxes are already the visible set
     vStart = 0;
     vEnd = box.length;
   }
@@ -280,6 +283,9 @@ export function drawBox(
       ctx.restore();
     }
   }
+  // `drawnCount` = box slots iterated (visible span, or the aggregate set when
+  // decimation engaged); `sourceCount` = the raw box count it started from.
+  return { sourceCount, drawnCount: vEnd - vStart, decimated };
 }
 
 /**
