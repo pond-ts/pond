@@ -71,6 +71,8 @@ and type-level changes; patch bumps are strictly additive.
   Interaction is unaffected — hit-testing reads the source boxes (§2.3). Pass
   `decimate={false}` to draw every box at its own slot.
 
+## [0.49.0] — 2026-07-21
+
 ### Added
 
 - **charts:** **Annotation theme roles** (#508 item 3, Tidal vol-surface
