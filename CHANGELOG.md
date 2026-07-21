@@ -54,9 +54,10 @@ and type-level changes; patch bumps are strictly additive.
 
 - **charts:** **Draw-cost + decimation observability** — `<ChartContainer
 onDrawStats>` (PND-DECOBS; dashboard A/B friction, 2026-07-21). Fires a
-  `DrawStatsFrame` once per row-canvas repaint, one `LayerDrawInfo` per layer
-  carrying its `as`, measured `drawMs`, and — for a decimating layer (line /
-  area / band / candle / box) — `sourceCount` / `drawnCount` / `decimated`.
+  `DrawStatsFrame` once per row-canvas repaint (keyed by an opaque `rowKey` for
+  multi-row attribution), one `LayerDrawInfo` per layer carrying its `as`,
+  measured `drawMs`, and — for a decimating layer (line / area / band / candle /
+  box) — `sourceCount` / `drawnCount` / `decimated`.
   Compare `drawnCount` to `sourceCount` to see whether M4 engaged; read `drawMs`
   for per-layer render cost. **Zero-overhead when unused** — the render loop
   skips per-layer timing entirely unless a consumer subscribes. New exports:

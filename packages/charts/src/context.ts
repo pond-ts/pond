@@ -428,10 +428,14 @@ export interface LayerDrawStats {
   /** Source series length the draw received (pre-cull, pre-decimation). */
   readonly sourceCount: number;
   /** Points / marks actually drawn this frame — after viewport culling and, if
-   *  it engaged, M4 decimation. `drawnCount === sourceCount` with `decimated`
-   *  false ⇒ neither fired (everything in view was drawn). */
+   *  it engaged, M4 decimation. `drawnCount < sourceCount` can come from **either**
+   *  culling (a zoomed-in view drops off-screen points) **or** decimation — read
+   *  `decimated` to tell which; `drawnCount === sourceCount` means everything in
+   *  view was drawn full-resolution. */
   readonly drawnCount: number;
-  /** Whether M4 decimation engaged (vs. drew the culled slice full-resolution). */
+  /** Whether M4 decimation engaged (vs. drew the culled slice full-resolution).
+   *  Distinguishes a decimated draw from a merely culled one — both shrink
+   *  `drawnCount`. */
   readonly decimated: boolean;
 }
 
@@ -462,6 +466,13 @@ export interface LayerDrawInfo {
  * per-layer render cost the packaged layer otherwise hides.
  */
 export interface DrawStatsFrame {
+  /**
+   * Opaque, stable identity of the **row** this frame is for — rows repaint
+   * independently, so a multi-row container fires one frame per row and this is
+   * how a consumer attributes each (group frames by `rowKey`, e.g. as a `Map`
+   * key). Not human-readable; `layers[].as` labels the series within a row.
+   */
+  readonly rowKey: symbol;
   readonly layers: readonly LayerDrawInfo[];
   /** Total ms across this row's layer draws this frame. */
   readonly totalDrawMs: number;

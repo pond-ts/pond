@@ -9,7 +9,7 @@
  *     {@link DrawStatsFrame} per repaint, one labelled {@link LayerDrawInfo} per
  *     layer with a measured `drawMs`.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { scaleLinear } from 'd3-scale';
 import { act, cleanup, render } from '@testing-library/react';
 import { TimeSeries } from 'pond-ts';
@@ -233,6 +233,7 @@ describe('<ChartContainer onDrawStats>', () => {
       });
       expect(frames.length).toBeGreaterThan(0);
       const frame = frames.at(-1)!;
+      expect(typeof frame.rowKey).toBe('symbol');
       expect(frame.layers).toHaveLength(1);
       const layer = frame.layers[0]!;
       expect(layer.as).toBe('signal');
@@ -248,11 +249,11 @@ describe('<ChartContainer onDrawStats>', () => {
     }
   });
 
-  it('no onDrawStats ⇒ still renders (no throw, zero-overhead path)', () => {
+  it('no onDrawStats ⇒ the chart still draws (the zero-overhead path renders)', () => {
     const stub = stubCanvasContext();
-    const onStats = vi.fn();
     try {
-      // A container WITHOUT onDrawStats must not call any stats sink.
+      // WITHOUT onDrawStats, Layers takes the untimed loop — the line must still
+      // stroke (the un-instrumented path is behaviour-neutral).
       act(() => {
         render(
           <ChartContainer range={[0, 399]} width={640}>
@@ -265,7 +266,12 @@ describe('<ChartContainer onDrawStats>', () => {
           </ChartContainer>,
         );
       });
-      expect(onStats).not.toHaveBeenCalled();
+      const strokes = stub.calls.filter((c) => c.name === 'stroke').length;
+      const moves = stub.calls.filter(
+        (c) => c.name === 'moveTo' || c.name === 'lineTo',
+      ).length;
+      expect(strokes).toBeGreaterThan(0);
+      expect(moves).toBeGreaterThan(0);
     } finally {
       stub.restore();
     }

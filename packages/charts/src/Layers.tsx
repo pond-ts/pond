@@ -294,7 +294,7 @@ export function Layers({ children }: LayersProps) {
             decimated: stats?.decimated,
           });
         }
-        report({ layers: infos, totalDrawMs });
+        report({ rowKey: row.rowKey, layers: infos, totalDrawMs });
       }
     },
     [
@@ -311,6 +311,7 @@ export function Layers({ children }: LayersProps) {
       container.discontinuities,
       container.timeRange,
       container.reportDrawStats,
+      row.rowKey,
     ],
   );
 
