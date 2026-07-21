@@ -1033,9 +1033,20 @@ export function ChartContainer({
     [annotations, xScale, draggingKey],
   );
 
+  // The frame's `[d0, d1]` tuple, identity-stable on the endpoints. The frame
+  // memo legitimately rebuilds on every cursor move (cursorX is a frame field),
+  // so an inline `[d0, d1]` literal there would mint a fresh array per hover
+  // frame — and every draw callback listing `container.timeRange` in its deps
+  // (Layers' data-canvas draw) would read that as a domain change and replot the
+  // row canvas on each mousemove, defeating the SVG-overlay cursor contract.
+  const timeRangeTuple = useMemo<readonly [number, number]>(
+    () => [d0, d1],
+    [d0, d1],
+  );
+
   const frame = useMemo<ContainerFrame>(
     () => ({
-      timeRange: [d0, d1],
+      timeRange: timeRangeTuple,
       width,
       theme: theme ?? defaultTheme,
       plotWidth,
@@ -1100,8 +1111,7 @@ export function ChartContainer({
       firstRowKey,
     }),
     [
-      d0,
-      d1,
+      timeRangeTuple,
       width,
       theme,
       plotWidth,
