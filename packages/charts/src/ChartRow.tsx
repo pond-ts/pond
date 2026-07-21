@@ -67,6 +67,7 @@ function axisSpecEqual(a: AxisSpec, b: AxisSpec): boolean {
     a.pad === b.pad &&
     a.labelPlacement === b.labelPlacement &&
     a.index === b.index &&
+    a.tickCount === b.tickCount &&
     Object.is(a.format, b.format) &&
     numberArraysEqual(a.tickValues, b.tickValues)
   );

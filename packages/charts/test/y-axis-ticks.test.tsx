@@ -204,6 +204,19 @@ describe('<YAxis tickCount> + height-derived density (#508 item 4)', () => {
     expect(labels.has('50')).toBe(true);
   });
 
+  it('a runtime tickCount change re-registers the axis (guard includes it)', () => {
+    // Regression: tickCount must be in axisSpecEqual, or a tickCount-only
+    // change compares equal to the stored spec and setAxes is skipped —
+    // leaving the axis stuck on its first count.
+    const { container, rerender } = render(
+      chart({ height: 300, tickCount: 8 }),
+    );
+    const before = new Set(autoTickLabels(container)).size;
+    rerender(chart({ height: 300, tickCount: 2 }));
+    const after = new Set(autoTickLabels(container)).size;
+    expect(after).toBeLessThan(before);
+  });
+
   it('explicit ticks still win over tickCount', () => {
     const { getByText, queryByText } = render(
       <ChartContainer range={[0, 2]} width={400} showAxis={false}>
