@@ -49,6 +49,51 @@ export function boxIndexAtTime(box: BoxSeries, time: number): number {
 }
 
 /**
+ * Hit-test plot-pixel `(px, py)` against `box`'s marks — the **first** box whose
+ * bounding rect (its x-slot × its `[upper, lower]` whisker extent) contains the
+ * point, or `null`. The x-span is {@link barSpanPx} (same `gapPx`/`minWidthPx`/
+ * `offsetPx` as {@link drawBox}), so the hit rect matches the drawn mark; the y
+ * extent is the full whisker reach, so a click anywhere on the box (body or
+ * whisker) selects it — a range-only bid→ask segment included. The returned
+ * tuple is `[index, begin, value]` (`begin` = the box's `x`, `value` = its
+ * `upper` — provenance) for the chart to assemble a `SelectInfo`; keeping this
+ * theme-free mirrors {@link barAt} and stays unit-testable without a
+ * `ChartTheme`. A gap box (some drawn quantile non-finite) is skipped. O(N).
+ */
+export function boxAt(
+  box: BoxSeries,
+  px: number,
+  py: number,
+  xScale: Scale,
+  yScale: Scale,
+  gapPx: number,
+  minWidthPx: number,
+  offsetPx = 0,
+): [index: number, begin: number, value: number] | null {
+  for (let i = 0; i < box.length; i += 1) {
+    if (!isFiniteBox(box, i)) continue;
+    const [span0, span1] = barSpanPx(
+      box.x[i]!,
+      box.xEnd[i]!,
+      xScale,
+      gapPx,
+      minWidthPx,
+    );
+    const x0 = span0 + offsetPx;
+    const x1 = span1 + offsetPx;
+    const yUpper = yScale(box.upper[i]!);
+    const yLower = yScale(box.lower[i]!);
+    // upper is the higher value ⇒ the smaller pixel y; order defensively.
+    const yTop = Math.min(yUpper, yLower);
+    const yBottom = Math.max(yUpper, yLower);
+    if (px >= x0 && px <= x1 && py >= yTop && py <= yBottom) {
+      return [i, box.x[i]!, box.upper[i]!];
+    }
+  }
+  return null;
+}
+
+/**
  * How a box renders its spread (pjm17971): **`whisker`** (today's thin stems +
  * end-caps), **`solid`** (the candlestick look — a light outer bar over the full
  * `lower→upper` range with a more-prominent inner `q1→q3` box, no stems), or
@@ -101,6 +146,12 @@ export function drawBox(
   showMedian = true,
   offsetPx = 0,
   capWidthPx?: number,
+  // Selection / hover highlight, keyed by the box's `x` (its `begin`, matched to
+  // the container selection's `key` by the caller). `null` ⇒ none. A selected
+  // box gets a full-strength bounding outline; a hovered one a fainter one —
+  // the box analog of the bar highlight, drawn without a new theme token.
+  selectedKey: number | null = null,
+  hoveredKey: number | null = null,
 ): void {
   // A range-only box (bid→ask segment) has no body / median; the whisker (or the
   // solid bar) runs the full lower→upper. Flags default true (a full box).
@@ -196,6 +247,20 @@ export function drawBox(
       ctx.moveTo(x0, yMedian);
       ctx.lineTo(x1, yMedian);
       ctx.stroke();
+    }
+
+    // Selection / hover: outline the whole mark (x-slot × whisker extent) so a
+    // click / pointer-over reads back on the canvas. Selected = full strength;
+    // hovered = fainter. Bracketed so alpha/width don't leak to the next box.
+    const key = box.x[i]!;
+    if (key === selectedKey || key === hoveredKey) {
+      ctx.save();
+      ctx.strokeStyle = style.stroke;
+      ctx.lineWidth =
+        key === selectedKey ? style.strokeWidth + 1 : style.strokeWidth;
+      ctx.globalAlpha = key === selectedKey ? 1 : 0.5;
+      ctx.strokeRect(x0, yUpper, x1 - x0, yLower - yUpper);
+      ctx.restore();
     }
   }
 }

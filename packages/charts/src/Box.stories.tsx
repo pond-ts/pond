@@ -377,3 +377,37 @@ export const CallPutPair: Story = {
     );
   },
 };
+
+/**
+ * **Selection (`id`).** With an `id`, a box is clickable — the same id-gated
+ * contract Line/Scatter/Bar carry (`selected`/`onSelect`, `hovered`/`onHover`).
+ * Here the 100-strike box is pinned via a controlled `selected`, so it draws
+ * outlined; in an app a click sets it. A range-only box selects anywhere in its
+ * bid→ask span. (`key` is the box's neighbour-span begin — 95 between the 90 and
+ * 100 strikes.)
+ */
+export const Selectable: Story = {
+  render: () => {
+    const s = smile();
+    return (
+      <ChartContainer
+        width={620}
+        theme={docsTheme}
+        selected={{
+          id: 'smile',
+          key: 95,
+          value: 0.26,
+          color: '#000',
+          label: 'iv',
+        }}
+      >
+        <ChartRow height={260}>
+          <YAxis id="iv" label="IV" />
+          <Layers>
+            <BoxPlot series={s} lower="bid" upper="ask" as="iv" id="smile" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};

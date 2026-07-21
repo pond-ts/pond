@@ -27,21 +27,22 @@ q3, upper })` / `boxFromValueSeries`.
 
 ## Props
 
-| Prop         | Type                             | Default        | Purpose                                                             |
-| ------------ | -------------------------------- | -------------- | ------------------------------------------------------------------- |
-| `series`     | `TimeSeries \| ValueSeries`      | — (req)        | The source series.                                                  |
-| `lower`      | `string`                         | — (req)        | Lower whisker column (e.g. `p5` / `min`).                           |
-| `upper`      | `string`                         | — (req)        | Upper whisker column (e.g. `p95` / `max`).                          |
-| `q1`         | `string`                         | —              | Box bottom (Q1). Both-or-neither with `q3`.                         |
-| `q3`         | `string`                         | —              | Box top (Q3).                                                       |
-| `median`     | `string`                         | —              | Median line column; omit for no centre line.                        |
-| `as`         | `string`                         | `'default'`    | Style role → `theme.box[as]`.                                       |
-| `axis`       | `string`                         | row default    | Which `<YAxis id>` to scale against.                                |
-| `shape`      | `'whisker' \| 'solid' \| 'none'` | `'whisker'`    | Box presentation (see variants).                                    |
-| `showMedian` | `boolean`                        | `true`         | Draw the median line (no-op without a `median` column).             |
-| `gap`        | `number`                         | `0`            | Total horizontal inset px.                                          |
-| `capWidth`   | `number`                         | half box width | Whisker cap width (`whisker` shape only).                           |
-| `offset`     | `number`                         | `0`            | Pixel x-shift — only the draw shifts, not the readout (keep small). |
+| Prop         | Type                             | Default        | Purpose                                                               |
+| ------------ | -------------------------------- | -------------- | --------------------------------------------------------------------- |
+| `series`     | `TimeSeries \| ValueSeries`      | — (req)        | The source series.                                                    |
+| `lower`      | `string`                         | — (req)        | Lower whisker column (e.g. `p5` / `min`).                             |
+| `upper`      | `string`                         | — (req)        | Upper whisker column (e.g. `p95` / `max`).                            |
+| `q1`         | `string`                         | —              | Box bottom (Q1). Both-or-neither with `q3`.                           |
+| `q3`         | `string`                         | —              | Box top (Q3).                                                         |
+| `median`     | `string`                         | —              | Median line column; omit for no centre line.                          |
+| `as`         | `string`                         | `'default'`    | Style role → `theme.box[as]`.                                         |
+| `axis`       | `string`                         | row default    | Which `<YAxis id>` to scale against.                                  |
+| `shape`      | `'whisker' \| 'solid' \| 'none'` | `'whisker'`    | Box presentation (see variants).                                      |
+| `showMedian` | `boolean`                        | `true`         | Draw the median line (no-op without a `median` column).               |
+| `gap`        | `number`                         | `0`            | Total horizontal inset px.                                            |
+| `capWidth`   | `number`                         | half box width | Whisker cap width (`whisker` shape only).                             |
+| `offset`     | `number`                         | `0`            | Pixel x-shift — only the draw shifts, not the readout (keep small).   |
+| `id`         | `string`                         | —              | Stable identity — **gates selection + hover** (click / pointer-over). |
 
 ## Variants
 
@@ -58,9 +59,15 @@ q3, upper })` / `boxFromValueSeries`.
   single consolidated flag at the box top with every quantile in one row, each
   coloured to its piece. This **opts the box out** of the crosshair reticle
   x-snap (unlike [Candlestick](./candlestick.mdx), which opts in).
-- **Selection:** not selectable.
+- **Selection:** **id-gated** — set `id` and a box is clickable (the same
+  `selected`/`onSelect`, `hovered`/`onHover` contract Line/Scatter/Bar carry). A
+  click anywhere in a box (body or whisker — a range-only bid→ask segment
+  included) selects it via rect-containment; the selected box outlines, a
+  hovered one lights fainter. `key` is the box's `x` (its span begin). Without
+  `id` the box is display-only. Independent of the cursor opt-out above — a box
+  is selectable whether or not the reticle snaps to it.
 - **Theming:** the `theme.box` slot (`BoxStyle` with fill / stroke / median /
-  whisker).
+  whisker); the selection outline reuses `stroke` (no new token).
 
 ## Cautions
 
