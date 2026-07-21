@@ -7,6 +7,7 @@ import { LineChart } from './LineChart.js';
 import { AreaChart } from './AreaChart.js';
 import { BandChart } from './BandChart.js';
 import { Candlestick } from './Candlestick.js';
+import { BoxPlot } from './BoxPlot.js';
 import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
 import { docsTheme } from './docs-theme.fixture.js';
@@ -298,6 +299,119 @@ export const CandlesOff: Story = {
         <YAxis id="p" side="right" />
         <Layers>
           <Candlestick series={candleSeries} axis="p" decimate={false} />
+        </Layers>
+      </ChartRow>
+      <XAxis />
+    </ChartContainer>
+  ),
+};
+
+// A large per-x distribution feed (interval-keyed boxes) for box decimation: a
+// bounded slow-trending centre with a fixed spread, so each per-pixel-column
+// aggregate box has a visible IQR body + whiskers.
+function bigBoxes(n: number) {
+  const rows: Array<[number, number, number, number, number, number]> =
+    new Array(n);
+  for (let i = 0; i < n; i += 1) {
+    const mid = 120 + 22 * Math.sin(i / (n / 8)); // slow trend, bounded ~98–142
+    const jitter = 4 * Math.sin(i / 2.7);
+    const median = mid + jitter;
+    rows[i] = [
+      BASE + i * STEP,
+      median - 8 - Math.abs(Math.cos(i / 1.3)), // lower
+      median - 3, // q1
+      median, // median
+      median + 3, // q3
+      median + 8 + Math.abs(Math.sin(i / 1.7)), // upper
+    ];
+  }
+  return new TimeSeries({
+    name: 'dist',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'lower', kind: 'number' },
+      { name: 'q1', kind: 'number' },
+      { name: 'median', kind: 'number' },
+      { name: 'q3', kind: 'number' },
+      { name: 'upper', kind: 'number' },
+    ] as const,
+    rows,
+  });
+}
+const boxSeries = bigBoxes(20_000);
+
+/** ~20k raw boxes, auto-decimated to per-pixel-column aggregate boxes (whiskers
+ *  min(lower)/max(upper), body min(q1)/max(q3), first median). */
+export const Boxes: Story = {
+  render: () => (
+    <ChartContainer width={720} theme={docsTheme} panZoom>
+      <ChartRow height={260}>
+        <YAxis id="p" side="right" />
+        <Layers>
+          <BoxPlot
+            series={boxSeries}
+            lower="lower"
+            q1="q1"
+            median="median"
+            q3="q3"
+            upper="upper"
+            axis="p"
+          />
+        </Layers>
+      </ChartRow>
+      <XAxis />
+    </ChartContainer>
+  ),
+};
+
+/** The same ~20k boxes zoomed to ~40 visible — the deep-zoom path: below the
+ *  decimation threshold, so boxes draw at their **full slot width** (guards the
+ *  visible-count gate, the box analog of `CandlesZoomed`). */
+export const BoxesZoomed: Story = {
+  render: () => (
+    <ChartContainer
+      width={720}
+      theme={docsTheme}
+      range={[BASE, BASE + 40 * STEP]}
+      panZoom
+    >
+      <ChartRow height={260}>
+        <YAxis id="p" side="right" />
+        <Layers>
+          <BoxPlot
+            series={boxSeries}
+            lower="lower"
+            q1="q1"
+            median="median"
+            q3="q3"
+            upper="upper"
+            axis="p"
+          />
+        </Layers>
+      </ChartRow>
+      <XAxis />
+    </ChartContainer>
+  ),
+};
+
+/** The same ~20k boxes with decimation OFF — every box at its own slot (sub-pixel
+ *  mush at this density; the reason decimation is the default). */
+export const BoxesOff: Story = {
+  render: () => (
+    <ChartContainer width={720} theme={docsTheme} panZoom>
+      <ChartRow height={260}>
+        <YAxis id="p" side="right" />
+        <Layers>
+          <BoxPlot
+            series={boxSeries}
+            lower="lower"
+            q1="q1"
+            median="median"
+            q3="q3"
+            upper="upper"
+            axis="p"
+            decimate={false}
+          />
         </Layers>
       </ChartRow>
       <XAxis />

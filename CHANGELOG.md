@@ -61,8 +61,15 @@ and type-level changes; patch bumps are strictly additive.
   candle count, so a deep zoom into a large series still draws full-width
   candles. Pass `decimate={false}` (and pre-aggregate upstream) for
   fixed-timeframe candles.
-
-## [0.49.0] — 2026-07-21
+- **charts:** M4 decimation extended to **`<BoxPlot>`** (same auto-on `decimate`
+  prop) — the interval-mark sibling of the candle. Dense boxes are drawn as
+  per-pixel-column **aggregate boxes**: the whiskers widen to the column's reach
+  (`min(lower)`/`max(upper)`), the body to its IQR envelope
+  (`min(q1)`/`max(q3)`), the centre line to the first box's median. Gates on the
+  **visible** box count (a deep zoom still draws full-width boxes); the
+  `hasBox`/`hasMedian` flags carry through, so a range-only box stays range-only.
+  Interaction is unaffected — hit-testing reads the source boxes (§2.3). Pass
+  `decimate={false}` to draw every box at its own slot.
 
 ### Added
 

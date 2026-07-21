@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { scaleLinear } from 'd3-scale';
 import {
   boxAt,
   boxExtent,
@@ -571,5 +572,63 @@ describe('drawBox — viewport culling (Phase 2)', () => {
     const { ctx, calls } = recordingContext();
     drawBox(ctx, ramp(), identity, identity, style);
     expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(6);
+  });
+});
+
+describe('drawBox — M4 decimation (Phase 5)', () => {
+  const pxScale = (lo: number, hi: number) =>
+    scaleLinear().domain([lo, hi]).range([lo, hi]) as unknown as (
+      v: number,
+    ) => number;
+  const sizedCtx = (widthPx: number) => {
+    const { ctx, calls } = recordingContext();
+    (ctx as unknown as { canvas: { width: number } }).canvas = {
+      width: widthPx,
+    };
+    return { ctx, calls };
+  };
+  // `n` contiguous boxes at x = 0..n-1 (xEnd = x+1).
+  const dense = (n: number) =>
+    bx(
+      Array.from({ length: n }, (_, i) => i),
+      {
+        lower: Array.from({ length: n }, () => 0),
+        q1: Array.from({ length: n }, () => 1),
+        median: Array.from({ length: n }, () => 2),
+        q3: Array.from({ length: n }, () => 3),
+        upper: Array.from({ length: n }, () => 4),
+      },
+      Array.from({ length: n }, (_, i) => i + 1),
+    );
+
+  it('decimates dense boxes to ~one aggregate box per column', () => {
+    const { ctx, calls } = sizedCtx(10); // W=10
+    // 5000 boxes → decimate to ≤10 aggregate boxes → ≤10 body outlines.
+    drawBox(ctx, dense(5000), pxScale(0, 5000), (v: number) => v, style);
+    const rects = calls.filter((c) => c.name === 'strokeRect').length;
+    expect(rects).toBeLessThanOrEqual(10);
+    expect(rects).toBeGreaterThan(0);
+  });
+
+  it('draws every box when decimate is off', () => {
+    const { ctx, calls } = sizedCtx(10);
+    drawBox(
+      ctx,
+      dense(40),
+      pxScale(0, 40),
+      (v: number) => v,
+      style,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+    );
+    // 40 boxes → 40 body outlines, not decimated.
+    expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(40);
   });
 });

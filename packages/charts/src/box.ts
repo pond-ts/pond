@@ -3,6 +3,7 @@ import type { Scale } from './line.js';
 import type { BoxStyle } from './theme.js';
 import { barSpanPx } from './range.js';
 import { visibleSpanRange } from './culling.js';
+import { decimateBox, type DecimateOption } from './decimate.js';
 
 /** Fraction of the box width the whisker end-caps span (centred on the stem). */
 const WHISKER_CAP_FRACTION = 0.5;
@@ -152,16 +153,32 @@ export function drawBox(
   // the box analog of the bar highlight, drawn without a new theme token.
   selectedKey: number | null = null,
   hoveredKey: number | null = null,
+  decimate: DecimateOption = true,
 ): void {
+  // Viewport cull first (Phase 2): the [vStart, vEnd) boxes whose span overlaps
+  // the window (+1 each side). Full range when `xScale` has no domain (a stub);
+  // `offsetPx` is a small pixel nudge the ±1 margin absorbs.
+  let [vStart, vEnd] = visibleSpanRange(box.x, box.xEnd, box.length, xScale);
+  // M4 box decimation (Phase 5): once the *visible* boxes are denser than ~2 per
+  // device pixel, replace them with per-column **aggregate boxes** ({@link
+  // decimateBox}). Gate on the visible count, NOT `box.length`: a box's width is
+  // its slot, so decimating when only a handful are on screen (deep zoom) would
+  // re-slot each to a 1px sliver. `decimateBox` no-ops (returns the same object)
+  // below the visible-density threshold or on a domainless scale, leaving the
+  // loop-bound cull above. A selection/hover highlight keyed by the source box's
+  // `x` won't match an aggregate column edge — but per-box highlight is
+  // meaningless at decimation density, and hit-testing still reads the source.
+  const decimated =
+    decimate !== false ? decimateBox(box, xScale, ctx, 2, vEnd - vStart) : box;
+  if (decimated !== box) {
+    box = decimated; // aggregate boxes are already the visible set
+    vStart = 0;
+    vEnd = box.length;
+  }
   // A range-only box (bid→ask segment) has no body / median; the whisker (or the
   // solid bar) runs the full lower→upper. Flags default true (a full box).
   const hasBox = box.hasBox !== false;
   const drawMedian = showMedian && box.hasMedian !== false;
-  // Viewport culling (Phase 2): draw only the boxes whose span overlaps the
-  // visible x-window (+1 each side); the loop keeps the original index `i`. Full
-  // range when `xScale` has no domain (a test stub). `offsetPx` is a small pixel
-  // nudge the ±1 margin absorbs.
-  const [vStart, vEnd] = visibleSpanRange(box.x, box.xEnd, box.length, xScale);
   for (let i = vStart; i < vEnd; i += 1) {
     if (!isFiniteBox(box, i)) continue;
     const [span0, span1] = barSpanPx(
