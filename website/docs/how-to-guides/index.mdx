@@ -37,6 +37,13 @@ Available:
   _across_ into a bar per column, via `pivotByGroup` →
   `transposeRow` → `<BarChart categories>`. Covers the band scale,
   stable per-column selection, and the high-cardinality label policy.
+- [**Rendering large time series**](./rendering-large-series) —
+  drawing **millions of points** without the pan-and-zoom cliff: how
+  the built-in **decimator** (viewport culling + M4 min/max/first/last)
+  makes the draw cost flat in the point count, what the machine-recorded
+  bench numbers actually say, per-layer aggregates (line / area / band /
+  candle / box), and the honest ceilings — the `three`-at-1M render floor
+  and the data-side ceiling that hits first for live streams.
 
 In flight:
 
