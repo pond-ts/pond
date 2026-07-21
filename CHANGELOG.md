@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 tag, so this file covers them all. Pre-1.0: minor bumps may include new features
 and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.48.1...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.49.0...HEAD
+[0.49.0]: https://github.com/pond-ts/pond/compare/v0.48.1...v0.49.0
 [0.48.1]: https://github.com/pond-ts/pond/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/pond-ts/pond/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/pond-ts/pond/compare/v0.46.0...v0.47.0
@@ -50,6 +51,98 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts:** M4 decimation extended to **`<Candlestick>`** (same auto-on
+  `decimate` prop). Dense candles are drawn as per-pixel-column **aggregate
+  candles** — `open=first`, `high=max`, `low=min`, `close=last` over the column —
+  i.e. re-bucketed to the pixel-column timeframe, the way a trading chart shows
+  fewer, wider candles as you zoom out (decimator §2.4). It is a faithful OHLC of
+  each column's span, never a distortion; the hover readout still reads the
+  **source** candle at the cursor (§2.3). Decimation gates on the **visible**
+  candle count, so a deep zoom into a large series still draws full-width
+  candles. Pass `decimate={false}` (and pre-aggregate upstream) for
+  fixed-timeframe candles.
+
+## [0.49.0] — 2026-07-21
+
+### Added
+
+- **charts:** **Annotation theme roles** (#508 item 3, Tidal vol-surface
+  friction). `theme.annotation` gains an optional **`roles`** map (role name →
+  `{ color, fillOpacity? }`), and `<Baseline>` / `<Marker>` / `<Region>` gain a
+  **`role`** prop that recolours that mark from `roles[role]` while keeping the
+  shared depth ramp — so a smile can place a green ATM baseline, a distinct
+  reference marker, and an amber zone at once without the whole register
+  shifting together. Resolves `roles[role] ?? annotation` (an unknown/unset
+  role is the base register). **Colour stays a theme concern** — there is no
+  per-mark colour prop (the one-styling-channel discipline; consistent with the
+  per-box red/green reject). `cssVarTheme` carries the `roles` map through
+  unchanged (deep-merged). `theme.annotation.roles` is optional, so existing
+  themes are unaffected.
+- **charts:** **`<BoxPlot id>` — box selection** (#508 item 5, Tidal
+  vol-surface friction). A `BoxPlot` with an `id` is now clickable on the same
+  id-gated contract `<BarChart>` / `<ScatterChart>` carry
+  (`selected`/`onSelect`, `hovered`/`onHover`): a click anywhere on a box —
+  body or whisker, a range-only bid→ask segment included — selects it via
+  rect-containment (`boxAt`, the interval-mark analog of `barAt`, **not** the
+  continuous nearest-point threshold), and the selected box outlines (hovered
+  fainter, reusing `theme.box.stroke`, no new token). `key` is the box's `x`
+  (its span begin). Without an `id` the box stays display-only. Independent of
+  the box's `cursorFlag` cursor opt-out — selection rides the separate
+  `hitTest` path.
+- **charts:** **`<YAxis tickCount>` + height-derived tick density** (#508
+  item 4, Tidal vol-surface friction). The y axis's auto-tick count now
+  follows the **row height** by default — a short strip (e.g. a 72px
+  histogram lane) gets fewer ticks than a tall row instead of crushing the
+  same ~5 labels into the space (mirrors the width-derived trading-time x
+  axis). A new **`tickCount`** prop pins an explicit target; explicit
+  `ticks` still overrides both. The count is resolved once per axis on the
+  row (`resolveYTickCount`) and shared by the axis labels, the cursor-readout
+  formatter, and the row gridlines, so a label / its gridline / its readout
+  stay on the same `ticks(count)` (replaces three hardcoded `5`s that agreed
+  by convention).
+
+- **charts:** **`<Legend>` — the series key** (#508 item 2, Tidal vol-surface
+  friction; design per the sender's sketch on the issue). Every draw layer now
+  registers its readout identity (`as ?? column`) plus its **resolved** style
+  as a `SwatchSpec` (line stroke+dash, area fill+line, band envelope, scatter
+  dot, box whisker, bar fill, candle up/down pair), and `<Legend />` renders
+  the registry as a small card anchored to a corner of the rows block
+  (`placement`, default `top-right`) — so the key can never drift from the
+  plot. Rows follow chart-row → declaration order; identities collapse
+  (`id ?? label`, as the tracker readout merges keys); a **stacked bar
+  registers one row per group** with its resolved fill. Per-layer control via
+  a new `legend` prop on all seven marks: `false` opts out, a string renames.
+  Interactions are **id-gated** (the shipped selection contract): rows whose
+  layer has an `id` echo hover into the container and toggle selection on
+  click; `onRowHover` / `onRowClick` take over when provided; series
+  show/hide deliberately stays consumer-side. **Scope follows placement:** at
+  the container level the card lists every row; placed inside a `<Layers>` it
+  scopes to that `<ChartRow>` and anchors to that row's plot (a per-row legend
+  needs no prop). `<Legend items={…}>` renders explicit rows — inside a
+  container or standalone (a dashboard-side key).
+  New optional `theme.legend` slot (background/border/text; derives from
+  `chip`/`axis` tokens when absent, so hand-built themes keep compiling).
+  **Headless variant:** `useChartLegend()` serves the entries as data —
+  `rows` (**items grouped by chart row**; each item is
+  `label` + resolved swatch + `id` + live `selected`/`hovered`; a flat list
+  is `rows.flatMap((r) => r.items)`) plus chart-synced `hover`/`select`
+  verbs, the container's axis `gutters` (for aligning a custom layout to the
+  plot), and **`cursorTime`** (the cursor's axis instant, `null` when idle) —
+  the seams for a legend that is a design of its own: horizontal chip rows,
+  ticker-compare with the secondary dimmed, and **current-or-cursor values**
+  per item (`series.nearest(cursorTime)`, else the latest sample; item
+  labels also match the tracker's sample labels, so an `onTrackerChanged`
+  merge is a label-keyed join); `<Legend>` itself renders through the same
+  core, so the two can't disagree. **Scope follows placement** for both the
+  card and the hook: inside a `<Layers>` they scope to that `<ChartRow>` and
+  the card anchors to that row's plot; container-level stays all-rows. Card
+  polish per the first design pass: plot-area-inset placement, selection
+  reads by contrast (the selected item bold, others dulled — the
+  ticker-compare treatment), a dashed line's swatch hand-renders as a
+  canonical three-dash glyph, and a bar's swatch is a centred rounded square.
+  New exports: `Legend`, `LegendProps`, `LegendPlacement`, `SwatchSpec`,
+  `LegendItemInput`, `useChartLegend`, `ChartLegend`, `LegendRow`,
+  `LegendItem`.
 - **charts:** **`cursorFormat` reaches value axes** (#508 item 1, Tidal
   vol-surface friction) — the container's readout channel now applies on a
   value x axis exactly as on a time axis: a **string** is a d3 _number_
@@ -97,14 +190,6 @@ and type-level changes; patch bumps are strictly additive.
   max(`upper`)** — the widest envelope the samples span, so it can never invert
   (§2.5) and covers the same pixels; the win is the canvas fill (≈W vertices vs
   every sample). Both gated off a non-linear `curve`; interaction unaffected.
-- **charts:** M4 decimation extended to **`<Candlestick>`** (same auto-on
-  `decimate` prop). Dense candles are drawn as per-pixel-column **aggregate
-  candles** — `open=first`, `high=max`, `low=min`, `close=last` over the column —
-  i.e. re-bucketed to the pixel-column timeframe, the way a trading chart shows
-  fewer, wider candles as you zoom out (decimator §2.4). It is a faithful OHLC of
-  each column's span, never a distortion; the hover readout still reads the
-  **source** candle at the cursor (§2.3). Pass `decimate={false}` (and
-  pre-aggregate upstream) for fixed-timeframe candles.
 - **charts:** **Viewport culling** (charts decimator wave, Phase 2). Line, area,
   and band layers now clip to the **visible slice** of their key column — plus
   one entry/exit point each side so the segment crossing each plot edge still
@@ -137,6 +222,19 @@ and type-level changes; patch bumps are strictly additive.
   mark that can paint into the plot is kept. Small-radius scatters are unaffected
   (they re-expand by a few pixels — usually the same window). Interval marks
   (bars / candles / boxes) don't need this — their width _is_ their x-span.
+
+### Changed
+
+- **charts:** **Tracker labels key on `as` across the multi-value marks**
+  (F-charts-8 §3, the `<Legend>` label-source prerequisite). With a semantic
+  `as`, a `<BandChart>`'s edge samples now read `"<as> lower"` / `"<as>
+upper"` and a `<Candlestick showOHLC>`'s quote pills read `"<as> high"` /
+  `"<as> open"` / … — the series-name + role convention `<BoxPlot>` already
+  shipped (`iv upper`) — so readout/legend merge keys are the series
+  identity, not raw column names or bare role words. Without an `as`,
+  labels are unchanged (column names / role words). Consumers keying
+  `onTrackerChanged` readouts on the old labels while setting `as` should
+  key on the new `"<as> <role>"` form.
 
 ### Fixed
 

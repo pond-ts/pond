@@ -175,6 +175,33 @@ export interface ChartTheme {
     readonly color: string;
     readonly fillOpacity: number;
     readonly depth: readonly [number, number, number];
+    /**
+     * **Optional per-role overrides** — a small map from a role name to its
+     * `color` (and optionally `fillOpacity`), so distinct marks can be styled
+     * at once without splitting the whole register: a `<Baseline role="atm">`
+     * green, a `<Marker role="ref">` in another hue, each still drawn through
+     * the shared {@link depth} ramp. A mark's `role` resolves
+     * `roles[role] ?? { color, fillOpacity }` (an unknown/unset role is the
+     * base register). Colour stays a **theme** concern — there is no per-mark
+     * colour prop (the one-styling-channel discipline).
+     */
+    readonly roles?: {
+      readonly [role: string]: {
+        readonly color: string;
+        readonly fillOpacity?: number;
+      };
+    };
+  };
+  /**
+   * The **`<Legend>` card** — background, border, and label text of the
+   * in-chart series key. **Optional**: when absent the legend derives from
+   * existing tokens (`chip.background`, `axis.grid`, `axis.label`), so a
+   * hand-built theme keeps compiling and reads coherently without opting in.
+   */
+  readonly legend?: {
+    readonly background: string;
+    readonly border: string;
+    readonly text: string;
   };
 }
 
@@ -432,6 +459,12 @@ export const defaultTheme: ChartTheme = {
     fillOpacity: 0.1,
     depth: [1, 0.7, 0.4],
   },
+  // The in-chart series key: chip-white card, gridline border, axis-label text.
+  legend: {
+    background: '#ffffff',
+    border: '#e2e8f0',
+    text: '#64748b',
+  },
 };
 
 /**
@@ -572,5 +605,11 @@ export const estelaTheme: ChartTheme = {
     color: '#7FE2D2', // --es-reef
     fillOpacity: 0.1,
     depth: [1, 0.7, 0.4],
+  },
+  // The in-chart series key on the dark ground: deep panel, abyss-line border.
+  legend: {
+    background: '#0B4E58', // --es-deep (the chip panel)
+    border: '#1B6B75',
+    text: '#B7D9DD',
   },
 };

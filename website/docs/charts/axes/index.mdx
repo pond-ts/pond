@@ -53,19 +53,20 @@ auto-fitting axis — you just get no gutter or ticks.
 
 ### `<YAxis>` props
 
-| Prop             | Type                                           | Default       | Purpose                                                                 |
-| ---------------- | ---------------------------------------------- | ------------- | ----------------------------------------------------------------------- |
-| `id`             | `string`                                       | — (required)  | The scale id a layer binds to via `axis`. First-declared = row default. |
-| `side`           | `'left' \| 'right'`                            | `'left'`      | Which gutter the axis sits in.                                          |
-| `label`          | `string`                                       | `id`          | Axis title / unit.                                                      |
-| `labelPlacement` | `'rotated' \| 'top'`                           | `'rotated'`   | `rotated` = vertical strip on the outer edge; `top` = horizontal atop.  |
-| `min` / `max`    | `number`                                       | auto-fit      | Explicit domain bounds; omit to fit the bound layers.                   |
-| `pad`            | `number`                                       | `0`           | Fractional headroom added each side of the resolved domain.             |
-| `format`         | `AxisFormat` (d3 specifier or `(v) => string`) | scale default | Tick-label **and** cursor-readout formatting. Hoist an inline function. |
-| `ticks`          | `ReadonlyArray<{ at: number; label: string }>` | auto          | Explicit ticks — drives both labels **and** gridlines. `[]` draws none. |
-| `boundaryLabels` | `boolean`                                      | `true`        | `false` drops just the top & bottom extreme labels (gridlines stay).    |
-| `width`          | `number`                                       | `50`          | Gutter width in CSS px.                                                 |
-| `color`          | `string`                                       | theme         | This axis's tick + title colour (presentation-only).                    |
+| Prop             | Type                                           | Default        | Purpose                                                                                                                               |
+| ---------------- | ---------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`             | `string`                                       | — (required)   | The scale id a layer binds to via `axis`. First-declared = row default.                                                               |
+| `side`           | `'left' \| 'right'`                            | `'left'`       | Which gutter the axis sits in.                                                                                                        |
+| `label`          | `string`                                       | `id`           | Axis title / unit.                                                                                                                    |
+| `labelPlacement` | `'rotated' \| 'top'`                           | `'rotated'`    | `rotated` = vertical strip on the outer edge; `top` = horizontal atop.                                                                |
+| `min` / `max`    | `number`                                       | auto-fit       | Explicit domain bounds; omit to fit the bound layers.                                                                                 |
+| `pad`            | `number`                                       | `0`            | Fractional headroom added each side of the resolved domain.                                                                           |
+| `format`         | `AxisFormat` (d3 specifier or `(v) => string`) | scale default  | Tick-label **and** cursor-readout formatting. Hoist an inline function.                                                               |
+| `ticks`          | `ReadonlyArray<{ at: number; label: string }>` | auto           | Explicit ticks — drives both labels **and** gridlines. `[]` draws none.                                                               |
+| `tickCount`      | `number`                                       | height-derived | Target auto-tick count (a `ticks(count)` hint). Omit ⇒ derived from row height, so a short strip isn't crushed. `ticks` overrides it. |
+| `boundaryLabels` | `boolean`                                      | `true`         | `false` drops just the top & bottom extreme labels (gridlines stay).                                                                  |
+| `width`          | `number`                                       | `50`           | Gutter width in CSS px.                                                                                                               |
+| `color`          | `string`                                       | theme          | This axis's tick + title colour (presentation-only).                                                                                  |
 
 `format` is the one prop whose inline **function** form must be hoisted or
 `useCallback`'d — it's the only prop the layout's structural change-detection

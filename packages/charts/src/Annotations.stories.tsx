@@ -834,3 +834,47 @@ export const PanZoomSelect: Story = {
     );
   },
 };
+
+/**
+ * **Theme roles — distinct mark colours in one register.** `theme.annotation.roles`
+ * maps a role name to a `color` (and optional `fillOpacity`); a mark's `role`
+ * prop picks one, keeping the shared depth ramp. Here an **ATM** baseline reads
+ * green, a **reference** marker blue, and a **zone** region amber — all placed
+ * at once, none dragging the others' hue (the vol-smile ask). Colour stays a
+ * theme concern: there's no per-mark colour prop.
+ */
+export const Roles: Story = {
+  render: () => {
+    const theme = {
+      ...docsTheme,
+      annotation: {
+        color: docsTheme.annotation?.color ?? '#0d9488',
+        fillOpacity: docsTheme.annotation?.fillOpacity ?? 0.1,
+        depth: docsTheme.annotation?.depth ?? ([1, 0.7, 0.4] as const),
+        roles: {
+          atm: { color: '#16a34a' }, // green
+          ref: { color: '#2563eb' }, // blue
+          zone: { color: '#f59e0b', fillOpacity: 0.15 }, // amber, softer fill
+        },
+      },
+    };
+    return (
+      <ChartContainer range={INTERVAL} width={620} theme={theme}>
+        <ChartRow height={240}>
+          <YAxis id="w" label="W" />
+          <Layers>
+            <LineChart series={power()} column="watts" axis="w" />
+            <Region
+              from={BASE + 8 * STEP}
+              to={BASE + 16 * STEP}
+              role="zone"
+              label="zone"
+            />
+            <Baseline value={165} role="atm" label="ATM" />
+            <Marker at={BASE + 28 * STEP} role="ref" label="ref" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};

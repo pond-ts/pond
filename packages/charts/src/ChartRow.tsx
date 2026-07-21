@@ -13,6 +13,7 @@ import {
 import { scaleLinear, type ScaleLinear } from 'd3-scale';
 import { resolveYDomain } from './domain.js';
 import { resolveAxisFormat } from './format.js';
+import { resolveYTickCount } from './yticks.js';
 import { placeAxisSlots, type SlotAxis } from './slots.js';
 import { useSlotKey } from './use-slot-key.js';
 import { YAxis } from './YAxis.js';
@@ -66,6 +67,7 @@ function axisSpecEqual(a: AxisSpec, b: AxisSpec): boolean {
     a.pad === b.pad &&
     a.labelPlacement === b.labelPlacement &&
     a.index === b.index &&
+    a.tickCount === b.tickCount &&
     Object.is(a.format, b.format) &&
     numberArraysEqual(a.tickValues, b.tickValues)
   );
@@ -226,6 +228,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
               labelPlacement: 'rotated',
               format: undefined,
               tickValues: undefined,
+              tickCount: undefined,
               index: 0,
             },
           ],
@@ -305,16 +308,32 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
     return map;
   }, [effectiveAxes, layerList, height, defaultAxisId, topHeader]);
 
+  // Resolved auto-tick count per axis — explicit `<YAxis tickCount>` else
+  // height-derived (see resolveYTickCount). The single source the `<YAxis>`
+  // labels, the readout formatter (below), and the `Layers` gridlines all read,
+  // so label / readout / gridline stay on one `ticks(count)`.
+  const tickCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const ax of effectiveAxes) {
+      map.set(ax.id, resolveYTickCount(height, ax.tickCount));
+    }
+    return map;
+  }, [effectiveAxes, height]);
+
   // A value formatter per axis (its `format` resolved against its scale) — shared
   // by the axis tick labels and the cursor readout so a value reads the same.
+  // Calibrated to the axis's resolved tick count (density), like the labels.
   const formats = useMemo(() => {
     const map = new Map<string, (value: number) => string>();
     for (const ax of effectiveAxes) {
       const sc = yScales.get(ax.id);
-      if (sc) map.set(ax.id, resolveAxisFormat(sc, AXIS_TICK_COUNT, ax.format));
+      if (sc) {
+        const count = tickCounts.get(ax.id) ?? AXIS_TICK_COUNT;
+        map.set(ax.id, resolveAxisFormat(sc, count, ax.format));
+      }
     }
     return map;
-  }, [effectiveAxes, yScales]);
+  }, [effectiveAxes, yScales, tickCounts]);
 
   // Explicit tick values per axis (axes that set `<YAxis ticks>`) — so Layers
   // draws the row's gridlines at the same positions the axis labels, instead of
@@ -344,6 +363,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
       yScales,
       formats,
       tickValues,
+      tickCounts,
       axisSides,
       defaultAxisId,
       axisSlots,
@@ -361,6 +381,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
       yScales,
       formats,
       tickValues,
+      tickCounts,
       axisSides,
       defaultAxisId,
       axisSlots,

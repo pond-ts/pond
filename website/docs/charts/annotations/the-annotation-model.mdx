@@ -36,6 +36,35 @@ A chart draws in two colour registers, and annotations live in the second:
   series. Don't override an annotation's colour to match a series; that
   collapses the two registers.
 
+### Roles within the register
+
+One register doesn't mean one colour. A theme can define **named roles** under
+`annotation.roles`, and a mark picks one with its `role` prop — so a vol smile
+can place a green ATM baseline, a blue reference marker, and an amber zone at
+once, each still an annotation (shared depth ramp, distinct from data):
+
+```tsx
+// `v` resolves each CSS var to a concrete colour at theme-build time — the
+// value becomes an SVG `stroke`, which can't itself resolve `var()`.
+const theme = cssVarTheme(defaultTheme, (v) => ({
+  annotation: {
+    roles: {
+      atm: { color: v('--green') },
+      ref: { color: v('--blue') },
+      zone: { color: v('--amber'), fillOpacity: 0.15 }, // optional per-role fill
+    },
+  },
+}));
+// …
+<Baseline value={atm} role="atm" />
+<Marker at={ref} role="ref" />
+<Region from={a} to={b} role="zone" />
+```
+
+A mark resolves `roles[role] ?? annotation` — an unknown or unset `role` is the
+base annotation colour. Colour stays a **theme** concern (there is no per-mark
+colour prop): the theme owns the palette, the mark just names a role.
+
 ## Depth and brightness
 
 Marks sort into three depth levels, so the one you're interacting with reads

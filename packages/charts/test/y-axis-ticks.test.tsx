@@ -136,6 +136,7 @@ describe('<YAxis color> — per-instance axis colour', () => {
               label="Value"
               labelPlacement="top"
               color="rgb(225, 29, 72)"
+              tickCount={5}
             />
             <Layers>
               <LineChart series={series()} column="v" axis="v" />
@@ -151,5 +152,89 @@ describe('<YAxis color> — per-instance axis colour', () => {
     } finally {
       stub.restore();
     }
+  });
+});
+
+describe('<YAxis tickCount> + height-derived density (#508 item 4)', () => {
+  // Count the numeric auto-tick labels the axis rendered (the gutter tick
+  // <div>s hold the formatted numbers; boundary labels included).
+  const autoTickLabels = (container: HTMLElement): string[] =>
+    Array.from(container.querySelectorAll('div'))
+      .filter((el) => el.childElementCount === 0)
+      .map((el) => el.textContent ?? '')
+      .filter((t) => /^\d+$/.test(t));
+
+  const chart = (props: { height: number; tickCount?: number }) => (
+    <ChartContainer range={[0, 2]} width={400} showAxis={false}>
+      <ChartRow height={props.height}>
+        <YAxis
+          id="v"
+          min={0}
+          max={100}
+          {...(props.tickCount !== undefined
+            ? { tickCount: props.tickCount }
+            : {})}
+        />
+        <Layers>
+          <LineChart series={series()} column="v" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  );
+
+  it('a short row gets fewer auto ticks than a tall one (height-derived)', () => {
+    const short = render(chart({ height: 72 }));
+    const shortN = new Set(autoTickLabels(short.container)).size;
+    cleanup();
+    const tall = render(chart({ height: 380 }));
+    const tallN = new Set(autoTickLabels(tall.container)).size;
+    // The 72px strip that used to crush 5 labels now shows materially fewer
+    // than the 380px row.
+    expect(shortN).toBeLessThan(tallN);
+    expect(shortN).toBeGreaterThanOrEqual(2); // still drawable
+  });
+
+  it('explicit tickCount overrides the height-derived default', () => {
+    // A tall row that would auto-pick many ticks, pinned to ~3.
+    const { container } = render(chart({ height: 380, tickCount: 3 }));
+    const labels = new Set(autoTickLabels(container));
+    // d3 ticks(3) over [0,100] → 0/50/100 (a few nice values), far fewer than
+    // the ~7 a 380px row derives.
+    expect(labels.size).toBeLessThanOrEqual(4);
+    expect(labels.has('50')).toBe(true);
+  });
+
+  it('a runtime tickCount change re-registers the axis (guard includes it)', () => {
+    // Regression: tickCount must be in axisSpecEqual, or a tickCount-only
+    // change compares equal to the stored spec and setAxes is skipped —
+    // leaving the axis stuck on its first count.
+    const { container, rerender } = render(
+      chart({ height: 300, tickCount: 8 }),
+    );
+    const before = new Set(autoTickLabels(container)).size;
+    rerender(chart({ height: 300, tickCount: 2 }));
+    const after = new Set(autoTickLabels(container)).size;
+    expect(after).toBeLessThan(before);
+  });
+
+  it('explicit ticks still win over tickCount', () => {
+    const { getByText, queryByText } = render(
+      <ChartContainer range={[0, 2]} width={400} showAxis={false}>
+        <ChartRow height={380}>
+          <YAxis
+            id="v"
+            min={0}
+            max={100}
+            tickCount={9}
+            ticks={[{ at: 42, label: 'only' }]}
+          />
+          <Layers>
+            <LineChart series={series()} column="v" />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    expect(getByText('only')).toBeTruthy();
+    expect(queryByText('50')).toBeNull(); // no auto ticks at all
   });
 });

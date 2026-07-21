@@ -18,6 +18,7 @@ import {
 } from '../src/annotations.js';
 import type { ContainerFrame } from '../src/context.js';
 import type { DiscontinuityProvider } from '../src/tradingTimeScale.js';
+import { defaultTheme, type ChartTheme } from '../src/theme.js';
 import type { AnnotationSpec } from '../src/context.js';
 
 afterEach(cleanup);
@@ -454,5 +455,73 @@ describe('Region edges', () => {
     expect(
       edgeCount(<Region from={1} to={3} label={false} edges={false} />),
     ).toBe(0);
+  });
+});
+
+describe('annotation theme roles (#508 item 3)', () => {
+  // A theme whose annotation register is grey, with two named roles.
+  const roleTheme: ChartTheme = {
+    ...defaultTheme,
+    annotation: {
+      color: '#808080',
+      fillOpacity: 0.1,
+      depth: [1, 0.7, 0.4],
+      roles: {
+        atm: { color: '#00aa00' },
+        band: { color: '#0000ff', fillOpacity: 0.4 },
+      },
+    },
+  };
+
+  /** Render one mark and return the stroke colours of its SVG lines (the
+   *  marker/baseline line, or a region's edges). */
+  const strokes = (child: ReactNode): string[] => {
+    const { container, unmount } = render(
+      <ChartContainer
+        range={[0, 4]}
+        width={300}
+        showAxis={false}
+        theme={roleTheme}
+      >
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={100} />
+          <Layers>
+            <LineChart series={series} column="v" axis="a" />
+            {child}
+          </Layers>
+        </ChartRow>
+      </ChartContainer>,
+    );
+    const out = Array.from(container.querySelectorAll('svg line'))
+      .map((l) => l.getAttribute('stroke'))
+      .filter((s): s is string => s !== null);
+    unmount();
+    return out;
+  };
+
+  it('a role recolours the mark from theme.annotation.roles[role]', () => {
+    expect(strokes(<Marker at={2} role="atm" label={false} />)).toContain(
+      '#00aa00',
+    );
+    expect(strokes(<Baseline value={50} role="atm" label={false} />)).toContain(
+      '#00aa00',
+    );
+  });
+
+  it('no role uses the base annotation colour', () => {
+    const s = strokes(<Marker at={2} label={false} />);
+    expect(s).toContain('#808080');
+    expect(s).not.toContain('#00aa00');
+  });
+
+  it('an unknown role falls back to the base colour', () => {
+    const s = strokes(<Marker at={2} role="nope" label={false} />);
+    expect(s).toContain('#808080');
+  });
+
+  it('a region role recolours its edges', () => {
+    expect(
+      strokes(<Region from={1} to={3} role="band" label={false} />),
+    ).toContain('#0000ff');
   });
 });

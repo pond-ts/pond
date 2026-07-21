@@ -29,10 +29,9 @@ A lost session should never erase the current state of the project.
 ### `@pond-ts/charts`
 
 The canvas wave shipped the rendering spine, seven chart types, interactions,
-the decimator, and the trading-time + categorical axes; the package is
-**published** (`@pond-ts/charts` on npm, `private: false`), though the
-decimator wave itself is landed on `main` but **unreleased** (CHANGELOG
-`[Unreleased]`, pending the next version bump). Remaining: land built work,
+the decimator (line/area/band M4 + viewport culling, **released in v0.49.0**),
+and the trading-time + categorical axes; the package is **published**
+(`@pond-ts/charts` on npm, `private: false`). Remaining: land built work,
 Phase-2 RFC slices, and the M5 parity gate for the stable / estela-parity
 milestone. Plan:
 [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md) · RFC:
@@ -48,24 +47,16 @@ milestone. Plan:
 - **[PND-SELECT]** — Selection Phase 2: multi-select widen + `selectionMode`,
   `LineChart.hitTest`, snap-follows-selection prop, theme-referenced dim.
   Breaking widen → human gate. RFC: [selection.md](docs/rfcs/selection.md).
-- **[PND-DECIM]** — Decimator Phase 5: candlestick decimation with Tidal;
-  Path2D cache only if the pan bench misses.
+- **[PND-DECIM]** — Decimator Phase 5 (finish-the-wave): candlestick + box
+  decimation (Tidal-anchored), document the `three`-at-1M render floor
+  (Path2D doesn't help pan), then the "large time series" how-to + release.
 - **[PND-BOXPLT]** — Finish BoxPlot: ValueSeries widening, range-only mode,
   px `offset` for same-x pairs, line-only shape, join the cursor x-snap, and
   selection `id` via rect-containment `hitTest` (#508 item 5; Candlestick
   takes the same geometry helper).
-- **[PND-LEGEND]** — `<Legend>` wave (#508 item 2, design sketch accepted):
-  per-layer resolved swatches, zero-config placement, `theme.legend` slot,
-  hover echo + id-gated select toggle. Sequenced behind
-  tracker-label-by-`as` ([PND-CURSOR]).
-- **[PND-ANROLE]** — Per-annotation colour as a theme role map
-  (`theme.annotation.roles` + `role` prop on the three marks; #508 item 3;
-  inline per-mark colour rejected).
-- **[PND-YTICKS]** — `YAxis` height-derived tick density + explicit
-  `tickCount` override (#508 item 4; the width-derived-x precedent). Small.
 - **[PND-CURSOR]** — Cursor/readout polish backlog (scatter 2D-nearest,
-  chip de-overlap, tracker-label-by-`as`, y-oriented region cursor,
-  `pointercancel` clear-only fix).
+  chip de-overlap, y-oriented region cursor, `pointercancel` clear-only
+  fix).
 - **[PND-AXES]** — Axis backlog (label align, relative time, custom ticks,
   scale variety) + the deferred value-axis naming follow-up.
 - **[PND-VALAX]** — Value axis: widen Box/Candlestick x; grow the

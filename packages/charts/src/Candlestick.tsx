@@ -17,6 +17,11 @@ import {
   type LayerEntry,
   type TrackerSample,
 } from './context.js';
+import {
+  legendLabelFor,
+  useLegendItems,
+  type LegendItemInput,
+} from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
 export interface CandlestickProps<S extends SeriesSchema> {
@@ -88,6 +93,13 @@ export interface CandlestickProps<S extends SeriesSchema> {
    */
   decimate?: DecimateOption;
   /**
+   * This layer's `<Legend>` row: `false` ⇒ no row (opt out), a string ⇒ the
+   * row's display name. **Omitted ⇒ a row named by the layer's readout
+   * identity** (`as` ?? the `close` column). The swatch is the resolved
+   * up/down candle pair.
+   */
+  legend?: boolean | string;
+  /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
    */
@@ -134,6 +146,7 @@ export function Candlestick<S extends SeriesSchema>({
   gap = 0,
   showOHLC = false,
   decimate = true,
+  legend,
   index = 0,
 }: CandlestickProps<S>) {
   const container = useContext(ContainerContext);
@@ -186,11 +199,16 @@ export function Candlestick<S extends SeriesSchema>({
           }
           // Opt-in full quote: four value pills (body colour for open/close, wick
           // colour for the high/low extremes). Each is a value-only axis pill.
+          // With a semantic `as`, each reads under the series name + role
+          // (`SPY high`) — BoxPlot's qLabel convention, so two quoted series
+          // don't merge readout keys on the bare role words (F-charts-8 §3).
+          const role = (r: string): string =>
+            semantic !== undefined ? `${semantic} ${r}` : r;
           const samples: TrackerSample[] = [
-            { x: at, value: ohlc.high[i]!, color: wick, label: 'high' },
-            { x: at, value: ohlc.open[i]!, color: body, label: 'open' },
-            { x: at, value: ohlc.close[i]!, color: body, label: 'close' },
-            { x: at, value: ohlc.low[i]!, color: wick, label: 'low' },
+            { x: at, value: ohlc.high[i]!, color: wick, label: role('high') },
+            { x: at, value: ohlc.open[i]!, color: body, label: role('open') },
+            { x: at, value: ohlc.close[i]!, color: body, label: role('close') },
+            { x: at, value: ohlc.low[i]!, color: wick, label: role('low') },
           ];
           return samples;
         },
@@ -215,6 +233,7 @@ export function Candlestick<S extends SeriesSchema>({
       ohlc,
       style,
       label,
+      semantic,
       variant,
       colorBy,
       gap,
@@ -242,6 +261,25 @@ export function Candlestick<S extends SeriesSchema>({
   useEffect(() => {
     registerTrackerSource(slot, entry.layer);
   }, [registerTrackerSource, slot, entry.layer]);
+
+  // And a legend row: the series identity + the resolved up/down pair, so a
+  // `<Legend>` swatch can never drift from the drawn candles.
+  const legendRows = useMemo<readonly LegendItemInput[] | null>(() => {
+    const name = legendLabelFor(legend, label);
+    return name === null
+      ? null
+      : [
+          {
+            label: name,
+            swatch: {
+              kind: 'candle',
+              up: style.rising.body,
+              down: style.falling.body,
+            },
+          },
+        ];
+  }, [legend, label, style]);
+  useLegendItems(container, slot, index, legendRows);
 
   return null;
 }

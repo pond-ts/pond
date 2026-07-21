@@ -57,13 +57,13 @@ the sole external reader (shim for estela only).
 
 ### [PND-DECIM] — Decimator Phase 5 (finish-the-wave)
 
-**Shipped (Phases 2–4):** viewport culling (all layers); M4 line/area/band
-decimation (auto-on, every gap mode, session breaks); the pan-FPS re-bench
-(cliff closed — line/band 90–120 fps to 1M, `three` 24 fps floor). Source of
-truth:
+**Shipped (Phases 2–4), released in v0.49.0:** viewport culling (all layers);
+M4 line/area/band decimation (auto-on, every gap mode, session breaks); the
+pan-FPS re-bench (cliff closed — line/band 90–120 fps to 1M, `three` 24 fps
+floor). Source of truth:
 [docs/notes/charts-decimator-assessment-2026-07.md](../notes/charts-decimator-assessment-2026-07.md).
-**Not released** — the whole wave sits under CHANGELOG `[Unreleased]`; latest
-tag `v0.48.1` predates it.
+**Candlestick decimation** (task 1 below) is landing now, unreleased under
+CHANGELOG `[Unreleased]` (post-v0.49.0).
 
 The remainder is one **Tidal-anchored experiment** (the candle default is the
 thing to red-team against a real financial workload before it hardens), run
@@ -120,38 +120,83 @@ stem-without-caps `shape` variant, and reconciling the `cursorFlag` x-snap
 exclusion so crosshairs grab box plots (Candlestick never opted out; this
 remains BoxPlot-only).
 
-Added by the #508 triage (item 5): **selection `id`** — extends the shipped
-id-gated discrete contract (rect-containment `hitTest` like Bar, not the
-still-RFC continuous-layer threshold model); Candlestick takes the same
-geometry helper in the pass so the interval marks don't fork the contract.
+**Selection `id` — DONE** (#508 triage item 5). `<BoxPlot id>` extends the
+shipped id-gated discrete contract via `boxAt` — rect-containment (the
+interval-mark analog of `barAt`), not the still-RFC continuous-layer
+threshold — returning a `SelectInfo` keyed on the box's `x` (span begin);
+selected/hovered boxes outline (reusing `theme.box.stroke`, no new token).
+**Scoped to BoxPlot only:** the geometry is a per-mark `boxAt`, consistent
+with the existing `barAt`/`stackAt`/`ohlcIndexAtTime` idiom — the _contract_
+(id-gated `hitTest`→`SelectInfo` + `registerSelectable`) is what's reused, not
+a shared geometry abstraction. Candlestick would add its own `ohlcAt` under
+the same contract when it gains selection (deferred — not requested by the
+report; the earlier "shared geometry helper" framing is superseded by the
+per-mark idiom the codebase already uses). **Still open in this wave:**
+`ValueSeries` widening, range-only mode polish, px `offset`, line-only shape,
+and the `cursorFlag` x-snap reconciliation.
 
-### [PND-LEGEND] — `<Legend>` wave
+### [PND-LEGEND] — `<Legend>` wave — DONE
 
-#508 item 2, accepted as one scoped wave; the sender's design sketch (on the
-issue) is the basis: per-layer resolved `SwatchSpec` at registration,
-zero-config `<Legend placement>`, dedup + per-layer `legend={false | 'name'}`
-opt-out, `theme.legend` slot, hover echo + id-gated select toggle via the
-existing frame contract; show/hide stays consumer-side. **Deltas from the
-sketch:** row identity keys `id ?? label` (the A2.2 selection model demoted
-`as` — a theme role can repeat), and the wave is **sequenced behind
-tracker-label-by-`as`** (F-charts-8 §3, in [PND-CURSOR] — the label-source
-prerequisite already flagged for the candlestick legend merge). Not
-RFC-worthy — the interaction semantics were red-teamed in the selection RFC.
+Shipped (#512, after the #511 label prerequisite): the sender's #508 design
+sketch built as specced — per-layer resolved `SwatchSpec` registration on all
+seven marks (line/area/band/scatter/box/bar/candle; a **stacked bar registers
+one row per group** with its resolved fill), container-level registry +
+`rowOrder`, zero-config `<Legend placement>` card over the rows block,
+`legend={false | 'name'}` per-layer opt-out/rename, optional `theme.legend`
+slot (token-derived fallback — no theme type break, unlike the required
+`candle` slot's gate), `items` escape hatch (standalone mode included).
+**Deltas held:** row identity keys `id ?? label` (A2.2), interactions id-gated
+via the shipped frame contract (hover echo + select toggle; the legend's
+series-scoped `SelectInfo` carries `NaN` provenance, documented), show/hide
+stays consumer-side (`onRowClick` is the override hook). Decisions of note:
+the swatch/helpers module is `swatch.ts` (a `legend.ts` beside `Legend.tsx`
+collides on case-insensitive filesystems); a one-group stacked shape
+(horizontal single, categorical) registers under the layer identity, not the
+`categoryStack` `'value'` sentinel.
 
-### [PND-ANROLE] — Per-annotation colour via theme role map
+**Follow-up (design pass, `feat/charts-legend-headless`, [Unreleased]):** a
+**headless `useChartLegend()`** — the same rows as data (`selected`/`hovered`
+state) plus chart-synced `hover`/`select`, the axis `gutters`, and
+`cursorTime` (the values-in-the-legend seam: `series.nearest(cursorTime)`);
+`<Legend>` re-renders through the same `buildChartLegend` core. Card polish
+from the first live review: plot-area-inset placement, selection reads by
+**contrast** (selected bold, others dulled — not a decorated selected row),
+canonical three-dash line swatch, centred rounded bar swatch. **Row-scoping:
+scope follows placement** — a `<Legend>` / `useChartLegend()` inside a
+`<Layers>` scopes to that `<ChartRow>` (rowKey filter via `RowContext`) and
+anchors to that row's plot (the plot cell is already `position: relative`);
+container-level stays all-rows. New docs page
+`website/docs/charts/interaction/legend.mdx` (card + headless live examples;
+one-row-per-group + row-scoping in prose). New exports `useChartLegend` /
+`ChartLegend` / `LegendRow` / `LegendItem` (rows group items by chart row).
 
-#508 item 3. Inline per-mark colour rejected (same discipline as the per-box
-red/green reject: colour = theme role, not call-site). Shape:
-`theme.annotation.roles?: Record<string, { color; fillOpacity? }>` + a
-`role?: string` prop on the three marks, resolving `roles[role] ??
-annotation`; the depth ramp applies within the role's hue. `cssVarTheme` role
-mapping lands in the same pass.
+### [PND-ANROLE] — Per-annotation colour via theme role map — DONE
 
-### [PND-YTICKS] — `YAxis` tick density
+Shipped (#508 item 3). `theme.annotation.roles?: { [role]: { color;
+fillOpacity? } }` + a `role?: string` prop on `<Baseline>`/`<Marker>`/
+`<Region>`, resolved in `useAnnotationFrame(name, role)` as `roles[role] ??
+annotation` — the role overrides colour (+ optional fill) only; the depth ramp
+stays shared, so selection/hover/edit levels read identically per role. Inline
+per-mark colour stays **rejected** (same discipline as the per-box red/green
+reject — colour = theme role, not call-site). `cssVarTheme` carries the map
+through unchanged (deep-merge, like `theme.legend`); the slot is optional so
+existing themes are untouched. **Scope note:** cross-row annotation _guides_
+(drawn in `Layers` from the base `annotation.color`) stay the base hue — a
+role recolours the mark, not its faint cross-row reference line; revisit only
+if a consumer needs role-tinted guides.
 
-#508 item 4. Height-derived default tick count + an explicit `tickCount`
-override (the 0.44.1 width-derived-x precedent); explicit `ticks` still wins.
-Small.
+### [PND-YTICKS] — `YAxis` tick density — DONE
+
+Shipped (#508 item 4). `<YAxis tickCount>` pins an explicit auto-tick target;
+omitted, the count is **height-derived** (`resolveYTickCount(height)` ≈ 1
+tick / 48px, floored at 2) so a short strip isn't crushed with a tall row's
+density — the y mirror of the 0.44.1 width-derived x axis. Explicit `ticks`
+still overrides both. **Key design point:** the count is resolved once per
+axis in `ChartRow` (`row.tickCounts`) and read by the `<YAxis>` labels, the
+readout formatter (`formats`), and the `Layers` gridlines — a single source
+replacing the three hardcoded `5`s (`YAxis` `TICK_COUNT`, `ChartRow`
+`AXIS_TICK_COUNT`, `Layers` `GRID_TICKS`) that previously agreed only by
+convention, so label / gridline / readout can no longer drift.
 
 ### [PND-CURSOR] — Cursor/readout polish backlog
 
@@ -159,15 +204,19 @@ Deferred-until-a-design-call items, none blocking: scatter `inline`
 **2D-nearest** readout (needs the pointer's y — a cursor-model change);
 scatter flag staff from the dot's top for large encoded marks; the "‹ VAL"
 callout; chip-vs-chip de-overlap (inline, and box+line in one row);
-**tracker-label-by-`as`** on Band/Box/Candle (friction F-charts-8 §3 —
-`sampleAt` hardcodes column names; prerequisite for the candlestick legend
-merge); the **y-oriented region cursor** for horizontal histograms
+the **y-oriented region cursor** for horizontal histograms
 ([docs/notes/y-oriented-region-cursor-2026-07.md](../notes/y-oriented-region-cursor-2026-07.md),
 parked until a real consumer needs it); the **`pointercancel` clear-only
 fix** — the region cursor currently commits the span on `pointercancel`
 (pre-existing; should clear instead — Layer-2 follow-up from #509). Timezone
 control for the cursor readout is tracked with the trading-time work
 ([PND-TCAL] in [PND_FINANCIAL_PLAN.md](PND_FINANCIAL_PLAN.md)).
+
+**Done from this backlog:** tracker-label-by-`as` (F-charts-8 §3) shipped in
+#511 — BandChart edges and Candlestick `showOHLC` pills adopted BoxPlot's
+`"<as> <role>"` qLabel convention (`iv lower`, `SPY high`), so readout/legend
+merge keys are the series identity; no-`as` labels unchanged. This was the
+[PND-LEGEND] label-source prerequisite.
 
 ### [PND-AXES] — Axis backlog + value-axis naming follow-up
 

@@ -19,6 +19,11 @@ import {
   type RadiusEncoding,
 } from './encoding.js';
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
+import {
+  legendLabelFor,
+  useLegendItems,
+  type LegendItemInput,
+} from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
 export interface ScatterChartProps<
@@ -109,6 +114,13 @@ export interface ScatterChartProps<
    */
   offset?: number;
   /**
+   * This layer's `<Legend>` row: `false` ⇒ no row (opt out), a string ⇒ the
+   * row's display name. **Omitted ⇒ a row named by the layer's readout
+   * identity** (`as` ?? `column`). The swatch is the resolved base dot style
+   * (a data-driven `radius`/`color` encoding shows its base, not the range).
+   */
+  legend?: boolean | string;
+  /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
    */
@@ -161,6 +173,7 @@ export function ScatterChart<
   color,
   label,
   offset = 0,
+  legend,
   index = 0,
 }: ScatterChartProps<S, VS>) {
   const container = useContext(ContainerContext);
@@ -343,6 +356,29 @@ export function ScatterChart<
   useEffect(() => {
     registerTrackerSource(slot, entry.layer);
   }, [registerTrackerSource, slot, entry.layer]);
+
+  // And a legend row: the readout identity + the resolved base dot (a fixed
+  // `radius` number shows at size; an encoding shows the style's base radius).
+  // Carries the layer's `id` so the legend's default interactions are id-gated
+  // exactly like the mark's own.
+  const legendRows = useMemo<readonly LegendItemInput[] | null>(() => {
+    const name = legendLabelFor(legend, seriesLabel);
+    return name === null
+      ? null
+      : [
+          {
+            label: name,
+            id,
+            swatch: {
+              kind: 'scatter',
+              color: style.color,
+              radius: typeof radius === 'number' ? radius : style.radius,
+              outline: style.outline,
+            },
+          },
+        ];
+  }, [legend, seriesLabel, id, style, radius]);
+  useLegendItems(container, slot, index, legendRows);
 
   // Advertise selectability (only when an `id` was given) so the container can
   // warn if selection is wired but nothing is selectable.

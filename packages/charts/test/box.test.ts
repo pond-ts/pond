@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { boxExtent, boxIndexAtTime, drawBox, isFiniteBox } from '../src/box.js';
+import {
+  boxAt,
+  boxExtent,
+  boxIndexAtTime,
+  drawBox,
+  isFiniteBox,
+} from '../src/box.js';
 import { recordingContext } from './canvas-mock.js';
 import type { BoxSeries } from '../src/data.js';
 
@@ -77,6 +83,100 @@ const style = {
 /** A single finite key, [begin, end] = [10, 30], quantiles 1/2/3/4/5. */
 const oneBox = () =>
   bx([10], { lower: [1], q1: [2], median: [3], q3: [4], upper: [5] }, [30]);
+
+describe('boxAt — selection hit-test (#508 item 5)', () => {
+  // identity x; flipped y (top = small pixel), so [lower,upper]=[1,5] → py [95,99].
+  const flipY = (v: number) => 100 - v;
+
+  it('hits a point inside the box bounding rect → [index, begin, upper]', () => {
+    const box = oneBox(); // x-span [10,30], lower1/upper5
+    // Centre: px=20 (in [10,30]), py=97 (in [95,99]).
+    expect(boxAt(box, 20, 97, identity, flipY, 0, 1)).toEqual([0, 10, 5]);
+  });
+
+  it('misses outside the x-span or the whisker extent → null', () => {
+    const box = oneBox();
+    expect(boxAt(box, 5, 97, identity, flipY, 0, 1)).toBeNull(); // left of span
+    expect(boxAt(box, 20, 90, identity, flipY, 0, 1)).toBeNull(); // above upper
+    expect(boxAt(box, 20, 99.9, identity, flipY, 0, 1)).toBeNull(); // below lower
+  });
+
+  it('hits a range-only box (bid→ask, no body) anywhere in lower→upper', () => {
+    const box = rangeBox(); // see below: x-span, lower/upper only
+    const hit = boxAt(
+      box,
+      box.x[0]!,
+      flipY(box.upper[0]! - 0.5),
+      identity,
+      flipY,
+      0,
+      1,
+    );
+    expect(hit).not.toBeNull();
+    expect(hit![0]).toBe(0);
+  });
+
+  it('skips a gap box (a present quantile non-finite)', () => {
+    const box = bx([10], {
+      lower: [1],
+      q1: [2],
+      median: [NaN],
+      q3: [4],
+      upper: [5],
+    });
+    expect(boxAt(box, 10, 97, identity, flipY, 0, 1)).toBeNull();
+  });
+
+  it('respects offsetPx (the paired-mark nudge), like the draw', () => {
+    const box = oneBox();
+    // With +8px offset the box x-span shifts to [18,38]; px=12 no longer hits.
+    expect(boxAt(box, 12, 97, identity, flipY, 0, 1, 8)).toBeNull();
+    expect(boxAt(box, 28, 97, identity, flipY, 0, 1, 8)).not.toBeNull();
+  });
+});
+
+describe('drawBox — selection / hover outline (#508 item 5)', () => {
+  it('outlines the box whose key matches selectedKey (range-only ⇒ only stroke)', () => {
+    // A range-only box draws no body outline, so the ONLY strokeRect is the
+    // selection highlight — a clean signal it fired.
+    const sel = recordingContext();
+    drawBox(
+      sel.ctx,
+      rangeBox(),
+      identity,
+      identity,
+      style,
+      0,
+      1,
+      'whisker',
+      true,
+      0,
+      undefined,
+      rangeBox().x[0]!,
+      null,
+    );
+    expect(sel.calls.some((c) => c.name === 'strokeRect')).toBe(true);
+
+    // No selection ⇒ no strokeRect on the range-only box.
+    const none = recordingContext();
+    drawBox(
+      none.ctx,
+      rangeBox(),
+      identity,
+      identity,
+      style,
+      0,
+      1,
+      'whisker',
+      true,
+      0,
+      undefined,
+      null,
+      null,
+    );
+    expect(none.calls.some((c) => c.name === 'strokeRect')).toBe(false);
+  });
+});
 
 describe('boxExtent', () => {
   it('returns [min lower, max upper] over finite keys (the whisker reach)', () => {

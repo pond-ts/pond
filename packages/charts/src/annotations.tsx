@@ -127,8 +127,16 @@ const overlayStyle: CSSProperties = {
   pointerEvents: 'none',
 };
 
-/** Read the container + row frames an annotation needs, or throw if misplaced. */
-function useAnnotationFrame(name: string) {
+/**
+ * Read the container + row frames an annotation needs (throw if misplaced), and
+ * resolve the mark's annotation style for its optional `role`. A `role` recolors
+ * *this* mark from the theme's `annotation.roles[role]` map (`color`, and
+ * optionally `fillOpacity`) while keeping the shared depth ramp — so a smile can
+ * place a green ATM baseline, a neutral vertical, and a distinct marker at once
+ * without splitting the whole register. An unknown / unset role falls back to
+ * the base `annotation` register (`roles[role] ?? annotation`).
+ */
+function useAnnotationFrame(name: string, role?: string) {
   const container = useContext(ContainerContext);
   if (container === null) {
     throw new Error(`<${name}> must be rendered inside a <ChartContainer>`);
@@ -137,7 +145,17 @@ function useAnnotationFrame(name: string) {
   if (row === null) {
     throw new Error(`<${name}> must be rendered inside a <ChartRow>`);
   }
-  const ann = container.theme.annotation ?? DEFAULT_ANNOTATION;
+  const base = container.theme.annotation ?? DEFAULT_ANNOTATION;
+  const roleStyle = role !== undefined ? base.roles?.[role] : undefined;
+  // The role overrides only colour (+ optional fill); depth stays the shared
+  // ramp, so selection / hover / edit levels read identically per role.
+  const ann = roleStyle
+    ? {
+        ...base,
+        color: roleStyle.color,
+        fillOpacity: roleStyle.fillOpacity ?? base.fillOpacity,
+      }
+    : base;
   return { container, row, ann };
 }
 
@@ -627,6 +645,12 @@ export interface MarkerProps {
    *  `false` it's inert background context — drawn at the back (level 3) always,
    *  no hover, no select, no edit. */
   selectable?: boolean;
+  /** Theme **role** — recolours this mark from `theme.annotation.roles[role]`
+   *  (its `color`, optionally `fillOpacity`), keeping the shared depth ramp, so
+   *  several marks can differ (a green ATM baseline, a distinct marker) without
+   *  splitting the register. Omitted / unknown ⇒ the base annotation colour.
+   *  Colour is a theme concern — there is no per-mark colour prop. */
+  role?: string;
   /** Controlled hover (OR'd with pointer hover) — lets a legend row light the mark
    *  remotely. Pair with the container's `onHoverAnnotation` to sync both ways. */
   hovered?: boolean;
@@ -659,8 +683,9 @@ export function Marker({
   editing = false,
   onChange,
   indicator = false,
+  role,
 }: MarkerProps) {
-  const { container, row, ann } = useAnnotationFrame('Marker');
+  const { container, row, ann } = useAnnotationFrame('Marker', role);
   const selfKey = useSlotKey();
   const { hovering, reportHover } = useAnnotationHover(container, id, hovered);
   // Draggable right now: global edit mode OR this mark's single-edit flag, and no
@@ -797,6 +822,12 @@ export interface BaselineProps {
   /** Whether the baseline responds to hover + selection (default `true`). When
    *  `false` it's inert background context — drawn at the back (level 3) always. */
   selectable?: boolean;
+  /** Theme **role** — recolours this mark from `theme.annotation.roles[role]`
+   *  (its `color`, optionally `fillOpacity`), keeping the shared depth ramp, so
+   *  several marks can differ (a green ATM baseline, a distinct marker) without
+   *  splitting the register. Omitted / unknown ⇒ the base annotation colour.
+   *  Colour is a theme concern — there is no per-mark colour prop. */
+  role?: string;
   /** Controlled hover (OR'd with pointer hover) — lets a legend row light the mark
    *  remotely. Pair with the container's `onHoverAnnotation` to sync both ways. */
   hovered?: boolean;
@@ -832,8 +863,9 @@ export function Baseline({
   editing = false,
   onChange,
   indicator = false,
+  role,
 }: BaselineProps) {
-  const { container, row, ann } = useAnnotationFrame('Baseline');
+  const { container, row, ann } = useAnnotationFrame('Baseline', role);
   const selfKey = useSlotKey();
   const { hovering, reportHover } = useAnnotationHover(container, id, hovered);
   // Draggable right now: global edit mode OR this mark's single-edit flag, and no
@@ -990,6 +1022,12 @@ export interface RegionProps {
    *  `false` it's inert background context — drawn at the back (level 3) always,
    *  and the double-click hit-test skips it. */
   selectable?: boolean;
+  /** Theme **role** — recolours this mark from `theme.annotation.roles[role]`
+   *  (its `color`, optionally `fillOpacity`), keeping the shared depth ramp, so
+   *  several marks can differ (a green ATM band, a distinct marker) without
+   *  splitting the register. Omitted / unknown ⇒ the base annotation colour.
+   *  Colour is a theme concern — there is no per-mark colour prop. */
+  role?: string;
   /** Controlled hover (OR'd with pointer hover) — lets a legend row light the mark
    *  remotely. Pair with the container's `onHoverAnnotation` to sync both ways. */
   hovered?: boolean;
@@ -1021,8 +1059,9 @@ export function Region({
   editing = false,
   onChange,
   edges = true,
+  role,
 }: RegionProps) {
-  const { container, row, ann } = useAnnotationFrame('Region');
+  const { container, row, ann } = useAnnotationFrame('Region', role);
   const selfKey = useSlotKey();
   const { hovering, reportHover } = useAnnotationHover(container, id, hovered);
   // Draggable right now: global edit mode OR this mark's single-edit flag, and no

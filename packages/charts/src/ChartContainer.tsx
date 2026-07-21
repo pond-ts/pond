@@ -30,6 +30,7 @@ import {
   type TrackerInfo,
   type TrackerSource,
 } from './context.js';
+import type { LegendItemSpec } from './swatch.js';
 import { maxSlotWidths, sum } from './slots.js';
 import { computeLabelLanes } from './annotations.js';
 import { resolveCursorX, DEFAULT_CURSOR_MODE } from './tracker.js';
@@ -576,6 +577,26 @@ export function ChartContainer({
     [annotationMap],
   );
 
+  // Legend rows register here (label + resolved swatch per layer, see
+  // useLegendItem) so a `<Legend>` anywhere in the container can enumerate
+  // every layer across rows. Same per-instance-slot discipline as the sources.
+  const [legendItems, setLegendItems] = useState<
+    ReadonlyMap<symbol, LegendItemSpec>
+  >(() => new Map());
+  const registerLegendItem = useCallback(
+    (key: symbol, item: LegendItemSpec) =>
+      setLegendItems((m) => new Map(m).set(key, item)),
+    [],
+  );
+  const unregisterLegendItem = useCallback((key: symbol) => {
+    setLegendItems((m) => {
+      if (!m.has(key)) return m;
+      const next = new Map(m);
+      next.delete(key);
+      return next;
+    });
+  }, []);
+
   // The shared x scale's kind, **inferred from the registered layers**: a
   // ValueSeries row plots on a value axis, a TimeSeries on time. A container
   // has one shared x (the synced cursor's whole point), so the rows must agree
@@ -674,8 +695,8 @@ export function ChartContainer({
         warnedNoSelectableRef.current = true;
         console.warn(
           '[pond-charts] `selected`/`onSelect` is set but no layer has an `id` — ' +
-            'nothing is selectable. Give a <BarChart>/<ScatterChart> an `id` to ' +
-            'make it interactive (an `id` gates selection + hover).',
+            'nothing is selectable. Give a <BarChart>/<ScatterChart>/<BoxPlot> an ' +
+            '`id` to make it interactive (an `id` gates selection + hover).',
         );
       }
     } else {
@@ -1029,6 +1050,10 @@ export function ChartContainer({
       unregisterSelectable,
       registerAnnotation,
       unregisterAnnotation,
+      registerLegendItem,
+      unregisterLegendItem,
+      legendItems,
+      rowOrder: rowKeys,
       annotations,
       labelLanes,
       xScale,
@@ -1088,6 +1113,10 @@ export function ChartContainer({
       unregisterSelectable,
       registerAnnotation,
       unregisterAnnotation,
+      registerLegendItem,
+      unregisterLegendItem,
+      legendItems,
+      rowKeys,
       annotations,
       labelLanes,
       xScale,
@@ -1112,6 +1141,9 @@ export function ChartContainer({
             display: 'flex',
             flexDirection: 'column',
             gap: `${rowGap}px`,
+            // The positioned ancestor for overlay chrome (`<Legend>`): the
+            // card anchors to the rows block, never the axis strip below.
+            position: 'relative',
           }}
         >
           {children}

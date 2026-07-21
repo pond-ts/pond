@@ -198,15 +198,16 @@ All take `series` plus an `as?` style identifier (theme lookup) and `axis?`
 scale id — style and scale are separate channels; there are no per-component
 color props (see Theming).
 
-| Component      | Data props                                                     | Purpose                                     | Source                                 |
-| -------------- | -------------------------------------------------------------- | ------------------------------------------- | -------------------------------------- |
-| `LineChart`    | `column`, `gaps?`, `sessionBreaks?`                            | Gap-aware line                              | `packages/charts/src/LineChart.tsx`    |
-| `AreaChart`    | `column`, `baseline?`, `gaps?`                                 | Filled area                                 | `packages/charts/src/AreaChart.tsx`    |
-| `BandChart`    | `lower`, `upper`                                               | Variance-band envelope                      | `packages/charts/src/BandChart.tsx`    |
-| `ScatterChart` | `column`, `id?` (selection), radius/color encodings            | Points; data-driven size/colour             | `packages/charts/src/ScatterChart.tsx` |
-| `BarChart`     | `column` \| `columns` \| `bins` \| `categories`, `horizontal?` | Bars, stacked bars, histograms, categorical | `packages/charts/src/BarChart.tsx`     |
-| `BoxPlot`      | `lower`/`q1?`/`median?`/`q3?`/`upper`, `shape?`                | Box-and-whisker from quantile columns       | `packages/charts/src/BoxPlot.tsx`      |
-| `Candlestick`  | OHLC columns, `variant?`, `colorBy?`, `showOHLC?`              | First-class OHLC candles (TimeSeries only)  | `packages/charts/src/Candlestick.tsx`  |
+| Component      | Data props                                                     | Purpose                                            | Source                                 |
+| -------------- | -------------------------------------------------------------- | -------------------------------------------------- | -------------------------------------- |
+| `LineChart`    | `column`, `gaps?`, `sessionBreaks?`                            | Gap-aware line                                     | `packages/charts/src/LineChart.tsx`    |
+| `AreaChart`    | `column`, `baseline?`, `gaps?`                                 | Filled area                                        | `packages/charts/src/AreaChart.tsx`    |
+| `BandChart`    | `lower`, `upper`                                               | Variance-band envelope                             | `packages/charts/src/BandChart.tsx`    |
+| `ScatterChart` | `column`, `id?` (selection), radius/color encodings            | Points; data-driven size/colour                    | `packages/charts/src/ScatterChart.tsx` |
+| `BarChart`     | `column` \| `columns` \| `bins` \| `categories`, `horizontal?` | Bars, stacked bars, histograms, categorical        | `packages/charts/src/BarChart.tsx`     |
+| `BoxPlot`      | `lower`/`q1?`/`median?`/`q3?`/`upper`, `shape?`                | Box-and-whisker from quantile columns              | `packages/charts/src/BoxPlot.tsx`      |
+| `Candlestick`  | OHLC columns, `variant?`, `colorBy?`, `showOHLC?`              | First-class OHLC candles (TimeSeries only)         | `packages/charts/src/Candlestick.tsx`  |
+| `Legend`       | `placement?`, `items?`, `onRowClick?`, `onRowHover?`           | Series key from registered layers' resolved styles | `packages/charts/src/Legend.tsx`       |
 
 ### Components — annotations & indicators
 
@@ -250,25 +251,29 @@ Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 
 ### Live values, scales & key types
 
-| Export                                  | Purpose                                                                         | Source                                    |
-| --------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------- |
-| `createLiveValue` / `LiveValue`         | Imperative push channel for high-frequency indicator updates (isolated repaint) | `packages/charts/src/indicators.tsx`      |
-| `scaleTradingTime` / `TradingTimeScale` | Discontinuous time scale collapsing closed-market gaps                          | `packages/charts/src/tradingTimeScale.ts` |
-| `DiscontinuityProvider`                 | Gap topology consumed by the trading-time scale                                 | `packages/charts/src/tradingTimeScale.ts` |
-| `scaleBand` / `ScaleBand`               | Ordinal slot scale for the category axis                                        | `packages/charts/src/bandScale.ts`        |
-| `GapMode`                               | `'none' \| 'empty' \| 'dashed' \| 'step' \| 'fade'` (Line/Area `gaps` prop)     | `packages/charts/src/gaps.ts`             |
-| `DecimateOption`                        | `<LineChart decimate>` — M4 viewport decimation (`bool \| { threshold }`)       | `packages/charts/src/decimate.ts`         |
-| `CursorMode`                            | `'none' \| 'line' \| 'point' \| 'inline' \| 'flag' \| 'crosshair' \| 'region'`  | `packages/charts/src/context.ts`          |
-| `TrackerInfo` / `TrackerSample`         | Hover readout payload (`onTrackerChanged`)                                      | `packages/charts/src/context.ts`          |
-| `AnnotationKind` / `CreateSpec`         | Annotation identity + draw-gesture payload (`onCreate`)                         | `packages/charts/src/context.ts`          |
-| `SelectInfo`                            | Selection/hover payload (`ChartContainer` `onSelect`/`onHover`)                 | `packages/charts/src/context.ts`          |
-| `TimeGrain`                             | Coarse time unit for grain-aware formatting                                     | `packages/charts/src/tickLadder.ts`       |
-| `Curve`                                 | Path interpolation: `'linear' \| 'monotone' \| 'natural' \| 'basis' \| 'step'`  | `packages/charts/src/curve.ts`            |
-| `RadiusEncoding` / `ColorEncoding`      | Data-driven scatter size/colour                                                 | `packages/charts/src/encoding.ts`         |
-| `CandleVariant` / `ColorBy`             | OHLC mark shape / colouring strategy                                            | `packages/charts/src/ohlc.ts`             |
-| `AxisFormat` / `CursorFormat`           | Tick and cursor-readout formatting (d3 specifier or fn)                         | `packages/charts/src/format.ts`           |
-| `AxisTransform`                         | Monotonic `to`/`from` pair for derived-unit x-axis relabeling                   | `packages/charts/src/derivedTicks.ts`     |
-| `Orientation`                           | Bar growth direction                                                            | `packages/charts/src/bars.ts`             |
+| Export                                     | Purpose                                                                          | Source                                    |
+| ------------------------------------------ | -------------------------------------------------------------------------------- | ----------------------------------------- |
+| `createLiveValue` / `LiveValue`            | Imperative push channel for high-frequency indicator updates (isolated repaint)  | `packages/charts/src/indicators.tsx`      |
+| `scaleTradingTime` / `TradingTimeScale`    | Discontinuous time scale collapsing closed-market gaps                           | `packages/charts/src/tradingTimeScale.ts` |
+| `DiscontinuityProvider`                    | Gap topology consumed by the trading-time scale                                  | `packages/charts/src/tradingTimeScale.ts` |
+| `scaleBand` / `ScaleBand`                  | Ordinal slot scale for the category axis                                         | `packages/charts/src/bandScale.ts`        |
+| `GapMode`                                  | `'none' \| 'empty' \| 'dashed' \| 'step' \| 'fade'` (Line/Area `gaps` prop)      | `packages/charts/src/gaps.ts`             |
+| `DecimateOption`                           | `<LineChart decimate>` — M4 viewport decimation (`bool \| { threshold }`)        | `packages/charts/src/decimate.ts`         |
+| `CursorMode`                               | `'none' \| 'line' \| 'point' \| 'inline' \| 'flag' \| 'crosshair' \| 'region'`   | `packages/charts/src/context.ts`          |
+| `TrackerInfo` / `TrackerSample`            | Hover readout payload (`onTrackerChanged`)                                       | `packages/charts/src/context.ts`          |
+| `AnnotationKind` / `CreateSpec`            | Annotation identity + draw-gesture payload (`onCreate`)                          | `packages/charts/src/context.ts`          |
+| `SelectInfo`                               | Selection/hover payload (`ChartContainer` `onSelect`/`onHover`)                  | `packages/charts/src/context.ts`          |
+| `TimeGrain`                                | Coarse time unit for grain-aware formatting                                      | `packages/charts/src/tickLadder.ts`       |
+| `SwatchSpec` / `LegendItemInput`           | Legend swatch vocabulary + explicit-rows input (`<Legend items>`)                | `packages/charts/src/swatch.ts`           |
+| `useChartLegend`                           | Headless legend hook: rows (items grouped by chart row) + `hover`/`select` verbs | `packages/charts/src/useChartLegend.ts`   |
+| `ChartLegend` / `LegendRow` / `LegendItem` | The hook's return shape (`rows` group `items`; items carry `selected`/`hovered`) | `packages/charts/src/useChartLegend.ts`   |
+| `LegendPlacement`                          | `'top-left' \| 'top-right' \| 'bottom-left' \| 'bottom-right'`                   | `packages/charts/src/Legend.tsx`          |
+| `Curve`                                    | Path interpolation: `'linear' \| 'monotone' \| 'natural' \| 'basis' \| 'step'`   | `packages/charts/src/curve.ts`            |
+| `RadiusEncoding` / `ColorEncoding`         | Data-driven scatter size/colour                                                  | `packages/charts/src/encoding.ts`         |
+| `CandleVariant` / `ColorBy`                | OHLC mark shape / colouring strategy                                             | `packages/charts/src/ohlc.ts`             |
+| `AxisFormat` / `CursorFormat`              | Tick and cursor-readout formatting (d3 specifier or fn)                          | `packages/charts/src/format.ts`           |
+| `AxisTransform`                            | Monotonic `to`/`from` pair for derived-unit x-axis relabeling                    | `packages/charts/src/derivedTicks.ts`     |
+| `Orientation`                              | Bar growth direction                                                             | `packages/charts/src/bars.ts`             |
 
 ---
 

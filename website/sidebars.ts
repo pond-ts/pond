@@ -166,6 +166,7 @@ const sidebars: SidebarsConfig = {
           items: [
             'charts/interaction/cursors-and-readouts',
             'charts/interaction/selection-and-hover',
+            'charts/interaction/legend',
             'charts/interaction/pan-zoom-and-range-selection',
           ],
         },

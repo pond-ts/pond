@@ -158,6 +158,49 @@ export const ExplicitTicks: Story = {
 };
 
 /**
+ * **`tickCount`** — a target for the auto ticks (d3 picks nice 1-2-5 values
+ * near it). Here `tickCount={3}` thins a dense default to three.
+ */
+export const TickCount: Story = {
+  render: () => (
+    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+      <ChartRow height={260}>
+        <YAxis id="pct" label="%" tickCount={3} />
+        <Layers>
+          <LineChart series={demo()} column="pct" axis="pct" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
+ * **Height-derived density (default).** With no `tickCount`, the tick count
+ * follows the **row height** — a short strip gets fewer ticks than a tall
+ * row, so labels don't crush on a compact lane (mirrors the width-derived x
+ * axis). Two rows, same domain, different heights: the 72px strip auto-thins
+ * where the 240px row fills in.
+ */
+export const HeightDerivedDensity: Story = {
+  render: () => (
+    <ChartContainer range={RANGE} width={W} theme={docsTheme}>
+      <ChartRow height={240}>
+        <YAxis id="pct" label="tall" />
+        <Layers>
+          <LineChart series={demo()} column="pct" axis="pct" />
+        </Layers>
+      </ChartRow>
+      <ChartRow height={72}>
+        <YAxis id="pct2" label="short" />
+        <Layers>
+          <LineChart series={demo()} column="pct" axis="pct2" />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  ),
+};
+
+/**
  * **Domain: auto-fit vs explicit.** Left auto-fits (d3 `.nice()` — round ticks
  * + headroom, so data doesn't touch the edge). Right is an explicit exact
  * `[min, max]` clamped tight to the data — its top/bottom labels (`0.263`,

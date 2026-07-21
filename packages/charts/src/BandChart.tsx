@@ -6,6 +6,11 @@ import { bandExtent, drawBand } from './band.js';
 import { resolveCurve, type Curve } from './curve.js';
 import type { DecimateOption } from './decimate.js';
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
+import {
+  legendLabelFor,
+  useLegendItems,
+  type LegendItemInput,
+} from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
 export interface BandChartProps<
@@ -33,7 +38,9 @@ export interface BandChartProps<
    * p5/p95 envelope, `inner` for p25/p75). The theme maps it to a
    * {@link BandStyle} (`theme.band[as] ?? theme.band.default`). **Omitted ⇒ the
    * `default` band style** — no per-component fill/opacity override (restyle via
-   * the theme, the single styling channel).
+   * the theme, the single styling channel). It's also the series identity for
+   * the tracker readout: with an `as`, the edge samples read `"<as> lower"` /
+   * `"<as> upper"` (else the raw column names).
    */
   as?: string;
   /**
@@ -58,6 +65,13 @@ export interface BandChartProps<
    * `{ threshold }` to tune. Shares {@link LineChart}'s `DecimateOption`.
    */
   decimate?: DecimateOption;
+  /**
+   * This layer's `<Legend>` row: `false` ⇒ no row (opt out), a string ⇒ the
+   * row's display name. **Omitted ⇒ a row named by the layer's readout
+   * identity** (`as`, else `"<lower>–<upper>"`). The swatch is the resolved
+   * band fill.
+   */
+  legend?: boolean | string;
   /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
@@ -93,6 +107,7 @@ export function BandChart<
   axis,
   curve,
   decimate = true,
+  legend,
   index = 0,
 }: BandChartProps<S, VS>) {
   const container = useContext(ContainerContext);
@@ -116,6 +131,15 @@ export function BandChart<
   const style =
     (semantic !== undefined ? band[semantic] : undefined) ?? band.default;
   const curveFactory = resolveCurve(curve);
+  // Readout label per edge: with a semantic `as`, an edge reads under the series
+  // name + role (`iv lower`, `iv upper`) — the `as ?? column` convention Line /
+  // Scatter use and the exact shape BoxPlot's qLabel ships — so two bands (or a
+  // band and its centre line) merge readout keys by series, not by raw column
+  // names (F-charts-8 §3). With no `as`, the column name stands (self-evident).
+  const edgeLabel = useMemo(() => {
+    return (col: string, role: 'lower' | 'upper'): string =>
+      semantic !== undefined ? `${semantic} ${role}` : col;
+  }, [semantic]);
   const entry = useMemo<LayerEntry>(
     () => ({
       layer: {
@@ -140,8 +164,18 @@ export function BandChart<
             const hi = bs.upper[i]!;
             if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [];
             return [
-              { x: bs.x[i]!, value: lo, color: style.fill, label: lower },
-              { x: bs.x[i]!, value: hi, color: style.fill, label: upper },
+              {
+                x: bs.x[i]!,
+                value: lo,
+                color: style.fill,
+                label: edgeLabel(lower, 'lower'),
+              },
+              {
+                x: bs.x[i]!,
+                value: hi,
+                color: style.fill,
+                label: edgeLabel(upper, 'upper'),
+              },
             ];
           }
           const e = series.nearest(x);
@@ -159,11 +193,22 @@ export function BandChart<
           ) {
             return [];
           }
-          // Both edges, labelled by their column (e.g. p25 / p75), in the band's
-          // fill colour. A gap on either edge yields no readout (like the fill).
+          // Both edges, labelled by series + role under an `as` (else by their
+          // column, e.g. p25 / p75), in the band's fill colour. A gap on either
+          // edge yields no readout (like the fill).
           return [
-            { x: e.begin(), value: lo, color: style.fill, label: lower },
-            { x: e.begin(), value: hi, color: style.fill, label: upper },
+            {
+              x: e.begin(),
+              value: lo,
+              color: style.fill,
+              label: edgeLabel(lower, 'lower'),
+            },
+            {
+              x: e.begin(),
+              value: hi,
+              color: style.fill,
+              label: edgeLabel(upper, 'upper'),
+            },
           ];
         },
         draw: (ctx, xScale, yScale) =>
@@ -172,7 +217,18 @@ export function BandChart<
       axisId: axis,
       index,
     }),
-    [bs, series, lower, upper, style, curveFactory, decimate, axis, index],
+    [
+      bs,
+      series,
+      lower,
+      upper,
+      style,
+      curveFactory,
+      decimate,
+      axis,
+      index,
+      edgeLabel,
+    ],
   );
   // Stable per-instance slot (see useSlotKey): keeps this band's z-position +
   // identity across prop updates; the injected index drives the sort.
@@ -192,6 +248,25 @@ export function BandChart<
   useEffect(() => {
     registerTrackerSource(slot, entry.layer);
   }, [registerTrackerSource, slot, entry.layer]);
+
+  // And a legend row: the series identity (`as`, else the edge columns as a
+  // span) + the resolved band fill, so a `<Legend>` swatch can never drift.
+  const legendRows = useMemo<readonly LegendItemInput[] | null>(() => {
+    const name = legendLabelFor(legend, semantic ?? `${lower}–${upper}`);
+    return name === null
+      ? null
+      : [
+          {
+            label: name,
+            swatch: {
+              kind: 'band',
+              fill: style.fill,
+              opacity: style.opacity,
+            },
+          },
+        ];
+  }, [legend, semantic, lower, upper, style]);
+  useLegendItems(container, slot, index, legendRows);
 
   return null;
 }

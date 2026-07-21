@@ -11,6 +11,11 @@ import {
   type GapMode,
 } from './gaps.js';
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
+import {
+  legendLabelFor,
+  useLegendItems,
+  type LegendItemInput,
+} from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
 export interface LineChartProps<
@@ -90,6 +95,12 @@ export interface LineChartProps<
    */
   decimate?: DecimateOption;
   /**
+   * This layer's `<Legend>` row: `false` ⇒ no row (opt out), a string ⇒ the
+   * row's display name. **Omitted ⇒ a row named by the layer's readout
+   * identity** (`as` ?? `column`). The swatch is the resolved line style.
+   */
+  legend?: boolean | string;
+  /**
    * @internal Declaration position among the `<Layers>` children, injected by
    * `Layers` so z-order follows JSX order. Do not set.
    */
@@ -118,6 +129,7 @@ export function LineChart<
   gaps = DEFAULT_GAP_MODE,
   sessionBreaks = false,
   decimate = true,
+  legend,
   index = 0,
 }: LineChartProps<S, VS>) {
   const container = useContext(ContainerContext);
@@ -247,6 +259,26 @@ export function LineChart<
   useEffect(() => {
     registerTrackerSource(slot, entry.layer);
   }, [registerTrackerSource, slot, entry.layer]);
+
+  // And a legend row: the readout identity + the resolved line style, so a
+  // `<Legend>` swatch can never drift from what the canvas draws.
+  const legendRows = useMemo<readonly LegendItemInput[] | null>(() => {
+    const name = legendLabelFor(legend, label);
+    return name === null
+      ? null
+      : [
+          {
+            label: name,
+            swatch: {
+              kind: 'line',
+              color: style.color,
+              width: style.width,
+              dash: style.dash,
+            },
+          },
+        ];
+  }, [legend, label, style]);
+  useLegendItems(container, slot, index, legendRows);
 
   return null;
 }
