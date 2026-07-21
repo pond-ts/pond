@@ -19,7 +19,7 @@ import {
 import {
   legendLabelFor,
   useLegendItems,
-  type LegendRowInput,
+  type LegendItemInput,
 } from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
@@ -238,7 +238,7 @@ export function Candlestick<S extends SeriesSchema>({
 
   // And a legend row: the series identity + the resolved up/down pair, so a
   // `<Legend>` swatch can never drift from the drawn candles.
-  const legendRows = useMemo<readonly LegendRowInput[] | null>(() => {
+  const legendRows = useMemo<readonly LegendItemInput[] | null>(() => {
     const name = legendLabelFor(legend, label);
     return name === null
       ? null

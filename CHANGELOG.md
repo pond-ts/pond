@@ -77,12 +77,34 @@ upper"` and a `<Candlestick showOHLC>`'s quote pills read `"<as> high"` /
   Interactions are **id-gated** (the shipped selection contract): rows whose
   layer has an `id` echo hover into the container and toggle selection on
   click; `onRowHover` / `onRowClick` take over when provided; series
-  show/hide deliberately stays consumer-side. `<Legend items={…}>` renders
-  explicit rows — inside a container or standalone (a dashboard-side key).
+  show/hide deliberately stays consumer-side. **Scope follows placement:** at
+  the container level the card lists every row; placed inside a `<Layers>` it
+  scopes to that `<ChartRow>` and anchors to that row's plot (a per-row legend
+  needs no prop). `<Legend items={…}>` renders explicit rows — inside a
+  container or standalone (a dashboard-side key).
   New optional `theme.legend` slot (background/border/text; derives from
-  `chip`/`axis` tokens when absent, so hand-built themes keep compiling). New
-  exports: `Legend`, `LegendProps`, `LegendPlacement`, `SwatchSpec`,
-  `LegendRowInput`.
+  `chip`/`axis` tokens when absent, so hand-built themes keep compiling).
+  **Headless variant:** `useChartLegend()` serves the entries as data —
+  `rows` (**items grouped by chart row**; each item is
+  `label` + resolved swatch + `id` + live `selected`/`hovered`; a flat list
+  is `rows.flatMap((r) => r.items)`) plus chart-synced `hover`/`select`
+  verbs, the container's axis `gutters` (for aligning a custom layout to the
+  plot), and **`cursorTime`** (the cursor's axis instant, `null` when idle) —
+  the seams for a legend that is a design of its own: horizontal chip rows,
+  ticker-compare with the secondary dimmed, and **current-or-cursor values**
+  per item (`series.nearest(cursorTime)`, else the latest sample; item
+  labels also match the tracker's sample labels, so an `onTrackerChanged`
+  merge is a label-keyed join); `<Legend>` itself renders through the same
+  core, so the two can't disagree. **Scope follows placement** for both the
+  card and the hook: inside a `<Layers>` they scope to that `<ChartRow>` and
+  the card anchors to that row's plot; container-level stays all-rows. Card
+  polish per the first design pass: plot-area-inset placement, selection
+  reads by contrast (the selected item bold, others dulled — the
+  ticker-compare treatment), a dashed line's swatch hand-renders as a
+  canonical three-dash glyph, and a bar's swatch is a centred rounded square.
+  New exports: `Legend`, `LegendProps`, `LegendPlacement`, `SwatchSpec`,
+  `LegendItemInput`, `useChartLegend`, `ChartLegend`, `LegendRow`,
+  `LegendItem`.
 - **charts:** **`cursorFormat` reaches value axes** (#508 item 1, Tidal
   vol-surface friction) — the container's readout channel now applies on a
   value x axis exactly as on a time axis: a **string** is a d3 _number_

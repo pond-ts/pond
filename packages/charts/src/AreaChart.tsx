@@ -14,7 +14,7 @@ import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
 import {
   legendLabelFor,
   useLegendItems,
-  type LegendRowInput,
+  type LegendItemInput,
 } from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
@@ -273,7 +273,7 @@ export function AreaChart<
 
   // And a legend row: the readout identity + the resolved area style (top line
   // over the translucent fill), so a `<Legend>` swatch can never drift.
-  const legendRows = useMemo<readonly LegendRowInput[] | null>(() => {
+  const legendRows = useMemo<readonly LegendItemInput[] | null>(() => {
     const name = legendLabelFor(legend, label);
     return name === null
       ? null
