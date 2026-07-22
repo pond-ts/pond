@@ -50,9 +50,6 @@ milestone. Plan:
 - **[PND-DECIM]** — Decimator Phase 5 (finish-the-wave): candlestick + box
   decimation (Tidal-anchored), document the `three`-at-1M render floor
   (Path2D doesn't help pan), then the "large time series" how-to + release.
-- **[PND-DECKEY]** — Decimation cache keyed on (series identity, x-domain,
-  plot width) so y-only invalidation (y-zoom / live y-autorange) stops
-  re-decimating identically (~19% at mountain@1M); no help for pan, by design.
 - **[PND-MARKDEC]** — Decimate the last two marks: scatter (M4-for-marks —
   per-pixel-column min/max representatives) and bars (per-column envelope
   below ~1px slots), following the shipped auto-on/opt-out conventions.

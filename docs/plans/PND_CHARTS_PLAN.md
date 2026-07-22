@@ -13,11 +13,11 @@ the trading-time axis, and the categorical axis Phase 1. The package is
 **published** (`@pond-ts/charts` on npm, `private: false`); what remains is
 landing the built-but-unmerged work, Phase-2 slices of the adopted RFCs, the
 M5 parity gate for the stable / estela-parity milestone, and the perf backlog
-from the 2026-07 external bench. The two highest-leverage draw-path levers
-(**[PND-AFFINE]** affine draw fast path, **[PND-GRADX]** gradient-extent cache)
-have **shipped**; **[PND-DECKEY]** and **[PND-MARKDEC]** remain on the draw
-path, plus **[PND-HOVCTX]** on the hover path, in measured-leverage order
-(notes:
+from the 2026-07 external bench. Three draw-path levers have **shipped**
+(**[PND-AFFINE]** affine draw fast path, **[PND-GRADX]** gradient-extent cache,
+**[PND-DECKEY]** y-only decimation cache); **[PND-MARKDEC]** (decimate
+scatter/bars) remains on the draw path, plus **[PND-HOVCTX]** on the hover
+path, in measured-leverage order (notes:
 [charts-bench-vs-scichart-suite-2026-07.md](../notes/charts-bench-vs-scichart-suite-2026-07.md),
 [charts-bench-vs-uplot-2026-07.md](../notes/charts-bench-vs-uplot-2026-07.md)).
 
@@ -173,18 +173,44 @@ the plain extent is correct for every gap mode. Perf-check: the extent walk
 (~0.6 ms/500k, ~1.2 ms/1M in JS) is eliminated on every cache hit; in-browser
 it was a larger frame share (fill rasterizes GPU-side).
 
-### [PND-DECKEY] — Decimation cache keyed on (series, x-domain, width)
+### [PND-DECKEY] — Decimation cache keyed on (series, x-domain, width) — DONE
 
-**Source:** same run, finding 3; third in measured leverage after
-[PND-AFFINE] and [PND-GRADX]. The remaining ~19% at mountain@1M re-runs an
-**x-only computation under y-only invalidation** — every y-zoom or live
-y-autorange frame re-decimates to an identical result. Fix: memoize the
-decimation output keyed on (series identity, x-domain, plot width) —
-e.g. a `WeakMap` on the series carrying a small keyed cache. Wins on y-only
-frames (y-zoom, y-autorange); **does not help pan** — the x-domain changes
-every pan frame, the same reasoning that rejected Path2D caching for the
-`three`-at-1M floor under [PND-DECIM]. Include DPR/gap-mode/column in the key
-audit before building. Perf-check protocol applies.
+**Shipped ([Unreleased]).** The remaining ~19% at mountain@1M re-ran an
+**x-only computation under y-only invalidation** (finding 3) — every y-zoom /
+live y-autorange frame re-binned the same points to the same polyline. The M4
+decimation output never reads the y-scale, so `drawLine` / `drawArea` now go
+through `decimateM4Cached` (`src/decimate.ts`): a `WeakMap<ChartSeries,
+entry>` holding **one** entry per source series — the last `(xScale, W, k,
+boundaries)` it was drawn for. A y-only frame matches → O(1) hit (reuses the
+polyline, skips the cull too); a pan / x-zoom mints a fresh `xScale`
+(`ChartContainer` keys the scale on the x-domain, **not** the y-domain — the
+load-bearing fact this relies on) → miss + overwrite, so it's **bounded, wins
+on y-only frames, no-op under pan** (the Path2D-doesn't-help-pan reasoning
+from [PND-DECIM]).
+
+**Key audit (as the plan asked):** keyed on the **`xScale` object identity**,
+not just `[domain, W]` — same object ⇒ identical pixel-column edges, which
+keeps a hit correct on a **non-affine trading-time** scale too (its edges
+depend on the provider structure, not only domain/W). **DPR** is folded into
+`W = deviceBucketCount(ctx)` (device columns = CSS width × DPR), so a DPR /
+resize re-keys. **Gap mode** is _not_ a key — `decimateM4` always does the
+§2.2 gap-edge union regardless of mode (the mode is applied downstream in the
+draw), so the decimated output is mode-independent. **Column** is captured by
+the source-series identity (the layer memoizes `cs` per series+column).
+Correctness rests on the {@link ChartSeries} immutability contract — a data
+change mints a new source object (new key ⇒ miss), so a stale entry can't be
+read; `boundaries` is compared by identity (the `<LineChart>` instants are
+`useMemo`-stable).
+
+**Verified:** byte-identical to cull+`decimateM4` (equivalence test);
+decimation pixel-identity e2e + all three perf invariants (live-append heap,
+pan, hover) pass — the `WeakMap` doesn't leak under live-append (new source
+per tick → old entries GC'd). **Perf** (`scripts/perf-deckey.mjs`): the
+~5 ms/frame decimation walk at 1M is eliminated on every y-only frame
+(0.6 ms @ 100k, 2.8 ms @ 500k). Scoped to line + area (`decimateM4`, the
+measured target); band / candle / box decimation has the same y-independence
+and can adopt the same helper later (mechanical follow-up, not built here).
+`decimateM4Cached` is a non-public export ⇒ no API.md change.
 
 ### [PND-MARKDEC] — Decimate scatter marks and bar columns
 
@@ -212,7 +238,7 @@ is mousemove still kind of slow" after [#524](https://github.com/pond-ts/pond/pu
 killer). What remains: cursor position lives in `useState` on `ChartContainer`
 (`hoverX`, `hoverPoint`) and is exposed as `ContainerFrame` fields
 (`cursorX`, `cursorY`, `cursorRowKey`; note `ContainerFrame.cursorTime` is an
-unrelated boolean config flag — the cursor *time value* is derived locally by
+unrelated boolean config flag — the cursor _time value_ is derived locally by
 each consumer from `cursorX` + `xScale`). Because those are frame fields,
 `handlePointerMove`'s three setState calls rebuild the frame memo with a new
 identity every mousemove, and **every** `ContainerContext` consumer

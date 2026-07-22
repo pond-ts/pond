@@ -3,7 +3,7 @@ import type { ChartSeries } from './data.js';
 import type { LineStyle } from './theme.js';
 import type { LayerDrawStats } from './context.js';
 import { cullChartSeries } from './culling.js';
-import { decimateM4, type DecimateOption } from './decimate.js';
+import { decimateM4Cached, type DecimateOption } from './decimate.js';
 import { affineOf, type Affine } from './affine.js';
 import {
   bridgeGaps,
@@ -135,31 +135,35 @@ export function drawLine(
   decimate: DecimateOption = true,
 ): LayerDrawStats {
   const sourceCount = cs.length; // pre-cull, pre-decimation (for draw stats)
-  // Viewport culling (Phase 2): clip to the visible slice (+1 entry/exit point)
-  // before any path work, so a pan repaint strokes O(visible), not O(N). A no-op
-  // — the same `cs` object back — when the whole series is in view or `xScale`
-  // exposes no domain (a bare test stub), keeping the fully-visible hot path
-  // byte-identical. Everything below indexes `cs` relatively, so the zero-copy
-  // subarray view drops in transparently; `boundaries` are absolute instants that
-  // `sessionRuns` bisects by value, so they still cut the slice correctly.
-  cs = cullChartSeries(cs, xScale);
-  // M4 decimation (Phase 3): once the culled slice is still denser than ~2
-  // samples per device pixel, replace it with the pixel-dense M4 polyline
-  // ({@link decimateM4}) — O(devicePlotWidth) points that rasterize identically.
-  // The edge union makes the decimated series break at exactly the real gaps
-  // (gap-mode connectors compose unchanged) **and** aligns a bucket edge to each
-  // session break in `boundaries`, so `sessionRuns` below still splits the
-  // decimated series into clean per-session subpaths. Only a non-linear **curve**
-  // stays gated (a smoothing curve would distort the 4-points-per-column
-  // polyline) — that draws full-resolution. Off (`decimate === false`) or a curve
-  // set ⇒ the full culled slice draws. `decimateM4` itself no-ops on a sparse
-  // slice or a domainless test scale, so this stays byte-identical there.
+  const source = cs; // pre-cull source — the decimation cache key ([PND-DECKEY])
+  // Two paths clip `cs` to what actually draws:
+  //  - **Decimated** (linear curve, `decimate !== false`): cull to the visible
+  //    slice, then replace it with the pixel-dense M4 polyline ({@link decimateM4})
+  //    — O(devicePlotWidth) points that rasterize identically. The edge union
+  //    breaks the decimated series at exactly the real gaps (gap-mode connectors
+  //    compose unchanged) **and** aligns a bucket edge to each session break in
+  //    `boundaries`, so `sessionRuns` below still splits it into clean per-session
+  //    subpaths. Cull + decimate are **memoized per source** ({@link
+  //    decimateM4Cached}) so a y-zoom / y-autorange frame reuses the prior
+  //    polyline instead of re-binning O(N) — the decimation output never depends
+  //    on the y-scale (finding 3). `decimateM4` no-ops on a sparse slice or a
+  //    domainless test scale, so this stays byte-identical there.
+  //  - **Full-resolution** (a smoothing curve would distort the 4-points-per-
+  //    column polyline, or `decimate === false`): just cull to the visible slice
+  //    (+1 entry/exit point) so a pan repaint strokes O(visible), not O(N). A
+  //    no-op — the same `cs` back — when the whole series is in view or `xScale`
+  //    exposes no domain (a bare test stub), keeping that hot path byte-identical.
+  // Everything below indexes `cs` relatively, so the zero-copy subarray view drops
+  // in transparently; `boundaries` are absolute instants that `sessionRuns`
+  // bisects by value, so they still cut the slice correctly.
   let decimated = false;
   if (decimate !== false && curve === curveLinear) {
     const k = typeof decimate === 'object' ? decimate.threshold : undefined;
-    const before = cs;
-    cs = decimateM4(cs, xScale, ctx, k, boundaries);
-    decimated = cs !== before;
+    const r = decimateM4Cached(source, xScale, ctx, k, boundaries);
+    cs = r.series;
+    decimated = r.decimated;
+  } else {
+    cs = cullChartSeries(source, xScale);
   }
   // Split into independent index runs at each boundary; no boundary inside the
   // data ⇒ one run over the whole series (the hot path — no slicing, so the draw

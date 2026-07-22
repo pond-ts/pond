@@ -79,6 +79,17 @@ and type-level changes; patch bumps are strictly additive.
   38 ms (3.5×). Separately, the area fill gradient's full-series value extent is
   now memoized per column buffer, so a y-zoom / pan repaint no longer re-walks
   the whole series to find the gradient span. No API change.
+- **charts:** **A y-zoom / y-autorange repaint no longer re-decimates line /
+  area layers** (PND-DECKEY; same 2026-07 profile, finding 3). The M4
+  decimation output is a pure function of the source data, x-domain, device
+  width, threshold, and session breaks — it never reads the y-scale — so it is
+  identical across every y-only frame. `drawLine` / `drawArea` now memoize the
+  cull+decimate result per source series (one entry, keyed on the x-scale
+  object + width + threshold + breaks), so a y-zoom / live y-autorange frame
+  reuses the prior polyline instead of re-binning O(N) points; a pan / x-zoom
+  mints a fresh x-scale and correctly recomputes. Measured
+  (`scripts/perf-deckey.mjs`): the ~5 ms/frame decimation walk at 1M points is
+  eliminated on every y-only frame. No API change.
 
 ### Added
 
