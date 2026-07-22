@@ -1,0 +1,92 @@
+---
+sidebar_position: 16
+---
+
+# Charts benchmarks: render performance
+
+The [pondjs comparison](./benchmarks) measures the **core** library's data
+operations. This page measures the **`@pond-ts/charts`** render path — how fast
+a chart mounts, draws, and stays responsive — against two widely-used canvas
+charting libraries, [uPlot](https://github.com/leeoniya/uPlot) and
+[Chart.js](https://www.chartjs.org/).
+
+The workload is uPlot's own bench: a real `dstat` capture of **55,550
+timestamps × 3 series = 166,650 points**, drawn on a 1920×600 chart with two
+y-scales, then swept with the mouse for 10 s. Each library runs the identical
+workload through the same harness.
+
+> Single-machine medians (Apple M1 Pro, headless Chromium, ~120 Hz display
+> cap). Treat the **shape** as the signal — which library is fast on which
+> axis — not the absolute milliseconds. Re-run instructions are in
+> [`packages/charts/perf/external/`](https://github.com/pond-ts/pond/tree/main/packages/charts/perf/external).
+
+## Results
+
+| Metric                    | uPlot     | Chart.js   | **pond-charts** |
+| ------------------------- | --------- | ---------- | --------------- |
+| Chart create → painted    | 14.5 ms   | 36.4 ms    | **11.4 ms**     |
+| Per-layer draw (166k pts) | —         | —          | **2.5 ms** ¹    |
+| Mousemove, 10 s script    | 107 ms    | 502 ms     | 352 ms ²        |
+| Mousemove FPS             | 120       | 120        | 120             |
+| Heap, peak / final        | 13 / 3 MB | 21 / 10 MB | 24 / 7 MB       |
+| Total load script         | 25 ms     | 40 ms      | 62 ms ³         |
+
+¹ pond's canvas draw of all 166,650 points, decimation off. With decimation on
+(≈7,300 points/layer after M4 pixel-bucketing) it's 1.9 ms. uPlot/Chart.js
+don't expose an equivalent per-layer number.
+² On this **two-axis** chart; the per-hover cost scales with the number of axes
+/ rows. Both modes hold the 120 fps display cap.
+³ Includes React boot — the single biggest constant pond pays that the
+vanilla-canvas libraries don't.
+
+## Where pond is strong
+
+- **Chart create is the fastest of the three** — 11.4 ms vs uPlot's 14.5 and
+  Chart.js's 36, and it barely moves whether it strokes all 166k points or the
+  decimated ~7k. `TimeSeries` keeps data in typed-array columns with a
+  monotonic x, so the first paint reads straight from the buffers.
+- **Per-frame draw is ~1 ms/layer.** Stroking 166k points takes 2.5 ms for all
+  three overlaid series (2.5 ms _total_, not per series); with M4 decimation on,
+  1.9 ms. This is the metric that governs pan/zoom smoothness, and it holds the
+  frame budget with room to spare.
+- **Frame rate is capped at the display refresh** (120 fps) during the mouse
+  sweep — pointer interaction never drops frames on this workload.
+
+## The honest weak columns
+
+pond-charts is a **React** component library built on `d3-scale` / `d3-shape`,
+and that shows up where a hand-tuned vanilla-canvas library doesn't pay the
+same constants:
+
+- **Bundle size.** The charting layer is competitive, but the whole stack is
+  larger:
+
+  | Package                | minified | gzipped |
+  | ---------------------- | -------- | ------- |
+  | uPlot (everything)     | 51 KB    | 22 KB   |
+  | Chart.js (everything)  | 203 KB   | 68 KB   |
+  | `@pond-ts/charts` + d3 | 149 KB   | 50 KB   |
+  | `pond-ts` core         | 344 KB   | 94 KB   |
+  | react + react-dom      | 188 KB   | 58 KB   |
+
+  A pond app already ships React and `pond-ts`, so the **marginal** cost of
+  adding charts is the 50 KB gzipped charts+d3 row — but the all-in footprint
+  is bigger than uPlot's.
+
+- **Load script (~62 ms) and heap peak (~24 MB)** are both higher, driven by
+  React boot and by materializing the columnar `TimeSeries` (row-array intake +
+  `Float64Array` buffers) before the first draw. Final heap (7 MB) settles
+  between uPlot (3 MB) and Chart.js (10 MB).
+
+## Reading it
+
+pond isn't trying to beat uPlot on bytes or boot — it's a different trade. What
+you buy for the larger footprint is the whole `pond-ts` data model
+(streaming `LiveSeries`, decimation, trading-time calendars, typed schemas)
+composed declaratively as React components. On the metrics that govern the
+**interactive** experience once mounted — create time and per-frame draw —
+pond is at or ahead of uPlot here; on **static footprint** it is not.
+
+For how the draw path scales to **millions** of points and how pond compares to
+a GPU-accelerated engine, see
+[Charts benchmarks: scaling to millions of points](./charts-scale-benchmarks).

@@ -221,7 +221,11 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Reference',
       link: { type: 'doc', id: 'reference/reference-index' },
-      items: ['reference/benchmarks'],
+      items: [
+        'reference/benchmarks',
+        'reference/charts-benchmarks',
+        'reference/charts-scale-benchmarks',
+      ],
     },
     {
       type: 'category',

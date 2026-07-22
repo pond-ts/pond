@@ -1,0 +1,130 @@
+---
+sidebar_position: 17
+---
+
+# Charts benchmarks: scaling to millions of points
+
+The [render benchmark](./charts-benchmarks) measures one 166k-point workload.
+This page pushes `@pond-ts/charts` to **10 million points** across chart types,
+using [SciChart's JavaScript chart-performance test
+suite](https://github.com/abtsoftware/javascript-chart-performance-test-suite) —
+a standard set of FPS ladders (1k → 10M points) where the chart is
+programmatically zoomed or streamed each frame and the sustained frame rate is
+measured.
+
+The comparison set is pond-charts, **SciChart.js** (a commercial **WebGL /
+GPU** engine — the suite's own author), **uPlot** (a canvas library, pond's
+closest architectural peer), and **Chart.js**.
+
+> **Read this as "how far does each architecture stretch," not "which chart
+> should I use."** The suite is published by SciChart and its axes (raw
+> point-count, GPU-friendly workloads) favour a WebGL engine. Single-machine
+> avg FPS (Apple M1 Pro, real Metal GPU for the WebGL libs, ~120 Hz cap, so
+> **119 ≈ at the display cap**). Directional; the shape of each curve is the
+> signal. Chart.js collapses in the low thousands in every category and is
+> omitted from the tables below. Harness:
+> [`packages/charts/perf/external/scichart-suite/`](https://github.com/pond-ts/pond/tree/main/packages/charts/perf/external).
+
+## Where pond holds the frame cap to millions of points
+
+The static chart types where the data doesn't change frame-to-frame — the view
+is zoomed, not rewritten — are pond's strongest showing. Its M4 pixel-bucket
+**decimation** bounds the per-frame draw to roughly the plot width regardless
+of point count, and the result is cached across y-only frames, so these hold
+the ~119 fps cap far past where a naive canvas renderer collapses.
+
+**Mountain (area), avg FPS:**
+
+| points | **pond** | SciChart (GPU) | uPlot |
+| ------ | -------- | -------------- | ----- |
+| 100k   | **119**  | 119            | 119   |
+| 1M     | **120**  | 120            | 119   |
+| 5M     | **118**  | 120            | 35    |
+| 10M    | **117**  | 119            | 18    |
+
+**Column (bars):**
+
+| points | **pond** | SciChart (GPU) | uPlot |
+| ------ | -------- | -------------- | ----- |
+| 100k   | **119**  | 119            | 32    |
+| 1M     | **119**  | 120            | 2     |
+| 5M     | **38**   | 120            | 0     |
+| 10M    | **20**   | 119            | —     |
+
+**Candlestick (OHLC):**
+
+| points | **pond** | SciChart (GPU) | uPlot |
+| ------ | -------- | -------------- | ----- |
+| 100k   | **119**  | 119            | 10    |
+| 1M     | **83**   | 119            | 1     |
+| 5M     | **20**   | 118            | —     |
+| 10M    | **10**   | 118            | —     |
+
+On these three, pond — a canvas + React library — tracks the WebGL engine to
+1M points and stays interactive to 10M, while the canvas peer (uPlot) falls off
+one to two orders of magnitude earlier. This is decimation doing its job: the
+picture at 10M points and the picture at ~plot-width points are pixel-identical,
+so drawing the latter is correct and ~1000× cheaper.
+
+## Where the ceiling is: data that changes every frame
+
+When the workload **rewrites its data each frame** — updating every y-value, or
+streaming a sliding window — the decimation cache can't help (the data genuinely
+changed), and the bottleneck moves off the draw and onto rebuilding the
+snapshot. Here a GPU engine with an incremental data pipeline pulls ahead, and
+pond is honestly the weaker of the canvas options at high N:
+
+**Point series, all y-values updated per frame:**
+
+| points | **pond** | SciChart (GPU) | uPlot |
+| ------ | -------- | -------------- | ----- |
+| 10k    | **119**  | 119            | 119   |
+| 100k   | **18**   | 119            | 37    |
+| 1M     | **1**    | 69             | 5     |
+
+**FIFO / streaming (5 series, sliding window):**
+
+| points | **pond** | SciChart (GPU) | uPlot |
+| ------ | -------- | -------------- | ----- |
+| 10k    | **119**  | 119            | 119   |
+| 100k   | **32**   | 119            | 119   |
+| 1M     | **3**    | 116            | 20    |
+
+These are the categories pond is **not** built to win today. The per-frame cost
+is dominated by rebuilding the immutable `TimeSeries` snapshot the React layer
+renders — a data-side cost, not a drawing cost — which is why decimation (a draw
+optimization) doesn't move them. For a live dashboard this ceiling sits well
+above typical in-window sizes (a few thousand points), but at 100k+ points
+changing every frame it is the wall.
+
+## Many series
+
+The monte-carlo case — N line series of N points each, none individually dense
+enough to decimate — is a pure per-point stroke test:
+
+| series × points | **pond** | SciChart (GPU) | uPlot |
+| --------------- | -------- | -------------- | ----- |
+| 500 × 500       | **119**  | 112            | 82    |
+| 1000 × 1000     | **44**   | 47             | 25    |
+| 2000 × 2000     | **6**    | 27             | 6     |
+
+pond matches the WebGL engine to ~1000 series (its affine-mapped stroke keeps
+per-point cost low) and matches uPlot beyond that; SciChart's GPU batching wins
+at the extreme 2000+ series.
+
+## Reading it
+
+Two honest takeaways:
+
+1. **On static, decimatable chart types, a well-decimated canvas library
+   competes with a GPU engine** — pond holds the frame cap to 1M points and
+   stays interactive to 10M on area, bar, and candlestick charts, matching
+   SciChart and far outrunning the canvas peer. If your data is large but the
+   view is a zoom/pan over a fixed dataset, pond scales.
+2. **On data that changes every frame** (per-frame y-updates, high-rate
+   streaming beyond ~tens of thousands of in-window points), the snapshot-rebuild
+   ceiling is real and a GPU engine with an incremental pipeline is faster.
+
+pond's bet is the first case plus the `pond-ts` data model (typed schemas,
+trading calendars, live composition) — not raw GPU throughput on
+rewritten-every-frame data.
