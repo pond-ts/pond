@@ -2,7 +2,7 @@ import { Fragment, useContext } from 'react';
 import { scaleLinear } from 'd3-scale';
 import type { ScaleLinear, ScaleTime } from 'd3-scale';
 import { derivedTicks, type AxisTransform } from './derivedTicks.js';
-import { ContainerContext } from './context.js';
+import { ContainerContext, CursorContext } from './context.js';
 import { axisPillStyle } from './chip.js';
 import type { TradingTimeScale } from './tradingTimeScale.js';
 import {
@@ -174,6 +174,7 @@ export function XAxis({
   if (container === null) {
     throw new Error('<XAxis> must be rendered inside a <ChartContainer>');
   }
+  const cursor = useContext(CursorContext);
   // `xTickCount` is the container's shared x-side count — the same value the x
   // gridlines and `formatTime` use, so labels and grid stay on the same instants
   // (width-derived on a trading-time axis).
@@ -191,7 +192,7 @@ export function XAxis({
   // cursor is live in-bounds, pin the hovered time to this axis (covering the
   // tick behind it), matching the on-axis y value pills the rows draw. Gated on
   // the container default, so a per-row `cursor` override doesn't reach here.
-  const cursorX = container.cursorX;
+  const cursorX = cursor.cursorX;
   const showCursorTag =
     container.cursor === 'crosshair' &&
     cursorX !== null &&

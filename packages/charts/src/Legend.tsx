@@ -1,5 +1,5 @@
 import { useContext, type CSSProperties, type ReactNode } from 'react';
-import { ContainerContext, RowContext } from './context.js';
+import { ContainerContext, CursorContext, RowContext } from './context.js';
 import type { LegendItemInput, SwatchSpec } from './swatch.js';
 import { buildChartLegend } from './useChartLegend.js';
 import { defaultTheme, type ChartTheme } from './theme.js';
@@ -225,6 +225,7 @@ export function Legend({
   theme: themeProp,
 }: LegendProps) {
   const container = useContext(ContainerContext);
+  const cursor = useContext(CursorContext);
   if (container === null && items === undefined) {
     throw new Error(
       '<Legend> must be inside a <ChartContainer> (or be given explicit `items`)',
@@ -245,7 +246,9 @@ export function Legend({
   // hover/select verbs — so the built-in card and a custom-rendered legend
   // can never disagree. `null` in standalone `items` mode (no chart to sync).
   const legend =
-    container !== null ? buildChartLegend(container, row?.rowKey) : null;
+    container !== null
+      ? buildChartLegend(container, cursor, row?.rowKey)
+      : null;
   // The card renders a flat item list — `rows` is grouped by chart row, so
   // flatten it (a scoped legend has one group anyway).
   const entries: readonly LegendItemInput[] =
