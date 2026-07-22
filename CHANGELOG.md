@@ -106,6 +106,17 @@ onDrawStats>` (PND-DECOBS; dashboard A/B friction, 2026-07-21). Fires a
   frame rate while hovering). Found running uPlot's bench protocol against
   pond-charts; guarded by a new hover-sweep perf invariant in
   `e2e/perf-invariants.spec.ts`.
+- **charts:** hovering no longer re-renders cursor-independent components
+  (both `YAxis`, `Bar`/`Box`). The cursor position was a `ContainerFrame`
+  field, so every mousemove re-identified the whole (~50-field) frame and
+  re-rendered **all** its context consumers — even ones that never read the
+  cursor. The per-move cursor state (`cursorX`/`cursorY`/`cursorRowKey`) now
+  lives in a dedicated `CursorContext`; the frame stays identity-stable across
+  a hover, so only the genuine cursor consumers (the `Layers` overlay,
+  `XAxis` crosshair pill, `Legend` values) re-render. Measured: 4 → 2 React
+  commits per mousemove, ~25% less hover script time on the uPlot-bench
+  workload (the win scales with axis/row count). No API change — the split
+  types are internal (`PND-HOVCTX`, follow-up to the repaint fix above).
 - **charts:** corrected the `@pond-ts/charts` package-header doc comment, which
   described a "chunked Path2D cache" render stage that was explored and
   **deferred**, never built (it doesn't help the pan case, which re-decimates

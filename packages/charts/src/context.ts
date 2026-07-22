@@ -49,25 +49,12 @@ export interface ContainerFrame {
   readonly rightGutter: number;
   /** Vertical space between rows in px (not under the time axis). */
   readonly rowGap: number;
-  /**
-   * The crosshair's **plot-pixel x** (`0..plotWidth`), shared across rows so the
-   * tracker syncs, or `null` when not hovering. A *pixel*, not a timestamp — so a
-   * still cursor stays put while a live window slides under it (a stored
-   * timestamp would drift sideways as `xScale` changes). A controlled
-   * `trackerPosition` (a timestamp) resolves to a pixel here.
-   */
-  readonly cursorX: number | null;
-  /** Set the hovered plot-pixel x; a row's event surface calls this on pointer move. */
+  /** Set the hovered plot-pixel x; a row's event surface calls this on pointer move.
+   *  The value itself is on {@link CursorFrame.cursorX} ({@link CursorContext}) —
+   *  split out so a hover doesn't re-identify this frame (see [PND-HOVCTX]). */
   setHoverX(x: number | null): void;
-  /**
-   * The hovered plot-pixel **y** and the row it's in — for the free-form
-   * crosshair's horizontal line + value readout (which are row-specific, unlike
-   * the shared vertical `cursorX`). `null` when not hovering a plot. Hover-driven
-   * only (no controlled equivalent).
-   */
-  readonly cursorY: number | null;
-  readonly cursorRowKey: symbol | null;
-  /** Set the hovered plot-pixel y + its row; the event surface calls this on move. */
+  /** Set the hovered plot-pixel y + its row; the event surface calls this on move.
+   *  The values are on {@link CursorFrame} ({@link CursorContext}). */
   setHoverY(y: number | null, rowKey: symbol | null): void;
   /**
    * `cursor="crosshair"` **y** snapping. **Default `true`** — the reticle centres
@@ -417,6 +404,50 @@ export interface GutterReq {
 }
 
 export const ContainerContext = createContext<ContainerFrame | null>(null);
+
+/**
+ * The **per-move** cursor state — split out of {@link ContainerFrame} so a
+ * mousemove re-identifies only this (small) context, not the whole frame.
+ * `ContainerFrame` carries ~50 mostly-static fields; when the cursor lived
+ * there, every pointer move rebuilt it and re-rendered **all** its consumers
+ * (both `YAxis`, `Legend`, `Bar`/`Box`) even though only the SVG overlay moved.
+ * Config consumers now read the stable frame and skip hover re-renders; the
+ * genuine cursor consumers (`Layers` overlay, `XAxis` crosshair pill,
+ * `useChartLegend` values) read this. See [PND-HOVCTX] and the note it links.
+ *
+ * The cursor *time* is **not** here — each consumer derives it locally from
+ * `cursorX` + its own `xScale` (an in-bounds `xScale.invert`), as before.
+ * ({@link ContainerFrame} still carries a `cursorTime` **boolean** — the
+ * unrelated "show time in the readout" config flag.)
+ */
+export interface CursorFrame {
+  /**
+   * The crosshair's **plot-pixel x** (`0..plotWidth`), shared across rows so the
+   * tracker syncs, or `null` when not hovering. A *pixel*, not a timestamp — so a
+   * still cursor stays put while a live window slides under it (a stored
+   * timestamp would drift sideways as `xScale` changes). A controlled
+   * `trackerPosition` (a timestamp) resolves to a pixel here.
+   */
+  readonly cursorX: number | null;
+  /**
+   * The hovered plot-pixel **y** and the row it's in — for the free-form
+   * crosshair's horizontal line + value readout (which are row-specific, unlike
+   * the shared vertical `cursorX`). `null` when not hovering a plot. Hover-driven
+   * only (no controlled equivalent).
+   */
+  readonly cursorY: number | null;
+  readonly cursorRowKey: symbol | null;
+}
+
+/** No-cursor default, so a consumer outside a provider reads "not hovering"
+ *  rather than needing a null guard (the container always provides a real one). */
+const NO_CURSOR: CursorFrame = {
+  cursorX: null,
+  cursorY: null,
+  cursorRowKey: null,
+};
+
+export const CursorContext = createContext<CursorFrame>(NO_CURSOR);
 
 /**
  * What a {@link RowLayer.draw} may return so the container can report render

@@ -20,6 +20,8 @@ import { Sequence, BoundedSequence } from 'pond-ts';
 import type { Interval, TimeRange } from 'pond-ts';
 import {
   ContainerContext,
+  CursorContext,
+  type CursorFrame,
   type AnnotationKind,
   type AnnotationSpec,
   type ContainerFrame,
@@ -1050,14 +1052,31 @@ export function ChartContainer({
   );
 
   // The frame's `[d0, d1]` tuple, identity-stable on the endpoints. The frame
-  // memo legitimately rebuilds on every cursor move (cursorX is a frame field),
-  // so an inline `[d0, d1]` literal there would mint a fresh array per hover
-  // frame — and every draw callback listing `container.timeRange` in its deps
-  // (Layers' data-canvas draw) would read that as a domain change and replot the
-  // row canvas on each mousemove, defeating the SVG-overlay cursor contract.
+  // memo rebuilds whenever any of its (many) fields change — a `hovered`
+  // transition, a selection, an annotation edit, a range change — so an inline
+  // `[d0, d1]` literal there would mint a fresh array on any such rebuild, and
+  // every draw callback listing `container.timeRange` in its deps (Layers'
+  // data-canvas draw) would read that as a domain change and replot the row
+  // canvas. Memoizing on the endpoints keeps the draw stable across those
+  // unrelated rebuilds. (Cursor *position* no longer rebuilds the frame at all —
+  // it lives in `cursorFrame` below, [PND-HOVCTX] — but the tuple stays a memo
+  // to hold the line for every other rebuild path.)
   const timeRangeTuple = useMemo<readonly [number, number]>(
     () => [d0, d1],
     [d0, d1],
+  );
+
+  // The per-move cursor state, split into its own context so a mousemove
+  // re-identifies only this small object — not the ~50-field frame below, which
+  // stays stable across hovers so `YAxis` / `Bar` / `Box` don't re-render. See
+  // [PND-HOVCTX] / {@link CursorContext}.
+  const cursorFrame = useMemo<CursorFrame>(
+    () => ({
+      cursorX,
+      cursorY: hoverPoint?.y ?? null,
+      cursorRowKey: hoverPoint?.rowKey ?? null,
+    }),
+    [cursorX, hoverPoint],
   );
 
   const frame = useMemo<ContainerFrame>(
@@ -1071,10 +1090,7 @@ export function ChartContainer({
       leftGutter,
       rightGutter,
       rowGap,
-      cursorX,
       setHoverX,
-      cursorY: hoverPoint?.y ?? null,
-      cursorRowKey: hoverPoint?.rowKey ?? null,
       setHoverY,
       crosshairSnap,
       cursorBuckets,
@@ -1136,8 +1152,6 @@ export function ChartContainer({
       leftGutter,
       rightGutter,
       rowGap,
-      cursorX,
-      hoverPoint,
       setHoverY,
       crosshairSnap,
       cursorBuckets,
@@ -1193,21 +1207,23 @@ export function ChartContainer({
 
   return (
     <ContainerContext.Provider value={frame}>
-      <div style={{ width: `${width}px` }}>
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: `${rowGap}px`,
-            // The positioned ancestor for overlay chrome (`<Legend>`): the
-            // card anchors to the rows block, never the axis strip below.
-            position: 'relative',
-          }}
-        >
-          {children}
+      <CursorContext.Provider value={cursorFrame}>
+        <div style={{ width: `${width}px` }}>
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: `${rowGap}px`,
+              // The positioned ancestor for overlay chrome (`<Legend>`): the
+              // card anchors to the rows block, never the axis strip below.
+              position: 'relative',
+            }}
+          >
+            {children}
+          </div>
+          {showAxis && <TimeAxis />}
         </div>
-        {showAxis && <TimeAxis />}
-      </div>
+      </CursorContext.Provider>
     </ContainerContext.Provider>
   );
 }
