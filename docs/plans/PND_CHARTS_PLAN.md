@@ -14,7 +14,8 @@ the trading-time axis, and the categorical axis Phase 1. The package is
 landing the built-but-unmerged work, Phase-2 slices of the adopted RFCs, the
 M5 parity gate for the stable / estela-parity milestone, and the perf backlog
 from the 2026-07 external bench ([PND-AFFINE] → [PND-GRADX] → [PND-DECKEY] →
-[PND-MARKDEC], in measured-leverage order; notes:
+[PND-MARKDEC] for the draw path, [PND-HOVCTX] for the hover path, in
+measured-leverage order; notes:
 [charts-bench-vs-scichart-suite-2026-07.md](../notes/charts-bench-vs-scichart-suite-2026-07.md),
 [charts-bench-vs-uplot-2026-07.md](../notes/charts-bench-vs-uplot-2026-07.md)).
 
@@ -180,6 +181,48 @@ narrower than ~1px (consistent with candle/box's visible-count gating).
 Extends the [PND-DECIM] wave to the last undecimated marks. Note the
 point-update group also pays a full per-frame `fromColumns` rebuild —
 data-side cost, out of scope here. Perf-check protocol applies.
+
+### [PND-HOVCTX] — Split cursor position out of the container context
+
+**Source:** external bench 2026-07-22, uPlot-bench mousemove leg + follow-up
+CPU/React profile (finding 6 in
+[charts-bench-vs-uplot-2026-07.md](../notes/charts-bench-vs-uplot-2026-07.md)).
+The **hover** counterpart to the draw-path tasks above, and the answer to "why
+is mousemove still kind of slow" after [#524](https://github.com/pond-ts/pond/pull/524).
+
+#524 stopped the cursor from repainting the **data canvas** (the 2.8–9 ms/event
+killer). What remains: cursor position lives in `useState` on `ChartContainer`
+(`hoverX`, `hoverPoint`) and is exposed as `ContainerFrame` fields
+(`cursorX`, `cursorY`, `cursorRowKey`; note `ContainerFrame.cursorTime` is an
+unrelated boolean config flag — the cursor *time value* is derived locally by
+each consumer from `cursorX` + `xScale`). Because those are frame fields,
+`handlePointerMove`'s three setState calls rebuild the frame memo with a new
+identity every mousemove, and **every** `ContainerContext` consumer
+re-renders — including the ones that never read the cursor. Measured (React
+Profiler, 179-event sweep): 4 commits/event; both `YAxis`, the right `YAxis`,
+and `Legend` each re-render on every move. Per-event script ≈ 0.68 ms vs
+uPlot's 0.13 ms (uPlot has no vdom — it nudges the cursor with a direct DOM
+write). No hot function, no redraw; it's the render+commit cascade of the whole
+context subtree.
+
+**Fix:** a dedicated `CursorContext` carrying only the every-move-varying
+fields `{ cursorX, cursorY, cursorRowKey }`, provided nested inside
+`ContainerContext`. Remove those three from `ContainerFrame` (and `cursorX` +
+`hoverPoint` from the frame memo's deps, so the frame stays identity-stable
+across a hover). The three real
+cursor consumers subscribe to it (`Layers` overlay — always; `XAxis` crosshair
+pill; `useChartLegend` values-in-legend); everyone else
+(`YAxis`, `BarChart`/`BoxPlot` — the latter read only the transition-gated
+`hovered`, which stays in `ContainerFrame`) stops re-rendering on hover with
+**zero code change**, because the frame they read no longer changes identity.
+`ContainerFrame` is internal (not exported), so this is a safe refactor.
+Expected: 4 commits/event → ~2 (only `Layers` + `Legend` + the state-owning
+`ChartContainer`, all of which genuinely track the cursor). Verify with the
+render-counter harness in the external bench notes. Follow-ups left open:
+`XAxis`/`Legend` still re-render on hover even in non-crosshair / no-values
+configs (they subscribe unconditionally) — a selector-context or config-gated
+subscription could trim those, but they're one component each, not the axis
+fan-out that dominated.
 
 ### [PND-BOXPLT] — Finish BoxPlot
 

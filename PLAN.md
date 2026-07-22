@@ -64,6 +64,16 @@ milestone. Plan:
 - **[PND-MARKDEC]** — Decimate the last two marks: scatter (M4-for-marks —
   per-pixel-column min/max representatives) and bars (per-column envelope
   below ~1px slots), following the shipped auto-on/opt-out conventions.
+- **[PND-HOVCTX]** — Split cursor position out of the `ContainerFrame` context
+  (external bench 2026-07 follow-up, profile-verified): cursor lives in
+  `useState` on `ChartContainer` and is a frame field, so every mousemove
+  rebuilds the frame and re-renders **all** context consumers (both `YAxis`,
+  `Legend`, `Bar`/`Box`) even though only the SVG overlay moved — measured 4
+  React commits/event, ~0.68 ms vs uPlot's 0.13 ms. A dedicated `CursorContext`
+  ({cursorX,cursorY,cursorRowKey} — the per-move-varying fields; the cursor
+  *time* is derived locally per consumer) leaves the config consumers untouched
+  on hover. This is why #524 (which stopped the *canvas* repaint) left hover
+  "still kind of slow".
 - **[PND-BOXPLT]** — Finish BoxPlot: ValueSeries widening, range-only mode,
   px `offset` for same-x pairs, line-only shape, join the cursor x-snap, and
   selection `id` via rect-containment `hitTest` (#508 item 5; Candlestick

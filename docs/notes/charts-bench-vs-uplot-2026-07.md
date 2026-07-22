@@ -82,6 +82,23 @@ Chart.js 0.80 ms. Pre-fix pond: 2.8 ms/event (decimate on, 41 fps),
 5. **Heap peak** (25.8 MB) is the other visible cost — row-array prep +
    `TimeSeries` construction + Float64Array materialization; final (6.7 MB)
    sits between uPlot (3.3) and Chart.js (9.9).
+6. **Why hover is still ~5× uPlot's per-event cost after #524** _(→
+   [PND-HOVCTX])_. #524 removed the canvas repaint, but the residual
+   0.56 ms/event (vs uPlot 0.13) is a **React render+commit cascade**, not a
+   redraw. Cursor position is `useState` on `ChartContainer` exposed as
+   `ContainerFrame` fields (`cursorX`/`cursorY`/`cursorRowKey`),
+   so `handlePointerMove`'s three setState calls rebuild the frame memo with a
+   fresh identity each move and **every** `ContainerContext` consumer
+   re-renders — including ones that never read the cursor. Measured (React
+   Profiler, 179-event sweep): **4 commits/event**; both `YAxis` and `Legend`
+   re-render on every move; the CPU profile shows no hot function and no
+   redraw — just render+commit spread across `ChartContainer`/`Layers`/`YAxis`
+   ×2/`Legend` (incl. `orderLegendItems` recomputing on each hover). uPlot has
+   no vdom, so it moves the cursor with a direct DOM write and touches nothing
+   else. **Fix:** a dedicated `CursorContext` for the three varying fields;
+   config consumers (`YAxis`, `Bar`/`Box`) then keep a stable frame and stop
+   re-rendering on hover (details + expected 4→~2 commits/event in
+   [PND-HOVCTX]).
 
 ## Files
 
