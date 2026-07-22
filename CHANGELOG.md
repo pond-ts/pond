@@ -85,9 +85,10 @@ and type-level changes; patch bumps are strictly additive.
 - **charts:** **`panZoom` is now a three-way mode + a `bounds` extent.**
   `<ChartContainer panZoom>` takes `'none'` / `'pan'` / `'panZoom'` (drag-only
   vs. drag+wheel), with the old boolean kept as shorthand (`true` ⇒ `'panZoom'`,
-  `false` ⇒ `'none'`) — so existing charts are unchanged. New `bounds={[min,
-max]}` prop fences pan/zoom to an **outer** extent (panning into an edge stops
-  there keeping its span; zoom-out is capped at the whole span), the companion
+  `false` ⇒ `'none'`) — so existing charts are unchanged. A new `bounds`
+  (`[min, max]`) prop fences pan/zoom to an **outer** extent (panning into an
+  edge stops there keeping its span; zoom-out is capped at the whole span), the
+  companion
   to the existing `minDuration` zoom-in floor — together they pin the reachable
   window between an inner and outer bound. On a trading-time axis `bounds`
   clamps in wall-clock ms. Purely additive; no type narrowing.
