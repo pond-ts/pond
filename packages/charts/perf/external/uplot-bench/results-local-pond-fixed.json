@@ -1,0 +1,114 @@
+[
+  {
+    "key": "pond",
+    "name": "pond-charts (decimate on)",
+    "url": "http://127.0.0.1:8123/pond.html",
+    "prepMs": 11.5,
+    "chartSyncMs": 10.7,
+    "chartMs": 10.8,
+    "load": {
+      "scriptMs": 63.5,
+      "layoutMs": 9,
+      "recalcStyleMs": 0.7,
+      "taskMs": 111.8
+    },
+    "heapPeakMB": 25.6,
+    "heapFinalMB": 6.7,
+    "drawStats": {
+      "layers": [
+        {
+          "as": "foam",
+          "index": 0,
+          "drawMs": 1.5,
+          "sourceCount": 55550,
+          "drawnCount": 7280,
+          "decimated": true
+        },
+        {
+          "as": "hr",
+          "index": 1,
+          "drawMs": 1.100000023841858,
+          "sourceCount": 55550,
+          "drawnCount": 7280,
+          "decimated": true
+        },
+        {
+          "as": "elevation",
+          "index": 2,
+          "drawMs": 0.8999999761581421,
+          "sourceCount": 55550,
+          "drawnCount": 7280,
+          "decimated": true
+        }
+      ],
+      "totalDrawMs": 3.5
+    },
+    "interaction": {
+      "seconds": 10,
+      "events": 603,
+      "scriptMs": 408.4,
+      "layoutMs": 19.6,
+      "recalcStyleMs": 0.2,
+      "taskMs": 1048.5,
+      "fps": 119.8,
+      "maxFrameGapMs": 33.2
+    },
+    "count": 55550
+  },
+  {
+    "key": "pond-nodecimate",
+    "name": "pond-charts (decimate off)",
+    "url": "http://127.0.0.1:8123/pond.html?decimate=0",
+    "prepMs": 10.6,
+    "chartSyncMs": 11,
+    "chartMs": 11,
+    "load": {
+      "scriptMs": 68,
+      "layoutMs": 8.8,
+      "recalcStyleMs": 0.7,
+      "taskMs": 115.3
+    },
+    "heapPeakMB": 25.7,
+    "heapFinalMB": 6.7,
+    "drawStats": {
+      "layers": [
+        {
+          "as": "foam",
+          "index": 0,
+          "drawMs": 3.899999976158142,
+          "sourceCount": 55550,
+          "drawnCount": 55550,
+          "decimated": false
+        },
+        {
+          "as": "hr",
+          "index": 1,
+          "drawMs": 3,
+          "sourceCount": 55550,
+          "drawnCount": 55550,
+          "decimated": false
+        },
+        {
+          "as": "elevation",
+          "index": 2,
+          "drawMs": 2.800000011920929,
+          "sourceCount": 55550,
+          "drawnCount": 55550,
+          "decimated": false
+        }
+      ],
+      "totalDrawMs": 9.699999988079071
+    },
+    "interaction": {
+      "seconds": 10,
+      "events": 601,
+      "scriptMs": 417.3,
+      "layoutMs": 18,
+      "recalcStyleMs": 0.2,
+      "taskMs": 1039.5,
+      "fps": 119.9,
+      "maxFrameGapMs": 25.1
+    },
+    "count": 55550
+  }
+]

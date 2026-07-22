@@ -1,0 +1,170 @@
+[
+  {
+    "key": "uplot",
+    "name": "uPlot v1.6.32",
+    "url": "http://127.0.0.1:8123/uPlot.html",
+    "prepMs": 6.9,
+    "chartSyncMs": 2.1,
+    "chartMs": 15,
+    "load": {
+      "scriptMs": 25.2,
+      "layoutMs": 5.6,
+      "recalcStyleMs": 0.6,
+      "taskMs": 64.3
+    },
+    "heapPeakMB": 13.8,
+    "heapFinalMB": 3.3,
+    "drawStats": null,
+    "interaction": {
+      "seconds": 10,
+      "events": 592,
+      "scriptMs": 77,
+      "layoutMs": 69.5,
+      "recalcStyleMs": 40.7,
+      "taskMs": 654,
+      "fps": 119.8,
+      "maxFrameGapMs": 25.5
+    },
+    "count": 55550
+  },
+  {
+    "key": "chartjs",
+    "name": "Chart.js v4 (CDN)",
+    "url": "http://127.0.0.1:8123/chartjs.html",
+    "prepMs": 8,
+    "chartSyncMs": 35.9,
+    "chartMs": 36,
+    "load": {
+      "scriptMs": 38.8,
+      "layoutMs": 4.6,
+      "recalcStyleMs": 0.3,
+      "taskMs": 78.6
+    },
+    "heapPeakMB": 21.7,
+    "heapFinalMB": 9.9,
+    "drawStats": null,
+    "interaction": {
+      "seconds": 10,
+      "events": 602,
+      "scriptMs": 482.9,
+      "layoutMs": 0,
+      "recalcStyleMs": 0,
+      "taskMs": 2564.2,
+      "fps": 120.1,
+      "maxFrameGapMs": 9.4
+    },
+    "count": 55550
+  },
+  {
+    "key": "pond",
+    "name": "pond-charts (decimate on)",
+    "url": "http://127.0.0.1:8123/pond.html",
+    "prepMs": 11.3,
+    "chartSyncMs": 11.3,
+    "chartMs": 11.3,
+    "load": {
+      "scriptMs": 62.9,
+      "layoutMs": 9.5,
+      "recalcStyleMs": 0.7,
+      "taskMs": 111.4
+    },
+    "heapPeakMB": 25.5,
+    "heapFinalMB": 6.7,
+    "drawStats": {
+      "layers": [
+        {
+          "as": "foam",
+          "index": 0,
+          "drawMs": 1.5999999642372131,
+          "sourceCount": 55550,
+          "drawnCount": 7280,
+          "decimated": true
+        },
+        {
+          "as": "hr",
+          "index": 1,
+          "drawMs": 1,
+          "sourceCount": 55550,
+          "drawnCount": 7280,
+          "decimated": true
+        },
+        {
+          "as": "elevation",
+          "index": 2,
+          "drawMs": 0.9000000357627869,
+          "sourceCount": 55550,
+          "drawnCount": 7280,
+          "decimated": true
+        }
+      ],
+      "totalDrawMs": 3.5
+    },
+    "interaction": {
+      "seconds": 10,
+      "events": 404,
+      "scriptMs": 1116.1,
+      "layoutMs": 9.1,
+      "recalcStyleMs": 14.8,
+      "taskMs": 1407.9,
+      "fps": 40.7,
+      "maxFrameGapMs": 58.4
+    },
+    "count": 55550
+  },
+  {
+    "key": "pond-nodecimate",
+    "name": "pond-charts (decimate off)",
+    "url": "http://127.0.0.1:8123/pond.html?decimate=0",
+    "prepMs": 11.5,
+    "chartSyncMs": 10.9,
+    "chartMs": 11,
+    "load": {
+      "scriptMs": 68.2,
+      "layoutMs": 8.9,
+      "recalcStyleMs": 0.7,
+      "taskMs": 116.3
+    },
+    "heapPeakMB": 25.7,
+    "heapFinalMB": 6.7,
+    "drawStats": {
+      "layers": [
+        {
+          "as": "foam",
+          "index": 0,
+          "drawMs": 4.199999988079071,
+          "sourceCount": 55550,
+          "drawnCount": 55550,
+          "decimated": false
+        },
+        {
+          "as": "hr",
+          "index": 1,
+          "drawMs": 3.200000047683716,
+          "sourceCount": 55550,
+          "drawnCount": 55550,
+          "decimated": false
+        },
+        {
+          "as": "elevation",
+          "index": 2,
+          "drawMs": 2.5,
+          "sourceCount": 55550,
+          "drawnCount": 55550,
+          "decimated": false
+        }
+      ],
+      "totalDrawMs": 9.900000035762787
+    },
+    "interaction": {
+      "seconds": 10.1,
+      "events": 103,
+      "scriptMs": 928.1,
+      "layoutMs": 2.4,
+      "recalcStyleMs": 3.8,
+      "taskMs": 1024.6,
+      "fps": 10.5,
+      "maxFrameGapMs": 141.7
+    },
+    "count": 55550
+  }
+]

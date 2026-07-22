@@ -50,6 +50,20 @@ milestone. Plan:
 - **[PND-DECIM]** — Decimator Phase 5 (finish-the-wave): candlestick + box
   decimation (Tidal-anchored), document the `three`-at-1M render floor
   (Path2D doesn't help pan), then the "large time series" how-to + release.
+- **[PND-AFFINE]** — Affine fast path for the per-point draw pipeline
+  (external bench 2026-07, profile-verified highest leverage): a `curveLinear`
+  path in `drawLine`/`drawArea` that precomputes the affine scale and loops
+  raw `ctx.lineTo` over the typed arrays, bypassing per-point d3-scale +
+  d3-shape (~55% of stroke-bound frame self-time; est. 3–6×).
+- **[PND-GRADX]** — Stop `buildGradient` walking the full series every frame
+  (~21% self-time + most of the d3-scale closure cost at mountain@1M): cached
+  column extent (semantics-preserving) or M4-derived extent.
+- **[PND-DECKEY]** — Decimation cache keyed on (series identity, x-domain,
+  plot width) so y-only invalidation (y-zoom / live y-autorange) stops
+  re-decimating identically (~19% at mountain@1M); no help for pan, by design.
+- **[PND-MARKDEC]** — Decimate the last two marks: scatter (M4-for-marks —
+  per-pixel-column min/max representatives) and bars (per-column envelope
+  below ~1px slots), following the shipped auto-on/opt-out conventions.
 - **[PND-BOXPLT]** — Finish BoxPlot: ValueSeries widening, range-only mode,
   px `offset` for same-x pairs, line-only shape, join the cursor x-snap, and
   selection `id` via rect-containment `hitTest` (#508 item 5; Candlestick

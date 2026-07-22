@@ -11,8 +11,12 @@ chart types, the full interaction stack (cursor modes, pan/zoom, selection
 Phase 1, annotations), the M4 decimator (pan-FPS cliff closed to 1M points),
 the trading-time axis, and the categorical axis Phase 1. The package is
 **published** (`@pond-ts/charts` on npm, `private: false`); what remains is
-landing the built-but-unmerged work, Phase-2 slices of the adopted RFCs, and
-the M5 parity gate for the stable / estela-parity milestone.
+landing the built-but-unmerged work, Phase-2 slices of the adopted RFCs, the
+M5 parity gate for the stable / estela-parity milestone, and the perf backlog
+from the 2026-07 external bench ([PND-AFFINE] → [PND-GRADX] → [PND-DECKEY] →
+[PND-MARKDEC], in measured-leverage order; notes:
+[charts-bench-vs-scichart-suite-2026-07.md](../notes/charts-bench-vs-scichart-suite-2026-07.md),
+[charts-bench-vs-uplot-2026-07.md](../notes/charts-bench-vs-uplot-2026-07.md)).
 
 ## Tasks
 
@@ -98,6 +102,84 @@ parity (conceded). M4 stays the auto-on default; LTTB the explicit opt-in.
 
 [#518]: https://github.com/pond-ts/pond/pull/518
 [#519]: https://github.com/pond-ts/pond/pull/519
+
+### [PND-AFFINE] — Affine fast path for the per-point draw pipeline
+
+**Source:** external bench 2026-07-22 — pond run through SciChart's
+chart-performance suite and uPlot's bench, then CPU-profiled (V8 sampling,
+unminified bundle). Results + protocol:
+[charts-bench-vs-scichart-suite-2026-07.md](../notes/charts-bench-vs-scichart-suite-2026-07.md)
+(finding 1) /
+[charts-bench-vs-uplot-2026-07.md](../notes/charts-bench-vs-uplot-2026-07.md);
+harness committed at
+[`packages/charts/perf/external/`](../../packages/charts/perf/external/).
+**The highest-leverage render lever the run found.**
+
+At N×M 1000×1000 (125 ms/frame — every series sits below the per-series M4
+threshold, so all 1M points stroke every frame), **~55% of self-time is the
+per-point call chain**: accessor arrow → d3-scale `scale()` + its
+deinterpolate/interpolate closures (~37%) → d3-shape `line`/`point` (~18%) —
+before native `lineTo`/`stroke` (~14%) do the actual work. React reconcile
+over the 1000 layer elements measured ~1% — element count is **not** the
+bottleneck (see parking lot). uPlot draws the same 1M points in 40 ms with
+inline `m*v+b`.
+
+**Fix:** a `curveLinear` fast path in `drawLine` (`src/line.ts`) and
+`drawArea` (`src/area.ts`): precompute the affine transform
+(`kx, bx, ky, by`) from the linear scales once per draw, then loop raw
+`ctx.lineTo` over the typed arrays — bypassing d3-shape and per-point d3-scale
+calls. Est. **3–6× on stroke-bound frames**; also trims every decimated draw
+(M4 output still pays the per-point constant today). Non-linear `curve`
+values keep the d3-shape path — the same `curve === curveLinear` gate
+decimation already uses. Scope note: this does **not** claim the
+`three`-at-1M pan floor under [PND-DECIM] — that floor is the per-frame
+decimation walk, not stroke. Perf-check protocol applies (complexity note,
+before/after table in the commit message; the committed external harness is
+the re-measure).
+
+### [PND-GRADX] — `buildGradient`: stop walking the full series per frame
+
+**Source:** same run, finding 2 — the real mountain/area ceiling. At
+mountain@1M (47 ms/frame), **~21% self-time is `buildGradient`**
+(`src/area.ts`) plus most of the ~52% d3-scale closure time it drives: an
+O(N) pass per repaint to find the fill gradient's pixel extent, re-run on
+every y-zoom / y-autorange frame. The decimation walk everyone suspected is
+only ~19%. Killing it removes ~half the frame at large N.
+
+**Fix options, in preference order:** (a) a **cached column extent** keyed on
+series+column identity — semantics-preserving (the extent is over the full
+series _by design_, so a full-series cache is exact and O(1) after first
+compute); (b) derive the extent from the M4 output — exact per-bucket
+extremes, but only over the _visible window's_ buckets, so it changes the
+gradient's meaning under x-zoom; take (b) only if a deliberate design call
+decides window-relative gradients are wanted. Perf-check protocol applies.
+
+### [PND-DECKEY] — Decimation cache keyed on (series, x-domain, width)
+
+**Source:** same run, finding 3; third in measured leverage after
+[PND-AFFINE] and [PND-GRADX]. The remaining ~19% at mountain@1M re-runs an
+**x-only computation under y-only invalidation** — every y-zoom or live
+y-autorange frame re-decimates to an identical result. Fix: memoize the
+decimation output keyed on (series identity, x-domain, plot width) —
+e.g. a `WeakMap` on the series carrying a small keyed cache. Wins on y-only
+frames (y-zoom, y-autorange); **does not help pan** — the x-domain changes
+every pan frame, the same reasoning that rejected Path2D caching for the
+`three`-at-1M floor under [PND-DECIM]. Include DPR/gap-mode/column in the key
+audit before building. Perf-check protocol applies.
+
+### [PND-MARKDEC] — Decimate scatter marks and bar columns
+
+**Source:** same run, finding 4. The suite's point-update and column
+categories fall off exactly where line/area/candle don't (point y-update:
+pond 18.1 fps @ 100k vs uPlot 37.4; column dead by 5M) — Scatter and Bar are
+the two marks with no decimation path. Shape, following the shipped
+decimator conventions (auto-on, `decimate` opt-out, interaction reads the
+source — §2.3): **scatter** = M4-for-marks, per-pixel-column min/max
+representative points; **bars** = per-column envelope once a bar's slot is
+narrower than ~1px (consistent with candle/box's visible-count gating).
+Extends the [PND-DECIM] wave to the last undecimated marks. Note the
+point-update group also pays a full per-frame `fromColumns` rebuild —
+data-side cost, out of scope here. Perf-check protocol applies.
 
 ### [PND-BOXPLT] — Finish BoxPlot
 
@@ -307,6 +389,16 @@ live consumer) and the live layer; sequence behind whichever pulls first. Not a
 standalone build yet — needs the design call on whether layers gain a live
 input or the idiom is just documented.
 
+**Quantified (external bench 2026-07-22,
+[finding 5](../notes/charts-bench-vs-scichart-suite-2026-07.md)):** the
+per-frame `live.toTimeSeries()` snapshot + chart-series conversion caps the
+SciChart suite's FIFO/ECG streaming category at **31.6 fps @ a 100k-event
+window vs uPlot's 119** (at-cap through 10k; 3.2 fps @ 1M). This is the
+data-side ceiling `perf/RESULTS.md` names — now measured against neighbours.
+No new task: the levers are this task's live-aware input / cheap-handle
+idiom plus the data-side items [PND-GATHER] (core), [PND-COLOUT] and
+[PND-LROLL] (columnar).
+
 ### [PND-ANNRFC] — Annotations RFC write-up
 
 The annotations system shipped (#306/#308/#309) and the staffed cursor-flag
@@ -342,3 +434,10 @@ consumers), `hasAnyDefined()`/`allMissing()`, the protobuf columnar wire
 - Band gap treatment (a filled envelope's break wants its own design; bands
   always break honestly for now).
 - M4.3 brush — skipped, no drivers.
+- **Multi-series layer API** (one layer, K columns) — **ergonomics only, not
+  perf**: the 2026-07 suite profile measured React reconcile over 1000 layer
+  elements at ~1% of frame time
+  ([finding 6](../notes/charts-bench-vs-scichart-suite-2026-07.md)); the N×M
+  collapse is the per-point draw constant ([PND-AFFINE]). Recorded here so it
+  is never built _as_ a perf fix; adopt only if a consumer asks for the
+  ergonomics on their own weight.
