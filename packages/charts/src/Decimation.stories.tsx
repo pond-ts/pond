@@ -10,6 +10,7 @@ import { BandChart } from './BandChart.js';
 import { Candlestick } from './Candlestick.js';
 import { BoxPlot } from './BoxPlot.js';
 import { BarChart } from './BarChart.js';
+import { ScatterChart } from './ScatterChart.js';
 import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
 import type { DrawStatsFrame } from './context.js';
@@ -102,6 +103,30 @@ function bigBand(n: number) {
 }
 const bandSeries = bigBand(N);
 
+/** A large scatter **cloud** — `n` points with a seeded random y spread over the
+ *  plot (a 2D distribution, not a thin line), so marks overlap densely and the
+ *  occupancy decimation has real clusters to collapse. */
+function bigScatter(n: number) {
+  const rows: Array<[number, number]> = new Array(n);
+  let a = 99;
+  const rand = () => (a = (a * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for (let i = 0; i < n; i += 1) {
+    rows[i] = [
+      BASE + i * STEP,
+      50 + 30 * Math.sin(i / (n / 12)) + (rand() - 0.5) * 70,
+    ];
+  }
+  return new TimeSeries({
+    name: 'cloud',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'v', kind: 'number' },
+    ] as const,
+    rows,
+  });
+}
+const cloud = bigScatter(N);
+
 /** Auto-decimation (default) — 200k points drawn from the per-pixel M4 buckets. */
 export const Default: Story = {
   render: () => (
@@ -124,6 +149,40 @@ export const Off: Story = {
       <ChartRow height={260}>
         <Layers>
           <LineChart series={series} column="v" as="power" decimate={false} />
+        </Layers>
+      </ChartRow>
+      <XAxis />
+    </ChartContainer>
+  ),
+};
+
+/** A 200k-point scatter **cloud**, auto-decimated ([PND-MARKDEC] scatter half).
+ *  Unlike a line's per-column min/max, a scatter has no fill, so it decimates by
+ *  **2D pixel occupancy** — overlapping uniform marks collapse to one per
+ *  mark-radius cell. Visually identical to `decimate={false}` at this density;
+ *  interaction still reads every source point. (Data-driven size/colour or a
+ *  translucent fill would keep the full draw — the density signal must survive.) */
+export const Scatter: Story = {
+  render: () => (
+    <ChartContainer width={720} theme={docsTheme} panZoom>
+      <ChartRow height={260}>
+        <Layers>
+          <ScatterChart series={cloud} column="v" />
+        </Layers>
+      </ChartRow>
+      <XAxis />
+    </ChartContainer>
+  ),
+};
+
+/** The same 200k scatter with decimation OFF — every mark drawn, for a
+ *  side-by-side check that the occupancy collapse is lossless at this density. */
+export const ScatterOff: Story = {
+  render: () => (
+    <ChartContainer width={720} theme={docsTheme} panZoom>
+      <ChartRow height={260}>
+        <Layers>
+          <ScatterChart series={cloud} column="v" decimate={false} />
         </Layers>
       </ChartRow>
       <XAxis />

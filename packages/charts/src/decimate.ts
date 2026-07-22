@@ -55,6 +55,7 @@ import type {
   BarSeries,
 } from './data.js';
 import type { Scale } from './line.js';
+import { affineOf } from './affine.js';
 import { scaleDomain, cullChartSeries } from './culling.js';
 
 /**
@@ -757,4 +758,117 @@ export function decimateBars(
     }
   }
   return { begin, end, lo, hi, length: W };
+}
+
+/**
+ * Decimate a **uniform** scatter to one representative mark per occupied
+ * **pixel cell** ([PND-MARKDEC] scatter half) — the marks analog of
+ * {@link decimateBars}, but **2D**: scatter has no fill, so a line/bar's
+ * `[min, max]`-per-column envelope would erase interior points. Instead this
+ * bins the plane into `cellPx × cellPx` cells and keeps the **first** point in
+ * each occupied cell.
+ *
+ * **Why it's visually lossless (for uniform, opaque marks):** with `cellPx` set
+ * to the mark **radius**, any two points sharing a cell are at most `cellPx·√2 ≈
+ * 1.4·r` apart — less than `2·r` — so their discs overlap; drawing one paints
+ * (essentially) the pixels of both. Points in different cells are kept, so a
+ * sparse-in-y scatter reduces little (and stays exact); a dense blob collapses to
+ * ~`plotArea / cellPx²` marks regardless of N. The reduction is therefore an
+ * **unconditional** identity for overlapping uniform marks — the caller's job is
+ * only to decide when the O(visible) sweep is worth it (density gate) and that
+ * the marks are in fact uniform + opaque (data-driven size/colour or translucent
+ * fill must **not** decimate — see {@link isOpaqueColor}).
+ *
+ * `cs.x` is sorted, so the sweep visits columns left-to-right and only the
+ * **current** column's occupied rows need tracking (a `Set` cleared on each
+ * column change — bounded memory, O(visible) total). Positions are in CSS px
+ * (`xScale`/`yScale` output), matching the mark radius' units. `[vStart, vEnd)`
+ * is the pre-culled visible window (defaults to the whole series). Gaps
+ * (non-finite y) are skipped, like {@link drawScatter}.
+ */
+export function decimateScatter(
+  cs: ChartSeries,
+  xScale: Scale,
+  yScale: Scale,
+  cellPx: number,
+  vStart = 0,
+  vEnd = cs.length,
+): ChartSeries {
+  const cell = cellPx > 0 ? cellPx : 1;
+  // Affine fast path ([PND-AFFINE]) for the per-point pixel mapping the sweep
+  // needs — an inline `k·v + b` over the typed arrays instead of a d3-scale
+  // closure per point (each axis independently; a non-affine axis, e.g. a
+  // real-gap trading x, falls back to the exact scale call). Without this the
+  // sweep would re-introduce the per-point d3-scale cost the line/area paths
+  // shed, making the decimation's own cost dominate.
+  const ax = affineOf(xScale);
+  const ay = affineOf(yScale);
+  const outX: number[] = [];
+  const outY: number[] = [];
+  let curCol = Number.NaN;
+  const rows = new Set<number>();
+  for (let i = vStart; i < vEnd; i += 1) {
+    const y = cs.y[i]!;
+    if (!Number.isFinite(y)) continue; // gap — no mark
+    const xv = cs.x[i]!;
+    const px = ax !== null ? ax.k * xv + ax.b : xScale(xv);
+    const col = Math.floor(px / cell);
+    if (col !== curCol) {
+      rows.clear();
+      curCol = col;
+    }
+    const py = ay !== null ? ay.k * y + ay.b : yScale(y);
+    const row = Math.floor(py / cell);
+    if (!rows.has(row)) {
+      rows.add(row);
+      outX.push(xv);
+      outY.push(y);
+    }
+  }
+  return {
+    x: Float64Array.from(outX),
+    y: Float64Array.from(outY),
+    length: outX.length,
+  };
+}
+
+/**
+ * Whether `color` is fully opaque — the second precondition (beside
+ * {@link ResolvedEncoding.uniform}) for scatter decimation. A **translucent**
+ * fill accumulates opacity where marks overlap (that build-up _is_ the density
+ * signal), so collapsing overlaps would lighten the plot — decimation must not
+ * engage. Returns `false` only when it can **prove** alpha &lt; 1
+ * (`rgba(…, a<1)`, `#rrggbbaa` / `#rgba` with alpha &lt; full, or `transparent`);
+ * every other form (`#rgb` / `#rrggbb`, `rgb()`, a named colour, `hsl()`) is
+ * treated as opaque. Conservative in the safe direction: a colour it can't prove
+ * translucent still decimates, but the realistic translucent cases are caught.
+ */
+export function isOpaqueColor(color: string): boolean {
+  const c = color.trim().toLowerCase();
+  if (c === 'transparent') return false;
+  // rgb/rgba/hsl/hsla, both syntaxes: legacy comma (`rgba(r,g,b,a)`) and modern
+  // slash (`rgb(r g b / a)` / `hsl(h s l / a)`). Extract the alpha either way.
+  const fn = /^(?:rgba?|hsla?)\(([^)]+)\)$/.exec(c);
+  if (fn) {
+    const body = fn[1]!;
+    const slash = body.split('/');
+    if (slash.length === 2) {
+      const a = parseFloat(slash[1]!.trim()); // modern: `… / <alpha>`
+      return !(Number.isFinite(a) && a < 1);
+    }
+    const parts = body.split(',').map((p) => p.trim());
+    if (parts.length >= 4) {
+      const a = parseFloat(parts[3]!); // legacy: 4th component is alpha
+      return !(Number.isFinite(a) && a < 1);
+    }
+    return true; // 3-component rgb/hsl → opaque
+  }
+  const hex = /^#([0-9a-f]{3,8})$/.exec(c);
+  if (hex) {
+    const h = hex[1]!;
+    if (h.length === 8) return parseInt(h.slice(6, 8), 16) === 255;
+    if (h.length === 4) return parseInt(h[3]! + h[3]!, 16) === 255;
+    return true; // #rgb / #rrggbb
+  }
+  return true; // named / unknown → opaque
 }

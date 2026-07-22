@@ -18,6 +18,7 @@ import {
   type ColorEncoding,
   type RadiusEncoding,
 } from './encoding.js';
+import type { DecimateOption } from './decimate.js';
 import { ContainerContext, LayersContext, type LayerEntry } from './context.js';
 import {
   legendLabelFor,
@@ -114,6 +115,16 @@ export interface ScatterChartProps<
    */
   offset?: number;
   /**
+   * Collapse dense, **uniform** marks to one representative per pixel cell —
+   * lossless at that density, so a scatter of 100k+ points stays interactive.
+   * **Default `true`.** It engages only when the marks are a fixed size + colour
+   * (no data-driven `radius`/`color`), the fill is opaque, and the visible points
+   * are denser than the pixel grid; otherwise every point draws. Interaction
+   * (hover / click / tracker) always reads the source points. `decimate={false}`
+   * draws every mark; `{ threshold }` tunes the samples-per-pixel trigger.
+   */
+  decimate?: DecimateOption;
+  /**
    * This layer's `<Legend>` row: `false` ⇒ no row (opt out), a string ⇒ the
    * row's display name. **Omitted ⇒ a row named by the layer's readout
    * identity** (`as` ?? `column`). The swatch is the resolved base dot style
@@ -173,6 +184,7 @@ export function ScatterChart<
   color,
   label,
   offset = 0,
+  decimate = true,
   legend,
   index = 0,
 }: ScatterChartProps<S, VS>) {
@@ -317,6 +329,7 @@ export function ScatterChart<
             container.selected,
             id,
             offset,
+            decimate,
           ),
       },
       axisId: axis,
@@ -335,6 +348,7 @@ export function ScatterChart<
       font,
       container.selected,
       offset,
+      decimate,
       axis,
       index,
     ],

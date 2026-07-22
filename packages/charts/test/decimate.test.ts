@@ -13,6 +13,8 @@ import {
   decimateOhlc,
   decimateBox,
   decimateBars,
+  decimateScatter,
+  isOpaqueColor,
 } from '../src/decimate.js';
 import { cullChartSeries } from '../src/culling.js';
 import type {
@@ -677,5 +679,88 @@ describe('decimateBars ([PND-MARKDEC])', () => {
     expect(Number.isNaN(env.lo[1]!)).toBe(true); // column [25,50): no bars
     expect(Number.isNaN(env.hi[1]!)).toBe(true);
     expect(Number.isFinite(env.hi[0]!)).toBe(true); // column [0,25): has bars
+  });
+});
+
+describe('decimateScatter — 2D occupancy', () => {
+  // Identity scales (value === px), so `cell` is in the same units as x/y.
+  const id = pxScale(0, 100, 100);
+
+  it('collapses points that share a cell to one representative (first wins)', () => {
+    // cell = 2 → cols floor(x/2), rows floor(y/2). Two clusters of two.
+    const s = cs([0, 1, 10, 11], [0, 1, 0, 1]);
+    const out = decimateScatter(s, id, id, 2);
+    // (0,1) share cell (0,0); (10,11) share cell (5,0) → 2 representatives, the
+    // FIRST of each cluster (x sorted, per-column row-set).
+    expect(out.length).toBe(2);
+    expect(Array.from(out.x)).toEqual([0, 10]);
+    expect(Array.from(out.y)).toEqual([0, 0]);
+  });
+
+  it('keeps points in distinct cells (sparse → no reduction, exact)', () => {
+    const s = cs([0, 2, 4], [0, 4, 8]); // cells (0,0) (1,2) (2,4) — all distinct
+    const out = decimateScatter(s, id, id, 2);
+    expect(out.length).toBe(3);
+    expect(Array.from(out.x)).toEqual([0, 2, 4]);
+  });
+
+  it('keeps distinct rows within one column (scatter, not min/max)', () => {
+    // The key difference from line/bar decimation: a column with points at
+    // several heights keeps them ALL (one per occupied row), not just min/max.
+    const s = cs([0, 0, 0], [0, 20, 40]); // one column, rows 0 / 10 / 20 (cell 2)
+    const out = decimateScatter(s, id, id, 2);
+    expect(out.length).toBe(3);
+    expect(Array.from(out.y)).toEqual([0, 20, 40]);
+  });
+
+  it('skips gaps (non-finite y)', () => {
+    const s = cs([0, 1, 2], [0, NaN, 4]);
+    const out = decimateScatter(s, id, id, 2);
+    expect(out.length).toBe(2);
+    expect(Array.from(out.x)).toEqual([0, 2]);
+  });
+
+  it('honours the [vStart, vEnd) window', () => {
+    const s = cs([0, 1, 2, 3], [0, 0, 0, 0]);
+    const out = decimateScatter(s, id, id, 2, 1, 3); // only indices 1,2
+    // x=1 (col0) and x=2 (col1) — distinct cols → both kept.
+    expect(Array.from(out.x)).toEqual([1, 2]);
+  });
+});
+
+describe('isOpaqueColor', () => {
+  it('opaque forms → true', () => {
+    for (const c of [
+      '#abc',
+      '#aabbcc',
+      '#aabbccff',
+      '#abcf',
+      'rgb(1,2,3)',
+      'rgba(1,2,3,1)',
+      'red',
+      'hsl(200, 50%, 50%)',
+      'hsl(200 50% 50%)',
+      'hsl(200 50% 50% / 1)',
+      'hsla(200, 50%, 50%, 1)',
+      'rgb(1 2 3 / 1)',
+      '  #ABC  ',
+    ]) {
+      expect(isOpaqueColor(c), c).toBe(true);
+    }
+  });
+
+  it('provably translucent forms → false', () => {
+    for (const c of [
+      'transparent',
+      'rgba(1,2,3,0.5)',
+      'rgba(1, 2, 3, 0)',
+      'rgb(1 2 3 / 0.5)',
+      'hsla(200, 50%, 50%, 0.3)',
+      'hsl(200 50% 50% / 0.4)',
+      '#aabbcc80',
+      '#abcd', // 4-digit: last nibble is alpha (d = 0xdd < 0xff)
+    ]) {
+      expect(isOpaqueColor(c), c).toBe(false);
+    }
   });
 });

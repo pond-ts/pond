@@ -68,6 +68,15 @@ export interface ResolvedEncoding {
   radiusAt(i: number): number;
   /** This point's fill colour (base colour if unencoded / non-finite). */
   colorAt(i: number): string;
+  /**
+   * `true` when **neither** radius nor colour is data-driven — every mark is the
+   * same fixed size and colour (`radiusAt`/`colorAt` ignore their index). This is
+   * the precondition for lossless occupancy **decimation** (PND-MARKDEC scatter
+   * half): only same-size, same-colour marks can be collapsed where they overlap
+   * without changing the picture. A `{column, range}` on either channel makes it
+   * `false`, and the scatter draws every point.
+   */
+  readonly uniform: boolean;
 }
 
 /** A numeric column read into a `Float64Array` (gaps as NaN), by name. */
@@ -196,5 +205,11 @@ export function resolveEncoding(
     }
   }
 
-  return { radiusAt, colorAt };
+  // Uniform iff both channels are fixed: radius a number/omitted and no colour
+  // encoding. Data-driven either side (`{column, range}`) makes every mark
+  // potentially distinct, so decimation must not collapse them.
+  const uniform =
+    (radius === undefined || typeof radius === 'number') && color === undefined;
+
+  return { radiusAt, colorAt, uniform };
 }
