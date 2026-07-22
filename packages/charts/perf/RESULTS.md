@@ -237,3 +237,31 @@ so its slow, noisy run never blocks the normal test gate. The **perf invariants*
 growth under live-append; sustained pan stays responsive at a fixed fixture) —
 **do** run in the normal `playwright test` gate. Absolute FPS/timing lives only
 here, never as a CI assertion (runner noise).
+
+## External benches (2026-07) — cross-library comparison
+
+The internal harness above measures pond against itself; on 2026-07-22 pond
+was also run through two third-party protocols — uPlot's own bench and
+SciChart's chart-performance test suite — with the harnesses committed under
+[`perf/external/`](external/README.md) and the results + CPU-profile analysis
+in
+[docs/notes/charts-bench-vs-uplot-2026-07.md](../../../docs/notes/charts-bench-vs-uplot-2026-07.md)
+and
+[docs/notes/charts-bench-vs-scichart-suite-2026-07.md](../../../docs/notes/charts-bench-vs-scichart-suite-2026-07.md).
+Two results bear directly on this document:
+
+- **The data-side ceiling ("The two ceilings" above) is now quantified
+  against neighbours:** the suite's FIFO/ECG streaming category — per-frame
+  `live.toTimeSeries()` + chart-series conversion — capped pond at
+  **31.6 fps @ a 100k-event window vs uPlot's 119** (at-cap through 10k).
+  The render-side story held: M4-decimated candlestick stayed at the ~120 fps
+  frame cap through 200k candles, matching SciChart's WebGL engine.
+- **The mousemove sweep exposed the cursor-hover full-repaint bug** the
+  internal harness couldn't see (pan/zoom change `timeRange` legitimately;
+  hover-only FPS was never measured). Fixed in
+  [#524](https://github.com/pond-ts/pond/pull/524), which also added the
+  hover-sweep zero-repaint invariant to `e2e/perf-invariants.spec.ts`.
+
+The profile-driven perf backlog from these runs ([PND-AFFINE], [PND-GRADX],
+[PND-DECKEY], [PND-MARKDEC]) is tracked in
+[docs/plans/PND_CHARTS_PLAN.md](../../../docs/plans/PND_CHARTS_PLAN.md).
