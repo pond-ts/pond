@@ -52,6 +52,20 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **charts:** **`trackerPosition` is now a _followed_ position, not a hard pin —
+  enabling cross-chart cursor sync.** A live local hover wins over
+  `trackerPosition`, so the chart under the pointer shows its own cursor while
+  any chart without a local pointer follows the controlled time (mapped through
+  its own `xScale`, so it's correct across different zooms). This makes
+  **multi-chart dashboard cursor sync** fall out of the plain props: give every
+  `<ChartContainer>` the same `trackerPosition={sharedTime}` and set `sharedTime`
+  from each one's `onTrackerChanged` (clear it to `null` on the group's
+  `onPointerLeave`) — no "which chart is active" bookkeeping. **Behaviour
+  change:** previously a numeric `trackerPosition` overrode local hover, and
+  `trackerPosition={null}` force-hid the cursor; now `null` and `undefined` are
+  equivalent ("no controlled position") and a hovered chart always tracks its
+  pointer. To force a chart to never show a cursor, use `cursor="none"`. See the
+  "Synced cursors across charts" story. No type change (`number | null`).
 - **charts:** **Line / area draw is ~3× faster on stroke-bound frames**
   (PND-AFFINE / PND-GRADX; 2026-07 external-bench profile). When the curve is
   linear and both scales are affine (every y axis is `scaleLinear`; x is

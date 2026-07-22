@@ -160,9 +160,25 @@ export interface ChartContainerProps {
    */
   showAxis?: boolean;
   /**
-   * Controlled tracker position (epoch ms) — pins the synced crosshair across
-   * rows. Omit for uncontrolled (the chart tracks the pointer itself); pass
-   * `null` to force it hidden. See {@link onTrackerChanged}.
+   * Controlled tracker position (epoch ms) — where to show the synced crosshair
+   * **when this chart isn't the one under the pointer**. A live local hover
+   * always wins over it, so this is a *followed* position, not a hard pin:
+   * supply it to drive the cursor from outside (a scrubber, a playback head, or
+   * — the main use — **cross-chart sync**). Maps through this chart's own
+   * `xScale`, so it lands at the right pixel even under a different zoom.
+   *
+   * **Multi-chart sync** falls out of this plus {@link onTrackerChanged}: give
+   * every `<ChartContainer>` the same `trackerPosition={sharedTime}` and set
+   * `sharedTime` from each one's `onTrackerChanged`. The hovered chart favors its
+   * own pointer (and reports the time out); the others follow. Clear `sharedTime`
+   * to `null` on the group's `onPointerLeave` so the crosshair lifts when the
+   * pointer leaves every chart. (See the "Synced cursors across charts" story /
+   * dashboard guide.)
+   *
+   * **Omit or pass `null`** (equivalent) for no controlled position — a hovered
+   * chart still tracks its pointer, a non-hovered one shows nothing. To force a
+   * chart to *never* show a cursor, use `cursor="none"`, not `trackerPosition`.
+   * See {@link onTrackerChanged}.
    */
   trackerPosition?: number | null;
   /**
