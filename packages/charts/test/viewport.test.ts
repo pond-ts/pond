@@ -4,6 +4,7 @@ import {
   zoomRange,
   panRangeTrading,
   zoomRangeTrading,
+  clampToBounds,
   type ViewportDiscontinuity,
 } from '../src/viewport.js';
 
@@ -35,6 +36,33 @@ describe('panRange', () => {
   it('shifts the range by dt (caller signs the gesture)', () => {
     expect(panRange([100, 200], 50)).toEqual([150, 250]);
     expect(panRange([100, 200], -30)).toEqual([70, 170]);
+  });
+});
+
+describe('clampToBounds', () => {
+  const bounds = [0, 1000] as const;
+
+  it('leaves a range already inside the extent untouched', () => {
+    expect(clampToBounds([200, 400], bounds)).toEqual([200, 400]);
+  });
+
+  it('slides a range past the left edge back in, preserving span', () => {
+    expect(clampToBounds([-50, 150], bounds)).toEqual([0, 200]);
+  });
+
+  it('slides a range past the right edge back in, preserving span', () => {
+    expect(clampToBounds([900, 1100], bounds)).toEqual([800, 1000]);
+  });
+
+  it('clamps a range wider than the extent to the full bounds (zoom-out ceiling)', () => {
+    expect(clampToBounds([-200, 1200], bounds)).toEqual([0, 1000]);
+    // exactly the extent width → also the full bounds
+    expect(clampToBounds([500, 1500], bounds)).toEqual([0, 1000]);
+  });
+
+  it('treats a degenerate extent (hi <= lo) as no constraint', () => {
+    expect(clampToBounds([10, 20], [100, 100])).toEqual([10, 20]);
+    expect(clampToBounds([10, 20], [100, 50])).toEqual([10, 20]);
   });
 });
 

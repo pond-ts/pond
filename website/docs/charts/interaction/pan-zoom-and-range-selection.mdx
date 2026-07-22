@@ -73,14 +73,32 @@ not only a zoom.
 ## Free pan & zoom — `panZoom`
 
 Separately from range-select, `panZoom` enables **direct manipulation**: drag
-the plot to pan, wheel to zoom around the cursor.
+the plot to pan, wheel to zoom around the cursor. It's a **three-way mode** —
+choose whether the plot captures pan, both, or neither:
 
-| Prop                | Type                            | Default | Purpose                                                                                           |
-| ------------------- | ------------------------------- | ------- | ------------------------------------------------------------------------------------------------- |
-| `panZoom`           | `boolean`                       | `false` | Drag-to-pan + wheel-to-zoom. Off by default so it doesn't capture drag/scroll unless asked.       |
-| `onTimeRangeChange` | `([start, end]) => void`        | —       | Fires on pan/zoom with the new range. Wire back to `range` for controlled; omit for uncontrolled. |
-| `minDuration`       | `number`                        | `1`     | Zoom-in floor — the minimum visible duration in ms.                                               |
-| `range`             | `[number, number] \| TimeRange` | —       | The controlled view range (shared by all three mechanisms).                                       |
+| `panZoom`                    | Gestures                                                 |
+| ---------------------------- | -------------------------------------------------------- |
+| `'none'` / `false` (default) | Neither — the plot ignores drag and scroll.              |
+| `'pan'`                      | Drag pans; the wheel is left alone (page still scrolls). |
+| `'panZoom'` / `true`         | Drag pans **and** wheel zooms around the cursor.         |
+
+| Prop                | Type                                      | Default  | Purpose                                                                                           |
+| ------------------- | ----------------------------------------- | -------- | ------------------------------------------------------------------------------------------------- |
+| `panZoom`           | `'none' \| 'pan' \| 'panZoom' \| boolean` | `'none'` | Which gestures the plot captures (table above). Boolean is the back-compat shorthand.             |
+| `bounds`            | `[number, number]`                        | —        | **Outer extent** — pan/zoom can't move the view outside it. Zoom-out ceiling; omit for no limit.  |
+| `minDuration`       | `number`                                  | `1`      | Zoom-**in** floor — the minimum visible duration in ms.                                           |
+| `onTimeRangeChange` | `([start, end]) => void`                  | —        | Fires on pan/zoom with the new range. Wire back to `range` for controlled; omit for uncontrolled. |
+| `range`             | `[number, number] \| TimeRange`           | —        | The controlled view range (shared by all three mechanisms).                                       |
+
+**Bounding the reachable window.** `bounds` and `minDuration` fence the view
+between an **outer** and an **inner** limit: `bounds` is the `[min, max]` the
+view can never move outside — pan into an edge stops there (keeping its span),
+and zoom-out is capped at the whole span — while `minDuration` is the narrowest
+visible window (the zoom-in floor). Set both and a gesture can neither scroll
+off into empty time nor zoom past a useful grain. Seed `range` within `bounds`.
+(On a trading-time axis, `bounds` clamps in wall-clock ms — a sensible outer
+limit; the per-session pan/zoom math already holds the trading span at each
+calendar edge.)
 
 **Controlled vs. uncontrolled matters here.** Uncontrolled (`panZoom` on, no
 `onTimeRangeChange`), the container holds the view internally and seeds it from
@@ -99,6 +117,13 @@ then ignored so they can't fight the user's pan. To drive the range externally
   grid; value-axis and category selections don't take one.
 - **Uncontrolled `panZoom` stops tracking `range`** once the user grabs it —
   if you need the view to follow live data, go controlled.
+- **`bounds` constrains _gestures_, not the initial `range`.** Only pan/zoom
+  output (and any range routed through the container) is clamped — a `range`
+  seeded outside `bounds` shows as-is until the first gesture pulls it in. Seed
+  it within `bounds` yourself.
+- **`bounds` wins over `minDuration` if they contradict.** A `bounds` span
+  narrower than `minDuration` clamps to the (narrower) extent; keep
+  `minDuration ≤ bounds` width.
 - **Mouse-only** — pan is drag, zoom is wheel; no keyboard or touch gestures
   yet.
 
@@ -110,3 +135,7 @@ then ignored so they can't fight the user's pan. To drive the range externally
   modes (the readouts, as opposed to `region`'s selection).
 - Storybook: [`Cursors/Region`](pathname:///storybook/?path=/story/cursors-region--drag-to-select)
   — `DragToSelect`, `Freeform`, `Sessions`, `ValueAxisSelect`, `PanAndSelect`.
+- Storybook: [`Cursors/Scenarios/Pan Zoom`](pathname:///storybook/?path=/story/cursors-scenarios--pan-zoom),
+  [`Pan Only`](pathname:///storybook/?path=/story/cursors-scenarios--pan-only),
+  [`Bounded`](pathname:///storybook/?path=/story/cursors-scenarios--bounded)
+  — the three `panZoom` modes and the `bounds` + `minDuration` fence.

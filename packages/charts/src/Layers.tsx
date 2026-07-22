@@ -514,7 +514,7 @@ export function Layers({ children }: LayersProps) {
         c.onRegionSelect &&
         (c.xKind === 'time' || c.xKind === 'value')
       ) {
-        const needsShift = c.regionSelectModifier === 'shift' && c.panZoom;
+        const needsShift = c.regionSelectModifier === 'shift' && c.panEnabled;
         if (!needsShift || e.shiftKey) {
           const px = Math.max(
             0,
@@ -535,7 +535,7 @@ export function Layers({ children }: LayersProps) {
         }
         // Modifier required but not held → fall through to pan.
       }
-      if (!c.panZoom || c.xKind === 'category') return;
+      if (!c.panEnabled || c.xKind === 'category') return;
       const r = c.timeRange;
       // Arm a potential pan: record the anchor, but DON'T capture the pointer or
       // hide the tracker yet. Capturing on press retargets the eventual `click`
@@ -810,7 +810,7 @@ export function Layers({ children }: LayersProps) {
     if (el === null) return;
     const onWheel = (e: WheelEvent) => {
       const c = containerRef.current;
-      if (!c.panZoom || c.xKind === 'category') return;
+      if (!c.zoomEnabled || c.xKind === 'category') return;
       e.preventDefault();
       const rect = el.getBoundingClientRect();
       const localX = Math.max(0, Math.min(c.plotWidth, e.clientX - rect.left));
@@ -1070,7 +1070,8 @@ export function Layers({ children }: LayersProps) {
             ? `inset 0 0 0 1px ${guideColor}`
             : undefined,
           // Let pan/zoom own touch gestures (no native scroll) when enabled.
-          touchAction: container.panZoom ? 'none' : 'auto',
+          touchAction:
+            container.panEnabled || container.zoomEnabled ? 'none' : 'auto',
         }}
         onPointerMove={handlePointerMove}
         onPointerDown={handlePointerDown}

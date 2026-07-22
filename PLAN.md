@@ -50,10 +50,6 @@ milestone. Plan:
 - **[PND-DECIM]** — Decimator Phase 5 (finish-the-wave): candlestick + box
   decimation (Tidal-anchored), document the `three`-at-1M render floor
   (Path2D doesn't help pan), then the "large time series" how-to + release.
-- **[PND-MARKDEC]** — Decimate the last two marks. **Bars shipped** (per-column
-  envelope `[min, max]` below ~1px slots — `<BarChart decimate>`). **Remaining:
-  scatter** (M4-for-marks — per-pixel-column min/max representative points),
-  following the same auto-on/opt-out conventions.
 - **[PND-HOVCTX]** — Split cursor position out of the `ContainerFrame` context
   (external bench 2026-07 follow-up, profile-verified): cursor lives in
   `useState` on `ChartContainer` and is a frame field, so every mousemove
