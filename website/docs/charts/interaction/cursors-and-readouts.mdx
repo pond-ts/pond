@@ -163,6 +163,14 @@ shows every chart's value at the one cursor.
 - **`crosshair` values snap to the series,** so the axis pills read like ticks
   — set `crosshairSnap={false}` only if you want the horizontal line to track
   the raw pointer Y instead.
+- **Sync on a trading-time axis:** a follower reports the shared time back
+  through its own `xScale`, which is an exact round-trip on a continuous
+  (linear / time) axis — so wiring `onTrackerChanged` on every chart is a clean
+  no-op there. On a **discontinuity (trading-time) axis** a shared time that
+  lands in _that chart's_ collapsed gap doesn't round-trip exactly, which can
+  nudge the shared cursor to the gap seam. If you sync charts with gaps,
+  dedupe your shared-state setter (ignore a near-equal time), or wire
+  `onTrackerChanged` only where you actually need the report.
 
 ## See also
 
