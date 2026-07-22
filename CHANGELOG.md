@@ -50,6 +50,22 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **charts:** **Line / area draw is ~3× faster on stroke-bound frames**
+  (PND-AFFINE / PND-GRADX; 2026-07 external-bench profile). When the curve is
+  linear and both scales are affine (every y axis is `scaleLinear`; x is
+  `scaleLinear` / `scaleTime` / the gap-free default time axis), `drawLine` and
+  `drawArea` now map points with an inline `k·v + b` over the typed arrays
+  instead of a per-point d3-scale closure + d3-shape generator — a **visually
+  identical** draw (guarded by the decimation pixel-identity and per-layer
+  visual-regression e2e). A real-gap trading-time axis, or a non-linear curve,
+  transparently keeps the exact d3 path. Measured on a JS-only micro-bench
+  (`scripts/perf-affine.mjs`): line 1M 60.4 → 19.0 ms (3.2×), area 1M 132 →
+  38 ms (3.5×). Separately, the area fill gradient's full-series value extent is
+  now memoized per column buffer, so a y-zoom / pan repaint no longer re-walks
+  the whole series to find the gradient span. No API change.
+
 ### Added
 
 - **charts:** **Draw-cost + decimation observability** — `<ChartContainer
