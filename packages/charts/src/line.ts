@@ -4,6 +4,7 @@ import type { LineStyle } from './theme.js';
 import type { LayerDrawStats } from './context.js';
 import { cullChartSeries } from './culling.js';
 import { decimateM4, type DecimateOption } from './decimate.js';
+import { affineOf, type Affine } from './affine.js';
 import {
   bridgeGaps,
   collectGapEdges,
@@ -22,6 +23,42 @@ const EMPTY_BOUNDARIES: readonly number[] = [];
 
 /** Maps a data value to a pixel coordinate (a d3 scale is assignable to this). */
 export type Scale = (value: number) => number;
+
+/**
+ * Stroke one run of `ys` (aligned index-for-index with `xs`) through the affine
+ * pixel maps `ax` / `ay` — the [PND-AFFINE] fast path. Replicates d3-shape's
+ * `curveLinear` + `.defined(Number.isFinite)` behaviour exactly: a non-finite
+ * value lifts the pen (the next finite point `moveTo`s a fresh subpath), a
+ * finite value `lineTo`s (or `moveTo`s when the pen is up), so a gap breaks and
+ * a lone point draws nothing — the same op sequence the generator emits, minus
+ * the per-point `scale()` + d3-shape closures. The caller brackets
+ * `beginPath`/`stroke`; `xs`/`ys` are the run (a `subarray` view, so index 0 is
+ * the run start). Used for lines and for the area outline.
+ */
+export function strokeAffinePolyline(
+  ctx: CanvasRenderingContext2D,
+  xs: Float64Array,
+  ys: Float64Array,
+  ax: Affine,
+  ay: Affine,
+): void {
+  const n = ys.length;
+  let penDown = false;
+  for (let j = 0; j < n; j += 1) {
+    const v = ys[j]!;
+    if (!Number.isFinite(v)) {
+      penDown = false;
+      continue;
+    }
+    const px = ax.k * xs[j]! + ax.b;
+    const py = ay.k * v + ay.b;
+    if (penDown) ctx.lineTo(px, py);
+    else {
+      ctx.moveTo(px, py);
+      penDown = true;
+    }
+  }
+}
 
 /**
  * The y-scale's domain lower bound (the axis floor) in pixels — where the
@@ -138,6 +175,15 @@ export function drawLine(
   );
   const singleRun = runs.length === 1;
 
+  // [PND-AFFINE] fast path: when the curve is linear and **both** scales are
+  // affine (every y axis is `scaleLinear`; x is `scaleLinear` / `scaleTime` /
+  // the gap-free default trading axis — a real-gap trading scale probes
+  // non-affine and is rejected), stroke each run with an inline multiply-add over
+  // the typed arrays, skipping the per-point d3-scale + d3-shape closures. Any
+  // other case (smoothing curve, non-affine x) keeps the exact d3-shape path.
+  const ax = curve === curveLinear ? affineOf(xScale) : null;
+  const ay = ax !== null ? affineOf(yScale) : null;
+
   // Solid pass: one path across every run. Each run's generator opens with its
   // own moveTo, so a run boundary is a clean pen-up — the session break.
   ctx.beginPath();
@@ -148,13 +194,18 @@ export function drawLine(
     // bridge, if any, is a separate overlay pass below).
     const seg = singleRun ? cs.y : cs.y.subarray(s, e);
     const ys = gaps === 'none' ? bridgeGaps(seg, e - s) : seg;
-    const gen = d3line<number>()
-      .defined((v) => Number.isFinite(v))
-      .x((_, j) => xScale(cs.x[s + j]!))
-      .y((v) => yScale(v))
-      .curve(curve)
-      .context(ctx);
-    gen(ys);
+    if (ax !== null && ay !== null) {
+      const xs = singleRun ? cs.x : cs.x.subarray(s, e);
+      strokeAffinePolyline(ctx, xs, ys, ax, ay);
+    } else {
+      const gen = d3line<number>()
+        .defined((v) => Number.isFinite(v))
+        .x((_, j) => xScale(cs.x[s + j]!))
+        .y((v) => yScale(v))
+        .curve(curve)
+        .context(ctx);
+      gen(ys);
+    }
   }
   ctx.strokeStyle = style.color;
   ctx.lineWidth = style.width;

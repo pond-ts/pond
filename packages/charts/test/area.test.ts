@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { scaleLinear } from 'd3-scale';
-import { areaExtent, drawArea } from '../src/area.js';
+import { areaExtent, drawArea, columnFiniteExtent } from '../src/area.js';
 import { resolveCurve } from '../src/curve.js';
 import { recordingContext, type CtxCall } from './canvas-mock.js';
 import type { ChartSeries } from '../src/data.js';
@@ -423,6 +423,116 @@ describe('drawArea — viewport culling (Phase 2)', () => {
     const [, y0, , y1] = anchors[0]!;
     expect(Math.max(y0!, y1!)).toBe(90);
     expect(Math.min(y0!, y1!)).toBe(0);
+  });
+});
+
+describe('columnFiniteExtent (PND-GRADX cache)', () => {
+  it('returns the finite [min, max], ignoring NaN gaps', () => {
+    const y = Float64Array.from([3, NaN, 1, 9, 4]);
+    expect(columnFiniteExtent(y, y.length)).toEqual([1, 9]);
+  });
+
+  it('returns null when nothing is finite', () => {
+    const y = Float64Array.from([NaN, NaN]);
+    expect(columnFiniteExtent(y, y.length)).toBeNull();
+  });
+
+  it('memoizes on the buffer identity (same reference back on repeat)', () => {
+    const y = Float64Array.from([2, 5, 1]);
+    const a = columnFiniteExtent(y, y.length);
+    const b = columnFiniteExtent(y, y.length);
+    expect(a).toBe(b); // cache hit → identical reference, no re-walk
+    // A different buffer with the same contents is a distinct cache entry.
+    const y2 = Float64Array.from([2, 5, 1]);
+    expect(columnFiniteExtent(y2, y2.length)).not.toBe(a);
+    expect(columnFiniteExtent(y2, y2.length)).toEqual(a); // …but equal value
+  });
+});
+
+describe('drawArea — affine fast path (PND-AFFINE)', () => {
+  // px = x (identity), py = 100 - v (flip). baseline 0 → baselinePx = 100.
+  const rx = scaleLinear().domain([0, 10]).range([0, 10]) as unknown as Scale;
+  const ry = scaleLinear().domain([0, 100]).range([100, 0]) as unknown as Scale;
+  const penOps = (calls: CtxCall[]) =>
+    calls
+      .filter((c) => c.name === 'moveTo' || c.name === 'lineTo')
+      .map((c) => ({ name: c.name, args: c.args as number[] }));
+
+  it('fills one closed polygon to the baseline per run, then strokes the outline', () => {
+    const { ctx, calls } = areaContext();
+    drawArea(ctx, cs([0, 5, 10], [40, 40, 40]), rx, ry, style, 0);
+    // Fill polygon: top edge (0,60)(5,60)(10,60), then down/back along baseline
+    // (10,100)(0,100), closed — a flat backward edge collapsed to its two corners
+    // (vs d3-area's per-point backward walk). Outline: the 3 top points.
+    expect(penOps(calls)).toEqual([
+      { name: 'moveTo', args: [0, 60] },
+      { name: 'lineTo', args: [5, 60] },
+      { name: 'lineTo', args: [10, 60] },
+      { name: 'lineTo', args: [10, 100] }, // down to baseline (right corner)
+      { name: 'lineTo', args: [0, 100] }, // flat back to the left corner
+      { name: 'moveTo', args: [0, 60] }, // outline re-walks the top edge
+      { name: 'lineTo', args: [5, 60] },
+      { name: 'lineTo', args: [10, 60] },
+    ]);
+    expect(calls.filter((c) => c.name === 'closePath')).toHaveLength(1);
+    expect(calls.filter((c) => c.name === 'fill')).toHaveLength(1);
+    expect(calls.filter((c) => c.name === 'stroke')).toHaveLength(1);
+  });
+
+  it('breaks into an independent closed polygon per finite run at a gap', () => {
+    const { ctx, calls } = areaContext();
+    // gap at index 2 → runs [0,1] and [3].
+    drawArea(ctx, cs([0, 2, 4, 6], [10, 20, NaN, 40]), rx, ry, style, 0);
+    // two fill moveTo + two outline moveTo = 4; one closePath per filled run = 2.
+    expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(4);
+    expect(calls.filter((c) => c.name === 'closePath')).toHaveLength(2);
+    expect(calls.filter((c) => c.name === 'fill')).toHaveLength(1);
+    expect(calls.filter((c) => c.name === 'stroke')).toHaveLength(1);
+  });
+
+  it('fills a signed edge crossing the baseline as one polygon', () => {
+    const { ctx, calls } = areaContext();
+    // values straddle baseline 0 (no NaN) → a single run, single closePath.
+    drawArea(ctx, cs([0, 5, 10], [-20, 30, -10]), rx, ry, style, 0);
+    expect(calls.filter((c) => c.name === 'closePath')).toHaveLength(1);
+    // one fill moveTo + one outline moveTo.
+    expect(calls.filter((c) => c.name === 'moveTo')).toHaveLength(2);
+  });
+
+  it('anchors the fill gradient to the FULL series under the fast path', () => {
+    const { ctx } = recordingContext();
+    const anchors: number[][] = [];
+    (
+      ctx as unknown as { createLinearGradient: (...a: number[]) => unknown }
+    ).createLinearGradient = (...args: number[]) => {
+      anchors.push(args);
+      return { addColorStop: () => {} };
+    };
+    // Full series y spans 10..90; ry maps 90→10 and 10→90, baseline 0→100.
+    // Region: top = min(10, 100) = 10, bottom = max(90, 100) = 100.
+    drawArea(ctx, cs([0, 5, 10], [10, 90, 40]), rx, ry, style, 0);
+    const [, y0, , y1] = anchors[0]!;
+    // `ry` is a real d3 scale, so its endpoint eval carries float noise (9.999…).
+    expect(Math.min(y0!, y1!)).toBeCloseTo(10, 9);
+    expect(Math.max(y0!, y1!)).toBeCloseTo(100, 9);
+  });
+
+  it('falls back to d3-area when x is a non-affine (real-gap) scale', () => {
+    const piecewise = Object.assign(
+      (v: number) => (v < 5 ? v : 5 + (v - 5) * 10),
+      { domain: () => [0, 10], range: () => [0, 55], invert: (p: number) => p },
+    ) as unknown as Scale;
+    const { ctx, calls } = areaContext();
+    drawArea(ctx, cs([0, 5, 10], [40, 40, 40]), piecewise, ry, style, 0);
+    // Still fills + strokes (fallback engaged, no throw). d3-area walks the
+    // baseline back per point, so more baseline vertices than the fast path.
+    expect(calls.filter((c) => c.name === 'fill')).toHaveLength(1);
+    expect(calls.filter((c) => c.name === 'stroke')).toHaveLength(1);
+    // x=10 maps through the kink to 5 + 5·10 = 55, not an affine value.
+    const xs = calls
+      .filter((c) => c.name === 'lineTo' || c.name === 'moveTo')
+      .map((c) => (c.args as number[])[0]);
+    expect(xs).toContain(55);
   });
 });
 
