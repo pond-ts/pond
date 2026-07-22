@@ -51,6 +51,27 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts:** **`<ScatterChart decimate>` — dense scatter plots now decimate**
+  (PND-MARKDEC scatter half — the last un-decimated mark type). **Default
+  `true`.** When the marks are **uniform** (fixed size + colour, no data-driven
+  `radius`/`color`), **opaque**, and denser than the pixel grid, overlapping
+  marks collapse to one representative per **mark-radius cell** via a 2D
+  pixel-**occupancy** sweep. Scatter has no fill, so a line/bar's per-column
+  `[min, max]` envelope would erase interior points — the occupancy grid keeps
+  one mark per occupied cell instead, which is **visually lossless** for uniform
+  opaque marks at that density (same-cell marks overlap). Interaction (hover /
+  click / tracker) still reads **every source point**; the per-point selection
+  ring + labels are suppressed only on the decimated (dense) path. A
+  **translucent** fill (density-encoded — overlap _should_ build up) or a
+  data-driven size/colour keeps the full draw. `decimate={false}` draws every
+  mark; `{ threshold }` tunes the trigger. The occupancy sweep uses the affine
+  fast path for the per-point pixel mapping. Measured (SciChart-suite
+  point-update, real browser): **100k 18 → 73 fps (4×)**, and the ladder now
+  runs to **10M** points (previously dead by 1M). `drawScatter` now returns
+  `LayerDrawStats` (visible via `onDrawStats`).
+
 ## [0.51.0] — 2026-07-22
 
 ### Changed

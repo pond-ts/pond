@@ -22,10 +22,17 @@ const identity = (v: number) => v;
 const keyAt = (cs: ChartSeries) => (i: number) => cs.x[i]!;
 
 /** A fixed-radius / fixed-colour encoding (radius/colour math is tested in
- *  encoding.test.ts; here we hold them constant to assert draw + hit geometry). */
-const fixed = (r: number, color = '#abc'): ResolvedEncoding => ({
+ *  encoding.test.ts; here we hold them constant to assert draw + hit geometry).
+ *  `uniform` defaults `true` (the fixed case); pass `false` to model a
+ *  data-driven encoding for the decimation-gate tests. */
+const fixed = (
+  r: number,
+  color = '#abc',
+  uniform = true,
+): ResolvedEncoding => ({
   radiusAt: () => r,
   colorAt: () => color,
+  uniform,
 });
 
 const style: ScatterStyle = {
@@ -598,6 +605,7 @@ describe('drawScatter — viewport culling (Phase 2)', () => {
     const enc: ResolvedEncoding = {
       radiusAt: () => 4,
       colorAt: (i) => `c${i}`,
+      uniform: false, // data-driven colour → not decimatable (full-draw path)
     };
     drawScatter(
       ctx,
@@ -635,5 +643,126 @@ describe('drawScatter — viewport culling (Phase 2)', () => {
       'v',
     );
     expect(calls.filter((c) => c.name === 'arc')).toHaveLength(10);
+  });
+});
+
+describe('drawScatter — decimation gate ([PND-MARKDEC] scatter half)', () => {
+  // A ctx with a backing width (drives deviceBucketCount / the density gate) that
+  // no-ops the draw calls. W = 800 → decimation gate trips above 2×800 points.
+  const gateCtx = (width: number) =>
+    ({
+      canvas: { width },
+      save() {},
+      restore() {},
+      beginPath() {},
+      arc() {},
+      fill() {},
+      stroke() {},
+      fillText() {},
+    }) as unknown as CanvasRenderingContext2D;
+
+  // 4000 points across the plot, all at one height → they pile into few cells.
+  const dense = cs(
+    Array.from({ length: 4000 }, (_, i) => i),
+    Array.from({ length: 4000 }, () => 0.5),
+  );
+  const xS = scaleLinear()
+    .domain([0, 4000])
+    .range([0, 800]) as unknown as Scale;
+  const yS = scaleLinear().domain([0, 1]).range([0, 400]) as unknown as Scale;
+
+  const run = (encoding: ResolvedEncoding, decimate: unknown = true) =>
+    drawScatter(
+      gateCtx(800),
+      dense,
+      xS,
+      yS,
+      style,
+      encoding,
+      keyAt(dense),
+      undefined,
+      font,
+      null,
+      undefined,
+      0,
+      decimate as never,
+    );
+
+  it('decimates a dense, uniform, opaque scatter (fewer marks, lossless flag)', () => {
+    const r = run(fixed(4));
+    expect(r.decimated).toBe(true);
+    expect(r.sourceCount).toBe(4000);
+    expect(r.drawnCount).toBeLessThan(4000); // collapsed to ~occupied cells
+  });
+
+  it('does NOT decimate when size/colour is data-driven (uniform false)', () => {
+    const r = run(fixed(4, '#abc', false));
+    expect(r.decimated).toBe(false);
+    expect(r.drawnCount).toBe(4000); // every visible mark drawn
+  });
+
+  it('does NOT decimate a translucent fill (density build-up must survive)', () => {
+    const r = run(fixed(4, 'rgba(1,2,3,0.4)'));
+    expect(r.decimated).toBe(false);
+  });
+
+  it('does NOT decimate when decimate={false}', () => {
+    const r = run(fixed(4), false);
+    expect(r.decimated).toBe(false);
+    expect(r.drawnCount).toBe(4000);
+  });
+
+  it('does NOT decimate below the density threshold (sparse series)', () => {
+    const sparse = cs([0, 1, 2], [0.5, 0.5, 0.5]);
+    const r = drawScatter(
+      gateCtx(800),
+      sparse,
+      xS,
+      yS,
+      style,
+      fixed(4),
+      keyAt(sparse),
+      undefined,
+      font,
+      null,
+      undefined,
+      0,
+      true,
+    );
+    expect(r.decimated).toBe(false);
+  });
+
+  it('does NOT decimate a gappy over-threshold scatter with no cell collision', () => {
+    // 60 entries (over W=20's threshold of 40), half gaps. The 30 finite marks
+    // land in 30 distinct x-columns → no overlap. The shrink guard must compare
+    // against the FINITE count (30), not the raw span (60): the old `< 60` guard
+    // would falsely decimate here and suppress the ring/labels with zero
+    // collisions. `decimateScatter` skips the gaps, so finite === drawn.
+    const xs: number[] = [];
+    const ys: number[] = [];
+    for (let i = 0; i < 60; i += 1) {
+      xs.push(i * 15); // spread → distinct x-columns
+      ys.push(i % 2 === 0 ? 0.5 : NaN); // every other point a gap
+    }
+    const gappy = cs(xs, ys);
+    const xWide = scaleLinear()
+      .domain([0, 900])
+      .range([0, 1000]) as unknown as Scale;
+    const r = drawScatter(
+      gateCtx(20), // W=20 → gate trips above 40 points
+      gappy,
+      xWide,
+      yS,
+      style,
+      fixed(4),
+      keyAt(gappy),
+      undefined,
+      font,
+      null,
+      undefined,
+      0,
+      true,
+    );
+    expect(r.decimated).toBe(false);
   });
 });

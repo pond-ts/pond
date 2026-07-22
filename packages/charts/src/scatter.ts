@@ -2,8 +2,14 @@ import type { ChartSeries } from './data.js';
 import type { Scale } from './line.js';
 import type { ScatterStyle } from './theme.js';
 import type { ResolvedEncoding } from './encoding.js';
-import type { SelectInfo } from './context.js';
+import type { SelectInfo, LayerDrawStats } from './context.js';
 import { visiblePointRange } from './culling.js';
+import {
+  shouldDecimateCount,
+  decimateScatter,
+  isOpaqueColor,
+  type DecimateOption,
+} from './decimate.js';
 
 /**
  * Scatter geometry + the canvas draw — pure, like {@link drawLine} /
@@ -135,7 +141,8 @@ export function drawScatter(
   selected: SelectInfo | null,
   seriesId: string | undefined,
   offsetPx = 0,
-): void {
+  decimate: DecimateOption = true,
+): LayerDrawStats {
   ctx.save();
   // The selection only lights up a point of *this* series; resolve the key once.
   // A no-id (non-selectable) layer passes `undefined` and never matches.
@@ -178,8 +185,72 @@ export function drawScatter(
     pad > 0
       ? visiblePointRange(cs.x, cs.length, xScale, pad)
       : [w0Start, w0End];
+
+  // [PND-MARKDEC] scatter decimation. When the marks are **uniform** (fixed
+  // size + colour), **opaque**, and denser than the pixel grid, collapse each
+  // overlapping cluster to one representative per mark-radius cell (2D
+  // occupancy — {@link decimateScatter}). Visually lossless at that density, and
+  // O(visible). Interaction is unaffected ({@link hitTestScatter} still walks
+  // every source point); the selection ring and per-point labels are dropped on
+  // this path — both are illegible under a dense blob — matching the decimated
+  // bar path. Data-driven size/colour (`!encoding.uniform`) or a translucent
+  // fill (density-encoded, where overlap *should* build up) keep the full draw.
+  const visibleCount = vEnd - vStart;
+  const k =
+    typeof decimate === 'object' && decimate.threshold !== undefined
+      ? decimate.threshold
+      : 2;
+  if (
+    decimate !== false &&
+    encoding.uniform &&
+    shouldDecimateCount(visibleCount, ctx, k) &&
+    isOpaqueColor(encoding.colorAt(vStart))
+  ) {
+    const r = encoding.radiusAt(vStart);
+    const dec = decimateScatter(
+      cs,
+      xScale,
+      yScale,
+      Math.max(1, r),
+      vStart,
+      vEnd,
+    );
+    // Only take the decimated pass if it actually shrank the work (a sparse-in-y
+    // scatter over the threshold may not overlap — then the full draw is fine,
+    // and keeps its selection ring + labels). Compare against the **finite**
+    // visible count, not `vEnd - vStart`: `decimateScatter` skips gaps, so the
+    // raw span would falsely read as a reduction on any gappy series (and wrongly
+    // suppress the ring / labels with zero cell collisions).
+    let finite = 0;
+    for (let i = vStart; i < vEnd; i += 1) if (isPoint(cs, i)) finite += 1;
+    if (dec.length < finite) {
+      ctx.fillStyle = encoding.colorAt(vStart);
+      const outlined = style.outlineWidth > 0;
+      if (outlined) {
+        ctx.lineWidth = style.outlineWidth;
+        ctx.strokeStyle = style.outline;
+      }
+      for (let j = 0; j < dec.length; j += 1) {
+        const px = xScale(dec.x[j]!) + offsetPx;
+        const py = yScale(dec.y[j]!);
+        ctx.beginPath();
+        ctx.arc(px, py, r, 0, Math.PI * 2);
+        ctx.fill();
+        if (outlined) ctx.stroke();
+      }
+      ctx.restore();
+      return {
+        sourceCount: cs.length,
+        drawnCount: dec.length,
+        decimated: true,
+      };
+    }
+  }
+
+  let drawn = 0;
   for (let i = vStart; i < vEnd; i += 1) {
     if (!isPoint(cs, i)) continue;
+    drawn += 1;
     // `offsetPx` nudges the whole scatter in pixel space (zoom-stable) — for
     // pairing same-key marks (call/put at one strike) beside each other.
     const px = xScale(cs.x[i]!) + offsetPx;
@@ -232,6 +303,10 @@ export function drawScatter(
   }
 
   ctx.restore();
+  // Full draw (no decimation): every finite mark in the visible window drew.
+  // `drawnCount < sourceCount` here reflects viewport **culling**, not
+  // decimation (`decimated: false`).
+  return { sourceCount: cs.length, drawnCount: drawn, decimated: false };
 }
 
 /** Gap (px) between a point's edge and its label text. */
