@@ -80,19 +80,79 @@ changing).
 
 All of these are on `<ChartContainer>`:
 
-| Prop               | Type                     | Default  | Purpose                                                                                      |
-| ------------------ | ------------------------ | -------- | -------------------------------------------------------------------------------------------- |
-| `cursor`           | `CursorMode`             | `'line'` | The in-chart cursor presentation (a `<ChartRow>` can override per row).                      |
-| `onTrackerChanged` | `(info \| null) => void` | —        | Hover snapshot for an off-chart readout; `null` on leave.                                    |
-| `trackerPosition`  | `number \| null`         | —        | **Controlled** cursor position (epoch ms). `null` forces it hidden. Omit for pointer-driven. |
-| `cursorTime`       | `boolean`                | `false`  | Show the cursor's time atop the in-chart readout, formatted by `timeFormat`.                 |
-| `crosshairSnap`    | `boolean`                | `true`   | `crosshair` reticle Y-snapping. `false` = free reticle (`yScale.invert(pointerY)`), no snap. |
+| Prop               | Type                     | Default  | Purpose                                                                                                                            |
+| ------------------ | ------------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `cursor`           | `CursorMode`             | `'line'` | The in-chart cursor presentation (a `<ChartRow>` can override per row).                                                            |
+| `onTrackerChanged` | `(info \| null) => void` | —        | Hover snapshot for an off-chart readout; `null` on leave.                                                                          |
+| `trackerPosition`  | `number \| null`         | —        | **Followed** cursor position (epoch ms) for when this chart isn't the one hovered. A local hover wins over it. `null`/omit = none. |
+| `cursorTime`       | `boolean`                | `false`  | Show the cursor's time atop the in-chart readout, formatted by `timeFormat`.                                                       |
+| `crosshairSnap`    | `boolean`                | `true`   | `crosshair` reticle Y-snapping. `false` = free reticle (`yScale.invert(pointerY)`), no snap.                                       |
 
 `trackerPosition` is the one to reach for when the cursor should follow
-something other than the mouse — a shared scrubber across charts, a
-playback head, a value picked in a sibling component. The vertical line
-always snaps its **x** to the data grid so the time readout stays clean, in
-every mode.
+something other than this chart's own mouse — a playback head, a value
+picked in a sibling component, or **another chart's cursor** (below). It is
+a _followed_ position, not a hard pin: a live hover on this chart always
+wins over it, so a chart is never stuck showing an external cursor while the
+user is pointing at it. The vertical line always snaps its **x** to the data
+grid so the time readout stays clean, in every mode. To force a chart to
+_never_ show a cursor, use `cursor="none"` — not `trackerPosition={null}`.
+
+## Syncing cursors across charts
+
+On a dashboard you usually want **one crosshair time shared across every
+chart** — hover the CPU chart and the memory, disk, and network charts all
+show a cursor at the same instant. That falls out of the two props above,
+with no "which chart is active" bookkeeping, because a local hover wins over
+`trackerPosition`:
+
+- hold the shared time in page state;
+- give **every** chart `trackerPosition={sharedTime}` (follow) and
+  `onTrackerChanged={info => setSharedTime(info?.time ?? null)}` (report);
+- clear it to `null` on the group's `onPointerLeave` so the crosshair lifts
+  off every chart when the pointer leaves them all.
+
+The chart under the pointer favours its own hover — it's the _source_, and
+reports the time out — while every other chart has no local pointer, so it
+_follows_ the shared time. Each follower maps that time through its **own**
+`xScale`, so the cursors line up even when the charts are at different zoom
+levels or x-domains.
+
+```tsx
+function Dashboard({ cpu, mem }: { cpu: TimeSeries; mem: TimeSeries }) {
+  const [cursor, setCursor] = useState<number | null>(null);
+
+  const chart = (series: TimeSeries, id: string) => (
+    <ChartContainer
+      range={range}
+      width={560}
+      trackerPosition={cursor} // follow the shared time…
+      onTrackerChanged={(info) => setCursor(info?.time ?? null)} // …and report ours
+    >
+      <ChartRow height={120}>
+        <YAxis id={id} min={0} max={100} />
+        <Layers>
+          <LineChart series={series} column="v" axis={id} />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  );
+
+  // The group-level onPointerLeave lifts the crosshair off every chart at once.
+  return (
+    <div onPointerLeave={() => setCursor(null)}>
+      {chart(cpu, 'cpu')}
+      {chart(mem, 'mem')}
+    </div>
+  );
+}
+```
+
+Because the shared cursor is plain React state, it composes with anything
+else that reads or writes it — a scrubber, a "jump to event" button, or an
+off-chart readout fed from the same `onTrackerChanged` (see above). Each
+chart's `onTrackerChanged` also fires while it's a follower, carrying _its_
+series' values at the shared time — handy for a combined readout row that
+shows every chart's value at the one cursor.
 
 ## Sharp edges
 
@@ -103,6 +163,14 @@ every mode.
 - **`crosshair` values snap to the series,** so the axis pills read like ticks
   — set `crosshairSnap={false}` only if you want the horizontal line to track
   the raw pointer Y instead.
+- **Sync on a trading-time axis:** a follower reports the shared time back
+  through its own `xScale`, which is an exact round-trip on a continuous
+  (linear / time) axis — so wiring `onTrackerChanged` on every chart is a clean
+  no-op there. On a **discontinuity (trading-time) axis** a shared time that
+  lands in _that chart's_ collapsed gap doesn't round-trip exactly, which can
+  nudge the shared cursor to the gap seam. If you sync charts with gaps,
+  dedupe your shared-state setter (ignore a near-equal time), or wire
+  `onTrackerChanged` only where you actually need the report.
 
 ## See also
 
@@ -112,6 +180,8 @@ every mode.
   (distinct from the hover readout).
 - [Pan, zoom & range selection](./pan-zoom-and-range-selection.mdx) — the
   `region` cursor and the select-to-zoom loop.
+- Storybook: [`Cursors/Scenarios/Synced Charts`](pathname:///storybook/?path=/story/cursors-scenarios--synced-charts) —
+  the cross-chart sync worked example.
 - Storybook: [`Cursors/Line`](pathname:///storybook/?path=/story/cursors-line--interactive),
   [`Cursors/Point`](pathname:///storybook/?path=/story/cursors-point--interactive),
   [`Cursors/Inline`](pathname:///storybook/?path=/story/cursors-inline--interactive),

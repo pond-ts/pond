@@ -640,6 +640,88 @@ describe('drawLine — viewport culling (Phase 2)', () => {
   });
 });
 
+describe('drawLine — affine fast path (PND-AFFINE)', () => {
+  // Real d3 scales → affineOf returns coefficients → the inline multiply-add
+  // path. x: 0..10 → 0..200 (k=20); y flipped: 0..10 → 100..0.
+  const rx = scaleLinear().domain([0, 10]).range([0, 200]) as unknown as Scale;
+  const ry = scaleLinear().domain([0, 10]).range([100, 0]) as unknown as Scale;
+  // Same numeric mapping, but stripped of domain/range → affineOf null → the
+  // exact d3-shape path (so the two can be compared for equivalence).
+  const slow = (s: Scale): Scale => ((v: number) => s(v)) as Scale;
+  const penOps = (calls: CtxCall[]) =>
+    calls
+      .filter((c) => c.name === 'moveTo' || c.name === 'lineTo')
+      .map((c) => ({ name: c.name, args: c.args as number[] }));
+
+  it('maps pixels by the affine k·v + b (both axes affine)', () => {
+    const { ctx, calls } = recordingContext();
+    drawLine(ctx, cs([0, 10], [0, 10]), rx, ry, style);
+    expect(penOps(calls)).toEqual([
+      { name: 'moveTo', args: [0, 100] }, // (x=0→0, y=0→100)
+      { name: 'lineTo', args: [200, 0] }, // (x=10→200, y=10→0)
+    ]);
+  });
+
+  it('breaks the subpath at a NaN gap — re-moves, never lines across', () => {
+    const { ctx, calls } = recordingContext();
+    drawLine(ctx, cs([0, 2, 5, 8], [1, NaN, 3, 4]), rx, ry, style);
+    // 1→moveTo; NaN→pen up; 3→re-moveTo; 4→lineTo.
+    expect(penOps(calls).map((o) => o.name)).toEqual([
+      'moveTo',
+      'moveTo',
+      'lineTo',
+    ]);
+  });
+
+  it('emits the same pen sequence + coordinates as the d3-shape path', () => {
+    const series = cs([0, 2, 5, 8, 10], [1, 4, 2, 9, 3]);
+    const fast = recordingContext();
+    drawLine(fast.ctx, series, rx, ry, style);
+    const slowRec = recordingContext();
+    drawLine(slowRec.ctx, series, slow(rx), slow(ry), style);
+    const f = penOps(fast.calls);
+    const s = penOps(slowRec.calls);
+    expect(f.map((o) => o.name)).toEqual(s.map((o) => o.name));
+    f.forEach((o, i) => {
+      expect(o.args[0]).toBeCloseTo(s[i]!.args[0]!, 9);
+      expect(o.args[1]).toBeCloseTo(s[i]!.args[1]!, 9);
+    });
+  });
+
+  it('matches the d3-shape solid-pass pen sequence across every gap mode', () => {
+    // gradientContext supplies a working createLinearGradient (the 'fade' mode
+    // drops a gradient at each gap edge); a real flipping y scale is needed so
+    // that edge's fade-to-floor reads `.domain()`.
+    for (const g of ['empty', 'none', 'dashed', 'step', 'fade'] as const) {
+      const series = cs([0, 2, 4, 6, 8, 10], [1, 5, NaN, 7, 3, 8]);
+      const fast = gradientContext();
+      drawLine(fast.ctx, series, rx, ry, style, undefined, g);
+      const slowRec = gradientContext();
+      drawLine(slowRec.ctx, series, slow(rx), slow(ry), style, undefined, g);
+      expect(
+        penOps(fast.calls).map((o) => o.name),
+        `gap mode ${g}`,
+      ).toEqual(penOps(slowRec.calls).map((o) => o.name));
+    }
+  });
+
+  it('falls back to the d3-shape path when x is a non-affine (real-gap) scale', () => {
+    // A stubbed piecewise x scale carrying domain/range/invert but a non-affine
+    // map: affineOf must reject it, so the draw still renders (via d3-shape).
+    const piecewise = Object.assign(
+      (v: number) => (v < 5 ? v : 5 + (v - 5) * 10), // kinked at 5
+      { domain: () => [0, 10], range: () => [0, 55], invert: (p: number) => p },
+    ) as unknown as Scale;
+    const { ctx, calls } = recordingContext();
+    drawLine(ctx, cs([0, 2, 5, 8], [1, 2, 3, 4]), piecewise, ry, style);
+    // Still draws all four points (no throw, no skip); the kink means the fast
+    // path would have been wrong, so this proves the fallback engaged.
+    expect(penOps(calls)).toHaveLength(4);
+    // x=8 maps through the kinked scale to 5 + 3·10 = 35 (not an affine 44).
+    expect(penOps(calls)[3]!.args[0]).toBe(35);
+  });
+});
+
 describe('drawLine — M4 decimation (Phase 3)', () => {
   const domainScale = (lo: number, hi: number): Scale =>
     scaleLinear().domain([lo, hi]).range([lo, hi]) as unknown as Scale;

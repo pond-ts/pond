@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { TimeSeries } from 'pond-ts';
 import { ChartContainer } from './ChartContainer.js';
@@ -326,6 +326,60 @@ function ControlledCursorDemo() {
 
 export const ControlledCursor: Story = {
   render: () => <ControlledCursorDemo />,
+};
+
+/**
+ * **Synced cursors across separate charts** — the multi-chart dashboard case.
+ * Two independent `<ChartContainer>`s (own data, own y-axis) share one crosshair
+ * time in page state. It composes from the plain tracker props, no per-chart
+ * bookkeeping:
+ *
+ * - every chart gets `trackerPosition={sharedTime}` (follow the shared time) and
+ *   `onTrackerChanged={info => setSharedTime(info?.time ?? null)}` (report out);
+ * - a live local hover **wins** over `trackerPosition`, so the chart under the
+ *   pointer drives — it's the source — while the others follow;
+ * - the group's `onPointerLeave` clears `sharedTime` so the crosshair lifts off
+ *   every chart when the pointer leaves them all.
+ *
+ * The follower maps the time through its **own** `xScale`, so this stays correct
+ * even if the charts are at different zooms. Hover either chart — both cursors
+ * move together.
+ */
+function SyncedChartsDemo() {
+  const [sharedTime, setSharedTime] = useState<number | null>(null);
+  const cpu = useMemo(() => demo(0, 40, 50), []);
+  const mem = useMemo(() => demo(2.2, 22, 55), []);
+
+  const chart = (series: ReturnType<typeof demo>, id: string) => (
+    <ChartContainer
+      range={TIME_RANGE}
+      width={560}
+      theme={docsTheme}
+      trackerPosition={sharedTime}
+      onTrackerChanged={(info) => setSharedTime(info?.time ?? null)}
+    >
+      <ChartRow height={120}>
+        <YAxis id={id} min={0} max={100} />
+        <Layers>
+          <LineChart series={series} column="v" axis={id} />
+        </Layers>
+      </ChartRow>
+    </ChartContainer>
+  );
+
+  return (
+    <div
+      onPointerLeave={() => setSharedTime(null)}
+      style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}
+    >
+      {chart(cpu, 'cpu')}
+      {chart(mem, 'mem')}
+    </div>
+  );
+}
+
+export const SyncedCharts: Story = {
+  render: () => <SyncedChartsDemo />,
 };
 
 /**

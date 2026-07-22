@@ -1,6 +1,6 @@
 import { area as d3area, curveLinear, type CurveFactory } from 'd3-shape';
 import type { ChartSeries } from './data.js';
-import type { Scale } from './line.js';
+import { strokeAffinePolyline, type Scale } from './line.js';
 import type { AreaStyle } from './theme.js';
 import type { LayerDrawStats } from './context.js';
 import {
@@ -16,6 +16,99 @@ import {
 } from './gaps.js';
 import { cullChartSeries } from './culling.js';
 import { decimateM4, type DecimateOption } from './decimate.js';
+import { affineOf, type Affine } from './affine.js';
+
+/**
+ * Per-buffer cache of a column's finite `[min, max]` value extent ([PND-GRADX]).
+ * The area fill gradient spans the **full** series' vertical pixel extent (so a
+ * culled/zoomed view still shades identically — see {@link buildGradient}), which
+ * previously meant an O(N) min/max walk on **every** repaint, including each
+ * y-zoom / y-autorange frame where the data hasn't changed (the 2026-07 bench
+ * profile's mountain@1M ceiling; see
+ * `docs/notes/charts-bench-vs-scichart-suite-2026-07.md`, finding 2).
+ *
+ * The extent is a pure function of the value buffer, so it is memoized on the
+ * `y` `Float64Array` (immutable by the {@link ChartSeries} contract): a y-zoom /
+ * pan reuses the same buffer → cache hit (no walk); a live re-materialization
+ * mints a new buffer → recompute once. The `WeakMap` evicts with the buffer, so
+ * there is no leak. Callers pass the full-series `length` (the buffer's logical
+ * length); a `subarray` view is never the cache key here (the gradient reads the
+ * pre-cull full series).
+ *
+ * NaN (the gap signal) is ignored — matching {@link areaExtent} / `yExtent` — so
+ * a coast doesn't drag the span. `null` when nothing is finite (the caller then
+ * falls back to a flat fill).
+ */
+const columnExtentCache = new WeakMap<
+  Float64Array,
+  readonly [number, number] | null
+>();
+
+export function columnFiniteExtent(
+  y: Float64Array,
+  length: number,
+): readonly [number, number] | null {
+  const cached = columnExtentCache.get(y);
+  if (cached !== undefined) return cached;
+  let min = Infinity;
+  let max = -Infinity;
+  for (let i = 0; i < length; i += 1) {
+    const v = y[i]!;
+    if (Number.isFinite(v)) {
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+  }
+  const extent = min === Infinity ? null : ([min, max] as const);
+  columnExtentCache.set(y, extent);
+  return extent;
+}
+
+/**
+ * Fill the area between an affine-mapped value polyline and a constant baseline
+ * pixel — the [PND-AFFINE] fast path for {@link drawArea}'s fill, the counterpart
+ * to {@link strokeAffinePolyline} for its outline. Emits one **independent closed
+ * polygon per finite run** (matching `d3.area`'s `.defined(Number.isFinite)`
+ * segmentation for a linear curve + constant `y0`): per run `[a, b)`,
+ * `moveTo(top_a)` → `lineTo(top…)` along the value edge → `lineTo(x_{b-1}, base)`
+ * → `lineTo(x_a, base)` → `closePath`. That is the same filled region `d3.area`
+ * draws — its flat backward baseline edge only adds collinear interior vertices,
+ * which don't change the fill — without the per-point `scale()` / d3-shape
+ * closures. A signed value edge crossing the baseline stays one polygon (no NaN),
+ * filled correctly on both sides. The caller brackets `beginPath`/`fill`;
+ * `xs`/`ys` are aligned index-for-index.
+ */
+export function fillAffineArea(
+  ctx: CanvasRenderingContext2D,
+  xs: Float64Array,
+  ys: Float64Array,
+  baselinePx: number,
+  ax: Affine,
+  ay: Affine,
+): void {
+  const n = ys.length;
+  let runStart = -1; // index of the current finite run's first point, or -1
+  for (let j = 0; j <= n; j += 1) {
+    const finite = j < n && Number.isFinite(ys[j]!);
+    if (finite) {
+      const px = ax.k * xs[j]! + ax.b;
+      const py = ay.k * ys[j]! + ay.b;
+      if (runStart < 0) {
+        runStart = j;
+        ctx.moveTo(px, py);
+      } else {
+        ctx.lineTo(px, py);
+      }
+    } else if (runStart >= 0) {
+      // Close the run: drop to the baseline under the last point, run flat back
+      // to the first point's x, close. (j-1 is the run's last finite index.)
+      ctx.lineTo(ax.k * xs[j - 1]! + ax.b, baselinePx);
+      ctx.lineTo(ax.k * xs[runStart]! + ax.b, baselinePx);
+      ctx.closePath();
+      runStart = -1;
+    }
+  }
+}
 
 /**
  * The `[min, max]` vertical extent an area occupies — the finite values of
@@ -103,12 +196,20 @@ export function drawArea(
   // The fill gradient's vertical extent is computed from the **full** series (a
   // vertical, position-anchored gradient spanning the data's whole pixel extent)
   // so viewport culling stays behavior-neutral: the culled path below paints the
-  // exact same visible pixels under the same gradient. This is a cheap O(N)
-  // min/max scan; the expensive per-point path work (fill + outline) culls. (Cull
-  // the region too and the shade would drift under pan as off-screen extrema
-  // enter/leave — a visible change culling must not make.)
-  const fullYs = gaps === 'none' ? bridgeGaps(cs.y, cs.length) : cs.y;
-  const fill = buildGradient(ctx, fullYs, cs.length, yScale, baselinePx, style);
+  // exact same visible pixels under the same gradient. (Cull the region too and
+  // the shade would drift under pan as off-screen extrema enter/leave — a visible
+  // change culling must not make.) [PND-GRADX]: the value extent is memoized per
+  // column buffer ({@link columnFiniteExtent}), so a y-zoom / pan frame reuses it
+  // instead of re-walking O(N) — the mountain@1M ceiling the bench profile
+  // flagged. A `'none'` bridge only fills interior gaps with interpolated values
+  // that stay within the finite extent, so the plain extent is exact for it too.
+  const fill = buildGradient(
+    ctx,
+    columnFiniteExtent(cs.y, cs.length),
+    yScale,
+    baselinePx,
+    style,
+  );
 
   // Viewport culling (Phase 2): the path, outline, and gap bridges walk the
   // visible slice (+1 entry/exit point) only. A no-op — the same `cs` back — when
@@ -131,13 +232,12 @@ export function drawArea(
   // other mode keeps NaN so d3 breaks both (the inferred line bridge, if any, is
   // a separate overlay pass below).
   const ys = gaps === 'none' ? bridgeGaps(cs.y, cs.length) : cs.y;
-  const gen = d3area<number>()
-    .defined((v) => Number.isFinite(v))
-    .x((_, i) => xScale(cs.x[i]!))
-    .y0(() => baselinePx)
-    .y1((v) => yScale(v))
-    .curve(curve)
-    .context(ctx);
+  // [PND-AFFINE] fast path: with a linear curve and both scales affine, draw the
+  // fill polygon + outline with inline multiply-add over the typed arrays, past
+  // the per-point d3-scale + d3-shape closures (finding 1/2). A smoothing curve
+  // or a non-affine (real-gap trading) x scale keeps the exact d3-area path.
+  const ax = curve === curveLinear ? affineOf(xScale) : null;
+  const ay = ax !== null ? affineOf(yScale) : null;
 
   ctx.save();
   // The fill: a vertical gradient anchored at the baseline pixel, opaque at the
@@ -147,17 +247,30 @@ export function drawArea(
   ctx.fillStyle = fill;
   ctx.globalAlpha = style.fillOpacity;
   ctx.beginPath();
-  gen(ys);
+  // The d3-area generator (slow path only) — also the source of the outline line.
+  let outline: ((data: Iterable<number>) => void) | null = null;
+  if (ax !== null && ay !== null) {
+    fillAffineArea(ctx, cs.x, ys, baselinePx, ax, ay);
+  } else {
+    const gen = d3area<number>()
+      .defined((v) => Number.isFinite(v))
+      .x((_, i) => xScale(cs.x[i]!))
+      .y0(() => baselinePx)
+      .y1((v) => yScale(v))
+      .curve(curve)
+      .context(ctx);
+    gen(ys);
+    outline = gen.lineY1();
+  }
   ctx.fill();
   ctx.restore();
 
-  // The outline on top: the area's top edge as a line (`lineY1` inherits the
-  // area's `defined`, `curve`, and `context`, so it breaks at the same gaps),
-  // at full opacity over the graded fill.
-  const outline = gen.lineY1();
+  // The outline on top: the area's top edge as a line (breaks at the same gaps
+  // as the fill), at full opacity over the graded fill.
   ctx.save();
   ctx.beginPath();
-  outline(ys);
+  if (outline !== null) outline(ys);
+  else strokeAffinePolyline(ctx, cs.x, ys, ax!, ay!);
   ctx.strokeStyle = style.color;
   ctx.lineWidth = style.width;
   ctx.stroke();
@@ -205,22 +318,20 @@ export function drawArea(
  */
 function buildGradient(
   ctx: CanvasRenderingContext2D,
-  ys: Float64Array,
-  length: number,
+  valueExtent: readonly [number, number] | null,
   yScale: Scale,
   baselinePx: number,
   style: AreaStyle,
 ): CanvasGradient | string {
-  let topPx = Infinity; // smallest pixel y (highest on screen)
-  let bottomPx = -Infinity; // largest pixel y (lowest on screen)
-  for (let i = 0; i < length; i += 1) {
-    const v = ys[i]!;
-    if (!Number.isFinite(v)) continue;
-    const py = yScale(v);
-    if (py < topPx) topPx = py;
-    if (py > bottomPx) bottomPx = py;
-  }
-  if (topPx === Infinity) return style.fill; // no finite values (caller no-ops)
+  if (valueExtent === null) return style.fill; // no finite values (caller no-ops)
+  // The pixel extent is the two value extremes mapped through the (monotonic,
+  // always-`scaleLinear`) y scale; min/max them so the result is flip-agnostic,
+  // exactly as the former per-point pixel scan produced. [PND-GRADX] moved the
+  // O(N) walk into the memoized {@link columnFiniteExtent}.
+  const pa = yScale(valueExtent[0]);
+  const pb = yScale(valueExtent[1]);
+  const topPx = Math.min(pa, pb); // smallest pixel y (highest on screen)
+  const bottomPx = Math.max(pa, pb); // largest pixel y (lowest on screen)
   // The drawn region runs from the topmost of {values, baseline} to the
   // bottommost — the fill reaches the baseline, so include it.
   const regionTop = Math.min(topPx, baselinePx);

@@ -72,8 +72,11 @@ in-chart readout draws from, just handed to you instead. `cursorTime`
 `flag`/`inline` readout, if you want it there too. For programmatic
 control rather than mouse-driven — highlighting a specific instant from
 outside, say a table row hover — a controlled `trackerPosition` (epoch
-ms, or `null` to hide) drives the same cursor without a real pointer
-event.
+ms) drives the same cursor without a real pointer event. It's a
+_followed_ position a live hover on the chart overrides, so it also
+powers **cross-chart cursor sync** (see
+[Cursors & readouts](../charts/interaction/cursors-and-readouts.mdx#syncing-cursors-across-charts));
+omit it or pass `null` for no controlled position.
 
 ## The payoff: select-to-zoom
 

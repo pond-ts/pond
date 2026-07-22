@@ -13,9 +13,11 @@ the trading-time axis, and the categorical axis Phase 1. The package is
 **published** (`@pond-ts/charts` on npm, `private: false`); what remains is
 landing the built-but-unmerged work, Phase-2 slices of the adopted RFCs, the
 M5 parity gate for the stable / estela-parity milestone, and the perf backlog
-from the 2026-07 external bench ([PND-AFFINE] → [PND-GRADX] → [PND-DECKEY] →
-[PND-MARKDEC] for the draw path, [PND-HOVCTX] for the hover path, in
-measured-leverage order; notes:
+from the 2026-07 external bench. The two highest-leverage draw-path levers
+(**[PND-AFFINE]** affine draw fast path, **[PND-GRADX]** gradient-extent cache)
+have **shipped**; **[PND-DECKEY]** and **[PND-MARKDEC]** remain on the draw
+path, plus **[PND-HOVCTX]** on the hover path, in measured-leverage order
+(notes:
 [charts-bench-vs-scichart-suite-2026-07.md](../notes/charts-bench-vs-scichart-suite-2026-07.md),
 [charts-bench-vs-uplot-2026-07.md](../notes/charts-bench-vs-uplot-2026-07.md)).
 
@@ -104,56 +106,72 @@ parity (conceded). M4 stays the auto-on default; LTTB the explicit opt-in.
 [#518]: https://github.com/pond-ts/pond/pull/518
 [#519]: https://github.com/pond-ts/pond/pull/519
 
-### [PND-AFFINE] — Affine fast path for the per-point draw pipeline
+### [PND-AFFINE] — Affine fast path for the per-point draw pipeline — DONE
 
-**Source:** external bench 2026-07-22 — pond run through SciChart's
-chart-performance suite and uPlot's bench, then CPU-profiled (V8 sampling,
-unminified bundle). Results + protocol:
-[charts-bench-vs-scichart-suite-2026-07.md](../notes/charts-bench-vs-scichart-suite-2026-07.md)
-(finding 1) /
-[charts-bench-vs-uplot-2026-07.md](../notes/charts-bench-vs-uplot-2026-07.md);
-harness committed at
-[`packages/charts/perf/external/`](../../packages/charts/perf/external/).
-**The highest-leverage render lever the run found.**
+**Shipped ([Unreleased]).** A `curveLinear` fast path in `drawLine`
+(`src/line.ts`) and `drawArea` (`src/area.ts`): when both scales are affine,
+map points with an inline `k·v + b` over the typed arrays, past the per-point
+d3-scale closure + d3-shape generator the 2026-07 external bench profile
+attributed **~55% of stroke-bound frame self-time** to (finding 1: accessor →
+d3-scale deinterpolate/interpolate ~37% → d3-shape ~18%; React reconcile ~1%,
+element count is **not** the bottleneck — see parking lot). uPlot drew the same
+1M points in 40 ms with inline `m*v+b`; pond now draws a 1M line in ~19 ms.
 
-At N×M 1000×1000 (125 ms/frame — every series sits below the per-series M4
-threshold, so all 1M points stroke every frame), **~55% of self-time is the
-per-point call chain**: accessor arrow → d3-scale `scale()` + its
-deinterpolate/interpolate closures (~37%) → d3-shape `line`/`point` (~18%) —
-before native `lineTo`/`stroke` (~14%) do the actual work. React reconcile
-over the 1000 layer elements measured ~1% — element count is **not** the
-bottleneck (see parking lot). uPlot draws the same 1M points in 40 ms with
-inline `m*v+b`.
+**How the affine gate works — the load-bearing decision.** A new
+`src/affine.ts` (`affineOf`) recovers the coefficients `{ k, b }` from a
+scale's own domain/range endpoints, then **verifies affine by probing interior
+points** (jittered fractions, sub-pixel tolerance). This accepts `scaleLinear`
+(every y axis), `scaleTime`, and the **gap-free** default
+`scaleTradingTime(identityProvider())` (genuinely affine over its domain), and
+**rejects** a real-gap trading scale, a log/pow axis, or a `scaleBand` — those
+transparently keep the exact d3 path. The verify step is what keeps it a pure
+optimization: a non-affine scale is never drawn as a straight line, and the
+e2e visual-regression + decimation pixel-identity specs are the backstop.
+Shape: `strokeAffinePolyline` (line + area outline) and `fillAffineArea` (area
+fill — one closed polygon per finite run, the flat baseline edge collapsed to
+its two corners, identical filled pixels to d3-area). Same `curve ===
+curveLinear` gate decimation already uses; composes with cull + M4 (the M4
+polyline strokes through the fast path too). Did **not** touch the `three`-at-1M
+pan floor ([PND-DECIM]) — that is the decimation walk, not stroke.
 
-**Fix:** a `curveLinear` fast path in `drawLine` (`src/line.ts`) and
-`drawArea` (`src/area.ts`): precompute the affine transform
-(`kx, bx, ky, by`) from the linear scales once per draw, then loop raw
-`ctx.lineTo` over the typed arrays — bypassing d3-shape and per-point d3-scale
-calls. Est. **3–6× on stroke-bound frames**; also trims every decimated draw
-(M4 output still pays the per-point constant today). Non-linear `curve`
-values keep the d3-shape path — the same `curve === curveLinear` gate
-decimation already uses. Scope note: this does **not** claim the
-`three`-at-1M pan floor under [PND-DECIM] — that floor is the per-frame
-decimation walk, not stroke. Perf-check protocol applies (complexity note,
-before/after table in the commit message; the committed external harness is
-the re-measure).
+**Measured (perf-check; `scripts/perf-affine.mjs`, JS-only micro-bench vs the
+real d3-scale path, i.e. the literal pre-PR behaviour):**
 
-### [PND-GRADX] — `buildGradient`: stop walking the full series per frame
+| workload  | before (d3) | after (affine) | speedup |
+| --------- | ----------- | -------------- | ------- |
+| line 100k | 3.8 ms      | 1.8 ms         | 2.1×    |
+| line 1M   | 60.4 ms     | 19.0 ms        | 3.2×    |
+| area 100k | 10.7 ms     | 3.7 ms         | 2.9×    |
+| area 1M   | 132 ms      | 38 ms          | 3.5×    |
 
-**Source:** same run, finding 2 — the real mountain/area ceiling. At
-mountain@1M (47 ms/frame), **~21% self-time is `buildGradient`**
-(`src/area.ts`) plus most of the ~52% d3-scale closure time it drives: an
-O(N) pass per repaint to find the fill gradient's pixel extent, re-run on
-every y-zoom / y-autorange frame. The decimation walk everyone suspected is
-only ~19%. Killing it removes ~half the frame at large N.
+Within the estimated 3–6× (the browser's unminified d3-scale is heavier and
+area fill rasterizes on the GPU, so the in-browser JS-fraction win runs at/above
+the upper end). Non-public exports (`affineOf` / `strokeAffinePolyline` /
+`fillAffineArea`), so no API.md change.
 
-**Fix options, in preference order:** (a) a **cached column extent** keyed on
-series+column identity — semantics-preserving (the extent is over the full
-series _by design_, so a full-series cache is exact and O(1) after first
-compute); (b) derive the extent from the M4 output — exact per-bucket
-extremes, but only over the _visible window's_ buckets, so it changes the
-gradient's meaning under x-zoom; take (b) only if a deliberate design call
-decides window-relative gradients are wanted. Perf-check protocol applies.
+### [PND-GRADX] — `buildGradient`: stop walking the full series per frame — DONE
+
+**Shipped ([Unreleased]).** The area fill gradient's vertical extent spans the
+**full** series (culling-neutral by design — a culled/zoomed view must shade
+identically), which meant an O(N) min/max walk on **every** repaint, including
+each y-zoom / y-autorange frame where the data is unchanged (finding 2:
+`buildGradient` ~21% of the mountain@1M frame, plus most of the d3-scale closure
+cost it drove; the decimation walk everyone suspected was only ~19%). The value
+extent is now memoized per column buffer (`columnFiniteExtent`, a `WeakMap` on
+the `y` `Float64Array`): a y-zoom / pan reuses the buffer → O(1) hit; a live
+re-materialization mints a new buffer → recompute once. `buildGradient` now maps
+the two value extremes through the (always-monotonic-`scaleLinear`) y scale
+instead of scanning per point.
+
+**Chose the cached column extent, not the M4-derived one** — the deferred-but-
+considered alternative: M4's per-bucket extremes are exact only over the
+_visible window's_ buckets, so under x-zoom they'd change the gradient's meaning
+(the "gradient anchors to the FULL series, not the culled view" contract the
+existing e2e/unit tests pin). The cached full-series extent is semantics-
+preserving and exact. `'none'`-bridged values stay within the finite extent, so
+the plain extent is correct for every gap mode. Perf-check: the extent walk
+(~0.6 ms/500k, ~1.2 ms/1M in JS) is eliminated on every cache hit; in-browser
+it was a larger frame share (fill rasterizes GPU-side).
 
 ### [PND-DECKEY] — Decimation cache keyed on (series, x-domain, width)
 

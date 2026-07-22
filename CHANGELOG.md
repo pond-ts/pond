@@ -50,6 +50,36 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **charts:** **`trackerPosition` is now a _followed_ position, not a hard pin —
+  enabling cross-chart cursor sync.** A live local hover wins over
+  `trackerPosition`, so the chart under the pointer shows its own cursor while
+  any chart without a local pointer follows the controlled time (mapped through
+  its own `xScale`, so it's correct across different zooms). This makes
+  **multi-chart dashboard cursor sync** fall out of the plain props: give every
+  `<ChartContainer>` the same `trackerPosition={sharedTime}` and set `sharedTime`
+  from each one's `onTrackerChanged` (clear it to `null` on the group's
+  `onPointerLeave`) — no "which chart is active" bookkeeping. **Behaviour
+  change:** previously a numeric `trackerPosition` overrode local hover, and
+  `trackerPosition={null}` force-hid the cursor; now `null` and `undefined` are
+  equivalent ("no controlled position") and a hovered chart always tracks its
+  pointer. To force a chart to never show a cursor, use `cursor="none"`. See the
+  "Synced cursors across charts" story. No type change (`number | null`).
+- **charts:** **Line / area draw is ~3× faster on stroke-bound frames**
+  (PND-AFFINE / PND-GRADX; 2026-07 external-bench profile). When the curve is
+  linear and both scales are affine (every y axis is `scaleLinear`; x is
+  `scaleLinear` / `scaleTime` / the gap-free default time axis), `drawLine` and
+  `drawArea` now map points with an inline `k·v + b` over the typed arrays
+  instead of a per-point d3-scale closure + d3-shape generator — a **visually
+  identical** draw (guarded by the decimation pixel-identity and per-layer
+  visual-regression e2e). A real-gap trading-time axis, or a non-linear curve,
+  transparently keeps the exact d3 path. Measured on a JS-only micro-bench
+  (`scripts/perf-affine.mjs`): line 1M 60.4 → 19.0 ms (3.2×), area 1M 132 →
+  38 ms (3.5×). Separately, the area fill gradient's full-series value extent is
+  now memoized per column buffer, so a y-zoom / pan repaint no longer re-walks
+  the whole series to find the gradient span. No API change.
+
 ### Added
 
 - **charts:** **Draw-cost + decimation observability** — `<ChartContainer

@@ -114,12 +114,25 @@ describe('resolveCursorX', () => {
     expect(resolveCursorX(undefined, null, xScale)).toBeNull();
   });
 
-  it('maps a controlled timestamp through xScale (ignoring hover)', () => {
-    expect(resolveCursorX(300, 42, xScale)).toBe(30);
+  it('a live local pointer wins over a controlled timestamp', () => {
+    // The hovered chart shows its OWN cursor even while a trackerPosition is
+    // supplied — this is what lets cross-chart sync compose (the hovered chart
+    // is the source, not a follower). Both the numeric and null controlled
+    // values yield to the pointer.
+    expect(resolveCursorX(300, 42, xScale)).toBe(42);
+    expect(resolveCursorX(null, 42, xScale)).toBe(42);
   });
 
-  it('hides on a controlled null', () => {
-    expect(resolveCursorX(null, 42, xScale)).toBeNull();
+  it('follows the controlled timestamp when there is no local pointer', () => {
+    // A non-hovered chart maps the shared time through its OWN xScale, so it
+    // lands at the right pixel even under a different zoom.
+    expect(resolveCursorX(300, null, xScale)).toBe(30);
+  });
+
+  it('shows nothing with neither a pointer nor a controlled position', () => {
+    // null and undefined are equivalent — both "no controlled position".
+    expect(resolveCursorX(null, null, xScale)).toBeNull();
+    expect(resolveCursorX(undefined, null, xScale)).toBeNull();
   });
 });
 

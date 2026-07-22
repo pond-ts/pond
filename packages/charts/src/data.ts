@@ -19,6 +19,14 @@ import type {
  * column materialized to a `Float64Array`. `x` is **monotonically ascending**
  * (a series' key column is sorted) — the draw layers and the viewport bisect
  * (`culling.ts`) rely on it, as `sessionRuns` already does.
+ *
+ * **Neither buffer may be mutated in place** — not just `x`. The area fill
+ * gradient's value extent is memoized on the `y` buffer's identity
+ * (`columnFiniteExtent`, [PND-GRADX]), so a consumer that mutated a live `y`
+ * buffer's contents across frames instead of materializing a fresh column would
+ * read a stale gradient span (no crash, just a wrong shade). The built-in
+ * readers always allocate a fresh exactly-sized buffer per materialization, so
+ * buffer identity tracks data identity — hold to that.
  */
 export interface ChartSeries {
   readonly x: Float64Array;
