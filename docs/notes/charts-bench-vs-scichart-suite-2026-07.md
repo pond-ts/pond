@@ -38,8 +38,15 @@ Brownian-scatter slot).
 
 ## Avg FPS by category (local run; cap ≈ 119)
 
-Full tables in `suite-results.json` / `pivot.mjs`; the shape in brief, listing
-points → scichart / pond / uplot / chartjs:
+> **These are the _as-found_ (pre-optimization) numbers** — the run that
+> surfaced the findings. The four draw-side levers they drove have since
+> shipped; see [**Re-bench after the perf arc**](#re-bench-after-the-perf-arc-2026-07-22-same-machine)
+> below for the current numbers (mountain 3→117 fps @ 10M, column 1→119 @ 1M, …).
+
+The shape in brief, listing points → scichart / pond / uplot / chartjs (the
+committed `suite-results.json` holds the **post-arc** pond leg + the unchanged
+reference libs; the pre-opt pond numbers below are preserved here in prose and
+in the re-bench before→after table):
 
 **Candlestick — pond's headline.**
 200k: 119 / **119.7** / 4.7 / dead · 1M: 119 / **46.1** / 0.6 / — ·
@@ -141,6 +148,42 @@ costs are per-point constants and one O(N)-per-frame walk:
    reconcile over 1000 layer elements measured ~1% of frame time — element
    count is not why NxM collapses; (1) is. _(Recorded in the
    PND_CHARTS_PLAN parking lot so it is never built as perf work.)_
+
+## Re-bench after the perf arc (2026-07-22, same machine)
+
+All four profile-derived tasks above shipped — **[PND-AFFINE]/[PND-GRADX]**
+(#527, affine draw + gradient-extent cache), **[PND-DECKEY]** (#529, decimation
+memoized under y-only invalidation), **[PND-MARKDEC]** (#531, dense bars →
+per-column envelopes). Re-running the pond leg (same adapter, same Metal-GPU
+config; `suite-results.json` now holds this run, reference-lib rows unchanged)
+confirms each finding hit its target category. **Avg FPS, before → after:**
+
+| category            | driver            | 100k       | 500k       | 1M         | 5M        | 10M         |
+| ------------------- | ----------------- | ---------- | ---------- | ---------- | --------- | ----------- |
+| **mountain** (area) | DECKEY            | 119→119    | 52→**120** | 29→**120** | 6→**118** | 3→**117**   |
+| **column** (bars)   | MARKDEC           | 24→**119** | 3→**119**  | 1→**119**  | 0→**38**  | dead→**20** |
+| **candlestick**     | DECKEY            | 119→119    | 81→**120** | 46→**83**  | 10→**20** | 5→**10**    |
+| point y-update      | (data-side bound) | 18→18      | 3→2        | 1→1        | —         | —           |
+| FIFO stream (5s)    | (data-side bound) | 32→32      | —          | 3→3        | 1→1       | —           |
+| compression         | (x grows / bound) | 52→52      | —          | 16→16      | —         | 4→3         |
+
+NxM (below the decimation threshold, so pure stroke): 500×500 **36→119**,
+1000×1000 **10→44**, 2000×2000 **1→6** — the affine fast path.
+
+**The headline:** the two static **y-zoom** categories that collapsed at scale
+now hold the ~119 fps cap to **10M points** — mountain 3→**117** and column
+(via bar decimation) 1→**119** at 1M, i.e. **~40× and ~100×**. pond, a
+canvas + React library, now matches SciChart's WebGL engine (flat at cap) on
+these. DECKEY is why: the y-zoom test re-runs an **x-only** decimation walk each
+frame, and caching it per source turns O(N)/frame into O(1). Candlestick's
+decimating OHLC picks up the same cache (~2× at the tail).
+
+**Honestly flat** — point-update, FIFO, compression — and correctly so: each
+changes its data (or x-domain) every frame, so the decimation cache can't hit
+and the ceiling is the **data-side** snapshot rebuild, not the draw. This is
+the "render ceiling ≠ perf solved" line the earlier findings drew, now shown
+from the other side: the four draw-side levers moved every category whose
+bottleneck was the draw, and none whose bottleneck wasn't.
 
 ## Files
 
