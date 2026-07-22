@@ -182,15 +182,15 @@ Types: `UseSnapshotOptions`, `SnapshotSource` (structural — covers
 
 ### Components — layout & axes
 
-| Component                   | Key props                                                                                                         | Purpose                                          | Source                                                 |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------ |
-| `ChartContainer`            | `width`, `range?`, `theme?`, `cursor?`, `panZoom?`, `showAxis?`, `calendar?`, `onTrackerChanged?`, `onDrawStats?` | Root: shared x-scale, interactions, annotations  | `packages/charts/src/ChartContainer.tsx`               |
-| `ChartRow`                  | `height`, `cursor?`                                                                                               | One stacked plot band; owns its y-axes           | `packages/charts/src/ChartRow.tsx`                     |
-| `Layers`                    | children                                                                                                          | Mandatory z-stack inside a row (back-to-front)   | `packages/charts/src/Layers.tsx`                       |
-| `YAxis`                     | `id` (req), `side?`, `min?`/`max?`, `format?`, `width?`                                                           | Y-axis gutter; layers bind via their `axis` prop | `packages/charts/src/YAxis.tsx`                        |
-| `XAxis`                     | `side?`, `label?`, `format?`, `ticks?`, `transform?`, `dateStyle?`                                                | Placeable x-axis strip; kind inferred from data  | `packages/charts/src/XAxis.tsx`                        |
-| `TimeAxis` / `CategoryAxis` | (XAxis props)                                                                                                     | Thin `XAxis` presets                             | `packages/charts/src/TimeAxis.tsx`, `CategoryAxis.tsx` |
-| `Canvas`                    | `width`, `height`, `draw`                                                                                         | Low-level DPR-aware canvas primitive             | `packages/charts/src/Canvas.tsx`                       |
+| Component                   | Key props                                                                                                                    | Purpose                                          | Source                                                 |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------ |
+| `ChartContainer`            | `width`, `range?`, `theme?`, `cursor?`, `panZoom?`, `bounds?`, `showAxis?`, `calendar?`, `onTrackerChanged?`, `onDrawStats?` | Root: shared x-scale, interactions, annotations  | `packages/charts/src/ChartContainer.tsx`               |
+| `ChartRow`                  | `height`, `cursor?`                                                                                                          | One stacked plot band; owns its y-axes           | `packages/charts/src/ChartRow.tsx`                     |
+| `Layers`                    | children                                                                                                                     | Mandatory z-stack inside a row (back-to-front)   | `packages/charts/src/Layers.tsx`                       |
+| `YAxis`                     | `id` (req), `side?`, `min?`/`max?`, `format?`, `width?`                                                                      | Y-axis gutter; layers bind via their `axis` prop | `packages/charts/src/YAxis.tsx`                        |
+| `XAxis`                     | `side?`, `label?`, `format?`, `ticks?`, `transform?`, `dateStyle?`                                                           | Placeable x-axis strip; kind inferred from data  | `packages/charts/src/XAxis.tsx`                        |
+| `TimeAxis` / `CategoryAxis` | (XAxis props)                                                                                                                | Thin `XAxis` presets                             | `packages/charts/src/TimeAxis.tsx`, `CategoryAxis.tsx` |
+| `Canvas`                    | `width`, `height`, `draw`                                                                                                    | Low-level DPR-aware canvas primitive             | `packages/charts/src/Canvas.tsx`                       |
 
 ### Components — draw layers
 

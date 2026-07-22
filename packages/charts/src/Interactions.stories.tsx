@@ -401,3 +401,48 @@ export const PanZoom: Story = {
     </ChartContainer>
   ),
 };
+
+/**
+ * **Pan only (`panZoom="pan"`).** Drag pans the time range, but the wheel is
+ * left alone — scroll still scrolls the page. The three-way `panZoom` prop is
+ * `'none'` (or `false`) / `'pan'` / `'panZoom'` (or `true`); this is the middle
+ * mode, for a chart you can slide but not zoom.
+ */
+export const PanOnly: Story = {
+  render: () => (
+    <ChartContainer
+      range={TIME_RANGE}
+      width={560}
+      theme={docsTheme}
+      panZoom="pan"
+    >
+      <Rows />
+    </ChartContainer>
+  ),
+};
+
+/**
+ * **Bounded pan/zoom (`bounds` + `minDuration`).** The view starts zoomed into
+ * the middle third and is fenced to the full data extent: `bounds` is the
+ * outer limit — pan into either edge stops there, and zoom-out is capped at the
+ * whole span — while `minDuration` is the zoom-in floor. Together they pin the
+ * reachable window between an inner and an outer bound, so a gesture can never
+ * scroll off into empty time or zoom past a useful grain.
+ */
+export const Bounded: Story = {
+  render: () => {
+    const third = (TIME_RANGE[1] - TIME_RANGE[0]) / 3;
+    return (
+      <ChartContainer
+        range={[TIME_RANGE[0] + third, TIME_RANGE[1] - third]}
+        width={560}
+        theme={docsTheme}
+        panZoom="panZoom"
+        bounds={TIME_RANGE}
+        minDuration={5 * STEP}
+      >
+        <Rows />
+      </ChartContainer>
+    );
+  },
+};

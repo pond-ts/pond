@@ -8,6 +8,38 @@
 export type TimeRange = readonly [number, number];
 
 /**
+ * Clamp a view range to an **outer extent** `bounds` — the pan/zoom limit, so
+ * the view can never show time outside `[bounds[0], bounds[1]]`. Applied at the
+ * range choke point (`applyRange`) so it constrains **every** gesture (pan,
+ * zoom-out) and any programmatic range in one place:
+ *
+ * - **Wider than the extent** (zoomed out past the whole span) → clamp to the
+ *   full `bounds` (you can't zoom out beyond the total). This makes `bounds`'s
+ *   width the zoom-**out** ceiling, the outer companion to the `minDuration`
+ *   zoom-**in** floor.
+ * - **Panned past an edge** → slide back so the nearer edge sits on the bound,
+ *   **preserving the span** (a pan into the boundary stops rather than shrinking
+ *   the window).
+ * - **Already inside** → unchanged.
+ *
+ * A degenerate `bounds` (`hi <= lo`) is treated as "no constraint" (returns the
+ * range untouched) so a mis-specified extent can't collapse the view.
+ */
+export function clampToBounds(
+  range: TimeRange,
+  bounds: TimeRange,
+): [number, number] {
+  const [lo, hi] = bounds;
+  const maxSpan = hi - lo;
+  if (!(maxSpan > 0)) return [range[0], range[1]];
+  const span = range[1] - range[0];
+  if (span >= maxSpan) return [lo, hi];
+  if (range[0] < lo) return [lo, lo + span];
+  if (range[1] > hi) return [hi - span, hi];
+  return [range[0], range[1]];
+}
+
+/**
  * Shift a range by `dt` ms (drag-pan). The caller signs `dt` from the gesture —
  * dragging the plot right reveals earlier data, i.e. a negative `dt`.
  */

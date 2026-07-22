@@ -259,8 +259,10 @@ export interface ContainerFrame {
    * category label), and the cursor readout to format the x position.
    */
   readonly xKind: 'time' | 'value' | 'category';
-  /** Pan/zoom enabled — the plot drag-pans and wheel-zooms the shared time range. */
-  readonly panZoom: boolean;
+  /** Drag-pan enabled (the `'pan'` and `'panZoom'` container modes). */
+  readonly panEnabled: boolean;
+  /** Wheel-zoom enabled (the `'panZoom'` container mode only). */
+  readonly zoomEnabled: boolean;
   /** Minimum visible duration (ms) — the zoom-in floor. */
   readonly minDuration: number;
   /**
