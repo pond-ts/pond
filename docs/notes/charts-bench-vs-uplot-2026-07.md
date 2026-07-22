@@ -100,6 +100,31 @@ Chart.js 0.80 ms. Pre-fix pond: 2.8 ms/event (decimate on, 41 fps),
    re-rendering on hover (details + expected 4→~2 commits/event in
    [PND-HOVCTX]).
 
+## Re-bench after the perf arc (2026-07-22, same machine)
+
+The draw-side levers shipped ([PND-AFFINE]/[PND-GRADX] #527, [PND-DECKEY] #529,
+[PND-MARKDEC] #531) and the hover levers ([PND-HOVCTX] #526). Re-running this
+166k-point workload from `origin/main` (`results-local.json` overwritten):
+
+- **Per-layer draw, decimate off (all 166,650 points stroked): 10.0 → 2.5 ms
+  (4×)** — the affine fast path (Finding 6's `curveLinear` `k·v+b` loop past
+  d3-scale/d3-shape). Decimate on (7,280 pts/layer): 3.3 → **1.9 ms**. This is
+  the clearest single win: pond's un-decimated stroke of 166k points is now
+  ~1 ms/layer, in the range of uPlot's raw path.
+- **Chart create** stays pond's strong column: **11.4 ms** (was 11.8), vs uPlot
+  15.0 — unchanged, the perf arc didn't touch the create path.
+- **Heap** 24.2 / 7.0 MB (was 25.8 / 6.7) — flat within noise.
+- **Mousemove** ~350–410 ms/10 s, ~flat vs the pre-arc rows. [PND-HOVCTX] #526
+  removed the two `YAxis` re-renders per hover, but this bench chart has only
+  two axes, so the win (~0.15 ms/event) sits inside run-to-run variance here —
+  it scales with axis/row count, not visible on this 2-axis workload. Both
+  modes still hold 119.8 fps.
+
+Net: the draw ceiling this note set out to measure moved 4× on the raw stroke;
+the columns that were already strong (create) or bounded elsewhere (mousemove
+on few axes, bundle size, React boot) are unchanged — an honest, targeted
+result, not a uniform lift.
+
 ## Files
 
 Committed in
