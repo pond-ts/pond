@@ -128,18 +128,31 @@ export function cursorParts(mode: CursorMode): {
 }
 
 /**
- * The crosshair's plot-pixel x from the tracker inputs. A controlled
- * `trackerPosition` (epoch ms) maps through `xScale`, so a pinned time rides with
- * the data; `null` hides it; `undefined` (uncontrolled) uses the stored hover
- * pixel, so a still cursor stays put while a live window slides under it.
+ * The crosshair's plot-pixel x from the tracker inputs. **A live local pointer
+ * always wins:** a chart the user is actively hovering (`hoverX` non-null) shows
+ * its own cursor, even when a controlled `trackerPosition` is also supplied.
+ * With no local pointer, a controlled `trackerPosition` (epoch ms) maps through
+ * this chart's `xScale` — so a pinned/synced time rides with the data and lands
+ * at the right pixel even under a different zoom — else there's no cursor.
+ *
+ * This ordering is what makes **cross-chart cursor sync** compose from the plain
+ * props: give every chart the same `trackerPosition={sharedTime}` and wire
+ * `onTrackerChanged` back to `sharedTime`. The chart under the pointer favors its
+ * own hover (it's the source, and reports out); every other chart has no local
+ * pointer, so it follows the shared time. No "which chart is active" bookkeeping.
+ *
+ * `null` and `undefined` are **equivalent** — both mean "no controlled position"
+ * (a hovered chart still tracks its pointer; a non-hovered one shows nothing). To
+ * force a chart to never show a cursor at all, use `cursor="none"`, not
+ * `trackerPosition={null}`.
  */
 export function resolveCursorX(
   trackerPosition: number | null | undefined,
   hoverX: number | null,
   xScale: (time: number) => number,
 ): number | null {
-  if (trackerPosition === undefined) return hoverX;
-  if (trackerPosition === null) return null;
+  if (hoverX !== null) return hoverX;
+  if (trackerPosition == null) return null;
   return xScale(trackerPosition);
 }
 
