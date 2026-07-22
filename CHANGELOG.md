@@ -109,9 +109,6 @@ and type-level changes; patch bumps are strictly additive.
   (`scripts/perf-markdec.mjs`, JS-only): the bar draw at 5M points drops
   485 → 26 ms (18.9×), 100k drops 9.7 → 0.9 ms (10.7×) — with the larger
   rasterization win on top, browser-side.
-
-### Added
-
 - **charts:** **Draw-cost + decimation observability** — `<ChartContainer
 onDrawStats>` (PND-DECOBS; dashboard A/B friction, 2026-07-21). Fires a
   `DrawStatsFrame` once per row-canvas repaint (keyed by an opaque `rowKey` for

@@ -467,6 +467,27 @@ describe('drawBars — M4 column decimation', () => {
     });
   });
 
+  it('threads { threshold } through to the decimation gate', () => {
+    const { ctx, calls } = sizedCtx(4); // W=4
+    // 100 bars: default (k=2) decimates (100 > 8); a high threshold (k=30, 100 <
+    // 120) draws full-resolution — proving the prop is wired, not hardcoded.
+    const stats = drawBars(
+      ctx,
+      dense(100),
+      pxScale(0, 100),
+      (v) => v,
+      style,
+      0,
+      0,
+      'count',
+      null,
+      null,
+      { threshold: 30 },
+    );
+    expect(calls.filter((c) => c.name === 'fillRect')).toHaveLength(100);
+    expect(stats.decimated).toBe(false);
+  });
+
   it('draws every bar when decimate is off, even at density', () => {
     const { ctx, calls } = sizedCtx(4);
     const stats = drawBars(

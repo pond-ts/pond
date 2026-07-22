@@ -154,9 +154,12 @@ export function drawBars(
   const [vStart, vEnd] = visibleSpanRange(cs.begin, cs.end, cs.length, xScale);
   // Decimate the visible bars to per-column envelope rects once dense (see the
   // header). `null` below the visible-density threshold ⇒ the full per-bar loop.
+  // `{ threshold }` tunes the samples-per-pixel factor `k` (as line/area/band do);
+  // `undefined` ⇒ decimateBars' default (2).
+  const k = typeof decimate === 'object' ? decimate.threshold : undefined;
   const envelope =
     decimate !== false
-      ? decimateBars(cs, xScale, ctx, baseline, 2, vEnd - vStart)
+      ? decimateBars(cs, xScale, ctx, baseline, k, vEnd - vStart)
       : null;
   if (envelope !== null) {
     ctx.fillStyle = style.fill;

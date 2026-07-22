@@ -621,6 +621,13 @@ describe('decimateBars ([PND-MARKDEC])', () => {
     ).toBeNull();
   });
 
+  it('respects the threshold k (decimates later at a higher factor)', () => {
+    const b = barsOf(100, (i) => i); // W=4
+    // k=2 → 100 > 2×4 → decimate; k=30 → 100 < 30×4 → below threshold → null.
+    expect(decimateBars(b, pxScale(0, 100), stubCtx(4), 0, 2)).not.toBeNull();
+    expect(decimateBars(b, pxScale(0, 100), stubCtx(4), 0, 30)).toBeNull();
+  });
+
   it('emits one envelope per pixel column, baseline pulled in (all-positive)', () => {
     // 100 bars over [0,100], value = index. W=4 → columns [0,25) [25,50) [50,75)
     // [75,100). All values ≥ baseline 0, so each envelope is [0, columnMax].
