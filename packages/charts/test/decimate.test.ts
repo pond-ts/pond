@@ -8,10 +8,12 @@ import {
   mergeGapEdges,
   m4Polyline,
   decimateM4,
+  decimateM4Cached,
   decimateBand,
   decimateOhlc,
   decimateBox,
 } from '../src/decimate.js';
+import { cullChartSeries } from '../src/culling.js';
 import type {
   ChartSeries,
   BandSeries,
@@ -488,5 +490,105 @@ describe('decimateBox', () => {
     const out = decimateBox(s, pxScale(0, 40), stubCtx(4), 1); // W=4, colWidth 10
     expect(Number.isNaN(out.lower[1]!)).toBe(true); // column [10,20): no boxes
     expect(Number.isNaN(out.upper[2]!)).toBe(true); // column [20,30): no boxes
+  });
+});
+
+/**
+ * `decimateM4Cached` ([PND-DECKEY]) memoizes cull+decimate per source series so a
+ * y-only repaint (y-zoom / y-autorange) reuses the prior polyline instead of
+ * re-binning O(N). The decimation output never reads the y-scale, so a cache hit
+ * (same source, xScale, W, k, boundaries) is byte-identical — proven here by
+ * object identity: a fresh `decimateM4` run allocates a new polyline, so an
+ * identity-equal return means no recompute.
+ */
+describe('decimateM4Cached ([PND-DECKEY])', () => {
+  const dense = (n: number): ChartSeries =>
+    cs(
+      Array.from({ length: n }, (_, i) => i),
+      Array.from({ length: n }, (_, i) => i),
+    );
+
+  it('matches cull-then-decimateM4 exactly (behavior-preserving)', () => {
+    const src = dense(5000);
+    const scale = pxScale(0, 5000);
+    const ctx = stubCtx(10);
+    const got = decimateM4Cached(src, scale, ctx).series;
+    const want = decimateM4(cullChartSeries(src, scale), scale, ctx);
+    expect(Array.from(got.x)).toEqual(Array.from(want.x));
+    expect(Array.from(got.y)).toEqual(Array.from(want.y));
+    expect(got.length).toBe(want.length);
+  });
+
+  it('reuses the decimated polyline on a repeat call (cache hit → same identity)', () => {
+    const src = dense(5000);
+    const scale = pxScale(0, 5000);
+    const ctx = stubCtx(10);
+    const a = decimateM4Cached(src, scale, ctx);
+    const b = decimateM4Cached(src, scale, ctx);
+    expect(a.decimated).toBe(true);
+    expect(b.series).toBe(a.series); // identity — no re-bin
+  });
+
+  it('a y-only frame hits: the y-scale is never a key (not even an argument)', () => {
+    // A y-zoom / y-autorange changes only the y-scale, which this function never
+    // receives — so the same (source, xScale, W) recurs and the polyline is reused.
+    const src = dense(5000);
+    const xScale = pxScale(0, 5000);
+    const ctx = stubCtx(10);
+    const beforeYZoom = decimateM4Cached(src, xScale, ctx).series;
+    const afterYZoom = decimateM4Cached(src, xScale, ctx).series;
+    expect(afterYZoom).toBe(beforeYZoom);
+  });
+
+  it('re-decimates on a pan / x-zoom (fresh xScale, new domain → miss)', () => {
+    const src = dense(5000);
+    const ctx = stubCtx(10);
+    const view = decimateM4Cached(src, pxScale(0, 5000), ctx).series;
+    const panned = decimateM4Cached(src, pxScale(1000, 4000), ctx).series;
+    expect(panned).not.toBe(view); // x-domain changed → recompute
+  });
+
+  it('re-decimates on a device-width (DPR / resize) change', () => {
+    const src = dense(5000);
+    const scale = pxScale(0, 5000);
+    const a = decimateM4Cached(src, scale, stubCtx(10)).series;
+    const b = decimateM4Cached(src, scale, stubCtx(20)).series; // W 10 → 20
+    expect(b).not.toBe(a);
+  });
+
+  it('keys session breaks by identity (stable array hits, fresh array misses)', () => {
+    const src = dense(5000);
+    const scale = pxScale(0, 5000);
+    const ctx = stubCtx(10);
+    const bounds = [2500];
+    const a = decimateM4Cached(src, scale, ctx, undefined, bounds).series;
+    const a2 = decimateM4Cached(src, scale, ctx, undefined, bounds).series;
+    expect(a2).toBe(a); // same array identity → hit
+    const b = decimateM4Cached(src, scale, ctx, undefined, [2500]).series;
+    expect(b).not.toBe(a); // fresh array identity → miss (safe, no benefit)
+  });
+
+  it('keys the threshold k', () => {
+    const src = dense(5000);
+    const scale = pxScale(0, 5000);
+    const ctx = stubCtx(10);
+    const a = decimateM4Cached(src, scale, ctx, 2).series;
+    expect(decimateM4Cached(src, scale, ctx, 2).series).toBe(a); // hit
+    expect(decimateM4Cached(src, scale, ctx, 3).series).not.toBe(a); // k changed
+  });
+
+  it('a new source object (data change) misses even with identical values', () => {
+    const scale = pxScale(0, 5000);
+    const ctx = stubCtx(10);
+    const a = decimateM4Cached(dense(5000), scale, ctx).series;
+    const b = decimateM4Cached(dense(5000), scale, ctx).series; // fresh source
+    expect(b).not.toBe(a); // new key → recompute (data may have changed)
+  });
+
+  it('reports decimated=false and returns the culled slice for a sparse window', () => {
+    const src = dense(5); // 5 points, W=10 → 5 < 2×10 → below the threshold
+    const r = decimateM4Cached(src, pxScale(0, 5), stubCtx(10));
+    expect(r.decimated).toBe(false);
+    expect(r.series.length).toBe(5); // the plain slice, not an M4 polyline
   });
 });

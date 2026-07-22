@@ -15,7 +15,7 @@ import {
   type GapMode,
 } from './gaps.js';
 import { cullChartSeries } from './culling.js';
-import { decimateM4, type DecimateOption } from './decimate.js';
+import { decimateM4Cached, type DecimateOption } from './decimate.js';
 import { affineOf, type Affine } from './affine.js';
 
 /**
@@ -211,22 +211,26 @@ export function drawArea(
     style,
   );
 
-  // Viewport culling (Phase 2): the path, outline, and gap bridges walk the
-  // visible slice (+1 entry/exit point) only. A no-op — the same `cs` back — when
-  // fully in view or `xScale` has no domain (a test stub), keeping that hot path
-  // byte-identical.
-  cs = cullChartSeries(cs, xScale);
-  // M4 decimation (Phase 3): the outline is a line, so the same {@link decimateM4}
-  // pre-pass shrinks the fill + outline + gap-bridge work to O(plot width) once
-  // dense — with the §2.2 gap-edge union so every gap mode composes. The gradient
-  // above is over the FULL series, so the decimated fill paints identical pixels
-  // under it. Gated off a smoothing `curve`; a no-op on a sparse slice / test scale.
+  // Clip `cs` to what draws. **Decimated** (linear curve, `decimate !== false`):
+  // cull to the visible slice, then the same {@link decimateM4} pre-pass shrinks
+  // the fill + outline + gap-bridge work to O(plot width) once dense (the §2.2
+  // gap-edge union so every gap mode composes; the FULL-series gradient above
+  // paints identical pixels under the decimated fill). Cull + decimate are
+  // **memoized per source** ({@link decimateM4Cached}) so a y-zoom / y-autorange
+  // frame reuses the prior polyline instead of re-binning O(N) — the decimation
+  // output never reads the y-scale (finding 3). **Full-resolution** (a smoothing
+  // curve, or `decimate === false`): just cull the visible slice (+1 entry/exit
+  // point); a no-op — the same `cs` back — when fully in view or `xScale` has no
+  // domain (a test stub), keeping that hot path byte-identical.
+  const source = cs; // pre-cull source — the decimation cache key ([PND-DECKEY])
   let decimated = false;
   if (decimate !== false && curve === curveLinear) {
     const k = typeof decimate === 'object' ? decimate.threshold : undefined;
-    const before = cs;
-    cs = decimateM4(cs, xScale, ctx, k);
-    decimated = cs !== before;
+    const r = decimateM4Cached(source, xScale, ctx, k);
+    cs = r.series;
+    decimated = r.decimated;
+  } else {
+    cs = cullChartSeries(source, xScale);
   }
   // `none` interpolates interior gaps so the fill + outline bridge them; every
   // other mode keeps NaN so d3 breaks both (the inferred line bridge, if any, is

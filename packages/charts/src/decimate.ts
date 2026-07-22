@@ -49,7 +49,7 @@
 import { Float64Column } from 'pond-ts';
 import type { ChartSeries, BandSeries, OhlcSeries, BoxSeries } from './data.js';
 import type { Scale } from './line.js';
-import { scaleDomain } from './culling.js';
+import { scaleDomain, cullChartSeries } from './culling.js';
 
 /**
  * A line layer's M4-decimation control (`<LineChart decimate>`). **Default
@@ -303,6 +303,94 @@ export function decimateM4(
     buckets,
     breaks.length > 0 ? new Set(breaks) : undefined,
   );
+}
+
+/**
+ * Stable empty boundary list for the (common) no-session-break decimation cache
+ * key — so an area / no-break line draw compares equal frame-to-frame instead of
+ * missing on a fresh default `[]`.
+ */
+const NO_BOUNDARIES: readonly number[] = [];
+
+interface M4CacheEntry {
+  readonly xScale: Scale;
+  readonly W: number;
+  readonly k: number | undefined;
+  readonly boundaries: readonly number[];
+  readonly series: ChartSeries;
+  readonly decimated: boolean;
+}
+
+/**
+ * One-entry-per-source cache of the cull+M4-decimate result ([PND-DECKEY]),
+ * keyed on the source series (`WeakMap`) → the last `(xScale, W, k, boundaries)`
+ * it was drawn for. Evicts with the series (no leak); one entry per source keeps
+ * it bounded under pan (see {@link decimateM4Cached}).
+ */
+const m4Cache = new WeakMap<ChartSeries, M4CacheEntry>();
+
+/**
+ * Cull `source` to the visible window and M4-decimate it, **memoized per source
+ * series** so a y-only repaint reuses the prior frame's polyline instead of
+ * re-binning O(N) points. The decimation output is a pure function of the source
+ * data, the x mapping, the device width, the threshold, and the session breaks —
+ * it **never reads the y-scale** — so it is byte-identical across every y-zoom /
+ * y-autorange frame (the ~19% mountain@1M recompute the 2026-07 bench profile
+ * flagged, finding 3: an x-only computation re-run under y-only invalidation).
+ *
+ * The cache holds **one** entry per source: a y-only frame matches the stored
+ * key → hit; a pan / x-zoom mints a fresh `xScale` (`ChartContainer` keys the
+ * scale on the x-domain, not the y-domain — so the scale object is stable under
+ * y-zoom and fresh under pan) → miss, and the single entry is overwritten. So it
+ * **wins on y-only frames and is a no-op under pan** — bounded, never growing,
+ * the same reasoning that made Path2D caching not help pan ([PND-DECIM]).
+ *
+ * Correctness rests on the {@link ChartSeries} immutability contract: a data
+ * change mints a **new** source object (the layer re-materializes its column),
+ * so a stale entry can't be read. `boundaries` is compared by **identity** — the
+ * `<LineChart>` session-break instants are `useMemo`-stable across frames; a
+ * caller passing a fresh array each frame simply misses (safe, no benefit). `W`
+ * is `deviceBucketCount(ctx)` so a DPR / resize change re-keys. Keying on the
+ * `xScale` object (not just its `[domain, W]`) is what keeps the hit correct on
+ * a **non-affine** trading-time scale too — same scale object ⇒ identical
+ * pixel-column edges.
+ *
+ * Returns `{ series, decimated }`: `series` is the M4 polyline, or the plain
+ * culled slice when the window is too sparse to decimate ({@link decimateM4}
+ * no-ops); `decimated` says which (for the caller's draw-stats + session-run
+ * split). Callers pass the **pre-cull** source and skip their own cull — this
+ * function does it, so a cache hit skips the cull too.
+ */
+export function decimateM4Cached(
+  source: ChartSeries,
+  xScale: Scale,
+  ctx: CanvasRenderingContext2D,
+  k?: number,
+  boundaries: readonly number[] = NO_BOUNDARIES,
+): { series: ChartSeries; decimated: boolean } {
+  const W = deviceBucketCount(ctx);
+  const cached = m4Cache.get(source);
+  if (
+    cached !== undefined &&
+    cached.xScale === xScale &&
+    cached.W === W &&
+    cached.k === k &&
+    cached.boundaries === boundaries
+  ) {
+    return cached;
+  }
+  const culled = cullChartSeries(source, xScale);
+  const series = decimateM4(culled, xScale, ctx, k, boundaries);
+  const entry: M4CacheEntry = {
+    xScale,
+    W,
+    k,
+    boundaries,
+    series,
+    decimated: series !== culled,
+  };
+  m4Cache.set(source, entry);
+  return entry;
 }
 
 /** Shared empty break-set for the common (no session-break) case. */
