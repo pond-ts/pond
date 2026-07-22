@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { scaleLinear } from 'd3-scale';
 import {
   barAt,
   barExtent,
@@ -395,5 +396,121 @@ describe('drawBars — viewport culling (Phase 2)', () => {
     const { ctx, calls } = recordingContext();
     drawBars(ctx, ramp(), identity, identity, style, 0, 0, 'count', null, null);
     expect(calls.filter((c) => c.name === 'fillRect')).toHaveLength(6);
+  });
+});
+
+/**
+ * `drawBars` M4 column decimation ([PND-MARKDEC]): once the visible bars are
+ * denser than ~2 per device pixel, they're drawn as one envelope rect per pixel
+ * column instead of every bar. Needs a real invertible scale + a sized ctx (a
+ * bare scale / unsized ctx never decimates — the other bars tests stay full-res).
+ */
+describe('drawBars — M4 column decimation', () => {
+  const pxScale = (lo: number, hi: number, widthCss = hi - lo) =>
+    scaleLinear().domain([lo, hi]).range([0, widthCss]) as unknown as (
+      v: number,
+    ) => number;
+  // A recording ctx with a device-pixel backing width so decimation can fire.
+  const sizedCtx = (widthPx: number) => {
+    const rec = recordingContext();
+    (rec.ctx as unknown as { canvas: { width: number } }).canvas = {
+      width: widthPx,
+    };
+    return rec;
+  };
+  // `n` unit bars over [0, n], value = index (all positive).
+  const dense = (n: number): BarSeries =>
+    bars(
+      Array.from({ length: n }, (_, i) => i),
+      Array.from({ length: n }, (_, i) => i + 1),
+      Array.from({ length: n }, (_, i) => i),
+    );
+
+  it('draws one envelope rect per non-empty column when dense', () => {
+    const { ctx, calls } = sizedCtx(4); // W=4
+    // 100 bars ≫ 2×4 → decimate to ≤4 column rects.
+    const stats = drawBars(
+      ctx,
+      dense(100),
+      pxScale(0, 100),
+      (v) => v,
+      style,
+      0,
+      0,
+      'count',
+      null,
+      null,
+    );
+    expect(calls.filter((c) => c.name === 'fillRect')).toHaveLength(4);
+    expect(stats).toEqual({ sourceCount: 100, drawnCount: 4, decimated: true });
+  });
+
+  it('draws every bar full-resolution below the density threshold', () => {
+    const { ctx, calls } = sizedCtx(800); // W=800; 100 bars < 2×800
+    const stats = drawBars(
+      ctx,
+      dense(100),
+      pxScale(0, 100),
+      (v) => v,
+      style,
+      0,
+      0,
+      'count',
+      null,
+      null,
+    );
+    expect(calls.filter((c) => c.name === 'fillRect')).toHaveLength(100);
+    expect(stats).toEqual({
+      sourceCount: 100,
+      drawnCount: 100,
+      decimated: false,
+    });
+  });
+
+  it('draws every bar when decimate is off, even at density', () => {
+    const { ctx, calls } = sizedCtx(4);
+    const stats = drawBars(
+      ctx,
+      dense(100),
+      pxScale(0, 100),
+      (v) => v,
+      style,
+      0,
+      0,
+      'count',
+      null,
+      null,
+      false, // decimate off
+    );
+    expect(calls.filter((c) => c.name === 'fillRect')).toHaveLength(100);
+    expect(stats.decimated).toBe(false);
+  });
+
+  it('suppresses the per-bar selection highlight when decimated', () => {
+    const { ctx, calls } = sizedCtx(4);
+    // A selection matching a source bar: at full res it would strokeRect; when
+    // decimated the aggregate columns aren't individually selectable, so no stroke.
+    drawBars(
+      ctx,
+      dense(100),
+      pxScale(0, 100),
+      (v) => v,
+      style,
+      0,
+      0,
+      'count',
+      { key: 42, id: 'count' },
+      null,
+    );
+    expect(calls.some((c) => c.name === 'strokeRect')).toBe(false);
+    // The envelope fill uses the flat `fill`, never the `highlight`.
+    expect(
+      calls.some(
+        (c) =>
+          c.type === 'set' &&
+          c.name === 'fillStyle' &&
+          c.args?.[0] === style.highlight,
+      ),
+    ).toBe(false);
   });
 });

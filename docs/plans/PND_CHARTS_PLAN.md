@@ -214,17 +214,41 @@ and can adopt the same helper later (mechanical follow-up, not built here).
 
 ### [PND-MARKDEC] — Decimate scatter marks and bar columns
 
-**Source:** same run, finding 4. The suite's point-update and column
-categories fall off exactly where line/area/candle don't (point y-update:
-pond 18.1 fps @ 100k vs uPlot 37.4; column dead by 5M) — Scatter and Bar are
-the two marks with no decimation path. Shape, following the shipped
-decimator conventions (auto-on, `decimate` opt-out, interaction reads the
-source — §2.3): **scatter** = M4-for-marks, per-pixel-column min/max
-representative points; **bars** = per-column envelope once a bar's slot is
-narrower than ~1px (consistent with candle/box's visible-count gating).
-Extends the [PND-DECIM] wave to the last undecimated marks. Note the
-point-update group also pays a full per-frame `fromColumns` rebuild —
-data-side cost, out of scope here. Perf-check protocol applies.
+**Source:** same run, finding 4. The suite's point-update and column categories
+fall off exactly where line/area/candle don't (point y-update: pond 18.1 fps @
+100k vs uPlot 37.4; column dead by 5M) — Scatter and Bar were the two marks with
+no decimation path. Shipped as two PRs (the candle #518 / box #519 precedent).
+
+**Bars — DONE ([Unreleased]).** `<BarChart decimate>` (default `true`): once the
+visible **single-series** bars exceed ~2 per device pixel (each slot < ~1px),
+`drawBars` replaces them with one **envelope rect per pixel column** — the exact
+painted union `[min(value, baseline), max(value, baseline)]` (`decimateBars`,
+`src/decimate.ts`, the interval-mark analog of `decimateBand`, widened to the
+baseline every bar reaches). Gated on the **visible** count (a bar's width is its
+slot — the candle/box trap). The decimated pass draws the flat `fill` only —
+aggregate columns aren't individually selectable, so per-bar selection/hover
+highlight is suppressed when decimated (a <1px ring isn't visible anyway);
+interaction still reads the **source** bars via `barAt` (§2.3). `drawBars` now
+returns `LayerDrawStats` (`onDrawStats`). **No-op for stacked / multi-group**
+histograms (low-count categorical). **Verified:** `decimateBars` envelope math +
+gating unit tests; `drawBars` decimated-path tests (W rects, stats,
+highlight-suppressed); visual — the `Decimation/Bars` vs `BarsOff` stories render
+**identically** at 100k. **Perf** (`scripts/perf-markdec.mjs`, JS-only): 5M bars
+485 → 26 ms (18.9×), 100k 9.7 → 0.9 ms (10.7×); the rasterization win (N filled
+rects → ~W) is browser-side on top. `decimateBars` / `BarColumnEnvelope` are
+non-public ⇒ no API.md change.
+
+**Deferred design note:** the envelope ignores per-bar `gapPx` and tiles the
+column (a few-px gap is invisible at <1px bars); a column with horizontal gaps
+between sparse bars would over-fill — accepted (the decimation-at-density
+tradeoff). Bars binned by `begin` key (begin/end share a column at density).
+
+**Scatter — remaining.** M4-for-marks: per pixel column, keep the argmin-y and
+argmax-y **source indices** as representatives (≤2W dots) so the per-point
+encoding (radius / colour / key / label) is preserved for the drawn ones; a
+selected point outside the representatives gets a separate highlight scan
+(interaction reads source). Note the point-update group also pays a full
+per-frame `fromColumns` rebuild — data-side, out of scope. Perf-check applies.
 
 ### [PND-HOVCTX] — Split cursor position out of the container context
 

@@ -26,6 +26,7 @@ import {
   type StackMark,
   type StackStyle,
 } from './bars.js';
+import type { DecimateOption } from './decimate.js';
 import {
   ContainerContext,
   LayersContext,
@@ -161,6 +162,18 @@ export interface BarChartProps<
    */
   gap?: number;
   /**
+   * **M4 column decimation** (charts decimator wave). **Omitted ⇒ `true`**: once
+   * the visible bars are denser than ~2 per device pixel (each slot < ~1px), the
+   * **single-series** bars are drawn as one per-column **envelope** rect — the
+   * exact painted union `[min, max]` of each pixel column's bars — instead of every
+   * bar, so a 100k-bar column chart stays interactive. It is **visually lossless**
+   * at that density (a perf knob, not a style); interaction still reads the source
+   * bars. Pass `false` to always draw every bar, or `{ threshold }` to tune the
+   * samples-per-pixel factor. **No-op for a stacked / multi-group histogram** (the
+   * categorical case is low-count; only the single-series path decimates).
+   */
+  decimate?: DecimateOption;
+  /**
    * This layer's `<Legend>` row(s): `false` ⇒ none (opt out), a string ⇒ the
    * display name of a **one-row** layer. **Omitted ⇒** the single path (and a
    * one-group stack) registers one row named by the layer identity
@@ -246,6 +259,7 @@ export function BarChart<
   id,
   axis,
   gap,
+  decimate = true,
   legend,
   index = 0,
 }: BarChartProps<S, VS>) {
@@ -522,6 +536,7 @@ export function BarChart<
               id,
               selection,
               hover,
+              decimate,
             ),
         },
         axisId: axis,
@@ -615,6 +630,7 @@ export function BarChart<
     label,
     id,
     gapPx,
+    decimate,
     stackMinWidth,
     selection,
     hover,

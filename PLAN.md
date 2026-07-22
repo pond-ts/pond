@@ -50,9 +50,10 @@ milestone. Plan:
 - **[PND-DECIM]** — Decimator Phase 5 (finish-the-wave): candlestick + box
   decimation (Tidal-anchored), document the `three`-at-1M render floor
   (Path2D doesn't help pan), then the "large time series" how-to + release.
-- **[PND-MARKDEC]** — Decimate the last two marks: scatter (M4-for-marks —
-  per-pixel-column min/max representatives) and bars (per-column envelope
-  below ~1px slots), following the shipped auto-on/opt-out conventions.
+- **[PND-MARKDEC]** — Decimate the last two marks. **Bars shipped** (per-column
+  envelope `[min, max]` below ~1px slots — `<BarChart decimate>`). **Remaining:
+  scatter** (M4-for-marks — per-pixel-column min/max representative points),
+  following the same auto-on/opt-out conventions.
 - **[PND-HOVCTX]** — Split cursor position out of the `ContainerFrame` context
   (external bench 2026-07 follow-up, profile-verified): cursor lives in
   `useState` on `ChartContainer` and is a frame field, so every mousemove
@@ -60,8 +61,8 @@ milestone. Plan:
   `Legend`, `Bar`/`Box`) even though only the SVG overlay moved — measured 4
   React commits/event, ~0.68 ms vs uPlot's 0.13 ms. A dedicated `CursorContext`
   ({cursorX,cursorY,cursorRowKey} — the per-move-varying fields; the cursor
-  *time* is derived locally per consumer) leaves the config consumers untouched
-  on hover. This is why #524 (which stopped the *canvas* repaint) left hover
+  _time_ is derived locally per consumer) leaves the config consumers untouched
+  on hover. This is why #524 (which stopped the _canvas_ repaint) left hover
   "still kind of slow".
 - **[PND-BOXPLT]** — Finish BoxPlot: ValueSeries widening, range-only mode,
   px `offset` for same-x pairs, line-only shape, join the cursor x-snap, and

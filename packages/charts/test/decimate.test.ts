@@ -12,6 +12,7 @@ import {
   decimateBand,
   decimateOhlc,
   decimateBox,
+  decimateBars,
 } from '../src/decimate.js';
 import { cullChartSeries } from '../src/culling.js';
 import type {
@@ -19,6 +20,7 @@ import type {
   BandSeries,
   OhlcSeries,
   BoxSeries,
+  BarSeries,
 } from '../src/data.js';
 import type { Scale } from '../src/line.js';
 
@@ -590,5 +592,83 @@ describe('decimateM4Cached ([PND-DECKEY])', () => {
     const r = decimateM4Cached(src, pxScale(0, 5), stubCtx(10));
     expect(r.decimated).toBe(false);
     expect(r.series.length).toBe(5); // the plain slice, not an M4 polyline
+  });
+});
+
+/**
+ * `decimateBars` ([PND-MARKDEC]) collapses a dense column chart to one envelope
+ * rect per device-pixel column — the interval-mark analog of `decimateBand`,
+ * widened to include the bar baseline. Gates on the visible count; `null` below
+ * the threshold (the caller then draws every bar).
+ */
+describe('decimateBars ([PND-MARKDEC])', () => {
+  const barsOf = (n: number, value: (i: number) => number): BarSeries => ({
+    begin: Float64Array.from({ length: n }, (_, i) => i),
+    end: Float64Array.from({ length: n }, (_, i) => i + 1),
+    y: Float64Array.from({ length: n }, (_, i) => value(i)),
+    length: n,
+  });
+
+  it('returns null below the visible-density threshold (draw every bar)', () => {
+    const b = barsOf(10, (i) => i); // 10 bars, W=800 → 10 < 2×800
+    expect(decimateBars(b, pxScale(0, 10), stubCtx(800), 0)).toBeNull();
+  });
+
+  it('returns null when the scale has no domain (a test stub)', () => {
+    const b = barsOf(5000, (i) => i);
+    expect(
+      decimateBars(b, ((v: number) => v) as Scale, stubCtx(4), 0),
+    ).toBeNull();
+  });
+
+  it('emits one envelope per pixel column, baseline pulled in (all-positive)', () => {
+    // 100 bars over [0,100], value = index. W=4 → columns [0,25) [25,50) [50,75)
+    // [75,100). All values ≥ baseline 0, so each envelope is [0, columnMax].
+    const b = barsOf(100, (i) => i);
+    const env = decimateBars(b, pxScale(0, 100), stubCtx(4), 0)!;
+    expect(env).not.toBeNull();
+    expect(env.length).toBe(4);
+    expect(Array.from(env.begin)).toEqual([0, 25, 50, 75]);
+    expect(Array.from(env.end)).toEqual([25, 50, 75, 100]);
+    expect(Array.from(env.lo)).toEqual([0, 0, 0, 0]); // baseline floor
+    expect(Array.from(env.hi)).toEqual([24, 49, 74, 99]); // per-column max value
+  });
+
+  it('captures both signs when the data straddles the baseline', () => {
+    // value = index - 50 → -50..49. Column 0 [0,25): values -50..-26 → [-50, 0];
+    // column 3 [75,100): values 25..49 → [0, 49].
+    const b = barsOf(100, (i) => i - 50);
+    const env = decimateBars(b, pxScale(0, 100), stubCtx(4), 0)!;
+    expect(env.lo[0]).toBe(-50); // min value, below baseline
+    expect(env.hi[0]).toBe(0); // baseline pulled in as the top edge
+    expect(env.lo[3]).toBe(0); // baseline pulled in as the bottom edge
+    expect(env.hi[3]).toBe(49); // max value, above baseline
+  });
+
+  it('rests on an explicit non-zero baseline', () => {
+    // baseline 10 above all values 0..99 in column 0 → lo=min(0,10)=0? no:
+    // column 0 values 0..24 → min 0 < baseline 10 → lo=0, hi=max(24,10)=24.
+    const b = barsOf(100, (i) => i);
+    const env = decimateBars(b, pxScale(0, 100), stubCtx(4), 10)!;
+    // Column 3 values 75..99, baseline 10 below them → lo=min(75,10)=10, hi=99.
+    expect(env.lo[3]).toBe(10); // baseline is the floor when all bars are above it
+    expect(env.hi[3]).toBe(99);
+  });
+
+  it('marks an empty column NaN (sparse source on a dense grid)', () => {
+    // Bars only in [0,25) and [75,100); columns 1 and 2 are empty.
+    const begin = Float64Array.from({ length: 5000 }, (_, i) =>
+      i < 2500 ? (i / 2500) * 20 : 80 + (i / 2500) * 20,
+    );
+    const b: BarSeries = {
+      begin,
+      end: Float64Array.from(begin, (v) => v + 0.001),
+      y: Float64Array.from({ length: 5000 }, () => 5),
+      length: 5000,
+    };
+    const env = decimateBars(b, pxScale(0, 100), stubCtx(4), 0)!;
+    expect(Number.isNaN(env.lo[1]!)).toBe(true); // column [25,50): no bars
+    expect(Number.isNaN(env.hi[1]!)).toBe(true);
+    expect(Number.isFinite(env.hi[0]!)).toBe(true); // column [0,25): has bars
   });
 });
