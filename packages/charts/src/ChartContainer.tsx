@@ -37,6 +37,7 @@ import type { LegendItemSpec } from './swatch.js';
 import { maxSlotWidths, sum } from './slots.js';
 import { computeLabelLanes } from './annotations.js';
 import { resolveCursorX, DEFAULT_CURSOR_MODE } from './tracker.js';
+import { clampToBounds } from './viewport.js';
 import {
   resolveAxisFormat,
   resolveTimeFormat,
@@ -238,9 +239,10 @@ export interface ChartContainerProps {
   onRegionSelect?: (range: readonly [number, number]) => void;
   /**
    * Which modifier a region-drag needs — set `'shift'` when you also enable
-   * `panZoom` and want **plain drag to pan, shift-drag to select**. It's only
-   * enforced while `panZoom` is on (with pan off there's no gesture conflict, so
-   * shift is optional — either drag selects). **Omitted** ⇒ a region-drag
+   * **pan** (`panZoom="pan"` or `"panZoom"`) and want **plain drag to pan,
+   * shift-drag to select**. It's only enforced while pan is enabled (with pan
+   * off there's no gesture conflict, so shift is optional — either drag
+   * selects). **Omitted** ⇒ a region-drag
    * **preempts** pan (drag always selects; document that precedence for users).
    * Wheel-zoom is unaffected in every case.
    */
@@ -307,10 +309,32 @@ export interface ChartContainerProps {
    */
   onHover?: (hit: SelectInfo | null) => void;
   /**
-   * Enable pan/zoom: drag the plot to pan the time range, wheel to zoom around
-   * the cursor. **Default off** — so it doesn't capture drag/scroll unless asked.
+   * Which pan/zoom gestures the plot captures:
+   *
+   * - `'none'` (or `false`, the **default**) — neither; the plot doesn't capture
+   *   drag or scroll.
+   * - `'pan'` — drag to pan the time range, **no** wheel-zoom (scroll still
+   *   scrolls the page).
+   * - `'panZoom'` (or `true`) — drag to pan **and** wheel to zoom around the
+   *   cursor.
+   *
+   * The boolean form is the back-compat shorthand (`true` ⇒ `'panZoom'`,
+   * `false` ⇒ `'none'`). Bound the reachable range with {@link bounds}
+   * (zoom-out / pan extent) and {@link minDuration} (zoom-in floor).
    */
-  panZoom?: boolean;
+  panZoom?: boolean | 'none' | 'pan' | 'panZoom';
+  /**
+   * **Outer pan/zoom extent** — `[min, max]` (same units as {@link range}) the
+   * view can never move outside. Panning into an edge stops there (the window
+   * keeps its span); zooming out is capped at this width, so `bounds` is the
+   * zoom-**out** ceiling that pairs with the {@link minDuration} zoom-**in**
+   * floor. **Omit for no limit** (pan/zoom is unbounded). Constrains gestures
+   * (and any range routed through the container); seed {@link range} within it.
+   * On a trading-time axis the clamp is in wall-clock ms (a sensible outer
+   * limit; the per-session pan/zoom math already holds the trading span at each
+   * calendar edge).
+   */
+  bounds?: readonly [number, number];
   /**
    * Controlled view range — fires on pan/zoom with the new `[start, end]`. Wire
    * it back to `range` for a controlled chart; omit for uncontrolled (the
@@ -449,6 +473,7 @@ export function ChartContainer({
   hovered,
   onHover,
   panZoom = false,
+  bounds,
   onTimeRangeChange,
   minDuration = 1,
   cursor = DEFAULT_CURSOR_MODE,
@@ -474,6 +499,16 @@ export function ChartContainer({
   sessionDividers = 'none',
   children,
 }: ChartContainerProps) {
+  // Normalize the `panZoom` mode (boolean shorthand or the three-way string)
+  // into the two gesture flags the event surface reads. `true` ⇒ both; `'pan'`
+  // ⇒ drag only; `false`/`'none'` ⇒ neither. Zoom implies pan (there is no
+  // zoom-without-pan mode), so `interactive` (holds an internal view) tracks
+  // whichever is on.
+  const panEnabled =
+    panZoom === true || panZoom === 'pan' || panZoom === 'panZoom';
+  const zoomEnabled = panZoom === true || panZoom === 'panZoom';
+  const interactive = panEnabled || zoomEnabled;
+
   // The explicit base domain from `range` (a tuple or a TimeRange). `undefined`
   // ⇒ auto-fit (resolved from the layers below). Pan/zoom seeds from it; `seed`
   // is the placeholder while auto-fitting.
@@ -488,7 +523,7 @@ export function ChartContainer({
     seed[0],
     seed[1],
   ]);
-  const uncontrolled = panZoom && onTimeRangeChange === undefined;
+  const uncontrolled = interactive && onTimeRangeChange === undefined;
   // While the internal view isn't in use (not uncontrolled), keep it synced to
   // the prop — so *entering* uncontrolled pan/zoom (toggling panZoom on, or a
   // controlled→uncontrolled switch) starts from the current range, not the
@@ -512,10 +547,18 @@ export function ChartContainer({
   useLayoutEffect(() => {
     onRangeRef.current = onTimeRangeChange;
   });
+  // Latest `bounds` in a ref too, so `applyRange` clamps to the current extent
+  // while staying identity-stable (it's a frame field + a gesture callback dep).
+  const boundsRef = useRef(bounds);
+  useLayoutEffect(() => {
+    boundsRef.current = bounds;
+  });
   const applyRange = useCallback((range: [number, number]) => {
+    const b = boundsRef.current;
+    const next = b ? clampToBounds(range, b) : range;
     const cb = onRangeRef.current;
-    if (cb) cb(range);
-    else setInternalRange(range);
+    if (cb) cb(next);
+    else setInternalRange(next);
   }, []);
 
   // Cross-row tracker. We store the cursor's plot-pixel x (not a timestamp), so a
@@ -1135,7 +1178,8 @@ export function ChartContainer({
       discontinuities: xDiscontinuities,
       grid,
       sessionDividers,
-      panZoom,
+      panEnabled,
+      zoomEnabled,
       minDuration,
       applyRange,
       registerGutter,
@@ -1196,7 +1240,8 @@ export function ChartContainer({
       xDiscontinuities,
       grid,
       sessionDividers,
-      panZoom,
+      panEnabled,
+      zoomEnabled,
       minDuration,
       applyRange,
       registerGutter,
