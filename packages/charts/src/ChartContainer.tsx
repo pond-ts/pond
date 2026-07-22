@@ -20,6 +20,8 @@ import { Sequence, BoundedSequence } from 'pond-ts';
 import type { Interval, TimeRange } from 'pond-ts';
 import {
   ContainerContext,
+  CursorContext,
+  type CursorFrame,
   type AnnotationKind,
   type AnnotationSpec,
   type ContainerFrame,
@@ -1044,6 +1046,19 @@ export function ChartContainer({
     [d0, d1],
   );
 
+  // The per-move cursor state, split into its own context so a mousemove
+  // re-identifies only this small object — not the ~50-field frame below, which
+  // stays stable across hovers so `YAxis` / `Bar` / `Box` don't re-render. See
+  // [PND-HOVCTX] / {@link CursorContext}.
+  const cursorFrame = useMemo<CursorFrame>(
+    () => ({
+      cursorX,
+      cursorY: hoverPoint?.y ?? null,
+      cursorRowKey: hoverPoint?.rowKey ?? null,
+    }),
+    [cursorX, hoverPoint],
+  );
+
   const frame = useMemo<ContainerFrame>(
     () => ({
       timeRange: timeRangeTuple,
@@ -1055,10 +1070,7 @@ export function ChartContainer({
       leftGutter,
       rightGutter,
       rowGap,
-      cursorX,
       setHoverX,
-      cursorY: hoverPoint?.y ?? null,
-      cursorRowKey: hoverPoint?.rowKey ?? null,
       setHoverY,
       crosshairSnap,
       cursorBuckets,
@@ -1120,8 +1132,6 @@ export function ChartContainer({
       leftGutter,
       rightGutter,
       rowGap,
-      cursorX,
-      hoverPoint,
       setHoverY,
       crosshairSnap,
       cursorBuckets,
@@ -1177,21 +1187,23 @@ export function ChartContainer({
 
   return (
     <ContainerContext.Provider value={frame}>
-      <div style={{ width: `${width}px` }}>
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: `${rowGap}px`,
-            // The positioned ancestor for overlay chrome (`<Legend>`): the
-            // card anchors to the rows block, never the axis strip below.
-            position: 'relative',
-          }}
-        >
-          {children}
+      <CursorContext.Provider value={cursorFrame}>
+        <div style={{ width: `${width}px` }}>
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: `${rowGap}px`,
+              // The positioned ancestor for overlay chrome (`<Legend>`): the
+              // card anchors to the rows block, never the axis strip below.
+              position: 'relative',
+            }}
+          >
+            {children}
+          </div>
+          {showAxis && <TimeAxis />}
         </div>
-        {showAxis && <TimeAxis />}
-      </div>
+      </CursorContext.Provider>
     </ContainerContext.Provider>
   );
 }

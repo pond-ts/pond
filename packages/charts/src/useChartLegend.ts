@@ -1,8 +1,10 @@
 import { useContext, useMemo } from 'react';
 import {
   ContainerContext,
+  CursorContext,
   RowContext,
   type ContainerFrame,
+  type CursorFrame,
 } from './context.js';
 import type { SelectInfo } from './context.js';
 import {
@@ -113,6 +115,7 @@ export function swatchColor(s: SwatchSpec): string {
  *  omit it for the whole container. */
 export function buildChartLegend(
   container: ContainerFrame,
+  cursor: CursorFrame,
   rowKey?: symbol,
 ): ChartLegend {
   const scoped = Array.from(container.legendItems.values()).filter(
@@ -139,10 +142,10 @@ export function buildChartLegend(
   // The cursor pixel → axis units, exactly as the tracker fan-in resolves it
   // (in-bounds guard included, so an off-plot cursor reads as "no cursor").
   const cursorTime =
-    container.cursorX !== null &&
-    container.cursorX >= 0 &&
-    container.cursorX <= container.plotWidth
-      ? +container.xScale.invert(container.cursorX)
+    cursor.cursorX !== null &&
+    cursor.cursorX >= 0 &&
+    cursor.cursorX <= container.plotWidth
+      ? +container.xScale.invert(cursor.cursorX)
       : null;
   return {
     rows,
@@ -193,10 +196,11 @@ export function useChartLegend(): ChartLegend {
   if (container === null) {
     throw new Error('useChartLegend() must be used inside a <ChartContainer>');
   }
+  const cursor = useContext(CursorContext);
   // A RowContext in scope (rendered inside a <Layers>) narrows to that row.
   const rowKey = useContext(RowContext)?.rowKey;
   return useMemo(
-    () => buildChartLegend(container, rowKey),
-    [container, rowKey],
+    () => buildChartLegend(container, cursor, rowKey),
+    [container, cursor, rowKey],
   );
 }

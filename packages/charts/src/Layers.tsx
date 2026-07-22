@@ -28,6 +28,7 @@ import {
 import { flagChipStyle, flagChipX, axisPillX, axisPillStyle } from './chip.js';
 import {
   ContainerContext,
+  CursorContext,
   LayersContext,
   RowContext,
   type LayerRegistry,
@@ -104,6 +105,9 @@ export function Layers({ children }: LayersProps) {
   if (container === null) {
     throw new Error('<Layers> must be rendered inside a <ChartContainer>');
   }
+  // Per-move cursor state (own context, so this overlay re-renders on hover
+  // without re-identifying the container frame — [PND-HOVCTX]).
+  const cursor = useContext(CursorContext);
   const row = useContext(RowContext);
   if (row === null) {
     throw new Error('<Layers> must be rendered inside a <ChartRow>');
@@ -325,7 +329,8 @@ export function Layers({ children }: LayersProps) {
   // pointer is over — syncs the cursor across every row for free. cursorX is a
   // *pixel*, so it stays put while a live window slides; the time + values under
   // it derive from the current xScale.
-  const { cursorX, cursorTime: showCursorTime, formatTime } = container;
+  const { cursorTime: showCursorTime, formatTime } = container;
+  const { cursorX } = cursor;
   // Cursor mode: the row's override, else the container default. One mode per
   // row (the synced vertical line is shared across rows); each layer renders the
   // mode in its own way. `parts` decomposes it into {line, dots, chip}.
@@ -882,8 +887,8 @@ export function Layers({ children }: LayersProps) {
     side: 'left' | 'right';
   } | null = (() => {
     if (parts.chip !== 'axis' || !cursorInBounds) return null;
-    const hoveredRow = container.cursorRowKey === row.rowKey;
-    const cy = container.cursorY;
+    const hoveredRow = cursor.cursorRowKey === row.rowKey;
+    const cy = cursor.cursorY;
     if (container.crosshairSnap) {
       if (trackerSamples.length === 0) return null;
       const pick =
@@ -891,7 +896,7 @@ export function Layers({ children }: LayersProps) {
           ? trackerSamples.reduce((a, b) =>
               Math.abs(b.py - cy) < Math.abs(a.py - cy) ? b : a,
             )
-          : container.cursorRowKey === null
+          : cursor.cursorRowKey === null
             ? trackerSamples[0]!
             : null;
       return pick
