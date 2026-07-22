@@ -13,11 +13,11 @@ the trading-time axis, and the categorical axis Phase 1. The package is
 **published** (`@pond-ts/charts` on npm, `private: false`); what remains is
 landing the built-but-unmerged work, Phase-2 slices of the adopted RFCs, the
 M5 parity gate for the stable / estela-parity milestone, and the perf backlog
-from the 2026-07 external bench. Three draw-path levers have **shipped**
+from the 2026-07 external bench. The draw-path levers have **shipped**
 (**[PND-AFFINE]** affine draw fast path, **[PND-GRADX]** gradient-extent cache,
-**[PND-DECKEY]** y-only decimation cache); **[PND-MARKDEC]** (decimate
-scatter/bars) remains on the draw path, plus **[PND-HOVCTX]** on the hover
-path, in measured-leverage order (notes:
+**[PND-DECKEY]** y-only decimation cache, **[PND-MARKDEC]** bar-column
+decimation — with its scatter half deferred, see below); **[PND-HOVCTX]** on the
+hover path remains (notes:
 [charts-bench-vs-scichart-suite-2026-07.md](../notes/charts-bench-vs-scichart-suite-2026-07.md),
 [charts-bench-vs-uplot-2026-07.md](../notes/charts-bench-vs-uplot-2026-07.md)).
 
@@ -212,19 +212,72 @@ measured target); band / candle / box decimation has the same y-independence
 and can adopt the same helper later (mechanical follow-up, not built here).
 `decimateM4Cached` is a non-public export ⇒ no API.md change.
 
-### [PND-MARKDEC] — Decimate scatter marks and bar columns
+### [PND-MARKDEC] — Decimate bar columns (bars DONE; scatter deferred)
 
-**Source:** same run, finding 4. The suite's point-update and column
-categories fall off exactly where line/area/candle don't (point y-update:
-pond 18.1 fps @ 100k vs uPlot 37.4; column dead by 5M) — Scatter and Bar are
-the two marks with no decimation path. Shape, following the shipped
-decimator conventions (auto-on, `decimate` opt-out, interaction reads the
-source — §2.3): **scatter** = M4-for-marks, per-pixel-column min/max
-representative points; **bars** = per-column envelope once a bar's slot is
-narrower than ~1px (consistent with candle/box's visible-count gating).
-Extends the [PND-DECIM] wave to the last undecimated marks. Note the
-point-update group also pays a full per-frame `fromColumns` rebuild —
-data-side cost, out of scope here. Perf-check protocol applies.
+**Source:** same run, finding 4. The suite's point-update and column categories
+fall off exactly where line/area/candle don't (point y-update: pond 18.1 fps @
+100k vs uPlot 37.4; column dead by 5M) — Scatter and Bar were the two marks with
+no decimation path. **Bars shipped; scatter deferred** (reasoning below). The
+task is closed at bars — reopen scatter only when a real consumer hits dense-
+scatter draw cost.
+
+**Bars — DONE ([Unreleased]).** `<BarChart decimate>` (default `true`): once the
+visible **single-series** bars exceed ~2 per device pixel (each slot < ~1px),
+`drawBars` replaces them with one **envelope rect per pixel column** — the exact
+painted union `[min(value, baseline), max(value, baseline)]` (`decimateBars`,
+`src/decimate.ts`, the interval-mark analog of `decimateBand`, widened to the
+baseline every bar reaches). Gated on the **visible** count (a bar's width is its
+slot — the candle/box trap). The decimated pass draws the flat `fill` only —
+aggregate columns aren't individually selectable, so per-bar selection/hover
+highlight is suppressed when decimated (a <1px ring isn't visible anyway);
+interaction still reads the **source** bars via `barAt` (§2.3). `drawBars` now
+returns `LayerDrawStats` (`onDrawStats`). **No-op for stacked / multi-group**
+histograms (low-count categorical). **Verified:** `decimateBars` envelope math +
+gating unit tests; `drawBars` decimated-path tests (W rects, stats,
+highlight-suppressed); visual — the `Decimation/Bars` vs `BarsOff` stories render
+**identically** at 100k. **Perf** (`scripts/perf-markdec.mjs`, JS-only): 5M bars
+485 → 26 ms (18.9×), 100k 9.7 → 0.9 ms (10.7×); the rasterization win (N filled
+rects → ~W) is browser-side on top. `decimateBars` / `BarColumnEnvelope` are
+non-public ⇒ no API.md change.
+
+**Deferred design note:** the envelope ignores per-bar `gapPx` and tiles the
+column (a few-px gap is invisible at <1px bars); a column with horizontal gaps
+between sparse bars would over-fill — accepted (the decimation-at-density
+tradeoff). Bars binned by `begin` key (begin/end share a column at density).
+
+**Scatter — DEFERRED (gated on a real driver).** Decided 2026-07-22 not to
+build it now; the payoff is small and the _correct_ algorithm is a different,
+messier one than the earlier sketch assumed. The reasoning (record, so it isn't
+re-litigated blind):
+
+- **The earlier sketch was wrong for a real scatter.** "M4-for-marks: per-x-column
+  argmin-y / argmax-y representatives" is a **1D** decimation — it keeps only the
+  top and bottom point of each pixel column. That reproduces the picture only when
+  the scatter is a **noisy signal over sorted x** (one y-ish per x — the SciChart
+  "point series, sorted, updating y" test, where the column min/max is just the
+  fuzzy-band envelope, same as line M4). For a genuine **2D cloud** (many marks
+  stacked at one x — a value-axis strike/IV scatter, returns-vs-returns) it
+  collapses the whole vertical distribution to two dots and looks nothing like the
+  data — i.e. wrong for exactly the case that makes a scatter a scatter.
+- **The correct general form is a radius-aware 2D occupancy grid.** Bin points into
+  pixel cells sized ~the marker **diameter** (radius is load-bearing: two centres
+  within ~2r are one visual blob), draw one representative per occupied cell. That
+  dedupes the actual cost — **overplotting** (at 100k marks with r≈3 on ~800×260,
+  most draws paint already-covered pixels) — in O(N) build / O(occupied ≤ cells)
+  draw. But it carries costs the line/bar decimators don't: **encoding loss** (which
+  point's colour/radius wins a cell — lossy for a colour-encoded scatter, the whole
+  reason scatter draws per-index), **selection/labels** need a separate pass (a
+  selected point may not be a cell rep), and it's a **new algorithm** not shared
+  with the M4 machinery (own test surface, less code leverage).
+- **Lowest leverage of the four levers.** The measured category (point y-update) is
+  dominated by the per-frame `fromColumns` **rebuild** (data-side — [PND-LIVELYR] /
+  the columnar-output items), not the marker draw, so even a perfect occupancy grid
+  lifts only part of it. And no consumer has reported dense-scatter draw pain — the
+  finding is synthetic-bench-only.
+
+**When a driver arrives**, first classify their scatter: noisy-monotone-signal
+(the cheap per-column envelope suffices) vs true 2D cloud (needs the occupancy
+grid). That fork decides the build; don't pre-commit to either now.
 
 ### [PND-HOVCTX] — Split cursor position out of the container context
 

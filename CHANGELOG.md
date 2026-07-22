@@ -93,6 +93,22 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts:** **`<BarChart decimate>` — dense column charts now decimate**
+  (PND-MARKDEC; 2026-07 profile, finding 4 — "column dead by 5M"). **Default
+  `true`**: once the visible **single-series** bars are denser than ~2 per device
+  pixel (each slot < ~1px), they're drawn as one per-column **envelope** rect —
+  the exact painted union `[min(value, baseline), max(value, baseline)]` of each
+  pixel column — instead of every bar, so a 100k–5M-bar column chart stays
+  interactive. **Visually lossless** at that density (a perf knob, not a style);
+  interaction still reads the source bars (`barAt`), and the per-bar
+  selection/hover highlight is suppressed only when decimated (a <1px bar's ring
+  isn't visible anyway). `decimate={false}` draws every bar; `{ threshold }`
+  tunes the samples-per-pixel factor. No-op for a stacked / multi-group
+  histogram (the low-count categorical path). `drawBars` now returns
+  `LayerDrawStats` (visible via `onDrawStats`). Measured
+  (`scripts/perf-markdec.mjs`, JS-only): the bar draw at 5M points drops
+  485 → 26 ms (18.9×), 100k drops 9.7 → 0.9 ms (10.7×) — with the larger
+  rasterization win on top, browser-side.
 - **charts:** **`panZoom` is now a three-way mode + a `bounds` extent.**
   `<ChartContainer panZoom>` takes `'none'` / `'pan'` / `'panZoom'` (drag-only
   vs. drag+wheel), with the old boolean kept as shorthand (`true` ⇒ `'panZoom'`,

@@ -47,7 +47,13 @@
  */
 
 import { Float64Column } from 'pond-ts';
-import type { ChartSeries, BandSeries, OhlcSeries, BoxSeries } from './data.js';
+import type {
+  ChartSeries,
+  BandSeries,
+  OhlcSeries,
+  BoxSeries,
+  BarSeries,
+} from './data.js';
 import type { Scale } from './line.js';
 import { scaleDomain, cullChartSeries } from './culling.js';
 
@@ -667,4 +673,88 @@ export function decimateBox(
     ...(box.hasBox !== undefined ? { hasBox: box.hasBox } : {}),
     ...(box.hasMedian !== undefined ? { hasMedian: box.hasMedian } : {}),
   };
+}
+
+/**
+ * One filled **envelope rect per device-pixel column** — the decimated form of a
+ * {@link BarSeries} ({@link decimateBars}). Each column `b` spans `[begin[b],
+ * end[b]]` in key space and fills the value range `[lo[b], hi[b]]`, i.e. the union
+ * of every bar in that column (their tops range over `[min, max]`, and each bar
+ * also reaches the baseline — so the union is `[min(minValue, baseline),
+ * max(maxValue, baseline)]`). An empty column carries `NaN` on `lo`/`hi` and draws
+ * nothing.
+ */
+export interface BarColumnEnvelope {
+  readonly begin: Float64Array;
+  readonly end: Float64Array;
+  readonly lo: Float64Array;
+  readonly hi: Float64Array;
+  readonly length: number;
+}
+
+/**
+ * Decimate a {@link BarSeries} to **one envelope rect per device-pixel column**
+ * ([PND-MARKDEC]) — the interval-mark analog of {@link decimateBand}, for the
+ * "column chart, dense in x" case (SciChart-suite finding 4: a bar column has no
+ * decimation path, so it falls off where line/area/candle don't). Once each bar's
+ * slot is narrower than ~1px (the visible bars exceed `k ×` the device-pixel
+ * column count), the individual rects overplot into a solid silhouette; this
+ * replaces them with the exact painted union: per column, `lo = min(minValue,
+ * baseline)` and `hi = max(maxValue, baseline)` — the bars' value range widened
+ * to include the baseline every bar reaches. Drawing one rect `[begin, end] ×
+ * [lo, hi]` per column reproduces that silhouette from O(W) rects instead of
+ * O(visible).
+ *
+ * Gates on the **visible** bar count (`visibleCount`, a bar's width is its slot —
+ * decimating a handful of deep-zoomed bars would render 1px slivers, the same
+ * trap the candle / box paths gate against). Returns `null` when decimation
+ * doesn't apply (below the visible-density threshold, domainless / non-invertible
+ * scale, no canvas width) — the caller then draws every visible bar. Bars are
+ * binned by their **`begin`** key (at this density `begin`/`end` sit in the same
+ * column); the envelope ignores per-bar `gapPx` and tiles the column (a few-px
+ * gap is invisible at <1px bars anyway — the standard decimation tradeoff).
+ * `baseline` is the resolved bar baseline in **value** units (from
+ * `resolveBarBaseline`), so the union is honest about the zero line.
+ */
+export function decimateBars(
+  cs: BarSeries,
+  xScale: Scale,
+  ctx: CanvasRenderingContext2D,
+  baseline: number,
+  k = 2,
+  visibleCount = cs.length,
+): BarColumnEnvelope | null {
+  if (!shouldDecimateCount(visibleCount, ctx, k)) return null;
+  const dom = scaleDomain(xScale);
+  if (dom === null || dom[1] <= dom[0]) return null;
+  const invert = scaleInvert(xScale);
+  const plotWidthCss = scaleRangeWidth(xScale);
+  if (invert === null || plotWidthCss === null) return null;
+  const W = deviceBucketCount(ctx);
+  const edges = pixelEdges(invert, plotWidthCss, W);
+  // Per-column min/max of the bar values, binned by the bar's begin key — two O(n)
+  // walks, like decimateBand. An empty column reduces to NaN on both.
+  const col = new Float64Column(cs.y, cs.length);
+  const vMin = col.binBy(cs.begin, edges, 'min');
+  const vMax = col.binBy(cs.begin, edges, 'max');
+  const begin = new Float64Array(W);
+  const end = new Float64Array(W);
+  const lo = new Float64Array(W);
+  const hi = new Float64Array(W);
+  for (let b = 0; b < W; b += 1) {
+    begin[b] = edges[b]!;
+    end[b] = edges[b + 1]!;
+    const mn = vMin[b]!;
+    if (Number.isFinite(mn)) {
+      // Widen to the baseline so the rect spans exactly the painted union (each
+      // bar reaches the baseline). One-signed data ⇒ one edge is the baseline ⇒
+      // the rect is the tallest bar, unchanged.
+      lo[b] = Math.min(mn, baseline);
+      hi[b] = Math.max(vMax[b]!, baseline);
+    } else {
+      lo[b] = NaN; // empty column — drawBars skips it
+      hi[b] = NaN;
+    }
+  }
+  return { begin, end, lo, hi, length: W };
 }

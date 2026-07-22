@@ -9,6 +9,7 @@ import { AreaChart } from './AreaChart.js';
 import { BandChart } from './BandChart.js';
 import { Candlestick } from './Candlestick.js';
 import { BoxPlot } from './BoxPlot.js';
+import { BarChart } from './BarChart.js';
 import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
 import type { DrawStatsFrame } from './context.js';
@@ -414,6 +415,59 @@ export const BoxesOff: Story = {
             axis="p"
             decimate={false}
           />
+        </Layers>
+      </ChartRow>
+      <XAxis />
+    </ChartContainer>
+  ),
+};
+
+/**
+ * A dense single-series **column chart** — `n` unit bars of a random-walk value
+ * (straddling the zero baseline), so each pixel column's envelope shows both a
+ * positive and a negative reach (the min/max union the decimator draws).
+ */
+function bigBars(n: number) {
+  const rows: Array<[number, number]> = new Array(n);
+  let prev = 0;
+  for (let i = 0; i < n; i += 1) {
+    prev += 3 * Math.sin(i / 999) + 2 * Math.sin(i / 3.3);
+    rows[i] = [BASE + i * STEP, prev];
+  }
+  return new TimeSeries({
+    name: 'cols',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'v', kind: 'number' },
+    ] as const,
+    rows,
+  });
+}
+const barSeries = bigBars(100_000);
+
+/** ~100k bars auto-decimated to one per-pixel-column **envelope** rect (the
+ *  `[min, max]` union widened to the baseline) — the column analog of `Boxes`. */
+export const Bars: Story = {
+  render: () => (
+    <ChartContainer width={720} theme={docsTheme} panZoom>
+      <ChartRow height={260}>
+        <Layers>
+          <BarChart series={barSeries} column="v" as="power" />
+        </Layers>
+      </ChartRow>
+      <XAxis />
+    </ChartContainer>
+  ),
+};
+
+/** The same ~100k bars with decimation OFF — every bar at its own <1px slot
+ *  (sub-pixel mush, the reason column decimation is the default). */
+export const BarsOff: Story = {
+  render: () => (
+    <ChartContainer width={720} theme={docsTheme} panZoom>
+      <ChartRow height={260}>
+        <Layers>
+          <BarChart series={barSeries} column="v" as="power" decimate={false} />
         </Layers>
       </ChartRow>
       <XAxis />

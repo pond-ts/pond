@@ -2,7 +2,9 @@ import { barSpanPx } from './range.js';
 import type { BarSeries, StackedBarSeries } from './data.js';
 import type { Scale } from './line.js';
 import type { BarStyle } from './theme.js';
+import type { LayerDrawStats } from './context.js';
 import { visibleSpanRange } from './culling.js';
+import { decimateBars, type DecimateOption } from './decimate.js';
 
 /**
  * Bar growth direction — the histogram orientation. `'vertical'` bars grow **up**
@@ -116,6 +118,17 @@ export function barRect(
  *
  * O(N) over the events, one fill (+ optional stroke) per bar, no per-bar
  * allocation beyond the rect tuple.
+ *
+ * **M4 column decimation ([PND-MARKDEC]):** once the *visible* bars are denser
+ * than ~2 per device pixel, they overplot into a solid silhouette, so
+ * `decimate !== false` replaces them with one **envelope rect per pixel column**
+ * ({@link decimateBars} — `[min(value, baseline), max(value, baseline)]`), from
+ * O(W) rects instead of O(visible). Gated on the *visible* count (a bar's width
+ * is its slot). The decimated pass draws the flat `fill` only — the aggregate
+ * columns aren't individually selectable, so per-bar selection/hover highlight is
+ * suppressed (a <1px bar's ring wouldn't be visible anyway); interaction still
+ * reads the **source** bars via {@link barAt} (§2.3). Pass `decimate={false}` to
+ * always draw every bar. Returns {@link LayerDrawStats} for `onDrawStats`.
  */
 export function drawBars(
   ctx: CanvasRenderingContext2D,
@@ -128,15 +141,48 @@ export function drawBars(
   seriesId: string | undefined,
   selection: { key: number; id: string } | null,
   hovered: { key: number; id: string } | null,
-): void {
+  decimate: DecimateOption = true,
+): LayerDrawStats {
   ctx.save();
   ctx.globalAlpha = style.opacity;
+  const sourceCount = cs.length; // pre-cull, pre-decimation (for draw stats)
   // Viewport culling (Phase 2): draw only the bars whose span overlaps the
   // visible x-window (+1 each side). The loop keeps the original index `i`, so
   // the `begin[i]` selection/hover match stays correct; full range when `xScale`
   // has no domain (a test stub). A selected/hovered bar off-screen isn't drawn
   // (its highlight would be off-screen anyway).
   const [vStart, vEnd] = visibleSpanRange(cs.begin, cs.end, cs.length, xScale);
+  // Decimate the visible bars to per-column envelope rects once dense (see the
+  // header). `null` below the visible-density threshold ⇒ the full per-bar loop.
+  // `{ threshold }` tunes the samples-per-pixel factor `k` (as line/area/band do);
+  // `undefined` ⇒ decimateBars' default (2).
+  const k = typeof decimate === 'object' ? decimate.threshold : undefined;
+  const envelope =
+    decimate !== false
+      ? decimateBars(cs, xScale, ctx, baseline, k, vEnd - vStart)
+      : null;
+  if (envelope !== null) {
+    ctx.fillStyle = style.fill;
+    let drawn = 0;
+    for (let b = 0; b < envelope.length; b += 1) {
+      const lo = envelope.lo[b]!;
+      if (!Number.isFinite(lo)) continue; // empty column
+      const [x0, x1] = barSpanPx(
+        envelope.begin[b]!,
+        envelope.end[b]!,
+        xScale,
+        0, // tile the column — a per-bar gapPx is invisible at <1px bars
+        style.minWidth,
+      );
+      const yTop = yScale(envelope.hi[b]!);
+      const yBottom = yScale(lo);
+      ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
+      drawn += 1;
+    }
+    ctx.restore();
+    return { sourceCount, drawnCount: drawn, decimated: true };
+  }
+  let drawn = 0;
   for (let i = vStart; i < vEnd; i += 1) {
     const rect = barRect(
       cs,
@@ -165,6 +211,7 @@ export function drawBars(
       hovered.key === cs.begin[i];
     ctx.fillStyle = selected || isHovered ? style.highlight : style.fill;
     ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
+    drawn += 1;
     if (selected) {
       // The selected bar gets an outline so it reads at full strength over the
       // (alpha'd) fills. Stroke at full opacity (reset within the save bracket).
@@ -176,6 +223,7 @@ export function drawBars(
     }
   }
   ctx.restore();
+  return { sourceCount, drawnCount: drawn, decimated: false };
 }
 
 /**
