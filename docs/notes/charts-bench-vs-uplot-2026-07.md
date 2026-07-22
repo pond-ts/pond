@@ -36,6 +36,15 @@ unaffected by it.
 ¹ Whole-page bundle (a pond app already ships most of it): react+react-dom
 188/58, pond-ts core 344/94, @pond-ts/charts+d3 **149/50**.
 
+> **Raw-data provenance.** The uPlot and Chart.js rows match the committed
+> `results-local.json` exactly. The pond rows are from a same-session run
+> whose raw JSON was not preserved (the committed
+> `results-local-pond-fixed.json` is a later pond-only re-run); against the
+> committed files the deltas are run-to-run noise — chart 10.8 vs 11.8 ms,
+> mm script 408 vs 336 ms, mm max gap 33 vs 24 ms — and **no cross-library
+> ordering changes**. Treat the committed JSONs as the auditable numbers and
+> this table as the session record.
+
 Per-layer draw (onDrawStats): decimate on = 3.3 ms total, 55,550 → 7,280
 points/layer (M4, DPR 1); decimate off = 10.0 ms total, all 55,550 stroked.
 

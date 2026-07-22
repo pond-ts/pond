@@ -50,9 +50,9 @@ uPlot's candle plugin (fillRect per candle) collapses at 50k. In the vendor's
 published table only SciChart/ChartGPU/LCJS survive past 500k; pond joins that
 club as a canvas+React library.
 
-**Mountain (area).** pond at cap through 200k, then 52 @ 500k, 28 @ 1M,
-3.1 @ 10M. uPlot holds cap to 1M and wins the tail (18 @ 10M). SciChart flat
-at cap.
+**Mountain (area).** pond at cap through 100k, then 106 @ 200k, 52 @ 500k,
+28 @ 1M, 3.1 @ 10M. uPlot holds cap to 1M and wins the tail (18 @ 10M).
+SciChart flat at cap.
 
 **Column.** pond ≈ uPlot throughout (23.9 vs 31.8 @ 100k; both ~0.2 @ 5M);
 SciChart flat at cap to 10M.
@@ -122,6 +122,10 @@ costs are per-point constants and one O(N)-per-frame walk:
    reduceFloat64ByBounds + decimateM4). **Fix:** derive the gradient extent
    from the M4 output (M4 preserves per-bucket extremes, so the global min/max
    is exact) or a cached column extent — kills ~half the frame at large N.
+   _(Triage note: M4-derived is exact only when the full series is in view —
+   the M4 buckets cover the visible window, so under x-zoom it would change
+   the gradient's meaning. The [PND-GRADX] write-up prefers the
+   semantics-preserving cached column extent for this reason.)_
 3. **Decimation cache keyed on x-domain** _(→ [PND-DECKEY])_ (series identity,
    x-domain, plot width): still real — the remaining ~19% at mountain@1M
    recomputes an x-only function under y-only invalidation (every y-zoom /
