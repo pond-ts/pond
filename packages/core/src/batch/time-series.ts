@@ -981,15 +981,20 @@ export class TimeSeries<S extends SeriesSchema> {
    * depend on `apache-arrow` — bring your own (`tableFromIPC(...)` /
    * `tableFromArrays(...)`) and hand the `Table` here; the input is duck-typed
    * against the small {@link ArrowTableLike} slice we read. Ingest is the
-   * zero-copy path: every `Float64` column's backing `Float64Array` is adopted
-   * as-is, and the time key is converted **BigInt-free** — Arrow's idiomatic
-   * int64 timestamps are recombined from their two int32 halves rather than
-   * `Number(bigint)` per row (which costs ~30ms at 500k rows).
+   * zero-copy path: every **single-chunk** `Float64` column's backing
+   * `Float64Array` is adopted as-is, and the time key is converted
+   * **BigInt-free** — Arrow's idiomatic int64 timestamps are recombined from
+   * their two int32 halves rather than `Number(bigint)` per row (which costs
+   * ~30ms at 500k rows). A table decoded from a multi-record-batch IPC stream
+   * has multi-chunk columns, whose `toArray()` concatenates into a fresh buffer
+   * — still correct, but a copy rather than an adopt.
    *
    * Column handling:
    * - **Time key** — named by `time` (default: a field named `'time'`).
-   *   Int64/int32/float sources all accepted; scaled to epoch ms from the
-   *   Arrow `Timestamp` unit (or `timeUnit`, default `'millisecond'`).
+   *   Timestamp/int/float/Date sources accepted and normalized to epoch ms: a
+   *   `Timestamp`'s raw-unit int64 is scaled by its `TimeUnit`; a `Date32`/
+   *   `Date64` already arrives as epoch-ms via Arrow's `toArray()` and passes
+   *   through; a plain int/float is taken as ms. `timeUnit` overrides.
    * - **Value columns** — every non-time field by default, or the subset named
    *   by `columns` (in order). Numeric columns (`Float32`/int convert to
    *   `Float64Array`; int64 recombines BigInt-free; nulls → `NaN`) and string

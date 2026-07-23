@@ -43,6 +43,19 @@ function i64(values: ReadonlyArray<bigint | null>): ArrowVectorLike {
 }
 
 /**
+ * Plain number array column — `toArray()` returns an `Array<number>`, the shape
+ * Arrow uses for a normalized `Date32`/`Date64` column (epoch-ms JS numbers).
+ */
+function numArr(values: ReadonlyArray<number | null>): ArrowVectorLike {
+  return {
+    length: values.length,
+    nullCount: values.filter((v) => v === null).length,
+    toArray: () => values.slice(),
+    get: (i) => values[i] ?? null,
+  };
+}
+
+/**
  * String column (Arrow `Utf8`) — `toArray()` returns a plain `Array`, the shape
  * that tells fromArrow to build a `StringColumn`.
  */
@@ -58,8 +71,10 @@ function str(values: ReadonlyArray<string | null>): ArrowVectorLike {
 interface FieldSpec {
   name: string;
   vector: ArrowVectorLike;
-  /** Arrow `TimeUnit` ordinal, set on a timestamp field's type. */
+  /** Arrow `TimeUnit`/`DateUnit` ordinal, set on the field's type. */
   unit?: number;
+  /** Arrow `Type` enum ordinal (Timestamp=10, Date=8), set on the field's type. */
+  typeId?: number;
 }
 
 function table(
@@ -72,7 +87,10 @@ function table(
     schema: {
       fields: specs.map((s) => ({
         name: s.name,
-        type: s.unit === undefined ? {} : { unit: s.unit },
+        type: {
+          ...(s.typeId === undefined ? {} : { typeId: s.typeId }),
+          ...(s.unit === undefined ? {} : { unit: s.unit }),
+        },
       })),
     },
     getChild: (name) => byName.get(name) ?? null,
@@ -169,6 +187,39 @@ describe('TimeSeries.fromArrow', () => {
     expect(ns.at(0)!.key().begin()).toBeCloseTo(1_700_000_000_000, 0);
   });
 
+  it('reads an Arrow Date time key (plain ms number array) unscaled', () => {
+    // Arrow's Date32/Date64 `toArray()` is already normalized to epoch-ms JS
+    // numbers (a plain Array, not a typed array) — so a Date key (typeId 8) is
+    // scale-1 and passes through as ms. (Real Date32/Date64 tables are
+    // exercised end-to-end in from-arrow.arrow.test.ts.)
+    const ms = [1_701_648_000_000, 1_701_734_400_000];
+    const series = build(2, [
+      { name: 'time', vector: numArr(ms), typeId: 8, unit: 0 },
+      { name: 'value', vector: f64([1, 2]) },
+    ]);
+    expect(series.at(0)!.key().begin()).toBe(ms[0]);
+    expect(series.at(1)!.key().begin()).toBe(ms[1]);
+  });
+
+  it('reads a Timestamp field unit as a TimeUnit when typeId says so', () => {
+    // typeId=Timestamp(10), unit=SECOND(0) → raw seconds ×1000.
+    const series = build(1, [
+      { name: 'time', vector: i64([1_700_000_000n]), typeId: 10, unit: 0 },
+      { name: 'value', vector: f64([1]) },
+    ]);
+    expect(series.at(0)!.key().begin()).toBe(1_700_000_000_000);
+  });
+
+  it('recombines a negative (pre-epoch) int64 timestamp correctly', () => {
+    // 1969-12-31T23:59:59Z = -1000 ms. Exercises the signed high word.
+    const series = build(2, [
+      { name: 'time', vector: i64([-1000n, 0n]) },
+      { name: 'value', vector: f64([1, 2]) },
+    ]);
+    expect(series.at(0)!.key().begin()).toBe(-1000);
+    expect(series.at(1)!.key().begin()).toBe(0);
+  });
+
   it('honours an explicit timeUnit over the field-declared unit', () => {
     const series = build(
       1,
@@ -202,6 +253,23 @@ describe('TimeSeries.fromArrow', () => {
     ]);
     expect(series.column('value').at(1)).toBeUndefined();
     expect(col(series, 'value')).toEqual([10, undefined, 30]);
+  });
+
+  it('reads an int64 value column, and maps its nulls to missing', () => {
+    // Dense int64 value column → BigInt-free fast path.
+    const dense = build(3, [
+      { name: 'time', vector: f64([0, 1, 2]) },
+      { name: 'count', vector: i64([10n, 20n, 30n]) },
+    ]);
+    expect(col(dense, 'count')).toEqual([10, 20, 30]);
+
+    // int64 value column with a null → the numericWithNulls slow path (null →
+    // undefined/missing, the surviving values still exact).
+    const withNull = build(3, [
+      { name: 'time', vector: f64([0, 1, 2]) },
+      { name: 'count', vector: i64([10n, null, 30n]) },
+    ]);
+    expect(col(withNull, 'count')).toEqual([10, undefined, 30]);
   });
 
   it('selects a numeric subset (in order) via { columns }', () => {
@@ -302,7 +370,7 @@ describe('TimeSeries.fromArrow', () => {
           { name: 'time', vector: f64([0, 1]) },
           { name: 'tags', vector: listVec },
         ]),
-      ).toThrow(/'tags' has a non-string value/);
+      ).toThrow(/'tags' is neither numeric nor string/);
     });
 
     it('throws on a null in the time key', () => {

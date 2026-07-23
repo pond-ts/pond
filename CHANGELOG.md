@@ -65,8 +65,10 @@ and type-level changes; patch bumps are strictly additive.
   `Number(bigint)` per row — measured **~11× faster** on the time column (0.6ms
   vs 6.8ms at 500k rows; `scripts/perf-from-arrow.mjs`). Options: `time` (key
   column, default the `'time'` field), `timeUnit` (default read from the Arrow
-  `Timestamp` unit, else `'millisecond'`), `columns` (subset, in order), `name`,
-  `sort`. Numeric **and string** columns are supported — string columns (Arrow
+  Arrow type family — a `Timestamp`'s raw-unit int64 is scaled by its
+  `TimeUnit`; `Date32`/`Date64` arrive already normalized to epoch-ms and pass
+  through; overridable), `columns` (subset, in order), `name`, `sort`. Numeric
+  **and string** columns are supported — string columns (Arrow
   `Utf8`) become dict-encoded `StringColumn`s; any other Arrow type
   (list/struct) throws, naming it. A null time key throws; numeric nulls map to
   `NaN` and string nulls to missing.

@@ -31,9 +31,10 @@ export type RawColumns = Record<
  * (`'number'` → `Float64Column`, `null`/`undefined`/non-finite → `NaN` gap;
  * `'string'` → `StringColumn` via the shared dict-encode heuristic,
  * `null`/`undefined` → missing) — and differ only in the key column they mint
- * (`TimeKeyColumn` vs `ValueKeyColumn`) and the words their errors use. `op` prefixes every message (so a throw names
- * the door the caller went through) and `keyNoun` names the key in the
- * out-of-order error (`timestamps` / `axis values`).
+ * (`TimeKeyColumn` vs `ValueKeyColumn`) and the words their errors use. `op`
+ * prefixes every message (so a throw names the door the caller went through)
+ * and `keyNoun` names the key in the out-of-order error
+ * (`timestamps` / `axis values`).
  *
  * `makeKey` runs **before** the ordering scan, matching the original inline
  * order of checks: a non-finite key fails in the key-column constructor first,
@@ -144,6 +145,19 @@ export function ingestColumnsToStore(input: {
       // `stringColumnFromArray`). `null`/`undefined` are missing. When sorting,
       // reorder into a fresh array through the key permutation first — strings
       // are heap objects, so there's no zero-copy story to preserve anyway.
+      //
+      // The `columns` input type isn't correlated per-column with the schema
+      // kind (one `RawColumns` union covers both), so a numeric typed array can
+      // reach a `'string'` column at the type level. Reject that clear mismatch
+      // loudly rather than stringifying numbers — the caller crossed the schema
+      // wires. (A plain `number[]` handed to a string column is still trusted;
+      // per-cell kind-checking isn't worth the hot-path cost.)
+      if (ArrayBuffer.isView(raw)) {
+        throw new ValidationError(
+          `${op}: string column '${def.name}' must be a string[] — got a ` +
+            `typed array (a numeric buffer can't back a string column)`,
+        );
+      }
       const rawStrings = raw as ReadonlyArray<string | null | undefined>;
       let source: ReadonlyArray<string | null | undefined>;
       if (order !== null) {
