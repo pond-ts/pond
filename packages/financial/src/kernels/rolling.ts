@@ -59,13 +59,12 @@ export function rollingColumns(
     specs as AggregateOutputMap<SeriesSchema>,
     { minSamples: period },
   );
-  const events = rolled.events;
   const out: Record<string, Array<number | undefined>> = {};
   for (const name of Object.keys(specs)) {
-    out[name] = events.map((event) => {
-      const v = (event.data() as Record<string, unknown>)[name];
-      return typeof v === 'number' ? v : undefined;
-    });
+    // Read the result column directly off the columnar store — materializing
+    // `rolled.events` costs ~50× the whole rolling scan at 1M rows (one Event
+    // + one data object per row) for what is a single numeric column read.
+    out[name] = readNumericColumn(rolled, name);
   }
   return out;
 }
@@ -93,10 +92,33 @@ export function columnValues(
   series: TimeSeries<SeriesSchema>,
   column: string,
 ): Array<number | undefined> {
-  return series.events.map((event) => {
-    const v = (event.data() as Record<string, unknown>)[column];
-    return typeof v === 'number' ? v : undefined;
-  });
+  return readNumericColumn(series, column);
+}
+
+/**
+ * Row-aligned `(number | undefined)[]` read of one numeric column via the
+ * public column API — no `series.events` materialization (an Event + data
+ * object per row), which dominated study cost on large series. A column
+ * that doesn't exist, or a non-number cell, reads as `undefined` — the same
+ * values the old `event.data()[column]` walk produced.
+ */
+function readNumericColumn(
+  series: TimeSeries<SeriesSchema>,
+  column: string,
+): Array<number | undefined> {
+  const col = series.column(
+    column as Parameters<TimeSeries<SeriesSchema>['column']>[0],
+  ) as { at(i: number): unknown } | undefined;
+  const length = series.length;
+  const values = new Array<number | undefined>(length);
+  if (col === undefined) {
+    return values.fill(undefined);
+  }
+  for (let i = 0; i < length; i += 1) {
+    const v = col.at(i);
+    values[i] = typeof v === 'number' ? v : undefined;
+  }
+  return values;
 }
 
 /** Row-aligned `period`-span EMA values over `column` (`α = 2/(period+1)`),

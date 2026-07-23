@@ -51,6 +51,32 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **core / financial:** **Market-scale studies are now typed-array fast**
+  (the "SMA/EMA at 1M bars costs hundreds of ms" report). Three cuts along
+  the same path, all behaviour-preserving (identical values, warm-ups,
+  missing-cell semantics, and rejection errors; every fast path falls back
+  to the original sweep when it doesn't apply):
+  - **`smooth('ema')` columnar fast path** — on a packed numeric source
+    column the EMA recurrence runs straight off the typed buffer into a
+    typed result column via trusted construction (key + untouched columns
+    pass through zero-copy), replacing the per-row Event/tuple rebuild +
+    full-series intake re-pack. 1M rows: **530 ms → 4.4 ms (~120×)**.
+  - **`rolling({ count })` numeric fast path** — an all-built-in numeric
+    mapping over packed sources feeds the shared incremental reducer states
+    directly from the typed buffers and writes snapshots into typed columns
+    (no per-row snapshot arrays, no boxed accumulators, no post-pass
+    assert/re-pack). 1M rows, `avg`: **135 ms → 32 ms (~4×)**.
+  - **financial kernel reads columns, not events** — `rollingColumns` /
+    `columnValues` now read study inputs/outputs off the public column API
+    instead of materializing `series.events` (an Event + data object per
+    row, ~400 ms of pure overhead at 1M rows).
+  - End-to-end at 1M bars: `ema()` **603 ms → 2.5 ms (~240×)**, `sma()`
+    **569 ms → 56 ms (~10×)**, `bollinger()` **748 ms → 162 ms (~4.6×)**.
+    Durable benchmarks: `packages/core/scripts/perf-smooth-ema.mjs`,
+    `packages/financial/scripts/perf-studies.mjs`.
+
 ### Added
 
 - **charts:** **`<ScatterChart decimate>` — dense scatter plots now decimate**

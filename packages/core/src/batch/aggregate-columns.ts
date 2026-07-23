@@ -1,11 +1,18 @@
-import { resolveReducer } from '../reducers/index.js';
-import type { Column, Float64Column } from '../columnar/index.js';
+import { resolveReducer, rollingStateFor } from '../reducers/index.js';
+import type { Column } from '../columnar/index.js';
+import {
+  Float64Column,
+  bitmapByteCount,
+  validityFromBits,
+} from '../columnar/index.js';
+import { ValidationError } from '../core/errors.js';
 import type {
   AggregateMap,
   AggregateOutputMap,
   AggregateOutputSpec,
   AggregateReducer,
   ColumnValue,
+  RollingAlignment,
   ScalarKind,
   SeriesSchema,
 } from '../schema/index.js';
@@ -245,4 +252,147 @@ export function tryAggregateColumnarTimeKeyed<
     rows[b] = Object.freeze([bucket, ...reduced]);
   }
   return rows;
+}
+
+/**
+ * **Columnar fast path for count-window `rolling()`** — the N-bar window
+ * financial studies compose on (SMA / Bollinger / rolling stats). When every
+ * mapped column is a built-in reducer producing a `'number'` output from a
+ * **packed `Float64Column`** source, the window sweep feeds the shared
+ * incremental rolling states (`rollingStateFor` — the same add / remove /
+ * snapshot arithmetic and non-finite skip policy as the generic path) values
+ * read straight off the typed buffers, and writes each snapshot into a typed
+ * result column. That removes the generic sweep's per-row costs: the
+ * `snapshotWindow` result-array allocation, the boxed accumulator rows, the
+ * polymorphic `col.read(i)` per add/remove, and the post-pass
+ * `assertColumnValuesMatchKind` + re-pack over boxed values (each written
+ * value is finite-asserted inline instead, same rejection class + message).
+ *
+ * Returns `null` — caller takes the generic sweep — when any column doesn't
+ * qualify: a custom-function reducer, a non-`'number'` output kind
+ * (`unique` / `samples` / `keep` over a non-number source / an explicit
+ * `kind` override), or a non-numeric / chunked / missing source column.
+ * All-or-nothing per call, matching {@link tryAggregateColumnarTimeKeyed}.
+ *
+ * Window shape replicates the generic count sweep exactly: rows are the unit
+ * (`count` is a bar count — no equal-key grouping), `lo` / `hi` are monotonic
+ * in the row index for every alignment (each row enters and leaves the window
+ * once, amortized O(1)), a centered even `count` biases one row toward the
+ * leading side, and a row whose window holds fewer than `minSamples` rows
+ * emits missing cells without consulting the reducer states.
+ */
+export function tryRollingCountColumnarNumeric(
+  getColumn: (name: string) => Column | undefined,
+  rowCount: number,
+  columns: ReadonlyArray<AggregateColumnSpec>,
+  count: number,
+  alignment: RollingAlignment,
+  minSamples: number,
+): Float64Column[] | null {
+  const specCount = columns.length;
+  const sources: Float64Column[] = [];
+  for (const spec of columns) {
+    if (typeof spec.reducer !== 'string') return null; // custom function
+    if (spec.kind !== 'number') return null; // non-numeric output kind
+    const source = getColumn(spec.source);
+    if (source === undefined) return null; // missing source
+    if (source.kind !== 'number' || source.storage !== 'packed') {
+      return null; // non-numeric / chunked numeric source
+    }
+    sources.push(source);
+  }
+
+  // An all-finite fully-defined source feeds its reducer state the raw
+  // buffer values, so the `rollingStateFor` non-finite skip wrapper is
+  // provably an identity there — resolve the bare built-in state instead
+  // and drop one call layer from every add / remove / snapshot. Any other
+  // source keeps the wrapped state (same values, same skip policy).
+  const states = columns.map((spec, c) => {
+    const source = sources[c]!;
+    return source.allFinite && source.validity === undefined
+      ? resolveReducer(spec.reducer as string).rollingState()
+      : rollingStateFor(spec.reducer);
+  });
+  const srcValues = sources.map((col) => col._values);
+  const srcValidity = sources.map((col) => col.validity);
+  const outValues = columns.map(() => new Float64Array(rowCount));
+  const outBits = columns.map(() => new Uint8Array(bitmapByteCount(rowCount)));
+  const outDefined = new Array<number>(specCount).fill(0);
+
+  // Feed the states exactly what the generic sweep's `col.read(index)`
+  // yields: `undefined` for a missing cell, the raw (possibly non-finite)
+  // number otherwise — the non-finite skip stays inside the shared state
+  // wrapper so the contributor set can't drift between the two paths.
+  const addAt = (index: number): void => {
+    for (let c = 0; c < specCount; c += 1) {
+      const validity = srcValidity[c];
+      const value =
+        validity === undefined || validity.isDefined(index)
+          ? srcValues[c]![index]!
+          : undefined;
+      states[c]!.add(index, value);
+    }
+  };
+  const removeAt = (index: number): void => {
+    for (let c = 0; c < specCount; c += 1) {
+      const validity = srcValidity[c];
+      const value =
+        validity === undefined || validity.isDefined(index)
+          ? srcValues[c]![index]!
+          : undefined;
+      states[c]!.remove(index, value);
+    }
+  };
+
+  const leftSpan = Math.floor((count - 1) / 2);
+  const rightSpan = count - 1 - leftSpan;
+  let windowStart = 0;
+  let windowEnd = 0;
+  for (let index = 0; index < rowCount; index += 1) {
+    let lo: number;
+    let hi: number;
+    if (alignment === 'trailing') {
+      lo = index - count + 1 < 0 ? 0 : index - count + 1;
+      hi = index;
+    } else if (alignment === 'leading') {
+      lo = index;
+      hi = index + count - 1 < rowCount ? index + count - 1 : rowCount - 1;
+    } else {
+      lo = index - leftSpan < 0 ? 0 : index - leftSpan;
+      hi = index + rightSpan < rowCount ? index + rightSpan : rowCount - 1;
+    }
+    while (windowEnd <= hi) {
+      addAt(windowEnd);
+      windowEnd += 1;
+    }
+    while (windowStart < lo) {
+      removeAt(windowStart);
+      windowStart += 1;
+    }
+    if (windowEnd - windowStart < minSamples) continue; // missing row
+    for (let c = 0; c < specCount; c += 1) {
+      const v = states[c]!.snapshot();
+      if (v === undefined) continue; // missing cell (e.g. all-missing window)
+      if (typeof v !== 'number' || !Number.isFinite(v)) {
+        // Same rejection class + message as the generic path's post-pass
+        // `assertColumnValuesMatchKind` (e.g. a `sum` overflow to Infinity)
+        // — checked at write time since there is no post-pass here.
+        throw new ValidationError(
+          `rolling column '${columns[c]!.output}': result ${String(v)} is not a valid 'number' value`,
+        );
+      }
+      outValues[c]![index] = v;
+      outBits[c]![index >> 3]! |= 1 << (index & 7);
+      outDefined[c] = outDefined[c]! + 1;
+    }
+  }
+
+  return columns.map((_, c) => {
+    const validity =
+      outDefined[c] === rowCount
+        ? undefined
+        : validityFromBits(outBits[c]!, rowCount);
+    // Every written cell was finite-asserted above → `allFinite`.
+    return new Float64Column(outValues[c]!, rowCount, validity, true);
+  });
 }
