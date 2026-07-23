@@ -4,14 +4,22 @@ import {
   type ColumnSchema,
   Float64Column,
   type KeyColumn,
+  stringColumnFromArray,
   validityFromPredicate,
 } from '../../columnar/index.js';
 import { ValidationError } from '../../core/errors.js';
 
-/** The per-column raw input the `fromColumns` doors accept. */
+/**
+ * The per-column raw input the `fromColumns` doors accept. A `'number'` column
+ * is a `number[]` (adopted-if-`Float64Array`); a `'string'` column is a
+ * `string[]` (`null`/`undefined` → missing). The kind is taken from the
+ * matching schema entry — the engine dispatches on it.
+ */
 export type RawColumns = Record<
   string,
-  ReadonlyArray<number | null | undefined> | Float64Array
+  | ReadonlyArray<number | null | undefined>
+  | Float64Array
+  | ReadonlyArray<string | null | undefined>
 >;
 
 /**
@@ -19,10 +27,11 @@ export type RawColumns = Record<
  * `ValueSeries.fromColumns`. Both doors are the same machine — normalize the
  * key column (adopt a `Float64Array` zero-copy, convert a `number[]`),
  * optionally sort by key (stable permutation, disables adoption), enforce the
- * non-decreasing-key invariant, pack each `'number'` value column
- * (`null`/`undefined` → `NaN`, one gap rule for both input types) — and differ
- * only in the key column they mint (`TimeKeyColumn` vs `ValueKeyColumn`) and
- * the words their errors use. `op` prefixes every message (so a throw names
+ * non-decreasing-key invariant, pack each value column by its schema kind
+ * (`'number'` → `Float64Column`, `null`/`undefined`/non-finite → `NaN` gap;
+ * `'string'` → `StringColumn` via the shared dict-encode heuristic,
+ * `null`/`undefined` → missing) — and differ only in the key column they mint
+ * (`TimeKeyColumn` vs `ValueKeyColumn`) and the words their errors use. `op` prefixes every message (so a throw names
  * the door the caller went through) and `keyNoun` names the key in the
  * out-of-order error (`timestamps` / `axis values`).
  *
@@ -109,13 +118,15 @@ export function ingestColumnsToStore(input: {
     }
   }
 
-  // Value columns — packed directly (missing-aware) from the arrays.
+  // Value columns — packed directly (missing-aware) from the arrays,
+  // dispatched by the schema kind.
   const columnMap = new Map<string, ColumnarColumn>();
   for (let i = 1; i < schema.length; i += 1) {
     const def = schema[i]!;
-    if (def.kind !== 'number') {
+    if (def.kind !== 'number' && def.kind !== 'string') {
       throw new ValidationError(
-        `${op}: v1 supports 'number' value columns; column '${def.name}' is '${def.kind}'`,
+        `${op}: supports 'number' and 'string' value columns; column ` +
+          `'${def.name}' is '${def.kind}'`,
       );
     }
     const raw = columns[def.name];
@@ -127,6 +138,25 @@ export function ingestColumnsToStore(input: {
         `${op}: column '${def.name}' length ${raw.length} does not match key length ${count}`,
       );
     }
+
+    if (def.kind === 'string') {
+      // String column → StringColumn (dict-encoded when it pays; see
+      // `stringColumnFromArray`). `null`/`undefined` are missing. When sorting,
+      // reorder into a fresh array through the key permutation first — strings
+      // are heap objects, so there's no zero-copy story to preserve anyway.
+      const rawStrings = raw as ReadonlyArray<string | null | undefined>;
+      let source: ReadonlyArray<string | null | undefined>;
+      if (order !== null) {
+        const reordered = new Array<string | null | undefined>(count);
+        for (let j = 0; j < count; j += 1) reordered[j] = rawStrings[order[j]!];
+        source = reordered;
+      } else {
+        source = rawStrings;
+      }
+      columnMap.set(def.name, stringColumnFromArray(source));
+      continue;
+    }
+
     // Normalize to a Float64Array either way — adopt if already typed (the
     // fast path a protobuf / fixed-point decoder hits, zero-copy), else
     // convert (`null`/`undefined` -> `NaN`) — then apply ONE validity rule
@@ -139,26 +169,29 @@ export function ingestColumnsToStore(input: {
     // array type decoded it.
     // Manual loop, not `Float64Array.from(arr, mapFn)` — see the key-column
     // comment above; the cost applies identically here.
+    const numeric = raw as
+      | ReadonlyArray<number | null | undefined>
+      | Float64Array;
     let values: Float64Array;
     if (order !== null) {
       // Sorting: reorder into a fresh buffer through the key permutation (no
       // zero-copy adoption — the rows are being moved). Same missing rule
       // (`null`/`undefined` → NaN) applied while remapping.
       values = new Float64Array(count);
-      if (raw instanceof Float64Array) {
-        for (let j = 0; j < count; j += 1) values[j] = raw[order[j]!]!;
+      if (numeric instanceof Float64Array) {
+        for (let j = 0; j < count; j += 1) values[j] = numeric[order[j]!]!;
       } else {
         for (let j = 0; j < count; j += 1) {
-          const v = raw[order[j]!];
+          const v = numeric[order[j]!];
           values[j] = v == null ? NaN : v;
         }
       }
-    } else if (raw instanceof Float64Array) {
-      values = raw;
+    } else if (numeric instanceof Float64Array) {
+      values = numeric;
     } else {
       values = new Float64Array(count);
       for (let j = 0; j < count; j += 1) {
-        const v = raw[j];
+        const v = numeric[j];
         values[j] = v == null ? NaN : v;
       }
     }

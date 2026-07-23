@@ -84,10 +84,10 @@ export class ValueSeries<VS extends ValueSeriesSchema> {
    * stable sort every unordered snapshot wants (e.g. a keyed live feed that
    * delivers rows in update order, not axis order).
    *
-   * **v1 scope:** `number` value columns, matching `TimeSeries.fromColumns`.
+   * **Value columns:** `number` and `string`, matching `TimeSeries.fromColumns`.
    *
    * @throws ValidationError on a non-`'value'` axis kind, a missing column, a
-   *   length mismatch, a non-`'number'` value column, or an out-of-order axis
+   *   length mismatch, an unsupported value-column kind, or an out-of-order axis
    *   when `sort` is not set. Throws RangeError on a non-finite
    *   (`null`/`NaN`/`±Infinity`) axis cell — sorting can't make it valid — or
    *   a duplicate column name (the axis name repeated among the value columns).
@@ -97,7 +97,9 @@ export class ValueSeries<VS extends ValueSeriesSchema> {
     schema: VS;
     columns: Record<
       string,
-      ReadonlyArray<number | null | undefined> | Float64Array
+      | ReadonlyArray<number | null | undefined>
+      | Float64Array
+      | ReadonlyArray<string | null | undefined>
     >;
     /**
      * Sort the rows by axis value before construction (off by default), for a
