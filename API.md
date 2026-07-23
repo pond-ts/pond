@@ -38,8 +38,13 @@ before writing code against them.
 | `BoundedSequence`       | Finite ordered list of explicit interval buckets       | `packages/core/src/sequence/bounded-sequence.ts`     |
 
 Static constructors on `TimeSeries`: `fromJSON()` (row tuples/objects),
-`fromColumns()` (struct-of-arrays), `fromEvents()`, `fromPoints()` (wide rows
-with `ts`), `concat()`, `joinMany()`. On `ValueSeries`: `fromColumns()`.
+`fromColumns()` (struct-of-arrays; `number` + `string` value columns),
+`fromArrow()` (bring-your-own Apache Arrow `Table`; zero-copy Float64 adopt +
+BigInt-free int64 time; numeric + `Utf8` string columns), `fromEvents()`,
+`fromPoints()` (wide rows with `ts`), `concat()`, `joinMany()`. On
+`ValueSeries`: `fromColumns()`. Arrow-ingest types (`ArrowTableLike`,
+`ArrowVectorLike`, `ArrowFieldLike`, `ArrowSchemaLike`, `ArrowTimeUnit`,
+`FromArrowOptions`) live in `packages/core/src/batch/operators/from-arrow.ts`.
 
 ### Temporal keys & events
 

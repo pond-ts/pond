@@ -79,6 +79,30 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **core:** **`TimeSeries.fromArrow(table, options?)` — ingest a decoded Apache
+  Arrow `Table`.** pond stays zero-dependency: bring your own Arrow
+  (`tableFromIPC(...)`) and hand the `Table` in; the input is duck-typed against
+  a small structural surface (`ArrowTableLike` / `ArrowVectorLike` / …, all
+  exported). Ingest is the zero-copy path — every `Float64` column's backing
+  `Float64Array` is adopted as-is (`Float32`/int columns convert; int64 value
+  columns recombine BigInt-free), and the schema is derived from the Arrow
+  fields. The time key is converted **BigInt-free**: Arrow's idiomatic int64
+  timestamps are recombined from their two int32 halves rather than
+  `Number(bigint)` per row — measured **~11× faster** on the time column (0.6ms
+  vs 6.8ms at 500k rows; `scripts/perf-from-arrow.mjs`). Options: `time` (key
+  column, default the `'time'` field), `timeUnit` (default read from the Arrow
+  Arrow type family — a `Timestamp`'s raw-unit int64 is scaled by its
+  `TimeUnit`; `Date32`/`Date64` arrive already normalized to epoch-ms and pass
+  through; overridable), `columns` (subset, in order), `name`, `sort`. Numeric
+  **and string** columns are supported — string columns (Arrow
+  `Utf8`) become dict-encoded `StringColumn`s; any other Arrow type
+  (list/struct) throws, naming it. A null time key throws; numeric nulls map to
+  `NaN` and string nulls to missing.
+- **core:** **`TimeSeries.fromColumns` / `ValueSeries.fromColumns` now accept
+  `string` value columns** (previously numeric-only), packed to dict-encoded
+  `StringColumn`s (`null`/`undefined` → missing) — the shared columnar-ingress
+  engine now dispatches on the schema kind. Other value kinds (`boolean`,
+  arrays) still throw.
 - **charts:** **`<ScatterChart decimate>` — dense scatter plots now decimate**
   (PND-MARKDEC scatter half — the last un-decimated mark type). **Default
   `true`.** When the marks are **uniform** (fixed size + colour, no data-driven

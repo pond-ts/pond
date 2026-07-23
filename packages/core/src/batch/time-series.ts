@@ -83,6 +83,11 @@ import {
 import { scanOp, type ScanStep } from './operators/scan.js';
 import { byValueOp } from './operators/by-value.js';
 import { ingestColumnsToStore } from './operators/ingest-columns.js';
+import {
+  arrowToColumns,
+  type ArrowTableLike,
+  type FromArrowOptions,
+} from './operators/from-arrow.js';
 import { ValueSeries } from './value-series.js';
 import { diffRateOp, type DiffRateMode } from './operators/diff-rate.js';
 import { fillOp, type ResolvedFillSpec } from './operators/fill.js';
@@ -916,9 +921,10 @@ export class TimeSeries<S extends SeriesSchema> {
    * — clamp the key column yourself before ingest; the library won't mutate data
    * for you.)
    *
-   * **v1 scope:** a `time`-kind key + `number` value columns (the market-data /
-   * chart wire case). Other key kinds (`interval` / `timeRange`) and non-numeric
-   * value columns throw for now — extend as consumers need.
+   * **Value columns:** `number` (→ `Float64Column`; `Float64Array` adopted) and
+   * `string` (→ `StringColumn`, dict-encoded when it pays; `null`/`undefined`
+   * missing). Other key kinds (`interval` / `timeRange`) and other value kinds
+   * (`boolean` / array) throw for now — extend as consumers need.
    *
    * @throws ValidationError on a missing column, a length mismatch, an
    *   unsupported kind, or an out-of-order (decreasing) timestamp when `sort`
@@ -931,7 +937,9 @@ export class TimeSeries<S extends SeriesSchema> {
     schema: S;
     columns: Record<
       string,
-      ReadonlyArray<number | null | undefined> | Float64Array
+      | ReadonlyArray<number | null | undefined>
+      | Float64Array
+      | ReadonlyArray<string | null | undefined>
     >;
     /**
      * Sort the rows by key before construction (off by default), for a columnar
@@ -968,6 +976,55 @@ export class TimeSeries<S extends SeriesSchema> {
       makeKey: (begin, count) => new TimeKeyColumn(begin, count),
     });
     return TimeSeries.#fromTrustedStore(name, schema, store);
+  }
+
+  /**
+   * Example: `TimeSeries.fromArrow(tableFromIPC(bytes), { time: 'ts' })`.
+   *
+   * Build a time series from a decoded Apache Arrow `Table`. pond does **not**
+   * depend on `apache-arrow` — bring your own (`tableFromIPC(...)` /
+   * `tableFromArrays(...)`) and hand the `Table` here; the input is duck-typed
+   * against the small {@link ArrowTableLike} slice we read. Ingest is the
+   * zero-copy path: every **single-chunk** `Float64` column's backing
+   * `Float64Array` is adopted as-is, and the time key is converted
+   * **BigInt-free** — Arrow's idiomatic int64 timestamps are recombined from
+   * their two int32 halves rather than `Number(bigint)` per row (which costs
+   * ~30ms at 500k rows). A table decoded from a multi-record-batch IPC stream
+   * has multi-chunk columns, whose `toArray()` concatenates into a fresh buffer
+   * — still correct, but a copy rather than an adopt.
+   *
+   * Column handling:
+   * - **Time key** — named by `time` (default: a field named `'time'`).
+   *   Timestamp/int/float/Date sources accepted and normalized to epoch ms: a
+   *   `Timestamp`'s raw-unit int64 is scaled by its `TimeUnit`; a `Date32`/
+   *   `Date64` already arrives as epoch-ms via Arrow's `toArray()` and passes
+   *   through; a plain int/float is taken as ms. `timeUnit` overrides.
+   * - **Value columns** — every non-time field by default, or the subset named
+   *   by `columns` (in order). Numeric columns (`Float32`/int convert to
+   *   `Float64Array`; int64 recombines BigInt-free; nulls → `NaN`) and string
+   *   columns (Arrow `Utf8` → `StringColumn`, dict-encoded when it pays; nulls →
+   *   missing) are supported. Any other Arrow type (list/struct/…) throws,
+   *   naming it. A null in the time key throws.
+   *
+   * The rows must be time-ordered (as `fromColumns` requires); pass
+   * `{ sort: true }` for an unordered table (disables zero-copy adoption).
+   *
+   * **Trust contract on the type parameter:** the runtime schema is derived
+   * from the Arrow fields. Supplying `S` (`fromArrow<MySchema>(...)`) is a
+   * downstream-typing convenience taken on trust — pond does not verify the
+   * Arrow fields match `S`, exactly as `fromEvents` trusts its schema.
+   */
+  static fromArrow<S extends SeriesSchema = SeriesSchema>(
+    table: ArrowTableLike,
+    options: FromArrowOptions = {},
+  ): TimeSeries<S> {
+    const { name, schema, columns } = arrowToColumns(table, options);
+    return TimeSeries.fromColumns({
+      name,
+      schema: schema as unknown as S,
+      columns,
+      sort: options.sort ?? false,
+    });
   }
 
   /**

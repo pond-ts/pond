@@ -27,6 +27,14 @@ export { Time } from './core/time.js';
 export { TimeRange, toTimeRange } from './core/time-range.js';
 export { Sequence } from './sequence/sequence.js';
 export { TimeSeries, type KeyLike } from './batch/time-series.js';
+export type {
+  ArrowTableLike,
+  ArrowVectorLike,
+  ArrowFieldLike,
+  ArrowSchemaLike,
+  ArrowTimeUnit,
+  FromArrowOptions,
+} from './batch/operators/from-arrow.js';
 export { ValueSeries } from './batch/value-series.js';
 export { top } from './reducers/index.js';
 export { ValidationError } from './core/errors.js';

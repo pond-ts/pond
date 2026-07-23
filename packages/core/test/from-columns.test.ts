@@ -104,17 +104,16 @@ describe('TimeSeries.fromColumns', () => {
     ).toThrow(/time/);
   });
 
-  it('throws on a non-number value column (v1 scope)', () => {
-    expect(() =>
-      TimeSeries.fromColumns({
-        name: 't',
-        schema: [
-          { name: 'time', kind: 'time' },
-          { name: 'label', kind: 'string' },
-        ] as const,
-        columns: { time: [1000, 2000], label: ['a', 'b'] as never },
-      }),
-    ).toThrow(/number/);
+  it('now accepts string value columns (see the "string columns" block)', () => {
+    const ts = TimeSeries.fromColumns({
+      name: 't',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'label', kind: 'string' },
+      ] as const,
+      columns: { time: [1000, 2000], label: ['a', 'b'] },
+    });
+    expect(ts.at(1)?.data().label).toBe('b');
   });
 
   it('throws on out-of-order timestamps (non-decreasing invariant, like fromJSON)', () => {
@@ -340,6 +339,71 @@ describe('TimeSeries.fromColumns', () => {
           },
         }),
       ).toThrow();
+    });
+  });
+
+  describe('string columns', () => {
+    const MIXED = [
+      { name: 'time', kind: 'time' },
+      { name: 'symbol', kind: 'string' },
+      { name: 'price', kind: 'number' },
+    ] as const;
+
+    it('packs a string column alongside a numeric one', () => {
+      const ts = TimeSeries.fromColumns({
+        name: 't',
+        schema: MIXED,
+        columns: {
+          time: [1000, 2000, 3000],
+          symbol: ['AAPL', 'MSFT', 'AAPL'],
+          price: [100, 200, 110],
+        },
+      });
+      expect(ts.at(0)?.data().symbol).toBe('AAPL');
+      expect(ts.at(1)?.data().symbol).toBe('MSFT');
+      expect(ts.at(0)?.data().price).toBe(100);
+      // null in a string column is a gap.
+      const withGap = TimeSeries.fromColumns({
+        name: 't',
+        schema: MIXED,
+        columns: {
+          time: [1000, 2000],
+          symbol: ['AAPL', null],
+          price: [100, 200],
+        },
+      });
+      expect(withGap.at(1)?.data().symbol).toBeUndefined();
+    });
+
+    it('carries string columns through a sort', () => {
+      const ts = TimeSeries.fromColumns({
+        name: 't',
+        schema: MIXED,
+        sort: true,
+        columns: {
+          time: [3000, 1000, 2000],
+          symbol: ['c', 'a', 'b'],
+          price: [30, 10, 20],
+        },
+      });
+      expect([
+        ts.at(0)?.data().symbol,
+        ts.at(1)?.data().symbol,
+        ts.at(2)?.data().symbol,
+      ]).toEqual(['a', 'b', 'c']);
+    });
+
+    it('still rejects an unsupported value kind (boolean)', () => {
+      expect(() =>
+        TimeSeries.fromColumns({
+          name: 't',
+          schema: [
+            { name: 'time', kind: 'time' },
+            { name: 'flag', kind: 'boolean' },
+          ] as const,
+          columns: { time: [1000], flag: [true] as never },
+        }),
+      ).toThrow(/'number' and 'string'/);
     });
   });
 });
