@@ -99,3 +99,52 @@ describe('smooth ema columnar fast path', () => {
     expect(dropped.at(0)!.begin()).toBe(2_000);
   });
 });
+
+describe('smooth ema event-path fallback', () => {
+  // The fast path gates on a packed 'number' source column. The one
+  // runtime-reachable input that misses the gate today is a non-numeric
+  // source (type-forbidden, hence the casts, but runtime-tolerated): every
+  // cell reads as not-a-number, so the event path emits an all-undefined
+  // column while preserving length and shape. Pinning it keeps the fallback
+  // executable — a chunked NUMERIC source would also route here, but a
+  // chunked-column TimeSeries is not constructible today (all public and
+  // internal construction paths pack; the trusted-store sentinel is
+  // module-private), so this lane is the fallback's only live coverage.
+  const mixedSchema = [
+    { name: 'time', kind: 'time' },
+    { name: 'host', kind: 'string' },
+    { name: 'v', kind: 'number' },
+  ] as const;
+  const mixed = new TimeSeries({
+    name: 'm',
+    schema: mixedSchema,
+    rows: [
+      [0, 'a', 1],
+      [1_000, 'b', 2],
+      [2_000, 'c', 3],
+    ] as Array<[number, string, number]>,
+  });
+
+  it('a non-numeric source takes the event path: all-undefined, length kept', () => {
+    const appended = mixed.smooth('host' as never, 'ema', {
+      alpha: 0.5,
+      output: 'e',
+    });
+    expect(appended.length).toBe(3);
+    expect(appended.schema.map((c) => c.name)).toEqual([
+      'time',
+      'host',
+      'v',
+      'e',
+    ]);
+    for (let i = 0; i < 3; i += 1) {
+      expect(appended.at(i)!.get('e')).toBeUndefined();
+      expect(appended.at(i)!.get('host')).toBe(['a', 'b', 'c'][i]);
+    }
+    const replaced = mixed.smooth('host' as never, 'ema', { alpha: 0.5 });
+    expect(replaced.length).toBe(3);
+    for (let i = 0; i < 3; i += 1) {
+      expect(replaced.at(i)!.get('host')).toBeUndefined();
+    }
+  });
+});
