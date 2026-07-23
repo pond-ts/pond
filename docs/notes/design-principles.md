@@ -23,6 +23,17 @@ These hold across all new work:
   loop. The library is a data structure, not a framework.
 - **Browser-safe by default.** Node-specific APIs go behind a separate entry
   point.
+- **Bulk paths read columns, never events.** `series.events` is consumer
+  ergonomics at the edges, not a data plane: it materializes an `Event` (plus
+  a data object per `data()` call) per row, which at scale costs more than
+  the operation being fed (PR #536: ~400 ms of a ~569 ms 1M-row SMA was the
+  `events` walk). Operator implementations, derived-data plumbing, and
+  anything else that touches every row reads the columnar store —
+  `column(name)`, key buffers, validity — and new operators build output via
+  trusted construction with a documented fallback, following the
+  `tryAggregateColumnarTimeKeyed` / `tryRollingCountColumnarNumeric`
+  pattern. An `events.map(...)` in an operator body or a downstream
+  package's hot path is a bug even when the tests pass.
 
 ## Semantics to preserve
 
