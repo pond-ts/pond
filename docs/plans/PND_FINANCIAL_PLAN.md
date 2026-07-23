@@ -18,6 +18,25 @@ and the #449 first studies batch — sma, ema, bollinger, envelope,
 rollingStdev/Min/Max/Percentile, zScore, percentChange — all fluent and
 pandas-oracle-verified.
 
+**Shipped 2026-07-23 — market-scale studies perf** (report: hand-rolled
+Float64Array SMA/EMA at 1M bars was single-digit ms; the studies were
+hundreds). Three behaviour-preserving cuts along one path: a
+`smooth('ema')` columnar fast path (typed-buffer recurrence + trusted
+construction, 530 → 4.4 ms at 1M), a `rolling({ count })` numeric fast
+path (shared incremental reducer states fed straight off packed buffers
+into typed result columns, 135 → 32 ms), and the financial kernel reading
+study columns off the column API instead of materializing `series.events`
+(~400 ms/1M of pure Event-allocation overhead). End-to-end at 1M bars:
+`ema()` 603 → 2.5 ms, `sma()` 569 → 56 ms, `bollinger()` 748 → 162 ms.
+Durable benches: `packages/core/scripts/perf-smooth-ema.mjs`,
+`packages/financial/scripts/perf-studies.mjs`. **Considered and deferred:**
+per-reducer fused kernels (running-sum SMA etc.) would close the remaining
+~20× gap to the bespoke floor but duplicate reducer arithmetic outside the
+shared states — take it up only if a consumer needs single-digit ms at 1M;
+the boxed `(number | undefined)[]` hop between kernel and `withColumn`
+(~12 ms/1M) is [PND-WCNAN]'s NaN-canonical typed intake, tracked in the
+columnar plan.
+
 ## Tasks
 
 ### [PND-STUDY] — Studies Phase-1 breadth

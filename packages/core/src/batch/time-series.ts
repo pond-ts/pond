@@ -74,6 +74,7 @@ import {
   isAggregateOutputSpec,
   normalizeAggregateColumns,
   tryAggregateColumnarTimeKeyed,
+  tryRollingCountColumnarNumeric,
 } from './aggregate-columns.js';
 import {
   cumulativeOp,
@@ -127,9 +128,12 @@ import {
   StringColumn,
   TimeKeyColumn,
   TimeRangeKeyColumn,
+  bitmapByteCount,
   float64ColumnFromArray,
   stringColumnFromArray,
+  validityFromBits,
   withColumnAppended,
+  withColumnReplaced,
   withColumnsRenamed,
   withColumnsSelected,
   withKeyColumn,
@@ -3508,6 +3512,34 @@ export class TimeSeries<S extends SeriesSchema> {
     // materialization, no per-row `Event`, no row re-validation/re-pack.
     const store = this.#store.store;
     const rowCount = store.length;
+    // Count-window numeric fast path: an all-built-in numeric mapping over
+    // packed sources builds its typed result columns in one sweep (see
+    // `tryRollingCountColumnarNumeric`) — none of the generic sweep's
+    // per-row snapshot arrays, boxed accumulators, or post-pass re-pack.
+    // `null` (a custom reducer, non-number output, chunked source) falls
+    // through to the generic sweep below.
+    if (countWindow !== null) {
+      const fastColumns = tryRollingCountColumnarNumeric(
+        (name) => store.columns.get(name),
+        rowCount,
+        columnSpecs,
+        countWindow,
+        alignment,
+        minSamples,
+      );
+      if (fastColumns !== null) {
+        const fastOutColumns = new Map<string, ColumnarColumn>();
+        for (let c = 0; c < columnSpecs.length; c += 1) {
+          fastOutColumns.set(columnSpecs[c]!.output, fastColumns[c]!);
+        }
+        const fastStore = ColumnarStore.fromTrustedStore(
+          resultSchema as unknown as ColumnSchema,
+          store.keys,
+          fastOutColumns,
+        );
+        return TimeSeries.#fromTrustedStore(this.name, resultSchema, fastStore);
+      }
+    }
     const sourceCols = columnSpecs.map(
       (spec) => store.columns.get(spec.source as string)!,
     );
@@ -3795,14 +3827,6 @@ export class TimeSeries<S extends SeriesSchema> {
         ? makeSmoothSchema(this.schema, column)
         : makeSmoothSchema(this.schema, column, output);
 
-    const anchors = this.events.map((event) => eventAnchorTime(event.key()));
-    const sourceValues: ReadonlyArray<number | undefined> = this.events.map(
-      (event) => {
-        const raw = event.get(column);
-        return typeof raw === 'number' ? raw : undefined;
-      },
-    );
-
     if (method === 'ema') {
       // Rate parameter: `alpha` directly, or the financial `span` convention
       // (α = 2/(span+1) — a `span`-period EMA), exactly one of the two.
@@ -3869,6 +3893,78 @@ export class TimeSeries<S extends SeriesSchema> {
         );
       }
 
+      // Columnar fast path: on a packed numeric source column the EMA
+      // recurrence runs straight off the typed buffer into a typed result
+      // column — no event materialization, no per-row Event / frozen-tuple
+      // allocation, and no full-series intake re-pack (the key and every
+      // untouched column pass through by reference). Emitted values are the
+      // exact sequence the event path emits (same reads, same arithmetic),
+      // and each one is asserted finite so the intake rejection the event
+      // path gets from its row re-pack is preserved. Non-packed sources
+      // (chunked storage) fall back to the event path below.
+      const emaSourceCol = this.#store.store.columns.get(column as string);
+      if (
+        emaSourceCol !== undefined &&
+        emaSourceCol.kind === 'number' &&
+        emaSourceCol.storage === 'packed'
+      ) {
+        const store = this.#store.store;
+        const packed = emaSourceCol as Float64Column;
+        const rowCount = store.length;
+        const src = packed._values;
+        const srcValidity = packed.validity;
+        const out = new Float64Array(rowCount);
+        const outBits = new Uint8Array(bitmapByteCount(rowCount));
+        let outDefined = 0;
+        let hasPrevious = false;
+        let previous = 0;
+        let seen = 0;
+        for (let i = 0; i < rowCount; i += 1) {
+          if (srcValidity !== undefined && !srcValidity.isDefined(i)) {
+            continue; // missing source cell — emitted value is missing too
+          }
+          const raw = src[i]!;
+          const smoothed = hasPrevious
+            ? alpha * raw + (1 - alpha) * previous
+            : raw;
+          previous = smoothed;
+          hasPrevious = true;
+          seen += 1;
+          // Mask the emitted value during the length-preserving warm-up;
+          // `previous` / `seen` advanced on the real value above.
+          if (seen < minSamples) continue;
+          if (!Number.isFinite(smoothed)) {
+            throw new ValidationError(
+              `smooth column '${output ?? (column as string)}': result ${smoothed} is not a valid 'number' value`,
+            );
+          }
+          out[i] = smoothed;
+          outBits[i >> 3]! |= 1 << (i & 7);
+          outDefined += 1;
+        }
+        const outValidity =
+          outDefined === rowCount
+            ? undefined
+            : validityFromBits(outBits, rowCount);
+        // Every defined cell was asserted finite above → `allFinite`.
+        const outColumn = new Float64Column(out, rowCount, outValidity, true);
+        const reshaped =
+          output === undefined || output === (column as string)
+            ? withColumnReplaced(store, column as string, outColumn)
+            : withColumnAppended(store, output, outColumn);
+        const kept =
+          warmup > 0 ? withRowRange(reshaped, warmup, rowCount) : reshaped;
+        return TimeSeries.#fromTrustedStore(
+          this.name,
+          resultSchema as unknown as SeriesSchema,
+          kept,
+        ) as unknown as TimeSeries<
+          Output extends string
+            ? SmoothAppendSchema<S, Output>
+            : SmoothSchema<S, Target>
+        >;
+      }
+
       let previous: number | undefined;
       let seen = 0;
       const resultRows = this.events.map((event) => {
@@ -3917,6 +4013,17 @@ export class TimeSeries<S extends SeriesSchema> {
           : SmoothSchema<S, Target>
       >;
     }
+
+    // Anchor times + source values for the window-based methods
+    // (movingAverage / loess). Materialized here — below the ema branch —
+    // because ema never reads either (its fast path stays event-free).
+    const anchors = this.events.map((event) => eventAnchorTime(event.key()));
+    const sourceValues: ReadonlyArray<number | undefined> = this.events.map(
+      (event) => {
+        const raw = event.get(column);
+        return typeof raw === 'number' ? raw : undefined;
+      },
+    );
 
     if (method === 'loess') {
       if (!('span' in options)) {
