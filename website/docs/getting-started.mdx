@@ -17,14 +17,14 @@ climbing, recorded at 1 Hz by a head unit with a power meter. Real data comes
 with real texture — dropouts, coasting, spikes — and that texture is most of
 what makes the next few steps worth doing.
 
-Here's what we're building. Hover it.
+Here's what we're building. Hover it, drag it, scroll to zoom.
 
 <ChartExample name="getting-started-ride" height={380}>
   <GettingStartedRide />
 </ChartExample>
 
 Two charts, one dataset. On top, the ride as it happened: **raw power** (noisy,
-because power meters are), the **30-second average** riding through it, and a
+because power meters are), a **2-minute average** riding through it, and a
 **normalized power** baseline. Underneath, the same ride keyed by _watts_
 instead of time — **where the time actually went**. That faint bar on the left
 is half an hour spent at almost no power at all: it's a descent-heavy loop, and
@@ -33,9 +33,9 @@ you coast a lot of it. The time axis can't show you that; the value axis can.
 Both charts make a concession to that coasting, and they're the two judgement
 calls in the whole example:
 
-- The raw trace **breaks** where you stop pedalling instead of diving to the
+- **Both traces break where you stop pedalling** rather than diving to the
   floor. Zero watts is true, but drawing it turns every descent into a picket
-  fence and buries the line you're meant to read.
+  fence and buries the line you're meant to read. Those holes are the descents.
 - The coasting bucket is drawn **faintly, and the y-axis ignores it**. It's
   three times any other bar; scaling to it would flatten the part of the
   distribution actually worth looking at. It runs off the top of the plot on
@@ -112,15 +112,22 @@ The fix is a moving average, and it's one call:
 
 ```ts
 const smoothed = ride.smooth('watts', 'movingAverage', {
-  window: '30s',
-  output: 'watts30',
+  window: '2m',
+  output: 'trend',
 });
 ```
 
 That **adds a column** rather than replacing one; the smoothed series still
 carries `watts`, so you can draw both — which is exactly what the top chart
-does. Windows are written as durations (`'30s'`, `'5m'`), not sample counts, so
+does. Windows are written as durations (`'30s'`, `'2m'`), not sample counts, so
 the result means the same thing whether your device logged at 1 Hz or 4 Hz.
+
+Two minutes is a deliberate choice. A 30-second window still carries most of the
+noise — you end up with a slightly tidier version of the same unreadable trace.
+Widen it until the line stops describing pedal strokes and starts describing
+_climbs_, and for this ride that's about two minutes. Zoom in on the chart above
+and you can watch the raw and the average disagree exactly where the terrain
+changes.
 
 ## Asking where the time went
 
@@ -245,6 +252,10 @@ fit isn't a separate engine. Normalized power _is_ a 30-second rolling mean
 (pond's `rolling`), and the zone breakdown _is_ value-axis bucketing (the same
 `byColumn` you just used). fit supplies the domain definitions; core does the
 work.
+
+That 30 seconds is fixed by the definition of NP — it's not the two-minute
+window we picked for the trend line. One is a metric, the other is a reading
+aid.
 :::
 
 ## Drawing it
@@ -261,26 +272,28 @@ no reshaping into `{x, y}` objects:
 ```tsx
 <ChartContainer
   range={ride.timeRange()}
-  width={680}
+  width={width}
   cursor="crosshair"
   origin="data"
+  panZoom="panZoom"
+  bounds={rideBounds}
 >
-  <ChartRow height={200}>
+  <ChartRow height={220}>
     <YAxis id="w" label="watts" min={0} />
     <Layers>
       <LineChart
-        series={ride}
-        column="watts"
+        series={traces}
+        column="pedalling"
         axis="w"
         as="muted"
         legend="power"
       />
       <LineChart
-        series={smoothed}
-        column="watts30"
+        series={traces}
+        column="trend"
         axis="w"
         as="primary"
-        legend="30 s average"
+        legend="2 min average"
       />
       <Baseline
         value={power.normalizedWatts}
@@ -299,6 +312,13 @@ everywhere in pond charts:
 
 - **`cursor="crosshair"`** on the container is the whole hover interaction — it
   reads values off every layer at once.
+- **`panZoom="panZoom"`** adds drag-to-pan and wheel-to-zoom, and **`bounds`**
+  fences them to the ride's own extent so you can't wander off into empty time.
+  (`"pan"` if you want dragging but would rather the wheel kept scrolling the
+  page.)
+- **`width`** is a number, not a CSS length — the chart measures its container
+  with a `ResizeObserver` and passes the result down. See the
+  [responsive width recipe](recipes/responsive-width).
 - **`origin="data"`** turns the time axis into a **duration** axis: ticks read
   `0:15`, `0:30`, `0:45` — time _into the ride_ — instead of the wall clock it
   happened to be in 2016. It's a labelling mode, not a transform; the data is

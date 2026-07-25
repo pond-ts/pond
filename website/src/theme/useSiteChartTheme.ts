@@ -1,6 +1,20 @@
 import { defaultTheme, useChartTheme, type ChartTheme } from '@pond-ts/charts';
 
 /**
+ * Add an alpha channel to a resolved `#rrggbb` custom property. Canvas takes
+ * 8-digit hex, so this is the cheapest way to derive a translucent shade of a
+ * palette colour without adding a second variable for every opacity we want.
+ * Anything that isn't a 6-digit hex passes through untouched.
+ */
+function fade(color: string, alpha: number): string {
+  if (!/^#[0-9a-f]{6}$/i.test(color)) return color;
+  const hex = Math.round(Math.min(Math.max(alpha, 0), 1) * 255)
+    .toString(16)
+    .padStart(2, '0');
+  return `${color}${hex}`;
+}
+
+/**
  * The theme every live chart embed on the docs site renders with —
  * `docsTheme`, but built live from the site's own `--pond-*` CSS custom
  * properties (defined in `src/css/custom.css`, mirroring
@@ -23,11 +37,11 @@ export function useSiteChartTheme(): ChartTheme {
       context: { color: v('--pond-viz-3') },
       fast: { color: v('--pond-viz-1') },
       slow: { color: v('--pond-viz-4') },
-      // Neutral grey and hairline-thin, not a data hue — for a raw/backdrop
-      // trace that a second layer is drawn *through* (raw watts under a moving
-      // average). Every viz-N hue competes with the line it's meant to sit
-      // behind, and at full width dense noise swallows it.
-      muted: { color: v('--pond-muted'), width: 1 },
+      // Neutral grey, hairline-thin and part-transparent — not a data hue. For
+      // a raw/backdrop trace that a second layer is drawn *through* (raw watts
+      // under a moving average). Every viz-N hue competes with the line it's
+      // meant to sit behind, and at full opacity dense noise swallows it.
+      muted: { color: fade(v('--pond-muted'), 0.55), width: 1 },
     },
     band: {
       default: { fill: v('--pond-viz-1') },
