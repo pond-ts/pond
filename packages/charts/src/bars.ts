@@ -171,10 +171,14 @@ export function drawBars(
   // header). `null` below the visible-density threshold ⇒ the full per-bar loop.
   // `{ threshold }` tunes the samples-per-pixel factor `k` (as line/area/band do);
   // `undefined` ⇒ decimateBars' default (2). Per-bar fills skip the envelope —
-  // one flat rect can't carry many bars' colours (see the header).
+  // one flat rect can't carry many bars' colours (see the header) — but an
+  // *empty* colour array is "no colours" (every bar would flat-fill anyway), so
+  // it stays on the legacy path end-to-end (L2 review, PR #542).
+  const fills =
+    binFills !== undefined && binFills.length > 0 ? binFills : undefined;
   const k = typeof decimate === 'object' ? decimate.threshold : undefined;
   const envelope =
-    decimate !== false && binFills === undefined
+    decimate !== false && fills === undefined
       ? decimateBars(cs, xScale, ctx, baseline, k, vEnd - vStart)
       : null;
   if (envelope !== null) {
@@ -225,11 +229,11 @@ export function drawBars(
       hovered !== null &&
       hovered.id === seriesId &&
       hovered.key === cs.begin[i];
-    if (binFills !== undefined) {
+    if (fills !== undefined) {
       // Per-bar fills: the bar keeps its own colour under hover / selection —
       // highlight pops the alpha to 1 and outlines the selection in the bar's
       // own fill (the drawStacks binFills convention; see the header).
-      const fill = binFills[i] ?? style.fill;
+      const fill = fills[i] ?? style.fill;
       ctx.globalAlpha = selected || isHovered ? 1 : style.opacity;
       ctx.fillStyle = fill;
       ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);

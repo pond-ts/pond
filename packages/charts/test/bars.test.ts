@@ -735,4 +735,88 @@ describe('drawBars — per-bar fills (binFills)', () => {
     expect(stats.decimated).toBe(false);
     expect(rec.calls.filter((c) => c.name === 'fillRect')).toHaveLength(n);
   });
+  it('stays source-aligned under viewport culling (vStart > 0)', () => {
+    const { ctx, calls } = recordingContext();
+    // 6 contiguous unit bars; view [22, 38] culls to indices [1, 5) (the two
+    // overlapping spans +1 margin each side — the pinned culling case above).
+    drawBars(
+      ctx,
+      bars(
+        [0, 10, 20, 30, 40, 50],
+        [10, 20, 30, 40, 50, 60],
+        [1, 2, 3, 4, 5, 6],
+      ),
+      scaleWithDomain(22, 38),
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      null,
+      null,
+      true,
+      ['#0', '#1', '#2', '#3', '#4', '#5'],
+    );
+    // The culled window draws bars 1..4 — each with its OWN colour (an
+    // index-zip against the culled slice would show '#0'..'#3').
+    expect(fillsAtRects(calls)).toEqual(['#1', '#2', '#3', '#4']);
+  });
+
+  it('an EMPTY binFills array stays on the legacy path end-to-end', () => {
+    // Dense: an empty array means "no colours", so the envelope pass still
+    // fires (presence alone must not disable the perf path — L2 review).
+    const pxScale = scaleLinear()
+      .domain([0, 100])
+      .range([0, 100]) as unknown as (v: number) => number;
+    const rec = recordingContext();
+    (rec.ctx as unknown as { canvas: { width: number } }).canvas = {
+      width: 4,
+    };
+    const n = 100;
+    const stats = drawBars(
+      rec.ctx,
+      bars(
+        Array.from({ length: n }, (_, i) => i),
+        Array.from({ length: n }, (_, i) => i + 1),
+        Array.from({ length: n }, (_, i) => i),
+      ),
+      pxScale,
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      null,
+      null,
+      true,
+      [],
+    );
+    expect(stats.decimated).toBe(true);
+    expect(rec.calls.filter((c) => c.name === 'fillRect')).toHaveLength(4);
+    // Sparse: the legacy highlight convention also applies (fill swaps to the
+    // highlight colour), exactly as if binFills were omitted.
+    const sparse = recordingContext();
+    drawBars(
+      sparse.ctx,
+      bars([0, 1], [1, 2], [10, 20]),
+      identity,
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      null,
+      { key: 1, id: 'count' },
+      true,
+      [],
+    );
+    expect(
+      sparse.calls.some(
+        (c) =>
+          c.type === 'set' &&
+          c.name === 'fillStyle' &&
+          c.args[0] === style.highlight,
+      ),
+    ).toBe(true);
+  });
 });
