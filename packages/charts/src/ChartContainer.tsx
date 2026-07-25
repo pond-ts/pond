@@ -1069,7 +1069,14 @@ export function ChartContainer({
               })
           : cursorFormat !== undefined
             ? resolveTimeFormat(e, xTickCount, cursorFormat)
-            : fine;
+            : // A container `timeFormat` shapes the readout too when no
+              // `cursorFormat` is set — its documented back-compat behaviour,
+              // and the same inversion as the `<XAxis format>` one a rung down:
+              // a custom format that owns the labels must own the pill rather
+              // than watch the elapsed default overrule it (PR #541 review).
+              timeFormat !== undefined
+              ? labels
+              : fine;
       return { xScale: e, formatTime: labels, formatReadout: readout };
     };
     if (xDiscontinuities !== undefined) {
@@ -1263,6 +1270,7 @@ export function ChartContainer({
       formatTime,
       formatReadout,
       xFormatCustom: timeFormat !== undefined,
+      xReadoutCustom: cursorFormat !== undefined,
       xTickCount,
       registerTrackerSource,
       unregisterTrackerSource,
@@ -1325,6 +1333,7 @@ export function ChartContainer({
       formatTime,
       formatReadout,
       timeFormat,
+      cursorFormat,
       xTickCount,
       registerTrackerSource,
       unregisterTrackerSource,

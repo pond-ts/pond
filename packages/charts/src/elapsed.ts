@@ -97,6 +97,11 @@ export function durationStep(span: number, count: number): number {
  *  step is derived from the domain span, so a real axis never comes close. */
 const MAX_TICKS = 10_000;
 
+/** Closest two ticks may sit in pixels before the second is dropped as a
+ *  duplicate. Only ever fires where a discontinuous base scale collapses a span
+ *  to a point — a continuous axis spaces its ticks tens of px apart. */
+const MIN_TICK_PX = 1;
+
 /**
  * Tick values in **absolute axis units** at `origin + k·step`, covering
  * `domain` — the anchored walk that makes `00:05` land exactly five minutes
@@ -306,6 +311,44 @@ export function scaleElapsed(
     return (v) => f(v - origin);
   };
 
+  /**
+   * Drop ticks that land on a pixel another tick already claimed. The walk is in
+   * **wall-clock** ms, but the base scale need not be continuous: on a trading
+   * axis every instant inside a collapsed session maps to the one seam pixel, so
+   * a duration ladder striding through a closed market emits several ticks at
+   * the *same* x — labels stacked on labels, gridlines stroked on gridlines
+   * (issue #540, finding 1). A plain axis is untouched: its ticks are ~65px
+   * apart by construction, so nothing is ever within the gap.
+   *
+   * The survivor is the **last** tick of each pixel group, not the first. Ticks
+   * ascend, so a group spans a collapsed gap and ends at the first instant the
+   * axis actually draws — the session open. Keeping the first would label the
+   * seam with a moment the market was shut: on three 09:30–16:00 sessions the
+   * pixel would read `12:00` (21:30 that night) instead of `1d 00:00`, the
+   * Tuesday open that genuinely sits there (PR #541 review).
+   */
+  const dedupeByPixel = (values: readonly number[]): number[] => {
+    const r = base.range();
+    // Pre-layout the whole range is one pixel wide; nothing is visible, and
+    // deduping there would collapse the axis to a single tick.
+    if (!(Math.abs(Number(r[1] ?? 0) - Number(r[0] ?? 0)) > 0))
+      return [...values];
+    const out: number[] = [];
+    let lastPx = 0;
+    for (const v of values) {
+      const px = base(v);
+      if (!Number.isFinite(px)) continue;
+      if (out.length > 0 && Math.abs(px - lastPx) < MIN_TICK_PX) {
+        out[out.length - 1] = v; // same pixel — the later instant wins
+        lastPx = px;
+        continue;
+      }
+      out.push(v);
+      lastPx = px;
+    }
+    return out;
+  };
+
   const scale = ((value: number) => base(value)) as {
     (value: number): number;
   } & Record<string, unknown>;
@@ -319,7 +362,7 @@ export function scaleElapsed(
       return [Number(r[0] ?? 0), Number(r[1] ?? 0)];
     },
     ticks: (count = DEFAULT_COUNT) =>
-      originTicks(bounds(), origin, stepFor(count)),
+      dedupeByPixel(originTicks(bounds(), origin, stepFor(count))),
     tickFormat: (count = DEFAULT_COUNT, specifier?: string) => {
       if (kind === 'value') return offsetFormat(count, specifier);
       if (specifier !== undefined && absolute !== undefined) {
