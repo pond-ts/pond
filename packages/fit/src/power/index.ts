@@ -115,9 +115,26 @@ export function trainingLoad(
   );
 }
 
-/** One bucket of the power histogram. */
+/**
+ * One bucket of the power histogram.
+ *
+ * Carries pond's canonical bin edges (`start` / `end`, watts) — the same
+ * `{ start, end, …aggregates }` shape core's `byColumn` returns — so the array
+ * feeds `@pond-ts/charts` directly:
+ *
+ * ```tsx
+ * <BarChart bins={power.distribution} column="seconds" />
+ * ```
+ */
 export interface PowerBin {
   /** Inclusive lower edge of the bin, watts. */
+  start: number;
+  /** Exclusive upper edge of the bin, watts (`start + binWatts`). */
+  end: number;
+  /**
+   * @deprecated Use {@link PowerBin.start}. Retained as an alias so existing
+   * callers keep working; `start` is the shape charts consume.
+   */
   wattsFrom: number;
   /** Seconds spent in this bin. */
   seconds: number;
@@ -158,15 +175,44 @@ export function powerDistribution(
   const seconds = new Array<number>(maxBin + 1).fill(0);
   for (const b of bins)
     seconds[Math.round(b.start / binWatts)] = (b.seconds as number) ?? 0;
-  return seconds.map((s, b) => ({ wattsFrom: b * binWatts, seconds: s }));
+  return seconds.map((s, b) => ({
+    start: b * binWatts,
+    end: (b + 1) * binWatts,
+    wattsFrom: b * binWatts,
+    seconds: s,
+  }));
 }
 
-/** One FTP-based training zone. */
+/**
+ * One FTP-based training zone.
+ *
+ * Like {@link PowerBin}, carries pond's canonical `start` / `end` edges so the
+ * array feeds `@pond-ts/charts` unmapped. Zone widths are very unequal, so a
+ * zone chart usually wants uniform slots rather than true watt widths:
+ *
+ * ```tsx
+ * <BarChart bins={power.zones} column="seconds" orientation="horizontal" ordinal />
+ * ```
+ */
 export interface PowerZone {
   zone: number;
   label: string;
+  /** Inclusive lower edge, watts. */
+  start: number;
+  /**
+   * Upper edge, watts, **always finite** — for the open-top zone this is the
+   * highest wattage observed in the ride. Read {@link PowerZone.maxWatts} for
+   * the true `Infinity` semantics.
+   */
+  end: number;
+  /**
+   * @deprecated Use {@link PowerZone.start}.
+   */
   minWatts: number;
-  /** Upper edge, watts; `Infinity` for the top zone. */
+  /**
+   * The mathematical upper edge, watts; `Infinity` for the top zone. Prefer
+   * {@link PowerZone.end} where a finite number is required (charts, spans).
+   */
   maxWatts: number;
   seconds: number;
   /** Fraction of total in-zone time [0, 1]. */
@@ -190,6 +236,8 @@ export function zoneDistribution(
   return zoneDistributionByValue(watts, intervals(timeSec), zones).map((z) => ({
     zone: z.zone,
     label: z.label,
+    start: Math.round(z.start),
+    end: Math.round(z.end),
     minWatts: Math.round(z.lo),
     maxWatts: z.hi === Infinity ? Infinity : Math.round(z.hi),
     seconds: z.seconds,

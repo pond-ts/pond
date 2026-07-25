@@ -19,14 +19,37 @@ const BIN_SCHEMA = [
 
 const SENTINEL = 1e9; // the open-top edge ZoneDef carries
 
-/** One zone's time + share. `hi` is `Infinity` for the open top. */
+/**
+ * One zone's time + share.
+ *
+ * Carries pond's canonical bin edges (`start` / `end`) so the array feeds
+ * `@pond-ts/charts` (`<BarChart bins>` / `stacksFromBins`) with no mapping
+ * step — the same `{ start, end, …aggregates }` shape core's `byColumn`
+ * returns. `end` is **always finite** (see below), because an infinite edge
+ * would blow up a chart's axis domain.
+ */
 export interface ZoneTime {
   /** 1-based zone number (Z1 = the lowest band). */
   zone: number;
   label: string;
   /** Inclusive lower edge, in the value axis (watts / bpm / m·s⁻¹). */
+  start: number;
+  /**
+   * Upper edge, **always finite**. For the open-top zone this is the highest
+   * value observed in the data (or `start` when the zone is empty), so the band
+   * is drawable; read {@link ZoneTime.hi} when you need the true open-top
+   * `Infinity` semantics.
+   */
+  end: number;
+  /**
+   * @deprecated Use {@link ZoneTime.start}. Retained as an alias so existing
+   * callers keep working; `start` is the shape charts consume.
+   */
   lo: number;
-  /** Upper edge; `Infinity` for the top zone. */
+  /**
+   * The mathematical upper edge — `Infinity` for the top zone. Prefer
+   * {@link ZoneTime.end} for anything that has to be finite (charts, spans).
+   */
   hi: number;
   seconds: number;
   /** Share of total in-zone time, [0, 1]. */
@@ -50,9 +73,14 @@ export function zoneDistributionByValue(
 ): ZoneTime[] {
   const { edges, labels } = zones;
   const rows: Array<[number, number | undefined, number]> = [];
+  // Track the highest value actually seen (clamped the same way it's binned) —
+  // it's the finite upper edge we give the open-top zone so it can be drawn.
+  let observedMax = -Infinity;
   for (let i = 0; i < values.length; i++) {
     const v = values[i]!;
-    rows.push([i, Number.isFinite(v) ? Math.max(0, v) : undefined, dt[i] ?? 0]);
+    const clamped = Number.isFinite(v) ? Math.max(0, v) : undefined;
+    if (clamped !== undefined && clamped > observedMax) observedMax = clamped;
+    rows.push([i, clamped, dt[i] ?? 0]);
   }
   const bins = new TimeSeries({
     name: 'zones',
@@ -65,14 +93,25 @@ export function zoneDistributionByValue(
   );
   const secs = bins.map((b) => (b.seconds as number) ?? 0);
   const total = secs.reduce((a, b) => a + b, 0) || 1;
-  return labels.map((label, z) => ({
-    zone: z + 1,
-    label,
-    lo: edges[z]!,
-    hi: (edges[z + 1] ?? SENTINEL) >= SENTINEL ? Infinity : edges[z + 1]!,
-    seconds: secs[z] ?? 0,
-    fraction: (secs[z] ?? 0) / total,
-  }));
+  return labels.map((label, z) => {
+    const lo = edges[z]!;
+    const hi =
+      (edges[z + 1] ?? SENTINEL) >= SENTINEL ? Infinity : edges[z + 1]!;
+    // Open-top zone: fall back to the observed max so `end` stays finite and
+    // the band has a drawable width. No data (observedMax === -Infinity) or
+    // nothing that reached this zone ⇒ zero-width at the floor.
+    const end = Number.isFinite(hi) ? hi : Math.max(lo, observedMax);
+    return {
+      zone: z + 1,
+      label,
+      start: lo,
+      end,
+      lo,
+      hi,
+      seconds: secs[z] ?? 0,
+      fraction: (secs[z] ?? 0) / total,
+    };
+  });
 }
 
 /** Time in each HR zone (bpm axis). `hrZones` from `profile.profileAsOf`. */

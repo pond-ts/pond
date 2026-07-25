@@ -29,6 +29,70 @@ describe('computePower', () => {
   });
 });
 
+/** The shape `@pond-ts/charts` consumes (`BinRecord` in charts' data.ts).
+ *  Mirrored here rather than imported — fit must not depend on charts. */
+type BinRecord = { readonly start: number; readonly end: number };
+
+describe('chart-ready bin edges', () => {
+  it('distribution bins carry contiguous finite start/end (BinRecord)', () => {
+    const p = computePower(t(100), new Float64Array(100).fill(150), 200, 100);
+
+    // Compiles ⇒ structurally assignable to what <BarChart bins> takes.
+    const asBins: BinRecord[] = p.distribution;
+    expect(asBins.length).toBe(p.distribution.length);
+
+    for (const b of p.distribution) {
+      expect(Number.isFinite(b.start)).toBe(true);
+      expect(Number.isFinite(b.end)).toBe(true);
+      expect(b.end).toBeGreaterThan(b.start);
+      expect(b.start).toBe(b.wattsFrom); // alias agrees
+    }
+    // contiguous: each bin starts where the previous ended
+    for (let i = 1; i < p.distribution.length; i++) {
+      expect(p.distribution[i]!.start).toBe(p.distribution[i - 1]!.end);
+    }
+  });
+
+  it('honours the bin width in the edges', () => {
+    const bins = powerDistribution(t(50), new Float64Array(50).fill(120), 25);
+    expect(bins[0]!.start).toBe(0);
+    expect(bins[0]!.end).toBe(25);
+    expect(bins[4]!.start).toBe(100); // the 100–125 W bucket holds the samples
+    expect(bins[4]!.end).toBe(125);
+    expect(bins[4]!.seconds).toBeGreaterThan(0);
+  });
+
+  it('zones expose a FINITE end for the open top (maxWatts stays Infinity)', () => {
+    // Ride tops out at 400 W; the top Coggan zone is open-ended.
+    const watts = new Float64Array(100).fill(150);
+    watts[50] = 400;
+    const zones = zoneDistribution(t(100), watts, 200);
+    const top = zones[zones.length - 1]!;
+
+    expect(top.maxWatts).toBe(Infinity); // unchanged semantics
+    expect(Number.isFinite(top.end)).toBe(true); // …but drawable
+    expect(top.end).toBe(400); // the highest wattage observed
+
+    const asBins: BinRecord[] = zones;
+    expect(asBins.length).toBe(zones.length);
+    for (const z of zones) {
+      expect(Number.isFinite(z.start)).toBe(true);
+      expect(Number.isFinite(z.end)).toBe(true);
+      expect(z.end).toBeGreaterThanOrEqual(z.start);
+      expect(z.start).toBe(z.minWatts); // alias agrees
+    }
+  });
+
+  it('an empty top zone collapses to zero width rather than Infinity', () => {
+    // Nothing above zone 1 — the open top is never entered.
+    const zones = zoneDistribution(t(20), new Float64Array(20).fill(10), 200);
+    const top = zones[zones.length - 1]!;
+    expect(top.seconds).toBe(0);
+    expect(Number.isFinite(top.end)).toBe(true);
+    expect(top.end).toBe(top.start);
+  });
+});
+
 describe('scalar power metrics', () => {
   it('averagePower skips NaN', () => {
     expect(averagePower(new Float64Array([100, NaN, 200]))).toBe(150);

@@ -29,6 +29,23 @@ describe('zoneDistributionByValue', () => {
     expect(out[0]!.lo).toBe(0);
   });
 
+  it('carries chart-ready start/end, with a finite end on the open top', () => {
+    const out = zoneDistributionByValue(
+      [100, 150, 250, 400],
+      [1, 1, 1, 1],
+      zones,
+    );
+    // start/end mirror lo/hi, except the open top is clamped to the observed max.
+    expect(out.map((z) => z.start)).toEqual([0, 200, 300]);
+    expect(out.map((z) => z.end)).toEqual([200, 300, 400]);
+    expect(out[2]!.hi).toBe(Infinity); // the true edge is still available
+    for (const z of out) {
+      expect(Number.isFinite(z.start)).toBe(true);
+      expect(Number.isFinite(z.end)).toBe(true);
+      expect(z.start).toBe(z.lo); // alias agrees
+    }
+  });
+
   it('is inclusive-upper at a boundary (a sample exactly on an edge → lower band)', () => {
     // value 200 sits on the low/mid edge → counts in `low` (pond `inclusive: '(]'`)
     const out = zoneDistributionByValue([200], [5], zones);

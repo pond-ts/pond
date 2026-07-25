@@ -52,6 +52,33 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **fit:** **Power bins and zones are now chart-ready without a mapping step.**
+  `PowerBin`, `PowerZone`, and `ZoneTime` carry pond's canonical bin edges —
+  `start` / `end` — the same `{ start, end, …aggregates }` shape core's
+  `byColumn` returns and `@pond-ts/charts` consumes. Previously each type used
+  its own vocabulary (`wattsFrom` with no upper edge; `lo`/`hi`;
+  `minWatts`/`maxWatts`), so every caller had to hand-map before drawing:
+
+  ```tsx
+  <BarChart bins={power.distribution} column="seconds" />
+  <BarChart bins={power.zones} column="seconds" orientation="horizontal" ordinal />
+  ```
+
+  `end` is **always finite**. The open-top zone previously exposed only
+  `Infinity`, which blows up a chart's axis domain; `end` now falls back to the
+  highest value observed in the data (or `start` when the zone is empty). The
+  mathematical edge is unchanged and still readable as `hi` / `maxWatts`.
+
+### Deprecated
+
+- **fit:** `PowerBin.wattsFrom`, `PowerZone.minWatts`, and `ZoneTime.lo` are
+  deprecated aliases of the new `start` field. They still populate, so existing
+  callers keep working; prefer `start` / `end` in new code. (`hi` and `maxWatts`
+  are **not** deprecated — they carry the true open-top `Infinity` that `end`
+  deliberately clamps.)
+
 ## [0.52.0] — 2026-07-23
 
 ### Changed
