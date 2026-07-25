@@ -319,6 +319,13 @@ export function scaleElapsed(
    * the *same* x — labels stacked on labels, gridlines stroked on gridlines
    * (issue #540, finding 1). A plain axis is untouched: its ticks are ~65px
    * apart by construction, so nothing is ever within the gap.
+   *
+   * The survivor is the **last** tick of each pixel group, not the first. Ticks
+   * ascend, so a group spans a collapsed gap and ends at the first instant the
+   * axis actually draws — the session open. Keeping the first would label the
+   * seam with a moment the market was shut: on three 09:30–16:00 sessions the
+   * pixel would read `12:00` (21:30 that night) instead of `1d 00:00`, the
+   * Tuesday open that genuinely sits there (PR #541 review).
    */
   const dedupeByPixel = (values: readonly number[]): number[] => {
     const r = base.range();
@@ -331,7 +338,11 @@ export function scaleElapsed(
     for (const v of values) {
       const px = base(v);
       if (!Number.isFinite(px)) continue;
-      if (out.length > 0 && Math.abs(px - lastPx) < MIN_TICK_PX) continue;
+      if (out.length > 0 && Math.abs(px - lastPx) < MIN_TICK_PX) {
+        out[out.length - 1] = v; // same pixel — the later instant wins
+        lastPx = px;
+        continue;
+      }
       out.push(v);
       lastPx = px;
     }

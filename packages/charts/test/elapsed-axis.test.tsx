@@ -218,18 +218,51 @@ describe('duration x axis — <ChartContainer origin>', () => {
           <YAxis id="a" min={0} max={200} />
           <Layers>
             <LineChart series={ride()} column="hr" axis="a" />
-            <Marker at={t0 + 5 * MINUTE + 12_000} indicator label={false} />
+            {/* Deliberately BETWEEN ticks (they sit at +0/+5/+10 min): a marker
+                on a tick would give the pill a wall-clock label some tick
+                already carries, and the positive assertion below would pass
+                with the marker deleted. */}
+            <Marker at={t0 + 7 * MINUTE + 30_000} indicator label={false} />
           </Layers>
         </ChartRow>
         <XAxis format="%H:%M" />
       </ChartContainer>,
     );
-    const d = new Date(t0 + 5 * MINUTE + 12_000);
+    const d = new Date(t0 + 7 * MINUTE + 30_000);
     const wall = `${String(d.getHours()).padStart(2, '0')}:${String(
       d.getMinutes(),
     ).padStart(2, '0')}`;
-    expect(labels(container)).toContain(wall);
-    expect(labels(container)).not.toContain('00:05:12');
+    const text = labels(container);
+    // The pill reads its own wall clock — a label no tick on this strip carries.
+    expect(text.filter((t) => t === wall)).toHaveLength(1);
+    expect(text).not.toContain('00:07:30');
+  });
+
+  it('lets a container timeFormat own the pill as well as the labels', () => {
+    // `timeFormat`'s documented back-compat: absent a `cursorFormat` it shapes
+    // the readout too. Under `origin` the elapsed default was overruling it —
+    // the same inversion as the `<XAxis format>` one, a rung further down
+    // (PR #541 review).
+    const { container } = render(
+      <ChartContainer
+        width={300}
+        origin="data"
+        timeFormat={() => 'CUSTOM'}
+        showAxis={false}
+      >
+        <ChartRow height={120}>
+          <YAxis id="a" min={0} max={200} />
+          <Layers>
+            <LineChart series={ride()} column="hr" axis="a" />
+            <Marker at={t0 + 7 * MINUTE + 30_000} indicator label={false} />
+          </Layers>
+        </ChartRow>
+        <XAxis />
+      </ChartContainer>,
+    );
+    // Ticks and pill alike: the custom format owns every label on the strip.
+    expect(labels(container)).not.toContain('00:07:30');
+    expect(labels(container).filter((t) => t === 'CUSTOM').length).toBe(4);
   });
 
   it('still lets a real cursorFormat outrank an axis format', () => {
@@ -332,6 +365,13 @@ describe('duration x axis — <ChartContainer origin>', () => {
     expect(new Set(xs).size).toBe(xs.length);
     // …and one label per tick: no two share a position.
     expect(labels(container).length).toBe(xs.length);
+    // The survivor at a seam is the LAST tick of the group — the session open
+    // that genuinely sits on that pixel (`1d 00:00` = Tuesday 09:30), not the
+    // first, which is a moment inside the collapsed night (`12:00` = 21:30,
+    // market shut). First-wins renders a label for time the axis doesn't draw.
+    const text = labels(container);
+    expect(text).toContain('1d 00:00');
+    expect(text).not.toContain('12:00');
   });
 
   it('is ignored on a category axis, which reads names', () => {

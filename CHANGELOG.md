@@ -64,14 +64,20 @@ and type-level changes; patch bumps are strictly additive.
   two-strip pattern the docs recommend: a wall-clock strip declared as
   `<XAxis format="%H:%M">` labelled its ticks `11:33` and pilled them
   `00:05:12`. A real `cursorFormat` still outranks an axis `format`, unchanged.
+  A container **`timeFormat`** was inverted the same way one rung down — its
+  documented back-compat is to shape the readout when no `cursorFormat` is set,
+  and the elapsed default was overruling it. Fixed with the same precedence.
 
 - **charts:** **A duration axis no longer stacks ticks on one pixel across a
   collapsed session.** The duration ladder strides in wall-clock time, so on a
   trading axis several ticks could land inside closed time — where the scale
   maps all of them to the same seam pixel, stroking labels over labels and
   gridlines over gridlines. Coinciding ticks are now dropped, so a seam shows
-  one label rather than four. Continuous axes are unaffected (their ticks are
-  tens of pixels apart by construction).
+  one label rather than four — and the one kept is the **last** of the group,
+  the session open that genuinely sits on that pixel (`1d 00:00`), rather than
+  the first, which falls inside the collapsed night (`12:00` = 21:30, market
+  shut). Continuous axes are unaffected (their ticks are tens of pixels apart
+  by construction).
 
 Both found by an adversarial review of the v0.53.0 duration axis
 ([#540](https://github.com/pond-ts/pond/issues/540)), which also corrected the

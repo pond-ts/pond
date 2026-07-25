@@ -477,6 +477,33 @@ naming+neutrality pass ([docs/rfcs/value-axis.md](../rfcs/value-axis.md)).
   duration formatter would be lying; wall-clock durations ship with the
   uneven-across-a-seam caveat documented.
 
+**What the review caught (v0.53.1, [#540] / [#541]).** The axis shipped
+without its Layer 2 pass; run afterwards, it found two real bugs, and the
+review of the _fix_ found two more. Worth recording because both pairs share
+a shape:
+
+- **Precedence inversions come in ladders.** The elapsed axis's finer default
+  readout was delivered through `formatReadout`, the field an explicit
+  `cursorFormat` uses — so it outranked an `<XAxis format>`. Fixing only that
+  rung left the identical bug for a container `timeFormat` one rung down. When
+  a fix restores one rung of a documented precedence chain, walk the whole
+  chain.
+- **A dedupe has to say which duplicate wins.** Dropping ticks that collide on
+  a collapsed-session pixel was right; keeping the _first_ was not — the
+  survivor should be the session open that sits on that pixel, not the instant
+  inside the closed night. "Drop duplicates" is under-specified whenever the
+  duplicates aren't interchangeable.
+
+**Follow-up (not done):** `formatReadout` is now two channels in one field
+(`cursorFormat` vs the axis kind's default), disambiguated by a companion
+`xReadoutCustom` flag mirroring `xFormatCustom`. The reviewer's point stands
+that the honest fix is to split the channels — let consumers read the scale's
+own `readoutFormat` (already present on both `ElapsedScale` and
+`TradingTimeScale`) and return `formatReadout` to meaning `cursorFormat`
+alone. Deferred out of a patch release because it touches all four
+`formatReadout` consumers (`XAxis`, `Layers`' in-plot chip, and two in
+`annotations`); pull it in with the next axis-surface change.
+
 ### [PND-VALAX] — Value axis: remaining chart types + algebra growth
 
 Box/Candlestick are still time-only on the x axis; widen them to
