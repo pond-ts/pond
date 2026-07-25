@@ -119,6 +119,17 @@ export function barRect(
  * O(N) over the events, one fill (+ optional stroke) per bar, no per-bar
  * allocation beyond the rect tuple.
  *
+ * **Per-bar fills (`binFills`):** an optional colour array aligned
+ * index-for-index to the source bars — bar `i` fills with `binFills[i]`
+ * (an `undefined` entry falls back to the flat `fill`). This is the
+ * direction-coloured financial volume row (rising / falling) and the
+ * value-band case on a time axis. Highlight follows {@link drawStacks}'s
+ * binFills convention rather than the flat path's: the bar **keeps its own
+ * colour** under hover / selection — the highlight pops `globalAlpha` to 1
+ * (and outlines the selection in the bar's own fill) — so a red / green bar
+ * stays red / green while live, instead of swapping to the single
+ * `highlight` colour and losing its meaning.
+ *
  * **M4 column decimation ([PND-MARKDEC]):** once the *visible* bars are denser
  * than ~2 per device pixel, they overplot into a solid silhouette, so
  * `decimate !== false` replaces them with one **envelope rect per pixel column**
@@ -128,7 +139,10 @@ export function barRect(
  * columns aren't individually selectable, so per-bar selection/hover highlight is
  * suppressed (a <1px bar's ring wouldn't be visible anyway); interaction still
  * reads the **source** bars via {@link barAt} (§2.3). Pass `decimate={false}` to
- * always draw every bar. Returns {@link LayerDrawStats} for `onDrawStats`.
+ * always draw every bar. **`binFills` disables the envelope pass** — a single
+ * envelope rect spans many differently-coloured bars, so decimating would
+ * repaint them one flat colour; per-bar-coloured layers draw every visible bar.
+ * Returns {@link LayerDrawStats} for `onDrawStats`.
  */
 export function drawBars(
   ctx: CanvasRenderingContext2D,
@@ -142,6 +156,7 @@ export function drawBars(
   selection: { key: number; id: string } | null,
   hovered: { key: number; id: string } | null,
   decimate: DecimateOption = true,
+  binFills?: readonly (string | undefined)[],
 ): LayerDrawStats {
   ctx.save();
   ctx.globalAlpha = style.opacity;
@@ -155,10 +170,11 @@ export function drawBars(
   // Decimate the visible bars to per-column envelope rects once dense (see the
   // header). `null` below the visible-density threshold ⇒ the full per-bar loop.
   // `{ threshold }` tunes the samples-per-pixel factor `k` (as line/area/band do);
-  // `undefined` ⇒ decimateBars' default (2).
+  // `undefined` ⇒ decimateBars' default (2). Per-bar fills skip the envelope —
+  // one flat rect can't carry many bars' colours (see the header).
   const k = typeof decimate === 'object' ? decimate.threshold : undefined;
   const envelope =
-    decimate !== false
+    decimate !== false && binFills === undefined
       ? decimateBars(cs, xScale, ctx, baseline, k, vEnd - vStart)
       : null;
   if (envelope !== null) {
@@ -209,6 +225,22 @@ export function drawBars(
       hovered !== null &&
       hovered.id === seriesId &&
       hovered.key === cs.begin[i];
+    if (binFills !== undefined) {
+      // Per-bar fills: the bar keeps its own colour under hover / selection —
+      // highlight pops the alpha to 1 and outlines the selection in the bar's
+      // own fill (the drawStacks binFills convention; see the header).
+      const fill = binFills[i] ?? style.fill;
+      ctx.globalAlpha = selected || isHovered ? 1 : style.opacity;
+      ctx.fillStyle = fill;
+      ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
+      drawn += 1;
+      if (selected) {
+        ctx.lineWidth = style.outlineWidth;
+        ctx.strokeStyle = fill;
+        ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
+      }
+      continue;
+    }
     ctx.fillStyle = selected || isHovered ? style.highlight : style.fill;
     ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
     drawn += 1;

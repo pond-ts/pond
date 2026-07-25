@@ -43,7 +43,7 @@ Adapters: `barsFromTimeSeries` / `barsFromValueSeries` (single),
 | `columns`     | `readonly string[]`                            | —                | Stacked segment columns, bottom → top.                         |
 | `as`          | `string`                                       | `'default'`      | Style role (single series only — **ignored on stacks**).       |
 | `colors`      | `Record<string, string>`                       | —                | Per-**group** fill override for stacks.                        |
-| `binColors`   | `readonly (string \| undefined)[]`             | —                | Per-**bin** fill for a single-series zone chart.               |
+| `binColors`   | `readonly (string \| undefined)[]`             | —                | Per-**bar** fill for a single series (zones, up/down volume).  |
 | `orientation` | `'vertical' \| 'horizontal'`                   | `'vertical'`     | Bar direction.                                                 |
 | `ordinal`     | `boolean`                                      | `false`          | For `bins`: uniform `[i, i+1]` slots instead of numeric edges. |
 | `id`          | `string`                                       | —                | Stable identity — **gates selection + hover**.                 |
@@ -56,8 +56,12 @@ Adapters: `barsFromTimeSeries` / `barsFromValueSeries` (single),
   `categories` (ordinal). This is the axis-behaviour fork.
 - **`orientation`** — `'vertical'` (default) or `'horizontal'`.
 - **`column` vs `columns`** — a single value column, or stacked segments.
-- **`colors`** (per-group stacks) vs **`binColors`** (per-bin single-series
-  zones).
+- **`colors`** (per-group stacks) vs **`binColors`** (per-bar single-series:
+  value-band zones, or a direction-coloured financial **volume** row — derive
+  the array from open vs close and the bars read green / red under the candles,
+  keeping their own colour in the hover / click readout). `binColors` draws
+  every visible bar (the dense-bar envelope decimation is skipped — one
+  envelope rect can't carry many colours).
 - **`ordinal`** — `bins` on a uniform ordinal band instead of their numeric
   spans.
 
@@ -88,7 +92,7 @@ Adapters: `barsFromTimeSeries` / `barsFromValueSeries` (single),
 - [Histograms guide](../../how-to-guides/histograms) ·
   [Categorical charts guide](../../how-to-guides/categorical-charts) — worked builds.
 - Storybook: [`Charts/BarChart`](pathname:///storybook/?path=/story/charts-barchart--buckets)
-  and [`Charts/Histogram`](pathname:///storybook/?path=/story/charts-histogram--power-distribution)
+  and [`Charts/BarChart/Histogram`](pathname:///storybook/?path=/story/charts-barchart-histogram--power-distribution)
   — buckets, stacks, zones, horizontal, selection.
 - The [API reference](/docs/api/charts/bar-chart) — the full
   `BarChartProps` type.

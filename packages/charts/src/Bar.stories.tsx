@@ -88,8 +88,8 @@ export const Buckets: Story = {
 /**
  * Diverging bars: a series that straddles zero grows up for positive values and
  * hangs down for negative ones, both off the zero baseline (pulled into the
- * domain). No per-bar colour — the single styling channel still applies; sign is
- * read from position, not hue.
+ * domain). No per-bar colour here — sign is read from position, not hue (to
+ * *also* colour by sign, derive a `binColors` array — the BinColors story).
  */
 export const Diverging: Story = {
   render: () => {
@@ -100,6 +100,43 @@ export const Diverging: Story = {
           <YAxis id="flow" label="net" />
           <Layers>
             <BarChart series={f} column="count" gap={3} />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **Per-bar colours (`binColors`)** on a time-axis series: `binColors[i]` fills
+ * bar `i`, overriding the theme fill (an `undefined` entry falls back). Here the
+ * net-flow bars are coloured **by sign** — the array is derived from the series'
+ * own data, the same recipe as a direction-coloured financial **volume** row
+ * (rising / falling off open vs close; see `Charts/Candlestick`'s price+volume
+ * scenario). Hover / click read out the bar's **own** colour, and the highlight
+ * pops opacity instead of swapping the fill, so a red / green bar keeps its
+ * meaning while live. Per-bar colours draw every visible bar (the dense-bar
+ * envelope decimation is skipped — it can't carry more than one colour).
+ */
+export const BinColors: Story = {
+  render: () => {
+    const f = netFlow();
+    const count = f.column('count');
+    const bySign = Array.from({ length: f.length }, (_, i) =>
+      (count.at(i) ?? 0) >= 0 ? '#15B3A6' : '#C96A5B',
+    );
+    return (
+      <ChartContainer range={TIME_RANGE} width={640} theme={docsTheme}>
+        <ChartRow height={240}>
+          <YAxis id="flow" label="net" />
+          <Layers>
+            <BarChart
+              series={f}
+              column="count"
+              gap={3}
+              binColors={bySign}
+              id="flow"
+            />
           </Layers>
         </ChartRow>
       </ChartContainer>
