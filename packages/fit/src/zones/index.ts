@@ -25,32 +25,31 @@ const SENTINEL = 1e9; // the open-top edge ZoneDef carries
  * Carries pond's canonical bin edges (`start` / `end`) so the array feeds
  * `@pond-ts/charts` (`<BarChart bins>` / `stacksFromBins`) with no mapping
  * step — the same `{ start, end, …aggregates }` shape core's `byColumn`
- * returns. `end` is **always finite** (see below), because an infinite edge
- * would blow up a chart's axis domain.
+ * returns, and the same guarantee core enforces: **finite, with
+ * `end > start`.** (An infinite edge blows up a chart's axis domain; a
+ * zero-width bin is what `byColumn` itself rejects as unrepresentable.)
  */
 export interface ZoneTime {
   /** 1-based zone number (Z1 = the lowest band). */
   zone: number;
   label: string;
-  /** Inclusive lower edge, in the value axis (watts / bpm / m·s⁻¹). */
+  /**
+   * Lower edge, in the value axis (watts / bpm / m·s⁻¹). Bands are
+   * **inclusive-upper** (`(start, end]`), so this edge belongs to the band
+   * below — except on Z1, whose floor is inclusive.
+   */
   start: number;
   /**
-   * Upper edge, **always finite**. For the open-top zone this is the highest
-   * value observed in the data (or `start` when the zone is empty), so the band
-   * is drawable; read {@link ZoneTime.hi} when you need the true open-top
-   * `Infinity` semantics.
+   * Upper edge — **always finite, always `> start`**. The top band is
+   * open-ended (see {@link ZoneTime.openEnded}); its `end` is drawn out to the
+   * highest value observed, never `Infinity`.
    */
   end: number;
   /**
-   * @deprecated Use {@link ZoneTime.start}. Retained as an alias so existing
-   * callers keep working; `start` is the shape charts consume.
+   * `true` on the open-ended top band, whose real upper edge is unbounded —
+   * `end` is a drawable stand-in. Label it `"{start}+"` rather than as a range.
    */
-  lo: number;
-  /**
-   * The mathematical upper edge — `Infinity` for the top zone. Prefer
-   * {@link ZoneTime.end} for anything that has to be finite (charts, spans).
-   */
-  hi: number;
+  openEnded: boolean;
   seconds: number;
   /** Share of total in-zone time, [0, 1]. */
   fraction: number;
@@ -94,24 +93,35 @@ export function zoneDistributionByValue(
   const secs = bins.map((b) => (b.seconds as number) ?? 0);
   const total = secs.reduce((a, b) => a + b, 0) || 1;
   return labels.map((label, z) => {
-    const lo = edges[z]!;
-    const hi =
-      (edges[z + 1] ?? SENTINEL) >= SENTINEL ? Infinity : edges[z + 1]!;
-    // Open-top zone: fall back to the observed max so `end` stays finite and
-    // the band has a drawable width. No data (observedMax === -Infinity) or
-    // nothing that reached this zone ⇒ zero-width at the floor.
-    const end = Number.isFinite(hi) ? hi : Math.max(lo, observedMax);
+    const start = edges[z]!;
+    const rawEnd = edges[z + 1] ?? SENTINEL;
+    const openEnded = rawEnd >= SENTINEL;
     return {
       zone: z + 1,
       label,
-      start: lo,
-      end,
-      lo,
-      hi,
+      start,
+      // The open-ended top band has no real upper edge. Draw it out to the
+      // highest value observed, and never narrower than the band below it —
+      // a zero-width bin is what `byColumn` rejects as unrepresentable, and
+      // it would vanish from a chart even while holding time.
+      end: openEnded
+        ? Math.max(observedMax, start + openTopWidth(edges, z))
+        : rawEnd,
+      openEnded,
       seconds: secs[z] ?? 0,
       fraction: (secs[z] ?? 0) / total,
     };
   });
+}
+
+/**
+ * A drawable width for the open-ended top band when the data doesn't supply
+ * one: the width of the band below it, falling back to 1 unit when there is no
+ * band below (or it too is degenerate). Guarantees `end > start`.
+ */
+function openTopWidth(edges: ReadonlyArray<number>, z: number): number {
+  const below = z > 0 ? edges[z]! - edges[z - 1]! : 0;
+  return below > 0 ? below : 1;
 }
 
 /** Time in each HR zone (bpm axis). `hrZones` from `profile.profileAsOf`. */

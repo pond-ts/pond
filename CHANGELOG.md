@@ -52,32 +52,46 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
-### Added
+### Changed
 
-- **fit:** **Power bins and zones are now chart-ready without a mapping step.**
-  `PowerBin`, `PowerZone`, and `ZoneTime` carry pond's canonical bin edges —
-  `start` / `end` — the same `{ start, end, …aggregates }` shape core's
-  `byColumn` returns and `@pond-ts/charts` consumes. Previously each type used
-  its own vocabulary (`wattsFrom` with no upper edge; `lo`/`hi`;
-  `minWatts`/`maxWatts`), so every caller had to hand-map before drawing:
+- **fit (breaking):** **Power bins and zones now use pond's canonical bin
+  edges**, so they feed `@pond-ts/charts` with no mapping step:
 
   ```tsx
   <BarChart bins={power.distribution} column="seconds" />
   <BarChart bins={power.zones} column="seconds" orientation="horizontal" ordinal />
   ```
 
-  `end` is **always finite**. The open-top zone previously exposed only
-  `Infinity`, which blows up a chart's axis domain; `end` now falls back to the
-  highest value observed in the data (or `start` when the zone is empty). The
-  mathematical edge is unchanged and still readable as `hi` / `maxWatts`.
+  Each type previously spoke its own dialect for the same concept —
+  `PowerBin.wattsFrom` (with **no upper edge at all**), `ZoneTime.lo`/`hi`, and
+  `PowerZone.minWatts`/`maxWatts` — while core's `byColumn` and charts' `BinRecord`
+  both use `{ start, end, …aggregates }`. Every caller had to hand-map before
+  drawing, even though the internals already computed the canonical shape and
+  discarded it.
 
-### Deprecated
+  **Migration** (pre-1.0, so the old names are gone rather than deprecated):
 
-- **fit:** `PowerBin.wattsFrom`, `PowerZone.minWatts`, and `ZoneTime.lo` are
-  deprecated aliases of the new `start` field. They still populate, so existing
-  callers keep working; prefer `start` / `end` in new code. (`hi` and `maxWatts`
-  are **not** deprecated — they carry the true open-top `Infinity` that `end`
-  deliberately clamps.)
+  | Was                   | Now                                    |
+  | --------------------- | -------------------------------------- |
+  | `PowerBin.wattsFrom`  | `PowerBin.start` (+ new `end`)         |
+  | `ZoneTime.lo` / `.hi` | `ZoneTime.start` / `.end`, `openEnded` |
+  | `PowerZone.minWatts`  | `PowerZone.start`                      |
+  | `PowerZone.maxWatts`  | `PowerZone.end`, `openEnded`           |
+
+  `end` is now **always finite and always `> start`** — the guarantee core
+  enforces (`byColumn` throws on a zero-width bin) and charts need (an infinite
+  edge blows up an axis domain). The open-ended top band, which previously
+  carried only `Infinity`, is drawn out to the highest value observed and never
+  narrower than the band below it; test for it with the new **`openEnded`**
+  flag instead of comparing against `Infinity`. Rounding zone edges to whole
+  watts no longer collapses bands at very low FTPs.
+
+### Added
+
+- **fit:** `computePower` takes an options object — **`{ binWatts }`** sets the
+  width of the `distribution` buckets (default `1`, unchanged). 1 W bins draw as
+  hairlines, so pass the width you intend to render rather than re-bucketing the
+  output yourself. New exported type `ComputePowerOptions`.
 
 ## [0.52.0] — 2026-07-23
 

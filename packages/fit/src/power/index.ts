@@ -131,11 +131,6 @@ export interface PowerBin {
   start: number;
   /** Exclusive upper edge of the bin, watts (`start + binWatts`). */
   end: number;
-  /**
-   * @deprecated Use {@link PowerBin.start}. Retained as an alias so existing
-   * callers keep working; `start` is the shape charts consume.
-   */
-  wattsFrom: number;
   /** Seconds spent in this bin. */
   seconds: number;
 }
@@ -178,7 +173,6 @@ export function powerDistribution(
   return seconds.map((s, b) => ({
     start: b * binWatts,
     end: (b + 1) * binWatts,
-    wattsFrom: b * binWatts,
     seconds: s,
   }));
 }
@@ -197,23 +191,22 @@ export function powerDistribution(
 export interface PowerZone {
   zone: number;
   label: string;
-  /** Inclusive lower edge, watts. */
+  /**
+   * Lower edge, watts (whole watts). Zones are **inclusive-upper**, so this
+   * edge belongs to the zone below — except on Z1, whose floor is inclusive.
+   */
   start: number;
   /**
-   * Upper edge, watts, **always finite** — for the open-top zone this is the
-   * highest wattage observed in the ride. Read {@link PowerZone.maxWatts} for
-   * the true `Infinity` semantics.
+   * Upper edge, watts — **always finite, always `> start`**. Z7 is open-ended
+   * (see {@link PowerZone.openEnded}); its `end` is drawn out to the highest
+   * wattage in the ride, never `Infinity`.
    */
   end: number;
   /**
-   * @deprecated Use {@link PowerZone.start}.
+   * `true` on Z7, whose real upper edge is unbounded — `end` is a drawable
+   * stand-in. Label it `"375+ W"` rather than as a range.
    */
-  minWatts: number;
-  /**
-   * The mathematical upper edge, watts; `Infinity` for the top zone. Prefer
-   * {@link PowerZone.end} where a finite number is required (charts, spans).
-   */
-  maxWatts: number;
+  openEnded: boolean;
   seconds: number;
   /** Fraction of total in-zone time [0, 1]. */
   fraction: number;
@@ -233,16 +226,25 @@ export function zoneDistribution(
   // engine (the same one HR + pace use — see ../zones). PowerZone keeps its
   // watts-named shape, so the display contract is unchanged.
   const zones = powerZoneDef(ftp);
-  return zoneDistributionByValue(watts, intervals(timeSec), zones).map((z) => ({
-    zone: z.zone,
-    label: z.label,
-    start: Math.round(z.start),
-    end: Math.round(z.end),
-    minWatts: Math.round(z.lo),
-    maxWatts: z.hi === Infinity ? Infinity : Math.round(z.hi),
-    seconds: z.seconds,
-    fraction: z.fraction,
-  }));
+  // Report whole watts (Coggan edges land on halves at most FTPs), but keep the
+  // edges strictly ascending as we round: at a tiny FTP several zones round to
+  // the same integer, which would collapse a band to zero width. Each zone
+  // starts where the previous ended, so the set stays contiguous and drawable.
+  let prevEnd = -Infinity;
+  return zoneDistributionByValue(watts, intervals(timeSec), zones).map((z) => {
+    const start = prevEnd === -Infinity ? Math.round(z.start) : prevEnd;
+    const end = Math.max(Math.round(z.end), start + 1);
+    prevEnd = end;
+    return {
+      zone: z.zone,
+      label: z.label,
+      start,
+      end,
+      openEnded: z.openEnded,
+      seconds: z.seconds,
+      fraction: z.fraction,
+    };
+  });
 }
 
 /** The 7 Coggan power zones as a watt-axis {@link ZoneDef} (FTP-relative).
@@ -357,12 +359,25 @@ export interface PowerSummary {
   trainingLoad: number;
   totalWorkKj: number;
   ftp: number;
-  /** Time per power bucket at the **finest (1 W)** resolution — the canonical
-   *  base the UI re-aggregates to wider bins (10/15/25 W). Always 1 W so the
-   *  display contract doesn't depend on a compute-time bin choice. */
+  /**
+   * Time per power bucket, `binWatts` wide (default **1 W** — the finest base,
+   * which a caller can re-aggregate). Pass `binWatts` to get display-ready
+   * buckets straight out: 1 W bins draw as hairlines, so a chart usually wants
+   * 10–25 W.
+   */
   distribution: PowerBin[];
   zones: PowerZone[];
   curve: PowerCurvePoint[];
+}
+
+/** Options for {@link computePower}. */
+export interface ComputePowerOptions {
+  /**
+   * Width of each {@link PowerSummary.distribution} bucket, watts. Defaults to
+   * `1` — the finest base. Set it to the width you intend to draw (10 / 15 /
+   * 25) rather than re-bucketing the 1 W output yourself.
+   */
+  binWatts?: number;
 }
 
 /** Compute the full power summary. `elapsedSeconds` drives TSS. */
@@ -371,7 +386,9 @@ export function computePower(
   watts: Float64Array,
   ftp: number,
   elapsedSeconds: number,
+  options: ComputePowerOptions = {},
 ): PowerSummary {
+  const { binWatts = 1 } = options;
   const np = normalizedPower(timeSec, watts);
   return {
     averageWatts: averagePower(watts),
@@ -381,8 +398,7 @@ export function computePower(
     trainingLoad: trainingLoad(np, ftp, elapsedSeconds),
     totalWorkKj: totalWorkKj(timeSec, watts),
     ftp,
-    // 1 W base; the UI aggregates to its chosen bin width (see PowerSummary).
-    distribution: powerDistribution(timeSec, watts, 1),
+    distribution: powerDistribution(timeSec, watts, binWatts),
     zones: zoneDistribution(timeSec, watts, ftp),
     curve: powerCurve(timeSec, watts),
   };

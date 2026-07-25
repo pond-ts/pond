@@ -25,8 +25,8 @@ describe('zoneDistributionByValue', () => {
     expect(out.map((z) => z.seconds)).toEqual([2, 1, 1]); // 100,150 → low; 250 → mid; 400 → high
     expect(out.map((z) => z.label)).toEqual(['low', 'mid', 'high']);
     expect(out.reduce((s, z) => s + z.fraction, 0)).toBeCloseTo(1, 6);
-    expect(out[2]!.hi).toBe(Infinity); // open top
-    expect(out[0]!.lo).toBe(0);
+    expect(out[2]!.openEnded).toBe(true); // open top
+    expect(out[0]!.start).toBe(0);
   });
 
   it('carries chart-ready start/end, with a finite end on the open top', () => {
@@ -35,20 +35,22 @@ describe('zoneDistributionByValue', () => {
       [1, 1, 1, 1],
       zones,
     );
-    // start/end mirror lo/hi, except the open top is clamped to the observed max.
+    // Real edges, except the open top which is drawn out to the observed max.
     expect(out.map((z) => z.start)).toEqual([0, 200, 300]);
     expect(out.map((z) => z.end)).toEqual([200, 300, 400]);
-    expect(out[2]!.hi).toBe(Infinity); // the true edge is still available
+    expect(out.map((z) => z.openEnded)).toEqual([false, false, true]);
     for (const z of out) {
       expect(Number.isFinite(z.start)).toBe(true);
       expect(Number.isFinite(z.end)).toBe(true);
-      expect(z.start).toBe(z.lo); // alias agrees
+      expect(z.end).toBeGreaterThan(z.start);
     }
   });
 
-  it('keeps end finite when no value can set it (unplaceable input)', () => {
+  it('keeps the open top drawable when no value can set its width', () => {
     // Nothing here can raise the open top: NaN and ±Infinity are dropped from
-    // binning, negatives clamp to 0. `end` must not leak -Infinity/Infinity.
+    // binning, negatives clamp to 0, and an all-zero ride sits ON the floor.
+    // `end` must stay finite AND wider than `start` — byColumn itself rejects a
+    // zero-width bin, and it would vanish from a chart even while holding time.
     for (const values of [
       [NaN, NaN],
       [] as number[],
@@ -62,9 +64,22 @@ describe('zoneDistributionByValue', () => {
       );
       const top = out[out.length - 1]!;
       expect(Number.isFinite(top.end)).toBe(true);
-      expect(top.end).toBe(top.start); // collapses to zero width
-      expect(top.hi).toBe(Infinity); // …while the true edge is untouched
+      expect(top.end).toBeGreaterThan(top.start);
+      expect(top.openEnded).toBe(true);
     }
+  });
+
+  it('gives a single open-ended band width even when it holds all the time', () => {
+    // One band, open-ended, every sample sitting exactly on its inclusive
+    // floor: `end` cannot come from the data, but the band holds 100% of the
+    // time and must still be drawable.
+    const out = zoneDistributionByValue([0, 0, 0], [1, 1, 1], {
+      edges: [0, 1e9],
+      labels: ['all'],
+    });
+    expect(out[0]!.seconds).toBe(3);
+    expect(out[0]!.fraction).toBeCloseTo(1, 6);
+    expect(out[0]!.end).toBeGreaterThan(out[0]!.start);
   });
 
   it('is inclusive-upper at a boundary (a sample exactly on an edge → lower band)', () => {

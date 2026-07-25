@@ -17,15 +17,25 @@ import {
 const t = (n: number) => Float64Array.from({ length: n }, (_, i) => i); // 1 Hz
 
 describe('computePower', () => {
-  it('emits the distribution at the 1 W base (the UI re-buckets up)', () => {
+  it('emits the distribution at the 1 W base by default', () => {
     const p = computePower(t(100), new Float64Array(100).fill(150), 200, 100);
     expect(p.distribution.length).toBeGreaterThan(1);
-    // contiguous 1 W bins: each wattsFrom is one more than the last
+    // contiguous 1 W bins: each starts one watt above the last
     for (let i = 1; i < p.distribution.length; i++) {
-      expect(
-        p.distribution[i]!.wattsFrom - p.distribution[i - 1]!.wattsFrom,
-      ).toBe(1);
+      expect(p.distribution[i]!.start - p.distribution[i - 1]!.start).toBe(1);
     }
+  });
+
+  it('buckets to `binWatts` when asked, so the output is display-ready', () => {
+    const p = computePower(t(100), new Float64Array(100).fill(150), 200, 100, {
+      binWatts: 25,
+    });
+    expect(p.distribution.every((b) => b.end - b.start === 25)).toBe(true);
+    // 150 W lands in the 150–175 bucket, which holds all the time
+    const occupied = p.distribution.filter((b) => b.seconds > 0);
+    expect(occupied.length).toBe(1);
+    expect(occupied[0]!.start).toBe(150);
+    expect(occupied[0]!.end).toBe(175);
   });
 });
 
@@ -45,7 +55,6 @@ describe('chart-ready bin edges', () => {
       expect(Number.isFinite(b.start)).toBe(true);
       expect(Number.isFinite(b.end)).toBe(true);
       expect(b.end).toBeGreaterThan(b.start);
-      expect(b.start).toBe(b.wattsFrom); // alias agrees
     }
     // contiguous: each bin starts where the previous ended
     for (let i = 1; i < p.distribution.length; i++) {
@@ -62,34 +71,54 @@ describe('chart-ready bin edges', () => {
     expect(bins[4]!.seconds).toBeGreaterThan(0);
   });
 
-  it('zones expose a FINITE end for the open top (maxWatts stays Infinity)', () => {
-    // Ride tops out at 400 W; the top Coggan zone is open-ended.
+  it('zones give the open-ended top a finite, drawable end', () => {
+    // Ride tops out at 400 W; Z7 is open-ended.
     const watts = new Float64Array(100).fill(150);
     watts[50] = 400;
     const zones = zoneDistribution(t(100), watts, 200);
     const top = zones[zones.length - 1]!;
 
-    expect(top.maxWatts).toBe(Infinity); // unchanged semantics
-    expect(Number.isFinite(top.end)).toBe(true); // …but drawable
+    expect(top.openEnded).toBe(true);
+    expect(Number.isFinite(top.end)).toBe(true);
     expect(top.end).toBe(400); // the highest wattage observed
+    expect(zones.slice(0, -1).every((z) => !z.openEnded)).toBe(true);
 
     const asBins: BinRecord[] = zones;
     expect(asBins.length).toBe(zones.length);
     for (const z of zones) {
       expect(Number.isFinite(z.start)).toBe(true);
       expect(Number.isFinite(z.end)).toBe(true);
-      expect(z.end).toBeGreaterThanOrEqual(z.start);
-      expect(z.start).toBe(z.minWatts); // alias agrees
+      expect(z.end).toBeGreaterThan(z.start); // never zero-width
+    }
+    // contiguous: each zone starts where the previous ended
+    for (let i = 1; i < zones.length; i++) {
+      expect(zones[i]!.start).toBe(zones[i - 1]!.end);
     }
   });
 
-  it('an empty top zone collapses to zero width rather than Infinity', () => {
-    // Nothing above zone 1 — the open top is never entered.
+  it('keeps the top zone drawable even when nothing reaches it', () => {
+    // Nothing above Z1 — the open top is never entered, but must still have
+    // width: a zero-width bin is what byColumn rejects as unrepresentable.
     const zones = zoneDistribution(t(20), new Float64Array(20).fill(10), 200);
     const top = zones[zones.length - 1]!;
     expect(top.seconds).toBe(0);
-    expect(Number.isFinite(top.end)).toBe(true);
-    expect(top.end).toBe(top.start);
+    expect(top.end).toBeGreaterThan(top.start);
+  });
+
+  it('never collapses a zone at a tiny FTP (rounding stays strictly ascending)', () => {
+    // At FTP 1 every Coggan edge rounds to the same watt or two; the bands must
+    // still come back strictly ascending rather than zero-width.
+    const zones = zoneDistribution(
+      t(4),
+      Float64Array.from([1, 1, 1, 1]),
+      1, // pathological FTP
+    );
+    for (const z of zones) expect(z.end).toBeGreaterThan(z.start);
+    for (let i = 1; i < zones.length; i++) {
+      expect(zones[i]!.start).toBe(zones[i - 1]!.end);
+    }
+    // and the time is still accounted for
+    expect(zones.reduce((s, z) => s + z.seconds, 0)).toBeGreaterThan(0);
   });
 });
 
@@ -146,7 +175,7 @@ describe('zoneDistribution (FTP-relative bucketing)', () => {
     expect(zones[0]!.seconds).toBeCloseTo(1, 6); // Z1: the 50 W sample at idx3
     expect(zones[4]!.seconds).toBeCloseTo(1, 6); // Z5: 120 W
     expect(zones[6]!.seconds).toBeCloseTo(1, 6); // Z7: 200 W
-    expect(zones[6]!.maxWatts).toBe(Infinity);
+    expect(zones[6]!.openEnded).toBe(true);
     const total = zones.reduce((a, z) => a + z.seconds, 0);
     expect(zones[0]!.fraction).toBeCloseTo(1 / 3, 5);
     expect(total).toBeCloseTo(3, 6);
