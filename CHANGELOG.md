@@ -54,6 +54,28 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts:** **`<BarChart binColors>` now works on the single-series
+  time-axis path** — per-bar colours for a plain `series={…} column="…"` bar
+  layer, the shape a **direction-coloured financial volume row** needs (derive
+  the array from open vs close and volume reads green / red under the
+  candles; the `Charts/Candlestick` price+volume scenario shows the recipe).
+  Previously `binColors` only applied to `bins` / horizontal (stacked-path)
+  charts. A per-bar-coloured bar keeps its own colour under hover / selection
+  (the highlight pops opacity instead of swapping the fill), the hover / click
+  readout reports the bar's own colour, and the dense-bar envelope decimation
+  is skipped (an envelope rect can't carry more than one colour), so every
+  visible bar draws.
+
+### Changed
+
+- **charts (Storybook):** the `Charts/Histogram` story group moved to
+  **`Charts/BarChart/Histogram`** — the histogram is `BarChart` in its `bins`
+  mode, not a separate component, and the sidebar now says so. Story IDs under
+  the group changed accordingly (`charts-histogram--*` →
+  `charts-barchart-histogram--*`).
+
 ## [0.53.1] — 2026-07-25
 
 ### Fixed

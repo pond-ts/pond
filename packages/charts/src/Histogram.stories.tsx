@@ -19,7 +19,7 @@ import type { SelectInfo } from './context.js';
  * with the data generation" story is visible in the render, not hidden.
  */
 const meta = {
-  title: 'Charts/Histogram',
+  title: 'Charts/BarChart/Histogram',
   parameters: { layout: 'centered' },
 } satisfies Meta;
 

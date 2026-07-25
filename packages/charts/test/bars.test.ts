@@ -8,7 +8,7 @@ import {
   drawBars,
   resolveBarBaseline,
 } from '../src/bars.js';
-import { recordingContext } from './canvas-mock.js';
+import { recordingContext, type CtxCall } from './canvas-mock.js';
 import type { BarSeries } from '../src/data.js';
 import type { BarStyle } from '../src/theme.js';
 
@@ -533,5 +533,290 @@ describe('drawBars — M4 column decimation', () => {
           c.args?.[0] === style.highlight,
       ),
     ).toBe(false);
+  });
+});
+
+/**
+ * `drawBars` per-bar fills (`binColors` on a single-series `<BarChart>`): bar
+ * `i` fills with `binFills[i]` (falling back to the flat `fill`), the highlight
+ * pops opacity instead of swapping the colour (the drawStacks binFills
+ * convention — a direction-coloured volume bar stays red / green while live),
+ * and the dense-bar envelope pass is skipped (one rect can't carry many
+ * colours).
+ */
+describe('drawBars — per-bar fills (binFills)', () => {
+  /** The fillStyle in effect at each fillRect, in draw order. */
+  const fillsAtRects = (calls: readonly CtxCall[]): unknown[] => {
+    let fill: unknown;
+    const out: unknown[] = [];
+    for (const c of calls) {
+      if (c.type === 'set' && c.name === 'fillStyle') fill = c.args[0];
+      else if (c.name === 'fillRect') out.push(fill);
+    }
+    return out;
+  };
+
+  it('fills each bar with its own binFills entry, in order', () => {
+    const { ctx, calls } = recordingContext();
+    drawBars(
+      ctx,
+      bars([0, 1, 2], [1, 2, 3], [10, 20, 30]),
+      identity,
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      null,
+      null,
+      true,
+      ['#r', '#g', '#b'],
+    );
+    expect(fillsAtRects(calls)).toEqual(['#r', '#g', '#b']);
+  });
+
+  it('an undefined / out-of-range entry falls back to the flat fill', () => {
+    const { ctx, calls } = recordingContext();
+    drawBars(
+      ctx,
+      bars([0, 1, 2], [1, 2, 3], [10, 20, 30]),
+      identity,
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      null,
+      null,
+      true,
+      ['#r', undefined], // bar 1 explicit undefined; bar 2 beyond the array
+    );
+    expect(fillsAtRects(calls)).toEqual(['#r', style.fill, style.fill]);
+  });
+
+  it('stays index-aligned across a gap bar (the gap consumes its slot)', () => {
+    const { ctx, calls } = recordingContext();
+    drawBars(
+      ctx,
+      bars([0, 1, 2], [1, 2, 3], [10, NaN, 30]),
+      identity,
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      null,
+      null,
+      true,
+      ['#r', '#g', '#b'],
+    );
+    // Bar 1 is a gap (no rect) but bar 2 still takes ITS colour, not '#g'.
+    expect(fillsAtRects(calls)).toEqual(['#r', '#b']);
+  });
+
+  it('a hovered bar keeps its own colour — alpha pops to 1, no fill swap', () => {
+    const { ctx, calls } = recordingContext();
+    drawBars(
+      ctx,
+      bars([0, 1, 2], [1, 2, 3], [10, 20, 30]),
+      identity,
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      null,
+      { key: 1, id: 'count' }, // hover the middle bar
+      true,
+      ['#r', '#g', '#b'],
+    );
+    // The highlight colour is never used; the hovered bar still fills '#g'.
+    expect(fillsAtRects(calls)).toEqual(['#r', '#g', '#b']);
+    expect(
+      calls.some(
+        (c) =>
+          c.type === 'set' &&
+          c.name === 'fillStyle' &&
+          c.args[0] === style.highlight,
+      ),
+    ).toBe(false);
+    // Alpha per bar: opacity, then 1 for the hovered bar, then opacity again
+    // (the leading set is drawBars' save-bracket initial opacity).
+    const alphas = calls
+      .filter((c) => c.type === 'set' && c.name === 'globalAlpha')
+      .map((c) => c.args[0]);
+    expect(alphas).toEqual([style.opacity, style.opacity, 1, style.opacity]);
+    // Hover alone never outlines.
+    expect(calls.some((c) => c.name === 'strokeRect')).toBe(false);
+  });
+
+  it('a selected bar outlines in its own fill, not the highlight colour', () => {
+    const { ctx, calls } = recordingContext();
+    drawBars(
+      ctx,
+      bars([0, 1, 2], [1, 2, 3], [10, 20, 30]),
+      identity,
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      { key: 1, id: 'count' }, // select the middle bar
+      null,
+      true,
+      ['#r', '#g', '#b'],
+    );
+    expect(calls.filter((c) => c.name === 'strokeRect')).toHaveLength(1);
+    expect(
+      calls.find((c) => c.type === 'set' && c.name === 'strokeStyle')?.args,
+    ).toEqual(['#g']);
+    expect(
+      calls.some(
+        (c) =>
+          c.type === 'set' &&
+          c.name === 'fillStyle' &&
+          c.args[0] === style.highlight,
+      ),
+    ).toBe(false);
+  });
+
+  it('skips the dense-bar envelope — per-bar colours draw every visible bar', () => {
+    const pxScale = scaleLinear()
+      .domain([0, 100])
+      .range([0, 100]) as unknown as (v: number) => number;
+    const sizedCtx = () => {
+      const rec = recordingContext();
+      (rec.ctx as unknown as { canvas: { width: number } }).canvas = {
+        width: 4,
+      };
+      return rec;
+    };
+    const n = 100;
+    const dense = bars(
+      Array.from({ length: n }, (_, i) => i),
+      Array.from({ length: n }, (_, i) => i + 1),
+      Array.from({ length: n }, (_, i) => i),
+    );
+    // Control: without binFills the same setup decimates to W=4 column rects.
+    const control = sizedCtx();
+    const cStats = drawBars(
+      control.ctx,
+      dense,
+      pxScale,
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      null,
+      null,
+    );
+    expect(cStats.decimated).toBe(true);
+    expect(control.calls.filter((c) => c.name === 'fillRect')).toHaveLength(4);
+    // With binFills: every visible bar draws, each with its own colour.
+    const fills = Array.from({ length: n }, (_, i) =>
+      i % 2 === 0 ? '#up' : '#dn',
+    );
+    const rec = sizedCtx();
+    const stats = drawBars(
+      rec.ctx,
+      dense,
+      pxScale,
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      null,
+      null,
+      true,
+      fills,
+    );
+    expect(stats.decimated).toBe(false);
+    expect(rec.calls.filter((c) => c.name === 'fillRect')).toHaveLength(n);
+  });
+  it('stays source-aligned under viewport culling (vStart > 0)', () => {
+    const { ctx, calls } = recordingContext();
+    // 6 contiguous unit bars; view [22, 38] culls to indices [1, 5) (the two
+    // overlapping spans +1 margin each side — the pinned culling case above).
+    drawBars(
+      ctx,
+      bars(
+        [0, 10, 20, 30, 40, 50],
+        [10, 20, 30, 40, 50, 60],
+        [1, 2, 3, 4, 5, 6],
+      ),
+      scaleWithDomain(22, 38),
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      null,
+      null,
+      true,
+      ['#0', '#1', '#2', '#3', '#4', '#5'],
+    );
+    // The culled window draws bars 1..4 — each with its OWN colour (an
+    // index-zip against the culled slice would show '#0'..'#3').
+    expect(fillsAtRects(calls)).toEqual(['#1', '#2', '#3', '#4']);
+  });
+
+  it('an EMPTY binFills array stays on the legacy path end-to-end', () => {
+    // Dense: an empty array means "no colours", so the envelope pass still
+    // fires (presence alone must not disable the perf path — L2 review).
+    const pxScale = scaleLinear()
+      .domain([0, 100])
+      .range([0, 100]) as unknown as (v: number) => number;
+    const rec = recordingContext();
+    (rec.ctx as unknown as { canvas: { width: number } }).canvas = {
+      width: 4,
+    };
+    const n = 100;
+    const stats = drawBars(
+      rec.ctx,
+      bars(
+        Array.from({ length: n }, (_, i) => i),
+        Array.from({ length: n }, (_, i) => i + 1),
+        Array.from({ length: n }, (_, i) => i),
+      ),
+      pxScale,
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      null,
+      null,
+      true,
+      [],
+    );
+    expect(stats.decimated).toBe(true);
+    expect(rec.calls.filter((c) => c.name === 'fillRect')).toHaveLength(4);
+    // Sparse: the legacy highlight convention also applies (fill swaps to the
+    // highlight colour), exactly as if binFills were omitted.
+    const sparse = recordingContext();
+    drawBars(
+      sparse.ctx,
+      bars([0, 1], [1, 2], [10, 20]),
+      identity,
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      null,
+      { key: 1, id: 'count' },
+      true,
+      [],
+    );
+    expect(
+      sparse.calls.some(
+        (c) =>
+          c.type === 'set' &&
+          c.name === 'fillStyle' &&
+          c.args[0] === style.highlight,
+      ),
+    ).toBe(true);
   });
 });

@@ -108,14 +108,21 @@ export interface BarChartProps<
    */
   colors?: Readonly<Record<string, string>>;
   /**
-   * **Per-bin** colours for a single-series band chart — `binColors[i]` fills
-   * bar `i` (aligned to the bins / bands in order), overriding the `as`/theme
-   * fill. This is the way to colour heart-rate / power **zones** or value bands
-   * each their own colour (the `colors` map above is per-**group**, for stacks).
-   * An `undefined`/short entry falls back to the theme fill. Meant for a
-   * single-series chart (`column` + `bins`, or a horizontal single series); on a
+   * **Per-bar** colours for a single-series chart — `binColors[i]` fills bar
+   * `i` (aligned to the bars / bins in order), overriding the `as`/theme fill.
+   * This is the way to colour heart-rate / power **zones** or value bands each
+   * their own colour, and the **direction-coloured financial volume row** — a
+   * time-axis `series` derives `binColors` from its own data (rising / falling
+   * off open vs close) so volume bars read green / red under the candles (the
+   * `colors` map above is per-**group**, for stacks). An `undefined`/short
+   * entry falls back to the theme fill. Works on any **single-series** shape —
+   * a time / value `series` (vertical or horizontal) or `bins`; on a
    * multi-group stack it would tint every segment of a bin alike, so it's not
-   * the tool there.
+   * the tool there. A per-bar-coloured bar keeps its own colour under hover /
+   * selection (the highlight pops opacity instead of swapping the fill), and
+   * the hover / click readout reports the bar's own colour. **Disables the
+   * dense-bar envelope decimation** (see `decimate`) — an envelope rect can't
+   * carry many bars' colours, so every visible bar draws.
    */
   binColors?: readonly (string | undefined)[];
   /**
@@ -170,7 +177,9 @@ export interface BarChartProps<
    * at that density (a perf knob, not a style); interaction still reads the source
    * bars. Pass `false` to always draw every bar, or `{ threshold }` to tune the
    * samples-per-pixel factor. **No-op for a stacked / multi-group histogram** (the
-   * categorical case is low-count; only the single-series path decimates).
+   * categorical case is low-count; only the single-series path decimates) — and
+   * **no-op when `binColors` is set** (an envelope rect would repaint its bars
+   * one flat colour; a per-bar-coloured layer draws every visible bar).
    */
   decimate?: DecimateOption;
   /**
@@ -493,7 +502,9 @@ export function BarChart<
               {
                 x: (bs.begin[i]! + bs.end[i]!) / 2,
                 value: v,
-                color: singleStyle.fill,
+                // A per-bar colour wins over the flat fill, so the readout
+                // pill reads the bar's own colour (as the stacked path does).
+                color: binColors?.[i] ?? singleStyle.fill,
                 label,
               },
             ];
@@ -514,12 +525,14 @@ export function BarChart<
                     singleStyle.minWidth,
                   );
                   if (hit === null) return null;
-                  const [, begin, value] = hit;
+                  const [bi, begin, value] = hit;
                   return {
                     id,
                     key: begin,
                     value,
-                    color: singleStyle.fill,
+                    // The bar's own colour when per-bar coloured (stacked-path
+                    // parity: the readout pill matches the pixels).
+                    color: binColors?.[bi] ?? singleStyle.fill,
                     label,
                   };
                 },
@@ -537,6 +550,7 @@ export function BarChart<
               selection,
               hover,
               decimate,
+              binColors,
             ),
         },
         axisId: axis,
@@ -627,6 +641,7 @@ export function BarChart<
     orientation,
     singleStyle,
     stackStyle,
+    binColors,
     label,
     id,
     gapPx,
