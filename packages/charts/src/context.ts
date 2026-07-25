@@ -174,6 +174,17 @@ export interface ContainerFrame {
    *  custom format owns the whole label, so the ladder mustn't second-line it. */
   readonly xFormatCustom: boolean;
   /**
+   * Whether an explicit container `cursorFormat` shaped {@link formatReadout} —
+   * as opposed to the axis kind supplying its own default readout (the elapsed
+   * axis's finer duration). The two are indistinguishable from the field alone,
+   * and `<XAxis>` must tell them apart to honour the documented pill precedence
+   * `cursorFormat → axis format → container`: a **`cursorFormat`** outranks an
+   * explicit `<XAxis format>`, a **default** does not. Without this the elapsed
+   * default silently occupied the `cursorFormat` slot and a wall-clock strip's
+   * pill read durations (issue #540, finding 2).
+   */
+  readonly xReadoutCustom: boolean;
+  /**
    * The shared **x-side tick count** — the `count` every x-side `ticks()` /
    * `tickFormat()` call passes (`<XAxis>` labels, the canvas x gridlines and
    * session dividers, {@link formatTime}), so labels, grid, and dividers all

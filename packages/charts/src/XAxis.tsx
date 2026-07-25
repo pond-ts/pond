@@ -319,8 +319,20 @@ export function XAxis({
   // own channel, so precise-pill-over-terse-ticks works on any axis kind. A
   // `transform`ed axis is exempt — its pill speaks the derived unit, which a
   // data-unit `cursorFormat` can't address.
+  //
+  // The middle rung is why `xReadoutCustom` exists: `formatReadout` carries
+  // either a real `cursorFormat` (which outranks this axis's `format`) or the
+  // axis kind's own default readout (which does not — an elapsed container's
+  // finer `00:05:12`). Reading the field alone can't tell them apart, so a
+  // wall-clock strip declared as `<XAxis format="%H:%M">` under an elapsed
+  // container used to label its ticks `11:33` and pill them `00:05:12`
+  // (issue #540).
   const readoutFmt =
-    transform === undefined ? (container.formatReadout ?? fmt) : fmt;
+    transform !== undefined
+      ? fmt
+      : format !== undefined && !container.xReadoutCustom
+        ? fmt
+        : (container.formatReadout ?? fmt);
 
   // Marker annotations that opted into an axis indicator (`<Marker indicator>`)
   // pin their **time** to this shared x-axis — a pill at `at`, in the annotation

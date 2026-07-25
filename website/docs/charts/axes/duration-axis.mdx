@@ -89,7 +89,7 @@ wall-clock axis it replaces; only an axis fine enough for seconds drops to
 
 | Axis                 | Reads                         |
 | -------------------- | ----------------------------- |
-| 2 s, 40 ms steps     | `00:00.000` `00:00.500`       |
+| 2 s, 500 ms steps    | `00:00.000` `00:00.500`       |
 | 90 s, 15 s steps     | `00:15` `00:30` `00:45`       |
 | 2 h, 30 s steps      | `01:01:30`                    |
 | 10 min, 5 min steps  | `00:00` `00:05` `00:10`       |
@@ -145,9 +145,17 @@ _travelled_ (`0` … `4,000`) instead of distance _recorded_ (`2,000` …
 ## Sharp edges
 
 - **Trading calendars.** On a [trading-time axis](./trading-time-axis.mdx) the
-  durations are **wall-clock**, so ticks spanning a collapsed session gap sit
-  unevenly across the seam. Elapsed _trading_ time (five hours of market time)
-  isn't implemented.
+  durations are **wall-clock**, so ticks sit unevenly across a collapse seam:
+  the ladder strides through closed time the axis doesn't draw, and everything
+  inside a gap lands on the seam itself. Ticks that would coincide there are
+  dropped rather than stacked, so a session boundary shows one label instead of
+  four — expect thinning around the seams, not a uniform stride. Elapsed
+  _trading_ time (five hours of market time) isn't implemented.
+- **An origin far outside the view makes every label carry the distance to it.**
+  `origin={0}` on a 2026 time axis is legitimately ~20,468 days ago, so the
+  ticks read `20468d 10:00`, `20468d 10:01` — correct, and useless. Put the
+  origin near the data (`'data'`, or an instant inside it); the labels shorten
+  as soon as you do.
 - **Category axes** have no numeric origin to offset from; `origin` is ignored.
 - **The origin is the data's, not the view's.** Pan past the first sample and
   the labels go negative rather than re-zeroing at the left edge. A
