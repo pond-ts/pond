@@ -73,6 +73,7 @@ export type {
   PowerCurvePoint,
   PowerSummary,
   PowerEffort,
+  ComputePowerOptions,
 } from './power/index.js';
 
 export {

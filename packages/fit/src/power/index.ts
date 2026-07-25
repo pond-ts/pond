@@ -115,10 +115,22 @@ export function trainingLoad(
   );
 }
 
-/** One bucket of the power histogram. */
+/**
+ * One bucket of the power histogram.
+ *
+ * Carries pond's canonical bin edges (`start` / `end`, watts) — the same
+ * `{ start, end, …aggregates }` shape core's `byColumn` returns — so the array
+ * feeds `@pond-ts/charts` directly:
+ *
+ * ```tsx
+ * <BarChart bins={power.distribution} column="seconds" />
+ * ```
+ */
 export interface PowerBin {
   /** Inclusive lower edge of the bin, watts. */
-  wattsFrom: number;
+  start: number;
+  /** Exclusive upper edge of the bin, watts (`start + binWatts`). */
+  end: number;
   /** Seconds spent in this bin. */
   seconds: number;
 }
@@ -158,16 +170,44 @@ export function powerDistribution(
   const seconds = new Array<number>(maxBin + 1).fill(0);
   for (const b of bins)
     seconds[Math.round(b.start / binWatts)] = (b.seconds as number) ?? 0;
-  return seconds.map((s, b) => ({ wattsFrom: b * binWatts, seconds: s }));
+  return seconds.map((s, b) => ({
+    start: b * binWatts,
+    end: (b + 1) * binWatts,
+    seconds: s,
+  }));
 }
 
-/** One FTP-based training zone. */
+/**
+ * One FTP-based training zone.
+ *
+ * Like {@link PowerBin}, carries pond's canonical `start` / `end` edges so the
+ * array feeds `@pond-ts/charts` unmapped. Zone widths are very unequal, so a
+ * zone chart usually wants uniform slots rather than true watt widths:
+ *
+ * ```tsx
+ * <BarChart bins={power.zones} column="seconds" orientation="horizontal" ordinal />
+ * ```
+ */
 export interface PowerZone {
   zone: number;
   label: string;
-  minWatts: number;
-  /** Upper edge, watts; `Infinity` for the top zone. */
-  maxWatts: number;
+  /**
+   * Lower edge, watts (whole watts). Zones are **inclusive-upper**, so this
+   * edge belongs to the zone below — except on Z1, whose floor is inclusive.
+   */
+  start: number;
+  /**
+   * Upper edge, watts — **always finite, always `> start`**. Z1–Z6 report their
+   * real edge. Z7 is open-ended and has none, so its `end` is a **drawable
+   * stand-in**, never `Infinity`: wide enough to cover the ride's peak wattage,
+   * and at least as wide as Z6. Treat it as a drawing bound, not as data.
+   */
+  end: number;
+  /**
+   * `true` on Z7, whose real upper edge is unbounded — `end` is a drawable
+   * stand-in. Label it `"375+ W"` rather than as a range.
+   */
+  openEnded: boolean;
   seconds: number;
   /** Fraction of total in-zone time [0, 1]. */
   fraction: number;
@@ -187,14 +227,25 @@ export function zoneDistribution(
   // engine (the same one HR + pace use — see ../zones). PowerZone keeps its
   // watts-named shape, so the display contract is unchanged.
   const zones = powerZoneDef(ftp);
-  return zoneDistributionByValue(watts, intervals(timeSec), zones).map((z) => ({
-    zone: z.zone,
-    label: z.label,
-    minWatts: Math.round(z.lo),
-    maxWatts: z.hi === Infinity ? Infinity : Math.round(z.hi),
-    seconds: z.seconds,
-    fraction: z.fraction,
-  }));
+  // Report whole watts (Coggan edges land on halves at most FTPs), but keep the
+  // edges strictly ascending as we round: at a tiny FTP several zones round to
+  // the same integer, which would collapse a band to zero width. Each zone
+  // starts where the previous ended, so the set stays contiguous and drawable.
+  let prevEnd = -Infinity;
+  return zoneDistributionByValue(watts, intervals(timeSec), zones).map((z) => {
+    const start = prevEnd === -Infinity ? Math.round(z.start) : prevEnd;
+    const end = Math.max(Math.round(z.end), start + 1);
+    prevEnd = end;
+    return {
+      zone: z.zone,
+      label: z.label,
+      start,
+      end,
+      openEnded: z.openEnded,
+      seconds: z.seconds,
+      fraction: z.fraction,
+    };
+  });
 }
 
 /** The 7 Coggan power zones as a watt-axis {@link ZoneDef} (FTP-relative).
@@ -309,12 +360,25 @@ export interface PowerSummary {
   trainingLoad: number;
   totalWorkKj: number;
   ftp: number;
-  /** Time per power bucket at the **finest (1 W)** resolution — the canonical
-   *  base the UI re-aggregates to wider bins (10/15/25 W). Always 1 W so the
-   *  display contract doesn't depend on a compute-time bin choice. */
+  /**
+   * Time per power bucket, `binWatts` wide (default **1 W** — the finest base,
+   * which a caller can re-aggregate). Pass `binWatts` to get display-ready
+   * buckets straight out: 1 W bins draw as hairlines, so a chart usually wants
+   * 10–25 W.
+   */
   distribution: PowerBin[];
   zones: PowerZone[];
   curve: PowerCurvePoint[];
+}
+
+/** Options for {@link computePower}. */
+export interface ComputePowerOptions {
+  /**
+   * Width of each {@link PowerSummary.distribution} bucket, watts. Defaults to
+   * `1` — the finest base. Set it to the width you intend to draw (10 / 15 /
+   * 25) rather than re-bucketing the 1 W output yourself.
+   */
+  binWatts?: number;
 }
 
 /** Compute the full power summary. `elapsedSeconds` drives TSS. */
@@ -323,7 +387,16 @@ export function computePower(
   watts: Float64Array,
   ftp: number,
   elapsedSeconds: number,
+  options: ComputePowerOptions = {},
 ): PowerSummary {
+  const { binWatts = 1 } = options;
+  if (!Number.isFinite(binWatts) || binWatts <= 0) {
+    // Without this the failure surfaces from `byColumn` as a complaint about
+    // `width` — an internal the caller never named.
+    throw new RangeError(
+      `computePower: binWatts must be a positive finite number; got ${binWatts}`,
+    );
+  }
   const np = normalizedPower(timeSec, watts);
   return {
     averageWatts: averagePower(watts),
@@ -333,8 +406,7 @@ export function computePower(
     trainingLoad: trainingLoad(np, ftp, elapsedSeconds),
     totalWorkKj: totalWorkKj(timeSec, watts),
     ftp,
-    // 1 W base; the UI aggregates to its chosen bin width (see PowerSummary).
-    distribution: powerDistribution(timeSec, watts, 1),
+    distribution: powerDistribution(timeSec, watts, binWatts),
     zones: zoneDistribution(timeSec, watts, ftp),
     curve: powerCurve(timeSec, watts),
   };

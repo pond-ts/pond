@@ -52,6 +52,57 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **fit (breaking):** **Power bins and zones now use pond's canonical bin
+  edges**, so they feed `@pond-ts/charts` with no mapping step:
+
+  ```tsx
+  <BarChart bins={power.distribution} column="seconds" />
+  <BarChart bins={power.zones} column="seconds" orientation="horizontal" ordinal />
+  ```
+
+  Each type previously spoke its own dialect for the same concept —
+  `PowerBin.wattsFrom` (with **no upper edge at all**), `ZoneTime.lo`/`hi`, and
+  `PowerZone.minWatts`/`maxWatts` — while core's `byColumn` and charts' `BinRecord`
+  both use `{ start, end, …aggregates }`. Every caller had to hand-map before
+  drawing, even though the internals already computed the canonical shape and
+  discarded it.
+
+  **Migration** (pre-1.0, so the old names are gone rather than deprecated):
+
+  | Was                   | Now                                    |
+  | --------------------- | -------------------------------------- |
+  | `PowerBin.wattsFrom`  | `PowerBin.start` (+ new `end`)         |
+  | `ZoneTime.lo` / `.hi` | `ZoneTime.start` / `.end`, `openEnded` |
+  | `PowerZone.minWatts`  | `PowerZone.start`                      |
+  | `PowerZone.maxWatts`  | `PowerZone.end`, `openEnded`           |
+
+  Only **`PowerZone.maxWatts`** — a zone's upper edge — is affected. The
+  identically-named `PowerSummary.maxWatts` and the per-lap / per-section peak
+  power are a different concept and are unchanged.
+
+  `end` is now **always finite and always `> start`** — the guarantee core
+  enforces (`byColumn` throws on a zero-width bin) and charts need (an infinite
+  edge blows up an axis domain). The open-ended top band, which previously
+  carried only `Infinity`, gets a **drawable stand-in** edge: wide enough to
+  cover the highest value observed, and at least as wide as the band below it.
+  Treat it as a drawing bound rather than data, and test for the band with the
+  new **`openEnded`** flag rather than comparing an edge against `Infinity`
+  (`openEnded` is now also strictly positional — only the final band can carry
+  it). Rounding zone edges to whole watts no longer collapses bands at very low
+  FTPs.
+
+### Added
+
+- **fit:** `computePower` takes an options object — **`{ binWatts }`** sets the
+  width of the `distribution` buckets (default `1`, unchanged). 1 W bins draw as
+  hairlines, so pass the width you intend to render rather than re-bucketing the
+  output yourself. It throws `RangeError` on a non-positive or non-finite
+  `binWatts`. New exported type `ComputePowerOptions`, also accepted by the
+  activity façade: `Activity.power(ftp, options)` and
+  `ProfiledActivity.power(options)`.
+
 ## [0.52.0] — 2026-07-23
 
 ### Changed

@@ -19,15 +19,40 @@ const BIN_SCHEMA = [
 
 const SENTINEL = 1e9; // the open-top edge ZoneDef carries
 
-/** One zone's time + share. `hi` is `Infinity` for the open top. */
+/**
+ * One zone's time + share.
+ *
+ * Carries pond's canonical bin edges (`start` / `end`) so the array feeds
+ * `@pond-ts/charts` (`<BarChart bins>` / `stacksFromBins`) with no mapping
+ * step — the same `{ start, end, …aggregates }` shape core's `byColumn`
+ * returns, and the same guarantee core enforces: **finite, with
+ * `end > start`.** (An infinite edge blows up a chart's axis domain; a
+ * zero-width bin is what `byColumn` itself rejects as unrepresentable.)
+ */
 export interface ZoneTime {
   /** 1-based zone number (Z1 = the lowest band). */
   zone: number;
   label: string;
-  /** Inclusive lower edge, in the value axis (watts / bpm / m·s⁻¹). */
-  lo: number;
-  /** Upper edge; `Infinity` for the top zone. */
-  hi: number;
+  /**
+   * Lower edge, in the value axis (watts / bpm / m·s⁻¹). Bands are
+   * **inclusive-upper** (`(start, end]`), so this edge belongs to the band
+   * below — except on Z1, whose floor is inclusive.
+   */
+  start: number;
+  /**
+   * Upper edge — **always finite, always `> start`**. On a closed band this is
+   * the real edge. The open-ended band has none, so `end` is a **drawable
+   * stand-in**, never `Infinity`: wide enough to cover the highest value
+   * observed, and at least as wide as the band below. Treat it as a drawing
+   * bound, not as data — it can exceed anything actually recorded (and a
+   * device's out-of-range sentinel sample will stretch it).
+   */
+  end: number;
+  /**
+   * `true` on the open-ended top band, whose real upper edge is unbounded —
+   * `end` is a drawable stand-in. Label it `"{start}+"` rather than as a range.
+   */
+  openEnded: boolean;
   seconds: number;
   /** Share of total in-zone time, [0, 1]. */
   fraction: number;
@@ -50,9 +75,14 @@ export function zoneDistributionByValue(
 ): ZoneTime[] {
   const { edges, labels } = zones;
   const rows: Array<[number, number | undefined, number]> = [];
+  // Track the highest value actually seen (clamped the same way it's binned) —
+  // it's the finite upper edge we give the open-top zone so it can be drawn.
+  let observedMax = -Infinity;
   for (let i = 0; i < values.length; i++) {
     const v = values[i]!;
-    rows.push([i, Number.isFinite(v) ? Math.max(0, v) : undefined, dt[i] ?? 0]);
+    const clamped = Number.isFinite(v) ? Math.max(0, v) : undefined;
+    if (clamped !== undefined && clamped > observedMax) observedMax = clamped;
+    rows.push([i, clamped, dt[i] ?? 0]);
   }
   const bins = new TimeSeries({
     name: 'zones',
@@ -65,14 +95,50 @@ export function zoneDistributionByValue(
   );
   const secs = bins.map((b) => (b.seconds as number) ?? 0);
   const total = secs.reduce((a, b) => a + b, 0) || 1;
-  return labels.map((label, z) => ({
-    zone: z + 1,
-    label,
-    lo: edges[z]!,
-    hi: (edges[z + 1] ?? SENTINEL) >= SENTINEL ? Infinity : edges[z + 1]!,
-    seconds: secs[z] ?? 0,
-    fraction: (secs[z] ?? 0) / total,
-  }));
+  const last = labels.length - 1;
+  return labels.map((label, z) => {
+    const start = edges[z]!;
+    const rawEnd = edges[z + 1] ?? SENTINEL;
+    // Only the FINAL band can be open-ended. The sentinel is a magnitude, so a
+    // caller whose real edges reach past it would otherwise flag an interior
+    // band open too — and then overlap the band above it.
+    const openEnded = z === last && rawEnd >= SENTINEL;
+    return {
+      zone: z + 1,
+      label,
+      start,
+      end: openEnded ? openTopEnd(start, edges, z, observedMax) : rawEnd,
+      openEnded,
+      seconds: secs[z] ?? 0,
+      fraction: (secs[z] ?? 0) / total,
+    };
+  });
+}
+
+/**
+ * A finite, drawable upper edge for the open-ended top band, which has no real
+ * one. Wide enough to cover the highest value observed, and never narrower than
+ * the band below it — a zero-width bin is what `byColumn` rejects as
+ * unrepresentable, and it would vanish from a chart even while holding time.
+ */
+function openTopEnd(
+  start: number,
+  edges: ReadonlyArray<number>,
+  z: number,
+  observedMax: number,
+): number {
+  const below = z > 0 ? start - edges[z - 1]! : 0;
+  const end = Math.max(observedMax, start + (below > 0 ? below : 1));
+  // At absurd magnitudes (≥2^53) adding a width is a no-op, so fall back to the
+  // next representable double — `end > start` is a guarantee, not a best effort.
+  return end > start ? end : nextUp(start);
+}
+
+/** The smallest double strictly greater than `x` (`x >= 0`). */
+function nextUp(x: number): number {
+  if (x === 0) return Number.MIN_VALUE;
+  const up = x * (1 + Number.EPSILON);
+  return up > x ? up : x + Math.abs(x) * Number.EPSILON * 2;
 }
 
 /** Time in each HR zone (bpm axis). `hrZones` from `profile.profileAsOf`. */
