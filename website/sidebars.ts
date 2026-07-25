@@ -141,6 +141,7 @@ const sidebars: SidebarsConfig = {
             'charts/axes/value-axis',
             'charts/axes/category-axis',
             'charts/axes/trading-time-axis',
+            'charts/axes/duration-axis',
           ],
         },
         'charts/layout',

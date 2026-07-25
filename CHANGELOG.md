@@ -95,6 +95,38 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts:** **Duration (elapsed) x axis** — `<ChartContainer origin>` labels
+  the shared x axis as offsets from a zero point instead of absolute values, so
+  a workout / lab run / load test reads `00:00 00:05 00:10` rather than
+  `10:35 10:40 10:45`:
+
+  ```tsx
+  <ChartContainer width={620} origin="data">
+    …
+    <XAxis label="Elapsed" />
+  </ChartContainer>
+  ```
+
+  `'data'` zeroes at the start of the data (and stays there as you pan); a
+  **number** sets an explicit zero point — a gun, a trigger, a lap — with ticks
+  before it reading negative (`-00:05`). Ticks are placed at round durations
+  **measured from the origin** (a ride starting at 10:33:17 ticks 10:33:17,
+  10:38:17, …), off a clock ladder (…15s, 30s, 1m, 2m, 5m, …, 12h, then whole
+  days) rather than the 1-2-5 ladder — the part a formatter alone can't do.
+  Labels pick their shape from the step and the axis's magnitude
+  (`00:00.500` · `00:15` · `01:01:30` · `1d 12:00` · `5d`), gridlines follow the
+  same ticks, and the cursor / marker pills read one grain finer (`00:05:12`).
+
+  It's a **labelling** mode, not a data transform: `range`, `<Marker at>`,
+  `onRegionSelect`, `trackerPosition` all stay in absolute axis units. The same
+  prop works on a **value** x axis (distance travelled, not distance recorded).
+  An explicit format still wins — on a time axis a d3 _time_ specifier can only
+  describe an instant, so it labels the wall clock, which is the lever for
+  stacking a wall-clock strip under a duration strip on one shared tick set; on
+  a value axis a number specifier formats the offset. Ignored on a category
+  axis; on a trading calendar the durations are wall-clock, so ticks spanning a
+  collapsed session gap sit unevenly.
+
 - **fit:** `computePower` takes an options object — **`{ binWatts }`** sets the
   width of the `distribution` buckets (default `1`, unchanged). 1 W bins draw as
   hairlines, so pass the width you intend to render rather than re-bucketing the

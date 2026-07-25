@@ -437,13 +437,45 @@ merge keys are the series identity; no-`as` labels unchanged. This was the
 ### [PND-AXES] — Axis backlog + value-axis naming follow-up
 
 Pull each in as a chart needs it, not before: time-label `align` place-prop
-(`center`/`left`/`right`); wall-clock vs relative (elapsed) time axis; custom
-labels at custom ticks (estela's intervals/splits); `<YAxis>` label position +
-rotation; d3 scale variety (log / pow / sqrt). The deferred **value-axis
-naming follow-up** rides here: `timeFormat` (needs an `<XAxis format>` →
-cursor-readout coupling), `onTimeRangeChange`, the internal
-`ContainerFrame.timeRange` field — one naming+neutrality pass
-([docs/rfcs/value-axis.md](../rfcs/value-axis.md)).
+(`center`/`left`/`right`); custom labels at custom ticks (estela's
+intervals/splits); `<YAxis>` label position + rotation; d3 scale variety
+(log / pow / sqrt). The deferred **value-axis naming follow-up** rides here:
+`timeFormat` (needs an `<XAxis format>` → cursor-readout coupling),
+`onTimeRangeChange`, the internal `ContainerFrame.timeRange` field — one
+naming+neutrality pass ([docs/rfcs/value-axis.md](../rfcs/value-axis.md)).
+
+**Done from this backlog: the relative (elapsed) time axis** — shipped as
+`<ChartContainer origin>` (`'data'` | an explicit axis value), CHANGELOG
+`[Unreleased]`. Decisions worth keeping:
+
+- **Container-level, not `<XAxis>`-level.** The container owns the shared x
+  geometry, and the ticks it resolves are both what the axis labels _and_
+  where `Layers` draws gridlines. An axis-level prop would have put labels at
+  `00:05` over a gridline at `10:35`, or forced an axis→container tick
+  feedback loop. The dual-strip case (wall clock + duration) that motivates an
+  axis-level prop is served instead by declaring two `<XAxis>` strips and
+  letting a d3 _time_ specifier read the absolute instant — one shared tick
+  set, two languages, which is strictly better than two tick sets.
+- **A wrapper scale, not new frame fields** (`scaleElapsed` in
+  [`elapsed.ts`](../../packages/charts/src/elapsed.ts)). It delegates the
+  pixel mapping and overrides `ticks`/`tickFormat` only, and deliberately
+  exposes **no** `tickBoundaries` / `bands` / `gridLevels` — which is exactly
+  how `<XAxis>` knows to skip the calendar date styles and how `Layers` knows
+  to fall to its labelled-ticks grid path. Zero call-site changes in either.
+- **Origin-anchored ticks are the feature**, not the formatter. `transform`
+  could already relabel `t - t0`, but its 1-2-5 ladder offers a 200-second
+  tick and its ticks stay where the calendar put them. The duration ladder
+  (…15s/30s/1m/2m/5m…/12h, then 1-2-5 whole days) plus the `origin + k·step`
+  walk is what makes `00:05` mean five minutes in.
+- **Labelling, not transforming.** `range`, `<Marker at>`, `onRegionSelect`,
+  `trackerPosition` stay absolute — no second coordinate system.
+- **Deferred, considered:** an `origin: 'view'` mode (re-zero at the left edge
+  as you pan) — nobody asked, and the union type leaves room. **Elapsed
+  _trading_ time** on a calendar axis (`provider.distance`/`offset` would give
+  evenly-spaced trading-time ticks) — parked because under
+  `spacing: 'uniform'` those primitives are in session-units, not ms, so a
+  duration formatter would be lying; wall-clock durations ship with the
+  uneven-across-a-seam caveat documented.
 
 ### [PND-VALAX] — Value axis: remaining chart types + algebra growth
 

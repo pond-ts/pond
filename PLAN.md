@@ -67,8 +67,9 @@ milestone. Plan:
 - **[PND-CURSOR]** — Cursor/readout polish backlog (scatter 2D-nearest,
   chip de-overlap, y-oriented region cursor, `pointercancel` clear-only
   fix).
-- **[PND-AXES]** — Axis backlog (label align, relative time, custom ticks,
-  scale variety) + the deferred value-axis naming follow-up.
+- **[PND-AXES]** — Axis backlog (label align, custom ticks, scale variety) +
+  the deferred value-axis naming follow-up. (Relative/elapsed time is done —
+  `<ChartContainer origin>`.)
 - **[PND-VALAX]** — Value axis: widen Box/Candlestick x; grow the
   `ValueSeries` algebra only when a second consumer (geo) pulls.
 - **[PND-THEME]** — `cssVarTheme` candle mapping (LOW; worked example + var

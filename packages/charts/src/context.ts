@@ -11,6 +11,7 @@ import type {
   DiscontinuityProvider,
 } from './tradingTimeScale.js';
 import type { ScaleBand } from './bandScale.js';
+import type { ElapsedScale } from './elapsed.js';
 
 /**
  * The frame a {@link ChartContainer} provides to its rows and the time axis.
@@ -229,12 +230,19 @@ export interface ContainerFrame {
    * container is given `discontinuities`) is the third kind — same callable /
    * `invert` / `ticks` / `tickFormat` surface, but the mapping runs through
    * trading time so closed-market gaps collapse (see {@link discontinuities}).
+   *
+   * A container given an `origin` wraps whichever of these it built in an
+   * {@link ElapsedScale} — the same pixel mapping, but ticks anchored at the
+   * origin and labelled as offsets (`00:05`), which is how the whole frame
+   * (axis labels, gridlines, cursor pill) reads durations without any consumer
+   * knowing about the mode.
    */
   readonly xScale:
     | ScaleTime<number, number>
     | ScaleLinear<number, number>
     | TradingTimeScale
-    | ScaleBand;
+    | ScaleBand
+    | ElapsedScale;
   /**
    * The discontinuity provider backing a **trading-time** x axis, if one was
    * supplied to the container — closed-market time (weekends, holidays,

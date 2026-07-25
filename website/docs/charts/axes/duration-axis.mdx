@@ -1,0 +1,162 @@
+---
+title: Duration axis
+sidebar_position: 5
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import ChartsDurationAxis from '@site/src/examples/charts-duration-axis';
+
+# Duration axis
+
+Some charts aren't about _when_ — they're about _how far in_. A workout, a
+lab run, a load test, a race: nobody reads "the heart rate at 10:38", they
+read "the heart rate five minutes in". `<ChartContainer origin>` relabels the
+shared x axis as **offsets from a zero point**, so the strip reads
+
+```
+00:00   00:05   00:10
+```
+
+where it used to read
+
+```
+10:35   10:40   10:45
+```
+
+<ChartExample name="charts-duration-axis" height={280}>
+  <ChartsDurationAxis />
+</ChartExample>
+
+That example stacks both strips on purpose — durations on top, the wall clock
+underneath, one shared tick set. See
+[Two label systems, one scale](#two-label-systems-one-scale) below.
+
+## `origin`
+
+| Value      | Zero point                                                 | Use it for                                                                   |
+| ---------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `'data'`   | The start of the data (the union of the layers' x extents) | "Since the beginning of the series" — the common case. Stays put as you pan. |
+| a `number` | An explicit instant / axis value                           | A gun, a trigger, a lap marker. Ticks before it read negative (`-00:05`).    |
+
+```tsx
+<ChartContainer width={620} origin="data">
+  <ChartRow height={180}>
+    <YAxis id="hr" label="bpm" />
+    <Layers>
+      <LineChart series={ride} column="hr" axis="hr" />
+    </Layers>
+  </ChartRow>
+  <XAxis label="Elapsed" />
+</ChartContainer>
+```
+
+`origin` lives on the **container**, not on `<XAxis>`, because the container
+owns the shared x geometry: the ticks it resolves are the ones the axis
+labels _and_ the ones the gridlines draw at. Put the origin on one axis and
+you'd get labels at `00:05` over a gridline at `10:35`.
+
+## Labelling, not transforming
+
+`origin` changes two things and only two: **where the ticks sit** and **what
+they say**. Everything else stays in absolute axis units — a `range`, a
+`<Marker at>`, an `onRegionSelect` span, `trackerPosition`, the data itself.
+There is no second coordinate system to keep straight; you never convert.
+
+## Ticks sit at round durations, measured from the origin
+
+This is the part that a formatter alone can't do. A ride starting at 10:33:17
+gets ticks at 10:33:17, 10:38:17, 10:43:17 — so its labels read `00:00`,
+`00:05`, `00:10`. Placing the ticks on wall-clock boundaries instead and just
+relabelling them would give `00:01:43`, `00:06:43`, `00:11:43`: technically
+correct, unreadable.
+
+The step comes off a **duration ladder** — the intervals a clock actually
+subdivides by — rather than the 1-2-5 ladder a linear axis uses:
+
+> 1 / 2 / 5 / 10 / 20 / 50 / 100 / 200 / 500 ms · 1 / 2 / 5 / 10 / 15 / 30 s ·
+> 1 / 2 / 5 / 10 / 15 / 30 min · 1 / 2 / 3 / 6 / 12 h · then 1-2-5 whole days
+
+Calendar months are deliberately not a rung: an elapsed axis measures
+duration, and "one month later" isn't one.
+
+## Label shapes
+
+The **step** picks the finest component shown, the axis's **magnitude** picks
+the coarsest. A minute-or-coarser step heads the clock with hours even when
+they're zero (`00:05` — five minutes in), because that's the shape of the
+wall-clock axis it replaces; only an axis fine enough for seconds drops to
+`MM:SS`.
+
+| Axis                 | Reads                         |
+| -------------------- | ----------------------------- |
+| 2 s, 40 ms steps     | `00:00.000` `00:00.500`       |
+| 90 s, 15 s steps     | `00:15` `00:30` `00:45`       |
+| 2 h, 30 s steps      | `01:01:30`                    |
+| 10 min, 5 min steps  | `00:00` `00:05` `00:10`       |
+| 6 h, 1 h steps       | `01:00` `02:00`               |
+| 3 days, 12 h steps   | `12:00` `1d 00:00` `1d 12:00` |
+| 30 days, 5 day steps | `0d` `5d` `10d`               |
+
+The day part appears only once there is one — the same promotion-at-the-turn
+the [flat date style](./index.mdx) makes on a calendar axis.
+
+## The cursor reads one grain finer
+
+Ticks stay terse; the crosshair pill and `<Marker indicator>` pills add
+seconds — `00:05:12` under a `00:05` axis. Same shape, more precision: the
+elapsed twin of the grain-aware readout a calendar axis gives you. A
+container [`cursorFormat`](./index.mdx) still overrides it, and a
+`cursorFormat` **function** receives the elapsed default as its `defaultText`.
+
+## Two label systems, one scale
+
+An explicit format wins over the duration default — and on a **time** axis, a
+d3 _time_ specifier can only describe an instant, so it labels the wall clock
+underneath. That's the lever, not a limitation: declare two `<XAxis>` strips
+and you get durations and wall clock on one shared, origin-anchored tick set.
+
+```tsx
+<XAxis label="Elapsed" />
+<XAxis format="%H:%M" color="#8b8fa3" />
+```
+
+For a label the library doesn't offer, pass a **function** — it receives the
+raw axis value and owns the whole label:
+
+```tsx
+<ChartContainer origin="data" timeFormat={(t) => `${Math.round((t - start) / 60_000)}m`}>
+```
+
+## On a value axis
+
+The same prop, the same walk: ticks anchored at the origin on the 1-2-5
+ladder, labels reading the offset. A ride logged from 1,200 m reads distance
+_travelled_ (`0` … `4,000`) instead of distance _recorded_ (`2,000` …
+`5,000`). Here a number specifier describes the offset perfectly well, so
+`<XAxis format>` formats the offset rather than the absolute value.
+
+```tsx
+<ChartContainer width={560} origin="data">
+  {/* series is a ValueSeries — see the value-axis page */}
+  <XAxis label="Metres ridden" />
+</ChartContainer>
+```
+
+## Sharp edges
+
+- **Trading calendars.** On a [trading-time axis](./trading-time-axis.mdx) the
+  durations are **wall-clock**, so ticks spanning a collapsed session gap sit
+  unevenly across the seam. Elapsed _trading_ time (five hours of market time)
+  isn't implemented.
+- **Category axes** have no numeric origin to offset from; `origin` is ignored.
+- **The origin is the data's, not the view's.** Pan past the first sample and
+  the labels go negative rather than re-zeroing at the left edge. A
+  view-anchored mode isn't implemented.
+
+## See also
+
+- Storybook: [`Axes/DurationAxis`](pathname:///storybook/?path=/story/axes-durationaxis--default)
+  — one story per grain, both origin kinds, the value axis, and the format
+  overrides.
+- [Value axis](./value-axis.mdx) — keying by a quantity instead of time.
+- [Axes](./index.mdx) — declaring and binding axes, `<XAxis>` props.
