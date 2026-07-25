@@ -23,6 +23,11 @@ export function useSiteChartTheme(): ChartTheme {
       context: { color: v('--pond-viz-3') },
       fast: { color: v('--pond-viz-1') },
       slow: { color: v('--pond-viz-4') },
+      // Neutral grey and hairline-thin, not a data hue — for a raw/backdrop
+      // trace that a second layer is drawn *through* (raw watts under a moving
+      // average). Every viz-N hue competes with the line it's meant to sit
+      // behind, and at full width dense noise swallows it.
+      muted: { color: v('--pond-muted'), width: 1 },
     },
     band: {
       default: { fill: v('--pond-viz-1') },

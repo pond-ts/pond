@@ -209,7 +209,7 @@ no reshaping into `{x, y}` objects:
         series={ride}
         column="watts"
         axis="w"
-        as="secondary"
+        as="muted"
         legend="power"
       />
       <LineChart
@@ -239,9 +239,10 @@ everywhere in pond charts:
 - **`<Legend>`** takes no data. It enumerates the registered layers and draws
   each one's _resolved_ style, so the key can't drift from the plot. `legend="…"`
   names a row.
-- **`as="primary"`** is a **style role**, not a colour. The theme decides what
-  primary looks like, which is why these charts follow the site's light/dark mode
-  without any colour in this snippet.
+- **`as="muted"` / `as="primary"`** are **style roles**, not colours. The theme
+  decides what each one looks like — here `muted` renders the raw trace in a
+  neutral grey so the `primary` moving average reads through it. That's why
+  these charts follow the site's light/dark mode with no colour in this snippet.
 - **`<Baseline>`** is an annotation — a horizontal line at a value, here the
   normalized power fit just computed.
 

@@ -58,7 +58,7 @@ export default function GettingStartedRide() {
               series={rideSeries}
               column="watts"
               axis="w"
-              as="secondary"
+              as="muted"
               legend="power"
             />
             <LineChart
