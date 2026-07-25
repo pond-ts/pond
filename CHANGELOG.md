@@ -78,20 +78,30 @@ and type-level changes; patch bumps are strictly additive.
   | `PowerZone.minWatts`  | `PowerZone.start`                      |
   | `PowerZone.maxWatts`  | `PowerZone.end`, `openEnded`           |
 
+  Only **`PowerZone.maxWatts`** — a zone's upper edge — is affected. The
+  identically-named `PowerSummary.maxWatts` and the per-lap / per-section peak
+  power are a different concept and are unchanged.
+
   `end` is now **always finite and always `> start`** — the guarantee core
   enforces (`byColumn` throws on a zero-width bin) and charts need (an infinite
   edge blows up an axis domain). The open-ended top band, which previously
-  carried only `Infinity`, is drawn out to the highest value observed and never
-  narrower than the band below it; test for it with the new **`openEnded`**
-  flag instead of comparing against `Infinity`. Rounding zone edges to whole
-  watts no longer collapses bands at very low FTPs.
+  carried only `Infinity`, gets a **drawable stand-in** edge: wide enough to
+  cover the highest value observed, and at least as wide as the band below it.
+  Treat it as a drawing bound rather than data, and test for the band with the
+  new **`openEnded`** flag rather than comparing an edge against `Infinity`
+  (`openEnded` is now also strictly positional — only the final band can carry
+  it). Rounding zone edges to whole watts no longer collapses bands at very low
+  FTPs.
 
 ### Added
 
 - **fit:** `computePower` takes an options object — **`{ binWatts }`** sets the
   width of the `distribution` buckets (default `1`, unchanged). 1 W bins draw as
   hairlines, so pass the width you intend to render rather than re-bucketing the
-  output yourself. New exported type `ComputePowerOptions`.
+  output yourself. It throws `RangeError` on a non-positive or non-finite
+  `binWatts`. New exported type `ComputePowerOptions`, also accepted by the
+  activity façade: `Activity.power(ftp, options)` and
+  `ProfiledActivity.power(options)`.
 
 ## [0.52.0] — 2026-07-23
 

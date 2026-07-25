@@ -40,9 +40,12 @@ export interface ZoneTime {
    */
   start: number;
   /**
-   * Upper edge — **always finite, always `> start`**. The top band is
-   * open-ended (see {@link ZoneTime.openEnded}); its `end` is drawn out to the
-   * highest value observed, never `Infinity`.
+   * Upper edge — **always finite, always `> start`**. On a closed band this is
+   * the real edge. The open-ended band has none, so `end` is a **drawable
+   * stand-in**, never `Infinity`: wide enough to cover the highest value
+   * observed, and at least as wide as the band below. Treat it as a drawing
+   * bound, not as data — it can exceed anything actually recorded (and a
+   * device's out-of-range sentinel sample will stretch it).
    */
   end: number;
   /**
@@ -92,21 +95,19 @@ export function zoneDistributionByValue(
   );
   const secs = bins.map((b) => (b.seconds as number) ?? 0);
   const total = secs.reduce((a, b) => a + b, 0) || 1;
+  const last = labels.length - 1;
   return labels.map((label, z) => {
     const start = edges[z]!;
     const rawEnd = edges[z + 1] ?? SENTINEL;
-    const openEnded = rawEnd >= SENTINEL;
+    // Only the FINAL band can be open-ended. The sentinel is a magnitude, so a
+    // caller whose real edges reach past it would otherwise flag an interior
+    // band open too — and then overlap the band above it.
+    const openEnded = z === last && rawEnd >= SENTINEL;
     return {
       zone: z + 1,
       label,
       start,
-      // The open-ended top band has no real upper edge. Draw it out to the
-      // highest value observed, and never narrower than the band below it —
-      // a zero-width bin is what `byColumn` rejects as unrepresentable, and
-      // it would vanish from a chart even while holding time.
-      end: openEnded
-        ? Math.max(observedMax, start + openTopWidth(edges, z))
-        : rawEnd,
+      end: openEnded ? openTopEnd(start, edges, z, observedMax) : rawEnd,
       openEnded,
       seconds: secs[z] ?? 0,
       fraction: (secs[z] ?? 0) / total,
@@ -115,13 +116,29 @@ export function zoneDistributionByValue(
 }
 
 /**
- * A drawable width for the open-ended top band when the data doesn't supply
- * one: the width of the band below it, falling back to 1 unit when there is no
- * band below (or it too is degenerate). Guarantees `end > start`.
+ * A finite, drawable upper edge for the open-ended top band, which has no real
+ * one. Wide enough to cover the highest value observed, and never narrower than
+ * the band below it — a zero-width bin is what `byColumn` rejects as
+ * unrepresentable, and it would vanish from a chart even while holding time.
  */
-function openTopWidth(edges: ReadonlyArray<number>, z: number): number {
-  const below = z > 0 ? edges[z]! - edges[z - 1]! : 0;
-  return below > 0 ? below : 1;
+function openTopEnd(
+  start: number,
+  edges: ReadonlyArray<number>,
+  z: number,
+  observedMax: number,
+): number {
+  const below = z > 0 ? start - edges[z - 1]! : 0;
+  const end = Math.max(observedMax, start + (below > 0 ? below : 1));
+  // At absurd magnitudes (≥2^53) adding a width is a no-op, so fall back to the
+  // next representable double — `end > start` is a guarantee, not a best effort.
+  return end > start ? end : nextUp(start);
+}
+
+/** The smallest double strictly greater than `x` (`x >= 0`). */
+function nextUp(x: number): number {
+  if (x === 0) return Number.MIN_VALUE;
+  const up = x * (1 + Number.EPSILON);
+  return up > x ? up : x + Math.abs(x) * Number.EPSILON * 2;
 }
 
 /** Time in each HR zone (bpm axis). `hrZones` from `profile.profileAsOf`. */

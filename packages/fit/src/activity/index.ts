@@ -41,6 +41,7 @@ import {
   type PowerCurvePoint,
   type PowerEffort,
   type PowerZone,
+  type ComputePowerOptions,
 } from '../power/index.js';
 import {
   hrZoneDistribution,
@@ -378,15 +379,16 @@ export class Activity {
   }
 
   /** Power summary (NP, IF, TSS, distribution, zones, curve) at the given FTP —
-   *  `undefined` when no power was recorded. `elapsedSeconds` drives TSS. */
-  power(ftp: number): PowerSummary | undefined {
+   *  `undefined` when no power was recorded. `options.binWatts` sets the
+   *  histogram bucket width (default 1 W). */
+  power(ftp: number, options?: ComputePowerOptions): PowerSummary | undefined {
     const watts = this.watts();
     if (!watts) return undefined;
     // elapsed = last − first sample, straight off the prepared relative-time axis
     // (timeRel[n−1]); avoids forcing the full journey summary just to read TSS.
     const elapsed =
       this.prep.n > 0 ? (this.prep.timeRel[this.prep.n - 1] ?? 0) : 0;
-    return computePower(this.prep.cols.timeSec, watts, ftp, elapsed);
+    return computePower(this.prep.cols.timeSec, watts, ftp, elapsed, options);
   }
   /** Mean-maximal power curve; `[]` when no power. */
   powerCurve(durations?: number[]): PowerCurvePoint[] {
@@ -614,10 +616,11 @@ export class ProfiledActivity {
   ) {}
 
   /** Full power summary (NP, IF, TSS, distribution, zones, curve) at the
-   *  profile's FTP. `undefined` when no power was recorded or no FTP is known. */
-  power(): PowerSummary | undefined {
+   *  profile's FTP. `undefined` when no power was recorded or no FTP is known.
+   *  `options.binWatts` sets the histogram bucket width (default 1 W). */
+  power(options?: ComputePowerOptions): PowerSummary | undefined {
     const ftp = this.profile.ftpWatts;
-    return ftp == null ? undefined : this.activity.power(ftp);
+    return ftp == null ? undefined : this.activity.power(ftp, options);
   }
 
   /** Time in each Coggan power zone (FTP-relative); `[]` with no power or no FTP. */

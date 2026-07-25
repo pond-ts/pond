@@ -197,9 +197,10 @@ export interface PowerZone {
    */
   start: number;
   /**
-   * Upper edge, watts — **always finite, always `> start`**. Z7 is open-ended
-   * (see {@link PowerZone.openEnded}); its `end` is drawn out to the highest
-   * wattage in the ride, never `Infinity`.
+   * Upper edge, watts — **always finite, always `> start`**. Z1–Z6 report their
+   * real edge. Z7 is open-ended and has none, so its `end` is a **drawable
+   * stand-in**, never `Infinity`: wide enough to cover the ride's peak wattage,
+   * and at least as wide as Z6. Treat it as a drawing bound, not as data.
    */
   end: number;
   /**

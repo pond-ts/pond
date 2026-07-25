@@ -69,6 +69,29 @@ describe('zoneDistributionByValue', () => {
     }
   });
 
+  it('flags only the FINAL band open-ended, even past the sentinel', () => {
+    // Real edges that run past the 1e9 sentinel: an interior band must NOT be
+    // treated as open (it would overlap the band above it).
+    const out = zoneDistributionByValue([0], [1], {
+      edges: [0, 2e9, 3e9],
+      labels: ['a', 'b'],
+    });
+    expect(out.map((z) => z.openEnded)).toEqual([false, true]);
+    expect(out[0]!.end).toBe(2e9); // its real edge, not a stand-in
+    expect(out[1]!.start).toBe(2e9); // no overlap
+    for (const z of out) expect(z.end).toBeGreaterThan(z.start);
+  });
+
+  it('keeps end > start even at magnitudes where +1 is a no-op', () => {
+    // Above 2^53 adding a width does nothing; the guarantee still has to hold.
+    const out = zoneDistributionByValue([0], [1], {
+      edges: [1e16, 2e16],
+      labels: ['huge'],
+    });
+    expect(out[0]!.end).toBeGreaterThan(out[0]!.start);
+    expect(Number.isFinite(out[0]!.end)).toBe(true);
+  });
+
   it('gives a single open-ended band width even when it holds all the time', () => {
     // One band, open-ended, every sample sitting exactly on its inclusive
     // floor: `end` cannot come from the data, but the band holds 100% of the
