@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import {
+  AreaChart,
   Baseline,
   BarChart,
   ChartContainer,
@@ -194,6 +195,20 @@ export default function GettingStartedRide() {
                   axis="w"
                   label={`NP ${Math.round(power.normalizedWatts)} W`}
                   indicator
+                />
+              </Layers>
+            </ChartRow>
+            {/* Second row, same container — so it shares the x scale, the
+                pan/zoom and the cursor. The profile is why the power trace
+                looks the way it does: the holes are the descents. */}
+            <ChartRow height={80}>
+              <YAxis id="ele" label="metres" width={52} pad={0.05} />
+              <Layers>
+                <AreaChart
+                  series={rideSeries}
+                  column="elevation"
+                  axis="ele"
+                  legend="elevation"
                 />
               </Layers>
             </ChartRow>

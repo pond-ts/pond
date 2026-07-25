@@ -23,13 +23,19 @@ Here's what we're building. Hover it, drag it, scroll to zoom.
   <GettingStartedRide />
 </ChartExample>
 
-One dataset, three views of it. On top, the ride as it happened: **raw power**
+One dataset, several views of it. On top, the ride as it happened: **raw power**
 (noisy, because power meters are), a **2-minute average** riding through it, and
-a **normalized power** baseline. Underneath, the four numbers a rider actually
+a **normalized power** baseline — with the **elevation profile** on its own row
+beneath, sharing the same time axis. Then the four numbers a rider actually
 looks at, and the same ride keyed by _watts_ instead of time — **where the time
 actually went**. That faint bar on the left is half an hour spent at almost no
 power at all: it's a descent-heavy loop, and you coast a lot of it. The time
 axis can't show you that; the value axis can.
+
+The profile earns its row by explaining the one above it. The holes in the power
+trace aren't dropouts — they line up with the descents, and the dense, spiky
+stretch is the long climb to 400 m. Two rows in one `ChartContainer` share an x
+scale, so they pan, zoom and track the cursor together.
 
 The same **NP** line appears on both — as a horizontal baseline against time,
 and as a vertical marker across the distribution. It's worth seeing where it
@@ -310,6 +316,17 @@ no reshaping into `{x, y}` objects:
       />
     </Layers>
   </ChartRow>
+  <ChartRow height={80}>
+    <YAxis id="ele" label="metres" pad={0.05} />
+    <Layers>
+      <AreaChart
+        series={ride}
+        column="elevation"
+        axis="ele"
+        legend="elevation"
+      />
+    </Layers>
+  </ChartRow>
   <Legend placement="top-right" />
 </ChartContainer>
 ```
@@ -345,18 +362,20 @@ The histogram is the same components pointed at the bins, in its **own**
 container — because its x-axis is watts, not time:
 
 ```tsx
-<ChartContainer range={[100, 375]} width={680}>
+<ChartContainer range={[0, 450]} width={histogramWidth}>
   <ChartRow height={130}>
-    <YAxis id="min" label="minutes" min={0} />
+    <YAxis id="min" label="minutes" min={0} max={pedallingPeak} />
     <Layers>
       <BarChart bins={bins} column="minutes" axis="min" gap={2} />
+      <Marker at={power.normalizedWatts} label="NP 192 W" />
     </Layers>
   </ChartRow>
 </ChartContainer>
 ```
 
-Rows inside one `ChartContainer` share an x-scale (that's what makes stacked
-rows line up), so a chart on a _different_ axis is a separate container.
+Rows inside one `ChartContainer` share an x-scale — that's what lets power and
+elevation stack and stay in step. A chart on a _different_ x axis, like this
+one, is therefore a separate container.
 
 That's the whole example — the source under the chart at the top of this page is
 the real, complete thing, nothing elided.
