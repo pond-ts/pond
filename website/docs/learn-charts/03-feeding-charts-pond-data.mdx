@@ -51,7 +51,7 @@ const series = TimeSeries.fromJSON({
 every example before this chapter used that shape. Struct-of-arrays data
 (a bulk columnar payload, decoded protobuf, typed arrays) skips the
 row round-trip entirely via `TimeSeries.fromColumns` — see
-[Creating series → Columnar ingest](../start-here/creating#columnar-ingest)
+[Creating series → Columnar ingest](../pond-ts/creating#columnar-ingest)
 for that shape; it's the same series either way once built.
 
 ## Point keys vs. interval keys
@@ -68,7 +68,7 @@ width to fill, so a point key is fine. A bar does — chapter 4's
 buckets (each output row spans a time bucket, not just an instant), which
 is exactly the shape `BarChart` needs to size each bar. Interval keys
 aren't a special case bolted on later; they're what "shaping data to
-chart" produces naturally. [Temporal keys](../start-here/concepts/temporal-keys)
+chart" produces naturally. [Temporal keys](../pond-ts/concepts/temporal-keys)
 covers the full model (a third kind, `timeRange`, covers point-in-time
 snapshots over an arbitrary span).
 

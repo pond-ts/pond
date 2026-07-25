@@ -1,0 +1,139 @@
+---
+sidebar_label: ValueSeries deep dive
+---
+
+# ValueSeries deep dive
+
+`ValueSeries` is the **value-keyed** counterpart of `TimeSeries` — the third of
+the core's three series types. Its key is a monotonic **non-time** axis
+(cumulative distance, cumulative work, lap number, sample index, strike price,
+frequency) rather than the wall clock. It carries the **ordering-based** slice
+of the series algebra — read the axis, read value columns, find the nearest row,
+slice a range — and, by type, _none_ of the calendar/clock operators, because a
+value axis has no wall-clock meaning.
+
+:::tip[Concept vs. deep dive]
+This page is the **API tour** of the `ValueSeries` type. For _when and why_ you
+reach for a value axis — the bike-ride "splits line up on distance, not time"
+intuition, and the closed-vs-projected-out story — read the
+[Value axis concept](concepts/value-axis) first. Exhaustive signatures live in
+the [API reference](/docs/api/core/value-series).
+:::
+
+## Two doors in
+
+You never call the constructor directly (it's trusted-construction only). There
+are exactly two ways to get a `ValueSeries`:
+
+```ts
+// 1. PROJECT a TimeSeries onto one of its monotonic columns.
+//    For data that starts life time-keyed — a ride sampled every second,
+//    re-keyed by the cumulative-distance column it already carries.
+const byDistance = ride.byValue('cumDist'); // TimeSeries → ValueSeries
+
+// 2. CONSTRUCT directly from columnar arrays.
+//    For data that is NATIVELY value-keyed and never had a per-row time key —
+//    an options chain keyed by strike, a spectrum keyed by frequency.
+const chain = ValueSeries.fromColumns({
+  name: 'chain',
+  schema: [
+    { name: 'strike', kind: 'value' }, // schema[0] is the axis
+    { name: 'iv', kind: 'number' },
+    { name: 'oi', kind: 'number' },
+  ],
+  columns: {
+    strike: [90, 95, 100, 105, 110],
+    iv: [0.31, 0.28, 0.26, 0.27, 0.3],
+    oi: [1200, 3400, 8800, 4100, 900],
+  },
+});
+```
+
+Both doors share **one ingest engine** and the same monotonicity contract; they
+differ only in where the axis comes from. Before `fromColumns` existed,
+cross-sectional callers had to launder their axis through a fake `time` column
+just to reach `TimeSeries.fromColumns` and project — the direct door removes that
+detour.
+
+### `byValue(axis)` — projection
+
+`series.byValue(axis)` re-keys a `TimeSeries` onto one of its numeric columns.
+The named column becomes the index and is **dropped from the value columns** — it
+_is_ the key now. The axis column must be **defined, finite, and non-decreasing
+at every row**; `byValue` validates this and throws otherwise. The usual way to
+build such a column is [`scan`](transforms/transformations#scan), a running fold
+that turns per-sample deltas into a cumulative, monotonic column. See
+[`byValue` in the aggregation reference](transforms/aggregation#byvalue).
+
+### `ValueSeries.fromColumns({ … })` — direct columnar ingest
+
+The exact `TimeSeries.fromColumns` contract, with the axis in place of time:
+
+- **`schema[0]` is the `'value'`-kind axis column**; the rest are value columns.
+  Each `columns` entry is one column's values, keyed by schema column name and
+  **aligned by index**.
+- Values may be a plain **`number[]`** _or_ a **`Float64Array`**. A cell is a
+  **gap** (missing) iff it is `null`/`undefined` or non-finite — identical for
+  both input types.
+- **`Float64Array` inputs are adopted, not copied** (zero-copy): the resulting
+  columns alias your buffers — pass a fresh buffer if that matters. Passing
+  **`sort: true`** disables the adoption (a reorder needs its own buffers).
+- **Ordering.** The axis must be defined, finite, and non-decreasing — it becomes
+  the index. An out-of-order axis **throws** by default; pass **`sort: true`** to
+  stably sort rows by axis value first (the right move for an unordered snapshot,
+  e.g. a keyed live feed that arrives in update order, not axis order).
+- **v1 scope:** `number` value columns, matching `TimeSeries.fromColumns`.
+
+It throws `ValidationError` on a non-`'value'` axis kind, a missing column, a
+length mismatch, a non-`number` value column, or an out-of-order axis without
+`sort`; and `RangeError` on a non-finite axis cell (sorting can't rescue it) or a
+duplicate column name. See [Creating series → Columnar ingest](creating#columnar-ingest).
+
+## Reading a ValueSeries
+
+The operator surface is small and deliberately ordering-based — the part of the
+algebra that was never about time:
+
+```ts
+byDistance.length; // number of rows
+byDistance.axisName; // 'cumDist' — the key column's name
+byDistance.axisValues(); // Float64Array of the axis, in order (zero-copy, read-only)
+byDistance.axisAt(3); // the axis value at row 3
+
+byDistance.column('hr'); // a value column → read with .read(i) / .values()
+
+byDistance.nearestIndex(40_000); // row nearest the 40 km mark (binary search)
+byDistance.sliceByValue(40_000, 60_000); // the [40 km, 60 km) sub-series (zero-copy)
+```
+
+- **`axisValues()`** returns the **live** key buffer — zero-copy, so treat it as
+  read-only.
+- **`column(name)`** returns the columnar `Column` (or `undefined`), for direct
+  `.read(i)` / `.values()` reads.
+- **`nearestIndex(value)`** is the value-axis cursor primitive: a binary search
+  over the non-decreasing axis. It returns `-1` for an empty series and **clamps**
+  to the first / last row when `value` falls outside the axis extent.
+- **`sliceByValue(lo, hi)`** is the value-axis cull (pan / zoom on a value x):
+  the contiguous sub-series with axis in `[lo, hi)`, zero-copy sliced. `lo >= hi`
+  (or a range outside the extent) yields an empty series.
+
+## When _not_ to reach for it
+
+A `ValueSeries` keeps the full-resolution channel and lets you read/plot it
+against a value. When you instead want to **collapse** the axis into per-bin
+rollups — per-kilometre splits, a histogram, time-in-zone — use
+[`byColumn` / `rollingByColumn`](transforms/aggregation#bycolumn), which project
+_out_ of the algebra to plain bin records rather than returning a series. The
+[Value axis concept](concepts/value-axis#closed-vs-projected-out-byvalue-vs-bycolumn)
+walks the split in full.
+
+## Where it fits
+
+- **Under the hood** — `ValueSeries` wraps the columnar store directly. A value
+  row is an `(axis, …values)` tuple, not a `Time`-keyed `Event`, so it skips the
+  time-only event layer entirely.
+- **Plotting** — `@pond-ts/charts` accepts a `ValueSeries` on a linear x scale
+  with a synced value cursor. See the
+  [value axis chart reference](../charts/axes/value-axis).
+- **Minimal by design** — the type carries only the operators a value axis
+  actually needs; the algebra grows as a second value-axis consumer earns it.

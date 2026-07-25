@@ -1,0 +1,64 @@
+---
+sidebar_position: 1
+sidebar_label: Introduction
+---
+
+# Introduction to pond-ts core
+
+`pond-ts` (the core package) is a **TypeScript-first, in-memory time-series
+foundation**: schema-typed events, a closed algebra of composable transforms, a
+live-ingest mode for streaming-style updates, and JSON round-trip — all strict TS
+end to end, all immutable. It covers **batch and streaming as peers**: the same
+schema type and the same operator surface, with two different cost models.
+
+It is the **foundation the rest of pond builds on.** Everything else is a sibling
+branch on top of core:
+
+| Branch                                                                    | What it adds                                                   |
+| ------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| **[@pond-ts/react](/docs/react)**                                         | Hooks that bind live series into React render                  |
+| **[@pond-ts/charts](/docs/charts)**                                       | The visualization layer — charts that consume pond series      |
+| **[@pond-ts/fit](/docs/fit)** · **[@pond-ts/financial](/docs/financial)** | Domain libraries (fitness, financial studies); others possible |
+
+Core knows nothing about any of them — it is the shared substrate they each
+build against.
+
+## What the core covers
+
+- **[The three series types](mental-model)** — `TimeSeries` (batch),
+  `LiveSeries` (streaming), and `ValueSeries` (value-keyed). The core's spine.
+- **Transforms** — `filter`, `map`, `aggregate`, `rolling`, `smooth`, `reduce`,
+  alignment, reshaping, sampling, cleaning, anomaly detection. A **closed
+  algebra**: a `TimeSeries` transform returns a `TimeSeries`, so you keep
+  chaining. Walked one operator per page in the
+  **[TimeSeries deep dive](transforms/queries)**.
+- **Live ingest** — push events into a bounded in-process buffer with bounded
+  reorder tolerance; aggregations and views update incrementally. The
+  **[LiveSeries deep dive](live/live-series)**.
+- **Value axis** — key a series by distance / work / lap instead of time. The
+  **[ValueSeries deep dive](value-series)**.
+- **Array columns & JSON** — array-valued columns and snapshot round-trip
+  (**[Advanced](advanced/columns)**).
+
+## What the core is _not_
+
+- **Not a database.** No persistence layer. Snapshots round-trip through JSON;
+  the storage is yours.
+- **Not a query engine.** No SQL surface — the operators _are_ the query surface,
+  end-to-end typed.
+- **Not a full streaming engine.** `LiveSeries` is a bounded in-process buffer
+  with bounded reorder tolerance — no watermarks, no exactly-once, no retraction.
+  See [Late data](concepts/late-data) for the trade-offs.
+- **Not a chart library.** Rendering lives in the **[@pond-ts/charts](/docs/charts)**
+  branch; core stays render-agnostic and hands off via `series.toPoints()` and
+  the chart data-adapters. (pond is a visualization platform _because_ of that
+  branch — not because core draws anything.)
+
+## Where to go next
+
+- New to the model? Start with the **[Mental model](mental-model)**, then read
+  the **[Concepts](concepts)** pages reference-style.
+- Ready to build a series? **[Creating series](creating)** covers batch and live
+  ingest.
+- Want exhaustive signatures? The generated **[API reference](/docs/api/)** has
+  every method and type.

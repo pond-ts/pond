@@ -11,7 +11,7 @@ window, or aggregate.
 
 For operations that _change_ the event grid (rolling windows,
 fixed-bucket aggregation, alignment), see
-[Concepts → Windowing](../../start-here/concepts/windowing) and
+[Concepts → Windowing](../../pond-ts/concepts/windowing) and
 the [Aggregation](./aggregation), [Alignment](./alignment), and
 [Rolling Windows](./rolling) operator pages.
 
@@ -233,7 +233,7 @@ order-dependent state into a column so value-axis aggregation
 Materialize the carried state with `scan`, then segment statelessly —
 e.g. per-kilometre split gain is `last − first` of the scanned `cumGain`
 in each distance bin. See
-[Value axis](../../start-here/concepts/value-axis) for the mental model
+[Value axis](../../pond-ts/concepts/value-axis) for the mental model
 behind this composition.
 
 ### `tail(duration)` — keep the trailing window

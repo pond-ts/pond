@@ -11,7 +11,7 @@ results to downstream consumers. Everything is synchronous and driven
 by data — no background timers, no implicit scheduling.
 
 The same vocabulary as batch
-[`TimeSeries`](../../start-here/concepts/series): `filter`, `map`,
+[`TimeSeries`](../../pond-ts/concepts/series): `filter`, `map`,
 `select`, `window`, `aggregate`, `rolling`, `diff`, `rate`,
 `pctChange`, `fill`, `cumulative`, `sample`. Each method exists in
 two flavors — batch over an immutable snapshot, live over an incoming
@@ -583,7 +583,7 @@ faster** and uses **34% of the heap** of N separate rollings. See
 the full bench table.
 
 For the conceptual framing alongside the other windowing modes,
-see [Windowing](../../start-here/concepts/windowing#multi-window-rolling-live).
+see [Windowing](../../pond-ts/concepts/windowing#multi-window-rolling-live).
 
 ## Per-event transforms: diff, rate, pctChange
 

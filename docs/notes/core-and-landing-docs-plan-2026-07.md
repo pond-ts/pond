@@ -12,11 +12,15 @@ commitment until pjm17971 adopts it into PLAN.md._
 ## 0. The one-sentence thesis
 
 **Pond is an analytics _and_ visualization platform.** `pond-ts` (core) is the
-typed time-series **foundation**; `@pond-ts/charts` is the **major middle layer**;
-`@pond-ts/financial` and `@pond-ts/fit` are **domain libraries on top**;
-`@pond-ts/react` is the live-binding glue. That layered picture — foundation →
-visualization → domain — is what a visitor must **come away with when they land**,
-and it is exactly what the current site does _not_ convey.
+typed time-series **foundation** at the top, and **three sibling categories build
+directly off it**: **React helpers** (`@pond-ts/react`), the **visualization
+layer** (`@pond-ts/charts`), and **domain libraries** — `@pond-ts/fit` (fitness)
+and `@pond-ts/financial` (financial utils), **with others possible**. The picture
+is a **core hub with three branches**, not a vertical stack: charts and the domain
+libs are co-equal, each building on core rather than on each other (the domain libs
+render _through_ charts but depend on core). That model — **core → {react ·
+charts · domain}** — is what a visitor must **come away with when they land**, and
+it is exactly what the current site does _not_ convey.
 
 Everything below serves that single outcome.
 
@@ -26,13 +30,13 @@ The charts wave has been landing beautifully — `docs/charts/**` and
 `docs/learn-charts/**` embed live, touchable charts on nearly every page. That
 throws the two untouched surfaces into sharp relief:
 
-| #   | Problem                                                                                                                                                                                                            | Where                                                             |
-| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| C1  | **The core transform pages render zero output.** `rolling`, `aggregate`, `smooth`, `baseline`/`outliers`, `align`, `reshape`, `sampling`, `cleaning` — every one explains the op and shows `toPoints()` as a **text/JSON fence**. The reader never _sees_ the smoothed line, the rolling band, the detected spikes. The "visualization platform" claim is invisible precisely where the analytics live. | `docs/pond-ts/transforms/*.mdx` |
-| L1  | **The homepage undersells to a primitive library.** Tagline "Typed time series primitives"; hero is a logo + three **text** feature cards; **no chart, no layering, no visualization in the pitch.** A lander comes away with "a typed TS time-series lib," not "a platform." | `src/pages/index.tsx`, `src/components/HomepageFeatures` |
-| L2  | **No layering story anywhere on the funnel.** Nothing on the homepage, the `/api` landing (a flat five-button list), or the section indexes tells the reader that core→charts→domain is a deliberate stack. The architecture is real (ARCHITECTURE.md) and load-bearing to the pitch, and it is nowhere a visitor can see it. | `src/pages/api.tsx`, section `index.mdx`s |
-| L3  | **The core section index is thin prose** — a table of contents, no rendered payoff. `financial/index.mdx` already opens with a live calendar-aware candlestick (#445); the **core** index, the front door to the foundation, opens with nothing to look at. | `docs/pond-ts/index.mdx` |
-| L4  | **`@pond-ts/fit` is a name with no home.** Sidebar entry + an API link, no section content, no embedded chart — yet the thesis names it a first-class domain library "on top." (The charts plan explicitly scoped fit out; the _platform positioning_ can't.) | `docs/fit/**` |
+| #   | Problem                                                                                                                                                                                                                                                                                                                                                                                                 | Where                                                    |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| C1  | **The core transform pages render zero output.** `rolling`, `aggregate`, `smooth`, `baseline`/`outliers`, `align`, `reshape`, `sampling`, `cleaning` — every one explains the op and shows `toPoints()` as a **text/JSON fence**. The reader never _sees_ the smoothed line, the rolling band, the detected spikes. The "visualization platform" claim is invisible precisely where the analytics live. | `docs/pond-ts/transforms/*.mdx`                          |
+| L1  | **The homepage undersells to a primitive library.** Tagline "Typed time series primitives"; hero is a logo + three **text** feature cards; **no chart, no layering, no visualization in the pitch.** A lander comes away with "a typed TS time-series lib," not "a platform."                                                                                                                           | `src/pages/index.tsx`, `src/components/HomepageFeatures` |
+| L2  | **No layering story anywhere on the funnel.** Nothing on the homepage, the `/api` landing (a flat five-button list), or the section indexes tells the reader that pond is a **core hub with three sibling branches** (react · charts · domain) building off it. The architecture is real (ARCHITECTURE.md) and load-bearing to the pitch, and it is nowhere a visitor can see it.                       | `src/pages/api.tsx`, section `index.mdx`s                |
+| L3  | **The core section index is thin prose** — a table of contents, no rendered payoff. `financial/index.mdx` already opens with a live calendar-aware candlestick (#445); the **core** index, the front door to the foundation, opens with nothing to look at.                                                                                                                                             | `docs/pond-ts/index.mdx`                                 |
+| L4  | **`@pond-ts/fit` is a name with no home.** Sidebar entry + an API link, no section content, no embedded chart — yet the thesis names it a first-class domain library building on core (with others possible). (The charts plan explicitly scoped fit out; the _platform positioning_ can't.)                                                                                                            | `docs/fit/**`                                            |
 
 C1 is the centerpiece. L1–L4 are the framing that makes C1 legible as "the
 foundation of a platform" rather than "one more page of transforms."
@@ -84,7 +88,7 @@ on that directive, and folding it in up front is what keeps this from producing 
 wall of indistinguishable line charts:
 
 - **Presentation ladder — the cheapest form that _teaches_:** `table → bar →
-  line → interactive`. The 118-method survey (RFC Appendix A) landed at **table
+line → interactive`. The 118-method survey (RFC Appendix A) landed at **table
   47 / line 16 / interactive 16 / none 39 / bar 0-as-primary**. A third of the
   surface honestly earns **no figure** — I/O, scalar accessors, boolean
   predicates. **The honest "—" is a deliverable, not a gap.**
@@ -150,7 +154,7 @@ Why this is the right call and now buildable:
   shape.
 - **It replaces the ASCII "Diagram candidate" boxes** already sitting in the core
   pages (`rolling.mdx` literally carries `ASCII first pass; Excalidraw replacement
-  welcome`). The concept animation _is_ that replacement — a live figure, not a
+welcome`). The concept animation _is_ that replacement — a live figure, not a
   static drawing.
 - **Two facets, both in-scope: autoplay _and_ core-param controls.** A concept
   figure drives itself (autoplay + pause), and where the operator has a meaningful
@@ -187,25 +191,25 @@ it says "table" or "none"; the ones marked **⟳** are _self-driving / streaming
 (the reader watches the operation happen). "→ interactive" marks the Phase-C
 escalation (a draggable handle added on top of the same autoplay figure).
 
-| Core page (`docs/pond-ts/`)          | Primary medium                 | What the reader sees / why                                                                                             |
-| ------------------------------------ | ------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| `transforms/queries`                 | table (+ none)                 | select/filter — the surviving rows are the lesson; the honest-`undefined` renderer earns its first outing             |
-| `transforms/transformations` (`map`) | table                          | column in → column out; rows show the transform, a chart adds nothing                                                 |
-| `transforms/alignment` (`align`)     | **⟳ line → interactive**       | resample onto a grid: raw points stream in behind, the aligned line snaps to grid on top. The archetype "window" figure |
-| `transforms/aggregation` (`aggregate`)| **⟳ bar → interactive**       | the flagship: **points stream in; each bucket's bar accretes as its window fills, then the window scrolls** — the predecessor's realtime demo, rebuilt (§3a); Phase C adds a draggable bucket width |
-| `transforms/reshape` (`collapse`/`reduce`) | **table**                 | exact columns collapsing is the whole point; a chart hides it                                                          |
-| `transforms/rolling`                 | **⟳ line + band → interactive** | rolling avg tracks the streaming raw; avg/sd → a band that breathes; the `minSamples` warm-up shows as an honest leading gap. Window archetype |
-| `transforms/sampling`                | line (points) / table          | downsample: show _which_ points survive vs. the dense source                                                          |
-| `transforms/smoothing` (`smooth`/EWMA)| **⟳ line → interactive**      | jagged raw streams in, the smoothed line eases behind it; drag α / window in Phase C                                   |
-| `transforms/anomaly-detection` (`baseline`/`outliers`) | **⟳ band + markers** | the baseline band forms and **outlier markers light up as spikes cross it** — the highest-value figure in the set: it _shows_ detection happening |
-| `transforms/cleaning` (`fill`/dedup) | **table (+ line-with-gaps)**   | the honest `undefined → filled` cell; the gap that closes. Links the charts "Missing data & gaps" page for the visual |
-| `transforms/reducer-reference`       | none / small table             | it's a vocabulary lookup; the aggregate/rolling pages carry the figures                                               |
-| `live/live-series`                   | **⟳ live ticking chart**       | a genuinely-live concept animation (pause affordance), reusing the charts wave's live path                            |
-| `live/live-transforms`               | number/table (+ optional live) | incremental views are scalar-shaped; a big readout, not a series                                                      |
-| `live/triggering`                    | number/table                   | trigger firing is an event log, not a curve                                                                           |
-| `advanced/columns`                   | table                          | array-column shape is structural                                                                                      |
-| `advanced/arrays`                    | table                          | ditto                                                                                                                 |
-| `advanced/charting`                  | _(unchanged — bridge page)_    | owned by the charts wave / third-party policy; leave it                                                               |
+| Core page (`docs/pond-ts/`)                            | Primary medium                  | What the reader sees / why                                                                                                                                                                          |
+| ------------------------------------------------------ | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `transforms/queries`                                   | table (+ none)                  | select/filter — the surviving rows are the lesson; the honest-`undefined` renderer earns its first outing                                                                                           |
+| `transforms/transformations` (`map`)                   | table                           | column in → column out; rows show the transform, a chart adds nothing                                                                                                                               |
+| `transforms/alignment` (`align`)                       | **⟳ line → interactive**        | resample onto a grid: raw points stream in behind, the aligned line snaps to grid on top. The archetype "window" figure                                                                             |
+| `transforms/aggregation` (`aggregate`)                 | **⟳ bar → interactive**         | the flagship: **points stream in; each bucket's bar accretes as its window fills, then the window scrolls** — the predecessor's realtime demo, rebuilt (§3a); Phase C adds a draggable bucket width |
+| `transforms/reshape` (`collapse`/`reduce`)             | **table**                       | exact columns collapsing is the whole point; a chart hides it                                                                                                                                       |
+| `transforms/rolling`                                   | **⟳ line + band → interactive** | rolling avg tracks the streaming raw; avg/sd → a band that breathes; the `minSamples` warm-up shows as an honest leading gap. Window archetype                                                      |
+| `transforms/sampling`                                  | line (points) / table           | downsample: show _which_ points survive vs. the dense source                                                                                                                                        |
+| `transforms/smoothing` (`smooth`/EWMA)                 | **⟳ line → interactive**        | jagged raw streams in, the smoothed line eases behind it; drag α / window in Phase C                                                                                                                |
+| `transforms/anomaly-detection` (`baseline`/`outliers`) | **⟳ band + markers**            | the baseline band forms and **outlier markers light up as spikes cross it** — the highest-value figure in the set: it _shows_ detection happening                                                   |
+| `transforms/cleaning` (`fill`/dedup)                   | **table (+ line-with-gaps)**    | the honest `undefined → filled` cell; the gap that closes. Links the charts "Missing data & gaps" page for the visual                                                                               |
+| `transforms/reducer-reference`                         | none / small table              | it's a vocabulary lookup; the aggregate/rolling pages carry the figures                                                                                                                             |
+| `live/live-series`                                     | **⟳ live ticking chart**        | a genuinely-live concept animation (pause affordance), reusing the charts wave's live path                                                                                                          |
+| `live/live-transforms`                                 | number/table (+ optional live)  | incremental views are scalar-shaped; a big readout, not a series                                                                                                                                    |
+| `live/triggering`                                      | number/table                    | trigger firing is an event log, not a curve                                                                                                                                                         |
+| `advanced/columns`                                     | table                           | array-column shape is structural                                                                                                                                                                    |
+| `advanced/arrays`                                      | table                           | ditto                                                                                                                                                                                               |
+| `advanced/charting`                                    | _(unchanged — bridge page)_     | owned by the charts wave / third-party policy; leave it                                                                                                                                             |
 
 This table is the review contract for Phase B: **a page that reaches for a line
 where its row above says "table" has to justify it**, and vice versa. It's the
@@ -213,7 +217,8 @@ same knob-by-knob discipline the Storybook fan-out uses, pointed at medium choic
 
 ## 5. Landing & positioning (the "come away with a platform" fix)
 
-Three surfaces, one message: **foundation → visualization → domain**.
+Three surfaces, one message: **core hub → three sibling branches (react ·
+charts · domain), others possible**.
 
 ### 5a. Homepage (`src/pages/index.tsx` + `HomepageFeatures`)
 
@@ -224,12 +229,15 @@ Three surfaces, one message: **foundation → visualization → domain**.
    you touch them") pulled to the **very top of the funnel**, where it does the
    most work. Retagline from "Typed time series primitives" → the
    analytics-**and**-visualization-platform line.
-2. **Replace the three text cards with the layering story.** A stack/constellation
-   visual: **core** (foundation) · **charts** (middle) · **financial + fit**
-   (domain) · **react** (glue) — each a card that states its one job and links its
-   section. This single change is what makes visitors _come away with_ the
-   platform model. (Site chrome already carries the brand system from #437/#438,
-   so this rides the existing look.)
+2. **Replace the three text cards with the layering story.** A **hub visual**:
+   **core** (`pond-ts`, the foundation) at the top, and **three sibling branches
+   building off it** — **React helpers** (`@pond-ts/react`), **visualization**
+   (`@pond-ts/charts`), and **domain libraries** (`@pond-ts/fit` +
+   `@pond-ts/financial`, _others possible_). Each branch is a card that states its
+   one job and links its section; the layout reads as _core → three branches_, not
+   a vertical stack with domain sitting above charts. This single change is what
+   makes visitors _come away with_ the platform model. (Site chrome already carries
+   the brand system from #437/#438, so this rides the existing look.)
 3. **The pipeline on one screen.** A compact "raw rows → `aggregate`/`baseline` →
    rendered chart" strip — the data→analytics→chart motion as one gesture, viewed
    from the platform vantage (the charts plan tells the same story from the chart
@@ -237,19 +245,21 @@ Three surfaces, one message: **foundation → visualization → domain**.
 
 ### 5b. `/api` landing (`src/pages/api.tsx`)
 
-Group the five packages **by layer** (Foundation · Visualization · Domain · React
-glue) instead of a flat button row. Even the API index should reflect the
-architecture — cheap, and it reinforces the model on a page evaluators reliably hit.
+Group the five packages as **core + its three sibling branches** (`pond-ts`
+foundation, then React helpers · Visualization · Domain) instead of a flat button
+row. Even the API index should reflect the architecture — cheap, and it reinforces
+the core-hub model on a page evaluators reliably hit.
 
 ### 5c. Section landings — one consistent "you are here" header + one payoff chart
 
-Every package index gets (a) a small **layer-locator** ("Foundation layer · sits
-under `@pond-ts/charts`") and (b) at least one embedded chart showing that
-package's payoff. Concretely:
+Every package index gets (a) a small **branch-locator** that places it in the hub
+— core reads "Foundation · everything else builds on this"; each branch reads
+"builds on `pond-ts` core" (e.g. "Domain library · builds on `pond-ts` core") — and
+(b) at least one embedded chart showing that package's payoff. Concretely:
 
 - **`start-here/intro.mdx`** — reframe the opener from "Typed time-series
-  primitives" to the platform thesis + a full **layer map of doors** (extends the
-  charts plan's "two doors" into the whole stack).
+  primitives" to the platform thesis + a full **hub map of doors** (extends the
+  charts plan's "two doors" into core + its three branches).
 - **`pond-ts/index.mdx` (core)** — open with a **live chart of a core analytic**
   (baseline band + outliers is the strongest single proof) so the foundation's
   front door _shows the analytics_, matching what `financial/index.mdx` already
@@ -260,8 +270,66 @@ package's payoff. Concretely:
   layer-locator + a live **activity/pace** chart + a short quickstart. Full
   per-operator fit docs stay a separate later wave; this closes L4 at the
   positioning level only.
-- **`react/index.mdx`** — layer-locator ("the live-binding glue"); it already has
-  hook content.
+- **`react/index.mdx`** — branch-locator ("React helpers · builds on `pond-ts`
+  core"); it already has hook content. (A first-class sibling category, not merely
+  "glue.")
+
+### 5d. Information architecture — "Start here" is platform-only; the mental model moves into core
+
+The current `Start here` section mixes two altitudes: the platform pitch
+(`intro`, `getting-started`) and the **core mental model** (`Concepts`, `Creating
+series`). The mental-model pages are **core-only** — they teach `pond-ts`, not the
+platform — so they move under `pond-ts (core)`, leaving `Start here` as a clean
+two-page platform on-ramp (user direction).
+
+**Top of the docs — platform on-ramp (two pages, in order):**
+
+1. **Introduction** (reframed `start-here/intro.mdx`) — **the first actual page in
+   the docs, and THE place to tell the platform story.** A full walkthrough of the
+   platform: the core-hub-with-three-branches model (§0), what each branch is for,
+   and the doors into each. Not a terse landing — the narrative that a reader comes
+   away from _understanding what pond is_.
+2. **Getting started** (`start-here/getting-started.mdx`) — **staged through a
+   single worked example that runs the whole stack** (core → a branch, e.g.
+   ingest → analyze → render), but deliberately **not too much** — one example, not
+   a tour. The **hero is the working example itself** (a live, running result up
+   top), and the page walks the reader through building it.
+
+**Moves into `pond-ts (core)`:** `Concepts` (the 9 pages) and `Creating series`
+leave `Start here` and become core-section pages — they are the core mental model.
+
+**`pond-ts (core)` section — new internal order:**
+
+1. **Introduction** (new page) — what the core covers, what the core _is_, and
+   what's built on it (the three branches). The core section's own front door.
+2. **Mental model** — the one-screen mental model of pond core (the current core
+   `index.mdx`'s mental-model role, given its own page).
+3. **Concepts** — moved from `start-here/concepts` (unchanged content; the SVG
+   redraws already shipped, #490).
+4. **Creating a series** — moved from `start-here/creating`.
+5. **TimeSeries deep dive** — **renamed** from the `TimeSeries` category (the
+   transform pages).
+6. **LiveSeries deep dive** — **renamed** from the `LiveSeries` category.
+7. **ValueSeries deep dive** — **new.** Core currently has **no** narrative
+   `ValueSeries` page at all (only the API-reference row and the `byValue`
+   concept); this is the missing third entry. Start as a single deep-dive page; it
+   can grow to a category later.
+8. **Advanced** · **API reference (core)** — unchanged.
+
+**Why the three "deep dives" matter: `TimeSeries` / `LiveSeries` / `ValueSeries`
+are the three entries to the core API** (`packages/core` exports all three). Naming
+them "… deep dive" and giving `ValueSeries` parity with the other two makes the
+core section's spine legibly _the three core series types_, each with its own deep
+dive, sitting under the shared mental model.
+
+**Open IA sub-decisions (call them out at build):**
+
+- Do **Introduction** + **Getting started** stay wrapped in a "Start here" (or
+  "Overview") category, or become two **top-level** doc entries above `pond-ts
+(core)`? (User phrasing — "the first actual page in the docs" — leans top-level.)
+- **Mental model** page: carve it out of the current core `index.mdx`, or author
+  fresh and repoint `index.mdx` at "Introduction"? (Recommend: core `index.mdx`
+  becomes the **Introduction** category-link page; Mental model is its own page.)
 
 ## 6. Component work
 

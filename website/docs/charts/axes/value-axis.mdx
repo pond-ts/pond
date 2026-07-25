@@ -13,7 +13,7 @@ import ChartsValueAxisDual from '@site/src/examples/charts-value-axis-dual';
 `@pond-ts/charts` draws whatever axis your data implies — it is never a prop
 you set. Hand `<ChartContainer>` a `TimeSeries` and you get a time axis; hand
 it a `ValueSeries` (from [`byValue`](../../pond-ts/transforms/aggregation#byvalue)
-or [`ValueSeries.fromColumns`](../../start-here/creating#columnar-ingest)) and
+or [`ValueSeries.fromColumns`](../../pond-ts/creating#columnar-ingest)) and
 every draw layer in that row draws against a **linear value axis** instead —
 same `LineChart`, `ScatterChart`, `BoxPlot`, `BarChart` components, no
 axis-type prop anywhere.
@@ -22,7 +22,7 @@ This page is the chart-level reference: how the axis kind is inferred, how
 each draw layer behaves once it's on a value axis, and how to run two label
 systems over one shared scale. For the series-level foundations — what a
 `ValueSeries` is, `byValue` vs `byColumn`, why `scan` builds the axis — see
-[the value-axis concept page](../../start-here/concepts/value-axis) and
+[the value-axis concept page](../../pond-ts/concepts/value-axis) and
 [the design RFC](https://github.com/pjm17971/pond-ts/blob/main/docs/rfcs/value-axis.md). For a guided first pass with
 a running example, see
 [Learn charts, chapter 9](../../learn-charts/beyond-the-time-axis). For the
@@ -120,7 +120,7 @@ transpose.
 Why the split: the `ValueSeries` stays **inside** the series algebra
 (sliceable, cursor-able, full resolution), while bins and categories have
 already **left** it as plain records — see
-[closed vs. projected-out](../../start-here/concepts/value-axis#closed-vs-projected-out-byvalue-vs-bycolumn)
+[closed vs. projected-out](../../pond-ts/concepts/value-axis#closed-vs-projected-out-byvalue-vs-bycolumn)
 for the reasoning.
 
 ## Two ways onto a value axis
@@ -161,7 +161,7 @@ from a time-bucketed aggregate:
 Reach for `byValue` (above) when you want to keep the full-resolution channel
 and plot or cursor it against a value; reach for `byColumn` when you want to
 collapse it into bins. See
-[`byValue` vs `byColumn`](../../start-here/concepts/value-axis#closed-vs-projected-out-byvalue-vs-bycolumn)
+[`byValue` vs `byColumn`](../../pond-ts/concepts/value-axis#closed-vs-projected-out-byvalue-vs-bycolumn)
 for the full distinction, including the `split = scan + byColumn` composition
 for stateful per-bin metrics.
 
@@ -209,7 +209,7 @@ Storybook stories for both on a `.byValue()` series.
 
 ## See also
 
-- [Value axis (concept)](../../start-here/concepts/value-axis) — the series-level
+- [Value axis (concept)](../../pond-ts/concepts/value-axis) — the series-level
   model: `ValueSeries`, `byValue`, `byColumn`, `scan`, and why the algebra
   stays closed.
 - [Value axis RFC](https://github.com/pjm17971/pond-ts/blob/main/docs/rfcs/value-axis.md) — the design rationale and

@@ -180,7 +180,7 @@ within each entity:
 series.partitionBy('host').fill({ cpu: 'linear' }).collect();
 ```
 
-See [Concepts → Partitioning](../../start-here/concepts/partitioning)
+See [Concepts → Partitioning](../../pond-ts/concepts/partitioning)
 for the full hazard discussion.
 
 ## Deduplicate \{#deduplicate\}
@@ -377,15 +377,15 @@ Most "the data is wrong" problems happen at the boundary, not inside
 pipelines. The relevant docs:
 
 - **Time zones / wall-clock strings** — see
-  [JSON ingest and time zones → Wall-clock strings](../../start-here/creating#wall-clock-strings-parsetimezone).
+  [JSON ingest and time zones → Wall-clock strings](../../pond-ts/creating#wall-clock-strings-parsetimezone).
   The decision table there ("does this input need `parse.timeZone`?")
   is the single most useful artifact for ingest-side time bugs.
 - **`null` vs `undefined`** — see
-  [JSON ingest → Missing values](../../start-here/creating#missing-values).
+  [JSON ingest → Missing values](../../pond-ts/creating#missing-values).
   Wire-format `null` becomes `undefined` on read; columns marked
   `required: false` accept it.
 - **Mixed timestamp formats** — see
-  [JSON ingest → Pitfalls](../../start-here/creating#pitfalls).
+  [JSON ingest → Pitfalls](../../pond-ts/creating#pitfalls).
   Mixing offset-qualified strings with bare wall-clock strings is a
   silent zone-drift footgun.
 

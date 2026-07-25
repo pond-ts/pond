@@ -60,6 +60,51 @@ const config: Config = {
         redirects: [
           // The API reference moved in-site (docs/api/); /api bookmarks live on.
           { from: '/api', to: '/docs/api/' },
+          // Core-IA restructure: "Start here" became a platform on-ramp; the
+          // core mental-model pages (Concepts, Creating series) moved into
+          // pond-ts (core), and Getting started went top-level.
+          {
+            from: '/docs/start-here/getting-started',
+            to: '/docs/getting-started',
+          },
+          { from: '/docs/start-here/creating', to: '/docs/pond-ts/creating' },
+          { from: '/docs/start-here/concepts', to: '/docs/pond-ts/concepts' },
+          {
+            from: '/docs/start-here/concepts/temporal-keys',
+            to: '/docs/pond-ts/concepts/temporal-keys',
+          },
+          {
+            from: '/docs/start-here/concepts/sequences',
+            to: '/docs/pond-ts/concepts/sequences',
+          },
+          {
+            from: '/docs/start-here/concepts/series',
+            to: '/docs/pond-ts/concepts/series',
+          },
+          {
+            from: '/docs/start-here/concepts/temporal-relations',
+            to: '/docs/pond-ts/concepts/temporal-relations',
+          },
+          {
+            from: '/docs/start-here/concepts/windowing',
+            to: '/docs/pond-ts/concepts/windowing',
+          },
+          {
+            from: '/docs/start-here/concepts/triggers',
+            to: '/docs/pond-ts/concepts/triggers',
+          },
+          {
+            from: '/docs/start-here/concepts/partitioning',
+            to: '/docs/pond-ts/concepts/partitioning',
+          },
+          {
+            from: '/docs/start-here/concepts/late-data',
+            to: '/docs/pond-ts/concepts/late-data',
+          },
+          {
+            from: '/docs/start-here/concepts/value-axis',
+            to: '/docs/pond-ts/concepts/value-axis',
+          },
         ],
       },
     ],
@@ -112,7 +157,7 @@ const config: Config = {
           items: [
             {
               label: 'Getting Started',
-              to: '/docs/start-here/getting-started',
+              to: '/docs/getting-started',
             },
             {
               label: 'pond-ts (core)',

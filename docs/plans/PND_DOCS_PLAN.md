@@ -52,7 +52,33 @@ The core docs & landing wave (#490, v0.48.1) shipped the `ConceptViz` shell
 and figures for aggregate/reduce, byColumn, byValue, align, sampling,
 smoothing, anomaly detection, rolling, plus the Concepts-page SVG redraws.
 Remaining: the **landing-page story** and any core pages beyond the
-transforms set — roster in the plan note.
+transforms set — roster in the plan note. The landing story now uses the
+**core-hub-with-three-branches** framing (core → react · charts · domain,
+others possible), not a vertical stack.
+
+Also carries an **IA restructure** (plan note §5d): `Start here` becomes a
+two-page platform on-ramp — **Introduction** (full platform walkthrough, THE
+story) + **Getting started** (one whole-stack worked example, hero = the
+running result). `Concepts` and `Creating series` move into `pond-ts (core)`.
+Core section gains an **Introduction** + **Mental model** front, and its API
+spine is the **three core series types** — `TimeSeries` / `LiveSeries` /
+`ValueSeries`, each a "… deep dive" (the first two renamed, `ValueSeries` new:
+core has no narrative page for it today).
+
+**Shipped on `docs/core-ia-restructure`** (not yet merged — landing/intro pages
+are human-review-gated): the IA moves + redirects, the three new core pages
+written (core Introduction, Mental model, ValueSeries deep dive), the Concepts
+index slimmed to its primitives table, and **Getting started rewritten as a
+whole-stack ride walkthrough** — hand-built series → `smooth` → `byColumn`
+histogram → `@pond-ts/fit` `computePower` (NP/IF/TSS/zones) → charts with
+legend, crosshair cursor, NP baseline, and the power breakdown underneath. The
+hero is `website/src/examples/getting-started-ride.tsx` (seeded fixture in
+`lib/ride-fixtures.ts`); every number quoted on the page was computed from the
+real pipeline, not estimated. This added **`@pond-ts/fit` as a website
+dependency** (it had none — the plan's L4 "fit is a name with no home").
+
+Still to write: the **top-level Introduction** platform story (§5a/§5c), which
+is the remaining narrative gap.
 
 ### [PND-APIREF] — In-site API reference completion
 

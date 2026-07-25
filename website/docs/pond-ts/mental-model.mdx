@@ -1,0 +1,70 @@
+---
+sidebar_position: 2
+sidebar_label: Mental model
+---
+
+import { MentalModel } from '@site/src/components/ConceptFigures';
+
+# Mental model
+
+Hold this one picture and the rest of core follows.
+
+A **series** is a schema-typed, ordered collection of events. **Events** carry a
+key plus a typed payload. **Operators** transform series into series; **reducers**
+compress events into values.
+
+<MentalModel />
+
+The schema `S` carries through every transform — the type system narrows column
+shapes correctly, without `as` casts. That single invariant is what makes the
+algebra **closed**: because every operator returns a series of a known schema,
+you keep chaining, and a bucket _is_ just a smaller series (same API, no second
+primitive to learn).
+
+## The three series types
+
+The key's _kind_ picks the type, and the type decides which operators exist:
+
+| Type              | Keyed by                      | Carries                                                   |
+| ----------------- | ----------------------------- | --------------------------------------------------------- |
+| **`TimeSeries`**  | a temporal key (batch)        | the full algebra incl. calendar/clock operators           |
+| **`LiveSeries`**  | a temporal key (streaming)    | the same operator surface, incremental cost model         |
+| **`ValueSeries`** | a monotonic **non-time** axis | the ordering-based operators only — no calendar (by type) |
+
+`TimeSeries` and `LiveSeries` are **peers**, not layers: same schema type, same
+operators, different cost models (whole-collection vs. incremental).
+[`ValueSeries`](value-series) drops in when the natural x of your data is a
+_quantity_ (distance, work) rather than the wall clock.
+
+The vocabulary each operator assumes — temporal keys, sequences, windowing,
+triggers, partitioning, late data, the value axis — is defined page by page in
+**[Concepts](concepts)**. Read those reference-style once the picture above is
+clear.
+
+## Coming from pandas?
+
+`pandas`'s `.resample()` covers both directions; pond-ts splits them:
+
+- **Downsample** (fewer rows out than in) — `aggregate(seq, mapping)` ≈ `.resample().agg()`
+- **Upsample / regrid** (one row per grid point, hold or interpolate) — `align(seq, { method })` ≈ `.asfreq()` + `.ffill()` / `.interpolate('time')`
+- `rolling(window, mapping)` ≈ `.rolling().agg()`
+- `within(range)` / `overlapping(range)` / `trim(range)` ≈ `.loc[]` slicing with three explicit semantics
+- `reduce(mapping)` ≈ `.agg()` on the whole frame
+- `groupBy(col)` ≈ `.groupby(col)`
+
+See [Aggregation](transforms/aggregation) for the deep dive on bucketing.
+
+## Coming from pondjs?
+
+| pondjs                   | pond-ts                                                |
+| ------------------------ | ------------------------------------------------------ |
+| `TimeSeries` (sorted)    | `TimeSeries` (1:1 conceptually; methods differ)        |
+| `Collection` (unordered) | `TimeSeries` — pond-ts only exposes the sorted variant |
+| `IndexedEvent`           | `Event<Interval>`                                      |
+| `TimeRangeEvent`         | `Event<TimeRange>`                                     |
+| `Pipeline` + processors  | method chain on `TimeSeries`                           |
+| `Pond` / `Aggregator`    | batch `aggregate()` or `LiveAggregation`               |
+
+pond-ts deliberately drops the `Collection` / `TimeSeries` distinction: a bucket
+_is_ a smaller `TimeSeries`, so anything that works on a series works on a bucket
+— same API, no second primitive.

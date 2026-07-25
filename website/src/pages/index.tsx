@@ -36,7 +36,7 @@ function HomepageHeader(): ReactNode {
         <div className={styles.buttons}>
           <Link
             className="button button--primary button--lg"
-            to="/docs/start-here/getting-started"
+            to="/docs/getting-started"
           >
             Get started
           </Link>

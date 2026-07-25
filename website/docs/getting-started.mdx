@@ -1,0 +1,288 @@
+---
+sidebar_position: 2
+---
+
+import ChartExample from '@site/src/components/ChartExample';
+import GettingStartedRide from '@site/src/examples/getting-started-ride';
+
+# Getting started
+
+We'll build one real thing, end to end: **take a bike ride, analyse it, and draw
+it.** It's a small enough problem to hold in your head and big enough to touch
+every layer of pond — the core series, a domain library, and the charts.
+
+Here's what we're building. Hover it.
+
+<ChartExample name="getting-started-ride" height={380}>
+  <GettingStartedRide />
+</ChartExample>
+
+Two charts, one dataset. On top, the ride as it happened: **raw power** (noisy,
+because power meters are), the **30-second average** riding through it, and a
+**normalized power** baseline. Underneath, the same ride keyed by _watts_
+instead of time — **where the time actually went**.
+
+Everything below builds up to that, one step at a time.
+
+## Install
+
+```sh
+npm install pond-ts
+```
+
+That's the core. We'll add the other two pieces when we need them.
+
+## A series, by hand
+
+Start with the smallest honest version: a few seconds of a ride, typed out. A
+**schema** declares the columns, the first of which is the temporal key:
+
+```ts
+import { TimeSeries } from 'pond-ts';
+
+const schema = [
+  { name: 'time', kind: 'time' },
+  { name: 'watts', kind: 'number' },
+  { name: 'hr', kind: 'number' },
+] as const;
+
+const ride = TimeSeries.fromJSON({
+  name: 'ride',
+  schema,
+  rows: [
+    ['2026-05-17T08:00:00Z', 182, 131],
+    ['2026-05-17T08:00:01Z', 191, 132],
+    ['2026-05-17T08:00:02Z', 178, 132],
+    ['2026-05-17T08:00:03Z', 205, 133],
+    ['2026-05-17T08:00:04Z', 236, 135],
+  ],
+});
+```
+
+`as const` is doing real work there — it's what lets pond carry the column names
+and types through every transform that follows, so `ride.column('watts')` is
+known to be numeric and `ride.column('wats')` doesn't compile.
+
+A series is an **ordered, immutable collection of events**. Read one:
+
+```ts
+const event = ride.at(3);
+
+event.key().toDate().toISOString(); // '2026-05-17T08:00:03.000Z'
+event.get('watts'); // 205
+event.data(); // { watts: 205, hr: 133 }
+```
+
+Nothing is mutable, so every operator below returns a _new_ series and the
+original stays intact.
+
+:::tip[Data arriving columnar?]
+Row tuples are the right default. If your data instead shows up
+struct-of-arrays — a bulk JSON payload, protobuf packed doubles, a decoder
+handing you typed arrays — `TimeSeries.fromColumns` skips the row round-trip
+entirely. See [Creating series → Columnar ingest](pond-ts/creating#columnar-ingest).
+:::
+
+## Smoothing it
+
+Real power data is spiky — you can't read a rider's effort off the raw trace.
+The fix is a moving average, and it's one call:
+
+```ts
+const smoothed = ride.smooth('watts', 'movingAverage', {
+  window: '30s',
+  output: 'watts30',
+});
+```
+
+That **adds a column** rather than replacing one; the smoothed series still
+carries `watts`, so you can draw both — which is exactly what the top chart
+does. Windows are written as durations (`'30s'`, `'5m'`), not sample counts, so
+the result means the same thing whether your device logged at 1 Hz or 4 Hz.
+
+## Asking where the time went
+
+Here's where time series get interesting. So far we've asked _"what was the
+power at 8:04?"_ — a **time** question. But the useful training question is
+_"how long did I spend at each power?"_ — a question about **values**, not
+clock time.
+
+`byColumn` buckets rows by a numeric column's value instead of by time:
+
+```ts
+const bins = ride.byColumn(
+  'watts',
+  { width: 25 }, // 25-watt-wide buckets
+  { secs: { from: 'watts', using: 'count' } },
+);
+// → [{ start: 100, end: 125, secs: 82 }, { start: 125, end: 150, secs: 900 }, …]
+```
+
+The samples are one second apart, so **counting rows in a watt band is
+literally counting seconds in it** — no extra bookkeeping. That array of
+`{ start, end, … }` records is the power histogram, and it's the second chart.
+
+Note what came back: **plain records, not a series**. A power bucket isn't keyed
+by anything you'd keep chaining, so pond hands the bins straight back. (When you
+_do_ want to keep the full-resolution channel but read it against a value —
+distance, say — that's [`byValue`](pond-ts/concepts/value-axis), which returns a
+[`ValueSeries`](pond-ts/value-series).)
+
+## Bringing in the domain library
+
+Everything so far was generic time-series work — pond core knows nothing about
+cycling. **Normalized power**, intensity factor, training load, and Coggan zones
+are real domain knowledge, and that's what
+[`@pond-ts/fit`](/docs/fit) is for:
+
+```sh
+npm install @pond-ts/fit
+```
+
+```ts
+import { computePower } from '@pond-ts/fit';
+
+const power = computePower(timeSec, watts, 250 /* FTP */, elapsedSeconds);
+```
+
+Two lines, and you get the whole analysis:
+
+| Metric              | Value  |
+| ------------------- | ------ |
+| Average power       | 210 W  |
+| Normalized power    | 246 W  |
+| Intensity factor    | 0.98   |
+| Training load (TSS) | 64     |
+| Total work          | 503 kJ |
+
+Plus a `zones` breakdown, which is where a hard interval session shows its
+shape — almost no time at tempo, because intervals live _above_ and _below_ it:
+
+| Zone        | Range     | Time  |
+| ----------- | --------- | ----- |
+| 1 Recovery  | 0–138 W   | 7:36  |
+| 2 Endurance | 138–188 W | 14:23 |
+| 3 Tempo     | 188–225 W | 0:07  |
+| 4 Threshold | 225–263 W | 6:00  |
+| 5 VO₂ Max   | 263–300 W | 3:34  |
+| 6 Anaerobic | 300–375 W | 8:19  |
+
+`computePower` wants typed arrays rather than a series, so the bridge from pond
+is two accessors:
+
+```ts
+const startMs = ride.keyColumn().begin[0];
+const timeSec = Float64Array.from(
+  ride.keyColumn().begin,
+  (ms) => (ms - startMs) / 1000,
+);
+const watts = ride.column('watts').toFloat64Array();
+```
+
+`toFloat64Array()` hands back the column's own buffer — no copy — which is why
+this stays cheap on a four-hour ride.
+
+:::note[Under the hood it's still pond]
+fit isn't a separate engine. Normalized power _is_ a 30-second rolling mean
+(pond's `rolling`), and the zone breakdown _is_ value-axis bucketing (the same
+`byColumn` you just used). fit supplies the domain definitions; core does the
+work.
+:::
+
+## Drawing it
+
+Now the charts. Install the visualization layer:
+
+```sh
+npm install @pond-ts/charts
+```
+
+Draw layers take a **series and a column** directly — there's no adapter step,
+no reshaping into `{x, y}` objects:
+
+```tsx
+<ChartContainer range={ride.timeRange()} width={680} cursor="crosshair">
+  <ChartRow height={200}>
+    <YAxis id="w" label="watts" min={0} />
+    <Layers>
+      <LineChart
+        series={ride}
+        column="watts"
+        axis="w"
+        as="secondary"
+        legend="power"
+      />
+      <LineChart
+        series={smoothed}
+        column="watts30"
+        axis="w"
+        as="primary"
+        legend="30 s average"
+      />
+      <Baseline
+        value={power.normalizedWatts}
+        axis="w"
+        label="NP 246 W"
+        indicator
+      />
+    </Layers>
+  </ChartRow>
+  <Legend placement="top-right" />
+</ChartContainer>
+```
+
+A few things worth naming, because they're the conventions you'll meet
+everywhere in pond charts:
+
+- **`cursor="crosshair"`** on the container is the whole hover interaction — it
+  reads values off every layer at once.
+- **`<Legend>`** takes no data. It enumerates the registered layers and draws
+  each one's _resolved_ style, so the key can't drift from the plot. `legend="…"`
+  names a row.
+- **`as="primary"`** is a **style role**, not a colour. The theme decides what
+  primary looks like, which is why these charts follow the site's light/dark mode
+  without any colour in this snippet.
+- **`<Baseline>`** is an annotation — a horizontal line at a value, here the
+  normalized power fit just computed.
+
+The histogram is the same components pointed at the bins, in its **own**
+container — because its x-axis is watts, not time:
+
+```tsx
+<ChartContainer range={[100, 375]} width={680}>
+  <ChartRow height={130}>
+    <YAxis id="min" label="minutes" min={0} />
+    <Layers>
+      <BarChart bins={bins} column="minutes" axis="min" gap={2} />
+    </Layers>
+  </ChartRow>
+</ChartContainer>
+```
+
+Rows inside one `ChartContainer` share an x-scale (that's what makes stacked
+rows line up), so a chart on a _different_ axis is a separate container.
+
+That's the whole example — the source under the chart at the top of this page is
+the real, complete thing, nothing elided.
+
+## What you just used
+
+| Piece                 | What it did                           |
+| --------------------- | ------------------------------------- |
+| **`pond-ts`**         | the series, `smooth`, `byColumn`      |
+| **`@pond-ts/fit`**    | normalized power, IF, TSS, zones      |
+| **`@pond-ts/charts`** | lines, bars, baseline, legend, cursor |
+
+Core sits underneath; fit and charts build on it independently.
+[`@pond-ts/react`](/docs/react) is the fourth piece — hooks for binding a
+**live** series into React render, which is the same story with data still
+arriving.
+
+## Where to go next
+
+- **[pond-ts core](pond-ts/introduction)** — the foundation in depth. Start with
+  the [Mental model](pond-ts/mental-model).
+- **[Learn charts](learn-charts/your-first-chart)** — the charts track, from
+  first chart to live data.
+- **[How-to guides](how-to-guides/)** — longer worked builds, including
+  [ingesting messy data](how-to-guides/ingesting-messy-data).
