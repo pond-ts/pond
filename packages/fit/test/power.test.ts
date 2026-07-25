@@ -37,6 +37,22 @@ describe('computePower', () => {
     expect(occupied[0]!.start).toBe(150);
     expect(occupied[0]!.end).toBe(175);
   });
+
+  it('rejects a binWatts that could not produce drawable bins', () => {
+    for (const binWatts of [0, -25, NaN, Infinity]) {
+      expect(() =>
+        computePower(t(20), new Float64Array(20).fill(150), 250, 20, {
+          binWatts,
+        }),
+      ).toThrow(/binWatts must be a positive finite number/);
+    }
+    // fractional widths are legitimate
+    expect(() =>
+      computePower(t(20), new Float64Array(20).fill(150), 250, 20, {
+        binWatts: 0.5,
+      }),
+    ).not.toThrow();
+  });
 });
 
 /** The shape `@pond-ts/charts` consumes (`BinRecord` in charts' data.ts).

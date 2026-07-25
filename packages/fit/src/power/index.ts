@@ -389,6 +389,13 @@ export function computePower(
   options: ComputePowerOptions = {},
 ): PowerSummary {
   const { binWatts = 1 } = options;
+  if (!Number.isFinite(binWatts) || binWatts <= 0) {
+    // Without this the failure surfaces from `byColumn` as a complaint about
+    // `width` — an internal the caller never named.
+    throw new RangeError(
+      `computePower: binWatts must be a positive finite number; got ${binWatts}`,
+    );
+  }
   const np = normalizedPower(timeSec, watts);
   return {
     averageWatts: averagePower(watts),
