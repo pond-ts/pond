@@ -4,12 +4,18 @@ sidebar_position: 2
 
 import ChartExample from '@site/src/components/ChartExample';
 import GettingStartedRide from '@site/src/examples/getting-started-ride';
+import GettingStartedZones from '@site/src/examples/getting-started-zones';
 
 # Getting started
 
 We'll build one real thing, end to end: **take a bike ride, analyse it, and draw
 it.** It's a small enough problem to hold in your head and big enough to touch
 every layer of pond — the core series, a domain library, and the charts.
+
+The data is a genuine ride, not a generated one: 1 h 54 m, 36.7 km, 712 m of
+climbing, recorded at 1 Hz by a head unit with a power meter. Real data comes
+with real texture — dropouts, coasting, spikes — and that texture is most of
+what makes the next few steps worth doing.
 
 Here's what we're building. Hover it.
 
@@ -20,7 +26,20 @@ Here's what we're building. Hover it.
 Two charts, one dataset. On top, the ride as it happened: **raw power** (noisy,
 because power meters are), the **30-second average** riding through it, and a
 **normalized power** baseline. Underneath, the same ride keyed by _watts_
-instead of time — **where the time actually went**.
+instead of time — **where the time actually went**. That faint bar on the left
+is half an hour spent at almost no power at all: it's a descent-heavy loop, and
+you coast a lot of it. The time axis can't show you that; the value axis can.
+
+Both charts make a concession to that coasting, and they're the two judgement
+calls in the whole example:
+
+- The raw trace **breaks** where you stop pedalling instead of diving to the
+  floor. Zero watts is true, but drawing it turns every descent into a picket
+  fence and buries the line you're meant to read.
+- The coasting bucket is drawn **faintly, and the y-axis ignores it**. It's
+  three times any other bar; scaling to it would flatten the part of the
+  distribution actually worth looking at. It runs off the top of the plot on
+  purpose.
 
 Everything below builds up to that, one step at a time.
 
@@ -34,7 +53,7 @@ That's the core. We'll add the other two pieces when we need them.
 
 ## A series, by hand
 
-Start with the smallest honest version: a few seconds of a ride, typed out. A
+Start with the smallest honest version: a few seconds of the ride, typed out. A
 **schema** declares the columns, the first of which is the temporal key:
 
 ```ts
@@ -43,21 +62,24 @@ import { TimeSeries } from 'pond-ts';
 const schema = [
   { name: 'time', kind: 'time' },
   { name: 'watts', kind: 'number' },
-  { name: 'hr', kind: 'number' },
 ] as const;
 
 const ride = TimeSeries.fromJSON({
   name: 'ride',
   schema,
   rows: [
-    ['2026-05-17T08:00:00Z', 182, 131],
-    ['2026-05-17T08:00:01Z', 191, 132],
-    ['2026-05-17T08:00:02Z', 178, 132],
-    ['2026-05-17T08:00:03Z', 205, 133],
-    ['2026-05-17T08:00:04Z', 236, 135],
+    ['2016-07-20T14:27:50Z', 110],
+    ['2016-07-20T14:27:51Z', 96],
+    ['2016-07-20T14:27:52Z', 101],
+    ['2016-07-20T14:27:53Z', 101],
+    ['2016-07-20T14:27:54Z', 79],
   ],
 });
 ```
+
+Two columns is all this example needs. The device also recorded cadence,
+altitude, speed and GPS — you declare the columns you're going to use, and the
+rest never enters the series.
 
 `as const` is doing real work there — it's what lets pond carry the column names
 and types through every transform that follows, so `ride.column('watts')` is
@@ -68,9 +90,9 @@ A series is an **ordered, immutable collection of events**. Read one:
 ```ts
 const event = ride.at(3);
 
-event.key().toDate().toISOString(); // '2026-05-17T08:00:03.000Z'
-event.get('watts'); // 205
-event.data(); // { watts: 205, hr: 133 }
+event.key().toDate().toISOString(); // '2016-07-20T14:27:53.000Z'
+event.get('watts'); // 101
+event.data(); // { watts: 101 }
 ```
 
 Nothing is mutable, so every operator below returns a _new_ series and the
@@ -115,12 +137,18 @@ const bins = ride.byColumn(
   { width: 25 }, // 25-watt-wide buckets
   { secs: { from: 'watts', using: 'count' } },
 );
-// → [{ start: 100, end: 125, secs: 82 }, { start: 125, end: 150, secs: 900 }, …]
+// → [{ start: 0, end: 25, secs: 1864 }, { start: 25, end: 50, secs: 82 }, …]
 ```
 
 The samples are one second apart, so **counting rows in a watt band is
 literally counting seconds in it** — no extra bookkeeping. That array of
 `{ start, end, … }` records is the power histogram, and it's the second chart.
+
+That first bucket is the 31 minutes of coasting. It's also where the recording's
+own gaps quietly do the right thing: the head unit dropped 38 seconds across the
+ride, those cells are **missing rather than zero**, and `byColumn` leaves them
+out of the count instead of filing them under 0 W. Missing and zero mean very
+different things on a bike.
 
 Note what came back: **plain records, not a series**. A power bucket isn't keyed
 by anything you'd keep chaining, so pond hands the bins straight back. (When you
@@ -142,30 +170,60 @@ npm install @pond-ts/fit
 ```ts
 import { computePower } from '@pond-ts/fit';
 
-const power = computePower(timeSec, watts, 250 /* FTP */, elapsedSeconds);
+const power = computePower(timeSec, watts, 200 /* FTP */, elapsedSeconds);
 ```
 
 Two lines, and you get the whole analysis:
 
-| Metric              | Value  |
-| ------------------- | ------ |
-| Average power       | 210 W  |
-| Normalized power    | 246 W  |
-| Intensity factor    | 0.98   |
-| Training load (TSS) | 64     |
-| Total work          | 503 kJ |
+| Metric              | pond   | the head unit |
+| ------------------- | ------ | ------------- |
+| Average power       | 135 W  | 135 W         |
+| Max power           | 440 W  | 440 W         |
+| Normalized power    | 192 W  | 192 W         |
+| Intensity factor    | 0.96   | 0.962         |
+| Training load (TSS) | 176    | 174.2         |
+| Total work          | 918 kJ | 918 kJ        |
 
-Plus a `zones` breakdown, which is where a hard interval session shows its
-shape — almost no time at tempo, because intervals live _above_ and _below_ it:
+The second column is what the Garmin wrote into the same file. We're not
+comparing against a fixture here — the device did this arithmetic on the bike in
+2016, and pond reproduces it from the raw samples. (TSS differs by a point
+because the head unit divides by _moving_ time and we passed _elapsed_.)
 
-| Zone        | Range     | Time  |
-| ----------- | --------- | ----- |
-| 1 Recovery  | 0–138 W   | 7:36  |
-| 2 Endurance | 138–188 W | 14:23 |
-| 3 Tempo     | 188–225 W | 0:07  |
-| 4 Threshold | 225–263 W | 6:00  |
-| 5 VO₂ Max   | 263–300 W | 3:34  |
-| 6 Anaerobic | 300–375 W | 8:19  |
+You also get a `zones` breakdown at that FTP — time in each of the seven Coggan
+bands. That's the third chart: bands on the y axis, minutes growing right. Note
+where the ride actually lived — 40% of it under 110 W, because what goes up
+comes back down.
+
+<ChartExample name="getting-started-zones" height={260}>
+  <GettingStartedZones />
+</ChartExample>
+
+```tsx
+const zones = power.zones.map((z) => ({ ...z, minutes: z.seconds / 60 }));
+
+<BarChart
+  bins={zones}
+  column="minutes"
+  orientation="horizontal"
+  ordinal
+  gap={6}
+/>;
+```
+
+`power.zones` goes **straight into the chart**. fit reports its bands as
+`{ start, end, … }` — the same shape `byColumn` returned two sections ago — so
+there's no adapter between the domain library and the visualization layer. The
+only thing that `.map` does is turn seconds into minutes, which is a units
+choice, not a reshape.
+
+Two details worth stealing:
+
+- **`ordinal`** gives every band the same height. Zone widths are wildly
+  unequal (Z2 is 40 W, Z6 is 60 W, Z7 has no top at all), and honouring those
+  widths would make the chart about arithmetic instead of about time.
+- **`openEnded`** marks the band with no upper bound, so the label can read
+  `300+ W` rather than inventing a ceiling. `end` is still a real number — the
+  chart has to draw _something_ — but the flag tells you not to believe it.
 
 `computePower` wants typed arrays rather than a series, so the bridge from pond
 is two accessors:
@@ -222,7 +280,7 @@ no reshaping into `{x, y}` objects:
       <Baseline
         value={power.normalizedWatts}
         axis="w"
-        label="NP 246 W"
+        label="NP 192 W"
         indicator
       />
     </Layers>
