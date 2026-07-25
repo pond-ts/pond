@@ -23,12 +23,19 @@ Here's what we're building. Hover it, drag it, scroll to zoom.
   <GettingStartedRide />
 </ChartExample>
 
-Two charts, one dataset. On top, the ride as it happened: **raw power** (noisy,
-because power meters are), a **2-minute average** riding through it, and a
-**normalized power** baseline. Underneath, the same ride keyed by _watts_
-instead of time — **where the time actually went**. That faint bar on the left
-is half an hour spent at almost no power at all: it's a descent-heavy loop, and
-you coast a lot of it. The time axis can't show you that; the value axis can.
+One dataset, three views of it. On top, the ride as it happened: **raw power**
+(noisy, because power meters are), a **2-minute average** riding through it, and
+a **normalized power** baseline. Underneath, the four numbers a rider actually
+looks at, and the same ride keyed by _watts_ instead of time — **where the time
+actually went**. That faint bar on the left is half an hour spent at almost no
+power at all: it's a descent-heavy loop, and you coast a lot of it. The time
+axis can't show you that; the value axis can.
+
+The same **NP** line appears on both — as a horizontal baseline against time,
+and as a vertical marker across the distribution. It's worth seeing where it
+lands: 192 W, well right of the 135 W average. Normalized power is deliberately
+not the mean, because an hour spent alternating between 0 and 300 W costs you
+far more than a steady 150.
 
 Both charts make a concession to that coasting, and they're the two judgement
 calls in the whole example:
@@ -331,7 +338,8 @@ everywhere in pond charts:
   neutral grey so the `primary` moving average reads through it. That's why
   these charts follow the site's light/dark mode with no colour in this snippet.
 - **`<Baseline>`** is an annotation — a horizontal line at a value, here the
-  normalized power fit just computed.
+  normalized power fit just computed. **`<Marker>`** is its vertical twin, at an
+  x coordinate: the same NP, drawn across the histogram's watt axis.
 
 The histogram is the same components pointed at the bins, in its **own**
 container — because its x-axis is watts, not time:

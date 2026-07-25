@@ -7,6 +7,7 @@ import {
   Layers,
   Legend,
   LineChart,
+  Marker,
   YAxis,
 } from '@pond-ts/charts';
 import { computePower } from '@pond-ts/fit';
@@ -72,6 +73,64 @@ const power = computePower(
 /** The ride's full extent — the outer limit for panning and zooming. */
 const RIDE_BOUNDS = [startMs, startMs + RIDE_ELAPSED_S * 1000] as const;
 
+/** Gutter between the stacked charts, and between the stats and the histogram. */
+const GAP = 20;
+/** Height of the histogram's plot row — the stats panel matches it. */
+const BOTTOM_H = 130;
+
+/** The ride in four numbers, straight off the `computePower` summary. */
+const STATS = [
+  {
+    label: 'Normalized power',
+    value: `${Math.round(power.normalizedWatts)} W`,
+  },
+  { label: 'Average', value: `${Math.round(power.averageWatts)} W` },
+  { label: 'Training load', value: `${Math.round(power.trainingLoad)} TSS` },
+  { label: 'Work', value: `${Math.round(power.totalWorkKj)} kJ` },
+];
+
+/** A 2×2 readout beside the histogram — the numbers a rider looks at first. */
+function RideStats({ width }: { width: number }) {
+  return (
+    <div
+      style={{
+        width,
+        height: BOTTOM_H,
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr',
+        gridTemplateRows: '1fr 1fr',
+        gap: '0.5rem 1rem',
+        alignContent: 'center',
+      }}
+    >
+      {STATS.map((s) => (
+        <div key={s.label}>
+          <div
+            style={{
+              fontSize: '0.6875rem',
+              lineHeight: 1.3,
+              color: 'var(--pond-muted)',
+            }}
+          >
+            {s.label}
+          </div>
+          <div
+            style={{
+              fontSize: '1.25rem',
+              lineHeight: 1.2,
+              fontWeight: 600,
+              color: 'var(--pond-ink)',
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {s.value}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Measure the container so the charts fill whatever width they're given. */
 function useMeasuredWidth<T extends HTMLElement>() {
   const ref = useRef<T | null>(null);
@@ -93,10 +152,14 @@ export default function GettingStartedRide() {
   const theme = useSiteChartTheme();
   const [boxRef, width] = useMeasuredWidth<HTMLDivElement>();
 
+  // The bottom strip splits a third / two thirds: the numbers, then the shape.
+  const statsWidth = Math.round((width - GAP) / 3);
+  const histogramWidth = width - GAP - statsWidth;
+
   return (
     <div ref={boxRef} style={{ width: '100%' }}>
       {width > 0 && (
-        <>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: GAP }}>
           {/* Time axis: the ride as it happened. `origin="data"` labels the
               ticks as time into the ride — nobody cares what o'clock it was in
               2016. Drag to pan, wheel to zoom; `bounds` stops you leaving. */}
@@ -137,28 +200,41 @@ export default function GettingStartedRide() {
             <Legend placement="top-right" />
           </ChartContainer>
 
-          {/* Value axis: where the time actually went. */}
-          <ChartContainer range={[0, 450]} width={width} theme={theme}>
-            <ChartRow height={130}>
-              <YAxis
-                id="min"
-                label="minutes"
-                min={0}
-                max={pedallingPeak}
-                width={52}
-              />
-              <Layers>
-                <BarChart
-                  bins={bins}
-                  column="minutes"
-                  axis="min"
-                  binColors={fadeFirstBar(theme.bar.default.fill)}
-                  gap={2}
+          {/* The numbers, then the shape — value axis: where the time went. */}
+          <div style={{ display: 'flex', gap: GAP, alignItems: 'flex-start' }}>
+            <RideStats width={statsWidth} />
+            <ChartContainer
+              range={[0, 450]}
+              width={histogramWidth}
+              theme={theme}
+            >
+              <ChartRow height={BOTTOM_H}>
+                <YAxis
+                  id="min"
+                  label="minutes"
+                  min={0}
+                  max={pedallingPeak}
+                  width={52}
                 />
-              </Layers>
-            </ChartRow>
-          </ChartContainer>
-        </>
+                <Layers>
+                  <BarChart
+                    bins={bins}
+                    column="minutes"
+                    axis="min"
+                    binColors={fadeFirstBar(theme.bar.default.fill)}
+                    gap={2}
+                  />
+                  {/* The same NP as the baseline above, on the watt axis this
+                      time: the single number the distribution is "worth". */}
+                  <Marker
+                    at={power.normalizedWatts}
+                    label={`NP ${Math.round(power.normalizedWatts)} W`}
+                  />
+                </Layers>
+              </ChartRow>
+            </ChartContainer>
+          </div>
+        </div>
       )}
     </div>
   );
