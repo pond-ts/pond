@@ -4,22 +4,31 @@ title: pond-ts (core)
 sidebar_position: 1
 ---
 
-# pond-ts
+# pond-ts (core)
 
-The core package — TypeScript-first time series primitives. Batch
-transforms (`filter`, `aggregate`, `rolling`, `smooth`, `reduce`),
-array-column support, JSON round-trip, and the live-series / live-view
-model for streaming-style updates.
+The core package — TypeScript-first time-series primitives, and the
+foundation the rest of pond builds on. Batch transforms (`filter`,
+`aggregate`, `rolling`, `smooth`, `reduce`), array-column support, JSON
+round-trip, and the live-series / live-view model for streaming-style
+updates.
 
-This section walks through the library in order:
+Start here:
 
-- **TimeSeries** — ingest, queries, transforms (one page per operator)
-- **LiveSeries** — `LiveSeries`, `LiveAggregation`,
-  `LiveRollingAggregation`, views
-- **Advanced** — chart interop, array columns
+- **[Introduction](introduction)** — what the core is, what it covers, and
+  what's built on it.
+- **[Mental model](mental-model)** — series, events, operators, reducers, and
+  the three series types, in one picture.
+- **[Concepts](concepts)** — the vocabulary the operator pages assume.
+- **[Creating series](creating)** — batch and live ingest.
 
-For the mental model — `TimeSeries`, `Event`, temporal keys,
-schemas — see [Start here → Concepts](../start-here/concepts).
+Then the three series types, each with its own deep dive:
+
+- **[TimeSeries deep dive](transforms/queries)** — queries and transforms, one
+  page per operator.
+- **[LiveSeries deep dive](live/live-series)** — streaming ingest, live
+  aggregations, and views.
+- **[ValueSeries deep dive](value-series)** — key a series by distance / work /
+  lap instead of time.
 
 The full generated API reference (every method, every type) lives at
 [**/docs/api**](/docs/api/) — browse it when you want exhaustive signatures rather

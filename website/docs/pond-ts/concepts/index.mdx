@@ -1,0 +1,31 @@
+---
+sidebar_position: 0
+---
+
+# Concepts
+
+These pages define the **vocabulary** the operator pages assume — temporal keys,
+sequences, windowing, triggers, partitioning, late data, and the value axis.
+Read them reference-style: definitional, no walkthroughs.
+
+:::tip[First time here?]
+Start with the one-picture **[Mental model](../mental-model)** — series, events,
+operators, reducers, and the three series types — then come back to these pages
+for the details.
+:::
+
+## Core primitives
+
+| Primitive              | What it is                                                             | Page                                       |
+| ---------------------- | ---------------------------------------------------------------------- | ------------------------------------------ |
+| **Temporal keys**      | `Time` / `TimeRange` / `Interval` — points and spans on the timeline   | [Temporal keys](./temporal-keys)           |
+| **Sequences**          | Grid definitions (fixed-step / calendar / bounded)                     | [Sequences](./sequences)                   |
+| **Series**             | `TimeSeries` (batch) and `LiveSeries` (streaming) — peers              | [Series](./series)                         |
+| **Temporal relations** | `within` / `overlapping` / `trim`; `tail`, `first`, `last` as concepts | [Temporal relations](./temporal-relations) |
+| **Windowing**          | Full / fixed / rolling / streaming-rolling / multi-window — five modes | [Windowing](./windowing)                   |
+| **Triggers**           | When live aggregations emit (`event` / `every` / `count`)              | [Triggers](./triggers)                     |
+| **Partitioning**       | Per-entity scope: split, operate, fan in                               | [Partitioning](./partitioning)             |
+| **Late data**          | "Data is the clock"; ordering modes; grace windows                     | [Late data](./late-data)                   |
+| **Value axis**         | Key by distance / work / lap instead of time; `ValueSeries`            | [Value axis](./value-axis)                 |
+
+The operator pages assume the vocabulary these introduce.

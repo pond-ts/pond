@@ -8,7 +8,7 @@ import CoreAlign from '@site/src/examples/core-align';
 # Alignment
 
 `align(seq, opts)` resamples a `TimeSeries` onto a
-[`Sequence`](../../start-here/concepts/sequences) grid, producing
+[`Sequence`](../../pond-ts/concepts/sequences) grid, producing
 one `Interval`-keyed event per grid point. The value at each grid
 point is computed by sampling the source — either holding the most
 recent source value or interpolating between the two nearest.
@@ -171,7 +171,7 @@ See [Aggregation](./aggregation) for the bucketing operator.
 ## See also
 
 - [Aggregation](./aggregation) — bucket-rollup counterpart
-- [Sequences](../../start-here/concepts/sequences) — grid
+- [Sequences](../../pond-ts/concepts/sequences) — grid
   definitions
 - [Cleaning data](./cleaning) — handle gaps left by `hold` or
   `linear` (e.g. early `undefined`s before the first source)

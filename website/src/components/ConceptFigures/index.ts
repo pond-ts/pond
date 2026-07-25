@@ -1,5 +1,5 @@
 /**
- * Static concept diagrams for the start-here/concepts pages — hand-built
+ * Static concept diagrams for the pond-ts/concepts pages — hand-built
  * SVGs in the site style (`--pond-*` tokens, theme-aware), replacing the
  * original Excalidraw PNG exports.
  */

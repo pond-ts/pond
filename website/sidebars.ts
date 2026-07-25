@@ -2,39 +2,36 @@ import type { SidebarsConfig } from '@docusaurus/plugin-content-docs';
 
 const sidebars: SidebarsConfig = {
   docsSidebar: [
-    {
-      type: 'category',
-      label: 'Start here',
-      items: [
-        'start-here/intro',
-        'start-here/getting-started',
-        {
-          type: 'category',
-          label: 'Concepts',
-          link: { type: 'doc', id: 'start-here/concepts/index' },
-          items: [
-            'start-here/concepts/temporal-keys',
-            'start-here/concepts/sequences',
-            'start-here/concepts/series',
-            'start-here/concepts/temporal-relations',
-            'start-here/concepts/windowing',
-            'start-here/concepts/triggers',
-            'start-here/concepts/partitioning',
-            'start-here/concepts/late-data',
-            'start-here/concepts/value-axis',
-          ],
-        },
-        'start-here/creating',
-      ],
-    },
+    // Platform on-ramp — two top-level pages before the core section.
+    'introduction',
+    'getting-started',
     {
       type: 'category',
       label: 'pond-ts (core)',
       link: { type: 'doc', id: 'pond-ts/pond-ts-index' },
       items: [
+        'pond-ts/introduction',
+        'pond-ts/mental-model',
         {
           type: 'category',
-          label: 'TimeSeries',
+          label: 'Concepts',
+          link: { type: 'doc', id: 'pond-ts/concepts/index' },
+          items: [
+            'pond-ts/concepts/temporal-keys',
+            'pond-ts/concepts/sequences',
+            'pond-ts/concepts/series',
+            'pond-ts/concepts/temporal-relations',
+            'pond-ts/concepts/windowing',
+            'pond-ts/concepts/triggers',
+            'pond-ts/concepts/partitioning',
+            'pond-ts/concepts/late-data',
+            'pond-ts/concepts/value-axis',
+          ],
+        },
+        'pond-ts/creating',
+        {
+          type: 'category',
+          label: 'TimeSeries deep dive',
           items: [
             'pond-ts/transforms/queries',
             'pond-ts/transforms/transformations',
@@ -51,13 +48,14 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'category',
-          label: 'LiveSeries',
+          label: 'LiveSeries deep dive',
           items: [
             'pond-ts/live/live-series',
             'pond-ts/live/live-transforms',
             'pond-ts/live/triggering',
           ],
         },
+        'pond-ts/value-series',
         {
           type: 'category',
           label: 'Advanced',

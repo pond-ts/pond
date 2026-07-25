@@ -11,7 +11,7 @@ import CoreByColumn from '@site/src/examples/core-bycolumn';
 # Aggregation
 
 `aggregate(seq, mapping)` collapses events onto a
-[`Sequence`](../../start-here/concepts/sequences) grid — one
+[`Sequence`](../../pond-ts/concepts/sequences) grid — one
 `Interval`-keyed output row per bucket, computed by reducing every
 source event whose key falls inside the bucket.
 
@@ -61,7 +61,7 @@ shape-changing ops, not value collapses.
 - `Pipeline` + `Processor` → method chain on `TimeSeries`; a custom
   reducer function fills the `Processor` role.
 - `Index`-keyed buckets → `Interval`-keyed events. The full rename
-  table is on [Concepts](../../start-here/concepts).
+  table is on [Concepts](../../pond-ts/concepts).
   :::
 
 ## `aggregate` \{#aggregate\}
@@ -390,7 +390,7 @@ into splits or a histogram.
 
 For the mental model — time as a tag, `byValue` as the closed
 projection, `byColumn` as the record-returning projection out — see
-[Value axis](../../start-here/concepts/value-axis).
+[Value axis](../../pond-ts/concepts/value-axis).
 
 ## `arrayAggregate` \{#arrayaggregate\}
 
