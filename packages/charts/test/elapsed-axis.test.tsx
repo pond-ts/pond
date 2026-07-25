@@ -374,6 +374,68 @@ describe('duration x axis — <ChartContainer origin>', () => {
     expect(text).not.toContain('12:00');
   });
 
+  it('holds the seam invariant across every pan and zoom of the view', () => {
+    // The dedupe is a pure function of (domain, range) re-evaluated per render,
+    // so pan/zoom — domain moving under a fixed range — is its live case. A
+    // controlled `range` is exactly what a pan gesture produces, so walking a
+    // ladder of views exercises it without synthesising pointer events. Each
+    // view must keep: at least one tick, no two on a pixel, one label each.
+    const sessions = weekdaySessions(3);
+    const prov = sessionsProvider(sessions);
+    const open = sessions[0]!.open;
+    const close = sessions[2]!.close;
+    const full = close - open;
+    const views: Array<readonly [number, number]> = [
+      [open, close], // everything
+      [open, open + full / 2], // zoomed to the first half
+      [open + full / 4, open + (3 * full) / 4], // panned into the middle
+      [sessions[0]!.close - 30 * MINUTE, sessions[1]!.open + 30 * MINUTE], // straddling one seam
+      [sessions[0]!.close, sessions[1]!.open], // *entirely* inside a collapsed gap
+      [open, open + 90 * MINUTE], // deep zoom, one session
+    ];
+    for (const range of views) {
+      const { container, unmount } = render(
+        <ChartContainer
+          width={900}
+          origin="data"
+          range={range}
+          discontinuities={prov}
+          showAxis={false}
+        >
+          <ChartRow height={120}>
+            <Layers>
+              <LineChart
+                series={
+                  new TimeSeries({
+                    name: 's',
+                    schema: [
+                      { name: 'time', kind: 'time' },
+                      { name: 'v', kind: 'number' },
+                    ] as const,
+                    rows: sessions.map(
+                      (s, i) => [s.open, 10 + i] as [number, number],
+                    ),
+                  })
+                }
+                column="v"
+              />
+            </Layers>
+          </ChartRow>
+          <XAxis />
+        </ChartContainer>,
+      );
+      const xs = tickMarkXs(container);
+      const label = labels(container);
+      expect(new Set(xs).size, `duplicate pixel in view ${range}`).toBe(
+        xs.length,
+      );
+      expect(label.length, `label/tick mismatch in view ${range}`).toBe(
+        xs.length,
+      );
+      unmount();
+    }
+  });
+
   it('is ignored on a category axis, which reads names', () => {
     const { container } = render(
       <ChartContainer width={400} origin="data" showAxis={false}>
