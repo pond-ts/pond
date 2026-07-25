@@ -259,7 +259,12 @@ Draw layers take a **series and a column** directly — there's no adapter step,
 no reshaping into `{x, y}` objects:
 
 ```tsx
-<ChartContainer range={ride.timeRange()} width={680} cursor="crosshair">
+<ChartContainer
+  range={ride.timeRange()}
+  width={680}
+  cursor="crosshair"
+  origin="data"
+>
   <ChartRow height={200}>
     <YAxis id="w" label="watts" min={0} />
     <Layers>
@@ -294,6 +299,10 @@ everywhere in pond charts:
 
 - **`cursor="crosshair"`** on the container is the whole hover interaction — it
   reads values off every layer at once.
+- **`origin="data"`** turns the time axis into a **duration** axis: ticks read
+  `0:15`, `0:30`, `0:45` — time _into the ride_ — instead of the wall clock it
+  happened to be in 2016. It's a labelling mode, not a transform; the data is
+  still absolute timestamps, and `range` still speaks in them.
 - **`<Legend>`** takes no data. It enumerates the registered layers and draws
   each one's _resolved_ style, so the key can't drift from the plot. `legend="…"`
   names a row.

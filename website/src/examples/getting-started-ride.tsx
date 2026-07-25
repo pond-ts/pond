@@ -64,12 +64,14 @@ export default function GettingStartedRide() {
 
   return (
     <div>
-      {/* Time axis: the ride as it happened. */}
+      {/* Time axis: the ride as it happened. `origin="data"` labels the ticks
+          as time into the ride — nobody cares what o'clock it was in 2016. */}
       <ChartContainer
         range={rideSeries.timeRange()}
         width={680}
         theme={theme}
         cursor="crosshair"
+        origin="data"
       >
         <ChartRow height={200}>
           <YAxis id="w" label="watts" min={0} width={52} />
