@@ -53,6 +53,33 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **charts:** **An `<XAxis format>` again owns its own cursor / marker pills**
+  under a container with `origin` set. The elapsed axis supplies a _default_
+  finer readout (`00:05:12` under `00:05` ticks), but it was being delivered
+  through the same frame field as an explicit `cursorFormat` — so it outranked
+  an axis-level `format`, inverting the documented pill precedence
+  (`cursorFormat → axis format → container`). The visible symptom was the
+  two-strip pattern the docs recommend: a wall-clock strip declared as
+  `<XAxis format="%H:%M">` labelled its ticks `11:33` and pilled them
+  `00:05:12`. A real `cursorFormat` still outranks an axis `format`, unchanged.
+
+- **charts:** **A duration axis no longer stacks ticks on one pixel across a
+  collapsed session.** The duration ladder strides in wall-clock time, so on a
+  trading axis several ticks could land inside closed time — where the scale
+  maps all of them to the same seam pixel, stroking labels over labels and
+  gridlines over gridlines. Coinciding ticks are now dropped, so a seam shows
+  one label rather than four. Continuous axes are unaffected (their ticks are
+  tens of pixels apart by construction).
+
+Both found by an adversarial review of the v0.53.0 duration axis
+([#540](https://github.com/pond-ts/pond/issues/540)), which also corrected the
+duration-axis docs: the trading-calendar caveat described uneven spacing where
+the real behaviour is thinning around seams, a far-off `origin` (`origin={0}`
+on a 2026 axis ⇒ `20468d 10:00` on every tick) was undocumented, and one row of
+the label-shape table quoted a sample spacing where it meant a tick step.
+
 ## [0.53.0] — 2026-07-25
 
 ### Changed
