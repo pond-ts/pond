@@ -46,6 +46,27 @@ describe('zoneDistributionByValue', () => {
     }
   });
 
+  it('keeps end finite when no value can set it (unplaceable input)', () => {
+    // Nothing here can raise the open top: NaN and ±Infinity are dropped from
+    // binning, negatives clamp to 0. `end` must not leak -Infinity/Infinity.
+    for (const values of [
+      [NaN, NaN],
+      [] as number[],
+      [-50, -10],
+      [Infinity, 150],
+    ]) {
+      const out = zoneDistributionByValue(
+        values,
+        values.map(() => 1),
+        zones,
+      );
+      const top = out[out.length - 1]!;
+      expect(Number.isFinite(top.end)).toBe(true);
+      expect(top.end).toBe(top.start); // collapses to zero width
+      expect(top.hi).toBe(Infinity); // …while the true edge is untouched
+    }
+  });
+
   it('is inclusive-upper at a boundary (a sample exactly on an edge → lower band)', () => {
     // value 200 sits on the low/mid edge → counts in `low` (pond `inclusive: '(]'`)
     const out = zoneDistributionByValue([200], [5], zones);
