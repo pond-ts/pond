@@ -1,6 +1,6 @@
 # API.md — public API map for agents
 
-A fast-navigation map of every public export across the monorepo's five
+A fast-navigation map of every public export across the monorepo's six
 packages, **for agents working in this repo**. Use it to find the right
 primitive and the file it lives in without crawling `src/`. It is a map, not a
 reference: one line per export, grouped by purpose, with the source path.
@@ -22,6 +22,7 @@ before writing code against them.
 | `packages/charts`    | `@pond-ts/charts`    | `.`                                              | `website/docs/charts/`    |
 | `packages/financial` | `@pond-ts/financial` | `.` and `./fluent` (prototype augmentation)      | `website/docs/financial/` |
 | `packages/fit`       | `@pond-ts/fit`       | `.`                                              | `website/docs/fit/`       |
+| `packages/process`   | `@pond-ts/process`   | `.`                                              | `packages/process/README.md` |
 
 ---
 
@@ -341,6 +342,24 @@ by studies) — `packages/financial/src/kernels/rolling.ts`.
 
 ---
 
+## @pond-ts/process
+
+Typed dataflow graphs for pipelines whose **shape is data** (runtime-assembled,
+user-edited, one computation fanned out to several consumers). Chaining stays
+the default for pipelines known at authoring time — see the package README.
+
+| Group            | Exports                                                                                                                                       | Source                              |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| Ports            | `Inlet`, `Outlet` (typed fields on `node.in` / `node.out`; `get()`, `peek()`, `version`, `connect`, `disconnect`)                              | `packages/process/src/port.ts`      |
+| Nodes            | `Node` (`in`, `out`, `dirty`, `error`, `invalidate()`), `defineNode` (reusable multi-output node type), `derive` (single-output, wired inline) | `packages/process/src/node.ts`      |
+| Port declaration | `port<T>({ equals, defaultValue })`; types `PortSpec`, `PortSpecMap`, `PortValue`, `PortValues`                                                | `packages/process/src/types.ts`     |
+| Sources          | `source<T>()` → `SourceNode` (`set()`), `fromLive(liveSource)` → `LiveSourceNode` (`dispose()`); `SnapshotSource`, `NoInputs`                  | `packages/process/src/source.ts`    |
+| Graph view       | `Graph` (`Graph.from(...roots)`, `nodes`, `order()`, `edges()`, `toJSON()`); types `GraphEdge`, `GraphJson`, `GraphNodeJson`, `GraphEdgeJson`  | `packages/process/src/graph.ts`     |
+| Errors           | `ProcessError` (base), `CycleError`, `UnconnectedInputError`, `MissingOutputError`, `UnsetSourceError`                                         | `packages/process/src/errors.ts`    |
+| Node type helpers | `NodeSpec`, `NodeFactory`, `InletsFor`, `OutletsFor`, `OutletValue`, `SpecsForOutlets`, `DerivedOutput`                                       | `packages/process/src/node.ts`      |
+
+---
+
 ## Cross-package seams (where agents most often need the joint)
 
 - **Batch → charts**: a draw layer takes a pond `series` + `column` directly;
@@ -355,3 +374,7 @@ by studies) — `packages/financial/src/kernels/rolling.ts`.
 - **Core → financial**: studies compose on core kernels; fluent methods mutate
   `TimeSeries.prototype` (runtime import of `@pond-ts/financial/fluent`
   required).
+- **Live → process**: `fromLive(liveSeries)` binds a `LiveSource` as a graph
+  input. Events only mark the node dirty; `toTimeSeries()` runs once at the
+  next pull, so per-event incremental work stays in the live layer and the
+  graph composes batch transforms over snapshots.

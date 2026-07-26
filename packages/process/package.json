@@ -1,0 +1,46 @@
+{
+  "name": "@pond-ts/process",
+  "version": "0.53.1",
+  "private": true,
+  "description": "WORK IN PROGRESS, NOT PUBLISHED. Typed dataflow engine over pond-ts; the consumer surface is expected to be the declarative plan layer in RFC #543, with this underneath it.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pond-ts/pond.git",
+    "directory": "packages/process"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/cjs-fallback.cjs"
+    }
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
+    "prepack": "cp ../../LICENSE ./LICENSE && cp ../../CHANGELOG.md ./CHANGELOG.md && npm run build && cp cjs-fallback.cjs dist/cjs-fallback.cjs && find dist -name '*.map' -delete",
+    "test": "npm run test:type && npm run test:runtime",
+    "test:type": "tsc -p tsconfig.types.json",
+    "test:runtime": "vitest run",
+    "verify": "npm run format:check && npm run build && npm test"
+  },
+  "peerDependencies": {
+    "pond-ts": "^0.53.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}
