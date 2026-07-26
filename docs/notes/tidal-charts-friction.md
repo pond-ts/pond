@@ -114,3 +114,49 @@ tracker label leaks into the host (suffix-normalized there).
 2. Or a **`colorBy`** on `BarChart` mirroring `<Candlestick colorBy>` —
    `'direction'` (from OHLC context or sign-of-delta) / a `(row) => color`
    callback. Either collapses our two-layer workaround back to one declaration.
+
+> **Thank you for F-charts-12** — `binColors` on the single-series vertical path
+> (#542) is exactly ask (1), and it collapses our two-layer `__up`/`__dn` split-bar
+> workaround back to one `<BarChart>`. We'll adopt it on the next charts bump.
+
+## F-charts-13 — `<Layers>` z-index injection is silently lost through a Fragment
+
+**Severity:** low — a **DX / observability** ask, not a library defect. Our bug to
+own; the friction is that it's invisible.
+
+**Where.** We added user-controlled draw order (a layers panel: reorder metrics
+front/back, move them between rows). Reordering changed our list but **nothing on
+the canvas**.
+
+**Why.** `<Layers>` z-orders by declaration position, injected as a prop:
+`Children.map(children, (child, index) => cloneElement(child, { index }))`. Our
+per-series render helper returned `<Fragment key={id}>{primary}{cmp}</Fragment>`
+(grouping a series with its dashed compare counterpart) — so the **Fragment**
+received `index` and the draw layers inside never did. Every layer kept its
+default index, and z-order followed **mount order** instead of JSX order. It had
+been wrong since our first multi-series chart; nothing surfaced it until order
+became user-facing.
+
+The docblock does say *"Draw layers must be direct children of `<Layers>` for the
+index to reach them"* — so this is documented behaviour, correctly. The problem is
+purely that violating it **fails silently**: charts render normally, z-order is
+just inert. Diagnosing it took reading `Layers.js`.
+
+**Our fix.** The layer builder returns a **flat array** of keyed elements
+(`ReactNode[]`, rendered with `flatMap`) — arrays are flattened by `Children.map`,
+so each layer stays a direct child with its own z slot. Locked with an e2e that
+reorders and asserts the canvas repaints (verified to fail on the Fragment
+version).
+
+**Ask — any one is cheap, in preference order.**
+
+1. **Dev-only warning** when `cloneElement` targets something that isn't a draw
+   layer (a Fragment, a wrapper component): *"a draw layer must be a direct child
+   of `<Layers>`; a Fragment swallows its z index"*. Turns a silent
+   mis-render into a one-line diagnosis.
+2. **Descend through Fragments** when injecting, so grouping is free and the
+   constraint disappears.
+3. **An explicit `zIndex` / `order` prop** on the draw layers, making z independent
+   of JSX position. Best fit for a consumer that owns order as *data* (ours lives
+   in a state machine and is user-reorderable) — it would also let us drop the
+   render-time `reverse()` we now do to map "first in list" → "painted last".
