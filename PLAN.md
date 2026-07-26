@@ -238,6 +238,17 @@ depend on. Plan:
   registry keyed by `kind`, config as a serializable field on the node spec,
   and a `Graph.fromJSON(json, registry)`. Until then the dump stays
   inspection-only — half a serialization format is worse than none.
+- **[PND-LIVESRC]** — `LiveAggregation` does not satisfy core's own
+  `LiveSource<S>`. It has `name` / `schema` / `length` / `at`, but its
+  `on('event', fn)` overload hands the listener a widened `ClosedEvent`
+  rather than a schema-narrowed `EventForSchema<Out>`, so assigning one to
+  `LiveSource<Out>` is a type error (surfaced building `@pond-ts/process`'s
+  `fromLive`, which now declares its own looser `GraphSource<S>` to accept
+  both raw buffers and incremental operators). Either narrow the `'event'`
+  overload on the aggregation classes or document that `LiveSource` is the
+  buffer/view contract only and give the incremental operators a named
+  contract of their own. Touches a public type, so needs human sign-off per
+  CLAUDE.md.
 - **[PND-PROCPERF]** — `@pond-ts/process` perf check. The engine is
   O(affected nodes) per change by construction (dirty marking cuts off at
   already-dirty nodes; version stamps stop cascades at unchanged values), and

@@ -42,7 +42,7 @@ export {
   LiveSourceNode,
   UnsetSourceError,
 } from './source.js';
-export type { NoInputs, SnapshotSource } from './source.js';
+export type { NoInputs, GraphSource, SnapshotSource } from './source.js';
 export { Graph } from './graph.js';
 export type {
   GraphEdge,

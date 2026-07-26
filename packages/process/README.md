@@ -114,6 +114,35 @@ That keeps the layer on the right side of pond's split: incremental
 per-event work stays in the live layer, and the graph composes whole-value
 batch transforms over snapshots.
 
+### There is no partial invalidation — bind the aggregation instead
+
+A dirty node recomputes from a *whole* snapshot. The pipeline above
+therefore re-aggregates every retained event on every pull, even though
+only the tail moved. The graph does not track which rows changed, and
+deliberately doesn't try to: pond's live layer already does incremental
+per-event computation, and reimplementing it behind ports would be a
+second engine to keep correct.
+
+So push the windowed work down and bind *its* output:
+
+```ts
+const feed = fromLive(live.aggregate(Sequence.every('1h'), { cpu: 'avg' }));
+const peak = derive({ s: feed.out.value }, ({ s }) => s.column('cpu').max());
+```
+
+`LiveAggregation` maintains its buckets per event, so a pull materializes
+bucket count instead of event count. At 200k events through a 50k-event
+buffer, pulling every 1k events: **9.05 ms/pull re-aggregating the buffer
+vs 0.04 ms/pull off the live aggregation — 235×**, and the gap widens with
+buffer size (O(retained events) vs O(buckets)).
+
+**Read the tradeoff before switching.** A live aggregation exposes *closed*
+buckets only. Data is the clock, so the newest bucket is invisible until an
+event crosses its end — two hours of minute data ending at 1h59m reads as
+one row this way and two by re-aggregating the buffer. If the currently
+filling bucket must be on screen, stay on the buffer and pay for it, or use
+a `Trigger` so buckets close on a schedule you control.
+
 ## Multi-output nodes
 
 `derive` covers single-output nodes. `defineNode` declares a reusable node

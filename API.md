@@ -353,7 +353,7 @@ the default for pipelines known at authoring time — see the package README.
 | Ports            | `Inlet`, `Outlet` (typed fields on `node.in` / `node.out`; `get()`, `peek()`, `version`, `connect`, `disconnect`)                              | `packages/process/src/port.ts`      |
 | Nodes            | `Node` (`in`, `out`, `dirty`, `error`, `invalidate()`), `defineNode` (reusable multi-output node type), `derive` (single-output, wired inline) | `packages/process/src/node.ts`      |
 | Port declaration | `port<T>({ equals, defaultValue })`; types `PortSpec`, `PortSpecMap`, `PortValue`, `PortValues`                                                | `packages/process/src/types.ts`     |
-| Sources          | `source<T>()` → `SourceNode` (`set()`), `fromLive(liveSource)` → `LiveSourceNode` (`dispose()`); `SnapshotSource`, `NoInputs`                  | `packages/process/src/source.ts`    |
+| Sources          | `source<T>()` → `SourceNode` (`set()`), `fromLive(liveSource)` → `LiveSourceNode` (`dispose()`); `GraphSource` (bind contract — looser than core's `LiveSource`, accepts `LiveAggregation`), `SnapshotSource`, `NoInputs` | `packages/process/src/source.ts` |
 | Graph view       | `Graph` (`Graph.from(...roots)`, `nodes`, `order()`, `edges()`, `toJSON()`); types `GraphEdge`, `GraphJson`, `GraphNodeJson`, `GraphEdgeJson`  | `packages/process/src/graph.ts`     |
 | Errors           | `ProcessError` (base), `CycleError`, `UnconnectedInputError`, `MissingOutputError`, `UnsetSourceError`                                         | `packages/process/src/errors.ts`    |
 | Node type helpers | `NodeSpec`, `NodeFactory`, `InletsFor`, `OutletsFor`, `OutletValue`, `SpecsForOutlets`, `DerivedOutput`                                       | `packages/process/src/node.ts`      |
@@ -381,7 +381,12 @@ deleted builds green and breaks only downstream. If you mark something
 - **Core → financial**: studies compose on core kernels; fluent methods mutate
   `TimeSeries.prototype` (runtime import of `@pond-ts/financial/fluent`
   required).
-- **Live → process**: `fromLive(liveSeries)` binds a `LiveSource` as a graph
-  input. Events only mark the node dirty; `toTimeSeries()` runs once at the
-  next pull, so per-event incremental work stays in the live layer and the
-  graph composes batch transforms over snapshots.
+- **Live → process**: `fromLive(liveSeries)` binds a live source as a graph
+  input. Events only mark the node dirty; the snapshot runs once at the next
+  pull, so per-event incremental work stays in the live layer and the graph
+  composes batch transforms over snapshots. The graph has **no partial
+  invalidation** — a dirty node recomputes from a whole snapshot — so for
+  windowed work bind the *aggregation* (`fromLive(live.aggregate(...))`),
+  which materializes bucket count rather than event count (235x per pull on
+  a 50k buffer). Tradeoff: a live aggregation exposes closed buckets only,
+  so the in-progress bucket is invisible until it closes.

@@ -106,6 +106,52 @@ describe('fromLive', () => {
     expect(feed.out.value.get().length).toBe(1);
   });
 
+  it('binds an incremental LiveAggregation, which has no toTimeSeries', () => {
+    const live = new LiveSeries({ name: 'metrics', schema });
+    // The whole point: LiveAggregation implements the live-source shape
+    // but cannot snapshot itself, so requiring toTimeSeries() would
+    // exclude exactly the operators that make repeated pulls cheap.
+    const agg = live.aggregate(Sequence.every('1h'), { cpu: 'avg' });
+    expect('toTimeSeries' in agg).toBe(false);
+
+    const feed = fromLive(agg);
+    const peak = derive({ s: feed.out.value }, ({ s }) =>
+      s.column('cpu').max(),
+    );
+
+    for (let i = 0; i < 120; i += 1) live.push([i * 60_000, i]);
+
+    // The snapshot is bucket-sized, not event-sized: 120 events in, one
+    // row out.
+    expect(feed.out.value.get().length).toBe(1);
+    expect(peak.out.value.get()).toBe(29.5); // mean of 0..59
+    feed.dispose();
+  });
+
+  it('shows closed buckets only — the in-progress bucket is not visible', () => {
+    const live = new LiveSeries({ name: 'metrics', schema });
+    const feed = fromLive(live.aggregate(Sequence.every('1h'), { cpu: 'avg' }));
+
+    // Two hours of minute data, last event at 1h59m: the second bucket
+    // has not closed yet.
+    for (let i = 0; i < 120; i += 1) live.push([i * 60_000, i]);
+
+    // This is the tradeoff against re-aggregating the raw buffer, which
+    // would report 2 — it buckets the partial tail as well. Data is the
+    // clock, so the open bucket appears only once an event crosses its
+    // end. A dashboard that must show the current partial bucket cannot
+    // take this path.
+    expect(feed.out.value.get().length).toBe(1);
+    expect(
+      live.toTimeSeries().aggregate(Sequence.every('1h'), { cpu: 'avg' })
+        .length,
+    ).toBe(2);
+
+    live.push([120 * 60_000, 0]); // crosses the 2h boundary
+    expect(feed.out.value.get().length).toBe(2);
+    feed.dispose();
+  });
+
   it('is idempotent on repeated dispose', () => {
     const live = new LiveSeries({ name: 'metrics', schema });
     const feed = fromLive(live);
