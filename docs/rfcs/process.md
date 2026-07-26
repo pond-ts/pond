@@ -1,8 +1,13 @@
 # RFC: `@pond-ts/process` — a declarative processing graph over a `TimeSeries`
 
-**Status:** **proposal (2026-07-26)** — for discussion. Nothing built. Filed by a
-consumer that has been running a narrow version of this in application code and
-would rather not own it.
+**Status:** **proposal, v2 (2026-07-26)** — revised after design review and a
+runnable spike (#543 comments; #544's `rfc543-plan-layer.mjs`). v2 collapses the
+two terminals into **one entry point**, re-founds the cache on **graph-node
+identity** (fixing two defects the spike demonstrated), pins four **identity and
+diagnostic requirements** the spike proved are not automatic, and answers the
+v1 streaming question via the #544 substrate. Filed by a consumer that has been
+running a narrow version of this in application code and would rather not own
+it.
 
 **Relationship to PLAN.md:** This RFC is strategic context, not a commitment.
 [PLAN.md](../../PLAN.md) is the binding source of truth for what is being built.
@@ -13,19 +18,28 @@ See [CLAUDE.md → Strategic RFCs](../../CLAUDE.md) for the layering.
 ## Summary
 
 Add a package that turns "compute these derived series" from **imperative calls**
-into a **declarative, content-addressed graph**:
+into a **declarative, content-addressed graph** with **one entry point**:
 
 ```
-                          ┌──> resolve() ──> TimeSeries + appended columns
-Plan (DAG of Specs) ──────┤
-                          └──> reduce()  ──> Facts (plain JSON)
+run(source, { plan, select, units, onError })
+        │
+        ├─ select: { on, columns: true }  ──> in-process TimeSeries columns
+        └─ select: { on, reduce: … }      ──> Facts (plain JSON)
 ```
 
-One plan, one cache, two terminals. `@pond-ts/financial` supplies the operations;
-this package supplies **composition, identity, validation, and reduction**.
+One plan, one graph, one call — a `select` list mixes column requests and
+reductions, so a renderer gets its band *and* its legend-chip value in a single
+pass, and a tool caller gets facts from the same resolution. The split that
+matters is preserved one level down: **the request collapses; the representation
+does not.** A response carries live `TimeSeries` references when columns were
+selected, and is JSON-safe exactly when none were — which is what keeps `shape(n)`
+the honest curve answer rather than an escape hatch. (v1 proposed separate
+`resolve()`/`reduce()` terminals; review argued the terminal is policy too, and
+the spike bore that out.)
 
-A worked sketch against the real corpus signatures is in
-[Appendix A](#appendix-a--worked-sketch).
+`@pond-ts/financial` supplies the operations; this package supplies
+**composition, identity, validation, and reduction**. A worked sketch against the
+real corpus signatures is in [Appendix A](#appendix-a--worked-sketch).
 
 ## Motivation
 
@@ -55,11 +69,11 @@ shape has appeared, and it wants the _same_ graph with a _different exit_:
 | Bad spec | must **skip** and keep rendering  | must **report** a reason as data                 |
 | Provenance | a label under a legend chip     | a citation the model can quote                   |
 
-These are the same computation with different terminals and different failure
-policy. Building them separately would duplicate the graph, the ids, the
-validation, and — expensively — the **cache**. Building them together means a
-value already computed for a human on screen is a cache hit for the tool call
-asking the same question, because both name it identically (see _Identity_).
+These are the same computation with different **response shapes** and different
+failure policy. Building them separately would duplicate the graph, the ids, the
+validation, and — expensively — the memoization. Building them together means a
+value already computed for a human on screen is a node hit for the tool call
+asking the same question, because both name the same node (see _Identity_).
 
 ### The four walls
 
@@ -124,20 +138,69 @@ Canonical param order so two spellings of one computation collide deliberately.
 Escaped separators so a string param cannot forge an id. Versioned prefix so the
 encoding can change without colliding with ids already persisted or cached.
 
-That one string is simultaneously the **column name**, the **cache key**, and the
-**provenance citation**. Consumers get dedup for free: the same computation
+That one string is simultaneously the **column name**, the **node identity**, and
+the **provenance citation**. Consumers get dedup for free: the same computation
 requested twice, from different surfaces, resolves once. `planId(plan)` is the
 same idea for a whole stack.
 
-### Two terminals
+**What `specId` deliberately does NOT name: the data.** The v1 draft called it
+"the cache key", and the spike demonstrated why that is wrong twice over: the
+same plan over two different series produced identical ids, so a shared value
+cache served one instrument's numbers as another's — a silently wrong answer
+wearing a confident citation. And a value keyed by id is stale-blind under live
+data, because the id does not change when the data does. The resolution is a
+division of labour: **spec identity decides _which node_; the node decides
+_whether its value is still good_** (see _Substrate_). Ids are scoped to a graph,
+and a graph is bound to one source — cross-series contamination becomes
+structurally impossible rather than something a wider key guards against.
+
+**Identity requirements** (each demonstrated non-automatic by the spike; pinned
+here as requirements, not implementation notes):
+
+1. **`specId` canonicalizes post-defaults.** `{"op":"sma"}` and
+   `{"op":"sma","params":{"period":20}}` are the same computation and must
+   produce the same id — build ids from `withDefaults(spec)`, never from the
+   literal the caller sent.
+2. **Param key order must not change the id**, or a persisted saved view and a
+   freshly composed request miss each other.
+3. **A selector must accept an id string** (`{ on: 'p1:sma(iv21;period=20)' }`),
+   with an inline spec as the convenience form. A JSON caller has no object
+   references to hand; content addressing makes both name the same node.
+4. **Ids must survive a JSON round trip** byte-identically (follows from 1–2,
+   worth asserting on its own).
+
+### One entry point
 
 ```ts
-resolve(series, plan, opts): Resolution   // series + column ids + diagnostics
-reduce(resolution, reductions): Facts     // plain JSON
+run(source, {
+  plan,                                   // DAG of specs (or ids into it)
+  select,                                 // what to hand back — see below
+  units,                                  // consumer unit map for raw columns
+  onError: 'skip' | 'collect' | 'throw',
+}): Response
+
+type Selector =
+  | { on: SpecRef; columns: true }        // in-process TimeSeries columns
+  | { on: SpecRef; output?: string; reduce: string; [param: string]: unknown };
+type SpecRef = string | Spec;             // an id, or an inline spec
 ```
 
-`reduce` is the part that does not exist anywhere today, and the part a renderer
-never needed. A second small registry of **reductions**, over resolved columns:
+v1 had two terminals (`resolve()` for columns, `reduce()` for facts). Review made
+the better argument: the terminal is policy, exactly like failure handling — so it
+should be request data, not two functions. A renderer selects columns and a
+legend-chip reduction **in one pass**; a tool caller selects only reductions and
+gets a JSON-safe response. The guardrail, which the spike made measurable: the
+**request** collapses, the **representation** must not — a 420-row response with
+columns selected is ~47 KB serialized, and real series are far longer, so column
+selections hand back in-process `TimeSeries` references and the response is
+JSON-safe **iff** no columns were selected. That boundary is self-enforcing
+rather than documented.
+
+This also dissolves v1's "where do reductions live" question: a reduction is a
+**selector kind**, not a sibling terminal that could drift into its own package.
+
+Reductions are the part that exists nowhere today (a renderer never needed
+them) — a second small registry, over resolved columns:
 
 - `last` — value + timestamp
 - `extremes` — min/max **with when**
@@ -152,24 +215,40 @@ never needed. A second small registry of **reductions**, over resolved columns:
 Every fact carries its **unit** and its **timestamp**, and the response echoes the
 **resolved** spec (post-defaults) so a caller can cite what actually ran.
 
-### Policy as a parameter
+### Policy as a parameter — covering selection, not just resolution
 
 ```ts
-resolve(series, plan, { onError: 'skip' | 'collect' | 'throw' });
+run(source, { plan, select, onError: 'skip' | 'collect' | 'throw' });
 ```
 
 `skip` keeps a renderer alive against a stale persisted plan (today's behaviour in
 the consumer implementation, and load-bearing there). `collect` returns
-`{ spec, reason }[]` for a caller that must explain itself. Same engine; the
-difference is an argument, not a fork.
+`{ spec | select, reason }[]` for a caller that must explain itself. Same engine;
+the difference is an argument, not a fork.
+
+**The policy governs the whole request.** The spike's first draft applied
+`onError` to the build loop only, and a malformed *selector* — the only part a
+JSON caller composes freehand — escaped as an unhandled `TypeError` on a request
+that had explicitly asked for `collect`. An unknown id, an unknown output suffix,
+and an unknown reduction are caller errors of exactly the kind `collect` exists
+for; they must be collected, not thrown.
+
+**Diagnostics must state what was received, with its type.** `{"period": "20"}`
+must produce `sma.period must be an integer, got "20" (string)` — the spike's
+first draft said `got 20`, indistinguishable from the valid value, aimed at the
+audience least able to debug it.
 
 ### `explain`
 
-`explain(plan) → string` falls out of the registry nearly free, and has two
-immediate readers: a tool server describing what it computed, and a UI rendering a
-lineage label. (In the existing consumer implementation, nested lineage is
-currently rendered wrong — `ema(sma(x))` loses the inner `sma` — precisely because
-the label is reconstructed by hand instead of derived from the plan.)
+`explain(plan) → string` has two immediate readers: a tool server describing what
+it computed, and a UI rendering a lineage label. (In the existing consumer
+implementation, nested lineage is currently rendered wrong — `ema(sma(x))` loses
+the inner `sma` — precisely because the label is reconstructed by hand instead of
+derived from the plan.) Two corrections from the spike: it is **not** free — each
+op needs a `label` template in its registry entry (`'SMA({period})'`), or the
+fallback reads like a spec dump — and it should be a **field on every response**
+(`explain: { [specId]: string }`) rather than a separate call, so it cannot drift
+back to being hand-built.
 
 ## Non-goals
 
@@ -212,6 +291,46 @@ annualized-volatility transform over a variance column) that today is effectivel
 a fork of library concerns. Registered locally, it is a citizen; if it proves
 general, it graduates into `financial` with no consumer change.
 
+## Substrate
+
+_(New in v2 — this section replaces v1's open questions on streaming and cache
+ownership.)_
+
+The plan layer should **compile onto the typed dataflow engine proposed in #544**
+rather than onto a hand-rolled fold + value map: each spec becomes a node
+(`specId` = node identity), the bound series is the graph's source node, and the
+engine's two mechanisms replace the cache design v1 got wrong:
+
+- **Dirty marking (push)** propagates a source change in O(affected nodes);
+- **Version stamps (pull)** stop the cascade where a recomputed value is
+  unchanged, so expensive downstream ops never rerun for an equal input.
+
+**The graph _is_ the cache.** v1 proposed a host-owned `Map<specId, TimeSeries>`;
+the spike demonstrated its two failure modes — cross-series contamination (the id
+names the computation, not the data, so one instrument's numbers answered for
+another's) and stale-blindness (the id does not change when the data does). Node
+memoization has neither: identity is scoped to a graph, a graph is bound to one
+source, and freshness is the node's job. Hosts own **graph lifecycle** (one
+compiled graph per data binding — per instrument, per snapshot), not value
+storage.
+
+This makes v1's streaming question answerable **now, with numbers** (spike,
+measured): a live re-resolution of the appendix's stack is ~1 ms — invalidation
+is no longer a deferral. Two engine limits carry through as documented choices
+rather than surprises: there is **no partial invalidation** (a dirty node
+recomputes from a whole snapshot, O(series) per node), and the fast path for
+windowed live work — binding a live _aggregation_ rather than the buffer (~229×
+per pull at 50k events) — exposes **closed buckets only**, so the in-progress
+bucket is invisible until it closes. Choosing that trade must remain the
+consumer's documented decision, never a default.
+
+The engine's own public API is a **builder**, which this RFC rules out as the
+primary consumer surface — and both documents agree on the reconciliation: plans
+in, compiled onto nodes; the builder is the substrate's wiring layer, not the
+product. (#544's own framing: if this RFC lands on a different substrate, that
+package should be reconsidered or withdrawn rather than become a second way to do
+the same thing.)
+
 ## Proving path
 
 Deliberately incremental, and each step is independently worth doing:
@@ -228,17 +347,32 @@ Deliberately incremental, and each step is independently worth doing:
 
 ## Open questions
 
-1. **Streaming.** v1 is batch over a snapshot. The rolling reducers are already
-   incremental internally, so live re-resolution is feasible — but the cache and
-   invalidation story changes materially. Defer, or design now?
-2. **Cache ownership.** Does `process` own an LRU keyed by `specId`, or only
-   define the keys and let the host store? (Leaning: host stores, library names.)
-3. **Reduction home.** Same package as the graph (they share the registry
-   pattern), or a sibling? (Leaning: same package, separate registry.)
-4. **Params as JSON Schema, or a small internal validator?** Emitting JSON Schema
+**Resolved since v1** (by review + spike; recorded so the reasoning survives):
+
+- ~~**Streaming.**~~ Answered by the substrate: dirty marking + version stamps
+  make live re-resolution ~1 ms on the appendix stack; the two engine limits (no
+  partial invalidation; closed-buckets-only on the live-aggregation fast path)
+  carry through as documented consumer choices. See _Substrate_.
+- ~~**Cache ownership.**~~ Neither of v1's options: the **graph** owns
+  memoization (node identity + version stamps); hosts own graph **lifecycle**
+  (one compiled graph per data binding). A host-side value map was demonstrated
+  unsound — cross-series contamination and stale-blindness.
+- ~~**Reduction home.**~~ Dissolved by the single entry point: a reduction is a
+  **selector kind**, not a terminal that could live in a sibling package.
+- ~~**Multi-output naming.**~~ Settled on the corpus's own `prefix` + suffix
+  convention (`${id}Upper|Middle|Lower`) — spike-verified, no mapping layer.
+
+**Still open:**
+
+1. **Params as JSON Schema, or a small internal validator?** Emitting JSON Schema
    is the point of the registry for tool callers; owning a validator is a cost.
-5. **Multi-output naming.** `id#output` vs the corpus's existing `prefix` +
-   suffix convention (Appendix A adopts the latter — it needs no mapping layer).
+   (The spike hand-validated; the diagnostic-quality requirement above applies to
+   whichever answer wins.)
+2. **Plan rehydration across processes.** Ids round-trip as strings, but a node
+   graph does not — #544 deliberately ships no `fromJSON` ("half a serialization
+   format is worse than none"). For the tool-server shape this is fine (plans
+   arrive as specs and compile per request); for persisted saved views it means
+   recompiling from the stored plan, which is cheap but worth stating.
 
 ## Alternatives considered
 
@@ -251,7 +385,11 @@ Deliberately incremental, and each step is independently worth doing:
 - **Expose only a fluent builder** (`series.sma(20).ema(10)`). Ergonomic in code,
   but the whole motivation is plans that arrive as **data** — persisted in saved
   views, or constructed by a caller that is not a programmer. A builder can be
-  sugar over a plan later; a plan cannot be recovered from a builder.
+  sugar over a plan later; a plan cannot be recovered from a builder. _(v2
+  refinement: the builder survives — one level down. The #544 engine's node
+  API is exactly a builder, and it is the right shape for a **substrate**; the
+  constraint is that it must not be the primary consumer surface. Plans compile
+  onto it.)_
 
 ---
 
@@ -270,6 +408,7 @@ export const smaOp = defineOp({
   name: 'sma',
   family: 'trend',
   summary: 'Simple moving average over a bar-count window.',
+  label: 'SMA({period})', // explain() reads this — lineage labels are declared, not free
   params: { period: int({ min: 2, default: 20, label: 'Period (bars)' }) },
   inputs: [{ role: 'source', kind: 'number' }],
   outputs: [{ id: '', unit: 'inherit' }], // single output ⇒ column === specId
@@ -281,6 +420,7 @@ export const bollingerOp = defineOp({
   name: 'bollinger',
   family: 'bands',
   summary: 'Moving average with ±stdDev bands.',
+  label: 'Bollinger({period}, {stdDev}σ)',
   params: {
     period: int({ min: 2, default: 20 }),
     stdDev: num({ min: 0.1, max: 5, default: 2, label: 'Std devs' }),
@@ -354,19 +494,27 @@ p1:sma(iv21;period=20)                  → one column, name === the id
 p1:ema(p1:sma(iv21;period=20);period=10)
 ```
 
-## A.3 Terminal one — `resolve()`, for a renderer
+## A.3 One call — the renderer shape
 
 ```ts
-const resolution = resolve(volSeries, plan, {
-  registry,
-  units: { iv21: '%', ccVar: 'variance' }, // consumer metadata — see note
+const graph = bind(volSeries, { registry, units: { iv21: '%', ccVar: 'variance' } });
+// ^ one compiled graph per data binding — the graph is the cache (A.7)
+
+const res = run(graph, {
+  plan,
   onError: 'skip', // a stale saved plan must not kill a render
-  cache, // host-owned Map, keyed by specId
+  select: [
+    { on: bb, columns: true },     // the band — three columns, one entry
+    { on: sma20, columns: true },  // the overlay line
+    { on: sma20, reduce: 'last' }, // …AND its legend-chip value, same pass
+  ],
 });
 
-resolution.series; // TimeSeries with every resolved column appended
-resolution.outputs; // Map<specId, { column: string; unit: string }[]>
-resolution.skipped; // [{ spec, reason }]
+res.series; // TimeSeries with every resolved column appended (in-process ref)
+res.outputs; // Map<specId, { column: string; unit: string }[]>
+res.facts; // the legend-chip value rides along
+res.explain; // { [specId]: 'Bollinger(20, 2σ)' … } — present on EVERY response
+res.skipped; // [{ spec | select, reason }]
 ```
 
 **DESIGN NOTE — units are an input, not a property of the series.** pond series
@@ -377,19 +525,27 @@ way out, which the JSON terminal needs and an axis policy already wants.
 The renderer draws `resolution.outputs`; a band is one entry with three columns, so
 it moves, colours, and deletes as a unit.
 
-## A.4 Terminal two — `reduce()`, for a tool caller
+## A.4 The same call — the tool-caller shape
+
+Same entry point; the `select` list simply contains no `columns` entries, so the
+response is JSON-safe by construction. Note every `on` here is an **id string** —
+the only form a JSON caller has (identity requirement 3):
 
 ```ts
-const bb = specId({ op: 'bollinger', params: { period: 20, stdDev: 2 }, inputs: ['iv21'] });
-const sma20 = specId({ op: 'sma', params: { period: 20 }, inputs: ['iv21'] });
+const bb = 'p1:bollinger(iv21;period=20,stdDev=2)';
+const sma20 = 'p1:sma(iv21;period=20)';
 
-const facts = reduce(resolution, [
-  { on: sma20, reduce: 'last' },
-  { on: 'iv21', reduce: 'percentileRank', window: '1y' },
-  { on: 'iv21', reduce: 'crossings', against: sma20 },
-  { on: bb, output: 'Upper', reduce: 'extremes' },
-  { on: 'iv21', reduce: 'shape', points: 40 }, // M4 via bin(w,'minMaxFirstLast')
-]);
+const res = run(graph, {
+  plan, // or ids into a plan already compiled on this graph
+  onError: 'collect', // a caller that must be told why
+  select: [
+    { on: sma20, reduce: 'last' },
+    { on: 'iv21', reduce: 'percentileRank', window: '1y' },
+    { on: 'iv21', reduce: 'crossings', against: sma20 },
+    { on: bb, output: 'Upper', reduce: 'extremes' },
+    { on: 'iv21', reduce: 'shape', points: 40 }, // M4 via bin(w,'minMaxFirstLast')
+  ],
+});
 ```
 
 ```json
@@ -436,6 +592,10 @@ const facts = reduce(resolution, [
     }
   ],
   "computed": ["p1:sma(iv21;period=20)", "p1:bollinger(iv21;period=20,stdDev=2)"],
+  "explain": {
+    "p1:sma(iv21;period=20)": "SMA(20) of iv21",
+    "p1:bollinger(iv21;period=20,stdDev=2)": "Bollinger(20, 2σ) of iv21"
+  },
   "skipped": []
 }
 ```
@@ -491,13 +651,24 @@ That last line is the lineage label the consumer currently renders wrong. The
 migration is not a refactor: it _is_ the grouped picker, the bands feature, and the
 lineage fix, in exchange for deleting local spec/id/fold code.
 
-## A.7 Cache
+## A.7 Cache — the graph, not a map
+
+v1 sketched a host-owned `Map<specId, TimeSeries>` here. The spike broke it two
+ways, both reproduced: the same plan over a **different series** returned the
+first series' numbers under an identical id (the id names the computation, not
+the data), and a value keyed by id is **stale-blind** under live data. So:
 
 ```ts
-const cache = new Map<string, TimeSeries<SeriesSchema>>(); // host owns storage
-resolve(series, plan, { registry, cache }); // library owns keys
+const aapl = bind(aaplSeries, { registry, units }); // one graph per binding
+const msft = bind(msftSeries, { registry, units }); // same ids, disjoint nodes
+
+run(aapl, { plan, select });  // computes
+run(aapl, { plan, select });  // node memoization — nothing recomputes
+run(msft, { plan, select });  // same specIds, different graph — no contamination
 ```
 
-Keys are `specId`s, so a renderer's on-screen `SMA(20)` and a tool call asking for
-`SMA(20)` hit the **same key** — one compute, two consumers. That shared key is
-the strongest argument for the two terminals living in one package.
+Spec identity decides **which node**; the node's version stamps decide **whether
+its value is still good**. The shared-work story survives intact one level up: a
+renderer's on-screen `SMA(20)` and a tool call asking for `SMA(20)` hit the same
+**node** on the same bound graph — one compute, two consumers. That shared node is
+the strongest argument for both request shapes living in one package.
