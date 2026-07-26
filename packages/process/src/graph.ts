@@ -79,13 +79,19 @@ export class Graph {
     return this.#nodes;
   }
 
-  /** Every connection, grouped by producing node. */
+  /**
+   * Every connection, grouped by producing node in {@link order}. Like
+   * `order()`, the result is independent of how the graph was
+   * discovered.
+   */
   edges(): readonly GraphEdge[] {
     const edges: GraphEdge[] = [];
-    for (const node of this.#nodes) {
+    for (const node of this.order()) {
       for (const outlet of node.outletList()) {
-        for (const inlet of outlet.connections)
-          edges.push({ from: outlet, to: inlet });
+        const consumers = [...outlet.connections].sort((a, b) =>
+          byId(a.node, b.node),
+        );
+        for (const inlet of consumers) edges.push({ from: outlet, to: inlet });
       }
     }
     return edges;
@@ -96,11 +102,17 @@ export class Graph {
    * feeding it. Evaluation doesn't need this (pulling is recursive and
    * finds its own order); it's for display and for reasoning about a
    * graph you didn't build.
+   *
+   * The DFS is seeded in node-id order rather than discovery order, so
+   * the result depends only on which nodes are in the graph — not on
+   * which node `Graph.from` happened to start from. Several topological
+   * orders are usually valid; this picks the same one every time.
    */
   order(): readonly Node<any, any>[] {
     const known = new Set(this.#nodes);
     const visited = new Set<Node<any, any>>();
     const ordered: Node<any, any>[] = [];
+    const seeds = [...this.#nodes].sort(byId);
 
     const visit = (node: Node<any, any>): void => {
       if (visited.has(node)) return;
@@ -114,7 +126,7 @@ export class Graph {
       ordered.push(node);
     };
 
-    for (const node of this.#nodes) visit(node);
+    for (const node of seeds) visit(node);
     return ordered;
   }
 
@@ -144,4 +156,12 @@ export class Graph {
       })),
     };
   }
+}
+
+/**
+ * Orders nodes by creation sequence. Node ids are `n1`, `n2`, … so a
+ * plain string sort would put `n10` before `n2`; compare numerically.
+ */
+function byId(a: Node<any, any>, b: Node<any, any>): number {
+  return a.id.localeCompare(b.id, undefined, { numeric: true });
 }

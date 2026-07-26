@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    // The point of this config: check our own emitted declarations,
+    // which `tsconfig.json` skips. `types: []` stops TypeScript from
+    // auto-including every `@types/*` package hoisted to the monorepo
+    // root — `@types/react-dom` needs the DOM lib we don't load, and its
+    // errors have nothing to do with this package.
+    "skipLibCheck": false,
+    "types": []
+  },
+  "include": ["test-dts"]
+}

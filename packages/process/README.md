@@ -66,20 +66,23 @@ downstream value stops the cascade there, so expensive transforms below it
 never run:
 
 ```ts
-const bucket = derive({ x: raw.out.value }, ({ x }) => Math.floor(x / 10), {
+const level = source<number>();
+const bucket = derive({ x: level.out.value }, ({ x }) => Math.floor(x / 10), {
   equals: (a, b) => a === b,
 });
 const expensive = derive({ b: bucket.out.value }, ({ b }) => heavyWork(b));
 
-raw.set(11);
+level.set(11);
 expensive.out.value.get(); // computes
-raw.set(13); // different input, same bucket
+level.set(13); // different input, same bucket
 expensive.out.value.get(); // cache hit — heavyWork never re-runs
 ```
 
 Equality defaults to `Object.is`, which is right for immutable pond values
 — a transform that changed something returns a new instance. Supply
-`equals` where a node produces scalars or small records.
+`equals` where a node produces scalars or small records. Note that a
+`true` from `equals` also **keeps the old value** and discards the new
+one, so compare everything a consumer can observe, not just an id.
 
 ## Types are enforced, not documented
 

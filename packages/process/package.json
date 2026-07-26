@@ -28,11 +28,12 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\" \"test-dts/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\" \"test-dts/**/*.ts\"",
     "prepack": "cp ../../LICENSE ./LICENSE && cp ../../CHANGELOG.md ./CHANGELOG.md && npm run build && cp cjs-fallback.cjs dist/cjs-fallback.cjs && find dist -name '*.map' -delete",
-    "test": "npm run test:type && npm run test:runtime",
+    "test": "npm run test:type && npm run test:dts && npm run test:runtime",
     "test:type": "tsc -p tsconfig.types.json",
+    "test:dts": "npm run build && tsc -p tsconfig.dts.json",
     "test:runtime": "vitest run",
     "verify": "npm run format:check && npm run build && npm test"
   },

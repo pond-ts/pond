@@ -25,8 +25,8 @@
  * graph) would recompute the whole subtree on every touch.
  */
 
-import { CycleError, MissingOutputError } from './errors.js';
-import { Inlet, Outlet, type PortOwner } from './port.js';
+import { CycleError, MissingOutputError, ProcessError } from './errors.js';
+import { Inlet, Outlet } from './port.js';
 import type { PortSpec, PortSpecMap, PortValue, PortValues } from './types.js';
 
 /** The inlet map exposed as `node.in`. */
@@ -66,7 +66,7 @@ let nextNodeId = 1;
 export class Node<
   In extends PortSpecMap = PortSpecMap,
   Out extends PortSpecMap = PortSpecMap,
-> implements PortOwner {
+> {
   /** Unique within the process. Stable across a graph's lifetime. */
   readonly id: string;
   /** The node type's name, from its spec. */
@@ -92,14 +92,17 @@ export class Node<
     this.kind = spec.kind;
     this.#compute = (inputs) => spec.compute(inputs);
 
-    const inlets: Record<string, Inlet<any>> = {};
+    // Null-prototype maps: a port legitimately named `__proto__` would
+    // otherwise hit the prototype setter instead of defining a key,
+    // leaving the node with no ports at all and a hijacked `node.in`.
+    const inlets: Record<string, Inlet<any>> = Object.create(null);
     for (const [name, portSpec] of Object.entries(spec.inputs) as [
       string,
       PortSpec<any>,
     ][]) {
       inlets[name] = new Inlet(this, name, portSpec.defaultValue);
     }
-    const outlets: Record<string, Outlet<any>> = {};
+    const outlets: Record<string, Outlet<any>> = Object.create(null);
     for (const [name, portSpec] of Object.entries(spec.outputs) as [
       string,
       PortSpec<any>,
@@ -160,17 +163,19 @@ export class Node<
 
   /** @internal Brings this node's outlets up to date. See the module docstring. */
   ensureFresh(): void {
-    if (!this.#dirty) {
-      if (this.#hasError) throw this.#error;
-      return;
-    }
+    // The re-entrancy check must precede the clean-node early return.
+    // `#dirty` is cleared before `compute` runs, so a compute that pulls
+    // its own node would otherwise take the early return and be handed
+    // the *previous* cached value — a silently stale result instead of
+    // the cycle it actually is.
     if (this.#evaluating) {
-      // Unreachable while `connect()` rejects cycles, but a node whose
-      // `compute` reaches back into the graph and pulls itself lands
-      // here — which is the same defect, found a step later.
       throw new CycleError(
         `Node '${this.kind}' was pulled while it was still evaluating — its compute re-entered the graph`,
       );
+    }
+    if (!this.#dirty) {
+      if (this.#hasError) throw this.#error;
+      return;
     }
     this.#evaluating = true;
     try {
@@ -179,7 +184,17 @@ export class Node<
       const versions = new Map<string, number>();
       let changed = !this.#computed;
       for (const inlet of this.#inlets) {
-        inlet.source?.node.ensureFresh();
+        try {
+          inlet.source?.node.ensureFresh();
+        } catch (error) {
+          // Upstream failed. Drop any error cached from this node's own
+          // last compute: it is no longer why this node can't produce a
+          // value, and leaving it would point a graph inspector at the
+          // wrong node. The failing upstream keeps its own `error`.
+          this.#error = undefined;
+          this.#hasError = false;
+          throw error;
+        }
         const version = inlet.sourceVersion();
         versions.set(inlet.name, version);
         if (this.#inputVersions.get(inlet.name) !== version) changed = true;
@@ -213,7 +228,10 @@ export class Node<
         }
         const values = produced as Record<string, unknown>;
         for (const outlet of this.#outlets) {
-          if (!(outlet.name in values)) {
+          // `hasOwn`, not `in`: `in` walks the prototype chain, so an
+          // output named `toString` or `valueOf` would silently pass the
+          // guard and publish an `Object.prototype` member as its value.
+          if (!Object.hasOwn(values, outlet.name)) {
             throw new MissingOutputError(
               `Node '${this.kind}' compute did not return output '${outlet.name}'`,
             );
@@ -330,7 +348,7 @@ export function derive<
     const inlet = (node.in as Record<string, Inlet<any>>)[name];
     if (inlet === undefined) {
       // Unreachable: the inputs above are built from these same keys.
-      throw new MissingOutputError(
+      throw new ProcessError(
         `Node '${node.kind}' has no input named '${name}'`,
       );
     }

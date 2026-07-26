@@ -203,6 +203,29 @@ describe('compute errors', () => {
     expect(() => downstream.out.value.get()).toThrow('upstream failed');
   });
 
+  it('clears its own stale error once the failure moves upstream', () => {
+    const a = source<number>({ initial: 0 });
+    const mid = derive({ x: a.out.value }, ({ x }) => {
+      if (x < 0) throw new Error('upstream broke');
+      return x;
+    });
+    const leaf = derive({ x: mid.out.value }, ({ x }) => {
+      if (x === 0) throw new Error('mine: div0');
+      return 100 / x;
+    });
+
+    // `leaf` fails on its own account.
+    expect(() => leaf.out.value.get()).toThrow('mine: div0');
+    expect((leaf.error as Error).message).toBe('mine: div0');
+
+    // Now the failure is upstream. `leaf.error` must stop claiming
+    // responsibility, or a graph inspector highlights the wrong node.
+    a.set(-1);
+    expect(() => leaf.out.value.get()).toThrow('upstream broke');
+    expect(leaf.error).toBeUndefined();
+    expect((mid.error as Error).message).toBe('upstream broke');
+  });
+
   it('reports a compute that omits a declared output', () => {
     const Bad = defineNode({
       kind: 'bad',
@@ -238,6 +261,49 @@ describe('sources', () => {
   it('treats an explicit initial value as set', () => {
     const a = source<number>({ initial: 0 });
     expect(a.out.value.get()).toBe(0);
+  });
+});
+
+describe('hostile port names and re-entrancy', () => {
+  it('rejects a compute that reaches back into its own node', () => {
+    const a = source<number>({ initial: 1 });
+    let self: ReturnType<typeof derive<{ x: typeof a.out.value }, number>>;
+    // Reads its own output once the input passes 1. Before the guard ran
+    // ahead of the clean-node early return, this silently returned the
+    // previous cached value instead of reporting the cycle.
+    const node = derive({ x: a.out.value }, ({ x }): number =>
+      x > 1 ? self.out.value.get() + 100 : x,
+    );
+    self = node;
+
+    expect(node.out.value.get()).toBe(1);
+    a.set(2);
+    expect(() => node.out.value.get()).toThrow(CycleError);
+  });
+
+  it('does not mistake inherited object properties for declared outputs', () => {
+    const Bad = defineNode({
+      kind: 'inherited',
+      inputs: {},
+      outputs: { toString: port<string>(), valueOf: port<number>() },
+      compute: () => ({}) as { toString: string; valueOf: number },
+    });
+    const bad = Bad();
+    // `'toString' in {}` is true via the prototype chain; the guard must
+    // use an own-property check or it publishes Object.prototype members.
+    expect(() => bad.out.toString.get()).toThrow(MissingOutputError);
+  });
+
+  it('handles a port literally named __proto__', () => {
+    const Weird = defineNode({
+      kind: 'weird',
+      inputs: {},
+      outputs: { ['__proto__']: port<number>() },
+      compute: () => ({ ['__proto__']: 42 }) as { ['__proto__']: number },
+    });
+    const weird = Weird();
+    expect(Object.keys(weird.out)).toEqual(['__proto__']);
+    expect(weird.out['__proto__'].get()).toBe(42);
   });
 });
 
@@ -281,6 +347,23 @@ describe('graph inspection', () => {
     const kinds = order.map((node) => node.kind);
     expect(kinds.indexOf('a')).toBeLessThan(kinds.indexOf('b'));
     expect(kinds.indexOf('b')).toBeLessThan(kinds.indexOf('c'));
+  });
+
+  it('dumps the same JSON whichever node discovery started from', () => {
+    const a = source<number>({ initial: 1, kind: 'a' });
+    const b = source<number>({ initial: 2, kind: 'b' });
+    const add = Add();
+    a.out.value.connect(add.in.a);
+    b.out.value.connect(add.in.b);
+
+    // The README and the toJSON docstring promise two dumps of the same
+    // graph are diffable; that only holds if ordering is canonical
+    // rather than dependent on traversal start.
+    const fromA = JSON.stringify(Graph.from(a).toJSON());
+    const fromB = JSON.stringify(Graph.from(b).toJSON());
+    const fromAdd = JSON.stringify(Graph.from(add).toJSON());
+    expect(fromA).toBe(fromB);
+    expect(fromA).toBe(fromAdd);
   });
 
   it('dumps structure as JSON', () => {

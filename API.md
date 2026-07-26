@@ -358,6 +358,13 @@ the default for pipelines known at authoring time — see the package README.
 | Errors           | `ProcessError` (base), `CycleError`, `UnconnectedInputError`, `MissingOutputError`, `UnsetSourceError`                                         | `packages/process/src/errors.ts`    |
 | Node type helpers | `NodeSpec`, `NodeFactory`, `InletsFor`, `OutletsFor`, `OutletValue`, `SpecsForOutlets`, `DerivedOutput`                                       | `packages/process/src/node.ts`      |
 
+Note: this package's `npm test` includes a `test:dts` step that typechecks the
+**emitted** `dist/*.d.ts` from a consumer's perspective (`test-dts/`,
+`skipLibCheck: false`). The package's own build sets `skipLibCheck: true` and
+never checks its own output, so a declaration referencing a type `stripInternal`
+deleted builds green and breaks only downstream. If you mark something
+`@internal`, confirm no public signature names it.
+
 ---
 
 ## Cross-package seams (where agents most often need the joint)

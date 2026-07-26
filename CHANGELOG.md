@@ -5,8 +5,8 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 `@pond-ts/fit`, `@pond-ts/financial`, and `@pond-ts/process` — release together
-under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may include new features
-and type-level changes; patch bumps are strictly additive.
+under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
+include new features and type-level changes; patch bumps are strictly additive.
 
 [Unreleased]: https://github.com/pond-ts/pond/compare/v0.53.1...HEAD
 [0.53.1]: https://github.com/pond-ts/pond/compare/v0.53.0...v0.53.1

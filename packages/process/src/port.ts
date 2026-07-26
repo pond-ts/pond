@@ -19,33 +19,15 @@ import {
   MissingOutputError,
   UnconnectedInputError,
 } from './errors.js';
-
-/**
- * The part of a node the ports need to see. Declared here rather than
- * importing `Node` so `port.ts` and `node.ts` don't form an import
- * cycle.
- *
- * @internal
- */
-export interface PortOwner {
-  readonly id: string;
-  readonly kind: string;
-  /** @internal Bring this node's outlets up to date. */
-  ensureFresh(): void;
-  /** @internal Mark stale and propagate downstream. */
-  markDirty(): void;
-  /** @internal Force recompute on the next pull, ignoring input versions. */
-  invalidate(): void;
-  /** @internal Every declared inlet, for upstream traversal. */
-  inletList(): readonly Inlet<any>[];
-  /** @internal Every declared outlet, for downstream traversal. */
-  outletList(): readonly Outlet<any>[];
-}
+// Type-only: erased at compile time, so this does not create a runtime
+// import cycle with `node.ts` (which imports these classes as values).
+import type { Node } from './node.js';
 
 /** A node's typed output port. */
 export class Outlet<T> {
   readonly name: string;
-  readonly node: PortOwner;
+  /** The node this output belongs to. */
+  readonly node: Node<any, any>;
 
   #value: T | undefined;
   #hasValue = false;
@@ -54,7 +36,11 @@ export class Outlet<T> {
   readonly #downstream = new Set<Inlet<T>>();
 
   /** @internal Constructed by `Node`; not part of the public surface. */
-  constructor(node: PortOwner, name: string, equals?: (a: T, b: T) => boolean) {
+  constructor(
+    node: Node<any, any>,
+    name: string,
+    equals?: (a: T, b: T) => boolean,
+  ) {
     this.node = node;
     this.name = name;
     this.#equals = equals ?? Object.is;
@@ -143,14 +129,15 @@ export class Outlet<T> {
 /** A node's typed input port. */
 export class Inlet<T> {
   readonly name: string;
-  readonly node: PortOwner;
+  /** The node this input belongs to. */
+  readonly node: Node<any, any>;
 
   #source: Outlet<T> | undefined;
   readonly #defaultValue: T | undefined;
   readonly #hasDefault: boolean;
 
   /** @internal Constructed by `Node`; not part of the public surface. */
-  constructor(node: PortOwner, name: string, defaultValue?: T) {
+  constructor(node: Node<any, any>, name: string, defaultValue?: T) {
     this.node = node;
     this.name = name;
     this.#defaultValue = defaultValue;
@@ -251,11 +238,14 @@ function unlink<T>(inlet: Inlet<T>): void {
  * loop. Runs at connect time, so the graph is acyclic by construction
  * and evaluation never has to guard against infinite recursion.
  */
-function wouldCycle(producer: PortOwner, consumer: PortOwner): boolean {
-  const seen = new Set<PortOwner>();
-  const stack: PortOwner[] = [producer];
+function wouldCycle(
+  producer: Node<any, any>,
+  consumer: Node<any, any>,
+): boolean {
+  const seen = new Set<Node<any, any>>();
+  const stack: Node<any, any>[] = [producer];
   while (stack.length > 0) {
-    const current = stack.pop() as PortOwner;
+    const current = stack.pop() as Node<any, any>;
     if (current === consumer) return true;
     if (seen.has(current)) continue;
     seen.add(current);

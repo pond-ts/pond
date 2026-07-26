@@ -23,6 +23,13 @@ export interface PortSpec<T> {
    * Returning `true` suppresses the version bump, so every downstream
    * node skips recomputation even though it was marked dirty.
    *
+   * It also **keeps the previously cached value** — the newly computed
+   * one is discarded. That is what makes the cutoff work (downstream
+   * `Object.is` checks still see the same reference), but it means a
+   * loose `equals` loses data: an `equals` comparing only an `id` field
+   * will keep serving the old object after the rest of it changed.
+   * Compare everything a consumer can observe.
+   *
    * Defaults to `Object.is`. For immutable pond values (`TimeSeries`,
    * `Event`) identity is the right test — a transform that genuinely
    * changed something returns a new instance. Supply a structural
