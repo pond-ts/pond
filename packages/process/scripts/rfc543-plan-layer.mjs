@@ -47,13 +47,11 @@ class Registry {
     const out = new Map();
     for (const op of this.#ops.values()) {
       if (!out.has(op.family)) out.set(op.family, []);
-      out
-        .get(op.family)
-        .push({
-          name: op.name,
-          summary: op.summary,
-          outputs: op.outputs.length,
-        });
+      out.get(op.family).push({
+        name: op.name,
+        summary: op.summary,
+        outputs: op.outputs.length,
+      });
     }
     return out;
   }
@@ -326,7 +324,8 @@ function run(seriesOutlet, request, cache) {
   const { plan = [], select = [], units = {}, onError = 'throw' } = request;
   const skipped = [],
     computed = [],
-    built = new Map();
+    built = new Map(),
+    specOf = new Map();
 
   const build = (spec) => {
     const id = specId(spec);
@@ -337,7 +336,13 @@ function run(seriesOutlet, request, cache) {
     for (const [k, d] of Object.entries(op.params)) {
       const v = params[k];
       if (d.kind === 'integer' && !Number.isInteger(v))
-        throw new Error(`${spec.op}.${k} must be an integer, got ${v}`);
+        throw new Error(
+          `${spec.op}.${k} must be an integer, got ${JSON.stringify(v)} (${typeof v})`,
+        );
+      if (d.kind === 'number' && typeof v !== 'number')
+        throw new Error(
+          `${spec.op}.${k} must be a number, got ${JSON.stringify(v)} (${typeof v})`,
+        );
       if (d.min !== undefined && v < d.min)
         throw new Error(`${spec.op}.${k}=${v} is below minimum ${d.min}`);
       if (d.max !== undefined && v > d.max)
@@ -357,6 +362,7 @@ function run(seriesOutlet, request, cache) {
     }
     if (cache.has(id)) {
       built.set(id, cache.get(id));
+      specOf.set(id, spec);
       return cache.get(id);
     }
 
@@ -370,6 +376,7 @@ function run(seriesOutlet, request, cache) {
       { kind: spec.op },
     );
     built.set(id, node);
+    specOf.set(id, spec);
     cache.set(id, node);
     computed.push(id);
     return node;
@@ -398,33 +405,55 @@ function run(seriesOutlet, request, cache) {
   };
 
   for (const sel of select) {
-    const node = built.get(specId(sel.on));
-    if (!node) continue;
-    const series = node.out.value.get();
-    if (sel.columns) {
-      response.series = series;
-      (response.outputs ??= {})[specId(sel.on)] = registry
-        .get(sel.on.op)
-        .outputs.map((o, n) => ({
-          column: specId(sel.on) + o.id,
-          unit: unitOf(sel.on, units, n),
+    // A selector may cite a spec inline OR by its id string — a JSON
+    // caller has no object references to hand, and content addressing
+    // means both name the same node. Everything in here runs under the
+    // same failure policy as the build loop: a bad selector must not
+    // take down a request that `onError` promised to keep alive.
+    try {
+      const id = typeof sel.on === 'string' ? sel.on : specId(sel.on);
+      const node = built.get(id);
+      if (!node) throw new Error(`'${id}' is not in this plan`);
+      const spec = specOf.get(id);
+      const op = registry.get(spec.op);
+      const series = node.out.value.get();
+
+      if (sel.columns) {
+        response.series = series;
+        (response.outputs ??= {})[id] = op.outputs.map((o, n) => ({
+          column: id + o.id,
+          unit: unitOf(spec, units, n),
         }));
-      continue;
+        continue;
+      }
+
+      const suffix = sel.output ?? '';
+      const idx = op.outputs.findIndex((o) => o.id === suffix);
+      if (idx === -1) {
+        throw new Error(
+          `'${spec.op}' has no output '${suffix}' (has ${op.outputs.map((o) => `'${o.id}'`).join(', ')})`,
+        );
+      }
+      if (!reductions[sel.reduce]) {
+        throw new Error(
+          `unknown reduction '${sel.reduce}' (have ${Object.keys(reductions).join(', ')})`,
+        );
+      }
+      const column = id + suffix;
+      const keys = series
+        .toRows()
+        .map((r) => (r[0] instanceof Date ? r[0].getTime() : r[0]));
+      response.facts.push({
+        id: column,
+        reduce: sel.reduce,
+        ...(sel.against && { against: sel.against }),
+        unit: unitOf(spec, units, idx),
+        ...reductions[sel.reduce](series.column(column), keys, sel, { series }),
+      });
+    } catch (e) {
+      if (onError === 'throw') throw e;
+      skipped.push({ select: sel, reason: e.message });
     }
-    const idx = registry
-      .get(sel.on.op)
-      .outputs.findIndex((o) => o.id === (sel.output ?? ''));
-    const column = specId(sel.on) + (sel.output ?? '');
-    const keys = series
-      .toRows()
-      .map((r) => (r[0] instanceof Date ? r[0].getTime() : r[0]));
-    response.facts.push({
-      id: column,
-      reduce: sel.reduce,
-      ...(sel.against && { against: sel.against }),
-      unit: unitOf(sel.on, units, Math.max(0, idx)),
-      ...reductions[sel.reduce](series.column(column), keys, sel, { series }),
-    });
   }
   return response;
 }
@@ -587,4 +616,145 @@ console.log(
   'newly computed       :',
   after.computed.length,
   '- node was cached but not stale-blind',
+);
+
+// ═══ 7. SERIALIZATION ════════════════════════════════════════
+// The RFC's premise is that plans arrive as data. Sections 1-6 above
+// pass spec *objects*, which is not the same thing — an agent sends a
+// string. These assert the round trip that premise depends on.
+console.log('\n══════ 7. SERIALIZATION ══════');
+const ok = (n, cond, extra = '') =>
+  console.log(
+    `  ${cond ? 'PASS' : 'FAIL'}  ${n}${extra ? '  — ' + extra : ''}`,
+  );
+
+const wirePlan = JSON.parse(`[
+  {"op":"bollinger","params":{"period":20,"stdDev":2},"inputs":["iv21"]},
+  {"op":"ema","params":{"period":10},"inputs":[
+     {"op":"sma","params":{"period":20},"inputs":["iv21"]}]},
+  {"op":"sma","params":{"period":20},"inputs":["iv21"]}
+]`);
+const wireCache = new Map();
+
+// A plan parsed off the wire resolves like a hand-built one.
+const fromWire = run(
+  feed.out.value,
+  {
+    plan: wirePlan,
+    units,
+    select: [{ on: wirePlan[2], reduce: 'last' }],
+    onError: 'collect',
+  },
+  wireCache,
+);
+ok(
+  'a JSON plan resolves',
+  fromWire.facts.length === 1,
+  JSON.stringify(fromWire.facts[0]),
+);
+
+// Ids must not depend on key order or on surviving a round trip, or a
+// persisted view and a freshly composed request miss each other.
+const orderA = {
+  op: 'bollinger',
+  params: { period: 20, stdDev: 2 },
+  inputs: ['iv21'],
+};
+const orderB = {
+  op: 'bollinger',
+  params: { stdDev: 2, period: 20 },
+  inputs: ['iv21'],
+};
+ok('param key order does not change the id', specId(orderA) === specId(orderB));
+ok(
+  'id survives JSON round trip',
+  specId(orderA) === specId(JSON.parse(JSON.stringify(orderA))),
+);
+ok(
+  'an omitted param collides with its explicit default',
+  specId({ op: 'sma', params: { period: 20 }, inputs: ['iv21'] }) ===
+    specId({ op: 'sma', inputs: ['iv21'] }),
+);
+
+// A JSON caller has no object references, so a selector must be able to
+// cite an id string.
+const byId = run(
+  feed.out.value,
+  {
+    plan: wirePlan,
+    units,
+    select: [{ on: specId(wirePlan[2]), reduce: 'last' }],
+    onError: 'collect',
+  },
+  wireCache,
+);
+ok('selector can cite a spec by id string', byId.facts.length === 1);
+
+// Bad input from a caller must be a diagnostic, not a crash — and the
+// message has to name what it actually got, since "got 20" for "20" is
+// exactly the confusion a JSON caller cannot debug.
+const sloppy = run(
+  feed.out.value,
+  {
+    plan: JSON.parse(
+      '[{"op":"sma","params":{"period":"20"},"inputs":["iv21"]}]',
+    ),
+    units,
+    select: [],
+    onError: 'collect',
+  },
+  new Map(),
+);
+ok(
+  'string-where-number is rejected',
+  sloppy.skipped.length === 1,
+  sloppy.skipped[0]?.reason,
+);
+
+const badSel = run(
+  feed.out.value,
+  {
+    plan: wirePlan,
+    units,
+    select: [{ on: 'p1:nope(x;)', reduce: 'last' }],
+    onError: 'collect',
+  },
+  wireCache,
+);
+ok(
+  'a bad selector is collected, not thrown',
+  badSel.skipped.length === 1,
+  badSel.skipped[0]?.reason,
+);
+
+// The wire/render split: JSON-safe exactly when no columns were asked for.
+const agentResp = run(
+  feed.out.value,
+  {
+    plan: wirePlan,
+    units,
+    select: [{ on: wirePlan[2], reduce: 'last' }],
+    onError: 'collect',
+  },
+  wireCache,
+);
+ok(
+  'agent response round-trips',
+  JSON.stringify(JSON.parse(JSON.stringify(agentResp))) ===
+    JSON.stringify(agentResp),
+);
+const renderResp = run(
+  feed.out.value,
+  {
+    plan: wirePlan,
+    units,
+    select: [{ on: wirePlan[0], columns: true }],
+    onError: 'skip',
+  },
+  wireCache,
+);
+ok(
+  'renderer response carries columns, not a wire payload',
+  renderResp.series !== undefined,
+  `serializing it would be ${(JSON.stringify(renderResp).length / 1024).toFixed(0)} KB for ${renderResp.series.length} rows`,
 );
