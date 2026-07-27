@@ -77,6 +77,14 @@ interface Entry {
   /** The columns response, fetched only when the viz tab asks. */
   drawn?: RunResult | undefined;
   drawing?: boolean | undefined;
+  /**
+   * Why the last draw failed. Distinct from `error` so a failed draw
+   * does not clobber the run's own message — and load-bearing: without
+   * somewhere to record the failure, "needs drawing" flips straight back
+   * to true and the tab retries forever behind a "Drawing…" that never
+   * clears.
+   */
+  drawError?: string | undefined;
   error?: string | undefined;
   pending: boolean;
 }
@@ -89,14 +97,34 @@ const EXAMPLES = [
 ];
 
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const json = await res.json();
-  if (!res.ok)
-    throw new Error((json as { error?: string }).error ?? res.statusText);
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    // A refused connection surfaced as "Failed to execute 'json' on
+    // 'Response'", which tells a reader nothing about what is wrong.
+    throw new Error(
+      `No response from the API on ${path}. Is the server still running (npm run dev:server)?`,
+    );
+  }
+  const text = await res.text();
+  let json: unknown;
+  try {
+    json = text === '' ? undefined : JSON.parse(text);
+  } catch {
+    json = undefined;
+  }
+  if (!res.ok) {
+    const reason = (json as { error?: string } | undefined)?.error;
+    throw new Error(reason ?? `${res.status} ${res.statusText}`.trim());
+  }
+  if (json === undefined) {
+    throw new Error(`${path} returned ${res.status} with no JSON body.`);
+  }
   return json as T;
 }
 
@@ -146,6 +174,7 @@ export function App() {
                 ...body,
                 ran: body.composed.envelope,
                 drawn: undefined,
+                drawError: undefined,
                 pending: false,
               }
             : e,
@@ -185,6 +214,7 @@ export function App() {
                 result,
                 ran: envelope,
                 drawn: undefined,
+                drawError: undefined,
                 pending: false,
                 error: undefined,
               }
@@ -217,10 +247,16 @@ export function App() {
    */
   async function draw(entry: Entry) {
     const envelope = (entry.ran ?? entry.composed?.envelope) as
-      { process?: unknown[]; select?: unknown[] } | undefined;
+      | { process?: unknown[]; select?: unknown[] }
+      | undefined;
+    // Nothing to draw from yet — the compose is still in flight. Bailing
+    // silently here is what left the tab on "Drawing…" forever; the tab
+    // now waits for the plan and draws when it lands.
     if (envelope?.process === undefined) return;
     setEntries((prev) =>
-      prev.map((e) => (e.id === entry.id ? { ...e, drawing: true } : e)),
+      prev.map((e) =>
+        e.id === entry.id ? { ...e, drawing: true, drawError: undefined } : e,
+      ),
     );
     try {
       // A focused node is addressed by **id** — a string `SpecRef` the
@@ -244,7 +280,7 @@ export function App() {
             ? {
                 ...en,
                 drawing: false,
-                error: e instanceof Error ? e.message : String(e),
+                drawError: e instanceof Error ? e.message : String(e),
               }
             : en,
         ),
@@ -616,7 +652,16 @@ function ResultsPanel(props: {
  */
 function VizTab(props: { entry: Entry; onDraw: (entry: Entry) => void }) {
   const { entry, onDraw } = props;
-  const needed = entry.drawn === undefined && entry.drawing !== true;
+  // Three separate states, and conflating them is what got this stuck:
+  // there is nothing to draw *from* until the plan lands; a draw is in
+  // flight; a draw failed. Only the middle one is "Drawing…".
+  const ready =
+    (entry.ran ?? entry.composed?.envelope) !== undefined && !entry.pending;
+  const needed =
+    ready &&
+    entry.drawn === undefined &&
+    entry.drawing !== true &&
+    entry.drawError === undefined;
   useEffect(() => {
     if (needed) onDraw(entry);
     // `entry.id` and `needed` are the trigger; `entry` itself changes
@@ -628,7 +673,9 @@ function VizTab(props: { entry: Entry; onDraw: (entry: Entry) => void }) {
       frames={entry.drawn?.frames}
       outputs={entry.drawn?.outputs ?? {}}
       explain={entry.drawn?.explain ?? {}}
-      pending={entry.drawing === true || needed}
+      pending={entry.drawing === true}
+      waiting={!ready}
+      error={entry.drawError}
       onDraw={() => onDraw(entry)}
     />
   );

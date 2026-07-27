@@ -121,17 +121,30 @@ export function Viz(props: {
   frames: Frames | undefined;
   outputs: Record<string, OutputInfo[]>;
   explain: Record<string, string>;
+  /** A draw is in flight. */
   pending: boolean;
+  /** There is no plan to draw from yet — the compose has not landed. */
+  waiting: boolean;
+  /** The last draw failed. Shown with a retry rather than swallowed. */
+  error?: string | undefined;
   onDraw: () => void;
 }) {
   const drawn = useDrawn(props.frames);
   const [ref, width] = useWidth();
   const groups = Object.entries(props.outputs).filter(([, o]) => o.length > 0);
+  const idle = !props.pending && !props.waiting && props.error === undefined;
 
   return (
     <div className="viz" ref={ref}>
+      {props.waiting && <p className="muted">Waiting for the plan…</p>}
       {props.pending && <p className="muted">Drawing…</p>}
-      {!props.pending && drawn === undefined && (
+      {props.error !== undefined && (
+        <>
+          <p className="notice bad">{props.error}</p>
+          <button onClick={props.onDraw}>Try again</button>
+        </>
+      )}
+      {idle && drawn === undefined && (
         <>
           <p className="muted">
             This response carries facts, not columns — a reduction never
