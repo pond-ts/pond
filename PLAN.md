@@ -342,9 +342,15 @@ is the agent's contract, not a hand-written prompt.
   `ANTHROPIC_API_KEY` it falls back to an offline keyword matcher that exercises
   every panel and **settles nothing about the registry**, and says so.
 - **[PND-DEMOM3]** — Results charts via `@pond-ts/charts`, chosen by key kind
-  (time → line, interval → bar, multi-output → band). Decides the remainder of
-  [PND-PROCCOL]: assembled series vs per-column arrays into a layer. May
-  re-surface [PND-LIVELYR].
+  (time → line, multi-output → band). Decided the remainder of [PND-PROCCOL],
+  and **not as the fork it was framed as**: charts already traverses columnar,
+  so the layers' `series` + `column` signature was fine — what was wrong was
+  assembling on the producer side, where a `TimeSeries` cannot cross a wire.
+  Landed `run({ assemble: false })` + `RunResult.columns`; the browser rebuilds
+  with `TimeSeries.fromColumns`, which adopts buffers zero-copy. Drawing costs
+  **transport, not compute** (5.72 MB for two studies at 150k rows vs 5 ms to
+  encode) — a second argument for the worker topology. [PND-LIVELYR] did not
+  bite.
 - **[PND-DEMOM4]** — Pipeline graph with clickable nodes (React Flow +
   dagre), labelled by `explain` and badged cached/Nms; clicking shows that
   node's output. The payoff, and nearly free — every intermediate is already a

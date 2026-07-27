@@ -318,3 +318,48 @@ textarea.envelope {
   white-space: pre;
   overflow: auto;
 }
+
+.tabs {
+  display: flex;
+  gap: 2px;
+}
+
+button.tab {
+  border-radius: 0;
+  padding: 3px 12px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+button.tab:first-child {
+  border-radius: 6px 0 0 6px;
+}
+
+button.tab:last-child {
+  border-radius: 0 6px 6px 0;
+}
+
+button.tab.on {
+  color: var(--ink);
+  border-color: var(--accent);
+  background: #303845;
+}
+
+.viz figure {
+  margin: 0 0 14px;
+}
+
+.viz figcaption {
+  font-size: 12px;
+  color: var(--ink);
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viz button {
+  margin-top: 8px;
+}

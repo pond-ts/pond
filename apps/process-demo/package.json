@@ -20,7 +20,9 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
+    "@pond-ts/charts": "file:../../packages/charts",
     "@pond-ts/process": "file:../../packages/process",
+    "@pond-ts/react": "file:../../packages/react",
     "pond-ts": "file:../../packages/core",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"

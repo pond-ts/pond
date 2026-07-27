@@ -5,12 +5,12 @@ in plain English, a model turns it into a process plan as JSON, the plan
 resolves against a long-lived bound graph, and you see both the plan and
 what came back.
 
-It is a demo, but its job is to **decide the library's shape**. This is M2
-of [PND_PROCESS_DEMO_PLAN.md](../../docs/plans/PND_PROCESS_DEMO_PLAN.md),
-and it exists to answer [PND-PROCSCHEMA]: is `registry.toJsonSchema()`
-enough for a caller to compose valid plans with no prose hand-holding?
-Charts are M3, the clickable pipeline is M4 — every panel here renders
-raw JSON on purpose.
+It is a demo, but its job is to **decide the library's shape**, per
+[PND_PROCESS_DEMO_PLAN.md](../../docs/plans/PND_PROCESS_DEMO_PLAN.md).
+M2 asked whether `registry.toJsonSchema()` is enough for a caller to
+compose valid plans with no prose hand-holding ([PND-PROCSCHEMA]); M3
+asked how a column value reaches a chart ([PND-PROCCOL]). The clickable
+pipeline is M4.
 
 ## Running it
 
@@ -52,6 +52,13 @@ nothing about the registry**.
   they are is a registry finding.
 - **`explain`, under each badge.** Never hand-built — it is the lineage the
   library derives, and it is what M4 will label pipeline nodes with.
+- **The `viz` tab.** Columns are fetched _lazily_, only when you switch to
+  it, because a column is ~1.2 MB per study here and a reduction is a few
+  bytes. The side effect is the clearest cache demo in the app: every node
+  comes back `cached` and what you wait for is purely the wire. A
+  multi-output op draws as a band rather than three lines, and nothing in
+  `Viz.tsx` inspects op names to work that out — it reads
+  `outputs[id].length`.
 
 ## Shape
 
@@ -64,9 +71,13 @@ server/
                Math.random, so a number in a friction note reproduces.
   compose.ts   The agent seam. `anthropicComposer` is the experiment;
                `scriptedComposer` is the offline stand-in.
+  frames.ts    Columns → base64 `Float64Array` for the wire, and the
+               reasoning for why that rather than an assembled series.
   index.ts     One long-lived Host. /api/context, /api/compose,
                /api/run, /api/ask.
-web/           The three panels.
+web/
+  App.tsx      The three panels.
+  Viz.tsx      The `viz` tab — decode, `TimeSeries.fromColumns`, chart.
 ```
 
 ## Notes for anyone extending it

@@ -85,6 +85,15 @@ include new features and type-level changes; patch bumps are strictly additive.
   for the nine other tickets the investigation produced (node eviction is
   blocking; column-valued nodes and dirty-per-range are the large wins).
 
+- **process:** **`run({ assemble: false })` and `RunResult.columns`** — columns
+  are the wire shape; the assembled `TimeSeries` is the in-process convenience
+  over the top of them. A `columns` selector now always hands back the resolved
+  columns by name, and `assemble: false` skips building a widened series for a
+  consumer that could never receive one. The receiving side rebuilds with
+  `TimeSeries.fromColumns`, which adopts a `Float64Array` **zero-copy** and
+  reads NaN as a gap, so reassembly across a boundary is free. Measured at 1M
+  rows, the skipped `appendColumn` is 7.6 ms for a gapless column and 22.4 ms
+  for a gapped one — and every rolling study is gapped. See **[PND-PROCCOL]**.
 - **process:** `registry.toJsonSchema({ base })` — the projection can now be
   **embedded** in a larger schema. Its recursive `$ref` (the line that lets a
   caller express _EMA of SMA of px_ without being taught a nesting concept)
