@@ -8,10 +8,10 @@
 
 ## How the measurements were produced
 
-Every number below came from a runnable script, not an estimate. The
-scripts live on the `feat/process-graph` branch
-([#544](https://github.com/pond-ts/pond/pull/544)) under
-`packages/process/scripts/`, and each is self-contained:
+Every number below came from a runnable script, not an estimate. They are
+on `main` under `packages/process/scripts/` (landed with
+[#544](https://github.com/pond-ts/pond/pull/544)), and each is
+self-contained — run them after `npm run build --workspaces`:
 
 | Script                    | Answers                                                        |
 | ------------------------- | -------------------------------------------------------------- |
@@ -21,42 +21,116 @@ scripts live on the `feat/process-graph` branch
 | `rfc543-ui-workloads.mjs` | Interactive params, hot leading edge, value representation     |
 | `rfc543-multisource.mjs`  | Separate graphs vs one graph; invalidation at N sources        |
 | `rfc543-ranged-dirty.mjs` | Join-as-a-node, dirty per column, dirty per range              |
+| `rfc543-param-ins.mjs`    | Content-addressed vs params-as-Ins; selective Out invalidation |
 
-If #544 is withdrawn (see [PND-PROCSUB]), these should be salvaged into
-whatever package replaces it — they are the evidence base for every
-decision here.
+If the package is restructured or withdrawn (see [PND-PROCSUB]), these
+should move with it — they are the evidence base for every decision here.
 
-**One caveat that shaped several findings:** measuring two heap
-representations inside one process gave GC-dominated, sometimes negative
-deltas. Memory numbers below were taken one representation per process,
-with `--expose-gc` and an explicit `global.gc()` before reading
-`memoryUsage()`.
+**Two measurement traps, both hit while producing these numbers**, worth
+knowing before trusting or extending them:
+
+1. Comparing two representations inside one process gives GC-dominated,
+   sometimes negative deltas. Run one configuration per process, with
+   `--expose-gc` and an explicit `global.gc()` before reading
+   `memoryUsage()`.
+2. `Float64Array` backing stores are **not** in `heapUsed` — they land in
+   `arrayBuffers` / `external`. Reading heap alone once reported an
+   identical 21 MB for two configurations that actually differed by
+   300 MB. Report `heapUsed` when the question is GC pressure and
+   `arrayBuffers` / `rss` when it is footprint; they answer different
+   questions and the gap between them is the whole point of
+   [PND-PROCCOL].
 
 ---
 
 ## Tasks
 
-### [PND-PROCEVICT] — Node eviction. Blocking for any interactive consumer.
+### [PND-PROCIDENT] — Node identity and lifetime: content-addressed, or params-as-Ins?
 
-**Nothing evicts, and content addressing guarantees an unbounded key
-space.** A user dragging a study's `period` from 21 to 40 creates 20 new
-specs, therefore 20 new permanently-cached nodes. Measured at 500k rows:
-28 nodes, **+457 MB** heap after gc. A parameter sweep across a realistic
-range OOMs a long-lived server, which is exactly the shape of the
-financial app and the MCP server the RFC targets.
+_Supersedes an earlier "add an LRU eviction policy" framing, which
+misdiagnosed the cause. Recorded here rather than silently rewritten,
+because the wrong diagnosis is instructive._
 
-The RFC's A.7 gives hosts "graph lifecycle" — one graph per binding — but
-there is no story for node lifetime _within_ a binding.
+**The original observation:** a user dragging a study's `period` through
+20 positions left 20 permanently-cached nodes and +457 MB. **The wrong
+conclusion:** the graph needs eviction.
 
-**Shape:** LRU over nodes with no live selector, bounded by count or by
-retained bytes. Wants a `graph.release(id)` / `graph.gc()` surface, and a
-decision on whether a node referenced by a persisted plan is pinned.
-Interacts with [PND-PROCCOL]: bytes-based bounds are only meaningful once
-node values have a knowable size, which packed columns have and JS arrays
-do not.
+**What review established.** That leak was not the graph. It was the plan
+layer's global `specId -> node` map, in which every slider position is a
+new id and nothing is ever dropped. The engine itself already localizes
+caching to a node's products — `Outlet` holds its own `#value` /
+`#version` and `produce()` bumps only on change (`src/port.ts`). There is
+no global store in the engine to leak; the prototype added one.
 
-**Done when:** a 200-position parameter sweep at 1M rows holds steady-state
-memory, with a documented policy for what survives.
+**The real question is how identity is assigned**, and the two answers
+have different lifetimes:
+
+- **Content-addressed** (params are part of the id). Accumulates by
+  design: a later question repeating an earlier one _should_ hit cache.
+  Correct for the MCP shape, where questions pile up and overlap.
+- **Params-as-Ins** (a param arrives through an inlet; changing it
+  invalidates the node's Outs rather than minting a node). Bounded by the
+  plan's shape rather than the history of values passed through. Correct
+  for the interactive shape, where a superseded slider position is
+  worthless.
+
+Measured, 200-position sweep at 200k rows, one mode per process:
+
+|                   | nodes | heap  | arrayBuffers | rss    |
+| ----------------- | ----- | ----- | ------------ | ------ |
+| content-addressed | 200   | 21 MB | 310 MB       | 452 MB |
+| params-as-Ins     | 1     | 21 MB | 6 MB         | 234 MB |
+
+~50× less buffer memory, and **flat in sweep length instead of linear**.
+
+These are the RFC's own two consumers wanting opposite policies, so this
+is a design decision rather than a bug to fix. Options: pick per binding
+(`bind(..., { identity: 'addressed' | 'positional' })`), or make params
+Ins universally and let the _plan_ declare how many instances of an op it
+wants — a plan with `sma(20)` and `sma(50)` has two entries and therefore
+two nodes either way, while a slider passing through 30 values has one.
+
+**Measurement trap, for whoever picks this up:** `Float64Array` backing
+stores are not in `heapUsed`. Reading heap alone reported 21 MB for both
+modes and hid a 300 MB difference. Use `arrayBuffers` / `rss`, one
+configuration per process. This gets sharper under [PND-PROCCOL].
+
+**Done when:** identity and node lifetime are a stated, tested policy, and
+a 200-position sweep at 1M rows holds steady-state memory under whichever
+policy the interactive consumer gets.
+
+---
+
+### [PND-PROCSEL] — Selective Out invalidation: document it, and give ops the hook
+
+**Already works on the engine as it stands**, which was not expected and
+should be written down before someone "fixes" it away.
+
+A node may decide, per-Out, what a change touched. Worked example: a
+bollinger-shaped node where `middle` depends only on `period`, and
+`upper`/`lower` on `period` + `stdDev`. Changing `stdDev` alone:
+
+    middle version 1 -> 1   (unchanged — its consumer did not rerun)
+    upper  version 1 -> 2   (changed — its consumer reran)
+
+The mechanism is that the op returns the **same array instance** for
+`middle` when `period` did not move, so `produce()`'s `Object.is` check
+declines the version bump and everything downstream of that Out skips.
+
+**This sharpens the RFC's v3 correction.** "The version-stamp cutoff
+cannot fire" holds for whole-series values compared by identity. Per-Out,
+with a cooperating op, the cutoff **is** the mechanism that expresses
+selective invalidation — so it should be described that way rather than
+written off at this layer.
+
+**Shape:** the registry should let an op declare which params each output
+depends on, so the plan layer can do this for the corpus instead of every
+op hand-rolling an instance-reuse cache. `outputs: [{ id: 'Middle',
+dependsOn: ['period'] }, …]` is enough to generate it. Composes with
+[PND-PROCJOIN]'s per-column dirty, which is the same idea one level up.
+
+**Done when:** the corpus's multi-output studies (bollinger, envelope)
+invalidate per-output, driven by declaration rather than by hand.
 
 ---
 
@@ -76,10 +150,17 @@ Measured, 20 columns × 500k rows, one representation per process:
 ~2× smaller overall and **~50× less GC-managed heap** — the number that
 shows up as pause time in an interactive UI.
 
-This task is a force multiplier: it is a prerequisite for byte-bounded
-eviction ([PND-PROCEVICT]) and for the ranged-recompute ceiling
-([PND-PROCRANGE], where array reallocation, not compute, was 99% of the
-remaining per-tick cost).
+This task is a force multiplier: it is a prerequisite for any
+bytes-bounded cache policy ([PND-PROCIDENT] — a bound is only meaningful
+once a node value has a knowable size) and for the ranged-recompute
+ceiling ([PND-PROCRANGE], where array reallocation, not compute, was 99%
+of the remaining per-tick cost).
+
+**Caveat on the numbers above:** they are `heapUsed`, which is the right
+counter for GC pressure but not for total footprint — a packed
+`Float64Array` moves its bytes to `arrayBuffers`/`external` rather than
+eliminating them (rss 237 MB → 123 MB, roughly halved, not 50×). Both
+framings matter and neither alone is honest.
 
 **Done when:** node values are a pond column type end to end, with no
 `Array`-of-`undefined` on the hot path.
@@ -299,17 +380,29 @@ benefit at all — which is why an earlier single-binding benchmark found
 none and wrongly concluded the substrate did not earn its keep. The graph
 earns its keep in proportion to how many sources share a cache.
 
-Three of the engine's headline properties are unavailable at this layer
-and should not be cited in its favour: the version-stamp **cutoff** cannot
-fire (every op returns a fresh series), connect-time **cycle rejection**
-is unreachable (a content-addressed spec cannot be cyclic), and **typed
-ports** are erased (params arrive as JSON). What remains — node identity,
-a memoized value, a validity token, dirty propagation — is the small core
-the plan layer actually needs.
+Two of the engine's headline properties really are unavailable here and
+should not be cited in its favour: connect-time **cycle rejection** is
+unreachable (a content-addressed spec cannot be cyclic, since an id
+containing itself is unconstructible), and **typed ports** are erased
+(params arrive as `JsonValue` off a wire).
 
-**Decide:** publish vs internal module, and whether #544 merges, is
-rebased into the plan package, or is closed with its scripts and tests
-salvaged.
+A third — the **version-stamp cutoff** — was listed alongside them, and
+that was too strong. It cannot fire for whole-series values compared by
+identity, which is what the RFC's v3 correction says and is right. But
+per-Out, with an op that returns the same instance for an output a change
+did not touch, the cutoff is exactly the mechanism that expresses
+selective invalidation, and it is demonstrated working
+([PND-PROCSEL]). So the small core is node identity, per-Out memoized
+values, a validity token, dirty propagation, **and a working per-Out
+change test** — more than the original framing credited.
+
+Note also that the +457 MB once cited against the graph was a plan-layer
+artifact, not an engine property — see [PND-PROCIDENT].
+
+**Decide:** publish vs internal module. #544 has since merged as a
+**WIP, `private: true`, unpublished** package, explicitly to iterate in
+the open rather than to ship; this ticket still owns whether it stays a
+package or relocates under the plan layer as `src/engine/`.
 
 ---
 

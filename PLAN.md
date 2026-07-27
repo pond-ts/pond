@@ -226,16 +226,28 @@ caller. Design: [process.md](docs/rfcs/process.md) (RFC — context, not a
 commitment). Task detail, and the measurements each task is sized against:
 [PND_PROCESS_PLAN.md](docs/plans/PND_PROCESS_PLAN.md).
 
-Ordering note: `PROCEVICT` blocks any interactive consumer, `PROCCOL` is a
-force multiplier for both `PROCEVICT` and `PROCRANGE`, and `PROCRANGE` is
-blocked by `PROCKERN` in `@pond-ts/financial`.
+Ordering note: `PROCIDENT` blocks any interactive consumer, `PROCCOL` is a
+force multiplier for both `PROCIDENT` and `PROCRANGE`, and `PROCRANGE` is
+blocked by `PROCKERN` in `@pond-ts/financial`. The engine itself landed in
+[#544](https://github.com/pond-ts/pond/pull/544) as a **WIP, unpublished**
+package (`private: true`) so this can be worked in the open; `PROCSUB` owns
+whether it stays one.
 
-- **[PND-PROCEVICT]** — Nothing evicts, and content addressing guarantees an
-  unbounded key space: a user dragging one study's `period` through 20
-  positions left 20 permanently-cached nodes and +457 MB at 500k rows. A.7
-  gives hosts graph lifecycle but says nothing about node lifetime within a
-  binding. Needs an LRU over nodes with no live selector, and a decision on
-  whether a node named by a persisted plan is pinned. **Blocking.**
+- **[PND-PROCIDENT]** — Decide how node identity is assigned, which decides
+  cache lifetime. Content-addressed params accumulate by design (right for the
+  MCP shape, where a repeated question should hit cache); params-as-Ins are
+  bounded by the plan's shape (right for a UI, where a superseded slider
+  position is worthless). Measured over a 200-position sweep: 200 nodes /
+  310 MB of buffers versus 1 node / 6 MB — flat rather than linear in sweep
+  length. The RFC's two consumers want opposite policies, so this is a design
+  call, not a leak to patch; an earlier framing of this ticket blamed the graph
+  for what was a plan-layer map. **Blocking for any interactive consumer.**
+- **[PND-PROCSEL]** — Selective per-Out invalidation already works: a
+  bollinger-shaped node changing `stdDev` leaves `middle`'s version untouched
+  and its consumer idle, because the op hands back the same instance. Document
+  it, and let the registry declare which params each output depends on so the
+  corpus gets it by declaration rather than by hand. Sharpens the RFC's "the
+  cutoff cannot fire" — true for whole-series identity compares, false per-Out.
 - **[PND-PROCCOL]** — Node values should be pond columns, not boxed JS arrays
   with `undefined` holes. Measured at 20 columns × 500k rows: 160 MB heap
   versus 3 MB packed (~50× less GC-managed heap, ~2× smaller overall).
