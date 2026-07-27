@@ -300,6 +300,45 @@ whether it stays one.
   event type. Narrow the overload, or give the incremental operators their own
   named contract. Touches a public type — needs sign-off.
 
+### Process demo — composer / request / results
+
+A three-panel web app where a prompt becomes a process plan, the plan resolves
+against a bound dataset, and the result is charted — clicking a node in the
+pipeline shows that node's output. It is a demo, but its primary job is to
+**decide the library's shape**: six open tickets in the process section rest on
+questions no argument settles, and each milestone here answers one. Plan:
+[PND_PROCESS_DEMO_PLAN.md](docs/plans/PND_PROCESS_DEMO_PLAN.md).
+
+Pinned before any code: the bound graph lives **server-side and outlives
+requests** (a per-request worker starts cold, and a cold graph is a fold with
+extra steps — it would demo none of its own architecture); `as` names an output
+rather than windowing it; `registry.toJsonSchema()` is the agent's contract, not
+a hand-written prompt.
+
+- **[PND-DEMOM0]** — The plan layer, headless: `bind`, registry, `specId`,
+  `run`, `explain`, typed and tested. Decides [PND-PROCSUB] (does anything
+  outside the plan layer still import the engine?) and [PND-PROCIDENT] (`run()`
+  cannot be written without choosing how a param is identified).
+- **[PND-DEMOM1]** — Node server holding `Map<datasetId, BoundGraph>`, one
+  seeded dataset, `POST /run`, still curl-only. Response carries **per-node
+  computed-vs-cached and a duration** — the architecture is invisible without
+  it. Decides [PND-PROCTERM].
+- **[PND-DEMOM2]** — Three panels, `raw` tabs only; agent composes plans from
+  the registry schema. Decides [PND-PROCREG]: is the projection enough to
+  compose valid plans unaided, and can the agent self-correct from `skipped`
+  reasons?
+- **[PND-DEMOM3]** — Results charts via `@pond-ts/charts`, chosen by key kind
+  (time → line, interval → bar, multi-output → band). Decides the remainder of
+  [PND-PROCCOL]: assembled series vs per-column arrays into a layer. May
+  re-surface [PND-LIVELYR].
+- **[PND-DEMOM4]** — Pipeline graph with clickable nodes (React Flow +
+  dagre), labelled by `explain` and badged cached/Nms; clicking shows that
+  node's output. The payoff, and nearly free — every intermediate is already a
+  named, cached, addressable value.
+- **[PND-DEMOM5]** — Conversational refinement ("smoother", "try 50"). Decides
+  [PND-PROCCACHE] and re-decides [PND-PROCIDENT] empirically: does "back to how
+  it was" return instantly?
+
 ### Ecosystem (Phase 6)
 
 Adapters and deployment-shape packages, after the streaming milestones they
