@@ -12,6 +12,15 @@
  */
 
 import { createServer } from 'node:http';
+
+// Load the demo's own .env before anything reads process.env. Node 22
+// has this built in, so no dependency — and the key reaches only this
+// process rather than the whole shell. `.env` is gitignored.
+try {
+  process.loadEnvFile(new URL('../.env', import.meta.url));
+} catch {
+  // No .env is the normal case; the composer falls back and says so.
+}
 import { createHost, toWire, type Envelope } from '@pond-ts/process';
 import { composerFromEnv, type Composer, type Turn } from './compose.js';
 import { barUnits, datasetSpecs, makeBars } from './data.js';
@@ -33,7 +42,7 @@ for (const spec of datasetSpecs) {
   );
 }
 
-const planSchema = registry.toJsonSchema({ base: '#/properties/process' });
+const planSchema = registry.toJsonSchema({ defs: 'spec', root: false });
 
 function composerContext() {
   return {

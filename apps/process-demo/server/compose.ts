@@ -14,6 +14,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { openaiComposer } from './compose-openai.js';
 import type {
   DatasetInfo,
   Envelope,
@@ -38,7 +39,7 @@ export interface Composed {
   readonly envelope: Envelope;
   /** The model's one-line account of what it built, for the composer panel. */
   readonly note?: string;
-  readonly source: 'anthropic' | 'scripted';
+  readonly source: 'anthropic' | 'openai' | 'scripted';
   readonly model?: string;
   readonly ms: number;
   readonly usage?: Readonly<Record<string, number>>;
@@ -47,7 +48,7 @@ export interface Composed {
 }
 
 export interface Composer {
-  readonly kind: 'anthropic' | 'scripted';
+  readonly kind: 'anthropic' | 'openai' | 'scripted';
   readonly why: string;
   compose(
     prompt: string,
@@ -61,21 +62,25 @@ export interface Composer {
 /**
  * The envelope as a tool schema.
  *
- * `process` is the registry's own projection, dropped in at
- * `#/properties/process` — which is why `toJsonSchema` takes a `base`.
- * A `$ref` resolves against the document root, so the projection's
- * recursive `#/items` would otherwise dangle here, silently.
+ * `process` is the registry's own projection with its `$defs` **hoisted
+ * to this document's root** — the only arrangement a tool API accepts,
+ * since a `$ref` may point at top-level definitions and nothing else.
  *
- * `select.on` refs *into* the plan's item schema, so a selector names a
+ * `select.on` reuses the very same `#/$defs/spec`, so a selector names a
  * spec inline. That is deliberate: a caller cannot compute a `specId`,
  * and asking it to invent one would be asking it to reimplement the
- * library's hashing rules.
+ * library's hashing rules. It is also the recursion paying off twice
+ * from a single definition.
  */
 export function requestSchema(ctx: ComposerContext): Record<string, unknown> {
+  const { $defs, ...plan } = ctx.planSchema as {
+    $defs: Record<string, unknown>;
+  } & Record<string, unknown>;
   return {
     type: 'object',
     additionalProperties: false,
     required: ['from', 'as', 'process', 'select'],
+    $defs,
     properties: {
       from: {
         type: 'string',
@@ -87,7 +92,7 @@ export function requestSchema(ctx: ComposerContext): Record<string, unknown> {
         description:
           'A short snake_case name for this result, so a later prompt can refer back to it. A name, not a time window.',
       },
-      process: ctx.planSchema,
+      process: plan,
       select: {
         type: 'array',
         minItems: 1,
@@ -98,12 +103,9 @@ export function requestSchema(ctx: ComposerContext): Record<string, unknown> {
           additionalProperties: false,
           required: ['on'],
           properties: {
-            on: {
-              $ref: '#/properties/process/items',
-              description:
-                'The spec to read, written out inline exactly as it appears in `process`.',
-            },
+            on: { $ref: '#/$defs/spec' },
             columns: {
+              type: 'boolean',
               const: true,
               description:
                 'Ask for the full column. Use sparingly: it returns every row.',
@@ -163,7 +165,7 @@ export function opTable(ctx: ComposerContext): string {
   ].join('\n');
 }
 
-const SYSTEM = `You turn a plain-English request about a price series into a process plan.
+export const SYSTEM = `You turn a plain-English request about a price series into a process plan.
 
 A plan is a DAG of specs. Each spec is { op, params, inputs }, and an input
 is either a raw column name or another spec written inline — that nesting is
@@ -184,7 +186,7 @@ Emit exactly one call to \`emit_request\`. Rules that are not in the schema:
 export function scriptedComposer(): Composer {
   return {
     kind: 'scripted',
-    why: 'No ANTHROPIC_API_KEY — falling back to a keyword matcher.',
+    why: 'No API key — falling back to a keyword matcher.',
     async compose(prompt, ctx) {
       const t0 = performance.now();
       const text = prompt.toLowerCase();
@@ -359,15 +361,42 @@ async function createWithFallbacks(
   return client.messages.create(params);
 }
 
-/** Picks a composer from the environment, without throwing when there is no key. */
+/**
+ * A key is present only if it is non-empty.
+ *
+ * `.env.example` ships `ANTHROPIC_API_KEY=` as a placeholder, and
+ * `loadEnvFile` faithfully sets it to `''` — which an `!== undefined`
+ * check reads as "present", silently routing to a provider with no
+ * credential. The same trap the Anthropic docs call out for a stale
+ * exported empty key; worth guarding rather than assuming.
+ */
+function key(name: string): string | undefined {
+  const value = process.env[name];
+  return value !== undefined && value.trim() !== '' ? value : undefined;
+}
+
+/**
+ * Picks a composer from the environment, without throwing when there is
+ * no key at all.
+ *
+ * Anthropic first when both are present — `compose.ts` is the reference
+ * implementation and the one the rest of the repo is written against.
+ */
 export function composerFromEnv(): Composer {
-  const configured = process.env['ANTHROPIC_API_KEY'];
-  const authToken = process.env['ANTHROPIC_AUTH_TOKEN'];
-  if (configured === undefined && authToken === undefined) {
-    return scriptedComposer();
+  if (
+    key('ANTHROPIC_API_KEY') !== undefined ||
+    key('ANTHROPIC_AUTH_TOKEN') !== undefined
+  ) {
+    return anthropicComposer({
+      model: process.env['PROCESS_DEMO_MODEL'] ?? 'claude-opus-5',
+      fallbacks: process.env['PROCESS_DEMO_NO_FALLBACKS'] !== '1',
+    });
   }
-  return anthropicComposer({
-    model: process.env['PROCESS_DEMO_MODEL'] ?? 'claude-opus-5',
-    fallbacks: process.env['PROCESS_DEMO_NO_FALLBACKS'] !== '1',
-  });
+  if (key('OPENAI_API_KEY') !== undefined) {
+    return openaiComposer({
+      model: process.env['PROCESS_DEMO_MODEL'] ?? 'gpt-5.4',
+      strict: process.env['PROCESS_DEMO_NO_STRICT'] !== '1',
+    });
+  }
+  return scriptedComposer();
 }

@@ -188,67 +188,96 @@ export class Registry {
   /**
    * The tool contract: ops as a discriminated union of param objects.
    *
-   * `inputs.items` is **recursive** (`$ref: '#/items'`), which is what
-   * lets a caller express *EMA of SMA of px* from the schema alone —
-   * without being taught a separate nesting concept. That recursion is
-   * the single most load-bearing line here.
+   * The spec schema is **recursive** — an input is a column name *or*
+   * another spec — which is what lets a caller express *EMA of SMA of
+   * px* from the schema alone, without being taught a nesting concept.
+   * That recursion is the single most load-bearing thing here, and
+   * getting it to travel took three attempts.
    *
-   * That recursion is also why the schema has to know where it lives. A
-   * `$ref` is resolved against the **document root**, so a projection
-   * emitted at `#` and then dropped inside a tool's `input_schema` has a
-   * dangling pointer — silently, since nothing validates the reference
-   * ([PND-PROCREG], found in M2). Pass `base` naming the pointer this
-   * subschema will sit at:
+   * It lives in `$defs`, and the recursion goes through
+   * `#/$defs/<name>`. That is the only shape that is actually portable:
+   *
+   * - `#/items`, the original, dangles the moment the projection is
+   *   nested inside a larger schema, because a `$ref` resolves against
+   *   the **document root**. Silently — nothing requires a `$ref` to
+   *   resolve ([PND-PROCREG], M2).
+   * - `#/properties/process/items`, a pointer *into* the host document,
+   *   fixes that and passes local validators — including OpenAI's own
+   *   `toStrictJsonSchema` — but the API rejects it: *"reference can
+   *   only point to definitions defined at the top level of the
+   *   schema"* ([PND-PROCSCHEMA], M5).
+   *
+   * So a caller embedding this must lift `$defs` to its own root, where
+   * `#/$defs/<name>` resolves from anywhere:
    *
    * ```ts
+   * const plan = registry.toJsonSchema({ defs: 'spec' });
+   * const { $defs, ...body } = plan;
    * const schema = {
    *   type: 'object',
-   *   properties: {
-   *     process: registry.toJsonSchema({ base: '#/properties/process' }),
-   *   },
+   *   $defs,                                  // hoisted to the root
+   *   properties: { process: body },
    * };
    * ```
    *
    * `$schema` is emitted only at the root — a nested subschema declaring
    * its own dialect is not what a caller means.
+   *
+   * Two more things learned by calling a real API rather than reading a
+   * spec, both cases where a **client-side** strict validator accepted
+   * what the server refused:
+   *
+   * - Unions are `anyOf`, not `oneOf`. Both branch sets here are
+   *   disjoint — the op union is discriminated by a `const`, and an
+   *   input is a string or an object, never both — so they are
+   *   equivalent in meaning, and `anyOf` is the one tool APIs accept
+   *   (*"'oneOf' is not permitted"*).
+   * - A `const` carries its `type` alongside. Redundant to a validator,
+   *   and required by the same API (*"schema must have a 'type' key"*).
    */
-  toJsonSchema(options: { base?: string } = {}): Record<string, unknown> {
-    const base = options.base ?? '#';
+  toJsonSchema(
+    options: { defs?: string; root?: boolean } = {},
+  ): Record<string, unknown> {
+    const name = options.defs ?? 'spec';
+    const ref = `#/$defs/${name}`;
     return {
-      ...(base === '#' && {
+      ...(options.root !== false && {
         $schema: 'https://json-schema.org/draft/2020-12/schema',
       }),
       title: 'Plan',
       type: 'array',
-      items: {
-        oneOf: [...this.#ops.values()].map((op) => ({
-          title: op.name,
-          description: op.summary,
-          type: 'object',
-          required: ['op', 'inputs'],
-          additionalProperties: false,
-          properties: {
-            op: { const: op.name },
-            inputs: {
-              type: 'array',
-              minItems: op.inputs.length,
-              maxItems: op.inputs.length,
-              items: {
-                oneOf: [{ type: 'string' }, { $ref: `${base}/items` }],
+      items: { $ref: ref },
+      $defs: {
+        [name]: {
+          anyOf: [...this.#ops.values()].map((op) => ({
+            title: op.name,
+            description: op.summary,
+            type: 'object',
+            required: ['op', 'inputs'],
+            additionalProperties: false,
+            properties: {
+              op: { type: 'string', const: op.name },
+              inputs: {
+                type: 'array',
+                minItems: op.inputs.length,
+                maxItems: op.inputs.length,
+                items: {
+                  anyOf: [{ type: 'string' }, { $ref: ref }],
+                },
+              },
+              params: {
+                type: 'object',
+                additionalProperties: false,
+                properties: Object.fromEntries(
+                  Object.entries(op.params).map(([k, d]) => [
+                    k,
+                    jsonSchemaForParam(d),
+                  ]),
+                ),
               },
             },
-            params: {
-              type: 'object',
-              additionalProperties: false,
-              properties: Object.fromEntries(
-                Object.entries(op.params).map(([k, d]) => [
-                  k,
-                  jsonSchemaForParam(d),
-                ]),
-              ),
-            },
-          },
-        })),
+          })),
+        },
       },
     };
   }

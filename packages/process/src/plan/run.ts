@@ -297,6 +297,17 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
     let id: string;
     try {
       id = refToId(registry, sel.on);
+      // An inline spec is a complete description of a computation, so
+      // resolve it whether or not the plan also lists it at top level.
+      // Requiring both was redundant bookkeeping that no schema could
+      // express — so it lived in prose, and a caller composing against
+      // the schema alone duly selected a spec it had not listed, and got
+      // a skip instead of an answer ([PND-PROCSCHEMA], M5).
+      if (typeof sel.on !== 'string' && graph.get(id) === undefined) {
+        const compiled = graph.compile(sel.on);
+        resolved.push({ id: compiled.id, spec: sel.on });
+        explainMap[id] = explain(registry, sel.on);
+      }
     } catch (e) {
       fail({ select: sel, reason: e instanceof Error ? e.message : String(e) });
       continue;
@@ -425,12 +436,17 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
   const facts: Fact[] = [];
   const keys = keysOf(graph.series);
   for (const { sel, id } of selectors) {
-    if ('columns' in sel && sel.columns === true) {
-      if (graph.get(id) === undefined) {
-        fail({ select: sel, reason: `'${id}' is not in this plan` });
-      }
+    const wantsColumns = 'columns' in sel && sel.columns === true;
+    if (wantsColumns && graph.get(id) === undefined) {
+      fail({ select: sel, reason: `'${id}' is not in this plan` });
       continue;
     }
+    // Not exclusive. A selector asking for both gets both — that is the
+    // legend-chip case [PND-PROCTERM] exists for, a fact riding
+    // alongside the columns it labels. Treating `columns` as a mode that
+    // suppressed the reduction silently dropped a fact the caller had
+    // plainly asked for, which is worse than refusing it.
+    if (!('reduce' in sel)) continue;
     const reduceSel = sel as ReduceSelect;
     try {
       const compiled = graph.get(id);

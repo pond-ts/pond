@@ -308,31 +308,40 @@ describe('registry as schema', () => {
 
   it('projects a recursive JSON Schema, which is what allows nesting', () => {
     const schema = registry.toJsonSchema() as {
-      items: {
-        oneOf: { title: string; properties: Record<string, unknown> }[];
+      items: { $ref: string };
+      $defs: {
+        spec: { anyOf: { title: string; properties: Record<string, any> }[] };
       };
     };
-    const smaSchema = schema.items.oneOf.find((o) => o.title === 'sma')!;
+    // The recursion lives in `$defs`, and `items` points at it.
+    expect(schema.items).toEqual({ $ref: '#/$defs/spec' });
+    const smaSchema = schema.$defs.spec.anyOf.find((o) => o.title === 'sma')!;
     const inputs = smaSchema.properties['inputs'] as {
-      items: { oneOf: unknown[] };
+      items: { anyOf: unknown[] };
     };
     // The single most load-bearing line: an input may be a column name OR
     // another spec, so a caller composes `ema(sma(px))` from the schema
     // alone rather than being taught a nesting concept.
-    expect(inputs.items.oneOf).toContainEqual({ $ref: '#/items' });
+    expect(inputs.items.anyOf).toContainEqual({ $ref: '#/$defs/spec' });
     expect(JSON.stringify(schema)).not.toContain('undefined');
   });
 
-  it('rebases the recursive ref so the projection can be embedded', () => {
-    // A `$ref` resolves against the *document root*. Dropping a schema
-    // emitted at `#` into a tool's `input_schema` therefore leaves
-    // `#/items` pointing at nothing — and nothing complains, which is
-    // how it survived until an agent had to compose against it (M2).
+  it('is embeddable, because the ref points at a top-level definition', () => {
+    // Three attempts to get this right, each failing differently:
+    //   `#/items`                     — dangles once nested (M2)
+    //   `#/properties/process/items`  — passes local validators, and the
+    //                                   API refuses it: "reference can
+    //                                   only point to definitions defined
+    //                                   at the top level" (M5)
+    //   `#/$defs/spec` + hoisted defs — travels.
+    const { $defs, ...body } = registry.toJsonSchema({
+      defs: 'spec',
+      root: false,
+    }) as { $defs: Record<string, unknown> } & Record<string, unknown>;
     const nested = {
       type: 'object',
-      properties: {
-        process: registry.toJsonSchema({ base: '#/properties/process' }),
-      },
+      $defs,
+      properties: { process: body },
     };
     const at = (doc: unknown, ptr: string): unknown =>
       ptr
@@ -342,16 +351,22 @@ describe('registry as schema', () => {
 
     const refs = [...JSON.stringify(nested).matchAll(/"\$ref":"([^"]+)"/g)];
     expect(refs.length).toBeGreaterThan(0);
-    for (const [, ptr] of refs) expect(at(nested, ptr!)).toBeDefined();
+    for (const [, ptr] of refs) {
+      // Resolvable, and pointing into `$defs` rather than the body.
+      expect(ptr!.startsWith('#/$defs/')).toBe(true);
+      expect(at(nested, ptr!)).toBeDefined();
+    }
     // A subschema does not get to declare its own dialect.
-    expect(nested.properties.process['$schema']).toBeUndefined();
+    expect(body['$schema']).toBeUndefined();
   });
 
   it('projects param constraints the validator actually enforces', () => {
     const schema = registry.toJsonSchema() as {
-      items: { oneOf: { title: string; properties: Record<string, any> }[] };
+      $defs: {
+        spec: { anyOf: { title: string; properties: Record<string, any> }[] };
+      };
     };
-    const bb = schema.items.oneOf.find((o) => o.title === 'bollinger')!;
+    const bb = schema.$defs.spec.anyOf.find((o) => o.title === 'bollinger')!;
     expect(bb.properties['params'].properties.stdDev).toEqual({
       type: 'number',
       default: 2,

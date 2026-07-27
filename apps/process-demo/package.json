@@ -25,6 +25,7 @@
     "@pond-ts/react": "file:../../packages/react",
     "@xyflow/react": "^12.11.2",
     "dagre": "^0.8.5",
+    "openai": "^6.49.0",
     "pond-ts": "file:../../packages/core",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
