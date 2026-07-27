@@ -15,13 +15,13 @@ before writing code against them.
   and `pathname:///generated-api/<pkg>/` (generated typedoc). This file is the
   agent-facing complement, not a replacement.
 
-| Package              | npm name             | Entry points                                     | Docs hub                  |
-| -------------------- | -------------------- | ------------------------------------------------ | ------------------------- |
-| `packages/core`      | `pond-ts`            | `.` and `./types` (zero-runtime schema contract) | `website/docs/pond-ts/`   |
-| `packages/react`     | `@pond-ts/react`     | `.`                                              | `website/docs/react/`     |
-| `packages/charts`    | `@pond-ts/charts`    | `.`                                              | `website/docs/charts/`    |
-| `packages/financial` | `@pond-ts/financial` | `.` and `./fluent` (prototype augmentation)      | `website/docs/financial/` |
-| `packages/fit`       | `@pond-ts/fit`       | `.`                                              | `website/docs/fit/`       |
+| Package              | npm name             | Entry points                                     | Docs hub                     |
+| -------------------- | -------------------- | ------------------------------------------------ | ---------------------------- |
+| `packages/core`      | `pond-ts`            | `.` and `./types` (zero-runtime schema contract) | `website/docs/pond-ts/`      |
+| `packages/react`     | `@pond-ts/react`     | `.`                                              | `website/docs/react/`        |
+| `packages/charts`    | `@pond-ts/charts`    | `.`                                              | `website/docs/charts/`       |
+| `packages/financial` | `@pond-ts/financial` | `.` and `./fluent` (prototype augmentation)      | `website/docs/financial/`    |
+| `packages/fit`       | `@pond-ts/fit`       | `.`                                              | `website/docs/fit/`          |
 | `packages/process`   | `@pond-ts/process`   | `.` — **WIP, `private: true`, not published**    | `packages/process/README.md` |
 
 ---
@@ -354,15 +354,16 @@ Typed dataflow graphs for pipelines whose **shape is data** (runtime-assembled,
 user-edited, one computation fanned out to several consumers). Chaining stays
 the default for pipelines known at authoring time — see the package README.
 
-| Group            | Exports                                                                                                                                       | Source                              |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| Ports            | `Inlet`, `Outlet` (typed fields on `node.in` / `node.out`; `get()`, `peek()`, `version`, `connect`, `disconnect`)                              | `packages/process/src/port.ts`      |
-| Nodes            | `Node` (`in`, `out`, `dirty`, `error`, `invalidate()`), `defineNode` (reusable multi-output node type), `derive` (single-output, wired inline) | `packages/process/src/node.ts`      |
-| Port declaration | `port<T>({ equals, defaultValue })`; types `PortSpec`, `PortSpecMap`, `PortValue`, `PortValues`                                                | `packages/process/src/types.ts`     |
-| Sources          | `source<T>()` → `SourceNode` (`set()`), `fromLive(liveSource)` → `LiveSourceNode` (`dispose()`); `GraphSource` (bind contract — looser than core's `LiveSource`, accepts `LiveAggregation`), `SnapshotSource`, `NoInputs` | `packages/process/src/source.ts` |
-| Graph view       | `Graph` (`Graph.from(...roots)`, `nodes`, `order()`, `edges()`, `toJSON()`); types `GraphEdge`, `GraphJson`, `GraphNodeJson`, `GraphEdgeJson`  | `packages/process/src/graph.ts`     |
-| Errors           | `ProcessError` (base), `CycleError`, `UnconnectedInputError`, `MissingOutputError`, `UnsetSourceError`                                         | `packages/process/src/errors.ts`    |
-| Node type helpers | `NodeSpec`, `NodeFactory`, `InletsFor`, `OutletsFor`, `OutletValue`, `SpecsForOutlets`, `DerivedOutput`                                       | `packages/process/src/node.ts`      |
+| Group             | Exports                                                                                                                                                                                                                   | Source                           |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| Ports             | `Inlet`, `Outlet` (typed fields on `node.in` / `node.out`; `get()`, `peek()`, `version`, `connect`, `disconnect`)                                                                                                         | `packages/process/src/port.ts`   |
+| Nodes             | `Node` (`in`, `out`, `dirty`, `error`, `invalidate()`), `defineNode` (reusable multi-output node type), `derive` (single-output, wired inline)                                                                            | `packages/process/src/node.ts`   |
+| Port declaration  | `port<T>({ equals, defaultValue })`; types `PortSpec`, `PortSpecMap`, `PortValue`, `PortValues`                                                                                                                           | `packages/process/src/types.ts`  |
+| Sources           | `source<T>()` → `SourceNode` (`set()`), `fromLive(liveSource)` → `LiveSourceNode` (`dispose()`); `GraphSource` (bind contract — looser than core's `LiveSource`, accepts `LiveAggregation`), `SnapshotSource`, `NoInputs` | `packages/process/src/source.ts` |
+| Graph view        | `Graph` (`Graph.from(...roots)`, `nodes`, `order()`, `edges()`, `toJSON()`); types `GraphEdge`, `GraphJson`, `GraphNodeJson`, `GraphEdgeJson`                                                                             | `packages/process/src/graph.ts`  |
+| Column values     | `packColumn` (values → packed `Float64Column`, NaN = missing), `columnBytes` (retained size, for a byte budget), `appendColumn` (column → series; boxing-free when gapless)                                               | `packages/process/src/column.ts` |
+| Errors            | `ProcessError` (base), `CycleError`, `UnconnectedInputError`, `MissingOutputError`, `UnsetSourceError`                                                                                                                    | `packages/process/src/errors.ts` |
+| Node type helpers | `NodeSpec`, `NodeFactory`, `InletsFor`, `OutletsFor`, `OutletValue`, `SpecsForOutlets`, `DerivedOutput`                                                                                                                   | `packages/process/src/node.ts`   |
 
 Note: this package's `npm test` includes a `test:dts` step that typechecks the
 **emitted** `dist/*.d.ts` from a consumer's perspective (`test-dts/`,
@@ -392,7 +393,7 @@ deleted builds green and breaks only downstream. If you mark something
   pull, so per-event incremental work stays in the live layer and the graph
   composes batch transforms over snapshots. The graph has **no partial
   invalidation** — a dirty node recomputes from a whole snapshot — so for
-  windowed work bind the *aggregation* (`fromLive(live.aggregate(...))`),
+  windowed work bind the _aggregation_ (`fromLive(live.aggregate(...))`),
   which materializes bucket count rather than event count (235x per pull on
   a 50k buffer). Tradeoff: a live aggregation exposes closed buckets only,
   so the in-progress bucket is invisible until it closes.
