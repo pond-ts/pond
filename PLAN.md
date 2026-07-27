@@ -217,6 +217,81 @@ Plan: [PND_CORE_PLAN.md](docs/plans/PND_CORE_PLAN.md).
 - **[PND-REACT]** — React remainders: `dt = 0` docs, dashboard-guide fixes,
   `useSyncExternalStore` migration.
 
+### `@pond-ts/process` — declarative processing graph
+
+A package that turns "compute these derived series" from imperative calls into
+a declarative graph: plans arrive as data, a registry is the schema, identity is
+content-addressed, and one request serves both a renderer and an LLM tool
+caller. Design: [process.md](docs/rfcs/process.md) (RFC — context, not a
+commitment). Task detail, and the measurements each task is sized against:
+[PND_PROCESS_PLAN.md](docs/plans/PND_PROCESS_PLAN.md).
+
+Ordering note: `PROCIDENT` blocks any interactive consumer, `PROCCOL` is a
+force multiplier for both `PROCIDENT` and `PROCRANGE`, and `PROCRANGE` is
+blocked by `PROCKERN` in `@pond-ts/financial`. The engine itself landed in
+[#544](https://github.com/pond-ts/pond/pull/544) as a **WIP, unpublished**
+package (`private: true`) so this can be worked in the open; `PROCSUB` owns
+whether it stays one.
+
+- **[PND-PROCIDENT]** — Decide how node identity is assigned, which decides
+  cache lifetime. Content-addressed params accumulate by design (right for the
+  MCP shape, where a repeated question should hit cache); params-as-Ins are
+  bounded by the plan's shape (right for a UI, where a superseded slider
+  position is worthless). Measured over a 200-position sweep: 200 nodes /
+  310 MB of buffers versus 1 node / 6 MB — flat rather than linear in sweep
+  length. The RFC's two consumers want opposite policies, so this is a design
+  call, not a leak to patch; an earlier framing of this ticket blamed the graph
+  for what was a plan-layer map. **Blocking for any interactive consumer.**
+- **[PND-PROCSEL]** — Selective per-Out invalidation already works: a
+  bollinger-shaped node changing `stdDev` leaves `middle`'s version untouched
+  and its consumer idle, because the op hands back the same instance. Document
+  it, and let the registry declare which params each output depends on so the
+  corpus gets it by declaration rather than by hand. Sharpens the RFC's "the
+  cutoff cannot fire" — true for whole-series identity compares, false per-Out.
+- **[PND-PROCCOL]** — Node values should be pond columns, not boxed JS arrays
+  with `undefined` holes. Measured at 20 columns × 500k rows: 160 MB heap
+  versus 3 MB packed (~50× less GC-managed heap, ~2× smaller overall).
+  Prerequisite for byte-bounded eviction and for the ranged-recompute ceiling.
+- **[PND-PROCTERM]** — Assembly into a `TimeSeries` should be requested, not
+  assumed. Reductions read node values directly (52× on an agent session;
+  441× once facts memoize on `node.out.value.version`), and a renderer pulls
+  per-study arrays. Sharp edge: the terminal must resolve the closure of every
+  id a selector mentions, including `crossings`' `against` — assembling only
+  the column-selectors yields a fact with no value rather than an error.
+- **[PND-PROCJOIN]** — Make the join a node: n series in, one aligned column
+  set out, alignment policy in the id (inner vs as-of changes the answer). This
+  is what lets a cross-source spec exist at all — separate graphs cannot hold
+  one, and hand-combining misaligned instruments silently pairs different
+  dates. Needs no engine change; `Graph` has no per-graph boundary today.
+- **[PND-PROCHIST]** — `requiredHistory(plan)`. The hot leading edge costs
+  765 ms/tick over 500k rows and 5.4 ms/tick over a 5,000-row tail, and the
+  registry already knows every op's lookback — so the safe window is derivable
+  rather than a consumer guess.
+- **[PND-PROCRANGE]** — Track dirty state per range (and per column, via the
+  join). 26× measured with identical results, and ~7000× once node values stop
+  reallocating. Requires `markDirty()` to carry a payload and makes a node's
+  `compute` an incremental update over its previous output rather than a pure
+  function of its inputs — weigh that against "transforms are views or
+  accumulators" rather than slipping it in. **Blocked by [PND-PROCKERN].**
+- **[PND-PROCKERN]** — Range-aware kernel entry point in `@pond-ts/financial`.
+  The kernels are whole-series today, so no corpus study can fill a slice and
+  none of `PROCRANGE`'s speedup is reachable. Worth doing on its own merits —
+  it removes a full-array allocation per study call.
+- **[PND-PROCREG]** — Plan rehydration across processes. Ids round-trip, a
+  compiled graph does not; persisted views recompile from the stored plan.
+  Deliberately no `fromJSON` yet. Two verified properties must become stated
+  requirements: `specId` is invariant under param key order, and an omitted
+  param collides with its explicit default.
+- **[PND-PROCSUB]** — Decide the substrate and packaging: the RFC concludes one
+  package with the engine internal, while [#544](https://github.com/pond-ts/pond/pull/544)
+  proposes publishing it. Evidence now favours keeping the graph (1.34–1.40× on
+  MCP flurries at 1M rows; 1/N invalidation at N sources) with the honest
+  caveat that the advantage is zero at a single source.
+- **[PND-LIVESRC]** — Core-side: `LiveAggregation` does not satisfy
+  `LiveSource<S>`, because its `on('event')` overload widens the listener's
+  event type. Narrow the overload, or give the incremental operators their own
+  named contract. Touches a public type — needs sign-off.
+
 ### Ecosystem (Phase 6)
 
 Adapters and deployment-shape packages, after the streaming milestones they
