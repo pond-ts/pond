@@ -1,4 +1,45 @@
+import type { Float64Column } from '../columnar/index.js';
 import type { ReducerDef } from './types.js';
+
+/**
+ * Counts the defined (and, on the guarded path, finite) cells of
+ * `col[start, end)`.
+ *
+ * **Deliberately not shared with `reduceColumn`.** The whole-column form
+ * answers the bitmap case in O(1) from `validity.definedCount`, which is
+ * cached at bitmap construction. A sub-range has no such cache and must
+ * popcount via `countInRange` — still far cheaper than materialising a
+ * slice (whose `PackedValidityBitmap` constructor popcounts *and* copies
+ * the bits), but genuinely a different algorithm. Collapsing the two
+ * would have turned `Float64Column.count()` from O(1) into O(n/8).
+ */
+function countRange(col: Float64Column, start: number, end: number): number {
+  const values = col._values;
+  const validity = col.validity;
+  // Fast path: every defined cell is finite, so "defined" and "defined
+  // AND finite" coincide and the popcount is exact.
+  if (col.allFinite) {
+    return validity === undefined
+      ? end - start
+      : validity.countInRange(start, end);
+  }
+  // Guarded path: walk — the non-finite policy excludes non-finite cells,
+  // which a popcount would count as present.
+  let n = 0;
+  if (validity === undefined) {
+    for (let i = start; i < end; i += 1) {
+      if (Number.isFinite(values[i]!)) n += 1;
+    }
+    return n;
+  }
+  const bits = validity.bits;
+  for (let i = start; i < end; i += 1) {
+    if ((bits[i >> 3]! & (1 << (i & 7))) !== 0 && Number.isFinite(values[i]!)) {
+      n += 1;
+    }
+  }
+  return n;
+}
 
 /**
  * Counts non-null values for the source column.
@@ -25,6 +66,7 @@ export const count: ReducerDef = {
   reduce(defined) {
     return defined.length;
   },
+  reduceColumnRange: countRange,
   reduceColumn(col) {
     const values = col._values;
     const validity = col.validity;

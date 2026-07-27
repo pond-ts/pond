@@ -197,13 +197,6 @@ consumer signal. Plan:
   finite guard for `allFinite: false` reductions. Acceptance benchmarks
   already exist in `spikes/columnar-wasm/bench/controls.mjs`; each control is
   checked against pond-ts's answer before it is timed.
-- **[PND-AGGALLOC]** — `tryAggregateColumnarStore` allocates a
-  `Float64Column` per bucket **per column** (`sliceByRange(start, scan)`) —
-  400k throwaway instances per `aggregate` call at B=100k, C=4. Range-scoped
-  reducers (`(col, start, end)` alongside `reduceColumn`) allocate nothing and
-  are bit-identical: measured **1.9–4.9×** on the aggregate kernel and
-  **1.6–1.7×** on the whole call, biggest at narrow buckets. Verified against
-  pond-ts's output series in `spikes/columnar-wasm/bench/aggregate.mjs`.
 - **[PND-WCNAN]** — `withColumn` NaN-canonical `Float64Array` intake
   (dashboard A/B friction, 2026-07-21): `withColumn` rejects NaN today, so a
   consumer deriving gated columns boxes into `(number | undefined)[]` — the

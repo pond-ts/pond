@@ -95,6 +95,42 @@ export type ReducerDef = {
   reduceColumn?(col: Float64Column): ColumnValue | undefined;
 
   /**
+   * **Range-scoped counterpart to `reduceColumn` — [PND-AGGALLOC].**
+   * Reduces the half-open index range `[start, end)` of `col` and
+   * returns exactly what `reduceColumn(col.sliceByRange(start, end))`
+   * would, without materialising the slice.
+   *
+   * The bucketed callers (`aggregate`) reduce many small ranges of one
+   * column. Reaching them via `sliceByRange` costs, per bucket per
+   * column, a `subarray` view, a `Float64Column` instance, and — when
+   * the source has a validity bitmap — a fresh `Uint8Array` plus an
+   * O(range) bit copy plus an O(range/8) popcount inside
+   * `PackedValidityBitmap`'s constructor. On a 1M-row series bucketed
+   * to 100k windows that is 400k throwaway objects and two extra passes
+   * over the data per column. Taking two integers instead costs nothing.
+   *
+   * `validity` is indexed from the **column origin**, so implementations
+   * walk absolute indices `[start, end)` — no bit-shifting, which is
+   * also why slicing was the expensive way round.
+   *
+   * **Not simply `reduceColumn` with bounds.** For `count` and `avg` the
+   * whole-column form has a shortcut the range form cannot use:
+   * `validity.definedCount` is cached at bitmap construction and answers
+   * "how many defined cells" in O(1), whereas a sub-range needs
+   * `countInRange`, an O(range/8) popcount. Those two reducers therefore
+   * keep genuinely different implementations; the rest share one body
+   * with `reduceColumn` delegating at `(0, col.length)`.
+   *
+   * Implementations may assume `0 <= start <= end <= col.length` and a
+   * packed `Float64Column`, exactly as `reduceColumn` may.
+   */
+  reduceColumnRange?(
+    col: Float64Column,
+    start: number,
+    end: number,
+  ): ColumnValue | undefined;
+
+  /**
    * **Columnar fast-path for boundary selectors.** Present only on
    * `first` / `last`. Marks the reducer as "pick the {first|last}
    * *defined* value in the bucket" — which a columnar caller can compute

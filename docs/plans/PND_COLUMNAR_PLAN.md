@@ -209,14 +209,82 @@ remove the two costs that make the port's remaining margin hard to read. If a
 question about a targeted kernel — and unlike this spike, it would have a
 named consumer.
 
-**[PND-AGGALLOC] shape.** `ReducerDef` gains a range-scoped form —
-`reduceColumnRange(col, start, end)` — alongside `reduceColumn`, and
-`tryAggregateColumnarStore` calls that instead of
-`reduce(column.sliceByRange(start, scan))`. `reduceColumn` stays (it is the
-whole-column public path and `Float64Column.sum()` etc. route through it); the
-range form is the bucketed caller's door. Bit-identical by construction — the
-arithmetic and the non-finite / validity policy are unchanged, only the bounds
-move from a column object to two integers.
+**[PND-AGGALLOC] — SHIPPED.** `ReducerDef` gained `reduceColumnRange(col,
+start, end)` and `tryAggregateColumnarStore` calls it instead of
+`reduceColumn(column.sliceByRange(start, scan))`.
+
+**What the slice actually cost.** More than the object churn the original note
+assumed. Per bucket per column, `sliceByRange` allocated a `subarray` view _and_
+a `Float64Column` — and on a column carrying a validity bitmap it also called
+`validitySliceByRange`, which allocates a fresh `Uint8Array` and copies the
+bucket's bits, after which `PackedValidityBitmap`'s constructor popcounts them.
+So on gappy data the slice was not just two allocations, it was two extra passes
+over the bucket's data, both discarded immediately. Two integers replace all of
+it.
+
+**Deviation from the planned shape, and why.** The plan said `reduceColumn`
+stays and the range form is the bucketed caller's door — implying the range form
+would be a thin re-parameterisation. Reading the reducers showed that is true
+for six of the eight but **false for `count` and `avg`**: their whole-column
+form answers the bitmap case in O(1) from `validity.definedCount`, cached at
+bitmap construction, while a sub-range must popcount via `countInRange`.
+Collapsing them onto one body would have turned `Float64Column.count()` from
+O(1) into O(n/8). So those two keep genuinely separate implementations, with the
+reason recorded at both sites; the other six share one standalone `*Range`
+function that `reduceColumn` calls at `(0, length)`.
+
+The `*Range` kernels are **standalone functions, not methods delegating through
+`this`** — callers detach the reducer (`reduce: def.reduceColumnRange`), which
+would leave `this` undefined.
+
+`planColumnarAggregate` gates on `reduceColumnRange` rather than falling back to
+`reduceColumn` + slice. Every built-in has both forms or neither (asserted), so
+the gate excludes exactly the reducers it excluded before (`unique` / `top` /
+`samples` / `keep` / `first` / `last` boundary cases aside), and there is no
+second bucket path left unexercised.
+
+**Measured** (`packages/core/scripts/perf-aggregate-output.mjs`, N=1M, 1 s grid;
+`+IVLCOL` is the state after that task, `+AGGALLOC` after this one):
+
+| C   | bucket  | buckets | ev/bkt | original | +IVLCOL  | +AGGALLOC | total     |
+| --- | ------- | ------- | ------ | -------- | -------- | --------- | --------- |
+| 1   | 10 s    | 100,000 | 10     | 31.18 ms | 17.89 ms | 12.45 ms  | **2.50×** |
+| 1   | 60 s    | 16,667  | 60     | 6.65 ms  | 3.63 ms  | 3.16 ms   | **2.10×** |
+| 1   | 600 s   | 1,667   | 600    | 2.11 ms  | 1.95 ms  | 1.95 ms   | 1.08×     |
+| 1   | 3600 s  | 278     | 3,597  | 1.82 ms  | 1.80 ms  | 1.83 ms   | 0.99×     |
+| 1   | 86400 s | 12      | 83,333 | 1.74 ms  | 1.76 ms  | 1.79 ms   | 0.97×     |
+| 4   | 10 s    | 100,000 | 10     | 55.52 ms | 38.84 ms | 21.81 ms  | **2.55×** |
+| 4   | 60 s    | 16,667  | 60     | 12.77 ms | 10.17 ms | 6.40 ms   | **2.00×** |
+| 4   | 600 s   | 1,667   | 600    | 5.25 ms  | 5.03 ms  | 4.79 ms   | 1.10×     |
+| 4   | 3600 s  | 278     | 3,597  | 4.80 ms  | 4.72 ms  | 4.86 ms   | 0.99×     |
+| 4   | 86400 s | 12      | 83,333 | 4.59 ms  | 4.61 ms  | 4.75 ms   | 0.97×     |
+
+The 0.97–0.99× at wide buckets is **not** a regression: three independent runs
+moved those cases ±2.5% in both directions, so it is run-to-run variance on a
+~1.8 ms call. It was checked rather than assumed, because the first run showed
++2–3% with a consistent sign across all four wide cases and that is not what
+noise usually looks like.
+
+**No cost to the whole-column path.** `perf-reducers-step3.mjs` before/after at
+N=1M: sum +4.6%, min −1.8%, max +2.1%, avg −3.4%, stdev −2.0%, median −3.9%,
+p95 −0.2% — mixed signs inside the same variance band. The one real addition is
+that gappy `percentile`/`median` now sizes its dense buffer with
+`countInRange(0, n)` instead of the cached `definedCount`; measured directly on
+a 1M column with 10% missing, that popcount is **0.124 ms against a 61.8 ms
+`median()` — 0.20%**, dominated by the sort it precedes. Worth the single
+implementation.
+
+**Tests:** `packages/core/test/reducer-column-range.test.ts` (19). The contract
+is asserted literally — `reduceColumnRange(col, s, e)` versus
+`reduceColumn(col.sliceByRange(s, e))` — across 8 reducers × both `allFinite`
+settings × 8 data shapes × 12 ranges, deliberately including ranges that do not
+start at 0 and that straddle byte boundaries. **That is the whole risk of this
+change**: slicing _rebases_ the validity bitmap so the slice's bit 0 is the
+source's bit `start`, while the range form indexes the original bitmap at
+absolute positions. Getting it backwards would make every offset bucket read the
+wrong cells' validity, with no type error and no crash. Mutation-checked: a
+rebased bitmap index in `sumRange`, and `minRange` seeded from `values[0]`
+instead of `values[start]`, each fail the suite.
 
 **[PND-IVLCOL] — SHIPPED.** `aggregate()` now assembles its result as a
 `ColumnarStore` and adopts it via trusted construction, instead of emitting

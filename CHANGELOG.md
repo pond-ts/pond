@@ -70,17 +70,29 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
-- **core:** **`aggregate()` now builds its result columnar** instead of routing
-  the answer back through row intake. The columnar fast path already computed
-  every bucket in typed arrays; it then boxed each one into a frozen
-  `[Interval, …]` row so `new TimeSeries({ rows })` could walk all of them back
-  into columns. The result is now assembled as a store directly. **1.7–1.8×
-  faster end to end** on narrow buckets (1M events, 1-minute windows: 6.65 ms →
-  3.63 ms; 10-second windows: 31.18 ms → 17.89 ms), tapering to no change on
-  wide rollups where the reduction dominates and there was nothing to save.
-  Output is unchanged — same values, same interval keys and labels, same
-  `undefined` (not `NaN`) for an empty bucket, and the same `ValidationError`
-  if a reducer overflows to a non-finite result.
+- **core:** **`aggregate()` is up to 2.5× faster**, from two changes to how it
+  produces its result. Neither changes the answer: same values, same interval
+  keys and labels, same `undefined` (not `NaN`) for an empty bucket, and the
+  same `ValidationError` if a reducer overflows to a non-finite result.
+  - It **builds the result columnar** instead of routing it back through row
+    intake. The columnar fast path already computed every bucket in typed
+    arrays, then boxed each one into a frozen `[Interval, …]` row so
+    `new TimeSeries({ rows })` could walk all of them back into columns; the
+    store is now assembled directly.
+  - It **reduces each bucket in place** rather than materialising a
+    `Float64Column` slice for it. Reducers gained a range-scoped kernel
+    (`reduceColumnRange`), so a bucket costs two integers instead of a column
+    instance — plus, on a column with a validity bitmap, a `Uint8Array`
+    allocation, an O(bucket) bit copy and an O(bucket/8) popcount that the
+    slice's constructor performed and then threw away.
+
+  Measured on 1M events, 1-second grid: **2.10× at 1-minute buckets**
+  (6.65 ms → 3.16 ms, one column) and **2.55× at 10-second buckets**
+  (55.52 ms → 21.81 ms, four columns). The win is per output bucket, so it
+  tapers to no change on hourly and daily rollups, where the reduction
+  dominates and there was nothing to save. Whole-column reductions
+  (`series.reduce`, `column.sum()`, …) are unaffected.
+
 - **charts (Storybook):** the `Charts/Histogram` story group moved to
   **`Charts/BarChart/Histogram`** — the histogram is `BarChart` in its `bins`
   mode, not a separate component, and the sidebar now says so. Story IDs under

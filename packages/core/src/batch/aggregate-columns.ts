@@ -155,7 +155,19 @@ type ColumnarAggregatePlan =
   | {
       kind: 'reduce';
       column: Float64Column;
-      reduce: (col: Float64Column) => ColumnValue | undefined;
+      /**
+       * The reducer's **range-scoped** kernel — [PND-AGGALLOC]. Reducing
+       * a bucket used to mean `reduce(column.sliceByRange(start, scan))`,
+       * which allocated a `Float64Column` per bucket per column and, on a
+       * column with a validity bitmap, also copied the bucket's bits into
+       * a fresh `Uint8Array` and popcounted them. Two integers do the same
+       * job for nothing.
+       */
+      reduce: (
+        col: Float64Column,
+        start: number,
+        end: number,
+      ) => ColumnValue | undefined;
     }
   | { kind: 'boundary'; column: Column; which: 'first' | 'last' };
 
@@ -201,11 +213,23 @@ function planColumnarAggregate(
       continue;
     }
 
-    if (def.reduceColumn === undefined) return null; // unique / top / samples / keep
+    // Gate on the **range-scoped** kernel, not `reduceColumn`. Every
+    // built-in that has one has the other (they are declared together),
+    // so this excludes exactly the same reducers as before: `unique` /
+    // `top` / `samples` / `keep`. Gating here rather than falling back to
+    // `reduceColumn(sliceByRange(...))` avoids carrying a second bucket
+    // path that nothing exercises — a reducer that somehow had only the
+    // whole-column form would take the row path, which is correct, just
+    // slower.
+    if (def.reduceColumnRange === undefined) return null;
     if (source.kind !== 'number' || source.storage !== 'packed') {
       return null; // non-numeric / chunked numeric source
     }
-    plans.push({ kind: 'reduce', column: source, reduce: def.reduceColumn });
+    plans.push({
+      kind: 'reduce',
+      column: source,
+      reduce: def.reduceColumnRange,
+    });
   }
   return plans;
 }
@@ -229,7 +253,7 @@ function reduceBucket(
   for (let p = 0; p < plans.length; p += 1) {
     const plan = plans[p]!;
     if (plan.kind === 'reduce') {
-      out[p] = plan.reduce(plan.column.sliceByRange(start, scan));
+      out[p] = plan.reduce(plan.column, start, scan);
     } else if (plan.which === 'first') {
       // First defined cell in [start, scan); scans past missing cells and
       // past non-finite numeric cells (reducer non-finite policy,
