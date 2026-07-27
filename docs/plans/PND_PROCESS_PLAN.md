@@ -13,16 +13,18 @@ on `main` under `packages/process/scripts/` (landed with
 [#544](https://github.com/pond-ts/pond/pull/544)), and each is
 self-contained — run them after `npm run build --workspaces`:
 
-| Script                    | Answers                                                         |
-| ------------------------- | --------------------------------------------------------------- |
-| `rfc543-plan-layer.mjs`   | Appendix A end-to-end; identity, units, JSON round trip         |
-| `rfc543-step0.mjs`        | Proving-path step 0 — forked series, 2-input op, graph vs fold  |
-| `rfc543-mcp-workload.mjs` | MCP flurries at 1M rows; the assembly tax and its bridge        |
-| `rfc543-ui-workloads.mjs` | Interactive params, hot leading edge, value representation      |
-| `rfc543-multisource.mjs`  | Separate graphs vs one graph; invalidation at N sources         |
-| `rfc543-ranged-dirty.mjs` | Join-as-a-node, dirty per column, dirty per range               |
-| `rfc543-param-ins.mjs`    | Content-addressed vs params-as-Ins; selective Out invalidation  |
-| `rfc543-op-cache.mjs`     | Two modes of In; node-level cache; per-op vs engine-wide budget |
+| Script                       | Answers                                                         |
+| ---------------------------- | --------------------------------------------------------------- |
+| `rfc543-plan-layer.mjs`      | Appendix A end-to-end; identity, units, JSON round trip         |
+| `rfc543-step0.mjs`           | Proving-path step 0 — forked series, 2-input op, graph vs fold  |
+| `rfc543-mcp-workload.mjs`    | MCP flurries at 1M rows; the assembly tax and its bridge        |
+| `rfc543-ui-workloads.mjs`    | Interactive params, hot leading edge, value representation      |
+| `rfc543-multisource.mjs`     | Separate graphs vs one graph; invalidation at N sources         |
+| `rfc543-ranged-dirty.mjs`    | Join-as-a-node, dirty per column, dirty per range               |
+| `rfc543-param-ins.mjs`       | Content-addressed vs params-as-Ins; selective Out invalidation  |
+| `rfc543-op-cache.mjs`        | Two modes of In; node-level cache; per-op vs engine-wide budget |
+| `rfc543-column-values.mjs`   | Boxed arrays vs columns as node values; read-path timings       |
+| `rfc543-worker-transfer.mjs` | Cost of crossing a worker boundary per representation           |
 
 If the package is restructured or withdrawn (see [PND-PROCSUB]), these
 should move with it — they are the evidence base for every decision here.
@@ -242,6 +244,16 @@ retained size, so a bytes-bounded cache ([PND-PROCCACHE]) cannot exist
 over it; `columnBytes` reported 77 MB across the 20 values above. And
 preallocated packed buffers are what lift the ranged-recompute ceiling
 ([PND-PROCRANGE], where reallocation was 99% of residual per-tick cost).
+
+**A third argument, which only appears once execution crosses a thread.**
+If the graph lives in a worker ([PND-DEMOM1]), every answer is
+marshalled. 500k values: **48.6 ms** boxed, **0.8 ms** as a
+structured-cloned `Float64Array`, **0.5 ms** transferred — 63× and 99×.
+A boxed array is cloned element by element and re-boxed on arrival; a
+packed column is one buffer, and a transferred one changes owner without
+a copy. At 48.6 ms per answer the worker topology would spend more time
+marshalling than computing, so **that topology cannot ship without this
+ticket**.
 
 **Core gap found while building this.** `withColumn` takes values, not a
 column, and rejects non-finite cells — so a **gapless** column
