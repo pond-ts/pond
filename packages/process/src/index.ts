@@ -78,6 +78,20 @@ export {
   dependsOn,
   outputKey,
 } from './plan/identity.js';
+export { bind, BoundGraph, UnitError } from './plan/graph.js';
+export { run } from './plan/run.js';
+export type {
+  ErrorPolicy,
+  Select,
+  ColumnSelect,
+  ReduceSelect,
+  ReductionName,
+  RunRequest,
+  RunResult,
+  OutputInfo,
+  Fact,
+  Skipped,
+} from './plan/run.js';
 export type {
   Spec,
   Plan,
