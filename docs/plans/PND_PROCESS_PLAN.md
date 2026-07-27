@@ -199,34 +199,63 @@ invalidate per-output, driven by declaration rather than by hand.
 
 ### [PND-PROCCOL] — Node values are columns, not JS arrays
 
-Ops already produce a `TimeSeries` whose column is packed; the current
-adapter unpacks it into a boxed `Array` with `undefined` holes and pays
-for that twice — space, and re-boxing on every later scan.
+**Partly landed.** `packColumn` / `columnBytes` / `appendColumn` ship in
+`src/column.ts` with 11 tests. What remains is the plan layer using them,
+which waits on [PND-PROCSUB].
 
-Measured, 20 columns × 500k rows, one representation per process:
+An op computes a study by calling the corpus, which returns a
+`TimeSeries` whose new column is already packed. The naive adapter
+unpacks that into a boxed `Array<number | undefined>` as the node value.
+Keeping the `Column` instead avoids the unpack.
 
-|                           | heapUsed | rss    |
-| ------------------------- | -------- | ------ |
-| JS Array (holey)          | 160 MB   | 237 MB |
-| `Float64Array` + validity | 3 MB     | 123 MB |
+Measured on **real study output** — 20 SMAs over 500k rows, one mode per
+process. This supersedes an earlier synthetic figure (160 MB vs 3 MB
+heap) which overstated the effect:
 
-~2× smaller overall and **~50× less GC-managed heap** — the number that
-shows up as pause time in an interactive UI.
+|              | heapUsed | arrayBuffers | rss    |
+| ------------ | -------- | ------------ | ------ |
+| boxed arrays | 271 MB   | 39 MB        | 466 MB |
+| columns      | 42 MB    | 93 MB        | 353 MB |
 
-This task is a force multiplier: it is a prerequisite for any
-bytes-bounded cache policy ([PND-PROCIDENT] — a bound is only meaningful
-once a node value has a knowable size) and for the ranged-recompute
-ceiling ([PND-PROCRANGE], where array reallocation, not compute, was 99%
-of the remaining per-tick cost).
+**6.5× less GC-managed heap** (which is what becomes pause time) and
+**1.3× smaller overall** — the bytes move to `arrayBuffers` rather than
+vanishing. Both framings matter; neither alone is honest.
 
-**Caveat on the numbers above:** they are `heapUsed`, which is the right
-counter for GC pressure but not for total footprint — a packed
-`Float64Array` moves its bytes to `arrayBuffers`/`external` rather than
-eliminating them (rss 237 MB → 123 MB, roughly halved, not 50×). Both
-framings matter and neither alone is honest.
+**A read-speed claim in the original ticket was wrong.** It asserted the
+boxed form "re-boxes on every later scan". Measured, folding a max over
+500k cells:
 
-**Done when:** node values are a pond column type end to end, with no
-`Array`-of-`undefined` on the hot path.
+    max over boxed array        0.91 ms
+    max over column.scan        4.27 ms
+    max over buffer + bitmap    0.96 ms
+
+The representation is **not** faster to read — a direct buffer walk only
+reaches parity with the boxed array. And `Column.scan()` is **4.7×
+slower than either**, because it takes a callback per cell. So the case
+for columns here is memory and sizeability, not read throughput, and any
+reduction on the hot path should walk `toFloat64Array()` plus the
+validity bits rather than call `scan`. Worth carrying to core, whose
+design principles recommend `scan` as the columnar read path.
+
+**Why it is still a force multiplier.** A boxed array has no knowable
+retained size, so a bytes-bounded cache ([PND-PROCCACHE]) cannot exist
+over it; `columnBytes` reported 77 MB across the 20 values above. And
+preallocated packed buffers are what lift the ranged-recompute ceiling
+([PND-PROCRANGE], where reallocation was 99% of residual per-tick cost).
+
+**Core gap found while building this.** `withColumn` takes values, not a
+column, and rejects non-finite cells — so a **gapless** column
+round-trips through `toFloat64Array()` with no boxing, but a column with
+a warm-up gap must be boxed on the way back in. Core appends columns
+directly (`withColumnAppended`) but does not expose it. Until it does,
+`appendColumn` pays one boxing pass for gapped columns, which is most
+studies — another reason assembly should be requested rather than assumed
+([PND-PROCTERM]). Also note `createValidityBitmap` is internal;
+`ValidityBitmap` is a structural interface, so `packColumn` implements it
+outside core rather than reaching in.
+
+**Done when:** the plan layer's node values are columns, and no
+`Array`-of-`undefined` sits on a hot path.
 
 ---
 

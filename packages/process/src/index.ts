@@ -43,6 +43,7 @@ export {
   UnsetSourceError,
 } from './source.js';
 export type { NoInputs, GraphSource, SnapshotSource } from './source.js';
+export { columnBytes, packColumn, appendColumn } from './column.js';
 export { Graph } from './graph.js';
 export type {
   GraphEdge,
