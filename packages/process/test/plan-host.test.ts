@@ -178,6 +178,23 @@ describe('per-node timing — the badge', () => {
     ]);
   });
 
+  it('explains every node it reports, including nested ones', () => {
+    // The badge row renders `explain[id]`. Populating it only for the
+    // plan's top level left a nested node labelled with its raw id —
+    // found in M2, and the same labels feed M4's pipeline view.
+    const { registry } = makeRegistry();
+    const host = createHost({ registry, units }).add('prices', series(50));
+    const nested = { op: 'scale', params: { by: 2 }, inputs: [sma3] };
+    const res = host.run({
+      from: 'prices',
+      process: [nested],
+      select: [{ on: nested, reduce: 'last' }],
+    });
+    expect(res.nodes.length).toBe(2);
+    for (const n of res.nodes) expect(res.explain[n.id]).toBeTruthy();
+    expect(res.explain[specId(registry, sma3)]).toContain('sma');
+  });
+
   it('attributes time to the node that spent it, not its consumer', () => {
     // Pulling a leaf without warming its inputs first would charge the
     // whole subtree to the leaf, and the badge would lie. Tested with a

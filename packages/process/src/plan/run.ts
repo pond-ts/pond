@@ -23,7 +23,7 @@ import { ProcessError } from '../errors.js';
 import type { Column, SeriesSchema, TimeSeries } from 'pond-ts';
 import type { BoundGraph } from './graph.js';
 import { columnsOf, explain, refToId, unitOf } from './identity.js';
-import type { Plan, Spec, SpecRef } from './types.js';
+import type { Input, Plan, Spec, SpecRef } from './types.js';
 
 /** What to do when a spec or a selector fails. Covers both, not just resolution. */
 export type ErrorPolicy = 'throw' | 'skip' | 'collect';
@@ -78,7 +78,16 @@ export interface NodeTiming {
 }
 
 export interface Skipped {
-  readonly spec?: { op: string; params: Record<string, unknown> };
+  /**
+   * The spec that failed, echoed back — including `inputs`, because a
+   * plan may hold two specs of the same op and a caller retrying needs
+   * to know which one it was.
+   */
+  readonly spec?: {
+    op: string;
+    params: Record<string, unknown>;
+    inputs: readonly Input[];
+  };
   readonly select?: Select;
   readonly reason: string;
 }
@@ -88,7 +97,11 @@ export interface RunResult {
   readonly series?: TimeSeries<SeriesSchema>;
   readonly outputs: Readonly<Record<string, readonly OutputInfo[]>>;
   readonly facts: readonly Fact[];
-  /** Lineage per resolved id — present on every response, never hand-built. */
+  /**
+   * Lineage per id, never hand-built. Covers every id in {@link nodes}
+   * as well as the plan's own entries, so a caller labelling a node
+   * always has a string for it.
+   */
   readonly explain: Readonly<Record<string, string>>;
   readonly skipped: readonly Skipped[];
   /**
@@ -206,7 +219,11 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
       resolved.push({ id: compiled.id, spec });
     } catch (e) {
       fail({
-        spec: { op: spec.op, params: { ...(spec.params ?? {}) } },
+        spec: {
+          op: spec.op,
+          params: { ...(spec.params ?? {}) },
+          inputs: spec.inputs,
+        },
         reason: e instanceof Error ? e.message : String(e),
       });
     }
@@ -251,6 +268,11 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
     timed.add(id);
     const compiled = graph.get(id);
     if (compiled === undefined) return;
+    // Lineage for the whole closure, not just the plan's top level. A
+    // nested spec is a node in `nodes` and will be a node in the M4
+    // pipeline view, and both label from here — leaving it out meant a
+    // badge with a raw id under it.
+    explainMap[id] ??= explain(registry, compiled.spec);
     for (const input of compiled.spec.inputs) {
       if (typeof input !== 'string') warm(refToId(registry, input));
     }

@@ -458,6 +458,78 @@ and should be **requirements, not accidents** — a persisted saved view and
 a freshly composed request must land on the same cache entry, which means
 `specId` canonicalizes post-defaults with sorted keys.
 
+**Confirmed in an app (M2).** `apps/process-demo` posts a JSON envelope to
+a process that never saw the composer, and the plan compiles against a
+graph the request did not build. Nothing here needed adding — which is the
+result. The remaining half of "plans as data across a boundary" is whether
+the _schema_ travels as well as the plan does: see [PND-PROCSCHEMA].
+
+---
+
+### [PND-PROCSCHEMA] — The schema projection is the agent's contract
+
+`registry.toJsonSchema()` is what a caller composes against. If it is
+under-specified the caller needs prose hand-holding, and the registry has
+failed at its fourth job. M2 put a model-shaped caller in front of it —
+the tool schema is the projection, nothing more — and turned up three
+things, two already fixed.
+
+**1. `$ref` is root-relative, so the projection was not embeddable.**
+`landed` — `toJsonSchema({ base })`. The recursion that makes nesting
+expressible (`#/items`, so an input may be a column name _or_ another
+spec) resolves against the **document root**. Dropping the projection into
+a tool's `input_schema` under `properties.process` left `#/items` pointing
+at nothing, and nothing complains: JSON Schema does not require a `$ref`
+to resolve, so the failure is silent and shows up as a caller that cannot
+express nesting. `base` names the pointer the subschema will live at, and
+`$schema` is now emitted only at the root. The demo's own request schema
+`$ref`s a _second_ time into `#/properties/process/items` so a selector
+names a spec inline, which is the same recursion paying off twice.
+
+**2. The projection does not carry units — in either direction.** Not the
+unit an output produces, and not the unit an input _demands_. So a caller
+reading only the schema cannot know that `annualise` refuses a raw price,
+and will emit a plan that fails the typed-input check. The demo works
+around it by rendering `describe()` as a table in the prompt, which is
+exactly the "prose hand-holding" this ticket exists to detect. **Open
+question, and the real decision:** projecting units into JSON Schema means
+either a `description` string per property (advisory, unvalidated, but
+free) or a discriminated encoding a validator could enforce (expensive,
+and JSON Schema is a projection, not the authority). The measured cost of
+_not_ doing it is one skipped spec and one retry, and the reason it
+produces is good — see 3.
+
+**3. The reasons are self-correctable; the cascade is noise.** Three
+deliberate errors in one plan came back as three distinct entries, each
+naming both sides:
+
+```
+annualise needs a 'variance' input for 'source', but 'px' is 'USD'
+sma.period=1 is below minimum 2
+unknown op 'hullMA' — have 'sma', 'ema', 'delta', 'roc', 'rsi', 'stddev', …
+```
+
+`unknown op` listing the alternatives is the one that matters most and was
+already right. The wart: when a _selector_ names a spec that failed to
+compile, the caller gets a second entry — `'p1:annualise(px;…)' is not in
+this plan` — for one mistake. It is accurate, and it may still mislead a
+caller into fixing two things. Deferred rather than changed mid-milestone;
+the fix, if it lands, is to mark the second entry as a consequence of the
+first rather than to suppress it.
+
+Also landed alongside, both found by having a UI render the response:
+
+- **`explain` covered only the plan's top level**, while `nodes` covers
+  the whole closure — so a nested node's badge rendered a raw id. Now
+  populated for every id in `nodes`. M4's pipeline labels read the same
+  map, so this would have surfaced there anyway, later.
+- **`skipped.spec` dropped `inputs`.** A plan may hold two specs of the
+  same op; `{op, params}` alone does not say which one to fix.
+
+**Done when:** a caller composes a plan with at least one nested spec from
+the projection alone, with no unit table in the prompt — or the decision is
+recorded that units stay out of the projection and belong in `describe()`.
+
 ---
 
 ### [PND-PROCSUB] — Substrate and packaging decision

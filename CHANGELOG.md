@@ -85,8 +85,23 @@ include new features and type-level changes; patch bumps are strictly additive.
   for the nine other tickets the investigation produced (node eviction is
   blocking; column-valued nodes and dirty-per-range are the large wins).
 
+- **process:** `registry.toJsonSchema({ base })` — the projection can now be
+  **embedded** in a larger schema. Its recursive `$ref` (the line that lets a
+  caller express _EMA of SMA of px_ without being taught a nesting concept)
+  resolves against the **document root**, so a projection emitted at `#` and
+  then dropped inside a tool's `input_schema` had a dangling pointer — silently,
+  since a `$ref` is not required to resolve. `base` names the pointer the
+  subschema will live at, and `$schema` is now emitted only at the root. Found
+  by putting a model-shaped caller in front of it; see **[PND-PROCSCHEMA]**.
+
 ### Changed
 
+- **process:** `RunResult.explain` now covers **every id in `nodes`**, not only
+  the plan's top-level entries — a nested spec is a node in the timing badges
+  (and will be a node in the pipeline view) and had no lineage string to render.
+  `Skipped.spec` also now carries `inputs`, because a plan may hold two specs of
+  the same op and `{op, params}` alone does not say which one to fix. Both are
+  additive to the response.
 - **charts (Storybook):** the `Charts/Histogram` story group moved to
   **`Charts/BarChart/Histogram`** — the histogram is `BarChart` in its `bins`
   mode, not a separate component, and the sidebar now says so. Story IDs under

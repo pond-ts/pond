@@ -223,6 +223,22 @@ describe('run — failure policy covers selection too', () => {
     expect(res.skipped[0]!.reason).toMatch(/needs a 'variance' input.*is '%'/);
   });
 
+  it('echoes the failing spec back with its inputs', () => {
+    // A plan may hold two specs of the same op. Reporting `{op, params}`
+    // alone left a caller unable to tell which one it had to fix — found
+    // in M2, where the caller retrying is an agent.
+    const { registry } = makeRegistry();
+    const graph = bind(series(10), { registry, units });
+    const res = run(graph, {
+      plan: [
+        { op: 'sma', params: { period: 1 }, inputs: ['px'] },
+        { op: 'sma', params: { period: 1 }, inputs: ['iv21'] },
+      ],
+      onError: 'collect',
+    });
+    expect(res.skipped.map((s) => s.spec?.inputs)).toEqual([['px'], ['iv21']]);
+  });
+
   it('throws under the default policy', () => {
     const { registry } = makeRegistry();
     const graph = bind(series(10), { registry, units });

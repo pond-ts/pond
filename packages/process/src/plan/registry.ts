@@ -192,10 +192,32 @@ export class Registry {
    * lets a caller express *EMA of SMA of px* from the schema alone —
    * without being taught a separate nesting concept. That recursion is
    * the single most load-bearing line here.
+   *
+   * That recursion is also why the schema has to know where it lives. A
+   * `$ref` is resolved against the **document root**, so a projection
+   * emitted at `#` and then dropped inside a tool's `input_schema` has a
+   * dangling pointer — silently, since nothing validates the reference
+   * ([PND-PROCREG], found in M2). Pass `base` naming the pointer this
+   * subschema will sit at:
+   *
+   * ```ts
+   * const schema = {
+   *   type: 'object',
+   *   properties: {
+   *     process: registry.toJsonSchema({ base: '#/properties/process' }),
+   *   },
+   * };
+   * ```
+   *
+   * `$schema` is emitted only at the root — a nested subschema declaring
+   * its own dialect is not what a caller means.
    */
-  toJsonSchema(): Record<string, unknown> {
+  toJsonSchema(options: { base?: string } = {}): Record<string, unknown> {
+    const base = options.base ?? '#';
     return {
-      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      ...(base === '#' && {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+      }),
       title: 'Plan',
       type: 'array',
       items: {
@@ -211,7 +233,9 @@ export class Registry {
               type: 'array',
               minItems: op.inputs.length,
               maxItems: op.inputs.length,
-              items: { oneOf: [{ type: 'string' }, { $ref: '#/items' }] },
+              items: {
+                oneOf: [{ type: 'string' }, { $ref: `${base}/items` }],
+              },
             },
             params: {
               type: 'object',
