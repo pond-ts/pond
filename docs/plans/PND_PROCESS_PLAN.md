@@ -13,15 +13,16 @@ on `main` under `packages/process/scripts/` (landed with
 [#544](https://github.com/pond-ts/pond/pull/544)), and each is
 self-contained — run them after `npm run build --workspaces`:
 
-| Script                    | Answers                                                        |
-| ------------------------- | -------------------------------------------------------------- |
-| `rfc543-plan-layer.mjs`   | Appendix A end-to-end; identity, units, JSON round trip        |
-| `rfc543-step0.mjs`        | Proving-path step 0 — forked series, 2-input op, graph vs fold |
-| `rfc543-mcp-workload.mjs` | MCP flurries at 1M rows; the assembly tax and its bridge       |
-| `rfc543-ui-workloads.mjs` | Interactive params, hot leading edge, value representation     |
-| `rfc543-multisource.mjs`  | Separate graphs vs one graph; invalidation at N sources        |
-| `rfc543-ranged-dirty.mjs` | Join-as-a-node, dirty per column, dirty per range              |
-| `rfc543-param-ins.mjs`    | Content-addressed vs params-as-Ins; selective Out invalidation |
+| Script                    | Answers                                                         |
+| ------------------------- | --------------------------------------------------------------- |
+| `rfc543-plan-layer.mjs`   | Appendix A end-to-end; identity, units, JSON round trip         |
+| `rfc543-step0.mjs`        | Proving-path step 0 — forked series, 2-input op, graph vs fold  |
+| `rfc543-mcp-workload.mjs` | MCP flurries at 1M rows; the assembly tax and its bridge        |
+| `rfc543-ui-workloads.mjs` | Interactive params, hot leading edge, value representation      |
+| `rfc543-multisource.mjs`  | Separate graphs vs one graph; invalidation at N sources         |
+| `rfc543-ranged-dirty.mjs` | Join-as-a-node, dirty per column, dirty per range               |
+| `rfc543-param-ins.mjs`    | Content-addressed vs params-as-Ins; selective Out invalidation  |
+| `rfc543-op-cache.mjs`     | Two modes of In; node-level cache; per-op vs engine-wide budget |
 
 If the package is restructured or withdrawn (see [PND-PROCSUB]), these
 should move with it — they are the evidence base for every decision here.
@@ -83,12 +84,36 @@ Measured, 200-position sweep at 200k rows, one mode per process:
 
 ~50× less buffer memory, and **flat in sweep length instead of linear**.
 
-These are the RFC's own two consumers wanting opposite policies, so this
-is a design decision rather than a bug to fix. Options: pick per binding
-(`bind(..., { identity: 'addressed' | 'positional' })`), or make params
-Ins universally and let the _plan_ declare how many instances of an op it
-wants — a plan with `sma(20)` and `sma(50)` has two entries and therefore
-two nodes either way, while a slider passing through 30 values has one.
+**The opposition dissolves — two modes of In.** Review proposed keeping
+params as Ins _and_ letting a node hold an internal cache keyed by them,
+bounded by a preallocated capacity rather than by history:
+
+- a **value In** holds a value and drives downstream invalidation;
+  superseded values are discarded;
+- a **cache-key In** additionally keys a node-level cache, because
+  repeats are expected, and is evicted under a budget.
+
+That gives the MCP shape its repeat hits and the interactive shape its
+bounded memory, without choosing. Measured on a repeat-heavy access
+pattern (120 accesses over 7 distinct periods, 200k rows):
+
+| mode                 | time  | computes | hits | evictions |
+| -------------------- | ----- | -------- | ---- | --------- |
+| value In only        | 57 ms | 98       | 0    | 0         |
+| cache-key In (cap 8) | 4 ms  | 7        | 91   | 0         |
+| cache-key In (cap 3) | 30 ms | 56       | 42   | 53        |
+
+**14.3× when capacity covers the working set**, and the capacity-3 row is
+the warning: undersized, it thrashes back to 1.9×.
+
+A cache hit does **not** cut the downstream cascade, and should not —
+going back to `period=20` genuinely changes what a consumer must see, so
+rerunning is correct. What the cache saves is the study recompute, which
+is the expensive half.
+
+So a plan with `sma(20)` and `sma(50)` has two entries and two nodes
+either way, while a slider passing through 30 values has one node and at
+most `capacity` cached results.
 
 **Measurement trap, for whoever picks this up:** `Float64Array` backing
 stores are not in `heapUsed`. Reading heap alone reported 21 MB for both
@@ -98,6 +123,44 @@ configuration per process. This gets sharper under [PND-PROCCOL].
 **Done when:** identity and node lifetime are a stated, tested policy, and
 a 200-position sweep at 1M rows holds steady-state memory under whichever
 policy the interactive consumer gets.
+
+---
+
+### [PND-PROCCACHE] — Op-level result cache under an engine-wide budget
+
+Falls out of [PND-PROCIDENT]'s two modes of In. An op that expects repeat
+values on a param should memoize on it — but **where the budget lives is
+not the op's call.**
+
+Measured, 20 nodes each holding 5 entries of a 200k-row result:
+
+| policy      | entries | arrayBuffers |
+| ----------- | ------- | ------------ |
+| per-op cap  | 100     | 157 MB       |
+| engine-wide | 10      | 35 MB        |
+
+A per-op capacity is a per-op promise; nothing supervises the total, so
+memory scales with node count. The split that works:
+
+- **The decision to cache is per-op.** Only the op knows what is
+  expensive and which Ins genuinely key the result (a `period` does, a
+  display flag does not).
+- **The capacity is engine-wide.** One LRU shared across nodes, so the
+  process has a bound rather than a sum of promises.
+
+**Shape:** declare it on the port — `port({ cacheKey: true })` — plus a
+graph-level budget, and have the engine build the key and consult the LRU
+around `compute`. That keeps every op from hand-rolling the same cache,
+and each hand-rolled one is a place to leak. Prototype in
+`rfc543-op-cache.mjs` (`withOpCache` + `CacheBudget`) is ~40 lines and
+sized the numbers above.
+
+**Open:** bound by entry count or by bytes. Bytes is the meaningful unit
+and only becomes knowable under [PND-PROCCOL].
+
+**Done when:** an op opts in by declaration, the budget is graph-level and
+configurable, and a repeat-heavy sweep holds steady-state memory while
+still hitting cache.
 
 ---
 
