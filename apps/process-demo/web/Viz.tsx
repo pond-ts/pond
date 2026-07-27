@@ -54,6 +54,142 @@ export interface OutputInfo {
   unit: string | null;
 }
 
+/**
+ * A fold over one column, as the response returns it.
+ *
+ * The payload differs per reduction, so the shape is open — `last` has
+ * `value`/`at`, `extremes` has `min`/`max`, and so on. The card below
+ * narrows on `reduce` rather than guessing from the keys present.
+ */
+export interface Fact {
+  id: string;
+  reduce: 'last' | 'extremes' | 'percentileRank' | 'shape';
+  unit: string | null;
+  [k: string]: unknown;
+}
+
+interface Point {
+  value: number;
+  at: string;
+}
+
+const isPoint = (v: unknown): v is Point =>
+  typeof v === 'object' && v !== null && typeof (v as Point).value === 'number';
+
+/** Enough precision to be useful, not so much that a card becomes a number dump. */
+function show(value: number): string {
+  const abs = Math.abs(value);
+  const digits = abs >= 1000 ? 0 : abs >= 1 ? 2 : 4;
+  return value.toLocaleString(undefined, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
+/**
+ * A fact names a **column**, which is a spec id plus an output suffix,
+ * while `explain` is keyed by the spec id alone. Longest-prefix wins, so
+ * a band's `…Upper` finds its parent and keeps the suffix as the label.
+ */
+function labelFor(
+  id: string,
+  explain: Record<string, string>,
+): { label: string; suffix: string } {
+  let best = '';
+  for (const key of Object.keys(explain)) {
+    if (id.startsWith(key) && key.length > best.length) best = key;
+  }
+  return best === ''
+    ? { label: id, suffix: '' }
+    : { label: explain[best]!, suffix: id.slice(best.length) };
+}
+
+function FactCard(props: { fact: Fact; explain: Record<string, string> }) {
+  const { fact } = props;
+  const { label, suffix } = labelFor(fact.id, props.explain);
+  const unit = fact.unit === null ? '' : fact.unit;
+
+  const body = (() => {
+    if (fact.reduce === 'last') {
+      if (typeof fact['value'] !== 'number')
+        return <span className="muted">no value</span>;
+      return (
+        <>
+          <div className="fact-value">
+            {show(fact['value'])}
+            {unit && <span className="fact-unit">{unit}</span>}
+          </div>
+          {typeof fact['at'] === 'string' && (
+            <div className="fact-at">at {fact['at']}</div>
+          )}
+        </>
+      );
+    }
+    if (fact.reduce === 'extremes') {
+      const lo = fact['min'];
+      const hi = fact['max'];
+      if (!isPoint(lo) || !isPoint(hi))
+        return <span className="muted">no range</span>;
+      return (
+        <div className="fact-pair">
+          {[
+            ['low', lo],
+            ['high', hi],
+          ].map(([name, p]) => (
+            <div key={name as string}>
+              <div className="fact-sub">{name as string}</div>
+              <div className="fact-value">
+                {show((p as Point).value)}
+                {unit && <span className="fact-unit">{unit}</span>}
+              </div>
+              <div className="fact-at">at {(p as Point).at}</div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+    if (fact.reduce === 'percentileRank') {
+      if (typeof fact['value'] !== 'number')
+        return <span className="muted">no rank</span>;
+      const pct = fact['value'] * 100;
+      return (
+        <>
+          <div className="fact-value">
+            {pct.toFixed(0)}
+            <span className="fact-unit">th pct</span>
+          </div>
+          {/* The bar is the reduction's own meaning, drawn rather than
+              described — where the latest value sits in its own history. */}
+          <div className="fact-bar">
+            <span style={{ width: `${Math.max(1, Math.min(100, pct))}%` }} />
+          </div>
+          {typeof fact['note'] === 'string' && (
+            <div className="fact-at">{fact['note']}</div>
+          )}
+        </>
+      );
+    }
+    const points = typeof fact['points'] === 'number' ? fact['points'] : 0;
+    return (
+      <>
+        <div className="fact-value">{points}</div>
+        <div className="fact-at">sampled points</div>
+      </>
+    );
+  })();
+
+  return (
+    <li className="fact">
+      <div className="fact-head" title={fact.id}>
+        {label}
+        {suffix && <span className="fact-suffix">· {suffix}</span>}
+      </div>
+      {body}
+      <div className="fact-reduce">{fact.reduce}</div>
+    </li>
+  );
+}
+
 /** base64 → `Float64Array`, one pass, no per-number parse. */
 function decode(b64: string): Float64Array {
   const bin = atob(b64);
@@ -127,6 +263,7 @@ export function Viz(props: {
   waiting: boolean;
   /** The last draw failed. Shown with a retry rather than swallowed. */
   error?: string | undefined;
+  facts: readonly Fact[];
   onDraw: () => void;
 }) {
   const drawn = useDrawn(props.frames);
@@ -153,6 +290,20 @@ export function Viz(props: {
           </p>
           <button onClick={props.onDraw}>Fetch columns and draw</button>
         </>
+      )}
+
+      {/* Facts first: a reduction is the answer to the question, and the
+          chart is the evidence behind it. */}
+      {props.facts.length > 0 && (
+        <ul className="facts">
+          {props.facts.map((f, i) => (
+            <FactCard
+              key={`${f.id}:${f.reduce}:${i}`}
+              fact={f}
+              explain={props.explain}
+            />
+          ))}
+        </ul>
       )}
 
       {drawn !== undefined &&
