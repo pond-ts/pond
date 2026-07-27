@@ -14,8 +14,8 @@
     "dev:web": "vite",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "start": "tsx server/index.ts",
-    "format": "prettier --write \"{server,web}/**/*.{ts,tsx,css}\" \"*.{ts,json,md}\"",
-    "format:check": "prettier --check \"{server,web}/**/*.{ts,tsx,css}\" \"*.{ts,json,md}\"",
+    "format": "../../node_modules/.bin/prettier --write \"{server,web}/**/*.{ts,tsx,css}\" \"*.{ts,json,md}\"",
+    "format:check": "../../node_modules/.bin/prettier --check \"{server,web}/**/*.{ts,tsx,css}\" \"*.{ts,json,md}\"",
     "verify": "npm run format:check && npm run build"
   },
   "dependencies": {
@@ -37,7 +37,6 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.0",
     "concurrently": "^9.1.0",
-    "prettier": "^3.8.3",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "vite": "^6.0.0"

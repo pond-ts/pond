@@ -116,6 +116,14 @@ web/
   `workers/` precedent, so a demo build can never gate a release. The cost
   is that the root `format:check` and `verify` do not cover it — run
   `npm run verify` in this directory.
+- Being outside `workspaces` also means this app gets its **own**
+  `node_modules`, and a tool installed here will drift from the repo's
+  copy without anything noticing. It already did: a local prettier
+  resolved to 3.9.6 against the root's 3.8.3, and the two disagree about
+  wrapping union types — so files formatted here failed the check run
+  from the root, and vice versa. The format scripts now call
+  `../../node_modules/.bin/prettier` so there is one formatter for one
+  `.prettierrc.json`. Run `npm install` at the repo root first.
 - The demo's rolling ops are the naive O(rows × period) implementations.
   That is a demo artefact, not a library one; it makes cold runs slow
   enough that the warm/cold difference is unmistakable.
