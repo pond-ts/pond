@@ -395,3 +395,55 @@ rather than hard-coded, across 17 data shapes × 13 quantiles, plus 200
 randomised trials biased toward heavy duplicates (the classic Hoare-partition
 stall), the sorted/reverse-sorted quadratic traps, sizes either side of the
 insertion-sort threshold, and the signed-zero regression pin.
+
+### [PND-BOXFREE] — first tranche SHIPPED (`cumulative`, `diff` / `rate` / `pctChange`)
+
+`packages/core/src/batch/operators/numeric-io.ts` adds `packedNumericSource`
+(raw `Float64Array` + validity bits, or `null` for chunked / non-numeric) and
+`NumericOutput` (typed value buffer + eagerly-allocated bitmap, dropped at
+`finish()` when every cell is defined). `cumulative` and `diff-rate` use them;
+the old boxed loop stays as the fallback for sources the fast path declines.
+
+**Measured** (`scripts/perf-operators-unboxed.mjs`, 200k rows × 4 columns):
+**4.0–7.1×** across all five entry points, dense and gappy.
+
+**Two things the naive version got wrong, both found by measuring:**
+
+1. **Unboxing alone barely moved `cumulative`** — 166 ms → 142 ms (1.2×). Its
+   per-cell cost was never the box, it was one invocation of `buildApply`'s
+   closure per element. Specialising `sum` / `count` / `max` / `min` into
+   dedicated loops is what took it to 2.6 ms. A custom fold still routes
+   through the closure, because that call is the caller's own function.
+2. **A shared `isDefinedAt(bits, i)` helper cost more than it saved** —
+   called with both `null` and `Uint8Array`, so V8 could not inline it.
+   Inlining the bit test at each site follows the convention the reducers
+   already use (hoist the validity branch, don't dispatch per cell).
+
+**Measurement note, and it invalidated an earlier round of numbers.** The
+benchmark harness warmed up for a fixed 40 ms. For a ~20 ms operation that is
+~10 iterations, and V8's optimising tier is a cliff: `Float64Column.sum()` over
+1M cells held at 3.82 ms through 400 warm-up iterations and dropped to 1.41 ms
+between 400 and 800. The symptom was that whichever configuration ran **first**
+in a process measured 3–7× slow — reversing the loop order reversed which side
+looked bad, which is how it was caught. The numbers above use 1000 warm-up
+iterations on both sides, at an N small enough that the pre-change build can
+reach them. `spikes/columnar-wasm/bench/suite.mjs` now warms by iteration count
+and reports `warmTruncated`; the other `scripts/perf-*.mjs` in this repo still
+warm for 3 iterations and are suspect for anything above ~1 ms.
+
+**Tests:** `packages/core/test/operators-unboxed.test.ts` (106). Expectations
+are computed by reference implementations mirroring the _old_ boxed code, not
+hard-coded. Mutation-checked: making a missing cell reset the accumulator
+instead of carrying it (5 failures), inheriting `allFinite` instead of deriving
+it (4), and keeping the validity bitmap when every cell is defined (1).
+
+One thing the tests surfaced: row intake **rejects non-finite numbers**, so a
+_defined_ NaN / ±Infinity cell cannot be constructed through
+`new TimeSeries({ rows })` at all. It is still reachable — an operator whose own
+arithmetic overflows produces one, and that column is a legitimate input to the
+next operator — so those cases are tested by chaining rather than by
+construction.
+
+**Remaining under [PND-BOXFREE]:** `fill` (four strategies, and it handles
+non-numeric kinds), `shift`, and `mapColumns` — the last of which takes a JS
+closure per cell and so needs a different answer, not just unboxing.

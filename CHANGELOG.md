@@ -110,6 +110,28 @@ and type-level changes; patch bumps are strictly additive.
   compares with `<` / `>`, under which they are equal, so the columnar path
   now returns `+0` and matches the row path.
 
+- **core:** **`cumulative`, `diff`, `rate` and `pctChange` are 4–7× faster.**
+  All four were column-native only in the sense of not materialising `Event`s:
+  each still read every cell through the polymorphic `col.read(i)` into a boxed
+  `Array<number | undefined>`, then handed that to `float64ColumnFromArray`,
+  which walked the boxed array twice more — once for the values and once for
+  the validity bitmap. They now walk the source's `Float64Array` and validity
+  bits directly and write into typed output buffers.
+
+  Measured at 200k rows × 4 columns (`scripts/perf-operators-unboxed.mjs`):
+
+  | operation           | dense                  | 4% missing             |
+  | ------------------- | ---------------------- | ---------------------- |
+  | `cumulative('sum')` | 10.22 → 2.56 ms (4.0×) | 22.94 → 3.44 ms (6.7×) |
+  | `cumulative('max')` | 11.84 → 2.54 ms (4.7×) | 22.12 → 3.43 ms (6.4×) |
+  | `diff`              | 19.18 → 2.71 ms (7.1×) | 20.29 → 3.87 ms (5.2×) |
+  | `rate`              | 21.18 → 3.96 ms (5.4×) | 21.92 → 5.14 ms (4.3×) |
+  | `pctChange`         | 19.87 → 2.85 ms (7.0×) | 21.85 → 3.95 ms (5.5×) |
+
+  Output is unchanged: same values, same missing cells, and `allFinite` still
+  derived from the produced values rather than inherited from the source.
+  Chunked and non-numeric sources keep the previous path.
+
 - **charts (Storybook):** the `Charts/Histogram` story group moved to
   **`Charts/BarChart/Histogram`** — the histogram is `BarChart` in its `bins`
   mode, not a separate component, and the sidebar now says so. Story IDs under

@@ -199,8 +199,9 @@ consumer signal. Plan:
   finite guard for `allFinite: false` reductions. Acceptance benchmarks
   already exist in `spikes/columnar-wasm/bench/controls.mjs`; each control is
   checked against pond-ts's answer before it is timed.
-- **[PND-BOXFREE]** — Element-wise operators box every cell. `diff`, `rate`,
-  `fill`, `shift`, `cumulative` and `mapColumns` are column-native only in the
+- **[PND-BOXFREE]** — Element-wise operators box every cell. **`cumulative`,
+  `diff`, `rate` and `pctChange` are done (4.0–7.1×); `fill`, `shift` and
+  `mapColumns` remain.** They are column-native only in the
   sense of not materialising `Event`s: they still read each cell through the
   polymorphic `read(i)` into a `ReadonlyArray<number | undefined>` and rebuild
   via `float64ColumnFromArray`. Measured **~10–20× slower per column than a
