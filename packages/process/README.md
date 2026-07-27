@@ -1,5 +1,20 @@
 # @pond-ts/process
 
+> **Work in progress. Not published, and the public shape is expected to
+> change.** This package is `private: true` — the release workflow skips it. It
+> lives on `main` so the design can be iterated in the open against
+> [RFC #543](../../docs/rfcs/process.md), not because it is ready to consume.
+>
+> The RFC concludes that the **declarative plan layer** is the consumer surface
+> and that this engine belongs underneath it as an internal module. That call is
+> tracked as **[PND-PROCSUB]**; the investigation behind it, and the nine other
+> tickets it produced, are in
+> [PND_PROCESS_PLAN.md](../../docs/plans/PND_PROCESS_PLAN.md). Node eviction
+> (**[PND-PROCEVICT]**) is blocking for any interactive consumer.
+>
+> The measurements those tickets are sized against are reproducible from
+> [`scripts/`](scripts/) — run them after `npm run build --workspaces`.
+
 **Typed dataflow graphs over [pond-ts](https://www.npmjs.com/package/pond-ts).**
 
 A small pull-based evaluation engine: nodes with typed ports, memoized

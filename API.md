@@ -22,7 +22,7 @@ before writing code against them.
 | `packages/charts`    | `@pond-ts/charts`    | `.`                                              | `website/docs/charts/`    |
 | `packages/financial` | `@pond-ts/financial` | `.` and `./fluent` (prototype augmentation)      | `website/docs/financial/` |
 | `packages/fit`       | `@pond-ts/fit`       | `.`                                              | `website/docs/fit/`       |
-| `packages/process`   | `@pond-ts/process`   | `.`                                              | `packages/process/README.md` |
+| `packages/process`   | `@pond-ts/process`   | `.` — **WIP, `private: true`, not published**    | `packages/process/README.md` |
 
 ---
 
@@ -343,6 +343,12 @@ by studies) — `packages/financial/src/kernels/rolling.ts`.
 ---
 
 ## @pond-ts/process
+
+**Work in progress — `private: true`, not published, public shape expected to
+change** (RFC [process.md](docs/rfcs/process.md) concludes the declarative plan
+layer is the consumer surface with this engine internal beneath it; tracked as
+[PND-PROCSUB]). Listed here because agents work in this repo, not because it is
+a stable surface. Tickets: [PND_PROCESS_PLAN.md](docs/plans/PND_PROCESS_PLAN.md).
 
 Typed dataflow graphs for pipelines whose **shape is data** (runtime-assembled,
 user-edited, one computation fanned out to several consumers). Chaining stays
