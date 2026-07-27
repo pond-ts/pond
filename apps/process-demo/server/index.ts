@@ -15,6 +15,7 @@ import { createServer } from 'node:http';
 import { createHost, toWire, type Envelope } from '@pond-ts/process';
 import { composerFromEnv, type Composer, type Turn } from './compose.js';
 import { barUnits, datasetSpecs, makeBars } from './data.js';
+import { toFrames } from './frames.js';
 import { demoRegistry } from './ops.js';
 
 const PORT = Number(process.env['PORT'] ?? 8787);
@@ -62,9 +63,16 @@ async function readJson(
 /** Resolves an envelope against its dataset's long-lived graph. */
 function runEnvelope(envelope: Envelope) {
   const t0 = performance.now();
-  const result = host.run({ onError: 'collect', ...envelope });
+  // `assemble: false` — the consumer is a browser, so a widened
+  // `TimeSeries` built here could never reach it. See `frames.ts`.
+  const result = host.run({ onError: 'collect', assemble: false, ...envelope });
   const ms = Math.round((performance.now() - t0) * 1000) / 1000;
-  return { ...toWire(result, envelope.as), ms };
+  const wire = toWire(result, envelope.as);
+  if (result.columns === undefined) return { ...wire, ms };
+  const t1 = performance.now();
+  const frames = toFrames(host.graphFor(envelope.from).series, result.columns);
+  const encodeMs = Math.round((performance.now() - t1) * 1000) / 1000;
+  return { ...wire, ms, frames, encodeMs };
 }
 
 async function handle(

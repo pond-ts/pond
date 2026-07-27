@@ -1,0 +1,205 @@
+/**
+ * The `viz` tab — M3.
+ *
+ * The interesting line in this file is `TimeSeries.fromColumns`. The
+ * server sends raw `Float64Array` buffers, and `fromColumns` **adopts**
+ * them rather than copying, treating NaN as a gap. So a study's column
+ * goes from the graph's `Outlet` to a stroked line without ever being
+ * boxed, on either side of the wire.
+ *
+ * That settles the fork the demo plan named. `@pond-ts/charts` already
+ * traverses columnar — the key axis is a zero-copy `subarray`, values
+ * land in a `Float64Array`, and no per-row object is allocated on the
+ * render path — so a layer's `series` + `column` signature was never the
+ * problem. What was wrong was assembling the series on the **producer**
+ * side: it cannot cross a wire, so `run({ assemble: false })` and the
+ * consumer builds its own for free.
+ *
+ * Chart choice is by shape, per the demo plan:
+ *
+ * | what             | chart |
+ * | ---------------- | ----- |
+ * | multi-output op  | band  |
+ * | single-output op | line  |
+ * | nothing drawable | JSON  |
+ *
+ * The band case is the multi-output naming decision paying off: a
+ * bollinger is **one** `outputs` entry carrying three columns, so the
+ * renderer draws an envelope rather than three unrelated lines. Nothing
+ * here inspects op names to work that out — it reads `outputs.length`.
+ */
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { TimeSeries, type SeriesSchema } from 'pond-ts';
+import {
+  BandChart,
+  ChartContainer,
+  ChartRow,
+  Layers,
+  LineChart,
+  YAxis,
+  defaultTheme,
+  type ChartTheme,
+} from '@pond-ts/charts';
+
+export interface Frames {
+  length: number;
+  key: string;
+  columns: Record<string, string>;
+  bytes: number;
+}
+
+export interface OutputInfo {
+  column: string;
+  unit: string | null;
+}
+
+/** base64 → `Float64Array`, one pass, no per-number parse. */
+function decode(b64: string): Float64Array {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+  return new Float64Array(bytes.buffer);
+}
+
+const PALETTE = ['#6fb3ff', '#f0b429', '#4fd1a5', '#c792ea', '#ff7a7a'];
+
+/** Styling is a theme channel, not a per-layer prop — one theme per figure. */
+function themeFor(color: string): ChartTheme {
+  return {
+    ...defaultTheme,
+    background: '#10131a',
+    line: { ...defaultTheme.line, default: { color, width: 1.25 } },
+    band: { ...defaultTheme.band, default: { fill: color, opacity: 0.22 } },
+  };
+}
+
+/**
+ * One series carrying every drawn column.
+ *
+ * Built once for the whole response rather than per figure — the key
+ * column is shared, and `fromColumns` adopts each value buffer zero-copy,
+ * so this is effectively free.
+ */
+function useDrawn(frames: Frames | undefined) {
+  return useMemo(() => {
+    if (frames === undefined || frames.length === 0) return undefined;
+    const names = Object.keys(frames.columns);
+    if (names.length === 0) return undefined;
+    const schema = [
+      { name: 'time', kind: 'time' },
+      ...names.map((name) => ({ name, kind: 'number' })),
+    ] as unknown as SeriesSchema;
+    const columns: Record<string, Float64Array> = { time: decode(frames.key) };
+    for (const name of names) columns[name] = decode(frames.columns[name]!);
+    const series = TimeSeries.fromColumns({ name: 'drawn', schema, columns });
+    const keys = columns['time']!;
+    return {
+      series,
+      range: [keys[0] ?? 0, keys[keys.length - 1] ?? 0] as [number, number],
+    };
+  }, [frames]);
+}
+
+/** `ChartContainer` needs a pixel width, so the panel has to be measured. */
+function useWidth(): [React.RefObject<HTMLDivElement | null>, number] {
+  const ref = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (el === null) return;
+    const ro = new ResizeObserver(([entry]) => {
+      setWidth(Math.max(0, Math.floor(entry!.contentRect.width)));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, width];
+}
+
+export function Viz(props: {
+  frames: Frames | undefined;
+  outputs: Record<string, OutputInfo[]>;
+  explain: Record<string, string>;
+  pending: boolean;
+  onDraw: () => void;
+}) {
+  const drawn = useDrawn(props.frames);
+  const [ref, width] = useWidth();
+  const groups = Object.entries(props.outputs).filter(([, o]) => o.length > 0);
+
+  return (
+    <div className="viz" ref={ref}>
+      {props.pending && <p className="muted">Drawing…</p>}
+      {!props.pending && drawn === undefined && (
+        <>
+          <p className="muted">
+            This response carries facts, not columns — a reduction never
+            materializes one, which is the point of <code>select</code>. Ask for
+            the columns and they will be fetched and drawn.
+          </p>
+          <button onClick={props.onDraw}>Fetch columns and draw</button>
+        </>
+      )}
+
+      {drawn !== undefined &&
+        width > 0 &&
+        groups.map(([id, outs], g) => {
+          const color = PALETTE[g % PALETTE.length]!;
+          return (
+            <figure key={id}>
+              <figcaption>
+                {props.explain[id] ?? id}
+                {outs[0]?.unit && (
+                  <span className="meta"> · {outs[0].unit}</span>
+                )}
+              </figcaption>
+              <ChartContainer
+                width={width}
+                range={drawn.range}
+                theme={themeFor(color)}
+              >
+                <ChartRow height={170}>
+                  <YAxis id="y" width={62} />
+                  <Layers>
+                    {outs.length === 3 ? (
+                      <>
+                        <BandChart
+                          axis="y"
+                          series={drawn.series}
+                          lower={outs[2]!.column}
+                          upper={outs[0]!.column}
+                        />
+                        <LineChart
+                          axis="y"
+                          series={drawn.series}
+                          column={outs[1]!.column}
+                        />
+                      </>
+                    ) : (
+                      outs.map((o) => (
+                        <LineChart
+                          key={o.column}
+                          axis="y"
+                          series={drawn.series}
+                          column={o.column}
+                        />
+                      ))
+                    )}
+                  </Layers>
+                </ChartRow>
+              </ChartContainer>
+            </figure>
+          );
+        })}
+
+      {drawn !== undefined && props.frames && (
+        <p className="muted">
+          {drawn.series.length.toLocaleString()} points ·{' '}
+          {(props.frames.bytes / 1024 / 1024).toFixed(2)} MB of buffers, adopted
+          zero-copy by <code>TimeSeries.fromColumns</code>.
+        </p>
+      )}
+    </div>
+  );
+}

@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Viz, type Frames } from './Viz.js';
 
 interface DatasetInfo {
   id: string;
@@ -46,6 +47,8 @@ interface RunResult {
   hasSeries: boolean;
   as?: string;
   ms: number;
+  frames?: Frames;
+  encodeMs?: number;
 }
 interface Composed {
   envelope: Record<string, unknown>;
@@ -61,6 +64,15 @@ interface Entry {
   prompt: string;
   composed?: Composed | undefined;
   result?: RunResult | undefined;
+  /**
+   * The envelope that actually produced `result` — which is not
+   * `composed.envelope` once the request panel has been edited. The draw
+   * path reads this, so a chart always matches the plan on screen.
+   */
+  ran?: unknown;
+  /** The columns response, fetched only when the viz tab asks. */
+  drawn?: RunResult | undefined;
+  drawing?: boolean | undefined;
   error?: string | undefined;
   pending: boolean;
 }
@@ -123,7 +135,17 @@ export function App() {
         { prompt: trimmed, history },
       );
       setEntries((prev) =>
-        prev.map((e) => (e.id === id ? { ...e, ...body, pending: false } : e)),
+        prev.map((e) =>
+          e.id === id
+            ? {
+                ...e,
+                ...body,
+                ran: body.composed.envelope,
+                drawn: undefined,
+                pending: false,
+              }
+            : e,
+        ),
       );
     } catch (e) {
       setEntries((prev) =>
@@ -148,10 +170,20 @@ export function App() {
     );
     try {
       const result = await post<RunResult>('/api/run', envelope);
+      // The envelope may have been hand-edited, so anything previously
+      // drawn is for a different plan. Dropping it is what makes the viz
+      // tab re-fetch rather than render a stale chart.
       setEntries((prev) =>
         prev.map((e) =>
           e.id === entry.id
-            ? { ...e, result, pending: false, error: undefined }
+            ? {
+                ...e,
+                result,
+                ran: envelope,
+                drawn: undefined,
+                pending: false,
+                error: undefined,
+              }
             : e,
         ),
       );
@@ -162,6 +194,47 @@ export function App() {
             ? {
                 ...en,
                 pending: false,
+                error: e instanceof Error ? e.message : String(e),
+              }
+            : en,
+        ),
+      );
+    }
+  }
+
+  /**
+   * Fetches the drawable columns for an entry, on demand.
+   *
+   * A second request rather than always asking for columns, because a
+   * column is ~1.2 MB per study at this dataset size and a reduction is
+   * a few bytes. It also makes the cache visible in the best possible
+   * way: every node comes back `cached`, and what you pay is purely the
+   * materialization and the wire.
+   */
+  async function draw(entry: Entry) {
+    const envelope = (entry.ran ?? entry.composed?.envelope) as
+      { process?: unknown[]; select?: unknown[] } | undefined;
+    if (envelope?.process === undefined) return;
+    setEntries((prev) =>
+      prev.map((e) => (e.id === entry.id ? { ...e, drawing: true } : e)),
+    );
+    try {
+      const drawn = await post<RunResult>('/api/run', {
+        ...envelope,
+        select: envelope.process.map((on) => ({ on, columns: true })),
+      });
+      setEntries((prev) =>
+        prev.map((e) =>
+          e.id === entry.id ? { ...e, drawn, drawing: false } : e,
+        ),
+      );
+    } catch (e) {
+      setEntries((prev) =>
+        prev.map((en) =>
+          en.id === entry.id
+            ? {
+                ...en,
+                drawing: false,
                 error: e instanceof Error ? e.message : String(e),
               }
             : en,
@@ -196,7 +269,7 @@ export function App() {
           }}
         />
         <RequestPanel entry={current} onRerun={rerun} />
-        <ResultsPanel entry={current} />
+        <ResultsPanel entry={current} onDraw={draw} />
       </main>
     </div>
   );
@@ -380,22 +453,60 @@ function RequestPanel(props: {
   );
 }
 
-function ResultsPanel(props: { entry: Entry | undefined }) {
+function ResultsPanel(props: {
+  entry: Entry | undefined;
+  onDraw: (entry: Entry) => void;
+}) {
   const { entry } = props;
+  const [tab, setTab] = useState<'raw' | 'viz'>('raw');
   const result = entry?.result;
+  // The badges come from whichever request was last resolved — on the viz
+  // tab that is the columns fetch, and its all-cached row is the point.
+  const shown = tab === 'viz' ? (entry?.drawn ?? result) : result;
   return (
     <section className="panel">
       <div className="panel-head">
         <h2>Results</h2>
-        {result && (
+        {shown && (
           <span className="meta">
-            {result.as ? `${result.as} · ` : ''}
-            {result.ms} ms
+            {shown.as ? `${shown.as} · ` : ''}
+            {shown.ms} ms
+            {shown.encodeMs !== undefined && ` · +${shown.encodeMs} ms encode`}
           </span>
         )}
+        <div className="tabs">
+          {(['raw', 'viz'] as const).map((t) => (
+            <button
+              key={t}
+              className={t === tab ? 'tab on' : 'tab'}
+              onClick={() => setTab(t)}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {result ? (
+      {tab === 'viz' && entry !== undefined && (
+        <VizTab entry={entry} onDraw={props.onDraw} />
+      )}
+
+      {tab === 'viz' && shown && (
+        <ul className="nodes">
+          {shown.nodes.map((n) => (
+            <li key={n.id} className={n.cached ? 'cached' : 'computed'}>
+              <code title={shown.explain[n.id] ?? n.id}>
+                {shown.explain[n.id] ?? n.id}
+              </code>
+              <span>
+                {n.cached ? 'cached' : 'computed'} · {n.ms} ms
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {tab === 'raw' && result ? (
         <>
           {/* The badge row. Without it the caching is true but invisible,
               which is the failure mode M1 exists to prevent. */}
@@ -439,10 +550,38 @@ function ResultsPanel(props: { entry: Entry | undefined }) {
             )}
           </pre>
         </>
-      ) : (
+      ) : tab === 'raw' ? (
         <Empty entry={entry} what="the response" />
-      )}
+      ) : null}
     </section>
+  );
+}
+
+/**
+ * The viz tab's own fetch trigger.
+ *
+ * Lives in a component rather than in the tab's `onClick` so that
+ * clearing `drawn` — which a re-run does, because the envelope may have
+ * been edited — re-fetches while the tab is already open. Handling it
+ * only on the click left a chart from the previous plan on screen.
+ */
+function VizTab(props: { entry: Entry; onDraw: (entry: Entry) => void }) {
+  const { entry, onDraw } = props;
+  const needed = entry.drawn === undefined && entry.drawing !== true;
+  useEffect(() => {
+    if (needed) onDraw(entry);
+    // `entry.id` and `needed` are the trigger; `entry` itself changes
+    // identity on every keystroke in the envelope editor.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entry.id, needed]);
+  return (
+    <Viz
+      frames={entry.drawn?.frames}
+      outputs={entry.drawn?.outputs ?? {}}
+      explain={entry.drawn?.explain ?? {}}
+      pending={entry.drawing === true || needed}
+      onDraw={() => onDraw(entry)}
+    />
   );
 }
 

@@ -54,6 +54,21 @@ export interface RunRequest {
   readonly plan: Plan;
   readonly select?: readonly Select[];
   readonly onError?: ErrorPolicy;
+  /**
+   * Whether a `columns` selector also assembles a widened `TimeSeries`.
+   *
+   * Defaults to `true`, which is right for an **in-process** renderer:
+   * the chart layers take a series plus a column name, and assembling
+   * once is cheaper than making every consumer do it.
+   *
+   * Pass `false` when the consumer is across a wire. Assembly there is
+   * pure waste — the series cannot be serialized, and the columns can,
+   * so the receiving side rebuilds one with `TimeSeries.fromColumns`,
+   * which **adopts a `Float64Array` zero-copy**. Measured at 1M rows,
+   * `appendColumn` costs 7.6 ms for a gapless column and 22.4 ms for a
+   * gapped one — and every rolling study is gapped ([PND-PROCCOL]).
+   */
+  readonly assemble?: boolean;
 }
 
 export interface OutputInfo {
@@ -93,8 +108,18 @@ export interface Skipped {
 }
 
 export interface RunResult {
-  /** Present only when a `columns` selector asked for it. */
+  /** Present only when a `columns` selector asked for it, and `assemble`. */
   readonly series?: TimeSeries<SeriesSchema>;
+  /**
+   * The resolved columns a `columns` selector asked for, keyed by the
+   * name they carry in {@link outputs} — present whenever one did.
+   *
+   * This is the wire-shaped answer, and the one M3 settled on: a column
+   * is a `Float64Array` plus a validity bitmap, so it encodes compactly
+   * and the consumer reassembles for free. {@link series} is the
+   * in-process convenience over the top of it.
+   */
+  readonly columns?: Readonly<Record<string, Column>>;
   readonly outputs: Readonly<Record<string, readonly OutputInfo[]>>;
   readonly facts: readonly Fact[];
   /**
@@ -202,7 +227,7 @@ function reduceColumn(
 // ── run ──────────────────────────────────────────────────────
 
 export function run(graph: BoundGraph, request: RunRequest): RunResult {
-  const { plan, select = [], onError = 'throw' } = request;
+  const { plan, select = [], onError = 'throw', assemble = true } = request;
   const registry = graph.registry;
   const skipped: Skipped[] = [];
   const resolved: { id: string; spec: Spec }[] = [];
@@ -256,6 +281,7 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
   const timings: NodeTiming[] = [];
   const timed = new Set<string>();
   let assembled: TimeSeries<SeriesSchema> | undefined;
+  let drawn: Record<string, Column> | undefined;
   const columnCache = new Map<string, Column>();
 
   /**
@@ -297,10 +323,13 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
     return col;
   };
 
-  // ── assemble, but only what was asked for ──────────────────
+  // ── resolve the drawable columns, and assemble only if asked ───
+  // The closure, not just the `columns: true` selectors — a reduction
+  // reads a column too, and `crossings`'s `against` names a second one.
   const wantsAnyColumns = selectors.some((s) => 'columns' in s.sel);
   if (wantsAnyColumns) {
-    assembled = graph.series;
+    drawn = {};
+    if (assemble) assembled = graph.series;
     for (const [id, report] of needed) {
       const compiled = graph.get(id);
       if (compiled === undefined) continue;
@@ -309,7 +338,8 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
       if (report) outputs[id] = [];
       op.outputs.forEach((o, n) => {
         const col = columnFor(id, o.id);
-        assembled = appendColumn(assembled!, cols[n]!, col);
+        drawn![cols[n]!] = col;
+        if (assemble) assembled = appendColumn(assembled!, cols[n]!, col);
         if (report) {
           outputs[id]!.push({
             column: cols[n]!,
@@ -359,6 +389,7 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
 
   return {
     ...(assembled !== undefined && { series: assembled }),
+    ...(drawn !== undefined && { columns: drawn }),
     outputs,
     facts,
     explain: explainMap,

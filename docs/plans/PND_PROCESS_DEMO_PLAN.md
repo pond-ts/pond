@@ -228,15 +228,29 @@ The band case is worth calling out: a bollinger is **one** `outputs` entry
 with three columns, so the renderer knows to draw a band rather than three
 unrelated lines. That is the multi-output naming decision paying off.
 
-**Decides [PND-PROCCOL]'s remainder:** how a column value reaches a chart.
-`appendColumn` (landed) assembles a series; per-column arrays avoid
-assembly entirely. The chart layers currently take a `TimeSeries` plus a
-column name, which points at assembly — but assembly is the expensive
-path, so this is a real fork and the UI is where it gets decided.
+**Decided [PND-PROCCOL]'s remainder — and it was not a fork.** The
+framing above assumed the layers' `TimeSeries` + column-name signature
+pointed at assembly. It does not: charts already traverses columnar (the
+key axis is a zero-copy `subarray`, values are a `Float64Array`, nothing
+is boxed on the render path), so the signature is satisfied by a series
+the **consumer** builds. What was wrong was assembling on the producer
+side, where the result cannot cross a wire.
 
-**Sharp edge:** `@pond-ts/charts` layers take only `TimeSeries`, which is
-[PND-LIVELYR] in the charts section. If it bites here, it is the same
-issue from a new direction and should be reported there.
+So: `run({ assemble: false })` plus `RunResult.columns`, and the browser
+calls `TimeSeries.fromColumns`, which adopts buffers zero-copy and reads
+NaN as a gap. Full write-up and numbers in [PND-PROCCOL]; the short
+version is that **drawing costs transport, not compute** — 5.72 MB of
+buffers for two studies at 150k rows against 5 ms to encode — and that is
+a second argument for the worker topology, where the same buffers
+transfer in 0.5 ms.
+
+**Landed** as a `raw | viz` tab pair in the results panel. Columns are
+fetched **lazily**, on switching to `viz`, because a column is ~1.2 MB
+per study and a reduction is a few bytes; the side effect is the clearest
+cache demonstration in the app, since every node comes back `cached` and
+what you wait for is purely wire.
+
+**The charts API needed nothing.** [PND-LIVELYR] did not bite here.
 
 ---
 

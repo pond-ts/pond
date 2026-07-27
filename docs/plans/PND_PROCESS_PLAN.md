@@ -25,6 +25,7 @@ self-contained — run them after `npm run build --workspaces`:
 | `rfc543-op-cache.mjs`        | Two modes of In; node-level cache; per-op vs engine-wide budget |
 | `rfc543-column-values.mjs`   | Boxed arrays vs columns as node values; read-path timings       |
 | `rfc543-worker-transfer.mjs` | Cost of crossing a worker boundary per representation           |
+| `demo-m3-render-path.mjs`    | What it costs to get a node's column onto a chart (M3)          |
 
 If the package is restructured or withdrawn (see [PND-PROCSUB]), these
 should move with it — they are the evidence base for every decision here.
@@ -265,6 +266,60 @@ studies — another reason assembly should be requested rather than assumed
 ([PND-PROCTERM]). Also note `createValidityBitmap` is internal;
 `ValidityBitmap` is a structural interface, so `packColumn` implements it
 outside core rather than reaching in.
+
+**The remainder, decided in M3.** The demo plan framed the last open
+question as a fork — an assembled `TimeSeries` versus per-column arrays
+into a chart layer. **It is not a fork, and the framing was wrong.**
+
+`@pond-ts/charts` already traverses columnar: the key axis is a zero-copy
+`subarray` over the key buffer (`charts/src/data.ts:244`), values land in
+a `Float64Array`, d3-shape passes typed arrays through untouched, and no
+per-row object is allocated anywhere on the render path. The layers'
+`series` + `column` signature was never the problem.
+
+What was wrong was assembling on the **producer** side. A `TimeSeries`
+cannot cross a wire, so a server that builds one has done work its
+consumer can never use. The answer is that **columns are the wire shape
+and the assembled series is the in-process convenience**:
+
+- `run({ assemble: false })` skips `appendColumn` entirely;
+- `RunResult.columns` hands back the resolved columns by name;
+- the consumer calls `TimeSeries.fromColumns`, which **adopts a
+  `Float64Array` zero-copy** and reads NaN as a gap — so reassembly on
+  the far side costs nothing.
+
+Measured (`scripts/demo-m3-render-path.mjs`), per column:
+
+| rows | `appendColumn` gapless | `appendColumn` gapped | charts' `read(i)` walk |
+| ---- | ---------------------- | --------------------- | ---------------------- |
+| 150k | 1.16 ms                | 2.38 ms               | 0.73 ms                |
+| 1M   | 7.64 ms                | 22.44 ms              | 5.24 ms                |
+
+**2.9× for the gapped path at 1M, and every rolling study is gapped** —
+the boxing fallback is the common case, not the edge, and it exists only
+because core's `withColumn` takes values rather than a column. Exposing
+`withColumnAppended` would remove it; until then `assemble: false` avoids
+it altogether for a wire consumer.
+
+**What actually dominates is transport, and that is the new finding.** A
+bollinger plus an RSI at 150k rows is 5.72 MB of buffers — ~7.6 MB once
+base64'd into JSON — against 5 ms to encode and ~0 ms to resolve warm.
+Drawing costs transport, not compute. And it is **forced by charts
+decimating client-side**: the layer needs the whole column to choose which
+pixels survive, so the whole column has to arrive.
+
+That is a second, independent argument for the worker topology, parallel
+to the one already recorded here: the same buffers _transfer_ in 0.5 ms
+with no copy. Over HTTP they are 7.6 MB of base64 per redraw. The
+alternative for a server topology is decimating server-side to viewport
+resolution, which is a real option ([PND-PROCTERM]'s `shape` reduction is
+the token-metered version of it) but changes who owns the zoom.
+
+**Core gap, seen from a second direction.** `toFloat64Array()` writes `0`
+for a missing cell, so a producer cannot use the bulk reader for a gapped
+column _even in Node_ — a warm-up would draw as a plunge to zero rather
+than as absent. The `missing` option charts F-2 asks for is needed by
+anything that materializes a column, not just charts.
 
 **Done when:** the plan layer's node values are columns, and no
 `Array`-of-`undefined` sits on a hot path.

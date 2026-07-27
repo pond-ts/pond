@@ -37,6 +37,8 @@ export interface Envelope {
   readonly as?: string;
   readonly select?: readonly Select[];
   readonly onError?: ErrorPolicy;
+  /** See {@link RunRequest.assemble}. A wire consumer wants `false`. */
+  readonly assemble?: boolean;
 }
 
 export interface DatasetInfo {
@@ -109,6 +111,7 @@ export class Host {
       plan: envelope.process,
       ...(envelope.select !== undefined && { select: envelope.select }),
       ...(envelope.onError !== undefined && { onError: envelope.onError }),
+      ...(envelope.assemble !== undefined && { assemble: envelope.assemble }),
     });
   }
 }
@@ -120,10 +123,10 @@ export function createHost(options: {
   return new Host(options);
 }
 
-/** A response with the in-process series dropped — what crosses a wire. */
-export interface WireResult extends Omit<RunResult, 'series'> {
+/** A response with the in-process values dropped — what crosses a wire. */
+export interface WireResult extends Omit<RunResult, 'series' | 'columns'> {
   readonly as?: string;
-  /** Columns the caller asked to draw, when it asked. */
+  /** Whether a `columns` selector asked for drawable values. */
   readonly hasSeries: boolean;
 }
 
@@ -138,10 +141,10 @@ export interface WireResult extends Omit<RunResult, 'series'> {
  * on exactly the requests that cross a wire.
  */
 export function toWire(result: RunResult, as?: string): WireResult {
-  const { series, ...rest } = result;
+  const { series, columns, ...rest } = result;
   return {
     ...rest,
     ...(as !== undefined && { as }),
-    hasSeries: series !== undefined,
+    hasSeries: series !== undefined || columns !== undefined,
   };
 }

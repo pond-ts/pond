@@ -444,3 +444,64 @@ describe('run — the graph is the cache', () => {
     expect(run(b, req).facts[0]).toMatchObject({ value: 1008 });
   });
 });
+
+describe('run — columns are the wire shape, assembly is the convenience', () => {
+  it('hands back the resolved columns a selector asked to draw', () => {
+    const { registry } = makeRegistry();
+    const graph = bind(series(50), { registry, units });
+    const res = run(graph, {
+      plan: [sma3],
+      select: [{ on: sma3, columns: true }],
+    });
+    const name = specId(registry, sma3);
+    expect(Object.keys(res.columns!)).toEqual([name]);
+    expect(res.columns![name]!.length).toBe(50);
+  });
+
+  it('names a multi-output op’s columns individually', () => {
+    // One spec, three columns — the band case M3 draws.
+    const { registry } = makeRegistry();
+    const graph = bind(series(50), { registry, units });
+    const bb = { op: 'band', params: { width: 2 }, inputs: ['px'] };
+    const res = run(graph, {
+      plan: [bb],
+      select: [{ on: bb, columns: true }],
+    });
+    const id = specId(registry, bb);
+    expect(Object.keys(res.columns!).sort()).toEqual(
+      [`${id}Lower`, `${id}Middle`, `${id}Upper`].sort(),
+    );
+  });
+
+  it('skips assembly when the consumer is across a wire', () => {
+    // `assemble: false` is not an optimization flag — a `TimeSeries`
+    // cannot be serialized, so building one for a wire consumer is pure
+    // waste. The columns still come back; the receiving side rebuilds
+    // with `TimeSeries.fromColumns`, which adopts buffers zero-copy.
+    const { registry } = makeRegistry();
+    const graph = bind(series(50), { registry, units });
+    const req = {
+      plan: [sma3],
+      select: [{ on: sma3, columns: true } as const],
+    };
+
+    const wire = run(graph, { ...req, assemble: false });
+    expect(wire.series).toBeUndefined();
+    expect(wire.columns).toBeDefined();
+
+    const inProcess = run(graph, req);
+    expect(inProcess.series).toBeDefined();
+    expect(inProcess.columns).toBeDefined();
+  });
+
+  it('leaves both undefined when nothing asked to be drawn', () => {
+    const { registry } = makeRegistry();
+    const graph = bind(series(50), { registry, units });
+    const res = run(graph, {
+      plan: [sma3],
+      select: [{ on: sma3, reduce: 'last' }],
+    });
+    expect(res.series).toBeUndefined();
+    expect(res.columns).toBeUndefined();
+  });
+});
