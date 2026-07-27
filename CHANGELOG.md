@@ -4,9 +4,9 @@ All notable changes to this project are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
-`@pond-ts/fit`, and `@pond-ts/financial` — release together under a single `v*`
-tag, so this file covers them all. Pre-1.0: minor bumps may include new features
-and type-level changes; patch bumps are strictly additive.
+`@pond-ts/fit`, `@pond-ts/financial`, and `@pond-ts/process` — release together
+under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
+include new features and type-level changes; patch bumps are strictly additive.
 
 [Unreleased]: https://github.com/pond-ts/pond/compare/v0.53.1...HEAD
 [0.53.1]: https://github.com/pond-ts/pond/compare/v0.53.0...v0.53.1
@@ -67,6 +67,23 @@ and type-level changes; patch bumps are strictly additive.
   readout reports the bar's own colour, and the dense-bar envelope decimation
   is skipped (an envelope rect can't carry more than one colour), so every
   visible bar draws.
+- **process:** new **`@pond-ts/process`** package — **work in progress, not
+  published.** Marked `private: true`, so the release workflow skips it; it is
+  on `main` to be iterated on in the open against
+  [RFC #543](https://github.com/pond-ts/pond/pull/543), not to be consumed.
+  A typed dataflow engine over pond values: nodes with typed `in` / `out` port
+  fields (wiring a `string` output into a `number` input is a compile error),
+  pull-based memoized evaluation, connect-time cycle rejection, per-node error
+  caching, and a read-only `Graph` view. `fromLive()` binds a live source where
+  events only mark dirty, so a burst of N events costs one snapshot at the next
+  pull rather than N.
+
+  **The public shape is expected to change.** The RFC concludes that the
+  declarative plan layer is the consumer surface and this engine belongs
+  underneath it as an internal module — see **[PND-PROCSUB]** in
+  [PLAN.md](PLAN.md), and [PND_PROCESS_PLAN.md](docs/plans/PND_PROCESS_PLAN.md)
+  for the nine other tickets the investigation produced (node eviction is
+  blocking; column-valued nodes and dirty-per-range are the large wins).
 
 ### Changed
 
