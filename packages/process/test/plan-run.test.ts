@@ -385,8 +385,10 @@ describe('run — the graph is the cache', () => {
     };
     const first = run(graph, req);
     const second = run(graph, req);
-    expect(first.computed).toEqual([specId(registry, sma3)]);
-    expect(second.computed).toEqual([]);
+    expect(first.nodes).toEqual([
+      { id: specId(registry, sma3), cached: false, ms: expect.any(Number) },
+    ]);
+    expect(second.nodes[0]).toMatchObject({ cached: true });
     expect(ran['sma']).toBe(1);
   });
 

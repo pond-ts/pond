@@ -79,6 +79,8 @@ export {
   outputKey,
 } from './plan/identity.js';
 export { bind, BoundGraph, UnitError } from './plan/graph.js';
+export { createHost, Host, toWire, UnknownDatasetError } from './plan/host.js';
+export type { Envelope, DatasetInfo, WireResult } from './plan/host.js';
 export { run } from './plan/run.js';
 export type {
   ErrorPolicy,
@@ -88,6 +90,7 @@ export type {
   ReductionName,
   RunRequest,
   RunResult,
+  NodeTiming,
   OutputInfo,
   Fact,
   Skipped,
