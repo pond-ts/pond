@@ -9,8 +9,8 @@ It is a demo, but its job is to **decide the library's shape**, per
 [PND_PROCESS_DEMO_PLAN.md](../../docs/plans/PND_PROCESS_DEMO_PLAN.md).
 M2 asked whether `registry.toJsonSchema()` is enough for a caller to
 compose valid plans with no prose hand-holding ([PND-PROCSCHEMA]); M3
-asked how a column value reaches a chart ([PND-PROCCOL]). The clickable
-pipeline is M4.
+asked how a column value reaches a chart ([PND-PROCCOL]); M4 is the
+payoff the first three were staging.
 
 ## Running it
 
@@ -52,6 +52,14 @@ nothing about the registry**.
   they are is a registry finding.
 - **`explain`, under each badge.** Never hand-built — it is the lineage the
   library derives, and it is what M4 will label pipeline nodes with.
+- **The `graph` tab, and clicking a node.** This is the point of the whole
+  demo. The pipeline is drawn from the response: the label is the lineage
+  the library derived, the badge is the same warm/cold data the raw tab
+  shows, and the edges come from `node.inputs`. Click a node — _any_ node,
+  including an intermediate the plan never named at its top level — and
+  Results draws that node's output. It is one more selector on an id the
+  response already gave you. In a fold you would have had to retain that
+  intermediate deliberately and invent a name for it.
 - **The `viz` tab.** Columns are fetched _lazily_, only when you switch to
   it, because a column is ~1.2 MB per study here and a reduction is a few
   bytes. The side effect is the clearest cache demo in the app: every node
@@ -78,6 +86,7 @@ server/
 web/
   App.tsx      The three panels.
   Viz.tsx      The `viz` tab — decode, `TimeSeries.fromColumns`, chart.
+  Pipeline.tsx The `graph` tab — dagre layout over `nodes` + `inputs`.
 ```
 
 ## Notes for anyone extending it

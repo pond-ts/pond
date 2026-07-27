@@ -86,10 +86,38 @@ export interface Fact {
 /** One node's contribution to a request — the per-node badge. */
 export interface NodeTiming {
   readonly id: string;
-  /** False when the value was produced this call. */
+  /**
+   * Whether this request actually read the node's value.
+   *
+   * A plan may resolve specs nothing selects. They are compiled and they
+   * are part of the pipeline, but no value was pulled through them, so
+   * {@link ms} is zero and says nothing. Reporting only the pulled subset
+   * made `nodes` a half-truth — the M4 pipeline view drew a plan with
+   * whole branches missing, because the request had not asked for them.
+   */
+  readonly pulled: boolean;
+  /**
+   * False when the value was produced this call.
+   *
+   * Still meaningful when {@link pulled} is false: a node left clean by
+   * an earlier request genuinely holds a cached value, this request just
+   * had no reason to read it.
+   */
   readonly cached: boolean;
-  /** Milliseconds attributable to this node, to 3 decimal places. */
+  /** Milliseconds attributable to this node, to 3 decimal places. Zero when not pulled. */
   readonly ms: number;
+  /**
+   * Upstream node ids, in the op's declared input order. Raw source
+   * columns are named by column, so an entry here is either an id in
+   * {@link RunResult.nodes} or a column of the bound series.
+   *
+   * This is what makes the response a **graph** rather than a list.
+   * A caller cannot derive it: the edges live in the specs, and turning
+   * a spec into an id means reimplementing `specId`'s canonicalization —
+   * which is exactly why a selector takes an inline spec rather than an
+   * id string. Added for M4's pipeline view.
+   */
+  readonly inputs: readonly string[];
 }
 
 export interface Skipped {
@@ -130,11 +158,15 @@ export interface RunResult {
   readonly explain: Readonly<Record<string, string>>;
   readonly skipped: readonly Skipped[];
   /**
-   * Every node this request touched, in dependency order, with whether
-   * it was computed or served warm and how long it took.
+   * Every node the plan resolved, in dependency order, each with its
+   * upstream ids and whether this request pulled it — and if so, whether
+   * it was computed or served warm, and how long it took.
    *
-   * This is the demo's explaining device ([PND-DEMOM1]): without it the
-   * caching is true but invisible.
+   * Two things at once, and deliberately: it is the demo's explaining
+   * device ([PND-DEMOM1]), without which the caching is true but
+   * invisible, *and* it is the pipeline's shape ([PND-DEMOM4]), which no
+   * caller can derive because turning a spec into an id means
+   * reimplementing `specId`.
    */
   readonly nodes: readonly NodeTiming[];
 }
@@ -299,15 +331,54 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
     // pipeline view, and both label from here — leaving it out meant a
     // badge with a raw id under it.
     explainMap[id] ??= explain(registry, compiled.spec);
-    for (const input of compiled.spec.inputs) {
-      if (typeof input !== 'string') warm(refToId(registry, input));
-    }
+    // Resolved on the way down, so an edge names the id the consumer
+    // will see in `nodes` rather than a spec it would have to hash.
+    const upstream = compiled.spec.inputs.map((input) => {
+      if (typeof input === 'string') return input;
+      const upId = refToId(registry, input);
+      warm(upId);
+      return upId;
+    });
     const suffix = registry.get(compiled.spec.op).outputs[0]!.id;
     const wasDirty = compiled.node.dirty;
     const t0 = performance.now();
     graph.columnOf(compiled, suffix);
     const ms = performance.now() - t0;
-    timings.push({ id, cached: !wasDirty, ms: Math.round(ms * 1000) / 1000 });
+    timings.push({
+      id,
+      pulled: true,
+      cached: !wasDirty,
+      ms: Math.round(ms * 1000) / 1000,
+      inputs: upstream,
+    });
+  };
+
+  /**
+   * Records a resolved node the request never pulled, inputs first.
+   *
+   * The pipeline is the plan, not the subset one selector happened to
+   * reach. Reading `node.dirty` is free — no value is produced — so this
+   * costs nothing beyond the walk.
+   */
+  const record = (id: string): void => {
+    if (timed.has(id)) return;
+    timed.add(id);
+    const compiled = graph.get(id);
+    if (compiled === undefined) return;
+    explainMap[id] ??= explain(registry, compiled.spec);
+    const upstream = compiled.spec.inputs.map((input) => {
+      if (typeof input === 'string') return input;
+      const upId = refToId(registry, input);
+      record(upId);
+      return upId;
+    });
+    timings.push({
+      id,
+      pulled: false,
+      cached: !compiled.node.dirty,
+      ms: 0,
+      inputs: upstream,
+    });
   };
 
   const columnFor = (id: string, suffix: string): Column => {
@@ -386,6 +457,10 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
       fail({ select: sel, reason: e instanceof Error ? e.message : String(e) });
     }
   }
+
+  // Anything the plan resolved but nothing selected. After the pulls, so
+  // a node that *was* read keeps its timing rather than being shadowed.
+  for (const { id } of resolved) record(id);
 
   return {
     ...(assembled !== undefined && { series: assembled }),

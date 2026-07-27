@@ -195,6 +195,33 @@ describe('per-node timing — the badge', () => {
     expect(res.explain[specId(registry, sma3)]).toContain('sma');
   });
 
+  it('names each node’s upstream ids, so the response is a graph', () => {
+    // Without this a caller has the nodes but not the edges, and cannot
+    // derive them: turning a spec into an id means reimplementing
+    // `specId`'s canonicalization. M4's pipeline view reads this.
+    const { registry } = makeRegistry();
+    const host = createHost({ registry, units }).add('prices', series(50));
+    const nested = { op: 'scale', params: { by: 2 }, inputs: [sma3] };
+    const res = host.run({
+      from: 'prices',
+      process: [nested],
+      select: [{ on: nested, reduce: 'last' }],
+    });
+    const smaId = specId(registry, sma3);
+    expect(res.nodes.map((n) => [n.id, n.inputs])).toEqual([
+      // A raw source column is named by column, not by node id.
+      [smaId, ['px']],
+      [specId(registry, nested), [smaId]],
+    ]);
+    // Every non-column input resolves to a node in the same response.
+    const ids = new Set(res.nodes.map((n) => n.id));
+    for (const n of res.nodes) {
+      for (const input of n.inputs) {
+        expect(ids.has(input) || input === 'px').toBe(true);
+      }
+    }
+  });
+
   it('attributes time to the node that spent it, not its consumer', () => {
     // Pulling a leaf without warming its inputs first would charge the
     // whole subtree to the leaf, and the badge would lie. Tested with a

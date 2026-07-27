@@ -173,7 +173,31 @@ describe('run — resolution', () => {
     const graph = bind(series(10), { registry, units });
     const nested = { op: 'scale', params: { by: 2 }, inputs: [sma3] };
     const res = run(graph, { plan: [nested] });
-    expect(Object.values(res.explain)).toEqual(['scale(by=2) of SMA(3) of px']);
+    // The whole closure, not just the plan's top level — a nested spec is
+    // a node in `nodes` and needs a label there too.
+    expect(Object.values(res.explain).sort()).toEqual([
+      'SMA(3) of px',
+      'scale(by=2) of SMA(3) of px',
+    ]);
+  });
+
+  it('reports resolved nodes nothing selected, marked not pulled', () => {
+    // A plan may carry a branch no selector reaches. It is still part of
+    // the pipeline, and leaving it out of `nodes` drew a graph with a
+    // whole branch missing (found in M4).
+    const { registry, ran } = makeRegistry();
+    const graph = bind(series(10), { registry, units });
+    const res = run(graph, {
+      plan: [sma3, sma5],
+      select: [{ on: sma3, reduce: 'last' }],
+    });
+    expect(res.nodes.map((n) => [n.id, n.pulled])).toEqual([
+      [specId(registry, sma3), true],
+      [specId(registry, sma5), false],
+    ]);
+    // Reporting it costs nothing: the unselected op never ran.
+    expect(ran['sma']).toBe(1);
+    expect(res.nodes[1]).toMatchObject({ ms: 0, cached: false });
   });
 
   it('resolves a 2-input op across two branches', () => {
@@ -402,7 +426,13 @@ describe('run — the graph is the cache', () => {
     const first = run(graph, req);
     const second = run(graph, req);
     expect(first.nodes).toEqual([
-      { id: specId(registry, sma3), cached: false, ms: expect.any(Number) },
+      {
+        id: specId(registry, sma3),
+        pulled: true,
+        cached: false,
+        ms: expect.any(Number),
+        inputs: ['px'],
+      },
     ]);
     expect(second.nodes[0]).toMatchObject({ cached: true });
     expect(ran['sma']).toBe(1);
