@@ -1,0 +1,39 @@
+{
+  "name": "@pond-ts/process-demo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "NOT PUBLISHED. Three-panel demo for @pond-ts/process — its job is to decide the library's shape (docs/plans/PND_PROCESS_DEMO_PLAN.md).",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "concurrently -n server,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "tsx watch server/index.ts",
+    "dev:web": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "start": "tsx server/index.ts",
+    "format": "prettier --write \"{server,web}/**/*.{ts,tsx,css}\" \"*.{ts,json,md}\"",
+    "format:check": "prettier --check \"{server,web}/**/*.{ts,tsx,css}\" \"*.{ts,json,md}\"",
+    "verify": "npm run format:check && npm run build"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
+    "@pond-ts/process": "file:../../packages/process",
+    "pond-ts": "file:../../packages/core",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.0",
+    "concurrently": "^9.1.0",
+    "prettier": "^3.8.3",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.0"
+  }
+}

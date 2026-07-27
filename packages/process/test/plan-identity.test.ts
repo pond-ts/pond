@@ -323,6 +323,30 @@ describe('registry as schema', () => {
     expect(JSON.stringify(schema)).not.toContain('undefined');
   });
 
+  it('rebases the recursive ref so the projection can be embedded', () => {
+    // A `$ref` resolves against the *document root*. Dropping a schema
+    // emitted at `#` into a tool's `input_schema` therefore leaves
+    // `#/items` pointing at nothing — and nothing complains, which is
+    // how it survived until an agent had to compose against it (M2).
+    const nested = {
+      type: 'object',
+      properties: {
+        process: registry.toJsonSchema({ base: '#/properties/process' }),
+      },
+    };
+    const at = (doc: unknown, ptr: string): unknown =>
+      ptr
+        .replace(/^#\//, '')
+        .split('/')
+        .reduce<any>((node, key) => node?.[key], doc);
+
+    const refs = [...JSON.stringify(nested).matchAll(/"\$ref":"([^"]+)"/g)];
+    expect(refs.length).toBeGreaterThan(0);
+    for (const [, ptr] of refs) expect(at(nested, ptr!)).toBeDefined();
+    // A subschema does not get to declare its own dialect.
+    expect(nested.properties.process['$schema']).toBeUndefined();
+  });
+
   it('projects param constraints the validator actually enforces', () => {
     const schema = registry.toJsonSchema() as {
       items: { oneOf: { title: string; properties: Record<string, any> }[] };

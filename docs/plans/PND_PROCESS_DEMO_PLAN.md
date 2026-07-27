@@ -21,7 +21,7 @@ concretely:
 | --------- | ----------------------------------------------------------- |
 | M0        | [PND-PROCSUB], [PND-PROCIDENT]                              |
 | M1        | [PND-PROCTERM], and whether the warm-graph claim is real    |
-| M2        | [PND-PROCREG] — is the registry schema enough for an agent? |
+| M2        | [PND-PROCSCHEMA] — is the registry projection enough alone? |
 | M3        | [PND-PROCCOL]'s remainder — how a column reaches a chart    |
 | M4        | Nothing new; it is the payoff that justifies the graph      |
 | M5        | [PND-PROCCACHE], and [PND-PROCIDENT] again, empirically     |
@@ -184,17 +184,32 @@ The UI, with `raw` tabs and no charts yet.
 The agent turns a prompt into `{ from, process, as }` using
 `registry.toJsonSchema()` and `registry.describe()`.
 
-**Decides [PND-PROCREG]:** whether the schema projection is sufficient for
-an agent to compose valid plans unaided, and how much of JSON Schema is
-worth projecting. If the agent needs prose hand-holding beyond `summary`
-and param metadata, the registry is under-specified.
+**Decides [PND-PROCSCHEMA]:** whether the schema projection is sufficient
+for a caller to compose valid plans unaided, and how much of JSON Schema is
+worth projecting. If the caller needs prose hand-holding beyond `summary`
+and param metadata, the registry is under-specified. It also **confirms
+[PND-PROCREG]** in an app rather than a test: the envelope is JSON, and the
+process that resolves it never saw the composer.
 
-**Watch for:** how often the agent invents an op that does not exist, and
+**Watch for:** how often the caller invents an op that does not exist, and
 whether `skipped` reasons are good enough for it to self-correct on a
 retry. Both are friction notes.
 
 **Done when:** a plain-English prompt produces a plan that resolves,
 including at least one nested spec.
+
+**Landed** in `apps/process-demo` — deliberately outside the root
+`workspaces`, following the `workers/` precedent, so a demo build can never
+gate a release. Three findings and two library fixes are written up in
+[PND-PROCSCHEMA]; the headline is that the projection's recursive `$ref`
+was **not embeddable** in a tool schema, silently, because a `$ref`
+resolves against the document root. `toJsonSchema({ base })` fixes it.
+
+The composer sits behind a seam with two implementations — a real one and
+an offline keyword matcher — so the panels, the run path and the UI are all
+exercisable without a key. **The keyword matcher settles nothing about the
+registry**, and says so in every response it returns; the schema question
+is only answered by a run with `ANTHROPIC_API_KEY` set.
 
 ---
 

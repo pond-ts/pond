@@ -290,6 +290,12 @@ whether it stays one.
   Deliberately no `fromJSON` yet. Two verified properties must become stated
   requirements: `specId` is invariant under param key order, and an omitted
   param collides with its explicit default.
+- **[PND-PROCSCHEMA]** — The schema projection is the caller's contract. M2 found
+  the recursive `$ref` was **not embeddable** — it resolves against the document
+  root, so the projection silently dangled inside a tool's `input_schema`; fixed
+  with `toJsonSchema({ base })`. Open: the projection carries no units, in either
+  direction, so a caller cannot know `annualise` refuses a raw price without a
+  `describe()` table in the prompt.
 - **[PND-PROCSUB]** — Decide the substrate and packaging: the RFC concludes one
   package with the engine internal, while [#544](https://github.com/pond-ts/pond/pull/544)
   proposes publishing it. Evidence now favours keeping the graph (1.34–1.40× on
@@ -329,9 +335,12 @@ is the agent's contract, not a hand-written prompt.
   computed-vs-cached and a duration** — the architecture is invisible without
   it. Decides [PND-PROCTERM].
 - **[PND-DEMOM2]** — Three panels, `raw` tabs only; agent composes plans from
-  the registry schema. Decides [PND-PROCREG]: is the projection enough to
+  the registry schema. Decides [PND-PROCSCHEMA]: is the projection enough to
   compose valid plans unaided, and can the agent self-correct from `skipped`
-  reasons?
+  reasons? Landed as `apps/process-demo`, outside the root `workspaces` so a
+  demo build never gates a release. The composer sits behind a seam: without
+  `ANTHROPIC_API_KEY` it falls back to an offline keyword matcher that exercises
+  every panel and **settles nothing about the registry**, and says so.
 - **[PND-DEMOM3]** — Results charts via `@pond-ts/charts`, chosen by key kind
   (time → line, interval → bar, multi-output → band). Decides the remainder of
   [PND-PROCCOL]: assembled series vs per-column arrays into a layer. May
