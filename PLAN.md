@@ -361,9 +361,15 @@ is the agent's contract, not a hand-written prompt.
   `specId`) and `NodeTiming.pulled` (`nodes` had reported only the subset a
   selector reached, so the view drew a plan with branches missing).
 
-- **[PND-DEMOM5]** — Conversational refinement ("smoother", "try 50"). Decides
-  [PND-PROCCACHE] and re-decides [PND-PROCIDENT] empirically: does "back to how
-  it was" return instantly?
+- **[PND-DEMOM5]** — Conversational refinement: follow-up prompts that adjust an
+  existing plan. **Landed, and it decided [PND-PROCIDENT].** "smoother" → "try
+  200 instead" → "back to how it was" returns in **2.811 ms against 75.071 ms
+  cold**, the node a straight cache hit at 0.004 ms — because a
+  content-addressed `sma(50)` is never invalidated by a detour, only unused.
+  Three nodes resident afterwards is the bill, and the case for
+  [PND-PROCCACHE]'s engine-wide budget. The capacity dial is deliberately not
+  here: there is no node cache to tune yet, and rushing one to make a demo
+  slider work would let the demo design the library.
 
 ### Ecosystem (Phase 6)
 

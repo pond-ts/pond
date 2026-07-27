@@ -85,6 +85,24 @@ include new features and type-level changes; patch bumps are strictly additive.
   for the nine other tickets the investigation produced (node eviction is
   blocking; column-valued nodes and dirty-per-range are the large wins).
 
+- **process:** **`registry.toJsonSchema({ defs })`** replaces the `base` option
+  added earlier in this cycle — the recursive `$ref` now lives in `$defs` and
+  points at `#/$defs/<name>`, which a caller lifts to its own document root.
+  `base` produced a pointer _into_ the host schema; that passes local
+  validators and is rejected by a real tool API (_"reference can only point to
+  definitions defined at the top level of the schema"_). The projection also
+  now emits `anyOf` rather than `oneOf` (equivalent here — both branch sets are
+  disjoint — and the one tool APIs accept), and every `const` carries its
+  `type`. All three were 400s from live calls that a client-side strict
+  validator had passed. See **[PND-PROCSCHEMA]**.
+- **process:** a **selector resolves its own inline spec**, whether or not the
+  plan also lists it at top level. Requiring both was bookkeeping no schema
+  could express, so it lived in prose — and a caller composing from the schema
+  alone duly selected a spec it had not listed and got a skip instead of an
+  answer.
+- **process:** `columns` and `reduce` on one selector are **no longer
+  exclusive** — asking for both now returns both, which is the legend-chip case
+  [PND-PROCTERM] exists for. Previously the reduction was silently dropped.
 - **process:** **`NodeTiming.inputs` and `NodeTiming.pulled`** — `nodes` now
   describes the **graph** the plan resolved, not just the subset a selector
   reached. `inputs` carries each node's upstream ids (a raw source column is

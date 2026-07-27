@@ -32,7 +32,7 @@ interface Context {
   families: Record<string, string[]>;
   units: Record<string, string>;
   planSchema: unknown;
-  composer: { kind: 'anthropic' | 'scripted'; why: string };
+  composer: { kind: 'anthropic' | 'openai' | 'scripted'; why: string };
 }
 interface RunResult {
   facts: Record<string, unknown>[];
@@ -49,7 +49,7 @@ interface RunResult {
 interface Composed {
   envelope: Record<string, unknown>;
   note?: string;
-  source: 'anthropic' | 'scripted';
+  source: 'anthropic' | 'openai' | 'scripted';
   model?: string;
   ms: number;
   usage?: Record<string, number>;
@@ -442,9 +442,9 @@ function RequestPanel(props: {
         {composed && entry && (
           <>
             <span className="meta">
-              {composed.source === 'anthropic'
-                ? `${composed.model ?? 'model'} · ${Math.round(composed.ms)} ms`
-                : 'scripted'}
+              {composed.source === 'scripted'
+                ? 'scripted'
+                : `${composed.model ?? 'model'} · ${Math.round(composed.ms)} ms`}
               {composed.usage && ` · ${composed.usage['output']} out`}
               {edited && ' · edited'}
             </span>

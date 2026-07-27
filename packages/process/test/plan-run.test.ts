@@ -535,3 +535,54 @@ describe('run — columns are the wire shape, assembly is the convenience', () =
     expect(res.columns).toBeUndefined();
   });
 });
+
+describe('run — a selector describes its own computation', () => {
+  it('resolves an inline spec the plan did not also list', () => {
+    // Requiring a spec to appear in both `process` and `select.on` was
+    // bookkeeping no schema could express, so it lived in prose — and a
+    // caller composing from the schema alone duly selected a spec it had
+    // not listed, and got a skip instead of an answer (M5).
+    const { registry } = makeRegistry();
+    const graph = bind(series(10), { registry, units });
+    const res = run(graph, {
+      plan: [sma3],
+      select: [{ on: sma5, reduce: 'last' }],
+      onError: 'collect',
+    });
+    expect(res.skipped).toEqual([]);
+    expect(res.facts[0]).toMatchObject({
+      id: specId(registry, sma5),
+      value: 17,
+    });
+    // And it is a node like any other, so the badge row reports it.
+    expect(res.nodes.map((n) => n.id)).toContain(specId(registry, sma5));
+  });
+
+  it('still refuses an id string naming nothing', () => {
+    // A string cannot describe a computation, so there is nothing to
+    // resolve — the reason has to stay.
+    const { registry } = makeRegistry();
+    const graph = bind(series(10), { registry, units });
+    const res = run(graph, {
+      plan: [sma3],
+      select: [{ on: 'p1:nope(px;)', reduce: 'last' }],
+      onError: 'collect',
+    });
+    expect(res.skipped[0]!.reason).toMatch(/not in this plan/);
+  });
+
+  it('gives both when a selector asks for columns and a reduction', () => {
+    // The legend-chip case: a fact riding alongside the columns it
+    // labels, in one pass. Treating `columns` as a mode silently dropped
+    // the reduction a caller had plainly asked for.
+    const { registry } = makeRegistry();
+    const graph = bind(series(10), { registry, units });
+    const res = run(graph, {
+      plan: [sma3],
+      select: [{ on: sma3, columns: true, reduce: 'last' } as never],
+    });
+    expect(res.columns).toBeDefined();
+    expect(res.outputs[specId(registry, sma3)]).toHaveLength(1);
+    expect(res.facts[0]).toMatchObject({ reduce: 'last', value: 18 });
+  });
+});

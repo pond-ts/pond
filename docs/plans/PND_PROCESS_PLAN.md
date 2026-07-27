@@ -123,6 +123,35 @@ stores are not in `heapUsed`. Reading heap alone reported 21 MB for both
 modes and hid a 300 MB difference. Use `arrayBuffers` / `rss`, one
 configuration per process. This gets sharper under [PND-PROCCOL].
 
+**Decided for the conversational shape, by watching (M5).** A four-turn
+refinement against a real model, 150k bars, one long-lived host
+(`apps/process-demo/scripts/refinement-run.mjs`):
+
+| turn                       | plan       | node                   | total     |
+| -------------------------- | ---------- | ---------------------- | --------- |
+| "a 50-bar moving average…" | `sma(50)`  | **computed** 64.729 ms | 75.071 ms |
+| "smoother"                 | `ema(50)`  | **computed** 16.001 ms | 21.225 ms |
+| "try 200 instead"          | `ema(200)` | **computed** 17.999 ms | 25.892 ms |
+| "back to how it was"       | `sma(50)`  | **cached** 0.004 ms    | 2.811 ms  |
+
+**27× end to end on the return trip, and the node itself is a straight
+cache hit.** That is the whole argument for content-addressing in one
+run: `sma(50)` was never invalidated by the detour through `ema(200)` —
+it was simply not asked for — so coming back is free. Under
+params-as-Ins the same conversation is one node whose param changed
+twice, and the fourth turn recomputes.
+
+And the bill is visible in the same run: **three nodes resident
+afterwards**, one per distinct spec the conversation passed through.
+Nothing evicts the detour. So the conversational shape wants
+content-addressing _and_ [PND-PROCCACHE]'s engine-wide budget; it does
+not want params-as-Ins.
+
+The interactive-slider shape still wants the opposite, which is what the
+two-modes-of-In proposal above is for. M5 does not overturn that — it
+establishes that the two shapes are genuinely different, with a measured
+case for each.
+
 **Done when:** identity and node lifetime are a stated, tested policy, and
 a 200-position sweep at 1M rows holds steady-state memory under whichever
 policy the interactive consumer gets.
@@ -580,6 +609,65 @@ Also landed alongside, both found by having a UI render the response:
   map, so this would have surfaced there anyway, later.
 - **`skipped.spec` dropped `inputs`.** A plan may hold two specs of the
   same op; `{op, params}` alone does not say which one to fix.
+
+### Answered (M5): yes for nesting, after three tries at the recursion
+
+Run against a real model with a real key. **The projection is sufficient
+for the thing it was built for**: given the schema and nothing teaching it
+a nesting concept, the caller composed `ema(sma(px))` unaided, and later
+`annualise(variance(roc(px)))`. The recursive `$ref` does its job.
+
+Getting that recursion to _travel_ took three shapes, and only the third
+works:
+
+| ref                           | outcome                                          |
+| ----------------------------- | ------------------------------------------------ |
+| `#/items`                     | dangles once nested — silently (M2)              |
+| `#/properties/process/items`  | passes local validators, **API rejects it** (M5) |
+| `#/$defs/spec` + hoisted defs | travels                                          |
+
+The middle row is the instructive one: _"reference can only point to
+definitions defined at the top level of the schema."_ So `base` was the
+wrong idea and is gone; `toJsonSchema({ defs })` emits the definition and
+the caller lifts `$defs` to its own root.
+
+**Three portability rules, none caught by a client-side validator.** Each
+came back as a 400 from a live call, and each had passed the SDK's own
+`toStrictJsonSchema` locally (`scripts/strict-schema-probe.mts` records
+that probe):
+
+- unions must be `anyOf`, not `oneOf` (_"'oneOf' is not permitted"_);
+- a `const` must carry its `type` (_"schema must have a 'type' key"_);
+- a `$ref` must point at a top-level definition.
+
+**Optionality is where the projection and strict mode genuinely
+disagree.** Strict structured outputs require every declared property to
+be listed in `required`; the registry's defaults live in _optionality_
+("params you omit take their declared defaults"). The resolution is the
+one strict mode intends — every param **required and nullable**, `null`
+meaning "use the default" — so the default survives as a value the caller
+can name rather than a property it can leave out. Handled in the adapter
+rather than the projection, because the projection is not strict-mode's
+to shape.
+
+**Two prose rules the schema could not express, and the caller broke
+both.** This is the finding that generalizes:
+
+- _"every spec you name in `select` must also appear in `process`"_ — it
+  selected a `zscore` it had not listed, and got a skip instead of an
+  answer;
+- _`columns` and `reduce` are exclusive_ — it asked for both, and the
+  reduction was silently dropped, so a question got no fact rather than
+  an error.
+
+Both are now **fixed in code rather than documented in prose**: an inline
+spec resolves whether or not the plan also lists it, and a selector asking
+for both gets both. A constraint a schema cannot express will be
+violated; the answer is to remove the constraint, not to write it down.
+
+**Still open:** units. The projection carries none, in either direction,
+so the demo still renders `describe()` as a table in the prompt. Nothing
+in M5 forced a decision, so it stays as recorded above.
 
 **Done when:** a caller composes a plan with at least one nested spec from
 the projection alone, with no unit table in the prompt — or the decision is
