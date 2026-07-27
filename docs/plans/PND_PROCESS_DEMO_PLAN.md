@@ -34,20 +34,48 @@ surface where it falls, and land the result as a how-to guide.
 
 ## Decisions to pin before any code
 
-**1. The bound graph lives on the server and outlives requests.**
+**1. The graph is long-lived — wherever it lives.**
 
-The original sketch put the job in a web worker. A worker spawned per job
-starts **cold**, and a cold graph is a fold with extra steps — it would
-demo none of its own architecture. Every measurement in the sibling plan
-(1.34–1.40× on MCP flurries, 441× on memoized facts, 14.3× on the op
-cache) assumes a warm, long-lived binding.
+The invariant is that the bound graph **outlives requests**. A graph
+constructed per request starts cold, and a cold graph is a fold with extra
+steps: every measurement behind these tickets (1.34–1.40× on MCP flurries,
+441× on memoized facts, 14.3× on the op cache) assumes a warm binding.
+What is fatal is per-request construction, not any particular host.
 
-So: the node server holds a `Map<datasetId, BoundGraph>`, and a request
-resolves against an existing graph. A worker is still fine for CPU
-isolation, but it must be **one persistent worker that owns the graph**,
-not one per job.
+Two topologies satisfy that, and they prove **different** things:
 
-This is not a demo detail. It is the demo's thesis.
+| Topology                      | Proves                                                                             |
+| ----------------------------- | ---------------------------------------------------------------------------------- |
+| Long-lived **worker**         | pond runs entirely client-side; decode / ingest / resolve stay off the main thread |
+| Long-lived **server** process | the MCP shape; one cache shared across sessions and clients                        |
+
+The worker is the more interesting demo, and it has a measurable product
+(`scripts/rfc543-worker-transfer.mjs`): while the worker computes for
+600 ms, the main thread keeps **~90% of a free 10 ms timer**. A UI that
+stays live through a 300 ms aggregate is a claim you can see.
+
+**The worker topology is coupled to [PND-PROCCOL], and cannot ship
+without it.** Every answer crosses a thread boundary, and the cost
+depends entirely on how a node value is represented — 500k values:
+
+| Crossing                         | per message |
+| -------------------------------- | ----------- |
+| boxed `Array<number\|undefined>` | 48.6 ms     |
+| `Float64Array`, structured clone | 0.8 ms      |
+| `Float64Array`, transferred      | 0.5 ms      |
+
+**63× cloned, 99× transferred.** A boxed array is cloned element by
+element and re-boxed on arrival; a packed column is one buffer, and a
+transferred one changes owner with no copy at all. At 48.6 ms per answer
+a worker would spend more time marshalling than computing, and the
+topology would be a net loss. With columns it is nearly free.
+
+That is a second argument for column-valued nodes, independent of the
+memory one, and it only appears once execution crosses a thread.
+
+Note the demo needs a server regardless — the agent call needs somewhere
+to hold a key. So "worker or server" is about where **execution** lives,
+not whether there is a backend.
 
 **2. The envelope.**
 
@@ -120,12 +148,14 @@ are stable across a round trip, and an invalid plan yields reasons.
 
 ---
 
-### M1 — Server, one dataset, raw results
+### M1 — A long-lived host, one dataset, raw results
 
-A node server holding one bound graph. `POST /run` with the envelope,
-JSON back. Curl-able; still no UI.
+One bound graph in a long-lived host — a worker or a server process, per
+decision 1. Submit the envelope, get JSON back. Still no UI.
 
-- `Map<datasetId, BoundGraph>`, built on first use
+- `Map<datasetId, BoundGraph>`, built on first use, outliving requests
+- If the worker topology: node values cross as transferred buffers, never
+  boxed arrays (63–99×, see decision 1)
 - One seeded dataset (5m bars, enough rows that caching is visible —
   100k+)
 - Response includes **per-node `computed` vs `cached` and a duration**

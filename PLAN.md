@@ -309,18 +309,23 @@ pipeline shows that node's output. It is a demo, but its primary job is to
 questions no argument settles, and each milestone here answers one. Plan:
 [PND_PROCESS_DEMO_PLAN.md](docs/plans/PND_PROCESS_DEMO_PLAN.md).
 
-Pinned before any code: the bound graph lives **server-side and outlives
-requests** (a per-request worker starts cold, and a cold graph is a fold with
-extra steps — it would demo none of its own architecture); `as` names an output
-rather than windowing it; `registry.toJsonSchema()` is the agent's contract, not
-a hand-written prompt.
+Pinned before any code: the bound graph is **long-lived, wherever it lives** —
+per-request construction is what is fatal, not any particular host. A long-lived
+worker and a long-lived server prove different things (client-side execution and
+an off-main-thread UI, versus the MCP shape with one cache shared across
+sessions). The worker topology is **coupled to [PND-PROCCOL]**: crossing a
+thread boundary costs 48.6 ms per 500k-value answer boxed versus 0.5 ms
+transferred, so without columns a worker spends more time marshalling than
+computing. `as` names an output rather than windowing it; `registry.toJsonSchema()`
+is the agent's contract, not a hand-written prompt.
 
 - **[PND-DEMOM0]** — The plan layer, headless: `bind`, registry, `specId`,
   `run`, `explain`, typed and tested. Decides [PND-PROCSUB] (does anything
   outside the plan layer still import the engine?) and [PND-PROCIDENT] (`run()`
   cannot be written without choosing how a param is identified).
-- **[PND-DEMOM1]** — Node server holding `Map<datasetId, BoundGraph>`, one
-  seeded dataset, `POST /run`, still curl-only. Response carries **per-node
+- **[PND-DEMOM1]** — A long-lived host (worker or server) holding
+  `Map<datasetId, BoundGraph>`, one seeded dataset, submit-and-return, still
+  no UI. Response carries **per-node
   computed-vs-cached and a duration** — the architecture is invisible without
   it. Decides [PND-PROCTERM].
 - **[PND-DEMOM2]** — Three panels, `raw` tabs only; agent composes plans from
