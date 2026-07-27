@@ -93,6 +93,23 @@ and type-level changes; patch bumps are strictly additive.
   dominates and there was nothing to save. Whole-column reductions
   (`series.reduce`, `column.sum()`, …) are unaffected.
 
+- **core:** **`median` / `percentile` are ~13× faster on the columnar path.**
+  `reducePercentileColumn` densified the defined+finite cells and then sorted
+  them; a percentile needs one or two order statistics, not a total order, so
+  it now runs quickselect — O(n) expected instead of O(n log n). Measured at
+  1M rows: `median` 76.18 ms → 5.90 ms, `p95` 75.80 ms → 5.88 ms (**12.9×**).
+  Applies to `series.reduce(col, 'median' | 'pNN')`, `column.median()`,
+  `column.percentile(q)`, and the `aggregate` / `bin` / `binBy` percentile
+  families. Other reducers are unchanged.
+
+  **One behaviour change, and it removes an inconsistency.** The old path used
+  `Float64Array.prototype.sort()`, which places `-0` strictly before `+0`,
+  while the row path sorts with `(a, b) => a - b` — a comparator that reads
+  the pair as equal. On signed-zero input the two paths disagreed: `p0` of
+  `[0, -0, 0, -0, 0]` was `-0` columnar and `+0` row-wise. Quickselect
+  compares with `<` / `>`, under which they are equal, so the columnar path
+  now returns `+0` and matches the row path.
+
 - **charts (Storybook):** the `Charts/Histogram` story group moved to
   **`Charts/BarChart/Histogram`** — the histogram is `BarChart` in its `bins`
   mode, not a separate component, and the sidebar now says so. Story IDs under

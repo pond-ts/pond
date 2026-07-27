@@ -360,3 +360,38 @@ They were **mutation-checked** rather than trusted for passing first time —
 flipping `allFinite` to `false`, removing the `assertCellKind` call, and writing
 a `NaN` sentinel instead of clearing the validity bit each fail exactly the
 tests meant to catch them (1, 1, and 6 failures respectively).
+
+### [PND-KERNEL] item 1 — quickselect percentile — SHIPPED
+
+`reducePercentileColumn` / `reducePercentileColumnRange` now answer with
+quickselect (median-of-three pivot, insertion sort below 16 elements) instead
+of densify-then-`Float64Array.sort()`.
+
+**Measured** (`scripts/perf-reducers-step3.mjs`, N=1M): `median` 76.18 ms →
+5.90 ms, `p95` 75.80 ms → 5.88 ms — **12.9×**, above the 7.3–11.8× the spike
+predicted. `sum` / `min` / `max` / `avg` / `stdev` unchanged (1.00×, 0.99×,
+1.02×, 1.00×, 1.00×).
+
+**Median-of-three is load-bearing, not a flourish.** Columnar percentile input
+is frequently already sorted or nearly so — a monotonic key column, a
+`cumulative` result, a `byValue` materialisation. A first- or middle-element
+pivot degrades to O(n²) on exactly those inputs, which would convert a chart
+frame into a hang. A 200k-cell already-sorted case is pinned with a wall-clock
+bound that quadratic cannot pass.
+
+**It also closed a cross-path drift.** `Float64Array.prototype.sort()`
+implements the spec total order, which places `-0` strictly before `+0`; the
+row path's `(a, b) => a - b` comparator returns `-0` for that pair, which
+`Array.prototype.sort` treats as equal and (being stable) leaves in input
+order. So `p0` of `[0, -0, 0, -0, 0]` was `-0` on the columnar path and `+0`
+on the row path — a data-dependent disagreement between two paths the
+`aggregate` fast-path gate picks between per call. Quickselect compares with
+`<` / `>`, under which the two zeros are equal, so the paths now agree.
+Pinned explicitly.
+
+**Tests:** `packages/core/test/percentile-quickselect.test.ts` (24). The
+reference is computed by actually sorting with the row path's comparator
+rather than hard-coded, across 17 data shapes × 13 quantiles, plus 200
+randomised trials biased toward heavy duplicates (the classic Hoare-partition
+stall), the sorted/reverse-sorted quadratic traps, sizes either side of the
+insertion-sort threshold, and the signed-zero regression pin.

@@ -185,18 +185,32 @@ consumer signal. Plan:
 - **[PND-DICT]** — Dictionary/string reducer adaptation (step 6):
   friction-gated.
 - **[PND-KERNEL]** — Kernel algorithm wins surfaced by the Rust/WASM spike
-  (`spikes/columnar-wasm/`, report + benchmarks committed). The spike is a
-  **no-go** on porting the substrate — dense `sum`/`mean`/`stdev` measured
-  exactly 1.00× and `bin` collapses to 1.00× at 10M — but the control
+  (`spikes/columnar-wasm/`, report + benchmarks committed). The spike says
+  **not now, not in this order** on porting the substrate (revised from an
+  earlier "no-go" — see REPORT.md §9: a Rust core is worth 1.3–4.3× on the
+  numeric kernel, and 2.2–2.6× end to end on the reduce family, but the
+  TypeScript work below is 5–10× larger and comes first). The control
   experiment isolated four wins that are pure algorithm and land in
-  TypeScript: quickselect in `reducePercentileColumn` (**7.3–11.8×** on
-  `median`/`p95`/`p99` and the `bin`/`binBy` percentile family), a 4-lane
+  TypeScript. **Quickselect for `reducePercentileColumn` has shipped —
+  measured 12.9× on `median`/`p95` at 1M rows.** Remaining: a 4-lane
   `Float64Column.minMax` (**1.27–1.50×**, bit-identical), 8-accumulator
   `sum`/`mean` (**1.83–1.85×**, but reassociation is _not_ bit-identical —
   needs a semantics decision against the cross-path tests), and a branchless
   finite guard for `allFinite: false` reductions. Acceptance benchmarks
   already exist in `spikes/columnar-wasm/bench/controls.mjs`; each control is
   checked against pond-ts's answer before it is timed.
+- **[PND-BOXFREE]** — Element-wise operators box every cell. `diff`, `rate`,
+  `fill`, `shift`, `cumulative` and `mapColumns` are column-native only in the
+  sense of not materialising `Event`s: they still read each cell through the
+  polymorphic `read(i)` into a `ReadonlyArray<number | undefined>` and rebuild
+  via `float64ColumnFromArray`. Measured **~10–20× slower per column than a
+  plain typed-array walk** (exact `diff` control: 9.9× on gappy data, 17.1×
+  dense; `rate`/`fill`/`shift` fitted at 16–27×). At 1M rows × 4 columns
+  `diff` costs ~294 ms against ~16 ms for the same work unboxed. This is the
+  largest single performance finding from the Rust/WASM spike and has nothing
+  to do with Rust — see `spikes/columnar-wasm/REPORT.md` §9.3. Each operator
+  needs its own validity write, since the boxed array is currently how
+  validity gets derived; [PND-IVLCOL] is the worked example of that shape.
 - **[PND-WCNAN]** — `withColumn` NaN-canonical `Float64Array` intake
   (dashboard A/B friction, 2026-07-21): `withColumn` rejects NaN today, so a
   consumer deriving gated columns boxes into `(number | undefined)[]` — the
