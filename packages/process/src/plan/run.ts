@@ -68,6 +68,15 @@ export interface Fact {
   readonly [k: string]: unknown;
 }
 
+/** One node's contribution to a request — the per-node badge. */
+export interface NodeTiming {
+  readonly id: string;
+  /** False when the value was produced this call. */
+  readonly cached: boolean;
+  /** Milliseconds attributable to this node, to 3 decimal places. */
+  readonly ms: number;
+}
+
 export interface Skipped {
   readonly spec?: { op: string; params: Record<string, unknown> };
   readonly select?: Select;
@@ -82,8 +91,14 @@ export interface RunResult {
   /** Lineage per resolved id — present on every response, never hand-built. */
   readonly explain: Readonly<Record<string, string>>;
   readonly skipped: readonly Skipped[];
-  /** Ids whose value was produced this call, as opposed to served warm. */
-  readonly computed: readonly string[];
+  /**
+   * Every node this request touched, in dependency order, with whether
+   * it was computed or served warm and how long it took.
+   *
+   * This is the demo's explaining device ([PND-DEMOM1]): without it the
+   * caching is true but invisible.
+   */
+  readonly nodes: readonly NodeTiming[];
 }
 
 // ── reductions: folds over a column, no series required ──────
@@ -221,9 +236,31 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
   }
 
   const outputs: Record<string, OutputInfo[]> = {};
-  const computed: string[] = [];
+  const timings: NodeTiming[] = [];
+  const timed = new Set<string>();
   let assembled: TimeSeries<SeriesSchema> | undefined;
   const columnCache = new Map<string, Column>();
+
+  /**
+   * Pulls a node's inputs before the node itself, so the time recorded
+   * against it is its own compute rather than an ancestor's. Without
+   * this a leaf absorbs the whole subtree's cost and the badge lies.
+   */
+  const warm = (id: string): void => {
+    if (timed.has(id)) return;
+    timed.add(id);
+    const compiled = graph.get(id);
+    if (compiled === undefined) return;
+    for (const input of compiled.spec.inputs) {
+      if (typeof input !== 'string') warm(refToId(registry, input));
+    }
+    const suffix = registry.get(compiled.spec.op).outputs[0]!.id;
+    const wasDirty = compiled.node.dirty;
+    const t0 = performance.now();
+    graph.columnOf(compiled, suffix);
+    const ms = performance.now() - t0;
+    timings.push({ id, cached: !wasDirty, ms: Math.round(ms * 1000) / 1000 });
+  };
 
   const columnFor = (id: string, suffix: string): Column => {
     const key = id + suffix;
@@ -232,9 +269,8 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
     const compiled = graph.get(id);
     if (compiled === undefined)
       throw new ProcessError(`'${id}' is not in this plan`);
-    const wasDirty = compiled.node.dirty;
+    warm(id);
     const col = graph.columnOf(compiled, suffix);
-    if (wasDirty && !computed.includes(id)) computed.push(id);
     columnCache.set(key, col);
     return col;
   };
@@ -305,6 +341,6 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
     facts,
     explain: explainMap,
     skipped,
-    computed,
+    nodes: timings,
   };
 }
