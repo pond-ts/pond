@@ -11,7 +11,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Viz, type Frames } from './Viz.js';
+import { Viz, type Fact, type Frames } from './Viz.js';
 import { Pipeline, type NodeTiming } from './Pipeline.js';
 
 interface DatasetInfo {
@@ -35,7 +35,7 @@ interface Context {
   composer: { kind: 'anthropic' | 'openai' | 'scripted'; why: string };
 }
 interface RunResult {
-  facts: Record<string, unknown>[];
+  facts: Fact[];
   outputs: Record<string, { column: string; unit: string | null }[]>;
   explain: Record<string, string>;
   skipped: { reason: string; spec?: unknown; select?: unknown }[];
@@ -263,10 +263,19 @@ export function App() {
       // response already named. A nested spec is in the graph as soon as
       // its parent compiled, so this reaches intermediates that never
       // appear in `process`.
+      //
+      // Unfocused, the original selectors ride along unchanged, so the
+      // same response carries the columns *and* the facts the prompt
+      // actually asked for. That is the `columns` + `reduce` pairing the
+      // library stopped treating as exclusive — the demo exercising its
+      // own fix rather than fetching twice.
       const select =
         entry.focus !== undefined
-          ? [{ on: entry.focus, columns: true }]
-          : envelope.process.map((on) => ({ on, columns: true }));
+          ? [{ on: entry.focus, columns: true, reduce: 'last' }]
+          : [
+              ...envelope.process.map((on) => ({ on, columns: true })),
+              ...((envelope.select ?? []) as unknown[]),
+            ];
       const drawn = await post<RunResult>('/api/run', { ...envelope, select });
       setEntries((prev) =>
         prev.map((e) =>
@@ -673,6 +682,7 @@ function VizTab(props: { entry: Entry; onDraw: (entry: Entry) => void }) {
       frames={entry.drawn?.frames}
       outputs={entry.drawn?.outputs ?? {}}
       explain={entry.drawn?.explain ?? {}}
+      facts={entry.drawn?.facts ?? []}
       pending={entry.drawing === true}
       waiting={!ready}
       error={entry.drawError}
