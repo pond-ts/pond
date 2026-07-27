@@ -57,3 +57,57 @@ export {
   UnconnectedInputError,
   MissingOutputError,
 } from './errors.js';
+
+// ─── Plan layer ([PND-DEMOM0]) ──────────────────────────────────
+export {
+  createRegistry,
+  Registry,
+  int,
+  num,
+  choice,
+  flag,
+} from './plan/registry.js';
+export { UnknownOpError, ParamError } from './plan/registry.js';
+export type { OpDescriptor } from './plan/registry.js';
+export {
+  specId,
+  refToId,
+  explain,
+  unitOf,
+  columnsOf,
+  dependsOn,
+  outputKey,
+} from './plan/identity.js';
+export { bind, BoundGraph, UnitError } from './plan/graph.js';
+export { run } from './plan/run.js';
+export type {
+  ErrorPolicy,
+  Select,
+  ColumnSelect,
+  ReduceSelect,
+  ReductionName,
+  RunRequest,
+  RunResult,
+  OutputInfo,
+  Fact,
+  Skipped,
+} from './plan/run.js';
+export type {
+  Spec,
+  Plan,
+  Input,
+  SpecRef,
+  ParamValue,
+  ParamDef,
+  NumberParam,
+  EnumParam,
+  BooleanParam,
+  Params,
+  Units,
+  UnitSpec,
+  InputDef,
+  OutputDef,
+  OpContext,
+  OpResult,
+  OpDef,
+} from './plan/types.js';
