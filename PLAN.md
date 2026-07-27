@@ -242,6 +242,14 @@ whether it stays one.
   length. The RFC's two consumers want opposite policies, so this is a design
   call, not a leak to patch; an earlier framing of this ticket blamed the graph
   for what was a plan-layer map. **Blocking for any interactive consumer.**
+- **[PND-PROCCACHE]** — Op-level result cache under an engine-wide budget.
+  Two modes of In: a **value In** drives invalidation and discards superseded
+  values; a **cache-key In** also keys a node-level cache, so repeats hit
+  (14.3× on a repeat-heavy sweep, and 1.9× when the capacity is undersized and
+  thrashes). The split that works: the **decision** to cache is per-op — only it
+  knows what is expensive and which Ins key the result — but the **capacity**
+  must be engine-wide, because a per-op cap is a per-op promise and nothing
+  supervises the total (20 nodes × 5 entries = 157 MB vs 35 MB shared).
 - **[PND-PROCSEL]** — Selective per-Out invalidation already works: a
   bollinger-shaped node changing `stdDev` leaves `middle`'s version untouched
   and its consumer idle, because the op hands back the same instance. Document
