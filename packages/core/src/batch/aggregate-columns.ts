@@ -1,11 +1,18 @@
 import { resolveReducer, rollingStateFor } from '../reducers/index.js';
-import type { Column } from '../columnar/index.js';
+import type { ArrayValue, Column, ColumnSchema } from '../columnar/index.js';
 import {
+  BooleanColumn,
+  ColumnarStore,
   Float64Column,
+  IntervalKeyColumn,
+  arrayColumnFromArray,
   bitmapByteCount,
+  stringColumnFromArray,
   validityFromBits,
 } from '../columnar/index.js';
 import { ValidationError } from '../core/errors.js';
+import type { Interval } from '../core/interval.js';
+import { assertCellKind } from './validate.js';
 import type {
   AggregateMap,
   AggregateOutputMap,
@@ -127,38 +134,23 @@ export function normalizeAggregateColumns<S extends SeriesSchema>(
   return normalized;
 }
 
-/**
- * **Phase 4.7 step 3B — columnar fast path for time-keyed `aggregate()`.**
- * On sorted time-keyed data each bucket is a contiguous index range, so
- * when every mapped column is a built-in numeric reducer with a
- * `reduceColumn` fast path over a **packed `Float64Column`** source, each
- * bucket reduces straight off the typed-array slice — skipping the
- * `series.events` materialization and the per-cell `state.add` walk the
- * row path pays. Reuses the shipped step-3A `reduceColumn` kernels
- * (sum/min/max/avg 59–73×, stdev 35×, median/p95 3.4×) per bucket.
- *
- * `first` / `last` also qualify, on **any** column kind / storage, via a
- * boundary scan (the first/last *defined* cell in the bucket — see
- * `ReducerDef.definedBoundary`). This is what lets a partitioned
- * `aggregate` take the fast path: its auto-injected partition-column
- * reducer is `'first'`, which previously tripped the all-or-nothing gate
- * for every partitioned call.
- *
- * Returns `null` — caller takes the unchanged row path — when any column
- * doesn't qualify: a custom-function reducer; a reducer that is neither a
- * numeric `reduceColumn` kernel nor a `first`/`last` boundary selector
- * (`unique` / `top` / `samples` / `keep`); or a numeric reducer over a
- * non-numeric / chunked / missing source column. All-or-nothing per call
- * keeps the bucket walk single-pass; mixed mappings fall back wholesale.
- *
- * `begins` is the key column's begin axis (sorted, identical row order to
- * the value columns — both read straight off the store). Bucketing
- * replicates the row path exactly: `cursor` carries across buckets, and a
- * bucket owns `[start, scan)` where `begins[i] ∈ [bucket.begin,
- * bucket.end)`. Empty buckets reduce an empty slice — the reducer's
- * empty-input result (the step-3A parity contract guarantees this matches
- * a zero-`add` bucket snapshot).
- */
+/* ══════════════════════════════════════════════════════════════════════ */
+/* Columnar fast path for time-keyed `aggregate()` (Phase 4.7 step 3B).   */
+/*                                                                        */
+/* On sorted time-keyed data each bucket is a contiguous index range, so   */
+/* when every mapped column is a built-in numeric reducer with a           */
+/* `reduceColumn` fast path over a packed `Float64Column` source, each     */
+/* bucket reduces straight off the typed-array slice — skipping the        */
+/* `series.events` materialization and the per-cell `state.add` walk the   */
+/* row path pays. Reuses the shipped step-3A `reduceColumn` kernels        */
+/* (sum/min/max/avg 59–73×, stdev 35×, median/p95 3.4×) per bucket.        */
+/*                                                                        */
+/* Three pieces: `planColumnarAggregate` (the gate), `reduceBucket` (one   */
+/* bucket's work), and `tryAggregateColumnarStore` (the walk + the         */
+/* result store).                                                         */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/** How one mapped column gets its per-bucket value. */
 type ColumnarAggregatePlan =
   | {
       kind: 'reduce';
@@ -167,14 +159,27 @@ type ColumnarAggregatePlan =
     }
   | { kind: 'boundary'; column: Column; which: 'first' | 'last' };
 
-export function tryAggregateColumnarTimeKeyed<
-  B extends { begin(): number; end(): number },
->(
-  begins: Float64Array,
+/**
+ * Resolves each mapped column to a per-bucket execution plan.
+ *
+ * Returns `null` — caller takes the unchanged row path — when any column
+ * doesn't qualify: a custom-function reducer; a reducer that is neither a
+ * numeric `reduceColumn` kernel nor a `first`/`last` boundary selector
+ * (`unique` / `top` / `samples` / `keep`); or a numeric reducer over a
+ * non-numeric / chunked / missing source column. All-or-nothing per call
+ * keeps the bucket walk single-pass; mixed mappings fall back wholesale.
+ *
+ * `first` / `last` qualify on **any** column kind / storage, via a
+ * boundary scan (the first/last *defined* cell in the bucket — see
+ * `ReducerDef.definedBoundary`). That is what lets a partitioned
+ * `aggregate` take the fast path: its auto-injected partition-column
+ * reducer is `'first'`, which previously tripped the gate for every
+ * partitioned call.
+ */
+function planColumnarAggregate(
   getColumn: (name: string) => Column | undefined,
-  buckets: ReadonlyArray<B>,
   columns: ReadonlyArray<AggregateColumnSpec>,
-): Array<ReadonlyArray<unknown>> | null {
+): ColumnarAggregatePlan[] | null {
   const plans: ColumnarAggregatePlan[] = [];
   for (const spec of columns) {
     if (typeof spec.reducer !== 'string') return null; // custom function
@@ -202,11 +207,204 @@ export function tryAggregateColumnarTimeKeyed<
     }
     plans.push({ kind: 'reduce', column: source, reduce: def.reduceColumn });
   }
+  return plans;
+}
 
+/**
+ * Runs one bucket's plans, writing each column's reduced value into
+ * `out[p]` in plan order. `[start, scan)` is the bucket's index range;
+ * `out` is caller-owned and reused across buckets so the walk doesn't
+ * allocate a result array per bucket.
+ *
+ * An empty bucket reduces an empty slice — the reducer's empty-input
+ * result, which the step-3A parity contract guarantees matches a
+ * zero-`add` bucket snapshot on the row path.
+ */
+function reduceBucket(
+  plans: ReadonlyArray<ColumnarAggregatePlan>,
+  start: number,
+  scan: number,
+  out: Array<ColumnValue | undefined>,
+): void {
+  for (let p = 0; p < plans.length; p += 1) {
+    const plan = plans[p]!;
+    if (plan.kind === 'reduce') {
+      out[p] = plan.reduce(plan.column.sliceByRange(start, scan));
+    } else if (plan.which === 'first') {
+      // First defined cell in [start, scan); scans past missing cells and
+      // past non-finite numeric cells (reducer non-finite policy,
+      // docs/notes/reducer-nan-policy.md — a NaN/±Inf numeric is "not a
+      // contributor", matching the row path's `defined` filter).
+      let value: ColumnValue | undefined;
+      for (let i = start; i < scan; i += 1) {
+        const cell = plan.column.read(i);
+        if (cell === undefined) continue;
+        if (typeof cell === 'number' && !Number.isFinite(cell)) continue;
+        value = cell;
+        break;
+      }
+      out[p] = value;
+    } else {
+      // Last defined cell in [start, scan); scans backward past missing and
+      // past non-finite numeric cells (see the 'first' branch above).
+      let value: ColumnValue | undefined;
+      for (let i = scan - 1; i >= start; i -= 1) {
+        const cell = plan.column.read(i);
+        if (cell === undefined) continue;
+        if (typeof cell === 'number' && !Number.isFinite(cell)) continue;
+        value = cell;
+        break;
+      }
+      out[p] = value;
+    }
+  }
+}
+
+/**
+ * Builds the interval key column for a bucket list — the begin / end
+ * axes plus the label column, discriminated on the label's runtime type.
+ *
+ * Mirrors `validateAndNormalizeColumnar`'s key-construction tail exactly,
+ * including the `RangeError` (not `ValidationError`) on a mixed-label
+ * sequence and its wording: some callers may catch by class, and this
+ * path must not change which class they see. The empty case falls to the
+ * string branch, matching the row path's behaviour for a zero-bucket
+ * result.
+ */
+function intervalKeysForBuckets(
+  buckets: ReadonlyArray<Interval>,
+): IntervalKeyColumn {
+  const length = buckets.length;
+  const begin = new Float64Array(length);
+  const end = new Float64Array(length);
+  const labels = new Array<string | number>(length);
+  let labelKind: 'string' | 'number' | undefined;
+
+  for (let i = 0; i < length; i += 1) {
+    const bucket = buckets[i]!;
+    begin[i] = bucket.begin();
+    end[i] = bucket.end();
+    const label = bucket.value;
+    if (labelKind === undefined) {
+      labelKind = typeof label === 'string' ? 'string' : 'number';
+    } else if (typeof label !== labelKind) {
+      throw new RangeError(
+        `row ${i} has interval label of type ${typeof label} but earlier rows had ${labelKind} labels — interval-keyed series must use one label type throughout`,
+      );
+    }
+    labels[i] = label;
+  }
+
+  if (labelKind === 'number') {
+    const buf = new Float64Array(length);
+    for (let i = 0; i < length; i += 1) buf[i] = labels[i] as number;
+    return new IntervalKeyColumn(
+      begin,
+      end,
+      new Float64Column(buf, length),
+      length,
+    );
+  }
+  return new IntervalKeyColumn(
+    begin,
+    end,
+    stringColumnFromArray(labels as ReadonlyArray<string>, { forceDict: true }),
+    length,
+  );
+}
+
+/**
+ * **Columnar output for time-keyed `aggregate()` — [PND-IVLCOL].**
+ *
+ * Same gate and same bucket walk as the reduction fast path above, but
+ * the result is assembled as a `ColumnarStore` instead of a row array.
+ *
+ * **Why this exists.** `aggregate`'s output is interval-keyed, and the
+ * only construction door for an interval-keyed series used to be row
+ * intake — so the columnar fast path computed each bucket's answer in
+ * typed arrays, boxed it into a frozen `[Interval, …]` row, and then
+ * `new TimeSeries({ rows })` walked those rows straight back into
+ * columns. Measured on a 1M-row series at 16,667 buckets × 4 columns,
+ * that round trip cost **2.52 ms of a 5.01 ms call** — more than the
+ * reduction it was packaging. Writing the columns directly costs
+ * **0.09 ms** (spike: `spikes/columnar-wasm/bench/interval-columnar.mjs`).
+ *
+ * **Behaviour is identical, deliberately.** Trusted construction skips
+ * row intake, so every check row intake performed is performed here:
+ *
+ * - Cell kinds go through the *same* `assertCellKind` (shared, not
+ *   copied), so a reducer that overflows to `Infinity` still raises the
+ *   same `ValidationError` with the same message rather than silently
+ *   landing a non-finite cell in a column flagged `allFinite`.
+ * - Numeric columns are stamped `allFinite: true` on the same
+ *   justification the row path uses — every surviving cell was
+ *   finite-checked above. Dropping that flag would be safe but would
+ *   quietly deoptimise every downstream reduction of an aggregate
+ *   result.
+ * - Missing cells (an empty bucket, or an all-missing one) set no
+ *   validity bit, so they read back as `undefined` — **not** `NaN`. That
+ *   is the sentinel decision this change forces, resolved in favour of
+ *   preserving current behaviour exactly.
+ *
+ * The one row-intake check deliberately skipped is the non-decreasing
+ * key scan: `BoundedSequence` already validates its intervals as sorted,
+ * non-overlapping, and positive-duration at construction, so re-deriving
+ * it per bucket would be checking the same fact twice.
+ *
+ * Returns `null` for the same disqualifying mappings as before; the
+ * caller falls back to the unchanged row path.
+ */
+export function tryAggregateColumnarStore(
+  begins: Float64Array,
+  getColumn: (name: string) => Column | undefined,
+  buckets: ReadonlyArray<Interval>,
+  columns: ReadonlyArray<AggregateColumnSpec>,
+  resultSchema: ColumnSchema,
+): ColumnarStore | null {
+  const plans = planColumnarAggregate(getColumn, columns);
+  if (plans === null) return null;
+
+  const bucketCount = buckets.length;
+  const colCount = columns.length;
+
+  // Per-kind output buffers, pre-sized to the bucket count — the same
+  // shape `validateAndNormalizeColumnar` uses, for the same reason: a
+  // generic `ColumnBuilder` would grow-and-copy its way to the same
+  // place. Validity bitmaps stay `null` until the first missing cell
+  // (the "all defined ⇒ no bitmap" convention).
+  const kinds = new Array<ScalarKind>(colCount);
+  const numberBufs = new Array<Float64Array | null>(colCount);
+  const booleanBufs = new Array<Uint8Array | null>(colCount);
+  const stringBufs = new Array<Array<string | undefined> | null>(colCount);
+  const arrayBufs = new Array<Array<ArrayValue | undefined> | null>(colCount);
+  const validityBits = new Array<Uint8Array | null>(colCount);
+  for (let c = 0; c < colCount; c += 1) {
+    const kind = columns[c]!.kind;
+    kinds[c] = kind;
+    numberBufs[c] = kind === 'number' ? new Float64Array(bucketCount) : null;
+    booleanBufs[c] =
+      kind === 'boolean' ? new Uint8Array(bitmapByteCount(bucketCount)) : null;
+    stringBufs[c] =
+      kind === 'string' ? new Array<string | undefined>(bucketCount) : null;
+    arrayBufs[c] =
+      kind === 'array' ? new Array<ArrayValue | undefined>(bucketCount) : null;
+    validityBits[c] = null;
+  }
+
+  /** Marks row `b` of column `c` missing, allocating + back-filling the
+   *  bitmap on the first such cell. */
+  const markMissing = (c: number, b: number): void => {
+    if ((validityBits[c] ?? null) !== null) return;
+    const bits = new Uint8Array(bitmapByteCount(bucketCount));
+    for (let j = 0; j < b; j += 1) bits[j >> 3]! |= 1 << (j & 7);
+    validityBits[c] = bits;
+  };
+
+  const reduced: Array<ColumnValue | undefined> = new Array(colCount);
   const n = begins.length;
   let cursor = 0;
-  const rows: Array<ReadonlyArray<unknown>> = new Array(buckets.length);
-  for (let b = 0; b < buckets.length; b += 1) {
+
+  for (let b = 0; b < bucketCount; b += 1) {
     const bucket = buckets[b]!;
     const bucketBegin = bucket.begin();
     const bucketEnd = bucket.end();
@@ -216,42 +414,88 @@ export function tryAggregateColumnarTimeKeyed<
     while (scan < n && begins[scan]! < bucketEnd) scan += 1;
     cursor = scan;
 
-    const reduced: Array<ColumnValue | undefined> = new Array(plans.length);
-    for (let p = 0; p < plans.length; p += 1) {
-      const plan = plans[p]!;
-      if (plan.kind === 'reduce') {
-        reduced[p] = plan.reduce(plan.column.sliceByRange(start, scan));
-      } else if (plan.which === 'first') {
-        // First defined cell in [start, scan); scans past missing cells and
-        // past non-finite numeric cells (reducer non-finite policy,
-        // docs/notes/reducer-nan-policy.md — a NaN/±Inf numeric is "not a
-        // contributor", matching the row path's `defined` filter).
-        let value: ColumnValue | undefined;
-        for (let i = start; i < scan; i += 1) {
-          const cell = plan.column.read(i);
-          if (cell === undefined) continue;
-          if (typeof cell === 'number' && !Number.isFinite(cell)) continue;
-          value = cell;
+    reduceBucket(plans, start, scan, reduced);
+
+    for (let c = 0; c < colCount; c += 1) {
+      const value = reduced[c];
+      // Column index is `c + 1` in the output schema (the key is 0), so
+      // an error names the same coordinates the row path would have.
+      assertCellKind(kinds[c]!, value, b, c + 1);
+      switch (kinds[c]) {
+        case 'number': {
+          if (typeof value === 'number') {
+            numberBufs[c]![b] = value;
+            const bits = validityBits[c];
+            // Bitmap exists ⇒ it covers every defined cell, so this
+            // row's bit needs setting. No bitmap yet ⇒ every prior row
+            // was defined and none is needed.
+            if (bits !== null && bits !== undefined)
+              bits[b >> 3]! |= 1 << (b & 7);
+          } else {
+            markMissing(c, b);
+          }
           break;
         }
-        reduced[p] = value;
-      } else {
-        // Last defined cell in [start, scan); scans backward past missing and
-        // past non-finite numeric cells (see the 'first' branch above).
-        let value: ColumnValue | undefined;
-        for (let i = scan - 1; i >= start; i -= 1) {
-          const cell = plan.column.read(i);
-          if (cell === undefined) continue;
-          if (typeof cell === 'number' && !Number.isFinite(cell)) continue;
-          value = cell;
+        case 'boolean': {
+          if (typeof value === 'boolean') {
+            if (value) booleanBufs[c]![b >> 3]! |= 1 << (b & 7);
+            const bits = validityBits[c];
+            if (bits !== null && bits !== undefined)
+              bits[b >> 3]! |= 1 << (b & 7);
+          } else {
+            markMissing(c, b);
+          }
           break;
         }
-        reduced[p] = value;
+        case 'string': {
+          stringBufs[c]![b] = typeof value === 'string' ? value : undefined;
+          break;
+        }
+        case 'array': {
+          // Defensive shallow freeze, matching the row path — the
+          // element contract was checked by `assertCellKind` above.
+          arrayBufs[c]![b] = Array.isArray(value)
+            ? (Object.freeze(value.slice()) as ArrayValue)
+            : undefined;
+          break;
+        }
       }
     }
-    rows[b] = Object.freeze([bucket, ...reduced]);
   }
-  return rows;
+
+  const outColumns = new Map<string, Column>();
+  for (let c = 0; c < colCount; c += 1) {
+    const bits = validityBits[c] ?? null;
+    const validity =
+      bits === null ? undefined : validityFromBits(bits, bucketCount);
+    let column: Column;
+    switch (kinds[c]) {
+      case 'number':
+        // `allFinite: true` on the same grounds the row path claims it:
+        // `assertCellKind` rejected every non-finite cell above, so a
+        // surviving column is provably finite.
+        column = new Float64Column(numberBufs[c]!, bucketCount, validity, true);
+        break;
+      case 'boolean':
+        column = new BooleanColumn(booleanBufs[c]!, bucketCount, validity);
+        break;
+      case 'string':
+        column = stringColumnFromArray(stringBufs[c]!);
+        break;
+      default:
+        column = arrayColumnFromArray(
+          arrayBufs[c]! as Parameters<typeof arrayColumnFromArray>[0],
+        );
+        break;
+    }
+    outColumns.set(columns[c]!.output, column);
+  }
+
+  return ColumnarStore.fromTrustedStore(
+    resultSchema,
+    intervalKeysForBuckets(buckets),
+    outColumns,
+  );
 }
 
 /**
@@ -272,7 +516,7 @@ export function tryAggregateColumnarTimeKeyed<
  * qualify: a custom-function reducer, a non-`'number'` output kind
  * (`unique` / `samples` / `keep` over a non-number source / an explicit
  * `kind` override), or a non-numeric / chunked / missing source column.
- * All-or-nothing per call, matching {@link tryAggregateColumnarTimeKeyed}.
+ * All-or-nothing per call, matching {@link tryAggregateColumnarStore}.
  *
  * Window shape replicates the generic count sweep exactly: rows are the unit
  * (`count` is a bar count — no equal-key grouping), `lo` / `hi` are monotonic

@@ -70,6 +70,17 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **core:** **`aggregate()` now builds its result columnar** instead of routing
+  the answer back through row intake. The columnar fast path already computed
+  every bucket in typed arrays; it then boxed each one into a frozen
+  `[Interval, …]` row so `new TimeSeries({ rows })` could walk all of them back
+  into columns. The result is now assembled as a store directly. **1.7–1.8×
+  faster end to end** on narrow buckets (1M events, 1-minute windows: 6.65 ms →
+  3.63 ms; 10-second windows: 31.18 ms → 17.89 ms), tapering to no change on
+  wide rollups where the reduction dominates and there was nothing to save.
+  Output is unchanged — same values, same interval keys and labels, same
+  `undefined` (not `NaN`) for an empty bucket, and the same `ValidationError`
+  if a reducer overflows to a non-finite result.
 - **charts (Storybook):** the `Charts/Histogram` story group moved to
   **`Charts/BarChart/Histogram`** — the histogram is `BarChart` in its `bins`
   mode, not a separate component, and the sidebar now says so. Story IDs under

@@ -184,6 +184,26 @@ consumer signal. Plan:
 - **[PND-PLANNR]** — Aggregate planner (step 5): friction-gated.
 - **[PND-DICT]** — Dictionary/string reducer adaptation (step 6):
   friction-gated.
+- **[PND-KERNEL]** — Kernel algorithm wins surfaced by the Rust/WASM spike
+  (`spikes/columnar-wasm/`, report + benchmarks committed). The spike is a
+  **no-go** on porting the substrate — dense `sum`/`mean`/`stdev` measured
+  exactly 1.00× and `bin` collapses to 1.00× at 10M — but the control
+  experiment isolated four wins that are pure algorithm and land in
+  TypeScript: quickselect in `reducePercentileColumn` (**7.3–11.8×** on
+  `median`/`p95`/`p99` and the `bin`/`binBy` percentile family), a 4-lane
+  `Float64Column.minMax` (**1.27–1.50×**, bit-identical), 8-accumulator
+  `sum`/`mean` (**1.83–1.85×**, but reassociation is _not_ bit-identical —
+  needs a semantics decision against the cross-path tests), and a branchless
+  finite guard for `allFinite: false` reductions. Acceptance benchmarks
+  already exist in `spikes/columnar-wasm/bench/controls.mjs`; each control is
+  checked against pond-ts's answer before it is timed.
+- **[PND-AGGALLOC]** — `tryAggregateColumnarStore` allocates a
+  `Float64Column` per bucket **per column** (`sliceByRange(start, scan)`) —
+  400k throwaway instances per `aggregate` call at B=100k, C=4. Range-scoped
+  reducers (`(col, start, end)` alongside `reduceColumn`) allocate nothing and
+  are bit-identical: measured **1.9–4.9×** on the aggregate kernel and
+  **1.6–1.7×** on the whole call, biggest at narrow buckets. Verified against
+  pond-ts's output series in `spikes/columnar-wasm/bench/aggregate.mjs`.
 - **[PND-WCNAN]** — `withColumn` NaN-canonical `Float64Array` intake
   (dashboard A/B friction, 2026-07-21): `withColumn` rejects NaN today, so a
   consumer deriving gated columns boxes into `(number | undefined)[]` — the

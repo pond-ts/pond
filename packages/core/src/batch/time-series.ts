@@ -73,7 +73,7 @@ import type {
 import {
   isAggregateOutputSpec,
   normalizeAggregateColumns,
-  tryAggregateColumnarTimeKeyed,
+  tryAggregateColumnarStore,
   tryRollingCountColumnarNumeric,
 } from './aggregate-columns.js';
 import {
@@ -791,6 +791,38 @@ type TrustedStoreInput<S extends SeriesSchema> = {
 };
 
 /**
+ * Wraps a pre-built `ColumnarStore` as a `TimeSeries`, bypassing row
+ * intake via the sentinel.
+ *
+ * Module-scoped rather than a method because ES private names
+ * (`TimeSeries.#fromTrustedStore`) are lexically confined to the class
+ * body, and the module-level transform functions at the bottom of this
+ * file — `aggregateInternal` among them — legitimately need the same
+ * door. `#fromTrustedStore` delegates here so there is one
+ * implementation, not two that can drift on how the schema is frozen.
+ *
+ * Callers must have produced the store from data that already satisfies
+ * the intake invariants: keys non-decreasing, column kinds matching the
+ * schema, non-finite numerics rejected.
+ */
+function timeSeriesFromTrustedStore<S extends SeriesSchema>(
+  name: string,
+  schema: S,
+  columnarStore: ColumnarStore<ColumnSchema>,
+): TimeSeries<S> {
+  const frozenSchema = Object.freeze(schema.slice()) as S;
+  const store = SeriesStore.fromTrustedStore(
+    columnarStore as unknown as ColumnarStore<S>,
+  ) as SeriesStore<S>;
+  const trustedInput: TrustedStoreInput<S> = {
+    name,
+    schema: frozenSchema,
+    [TRUSTED_STORE_SENTINEL]: store,
+  };
+  return new TimeSeries<S>(trustedInput as unknown as TimeSeriesInput<S>);
+}
+
+/**
  * An immutable, schema-typed, ordered collection of events — the batch
  * layer's core primitive. A series is constructed whole from complete data
  * and never mutated: every transform (`filter`, `align`, `rollup`, …)
@@ -1303,24 +1335,17 @@ export class TimeSeries<S extends SeriesSchema> {
    * new store on demand. The caller guarantees `columnarStore`'s
    * shape matches `schema` — that assertion is the single cast, the
    * trust boundary (Step 4).
+   *
+   * Delegates to the module-scoped {@link timeSeriesFromTrustedStore},
+   * which the module-level transform functions also use (a `#name` is
+   * lexically confined to this class body and they sit outside it).
    */
   static #fromTrustedStore<NextSchema extends SeriesSchema>(
     name: string,
     schema: NextSchema,
     columnarStore: ColumnarStore<ColumnSchema>,
   ): TimeSeries<NextSchema> {
-    const frozenSchema = Object.freeze(schema.slice()) as NextSchema;
-    const store = SeriesStore.fromTrustedStore(
-      columnarStore as unknown as ColumnarStore<NextSchema>,
-    ) as SeriesStore<NextSchema>;
-    const trustedInput: TrustedStoreInput<NextSchema> = {
-      name,
-      schema: frozenSchema,
-      [TRUSTED_STORE_SENTINEL]: store,
-    };
-    return new TimeSeries<NextSchema>(
-      trustedInput as unknown as TimeSeriesInput<NextSchema>,
-    );
+    return timeSeriesFromTrustedStore(name, schema, columnarStore);
   }
 
   /**
@@ -5493,18 +5518,27 @@ function aggregateInternal<S extends SeriesSchema>(
     // `Float64Column` source, reduce each bucket's contiguous index range
     // off the typed arrays — no `series.events` materialization. Returns
     // null (→ the row path below, unchanged) for any non-qualifying column.
-    const columnarRows = tryAggregateColumnarTimeKeyed(
+    //
+    // [PND-IVLCOL]: the result is assembled as a `ColumnarStore` and
+    // adopted via trusted construction, rather than emitted as frozen
+    // `[Interval, …]` rows for `new TimeSeries({ rows })` to walk back
+    // into columns. The reduce already produced typed arrays; the round
+    // trip through rows cost more than the reduce itself at realistic
+    // bucket counts. `tryAggregateColumnarStore` performs every check
+    // row intake performed — see its doc comment.
+    const columnarStore = tryAggregateColumnarStore(
       series.keyColumn().begin,
       (name) => series.column(name as ValueColumnsForSchema<S>[number]['name']),
       buckets,
       columns,
+      resultSchema as unknown as ColumnSchema,
     );
-    if (columnarRows !== null) {
-      return new TimeSeries({
-        name: series.name,
-        schema: resultSchema as unknown as SeriesSchema,
-        rows: columnarRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-      });
+    if (columnarStore !== null) {
+      return timeSeriesFromTrustedStore(
+        series.name,
+        resultSchema as unknown as SeriesSchema,
+        columnarStore,
+      );
     }
 
     const builtInOnly = columns.every((column) =>
