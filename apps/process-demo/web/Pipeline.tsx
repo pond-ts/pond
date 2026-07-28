@@ -55,6 +55,12 @@ interface NodeData extends Record<string, unknown> {
   kind: 'source' | 'node';
   state: 'cached' | 'computed' | 'idle';
   selected: boolean;
+  /**
+   * The content-addressed id. The view is keyed by slot so a param edit
+   * does not read as a new graph, but everything downstream — drawing,
+   * selection, addressing an intermediate — still goes by id.
+   */
+  specId: string;
 }
 
 const NODE_W = 190;
@@ -90,6 +96,15 @@ function layout(
   explain: Record<string, string>,
   selected: string | undefined,
 ) {
+  // **Keyed by slot, not by id.** A param edit changes every derived id,
+  // so keying on those made React Flow see the whole graph replaced:
+  // nodes remounted, `fitView` re-ran, and the pipeline jumped on every
+  // slider move. A slot is stable across exactly that edit — which is
+  // what it is for. A nested plan has no slots, and there the id is the
+  // only identity available.
+  const stable = new Map(nodes.map((n) => [n.id, n.slot ?? n.id]));
+  const ref = (id: string) => stable.get(id) ?? id;
+
   const g = new dagre.graphlib.Graph();
   g.setGraph({
     rankdir: 'TB',
@@ -106,17 +121,17 @@ function layout(
     for (const input of n.inputs) if (!known.has(input)) sources.add(input);
   }
 
-  for (const id of [...sources, ...nodes.map((n) => n.id)]) {
+  for (const id of [...sources, ...nodes.map((n) => ref(n.id))]) {
     g.setNode(id, { width: NODE_W, height: NODE_H });
   }
   const edges: Edge[] = [];
   for (const n of nodes) {
     for (const input of n.inputs) {
-      g.setEdge(input, n.id);
+      g.setEdge(ref(input), ref(n.id));
       edges.push({
-        id: `${input}->${n.id}`,
-        source: input,
-        target: n.id,
+        id: `${ref(input)}->${ref(n.id)}`,
+        source: ref(input),
+        target: ref(n.id),
         animated: n.pulled && !n.cached,
       });
     }
@@ -146,10 +161,11 @@ function layout(
         kind: 'source',
         state: 'idle',
         selected: false,
+        specId: id,
       }),
     ),
     ...nodes.map((n) =>
-      place(n.id, {
+      place(ref(n.id), {
         label: explain[n.id] ?? n.id,
         // A node nothing selected has no timing to report — saying
         // "cached · 0 ms" there would be a lie dressed as a measurement.
@@ -166,6 +182,7 @@ function layout(
         kind: 'node',
         state: n.pulled ? (n.cached ? 'cached' : 'computed') : 'idle',
         selected: n.id === selected,
+        specId: n.id,
       }),
     ),
   ];
@@ -187,7 +204,7 @@ export function Pipeline(props: {
     (_: unknown, node: Node) => {
       const data = node.data as NodeData;
       if (data.kind === 'source') return;
-      props.onSelect(node.id === props.selected ? undefined : node.id);
+      props.onSelect(data.specId === props.selected ? undefined : data.specId);
     },
     [props],
   );
@@ -199,8 +216,10 @@ export function Pipeline(props: {
   return (
     <div className="flow">
       <ReactFlow
-        // Re-mounting on a shape change re-runs `fitView`; without it a
-        // new plan inherits the previous viewport and lands off-screen.
+        // Re-mounting re-runs `fitView` — which a genuinely new plan
+        // wants and a param edit does not. Keyed by the ids *after* the
+        // slot mapping, so it changes when the topology does and holds
+        // still when only a value moved.
         key={flowNodes.map((n) => n.id).join('|')}
         nodes={flowNodes}
         edges={edges}
