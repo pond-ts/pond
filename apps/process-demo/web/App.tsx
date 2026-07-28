@@ -10,9 +10,10 @@
  * warm/cold badges.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Viz, type Fact, type Frames } from './Viz.js';
 import { Pipeline, type NodeTiming } from './Pipeline.js';
+import { Tune, type ParamDef } from './Tune.js';
 
 interface DatasetInfo {
   id: string;
@@ -24,6 +25,7 @@ interface OpDescriptor {
   name: string;
   family: string;
   summary: string;
+  params: Record<string, ParamDef>;
   outputs: { suffix: string; unit: string }[];
 }
 interface Context {
@@ -146,12 +148,20 @@ export function App() {
   const [selected, setSelected] = useState<number>();
   const nextId = useRef(1);
 
-  useEffect(() => {
+  const [resident, setResident] = useState<number>();
+  const refreshContext = useCallback(() => {
     fetch('/api/context')
       .then((r) => r.json())
-      .then(setContext)
+      .then((c: Context) => {
+        setContext(c);
+        // How many nodes the host is holding. Under content-addressing
+        // this only grows, which is exactly [PND-PROCIDENT]'s point and
+        // the reason [PND-PROCCACHE] exists — there is no budget yet.
+        setResident(c.datasets.reduce((n, d) => n + d.nodes, 0));
+      })
       .catch(() => undefined);
   }, []);
+  useEffect(refreshContext, [refreshContext]);
 
   const current = useMemo(
     () => entries.find((e) => e.id === selected) ?? entries[entries.length - 1],
@@ -207,13 +217,18 @@ export function App() {
   }
 
   /** Re-runs a hand-edited envelope without going back through the model. */
-  async function rerun(entry: Entry, envelope: unknown) {
-    if (envelope === undefined) return;
+  async function rerun(
+    entry: Entry,
+    envelope: unknown,
+  ): Promise<RunResult | undefined> {
+    if (envelope === undefined) return undefined;
     setEntries((prev) =>
       prev.map((e) => (e.id === entry.id ? { ...e, pending: true } : e)),
     );
+    let returned: RunResult | undefined;
     try {
       const result = await post<RunResult>('/api/run', envelope);
+      returned = result;
       // The envelope may have been hand-edited, so anything previously
       // drawn is for a different plan. Dropping it is what makes the viz
       // tab re-fetch rather than render a stale chart.
@@ -245,6 +260,7 @@ export function App() {
         ),
       );
     }
+    return returned;
   }
 
   /**
@@ -336,6 +352,39 @@ export function App() {
     }
   }
 
+  /**
+   * Applies a param edit to one slot and re-runs.
+   *
+   * No model call: this is [PND-PROCSLOT]'s "refinement becomes a patch"
+   * literally — the slot is the thing being addressed, and it survives
+   * the edit that moves every derived id.
+   */
+  function tune(entry: Entry, slot: string, params: Record<string, unknown>) {
+    const envelope = (entry.ran ?? entry.composed?.envelope) as
+      | { nodes?: Record<string, { params?: unknown }> }
+      | undefined;
+    if (envelope?.nodes?.[slot] === undefined) return;
+    const next = {
+      ...envelope,
+      nodes: {
+        ...envelope.nodes,
+        [slot]: { ...envelope.nodes[slot], params },
+      },
+    };
+    rerun(entry, next).then((result) => {
+      refreshContext();
+      // Re-point the selection at the slot's **new** id. Keying the UI on
+      // a derived id is precisely the mistake slots exist to prevent, and
+      // this panel made it: a param edit moved the id, the lookup failed,
+      // and the controls unmounted mid-drag.
+      const id = result?.nodes.find((n) => n.slot === slot)?.id;
+      if (id === undefined) return;
+      setEntries((prev) =>
+        prev.map((e) => (e.id === entry.id ? { ...e, focus: id } : e)),
+      );
+    });
+  }
+
   /** Selects a pipeline node, and invalidates whatever was drawn for the old one. */
   function focusNode(entry: Entry, id: string | undefined) {
     setEntries((prev) =>
@@ -370,7 +419,14 @@ export function App() {
             setSelected(undefined);
           }}
         />
-        <RequestPanel entry={current} onRerun={rerun} onFocus={focusNode} />
+        <RequestPanel
+          entry={current}
+          context={context}
+          resident={resident}
+          onRerun={rerun}
+          onFocus={focusNode}
+          onTune={tune}
+        />
         <ResultsPanel entry={current} onDraw={draw} />
       </main>
     </div>
@@ -489,11 +545,36 @@ function Composer(props: {
 
 function RequestPanel(props: {
   entry: Entry | undefined;
+  context: Context | undefined;
+  resident: number | undefined;
   onRerun: (entry: Entry, envelope: unknown) => void;
   onFocus: (entry: Entry, id: string | undefined) => void;
+  onTune: (entry: Entry, slot: string, params: Record<string, unknown>) => void;
 }) {
   const { entry } = props;
   const [tab, setTab] = useState<'json' | 'graph'>('json');
+
+  // The selected node, resolved back to the slot and op the envelope
+  // declared — `focus` is an id, because that is what the pipeline and
+  // the drawing path address by.
+  const tuning = useMemo(() => {
+    if (entry?.focus === undefined || props.context === undefined) return;
+    const slot = entry.result?.nodes.find((n) => n.id === entry.focus)?.slot;
+    if (slot === undefined) return;
+    const envelope = (entry.ran ?? entry.composed?.envelope) as
+      | { nodes?: Record<string, { op: string; params?: unknown }> }
+      | undefined;
+    const node = envelope?.nodes?.[slot];
+    if (node === undefined) return;
+    const defs = props.context.ops.find((o) => o.name === node.op)?.params;
+    if (defs === undefined) return;
+    return {
+      slot,
+      op: node.op,
+      defs,
+      params: (node.params ?? {}) as Record<string, unknown>,
+    };
+  }, [entry, props.context]);
   // The envelope is editable, and that is not a nicety. M2's whole job is
   // finding out what does and does not resolve; being able to change one
   // param and re-run without a round trip through a model is how most of
@@ -566,10 +647,20 @@ function RequestPanel(props: {
             selected={entry.focus}
             onSelect={(id) => props.onFocus(entry, id)}
           />
+          {tuning !== undefined && (
+            <Tune
+              op={tuning.op}
+              slot={tuning.slot}
+              params={tuning.params}
+              defs={tuning.defs}
+              resident={props.resident}
+              onChange={(params) => props.onTune(entry, tuning.slot, params)}
+            />
+          )}
           <p className="muted">
             {entry.focus === undefined
-              ? 'Click a node to draw that node’s output — including intermediates the plan never named at its top level.'
-              : 'Showing this node in Results. Click the background to go back to the whole plan.'}
+              ? 'Click a node to draw that node’s output — and, on a slot plan, to tune its params.'
+              : 'Showing this node in Results. Tuning re-runs without calling the model. Click the background to go back.'}
           </p>
         </>
       ) : composed ? (
