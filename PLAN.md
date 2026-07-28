@@ -296,6 +296,22 @@ whether it stays one.
   with `toJsonSchema({ base })`. Open: the projection carries no units, in either
   direction, so a caller cannot know `annualise` refuses a raw price without a
   `describe()` table in the prompt.
+- **[PND-PROCSLOT]** — Caller-assigned **slots**, separating topology from value.
+  Params are part of a node's id but do not change the shape, so the format uses
+  one identity for two jobs. A slot (`bb`) is stable across a param edit and
+  names a position; `specId` still keys the cache. Fixes `on` restating whole
+  nested specs, makes refinement a patch, stops the pipeline view re-laying-out
+  on a param change, and lets surfaced outputs carry the requester's own names
+  — which is what a Tidal card is. Slots are an alias layer, not a replacement:
+  M5's 2.811 ms return trip works _because_ the node persisted under its content
+  id. Connections stay on the node (no full node editor is wanted); how a slot
+  reference is disambiguated from a source column name is open.
+- **[PND-PROCBUILD]** — A programmable API that **emits** a plan, for consumers
+  building graphs in application code rather than composing JSON. Depends on
+  [PND-PROCSLOT]: a builder needs a stable handle and a content-addressed id
+  cannot be one. The builder produces the same envelope a model would, so there
+  is one resolution path and one cache. Open: how far to type params off the
+  registry's `ParamDef`, and whether `specId` ships to the client.
 - **[PND-PROCSUB]** — Decide the substrate and packaging: the RFC concludes one
   package with the engine internal, while [#544](https://github.com/pond-ts/pond/pull/544)
   proposes publishing it. Evidence now favours keeping the graph (1.34–1.40× on

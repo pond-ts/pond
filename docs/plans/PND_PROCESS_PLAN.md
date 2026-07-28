@@ -675,6 +675,166 @@ recorded that units stay out of the projection and belong in `describe()`.
 
 ---
 
+### [PND-PROCSLOT] — Caller-assigned slots: separate topology from value
+
+**The observation, from reading a composed plan:** params are part of a
+node's id, but they do not change the topology. Move a `period` from 20 to
+50 and the plan is structurally identical — same ops, same edges, same
+shape — yet every id downstream of the change is different. The format is
+using **one identity for two jobs**.
+
+This is [PND-PROCIDENT] restated as a _format_ question rather than an
+engine one, which is the more useful framing: the conflation originates in
+how a plan is written, not in how the graph stores things.
+
+**Two identities, and they want to be separate:**
+
+|           | Example                               | Stable under a param edit? | Job                              |
+| --------- | ------------------------------------- | -------------------------- | -------------------------------- |
+| **Slot**  | `bb`                                  | yes                        | names a position in the topology |
+| **Value** | `p1:bollinger(px;period=20,stdDev=2)` | no                         | keys the cache                   |
+
+Today only the second exists, and it does both jobs.
+
+**What slots fix, concretely.**
+
+- **`on` stops restating whole specs.** A selector on a three-deep chain
+  currently repeats the entire nested structure, and twice over if it wants
+  both a column and a fact. `{ "on": "bb" }` replaces it.
+- **Refinement becomes a patch.** "Make it 50" is
+  `nodes.bb.params.period = 50` rather than a regenerated plan — a diff
+  that can be validated against what is already resolved, and far cheaper
+  for a model to emit.
+- **Sharing becomes declared rather than coincidental.** Two identical
+  inline specs dedupe today _because their hashes collide_. That works, but
+  it is emergent; `["sma1", "sma1"]` states it.
+- **The pipeline view stops re-laying-out on a param change.** Same slots →
+  same dagre layout → the badge flips amber and nothing moves. That is a
+  far better rendering of "only this recomputed" than the whole graph
+  jumping, and M4's view currently does the jumping.
+- **Named outputs make a response directly consumable.** Facts come back
+  keyed `p1:bollinger(px;period=20,stdDev=2)Upper`, so a requester parses
+  an id to find what it asked for. Naming the surfaced outputs removes
+  that step — and maps exactly onto the consumer: a Tidal **card** is a
+  named output, and on a data refresh it keeps its identity and updates in
+  place instead of being re-keyed.
+
+**What must not break.** Content addressing is what makes the cache work
+_across_ requests, sessions and callers: a saved view composed months ago
+and a freshly composed one land on the same node because the id is
+derived, not assigned. Slots are session-local — one caller's `bb` means
+nothing to another's.
+
+M5 measured what that is worth. "Back to how it was" returned in
+**2.811 ms against 75.071 ms cold**, and only because the original node was
+still resident under its content-addressed id. If slots _replaced_ content
+addressing, that return would recompute.
+
+So: **slots are an alias layer; `specId` stays the cache key.** Both
+belong in the response, so a consumer can key its UI on the slot and its
+cache reasoning on the id.
+
+**Proposed shape:**
+
+```jsonc
+{
+  "from": "ACME_5m",
+  "as": "bands_and_stretch",
+  "nodes": {
+    "bb": { "op": "bollinger", "params": { "period": 20 }, "in": ["px"] },
+    "z": { "op": "zscore", "params": { "period": 20 }, "in": ["px"] },
+  },
+  "outputs": {
+    "upper_band": { "on": "bb", "output": "Upper", "reduce": "last" },
+    "stretch": { "on": "z", "reduce": "percentileRank" },
+    "band_series": { "on": "bb", "columns": true },
+  },
+}
+```
+
+`as` names the request; `outputs` names its parts.
+
+**Decision — connections live on the node, not in a separate `edges`
+list.** A separate edge list can express graphs the ops cannot accept
+(wrong input count, edges to nowhere), so it has to be validated against
+the node definitions anyway; arity is a per-op property and belongs where
+it can be checked once. The case for a standalone edge list is a **full
+node editor**, where a user drags connections independently of nodes —
+and the consumer does not want one. Tidal adds studies onto raw metrics
+and adds cards over facts; it does not rewire a DAG by hand. Revisit only
+if that changes.
+
+**Open — how an input reference is disambiguated.** An input string is a
+source column name today. With slots it could be either, and a slot named
+`px` would shadow the column. Cheapest resolution is to reject slot ids
+that collide with a bound source's column names at compile time, with a
+reason naming both sides. A sigil (`"@bb"`) also works but introduces
+syntax to a format that currently has none. Prefer the validation.
+
+**Migration.** Additive: `nodes` + `outputs` alongside the existing
+`process` + `select`, with the old form retained until the composer and
+the demo have moved. `specId` and the whole resolution path are unchanged
+— this is a naming layer over them, not a replacement.
+
+**Done when:** a plan authored with slots resolves to the same node ids as
+the equivalent nested plan; a param edit changes an id but not a slot; the
+response reports both; and a follow-up expressed as a patch hits cache
+exactly as the full re-compose does.
+
+---
+
+### [PND-PROCBUILD] — A programmable API that emits a plan
+
+Plans-as-data is right for a wire format and required for a cache key, but
+it is not how an application wants to _author_ a graph. A consumer
+building studies over its own metrics in application code should not be
+assembling nested JSON by hand.
+
+**Slots are what make this possible**, which is why it depends on
+[PND-PROCSLOT] rather than standing alone: a builder needs a stable handle
+to refer back to, and a content-addressed id cannot be one — it changes
+the moment a param does. A slot is exactly a handle.
+
+```ts
+const g = plan('ACME_5m');
+const bb = g.add('bb', 'bollinger', { period: 20 }, ['px']);
+const z = g.add('z', 'zscore', { period: 20 }, ['px']);
+
+g.expose('upper_band', bb.output('Upper').last());
+g.expose('stretch', z.percentileRank());
+g.expose('band_series', bb.columns());
+
+await host.run(g.toJSON()); // the same envelope a model would emit
+```
+
+**The builder emits the plan; it does not replace it.** One resolution
+path, one cache, one thing to test — and a graph built in code and one
+composed by a model land on the same nodes. That is also the cheapest way
+to keep the two honest: the builder's output is a plan, so the existing
+plan tests cover it.
+
+**Open questions.**
+
+- **How typed?** The registry already carries `ParamDef` per op, so
+  `params` could be typed per op name via a generated or inferred map.
+  That is the difference between a convenience wrapper and something worth
+  the dependency — but it constrains how ops are registered, and the
+  registry is currently a runtime object.
+- **Where it lives.** A builder that imports the registry is a different
+  dependency shape from one that takes a registry as an argument. The
+  latter keeps `@pond-ts/process` free of the op corpus; see
+  [PND-PROCSUB].
+- **Does it need to resolve?** A builder that can answer "what id will
+  this be" locally would let a consumer pre-compute cache keys — but that
+  means shipping `specId` to the client, which may be fine and may be a
+  compatibility surface nobody wants to own.
+
+**Done when:** a graph built in application code and the equivalent
+model-composed JSON resolve to identical node ids, and the builder has no
+resolution logic of its own.
+
+---
+
 ### [PND-PROCSUB] — Substrate and packaging decision
 
 The RFC's v3 concludes **one package**, with the engine relocated to
