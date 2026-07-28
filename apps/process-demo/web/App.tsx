@@ -37,6 +37,8 @@ interface Context {
   composer: { kind: 'anthropic' | 'openai' | 'scripted'; why: string };
 }
 interface RunResult {
+  /** Columns the server did not re-send, because we said we held them. */
+  reused?: string[];
   facts: Fact[];
   outputs: Record<string, { column: string; unit: string | null }[]>;
   explain: Record<string, string>;
@@ -78,6 +80,15 @@ interface Entry {
   focus?: string | undefined;
   /** The columns response, fetched only when the viz tab asks. */
   drawn?: RunResult | undefined;
+  /**
+   * The drawn response is for a superseded run and should be refetched —
+   * but **kept on screen meanwhile**. Clearing it instead made every
+   * slider step tear the panel down and rebuild it: figures unmounted,
+   * the panel collapsed to a one-line message, then re-expanded. Holding
+   * the last good render is what makes tuning read as a value changing
+   * rather than a page reloading.
+   */
+  drawnStale?: boolean | undefined;
   drawing?: boolean | undefined;
   /**
    * Why the last draw failed. Distinct from `error` so a failed draw
@@ -149,6 +160,15 @@ export function App() {
   const nextId = useRef(1);
 
   const [resident, setResident] = useState<number>();
+  /**
+   * Decoded columns, keyed by name.
+   *
+   * A column's name is its content-addressed id, so this never goes
+   * stale: the same name is always the same data. It is the graph's own
+   * cache, mirrored on the client — which is the point of deriving the
+   * id rather than assigning it.
+   */
+  const held = useRef(new Map<string, string>());
   const refreshContext = useCallback(() => {
     fetch('/api/context')
       .then((r) => r.json())
@@ -239,7 +259,7 @@ export function App() {
                 ...e,
                 result,
                 ran: envelope,
-                drawn: undefined,
+                drawnStale: true,
                 drawError: undefined,
                 pending: false,
                 error: undefined,
@@ -331,10 +351,45 @@ export function App() {
               ];
         body = { ...envelope, select };
       }
-      const drawn = await post<RunResult>('/api/run', body);
+      // Ask only for what we do not already hold. A node the graph
+      // reports `cached` has the same id, hence the same column name,
+      // hence data we already decoded — re-sending it would be the one
+      // cost this design exists to avoid.
+      const drawn = await post<RunResult>('/api/run', {
+        ...body,
+        have: [...held.current.keys()],
+      });
+      for (const [name, b64] of Object.entries(drawn.frames?.columns ?? {})) {
+        held.current.set(name, b64);
+      }
+      // The key column too: it is the dataset's, not a study's, and at
+      // 150k rows it outweighs the column a tune actually recomputes.
+      if (drawn.frames?.key !== undefined) {
+        held.current.set(drawn.frames.keyId, drawn.frames.key);
+      }
+      // Re-attach what the server skipped, so the panel sees one whole
+      // set of frames and knows nothing about the negotiation.
+      const columns = { ...(drawn.frames?.columns ?? {}) };
+      for (const name of drawn.reused ?? []) {
+        const b64 = held.current.get(name);
+        if (b64 !== undefined) columns[name] = b64;
+      }
+      const whole =
+        drawn.frames === undefined
+          ? drawn
+          : {
+              ...drawn,
+              frames: {
+                ...drawn.frames,
+                key: drawn.frames.key ?? held.current.get(drawn.frames.keyId),
+                columns,
+              },
+            };
       setEntries((prev) =>
         prev.map((e) =>
-          e.id === entry.id ? { ...e, drawn, drawing: false } : e,
+          e.id === entry.id
+            ? { ...e, drawn: whole, drawing: false, drawnStale: false }
+            : e,
         ),
       );
     } catch (e) {
@@ -389,7 +444,7 @@ export function App() {
   function focusNode(entry: Entry, id: string | undefined) {
     setEntries((prev) =>
       prev.map((e) =>
-        e.id === entry.id ? { ...e, focus: id, drawn: undefined } : e,
+        e.id === entry.id ? { ...e, focus: id, drawnStale: true } : e,
       ),
     );
   }
@@ -798,7 +853,7 @@ function VizTab(props: { entry: Entry; onDraw: (entry: Entry) => void }) {
     (entry.ran ?? entry.composed?.envelope) !== undefined && !entry.pending;
   const needed =
     ready &&
-    entry.drawn === undefined &&
+    (entry.drawn === undefined || entry.drawnStale === true) &&
     entry.drawing !== true &&
     entry.drawError === undefined;
   useEffect(() => {
@@ -813,8 +868,14 @@ function VizTab(props: { entry: Entry; onDraw: (entry: Entry) => void }) {
       outputs={entry.drawn?.outputs ?? {}}
       explain={entry.drawn?.explain ?? {}}
       facts={entry.drawn?.facts ?? []}
+      // Only a *first* draw blocks the panel. Once there is something on
+      // screen, a refresh is reported in place rather than replacing it.
       pending={entry.drawing === true}
-      waiting={!ready}
+      waiting={!ready && entry.drawn === undefined}
+      refreshing={
+        entry.drawn !== undefined &&
+        (entry.drawing === true || entry.drawnStale === true || !ready)
+      }
       error={entry.drawError}
       onDraw={() => onDraw(entry)}
     />

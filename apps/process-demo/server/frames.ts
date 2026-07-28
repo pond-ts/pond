@@ -29,8 +29,17 @@ import type { Column, SeriesSchema, TimeSeries } from 'pond-ts';
 /** One request's drawable values, in the shape the browser rebuilds from. */
 export interface Frames {
   readonly length: number;
-  /** Epoch-ms keys, base64 of a `Float64Array`. */
-  readonly key: string;
+  /**
+   * Identifies the key column, so a caller can say it already holds it.
+   *
+   * The keys are the *dataset's*, not a study's: they do not change when
+   * a param does, and at 150k rows they are 1.2 MB — larger than the
+   * column a tune actually recomputes. Re-sending them on every slider
+   * step dominated the wire.
+   */
+  readonly keyId: string;
+  /** Epoch-ms keys, base64 of a `Float64Array`. Absent when reused. */
+  readonly key?: string;
   /** Column name → base64 of a `Float64Array`, NaN where the cell is a gap. */
   readonly columns: Readonly<Record<string, string>>;
   /** Bytes on the wire before JSON framing — the number M3 is about. */
@@ -66,15 +75,22 @@ function densify(column: Column): Float64Array {
 export function toFrames(
   series: TimeSeries<SeriesSchema>,
   columns: Readonly<Record<string, Column>>,
+  options: { keyId: string; holdsKey?: boolean } = { keyId: '' },
 ): Frames {
   const length = series.length;
   const keys = series.keyColumn().begin.subarray(0, length);
   const encoded: Record<string, string> = {};
-  let bytes = keys.byteLength;
+  let bytes = options.holdsKey === true ? 0 : keys.byteLength;
   for (const [name, column] of Object.entries(columns)) {
     const packed = densify(column);
     bytes += packed.byteLength;
     encoded[name] = toBase64(packed);
   }
-  return { length, key: toBase64(keys), columns: encoded, bytes };
+  return {
+    length,
+    keyId: options.keyId,
+    ...(options.holdsKey !== true && { key: toBase64(keys) }),
+    columns: encoded,
+    bytes,
+  };
 }

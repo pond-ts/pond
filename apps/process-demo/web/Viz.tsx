@@ -44,7 +44,10 @@ import {
 
 export interface Frames {
   length: number;
-  key: string;
+  /** Identifies the keys, so a caller can report already holding them. */
+  keyId: string;
+  /** Absent when the server skipped it because we said we had it. */
+  key?: string | undefined;
   columns: Record<string, string>;
   bytes: number;
 }
@@ -224,6 +227,9 @@ function themeFor(color: string): ChartTheme {
 function useDrawn(frames: Frames | undefined) {
   return useMemo(() => {
     if (frames === undefined || frames.length === 0) return undefined;
+    // `key` is absent only if the caller claimed to hold it and then
+    // failed to re-attach it — a bug rather than a state to render.
+    if (frames.key === undefined) return undefined;
     const names = Object.keys(frames.columns);
     if (names.length === 0) return undefined;
     const schema = [
@@ -265,6 +271,11 @@ export function Viz(props: {
   pending: boolean;
   /** There is no plan to draw from yet — the compose has not landed. */
   waiting: boolean;
+  /**
+   * A newer run is in flight, but the last render is still on screen and
+   * stays there. Reported as a chip rather than by blanking the panel.
+   */
+  refreshing?: boolean | undefined;
   /** The last draw failed. Shown with a retry rather than swallowed. */
   error?: string | undefined;
   facts: readonly Fact[];
@@ -273,19 +284,26 @@ export function Viz(props: {
   const drawn = useDrawn(props.frames);
   const [ref, width] = useWidth();
   const groups = Object.entries(props.outputs).filter(([, o]) => o.length > 0);
-  const idle = !props.pending && !props.waiting && props.error === undefined;
+  // Anything already drawn keeps rendering; only a panel with nothing in
+  // it yet gets a message instead of content.
+  const blank = drawn === undefined;
+  const idle =
+    blank && !props.pending && !props.waiting && props.error === undefined;
 
   return (
     <div className="viz" ref={ref}>
-      {props.waiting && <p className="muted">Waiting for the plan…</p>}
-      {props.pending && <p className="muted">Drawing…</p>}
-      {props.error !== undefined && (
+      {blank && props.waiting && <p className="muted">Waiting for the plan…</p>}
+      {blank && props.pending && <p className="muted">Drawing…</p>}
+      {props.refreshing === true && (
+        <p className="muted refreshing">updating…</p>
+      )}
+      {blank && props.error !== undefined && (
         <>
           <p className="notice bad">{props.error}</p>
           <button onClick={props.onDraw}>Try again</button>
         </>
       )}
-      {idle && drawn === undefined && (
+      {idle && (
         <>
           <p className="muted">
             This response carries facts, not columns — a reduction never

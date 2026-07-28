@@ -634,3 +634,20 @@ button.tab.on {
   font: inherit;
   font-size: 11px;
 }
+
+/* A refresh is reported in place — never by blanking what is drawn. */
+.viz .refreshing {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0;
+  pointer-events: none;
+}
+
+.viz {
+  position: relative;
+}
