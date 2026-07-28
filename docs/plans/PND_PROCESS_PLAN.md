@@ -123,6 +123,35 @@ stores are not in `heapUsed`. Reading heap alone reported 21 MB for both
 modes and hid a 300 MB difference. Use `arrayBuffers` / `rss`, one
 configuration per process. This gets sharper under [PND-PROCCOL].
 
+**Decided for the conversational shape, by watching (M5).** A four-turn
+refinement against a real model, 150k bars, one long-lived host
+(`apps/process-demo/scripts/refinement-run.mjs`):
+
+| turn                       | plan       | node                   | total     |
+| -------------------------- | ---------- | ---------------------- | --------- |
+| "a 50-bar moving average…" | `sma(50)`  | **computed** 64.729 ms | 75.071 ms |
+| "smoother"                 | `ema(50)`  | **computed** 16.001 ms | 21.225 ms |
+| "try 200 instead"          | `ema(200)` | **computed** 17.999 ms | 25.892 ms |
+| "back to how it was"       | `sma(50)`  | **cached** 0.004 ms    | 2.811 ms  |
+
+**27× end to end on the return trip, and the node itself is a straight
+cache hit.** That is the whole argument for content-addressing in one
+run: `sma(50)` was never invalidated by the detour through `ema(200)` —
+it was simply not asked for — so coming back is free. Under
+params-as-Ins the same conversation is one node whose param changed
+twice, and the fourth turn recomputes.
+
+And the bill is visible in the same run: **three nodes resident
+afterwards**, one per distinct spec the conversation passed through.
+Nothing evicts the detour. So the conversational shape wants
+content-addressing _and_ [PND-PROCCACHE]'s engine-wide budget; it does
+not want params-as-Ins.
+
+The interactive-slider shape still wants the opposite, which is what the
+two-modes-of-In proposal above is for. M5 does not overturn that — it
+establishes that the two shapes are genuinely different, with a measured
+case for each.
+
 **Done when:** identity and node lifetime are a stated, tested policy, and
 a 200-position sweep at 1M rows holds steady-state memory under whichever
 policy the interactive consumer gets.
@@ -581,9 +610,228 @@ Also landed alongside, both found by having a UI render the response:
 - **`skipped.spec` dropped `inputs`.** A plan may hold two specs of the
   same op; `{op, params}` alone does not say which one to fix.
 
+### Answered (M5): yes for nesting, after three tries at the recursion
+
+Run against a real model with a real key. **The projection is sufficient
+for the thing it was built for**: given the schema and nothing teaching it
+a nesting concept, the caller composed `ema(sma(px))` unaided, and later
+`annualise(variance(roc(px)))`. The recursive `$ref` does its job.
+
+Getting that recursion to _travel_ took three shapes, and only the third
+works:
+
+| ref                           | outcome                                          |
+| ----------------------------- | ------------------------------------------------ |
+| `#/items`                     | dangles once nested — silently (M2)              |
+| `#/properties/process/items`  | passes local validators, **API rejects it** (M5) |
+| `#/$defs/spec` + hoisted defs | travels                                          |
+
+The middle row is the instructive one: _"reference can only point to
+definitions defined at the top level of the schema."_ So `base` was the
+wrong idea and is gone; `toJsonSchema({ defs })` emits the definition and
+the caller lifts `$defs` to its own root.
+
+**Three portability rules, none caught by a client-side validator.** Each
+came back as a 400 from a live call, and each had passed the SDK's own
+`toStrictJsonSchema` locally (`scripts/strict-schema-probe.mts` records
+that probe):
+
+- unions must be `anyOf`, not `oneOf` (_"'oneOf' is not permitted"_);
+- a `const` must carry its `type` (_"schema must have a 'type' key"_);
+- a `$ref` must point at a top-level definition.
+
+**Optionality is where the projection and strict mode genuinely
+disagree.** Strict structured outputs require every declared property to
+be listed in `required`; the registry's defaults live in _optionality_
+("params you omit take their declared defaults"). The resolution is the
+one strict mode intends — every param **required and nullable**, `null`
+meaning "use the default" — so the default survives as a value the caller
+can name rather than a property it can leave out. Handled in the adapter
+rather than the projection, because the projection is not strict-mode's
+to shape.
+
+**Two prose rules the schema could not express, and the caller broke
+both.** This is the finding that generalizes:
+
+- _"every spec you name in `select` must also appear in `process`"_ — it
+  selected a `zscore` it had not listed, and got a skip instead of an
+  answer;
+- _`columns` and `reduce` are exclusive_ — it asked for both, and the
+  reduction was silently dropped, so a question got no fact rather than
+  an error.
+
+Both are now **fixed in code rather than documented in prose**: an inline
+spec resolves whether or not the plan also lists it, and a selector asking
+for both gets both. A constraint a schema cannot express will be
+violated; the answer is to remove the constraint, not to write it down.
+
+**Still open:** units. The projection carries none, in either direction,
+so the demo still renders `describe()` as a table in the prompt. Nothing
+in M5 forced a decision, so it stays as recorded above.
+
 **Done when:** a caller composes a plan with at least one nested spec from
 the projection alone, with no unit table in the prompt — or the decision is
 recorded that units stay out of the projection and belong in `describe()`.
+
+---
+
+### [PND-PROCSLOT] — Caller-assigned slots: separate topology from value
+
+**The observation, from reading a composed plan:** params are part of a
+node's id, but they do not change the topology. Move a `period` from 20 to
+50 and the plan is structurally identical — same ops, same edges, same
+shape — yet every id downstream of the change is different. The format is
+using **one identity for two jobs**.
+
+This is [PND-PROCIDENT] restated as a _format_ question rather than an
+engine one, which is the more useful framing: the conflation originates in
+how a plan is written, not in how the graph stores things.
+
+**Two identities, and they want to be separate:**
+
+|           | Example                               | Stable under a param edit? | Job                              |
+| --------- | ------------------------------------- | -------------------------- | -------------------------------- |
+| **Slot**  | `bb`                                  | yes                        | names a position in the topology |
+| **Value** | `p1:bollinger(px;period=20,stdDev=2)` | no                         | keys the cache                   |
+
+Today only the second exists, and it does both jobs.
+
+**What slots fix, concretely.**
+
+- **`on` stops restating whole specs.** A selector on a three-deep chain
+  currently repeats the entire nested structure, and twice over if it wants
+  both a column and a fact. `{ "on": "bb" }` replaces it.
+- **Refinement becomes a patch.** "Make it 50" is
+  `nodes.bb.params.period = 50` rather than a regenerated plan — a diff
+  that can be validated against what is already resolved, and far cheaper
+  for a model to emit.
+- **Sharing becomes declared rather than coincidental.** Two identical
+  inline specs dedupe today _because their hashes collide_. That works, but
+  it is emergent; `["sma1", "sma1"]` states it.
+- **The pipeline view stops re-laying-out on a param change.** Same slots →
+  same dagre layout → the badge flips amber and nothing moves. That is a
+  far better rendering of "only this recomputed" than the whole graph
+  jumping, and M4's view currently does the jumping.
+- **Named outputs make a response directly consumable.** Facts come back
+  keyed `p1:bollinger(px;period=20,stdDev=2)Upper`, so a requester parses
+  an id to find what it asked for. Naming the surfaced outputs removes
+  that step — and maps exactly onto the consumer: a Tidal **card** is a
+  named output, and on a data refresh it keeps its identity and updates in
+  place instead of being re-keyed.
+
+**What must not break.** Content addressing is what makes the cache work
+_across_ requests, sessions and callers: a saved view composed months ago
+and a freshly composed one land on the same node because the id is
+derived, not assigned. Slots are session-local — one caller's `bb` means
+nothing to another's.
+
+M5 measured what that is worth. "Back to how it was" returned in
+**2.811 ms against 75.071 ms cold**, and only because the original node was
+still resident under its content-addressed id. If slots _replaced_ content
+addressing, that return would recompute.
+
+So: **slots are an alias layer; `specId` stays the cache key.** Both
+belong in the response, so a consumer can key its UI on the slot and its
+cache reasoning on the id.
+
+**Proposed shape:**
+
+```jsonc
+{
+  "from": "ACME_5m",
+  "as": "bands_and_stretch",
+  "nodes": {
+    "bb": { "op": "bollinger", "params": { "period": 20 }, "in": ["px"] },
+    "z": { "op": "zscore", "params": { "period": 20 }, "in": ["px"] },
+  },
+  "outputs": {
+    "upper_band": { "on": "bb", "output": "Upper", "reduce": "last" },
+    "stretch": { "on": "z", "reduce": "percentileRank" },
+    "band_series": { "on": "bb", "columns": true },
+  },
+}
+```
+
+`as` names the request; `outputs` names its parts.
+
+**Decision — connections live on the node, not in a separate `edges`
+list.** A separate edge list can express graphs the ops cannot accept
+(wrong input count, edges to nowhere), so it has to be validated against
+the node definitions anyway; arity is a per-op property and belongs where
+it can be checked once. The case for a standalone edge list is a **full
+node editor**, where a user drags connections independently of nodes —
+and the consumer does not want one. Tidal adds studies onto raw metrics
+and adds cards over facts; it does not rewire a DAG by hand. Revisit only
+if that changes.
+
+**Open — how an input reference is disambiguated.** An input string is a
+source column name today. With slots it could be either, and a slot named
+`px` would shadow the column. Cheapest resolution is to reject slot ids
+that collide with a bound source's column names at compile time, with a
+reason naming both sides. A sigil (`"@bb"`) also works but introduces
+syntax to a format that currently has none. Prefer the validation.
+
+**Migration.** Additive: `nodes` + `outputs` alongside the existing
+`process` + `select`, with the old form retained until the composer and
+the demo have moved. `specId` and the whole resolution path are unchanged
+— this is a naming layer over them, not a replacement.
+
+**Done when:** a plan authored with slots resolves to the same node ids as
+the equivalent nested plan; a param edit changes an id but not a slot; the
+response reports both; and a follow-up expressed as a patch hits cache
+exactly as the full re-compose does.
+
+---
+
+### [PND-PROCBUILD] — A programmable API that emits a plan
+
+Plans-as-data is right for a wire format and required for a cache key, but
+it is not how an application wants to _author_ a graph. A consumer
+building studies over its own metrics in application code should not be
+assembling nested JSON by hand.
+
+**Slots are what make this possible**, which is why it depends on
+[PND-PROCSLOT] rather than standing alone: a builder needs a stable handle
+to refer back to, and a content-addressed id cannot be one — it changes
+the moment a param does. A slot is exactly a handle.
+
+```ts
+const g = plan('ACME_5m');
+const bb = g.add('bb', 'bollinger', { period: 20 }, ['px']);
+const z = g.add('z', 'zscore', { period: 20 }, ['px']);
+
+g.expose('upper_band', bb.output('Upper').last());
+g.expose('stretch', z.percentileRank());
+g.expose('band_series', bb.columns());
+
+await host.run(g.toJSON()); // the same envelope a model would emit
+```
+
+**The builder emits the plan; it does not replace it.** One resolution
+path, one cache, one thing to test — and a graph built in code and one
+composed by a model land on the same nodes. That is also the cheapest way
+to keep the two honest: the builder's output is a plan, so the existing
+plan tests cover it.
+
+**Open questions.**
+
+- **How typed?** The registry already carries `ParamDef` per op, so
+  `params` could be typed per op name via a generated or inferred map.
+  That is the difference between a convenience wrapper and something worth
+  the dependency — but it constrains how ops are registered, and the
+  registry is currently a runtime object.
+- **Where it lives.** A builder that imports the registry is a different
+  dependency shape from one that takes a registry as an argument. The
+  latter keeps `@pond-ts/process` free of the op corpus; see
+  [PND-PROCSUB].
+- **Does it need to resolve?** A builder that can answer "what id will
+  this be" locally would let a consumer pre-compute cache keys — but that
+  means shipping `specId` to the client, which may be fine and may be a
+  compatibility surface nobody wants to own.
+
+**Done when:** a graph built in application code and the equivalent
+model-composed JSON resolve to identical node ids, and the builder has no
+resolution logic of its own.
 
 ---
 

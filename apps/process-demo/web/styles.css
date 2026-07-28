@@ -441,3 +441,104 @@ button.tab.on {
   stroke: #3a424f;
   stroke-width: 1.5;
 }
+
+/* ── fact cards (viz) ──────────────────────────────────────── */
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.fact {
+  background: #10131a;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--accent);
+  border-radius: 6px;
+  padding: 8px 10px 9px;
+  overflow: hidden;
+}
+
+.fact-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.fact-name {
+  flex: 1;
+  min-width: 0;
+  font:
+    10px/1.35 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fact-suffix {
+  color: var(--accent);
+  margin-left: 3px;
+}
+
+.fact-value {
+  font-size: 20px;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.fact-unit {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: 4px;
+}
+
+.fact-at {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+.fact-sub {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+
+.fact-pair {
+  display: grid;
+  gap: 8px;
+}
+
+.fact-pair .fact-value {
+  font-size: 15px;
+}
+
+.fact-bar {
+  height: 3px;
+  background: var(--line);
+  border-radius: 2px;
+  margin-top: 6px;
+  overflow: hidden;
+}
+
+.fact-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.fact-reduce {
+  flex: none;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #4a5361;
+}

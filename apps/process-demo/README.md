@@ -10,7 +10,8 @@ It is a demo, but its job is to **decide the library's shape**, per
 M2 asked whether `registry.toJsonSchema()` is enough for a caller to
 compose valid plans with no prose hand-holding ([PND-PROCSCHEMA]); M3
 asked how a column value reaches a chart ([PND-PROCCOL]); M4 is the
-payoff the first three were staging.
+payoff the first three were staging; M5 answers [PND-PROCIDENT] by
+watching a conversation rather than arguing about identity.
 
 ## Running it
 
@@ -25,15 +26,21 @@ npm run dev
 
 `http://localhost:5173` for the UI, `http://localhost:8787` for the API.
 
-To run the actual experiment rather than the offline fallback, export a
-key first — see `.env.example`:
+To run the actual experiment rather than the offline fallback, put a key
+in `apps/process-demo/.env` (gitignored; see `.env.example`). The server
+loads it itself via `process.loadEnvFile`, so the key reaches only this
+process:
 
-```bash
-export ANTHROPIC_API_KEY=…
-npm run dev
+```
+ANTHROPIC_API_KEY=…      # preferred, if you have one
+OPENAI_API_KEY=…         # otherwise
 ```
 
-Without one, the composer falls back to a keyword matcher. That fallback
+Anthropic wins when both are set. **An empty value counts as absent** —
+`.env.example` ships empty placeholders, and treating `''` as "present"
+routes to a provider with no credential.
+
+Without either, the composer falls back to a keyword matcher. That fallback
 exists so the panels, the run path and the UI are exercisable with no
 network, and it is labelled everywhere it appears, because **it settles
 nothing about the registry**.
@@ -77,8 +84,12 @@ server/
                typed input (annualise demands 'variance').
   data.ts      Seeded 5m bars, 150k rows each, deterministic — no
                Math.random, so a number in a friction note reproduces.
-  compose.ts   The agent seam. `anthropicComposer` is the experiment;
+  compose.ts   The agent seam, and the Claude implementation;
                `scriptedComposer` is the offline stand-in.
+  compose-openai.ts
+               The second vendor. A finding that holds across two
+               independent tool-calling implementations is evidence
+               about the projection rather than about one API.
   frames.ts    Columns → base64 `Float64Array` for the wire, and the
                reasoning for why that rather than an assembled series.
   index.ts     One long-lived Host. /api/context, /api/compose,
@@ -89,12 +100,30 @@ web/
   Pipeline.tsx The `graph` tab — dagre layout over `nodes` + `inputs`.
 ```
 
+## The two scripts
+
+- `scripts/refinement-run.mjs` — M5's experiment. Four turns ending in
+  "back to how it was"; prints the warm/cold badge for every node and the
+  resident node count afterwards. Needs a key.
+- `scripts/strict-schema-probe.mts` — runs the registry's projection
+  through the OpenAI SDK's own `toStrictJsonSchema`. No API calls, and
+  worth knowing it is **more permissive than the server**: it accepted a
+  `oneOf` and a body-pointer `$ref` that live calls rejected.
+
 ## Notes for anyone extending it
 
 - **This app is outside the root `workspaces` on purpose**, following the
   `workers/` precedent, so a demo build can never gate a release. The cost
   is that the root `format:check` and `verify` do not cover it — run
   `npm run verify` in this directory.
+- Being outside `workspaces` also means this app gets its **own**
+  `node_modules`, and a tool installed here will drift from the repo's
+  copy without anything noticing. It already did: a local prettier
+  resolved to 3.9.6 against the root's 3.8.3, and the two disagree about
+  wrapping union types — so files formatted here failed the check run
+  from the root, and vice versa. The format scripts now call
+  `../../node_modules/.bin/prettier` so there is one formatter for one
+  `.prettierrc.json`. Run `npm install` at the repo root first.
 - The demo's rolling ops are the naive O(rows × period) implementations.
   That is a demo artefact, not a library one; it makes cold runs slow
   enough that the warm/cold difference is unmistakable.

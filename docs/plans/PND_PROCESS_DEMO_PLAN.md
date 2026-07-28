@@ -311,13 +311,27 @@ column, and reads the way a pipeline is described anyway.
 Follow-up prompts that adjust an existing plan: "smoother", "try 50
 instead", "add a slower one".
 
-**Decides [PND-PROCCACHE] and re-decides [PND-PROCIDENT] empirically.**
-Say "smoother", then "back to how it was" — does the second return
-instantly? That is precisely the content-addressed vs params-as-Ins
-question, answered by watching rather than arguing. Measured cold: 14.3×
-when the cache covers the working set, 1.9× when it thrashes at capacity 3
-— so the demo should expose the capacity and let it be tuned badly on
-purpose.
+**Decided [PND-PROCIDENT] empirically. Motivated [PND-PROCCACHE] without
+building it.** Say "smoother", then "back to how it was" — does the second
+return instantly? **Yes: 75.071 ms cold, 2.811 ms on the return, and the
+node itself a straight cache hit at 0.004 ms.** `sma(50)` was never
+invalidated by the detour through `ema(200)`; it was simply not asked for.
+That is content-addressing's whole case, and under params-as-Ins the same
+conversation recomputes on the fourth turn.
+
+The bill shows up in the same run: **three nodes resident afterwards**,
+one per distinct spec the conversation passed through, and nothing evicts
+the detour. So this shape wants content-addressing _and_ an engine-wide
+budget — which is [PND-PROCCACHE], still unbuilt.
+
+**The capacity dial is not here, deliberately.** The plan wanted it
+exposed and tuned badly on purpose, but there is no node cache to tune:
+[PND-PROCCACHE] is open, and rushing a first cut of it to make a demo
+slider work would be letting the demo design the library. M5 answers what
+it can answer and leaves PROCCACHE to land on its own evidence — with one
+more piece of it, measured here.
+
+Reproducible: `apps/process-demo/scripts/refinement-run.mjs`.
 
 ---
 
