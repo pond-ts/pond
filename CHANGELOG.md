@@ -132,6 +132,25 @@ and type-level changes; patch bumps are strictly additive.
   derived from the produced values rather than inherited from the source.
   Chunked and non-numeric sources keep the previous path.
 
+- **core:** **`rolling()`'s count-window kernel sweeps one column at a time**,
+  making every reducer-state call monomorphic instead of megamorphic, and
+  specialises `avg` inline. The window bounds never depended on the column, so
+  the columns were only sharing a sweep — and sharing it meant a single
+  `states[c].add(...)` site saw every reducer's state shape in turn, costing
+  three uninlinable virtual calls per row per column for what is usually O(1)
+  arithmetic.
+
+  Measured on 500k 1-minute bars through `@pond-ts/financial`
+  (`packages/financial/scripts/perf-agent-queries.mjs`): `sma(20)` 21.48 →
+  15.20 ms, `bollinger(20)` 105.26 → 73.66 ms, `zScore(20)` 98.77 → 61.88 ms,
+  `envelope(20)` 69.33 → 45.03 ms, and a five-study strategy pass **318.30 →
+  212.18 ms (1.50×)**.
+
+  Results are bit-identical: the same reducer states are fed the same values in
+  the same order, and `avg`'s specialisation is a running sum with no accuracy
+  argument to preserve (unlike `stdev`, whose order-independent Welford delete
+  keeps its state path).
+
 - **charts (Storybook):** the `Charts/Histogram` story group moved to
   **`Charts/BarChart/Histogram`** — the histogram is `BarChart` in its `bins`
   mode, not a separate component, and the sidebar now says so. Story IDs under

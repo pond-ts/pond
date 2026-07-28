@@ -199,17 +199,6 @@ consumer signal. Plan:
   finite guard for `allFinite: false` reductions. Acceptance benchmarks
   already exist in `spikes/columnar-wasm/bench/controls.mjs`; each control is
   checked against pond-ts's answer before it is timed.
-- **[PND-ROLLKERN]** — Specialise `rolling`'s count-window kernel. It already
-  has a columnar fast path (`tryRollingCountColumnarNumeric`) that writes typed
-  result columns, but it drives the generic `rollingStateFor` accumulators —
-  three polymorphic method calls (`add` / `remove` / `snapshot`) **per row per
-  column** for what is O(1) arithmetic. Measured 14.6 ms for a 20-bar `avg`
-  over 500k rows, 29 ns/row. That is **66% of every `@pond-ts/financial`
-  study**, which is the hottest path in the current agent workload (see
-  [PND-AGENTQ]). Dedicated loops for `avg` / `stdev` / `min` / `max` / `sum`
-  remove the calls; the `cumulative` specialisation in [PND-BOXFREE] is the
-  worked example, where the same change was worth 4–7× after unboxing alone
-  had achieved 1.2×. Custom reducers keep the state path.
 - **[PND-STUDYBOX]** — `@pond-ts/financial`'s study kernel boxes every cell.
   `readNumericColumn` (which `rollingValues` / `rollingColumns` /
   `columnValues` / `emaValues` all route through) walks the result with the

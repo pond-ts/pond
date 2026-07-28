@@ -447,3 +447,48 @@ construction.
 **Remaining under [PND-BOXFREE]:** `fill` (four strategies, and it handles
 non-numeric kinds), `shift`, and `mapColumns` — the last of which takes a JS
 closure per cell and so needs a different answer, not just unboxing.
+
+### [PND-ROLLKERN] — SHIPPED (per-column sweeps + `avg` specialisation)
+
+`tryRollingCountColumnarNumeric` already wrote typed result columns, but drove
+the generic `rollingStateFor` accumulators from a **single shared sweep**: one
+`states[c].add(...)` call site that saw every reducer's state shape in turn, so
+it was megamorphic and uninlinable. Three virtual calls per row per column
+(`add` / `remove` / `snapshot`) for O(1) arithmetic — 29 ns/row.
+
+The window bounds depend only on the row index, `count` and the alignment,
+never on the column, so the columns were sharing a sweep for no reason.
+`sweepRollingColumn` now runs one column at a time: each call site is
+monomorphic, and the walk is over one contiguous column rather than striding
+across all of them. `avg` is additionally specialised inline.
+
+**Measured** on the workload that motivated it — 500k 1-minute OHLCV bars
+through `@pond-ts/financial`:
+
+| query                  | before           | after            | ×             |
+| ---------------------- | ---------------- | ---------------- | ------------- |
+| 5-study strategy pass  | 318.30 ms        | 212.18 ms        | **1.50×**     |
+| `bollinger(20)`        | 105.26 ms        | 73.66 ms         | 1.43×         |
+| `zScore(20)`           | 98.77 ms         | 61.88 ms         | 1.60×         |
+| `envelope(20)`         | 69.33 ms         | 45.03 ms         | 1.54×         |
+| `sma(20)` / `sma(200)` | 21.48 / 21.47 ms | 15.20 / 14.49 ms | 1.41× / 1.48× |
+
+**Why only `avg` is specialised.** It is what `sma` and the centre line of
+`bollinger` / `zScore` reduce to, and its recurrence is a running sum with no
+accuracy argument to preserve. `stdev` deliberately keeps its state path: its
+`rollingState` implements an order-independent Welford delete with exact
+`n <= 1` and `n === 1` cases chosen to avoid cancellation on near-equal large
+values, and duplicating that inline to save a call would be trading a
+documented numerical property for a constant factor. `min` / `max` keep their
+monotonic deque for the same reason.
+
+**Contributor semantics preserved.** The shared sweep chose between the bare
+built-in state (safe only when the source is provably all-finite and fully
+defined) and the `rollingStateFor` wrapper that applies the non-finite policy.
+`sweepRollingColumn` keeps that choice and reproduces the wrapper's filter in
+its `contributes()` predicate, so the contributor set cannot drift between the
+two paths.
+
+**Remaining:** `stdev` is now the dominant per-row cost in `bollinger` /
+`zScore`; a specialisation would need to carry the Welford delete verbatim.
+Worth measuring before attempting.
