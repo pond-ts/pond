@@ -1,0 +1,217 @@
+/**
+ * The pipeline, as a graph you can click — M4.
+ *
+ * This is the demo's payoff, and the plan's claim about it is that it
+ * "costs almost nothing, because every intermediate is already a named,
+ * cached, addressable value." Building it, that held:
+ *
+ * - the **label** is `explain[id]`, which the library derives;
+ * - the **badge** is `cached` / `ms` from the same `nodes` array M1 added;
+ * - the **edges** are `node.inputs`, added in M4 because they were the
+ *   one thing genuinely missing — a consumer cannot derive them without
+ *   reimplementing `specId`;
+ * - **clicking** a node is one more `columns: true` selector on an id the
+ *   response already names.
+ *
+ * Nothing here holds intermediate state or invents a name. In a fold you
+ * would have to deliberately retain every intermediate and name it
+ * yourself; that asymmetry is the clearest argument the graph has.
+ *
+ * Layout is dagre — React Flow ships no layout engine deliberately, and a
+ * DAG is exactly what dagre is for. **Top to bottom**, not left to right:
+ * the request panel is a tall narrow column, and an LR graph three nodes
+ * wide hit React Flow's 0.5 zoom floor and clipped. Source at the top,
+ * result at the bottom also reads the way a pipeline is described.
+ */
+
+import { useCallback, useMemo } from 'react';
+import dagre from 'dagre';
+import {
+  Background,
+  Controls,
+  Handle,
+  Position,
+  ReactFlow,
+  type Edge,
+  type Node,
+  type NodeProps,
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+
+export interface NodeTiming {
+  id: string;
+  /** False for a node the plan resolved but this request never read. */
+  pulled: boolean;
+  cached: boolean;
+  ms: number;
+  inputs: string[];
+}
+
+interface NodeData extends Record<string, unknown> {
+  label: string;
+  detail: string;
+  kind: 'source' | 'node';
+  state: 'cached' | 'computed' | 'idle';
+  selected: boolean;
+}
+
+const NODE_W = 190;
+const NODE_H = 52;
+
+function StepNode({ data }: NodeProps<Node<NodeData>>) {
+  const cls = ['flow-node', data.kind, data.state, data.selected ? 'on' : '']
+    .filter(Boolean)
+    .join(' ');
+  return (
+    <div className={cls} style={{ width: NODE_W, height: NODE_H }}>
+      <Handle type="target" position={Position.Top} />
+      <div className="flow-label" title={data.detail}>
+        {data.label}
+      </div>
+      <div className="flow-badge">{data.detail}</div>
+      <Handle type="source" position={Position.Bottom} />
+    </div>
+  );
+}
+
+const NODE_TYPES = { step: StepNode };
+
+/**
+ * Lays the DAG out left to right.
+ *
+ * Source columns become nodes too. They are not in `nodes` — they are not
+ * computed — but an edge from `px` is the difference between a pipeline
+ * you can read and a set of floating boxes.
+ */
+function layout(
+  nodes: readonly NodeTiming[],
+  explain: Record<string, string>,
+  selected: string | undefined,
+) {
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({
+    rankdir: 'TB',
+    nodesep: 16,
+    ranksep: 34,
+    marginx: 8,
+    marginy: 8,
+  });
+  g.setDefaultEdgeLabel(() => ({}));
+
+  const known = new Set(nodes.map((n) => n.id));
+  const sources = new Set<string>();
+  for (const n of nodes) {
+    for (const input of n.inputs) if (!known.has(input)) sources.add(input);
+  }
+
+  for (const id of [...sources, ...nodes.map((n) => n.id)]) {
+    g.setNode(id, { width: NODE_W, height: NODE_H });
+  }
+  const edges: Edge[] = [];
+  for (const n of nodes) {
+    for (const input of n.inputs) {
+      g.setEdge(input, n.id);
+      edges.push({
+        id: `${input}->${n.id}`,
+        source: input,
+        target: n.id,
+        animated: n.pulled && !n.cached,
+      });
+    }
+  }
+  dagre.layout(g);
+
+  const place = (id: string, data: NodeData): Node<NodeData> => {
+    const p = g.node(id) as { x: number; y: number } | undefined;
+    return {
+      id,
+      type: 'step',
+      position: { x: (p?.x ?? 0) - NODE_W / 2, y: (p?.y ?? 0) - NODE_H / 2 },
+      // Given rather than measured, so `fitView` has bounds on the first
+      // render instead of after a layout pass.
+      width: NODE_W,
+      height: NODE_H,
+      data,
+      draggable: false,
+    };
+  };
+
+  const flowNodes: Node<NodeData>[] = [
+    ...[...sources].map((id) =>
+      place(id, {
+        label: id,
+        detail: 'source column',
+        kind: 'source',
+        state: 'idle',
+        selected: false,
+      }),
+    ),
+    ...nodes.map((n) =>
+      place(n.id, {
+        label: explain[n.id] ?? n.id,
+        // A node nothing selected has no timing to report — saying
+        // "cached · 0 ms" there would be a lie dressed as a measurement.
+        detail: n.pulled
+          ? `${n.cached ? 'cached' : 'computed'} · ${n.ms} ms`
+          : n.cached
+            ? 'not requested · holds a value'
+            : 'not requested',
+        kind: 'node',
+        state: n.pulled ? (n.cached ? 'cached' : 'computed') : 'idle',
+        selected: n.id === selected,
+      }),
+    ),
+  ];
+  return { flowNodes, edges };
+}
+
+export function Pipeline(props: {
+  nodes: readonly NodeTiming[];
+  explain: Record<string, string>;
+  selected: string | undefined;
+  onSelect: (id: string | undefined) => void;
+}) {
+  const { flowNodes, edges } = useMemo(
+    () => layout(props.nodes, props.explain, props.selected),
+    [props.nodes, props.explain, props.selected],
+  );
+
+  const onNodeClick = useCallback(
+    (_: unknown, node: Node) => {
+      const data = node.data as NodeData;
+      if (data.kind === 'source') return;
+      props.onSelect(node.id === props.selected ? undefined : node.id);
+    },
+    [props],
+  );
+
+  if (props.nodes.length === 0) {
+    return <p className="muted">No nodes in this response yet.</p>;
+  }
+
+  return (
+    <div className="flow">
+      <ReactFlow
+        // Re-mounting on a shape change re-runs `fitView`; without it a
+        // new plan inherits the previous viewport and lands off-screen.
+        key={flowNodes.map((n) => n.id).join('|')}
+        nodes={flowNodes}
+        edges={edges}
+        nodeTypes={NODE_TYPES}
+        onNodeClick={onNodeClick}
+        onPaneClick={() => props.onSelect(undefined)}
+        fitView
+        fitViewOptions={{ padding: 0.12 }}
+        // Below React Flow's 0.5 default, so a deep plan shrinks to fit
+        // rather than being clipped at the floor.
+        minZoom={0.25}
+        proOptions={{ hideAttribution: true }}
+        nodesConnectable={false}
+        elementsSelectable={false}
+      >
+        <Background gap={18} color="#2b3038" />
+        <Controls showInteractive={false} />
+      </ReactFlow>
+    </div>
+  );
+}

@@ -85,6 +85,14 @@ include new features and type-level changes; patch bumps are strictly additive.
   for the nine other tickets the investigation produced (node eviction is
   blocking; column-valued nodes and dirty-per-range are the large wins).
 
+- **process:** **`NodeTiming.inputs` and `NodeTiming.pulled`** — `nodes` now
+  describes the **graph** the plan resolved, not just the subset a selector
+  reached. `inputs` carries each node's upstream ids (a raw source column is
+  named by column), which a consumer cannot derive without reimplementing
+  `specId`'s canonicalization; `pulled` is false for a resolved node this
+  request never read, whose `ms` is therefore zero and says nothing. Reporting
+  the unpulled ones is free — no value is produced for them. Found by drawing
+  the pipeline for M4, which rendered a plan with whole branches missing.
 - **process:** **`run({ assemble: false })` and `RunResult.columns`** — columns
   are the wire shape; the assembled `TimeSeries` is the in-process convenience
   over the top of them. A `columns` selector now always hands back the resolved

@@ -12,6 +12,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Viz, type Frames } from './Viz.js';
+import { Pipeline, type NodeTiming } from './Pipeline.js';
 
 interface DatasetInfo {
   id: string;
@@ -32,11 +33,6 @@ interface Context {
   units: Record<string, string>;
   planSchema: unknown;
   composer: { kind: 'anthropic' | 'scripted'; why: string };
-}
-interface NodeTiming {
-  id: string;
-  cached: boolean;
-  ms: number;
 }
 interface RunResult {
   facts: Record<string, unknown>[];
@@ -70,6 +66,14 @@ interface Entry {
    * path reads this, so a chart always matches the plan on screen.
    */
   ran?: unknown;
+  /**
+   * The node the pipeline view has selected, if any. Drawing reads it:
+   * with a focus the request asks for that one id, without it for every
+   * top-level spec. Addressing an intermediate *by name* is the whole
+   * point of M4 — in a fold you would have had to retain and name it
+   * yourself.
+   */
+  focus?: string | undefined;
   /** The columns response, fetched only when the viz tab asks. */
   drawn?: RunResult | undefined;
   drawing?: boolean | undefined;
@@ -219,10 +223,15 @@ export function App() {
       prev.map((e) => (e.id === entry.id ? { ...e, drawing: true } : e)),
     );
     try {
-      const drawn = await post<RunResult>('/api/run', {
-        ...envelope,
-        select: envelope.process.map((on) => ({ on, columns: true })),
-      });
+      // A focused node is addressed by **id** — a string `SpecRef` the
+      // response already named. A nested spec is in the graph as soon as
+      // its parent compiled, so this reaches intermediates that never
+      // appear in `process`.
+      const select =
+        entry.focus !== undefined
+          ? [{ on: entry.focus, columns: true }]
+          : envelope.process.map((on) => ({ on, columns: true }));
+      const drawn = await post<RunResult>('/api/run', { ...envelope, select });
       setEntries((prev) =>
         prev.map((e) =>
           e.id === entry.id ? { ...e, drawn, drawing: false } : e,
@@ -241,6 +250,15 @@ export function App() {
         ),
       );
     }
+  }
+
+  /** Selects a pipeline node, and invalidates whatever was drawn for the old one. */
+  function focusNode(entry: Entry, id: string | undefined) {
+    setEntries((prev) =>
+      prev.map((e) =>
+        e.id === entry.id ? { ...e, focus: id, drawn: undefined } : e,
+      ),
+    );
   }
 
   return (
@@ -268,7 +286,7 @@ export function App() {
             setSelected(undefined);
           }}
         />
-        <RequestPanel entry={current} onRerun={rerun} />
+        <RequestPanel entry={current} onRerun={rerun} onFocus={focusNode} />
         <ResultsPanel entry={current} onDraw={draw} />
       </main>
     </div>
@@ -388,8 +406,10 @@ function Composer(props: {
 function RequestPanel(props: {
   entry: Entry | undefined;
   onRerun: (entry: Entry, envelope: unknown) => void;
+  onFocus: (entry: Entry, id: string | undefined) => void;
 }) {
   const { entry } = props;
+  const [tab, setTab] = useState<'json' | 'graph'>('json');
   // The envelope is editable, and that is not a nicety. M2's whole job is
   // finding out what does and does not resolve; being able to change one
   // param and re-run without a round trip through a model is how most of
@@ -403,6 +423,10 @@ function RequestPanel(props: {
   useEffect(() => setDraft(pretty), [pretty]);
 
   const parsed = useMemo(() => {
+    // An empty panel has an empty draft, and `JSON.parse('')` throws —
+    // which surfaced "Unexpected end of JSON input" before anything had
+    // been composed at all.
+    if (draft.trim() === '') return { value: undefined, error: undefined };
     try {
       return { value: JSON.parse(draft) as unknown, error: undefined };
     } catch (e) {
@@ -435,11 +459,36 @@ function RequestPanel(props: {
             </button>
           </>
         )}
+        <div className="tabs">
+          {(['json', 'graph'] as const).map((t) => (
+            <button
+              key={t}
+              className={t === tab ? 'tab on' : 'tab'}
+              onClick={() => setTab(t)}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
       </div>
       {composed?.warning && <p className="notice warn">{composed.warning}</p>}
       {composed?.note && <p className="notice">{composed.note}</p>}
       {parsed.error && <p className="notice bad">{parsed.error}</p>}
-      {composed ? (
+      {tab === 'graph' && entry !== undefined ? (
+        <>
+          <Pipeline
+            nodes={entry.result?.nodes ?? []}
+            explain={entry.result?.explain ?? {}}
+            selected={entry.focus}
+            onSelect={(id) => props.onFocus(entry, id)}
+          />
+          <p className="muted">
+            {entry.focus === undefined
+              ? 'Click a node to draw that node’s output — including intermediates the plan never named at its top level.'
+              : 'Showing this node in Results. Click the background to go back to the whole plan.'}
+          </p>
+        </>
+      ) : composed ? (
         <textarea
           className="envelope"
           spellCheck={false}

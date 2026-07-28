@@ -278,6 +278,32 @@ would have to deliberately retain intermediates and invent names. That
 asymmetry is the clearest argument the graph has, and it is worth staging
 the demo to land on it.
 
+**Landed, and the claim held.** The label is `explain[id]`, the badge is
+`nodes`, and clicking a node is one more `columns: true` selector on an id
+the response already named — including a **nested** spec that never
+appears at the plan's top level, because `select.on` accepts a string id
+and a nested spec is in the graph the moment its parent compiled. No new
+addressing concept was needed.
+
+Two things did have to be added, and both were the response failing to
+describe the graph it had resolved:
+
+- **`NodeTiming.inputs`** — the edges. A consumer cannot derive them:
+  the edges live in the specs, and turning a spec into an id means
+  reimplementing `specId`'s canonicalization, which is exactly why a
+  selector takes an inline spec in the first place.
+- **`NodeTiming.pulled`** — `nodes` reported only the subset some
+  selector reached, so the pipeline drew a plan with whole branches
+  missing. It now reports every resolved node, with `pulled: false` and
+  `ms: 0` for one nothing asked for. Reporting it is free: reading
+  `node.dirty` produces no value, and a test pins that the unselected op
+  never ran.
+
+**App-level note, not a library one.** React Flow's default `minZoom` is
+0.5, and a left-to-right DAG three nodes wide hit that floor in a side
+panel and clipped. Top-to-bottom is the right layout for a tall narrow
+column, and reads the way a pipeline is described anyway.
+
 ---
 
 ### M5 — Conversational refinement

@@ -351,10 +351,16 @@ is the agent's contract, not a hand-written prompt.
   **transport, not compute** (5.72 MB for two studies at 150k rows vs 5 ms to
   encode) — a second argument for the worker topology. [PND-LIVELYR] did not
   bite.
-- **[PND-DEMOM4]** — Pipeline graph with clickable nodes (React Flow +
-  dagre), labelled by `explain` and badged cached/Nms; clicking shows that
-  node's output. The payoff, and nearly free — every intermediate is already a
-  named, cached, addressable value.
+- **[PND-DEMOM4]** — Pipeline graph with clickable nodes (React Flow + dagre),
+  labelled by `explain` and badged cached/Nms; clicking shows that node's
+  output. **Landed, and the "costs almost nothing" claim held** — clicking a
+  node is one more `columns: true` selector on an id the response already
+  names, including a _nested_ spec that never appears at the plan's top level.
+  Two additions, both the response failing to describe its own graph:
+  `NodeTiming.inputs` (the edges — underivable without reimplementing
+  `specId`) and `NodeTiming.pulled` (`nodes` had reported only the subset a
+  selector reached, so the view drew a plan with branches missing).
+
 - **[PND-DEMOM5]** — Conversational refinement ("smoother", "try 50"). Decides
   [PND-PROCCACHE] and re-decides [PND-PROCIDENT] empirically: does "back to how
   it was" return instantly?

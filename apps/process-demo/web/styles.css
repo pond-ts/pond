@@ -363,3 +363,81 @@ button.tab.on {
 .viz button {
   margin-top: 8px;
 }
+
+/* ── pipeline (M4) ─────────────────────────────────────────── */
+
+.flow {
+  height: 460px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #10131a;
+  margin-bottom: 10px;
+}
+
+.flow-node {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 6px;
+  background: #1b1e24;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.flow-node.cached {
+  border-left-color: var(--cold);
+}
+
+.flow-node.computed {
+  border-left-color: var(--warm);
+}
+
+.flow-node.idle {
+  border-left-color: var(--line);
+  opacity: 0.72;
+}
+
+.flow-node.source {
+  border-left-color: var(--muted);
+  border-style: dashed;
+  cursor: default;
+}
+
+.flow-node.on {
+  border-color: var(--accent);
+  border-left-color: var(--accent);
+  background: #21262e;
+}
+
+.flow-label {
+  font:
+    11px/1.35 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-badge {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.react-flow__handle {
+  width: 5px;
+  height: 5px;
+  background: var(--line);
+  border: none;
+}
+
+.react-flow__edge-path {
+  stroke: #3a424f;
+  stroke-width: 1.5;
+}
