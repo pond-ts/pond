@@ -42,7 +42,9 @@ for (const spec of datasetSpecs) {
   );
 }
 
-const planSchema = registry.toJsonSchema({ defs: 'spec', root: false });
+// The slot projection: flat, and with no recursive `$ref` to rebase,
+// because a slot's input is a plain string ([PND-PROCSLOT]).
+const planSchema = registry.toJsonSchema({ shape: 'slots', root: false });
 
 function composerContext() {
   return {
@@ -70,7 +72,21 @@ async function readJson(
 }
 
 /** Resolves an envelope against its dataset's long-lived graph. */
-function runEnvelope(envelope: Envelope) {
+/**
+ * Resolves an envelope, and sends back only the columns the caller lacks.
+ *
+ * A column's name **is** its content-addressed id, so a caller holding
+ * `p1:sma(px;period=50)` holds that exact data — a later request that
+ * reports the node `cached` cannot have changed it. `have` lets the
+ * caller say what it already has, and those columns are named in
+ * `reused` rather than re-encoded.
+ *
+ * This is the graph's own dirty state carried through to the wire. A
+ * param edit on one node re-sends that node's column and nothing else,
+ * which is the difference between a chart re-rendering and a chart
+ * standing still.
+ */
+function runEnvelope(envelope: Envelope, have: readonly string[] = []) {
   const t0 = performance.now();
   // `assemble: false` — the consumer is a browser, so a widened
   // `TimeSeries` built here could never reach it. See `frames.ts`.
@@ -78,10 +94,26 @@ function runEnvelope(envelope: Envelope) {
   const ms = Math.round((performance.now() - t0) * 1000) / 1000;
   const wire = toWire(result, envelope.as);
   if (result.columns === undefined) return { ...wire, ms };
+
+  const held = new Set(have);
+  const reused: string[] = [];
+  const send: Record<string, (typeof result.columns)[string]> = {};
+  for (const [name, column] of Object.entries(result.columns)) {
+    if (held.has(name)) reused.push(name);
+    else send[name] = column;
+  }
+
+  const series = host.graphFor(envelope.from).series;
+  // The keys belong to the dataset, so they change only when it does —
+  // length is enough to notice a refresh.
+  const keyId = `${envelope.from}#${series.length}`;
   const t1 = performance.now();
-  const frames = toFrames(host.graphFor(envelope.from).series, result.columns);
+  const frames = toFrames(series, send, {
+    keyId,
+    holdsKey: held.has(keyId),
+  });
   const encodeMs = Math.round((performance.now() - t1) * 1000) / 1000;
-  return { ...wire, ms, frames, encodeMs };
+  return { ...wire, ms, frames, encodeMs, reused };
 }
 
 async function handle(
@@ -121,14 +153,27 @@ async function handle(
   }
 
   if (method === 'POST' && path === '/api/run') {
-    const envelope = (await readJson(req)) as Envelope;
-    if (
-      typeof envelope?.from !== 'string' ||
-      !Array.isArray(envelope.process)
-    ) {
-      return { status: 400, body: { error: 'expected { from, process, … }' } };
+    const envelope = (await readJson(req)) as Envelope | undefined;
+    // Two accepted shapes now: nested `process`, or `nodes` keyed by
+    // caller-assigned slots ([PND-PROCSLOT]). Making the union explicit
+    // here is what caught this — the old check read `.process` off a
+    // request that may not carry one.
+    const shaped =
+      envelope !== undefined &&
+      typeof envelope.from === 'string' &&
+      ('nodes' in envelope
+        ? typeof envelope.nodes === 'object' && envelope.nodes !== null
+        : Array.isArray(envelope.process));
+    if (!shaped) {
+      return {
+        status: 400,
+        body: { error: 'expected { from, process, … } or { from, nodes, … }' },
+      };
     }
-    return { status: 200, body: runEnvelope(envelope) };
+    const have = Array.isArray((envelope as { have?: unknown }).have)
+      ? ((envelope as { have?: string[] }).have as string[])
+      : [];
+    return { status: 200, body: runEnvelope(envelope, have) };
   }
 
   // One round trip for the UI: prompt in, both panels out. The panels

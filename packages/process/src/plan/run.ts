@@ -23,19 +23,34 @@ import { ProcessError } from '../errors.js';
 import type { Column, SeriesSchema, TimeSeries } from 'pond-ts';
 import type { BoundGraph } from './graph.js';
 import { columnsOf, explain, refToId, unitOf } from './identity.js';
+import { expandSlots, type Slots } from './slots.js';
+import { specId } from './identity.js';
 import type { Input, Plan, Spec, SpecRef } from './types.js';
 
 /** What to do when a spec or a selector fails. Covers both, not just resolution. */
 export type ErrorPolicy = 'throw' | 'skip' | 'collect';
 
+/**
+ * A caller's own name for a surfaced output.
+ *
+ * Set from the key when a request uses `outputs`, and settable directly
+ * in the older `select` form too — naming does not require slots. It
+ * rides back on the {@link Fact} and {@link OutputInfo} so a consumer
+ * reads the name it chose rather than parsing a derived id
+ * ([PND-PROCSLOT]).
+ */
+interface Named {
+  readonly name?: string;
+}
+
 /** Ask for a spec's columns, for drawing. */
-export interface ColumnSelect {
+export interface ColumnSelect extends Named {
   readonly on: SpecRef;
   readonly columns: true;
 }
 
 /** Ask for a fact — a fold over one resolved column. */
-export interface ReduceSelect {
+export interface ReduceSelect extends Named {
   readonly on: SpecRef;
   /** Which output of a multi-output op. Defaults to the first. */
   readonly output?: string;
@@ -50,9 +65,8 @@ export type Select = ColumnSelect | ReduceSelect;
 
 export type ReductionName = 'last' | 'extremes' | 'percentileRank' | 'shape';
 
-export interface RunRequest {
-  readonly plan: Plan;
-  readonly select?: readonly Select[];
+/** Options common to both request forms. */
+export interface RunOptions {
   readonly onError?: ErrorPolicy;
   /**
    * Whether a `columns` selector also assembles a widened `TimeSeries`.
@@ -71,13 +85,42 @@ export interface RunRequest {
   readonly assemble?: boolean;
 }
 
+/** A request written as nested specs — the original form. */
+export interface PlanRequest extends RunOptions {
+  readonly plan: Plan;
+  readonly select?: readonly Select[];
+}
+
+/**
+ * A request written as **slots** — [PND-PROCSLOT].
+ *
+ * `nodes` is keyed by caller-assigned names, and `outputs` is keyed by
+ * the caller's name for each surfaced result. Both names ride back on
+ * the response, so a consumer keys its UI on a slot that survives a
+ * param edit and its cache reasoning on the derived id.
+ *
+ * Every slot becomes a plan entry, so a slot nothing selects is still
+ * reported in {@link RunResult.nodes} — a pipeline view draws the graph
+ * that was described, not the subset one selector reached.
+ */
+export interface SlotRequest extends RunOptions {
+  readonly nodes: Slots;
+  readonly outputs?: Readonly<Record<string, Select>>;
+}
+
+export type RunRequest = PlanRequest | SlotRequest;
+
 export interface OutputInfo {
   readonly column: string;
   readonly unit: string | null;
+  /** The caller's name for this output, when it gave one. */
+  readonly name?: string;
 }
 
 export interface Fact {
   readonly id: string;
+  /** The caller's name for this output, when it gave one. */
+  readonly name?: string;
   readonly reduce: ReductionName;
   readonly unit: string | null;
   readonly [k: string]: unknown;
@@ -86,6 +129,12 @@ export interface Fact {
 /** One node's contribution to a request — the per-node badge. */
 export interface NodeTiming {
   readonly id: string;
+  /**
+   * The caller's name for this node's position, when the request was
+   * written with slots. Stable across a param edit, unlike {@link id} —
+   * which is the whole point of having both ([PND-PROCSLOT]).
+   */
+  readonly slot?: string;
   /**
    * Whether this request actually read the node's value.
    *
@@ -258,8 +307,50 @@ function reduceColumn(
 
 // ── run ──────────────────────────────────────────────────────
 
+/**
+ * Reduces either request form to the one the resolver already handles.
+ *
+ * A slot request expands to exactly the nested plan its equivalent would
+ * have been written as, so both land on identical ids — that equality is
+ * the contract, and it is why nothing downstream of here knows slots
+ * exist ([PND-PROCSLOT]).
+ */
+function normalize(
+  graph: BoundGraph,
+  request: RunRequest,
+): { plan: Plan; select: readonly Select[]; slotOf: Map<string, string> } {
+  if (!('nodes' in request)) {
+    return {
+      plan: request.plan,
+      select: request.select ?? [],
+      slotOf: new Map(),
+    };
+  }
+  const columns = graph.series.schema.slice(1).map((c) => c.name);
+  const expanded = expandSlots(request.nodes, columns);
+
+  const slotOf = new Map<string, string>();
+  for (const [slot, spec] of expanded) {
+    slotOf.set(specId(graph.registry, spec), slot);
+  }
+
+  const select = Object.entries(request.outputs ?? {}).map(([name, sel]) => {
+    // `on` names a slot here. Anything else is left alone, so an id
+    // string still works — a follow-up can cite what the last response
+    // returned without re-deriving it.
+    const on =
+      typeof sel.on === 'string' && expanded.has(sel.on)
+        ? expanded.get(sel.on)!
+        : sel.on;
+    return { ...sel, on, name } as Select;
+  });
+
+  return { plan: [...expanded.values()], select, slotOf };
+}
+
 export function run(graph: BoundGraph, request: RunRequest): RunResult {
-  const { plan, select = [], onError = 'throw', assemble = true } = request;
+  const { onError = 'throw', assemble = true } = request;
+  const { plan, select, slotOf } = normalize(graph, request);
   const registry = graph.registry;
   const skipped: Skipped[] = [];
   const resolved: { id: string; spec: Spec }[] = [];
@@ -293,6 +384,8 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
   // Every id any selector mentions, including a `crossings` `against`.
   const needed = new Map<string, boolean>(); // id -> report in `outputs`
   const selectors: { sel: Select; id: string }[] = [];
+  /** The caller's name per id, for the columns branch. */
+  const nameOf = new Map<string, string>();
   for (const sel of select) {
     let id: string;
     try {
@@ -313,6 +406,7 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
       continue;
     }
     selectors.push({ sel, id });
+    if (sel.name !== undefined) nameOf.set(id, sel.name);
     const wantsColumns = 'columns' in sel && sel.columns === true;
     needed.set(id, (needed.get(id) ?? false) || wantsColumns);
     if ('against' in sel && typeof sel.against === 'string') {
@@ -357,6 +451,7 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
     const ms = performance.now() - t0;
     timings.push({
       id,
+      ...(slotOf.has(id) && { slot: slotOf.get(id)! }),
       pulled: true,
       cached: !wasDirty,
       ms: Math.round(ms * 1000) / 1000,
@@ -385,6 +480,7 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
     });
     timings.push({
       id,
+      ...(slotOf.has(id) && { slot: slotOf.get(id)! }),
       pulled: false,
       cached: !compiled.node.dirty,
       ms: 0,
@@ -426,6 +522,7 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
           outputs[id]!.push({
             column: cols[n]!,
             unit: unitOf(registry, compiled.spec, graph.units, n),
+            ...(nameOf.has(id) && { name: nameOf.get(id)! }),
           });
         }
       });
@@ -464,6 +561,7 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
         .outputs.findIndex((o) => o.id === suffix);
       facts.push({
         id: id + suffix,
+        ...(reduceSel.name !== undefined && { name: reduceSel.name }),
         reduce: reduceSel.reduce,
         unit: unitOf(registry, compiled.spec, graph.units, Math.max(0, idx)),
         ...(reduceSel.against !== undefined && { against: reduceSel.against }),

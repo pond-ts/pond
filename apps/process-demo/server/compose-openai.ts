@@ -34,6 +34,7 @@
 import OpenAI from 'openai';
 import type { Envelope } from '@pond-ts/process';
 import {
+  foldSlotRequest,
   opTable,
   requestSchema,
   SYSTEM,
@@ -146,9 +147,9 @@ export function openaiComposer(options: {
       }
 
       const raw = JSON.parse(call.arguments) as Record<string, unknown>;
-      const { note, ...envelope } = options.strict
-        ? (dropNulls(raw) as Record<string, unknown>)
-        : raw;
+      const { envelope, note } = foldSlotRequest(
+        options.strict ? (dropNulls(raw) as Record<string, unknown>) : raw,
+      );
 
       return {
         // Not the model's choice to make: an invalid plan has to come

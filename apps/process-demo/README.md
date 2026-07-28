@@ -127,8 +127,13 @@ web/
 - The demo's rolling ops are the naive O(rows × period) implementations.
   That is a demo artefact, not a library one; it makes cold runs slow
   enough that the warm/cold difference is unmistakable.
-- The tool schema is assembled in `compose.ts:requestSchema`. Note the two
-  `$ref`s into `#/properties/process/items` — one for nesting an input, one
-  for a selector naming a spec inline. Both depend on
-  `toJsonSchema({ base })`, because a `$ref` resolves against the document
-  root and the projection is not at the root here.
+- The tool schema is assembled in `compose.ts:requestSchema` over
+  `registry.toJsonSchema({ shape: 'slots' })`. It is **flat** — no `$defs`,
+  no `$ref`, nothing to rebase — because a slot's input is a plain string
+  rather than a nested spec. The nested projection still exists and still
+  needs its recursive `$ref`; the slot form simply does not have the
+  problem. `nodes` and `outputs` cross the wire as **arrays** carrying
+  their name as a field, because a caller-chosen key cannot be declared in
+  `properties` and strict structured outputs require
+  `additionalProperties: false`; `foldSlotRequest` folds them back into the
+  records the library takes.
