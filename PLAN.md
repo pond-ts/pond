@@ -199,6 +199,36 @@ consumer signal. Plan:
   finite guard for `allFinite: false` reductions. Acceptance benchmarks
   already exist in `spikes/columnar-wasm/bench/controls.mjs`; each control is
   checked against pond-ts's answer before it is timed.
+- **[PND-ROLLKERN]** — Specialise `rolling`'s count-window kernel. It already
+  has a columnar fast path (`tryRollingCountColumnarNumeric`) that writes typed
+  result columns, but it drives the generic `rollingStateFor` accumulators —
+  three polymorphic method calls (`add` / `remove` / `snapshot`) **per row per
+  column** for what is O(1) arithmetic. Measured 14.6 ms for a 20-bar `avg`
+  over 500k rows, 29 ns/row. That is **66% of every `@pond-ts/financial`
+  study**, which is the hottest path in the current agent workload (see
+  [PND-AGENTQ]). Dedicated loops for `avg` / `stdev` / `min` / `max` / `sum`
+  remove the calls; the `cumulative` specialisation in [PND-BOXFREE] is the
+  worked example, where the same change was worth 4–7× after unboxing alone
+  had achieved 1.2×. Custom reducers keep the state path.
+- **[PND-STUDYBOX]** — `@pond-ts/financial`'s study kernel boxes every cell.
+  `readNumericColumn` (which `rollingValues` / `rollingColumns` /
+  `columnValues` / `emaValues` all route through) walks the result with the
+  polymorphic `col.at(i)` into an `Array<number | undefined>`, and studies then
+  compute over boxed arrays — `bollinger` allocates **four** 500k boxed arrays
+  (two from the kernel, two more from `.map()` with a closure per cell) before
+  three `withColumn` re-ingests. Measured: the boxing step alone is 8.28 ms of
+  `sma(20)`'s 22.17 ms at 500k bars, against **0.40 ms** for the same read into
+  a `Float64Array` — 20× on that stage. `withColumn` already accepts a
+  `Float64Array`, so the round trip is column → boxed → column for no reason.
+  Same shape as [PND-BOXFREE], applied to the six studies.
+- **[PND-AGENTQ]** — The measured shape of the current agent workload, kept as
+  the acceptance benchmark: `packages/financial/scripts/perf-agent-queries.mjs`
+  (500k 1-minute OHLCV bars, resident, per-query latency). Today: a 5-study
+  strategy pass is **318 ms**, individual studies 21–105 ms, while every
+  summary fact (`minMax` / `mean` / `stdev` / `median` / `percentile`) is
+  **under 3 ms**. Studies are ~100× the cost of facts, so they are where all
+  effort belongs. Re-run this before and after [PND-ROLLKERN] and
+  [PND-STUDYBOX].
 - **[PND-BOXFREE]** — Element-wise operators box every cell. **`cumulative`,
   `diff`, `rate` and `pctChange` are done (4.0–7.1×); `fill`, `shift` and
   `mapColumns` remain.** They are column-native only in the
