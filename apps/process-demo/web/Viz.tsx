@@ -180,12 +180,16 @@ function FactCard(props: { fact: Fact; explain: Record<string, string> }) {
 
   return (
     <li className="fact">
-      <div className="fact-head" title={fact.id}>
-        {label}
-        {suffix && <span className="fact-suffix">· {suffix}</span>}
+      {/* One row, not an absolutely-positioned chip: a long label and a
+          long reduction name (`percentileRank`) overlapped. */}
+      <div className="fact-head">
+        <span className="fact-name" title={fact.id}>
+          {label}
+          {suffix && <span className="fact-suffix">· {suffix}</span>}
+        </span>
+        <span className="fact-reduce">{fact.reduce}</span>
       </div>
       {body}
-      <div className="fact-reduce">{fact.reduce}</div>
     </li>
   );
 }

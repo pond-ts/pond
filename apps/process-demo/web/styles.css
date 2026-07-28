@@ -452,7 +452,6 @@ button.tab.on {
 }
 
 .fact {
-  position: relative;
   background: #10131a;
   border: 1px solid var(--line);
   border-left: 2px solid var(--accent);
@@ -462,13 +461,21 @@ button.tab.on {
 }
 
 .fact-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.fact-name {
+  flex: 1;
+  min-width: 0;
   font:
     10px/1.35 ui-monospace,
     SFMono-Regular,
     Menlo,
     monospace;
   color: var(--muted);
-  margin-bottom: 5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -529,11 +536,9 @@ button.tab.on {
 }
 
 .fact-reduce {
-  position: absolute;
-  top: 7px;
-  right: 8px;
+  flex: none;
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: var(--line);
+  color: #4a5361;
 }
