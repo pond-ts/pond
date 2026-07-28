@@ -42,7 +42,9 @@ for (const spec of datasetSpecs) {
   );
 }
 
-const planSchema = registry.toJsonSchema({ defs: 'spec', root: false });
+// The slot projection: flat, and with no recursive `$ref` to rebase,
+// because a slot's input is a plain string ([PND-PROCSLOT]).
+const planSchema = registry.toJsonSchema({ shape: 'slots', root: false });
 
 function composerContext() {
   return {

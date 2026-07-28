@@ -15,12 +15,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { openaiComposer } from './compose-openai.js';
-import type {
-  DatasetInfo,
-  Envelope,
-  OpDescriptor,
-  Spec,
-} from '@pond-ts/process';
+import type { DatasetInfo, Envelope, OpDescriptor } from '@pond-ts/process';
 
 export interface ComposerContext {
   readonly datasets: readonly DatasetInfo[];
@@ -73,14 +68,10 @@ export interface Composer {
  * from a single definition.
  */
 export function requestSchema(ctx: ComposerContext): Record<string, unknown> {
-  const { $defs, ...plan } = ctx.planSchema as {
-    $defs: Record<string, unknown>;
-  } & Record<string, unknown>;
   return {
     type: 'object',
     additionalProperties: false,
-    required: ['from', 'as', 'process', 'select'],
-    $defs,
+    required: ['from', 'as', 'nodes', 'outputs'],
     properties: {
       from: {
         type: 'string',
@@ -92,18 +83,26 @@ export function requestSchema(ctx: ComposerContext): Record<string, unknown> {
         description:
           'A short snake_case name for this result, so a later prompt can refer back to it. A name, not a time window.',
       },
-      process: plan,
-      select: {
+      nodes: ctx.planSchema,
+      outputs: {
         type: 'array',
         minItems: 1,
         description:
-          'What to return. Prefer a reduction — the caller is reading JSON, not drawing a chart.',
+          'What to return, each under a name you choose. Prefer a reduction — the caller is reading JSON, not drawing a chart.',
         items: {
           type: 'object',
           additionalProperties: false,
-          required: ['on'],
+          required: ['name', 'on'],
           properties: {
-            on: { $ref: '#/$defs/spec' },
+            name: {
+              type: 'string',
+              description:
+                'A short snake_case name for this result, e.g. "upper_band". The caller reads it back by this name.',
+            },
+            on: {
+              type: 'string',
+              description: 'The slot of the node to read.',
+            },
             columns: {
               type: 'boolean',
               const: true,
@@ -139,6 +138,40 @@ export function requestSchema(ctx: ComposerContext): Record<string, unknown> {
 }
 
 /**
+ * Folds the wire arrays into the record shapes the library takes.
+ *
+ * `nodes` and `outputs` are both caller-keyed maps, and a caller-chosen
+ * key cannot be declared in JSON Schema `properties` — which strict
+ * structured outputs require alongside `additionalProperties: false`. So
+ * they cross as arrays carrying their name as a field, and fold here.
+ */
+export function foldSlotRequest(raw: Record<string, unknown>): {
+  envelope: Record<string, unknown>;
+  note?: string;
+} {
+  const { note, nodes, outputs, ...rest } = raw as {
+    note?: string;
+    nodes?: { slot: string; op: string; in: string[]; params?: unknown }[];
+    outputs?: { name: string; on: string; [k: string]: unknown }[];
+  } & Record<string, unknown>;
+
+  const folded: Record<string, unknown> = {};
+  for (const n of nodes ?? []) {
+    const { slot, ...def } = n;
+    folded[slot] = def;
+  }
+  const surfaced: Record<string, unknown> = {};
+  for (const o of outputs ?? []) {
+    const { name, ...sel } = o;
+    surfaced[name] = sel;
+  }
+  return {
+    envelope: { ...rest, nodes: folded, outputs: surfaced },
+    ...(typeof note === 'string' && { note }),
+  };
+}
+
+/**
  * The op table, rendered for the prompt.
  *
  * This exists because the JSON Schema projection does **not** carry
@@ -167,15 +200,18 @@ export function opTable(ctx: ComposerContext): string {
 
 export const SYSTEM = `You turn a plain-English request about a price series into a process plan.
 
-A plan is a DAG of specs. Each spec is { op, params, inputs }, and an input
-is either a raw column name or another spec written inline — that nesting is
-how you express "EMA of the SMA of px". Params you omit take their declared
-defaults.
+A plan is a DAG of nodes. Each node gets a **slot** — a short name you choose,
+unique within the request — plus an op and its params. A node's \`in\` lists its
+inputs in order, and each input is either a source column name or the slot of
+another node. That is how you express "EMA of the SMA of px": two nodes, where
+the EMA's \`in\` is the SMA's slot. Params you omit take their declared defaults.
 
 Emit exactly one call to \`emit_request\`. Rules that are not in the schema:
 
-- Every spec you name in \`select\` must also appear in \`process\`, written
-  identically. Nested specs do not need their own \`process\` entry.
+- A slot must not be the name of a source column.
+- Every \`on\` in \`outputs\` must be a slot you defined in \`nodes\`.
+- Name each output for what it *is* ("upper_band", "annualised_vol"), because
+  the caller reads results back by that name.
 - Prefer a reduction over \`columns\`. The caller reads JSON.
 - If the request is ambiguous, choose conventional defaults and say what you
   chose in \`note\` rather than asking.
@@ -197,38 +233,39 @@ export function scriptedComposer(): Composer {
       const period = Number(/\b(\d{1,4})\b/.exec(text)?.[1] ?? 20);
       const has = (...words: string[]) => words.some((w) => text.includes(w));
 
-      let spec: Spec;
+      let nodes: Record<string, unknown>;
+      let on: string;
       let as: string;
       if (has('bollinger', 'band')) {
-        spec = { op: 'bollinger', params: { period }, inputs: ['px'] };
+        nodes = { bb: { op: 'bollinger', params: { period }, in: ['px'] } };
+        on = 'bb';
         as = 'bands';
       } else if (has('rsi', 'strength')) {
-        spec = { op: 'rsi', params: { period }, inputs: ['px'] };
+        nodes = { rsi: { op: 'rsi', params: { period }, in: ['px'] } };
+        on = 'rsi';
         as = 'rsi';
       } else if (has('volatil', 'annualis', 'annualiz')) {
-        spec = {
-          op: 'annualise',
-          inputs: [
-            {
-              op: 'variance',
-              params: { period },
-              inputs: [{ op: 'roc', params: { period: 1 }, inputs: ['px'] }],
-            },
-          ],
+        nodes = {
+          ret: { op: 'roc', params: { period: 1 }, in: ['px'] },
+          v: { op: 'variance', params: { period }, in: ['ret'] },
+          vol: { op: 'annualise', in: ['v'] },
         };
+        on = 'vol';
         as = 'annualised_vol';
       } else if (has('z-score', 'zscore', 'unusual', 'stretched')) {
-        spec = { op: 'zscore', params: { period }, inputs: ['px'] };
+        nodes = { z: { op: 'zscore', params: { period }, in: ['px'] } };
+        on = 'z';
         as = 'zscore';
       } else if (has('smooth', 'smoother', 'double')) {
-        spec = {
-          op: 'ema',
-          params: { period },
-          inputs: [{ op: 'sma', params: { period }, inputs: ['px'] }],
+        nodes = {
+          avg: { op: 'sma', params: { period }, in: ['px'] },
+          smooth: { op: 'ema', params: { period }, in: ['avg'] },
         };
+        on = 'smooth';
         as = 'smoothed';
       } else {
-        spec = { op: 'sma', params: { period }, inputs: ['px'] };
+        nodes = { avg: { op: 'sma', params: { period }, in: ['px'] } };
+        on = 'avg';
         as = 'average';
       }
 
@@ -236,10 +273,10 @@ export function scriptedComposer(): Composer {
         envelope: {
           from,
           as,
-          process: [spec],
-          select: [{ on: spec, reduce: 'last' }],
+          nodes,
+          outputs: { latest: { on, reduce: 'last' } },
           onError: 'collect',
-        },
+        } as unknown as Envelope,
         note: 'Built by the offline keyword matcher, not by a model.',
         source: 'scripted',
         ms: Math.round((performance.now() - t0) * 1000) / 1000,
@@ -311,7 +348,9 @@ export function anthropicComposer(options: {
         );
       }
 
-      const { note, ...envelope } = call.input as Record<string, unknown>;
+      const { envelope, note } = foldSlotRequest(
+        call.input as Record<string, unknown>,
+      );
       return {
         // `onError: 'collect'` is not the agent's choice to make — an
         // invalid plan has to come back as readable `skipped` reasons it

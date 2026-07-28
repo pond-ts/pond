@@ -236,8 +236,11 @@ export class Registry {
    *   and required by the same API (*"schema must have a 'type' key"*).
    */
   toJsonSchema(
-    options: { defs?: string; root?: boolean } = {},
+    options: { defs?: string; root?: boolean; shape?: 'nested' | 'slots' } = {},
   ): Record<string, unknown> {
+    if (options.shape === 'slots') {
+      return slotSchemaFor([...this.#ops.values()]);
+    }
     const name = options.defs ?? 'spec';
     const ref = `#/$defs/${name}`;
     return {
@@ -281,6 +284,67 @@ export class Registry {
       },
     };
   }
+}
+
+/**
+ * The slot projection — [PND-PROCSLOT].
+ *
+ * Worth noticing what is *not* here. The nested form's single most
+ * load-bearing line is a recursive `$ref`, because an input may be
+ * another spec — and making that portable took three rounds against a
+ * live API: `oneOf` refused, every node needing an explicit `type`, and
+ * a body pointer rejected in favour of a top-level `$defs`.
+ *
+ * With slots an input is a **string** — a column name, or another slot —
+ * so the recursion is gone, and every one of those problems with it.
+ * Flat, no `$defs`, no `$ref`, nothing to rebase when embedded.
+ *
+ * `nodes` projects as an **array** rather than an object keyed by slot
+ * name: a caller-chosen key cannot be declared in `properties`, and
+ * strict structured outputs require `additionalProperties: false`. The
+ * array carries the name as a field instead, and the caller keys by it.
+ */
+function slotSchemaFor(ops: readonly OpDef[]): Record<string, unknown> {
+  return {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    title: 'Nodes',
+    type: 'array',
+    items: {
+      anyOf: ops.map((op) => ({
+        title: op.name,
+        description: op.summary,
+        type: 'object',
+        required: ['slot', 'op', 'in'],
+        additionalProperties: false,
+        properties: {
+          slot: {
+            type: 'string',
+            description:
+              'A short name you choose for this node, unique within the request. Used to wire it into other nodes and to name it in outputs. It must not be the name of a source column.',
+          },
+          op: { type: 'string', const: op.name },
+          in: {
+            type: 'array',
+            minItems: op.inputs.length,
+            maxItems: op.inputs.length,
+            description:
+              'Inputs in order. Each is a source column name, or the slot of another node in this request.',
+            items: { type: 'string' },
+          },
+          params: {
+            type: 'object',
+            additionalProperties: false,
+            properties: Object.fromEntries(
+              Object.entries(op.params).map(([k, d]) => [
+                k,
+                jsonSchemaForParam(d),
+              ]),
+            ),
+          },
+        },
+      })),
+    },
+  };
 }
 
 function jsonSchemaForParam(d: ParamDef): Record<string, unknown> {

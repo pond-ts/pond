@@ -147,6 +147,14 @@ include new features and type-level changes; patch bumps are strictly additive.
   `NodeTiming` gains `slot`, and `Fact` / `OutputInfo` gain `name`. Naming does
   not require slots: a `Select` in the original form can carry a `name` too.
 
+- **process:** **`registry.toJsonSchema({ shape: 'slots' })`** — the projection
+  for the slot format, and notably **flat**. The nested projection's single most
+  load-bearing line is a recursive `$ref`, because an input may be another spec;
+  making that portable took three rounds against a live API (`oneOf` refused,
+  every node needing an explicit `type`, a body pointer rejected in favour of a
+  top-level `$defs`). With slots an input is a plain string, so the recursion is
+  gone and every one of those problems with it — no `$defs`, no `$ref`, nothing
+  to rebase when embedded.
 - **process:** **`plan(from)`** — a builder that emits a plan
   ([PND-PROCBUILD]). `add` returns a handle you pass as another node's input,
   so a mistyped reference is a compile error rather than a resolution failure,
