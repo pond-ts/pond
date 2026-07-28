@@ -40,6 +40,8 @@ import '@xyflow/react/dist/style.css';
 
 export interface NodeTiming {
   id: string;
+  /** The caller's name for this position, when the request used slots. */
+  slot?: string;
   /** False for a node the plan resolved but this request never read. */
   pulled: boolean;
   cached: boolean;
@@ -151,11 +153,16 @@ function layout(
         label: explain[n.id] ?? n.id,
         // A node nothing selected has no timing to report — saying
         // "cached · 0 ms" there would be a lie dressed as a measurement.
-        detail: n.pulled
-          ? `${n.cached ? 'cached' : 'computed'} · ${n.ms} ms`
-          : n.cached
-            ? 'not requested · holds a value'
-            : 'not requested',
+        // The slot leads when there is one: it is the name the caller
+        // chose, and the one thing on this node that survives a param
+        // edit ([PND-PROCSLOT]).
+        detail:
+          (n.slot === undefined ? '' : `${n.slot} · `) +
+          (n.pulled
+            ? `${n.cached ? 'cached' : 'computed'} · ${n.ms} ms`
+            : n.cached
+              ? 'not requested · holds a value'
+              : 'not requested'),
         kind: 'node',
         state: n.pulled ? (n.cached ? 'cached' : 'computed') : 'idle',
         selected: n.id === selected,

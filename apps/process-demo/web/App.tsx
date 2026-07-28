@@ -96,6 +96,17 @@ const EXAMPLES = [
   'Give me bollinger bands and the current upper band.',
 ];
 
+/** Either request shape counts as something we can draw from. */
+function hasPlan(envelope: {
+  process?: unknown[];
+  nodes?: Record<string, unknown>;
+}): boolean {
+  return (
+    Array.isArray(envelope.process) ||
+    (typeof envelope.nodes === 'object' && envelope.nodes !== null)
+  );
+}
+
 async function post<T>(path: string, body: unknown): Promise<T> {
   let res: Response;
   try {
@@ -247,12 +258,17 @@ export function App() {
    */
   async function draw(entry: Entry) {
     const envelope = (entry.ran ?? entry.composed?.envelope) as
-      | { process?: unknown[]; select?: unknown[] }
+      | {
+          process?: unknown[];
+          select?: unknown[];
+          nodes?: Record<string, unknown>;
+          outputs?: Record<string, unknown>;
+        }
       | undefined;
     // Nothing to draw from yet — the compose is still in flight. Bailing
     // silently here is what left the tab on "Drawing…" forever; the tab
     // now waits for the plan and draws when it lands.
-    if (envelope?.process === undefined) return;
+    if (envelope === undefined || !hasPlan(envelope)) return;
     setEntries((prev) =>
       prev.map((e) =>
         e.id === entry.id ? { ...e, drawing: true, drawError: undefined } : e,
@@ -269,14 +285,37 @@ export function App() {
       // actually asked for. That is the `columns` + `reduce` pairing the
       // library stopped treating as exclusive — the demo exercising its
       // own fix rather than fetching twice.
-      const select =
-        entry.focus !== undefined
-          ? [{ on: entry.focus, columns: true, reduce: 'last' }]
-          : [
-              ...envelope.process.map((on) => ({ on, columns: true })),
-              ...((envelope.select ?? []) as unknown[]),
-            ];
-      const drawn = await post<RunResult>('/api/run', { ...envelope, select });
+      // Both request shapes draw the same way, and the difference is only
+      // in how a node is addressed: a slot envelope names slots, a nested
+      // one restates specs. A focused node is addressed by **id** either
+      // way — a string `SpecRef` the response already named, which reaches
+      // intermediates that appear nowhere in the request.
+      let body: Record<string, unknown>;
+      if (envelope.nodes !== undefined) {
+        const outputs: Record<string, unknown> =
+          entry.focus !== undefined
+            ? { focused: { on: entry.focus, columns: true, reduce: 'last' } }
+            : {
+                ...(envelope.outputs ?? {}),
+                ...Object.fromEntries(
+                  Object.keys(envelope.nodes).map((slot) => [
+                    `${slot}_columns`,
+                    { on: slot, columns: true },
+                  ]),
+                ),
+              };
+        body = { ...envelope, outputs };
+      } else {
+        const select =
+          entry.focus !== undefined
+            ? [{ on: entry.focus, columns: true, reduce: 'last' }]
+            : [
+                ...envelope.process!.map((on) => ({ on, columns: true })),
+                ...((envelope.select ?? []) as unknown[]),
+              ];
+        body = { ...envelope, select };
+      }
+      const drawn = await post<RunResult>('/api/run', body);
       setEntries((prev) =>
         prev.map((e) =>
           e.id === entry.id ? { ...e, drawn, drawing: false } : e,
