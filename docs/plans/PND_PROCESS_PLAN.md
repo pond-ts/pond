@@ -781,6 +781,21 @@ the equivalent nested plan; a param edit changes an id but not a slot; the
 response reports both; and a follow-up expressed as a patch hits cache
 exactly as the full re-compose does.
 
+**Landed.** Expansion only — a slot graph becomes the nested `Spec` form
+the resolver already handles, so ids match by construction and neither
+`compile` nor `specId` learned anything. Verified at 150k bars
+(`apps/process-demo/scripts/slots-equivalence.mts`): a nested plan
+computes in 52.8 + 13.8 ms, and the slot form of the same graph returns
+**every node cached at 0.002 ms** — the cache one built is the cache the
+other hits. A `period` edit from 50 to 80 moves both ids and leaves the
+slots `avg` / `smooth` untouched.
+
+The collision decision was taken as written: a slot may not take a
+column's name, and the reason names both sides. Cycles report as a path
+(`slot cycle: a → b → a`) rather than a stack overflow. `on` still
+accepts an id string, so a follow-up can cite what the last response
+returned without re-deriving it.
+
 ---
 
 ### [PND-PROCBUILD] — A programmable API that emits a plan
@@ -832,6 +847,22 @@ plan tests cover it.
 **Done when:** a graph built in application code and the equivalent
 model-composed JSON resolve to identical node ids, and the builder has no
 resolution logic of its own.
+
+**Landed**, both conditions met and pinned by tests: `toJSON()` is
+compared field-for-field against the hand-written envelope, and the two
+are run against the same graph to confirm identical ids and facts. The
+builder holds no registry reference, so op names and params are still
+diagnosed in exactly one place.
+
+`add` returns a handle rather than a name, and a handle is what you pass
+as another node's input — which is the compile-time half of the argument
+for slots. Slot names are required rather than derived: a counter would
+renumber the moment a node is inserted above it, destroying the stability
+the slot exists to provide.
+
+**Still open, unchanged:** typing params off the registry's `ParamDef`,
+and whether `specId` ships to the client so a consumer can pre-compute
+cache keys.
 
 ---
 

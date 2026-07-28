@@ -17,6 +17,7 @@ import type { SeriesSchema, TimeSeries } from 'pond-ts';
 import { bind, BoundGraph } from './graph.js';
 import type { Registry } from './registry.js';
 import { run, type RunResult, type Select, type ErrorPolicy } from './run.js';
+import type { Slots } from './slots.js';
 import type { Plan, Units } from './types.js';
 
 /** Thrown when a request names a dataset the host has not been given. */
@@ -31,15 +32,33 @@ export class UnknownDatasetError extends ProcessError {}
  * deliberately does not window one, or the request would have two places
  * that slice time and they would eventually disagree.
  */
-export interface Envelope {
+interface EnvelopeBase {
   readonly from: string;
-  readonly process: Plan;
   readonly as?: string;
-  readonly select?: readonly Select[];
   readonly onError?: ErrorPolicy;
-  /** See {@link RunRequest.assemble}. A wire consumer wants `false`. */
+  /** See {@link RunOptions.assemble}. A wire consumer wants `false`. */
   readonly assemble?: boolean;
 }
+
+/** The original form: a plan of nested specs, selected inline. */
+export interface PlanEnvelope extends EnvelopeBase {
+  readonly process: Plan;
+  readonly select?: readonly Select[];
+}
+
+/**
+ * The slot form — [PND-PROCSLOT].
+ *
+ * `nodes` is keyed by names the caller owns and `outputs` by names it
+ * will read back, so both survive a param edit that moves every derived
+ * id. What a `PlanBuilder` emits.
+ */
+export interface SlotEnvelope extends EnvelopeBase {
+  readonly nodes: Slots;
+  readonly outputs?: Readonly<Record<string, Select>>;
+}
+
+export type Envelope = PlanEnvelope | SlotEnvelope;
 
 export interface DatasetInfo {
   readonly id: string;
@@ -107,12 +126,21 @@ export class Host {
   /** Resolves an envelope against its dataset's long-lived graph. */
   run(envelope: Envelope): RunResult {
     const graph = this.graphFor(envelope.from);
-    return run(graph, {
-      plan: envelope.process,
-      ...(envelope.select !== undefined && { select: envelope.select }),
+    const options = {
       ...(envelope.onError !== undefined && { onError: envelope.onError }),
       ...(envelope.assemble !== undefined && { assemble: envelope.assemble }),
-    });
+    };
+    return 'nodes' in envelope
+      ? run(graph, {
+          nodes: envelope.nodes,
+          ...(envelope.outputs !== undefined && { outputs: envelope.outputs }),
+          ...options,
+        })
+      : run(graph, {
+          plan: envelope.process,
+          ...(envelope.select !== undefined && { select: envelope.select }),
+          ...options,
+        });
   }
 }
 

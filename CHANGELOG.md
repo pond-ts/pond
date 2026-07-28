@@ -129,6 +129,31 @@ include new features and type-level changes; patch bumps are strictly additive.
   subschema will live at, and `$schema` is now emitted only at the root. Found
   by putting a model-shaped caller in front of it; see **[PND-PROCSCHEMA]**.
 
+- **process:** **slots** — a plan may now be written as `nodes` keyed by
+  caller-assigned names, with `outputs` keyed by the caller's name for each
+  surfaced result ([PND-PROCSLOT]). A node's `specId` is derived from its op,
+  params and inputs, so it keys the cache correctly and **changes the moment a
+  param does — even though the topology has not**. A slot is the missing
+  identity: `avg` survives a `period` edit that moves every derived id.
+
+  Slots are an alias layer, not a replacement. `specId` remains the cache key,
+  because it is what finds a node again across requests, sessions and callers;
+  one caller's `avg` means nothing to another's. Expansion produces exactly the
+  nested plan the equivalent would have been written as, so **a slot plan hits
+  the cache a nested plan built** — verified at 150k bars, where the slot form
+  of an already-resolved graph comes back `cached` at 0.002 ms per node — and
+  neither `compile` nor `specId` knows slots exist.
+
+  `NodeTiming` gains `slot`, and `Fact` / `OutputInfo` gain `name`. Naming does
+  not require slots: a `Select` in the original form can carry a `name` too.
+
+- **process:** **`plan(from)`** — a builder that emits a plan
+  ([PND-PROCBUILD]). `add` returns a handle you pass as another node's input,
+  so a mistyped reference is a compile error rather than a resolution failure,
+  and `toJSON()` produces the same envelope a model would compose. It holds no
+  resolution logic and knows nothing about the registry, so there is one
+  resolution path, one cache, and the existing plan tests cover it.
+
 ### Changed
 
 - **process:** `RunResult.explain` now covers **every id in `nodes`**, not only

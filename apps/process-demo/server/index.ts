@@ -121,12 +121,22 @@ async function handle(
   }
 
   if (method === 'POST' && path === '/api/run') {
-    const envelope = (await readJson(req)) as Envelope;
-    if (
-      typeof envelope?.from !== 'string' ||
-      !Array.isArray(envelope.process)
-    ) {
-      return { status: 400, body: { error: 'expected { from, process, … }' } };
+    const envelope = (await readJson(req)) as Envelope | undefined;
+    // Two accepted shapes now: nested `process`, or `nodes` keyed by
+    // caller-assigned slots ([PND-PROCSLOT]). Making the union explicit
+    // here is what caught this — the old check read `.process` off a
+    // request that may not carry one.
+    const shaped =
+      envelope !== undefined &&
+      typeof envelope.from === 'string' &&
+      ('nodes' in envelope
+        ? typeof envelope.nodes === 'object' && envelope.nodes !== null
+        : Array.isArray(envelope.process));
+    if (!shaped) {
+      return {
+        status: 400,
+        body: { error: 'expected { from, process, … } or { from, nodes, … }' },
+      };
     }
     return { status: 200, body: runEnvelope(envelope) };
   }

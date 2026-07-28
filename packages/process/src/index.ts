@@ -79,11 +79,24 @@ export {
   outputKey,
 } from './plan/identity.js';
 export { bind, BoundGraph, UnitError } from './plan/graph.js';
+export { expandSlots, SlotError } from './plan/slots.js';
+export { plan, PlanBuilder, BuilderError } from './plan/builder.js';
+export type { NodeHandle, InputRef, BuiltRequest } from './plan/builder.js';
+export type { SlotDef, Slots } from './plan/slots.js';
 export { createHost, Host, toWire, UnknownDatasetError } from './plan/host.js';
-export type { Envelope, DatasetInfo, WireResult } from './plan/host.js';
+export type {
+  Envelope,
+  PlanEnvelope,
+  SlotEnvelope,
+  DatasetInfo,
+  WireResult,
+} from './plan/host.js';
 export { run } from './plan/run.js';
 export type {
   ErrorPolicy,
+  RunOptions,
+  PlanRequest,
+  SlotRequest,
   Select,
   ColumnSelect,
   ReduceSelect,
