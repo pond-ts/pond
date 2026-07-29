@@ -638,15 +638,37 @@ function sweepRollingColumn(
     return allFinite || Number.isFinite(values[i]!);
   };
 
-  const specialised = spec.reducer === 'avg' || spec.reducer === 'mean';
-  const state = specialised
-    ? null
-    : allFinite && validity === undefined
-      ? resolveReducer(spec.reducer as string).rollingState()
-      : rollingStateFor(spec.reducer);
+  // `avg` is a running sum; `stdev` is Welford. Both are inlined to remove
+  // the per-row `add` / `remove` / `snapshot` calls; everything else keeps
+  // its reducer state, which is monomorphic here now.
+  const kind: 'avg' | 'stdev' | 'state' =
+    spec.reducer === 'avg' || spec.reducer === 'mean'
+      ? 'avg'
+      : spec.reducer === 'stdev'
+        ? 'stdev'
+        : 'state';
+  const state =
+    kind !== 'state'
+      ? null
+      : allFinite && validity === undefined
+        ? resolveReducer(spec.reducer as string).rollingState()
+        : rollingStateFor(spec.reducer);
 
+  // `avg`
   let runningSum = 0;
   let runningCount = 0;
+  // `stdev` — Welford with an order-independent delete. Transcribed from
+  // `reducers/stdev.ts`'s `rollingState` **verbatim**, including the two
+  // exact-reset cases, because the value of that recurrence is entirely in
+  // its numerical behaviour: the deviation-space mean update avoids the
+  // `n·mean − v` product that loses precision at large magnitudes, and the
+  // `n → 1` case is set directly because the reverse step alone leaves
+  // rounding residue (~0.016 on 1e10 offsets). A "simplification" here would
+  // be a silent accuracy regression, so the test asserts bit-equality against
+  // the state object rather than closeness.
+  let wN = 0;
+  let wMean = 0;
+  let wM2 = 0;
 
   const leftSpan = Math.floor((count - 1) / 2);
   const rightSpan = count - 1 - leftSpan;
@@ -667,7 +689,7 @@ function sweepRollingColumn(
       hi = index + rightSpan < rowCount ? index + rightSpan : rowCount - 1;
     }
 
-    if (specialised) {
+    if (kind === 'avg') {
       while (windowEnd <= hi) {
         if (contributes(windowEnd)) {
           runningSum += values[windowEnd]!;
@@ -679,6 +701,42 @@ function sweepRollingColumn(
         if (contributes(windowStart)) {
           runningSum -= values[windowStart]!;
           runningCount -= 1;
+        }
+        windowStart += 1;
+      }
+    } else if (kind === 'stdev') {
+      while (windowEnd <= hi) {
+        if (contributes(windowEnd)) {
+          const v = values[windowEnd]!;
+          wN += 1;
+          const delta = v - wMean;
+          wMean += delta / wN;
+          wM2 += delta * (v - wMean);
+        }
+        windowEnd += 1;
+      }
+      while (windowStart < lo) {
+        if (contributes(windowStart)) {
+          const v = values[windowStart]!;
+          if (wN <= 1) {
+            // Removing the final contributor — reset exactly (no 0/0, no drift).
+            wN = 0;
+            wMean = 0;
+            wM2 = 0;
+          } else {
+            const meanWith = wMean;
+            wN -= 1;
+            if (wN === 1) {
+              // A single remaining element has population variance exactly 0.
+              wMean = meanWith * 2 - v; // the survivor: 2·mean₂ − removed
+              wM2 = 0;
+            } else {
+              // Deviation-space mean update, then reverse Welford.
+              wMean = meanWith - (v - meanWith) / wN;
+              wM2 -= (v - wMean) * (v - meanWith);
+              if (wM2 < 0) wM2 = 0;
+            }
+          }
         }
         windowStart += 1;
       }
@@ -701,11 +759,16 @@ function sweepRollingColumn(
 
     if (windowEnd - windowStart < minSamples) continue; // missing row
 
-    const v = specialised
-      ? runningCount === 0
-        ? undefined
-        : runningSum / runningCount
-      : state!.snapshot();
+    const v =
+      kind === 'avg'
+        ? runningCount === 0
+          ? undefined
+          : runningSum / runningCount
+        : kind === 'stdev'
+          ? wN === 0
+            ? undefined
+            : Math.sqrt(Math.max(0, wM2 / wN))
+          : state!.snapshot();
     if (v === undefined) continue; // missing cell (e.g. all-missing window)
     if (typeof v !== 'number' || !Number.isFinite(v)) {
       // Same rejection class + message as the generic path's post-pass

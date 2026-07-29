@@ -132,6 +132,19 @@ and type-level changes; patch bumps are strictly additive.
   derived from the produced values rather than inherited from the source.
   Chunked and non-numeric sources keep the previous path.
 
+- **core:** **`rolling(count, 'stdev')` runs Welford inline.** `stdev` was the
+  one reducer deliberately left on the reducer-state path when the kernel was
+  restructured, because its order-independent delete has exact `n <= 1` and
+  `n === 1` cases whose value is entirely numerical. The recurrence is now
+  transcribed verbatim into the sweep, removing three virtual calls per row
+  while keeping results **bit-identical** — asserted with `Object.is` against
+  the real state object across 18 shapes (large offsets, gross-outlier
+  eviction, denormals, gaps) plus 150 randomised trials, not with a closeness
+  tolerance that a dropped special case could pass.
+
+  `bollinger(20)` 31.51 → 25.18 ms, `zScore(20)` 26.49 → 19.88 ms, and the
+  five-study strategy pass 84.15 → 70.58 ms.
+
 - **core:** **`rolling()`'s count-window kernel sweeps one column at a time**,
   making every reducer-state call monomorphic instead of megamorphic, and
   specialises `avg` inline. The window bounds never depended on the column, so

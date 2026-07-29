@@ -489,6 +489,26 @@ defined) and the `rollingStateFor` wrapper that applies the non-finite policy.
 its `contributes()` predicate, so the contributor set cannot drift between the
 two paths.
 
-**Remaining:** `stdev` is now the dominant per-row cost in `bollinger` /
-`zScore`; a specialisation would need to carry the Welford delete verbatim.
-Worth measuring before attempting.
+**Follow-up — `stdev` specialised too (SHIPPED).** It was the dominant per-row
+cost in `bollinger` / `zScore` once `avg` was inlined. The Welford
+order-independent delete is now transcribed **verbatim** into the sweep,
+including both exact-reset branches.
+
+| study                 | before   | after        |
+| --------------------- | -------- | ------------ |
+| 5-study strategy pass | 84.15 ms | **70.58 ms** |
+| `zScore(20)`          | 26.49 ms | 19.88 ms     |
+| `bollinger(20)`       | 31.51 ms | 25.18 ms     |
+
+The test asserts **`Object.is`, not `toBeCloseTo`**, against the real
+`rollingState()` object driven through the same window walk. That choice is
+the point: a closeness test would pass for a transcription that quietly
+dropped one of the recurrence's special cases, and those only misbehave on
+data with large offsets that no ordinary fixture carries. Mutation-checked —
+reaching `n → 1` via the reverse step instead of setting it directly fails 3
+tests, the naive `n·mean − v` mean update fails 10, and dropping the `m2 < 0`
+clamp fails 1.
+
+`min` / `max` keep their monotonic deque: unlike Welford it is a data
+structure rather than a recurrence, so inlining it would mean duplicating the
+deque itself, and they are not on the studies' hot path.
