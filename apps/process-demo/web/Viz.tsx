@@ -311,6 +311,68 @@ function useWidth(): [React.RefObject<HTMLDivElement | null>, number] {
   return [ref, width];
 }
 
+/**
+ * The `[min, max]` of the visible slice, so zooming in actually resolves
+ * anything.
+ *
+ * `YAxis` auto-fit walks the **whole** series by design — `yExtent` reads
+ * the full source so a hover readout never shifts when the window
+ * changes ([culling.ts]). Correct for a readout, and fatal for reading
+ * structure: a 20-period Bollinger band is 1.26 USD inside a 58 USD
+ * extent, which is **2.8 pixels** on a 130px plot. The band renders — a
+ * 5σ/5000-period one fills 40% of the plot — but at default settings it
+ * is thinner than the line's own vertical smear at 150,000 points, so
+ * there is genuinely nothing to see, and no amount of time-zoom helps
+ * while y stays pinned to the full range.
+ *
+ * Bisected rather than scanned: a pan re-runs this per figure per frame,
+ * and the keys are sorted, so walking 150,000 rows six times to find a
+ * few hundred was the difference between a smooth drag and a stuttering
+ * one.
+ */
+function useVisibleExtent(
+  drawn: NonNullable<ReturnType<typeof useDrawn>>,
+  outs: OutputInfo[],
+  range: readonly [number, number] | undefined,
+): [number, number] | undefined {
+  return useMemo(() => {
+    if (range === undefined) return undefined;
+    const keys = drawn.series.keyColumn() as unknown as {
+      length: number;
+      at(i: number): number;
+    };
+    const bisect = (t: number): number => {
+      let lo = 0;
+      let hi = keys.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (keys.at(mid) < t) lo = mid + 1;
+        else hi = mid;
+      }
+      return lo;
+    };
+    const from = bisect(range[0]);
+    const to = Math.min(keys.length, bisect(range[1]) + 1);
+    const cols = outs.map(
+      (o) =>
+        drawn.series.column(o.column) as unknown as {
+          at(i: number): number | undefined;
+        },
+    );
+    let min = Infinity;
+    let max = -Infinity;
+    for (let i = from; i < to; i += 1) {
+      for (const col of cols) {
+        const v = col.at(i);
+        if (v === undefined || !Number.isFinite(v)) continue;
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+    }
+    return min === Infinity ? undefined : [min, max];
+  }, [drawn, outs, range]);
+}
+
 /** One node's chart. The band case reads `outs.length`, never an op name. */
 function Figure(props: {
   id: string;
@@ -329,6 +391,7 @@ function Figure(props: {
   onRangeChange?: ((range: [number, number]) => void) | undefined;
 }) {
   const { outs, drawn } = props;
+  const domain = useVisibleExtent(drawn, outs, props.range);
   return (
     <figure>
       <figcaption>{props.caption}</figcaption>
@@ -342,7 +405,12 @@ function Figure(props: {
         })}
       >
         <ChartRow height={170}>
-          <YAxis id="y" width={62} />
+          <YAxis
+            id="y"
+            width={62}
+            pad={0.08}
+            {...(domain !== undefined && { min: domain[0], max: domain[1] })}
+          />
           <Layers>
             {outs.length === 3 ? (
               <>
@@ -523,6 +591,12 @@ function Output(props: {
   explain: Record<string, string>;
   colors: Map<string, string>;
 }) {
+  // The same shared view the workbook has. Without it these figures were
+  // fixed at full extent, and at 150,000 points a study's own noise
+  // smears vertically over any structure inside it — a Bollinger band
+  // reads as one thick line, and there was no way to zoom in and find
+  // out otherwise. A chart you cannot interrogate is a picture.
+  const [view, setView] = useState<[number, number]>();
   // An empty `asked` means the request named nothing — an older nested
   // plan, say — so everything is shown rather than nothing.
   const wanted = new Set(props.asked);
@@ -562,6 +636,8 @@ function Output(props: {
           drawn={props.drawn}
           width={props.width}
           color={props.colors.get(id) ?? PALETTE[0]!}
+          range={view ?? props.drawn.range}
+          onRangeChange={setView}
           caption={
             <>
               {outs[0]?.name ?? props.explain[id] ?? id}
