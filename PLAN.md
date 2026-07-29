@@ -212,6 +212,16 @@ consumer signal. Plan:
   `zScore(20)` 26.5 ms, `envelope(20)` 12.5 ms, `sma(20)` 10.5 ms,
   `percentChange()` 4.5 ms, `ema(20)` 3.9 ms.
 
+  **Against the pandas oracle** (`scripts/perf-vs-oracle.mjs`, the timing
+  counterpart to the correctness oracle): the strategy pass has gone from
+  **5.6× slower than pandas to 1.64×**, and `median` / `percentile` are now
+  _faster_ than pandas (0.98× / 0.85×) on the back of the quickselect change.
+  Worst case is 2.39×. Two architectural differences explain most of what is
+  left and are the honest next question: pandas tracks missing values as
+  **inline NaN** in the same float64 buffer where pond-ts tests a **validity
+  bit per cell**, and pandas mutates a frame in place where every pond-ts
+  operation returns a new immutable series.
+
   Next candidates, in the order the numbers suggest: a `stdev` specialisation
   in the rolling kernel (now the dominant per-row cost in `bollinger` /
   `zScore`, and the one reducer deliberately left on the state path because its
