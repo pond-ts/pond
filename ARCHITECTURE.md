@@ -641,6 +641,44 @@ TimeSeries`. Ingest-time normalization (timestamp parsing, missing-
   `LiveSeries`-architecture changes (validate-then-commit-then-
   notify, or listener-error isolation) but not in the v0.11 wave.
 
+### Graph evaluation lives outside core (`@pond-ts/process`)
+
+The streaming RFC's line to hold is explicit: **resist operator-graph
+vocabulary.** Pond's user model is "you have a `LiveSeries` and you
+chain transforms on it," not "submit a job graph to a runtime," and
+`docs/rfcs/streaming.md` lists an *operator-graph public API* among its
+deferrals. That constraint is about **core**, and it stands.
+
+`@pond-ts/process` is how a graph can exist without violating it:
+
+- **Separate, opt-in package.** Nothing in `pond-ts` grows a graph
+  method, a registry, or a planner. A user who never installs
+  `@pond-ts/process` sees the chain API unchanged.
+- **It targets the case chaining genuinely can't express** — a pipeline
+  whose *shape is data*: assembled at runtime from config, edited by a
+  user in a node editor, or one expensive computation fanned out to
+  several consumers. When the pipeline is known at authoring time, the
+  chain is strictly better and the README says so.
+- **It composes batch transforms, it does not reimplement them.** Node
+  values are immutable `TimeSeries` snapshots; a node body is a call to
+  the existing operator surface. The package ships `source` / `derive` /
+  `defineNode` and deliberately does **not** mirror the `TimeSeries` API
+  as a node vocabulary — that would duplicate primitives and double the
+  maintenance surface for no gain.
+- **Live stays incremental in the live layer.** `fromLive()` subscribes
+  only to mark the node dirty; the `toTimeSeries()` snapshot happens at
+  the next pull. Per-event incremental computation stays where it
+  already exists, and the graph sees whole values. This is the same
+  live/batch boundary as §1, entered from a different direction.
+
+The engine itself (pull evaluation, memoization, per-outlet version
+stamps that stop a cascade when a recomputed value is unchanged) is
+value-agnostic; pond types appear only in the live binding.
+
+If graph vocabulary ever *does* earn a place in core, this package is
+the evidence base for what shape it should take — not a precedent that
+it should.
+
 ### Type-level limitations (known, deferred)
 
 - **`TimeSeries<S>` variance issue.** `toJSON()` returns
@@ -688,6 +726,7 @@ TimeSeries`. Ingest-time normalization (timestamp parsing, missing-
 | Live aggregation                               | `LiveAggregation.ts`, `LiveRollingAggregation.ts`, `LivePartitionedSyncRolling.ts`, `triggers.ts` |
 | Live partitioning                              | `LivePartitionedSeries.ts`                                                                        |
 | React hooks                                    | `packages/react/src/`                                                                             |
+| Dataflow graph engine (opt-in package)         | `packages/process/src/` (`port.ts` = ports + versions, `node.ts` = pull evaluation)                |
 | Public exports                                 | `packages/core/src/index.ts`                                                                      |
 | Plan / status / roadmap                        | `PLAN.md`                                                                                         |
 | Process / discipline / release                 | `CLAUDE.md`                                                                                       |

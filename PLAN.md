@@ -316,6 +316,176 @@ consumer signal. Plan:
 - **[PND-REACT]** — React remainders: `dt = 0` docs, dashboard-guide fixes,
   `useSyncExternalStore` migration.
 
+### `@pond-ts/process` — declarative processing graph
+
+A package that turns "compute these derived series" from imperative calls into
+a declarative graph: plans arrive as data, a registry is the schema, identity is
+content-addressed, and one request serves both a renderer and an LLM tool
+caller. Design: [process.md](docs/rfcs/process.md) (RFC — context, not a
+commitment). Task detail, and the measurements each task is sized against:
+[PND_PROCESS_PLAN.md](docs/plans/PND_PROCESS_PLAN.md).
+
+Ordering note: `PROCIDENT` blocks any interactive consumer, `PROCCOL` is a
+force multiplier for both `PROCIDENT` and `PROCRANGE`, and `PROCRANGE` is
+blocked by `PROCKERN` in `@pond-ts/financial`. The engine itself landed in
+[#544](https://github.com/pond-ts/pond/pull/544) as a **WIP, unpublished**
+package (`private: true`) so this can be worked in the open; `PROCSUB` owns
+whether it stays one.
+
+- **[PND-PROCIDENT]** — Decide how node identity is assigned, which decides
+  cache lifetime. Content-addressed params accumulate by design (right for the
+  MCP shape, where a repeated question should hit cache); params-as-Ins are
+  bounded by the plan's shape (right for a UI, where a superseded slider
+  position is worthless). Measured over a 200-position sweep: 200 nodes /
+  310 MB of buffers versus 1 node / 6 MB — flat rather than linear in sweep
+  length. The RFC's two consumers want opposite policies, so this is a design
+  call, not a leak to patch; an earlier framing of this ticket blamed the graph
+  for what was a plan-layer map. **Blocking for any interactive consumer.**
+- **[PND-PROCCACHE]** — Op-level result cache under an engine-wide budget.
+  Two modes of In: a **value In** drives invalidation and discards superseded
+  values; a **cache-key In** also keys a node-level cache, so repeats hit
+  (14.3× on a repeat-heavy sweep, and 1.9× when the capacity is undersized and
+  thrashes). The split that works: the **decision** to cache is per-op — only it
+  knows what is expensive and which Ins key the result — but the **capacity**
+  must be engine-wide, because a per-op cap is a per-op promise and nothing
+  supervises the total (20 nodes × 5 entries = 157 MB vs 35 MB shared).
+- **[PND-PROCSEL]** — Selective per-Out invalidation already works: a
+  bollinger-shaped node changing `stdDev` leaves `middle`'s version untouched
+  and its consumer idle, because the op hands back the same instance. Document
+  it, and let the registry declare which params each output depends on so the
+  corpus gets it by declaration rather than by hand. Sharpens the RFC's "the
+  cutoff cannot fire" — true for whole-series identity compares, false per-Out.
+- **[PND-PROCCOL]** — Node values should be pond columns, not boxed JS arrays
+  with `undefined` holes. Measured at 20 columns × 500k rows: 160 MB heap
+  versus 3 MB packed (~50× less GC-managed heap, ~2× smaller overall).
+  Prerequisite for byte-bounded eviction and for the ranged-recompute ceiling.
+- **[PND-PROCTERM]** — Assembly into a `TimeSeries` should be requested, not
+  assumed. Reductions read node values directly (52× on an agent session;
+  441× once facts memoize on `node.out.value.version`), and a renderer pulls
+  per-study arrays. Sharp edge: the terminal must resolve the closure of every
+  id a selector mentions, including `crossings`' `against` — assembling only
+  the column-selectors yields a fact with no value rather than an error.
+- **[PND-PROCJOIN]** — Make the join a node: n series in, one aligned column
+  set out, alignment policy in the id (inner vs as-of changes the answer). This
+  is what lets a cross-source spec exist at all — separate graphs cannot hold
+  one, and hand-combining misaligned instruments silently pairs different
+  dates. Needs no engine change; `Graph` has no per-graph boundary today.
+- **[PND-PROCHIST]** — `requiredHistory(plan)`. The hot leading edge costs
+  765 ms/tick over 500k rows and 5.4 ms/tick over a 5,000-row tail, and the
+  registry already knows every op's lookback — so the safe window is derivable
+  rather than a consumer guess.
+- **[PND-PROCRANGE]** — Track dirty state per range (and per column, via the
+  join). 26× measured with identical results, and ~7000× once node values stop
+  reallocating. Requires `markDirty()` to carry a payload and makes a node's
+  `compute` an incremental update over its previous output rather than a pure
+  function of its inputs — weigh that against "transforms are views or
+  accumulators" rather than slipping it in. **Blocked by [PND-PROCKERN].**
+- **[PND-PROCKERN]** — Range-aware kernel entry point in `@pond-ts/financial`.
+  The kernels are whole-series today, so no corpus study can fill a slice and
+  none of `PROCRANGE`'s speedup is reachable. Worth doing on its own merits —
+  it removes a full-array allocation per study call.
+- **[PND-PROCREG]** — Plan rehydration across processes. Ids round-trip, a
+  compiled graph does not; persisted views recompile from the stored plan.
+  Deliberately no `fromJSON` yet. Two verified properties must become stated
+  requirements: `specId` is invariant under param key order, and an omitted
+  param collides with its explicit default.
+- **[PND-PROCSCHEMA]** — The schema projection is the caller's contract. M2 found
+  the recursive `$ref` was **not embeddable** — it resolves against the document
+  root, so the projection silently dangled inside a tool's `input_schema`; fixed
+  with `toJsonSchema({ base })`. Open: the projection carries no units, in either
+  direction, so a caller cannot know `annualise` refuses a raw price without a
+  `describe()` table in the prompt.
+- **[PND-PROCSLOT]** — Caller-assigned **slots**, separating topology from value.
+  Params are part of a node's id but do not change the shape, so the format uses
+  one identity for two jobs. A slot (`bb`) is stable across a param edit and
+  names a position; `specId` still keys the cache. Fixes `on` restating whole
+  nested specs, makes refinement a patch, stops the pipeline view re-laying-out
+  on a param change, and lets surfaced outputs carry the requester's own names
+  — which is what a Tidal card is. Slots are an alias layer, not a replacement:
+  M5's 2.811 ms return trip works _because_ the node persisted under its content
+  id. Connections stay on the node (no full node editor is wanted); how a slot
+  reference is disambiguated from a source column name is open.
+- **[PND-PROCBUILD]** — A programmable API that **emits** a plan, for consumers
+  building graphs in application code rather than composing JSON. Depends on
+  [PND-PROCSLOT]: a builder needs a stable handle and a content-addressed id
+  cannot be one. The builder produces the same envelope a model would, so there
+  is one resolution path and one cache. Open: how far to type params off the
+  registry's `ParamDef`, and whether `specId` ships to the client.
+- **[PND-PROCSUB]** — Decide the substrate and packaging: the RFC concludes one
+  package with the engine internal, while [#544](https://github.com/pond-ts/pond/pull/544)
+  proposes publishing it. Evidence now favours keeping the graph (1.34–1.40× on
+  MCP flurries at 1M rows; 1/N invalidation at N sources) with the honest
+  caveat that the advantage is zero at a single source.
+- **[PND-LIVESRC]** — Core-side: `LiveAggregation` does not satisfy
+  `LiveSource<S>`, because its `on('event')` overload widens the listener's
+  event type. Narrow the overload, or give the incremental operators their own
+  named contract. Touches a public type — needs sign-off.
+
+### Process demo — composer / request / results
+
+A three-panel web app where a prompt becomes a process plan, the plan resolves
+against a bound dataset, and the result is charted — clicking a node in the
+pipeline shows that node's output. It is a demo, but its primary job is to
+**decide the library's shape**: six open tickets in the process section rest on
+questions no argument settles, and each milestone here answers one. Plan:
+[PND_PROCESS_DEMO_PLAN.md](docs/plans/PND_PROCESS_DEMO_PLAN.md).
+
+Pinned before any code: the bound graph is **long-lived, wherever it lives** —
+per-request construction is what is fatal, not any particular host. A long-lived
+worker and a long-lived server prove different things (client-side execution and
+an off-main-thread UI, versus the MCP shape with one cache shared across
+sessions). The worker topology is **coupled to [PND-PROCCOL]**: crossing a
+thread boundary costs 48.6 ms per 500k-value answer boxed versus 0.5 ms
+transferred, so without columns a worker spends more time marshalling than
+computing. `as` names an output rather than windowing it; `registry.toJsonSchema()`
+is the agent's contract, not a hand-written prompt.
+
+- **[PND-DEMOM0]** — The plan layer, headless: `bind`, registry, `specId`,
+  `run`, `explain`, typed and tested. Decides [PND-PROCSUB] (does anything
+  outside the plan layer still import the engine?) and [PND-PROCIDENT] (`run()`
+  cannot be written without choosing how a param is identified).
+- **[PND-DEMOM1]** — A long-lived host (worker or server) holding
+  `Map<datasetId, BoundGraph>`, one seeded dataset, submit-and-return, still
+  no UI. Response carries **per-node
+  computed-vs-cached and a duration** — the architecture is invisible without
+  it. Decides [PND-PROCTERM].
+- **[PND-DEMOM2]** — Three panels, `raw` tabs only; agent composes plans from
+  the registry schema. Decides [PND-PROCSCHEMA]: is the projection enough to
+  compose valid plans unaided, and can the agent self-correct from `skipped`
+  reasons? Landed as `apps/process-demo`, outside the root `workspaces` so a
+  demo build never gates a release. The composer sits behind a seam: without
+  `ANTHROPIC_API_KEY` it falls back to an offline keyword matcher that exercises
+  every panel and **settles nothing about the registry**, and says so.
+- **[PND-DEMOM3]** — Results charts via `@pond-ts/charts`, chosen by key kind
+  (time → line, multi-output → band). Decided the remainder of [PND-PROCCOL],
+  and **not as the fork it was framed as**: charts already traverses columnar,
+  so the layers' `series` + `column` signature was fine — what was wrong was
+  assembling on the producer side, where a `TimeSeries` cannot cross a wire.
+  Landed `run({ assemble: false })` + `RunResult.columns`; the browser rebuilds
+  with `TimeSeries.fromColumns`, which adopts buffers zero-copy. Drawing costs
+  **transport, not compute** (5.72 MB for two studies at 150k rows vs 5 ms to
+  encode) — a second argument for the worker topology. [PND-LIVELYR] did not
+  bite.
+- **[PND-DEMOM4]** — Pipeline graph with clickable nodes (React Flow + dagre),
+  labelled by `explain` and badged cached/Nms; clicking shows that node's
+  output. **Landed, and the "costs almost nothing" claim held** — clicking a
+  node is one more `columns: true` selector on an id the response already
+  names, including a _nested_ spec that never appears at the plan's top level.
+  Two additions, both the response failing to describe its own graph:
+  `NodeTiming.inputs` (the edges — underivable without reimplementing
+  `specId`) and `NodeTiming.pulled` (`nodes` had reported only the subset a
+  selector reached, so the view drew a plan with branches missing).
+
+- **[PND-DEMOM5]** — Conversational refinement: follow-up prompts that adjust an
+  existing plan. **Landed, and it decided [PND-PROCIDENT].** "smoother" → "try
+  200 instead" → "back to how it was" returns in **2.811 ms against 75.071 ms
+  cold**, the node a straight cache hit at 0.004 ms — because a
+  content-addressed `sma(50)` is never invalidated by a detour, only unused.
+  Three nodes resident afterwards is the bill, and the case for
+  [PND-PROCCACHE]'s engine-wide budget. The capacity dial is deliberately not
+  here: there is no node cache to tune yet, and rushing one to make a demo
+  slider work would let the demo design the library.
+
 ### Ecosystem (Phase 6)
 
 Adapters and deployment-shape packages, after the streaming milestones they

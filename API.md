@@ -1,6 +1,6 @@
 # API.md — public API map for agents
 
-A fast-navigation map of every public export across the monorepo's five
+A fast-navigation map of every public export across the monorepo's six
 packages, **for agents working in this repo**. Use it to find the right
 primitive and the file it lives in without crawling `src/`. It is a map, not a
 reference: one line per export, grouped by purpose, with the source path.
@@ -15,13 +15,14 @@ before writing code against them.
   and `pathname:///generated-api/<pkg>/` (generated typedoc). This file is the
   agent-facing complement, not a replacement.
 
-| Package              | npm name             | Entry points                                     | Docs hub                  |
-| -------------------- | -------------------- | ------------------------------------------------ | ------------------------- |
-| `packages/core`      | `pond-ts`            | `.` and `./types` (zero-runtime schema contract) | `website/docs/pond-ts/`   |
-| `packages/react`     | `@pond-ts/react`     | `.`                                              | `website/docs/react/`     |
-| `packages/charts`    | `@pond-ts/charts`    | `.`                                              | `website/docs/charts/`    |
-| `packages/financial` | `@pond-ts/financial` | `.` and `./fluent` (prototype augmentation)      | `website/docs/financial/` |
-| `packages/fit`       | `@pond-ts/fit`       | `.`                                              | `website/docs/fit/`       |
+| Package              | npm name             | Entry points                                     | Docs hub                     |
+| -------------------- | -------------------- | ------------------------------------------------ | ---------------------------- |
+| `packages/core`      | `pond-ts`            | `.` and `./types` (zero-runtime schema contract) | `website/docs/pond-ts/`      |
+| `packages/react`     | `@pond-ts/react`     | `.`                                              | `website/docs/react/`        |
+| `packages/charts`    | `@pond-ts/charts`    | `.`                                              | `website/docs/charts/`       |
+| `packages/financial` | `@pond-ts/financial` | `.` and `./fluent` (prototype augmentation)      | `website/docs/financial/`    |
+| `packages/fit`       | `@pond-ts/fit`       | `.`                                              | `website/docs/fit/`          |
+| `packages/process`   | `@pond-ts/process`   | `.` — **WIP, `private: true`, not published**    | `packages/process/README.md` |
 
 ---
 
@@ -352,6 +353,47 @@ by studies) — `packages/financial/src/kernels/rolling.ts`.
 
 ---
 
+## @pond-ts/process
+
+**Work in progress — `private: true`, not published, public shape expected to
+change** (RFC [process.md](docs/rfcs/process.md) concludes the declarative plan
+layer is the consumer surface with this engine internal beneath it; tracked as
+[PND-PROCSUB]). Listed here because agents work in this repo, not because it is
+a stable surface. Tickets: [PND_PROCESS_PLAN.md](docs/plans/PND_PROCESS_PLAN.md).
+
+Typed dataflow graphs for pipelines whose **shape is data** (runtime-assembled,
+user-edited, one computation fanned out to several consumers). Chaining stays
+the default for pipelines known at authoring time — see the package README.
+
+| Group                   | Exports                                                                                                                                                                                                                                                                                                | Source                                               |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| Ports                   | `Inlet`, `Outlet` (typed fields on `node.in` / `node.out`; `get()`, `peek()`, `version`, `connect`, `disconnect`)                                                                                                                                                                                      | `packages/process/src/port.ts`                       |
+| Nodes                   | `Node` (`in`, `out`, `dirty`, `error`, `invalidate()`), `defineNode` (reusable multi-output node type), `derive` (single-output, wired inline)                                                                                                                                                         | `packages/process/src/node.ts`                       |
+| Port declaration        | `port<T>({ equals, defaultValue })`; types `PortSpec`, `PortSpecMap`, `PortValue`, `PortValues`                                                                                                                                                                                                        | `packages/process/src/types.ts`                      |
+| Sources                 | `source<T>()` → `SourceNode` (`set()`), `fromLive(liveSource)` → `LiveSourceNode` (`dispose()`); `GraphSource` (bind contract — looser than core's `LiveSource`, accepts `LiveAggregation`), `SnapshotSource`, `NoInputs`                                                                              | `packages/process/src/source.ts`                     |
+| Graph view              | `Graph` (`Graph.from(...roots)`, `nodes`, `order()`, `edges()`, `toJSON()`); types `GraphEdge`, `GraphJson`, `GraphNodeJson`, `GraphEdgeJson`                                                                                                                                                          | `packages/process/src/graph.ts`                      |
+| Column values           | `packColumn` (values → packed `Float64Column`, NaN = missing), `columnBytes` (retained size, for a byte budget), `appendColumn` (column → series; boxing-free when gapless)                                                                                                                            | `packages/process/src/column.ts`                     |
+| Plan — registry         | `createRegistry({ folds })` / `Registry` (`define`, `get`, `foldFor`, `outputsOf`, `resolveParams`, `byFamily`, `describe`, `toJsonSchema`), param builders `int` / `num` / `choice` / `flag`, `UnknownOpError`, `ParamError`                                                                          | `packages/process/src/plan/registry.ts`, `params.ts` |
+| Plan — identity         | `specId` (content-addressed, param-order invariant, defaults materialized), `refToId`, `explain`, `unitOf`, `columnsOf`, `dependsOn`, `outputKey`                                                                                                                                                      | `packages/process/src/plan/identity.ts`              |
+| Plan — types            | `Spec`, `Plan`, `Input` (column name \| `Spec` \| `PickedOutput`), `SpecRef`, `Def` (`OpDef` \| `FoldDef`), `OpContext`, `OpResult`, `FoldContext`, `FactBody`, `isFold`, `ParamDef`, `Params`, `Units`, `InputDef`, `OutputDef`                                                                       | `packages/process/src/plan/types.ts`                 |
+| Plan — bind / run       | `bind(series, { registry, units })` → `BoundGraph` (`compile`, `setSource`, `ids`, `series`, `columnOf`), `run(graph, { plan, select, onError })` → `RunResult`, `UnitError`                                                                                                                           | `packages/process/src/plan/graph.ts`, `run.ts`       |
+| Plan — request/response | `RunRequest` (`PlanRequest` \| `SlotRequest`), `RunOptions`, `RunResult`, `Select` (`{ on, output?, name? }` — points at a node; what comes back is what that node produces), `ErrorPolicy`, `Fact` (carries `op`), `OutputInfo`, `Skipped`, `NodeTiming` (`slot`, `pulled`, `cached`, `ms`, `inputs`) | `packages/process/src/plan/run.ts`                   |
+| Plan — host             | `createHost({ registry, units })` → `Host` (`add`, `has`, `datasets`, `graphFor`, `run`), `toWire`, `UnknownDatasetError`; types `Envelope` (`PlanEnvelope` \| `SlotEnvelope`), `DatasetInfo`, `WireResult`                                                                                            | `packages/process/src/plan/host.ts`                  |
+| Plan — slots            | `expandSlots(slots, columns)` → `Map<slot, Spec>` (expands to the nested form, so ids match by construction; `slot#Output` picks one output), `SlotError`; types `SlotDef` (`{ op, params, in }`), `Slots`                                                                                             | `packages/process/src/plan/slots.ts`                 |
+| Plan — builder          | `plan(from)` → `PlanBuilder` (`as`, `add`, `expose`, `toJSON`), `BuilderError`; types `NodeHandle` (`last`, `extremes`, `percentileRank`, `shape` — each **adds a fold node** and returns its handle), `InputRef`, `BuiltRequest`                                                                      | `packages/process/src/plan/builder.ts`               |
+| Plan — folds            | `STANDARD_FOLDS` and the four it holds — `last`, `extremes`, `percentileRank`, `shape` — pre-registered by `createRegistry()`; each a plain `FoldDef`, so a consumer can `define` over one                                                                                                             | `packages/process/src/plan/folds.ts`                 |
+| Errors                  | `ProcessError` (base), `CycleError`, `UnconnectedInputError`, `MissingOutputError`, `UnsetSourceError`                                                                                                                                                                                                 | `packages/process/src/errors.ts`                     |
+| Node type helpers       | `NodeSpec`, `NodeFactory`, `InletsFor`, `OutletsFor`, `OutletValue`, `SpecsForOutlets`, `DerivedOutput`                                                                                                                                                                                                | `packages/process/src/node.ts`                       |
+
+Note: this package's `npm test` includes a `test:dts` step that typechecks the
+**emitted** `dist/*.d.ts` from a consumer's perspective (`test-dts/`,
+`skipLibCheck: false`). The package's own build sets `skipLibCheck: true` and
+never checks its own output, so a declaration referencing a type `stripInternal`
+deleted builds green and breaks only downstream. If you mark something
+`@internal`, confirm no public signature names it.
+
+---
+
 ## Cross-package seams (where agents most often need the joint)
 
 - **Batch → charts**: a draw layer takes a pond `series` + `column` directly;
@@ -366,3 +408,12 @@ by studies) — `packages/financial/src/kernels/rolling.ts`.
 - **Core → financial**: studies compose on core kernels; fluent methods mutate
   `TimeSeries.prototype` (runtime import of `@pond-ts/financial/fluent`
   required).
+- **Live → process**: `fromLive(liveSeries)` binds a live source as a graph
+  input. Events only mark the node dirty; the snapshot runs once at the next
+  pull, so per-event incremental work stays in the live layer and the graph
+  composes batch transforms over snapshots. The graph has **no partial
+  invalidation** — a dirty node recomputes from a whole snapshot — so for
+  windowed work bind the _aggregation_ (`fromLive(live.aggregate(...))`),
+  which materializes bucket count rather than event count (235x per pull on
+  a 50k buffer). Tradeoff: a live aggregation exposes closed buckets only,
+  so the in-progress bucket is invisible until it closes.

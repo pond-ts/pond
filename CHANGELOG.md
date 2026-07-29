@@ -4,9 +4,9 @@ All notable changes to this project are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
-`@pond-ts/fit`, and `@pond-ts/financial` — release together under a single `v*`
-tag, so this file covers them all. Pre-1.0: minor bumps may include new features
-and type-level changes; patch bumps are strictly additive.
+`@pond-ts/fit`, `@pond-ts/financial`, and `@pond-ts/process` — release together
+under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
+include new features and type-level changes; patch bumps are strictly additive.
 
 [Unreleased]: https://github.com/pond-ts/pond/compare/v0.53.1...HEAD
 [0.53.1]: https://github.com/pond-ts/pond/compare/v0.53.0...v0.53.1
@@ -86,6 +86,137 @@ and type-level changes; patch bumps are strictly additive.
   readout reports the bar's own colour, and the dense-bar envelope decimation
   is skipped (an envelope rect can't carry more than one colour), so every
   visible bar draws.
+- **process:** new **`@pond-ts/process`** package — **work in progress, not
+  published.** Marked `private: true`, so the release workflow skips it; it is
+  on `main` to be iterated on in the open against
+  [RFC #543](https://github.com/pond-ts/pond/pull/543), not to be consumed.
+  A typed dataflow engine over pond values: nodes with typed `in` / `out` port
+  fields (wiring a `string` output into a `number` input is a compile error),
+  pull-based memoized evaluation, connect-time cycle rejection, per-node error
+  caching, and a read-only `Graph` view. `fromLive()` binds a live source where
+  events only mark dirty, so a burst of N events costs one snapshot at the next
+  pull rather than N.
+
+  **The public shape is expected to change.** The RFC concludes that the
+  declarative plan layer is the consumer surface and this engine belongs
+  underneath it as an internal module — see **[PND-PROCSUB]** in
+  [PLAN.md](PLAN.md), and [PND_PROCESS_PLAN.md](docs/plans/PND_PROCESS_PLAN.md)
+  for the nine other tickets the investigation produced (node eviction is
+  blocking; column-valued nodes and dirty-per-range are the large wins).
+
+- **process:** **`registry.toJsonSchema({ defs })`** replaces the `base` option
+  added earlier in this cycle — the recursive `$ref` now lives in `$defs` and
+  points at `#/$defs/<name>`, which a caller lifts to its own document root.
+  `base` produced a pointer _into_ the host schema; that passes local
+  validators and is rejected by a real tool API (_"reference can only point to
+  definitions defined at the top level of the schema"_). The projection also
+  now emits `anyOf` rather than `oneOf` (equivalent here — both branch sets are
+  disjoint — and the one tool APIs accept), and every `const` carries its
+  `type`. All three were 400s from live calls that a client-side strict
+  validator had passed. See **[PND-PROCSCHEMA]**.
+- **process:** a **selector resolves its own inline spec**, whether or not the
+  plan also lists it at top level. Requiring both was bookkeeping no schema
+  could express, so it lived in prose — and a caller composing from the schema
+  alone duly selected a spec it had not listed and got a skip instead of an
+  answer.
+- **process:** `columns` and `reduce` on one selector are **no longer
+  exclusive** — asking for both now returns both, which is the legend-chip case
+  [PND-PROCTERM] exists for. Previously the reduction was silently dropped.
+- **process:** **`NodeTiming.inputs` and `NodeTiming.pulled`** — `nodes` now
+  describes the **graph** the plan resolved, not just the subset a selector
+  reached. `inputs` carries each node's upstream ids (a raw source column is
+  named by column), which a consumer cannot derive without reimplementing
+  `specId`'s canonicalization; `pulled` is false for a resolved node this
+  request never read, whose `ms` is therefore zero and says nothing. Reporting
+  the unpulled ones is free — no value is produced for them. Found by drawing
+  the pipeline for M4, which rendered a plan with whole branches missing.
+- **process:** **`run({ assemble: false })` and `RunResult.columns`** — columns
+  are the wire shape; the assembled `TimeSeries` is the in-process convenience
+  over the top of them. A `columns` selector now always hands back the resolved
+  columns by name, and `assemble: false` skips building a widened series for a
+  consumer that could never receive one. The receiving side rebuilds with
+  `TimeSeries.fromColumns`, which adopts a `Float64Array` **zero-copy** and
+  reads NaN as a gap, so reassembly across a boundary is free. Measured at 1M
+  rows, the skipped `appendColumn` is 7.6 ms for a gapless column and 22.4 ms
+  for a gapped one — and every rolling study is gapped. See **[PND-PROCCOL]**.
+- **process:** `registry.toJsonSchema({ base })` — the projection can now be
+  **embedded** in a larger schema. Its recursive `$ref` (the line that lets a
+  caller express _EMA of SMA of px_ without being taught a nesting concept)
+  resolves against the **document root**, so a projection emitted at `#` and
+  then dropped inside a tool's `input_schema` had a dangling pointer — silently,
+  since a `$ref` is not required to resolve. `base` names the pointer the
+  subschema will live at, and `$schema` is now emitted only at the root. Found
+  by putting a model-shaped caller in front of it; see **[PND-PROCSCHEMA]**.
+
+- **process:** **slots** — a plan may now be written as `nodes` keyed by
+  caller-assigned names, with `outputs` keyed by the caller's name for each
+  surfaced result ([PND-PROCSLOT]). A node's `specId` is derived from its op,
+  params and inputs, so it keys the cache correctly and **changes the moment a
+  param does — even though the topology has not**. A slot is the missing
+  identity: `avg` survives a `period` edit that moves every derived id.
+
+  Slots are an alias layer, not a replacement. `specId` remains the cache key,
+  because it is what finds a node again across requests, sessions and callers;
+  one caller's `avg` means nothing to another's. Expansion produces exactly the
+  nested plan the equivalent would have been written as, so **a slot plan hits
+  the cache a nested plan built** — verified at 150k bars, where the slot form
+  of an already-resolved graph comes back `cached` at 0.002 ms per node — and
+  neither `compile` nor `specId` knows slots exist.
+
+  `NodeTiming` gains `slot`, and `Fact` / `OutputInfo` gain `name`. Naming does
+  not require slots: a `Select` in the original form can carry a `name` too.
+
+- **process:** **`registry.toJsonSchema({ shape: 'slots' })`** — the projection
+  for the slot format, and notably **flat**. The nested projection's single most
+  load-bearing line is a recursive `$ref`, because an input may be another spec;
+  making that portable took three rounds against a live API (`oneOf` refused,
+  every node needing an explicit `type`, a body pointer rejected in favour of a
+  top-level `$defs`). With slots an input is a plain string, so the recursion is
+  gone and every one of those problems with it — no `$defs`, no `$ref`, nothing
+  to rebase when embedded.
+- **process:** **`plan(from)`** — a builder that emits a plan
+  ([PND-PROCBUILD]). `add` returns a handle you pass as another node's input,
+  so a mistyped reference is a compile error rather than a resolution failure,
+  and `toJSON()` produces the same envelope a model would compose. It holds no
+  resolution logic and knows nothing about the registry, so there is one
+  resolution path, one cache, and the existing plan tests cover it.
+
+- **process:** **`OpDescriptor.inputs` is the declared `InputDef[]`**, not a
+  count. A count checks arity and says nothing else — a consumer labelling a
+  two-input op could not tell which side was which, and one explaining a
+  rejection could not name the unit an input demands, both of which the
+  registry holds and `describe()` was dropping. **Breaking** for anything
+  reading `inputs` as a number; `inputs.length` is the same value.
+
+- **process:** **`suggest` on a numeric param** — the range worth offering,
+  as distinct from `min`/`max`, the range that rejects. Sliders drawn on the
+  legal range spent 96% of their travel where nobody goes, and a param with
+  no `max` had no drawable range at all: `annualise.barsPerYear` defaults to
+  105,120 against a fallback ceiling of 100, so its control sat pinned at the
+  edge and any drag silently destroyed the annualisation. Advisory — nothing
+  rejects a value outside it — but checked at `define()` time so an inverted
+  or escaping range fails in front of the op's author. It also reaches a
+  composing model, as `description` prose in the JSON Schema projection
+  rather than a custom keyword.
+
+- **process:** **Reductions are nodes.** `last`, `extremes`,
+  `percentileRank` and `shape` were a fixed `reduce` enum on the selector,
+  computed after the graph finished — so the one thing every caller reads
+  sat outside the memo, at 10.85 ms of an 11.6 ms fully-cached run
+  (`percentileRank` alone 6.57 ms, densifying 150,000 values and filtering
+  them twice, every request). They are ordinary registry entries now, with
+  content-addressed ids, cache entries and badges like anything else:
+  **0.09 ms**, a 120× improvement on the warm path. **Breaking** — a
+  selector is `{on, output?}`; `reduce`, `points` and `columns: true` are
+  gone, and what a selector yields is decided by the node it points at.
+- **process:** **`Input` admits `{from, output}`** — `slot#Output` in the
+  flat slot form — so a node can read one named output of a multi-output
+  upstream. A nested input had always read output 0, which nobody hit
+  while `select.output` could pick one at the end.
+- **process:** **Slot-expansion failures are collectable.** They ran
+  before the error policy, so a mistyped input was the only class of bad
+  plan that threw instead of coming back as a `skipped` reason an agent
+  could retry against.
 
 ### Changed
 
@@ -271,6 +402,12 @@ and type-level changes; patch bumps are strictly additive.
   and, for the gap placement the oracle doesn't cover, byte-identical to the
   pre-change build.
 
+- **process:** `RunResult.explain` now covers **every id in `nodes`**, not only
+  the plan's top-level entries — a nested spec is a node in the timing badges
+  (and will be a node in the pipeline view) and had no lineage string to render.
+  `Skipped.spec` also now carries `inputs`, because a plan may hold two specs of
+  the same op and `{op, params}` alone does not say which one to fix. Both are
+  additive to the response.
 - **charts (Storybook):** the `Charts/Histogram` story group moved to
   **`Charts/BarChart/Histogram`** — the histogram is `BarChart` in its `bins`
   mode, not a separate component, and the sidebar now says so. Story IDs under
