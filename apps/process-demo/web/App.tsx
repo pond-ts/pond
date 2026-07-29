@@ -610,9 +610,19 @@ function PanelTop(props: {
  */
 function Reply(props: { entry: Entry }) {
   const { entry } = props;
-  if (entry.pending) return <p className="reply working">Working…</p>;
+  if (entry.pending) {
+    return (
+      <div className="reply">
+        <p className="bubble working">Working…</p>
+      </div>
+    );
+  }
   if (entry.error !== undefined) {
-    return <p className="reply notice bad">{entry.error}</p>;
+    return (
+      <div className="reply">
+        <p className="bubble notice bad">{entry.error}</p>
+      </div>
+    );
   }
   const answer = entry.answer;
   if (answer === undefined) return null;
@@ -622,14 +632,18 @@ function Reply(props: { entry: Entry }) {
     Math.round(answer.rounds.reduce((n, r) => n + r.ms, 0) * 100) / 100;
   return (
     <div className="reply">
-      <p className="reply-text">{answer.text}</p>
-      {answer.cites.length > 0 && (
-        <p className="reply-cites">
-          {answer.cites.map((c) => (
-            <code key={c}>{c}</code>
-          ))}
-        </p>
-      )}
+      <div className="bubble">
+        <p className="reply-text">{answer.text}</p>
+        {answer.cites.length > 0 && (
+          <p className="reply-cites">
+            {answer.cites.map((c) => (
+              <code key={c}>{c}</code>
+            ))}
+          </p>
+        )}
+      </div>
+      {/* Outside the bubble: this is the app talking about the reply, not
+          part of it. */}
       <p className="reply-meta">
         {answer.rounds.length} round{answer.rounds.length === 1 ? '' : 's'} ·{' '}
         {computed} computed, {cached} cached · {engine} ms in the engine of{' '}

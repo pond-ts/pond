@@ -946,11 +946,12 @@ button.chip.on {
 }
 
 /* ── the conversation ────────────────────────────────────────
-   The composer is a chat: the transcript scrolls, the input stays put
-   at the bottom. That needs the panel to be a flex column rather than
-   the plain scrolling block every other panel is — `.panel` sets
-   `overflow: auto`, which here has to move down onto the transcript so
-   the form below it cannot scroll away. */
+   The composer is a dialog: the question sits right, the reply sits
+   left, and the alternation is what makes a scrollback readable at a
+   glance. The transcript scrolls; the input stays put below it, which
+   needs the panel to be a flex column rather than the plain scrolling
+   block every other panel is — `.panel` sets `overflow: auto`, and that
+   has to move down onto the transcript so the form cannot scroll away. */
 .panel.composer {
   display: flex;
   flex-direction: column;
@@ -967,39 +968,66 @@ button.chip.on {
 }
 
 /* A turn is the unit of selection — clicking anywhere in it drives the
-   other two panels — so the whole block gets the accent bar, not just
-   the question. */
+   other two panels — so both sides dim together when it is not the one
+   on screen to the right. */
 .turn {
-  border-left: 2px solid transparent;
-  padding: 0 0 14px 10px;
-  margin-bottom: 14px;
-  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
   cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 120ms ease;
 }
 
-.turn:last-child {
-  border-bottom: none;
+.turn.selected,
+.turn:hover {
+  opacity: 1;
 }
 
-.turn.selected {
-  border-left-color: var(--accent);
-}
-
-.turn:not(.selected) .reply-text {
-  color: var(--muted);
-}
-
+/* The question. Right-aligned and filled, so the eye can find where each
+   exchange begins without reading anything. */
 .asked {
-  margin: 0 0 8px;
-  font-weight: 600;
-}
-
-.reply {
+  align-self: flex-end;
+  max-width: 88%;
   margin: 0;
+  padding: 7px 11px;
+  border-radius: 12px 12px 3px 12px;
+  background: color-mix(in srgb, var(--accent) 20%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
 }
 
-.reply.working {
+/* The reply. Left, and wider — it carries the substance. */
+.reply {
+  align-self: flex-start;
+  max-width: 94%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bubble {
+  margin: 0;
+  padding: 9px 12px;
+  border-radius: 12px 12px 12px 3px;
+  background: #10131a;
+  border: 1px solid var(--line);
+}
+
+/* The selected turn's reply gets the accent edge, so "which one is the
+   panels showing" survives the dimming being subtle. */
+.turn.selected .bubble {
+  border-left: 2px solid var(--accent);
+}
+
+.bubble.working {
   color: var(--muted);
+  font-style: italic;
+}
+
+.bubble.notice {
+  border-radius: 12px 12px 12px 3px;
+  padding: 9px 12px;
 }
 
 .reply-text {
@@ -1026,13 +1054,9 @@ button.chip.on {
 }
 
 .reply-meta {
-  margin: 8px 0 0;
-  font-size: 12px;
+  margin: 0 0 0 2px;
+  font-size: 11px;
   color: var(--muted);
-}
-
-.reply .notice {
-  margin: 9px 0 0;
 }
 
 /* Below the transcript, and not scrolling with it. */
