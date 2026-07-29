@@ -63,6 +63,8 @@ include new features and type-level changes; patch bumps are strictly additive.
   sources (`defineSource`, `SourceRegistry`, `Host.runAsync`): requests carry
   only `{ source, params }`, loaders and credentials stay host-side, and equal
   remote revisions reuse the existing bound graph and all node caches.
+  Concurrent calls for one source identity share a single in-flight load and
+  revision update.
 - **charts:** **`<BarChart binColors>` now works on the single-series
   time-axis path** — per-bar colours for a plain `series={…} column="…"` bar
   layer, the shape a **direction-coloured financial volume row** needs (derive

@@ -189,9 +189,7 @@ export class ProcessBuilder<
         if (Reflect.has(base, property)) {
           return Reflect.get(base, property, receiver);
         }
-        if (typeof property !== 'string' || !this.#registry.has(property)) {
-          return undefined;
-        }
+        if (typeof property !== 'string') return undefined;
         const def = this.#registry.get(property);
         if (isFold(def)) return undefined;
         return (options: Record<string, unknown>) =>

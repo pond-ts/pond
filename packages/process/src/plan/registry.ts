@@ -22,6 +22,9 @@ import type { InputDef, ParamDef, Params, ParamValue } from './types.js';
 /** The compile-time vocabulary retained by a registry as definitions are added. */
 export type DefMap = Readonly<Record<string, Def>>;
 
+type WithDef<Defs extends DefMap, D extends Def> = Omit<Defs, D['name']> &
+  Readonly<Record<D['name'], D>>;
+
 /** One declared output, as `outputsOf` reports it. */
 type OutputShape = { readonly id: string; readonly unit: string };
 
@@ -147,9 +150,17 @@ export class Registry<Defs extends DefMap = {}> {
    * type exists for the programmable fluent authoring layer, where it turns
    * op names, params, input roles and output suffixes into compile-time facts.
    */
-  define<const D extends Def>(
-    def: D,
-  ): Registry<Defs & Readonly<Record<D['name'], D>>> {
+  define<const D extends Def>(def: D): Registry<WithDef<Defs, D>> {
+    if (Object.hasOwn(def.params, 'as')) {
+      throw new ProcessError(
+        `definition '${def.name}' uses reserved param 'as' — fluent plans use it for the node slot`,
+      );
+    }
+    if (def.inputs.some((input) => input.role === 'as')) {
+      throw new ProcessError(
+        `definition '${def.name}' uses reserved input role 'as' — fluent plans use it for the node slot`,
+      );
+    }
     if (!isFold(def)) {
       if (def.outputs.length === 0) {
         throw new ProcessError(`op '${def.name}' declares no outputs`);
@@ -163,7 +174,7 @@ export class Registry<Defs extends DefMap = {}> {
     for (const [key, d] of Object.entries(def.params))
       checkSuggest(def.name, key, d);
     this.#ops.set(def.name, def);
-    return this as Registry<Defs & Readonly<Record<D['name'], D>>>;
+    return this as Registry<WithDef<Defs, D>>;
   }
 
   has(name: string): boolean {

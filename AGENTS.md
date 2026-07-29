@@ -82,7 +82,7 @@ new sections so the contributor chain stays visible.
 ## Multi-agent experiments and the feedback model
 
 Pond is being designed and battle-tested through parallel multi-agent
-experiments. Different agents (Codex, Codex, Gemini) each build
+experiments. Different agents (Claude, Codex, Gemini) each build
 real(ish) things end-to-end, hit pain wherever it falls, write
 friction reports, and the library iterates. The discipline:
 
@@ -119,10 +119,9 @@ friction reports, and the library iterates. The discipline:
 
 ### Context preservation across sessions
 
-Conversation transcripts live locally at
-`~/.Codex/projects/-Users-peter-murphy-Code-pond/<uuid>.jsonl` —
-they're per-machine, not committed, and don't survive context
-compaction within a session.
+Conversation transcripts live in each agent's local application state —
+they're per-machine, not committed, and don't survive context compaction
+within a session.
 
 When a meaningful decision lands (API shape choice, design pivot,
 deferred-but-considered alternative, blind-alley walked-back), the

@@ -149,6 +149,32 @@ band.output('Middle');
 // @ts-expect-error The second input role is required and named.
 band.output('Upper').difference({ as: 'missing-right' });
 
+// Redefining a name replaces the old definition in the accumulated type,
+// matching the registry's runtime Map semantics.
+const replacedOps = createRegistry()
+  .define({
+    name: 'scale',
+    family: 'test',
+    summary: 'Original scale.',
+    params: { by: num({ default: 2 }) },
+    inputs: [{ role: 'source' }],
+    outputs: [{ id: '', unit: 'inherit' }],
+    run: () => [],
+  })
+  .define({
+    name: 'scale',
+    family: 'test',
+    summary: 'Replacement scale.',
+    params: { factor: num({ default: 3 }) },
+    inputs: [{ role: 'source' }],
+    outputs: [{ id: '', unit: 'inherit' }],
+    run: () => [],
+  });
+const replacedPx = process(replacedOps, 'prices').column('px');
+replacedPx.scale({ as: 'replacement', factor: 4 });
+// @ts-expect-error The old definition's params were replaced, not intersected.
+replacedPx.scale({ as: 'old-definition', by: 4 });
+
 void [
   rowCount,
   lo,
@@ -158,4 +184,5 @@ void [
   localDatasetId,
   asyncSource,
   difference,
+  replacedPx,
 ];

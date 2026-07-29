@@ -913,7 +913,10 @@ loads it, keys a long-lived graph by canonical source identity, and only calls
 `setSource` when the loader's required `revision` changes. Equal revisions
 therefore revalidate remotely while preserving all node caches. Param key order
 does not affect source identity, and value types are encoded so `1` and `"1"`
-cannot collide. Local string datasets and synchronous `Host.run` are unchanged.
+cannot collide. Concurrent requests for the same source identity share one
+in-flight load and one revision update, preventing duplicate invalidation and a
+stale response winning a race. Local string datasets and synchronous `Host.run`
+are unchanged.
 An end-to-end tutorial covering the registry, fluent graph, remote binding,
 column/fact selection, cache diagnostics, and refinement now lives at
 `website/docs/process/tutorial.mdx`; it is deliberately unlisted and absent
@@ -925,7 +928,8 @@ derive freshness from a `TimeSeries`.
 
 **Remaining before this is a durable remote-execution surface:**
 
-- coalesce concurrent loads of one source identity and thread cancellation;
+- thread cancellation through a coalesced load without one caller cancelling
+  work another caller still needs;
 - separate caller freshness policy (`cache-only`, max-age, revalidate, reload)
   from the processing plan;
 - project source names and param schemas for a remote/model composer without
@@ -933,9 +937,9 @@ derive freshness from a `TimeSeries`.
 - measure polling and refresh workloads, and state what a loader promises when
   a revision is equal.
 
-**Done when:** concurrent callers produce one load, freshness is explicit and
-tested, the source catalog is embeddable beside the op schema, and equal
-revisions are demonstrated to keep both source and node work flat.
+**Done when:** freshness is explicit and tested, the source catalog is
+embeddable beside the op schema, and equal revisions are demonstrated to keep
+both source and node work flat.
 
 ---
 

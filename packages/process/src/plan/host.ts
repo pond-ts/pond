@@ -100,6 +100,7 @@ export class Host {
   readonly #sources = new Map<string, TimeSeries<SeriesSchema>>();
   readonly #sourceRegistry: SourceRegistry | undefined;
   readonly #loadedSources = new Map<string, LoadedSource>();
+  readonly #loadingSources = new Map<string, Promise<void>>();
 
   constructor(options: {
     registry: Registry;
@@ -191,13 +192,35 @@ export class Host {
     }
 
     const id = sourceId(envelope.from);
+    let loading = this.#loadingSources.get(id);
+    if (loading === undefined) {
+      loading = this.#refreshSource(id, envelope.from);
+      this.#loadingSources.set(id, loading);
+    }
+    try {
+      await loading;
+    } finally {
+      if (this.#loadingSources.get(id) === loading) {
+        this.#loadingSources.delete(id);
+      }
+    }
+    return this.run({ ...envelope, from: id });
+  }
+
+  /**
+   * Loads and applies one source revision as a single in-flight operation.
+   *
+   * `runAsync` shares this promise per canonical source identity. Keeping the
+   * state update inside it means concurrent callers cannot each invalidate the
+   * graph or race to install an older revision.
+   */
+  async #refreshSource(id: string, ref: SourceRef): Promise<void> {
     const previous = this.#loadedSources.get(id);
-    const loaded = await this.#sourceRegistry.load(envelope.from, previous);
+    const loaded = await this.#sourceRegistry!.load(ref, previous);
     if (previous === undefined || previous.revision !== loaded.revision) {
       this.#loadedSources.set(id, loaded);
       this.add(id, loaded.value);
     }
-    return this.run({ ...envelope, from: id });
   }
 }
 
