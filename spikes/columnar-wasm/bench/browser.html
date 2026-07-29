@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>pond-ts columnar — Rust/WASM spike (browser)</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #fbfbfa;
+        --fg: #1c1b19;
+        --muted: #6b6862;
+        --rule: #e2e0db;
+        --win: #1a7f47;
+        --loss: #b03030;
+        --accent: #2b6cb0;
+        --card: #fff;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #16161a;
+          --fg: #e8e6e1;
+          --muted: #9a968e;
+          --rule: #2e2e34;
+          --win: #4ade80;
+          --loss: #f87171;
+          --accent: #7cb3e8;
+          --card: #1d1d22;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 2rem 1.5rem 4rem;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          15px/1.55 ui-sans-serif,
+          system-ui,
+          -apple-system,
+          'Segoe UI',
+          sans-serif;
+      }
+      main {
+        max-width: 1080px;
+        margin: 0 auto;
+      }
+      h1 {
+        font-size: 1.35rem;
+        margin: 0 0 0.25rem;
+        letter-spacing: -0.01em;
+      }
+      h2 {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin: 2rem 0 0.6rem;
+        font-weight: 600;
+      }
+      .sub {
+        color: var(--muted);
+        margin: 0 0 1.5rem;
+        font-size: 0.9rem;
+      }
+      .env {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 0.75rem;
+        margin-bottom: 1.5rem;
+      }
+      .env div {
+        background: var(--card);
+        border: 1px solid var(--rule);
+        border-radius: 8px;
+        padding: 0.6rem 0.75rem;
+      }
+      .env dt {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+      }
+      .env dd {
+        margin: 0.15rem 0 0;
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+      }
+      button {
+        font: inherit;
+        font-weight: 600;
+        padding: 0.55rem 1.1rem;
+        border-radius: 7px;
+        border: 1px solid var(--accent);
+        background: var(--accent);
+        color: #fff;
+        cursor: pointer;
+      }
+      button[disabled] {
+        opacity: 0.5;
+        cursor: progress;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 13.5px;
+      }
+      th,
+      td {
+        padding: 0.35rem 0.6rem;
+        text-align: right;
+        border-bottom: 1px solid var(--rule);
+      }
+      th:first-child,
+      td:first-child {
+        text-align: left;
+      }
+      th {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--muted);
+        font-weight: 600;
+      }
+      td {
+        font-variant-numeric: tabular-nums;
+      }
+      .win {
+        color: var(--win);
+        font-weight: 700;
+      }
+      .loss {
+        color: var(--loss);
+        font-weight: 700;
+      }
+      .scroll {
+        overflow-x: auto;
+      }
+      #log {
+        color: var(--muted);
+        font-size: 0.85rem;
+        margin: 0.75rem 0;
+        min-height: 1.2em;
+      }
+      pre {
+        background: var(--card);
+        border: 1px solid var(--rule);
+        border-radius: 8px;
+        padding: 0.75rem;
+        overflow-x: auto;
+        font-size: 11.5px;
+        max-height: 340px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>pond-ts columnar substrate — Rust/WASM spike</h1>
+      <p class="sub">
+        Same kernels, same case matrix, same methodology as the Node run — so
+        the two engines' numbers are directly comparable. Parity against
+        pond-ts's real
+        <code>Float64Column</code> is verified in-page before any timing is
+        reported.
+      </p>
+
+      <div class="env" id="env"></div>
+      <button id="run">Run benchmark</button>
+      <div id="log"></div>
+      <div id="out"></div>
+      <h2>Raw JSON</h2>
+      <pre id="json">(run the benchmark)</pre>
+    </main>
+
+    <script type="module">
+      import {
+        Float64Column,
+        validityFromBits,
+        validityFromPredicate,
+      } from '/packages/core/dist/columnar/index.js';
+      import '/packages/core/dist/column.js';
+      import {
+        loadSubstrate,
+        hasSimd,
+      } from '/spikes/columnar-wasm/js/loader.mjs';
+      import {
+        WasmFloat64Column,
+        makeBridge,
+      } from '/spikes/columnar-wasm/js/wasm-column.mjs';
+      import {
+        bench,
+        runKernelSweep,
+        runBoundarySweep,
+        makeValues,
+        timerResolutionMs,
+      } from '/spikes/columnar-wasm/bench/suite.mjs';
+
+      const $ = (id) => document.getElementById(id);
+      const log = (m) => ($('log').textContent = m);
+
+      let hostEmitImpl = () => {};
+      const rt = await loadSubstrate({
+        url: new URL(
+          hasSimd()
+            ? '/spikes/columnar-wasm/pkg/pond_columnar.simd.wasm'
+            : '/spikes/columnar-wasm/pkg/pond_columnar.wasm',
+          location.origin,
+        ),
+        simd: hasSimd(),
+        hostEmit: (v, i) => hostEmitImpl(v, i),
+      });
+
+      const envInfo = {
+        engine: navigator.userAgent.includes('Firefox')
+          ? 'SpiderMonkey'
+          : navigator.userAgent.includes('Chrome')
+            ? 'V8'
+            : 'JavaScriptCore',
+        simd128: hasSimd() ? 'available' : 'unavailable',
+        wasmBytes: rt.byteLength.toLocaleString(),
+        instantiateMs: rt.instantiateMs.toFixed(2) + ' ms',
+        cores: navigator.hardwareConcurrency ?? '?',
+        timerRes: (timerResolutionMs() * 1000).toFixed(1) + ' µs',
+      };
+      $('env').innerHTML = Object.entries(envInfo)
+        .map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`)
+        .join('');
+
+      const env = {
+        rt,
+        WasmFloat64Column,
+        makeBridge,
+        Float64Column,
+        validityFromBits,
+        setHostEmit: (fn) => {
+          hostEmitImpl = fn;
+        },
+      };
+
+      /* ── in-page parity gate ─────────────────────────────────────── */
+      function parityCheck() {
+        const problems = [];
+        const cases = [
+          Array.from({ length: 3000 }, (_, i) => Math.sin(i / 7) * 100),
+          Array.from({ length: 3000 }, (_, i) =>
+            i % 11 === 0 ? undefined : i * 0.5,
+          ),
+          Array.from({ length: 500 }, (_, i) =>
+            i % 13 === 0 ? NaN : i % 17 === 0 ? Infinity : i - 250,
+          ),
+        ];
+        for (const [ci, src] of cases.entries()) {
+          const n = src.length;
+          const vals = new Float64Array(n);
+          for (let i = 0; i < n; i += 1)
+            vals[i] = typeof src[i] === 'number' ? src[i] : 0;
+          const validity = validityFromPredicate(
+            n,
+            (i) => typeof src[i] === 'number',
+          );
+          const af = src.every(
+            (v) => typeof v !== 'number' || Number.isFinite(v),
+          );
+          const js = new Float64Column(vals, n, validity, af);
+          const w = WasmFloat64Column.from(rt, vals, validity?.bits, af);
+          const pairs = [
+            ['sum', js.sum(), w.sum()],
+            ['count', js.count(), w.count()],
+            ['mean', js.mean(), w.mean()],
+            ['stdev', js.stdev(), w.stdev()],
+            ['median', js.median(), w.median()],
+            ['p95', js.percentile(95), w.percentile(95)],
+            ['minMax', JSON.stringify(js.minMax()), JSON.stringify(w.minMax())],
+          ];
+          for (const [name, a, b] of pairs) {
+            const same =
+              Object.is(a, b) || (Number.isNaN(a) && Number.isNaN(b));
+            if (!same)
+              problems.push(`case ${ci} ${name}: pond ${a} vs wasm ${b}`);
+          }
+          const jb = js.bin(64, 'minMaxFirstLast');
+          const wb = w.bin(64, 'minMaxFirstLast');
+          for (const ch of ['lo', 'hi', 'first', 'last']) {
+            for (let i = 0; i < 64; i += 1) {
+              const a = jb[ch][i];
+              const b = wb[ch][i];
+              if (!(Object.is(a, b) || (Number.isNaN(a) && Number.isNaN(b)))) {
+                problems.push(`case ${ci} bin.${ch}[${i}]: ${a} vs ${b}`);
+                break;
+              }
+            }
+          }
+          w.free();
+        }
+        return problems;
+      }
+
+      /* ── rendering ───────────────────────────────────────────────── */
+      const cls = (s) => (s >= 1.15 ? 'win' : s <= 0.87 ? 'loss' : '');
+      function table(title, rows, cols) {
+        const h = `<h2>${title}</h2><div class="scroll"><table><thead><tr>${cols
+          .map((c) => `<th>${c.label}</th>`)
+          .join('')}</tr></thead><tbody>${rows
+          .map(
+            (r) =>
+              `<tr>${cols
+                .map((c) => `<td class="${c.cls?.(r) ?? ''}">${c.get(r)}</td>`)
+                .join('')}</tr>`,
+          )
+          .join('')}</tbody></table></div>`;
+        $('out').insertAdjacentHTML('beforeend', h);
+      }
+
+      const KERNEL_COLS = [
+        { label: 'op', get: (r) => r.op },
+        { label: 'shape', get: (r) => r.shape },
+        { label: 'n', get: (r) => r.n.toLocaleString() },
+        { label: 'pond-ts', get: (r) => r.jsMs.toFixed(3) + ' ms' },
+        { label: 'wasm', get: (r) => r.wasmMs.toFixed(3) + ' ms' },
+        {
+          label: '×',
+          get: (r) => r.speedup.toFixed(2) + '×',
+          cls: (r) => cls(r.speedup),
+        },
+        { label: 'ns/elem js', get: (r) => r.jsNsPerElem.toFixed(2) },
+        { label: 'ns/elem wasm', get: (r) => r.wasmNsPerElem.toFixed(2) },
+      ];
+
+      // An async click handler that throws rejects silently — the page
+      // just freezes with the button disabled and the last log line
+      // showing, which is exactly how the first browser run looked.
+      // Surface it instead.
+      const fail = (where, err) => {
+        $('out').insertAdjacentHTML(
+          'beforeend',
+          `<h2>Failed during ${where}</h2><pre>${String(err?.stack ?? err)}</pre>`,
+        );
+        log('failed — see above');
+        $('run').disabled = false;
+      };
+      addEventListener('unhandledrejection', (e) =>
+        fail('an async step', e.reason),
+      );
+      addEventListener('error', (e) => fail('a synchronous step', e.error));
+
+      $('run').addEventListener('click', async () => {
+        try {
+          $('run').disabled = true;
+          $('out').innerHTML = '';
+          log('checking parity…');
+          await new Promise((r) => setTimeout(r, 30));
+
+          const problems = parityCheck();
+          if (problems.length) {
+            $('out').innerHTML =
+              `<h2>Parity FAILED — not reporting timings</h2><pre>${problems
+                .slice(0, 20)
+                .join('\n')}</pre>`;
+            $('run').disabled = false;
+            log('');
+            return;
+          }
+          log('parity ok — running boundary sweep…');
+          await new Promise((r) => setTimeout(r, 30));
+
+          const boundary = runBoundarySweep(env, { budgetMs: 120 });
+          table('Boundary costs', boundary, [
+            { label: 'what', get: (r) => r.what },
+            {
+              label: 'ns/call',
+              get: (r) => (r.nsPerCall != null ? r.nsPerCall.toFixed(1) : ''),
+            },
+            { label: 'ms', get: (r) => (r.ms != null ? r.ms.toFixed(3) : '') },
+            {
+              label: 'GB/s',
+              get: (r) => (r.gbPerSec != null ? r.gbPerSec.toFixed(2) : ''),
+            },
+            {
+              label: 'ns/elem',
+              get: (r) => (r.nsPerElem != null ? r.nsPerElem.toFixed(2) : ''),
+            },
+          ]);
+
+          log('running size sweep (dense)…');
+          await new Promise((r) => setTimeout(r, 30));
+          const sweepA = runKernelSweep(env, {
+            sizes: [10_000, 100_000, 1_000_000],
+            shapes: ['dense'],
+            budgetMs: 120,
+          });
+          table('A · size sweep (dense, allFinite)', sweepA, KERNEL_COLS);
+
+          log('running shape sweep…');
+          await new Promise((r) => setTimeout(r, 30));
+          const sweepB = runKernelSweep(env, {
+            sizes: [1_000_000],
+            shapes: ['gappy30', 'guarded'],
+            budgetMs: 120,
+          });
+          table('B · shape sweep (n = 1M)', sweepB, KERNEL_COLS);
+
+          log('running bridged sweep…');
+          await new Promise((r) => setTimeout(r, 30));
+          // Smaller than the Node sweep on purpose: the browser run exists
+          // to confirm the *shape* of the result on a second engine, not to
+          // produce a second full dataset. Node is the authoritative table.
+          const sweepC = runKernelSweep(env, {
+            sizes: [100_000, 1_000_000],
+            shapes: ['dense'],
+            includeBridged: true,
+            budgetMs: 60,
+            onlyBridged: true,
+          }).filter((r) => r.op.includes('[bridged]'));
+          table('C · bridged (copy-in per call)', sweepC, KERNEL_COLS);
+
+          log('running simd comparison…');
+          await new Promise((r) => setTimeout(r, 30));
+          const rtScalar = await loadSubstrate({
+            url: new URL(
+              '/spikes/columnar-wasm/pkg/pond_columnar.wasm',
+              location.origin,
+            ),
+            simd: false,
+          });
+          const rtSimd = await loadSubstrate({
+            url: new URL(
+              '/spikes/columnar-wasm/pkg/pond_columnar.simd.wasm',
+              location.origin,
+            ),
+            simd: true,
+          });
+          const simdRows = [];
+          for (const n of [100_000, 1_000_000]) {
+            const values = makeValues(n);
+            const cS = WasmFloat64Column.from(rtScalar, values, null, true);
+            const cV = WasmFloat64Column.from(rtSimd, values, null, true);
+            for (const [op, fs, fv] of [
+              ['sum (sequential)', () => cS.sum(), () => cV.sum()],
+              [
+                'sum (reassociated)',
+                () => cS.sumReassociated(),
+                () => cV.sumReassociated(),
+              ],
+              ['minMax', () => cS.minMax(), () => cV.minMax()],
+              [
+                'minMax (lane form)',
+                () => cS.minMax(true),
+                () => cV.minMax(true),
+              ],
+              [
+                `bin(1024,'minMax')`,
+                () => cS.bin(1024, 'minMax'),
+                () => cV.bin(1024, 'minMax'),
+              ],
+            ]) {
+              const s = bench(fs, { budgetMs: 120 });
+              const v = bench(fv, { budgetMs: 120 });
+              simdRows.push({
+                op,
+                n,
+                scalarMs: s.medianMs,
+                simdMs: v.medianMs,
+                speedup: s.medianMs / v.medianMs,
+              });
+            }
+            cS.free();
+            cV.free();
+          }
+          table('D · simd128 build vs baseline build', simdRows, [
+            { label: 'op', get: (r) => r.op },
+            { label: 'n', get: (r) => r.n.toLocaleString() },
+            { label: 'scalar', get: (r) => r.scalarMs.toFixed(3) + ' ms' },
+            { label: 'simd128', get: (r) => r.simdMs.toFixed(3) + ' ms' },
+            {
+              label: '×',
+              get: (r) => r.speedup.toFixed(2) + '×',
+              cls: (r) => cls(r.speedup),
+            },
+          ]);
+
+          const results = {
+            env: envInfo,
+            boundary,
+            sweepA,
+            sweepB,
+            sweepC,
+            simd: simdRows,
+          };
+          $('json').textContent = JSON.stringify(results, null, 2);
+          globalThis.__benchResults = results;
+          log('done.');
+          $('run').disabled = false;
+        } catch (err) {
+          fail('the benchmark', err);
+        }
+      });
+
+      log('ready');
+    </script>
+  </body>
+</html>

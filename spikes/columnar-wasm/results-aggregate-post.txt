@@ -1,0 +1,10 @@
+file:///Users/peter/Code/pond-ts/.claude/worktrees/unruffled-bardeen-b42902/spikes/columnar-wasm/bench/aggregate.mjs:46
+import { tryAggregateColumnarTimeKeyed } from '../../../packages/core/dist/batch/aggregate-columns.js';
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+SyntaxError: The requested module '../../../packages/core/dist/batch/aggregate-columns.js' does not provide an export named 'tryAggregateColumnarTimeKeyed'
+    at ModuleJob._instantiate (node:internal/modules/esm/module_job:182:21)
+    at async ModuleJob.run (node:internal/modules/esm/module_job:266:5)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:644:26)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:116:5)
+
+Node.js v22.15.0
