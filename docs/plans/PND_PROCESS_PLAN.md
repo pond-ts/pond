@@ -935,3 +935,50 @@ buffer is ~229× per pull at 50k events, because a pull materializes
 bucket count rather than event count. That path exposes **closed buckets
 only** — the in-progress bucket is invisible until an event crosses its
 end — so it must remain a documented consumer choice, never a default.
+
+---
+
+### [PND-PROCHELD] — A caller cannot ask what is already resident
+
+Found by closing the demo's answer loop (M6). Asked a follow-up — "is
+that high or low compared with the rest of the history?" — the model
+replied that it **could not** compare against the previous turn's value,
+because it did not have that result in hand. Those nodes were still
+resident and would have cost nothing to re-read. It simply had no reason
+to believe re-asking was cheap.
+
+One line of prompt — "the cache outlives the turn; if an earlier result
+would help, ask for it again" — turned the same follow-up from a refusal
+into a full comparison at **`computed=2, cached=3`**. That fix works and
+is also the evidence that something is missing: the capability was there
+the whole time, and the only way to reach it was to tell a model it
+existed.
+
+**The gap.** A response reports `cached` per node _after_ the work is
+requested. Nothing lets a caller ask, before composing, **what the host
+already holds**. An agent that could see the resident set would plan
+differently — reach for the study it already has rather than the
+equivalent one it would have to build, and stop treating a comparison
+against last turn as unavailable.
+
+**What it is not.** Not a cache API, and not the eviction budget — that
+is [PND-PROCCACHE], and this ticket must not quietly become it. This is a
+read-only view: names, and enough lineage to recognise one.
+
+**Open questions.**
+
+- **What is a name here?** A `specId` is exact and unreadable; a `label`
+  is readable and ambiguous. The demo's slots are caller-local and mean
+  nothing across sessions, so they cannot be it.
+- **Whose residency?** `host.datasets` already reports a node _count_ per
+  dataset. The natural home is the same place, but a count was enough for
+  a badge and is not enough for this.
+- **Does it scale?** After a slider drag the demo held 55 nodes; a long
+  session holds far more, and a list of every resident node is not a
+  thing to put in a context window. Some projection — by op, by family,
+  by what a plan would reuse — is probably the real shape, and finding it
+  is most of the work.
+
+**Done when:** a composing agent, given the resident view and no prompt
+instruction about caching, re-reads an earlier turn's node instead of
+declining to compare.
