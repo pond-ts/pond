@@ -817,3 +817,42 @@ button.tab.on {
   color: var(--muted);
   margin: 0 0 8px;
 }
+
+/* React Flow ships its controls in a light theme — its own stylesheet is
+   imported for layout, so they arrive as white boxes on a dark panel. */
+.react-flow__controls {
+  box-shadow: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--panel);
+}
+
+.react-flow__controls-button {
+  width: 22px;
+  height: 22px;
+  padding: 4px;
+  background: var(--panel);
+  border: none;
+  border-bottom: 1px solid var(--line);
+  fill: var(--muted);
+}
+
+.react-flow__controls-button:last-child {
+  border-bottom: none;
+}
+
+.react-flow__controls-button:hover:not(:disabled) {
+  background: #262b34;
+  fill: var(--accent);
+}
+
+.react-flow__controls-button:disabled {
+  opacity: 0.4;
+  fill: var(--line);
+}
+
+.react-flow__controls-button svg {
+  max-width: 11px;
+  max-height: 11px;
+}

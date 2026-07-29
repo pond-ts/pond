@@ -654,7 +654,9 @@ function RequestPanel(props: {
   onTune: (entry: Entry, slot: string, params: Record<string, unknown>) => void;
 }) {
   const { entry } = props;
-  const [tab, setTab] = useState<'json' | 'graph'>('json');
+  // `graph` leads, so it is also the default — a first tab that is not
+  // what opens reads as a mistake. Its empty state says so plainly.
+  const [tab, setTab] = useState<'graph' | 'raw'>('graph');
 
   // The selected node, resolved back to the slot and op the envelope
   // declared — `focus` is an id, because that is what the pipeline and
@@ -742,7 +744,7 @@ function RequestPanel(props: {
         }
         tabs={
           <>
-            {(['json', 'graph'] as const).map((t) => (
+            {(['graph', 'raw'] as const).map((t) => (
               <button
                 key={t}
                 className={t === tab ? 'tab on' : 'tab'}
@@ -807,7 +809,7 @@ function ResultsPanel(props: {
   return (
     <section className="panel">
       <PanelTop
-        title="Output"
+        title="Results"
         meta={
           shown && (
             <>
