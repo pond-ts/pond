@@ -96,9 +96,14 @@ spike's central conclusion. The spike measured dense `sum` at exactly 1.00×
 against a hand-written Rust kernel and read that as "there is nothing here".
 Both sides were running scalar sequential accumulation, so of course they
 tied. polars does the same reduction ~9× faster, which shows the headroom
-was never the language — it is vectorisation and reassociation. That is
-[PND-KERNEL] item 3, already in the plan, blocked on a semantics decision
-(reassociation is not bit-identical) rather than on effort.
+was never the language — it is vectorisation and reassociation.
+
+That reading has since been acted on and confirmed. Blocked summation
+shipped in TypeScript ([blocked-summation.md](blocked-summation.md)) and
+took `close.mean()` from 0.47 ms to **0.19 ms**, closing the gap to polars
+from 8.98× to ~3.8× with no Rust involved. The residue is genuine wide
+SIMD, which is exactly what WASM cannot deliver — its `simd128` is 2-wide
+`f64` and measured **1.00×** across every kernel in the spike.
 
 **A possible optional sidecar, later.** If a workload ever demands bulk scan
 throughput that vectorised TypeScript cannot reach, a Node-only sidecar

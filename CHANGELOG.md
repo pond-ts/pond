@@ -70,6 +70,30 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Changed
 
+- **core:** **`sum` and `mean` are ~2.5× faster on long runs**, and their
+  results may differ from previous versions in the last ulp. Runs of **32 or
+  more** cells now accumulate into eight independent partial sums rather than
+  one running total, which breaks the loop's dependency chain — 2.51× on a
+  dense column, 2.22× through a validity bitmap, and `close.mean()` over 500k
+  bars goes from 0.47 ms to **0.19 ms**.
+
+  Floating-point addition is not associative, so this **can change the
+  answer** — worth being precise about the direction, though: the blocked
+  result is _generally more accurate_, not less. Sequential summation
+  accumulates rounding error as O(n·ε); eight partial sums accumulate it as
+  O((n/8)·ε + 8·ε). Summing 10⁶ copies of `0.1` lands strictly closer to the
+  true answer than before, and `1e16` followed by 8191 `1`s no longer absorbs
+  every `1` into the exponent gap.
+
+  What is guaranteed: runs of **fewer than 32** cells are unchanged bit for
+  bit; which cells contribute is unchanged (the validity bitmap and the
+  non-finite policy behave exactly as before — only the order of the
+  additions moved); `stdev`, the rolling-window kernel that backs
+  `@pond-ts/financial`'s studies, and the row-API path are all untouched.
+  pond-ts does not guarantee that a columnar sum and a row sum of the same
+  values agree bit for bit. Full rationale, measurements, and the threshold
+  reasoning in [`docs/notes/blocked-summation.md`](docs/notes/blocked-summation.md).
+
 - **core:** **`aggregate()` is up to 2.5× faster**, from two changes to how it
   produces its result. Neither changes the answer: same values, same interval
   keys and labels, same `undefined` (not `NaN`) for an empty bucket, and the

@@ -1,4 +1,5 @@
 import type { Float64Column } from '../columnar/index.js';
+import { BLOCKED_MIN, blockedSum, blockedSumMasked } from './blocked.js';
 import type { ReducerDef } from './types.js';
 
 /**
@@ -11,6 +12,12 @@ import type { ReducerDef } from './types.js';
  * method delegating through `this`, because callers detach the reducer
  * (`const reduce = def.reduceColumnRange`) and a `this`-bound body would
  * break when they do.
+ *
+ * Runs of at least {@link BLOCKED_MIN} cells on the `allFinite` paths
+ * accumulate into eight independent partial sums (see `./blocked.ts`),
+ * which is 2.2–2.5× faster and — because floating-point addition is not
+ * associative — may differ from the sequential result in the last ulp.
+ * Shorter runs stay sequential and so stay bit-identical.
  */
 function sumRange(col: Float64Column, start: number, end: number): number {
   const values = col._values;
@@ -23,10 +30,14 @@ function sumRange(col: Float64Column, start: number, end: number): number {
   // accumulate, identical result.
   if (col.allFinite) {
     if (validity === undefined) {
+      if (end - start >= BLOCKED_MIN) return blockedSum(values, start, end);
       for (let i = start; i < end; i += 1) s += values[i]!;
       return s;
     }
     const bits = validity.bits;
+    if (end - start >= BLOCKED_MIN) {
+      return blockedSumMasked(values, bits, start, end);
+    }
     for (let i = start; i < end; i += 1) {
       if ((bits[i >> 3]! & (1 << (i & 7))) !== 0) s += values[i]!;
     }

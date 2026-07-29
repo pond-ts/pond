@@ -1,4 +1,5 @@
 import type { Float64Column } from '../columnar/index.js';
+import { BLOCKED_MIN, blockedSum, blockedSumMasked } from './blocked.js';
 import type { ReducerDef } from './types.js';
 
 /**
@@ -11,6 +12,12 @@ import type { ReducerDef } from './types.js';
  * `validity.definedCount` in O(1), while a sub-range has to popcount it
  * with `countInRange`. Sharing one body would have made
  * `Float64Column.mean()` do an O(n/8) pass it does not need.
+ *
+ * The numerator follows `sum`: runs of at least {@link BLOCKED_MIN} on
+ * the `allFinite` paths accumulate into eight partial sums, which may
+ * differ from the sequential result in the last ulp (see
+ * `./blocked.ts`). Only the summation changes — the divisor is counted
+ * exactly as before.
  */
 function avgRange(
   col: Float64Column,
@@ -27,12 +34,20 @@ function avgRange(
   // finite guard the non-finite policy otherwise requires.
   if (col.allFinite) {
     if (validity === undefined) {
+      if (end <= start) return undefined;
+      if (end - start >= BLOCKED_MIN) {
+        return blockedSum(values, start, end) / (end - start);
+      }
       for (let i = start; i < end; i += 1) s += values[i]!;
-      return end <= start ? undefined : s / (end - start);
+      return s / (end - start);
     }
     const bits = validity.bits;
-    for (let i = start; i < end; i += 1) {
-      if ((bits[i >> 3]! & (1 << (i & 7))) !== 0) s += values[i]!;
+    if (end - start >= BLOCKED_MIN) {
+      s = blockedSumMasked(values, bits, start, end);
+    } else {
+      for (let i = start; i < end; i += 1) {
+        if ((bits[i >> 3]! & (1 << (i & 7))) !== 0) s += values[i]!;
+      }
     }
     const defined = validity.countInRange(start, end);
     return defined === 0 ? undefined : s / defined;
@@ -83,12 +98,20 @@ export const avg: ReducerDef = {
     // (docs/notes/reducer-nan-policy.md) otherwise requires.
     if (col.allFinite) {
       if (validity === undefined) {
+        if (col.length === 0) return undefined;
+        if (col.length >= BLOCKED_MIN) {
+          return blockedSum(values, 0, col.length) / col.length;
+        }
         for (let i = 0; i < col.length; i += 1) s += values[i]!;
-        return col.length === 0 ? undefined : s / col.length;
+        return s / col.length;
       }
       const bits = validity.bits;
-      for (let i = 0; i < col.length; i += 1) {
-        if ((bits[i >> 3]! & (1 << (i & 7))) !== 0) s += values[i]!;
+      if (col.length >= BLOCKED_MIN) {
+        s = blockedSumMasked(values, bits, 0, col.length);
+      } else {
+        for (let i = 0; i < col.length; i += 1) {
+          if ((bits[i >> 3]! & (1 << (i & 7))) !== 0) s += values[i]!;
+        }
       }
       const count = validity.definedCount;
       return count === 0 ? undefined : s / count;

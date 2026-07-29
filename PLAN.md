@@ -191,14 +191,39 @@ consumer signal. Plan:
   numeric kernel, and 2.2–2.6× end to end on the reduce family, but the
   TypeScript work below is 5–10× larger and comes first). The control
   experiment isolated four wins that are pure algorithm and land in
-  TypeScript. **Quickselect for `reducePercentileColumn` has shipped —
-  measured 12.9× on `median`/`p95` at 1M rows.** Remaining: a 4-lane
-  `Float64Column.minMax` (**1.27–1.50×**, bit-identical), 8-accumulator
-  `sum`/`mean` (**1.83–1.85×**, but reassociation is _not_ bit-identical —
-  needs a semantics decision against the cross-path tests), and a branchless
-  finite guard for `allFinite: false` reductions. Acceptance benchmarks
-  already exist in `spikes/columnar-wasm/bench/controls.mjs`; each control is
-  checked against pond-ts's answer before it is timed.
+  TypeScript. Two have shipped:
+  - **Quickselect for `reducePercentileColumn`** — measured 12.9× on
+    `median`/`p95` at 1M rows.
+  - **Blocked (8-accumulator) `sum`/`mean`** — 2.51× dense, 2.22× through a
+    validity bitmap, **`close.mean()` 0.47 ms → 0.19 ms** end to end. The
+    semantics decision this was blocked on is made and recorded in
+    [blocked-summation.md](docs/notes/blocked-summation.md): reassociate
+    above a 32-cell threshold, leave shorter runs bit-identical. Worth
+    noting the direction — blocked summation is _more_ accurate than
+    sequential (error grows as O((n/k)·ε + k·ε) rather than O(n·ε)), so the
+    trade was speed **and** precision against reproducibility of the exact
+    previous bits, not speed against accuracy.
+
+  Remaining: a branchless finite guard for `allFinite: false` reductions,
+  and blocking the guarded sum path (measured **1.84×**, deliberately not
+  taken — after [PND-WCNAN] almost nothing lands there; see the note).
+
+  **Correction: the 4-lane `Float64Column.minMax` is _not_ bit-identical**,
+  as this entry previously claimed. `+0` and `-0` compare equal, so
+  `lo <= x ? lo : x` keeps whichever the traversal reached first, and
+  lane-parallel traversal reaches a different one — verified: 16 cells, all
+  `1` except `values[1] = +0` and `values[4] = -0`, sequential gives `+0`
+  and 4-lane gives `-0` (`===` equal, `Object.is` not — and vitest's `toBe`
+  uses `Object.is`). `minMax` explicitly commits to matching
+  `[col.min(), col.max()]` (PR #153), so the lane form would break that
+  commitment on `±0` input for 1.27–1.50× on an operation already costing
+  0.49 ms. Not worth it as scoped; if it is ever wanted, it needs a signed
+  zero fixup in the combine, not a straight lane split.
+
+  Acceptance benchmarks already exist in
+  `spikes/columnar-wasm/bench/controls.mjs`; each control is checked against
+  pond-ts's answer before it is timed.
+
 - **[PND-TOARROW]** — A zero-copy Arrow **export** door. pond-ts's columnar
   buffers are already Arrow-shaped — the validity bitmap is
   `bits[i >> 3] & (1 << (i & 7))`, LSB-first one bit per value, which is
