@@ -19,6 +19,9 @@ export { int, num, choice, flag } from './params.js';
 import { isFold, type Def, type FoldDef } from './types.js';
 import type { InputDef, ParamDef, Params, ParamValue } from './types.js';
 
+/** The compile-time vocabulary retained by a registry as definitions are added. */
+export type DefMap = Readonly<Record<string, Def>>;
+
 /** One declared output, as `outputsOf` reports it. */
 type OutputShape = { readonly id: string; readonly unit: string };
 
@@ -134,10 +137,19 @@ export interface OpDescriptor {
   }[];
 }
 
-export class Registry {
+export class Registry<Defs extends DefMap = {}> {
   readonly #ops = new Map<string, Def>();
 
-  define(def: Def): this {
+  /**
+   * Adds a definition and retains its literal shape in the return type.
+   *
+   * Runtime callers still validate through this registry. The accumulated
+   * type exists for the programmable fluent authoring layer, where it turns
+   * op names, params, input roles and output suffixes into compile-time facts.
+   */
+  define<const D extends Def>(
+    def: D,
+  ): Registry<Defs & Readonly<Record<D['name'], D>>> {
     if (!isFold(def)) {
       if (def.outputs.length === 0) {
         throw new ProcessError(`op '${def.name}' declares no outputs`);
@@ -151,7 +163,7 @@ export class Registry {
     for (const [key, d] of Object.entries(def.params))
       checkSuggest(def.name, key, d);
     this.#ops.set(def.name, def);
-    return this;
+    return this as Registry<Defs & Readonly<Record<D['name'], D>>>;
   }
 
   has(name: string): boolean {
@@ -428,7 +440,7 @@ function jsonSchemaForParam(d: ParamDef): Record<string, unknown> {
  * they are privileged. They are plain defs: `define` over a name to
  * replace one.
  */
-export function createRegistry(options?: { folds?: boolean }): Registry {
+export function createRegistry(options?: { folds?: boolean }): Registry<{}> {
   const registry = new Registry();
   if (options?.folds !== false) {
     for (const fold of STANDARD_FOLDS) registry.define(fold);

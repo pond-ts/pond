@@ -323,10 +323,6 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
   // Every id any selector mentions, including a `crossings` `against`.
   const needed = new Map<string, boolean>(); // id -> report in `outputs`
   const selectors: { sel: Select; id: string }[] = [];
-  /** The caller's name per id, for the columns branch. */
-  const nameOf = new Map<string, string>();
-  /** A single named output, when the selector narrowed to one. */
-  const wantedOutput = new Map<string, string>();
   for (const sel of select) {
     let id: string;
     try {
@@ -347,14 +343,12 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
       continue;
     }
     selectors.push({ sel, id });
-    if (sel.name !== undefined) nameOf.set(id, sel.name);
     // Surfacing a column-producing node means surfacing its columns.
     // There is no longer a `columns: true` to opt into, because what a
     // selector yields is decided by the node it points at.
     const compiled = graph.get(id);
     const isFoldNode = compiled?.fold === true;
     if (!isFoldNode) needed.set(id, true);
-    if (sel.output !== undefined) wantedOutput.set(id, sel.output);
   }
 
   const outputs: Record<string, OutputInfo[]> = {};
@@ -456,21 +450,29 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
       const compiled = graph.get(id);
       if (compiled === undefined) continue;
       const cols = columnsOf(registry, compiled.spec, id);
-      const wanted = wantedOutput.get(id);
       if (report) outputs[id] = [];
-      registry.outputsOf(registry.get(compiled.spec.op)).forEach((o, n) => {
-        if (wanted !== undefined && o.id !== wanted) return;
-        const col = columnFor(id, o.id);
-        drawn![cols[n]!] = col;
-        if (assemble) assembled = appendColumn(assembled!, cols[n]!, col);
-        if (report) {
-          outputs[id]!.push({
-            column: cols[n]!,
-            unit: unitOf(registry, compiled.spec, graph.units, n),
-            ...(nameOf.has(id) && { name: nameOf.get(id)! }),
-          });
-        }
-      });
+      const selections = selectors.filter((selection) => selection.id === id);
+      for (const { sel } of selections) {
+        registry.outputsOf(registry.get(compiled.spec.op)).forEach((o, n) => {
+          if (sel.output !== undefined && o.id !== sel.output) return;
+          const columnName = cols[n]!;
+          const col = columnFor(id, o.id);
+          // Several selectors may surface the same node or column under
+          // different caller names. Report every selection, but materialize
+          // each physical column once.
+          if (drawn![columnName] === undefined) {
+            drawn![columnName] = col;
+            if (assemble) assembled = appendColumn(assembled!, columnName, col);
+          }
+          if (report) {
+            outputs[id]!.push({
+              column: columnName,
+              unit: unitOf(registry, compiled.spec, graph.units, n),
+              ...(sel.name !== undefined && { name: sel.name }),
+            });
+          }
+        });
+      }
     }
   }
 

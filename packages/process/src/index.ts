@@ -68,6 +68,7 @@ export {
   flag,
 } from './plan/registry.js';
 export { UnknownOpError, ParamError } from './plan/registry.js';
+export type { DefMap } from './plan/registry.js';
 export { isFold } from './plan/types.js';
 export {
   STANDARD_FOLDS,
@@ -89,13 +90,46 @@ export {
 export { bind, BoundGraph, UnitError } from './plan/graph.js';
 export { expandSlots, SlotError } from './plan/slots.js';
 export { plan, PlanBuilder, BuilderError } from './plan/builder.js';
-export type { NodeHandle, InputRef, BuiltRequest } from './plan/builder.js';
+export type {
+  NodeHandle,
+  OutputHandle,
+  InputRef,
+  BuiltRequest,
+} from './plan/builder.js';
+export { process, ProcessBuilder } from './plan/fluent.js';
+export type {
+  BuildOptions,
+  FluentColumnRef,
+  SelectedColumnRef,
+  SingleColumnNode,
+  MultiColumnNode,
+  ColumnSelection,
+  FactRef,
+  FluentRequest,
+} from './plan/fluent.js';
+export {
+  createSourceRegistry,
+  defineSource,
+  sourceId,
+  SourceRegistry,
+  UnknownSourceError,
+} from './plan/source.js';
+export type {
+  SourceParams,
+  SourceRef,
+  LoadedSource,
+  SourceLoadContext,
+  SourceDef,
+} from './plan/source.js';
 export type { SlotDef, Slots } from './plan/slots.js';
 export { createHost, Host, toWire, UnknownDatasetError } from './plan/host.js';
 export type {
   Envelope,
+  AsyncEnvelope,
   PlanEnvelope,
   SlotEnvelope,
+  AsyncPlanEnvelope,
+  AsyncSlotEnvelope,
   DatasetInfo,
   WireResult,
 } from './plan/host.js';

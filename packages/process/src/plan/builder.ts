@@ -39,14 +39,21 @@
 
 import { ProcessError } from '../errors.js';
 import type { Select } from './run.js';
+import type { SourceRef } from './source.js';
 import type { SlotDef, Slots } from './slots.js';
 import type { ParamValue } from './types.js';
 
 /** Thrown when a graph is built wrong — before it is ever sent. */
 export class BuilderError extends ProcessError {}
 
-/** What a node's inputs may be: a source column name, or another node. */
-export type InputRef = string | NodeHandle;
+/** One named output of a multi-output node. */
+export interface OutputHandle {
+  readonly slot: string;
+  readonly output: string;
+}
+
+/** What a node's inputs may be: a source column, a node, or one named output. */
+export type InputRef = string | NodeHandle | OutputHandle;
 
 /**
  * A reference to a node in the graph under construction.
@@ -74,20 +81,20 @@ export interface NodeHandle {
 }
 
 /** The envelope a builder produces — what `Host.run` takes. */
-export interface BuiltRequest {
-  readonly from: string;
+export interface BuiltRequest<From extends string | SourceRef = string> {
+  readonly from: From;
   readonly as?: string;
   readonly nodes: Slots;
   readonly outputs: Readonly<Record<string, Select>>;
 }
 
-export class PlanBuilder {
-  readonly #from: string;
+export class PlanBuilder<From extends string | SourceRef = string> {
+  readonly #from: From;
   #as: string | undefined;
   readonly #nodes = new Map<string, SlotDef>();
   readonly #outputs = new Map<string, Select>();
 
-  constructor(from: string) {
+  constructor(from: From) {
     this.#from = from;
   }
 
@@ -121,7 +128,13 @@ export class PlanBuilder {
     this.#nodes.set(slot, {
       op,
       ...(params !== undefined && { params }),
-      in: inputs.map((i) => (typeof i === 'string' ? i : i.slot)),
+      in: inputs.map((i) =>
+        typeof i === 'string'
+          ? i
+          : 'output' in i
+            ? `${i.slot}#${i.output}`
+            : i.slot,
+      ),
     });
     return this.#handle(slot);
   }
@@ -184,7 +197,7 @@ export class PlanBuilder {
   }
 
   /** The envelope. Plain JSON — nothing here survives into the request. */
-  toJSON(): BuiltRequest {
+  toJSON(): BuiltRequest<From> {
     return {
       from: this.#from,
       ...(this.#as !== undefined && { as: this.#as }),
@@ -194,6 +207,8 @@ export class PlanBuilder {
   }
 }
 
-export function plan(from: string): PlanBuilder {
+export function plan<const From extends string | SourceRef>(
+  from: From,
+): PlanBuilder<From> {
   return new PlanBuilder(from);
 }

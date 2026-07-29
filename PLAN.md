@@ -306,12 +306,11 @@ whether it stays one.
   M5's 2.811 ms return trip works _because_ the node persisted under its content
   id. Connections stay on the node (no full node editor is wanted); how a slot
   reference is disambiguated from a source column name is open.
-- **[PND-PROCBUILD]** — A programmable API that **emits** a plan, for consumers
-  building graphs in application code rather than composing JSON. Depends on
-  [PND-PROCSLOT]: a builder needs a stable handle and a content-addressed id
-  cannot be one. The builder produces the same envelope a model would, so there
-  is one resolution path and one cache. Open: how far to type params off the
-  registry's `ParamDef`, and whether `specId` ships to the client.
+- **[PND-PROCSOURCE]** — Harden the new opaque async-source boundary. The first
+  slice (`defineSource`, `SourceRegistry`, `Host.runAsync`) keeps loaders and
+  credentials host-side and preserves a bound graph across equal revisions.
+  Remaining: concurrent-load coalescing, cancellation/freshness policy, source
+  schema projection for remote composers, and a measured revision contract.
 - **[PND-PROCSUB]** — Decide the substrate and packaging: the RFC concludes one
   package with the engine internal, while [#544](https://github.com/pond-ts/pond/pull/544)
   proposes publishing it. Evidence now favours keeping the graph (1.34–1.40× on

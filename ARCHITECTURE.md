@@ -646,7 +646,7 @@ TimeSeries`. Ingest-time normalization (timestamp parsing, missing-
 The streaming RFC's line to hold is explicit: **resist operator-graph
 vocabulary.** Pond's user model is "you have a `LiveSeries` and you
 chain transforms on it," not "submit a job graph to a runtime," and
-`docs/rfcs/streaming.md` lists an *operator-graph public API* among its
+`docs/rfcs/streaming.md` lists an _operator-graph public API_ among its
 deferrals. That constraint is about **core**, and it stands.
 
 `@pond-ts/process` is how a graph can exist without violating it:
@@ -655,7 +655,7 @@ deferrals. That constraint is about **core**, and it stands.
   method, a registry, or a planner. A user who never installs
   `@pond-ts/process` sees the chain API unchanged.
 - **It targets the case chaining genuinely can't express** — a pipeline
-  whose *shape is data*: assembled at runtime from config, edited by a
+  whose _shape is data_: assembled at runtime from config, edited by a
   user in a node editor, or one expensive computation fanned out to
   several consumers. When the pipeline is known at authoring time, the
   chain is strictly better and the README says so.
@@ -675,7 +675,18 @@ The engine itself (pull evaluation, memoization, per-outlet version
 stamps that stop a cascade when a recomputed value is unchanged) is
 value-agnostic; pond types appear only in the live binding.
 
-If graph vocabulary ever *does* earn a place in core, this package is
+The declarative layer above it has two authoring routes into the same slot
+envelope. `PlanBuilder` is registry-independent and mirrors the wire shape;
+`ProcessBuilder` binds a registry and projects its literal definitions as
+fluent, typed operation methods. Neither resolves nodes or computes ids.
+
+Remote inputs use the same identity/freshness split as graph nodes.
+`SourceRegistry` keeps async loaders and credentials on the host while a plan
+carries only `{ source, params }`. Canonical source identity selects the
+long-lived `BoundGraph`; the loader's revision decides whether `setSource`
+invalidates it. Equal revisions leave the graph untouched.
+
+If graph vocabulary ever _does_ earn a place in core, this package is
 the evidence base for what shape it should take — not a precedent that
 it should.
 
@@ -726,7 +737,8 @@ it should.
 | Live aggregation                               | `LiveAggregation.ts`, `LiveRollingAggregation.ts`, `LivePartitionedSyncRolling.ts`, `triggers.ts` |
 | Live partitioning                              | `LivePartitionedSeries.ts`                                                                        |
 | React hooks                                    | `packages/react/src/`                                                                             |
-| Dataflow graph engine (opt-in package)         | `packages/process/src/` (`port.ts` = ports + versions, `node.ts` = pull evaluation)                |
+| Dataflow graph engine (opt-in package)         | `packages/process/src/` (`port.ts` = ports + versions, `node.ts` = pull evaluation)               |
+| Declarative graph authoring / remote sources   | `packages/process/src/plan/` (`fluent.ts`, `source.ts`, `host.ts`)                                |
 | Public exports                                 | `packages/core/src/index.ts`                                                                      |
 | Plan / status / roadmap                        | `PLAN.md`                                                                                         |
 | Process / discipline / release                 | `CLAUDE.md`                                                                                       |

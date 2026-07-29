@@ -18,6 +18,12 @@ import { bind, BoundGraph } from './graph.js';
 import type { Registry } from './registry.js';
 import { run, type RunResult, type Select, type ErrorPolicy } from './run.js';
 import type { Slots } from './slots.js';
+import {
+  sourceId,
+  type LoadedSource,
+  type SourceRef,
+  type SourceRegistry,
+} from './source.js';
 import type { Plan, Units } from './types.js';
 
 /** Thrown when a request names a dataset the host has not been given. */
@@ -32,8 +38,8 @@ export class UnknownDatasetError extends ProcessError {}
  * deliberately does not window one, or the request would have two places
  * that slice time and they would eventually disagree.
  */
-interface EnvelopeBase {
-  readonly from: string;
+interface EnvelopeBase<From extends string | SourceRef> {
+  readonly from: From;
   readonly as?: string;
   readonly onError?: ErrorPolicy;
   /** See {@link RunOptions.assemble}. A wire consumer wants `false`. */
@@ -41,7 +47,7 @@ interface EnvelopeBase {
 }
 
 /** The original form: a plan of nested specs, selected inline. */
-export interface PlanEnvelope extends EnvelopeBase {
+export interface PlanEnvelope extends EnvelopeBase<string> {
   readonly process: Plan;
   readonly select?: readonly Select[];
 }
@@ -53,12 +59,31 @@ export interface PlanEnvelope extends EnvelopeBase {
  * will read back, so both survive a param edit that moves every derived
  * id. What a `PlanBuilder` emits.
  */
-export interface SlotEnvelope extends EnvelopeBase {
+export interface SlotEnvelope extends EnvelopeBase<string> {
   readonly nodes: Slots;
   readonly outputs?: Readonly<Record<string, Select>>;
 }
 
 export type Envelope = PlanEnvelope | SlotEnvelope;
+
+/** Nested-plan request whose source must be resolved asynchronously. */
+export interface AsyncPlanEnvelope extends EnvelopeBase<SourceRef> {
+  readonly process: Plan;
+  readonly select?: readonly Select[];
+}
+
+/** Slot request whose source must be resolved asynchronously. */
+export interface AsyncSlotEnvelope extends EnvelopeBase<SourceRef> {
+  readonly nodes: Slots;
+  readonly outputs?: Readonly<Record<string, Select>>;
+}
+
+/** What `Host.runAsync` accepts: local requests too, for composable callers. */
+export type AsyncEnvelope = Envelope | AsyncPlanEnvelope | AsyncSlotEnvelope;
+
+function isLocalEnvelope(envelope: AsyncEnvelope): envelope is Envelope {
+  return typeof envelope.from === 'string';
+}
 
 export interface DatasetInfo {
   readonly id: string;
@@ -73,10 +98,17 @@ export class Host {
   readonly #units: Units;
   readonly #graphs = new Map<string, BoundGraph>();
   readonly #sources = new Map<string, TimeSeries<SeriesSchema>>();
+  readonly #sourceRegistry: SourceRegistry | undefined;
+  readonly #loadedSources = new Map<string, LoadedSource>();
 
-  constructor(options: { registry: Registry; units?: Units }) {
+  constructor(options: {
+    registry: Registry;
+    units?: Units;
+    sources?: SourceRegistry;
+  }) {
     this.registry = options.registry;
     this.#units = options.units ?? {};
+    this.#sourceRegistry = options.sources;
   }
 
   /**
@@ -142,11 +174,37 @@ export class Host {
           ...options,
         });
   }
+
+  /**
+   * Resolves either a preloaded dataset or an opaque asynchronous source.
+   *
+   * Equal revisions preserve the graph untouched. A changed revision updates
+   * its source in place, retaining compiled nodes while normal invalidation
+   * propagates from the new value.
+   */
+  async runAsync(envelope: AsyncEnvelope): Promise<RunResult> {
+    if (isLocalEnvelope(envelope)) return this.run(envelope);
+    if (this.#sourceRegistry === undefined) {
+      throw new ProcessError(
+        `source '${envelope.from.source}' cannot load — this host has no source registry`,
+      );
+    }
+
+    const id = sourceId(envelope.from);
+    const previous = this.#loadedSources.get(id);
+    const loaded = await this.#sourceRegistry.load(envelope.from, previous);
+    if (previous === undefined || previous.revision !== loaded.revision) {
+      this.#loadedSources.set(id, loaded);
+      this.add(id, loaded.value);
+    }
+    return this.run({ ...envelope, from: id });
+  }
 }
 
 export function createHost(options: {
   registry: Registry;
   units?: Units;
+  sources?: SourceRegistry;
 }): Host {
   return new Host(options);
 }
