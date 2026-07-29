@@ -856,3 +856,74 @@ button.tab.on {
   max-width: 11px;
   max-height: 11px;
 }
+
+/* ── wiring chips: what fed a step, and with what ──────────── */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 7px;
+}
+
+.chips.columns {
+  margin-top: 2px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font:
+    10px/1.6 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  color: var(--muted);
+  background: transparent;
+}
+
+.chip.param {
+  border-style: dashed;
+}
+
+button.chip {
+  cursor: pointer;
+}
+
+button.chip:hover {
+  color: var(--ink);
+}
+
+button.chip.on {
+  color: var(--ink);
+  border-color: var(--accent);
+  background: #21262e;
+}
+
+.chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+
+/* A source is not a computed node; it reads as the ground the
+   derivation starts from rather than a step in it. */
+.step.source {
+  border-left-style: dashed;
+  border-left-color: var(--line);
+  opacity: 0.75;
+}
+
+.step.source .step-n {
+  border-color: var(--line);
+  color: var(--muted);
+}
+
+.step.source .step-label {
+  color: var(--muted);
+}

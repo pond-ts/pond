@@ -306,6 +306,14 @@ function Figure(props: {
   width: number;
   color: string;
   caption: React.ReactNode;
+  /**
+   * Controlled view. Passing the same tuple to every figure and wiring
+   * the callback back is what makes one pan move them all — the
+   * container is explicit that uncontrolled mode holds its own view and
+   * ignores later `range` props, so sharing requires controlling.
+   */
+  range?: readonly [number, number] | undefined;
+  onRangeChange?: ((range: [number, number]) => void) | undefined;
 }) {
   const { outs, drawn } = props;
   return (
@@ -313,8 +321,12 @@ function Figure(props: {
       <figcaption>{props.caption}</figcaption>
       <ChartContainer
         width={props.width}
-        range={drawn.range}
+        range={props.range ?? drawn.range}
         theme={themeFor(props.color)}
+        {...(props.onRangeChange !== undefined && {
+          panZoom: 'panZoom' as const,
+          onTimeRangeChange: props.onRangeChange,
+        })}
       >
         <ChartRow height={170}>
           <YAxis id="y" width={62} />
@@ -357,6 +369,8 @@ export interface NodeTiming {
   pulled: boolean;
   cached: boolean;
   ms: number;
+  /** Upstream ids, or source column names — what fed this step. */
+  inputs: readonly string[];
 }
 
 export function Viz(props: {
@@ -376,6 +390,8 @@ export function Viz(props: {
   nodes: readonly NodeTiming[];
   /** Output names the request asked for, as opposed to ones drawing added. */
   asked: readonly string[];
+  /** The request's node definitions, keyed by slot — for the param chips. */
+  defs: Record<string, { op: string; params?: Record<string, unknown> }>;
   /** A draw is in flight. */
   pending: boolean;
   /** There is no plan to draw from yet — the compose has not landed. */
@@ -448,6 +464,7 @@ export function Viz(props: {
           facts={props.facts}
           explain={props.explain}
           colors={colors}
+          defs={props.defs}
         />
       )}
 
@@ -554,6 +571,63 @@ function Output(props: {
  * the library derived and the warm/cold badge, so the reader can see
  * both what was computed and what was already known.
  */
+/** One node's inputs and params, as chips beside the step. */
+function Wiring(props: {
+  inputs: readonly string[];
+  slotOf: Map<string, string>;
+  colors: Map<string, string>;
+  params: Record<string, unknown> | undefined;
+}) {
+  const chips = [
+    ...props.inputs.map((ref) => ({
+      kind: 'in' as const,
+      // A slot when the input is another node; the bare column name when
+      // it is the source. `describe()` reports `inputs` as a *count*, so
+      // the op's role names ("source", "against") are not available to a
+      // client — worth knowing before reading these as roles.
+      label: props.slotOf.get(ref) ?? ref,
+      color: props.colors.get(ref),
+    })),
+    ...Object.entries(props.params ?? {}).map(([k, v]) => ({
+      kind: 'param' as const,
+      label: `${k}: ${String(v)}`,
+      color: undefined,
+    })),
+  ];
+  if (chips.length === 0) return null;
+  return (
+    <div className="chips">
+      {chips.map((c, i) => (
+        <span
+          key={`${c.kind}:${c.label}:${i}`}
+          className={`chip ${c.kind}`}
+          style={c.color === undefined ? undefined : { borderColor: c.color }}
+        >
+          {c.kind === 'in' && (
+            <i
+              className="chip-dot"
+              style={{ background: c.color ?? 'var(--muted)' }}
+            />
+          )}
+          {c.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The work, top to bottom, with the answers at the bottom.
+ *
+ * `nodes` arrives in dependency order — inputs before the things that
+ * consume them — so walking it in order *is* the derivation, and no
+ * ordering has to be reconstructed here. Each step carries the lineage
+ * the library derived, what fed it, and the warm/cold badge.
+ *
+ * Every chart is **controlled by one shared range**, so panning or
+ * zooming any of them moves all of them: comparing a study against the
+ * thing it was computed from is the whole reason to stack them.
+ */
 function Workbook(props: {
   drawn: NonNullable<ReturnType<typeof useDrawn>>;
   width: number;
@@ -562,14 +636,60 @@ function Workbook(props: {
   facts: readonly Fact[];
   explain: Record<string, string>;
   colors: Map<string, string>;
+  /** The request's node definitions, for params. Keyed by slot. */
+  defs: Record<string, { op: string; params?: Record<string, unknown> }>;
 }) {
+  const [view, setView] = useState<[number, number] | undefined>();
+  // A new response resets the shared view; otherwise a pan survives data
+  // it no longer describes.
+  useEffect(() => setView(undefined), [props.drawn.range]);
+
+  // Which single column of a multi-output node to isolate, if any.
+  const [only, setOnly] = useState<Record<string, string>>({});
+
+  const slotOf = useMemo(
+    () => new Map(props.nodes.map((n) => [n.id, n.slot ?? n.id])),
+    [props.nodes],
+  );
+  const known = useMemo(
+    () => new Set(props.nodes.map((n) => n.id)),
+    [props.nodes],
+  );
+  // Source columns are not nodes — nothing computed them — but the
+  // derivation starts there, so the workbook names them. They carry no
+  // chart: a raw column cannot be selected as an output, since `on`
+  // takes a spec or an id and a source column is neither.
+  const sources = useMemo(() => {
+    const out = new Set<string>();
+    for (const n of props.nodes) {
+      for (const ref of n.inputs) if (!known.has(ref)) out.add(ref);
+    }
+    return [...out];
+  }, [props.nodes, known]);
+
   return (
     <div className="workbook">
       <ol className="steps">
+        {sources.map((name) => (
+          <li key={name} className="step source">
+            <div className="step-head">
+              <span className="step-n">·</span>
+              <span className="step-label">{name}</span>
+              <span className="step-badge">source column</span>
+            </div>
+          </li>
+        ))}
+
         {props.nodes.map((n, i) => {
-          const outs = props.outputs[n.id] ?? [];
+          const all = props.outputs[n.id] ?? [];
+          const isolated = only[n.id];
+          const outs =
+            isolated === undefined
+              ? all
+              : all.filter((o) => o.column === isolated);
           const state = !n.pulled ? 'idle' : n.cached ? 'cached' : 'computed';
           const color = props.colors.get(n.id) ?? PALETTE[0]!;
+          const slot = n.slot ?? n.id;
           return (
             <li
               key={n.id}
@@ -592,6 +712,41 @@ function Workbook(props: {
                     : `${n.cached ? 'cached' : 'computed'} · ${n.ms} ms`}
                 </span>
               </div>
+
+              <Wiring
+                inputs={n.inputs}
+                slotOf={slotOf}
+                colors={props.colors}
+                params={props.defs[slot]?.params}
+              />
+
+              {/* A multi-output op draws as one band by default; the chips
+                  page through its columns. Nothing here reads an op name —
+                  it is `all.length` that decides there is anything to page. */}
+              {all.length > 1 && (
+                <div className="chips columns">
+                  <button
+                    className={isolated === undefined ? 'chip on' : 'chip'}
+                    onClick={() =>
+                      setOnly(({ [n.id]: _drop, ...rest }) => rest)
+                    }
+                  >
+                    all
+                  </button>
+                  {all.map((o) => (
+                    <button
+                      key={o.column}
+                      className={isolated === o.column ? 'chip on' : 'chip'}
+                      onClick={() =>
+                        setOnly((prev) => ({ ...prev, [n.id]: o.column }))
+                      }
+                    >
+                      {o.column.slice(n.id.length) || o.column}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {outs.length > 0 ? (
                 <Figure
                   id={n.id}
@@ -599,6 +754,8 @@ function Workbook(props: {
                   drawn={props.drawn}
                   width={props.width - 26}
                   color={color}
+                  range={view ?? props.drawn.range}
+                  onRangeChange={setView}
                   caption={
                     outs[0]?.unit ? (
                       <span className="meta">{outs[0].unit}</span>

@@ -946,6 +946,18 @@ function VizTab(props: {
     <Viz
       view={props.view}
       asked={entry.asked ?? []}
+      defs={
+        (
+          (entry.ran ?? entry.composed?.envelope) as
+            | {
+                nodes?: Record<
+                  string,
+                  { op: string; params?: Record<string, unknown> }
+                >;
+              }
+            | undefined
+        )?.nodes ?? {}
+      }
       nodes={entry.drawn?.nodes ?? entry.result?.nodes ?? []}
       frames={entry.drawn?.frames}
       outputs={entry.drawn?.outputs ?? {}}
