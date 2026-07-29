@@ -512,3 +512,45 @@ clamp fails 1.
 `min` / `max` keep their monotonic deque: unlike Welford it is a data
 structure rather than a recurrence, so inlining it would mean duplicating the
 deque itself, and they are not on the studies' hot path.
+
+### [PND-AGENTQ] — the true baseline, measured properly
+
+Every ratio quoted during the optimisation session compared against a
+baseline captured with `perf-agent-queries.mjs`'s original **200-iteration**
+warm-up. That is below V8's optimising-tier cliff (~800 iterations for
+operations this size), so the baseline was itself inflated — and because
+entries run in order, inflated unevenly: whichever query ran first paid most.
+
+The baseline was therefore re-measured on a clean worktree at the pre-session
+commit (`206ef18`), with the same 1000-iteration warm-up now used everywhere.
+500k 1-minute OHLCV bars, resident, per query:
+
+| query                      | true baseline    | now            | honest ×          | (as reported during the session) |
+| -------------------------- | ---------------- | -------------- | ----------------- | -------------------------------- |
+| 5-study strategy pass      | 320.35 ms        | 65.25 ms       | **4.91×**         | 4.88×                            |
+| `bollinger(20)`            | 108.24 ms        | 22.58 ms       | **4.79×**         | 4.66×                            |
+| `zScore(20)`               | 99.59 ms         | 17.60 ms       | **5.66×**         | 5.61×                            |
+| `envelope(20)`             | 69.01 ms         | 11.32 ms       | **6.09×**         | 6.12×                            |
+| `sma(20)` / `sma(200)`     | 22.28 / 22.22 ms | 6.52 / 6.35 ms | **3.42× / 3.50×** | 3.29× / 3.38×                    |
+| `percentChange()`          | 22.40 ms         | 3.17 ms        | **7.06×**         | 7.45×                            |
+| `close.median()`           | 32.00 ms         | 2.75 ms        | **11.66×**        | 1.03×                            |
+| `close.percentile(95)`     | 31.99 ms         | 2.85 ms        | **11.22×**        | 1.02×                            |
+| `ema(20)`                  | 2.05 ms          | 2.06 ms        | **0.99×**         | 1.92×                            |
+| `close.minMax()`           | 0.48 ms          | 0.48 ms        | **1.00×**         | 1.98×                            |
+| `close.mean()` / `stdev()` | 0.47 / 2.63 ms   | 0.47 / 2.54 ms | 1.00× / 1.03×     | —                                |
+
+**Three corrections worth keeping:**
+
+1. **`ema` never improved.** It was reported at 1.92× at one point; it is
+   0.99×. It composes on core's `smooth`, not the count-window rolling kernel,
+   so none of this work touched it — which is what the structure predicted and
+   the under-warmed number contradicted.
+2. **`minMax` and the pure summary facts are unchanged**, as they should be —
+   nothing in this session touched them. The 1.98× once quoted for `minMax`
+   was noise.
+3. **`median` / `percentile` are 11.2–11.7×**, not the ~1.0× the session
+   baseline suggested. That baseline was captured _after_ quickselect had
+   already landed, so it hid its own win.
+
+The headline (strategy pass ~4.9×) held up. The per-query numbers moved in
+both directions, and two of them were entirely artefacts.
