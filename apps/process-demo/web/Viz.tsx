@@ -55,6 +55,8 @@ export interface Frames {
 export interface OutputInfo {
   column: string;
   unit: string | null;
+  /** The caller's name, when this output was one it asked for. */
+  name?: string;
 }
 
 /**
@@ -272,10 +274,84 @@ function useWidth(): [React.RefObject<HTMLDivElement | null>, number] {
   return [ref, width];
 }
 
+/** One node's chart. The band case reads `outs.length`, never an op name. */
+function Figure(props: {
+  id: string;
+  outs: OutputInfo[];
+  drawn: NonNullable<ReturnType<typeof useDrawn>>;
+  width: number;
+  color: string;
+  caption: React.ReactNode;
+}) {
+  const { outs, drawn } = props;
+  return (
+    <figure>
+      <figcaption>{props.caption}</figcaption>
+      <ChartContainer
+        width={props.width}
+        range={drawn.range}
+        theme={themeFor(props.color)}
+      >
+        <ChartRow height={170}>
+          <YAxis id="y" width={62} />
+          <Layers>
+            {outs.length === 3 ? (
+              <>
+                <BandChart
+                  axis="y"
+                  series={drawn.series}
+                  lower={outs[2]!.column}
+                  upper={outs[0]!.column}
+                />
+                <LineChart
+                  axis="y"
+                  series={drawn.series}
+                  column={outs[1]!.column}
+                />
+              </>
+            ) : (
+              outs.map((o) => (
+                <LineChart
+                  key={o.column}
+                  axis="y"
+                  series={drawn.series}
+                  column={o.column}
+                />
+              ))
+            )}
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    </figure>
+  );
+}
+
+/** A node's timing, as the workbook needs it. */
+export interface NodeTiming {
+  id: string;
+  slot?: string;
+  pulled: boolean;
+  cached: boolean;
+  ms: number;
+}
+
 export function Viz(props: {
   frames: Frames | undefined;
   outputs: Record<string, OutputInfo[]>;
   explain: Record<string, string>;
+  /**
+   * Which question the panel is answering.
+   *
+   * `output` is what the prompt asked for and nothing else — the named
+   * results. `workbook` shows the work: every node the plan resolved, in
+   * dependency order, with the outputs at the bottom. Both read the same
+   * response; only the filtering differs.
+   */
+  view: 'output' | 'workbook';
+  /** Every resolved node, in dependency order. */
+  nodes: readonly NodeTiming[];
+  /** Output names the request asked for, as opposed to ones drawing added. */
+  asked: readonly string[];
   /** A draw is in flight. */
   pending: boolean;
   /** There is no plan to draw from yet — the compose has not landed. */
@@ -323,9 +399,31 @@ export function Viz(props: {
         </>
       )}
 
-      {/* Facts first: a reduction is the answer to the question, and the
-          chart is the evidence behind it. */}
-      {props.facts.length > 0 && (
+      {drawn !== undefined && width > 0 && props.view === 'output' && (
+        <Output
+          drawn={drawn}
+          width={width}
+          groups={groups}
+          asked={props.asked}
+          facts={props.facts}
+          explain={props.explain}
+        />
+      )}
+
+      {drawn !== undefined && width > 0 && props.view === 'workbook' && (
+        <Workbook
+          drawn={drawn}
+          width={width}
+          outputs={props.outputs}
+          nodes={props.nodes}
+          facts={props.facts}
+          explain={props.explain}
+        />
+      )}
+
+      {/* Facts still show before anything is drawn, so a facts-only
+          response is not an empty panel. */}
+      {drawn === undefined && props.facts.length > 0 && (
         <ul className="facts">
           {props.facts.map((f, i) => (
             <FactCard
@@ -337,57 +435,6 @@ export function Viz(props: {
         </ul>
       )}
 
-      {drawn !== undefined &&
-        width > 0 &&
-        groups.map(([id, outs], g) => {
-          const color = PALETTE[g % PALETTE.length]!;
-          return (
-            <figure key={id}>
-              <figcaption>
-                {props.explain[id] ?? id}
-                {outs[0]?.unit && (
-                  <span className="meta"> · {outs[0].unit}</span>
-                )}
-              </figcaption>
-              <ChartContainer
-                width={width}
-                range={drawn.range}
-                theme={themeFor(color)}
-              >
-                <ChartRow height={170}>
-                  <YAxis id="y" width={62} />
-                  <Layers>
-                    {outs.length === 3 ? (
-                      <>
-                        <BandChart
-                          axis="y"
-                          series={drawn.series}
-                          lower={outs[2]!.column}
-                          upper={outs[0]!.column}
-                        />
-                        <LineChart
-                          axis="y"
-                          series={drawn.series}
-                          column={outs[1]!.column}
-                        />
-                      </>
-                    ) : (
-                      outs.map((o) => (
-                        <LineChart
-                          key={o.column}
-                          axis="y"
-                          series={drawn.series}
-                          column={o.column}
-                        />
-                      ))
-                    )}
-                  </Layers>
-                </ChartRow>
-              </ChartContainer>
-            </figure>
-          );
-        })}
-
       {drawn !== undefined && props.frames && (
         <p className="muted">
           {drawn.series.length.toLocaleString()} points ·{' '}
@@ -395,6 +442,155 @@ export function Viz(props: {
           zero-copy by <code>TimeSeries.fromColumns</code>.
         </p>
       )}
+    </div>
+  );
+}
+
+/**
+ * What the prompt asked for, and nothing else.
+ *
+ * The request names its outputs; this shows those and stops. A node the
+ * plan needed on the way — a `roc` under a `variance` under an
+ * `annualise` — is real work and belongs in the workbook, not in the
+ * answer. Filtering on `name` is what separates the two, which is the
+ * reason outputs carry one.
+ */
+function Output(props: {
+  drawn: NonNullable<ReturnType<typeof useDrawn>>;
+  width: number;
+  groups: [string, OutputInfo[]][];
+  asked: readonly string[];
+  facts: readonly Fact[];
+  explain: Record<string, string>;
+}) {
+  // An empty `asked` means the request named nothing — an older nested
+  // plan, say — so everything is shown rather than nothing.
+  const wanted = new Set(props.asked);
+  const keep = (name: string | undefined) =>
+    wanted.size === 0 || (name !== undefined && wanted.has(name));
+  const named = props.groups.filter(([, outs]) =>
+    outs.some((o) => keep(o.name)),
+  );
+  const shown = props.facts.filter((f) => keep(f.name));
+
+  if (shown.length === 0 && named.length === 0) {
+    return (
+      <p className="muted">
+        Nothing was named as an output. The workbook has the whole plan.
+      </p>
+    );
+  }
+  return (
+    <>
+      {shown.length > 0 && (
+        <ul className="facts">
+          {shown.map((f, i) => (
+            <FactCard
+              key={`${f.id}:${f.reduce}:${i}`}
+              fact={f}
+              explain={props.explain}
+            />
+          ))}
+        </ul>
+      )}
+      {named.map(([id, outs], g) => (
+        <Figure
+          key={id}
+          id={id}
+          outs={outs}
+          drawn={props.drawn}
+          width={props.width}
+          color={PALETTE[g % PALETTE.length]!}
+          caption={
+            <>
+              {outs[0]?.name ?? props.explain[id] ?? id}
+              {outs[0]?.unit && <span className="meta"> · {outs[0].unit}</span>}
+            </>
+          }
+        />
+      ))}
+    </>
+  );
+}
+
+/**
+ * The work, top to bottom, with the answers at the bottom.
+ *
+ * `nodes` arrives in dependency order — inputs before the things that
+ * consume them — so walking it in order *is* the derivation, and no
+ * ordering has to be reconstructed here. Each step carries the lineage
+ * the library derived and the warm/cold badge, so the reader can see
+ * both what was computed and what was already known.
+ */
+function Workbook(props: {
+  drawn: NonNullable<ReturnType<typeof useDrawn>>;
+  width: number;
+  outputs: Record<string, OutputInfo[]>;
+  nodes: readonly NodeTiming[];
+  facts: readonly Fact[];
+  explain: Record<string, string>;
+}) {
+  return (
+    <div className="workbook">
+      <ol className="steps">
+        {props.nodes.map((n, i) => {
+          const outs = props.outputs[n.id] ?? [];
+          const state = !n.pulled ? 'idle' : n.cached ? 'cached' : 'computed';
+          return (
+            <li key={n.id} className={`step ${state}`}>
+              <div className="step-head">
+                <span className="step-n">{i + 1}</span>
+                {n.slot !== undefined && (
+                  <span className="step-slot">{n.slot}</span>
+                )}
+                <span className="step-label" title={n.id}>
+                  {props.explain[n.id] ?? n.id}
+                </span>
+                <span className="step-badge">
+                  {!n.pulled
+                    ? 'not requested'
+                    : `${n.cached ? 'cached' : 'computed'} · ${n.ms} ms`}
+                </span>
+              </div>
+              {outs.length > 0 ? (
+                <Figure
+                  id={n.id}
+                  outs={outs}
+                  drawn={props.drawn}
+                  width={props.width - 26}
+                  color={PALETTE[i % PALETTE.length]!}
+                  caption={
+                    outs[0]?.unit ? (
+                      <span className="meta">{outs[0].unit}</span>
+                    ) : null
+                  }
+                />
+              ) : (
+                <p className="muted step-note">
+                  No column drawn for this step.
+                </p>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+
+      <div className="workbook-out">
+        <h3>Outputs</h3>
+        {props.facts.length === 0 ? (
+          <p className="muted">This request asked for columns, not facts.</p>
+        ) : (
+          <ul className="facts">
+            {props.facts.map((f, i) => (
+              <FactCard
+                key={`${f.id}:${f.reduce}:${i}`}
+                fact={f}
+                explain={props.explain}
+              />
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }

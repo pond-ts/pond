@@ -91,6 +91,15 @@ interface Entry {
   drawnStale?: boolean | undefined;
   drawing?: boolean | undefined;
   /**
+   * The output names the *request* asked for.
+   *
+   * Drawing adds a `columns` selector per node so the workbook has a
+   * chart for every step, and the server names those from their key like
+   * any other — so `name !== undefined` cannot separate "what was asked
+   * for" from "what we added to show the work". This can.
+   */
+  asked?: string[] | undefined;
+  /**
    * Why the last draw failed. Distinct from `error` so a failed draw
    * does not clobber the run's own message — and load-bearing: without
    * somewhere to record the failure, "needs drawing" flips straight back
@@ -327,6 +336,7 @@ export function App() {
       // way — a string `SpecRef` the response already named, which reaches
       // intermediates that appear nowhere in the request.
       let body: Record<string, unknown>;
+      let asked: string[] = [];
       if (envelope.nodes !== undefined) {
         const outputs: Record<string, unknown> =
           entry.focus !== undefined
@@ -340,6 +350,7 @@ export function App() {
                   ]),
                 ),
               };
+        asked = Object.keys(envelope.outputs ?? {});
         body = { ...envelope, outputs };
       } else {
         const select =
@@ -388,7 +399,7 @@ export function App() {
       setEntries((prev) =>
         prev.map((e) =>
           e.id === entry.id
-            ? { ...e, drawn: whole, drawing: false, drawnStale: false }
+            ? { ...e, drawn: whole, asked, drawing: false, drawnStale: false }
             : e,
         ),
       );
@@ -737,11 +748,13 @@ function ResultsPanel(props: {
   onDraw: (entry: Entry) => void;
 }) {
   const { entry } = props;
-  const [tab, setTab] = useState<'raw' | 'viz'>('raw');
+  const [tab, setTab] = useState<'output' | 'workbook' | 'raw'>('output');
   const result = entry?.result;
-  // The badges come from whichever request was last resolved — on the viz
-  // tab that is the columns fetch, and its all-cached row is the point.
-  const shown = tab === 'viz' ? (entry?.drawn ?? result) : result;
+  const drawing = tab !== 'raw';
+  // The badges come from whichever request was last resolved — on a
+  // drawing tab that is the columns fetch, and its all-cached row is the
+  // point. The workbook shows the same data as its own step list.
+  const shown = drawing ? (entry?.drawn ?? result) : result;
   return (
     <section className="panel">
       <div className="panel-head">
@@ -754,7 +767,7 @@ function ResultsPanel(props: {
           </span>
         )}
         <div className="tabs">
-          {(['raw', 'viz'] as const).map((t) => (
+          {(['output', 'workbook', 'raw'] as const).map((t) => (
             <button
               key={t}
               className={t === tab ? 'tab on' : 'tab'}
@@ -766,11 +779,18 @@ function ResultsPanel(props: {
         </div>
       </div>
 
-      {tab === 'viz' && entry !== undefined && (
-        <VizTab entry={entry} onDraw={props.onDraw} />
+      {drawing && entry !== undefined && (
+        <VizTab
+          entry={entry}
+          view={tab === 'workbook' ? 'workbook' : 'output'}
+          onDraw={props.onDraw}
+        />
       )}
 
-      {tab === 'viz' && shown && (
+      {/* The badge row belongs to `output`, which otherwise says nothing
+          about what it cost. The workbook carries the same information
+          per step, so repeating it there would be noise. */}
+      {tab === 'output' && shown && (
         <ul className="nodes">
           {shown.nodes.map((n) => (
             <li key={n.id} className={n.cached ? 'cached' : 'computed'}>
@@ -844,7 +864,11 @@ function ResultsPanel(props: {
  * been edited — re-fetches while the tab is already open. Handling it
  * only on the click left a chart from the previous plan on screen.
  */
-function VizTab(props: { entry: Entry; onDraw: (entry: Entry) => void }) {
+function VizTab(props: {
+  entry: Entry;
+  view: 'output' | 'workbook';
+  onDraw: (entry: Entry) => void;
+}) {
   const { entry, onDraw } = props;
   // Three separate states, and conflating them is what got this stuck:
   // there is nothing to draw *from* until the plan lands; a draw is in
@@ -864,6 +888,9 @@ function VizTab(props: { entry: Entry; onDraw: (entry: Entry) => void }) {
   }, [entry.id, needed]);
   return (
     <Viz
+      view={props.view}
+      asked={entry.asked ?? []}
+      nodes={entry.drawn?.nodes ?? entry.result?.nodes ?? []}
       frames={entry.drawn?.frames}
       outputs={entry.drawn?.outputs ?? {}}
       explain={entry.drawn?.explain ?? {}}
