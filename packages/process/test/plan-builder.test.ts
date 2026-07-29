@@ -91,8 +91,11 @@ describe('the builder emits a plan, it does not replace one', () => {
       nodes: {
         avg: { op: 'sma', params: { period: 3 }, in: ['px'] },
         outer: { op: 'scale', params: { by: 2 }, in: ['avg'] },
+        // The fold the builder added, spelled out: a reduction is an
+        // ordinary node now, so it appears in `nodes` like any other.
+        'outer:last': { op: 'last', in: ['outer'] },
       },
-      outputs: { latest: { on: 'outer', reduce: 'last' as const } },
+      outputs: { latest: { on: 'outer:last' } },
     };
 
     expect(built.nodes).toEqual(byHand.nodes);
@@ -124,24 +127,31 @@ describe('the builder emits a plan, it does not replace one', () => {
     const outer = g.add('outer', 'scale', undefined, [avg]);
     expect(avg.slot).toBe('avg');
     expect(g.toJSON().nodes['outer']!.in).toEqual(['avg']);
-    expect(outer.columns()).toEqual({ on: 'outer', columns: true });
+    // A fold hands back a handle too, so it composes like any node.
+    expect(outer.last().slot).toBe('outer:last');
   });
 
-  it('builds every reduction the response knows how to answer', () => {
+  it('adds a fold as a node, and adds it once', () => {
     const g = plan('ACME_5m');
     const n = g.add('n', 'sma', { period: 3 }, ['px']);
-    expect(n.last({ output: 'Upper' })).toEqual({
-      on: 'n',
-      reduce: 'last',
-      output: 'Upper',
+    n.last();
+    n.extremes();
+    n.percentileRank();
+    n.shape({ points: 40 });
+    expect(g.toJSON().nodes).toEqual({
+      n: { op: 'sma', params: { period: 3 }, in: ['px'] },
+      'n:last': { op: 'last', in: ['n'] },
+      'n:extremes': { op: 'extremes', in: ['n'] },
+      'n:percentileRank': { op: 'percentileRank', in: ['n'] },
+      // A param, not a selector field — so it lands in the id, and two
+      // callers asking for 40 points share one node.
+      'n:shape': { op: 'shape', params: { points: 40 }, in: ['n'] },
     });
-    expect(n.extremes()).toEqual({ on: 'n', reduce: 'extremes' });
-    expect(n.percentileRank()).toEqual({ on: 'n', reduce: 'percentileRank' });
-    expect(n.shape({ points: 40 })).toEqual({
-      on: 'n',
-      reduce: 'shape',
-      points: 40,
-    });
+
+    // Idempotent: the slot is a function of the node and the fold, so
+    // asking twice is one node rather than a collision.
+    expect(n.last().slot).toBe('n:last');
+    expect(Object.keys(g.toJSON().nodes)).toHaveLength(5);
   });
 
   it('refuses a duplicate slot before the request is ever sent', () => {

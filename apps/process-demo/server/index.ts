@@ -22,6 +22,7 @@ try {
   // No .env is the normal case; the composer falls back and says so.
 }
 import { createHost, toWire, type Envelope } from '@pond-ts/process';
+import { readingOf, type Round } from './agent.js';
 import { composerFromEnv, type Composer, type Turn } from './compose.js';
 import { barUnits, datasetSpecs, makeBars } from './data.js';
 import { toFrames } from './frames.js';
@@ -116,6 +117,33 @@ function runEnvelope(envelope: Envelope, have: readonly string[] = []) {
   return { ...wire, ms, frames, encodeMs, reused };
 }
 
+/**
+ * What the agent loop sees: facts, and what they cost.
+ *
+ * No columns, and no encoding — the model reads reductions. That is
+ * `select` doing the job it was built for, against the consumer that
+ * most needs it: 150,000 points is a rounding error to a browser and
+ * ruinous to a context window.
+ *
+ * `computed` versus `cached` is reported back to the model deliberately.
+ * It is being told to look twice, and this is the evidence that looking
+ * twice was in fact nearly free.
+ */
+function readBack(envelope: Envelope): Round {
+  const t0 = performance.now();
+  const result = host.run({ onError: 'collect', assemble: false, ...envelope });
+  const ms = Math.round((performance.now() - t0) * 1000) / 1000;
+  const wire = toWire(result, envelope.as);
+  const nodes = wire.nodes ?? [];
+  return {
+    envelope,
+    reading: readingOf(wire),
+    ms,
+    cached: nodes.filter((n) => n.cached).length,
+    computed: nodes.filter((n) => !n.cached).length,
+  };
+}
+
 async function handle(
   method: string,
   path: string,
@@ -176,9 +204,11 @@ async function handle(
     return { status: 200, body: runEnvelope(envelope, have) };
   }
 
-  // One round trip for the UI: prompt in, both panels out. The panels
-  // are still fed separately so a hand-edited envelope can be re-run
-  // without going back through the model.
+  // One round trip for the UI: prompt in, an answer out — plus the last
+  // round's plan and results, so the panels below it show the work the
+  // answer rests on. The panels are still fed separately so a
+  // hand-edited envelope can be re-run without going back through the
+  // model.
   if (method === 'POST' && path === '/api/ask') {
     const { prompt, history = [] } = (await readJson(req)) as {
       prompt?: string;
@@ -187,10 +217,34 @@ async function handle(
     if (typeof prompt !== 'string' || prompt.trim() === '') {
       return { status: 400, body: { error: 'prompt is required' } };
     }
-    const composed = await composer.compose(prompt, composerContext(), history);
+    const answer = await composer.converse(
+      prompt,
+      composerContext(),
+      history,
+      readBack,
+    );
+    const final = answer.rounds[answer.rounds.length - 1];
+    if (final === undefined) {
+      return { status: 200, body: { answer } };
+    }
+    // Re-run the winning plan for the panels. Every node is cached by
+    // now, so this costs a lookup — the same property the loop itself
+    // relies on, used here to avoid teaching `readBack` about columns.
     return {
       status: 200,
-      body: { composed, result: runEnvelope(composed.envelope) },
+      body: {
+        answer,
+        composed: {
+          envelope: final.envelope,
+          ...(final.note !== undefined && { note: final.note }),
+          source: answer.source,
+          ...(answer.model !== undefined && { model: answer.model }),
+          ms: answer.ms,
+          ...(answer.usage !== undefined && { usage: answer.usage }),
+          ...(answer.warning !== undefined && { warning: answer.warning }),
+        },
+        result: runEnvelope(final.envelope),
+      },
     };
   }
 

@@ -11,7 +11,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Viz, type Fact, type Frames } from './Viz.js';
+import { FactCard, Viz, type Fact, type Frames } from './Viz.js';
 import { Pipeline, type NodeTiming } from './Pipeline.js';
 import { Tune, type ParamDef } from './Tune.js';
 
@@ -26,6 +26,10 @@ interface OpDescriptor {
   family: string;
   summary: string;
   params: Record<string, ParamDef>;
+  /** The declared inputs — roles and any demanded unit, not a count. */
+  inputs: { role: string; unit?: string }[];
+  /** `'fold'` ends in a fact, so nothing downstream can take it. */
+  kind: 'op' | 'fold';
   outputs: { suffix: string; unit: string }[];
 }
 interface Context {
@@ -59,11 +63,37 @@ interface Composed {
   usage?: Record<string, number>;
   warning?: string;
 }
+/**
+ * The agent's reply, and the trips through the engine it rests on.
+ *
+ * `rounds` is the part worth showing. It is the record of the model
+ * looking twice — and of the second look costing nothing, which is the
+ * library claim the whole demo exists to test.
+ */
+interface AnswerBody {
+  text: string;
+  cites: string[];
+  rounds: {
+    note?: string;
+    ms: number;
+    computed: number;
+    cached: number;
+    reading: { facts: Fact[]; skipped?: unknown[] };
+  }[];
+  source: 'anthropic' | 'openai' | 'scripted';
+  model?: string;
+  ms: number;
+  usage?: Record<string, number>;
+  warning?: string;
+}
+
 interface Entry {
   id: number;
   prompt: string;
   composed?: Composed | undefined;
   result?: RunResult | undefined;
+  /** The prose reply. Absent until `/api/ask` lands. */
+  answer?: AnswerBody | undefined;
   /**
    * The envelope that actually produced `result` — which is not
    * `composed.envelope` once the request panel has been edited. The draw
@@ -90,6 +120,15 @@ interface Entry {
    */
   drawnStale?: boolean | undefined;
   drawing?: boolean | undefined;
+  /**
+   * The output names the *request* asked for.
+   *
+   * Drawing adds a `columns` selector per node so the workbook has a
+   * chart for every step, and the server names those from their key like
+   * any other — so `name !== undefined` cannot separate "what was asked
+   * for" from "what we added to show the work". This can.
+   */
+  asked?: string[] | undefined;
   /**
    * Why the last draw failed. Distinct from `error` so a failed draw
    * does not clobber the run's own message — and load-bearing: without
@@ -169,6 +208,14 @@ export function App() {
    * id rather than assigning it.
    */
   const held = useRef(new Map<string, string>());
+  /**
+   * The transcript, so a new turn scrolls itself into view.
+   *
+   * Pinned to the bottom on every change rather than only on a new
+   * entry: a turn arrives empty and grows when the answer lands, and
+   * scrolling once at the start leaves the reply below the fold.
+   */
+  const transcript = useRef<HTMLOListElement>(null);
   const refreshContext = useCallback(() => {
     fetch('/api/context')
       .then((r) => r.json())
@@ -182,6 +229,11 @@ export function App() {
       .catch(() => undefined);
   }, []);
   useEffect(refreshContext, [refreshContext]);
+
+  useEffect(() => {
+    const el = transcript.current;
+    if (el !== null) el.scrollTop = el.scrollHeight;
+  }, [entries]);
 
   const current = useMemo(
     () => entries.find((e) => e.id === selected) ?? entries[entries.length - 1],
@@ -203,17 +255,18 @@ export function App() {
       .map((e) => ({ prompt: e.prompt, envelope: e.composed!.envelope }));
 
     try {
-      const body = await post<{ composed: Composed; result: RunResult }>(
-        '/api/ask',
-        { prompt: trimmed, history },
-      );
+      const body = await post<{
+        answer: AnswerBody;
+        composed?: Composed;
+        result?: RunResult;
+      }>('/api/ask', { prompt: trimmed, history });
       setEntries((prev) =>
         prev.map((e) =>
           e.id === id
             ? {
                 ...e,
                 ...body,
-                ran: body.composed.envelope,
+                ran: body.composed?.envelope,
                 drawn: undefined,
                 drawError: undefined,
                 pending: false,
@@ -292,6 +345,17 @@ export function App() {
    * way: every node comes back `cached`, and what you pay is purely the
    * materialization and the wire.
    */
+  /** Op names that end in a fact, straight off the registry's own `kind`. */
+  const folds = useMemo(
+    () =>
+      new Set(
+        (context?.ops ?? [])
+          .filter((o) => o.kind === 'fold')
+          .map((o) => o.name),
+      ),
+    [context],
+  );
+
   async function draw(entry: Entry) {
     const envelope = (entry.ran ?? entry.composed?.envelope) as
       | {
@@ -316,37 +380,58 @@ export function App() {
       // its parent compiled, so this reaches intermediates that never
       // appear in `process`.
       //
-      // Unfocused, the original selectors ride along unchanged, so the
-      // same response carries the columns *and* the facts the prompt
-      // actually asked for. That is the `columns` + `reduce` pairing the
-      // library stopped treating as exclusive — the demo exercising its
-      // own fix rather than fetching twice.
+      // Unfocused, the request's own outputs ride along unchanged, so
+      // the same response carries the columns *and* the facts the prompt
+      // asked for — the facts come from fold nodes now, so they are
+      // pulled from the same cache as everything else rather than
+      // recomputed beside the draw.
       // Both request shapes draw the same way, and the difference is only
       // in how a node is addressed: a slot envelope names slots, a nested
       // one restates specs. A focused node is addressed by **id** either
       // way — a string `SpecRef` the response already named, which reaches
       // intermediates that appear nowhere in the request.
       let body: Record<string, unknown>;
+      let asked: string[] = [];
       if (envelope.nodes !== undefined) {
+        // Two selectors on one node collapse: `outputs` is keyed by id,
+        // so the *last* name wins. Adding `bb_columns` beside the
+        // request's own `bollinger_bands` therefore renamed it, and the
+        // output panel — which filters on the names the request asked
+        // for — dropped the very figure the prompt wanted.
+        //
+        // So: skip a slot the request already surfaces, and skip folds,
+        // which yield a fact rather than columns and would come back
+        // twice under a name nobody asked for.
+        const drawable = (envelope.nodes ?? {}) as Record<
+          string,
+          { op: string }
+        >;
+        const already = new Set(
+          Object.values(envelope.outputs ?? {}).map(
+            (sel) => (sel as { on?: string }).on,
+          ),
+        );
         const outputs: Record<string, unknown> =
           entry.focus !== undefined
-            ? { focused: { on: entry.focus, columns: true, reduce: 'last' } }
+            ? { focused: { on: entry.focus } }
             : {
                 ...(envelope.outputs ?? {}),
                 ...Object.fromEntries(
-                  Object.keys(envelope.nodes).map((slot) => [
-                    `${slot}_columns`,
-                    { on: slot, columns: true },
-                  ]),
+                  Object.entries(drawable)
+                    .filter(
+                      ([slot, def]) => !folds.has(def.op) && !already.has(slot),
+                    )
+                    .map(([slot]) => [`${slot}_columns`, { on: slot }]),
                 ),
               };
+        asked = Object.keys(envelope.outputs ?? {});
         body = { ...envelope, outputs };
       } else {
         const select =
           entry.focus !== undefined
-            ? [{ on: entry.focus, columns: true, reduce: 'last' }]
+            ? [{ on: entry.focus }]
             : [
-                ...envelope.process!.map((on) => ({ on, columns: true })),
+                ...envelope.process!.map((on) => ({ on })),
                 ...((envelope.select ?? []) as unknown[]),
               ];
         body = { ...envelope, select };
@@ -388,7 +473,7 @@ export function App() {
       setEntries((prev) =>
         prev.map((e) =>
           e.id === entry.id
-            ? { ...e, drawn: whole, drawing: false, drawnStale: false }
+            ? { ...e, drawn: whole, asked, drawing: false, drawnStale: false }
             : e,
         ),
       );
@@ -473,6 +558,7 @@ export function App() {
             setEntries([]);
             setSelected(undefined);
           }}
+          transcript={transcript}
         />
         <RequestPanel
           entry={current}
@@ -482,8 +568,170 @@ export function App() {
           onFocus={focusNode}
           onTune={tune}
         />
-        <ResultsPanel entry={current} onDraw={draw} />
+        <ResultsPanel entry={current} context={context} onDraw={draw} />
       </main>
+    </div>
+  );
+}
+
+/**
+ * The top of a column: title and its one action, the run's numbers on
+ * their own line, anything the run wants to say, then the views.
+ *
+ * Shared so the three columns line up — the rules land at the same
+ * height whether or not a panel has meta or notes to show, which is what
+ * makes them read as one header rather than three.
+ */
+function PanelTop(props: {
+  title: string;
+  meta?: React.ReactNode;
+  action?: React.ReactNode;
+  notes?: React.ReactNode;
+  tabs?: React.ReactNode;
+}) {
+  return (
+    <header className="panel-top">
+      <div className="panel-title">
+        <h2>{props.title}</h2>
+        {props.action}
+      </div>
+      <p className="panel-meta">{props.meta}</p>
+      {props.notes !== undefined && (
+        <div className="panel-notes">{props.notes}</div>
+      )}
+      {props.tabs !== undefined && (
+        <nav className="panel-tabs">
+          <div className="tabs">{props.tabs}</div>
+        </nav>
+      )}
+    </header>
+  );
+}
+
+/**
+ * One turn's reply: the prose, what it rests on, and what it cost.
+ *
+ * This lives in the composer rather than in Results because that is
+ * where a person looks for it. Results is the *evidence* — the plan, the
+ * badges, the charts — and putting the answer there made the reply to a
+ * question appear two panels away from the question.
+ *
+ * The cost line stays attached to the answer rather than moving to a
+ * status bar. `5 computed, 4 cached` is the claim this whole app exists
+ * to make, and it means something next to the sentence it paid for.
+ */
+/**
+ * A cited output name, showing its card on hover.
+ *
+ * The prose states a figure and the chip names where it came from; until
+ * now checking one meant finding the matching card in the panel two
+ * columns over. The card is the same component Results renders, so there
+ * is one definition of what a fact looks like.
+ *
+ * Positioned `fixed` from the chip's own rect rather than absolutely
+ * inside it: the transcript scrolls, and an absolutely-positioned
+ * popover would be clipped by that `overflow` the moment it sat near an
+ * edge — which is most of the time in a column this narrow.
+ */
+function Cite(props: {
+  name: string;
+  fact: Fact | undefined;
+  explain: Record<string, string>;
+}) {
+  const [at, setAt] = useState<{ left: number; top: number; above: boolean }>();
+  const show = (e: React.MouseEvent<HTMLElement>) => {
+    if (props.fact === undefined) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    // Above the chip when there is room, below when there is not. The
+    // flag is carried rather than re-derived from `top` below: deciding
+    // twice from two thresholds put the card *over* its own chip for
+    // anything sitting near the boundary.
+    const above = r.top > 200;
+    setAt({
+      left: Math.max(8, Math.min(r.left, window.innerWidth - 300)),
+      top: above ? r.top - 8 : r.bottom + 8,
+      above,
+    });
+  };
+  return (
+    <>
+      <code
+        className={props.fact === undefined ? 'cite' : 'cite has-card'}
+        onMouseEnter={show}
+        onMouseLeave={() => setAt(undefined)}
+      >
+        {props.name}
+      </code>
+      {at !== undefined && props.fact !== undefined && (
+        <ul
+          className="cite-card"
+          style={{
+            left: at.left,
+            top: at.top,
+            transform: at.above ? 'translateY(-100%)' : undefined,
+          }}
+        >
+          <FactCard fact={props.fact} explain={props.explain} />
+        </ul>
+      )}
+    </>
+  );
+}
+
+function Reply(props: { entry: Entry }) {
+  const { entry } = props;
+  if (entry.pending) {
+    return (
+      <div className="reply">
+        <p className="bubble working">Working…</p>
+      </div>
+    );
+  }
+  if (entry.error !== undefined) {
+    return (
+      <div className="reply">
+        <p className="bubble notice bad">{entry.error}</p>
+      </div>
+    );
+  }
+  const answer = entry.answer;
+  if (answer === undefined) return null;
+  // Every fact the answer read, across every round — a cite may name one
+  // the *first* round returned, which the final response no longer
+  // carries.
+  const facts = new Map(
+    answer.rounds
+      .flatMap((r) => r.reading.facts)
+      .filter((f): f is Fact => typeof f['name'] === 'string')
+      .map((f) => [f.name!, f]),
+  );
+  const explain = entry.result?.explain ?? entry.drawn?.explain ?? {};
+  const computed = answer.rounds.reduce((n, r) => n + r.computed, 0);
+  const cached = answer.rounds.reduce((n, r) => n + r.cached, 0);
+  const engine =
+    Math.round(answer.rounds.reduce((n, r) => n + r.ms, 0) * 100) / 100;
+  return (
+    <div className="reply">
+      <div className="bubble">
+        <p className="reply-text">{answer.text}</p>
+        {answer.cites.length > 0 && (
+          <p className="reply-cites">
+            {answer.cites.map((c) => (
+              <Cite key={c} name={c} fact={facts.get(c)} explain={explain} />
+            ))}
+          </p>
+        )}
+      </div>
+      {/* Outside the bubble: this is the app talking about the reply, not
+          part of it. */}
+      <p className="reply-meta">
+        {answer.rounds.length} round{answer.rounds.length === 1 ? '' : 's'} ·{' '}
+        {computed} computed, {cached} cached · {engine} ms in the engine of{' '}
+        {answer.ms} ms
+      </p>
+      {answer.warning !== undefined && (
+        <p className="notice warn">{answer.warning}</p>
+      )}
     </div>
   );
 }
@@ -497,16 +745,44 @@ function Composer(props: {
   onAsk: (v: string) => void;
   onSelect: (id: number) => void;
   onClear: () => void;
+  transcript: React.RefObject<HTMLOListElement | null>;
 }) {
   const { context } = props;
   return (
     <section className="panel composer">
-      <div className="panel-head">
-        <h2>Composer</h2>
-        <button onClick={props.onClear} disabled={props.entries.length === 0}>
-          Clear
-        </button>
-      </div>
+      <PanelTop
+        title="Composer"
+        action={
+          <button onClick={props.onClear} disabled={props.entries.length === 0}>
+            Clear
+          </button>
+        }
+      />
+
+      <ol className="chat" ref={props.transcript}>
+        {props.entries.map((entry) => (
+          <li
+            key={entry.id}
+            className={`turn${entry.id === props.selectedId ? ' selected' : ''}`}
+            onClick={() => props.onSelect(entry.id)}
+          >
+            <p className="asked">{entry.prompt}</p>
+            <Reply entry={entry} />
+          </li>
+        ))}
+      </ol>
+
+      {props.entries.length === 0 && (
+        <ul className="examples">
+          {EXAMPLES.map((e) => (
+            <li key={e}>
+              <button className="link" onClick={() => props.onAsk(e)}>
+                {e}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
 
       <form
         onSubmit={(e) => {
@@ -530,42 +806,6 @@ function Composer(props: {
           Compose <kbd>⌘↵</kbd>
         </button>
       </form>
-
-      {props.entries.length === 0 && (
-        <ul className="examples">
-          {EXAMPLES.map((e) => (
-            <li key={e}>
-              <button className="link" onClick={() => props.onAsk(e)}>
-                {e}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <ol className="history">
-        {props.entries.map((entry) => (
-          <li
-            key={entry.id}
-            className={entry.id === props.selectedId ? 'selected' : ''}
-          >
-            <button className="link" onClick={() => props.onSelect(entry.id)}>
-              {entry.prompt}
-            </button>
-            <span className="meta">
-              {entry.pending && '…'}
-              {entry.error && <span className="bad">failed</span>}
-              {entry.result && `${entry.result.ms} ms`}
-              {entry.result?.skipped.length ? (
-                <span className="warn">
-                  {' '}
-                  {entry.result.skipped.length} skipped
-                </span>
-              ) : null}
-            </span>
-          </li>
-        ))}
-      </ol>
 
       {context && (
         <details className="vocab">
@@ -607,7 +847,9 @@ function RequestPanel(props: {
   onTune: (entry: Entry, slot: string, params: Record<string, unknown>) => void;
 }) {
   const { entry } = props;
-  const [tab, setTab] = useState<'json' | 'graph'>('json');
+  // `graph` leads, so it is also the default — a first tab that is not
+  // what opens reads as a mistake. Its empty state says so plainly.
+  const [tab, setTab] = useState<'graph' | 'raw'>('graph');
 
   // The selected node, resolved back to the slot and op the envelope
   // declared — `focus` is an id, because that is what the pipeline and
@@ -657,43 +899,56 @@ function RequestPanel(props: {
 
   return (
     <section className="panel">
-      <div className="panel-head">
-        <h2>Request</h2>
-        {composed && entry && (
-          <>
-            <span className="meta">
+      <PanelTop
+        title="Request"
+        meta={
+          composed && (
+            <>
               {composed.source === 'scripted'
                 ? 'scripted'
                 : `${composed.model ?? 'model'} · ${Math.round(composed.ms)} ms`}
               {composed.usage && ` · ${composed.usage['output']} out`}
               {edited && ' · edited'}
-            </span>
-            {/* In the head, not under the JSON: the envelope is long
-                enough that a button below it is off-screen, and re-running
-                the same plan is how you see the badges flip to cached. */}
+            </>
+          )
+        }
+        action={
+          /* Beside the title, not under the JSON: the envelope is long
+             enough that a button below it is off-screen, and re-running
+             the same plan is how you see the badges flip to cached. */
+          composed &&
+          entry && (
             <button
               onClick={() => props.onRerun(entry, parsed.value)}
               disabled={entry.pending || parsed.error !== undefined}
             >
-              Re-run
+              Rerun
             </button>
+          )
+        }
+        notes={
+          <>
+            {composed?.warning && (
+              <p className="notice warn">{composed.warning}</p>
+            )}
+            {composed?.note && <p className="notice">{composed.note}</p>}
+            {parsed.error && <p className="notice bad">{parsed.error}</p>}
           </>
-        )}
-        <div className="tabs">
-          {(['json', 'graph'] as const).map((t) => (
-            <button
-              key={t}
-              className={t === tab ? 'tab on' : 'tab'}
-              onClick={() => setTab(t)}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-      </div>
-      {composed?.warning && <p className="notice warn">{composed.warning}</p>}
-      {composed?.note && <p className="notice">{composed.note}</p>}
-      {parsed.error && <p className="notice bad">{parsed.error}</p>}
+        }
+        tabs={
+          <>
+            {(['graph', 'raw'] as const).map((t) => (
+              <button
+                key={t}
+                className={t === tab ? 'tab on' : 'tab'}
+                onClick={() => setTab(t)}
+              >
+                {t}
+              </button>
+            ))}
+          </>
+        }
+      />
       {tab === 'graph' && entry !== undefined ? (
         <>
           <Pipeline
@@ -734,43 +989,73 @@ function RequestPanel(props: {
 
 function ResultsPanel(props: {
   entry: Entry | undefined;
+  context: Context | undefined;
   onDraw: (entry: Entry) => void;
 }) {
   const { entry } = props;
-  const [tab, setTab] = useState<'raw' | 'viz'>('raw');
+  const [tab, setTab] = useState<'output' | 'workbook' | 'raw'>('output');
   const result = entry?.result;
-  // The badges come from whichever request was last resolved — on the viz
-  // tab that is the columns fetch, and its all-cached row is the point.
-  const shown = tab === 'viz' ? (entry?.drawn ?? result) : result;
+  const drawing = tab !== 'raw';
+  // The badges come from whichever request was last resolved — on a
+  // drawing tab that is the columns fetch, and its all-cached row is the
+  // point. The workbook shows the same data as its own step list.
+  const shown = drawing ? (entry?.drawn ?? result) : result;
+  const answeredWithoutPlan =
+    entry?.answer !== undefined && entry.answer.rounds.length === 0;
   return (
     <section className="panel">
-      <div className="panel-head">
-        <h2>Results</h2>
-        {shown && (
-          <span className="meta">
-            {shown.as ? `${shown.as} · ` : ''}
-            {shown.ms} ms
-            {shown.encodeMs !== undefined && ` · +${shown.encodeMs} ms encode`}
-          </span>
-        )}
-        <div className="tabs">
-          {(['raw', 'viz'] as const).map((t) => (
-            <button
-              key={t}
-              className={t === tab ? 'tab on' : 'tab'}
-              onClick={() => setTab(t)}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-      </div>
+      <PanelTop
+        title="Results"
+        meta={
+          shown && (
+            <>
+              {shown.as ? `${shown.as} · ` : ''}
+              {shown.ms} ms
+              {shown.encodeMs !== undefined &&
+                ` · +${shown.encodeMs} ms encode`}
+            </>
+          )
+        }
+        tabs={
+          <>
+            {(['output', 'workbook', 'raw'] as const).map((t) => (
+              <button
+                key={t}
+                className={t === tab ? 'tab on' : 'tab'}
+                onClick={() => setTab(t)}
+              >
+                {t}
+              </button>
+            ))}
+          </>
+        }
+      />
 
-      {tab === 'viz' && entry !== undefined && (
-        <VizTab entry={entry} onDraw={props.onDraw} />
+      {/* An answer with no plan behind it is a real outcome, not a
+          missing one: asked to annualise a price directly, the model
+          reads the op table, sees the unit `annualise` demands, and
+          declines without running anything. There is nothing to draw,
+          and "Waiting for a plan…" would be a lie — the reply itself is
+          in the composer, where it says why. */}
+      {answeredWithoutPlan && (
+        <p className="muted">
+          Nothing ran — the model answered from the op table alone.
+        </p>
       )}
 
-      {tab === 'viz' && shown && (
+      {drawing && entry !== undefined && !answeredWithoutPlan && (
+        <VizTab
+          entry={entry}
+          view={tab === 'workbook' ? 'workbook' : 'output'}
+          ops={props.context?.ops}
+          onDraw={props.onDraw}
+        />
+      )}
+
+      {/* The badge row belongs to `output`, which otherwise says nothing
+          about what it cost. The workbook carries the same information
+          per step, so repeating it there would be noise. */}
+      {tab === 'output' && shown && (
         <ul className="nodes">
           {shown.nodes.map((n) => (
             <li key={n.id} className={n.cached ? 'cached' : 'computed'}>
@@ -844,7 +1129,12 @@ function ResultsPanel(props: {
  * been edited — re-fetches while the tab is already open. Handling it
  * only on the click left a chart from the previous plan on screen.
  */
-function VizTab(props: { entry: Entry; onDraw: (entry: Entry) => void }) {
+function VizTab(props: {
+  entry: Entry;
+  view: 'output' | 'workbook';
+  ops: OpDescriptor[] | undefined;
+  onDraw: (entry: Entry) => void;
+}) {
   const { entry, onDraw } = props;
   // Three separate states, and conflating them is what got this stuck:
   // there is nothing to draw *from* until the plan lands; a draw is in
@@ -864,6 +1154,24 @@ function VizTab(props: { entry: Entry; onDraw: (entry: Entry) => void }) {
   }, [entry.id, needed]);
   return (
     <Viz
+      view={props.view}
+      asked={entry.asked ?? []}
+      ops={Object.fromEntries(
+        (props.ops ?? []).map((o) => [o.name, { inputs: o.inputs }]),
+      )}
+      defs={
+        (
+          (entry.ran ?? entry.composed?.envelope) as
+            | {
+                nodes?: Record<
+                  string,
+                  { op: string; params?: Record<string, unknown> }
+                >;
+              }
+            | undefined
+        )?.nodes ?? {}
+      }
+      nodes={entry.drawn?.nodes ?? entry.result?.nodes ?? []}
       frames={entry.drawn?.frames}
       outputs={entry.drawn?.outputs ?? {}}
       explain={entry.drawn?.explain ?? {}}

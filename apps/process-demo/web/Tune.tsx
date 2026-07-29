@@ -16,16 +16,19 @@
  * becomes a patch" claim made literal — and only possible because a slot
  * survives the param edit that moves every derived id.
  *
- * Two things the registry does not carry, both visible the moment you
- * drag one:
+ * Sliders are drawn on the param's `suggest` range, which the registry
+ * carries precisely because this panel needed it. It replaced a log scale
+ * that existed only to make a 2…5000 travel bearable, and it fixed a
+ * control that was outright broken: `barsPerYear` declares no `max`, so
+ * the slider fell back to 100 while the default sat at 105,120 — pinned
+ * at the right edge, and any drag silently destroyed the annualisation.
  *
- * - **`min`/`max` are validation bounds, not display bounds.** `period`
- *   is legal to 5000 and interesting below ~300, so a linear slider
- *   spends 94% of its travel in a range nobody wants. A log scale is a
- *   workaround; a `suggest` range would be the fix.
- * - **Only numeric params exist in this vocabulary**, so `choice` and
- *   `flag` are unexercised here. The controls are written for them, but
- *   nothing in the demo proves they are right.
+ * A param without `suggest` still falls back to the legal bounds. That
+ * path is now unexercised by the demo vocabulary, which is the point.
+ *
+ * Still missing: **only numeric params exist in this vocabulary**, so
+ * `choice` and `flag` are unexercised. The controls are written for them,
+ * but nothing here proves they are right.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -35,6 +38,7 @@ export interface ParamDef {
   default: number | string | boolean;
   min?: number;
   max?: number;
+  suggest?: [number, number];
   of?: string[];
   label?: string;
 }
@@ -44,29 +48,25 @@ export interface OpDescriptor {
   params: Record<string, ParamDef>;
 }
 
-/** A linear slider over a 2…5000 range is unusable; a log one is not. */
-const isWide = (d: ParamDef): boolean =>
-  d.min !== undefined &&
-  d.max !== undefined &&
-  d.max / Math.max(d.min, 1) > 100;
-
-function toSlider(value: number, d: ParamDef): number {
-  const min = d.min ?? 0;
-  const max = d.max ?? 100;
-  if (!isWide(d)) return value;
-  const lo = Math.log(Math.max(min, 1));
-  const hi = Math.log(max);
-  return ((Math.log(Math.max(value, 1)) - lo) / (hi - lo)) * 1000;
+/**
+ * The range to draw on: the useful one where declared, else the legal
+ * one, else a guess.
+ *
+ * **Always widened to include the current value.** `suggest` is advisory,
+ * so a plan may legitimately arrive with a `period` of 1000 against a
+ * suggestion of 5–200 — and a slider that cannot represent the value it
+ * is bound to does not clamp the display, it clamps the *param*, the
+ * moment the value is read back out of it.
+ */
+function span(d: ParamDef, value: number): [number, number] {
+  const [lo, hi] = d.suggest ?? [d.min ?? 0, d.max ?? 100];
+  return [Math.min(lo, value), Math.max(hi, value)];
 }
 
-function fromSlider(pos: number, d: ParamDef): number {
-  const min = d.min ?? 0;
-  const max = d.max ?? 100;
-  if (!isWide(d)) return d.kind === 'integer' ? Math.round(pos) : pos;
-  const lo = Math.log(Math.max(min, 1));
-  const hi = Math.log(max);
-  const raw = Math.exp(lo + (pos / 1000) * (hi - lo));
-  return d.kind === 'integer' ? Math.round(raw) : Math.round(raw * 100) / 100;
+/** Integers step by whole values, and never by less than one. */
+function step(d: ParamDef, [lo, hi]: [number, number]): number {
+  const fine = (hi - lo) / 1000;
+  return d.kind === 'integer' ? Math.max(1, Math.round(fine)) : fine;
 }
 
 export function Tune(props: {
@@ -150,21 +150,30 @@ export function Tune(props: {
         }
 
         const n = Number(value);
-        const wide = isWide(d);
+        const range = span(d, n);
+        const beyond =
+          d.suggest !== undefined && (n < d.suggest[0] || n > d.suggest[1]);
         return (
           <label key={key} className="tune-row">
             <span className="tune-label">
               {d.label ?? key}
-              {wide && <span className="tune-scale">log</span>}
+              {beyond && (
+                <span
+                  className="tune-scale"
+                  title={`Outside the usual ${d.suggest![0]}–${d.suggest![1]}`}
+                >
+                  wide
+                </span>
+              )}
             </span>
             <input
               type="range"
-              min={wide ? 0 : (d.min ?? 0)}
-              max={wide ? 1000 : (d.max ?? 100)}
-              step={wide ? 1 : d.kind === 'integer' ? 1 : 0.01}
-              value={toSlider(n, d)}
+              min={range[0]}
+              max={range[1]}
+              step={step(d, range)}
+              value={n}
               onChange={(e) =>
-                push({ ...draft, [key]: fromSlider(Number(e.target.value), d) })
+                push({ ...draft, [key]: Number(e.target.value) })
               }
             />
             <span className="tune-value">{n}</span>

@@ -68,6 +68,14 @@ export {
   flag,
 } from './plan/registry.js';
 export { UnknownOpError, ParamError } from './plan/registry.js';
+export { isFold } from './plan/types.js';
+export {
+  STANDARD_FOLDS,
+  last,
+  extremes,
+  percentileRank,
+  shape,
+} from './plan/folds.js';
 export type { OpDescriptor } from './plan/registry.js';
 export {
   specId,
@@ -98,9 +106,6 @@ export type {
   PlanRequest,
   SlotRequest,
   Select,
-  ColumnSelect,
-  ReduceSelect,
-  ReductionName,
   RunRequest,
   RunResult,
   NodeTiming,
@@ -126,4 +131,8 @@ export type {
   OpContext,
   OpResult,
   OpDef,
+  Def,
+  FoldDef,
+  FoldContext,
+  FactBody,
 } from './plan/types.js';

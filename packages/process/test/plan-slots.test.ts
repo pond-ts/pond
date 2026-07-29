@@ -10,7 +10,11 @@ import {
   SlotError,
   type OpDef,
   type Registry,
+  type Spec,
 } from '../src/index.js';
+
+/** A fold node over a spec — what a `reduce` selector used to be. */
+const fold = (op: string, on: Spec): Spec => ({ op, inputs: [on] });
 
 const values = (ctx: Parameters<OpDef['run']>[0], role: string) => {
   const col = ctx.series.column(ctx.inputs[role]!) as unknown as {
@@ -111,14 +115,15 @@ describe('slots — an alias layer over content-addressed ids', () => {
 
     const viaPlan = run(graph, {
       plan: [nested],
-      select: [{ on: nested, reduce: 'last' }],
+      select: [{ on: fold('last', nested) }],
     });
     const viaSlots = run(graph, {
       nodes: {
         avg: { op: 'sma', params: { period: 3 }, in: ['px'] },
         outer: { op: 'scale', params: { by: 2 }, in: ['avg'] },
+        latest: { op: 'last', in: ['outer'] },
       },
-      outputs: { doubled: { on: 'outer', reduce: 'last' } },
+      outputs: { doubled: { on: 'latest' } },
     });
 
     expect(viaSlots.nodes.map((n) => n.id).sort()).toEqual(
@@ -139,7 +144,7 @@ describe('slots — an alias layer over content-addressed ids', () => {
     const at = (period: number) =>
       run(graph, {
         nodes: { avg: { op: 'sma', params: { period }, in: ['px'] } },
-        outputs: { latest: { on: 'avg', reduce: 'last' } },
+        outputs: {},
       }).nodes[0]!;
 
     const before = at(3);
@@ -155,12 +160,14 @@ describe('slots — an alias layer over content-addressed ids', () => {
     const res = run(graph, {
       nodes: {
         a: { op: 'sma', params: { period: 3 }, in: ['px'] },
+        a_now: { op: 'last', in: ['a'] },
         b: { op: 'sma', params: { period: 5 }, in: ['px'] },
       },
-      outputs: { only_a: { on: 'a', reduce: 'last' } },
+      outputs: { only_a: { on: 'a_now' } },
     });
     expect(res.nodes.map((n) => [n.slot, n.pulled]).sort()).toEqual([
       ['a', true],
+      ['a_now', true],
       ['b', false],
     ]);
   });
@@ -171,13 +178,17 @@ describe('slots — an alias layer over content-addressed ids', () => {
     const { registry } = makeRegistry();
     const graph = bind(series(20), { registry, units });
     const res = run(graph, {
-      nodes: { bb: { op: 'band', params: { width: 2 }, in: ['px'] } },
+      nodes: {
+        bb: { op: 'band', params: { width: 2 }, in: ['px'] },
+        // `#Upper` picks one output of a multi-output slot.
+        top_now: { op: 'last', in: ['bb#Upper'] },
+      },
       outputs: {
-        top: { on: 'bb', output: 'Upper', reduce: 'last' },
-        drawable: { on: 'bb', columns: true },
+        top: { on: 'top_now' },
+        drawable: { on: 'bb' },
       },
     });
-    expect(res.facts[0]).toMatchObject({ name: 'top', reduce: 'last' });
+    expect(res.facts[0]).toMatchObject({ name: 'top', op: 'last' });
     const id = specId(registry, {
       op: 'band',
       params: { width: 2 },
@@ -190,13 +201,19 @@ describe('slots — an alias layer over content-addressed ids', () => {
     const { registry } = makeRegistry();
     const graph = bind(series(20), { registry, units });
     const first = run(graph, {
-      nodes: { avg: { op: 'sma', params: { period: 3 }, in: ['px'] } },
-      outputs: { latest: { on: 'avg', reduce: 'last' } },
+      nodes: {
+        avg: { op: 'sma', params: { period: 3 }, in: ['px'] },
+        now: { op: 'last', in: ['avg'] },
+      },
+      outputs: { latest: { on: 'now' } },
     });
-    const id = first.nodes[0]!.id;
+    const id = first.facts[0]!.id;
     const second = run(graph, {
-      nodes: { avg: { op: 'sma', params: { period: 3 }, in: ['px'] } },
-      outputs: { latest: { on: id, reduce: 'last' } },
+      nodes: {
+        avg: { op: 'sma', params: { period: 3 }, in: ['px'] },
+        now: { op: 'last', in: ['avg'] },
+      },
+      outputs: { latest: { on: id } },
     });
     expect(second.facts[0]!['value']).toBe(first.facts[0]!['value']);
   });

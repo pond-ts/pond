@@ -42,7 +42,9 @@ kbd {
   height: 100vh;
 }
 
-header {
+/* Scoped: a bare `header` selector also caught every panel's own
+   `<header>`, laying its rows out in a row. */
+.app > header {
   display: flex;
   align-items: baseline;
   gap: 12px;
@@ -50,7 +52,7 @@ header {
   border-bottom: 1px solid var(--line);
 }
 
-header h1 {
+.app > header h1 {
   font-size: 15px;
   font-weight: 600;
   margin: 0;
@@ -88,18 +90,65 @@ main {
   min-height: 0;
 }
 
-.panel-head {
+/* ── column header ─────────────────────────────────────────── */
+
+.panel-top {
+  display: block;
+  margin-bottom: 12px;
+}
+
+/* Fixed, not minimum: a column with no action button was 5px shorter
+   than one with, so the rules beneath drifted out of line. */
+.panel-title {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 10px;
+  height: 33px;
+}
+
+/* Always present, and a fixed height even when empty, so the rule below
+   lands at the same place in every column whether or not there is
+   anything to say. */
+.panel-meta {
+  margin: 2px 0 0;
+  height: 27px;
+  line-height: 18px;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-notes,
+.panel-meta {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 8px;
+}
+
+.panel-notes {
+  margin-top: 8px;
+}
+
+.panel-notes:empty {
+  display: none;
+}
+
+.panel-notes .notice:last-child {
+  margin-bottom: 0;
+}
+
+.panel-tabs {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
 }
 
 .panel h2 {
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.09em;
-  color: var(--muted);
+  color: var(--ink);
   margin: 0 auto 0 0;
   font-weight: 600;
 }
@@ -388,17 +437,17 @@ button.tab.on {
   overflow: hidden;
 }
 
-.flow-node.cached {
-  border-left-color: var(--cold);
-}
-
-.flow-node.computed {
-  border-left-color: var(--warm);
-}
-
 .flow-node.idle {
-  border-left-color: var(--line);
   opacity: 0.72;
+}
+
+/* Warm/cold moved off the border, which now carries identity. */
+.flow-badge.cached {
+  color: var(--cold);
+}
+
+.flow-badge.computed {
+  color: var(--warm);
 }
 
 .flow-node.source {
@@ -471,7 +520,23 @@ button.tab.on {
   flex: 1;
   min-width: 0;
   font:
-    10px/1.35 ui-monospace,
+    11px/1.35 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Where the number came from, under the number itself. */
+.fact-lineage {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid var(--line);
+  font:
+    10px/1.3 ui-monospace,
     SFMono-Regular,
     Menlo,
     monospace;
@@ -650,4 +715,390 @@ button.tab.on {
 
 .viz {
   position: relative;
+}
+
+/* ── workbook: the derivation, top to bottom ───────────────── */
+
+.steps {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+}
+
+.step {
+  position: relative;
+  padding: 0 0 14px 26px;
+  border-left: 1px solid var(--line);
+}
+
+.step:last-child {
+  border-left-color: transparent;
+  padding-bottom: 4px;
+}
+
+.step-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-bottom: 6px;
+}
+
+.step-n {
+  position: absolute;
+  left: -9px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* The step number carries the node's colour; the badge carries state. */
+.step.computed .step-badge {
+  color: var(--warm);
+}
+
+.step.cached .step-badge {
+  color: var(--cold);
+}
+
+.step-slot {
+  color: var(--accent);
+  font:
+    11px/1.3 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+
+.step-label {
+  flex: 1;
+  min-width: 0;
+  font:
+    11px/1.3 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-badge {
+  flex: none;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.step-note {
+  font-size: 11px;
+  margin: 0;
+}
+
+.step figure {
+  margin: 0;
+}
+
+.workbook-out {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.workbook-out h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+
+/* React Flow ships its controls in a light theme — its own stylesheet is
+   imported for layout, so they arrive as white boxes on a dark panel. */
+.react-flow__controls {
+  box-shadow: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--panel);
+}
+
+.react-flow__controls-button {
+  width: 22px;
+  height: 22px;
+  padding: 4px;
+  background: var(--panel);
+  border: none;
+  border-bottom: 1px solid var(--line);
+  fill: var(--muted);
+}
+
+.react-flow__controls-button:last-child {
+  border-bottom: none;
+}
+
+.react-flow__controls-button:hover:not(:disabled) {
+  background: #262b34;
+  fill: var(--accent);
+}
+
+.react-flow__controls-button:disabled {
+  opacity: 0.4;
+  fill: var(--line);
+}
+
+.react-flow__controls-button svg {
+  max-width: 11px;
+  max-height: 11px;
+}
+
+/* ── wiring chips: what fed a step, and with what ──────────── */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 7px;
+}
+
+.chips.columns {
+  margin-top: 2px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font:
+    10px/1.6 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  color: var(--muted);
+  background: transparent;
+}
+
+.chip.param {
+  border-style: dashed;
+}
+
+button.chip {
+  cursor: pointer;
+}
+
+button.chip:hover {
+  color: var(--ink);
+}
+
+button.chip.on {
+  color: var(--ink);
+  border-color: var(--accent);
+  background: #21262e;
+}
+
+.chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+
+/* A source is not a computed node; it reads as the ground the
+   derivation starts from rather than a step in it. */
+.step.source {
+  border-left-style: dashed;
+  border-left-color: var(--line);
+  opacity: 0.75;
+}
+
+.step.source .step-n {
+  border-color: var(--line);
+  color: var(--muted);
+}
+
+.step.source .step-label {
+  color: var(--muted);
+}
+
+/* The unit an input demands — why a plan gets rejected, not decoration. */
+.chip-want {
+  font-style: normal;
+  color: var(--warm);
+  opacity: 0.85;
+}
+
+.chip-want::before {
+  content: '⟨';
+  opacity: 0.6;
+}
+
+.chip-want::after {
+  content: '⟩';
+  opacity: 0.6;
+}
+
+/* ── the conversation ────────────────────────────────────────
+   The composer is a dialog: the question sits right, the reply sits
+   left, and the alternation is what makes a scrollback readable at a
+   glance. The transcript scrolls; the input stays put below it, which
+   needs the panel to be a flex column rather than the plain scrolling
+   block every other panel is — `.panel` sets `overflow: auto`, and that
+   has to move down onto the transcript so the form cannot scroll away. */
+.panel.composer {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.chat {
+  list-style: none;
+  margin: 0;
+  padding: 0 2px 0 0;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* A turn is the unit of selection — clicking anywhere in it drives the
+   other two panels — so both sides dim together when it is not the one
+   on screen to the right. */
+.turn {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 120ms ease;
+}
+
+.turn.selected,
+.turn:hover {
+  opacity: 1;
+}
+
+/* The question. Right-aligned and filled, so the eye can find where each
+   exchange begins without reading anything. */
+.asked {
+  align-self: flex-end;
+  max-width: 88%;
+  margin: 0;
+  padding: 7px 11px;
+  border-radius: 12px 12px 3px 12px;
+  background: color-mix(in srgb, var(--accent) 20%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+
+/* The reply. Left, and wider — it carries the substance. */
+.reply {
+  align-self: flex-start;
+  max-width: 94%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bubble {
+  margin: 0;
+  padding: 9px 12px;
+  border-radius: 12px 12px 12px 3px;
+  background: #10131a;
+  border: 1px solid var(--line);
+}
+
+/* The selected turn's reply gets the accent edge, so "which one is the
+   panels showing" survives the dimming being subtle. */
+.turn.selected .bubble {
+  border-left: 2px solid var(--accent);
+}
+
+.bubble.working {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.bubble.notice {
+  border-radius: 12px 12px 12px 3px;
+  padding: 9px 12px;
+}
+
+.reply-text {
+  margin: 0;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.reply-cites {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 9px 0 0;
+}
+
+/* The names the prose rests on — the same names the cards in Results
+   carry, which is what makes a figure checkable rather than trusted. */
+.reply-cites .cite {
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px 6px;
+  color: var(--accent);
+  background: var(--bg);
+}
+
+/* Only cites we can actually show a card for invite a hover. */
+.reply-cites .cite.has-card {
+  cursor: help;
+  border-style: dashed;
+}
+
+.reply-cites .cite.has-card:hover {
+  border-style: solid;
+  border-color: var(--accent);
+}
+
+/* `fixed`, so the scrolling transcript cannot clip it. */
+.cite-card {
+  position: fixed;
+  z-index: 20;
+  width: 280px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  pointer-events: none;
+  filter: drop-shadow(0 6px 16px rgb(0 0 0 / 0.55));
+}
+
+.cite-card .fact {
+  margin: 0;
+  border-color: var(--accent);
+}
+
+.reply-meta {
+  margin: 0 0 0 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Below the transcript, and not scrolling with it. */
+.composer form {
+  flex: none;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.composer .examples {
+  flex: none;
+}
+
+.composer .vocab {
+  flex: none;
+  margin-top: 12px;
 }

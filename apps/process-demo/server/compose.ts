@@ -15,6 +15,15 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { openaiComposer } from './compose-openai.js';
+import {
+  ANALYST,
+  ANSWER_TOOL,
+  MAX_ROUNDS,
+  resultText,
+  type Answer,
+  type Round,
+  type Runner,
+} from './agent.js';
 import type { DatasetInfo, Envelope, OpDescriptor } from '@pond-ts/process';
 
 export interface ComposerContext {
@@ -50,6 +59,17 @@ export interface Composer {
     ctx: ComposerContext,
     history: readonly Turn[],
   ): Promise<Composed>;
+  /**
+   * The same seam, one step further: compose, **read the result back**,
+   * and answer. `run` is supplied by the server so the loop never learns
+   * what a `Host` is.
+   */
+  converse(
+    prompt: string,
+    ctx: ComposerContext,
+    history: readonly Turn[],
+    run: Runner,
+  ): Promise<Answer>;
 }
 
 // ── the tool contract ────────────────────────────────────────
@@ -88,7 +108,7 @@ export function requestSchema(ctx: ComposerContext): Record<string, unknown> {
         type: 'array',
         minItems: 1,
         description:
-          'What to return, each under a name you choose. Prefer a reduction — the caller is reading JSON, not drawing a chart.',
+          'Which nodes to surface, each under a name you choose. A fold node returns a fact; anything else returns its full column, which is usually far more than you want.',
         items: {
           type: 'object',
           additionalProperties: false,
@@ -101,30 +121,7 @@ export function requestSchema(ctx: ComposerContext): Record<string, unknown> {
             },
             on: {
               type: 'string',
-              description: 'The slot of the node to read.',
-            },
-            columns: {
-              type: 'boolean',
-              const: true,
-              description:
-                'Ask for the full column. Use sparingly: it returns every row.',
-            },
-            reduce: {
-              type: 'string',
-              enum: ['last', 'extremes', 'percentileRank', 'shape'],
-              description:
-                'last: latest defined value. extremes: min and max with timestamps. percentileRank: where the latest value sits in its own history. shape: a bounded sample of the whole series.',
-            },
-            output: {
-              type: 'string',
-              description:
-                'For a multi-output op, which output — e.g. "Upper". Defaults to the first.',
-            },
-            points: {
-              type: 'integer',
-              minimum: 2,
-              maximum: 400,
-              description: 'For `shape`, roughly how many points to return.',
+              description: 'The slot of the node to surface.',
             },
           },
         },
@@ -182,6 +179,7 @@ export function foldSlotRequest(raw: Record<string, unknown>): {
  */
 export function opTable(ctx: ComposerContext): string {
   const rows = ctx.ops.map((op) => {
+    if (op.kind === 'fold') return `- ${op.name} [${op.family}] → a fact`;
     const outs = op.outputs
       .map((o) => `${o.suffix === '' ? '(single)' : o.suffix}:${o.unit}`)
       .join(' ');
@@ -206,13 +204,27 @@ inputs in order, and each input is either a source column name or the slot of
 another node. That is how you express "EMA of the SMA of px": two nodes, where
 the EMA's \`in\` is the SMA's slot. Params you omit take their declared defaults.
 
+**Reading a result is also a node.** \`last\`, \`extremes\`, \`percentileRank\` and
+\`shape\` are ops like any other: to get the current value of a study, add a
+\`last\` node whose \`in\` is that study's slot, then surface *that* slot in
+\`outputs\`. They are terminal — they produce a fact, so nothing can take one as
+an input.
+
+Surface a **study** to get its series back for drawing; surface a **fold** to get
+a value. A request that asks for both — "the bands, and the current upper band" —
+names both: the study slot for the series, and a \`last\` node over it for the
+value.
+
 Emit exactly one call to \`emit_request\`. Rules that are not in the schema:
 
 - A slot must not be the name of a source column.
 - Every \`on\` in \`outputs\` must be a slot you defined in \`nodes\`.
 - Name each output for what it *is* ("upper_band", "annualised_vol"), because
   the caller reads results back by that name.
-- Prefer a reduction over \`columns\`. The caller reads JSON.
+- For one output of a multi-output op, write \`slot#Output\` in \`in\` — a
+  \`last\` node with \`in: ["bb#Upper"]\` reads the upper Bollinger band.
+- Give a value for anything the request asks the current state of. A series on
+  its own rarely answers a question.
 - If the request is ambiguous, choose conventional defaults and say what you
   chose in \`note\` rather than asking.
 - If you cannot express the request with the ops available, still emit a
@@ -223,6 +235,38 @@ export function scriptedComposer(): Composer {
   return {
     kind: 'scripted',
     why: 'No API key — falling back to a keyword matcher.',
+
+    /**
+     * One round, and a reading of the facts rather than an answer.
+     *
+     * A keyword matcher cannot answer a question, and pretending
+     * otherwise would put prose on screen that looks like analysis and
+     * is not. It restates what came back and says who wrote it.
+     */
+    async converse(prompt, ctx, history, run: Runner): Promise<Answer> {
+      const t0 = performance.now();
+      const composed = await this.compose(prompt, ctx, history);
+      const round: Round = {
+        ...run(composed.envelope),
+        ...(composed.note !== undefined && { note: composed.note }),
+      };
+      const read = round.reading.facts
+        .map((f) => `${String(f['name'])} = ${String(f['value'] ?? '—')}`)
+        .join('; ');
+      return {
+        text:
+          read === ''
+            ? 'The plan produced no facts.'
+            : `Read back: ${read}. No model was involved, so this is a restatement rather than an answer.`,
+        cites: round.reading.facts.map((f) => String(f['name'])),
+        rounds: [round],
+        source: 'scripted',
+        ms: Math.round((performance.now() - t0) * 1000) / 1000,
+        warning:
+          'The offline keyword matcher cannot analyse a result — it only echoes the facts the engine returned.',
+      };
+    },
+
     async compose(prompt, ctx) {
       const t0 = performance.now();
       const text = prompt.toLowerCase();
@@ -273,8 +317,9 @@ export function scriptedComposer(): Composer {
         envelope: {
           from,
           as,
-          nodes,
-          outputs: { latest: { on, reduce: 'last' } },
+          // Reading is a node too, so even the keyword matcher adds one.
+          nodes: { ...nodes, latest: { op: 'last', in: [on] } },
+          outputs: { latest: { on: 'latest' } },
           onError: 'collect',
         } as unknown as Envelope,
         note: 'Built by the offline keyword matcher, not by a model.',
@@ -287,6 +332,37 @@ export function scriptedComposer(): Composer {
   };
 }
 
+/** The plan tool, shared by the one-shot path and the answer loop. */
+function emitTool(ctx: ComposerContext): Anthropic.Tool {
+  return {
+    name: 'emit_request',
+    description:
+      'Emit the process request that answers the user’s prompt. Call this exactly once.',
+    input_schema: requestSchema(ctx) as Anthropic.Tool['input_schema'],
+  };
+}
+
+/** History and the op table, as the opening messages of either path. */
+function opening(
+  prompt: string,
+  ctx: ComposerContext,
+  history: readonly Turn[],
+): Anthropic.MessageParam[] {
+  const messages: Anthropic.MessageParam[] = [];
+  for (const turn of history) {
+    messages.push({ role: 'user', content: turn.prompt });
+    messages.push({
+      role: 'assistant',
+      content: `Previous request:\n${JSON.stringify(turn.envelope)}`,
+    });
+  }
+  messages.push({
+    role: 'user',
+    content: `${opTable(ctx)}\n\nRequest: ${prompt}`,
+  });
+  return messages;
+}
+
 export function anthropicComposer(options: {
   model: string;
   fallbacks: boolean;
@@ -295,36 +371,113 @@ export function anthropicComposer(options: {
   return {
     kind: 'anthropic',
     why: `Composing with ${options.model}.`,
-    async compose(prompt, ctx, history) {
-      const t0 = performance.now();
-      const tool = {
-        name: 'emit_request',
-        description:
-          'Emit the process request that answers the user’s prompt. Call this exactly once.',
-        input_schema: requestSchema(ctx) as Anthropic.Tool['input_schema'],
-      };
 
-      const messages: Anthropic.MessageParam[] = [];
-      for (const turn of history) {
-        messages.push({ role: 'user', content: turn.prompt });
+    /**
+     * Compose, run, read back, answer.
+     *
+     * The assistant's content blocks go back verbatim each round —
+     * thinking blocks included — because with adaptive thinking the
+     * model's reasoning about round one is what makes round two a
+     * *sharper* question rather than a differently-worded one.
+     */
+    async converse(prompt, ctx, history, run: Runner): Promise<Answer> {
+      const t0 = performance.now();
+      const answerTool: Anthropic.Tool = {
+        name: ANSWER_TOOL.name,
+        description: ANSWER_TOOL.description,
+        input_schema: ANSWER_TOOL.schema as Anthropic.Tool['input_schema'],
+      };
+      const messages = opening(prompt, ctx, history);
+      const rounds: Round[] = [];
+      const usage = { input: 0, output: 0, cacheRead: 0 };
+      let model: string | undefined;
+
+      for (let round = 0; round < MAX_ROUNDS; round += 1) {
+        // The last round may only answer, so the cap can never surface
+        // as a missing reply.
+        const last = round === MAX_ROUNDS - 1;
+        const response = await createWithFallbacks(
+          client,
+          {
+            model: options.model,
+            max_tokens: 16000,
+            system: ANALYST,
+            thinking: { type: 'adaptive' },
+            tools: last ? [answerTool] : [emitTool(ctx), answerTool],
+            tool_choice: last
+              ? { type: 'tool', name: ANSWER_TOOL.name }
+              : { type: 'any' },
+            messages,
+          },
+          options,
+        );
+        model = response.model;
+        usage.input += response.usage.input_tokens;
+        usage.output += response.usage.output_tokens;
+        usage.cacheRead += response.usage.cache_read_input_tokens ?? 0;
+
+        if (response.stop_reason === 'refusal') {
+          throw new Error(
+            `The model declined this prompt (${response.stop_details?.category ?? 'unspecified'}).`,
+          );
+        }
+        messages.push({ role: 'assistant', content: response.content });
+        const call = response.content.find(
+          (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use',
+        );
+        if (call === undefined) {
+          throw new Error('The model ended its turn without calling a tool.');
+        }
+
+        if (call.name === ANSWER_TOOL.name) {
+          const { answer, cites } = call.input as {
+            answer?: string;
+            cites?: string[];
+          };
+          return {
+            text: answer ?? '',
+            cites: cites ?? [],
+            rounds,
+            source: 'anthropic',
+            ...(model !== undefined && { model }),
+            ms: Math.round((performance.now() - t0) * 1000) / 1000,
+            usage,
+            ...(rounds.length === 0 && {
+              warning: 'The model answered without reading anything back.',
+            }),
+          };
+        }
+
+        const { envelope, note } = foldSlotRequest(
+          call.input as Record<string, unknown>,
+        );
+        const result = run({ ...envelope, onError: 'collect' } as Envelope);
+        rounds.push({ ...result, ...(note !== undefined && { note }) });
         messages.push({
-          role: 'assistant',
-          content: `Previous request:\n${JSON.stringify(turn.envelope)}`,
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: call.id,
+              content: resultText(rounds[rounds.length - 1]!),
+            },
+          ],
         });
       }
-      messages.push({
-        role: 'user',
-        content: `${opTable(ctx)}\n\nRequest: ${prompt}`,
-      });
 
+      throw new Error(`The model did not answer within ${MAX_ROUNDS} rounds.`);
+    },
+
+    async compose(prompt, ctx, history) {
+      const t0 = performance.now();
       const params: Anthropic.MessageCreateParamsNonStreaming = {
         model: options.model,
         max_tokens: 16000,
         system: SYSTEM,
         thinking: { type: 'adaptive' },
-        tools: [tool],
+        tools: [emitTool(ctx)],
         tool_choice: { type: 'tool', name: 'emit_request' },
-        messages,
+        messages: opening(prompt, ctx, history),
       };
 
       const response = await createWithFallbacks(client, params, options);

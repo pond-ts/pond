@@ -34,6 +34,15 @@
 import OpenAI from 'openai';
 import type { Envelope } from '@pond-ts/process';
 import {
+  ANALYST,
+  ANSWER_TOOL,
+  MAX_ROUNDS,
+  resultText,
+  type Answer,
+  type Round,
+  type Runner,
+} from './agent.js';
+import {
   foldSlotRequest,
   opTable,
   requestSchema,
@@ -93,47 +102,144 @@ export function openaiComposer(options: {
   strict: boolean;
 }): Composer {
   const client = new OpenAI();
+
+  const emitTool = (ctx: ComposerContext): OpenAI.Responses.Tool => ({
+    type: 'function',
+    name: 'emit_request',
+    description:
+      'Emit the process request that answers the user’s prompt. Call this exactly once.',
+    parameters: options.strict
+      ? (strictParams(requestSchema(ctx)) as Record<string, unknown>)
+      : requestSchema(ctx),
+    strict: options.strict,
+  });
+
+  const opening = (
+    prompt: string,
+    ctx: ComposerContext,
+    history: readonly Turn[],
+  ): OpenAI.Responses.ResponseInput => {
+    const input: OpenAI.Responses.ResponseInput = [];
+    for (const turn of history) {
+      input.push({ role: 'user', content: turn.prompt });
+      input.push({
+        role: 'assistant',
+        content: `Previous request:\n${JSON.stringify(turn.envelope)}`,
+      });
+    }
+    input.push({
+      role: 'user',
+      content: `${opTable(ctx)}\n\nRequest: ${prompt}`,
+    });
+    return input;
+  };
+
   return {
     kind: 'openai',
     why: `Composing with ${options.model}${options.strict ? ' (strict)' : ''}.`,
+
+    /**
+     * Compose, run, read back, answer.
+     *
+     * Every output item goes back into `input` verbatim — including
+     * reasoning items, which the Responses API expects to see again on
+     * the next turn and which are the model's own account of what round
+     * one told it.
+     */
+    async converse(
+      prompt,
+      ctx: ComposerContext,
+      history: readonly Turn[],
+      run: Runner,
+    ): Promise<Answer> {
+      const t0 = performance.now();
+      const answerTool: OpenAI.Responses.Tool = {
+        type: 'function',
+        name: ANSWER_TOOL.name,
+        description: ANSWER_TOOL.description,
+        parameters: ANSWER_TOOL.schema as unknown as Record<string, unknown>,
+        strict: options.strict,
+      };
+      const input = opening(prompt, ctx, history);
+      const rounds: Round[] = [];
+      const usage = { input: 0, output: 0, cacheRead: 0 };
+      let model: string | undefined;
+
+      for (let round = 0; round < MAX_ROUNDS; round += 1) {
+        const last = round === MAX_ROUNDS - 1;
+        const response = await client.responses.create({
+          model: options.model,
+          instructions: ANALYST,
+          input,
+          tools: last ? [answerTool] : [emitTool(ctx), answerTool],
+          tool_choice: last
+            ? { type: 'function', name: ANSWER_TOOL.name }
+            : 'required',
+        });
+        model = response.model;
+        usage.input += response.usage?.input_tokens ?? 0;
+        usage.output += response.usage?.output_tokens ?? 0;
+        usage.cacheRead +=
+          response.usage?.input_tokens_details?.cached_tokens ?? 0;
+        // Output items are echoed back as input for the next turn; the
+        // SDK types the two sides separately, and only the tool-call
+        // variants this loop can actually produce overlap cleanly.
+        input.push(
+          ...(response.output as unknown as OpenAI.Responses.ResponseInput),
+        );
+
+        const call = response.output.find((i) => i.type === 'function_call');
+        if (call === undefined || call.type !== 'function_call') {
+          throw new Error(
+            `The model ended its turn without calling a tool: ${response.output_text.slice(0, 300)}`,
+          );
+        }
+        const raw = JSON.parse(call.arguments) as Record<string, unknown>;
+        const args = options.strict
+          ? (dropNulls(raw) as Record<string, unknown>)
+          : raw;
+
+        if (call.name === ANSWER_TOOL.name) {
+          return {
+            text: typeof args['answer'] === 'string' ? args['answer'] : '',
+            cites: Array.isArray(args['cites'])
+              ? (args['cites'] as string[])
+              : [],
+            rounds,
+            source: 'openai',
+            ...(model !== undefined && { model }),
+            ms: Math.round((performance.now() - t0) * 1000) / 1000,
+            usage,
+            ...(rounds.length === 0 && {
+              warning: 'The model answered without reading anything back.',
+            }),
+          };
+        }
+
+        const { envelope, note } = foldSlotRequest(args);
+        const result = run({ ...envelope, onError: 'collect' } as Envelope);
+        rounds.push({ ...result, ...(note !== undefined && { note }) });
+        input.push({
+          type: 'function_call_output',
+          call_id: call.call_id,
+          output: resultText(rounds[rounds.length - 1]!),
+        });
+      }
+
+      throw new Error(`The model did not answer within ${MAX_ROUNDS} rounds.`);
+    },
+
     async compose(prompt, ctx: ComposerContext, history: readonly Turn[]) {
       const t0 = performance.now();
-      const base = requestSchema(ctx);
-      const parameters = options.strict
-        ? (strictParams(base) as Record<string, unknown>)
-        : base;
-
       // The Responses API is what this SDK version presents as current.
       // Note the shapes differ from Chat Completions: the tool is flat
       // (no nested `function`), `strict` is required rather than
       // optional, and `tool_choice` is `{type, name}` without nesting.
-      const input: OpenAI.Responses.ResponseInput = [];
-      for (const turn of history) {
-        input.push({ role: 'user', content: turn.prompt });
-        input.push({
-          role: 'assistant',
-          content: `Previous request:\n${JSON.stringify(turn.envelope)}`,
-        });
-      }
-      input.push({
-        role: 'user',
-        content: `${opTable(ctx)}\n\nRequest: ${prompt}`,
-      });
-
       const response = await client.responses.create({
         model: options.model,
         instructions: SYSTEM,
-        input,
-        tools: [
-          {
-            type: 'function',
-            name: 'emit_request',
-            description:
-              'Emit the process request that answers the user’s prompt. Call this exactly once.',
-            parameters,
-            strict: options.strict,
-          },
-        ],
+        input: opening(prompt, ctx, history),
+        tools: [emitTool(ctx)],
         tool_choice: { type: 'function', name: 'emit_request' },
       });
 

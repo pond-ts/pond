@@ -935,3 +935,185 @@ buffer is ~229× per pull at 50k events, because a pull materializes
 bucket count rather than event count. That path exposes **closed buckets
 only** — the in-progress bucket is invisible until an event crosses its
 end — so it must remain a documented consumer choice, never a default.
+
+---
+
+### [PND-PROCHELD] — A caller cannot ask what is already resident
+
+Found by closing the demo's answer loop (M6). Asked a follow-up — "is
+that high or low compared with the rest of the history?" — the model
+replied that it **could not** compare against the previous turn's value,
+because it did not have that result in hand. Those nodes were still
+resident and would have cost nothing to re-read. It simply had no reason
+to believe re-asking was cheap.
+
+One line of prompt — "the cache outlives the turn; if an earlier result
+would help, ask for it again" — turned the same follow-up from a refusal
+into a full comparison at **`computed=2, cached=3`**. That fix works and
+is also the evidence that something is missing: the capability was there
+the whole time, and the only way to reach it was to tell a model it
+existed.
+
+**The gap.** A response reports `cached` per node _after_ the work is
+requested. Nothing lets a caller ask, before composing, **what the host
+already holds**. An agent that could see the resident set would plan
+differently — reach for the study it already has rather than the
+equivalent one it would have to build, and stop treating a comparison
+against last turn as unavailable.
+
+**What it is not.** Not a cache API, and not the eviction budget — that
+is [PND-PROCCACHE], and this ticket must not quietly become it. This is a
+read-only view: names, and enough lineage to recognise one.
+
+**Open questions.**
+
+- **What is a name here?** A `specId` is exact and unreadable; a `label`
+  is readable and ambiguous. The demo's slots are caller-local and mean
+  nothing across sessions, so they cannot be it.
+- **Whose residency?** `host.datasets` already reports a node _count_ per
+  dataset. The natural home is the same place, but a count was enough for
+  a badge and is not enough for this.
+- **Does it scale?** After a slider drag the demo held 55 nodes; a long
+  session holds far more, and a list of every resident node is not a
+  thing to put in a context window. Some projection — by op, by family,
+  by what a plan would reuse — is probably the real shape, and finding it
+  is most of the work.
+
+**Done when:** a composing agent, given the resident view and no prompt
+instruction about caching, re-reads an earlier turn's node instead of
+declining to compare.
+
+---
+
+### [PND-PROCFOLD] — Reductions are nodes
+
+**Landed.** `last`, `extremes`, `percentileRank` and `shape` were a fixed
+`reduce` enum on the selector, computed after the graph had finished.
+That put the one thing every caller actually reads outside the memo:
+
+```
+warm, 3 studies + 3 facts, 150k rows   11.60 ms
+warm, zero facts                        0.75 ms
+                                       ────────
+the reductions                         10.85 ms   every request, forever
+  last          0.89 ms
+  extremes      1.21 ms
+  percentileRank 6.57 ms
+```
+
+Every node cached, and `percentileRank` still densified 150,000 values
+and filtered them twice. The library's whole claim is memoization, and it
+stopped one step short of the output.
+
+A **fold** is now an ordinary registry entry — `{kind: 'fold', inputs,
+unit, fold}` — compiled into a node with a fact outlet instead of column
+outlets. Same `specId`, same version check, same badge row. It is always
+a leaf: a fact cannot feed anything, and naming a fold as an op's input
+is rejected at compile time with both sides named.
+
+```
+warm, same 3 facts   0.13 ms
+the facts now cost   0.09 ms   (was 10.85)
+```
+
+**120× on the warm path**, and `percentileRank` from 6.57 ms to 0.01 ms.
+In the demo a repeated question went from 199.31 ms to **0.664 ms, `0
+computed, 8 cached`** — a number that was previously impossible to reach
+because three of those eight were not cacheable at all.
+
+**What else it fixed, which is the better argument.**
+
+- **One vocabulary.** A consumer adds a reduction with `define`, not by
+  editing this library. `describe()` reports `kind`, so a picker knows
+  what can be wired onward.
+- **Provenance.** A fact's id is now
+  `p1:percentileRank(p1:annualise(…);)`. Two callers asking the same
+  question share the answer; before, the reduction appeared in no id at
+  all.
+- **`outputs` means what it says.** A selector is `{on, output?}` — it
+  points at a node and names it. No `reduce`, no `points`, no
+  `columns: true`. What comes back is whatever that node produces.
+- **`shape`'s `points` is a param**, so it lands in the id and two
+  callers asking for 40 points share one node rather than computing it
+  twice.
+
+**A gap it exposed, fixed alongside.** Removing `select.output` left no
+way to read a band's middle or lower line — a nested input had always
+read output 0, so `sma` of a Bollinger could only ever smooth `Upper`.
+Nobody hit it while a selector could pick at the end. `Input` now admits
+`{from, output}`, spelled `slot#Output` in the flat slot form, and it is
+in the id: reading a different output is a different computation.
+
+**And a second-order one.** The first live plan using it wrote
+`bb.Upper`, which threw a 500 — slot expansion runs before the error
+policy, so a mistyped input was the one class of bad plan an agent could
+not read and retry against. It is collectable now, the message names the
+`#` spelling when a reference looks like an attempt at one, and the
+convention is in the **schema description** rather than only the system
+prompt. With that in place the model composed `bb#Upper`, `bb#Middle` and
+`bb#Lower` in one plan, first try.
+
+---
+
+### [PND-PROCDRAW] — Surfacing carries no intent
+
+Found by reading an answer that said _"I also included the band series
+output for plotting."_ It had not. It had added three `shape` folds — one
+each over `bb#Upper`, `bb#Middle` and `bb#Lower`, forty points apiece —
+and called 120 numbers a plot. Nothing draws a `shape`.
+
+The band **was** on screen, because the demo adds a `columns` selector for
+every non-fold slot behind the agent's back, and `Figure` renders three
+outputs as a `BandChart` without being told an op name. So the claim was
+wrong and accidentally true at once, which is the worst version.
+
+**The gap.** A selector says _what to surface_; it cannot say _why_.
+`{on: 'bb'}` means "give me what this node produces", and whether that
+becomes a chart, a table or nothing is entirely the consumer's business.
+An agent that wants a curve on screen has no way to ask for one, so it
+reaches for the nearest thing it can name — and `shape` is a sampled list
+that exists for a completely different reason.
+
+Half of this is a prompt bug and is fixed: the brief had conflated "I
+cannot read a column" with "do not ask for one", when the server strips
+columns before the agent sees them and surfacing a study is free. With
+that corrected the same request produces two nodes rather than five, and
+the band reaches the output panel rather than only the workbook.
+
+The other half is real and unbuilt.
+
+**Why it is worth more than it looks.** Today `outputs` serves two
+readers with opposite appetites — an agent that wants a few numbers, and
+a renderer that wants every row — and the server reconciles them by
+quietly dropping columns on the way to the model. That reconciliation
+stops working when the two readers are **the same party**: an MCP client
+whose responses may carry markup, rendering pond charts in the reply
+itself. Then "surface this so it can be seen" is something the requester
+genuinely means, and there is nowhere to put it.
+
+**Open questions.**
+
+- **Where does intent live?** `{on, draw: true}` is the obvious spelling
+  and probably too binary — "as a band", "against this other series",
+  "the last 200 bars" are all things a requester means by "show me".
+  A flag that immediately wants three modifiers is a flag in the wrong
+  place.
+- **Who renders?** `Figure` deciding band-vs-line from `outs.length`
+  proves the response already carries enough to draw correctly without op
+  knowledge. That argues the renderer can stay a consumer. But if a
+  response is to _contain_ a chart, something has to own that, and
+  `@pond-ts/process` depending on `@pond-ts/charts` is a dependency
+  direction worth refusing on purpose.
+- **What crosses the wire?** Not rendered pixels and not 150,000 points
+  of JSON. The frames path already answers this — base64 `Float64Array`
+  plus a validity bitmap, adopted zero-copy by `TimeSeries.fromColumns`
+  ([PND-PROCCOL]) — so a renderable response is the existing wire shape
+  plus a rendering shell, not a new transport.
+- **Does `shape` survive?** It exists because a model pays per point. If
+  the model can hand back a chart instead of describing one, `shape`
+  narrows to its honest use — _the agent itself_ needing a trajectory to
+  reason about — which is a smaller job than it currently advertises.
+
+**Done when:** a requester can express "show this" without the consumer
+having to guess, and an agent that wants a band on screen names one
+rather than approximating it with a fold.

@@ -17,7 +17,16 @@ import { source, type SourceNode } from '../source.js';
 import type { Column, SeriesSchema, TimeSeries } from 'pond-ts';
 import { columnsOf, specId } from './identity.js';
 import type { Registry } from './registry.js';
-import type { OpDef, Params, Spec, Units } from './types.js';
+import {
+  isFold,
+  isPicked,
+  specOf,
+  type FactBody,
+  type OpDef,
+  type Params,
+  type Spec,
+  type Units,
+} from './types.js';
 
 /** Thrown when an op demands an input unit its source does not carry. */
 export class UnitError extends ProcessError {}
@@ -53,6 +62,22 @@ interface Compiled {
   readonly params: Params;
   readonly node: Node<any, any>;
   readonly outlets: Readonly<Record<string, string>>;
+  /** True when the node ends in a fact. Its `outlets` are then empty. */
+  readonly fold: boolean;
+}
+
+/** The outlet a fold's fact arrives on. Not a column, so not in `outlets`. */
+const FACT = 'fact';
+
+/** Reads a column into a dense array — done once per version, inside the memo. */
+function densify(column: Column): (number | undefined)[] {
+  const out = new Array<number | undefined>(column.length).fill(undefined);
+  const anyCol = column as unknown as { at(i: number): number | undefined };
+  for (let i = 0; i < column.length; i += 1) {
+    const v = anyCol.at(i);
+    if (v !== undefined && !Number.isNaN(v)) out[i] = v;
+  }
+  return out;
 }
 
 /** A source plus every node compiled against it. */
@@ -118,9 +143,10 @@ export class BoundGraph {
       const got =
         typeof raw === 'string'
           ? (this.units[raw] ?? null)
-          : unitOfCompiled(this.registry, raw, this.units);
+          : unitOfCompiled(this.registry, specOf(raw), this.units);
       if (got !== def.unit) {
-        const name = typeof raw === 'string' ? raw : specId(this.registry, raw);
+        const name =
+          typeof raw === 'string' ? raw : specId(this.registry, specOf(raw));
         throw new UnitError(
           `${spec.op} needs a '${def.unit}' input for '${def.role}', but '${name}' is '${got ?? 'unitless'}'`,
         );
@@ -134,13 +160,32 @@ export class BoundGraph {
       if (typeof raw === 'string') {
         return { role, column: raw, outlet: undefined, nested: false as const };
       }
-      const upstream = this.compile(raw);
-      const upstreamId = upstream.id;
-      const first = columnsOf(this.registry, raw, upstreamId)[0]!;
-      const key = outletKey(this.registry.get(raw.op).outputs[0]!);
+      // A fold ends in a fact, so it has nothing to hand onward. Caught
+      // here rather than at pull time, and named on both sides, because
+      // a caller composing from the schema has no other way to learn it.
+      const from = specOf(raw);
+      const upstreamDef = this.registry.get(from.op);
+      if (isFold(upstreamDef)) {
+        throw new ProcessError(
+          `'${from.op}' produces a fact, not a series, so it cannot be the '${role}' input of '${spec.op}' — surface it in outputs instead`,
+        );
+      }
+      const declaredUp = upstreamDef.outputs;
+      const index = isPicked(raw)
+        ? declaredUp.findIndex((o) => o.id === raw.output)
+        : 0;
+      if (index === -1) {
+        const have = declaredUp.map((o) => `'${o.id}'`).join(', ');
+        throw new ProcessError(
+          `'${from.op}' has no output '${(raw as { output: string }).output}' (has ${have})`,
+        );
+      }
+      const upstream = this.compile(from);
+      const column = columnsOf(this.registry, from, upstream.id)[index]!;
+      const key = outletKey(declaredUp[index]!);
       return {
         role,
-        column: first,
+        column,
         outlet: upstream.node.out[key] as { get(): Column },
         nested: true as const,
       };
@@ -151,9 +196,11 @@ export class BoundGraph {
       if (b.nested) inlets[`in${i}`] = b.outlet;
     });
 
-    const outputs = Object.fromEntries(
-      op.outputs.map((o) => [outletKey(o), port<Column>()]),
-    );
+    const terminal = isFold(op);
+    const declared = this.registry.outputsOf(op);
+    const outputs = terminal
+      ? { [FACT]: port<FactBody>() }
+      : Object.fromEntries(declared.map((o) => [outletKey(o), port<Column>()]));
 
     const factory = defineNode({
       kind: spec.op,
@@ -173,6 +220,30 @@ export class BoundGraph {
         const inputsByRole = Object.fromEntries(
           bound.map((b) => [b.role, b.column]),
         );
+        if (isFold(op)) {
+          // Densifying happens here — inside the memo, once per version.
+          // As a selector-side reduction it happened once per *request*,
+          // forever, on a column the graph had already cached.
+          const values = Object.fromEntries(
+            bound.map((b) => [
+              b.role,
+              densify(
+                series.column(b.column) as unknown as Column,
+              ) as readonly (number | undefined)[],
+            ]),
+          );
+          const keyColumn = series.keyColumn() as unknown as {
+            at(i: number): number;
+          };
+          return {
+            [FACT]: op.fold({
+              values,
+              at: (i) => keyColumn.at(i),
+              params,
+              id,
+            }),
+          };
+        }
         const produced = op.run({ series, inputs: inputsByRole, params, id });
         const columns = toColumns(op, id, produced);
         return Object.fromEntries(
@@ -191,7 +262,8 @@ export class BoundGraph {
       spec,
       params,
       node,
-      outlets: Object.fromEntries(op.outputs.map((o) => [o.id, outletKey(o)])),
+      fold: terminal,
+      outlets: Object.fromEntries(declared.map((o) => [o.id, outletKey(o)])),
     };
     this.#nodes.set(id, compiled);
     return compiled;
@@ -205,10 +277,28 @@ export class BoundGraph {
         .map((s) => `'${s}'`)
         .join(', ');
       throw new ProcessError(
-        `'${compiled.spec.op}' has no output '${suffix}' (has ${have})`,
+        compiled.fold
+          ? `'${compiled.spec.op}' is a fold — it produces a fact, not columns`
+          : `'${compiled.spec.op}' has no output '${suffix}' (has ${have})`,
       );
     }
     return (compiled.node.out[key] as { get(): Column }).get();
+  }
+
+  /**
+   * Reads a fold's fact.
+   *
+   * The same memoized pull `columnOf` does, which is the whole change:
+   * the value is cached against the node's version like any column, so
+   * asking twice costs a version check rather than a rescan.
+   */
+  factOf(compiled: Compiled): FactBody {
+    if (!compiled.fold) {
+      throw new ProcessError(
+        `'${compiled.spec.op}' produces columns, not a fact`,
+      );
+    }
+    return (compiled.node.out[FACT] as { get(): FactBody }).get();
   }
 }
 
@@ -219,13 +309,13 @@ function unitOfCompiled(
   units: Units,
 ): string | null {
   const op = registry.get(spec.op);
-  const declared = op.outputs[0]?.unit ?? 'inherit';
+  const declared = isFold(op) ? op.unit : (op.outputs[0]?.unit ?? 'inherit');
   if (declared !== 'inherit') return declared;
   const src = spec.inputs[0];
   if (src === undefined) return null;
   return typeof src === 'string'
     ? (units[src] ?? null)
-    : unitOfCompiled(registry, src, units);
+    : unitOfCompiled(registry, specOf(src), units);
 }
 
 /**

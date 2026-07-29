@@ -47,6 +47,15 @@ nothing about the registry**.
 
 ## What to look at
 
+- **The reply, in the composer.** The app's last step, and the one it went
+  five milestones without: the facts go **back to the model**, and it
+  answers in the pane you asked in, with the output names it rested on.
+  Ask a follow-up and read the line under it — a first turn costs
+  `2 computed, 0 cached · 215.3 ms`, and the follow-up that reuses those
+  nodes costs `0 computed, 2 cached · 43.22 ms`. Both sit inside a model
+  call of 8–12 seconds, which is a fair summary of where the time in an
+  agentic tool actually goes, and the argument for answering from
+  reductions rather than columns.
 - **The badge row in Results.** Amber `computed`, green `cached`, per node,
   in dependency order. Hit **Re-run** and watch a 100 ms request become a
   5 ms one. That is the whole architectural claim from M1, made visible —
@@ -84,6 +93,8 @@ server/
                typed input (annualise demands 'variance').
   data.ts      Seeded 5m bars, 150k rows each, deterministic — no
                Math.random, so a number in a friction note reproduces.
+  agent.ts     The answer loop's shared parts — the `answer` tool, the
+               analyst brief, and the facts-only reading the model sees.
   compose.ts   The agent seam, and the Claude implementation;
                `scriptedComposer` is the offline stand-in.
   compose-openai.ts
@@ -93,7 +104,8 @@ server/
   frames.ts    Columns → base64 `Float64Array` for the wire, and the
                reasoning for why that rather than an assembled series.
   index.ts     One long-lived Host. /api/context, /api/compose,
-               /api/run, /api/ask.
+               /api/run, and /api/ask — which is now the whole loop:
+               compose, run, read back, answer.
 web/
   App.tsx      The three panels.
   Viz.tsx      The `viz` tab — decode, `TimeSeries.fromColumns`, chart.

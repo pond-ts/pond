@@ -9,6 +9,8 @@ import {
   specId,
   type OpDef,
   type Registry,
+  type Spec,
+  type ParamValue,
 } from '../src/index.js';
 
 // ── a registry of hand-rolled ops ────────────────────────────
@@ -140,6 +142,25 @@ const sma3 = { op: 'sma', params: { period: 3 }, inputs: ['px'] };
 const sma5 = { op: 'sma', params: { period: 5 }, inputs: ['px'] };
 const units = { px: '%' };
 
+/**
+ * A fold node over a spec — what a `reduce` selector used to be.
+ *
+ * Written out here rather than hidden in a helper file because the shape
+ * is the point: a reduction is now an ordinary `{op, params, inputs}`
+ * spec, which is why it gets an id, a cache entry and a badge like
+ * everything else ([PND-PROCFOLD]).
+ */
+const fold = (
+  op: string,
+  on: Spec,
+  params?: Record<string, ParamValue>,
+  output?: string,
+): Spec => ({
+  op,
+  ...(params !== undefined && { params }),
+  inputs: [output === undefined ? on : { from: on, output }],
+});
+
 describe('run — resolution', () => {
   it('resolves a plan that arrived as a JSON string', () => {
     const { registry } = makeRegistry();
@@ -147,9 +168,9 @@ describe('run — resolution', () => {
     const plan = JSON.parse(
       '[{"op":"sma","params":{"period":3},"inputs":["px"]}]',
     ) as never;
-    const res = run(graph, { plan, select: [{ on: sma3, reduce: 'last' }] });
+    const res = run(graph, { plan, select: [{ on: fold('last', sma3) }] });
     expect(res.facts[0]).toMatchObject({
-      reduce: 'last',
+      op: 'last',
       unit: '%',
       value: 18,
     });
@@ -161,10 +182,11 @@ describe('run — resolution', () => {
     const emaOfSma = { op: 'scale', params: { by: 2 }, inputs: [sma3] };
     run(graph, {
       plan: [emaOfSma, sma3],
-      select: [{ on: sma3, reduce: 'last' }],
+      select: [{ on: fold('last', sma3) }],
     });
-    // Three plan entries' worth of specs, two distinct nodes.
-    expect(graph.ids).toHaveLength(2);
+    // Three plan entries' worth of specs, two distinct study nodes —
+    // plus the fold, which is a node like any other now.
+    expect(graph.ids).toHaveLength(3);
     expect(ran['sma']).toBe(1);
   });
 
@@ -189,15 +211,16 @@ describe('run — resolution', () => {
     const graph = bind(series(10), { registry, units });
     const res = run(graph, {
       plan: [sma3, sma5],
-      select: [{ on: sma3, reduce: 'last' }],
+      select: [{ on: fold('last', sma3) }],
     });
     expect(res.nodes.map((n) => [n.id, n.pulled])).toEqual([
       [specId(registry, sma3), true],
+      [specId(registry, fold('last', sma3)), true],
       [specId(registry, sma5), false],
     ]);
     // Reporting it costs nothing: the unselected op never ran.
     expect(ran['sma']).toBe(1);
-    expect(res.nodes[1]).toMatchObject({ ms: 0, cached: false });
+    expect(res.nodes[2]).toMatchObject({ ms: 0, cached: false });
   });
 
   it('resolves a 2-input op across two branches', () => {
@@ -206,7 +229,7 @@ describe('run — resolution', () => {
     const spread = { op: 'spread', inputs: [sma3, sma5] };
     const res = run(graph, {
       plan: [spread],
-      select: [{ on: spread, reduce: 'last' }],
+      select: [{ on: fold('last', spread) }],
     });
     // last sma3 = mean(17,18,19)=18; last sma5 = mean(15..19)=17
     expect(res.facts[0]).toMatchObject({ value: 1 });
@@ -230,7 +253,7 @@ describe('run — failure policy covers selection too', () => {
     const graph = bind(series(10), { registry, units });
     const res = run(graph, {
       plan: [sma3],
-      select: [{ on: 'p1:nope(px;)', reduce: 'last' }],
+      select: [{ on: 'p1:nope(px;)' }],
       onError: 'collect',
     });
     expect(res.skipped[0]!.reason).toMatch(/not in this plan/);
@@ -280,7 +303,7 @@ describe('run — the terminal', () => {
     const graph = bind(series(10), { registry, units });
     const res = run(graph, {
       plan: [sma3],
-      select: [{ on: sma3, reduce: 'last' }],
+      select: [{ on: fold('last', sma3) }],
     });
     // [PND-PROCTERM]: assembly is requested, never assumed. 52x measured.
     expect(res.series).toBeUndefined();
@@ -293,10 +316,7 @@ describe('run — the terminal', () => {
     const band = { op: 'band', params: { width: 1 }, inputs: ['px'] };
     const res = run(graph, {
       plan: [sma3, band],
-      select: [
-        { on: sma3, columns: true },
-        { on: band, columns: true },
-      ],
+      select: [{ on: sma3 }, { on: band }],
     });
     const names = res.series!.schema.map((c) => c.name);
     const promised = Object.values(res.outputs)
@@ -314,10 +334,7 @@ describe('run — the terminal', () => {
     const graph = bind(series(10), { registry, units });
     const res = run(graph, {
       plan: [sma3, sma5],
-      select: [
-        { on: sma3, columns: true },
-        { on: sma5, reduce: 'last' },
-      ],
+      select: [{ on: sma3 }, { on: fold('last', sma5) }],
     });
     expect(res.facts[0]).toMatchObject({ value: 17 });
     expect(res.outputs[specId(registry, sma5)]).toBeUndefined();
@@ -329,7 +346,7 @@ describe('run — the terminal', () => {
     const band = { op: 'band', params: { width: 2 }, inputs: ['px'] };
     const res = run(graph, {
       plan: [band],
-      select: [{ on: band, columns: true }],
+      select: [{ on: band }],
     });
     const id = specId(registry, band);
     expect(res.outputs[id]!.map((o) => o.column)).toEqual([
@@ -347,7 +364,7 @@ describe('run — the terminal', () => {
     const band = { op: 'band', params: { width: 2 }, inputs: ['px'] };
     const res = run(graph, {
       plan: [band],
-      select: [{ on: band, output: 'Upper', reduce: 'last' }],
+      select: [{ on: fold('last', band, undefined, 'Upper') }],
     });
     expect(res.facts[0]).toMatchObject({ value: 21 }); // last px 19 + 2
   });
@@ -355,11 +372,14 @@ describe('run — the terminal', () => {
   it('accepts a selector citing an id string, which is all a JSON caller has', () => {
     const { registry } = makeRegistry();
     const graph = bind(series(10), { registry, units });
-    const id = specId(registry, sma3);
+    const latest = fold('last', sma3);
+    const id = specId(registry, latest);
     const res = run(graph, {
-      plan: [sma3],
-      select: [{ on: id, reduce: 'last' }],
+      plan: [latest],
+      select: [{ on: id }],
     });
+    // A fold's id is a citation like any other, so a follow-up can name
+    // the fact the last response returned.
     expect(res.facts[0]!.id).toBe(id);
   });
 });
@@ -374,7 +394,7 @@ describe('run — reductions', () => {
     const { graph } = setup();
     const res = run(graph, {
       plan: [sma3],
-      select: [{ on: sma3, reduce: 'last' }],
+      select: [{ on: fold('last', sma3) }],
     });
     expect(res.facts[0]).toMatchObject({
       value: 18,
@@ -387,7 +407,7 @@ describe('run — reductions', () => {
     const { graph } = setup();
     const res = run(graph, {
       plan: [sma3],
-      select: [{ on: sma3, reduce: 'extremes' }],
+      select: [{ on: fold('extremes', sma3) }],
     });
     expect(res.facts[0]).toMatchObject({
       min: { value: 11, at: '2026-01-03' },
@@ -399,7 +419,7 @@ describe('run — reductions', () => {
     const { graph } = setup();
     const res = run(graph, {
       plan: [sma3],
-      select: [{ on: sma3, reduce: 'shape', points: 3 }],
+      select: [{ on: fold('shape', sma3, { points: 3 }) }],
     });
     expect(res.facts[0]!['points'] as number).toBeLessThanOrEqual(4);
   });
@@ -408,7 +428,7 @@ describe('run — reductions', () => {
     const { graph } = setup();
     const res = run(graph, {
       plan: [sma3],
-      select: [{ on: sma3, reduce: 'extremes' }],
+      select: [{ on: fold('extremes', sma3) }],
     });
     expect(res.series).toBeUndefined();
     expect(() => JSON.stringify(res)).not.toThrow();
@@ -421,7 +441,7 @@ describe('run — the graph is the cache', () => {
     const graph = bind(series(50), { registry, units });
     const req = {
       plan: [sma3],
-      select: [{ on: sma3, reduce: 'last' as const }],
+      select: [{ on: fold('last', sma3) }],
     };
     const first = run(graph, req);
     const second = run(graph, req);
@@ -433,8 +453,18 @@ describe('run — the graph is the cache', () => {
         ms: expect.any(Number),
         inputs: ['px'],
       },
+      {
+        id: specId(registry, fold('last', sma3)),
+        pulled: true,
+        cached: false,
+        ms: expect.any(Number),
+        inputs: [specId(registry, sma3)],
+      },
     ]);
-    expect(second.nodes[0]).toMatchObject({ cached: true });
+    // Both warm on the repeat — including the fold, which is the whole
+    // point of [PND-PROCFOLD]. The reduction used to rescan 150,000
+    // values here and report nothing about having done so.
+    expect(second.nodes.map((n) => n.cached)).toEqual([true, true]);
     expect(ran['sma']).toBe(1);
   });
 
@@ -443,7 +473,7 @@ describe('run — the graph is the cache', () => {
     const graph = bind(series(10), { registry, units });
     const req = {
       plan: [sma3],
-      select: [{ on: sma3, reduce: 'last' as const }],
+      select: [{ on: fold('last', sma3) }],
     };
     expect(run(graph, req).facts[0]).toMatchObject({ value: 18 });
     graph.setSource(series(20));
@@ -468,7 +498,7 @@ describe('run — the graph is the cache', () => {
     );
     const req = {
       plan: [sma3],
-      select: [{ on: sma3, reduce: 'last' as const }],
+      select: [{ on: fold('last', sma3) }],
     };
     expect(run(a, req).facts[0]).toMatchObject({ value: 18 });
     expect(run(b, req).facts[0]).toMatchObject({ value: 1008 });
@@ -481,7 +511,7 @@ describe('run — columns are the wire shape, assembly is the convenience', () =
     const graph = bind(series(50), { registry, units });
     const res = run(graph, {
       plan: [sma3],
-      select: [{ on: sma3, columns: true }],
+      select: [{ on: sma3 }],
     });
     const name = specId(registry, sma3);
     expect(Object.keys(res.columns!)).toEqual([name]);
@@ -495,7 +525,7 @@ describe('run — columns are the wire shape, assembly is the convenience', () =
     const bb = { op: 'band', params: { width: 2 }, inputs: ['px'] };
     const res = run(graph, {
       plan: [bb],
-      select: [{ on: bb, columns: true }],
+      select: [{ on: bb }],
     });
     const id = specId(registry, bb);
     expect(Object.keys(res.columns!).sort()).toEqual(
@@ -512,7 +542,7 @@ describe('run — columns are the wire shape, assembly is the convenience', () =
     const graph = bind(series(50), { registry, units });
     const req = {
       plan: [sma3],
-      select: [{ on: sma3, columns: true } as const],
+      select: [{ on: sma3 } as const],
     };
 
     const wire = run(graph, { ...req, assemble: false });
@@ -529,7 +559,7 @@ describe('run — columns are the wire shape, assembly is the convenience', () =
     const graph = bind(series(50), { registry, units });
     const res = run(graph, {
       plan: [sma3],
-      select: [{ on: sma3, reduce: 'last' }],
+      select: [{ on: fold('last', sma3) }],
     });
     expect(res.series).toBeUndefined();
     expect(res.columns).toBeUndefined();
@@ -546,15 +576,16 @@ describe('run — a selector describes its own computation', () => {
     const graph = bind(series(10), { registry, units });
     const res = run(graph, {
       plan: [sma3],
-      select: [{ on: sma5, reduce: 'last' }],
+      select: [{ on: fold('last', sma5) }],
       onError: 'collect',
     });
     expect(res.skipped).toEqual([]);
     expect(res.facts[0]).toMatchObject({
-      id: specId(registry, sma5),
+      id: specId(registry, fold('last', sma5)),
       value: 17,
     });
-    // And it is a node like any other, so the badge row reports it.
+    // And it is a node like any other, so the badge row reports it —
+    // both the study the selector implied and the fold over it.
     expect(res.nodes.map((n) => n.id)).toContain(specId(registry, sma5));
   });
 
@@ -565,24 +596,36 @@ describe('run — a selector describes its own computation', () => {
     const graph = bind(series(10), { registry, units });
     const res = run(graph, {
       plan: [sma3],
-      select: [{ on: 'p1:nope(px;)', reduce: 'last' }],
+      select: [{ on: 'p1:nope(px;)' }],
       onError: 'collect',
     });
     expect(res.skipped[0]!.reason).toMatch(/not in this plan/);
   });
 
-  it('gives both when a selector asks for columns and a reduction', () => {
+  it('gives columns and a fact in one pass, from two selectors', () => {
     // The legend-chip case: a fact riding alongside the columns it
-    // labels, in one pass. Treating `columns` as a mode silently dropped
-    // the reduction a caller had plainly asked for.
+    // labels. It used to be one selector in two modes; it is two
+    // selectors now, pointing at two nodes, which is what makes the
+    // fact cacheable rather than recomputed beside the draw.
     const { registry } = makeRegistry();
     const graph = bind(series(10), { registry, units });
     const res = run(graph, {
       plan: [sma3],
-      select: [{ on: sma3, columns: true, reduce: 'last' } as never],
+      select: [
+        { on: sma3, name: 'curve' },
+        { on: fold('last', sma3), name: 'now' },
+      ],
     });
     expect(res.columns).toBeDefined();
     expect(res.outputs[specId(registry, sma3)]).toHaveLength(1);
-    expect(res.facts[0]).toMatchObject({ reduce: 'last', value: 18 });
+    expect(res.facts[0]).toMatchObject({
+      name: 'now',
+      op: 'last',
+      value: 18,
+    });
+    // One pull of the study, shared by both.
+    expect(
+      res.nodes.filter((n) => n.id === specId(registry, sma3)),
+    ).toHaveLength(1);
   });
 });

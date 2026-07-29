@@ -37,6 +37,7 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { colorsForNodes } from './palette.js';
 
 export interface NodeTiming {
   id: string;
@@ -55,6 +56,8 @@ interface NodeData extends Record<string, unknown> {
   kind: 'source' | 'node';
   state: 'cached' | 'computed' | 'idle';
   selected: boolean;
+  /** This node's colour, the same one its curves and cards carry. */
+  color: string | undefined;
   /**
    * The content-addressed id. The view is keyed by slot so a param edit
    * does not read as a new graph, but everything downstream — drawing,
@@ -71,12 +74,27 @@ function StepNode({ data }: NodeProps<Node<NodeData>>) {
     .filter(Boolean)
     .join(' ');
   return (
-    <div className={cls} style={{ width: NODE_W, height: NODE_H }}>
+    <div
+      className={cls}
+      style={{
+        width: NODE_W,
+        height: NODE_H,
+        // The border is the node's **identity**; warm/cold moved to the
+        // badge text. Two channels, two meanings — colouring the border
+        // by state would have cost the thread that ties this box to its
+        // curve in the workbook and its card in the output.
+        ...(data.color !== undefined &&
+          !data.selected && {
+            borderColor: data.color,
+            borderLeftColor: data.color,
+          }),
+      }}
+    >
       <Handle type="target" position={Position.Top} />
       <div className="flow-label" title={data.detail}>
         {data.label}
       </div>
-      <div className="flow-badge">{data.detail}</div>
+      <div className={`flow-badge ${data.state}`}>{data.detail}</div>
       <Handle type="source" position={Position.Bottom} />
     </div>
   );
@@ -104,6 +122,9 @@ function layout(
   // only identity available.
   const stable = new Map(nodes.map((n) => [n.id, n.slot ?? n.id]));
   const ref = (id: string) => stable.get(id) ?? id;
+  // Derived exactly as the results panel derives it, so a box and the
+  // curve it produced carry the same hue with neither told about the other.
+  const colors = colorsForNodes(nodes);
 
   const g = new dagre.graphlib.Graph();
   g.setGraph({
@@ -161,6 +182,7 @@ function layout(
         kind: 'source',
         state: 'idle',
         selected: false,
+        color: undefined,
         specId: id,
       }),
     ),
@@ -182,6 +204,7 @@ function layout(
         kind: 'node',
         state: n.pulled ? (n.cached ? 'cached' : 'computed') : 'idle',
         selected: n.id === selected,
+        color: colors.get(n.id),
         specId: n.id,
       }),
     ),

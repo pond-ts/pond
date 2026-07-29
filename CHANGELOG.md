@@ -162,6 +162,43 @@ include new features and type-level changes; patch bumps are strictly additive.
   resolution logic and knows nothing about the registry, so there is one
   resolution path, one cache, and the existing plan tests cover it.
 
+- **process:** **`OpDescriptor.inputs` is the declared `InputDef[]`**, not a
+  count. A count checks arity and says nothing else — a consumer labelling a
+  two-input op could not tell which side was which, and one explaining a
+  rejection could not name the unit an input demands, both of which the
+  registry holds and `describe()` was dropping. **Breaking** for anything
+  reading `inputs` as a number; `inputs.length` is the same value.
+
+- **process:** **`suggest` on a numeric param** — the range worth offering,
+  as distinct from `min`/`max`, the range that rejects. Sliders drawn on the
+  legal range spent 96% of their travel where nobody goes, and a param with
+  no `max` had no drawable range at all: `annualise.barsPerYear` defaults to
+  105,120 against a fallback ceiling of 100, so its control sat pinned at the
+  edge and any drag silently destroyed the annualisation. Advisory — nothing
+  rejects a value outside it — but checked at `define()` time so an inverted
+  or escaping range fails in front of the op's author. It also reaches a
+  composing model, as `description` prose in the JSON Schema projection
+  rather than a custom keyword.
+
+- **process:** **Reductions are nodes.** `last`, `extremes`,
+  `percentileRank` and `shape` were a fixed `reduce` enum on the selector,
+  computed after the graph finished — so the one thing every caller reads
+  sat outside the memo, at 10.85 ms of an 11.6 ms fully-cached run
+  (`percentileRank` alone 6.57 ms, densifying 150,000 values and filtering
+  them twice, every request). They are ordinary registry entries now, with
+  content-addressed ids, cache entries and badges like anything else:
+  **0.09 ms**, a 120× improvement on the warm path. **Breaking** — a
+  selector is `{on, output?}`; `reduce`, `points` and `columns: true` are
+  gone, and what a selector yields is decided by the node it points at.
+- **process:** **`Input` admits `{from, output}`** — `slot#Output` in the
+  flat slot form — so a node can read one named output of a multi-output
+  upstream. A nested input had always read output 0, which nobody hit
+  while `select.output` could pick one at the end.
+- **process:** **Slot-expansion failures are collectable.** They ran
+  before the error policy, so a mistyped input was the only class of bad
+  plan that threw instead of coming back as a `skipped` reason an agent
+  could retry against.
+
 ### Changed
 
 - **process:** `RunResult.explain` now covers **every id in `nodes`**, not only
