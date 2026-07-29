@@ -609,6 +609,58 @@ for ("to formalize") was never written. Confirm it is still wanted, then
 write it as the durable design record (two registers, depth model, three
 interaction modes, the interaction-mode W1/W2/W3 split).
 
+### [PND-YFIT] — `YAxis` cannot fit the visible window
+
+Surfaced by a consumer (the process demo) trying to read a Bollinger band
+and concluding, correctly, that there wasn't one.
+
+`YAxis` auto-fit walks the **whole** series: `yExtent`
+([line.ts](../../packages/charts/src/line.ts)) captures `cs` directly, and
+[culling.ts](../../packages/charts/src/culling.ts) states the invariant
+outright — _"`sampleAt` / `hitTest` / `yExtent` read the full source series
+… nothing user-facing depends on the visible slice."_ That is right for a
+readout: a hover value must not shift when the window resizes.
+
+It is wrong for reading structure inside a series. Measured on 150,000
+5-minute bars: a 20-period 2σ band spans **1.26 USD inside a 58.2 USD
+extent — 2.8 pixels** on a 130px plot, thinner than the line's own
+vertical smear at that point density. The band renders correctly (a
+5000-period 5σ one fills 40.4% of the plot) and is simply invisible, and
+time-zoom cannot recover it while y stays pinned to the full range. Two
+observers in a row concluded the `BandChart` was broken.
+
+**The workaround, and why it is a signal.** The consumer now bisects the
+key column per figure per frame and passes explicit `min`/`max`
+([Viz.tsx](../../apps/process-demo/web/Viz.tsx) → `useVisibleExtent`).
+Zooming 150,000 rows to ~6,000 tightens the domain from 58 USD to
+166.68–181.45 and the ribbon appears. That is ~40 lines every consumer
+wanting a legible zoom would have to write, including the bisect — the
+naive full scan re-run per figure per pan frame is the difference between
+a smooth drag and a stuttering one.
+
+**Open questions.**
+
+- **Opt-in shape.** `<YAxis fit="visible">` alongside the current default
+  reads right and keeps the readout invariant intact. `fit="data"` stays
+  the default; nothing existing changes.
+- **Who computes it.** The container already resolves the x domain and
+  owns the visible range, and layers already publish `yExtent()` — so a
+  _windowed_ extent is a layer capability (`yExtentIn(range)`) that the
+  container unions, mirroring the existing auto-fit path rather than
+  adding one. Culling already computes visible slice bounds per layer on
+  the draw path; that index arithmetic is the same arithmetic.
+- **Does the readout invariant actually break?** Only if a readout reads
+  the _axis_ domain rather than the source. Worth confirming, because if
+  it does not, the invariant as written is stronger than it needs to be.
+- **Pan stability.** A domain recomputed per frame makes the y-axis move
+  under a horizontal drag, which is disorienting on a shared-view stack.
+  A hysteresis or nice-number quantisation is probably part of shipping
+  this, not a follow-up.
+
+**Done when:** a consumer can ask for a visible-window domain without
+hand-computing one, and a 20-period band on 150k points becomes legible
+by zooming rather than by 40 lines of caller code.
+
 ## Core carry-forwards surfaced by charts
 
 Tracked in [PND_CORE_PLAN.md](PND_CORE_PLAN.md): bundle-safe column-API
