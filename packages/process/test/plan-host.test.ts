@@ -9,7 +9,14 @@ import {
   UnknownDatasetError,
   type OpDef,
   type Registry,
+  type Spec,
 } from '../src/index.js';
+
+/** A fold node over a spec — what a `reduce` selector used to be. */
+const fold = (op: string, on: Spec, output?: string): Spec => ({
+  op,
+  inputs: [output === undefined ? on : { from: on, output }],
+});
 
 const schema = [
   { name: 'time', kind: 'time' },
@@ -83,7 +90,7 @@ describe('Host — the graph outlives requests', () => {
     const envelope = {
       from: 'prices',
       process: [sma3],
-      select: [{ on: sma3, reduce: 'last' as const }],
+      select: [{ on: fold('last', sma3) }],
     };
 
     const first = host.run(envelope);
@@ -103,7 +110,7 @@ describe('Host — the graph outlives requests', () => {
     const envelope = (from: string) => ({
       from,
       process: [sma3],
-      select: [{ on: sma3, reduce: 'last' as const }],
+      select: [{ on: fold('last', sma3) }],
     });
     // Same specId in both, different data — v1's cross-series cache bug.
     expect(host.run(envelope('a')).facts[0]).toMatchObject({ value: 18 });
@@ -116,7 +123,7 @@ describe('Host — the graph outlives requests', () => {
     const envelope = {
       from: 'prices',
       process: [sma3],
-      select: [{ on: sma3, reduce: 'last' as const }],
+      select: [{ on: fold('last', sma3) }],
     };
     host.run(envelope);
     const nodesBefore = host.datasets[0]!.nodes;
@@ -169,12 +176,14 @@ describe('per-node timing — the badge', () => {
     const res = host.run({
       from: 'prices',
       process: [nested],
-      select: [{ on: nested, reduce: 'last' }],
+      select: [{ on: fold('last', nested) }],
     });
-    // Inputs first: the inner sma before the scale that consumes it.
+    // Inputs first: the inner sma before the scale that consumes it,
+    // and the fold that reads the scale last of all.
     expect(res.nodes.map((n) => n.id)).toEqual([
       specId(registry, sma3),
       specId(registry, nested),
+      specId(registry, fold('last', nested)),
     ]);
   });
 
@@ -188,9 +197,9 @@ describe('per-node timing — the badge', () => {
     const res = host.run({
       from: 'prices',
       process: [nested],
-      select: [{ on: nested, reduce: 'last' }],
+      select: [{ on: fold('last', nested) }],
     });
-    expect(res.nodes.length).toBe(2);
+    expect(res.nodes.length).toBe(3);
     for (const n of res.nodes) expect(res.explain[n.id]).toBeTruthy();
     expect(res.explain[specId(registry, sma3)]).toContain('sma');
   });
@@ -205,13 +214,16 @@ describe('per-node timing — the badge', () => {
     const res = host.run({
       from: 'prices',
       process: [nested],
-      select: [{ on: nested, reduce: 'last' }],
+      select: [{ on: fold('last', nested) }],
     });
     const smaId = specId(registry, sma3);
     expect(res.nodes.map((n) => [n.id, n.inputs])).toEqual([
       // A raw source column is named by column, not by node id.
       [smaId, ['px']],
       [specId(registry, nested), [smaId]],
+      // The fold's edge too: it is in the graph, so it is in the graph's
+      // shape, and a pipeline view draws it like any other node.
+      [specId(registry, fold('last', nested)), [specId(registry, nested)]],
     ]);
     // Every non-column input resolves to a node in the same response.
     const ids = new Set(res.nodes.map((n) => n.id));
@@ -253,7 +265,7 @@ describe('per-node timing — the badge', () => {
     const res = host.run({
       from: 'prices',
       process: [fastOuter],
-      select: [{ on: fastOuter, reduce: 'last' }],
+      select: [{ on: fold('last', fastOuter) }],
     });
     const [inner, outer] = res.nodes;
     expect(inner!.id).toBe(specId(registry, slowInner));
@@ -273,7 +285,7 @@ describe('per-node timing — the badge', () => {
     const res = host.run({
       from: 'prices',
       process: [nested],
-      select: [{ on: nested, reduce: 'last' }],
+      select: [{ on: fold('last', nested) }],
     });
     // Both do O(rows) work; neither is negligible.
     for (const n of res.nodes) expect(n.ms).toBeGreaterThan(0);
@@ -285,7 +297,7 @@ describe('per-node timing — the badge', () => {
     const req = {
       from: 'prices',
       process: [sma3],
-      select: [{ on: sma3, reduce: 'last' as const }],
+      select: [{ on: fold('last', sma3) }],
     };
     const cold = host.run(req).nodes[0]!;
     const warm = host.run(req).nodes[0]!;
@@ -302,7 +314,7 @@ describe('toWire', () => {
     const res = host.run({
       from: 'prices',
       process: [sma3],
-      select: [{ on: sma3, reduce: 'last' }],
+      select: [{ on: fold('last', sma3) }],
     });
     const wire = toWire(res, 'last_30m');
     expect(wire.hasSeries).toBe(false);
@@ -317,7 +329,7 @@ describe('toWire', () => {
     const res = host.run({
       from: 'prices',
       process: [sma3],
-      select: [{ on: sma3, columns: true }],
+      select: [{ on: sma3 }],
     });
     expect(res.series).toBeDefined();
     const wire = toWire(res);
@@ -335,7 +347,7 @@ describe('toWire', () => {
     const req = {
       from: 'prices',
       process: [sma3],
-      select: [{ on: sma3, reduce: 'last' as const }],
+      select: [{ on: fold('last', sma3) }],
     };
     host.run(req);
     const wire = toWire(host.run(req));

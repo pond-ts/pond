@@ -28,6 +28,8 @@ interface OpDescriptor {
   params: Record<string, ParamDef>;
   /** The declared inputs — roles and any demanded unit, not a count. */
   inputs: { role: string; unit?: string }[];
+  /** `'fold'` ends in a fact, so nothing downstream can take it. */
+  kind: 'op' | 'fold';
   outputs: { suffix: string; unit: string }[];
 }
 interface Context {
@@ -343,6 +345,17 @@ export function App() {
    * way: every node comes back `cached`, and what you pay is purely the
    * materialization and the wire.
    */
+  /** Op names that end in a fact, straight off the registry's own `kind`. */
+  const folds = useMemo(
+    () =>
+      new Set(
+        (context?.ops ?? [])
+          .filter((o) => o.kind === 'fold')
+          .map((o) => o.name),
+      ),
+    [context],
+  );
+
   async function draw(entry: Entry) {
     const envelope = (entry.ran ?? entry.composed?.envelope) as
       | {
@@ -367,11 +380,11 @@ export function App() {
       // its parent compiled, so this reaches intermediates that never
       // appear in `process`.
       //
-      // Unfocused, the original selectors ride along unchanged, so the
-      // same response carries the columns *and* the facts the prompt
-      // actually asked for. That is the `columns` + `reduce` pairing the
-      // library stopped treating as exclusive — the demo exercising its
-      // own fix rather than fetching twice.
+      // Unfocused, the request's own outputs ride along unchanged, so
+      // the same response carries the columns *and* the facts the prompt
+      // asked for — the facts come from fold nodes now, so they are
+      // pulled from the same cache as everything else rather than
+      // recomputed beside the draw.
       // Both request shapes draw the same way, and the difference is only
       // in how a node is addressed: a slot envelope names slots, a nested
       // one restates specs. A focused node is addressed by **id** either
@@ -380,16 +393,23 @@ export function App() {
       let body: Record<string, unknown>;
       let asked: string[] = [];
       if (envelope.nodes !== undefined) {
+        // A fold slot is skipped: surfacing one yields a fact, and the
+        // request's own outputs already name the facts it wanted. Adding
+        // a `_columns` selector to a fold would return the same fact
+        // twice under a name nobody asked for.
+        const drawable = (envelope.nodes ?? {}) as Record<
+          string,
+          { op: string }
+        >;
         const outputs: Record<string, unknown> =
           entry.focus !== undefined
-            ? { focused: { on: entry.focus, columns: true, reduce: 'last' } }
+            ? { focused: { on: entry.focus } }
             : {
                 ...(envelope.outputs ?? {}),
                 ...Object.fromEntries(
-                  Object.keys(envelope.nodes).map((slot) => [
-                    `${slot}_columns`,
-                    { on: slot, columns: true },
-                  ]),
+                  Object.entries(drawable)
+                    .filter(([, def]) => !folds.has(def.op))
+                    .map(([slot]) => [`${slot}_columns`, { on: slot }]),
                 ),
               };
         asked = Object.keys(envelope.outputs ?? {});
@@ -397,9 +417,9 @@ export function App() {
       } else {
         const select =
           entry.focus !== undefined
-            ? [{ on: entry.focus, columns: true, reduce: 'last' }]
+            ? [{ on: entry.focus }]
             : [
-                ...envelope.process!.map((on) => ({ on, columns: true })),
+                ...envelope.process!.map((on) => ({ on })),
                 ...((envelope.select ?? []) as unknown[]),
               ];
         body = { ...envelope, select };

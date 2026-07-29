@@ -19,8 +19,33 @@ export interface Spec {
   readonly inputs: readonly Input[];
 }
 
-/** An input is a raw column name or another spec. */
-export type Input = string | Spec;
+/**
+ * One named output of an upstream spec.
+ *
+ * A nested input used to read output 0 and nothing else, so `sma` of a
+ * Bollinger band could only ever smooth `Upper` — a limitation nobody
+ * hit while `select.output` existed to pick one at the end. Folds made
+ * it visible: a fold *is* the end, so with no way to say which output it
+ * reads, the middle and lower bands became unreachable.
+ */
+export interface PickedOutput {
+  readonly from: Spec;
+  /** The output's declared suffix, e.g. `'Lower'`. */
+  readonly output: string;
+}
+
+/** An input is a raw column name, another spec, or one output of one. */
+export type Input = string | Spec | PickedOutput;
+
+/** Narrows an input to the picked-output form. */
+export function isPicked(input: Input): input is PickedOutput {
+  return typeof input !== 'string' && 'from' in input;
+}
+
+/** The spec an input refers to, ignoring which output it picks. */
+export function specOf(input: Spec | PickedOutput): Spec {
+  return 'from' in input ? input.from : input;
+}
 
 /** A DAG. Declaration order is free; nesting is inline. */
 export type Plan = readonly Spec[];
@@ -142,6 +167,8 @@ export type OpResult =
   | readonly (Column | ArrayLike<number | undefined>)[];
 
 export interface OpDef {
+  /** Discriminates against {@link FoldDef}. Optional, because an op is the default. */
+  readonly kind?: 'op';
   readonly name: string;
   readonly family: string;
   readonly summary: string;
@@ -155,4 +182,76 @@ export interface OpDef {
    */
   readonly label?: (params: Params, inputs: string) => string;
   readonly run: (ctx: OpContext) => OpResult;
+}
+
+// ── folds ────────────────────────────────────────────────────
+
+/**
+ * What a fold returns: the body of a fact.
+ *
+ * Deliberately loose. `last` answers with a value and a timestamp,
+ * `extremes` with two of each, `percentileRank` with a fraction and a
+ * sentence explaining it. Forcing those into one shape would mean
+ * inventing a lowest common denominator that suits none of them.
+ */
+export type FactBody = Readonly<Record<string, unknown>>;
+
+export interface FoldContext {
+  /**
+   * Dense values per input role, gaps as `undefined`.
+   *
+   * Prepared by the graph rather than by each fold, and — the point of
+   * the whole exercise — prepared **inside the memo**, so densifying a
+   * 150,000-row column happens once per version rather than once per
+   * request.
+   */
+  readonly values: Readonly<Record<string, readonly (number | undefined)[]>>;
+  /**
+   * Timestamp at a row index.
+   *
+   * A function rather than an array because a fold reports two or three
+   * rows out of 150,000, and materializing the key column to answer that
+   * was most of what a reduction used to cost.
+   */
+  readonly at: (index: number) => number;
+  readonly params: Params;
+  /** This fold's id — the fact's own cache key and citation. */
+  readonly id: string;
+}
+
+/**
+ * A **fold** — a node that ends in a fact rather than a column.
+ *
+ * Reductions used to be a fixed enum on the selector, computed after the
+ * graph had finished: `last` rescanned 150,000 values on a total cache
+ * hit, and `percentileRank` densified and filtered twice, every request,
+ * forever. Measured at 10.85 ms of an 11.6 ms warm run — the graph
+ * memoized every intermediate and then recomputed the only part anyone
+ * actually read.
+ *
+ * A fold is an ordinary registry entry with an ordinary content-addressed
+ * id, so it caches, it carries provenance, and a consumer adds one by
+ * calling `define` rather than by editing this library. What it cannot do
+ * is feed anything: a fold produces a fact, so it is always a leaf, and
+ * naming one as an op's input is rejected at compile time.
+ */
+export interface FoldDef {
+  readonly kind: 'fold';
+  readonly name: string;
+  readonly family: string;
+  readonly summary: string;
+  readonly params: Readonly<Record<string, ParamDef>>;
+  readonly inputs: readonly InputDef[];
+  /** The unit the fact carries. `'inherit'` takes input 0's. */
+  readonly unit: UnitSpec;
+  readonly label?: (params: Params, inputs: string) => string;
+  readonly fold: (ctx: FoldContext) => FactBody;
+}
+
+/** Anything the registry holds. */
+export type Def = OpDef | FoldDef;
+
+/** Narrows a registry entry to the terminal kind. */
+export function isFold(def: Def): def is FoldDef {
+  return def.kind === 'fold';
 }

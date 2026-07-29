@@ -114,6 +114,8 @@ You have two tools:
 
 Call \`emit_request\` as many times as the question needs — up to ${MAX_ROUNDS - 1} — then \`answer\` exactly once.
 
+Reading a value is itself a node: add a \`last\`, \`extremes\`, \`percentileRank\` or \`shape\` node over the study you care about and surface *that*. **You** should surface folds only — surfacing a study hands back its whole column, every row, which is no use to you. If the person asked to see a series, surface a \`shape\` node over it; the app draws the full curve regardless of what you name.
+
 **A follow-up request is nearly free.** Nodes are content-addressed and cached, so re-stating a node you already computed costs nothing and only genuinely new work runs; each result tells you how many nodes were computed versus cached. So prefer looking twice over guessing once: read a first result, then ask the sharper question it suggests. A question like "is this unusual?" needs both the current value and something to compare it against — go and get both.
 
 **The cache outlives the turn.** If a result from an earlier turn in this conversation would help you answer, ask for it again. Re-stating those nodes costs nothing — they are still computed. Never tell the person you cannot compare against something you measured earlier; go and re-read it.

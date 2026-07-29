@@ -65,13 +65,14 @@ export interface OutputInfo {
  *
  * The payload differs per reduction, so the shape is open — `last` has
  * `value`/`at`, `extremes` has `min`/`max`, and so on. The card below
- * narrows on `reduce` rather than guessing from the keys present.
+ * narrows on `op` rather than guessing from the keys present.
  */
 export interface Fact {
   id: string;
   /** The caller's own name for this output — what a card is keyed by. */
   name?: string;
-  reduce: 'last' | 'extremes' | 'percentileRank' | 'shape';
+  /** The fold that produced it — a registry name now, not an enum. */
+  op: string;
   unit: string | null;
   [k: string]: unknown;
 }
@@ -136,7 +137,7 @@ function FactCard(props: {
   const unit = fact.unit === null ? '' : fact.unit;
 
   const body = (() => {
-    if (fact.reduce === 'last') {
+    if (fact.op === 'last') {
       if (typeof fact['value'] !== 'number')
         return <span className="muted">no value</span>;
       return (
@@ -151,7 +152,7 @@ function FactCard(props: {
         </>
       );
     }
-    if (fact.reduce === 'extremes') {
+    if (fact.op === 'extremes') {
       const lo = fact['min'];
       const hi = fact['max'];
       if (!isPoint(lo) || !isPoint(hi))
@@ -174,7 +175,7 @@ function FactCard(props: {
         </div>
       );
     }
-    if (fact.reduce === 'percentileRank') {
+    if (fact.op === 'percentileRank') {
       if (typeof fact['value'] !== 'number')
         return <span className="muted">no rank</span>;
       const pct = fact['value'] * 100;
@@ -221,7 +222,7 @@ function FactCard(props: {
         <span className="fact-name" title={fact.id}>
           {fact.name ?? label}
         </span>
-        <span className="fact-reduce">{fact.reduce}</span>
+        <span className="fact-reduce">{fact.op}</span>
       </div>
       {body}
       {fact.name !== undefined && (
@@ -282,16 +283,28 @@ function useDrawn(frames: Frames | undefined) {
   }, [frames]);
 }
 
-/** `ChartContainer` needs a pixel width, so the panel has to be measured. */
+/**
+ * `ChartContainer` needs a pixel width, so the panel has to be measured.
+ *
+ * Measured **synchronously on mount** and then observed for changes.
+ * Waiting for the observer's first callback made the whole panel render
+ * nothing until a resize arrived — the props were all correct and the
+ * width gate silently held everything back, which is indistinguishable
+ * from a data bug and took far too long to tell apart from one. The
+ * element's width is available the moment it is in the DOM; there is no
+ * reason to ask an observer for it.
+ */
 function useWidth(): [React.RefObject<HTMLDivElement | null>, number] {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   useEffect(() => {
     const el = ref.current;
     if (el === null) return;
-    const ro = new ResizeObserver(([entry]) => {
-      setWidth(Math.max(0, Math.floor(entry!.contentRect.width)));
-    });
+    const measure = (w: number) => setWidth(Math.max(0, Math.floor(w)));
+    measure(el.getBoundingClientRect().width);
+    const ro = new ResizeObserver(([entry]) =>
+      measure(entry!.contentRect.width),
+    );
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
@@ -476,11 +489,7 @@ export function Viz(props: {
       {drawn === undefined && props.facts.length > 0 && (
         <ul className="facts">
           {props.facts.map((f, i) => (
-            <FactCard
-              key={`${f.id}:${f.reduce}:${i}`}
-              fact={f}
-              explain={props.explain}
-            />
+            <FactCard key={`${f.id}:${i}`} fact={f} explain={props.explain} />
           ))}
         </ul>
       )}
@@ -537,7 +546,7 @@ function Output(props: {
         <ul className="facts">
           {shown.map((f, i) => (
             <FactCard
-              key={`${f.id}:${f.reduce}:${i}`}
+              key={`${f.id}:${i}`}
               fact={f}
               explain={props.explain}
               color={props.colors.get(ownerOf(f.id, props.colors.keys()) ?? '')}
@@ -797,7 +806,7 @@ function Workbook(props: {
           <ul className="facts">
             {props.facts.map((f, i) => (
               <FactCard
-                key={`${f.id}:${f.reduce}:${i}`}
+                key={`${f.id}:${i}`}
                 fact={f}
                 explain={props.explain}
                 color={props.colors.get(

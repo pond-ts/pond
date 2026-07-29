@@ -14,41 +14,19 @@
  */
 
 import { ProcessError } from '../errors.js';
-import type {
-  BooleanParam,
-  EnumParam,
-  InputDef,
-  NumberParam,
-  OpDef,
-  ParamDef,
-  Params,
-  ParamValue,
-} from './types.js';
+import { STANDARD_FOLDS } from './folds.js';
+export { int, num, choice, flag } from './params.js';
+import { isFold, type Def, type FoldDef } from './types.js';
+import type { InputDef, ParamDef, Params, ParamValue } from './types.js';
+
+/** One declared output, as `outputsOf` reports it. */
+type OutputShape = { readonly id: string; readonly unit: string };
 
 /** Thrown when a plan names an op the registry does not have. */
 export class UnknownOpError extends ProcessError {}
 
 /** Thrown when a param is missing, mistyped, or out of range. */
 export class ParamError extends ProcessError {}
-
-// ── param constructors ───────────────────────────────────────
-
-export const int = (o: Omit<NumberParam, 'kind'>): NumberParam => ({
-  kind: 'integer',
-  ...o,
-});
-export const num = (o: Omit<NumberParam, 'kind'>): NumberParam => ({
-  kind: 'number',
-  ...o,
-});
-export const choice = (o: Omit<EnumParam, 'kind'>): EnumParam => ({
-  kind: 'enum',
-  ...o,
-});
-export const flag = (o: Omit<BooleanParam, 'kind'>): BooleanParam => ({
-  kind: 'boolean',
-  ...o,
-});
 
 /**
  * Validates one param and returns it.
@@ -138,6 +116,18 @@ export interface OpDescriptor {
    * show how many wires there were.
    */
   readonly inputs: readonly InputDef[];
+  /**
+   * `'fold'` for a terminal node — one that ends in a fact rather than a
+   * column, and so cannot be another node's input.
+   *
+   * A consumer needs this to know what surfacing the node will hand it
+   * back, and a picker needs it to know which entries can be wired
+   * onward. Absent would have meant every reader inferring it from an
+   * empty `outputs`, which is exactly the kind of thing the registry
+   * exists to state.
+   */
+  readonly kind: 'op' | 'fold';
+  /** Empty for a fold: a fact has no columns. */
   readonly outputs: readonly {
     readonly suffix: string;
     readonly unit: string;
@@ -145,20 +135,22 @@ export interface OpDescriptor {
 }
 
 export class Registry {
-  readonly #ops = new Map<string, OpDef>();
+  readonly #ops = new Map<string, Def>();
 
-  define(op: OpDef): this {
-    if (op.outputs.length === 0) {
-      throw new ProcessError(`op '${op.name}' declares no outputs`);
+  define(def: Def): this {
+    if (!isFold(def)) {
+      if (def.outputs.length === 0) {
+        throw new ProcessError(`op '${def.name}' declares no outputs`);
+      }
+      if (def.outputs.length > 1 && def.outputs.some((o) => o.id === '')) {
+        throw new ProcessError(
+          `op '${def.name}' is multi-output, so every output needs a suffix — '' would collide with the spec id`,
+        );
+      }
     }
-    if (op.outputs.length > 1 && op.outputs.some((o) => o.id === '')) {
-      throw new ProcessError(
-        `op '${op.name}' is multi-output, so every output needs a suffix — '' would collide with the spec id`,
-      );
-    }
-    for (const [key, d] of Object.entries(op.params))
-      checkSuggest(op.name, key, d);
-    this.#ops.set(op.name, op);
+    for (const [key, d] of Object.entries(def.params))
+      checkSuggest(def.name, key, d);
+    this.#ops.set(def.name, def);
     return this;
   }
 
@@ -167,7 +159,7 @@ export class Registry {
   }
 
   /** @throws {UnknownOpError} naming what is available, so an agent can retry. */
-  get(name: string): OpDef {
+  get(name: string): Def {
     const op = this.#ops.get(name);
     if (op === undefined) {
       throw new UnknownOpError(
@@ -177,9 +169,26 @@ export class Registry {
     return op;
   }
 
+  /** The entry as a fold, or `undefined` if it produces columns. */
+  foldFor(name: string): FoldDef | undefined {
+    const def = this.#ops.get(name);
+    return def !== undefined && isFold(def) ? def : undefined;
+  }
+
+  /**
+   * Declared outputs, empty for a fold.
+   *
+   * Every caller that used to reach for `op.outputs` went through here
+   * once folds existed, because a fact has none and the alternative was
+   * an optional-chain at each of the nine call sites.
+   */
+  outputsOf(def: Def): readonly OutputShape[] {
+    return isFold(def) ? [] : def.outputs;
+  }
+
   /** Applies defaults, then validates every declared param. */
   resolveParams(
-    op: OpDef,
+    op: Def,
     given: Readonly<Record<string, ParamValue>> = {},
   ): Params {
     const out: Record<string, ParamValue> = {};
@@ -219,7 +228,8 @@ export class Registry {
       summary: op.summary,
       params: op.params,
       inputs: op.inputs,
-      outputs: op.outputs.map((o) => ({ suffix: o.id, unit: o.unit })),
+      kind: isFold(op) ? ('fold' as const) : ('op' as const),
+      outputs: this.outputsOf(op).map((o) => ({ suffix: o.id, unit: o.unit })),
     }));
   }
 
@@ -342,7 +352,7 @@ export class Registry {
  * strict structured outputs require `additionalProperties: false`. The
  * array carries the name as a field instead, and the caller keys by it.
  */
-function slotSchemaFor(ops: readonly OpDef[]): Record<string, unknown> {
+function slotSchemaFor(ops: readonly Def[]): Record<string, unknown> {
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     title: 'Nodes',
@@ -350,7 +360,9 @@ function slotSchemaFor(ops: readonly OpDef[]): Record<string, unknown> {
     items: {
       anyOf: ops.map((op) => ({
         title: op.name,
-        description: op.summary,
+        description: isFold(op)
+          ? `${op.summary} Terminal: produces a fact, so nothing can take it as an input — surface it in outputs instead.`
+          : op.summary,
         type: 'object',
         required: ['slot', 'op', 'in'],
         additionalProperties: false,
@@ -366,7 +378,7 @@ function slotSchemaFor(ops: readonly OpDef[]): Record<string, unknown> {
             minItems: op.inputs.length,
             maxItems: op.inputs.length,
             description:
-              'Inputs in order. Each is a source column name, or the slot of another node in this request.',
+              'Inputs in order. Each is a source column name, or the slot of another node in this request. To read one named output of a multi-output node, write "slot#Output" — e.g. "bb#Upper".',
             items: { type: 'string' },
           },
           params: {
@@ -408,6 +420,18 @@ function jsonSchemaForParam(d: ParamDef): Record<string, unknown> {
   };
 }
 
-export function createRegistry(): Registry {
-  return new Registry();
+/**
+ * A registry with the standard folds already in it.
+ *
+ * Pre-registered because `last`, `extremes`, `percentileRank` and `shape`
+ * apply to any numeric series and every consumer wants them — not because
+ * they are privileged. They are plain defs: `define` over a name to
+ * replace one.
+ */
+export function createRegistry(options?: { folds?: boolean }): Registry {
+  const registry = new Registry();
+  if (options?.folds !== false) {
+    for (const fold of STANDARD_FOLDS) registry.define(fold);
+  }
+  return registry;
 }

@@ -51,22 +51,26 @@ export type InputRef = string | NodeHandle;
 /**
  * A reference to a node in the graph under construction.
  *
- * The reduction methods return selectors rather than registering them,
- * so a caller decides what to surface and under what name — `expose` is
- * the only thing that adds to the request.
+ * The fold methods **add a node** and hand back a handle to it, rather
+ * than producing a selector as they used to. That is the whole shape of
+ * [PND-PROCFOLD] at the authoring layer: `z.percentileRank()` always
+ * read like an op call, and now it is one.
+ *
+ * The derived slot is `<slot>:<fold>`, which is deterministic — so
+ * calling `.last()` twice on the same node returns the same node rather
+ * than colliding — and safe against a source column name, which cannot
+ * contain a colon.
  */
 export interface NodeHandle {
   readonly slot: string;
-  /** Ask for this node's columns, for drawing. */
-  columns(): Select;
   /** Latest defined value, with when. */
-  last(options?: { output?: string }): Select;
+  last(): NodeHandle;
   /** Minimum and maximum, each with when. */
-  extremes(options?: { output?: string }): Select;
+  extremes(): NodeHandle;
   /** Where the latest value sits in its own history. */
-  percentileRank(options?: { output?: string }): Select;
+  percentileRank(): NodeHandle;
   /** A bounded sample of the whole series. */
-  shape(options?: { output?: string; points?: number }): Select;
+  shape(options?: { points?: number }): NodeHandle;
 }
 
 /** The envelope a builder produces — what `Host.run` takes. */
@@ -75,25 +79,6 @@ export interface BuiltRequest {
   readonly as?: string;
   readonly nodes: Slots;
   readonly outputs: Readonly<Record<string, Select>>;
-}
-
-function handleFor(slot: string): NodeHandle {
-  const reduce =
-    (name: 'last' | 'extremes' | 'percentileRank' | 'shape') =>
-    (options: { output?: string; points?: number } = {}): Select => ({
-      on: slot,
-      reduce: name,
-      ...(options.output !== undefined && { output: options.output }),
-      ...(options.points !== undefined && { points: options.points }),
-    });
-  return {
-    slot,
-    columns: () => ({ on: slot, columns: true }),
-    last: reduce('last'),
-    extremes: reduce('extremes'),
-    percentileRank: reduce('percentileRank'),
-    shape: reduce('shape'),
-  };
 }
 
 export class PlanBuilder {
@@ -138,19 +123,63 @@ export class PlanBuilder {
       ...(params !== undefined && { params }),
       in: inputs.map((i) => (typeof i === 'string' ? i : i.slot)),
     });
-    return handleFor(slot);
+    return this.#handle(slot);
   }
 
   /**
-   * Surfaces a selector under the caller's own name.
+   * Adds a fold over `on`, or returns the one already added.
+   *
+   * Idempotent because the derived slot is a function of the node and
+   * the fold: writing `z.percentileRank()` in two places is one node,
+   * which is the same thing content-addressing does one layer down.
+   */
+  #fold(
+    on: string,
+    op: string,
+    params?: Readonly<Record<string, ParamValue>>,
+  ): NodeHandle {
+    const slot = `${on}:${op}`;
+    if (!this.#nodes.has(slot)) {
+      this.#nodes.set(slot, {
+        op,
+        ...(params !== undefined && { params }),
+        in: [on],
+      });
+    }
+    return this.#handle(slot);
+  }
+
+  #handle(slot: string): NodeHandle {
+    return {
+      slot,
+      last: () => this.#fold(slot, 'last'),
+      extremes: () => this.#fold(slot, 'extremes'),
+      percentileRank: () => this.#fold(slot, 'percentileRank'),
+      shape: (options = {}) =>
+        this.#fold(
+          slot,
+          'shape',
+          options.points !== undefined ? { points: options.points } : undefined,
+        ),
+    };
+  }
+
+  /**
+   * Surfaces a node under the caller's own name.
+   *
+   * Takes a handle, because a selector's only remaining job is to point
+   * at a node — what comes back is whatever that node produces.
    *
    * @throws {BuilderError} if the name is already used.
    */
-  expose(name: string, selector: Select): this {
+  expose(name: string, node: NodeHandle, options?: { output?: string }): this {
     if (this.#outputs.has(name)) {
       throw new BuilderError(`output '${name}' is already exposed`);
     }
-    this.#outputs.set(name, selector);
+    this.#outputs.set(name, {
+      on: node.slot,
+      ...(options?.output !== undefined && { output: options.output }),
+    });
     return this;
   }
 

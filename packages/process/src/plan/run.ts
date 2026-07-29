@@ -25,45 +25,42 @@ import type { BoundGraph } from './graph.js';
 import { columnsOf, explain, refToId, unitOf } from './identity.js';
 import { expandSlots, type Slots } from './slots.js';
 import { specId } from './identity.js';
+import { specOf } from './types.js';
 import type { Input, Plan, Spec, SpecRef } from './types.js';
 
 /** What to do when a spec or a selector fails. Covers both, not just resolution. */
 export type ErrorPolicy = 'throw' | 'skip' | 'collect';
 
 /**
- * A caller's own name for a surfaced output.
+ * A selector says **what to surface**, not what to compute.
  *
- * Set from the key when a request uses `outputs`, and settable directly
- * in the older `select` form too — naming does not require slots. It
- * rides back on the {@link Fact} and {@link OutputInfo} so a consumer
- * reads the name it chose rather than parsing a derived id
- * ([PND-PROCSLOT]).
+ * It used to say both: `{ on, reduce: 'percentileRank' }` named a node
+ * *and* a fold to run over it, from an enum this file owned. The fold is
+ * a node now ([PND-PROCFOLD]), so a selector's whole job is to point at
+ * one and name it — and what comes back is whatever that node produces:
+ * a fact from a fold, columns from anything else.
+ *
+ * That is the simplification the change was for. There is no `reduce`,
+ * no `points`, and no `columns: true`; asking for a bounded sample means
+ * pointing at a `shape` node, which is a thing with an id that caches.
  */
-interface Named {
+export interface Select {
+  readonly on: SpecRef;
+  /**
+   * Which output of a multi-output op. Defaults to all of them.
+   *
+   * Only meaningful for a column-producing node — a fact has one shape.
+   */
+  readonly output?: string;
+  /**
+   * The caller's own name for this output.
+   *
+   * Set from the key when a request uses `outputs`. It rides back on the
+   * {@link Fact} and {@link OutputInfo} so a consumer reads the name it
+   * chose rather than parsing a derived id ([PND-PROCSLOT]).
+   */
   readonly name?: string;
 }
-
-/** Ask for a spec's columns, for drawing. */
-export interface ColumnSelect extends Named {
-  readonly on: SpecRef;
-  readonly columns: true;
-}
-
-/** Ask for a fact — a fold over one resolved column. */
-export interface ReduceSelect extends Named {
-  readonly on: SpecRef;
-  /** Which output of a multi-output op. Defaults to the first. */
-  readonly output?: string;
-  readonly reduce: ReductionName;
-  /** For `crossings`: the id of the column to compare against. */
-  readonly against?: string;
-  /** For `shape`: roughly how many points to return. */
-  readonly points?: number;
-}
-
-export type Select = ColumnSelect | ReduceSelect;
-
-export type ReductionName = 'last' | 'extremes' | 'percentileRank' | 'shape';
 
 /** Options common to both request forms. */
 export interface RunOptions {
@@ -105,6 +102,13 @@ export interface PlanRequest extends RunOptions {
  */
 export interface SlotRequest extends RunOptions {
   readonly nodes: Slots;
+  /**
+   * Which slots to surface, under the caller's own names.
+   *
+   * Purely a projection of {@link nodes}: every result here is produced
+   * by a node the request declared, so nothing is computed that the plan
+   * does not already describe.
+   */
   readonly outputs?: Readonly<Record<string, Select>>;
 }
 
@@ -121,7 +125,8 @@ export interface Fact {
   readonly id: string;
   /** The caller's name for this output, when it gave one. */
   readonly name?: string;
-  readonly reduce: ReductionName;
+  /** The fold that produced it — a registry name, not a fixed enum. */
+  readonly op: string;
   readonly unit: string | null;
   readonly [k: string]: unknown;
 }
@@ -220,91 +225,6 @@ export interface RunResult {
   readonly nodes: readonly NodeTiming[];
 }
 
-// ── reductions: folds over a column, no series required ──────
-
-const day = (t: number): string => new Date(t).toISOString().slice(0, 10);
-const round = (v: number): number => Math.round(v * 1e6) / 1e6;
-
-/** Reads a column into a dense array once, for the folds that need indexing. */
-function densify(column: Column): (number | undefined)[] {
-  const out = new Array<number | undefined>(column.length).fill(undefined);
-  const anyCol = column as unknown as { at(i: number): number | undefined };
-  for (let i = 0; i < column.length; i += 1) {
-    const v = anyCol.at(i);
-    if (v !== undefined && !Number.isNaN(v)) out[i] = v;
-  }
-  return out;
-}
-
-function keysOf(series: TimeSeries<SeriesSchema>): number[] {
-  const kc = series.keyColumn() as unknown as {
-    length: number;
-    at(i: number): number;
-  };
-  const out = new Array<number>(kc.length);
-  for (let i = 0; i < kc.length; i += 1) out[i] = kc.at(i);
-  return out;
-}
-
-function reduceColumn(
-  name: ReductionName,
-  column: Column,
-  keys: number[],
-  sel: ReduceSelect,
-  other: Column | undefined,
-): Record<string, unknown> {
-  const v = densify(column);
-  if (name === 'last') {
-    for (let i = v.length - 1; i >= 0; i -= 1) {
-      if (v[i] !== undefined) return { value: round(v[i]!), at: day(keys[i]!) };
-    }
-    return { value: null };
-  }
-  if (name === 'extremes') {
-    let lo = Infinity;
-    let hi = -Infinity;
-    let loAt = 0;
-    let hiAt = 0;
-    for (let i = 0; i < v.length; i += 1) {
-      const x = v[i];
-      if (x === undefined) continue;
-      if (x < lo) {
-        lo = x;
-        loAt = keys[i]!;
-      }
-      if (x > hi) {
-        hi = x;
-        hiAt = keys[i]!;
-      }
-    }
-    if (lo === Infinity) return { min: null, max: null };
-    return {
-      min: { value: round(lo), at: day(loAt) },
-      max: { value: round(hi), at: day(hiAt) },
-    };
-  }
-  if (name === 'percentileRank') {
-    const defined = v.filter((x): x is number => x !== undefined);
-    if (defined.length === 0) return { value: null };
-    const last = defined[defined.length - 1]!;
-    const below = defined.filter((x) => x < last).length;
-    return {
-      value: round(below / defined.length),
-      note: `${Math.round((below / defined.length) * 100)}th percentile of ${defined.length} observations`,
-    };
-  }
-  // shape — the honest answer to "return the series" for a token-metered
-  // caller: a bounded envelope instead of every point.
-  const want = sel.points ?? 40;
-  const step = Math.max(1, Math.floor(v.length / want));
-  const pts: [string, number][] = [];
-  for (let i = 0; i < v.length; i += step) {
-    if (v[i] !== undefined) pts.push([day(keys[i]!), round(v[i]!)]);
-  }
-  void other;
-  return { points: pts.length, series: pts };
-}
-
 // ── run ──────────────────────────────────────────────────────
 
 /**
@@ -350,10 +270,29 @@ function normalize(
 
 export function run(graph: BoundGraph, request: RunRequest): RunResult {
   const { onError = 'throw', assemble = true } = request;
-  const { plan, select, slotOf } = normalize(graph, request);
   const registry = graph.registry;
   const skipped: Skipped[] = [];
   const resolved: { id: string; spec: Spec }[] = [];
+
+  // Slot expansion happens before anything resolves, so its failures
+  // used to escape the error policy entirely — a mistyped input came
+  // back as a thrown 500 rather than a `skipped` reason an agent could
+  // read and retry against. Every other class of bad plan is
+  // collectable; there was no argument for this one being different.
+  let normalized: ReturnType<typeof normalize>;
+  try {
+    normalized = normalize(graph, request);
+  } catch (e) {
+    if (onError === 'throw') throw e;
+    return {
+      outputs: {},
+      facts: [],
+      explain: {},
+      skipped: [{ reason: e instanceof Error ? e.message : String(e) }],
+      nodes: [],
+    };
+  }
+  const { plan, select, slotOf } = normalized;
 
   const fail = (entry: Skipped): void => {
     if (onError === 'throw') throw new ProcessError(entry.reason);
@@ -386,6 +325,8 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
   const selectors: { sel: Select; id: string }[] = [];
   /** The caller's name per id, for the columns branch. */
   const nameOf = new Map<string, string>();
+  /** A single named output, when the selector narrowed to one. */
+  const wantedOutput = new Map<string, string>();
   for (const sel of select) {
     let id: string;
     try {
@@ -407,11 +348,13 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
     }
     selectors.push({ sel, id });
     if (sel.name !== undefined) nameOf.set(id, sel.name);
-    const wantsColumns = 'columns' in sel && sel.columns === true;
-    needed.set(id, (needed.get(id) ?? false) || wantsColumns);
-    if ('against' in sel && typeof sel.against === 'string') {
-      needed.set(sel.against, needed.get(sel.against) ?? false);
-    }
+    // Surfacing a column-producing node means surfacing its columns.
+    // There is no longer a `columns: true` to opt into, because what a
+    // selector yields is decided by the node it points at.
+    const compiled = graph.get(id);
+    const isFoldNode = compiled?.fold === true;
+    if (!isFoldNode) needed.set(id, true);
+    if (sel.output !== undefined) wantedOutput.set(id, sel.output);
   }
 
   const outputs: Record<string, OutputInfo[]> = {};
@@ -440,14 +383,18 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
     // will see in `nodes` rather than a spec it would have to hash.
     const upstream = compiled.spec.inputs.map((input) => {
       if (typeof input === 'string') return input;
-      const upId = refToId(registry, input);
+      const upId = refToId(registry, specOf(input));
       warm(upId);
       return upId;
     });
-    const suffix = registry.get(compiled.spec.op).outputs[0]!.id;
+    const declared = registry.outputsOf(registry.get(compiled.spec.op));
     const wasDirty = compiled.node.dirty;
     const t0 = performance.now();
-    graph.columnOf(compiled, suffix);
+    // A fold is pulled exactly like a column node — same memo, same
+    // version check. That equivalence is the point of [PND-PROCFOLD]:
+    // the badge row now covers the part callers actually read.
+    if (compiled.fold) graph.factOf(compiled);
+    else graph.columnOf(compiled, declared[0]!.id);
     const ms = performance.now() - t0;
     timings.push({
       id,
@@ -474,7 +421,7 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
     explainMap[id] ??= explain(registry, compiled.spec);
     const upstream = compiled.spec.inputs.map((input) => {
       if (typeof input === 'string') return input;
-      const upId = refToId(registry, input);
+      const upId = refToId(registry, specOf(input));
       record(upId);
       return upId;
     });
@@ -501,20 +448,18 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
     return col;
   };
 
-  // ── resolve the drawable columns, and assemble only if asked ───
-  // The closure, not just the `columns: true` selectors — a reduction
-  // reads a column too, and `crossings`'s `against` names a second one.
-  const wantsAnyColumns = selectors.some((s) => 'columns' in s.sel);
-  if (wantsAnyColumns) {
+  // ── resolve the surfaced columns, and assemble only if asked ───
+  if (needed.size > 0) {
     drawn = {};
     if (assemble) assembled = graph.series;
     for (const [id, report] of needed) {
       const compiled = graph.get(id);
       if (compiled === undefined) continue;
       const cols = columnsOf(registry, compiled.spec, id);
-      const op = registry.get(compiled.spec.op);
+      const wanted = wantedOutput.get(id);
       if (report) outputs[id] = [];
-      op.outputs.forEach((o, n) => {
+      registry.outputsOf(registry.get(compiled.spec.op)).forEach((o, n) => {
+        if (wanted !== undefined && o.id !== wanted) return;
         const col = columnFor(id, o.id);
         drawn![cols[n]!] = col;
         if (assemble) assembled = appendColumn(assembled!, cols[n]!, col);
@@ -529,43 +474,23 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
     }
   }
 
-  // ── facts read node values; no series is built for them ────
+  // ── facts are pulled from fold nodes, like any other value ──
   const facts: Fact[] = [];
-  const keys = keysOf(graph.series);
   for (const { sel, id } of selectors) {
-    const wantsColumns = 'columns' in sel && sel.columns === true;
-    if (wantsColumns && graph.get(id) === undefined) {
+    const compiled = graph.get(id);
+    if (compiled === undefined) {
       fail({ select: sel, reason: `'${id}' is not in this plan` });
       continue;
     }
-    // Not exclusive. A selector asking for both gets both — that is the
-    // legend-chip case [PND-PROCTERM] exists for, a fact riding
-    // alongside the columns it labels. Treating `columns` as a mode that
-    // suppressed the reduction silently dropped a fact the caller had
-    // plainly asked for, which is worse than refusing it.
-    if (!('reduce' in sel)) continue;
-    const reduceSel = sel as ReduceSelect;
+    if (!compiled.fold) continue;
     try {
-      const compiled = graph.get(id);
-      if (compiled === undefined)
-        throw new ProcessError(`'${id}' is not in this plan`);
-      const suffix =
-        reduceSel.output ?? registry.get(compiled.spec.op).outputs[0]!.id;
-      const column = columnFor(id, suffix);
-      const other =
-        reduceSel.against !== undefined
-          ? columnFor(reduceSel.against, '')
-          : undefined;
-      const idx = registry
-        .get(compiled.spec.op)
-        .outputs.findIndex((o) => o.id === suffix);
+      warm(id);
       facts.push({
-        id: id + suffix,
-        ...(reduceSel.name !== undefined && { name: reduceSel.name }),
-        reduce: reduceSel.reduce,
-        unit: unitOf(registry, compiled.spec, graph.units, Math.max(0, idx)),
-        ...(reduceSel.against !== undefined && { against: reduceSel.against }),
-        ...reduceColumn(reduceSel.reduce, column, keys, reduceSel, other),
+        id,
+        ...(sel.name !== undefined && { name: sel.name }),
+        op: compiled.spec.op,
+        unit: unitOf(registry, compiled.spec, graph.units),
+        ...graph.factOf(compiled),
       });
     } catch (e) {
       fail({ select: sel, reason: e instanceof Error ? e.message : String(e) });

@@ -30,7 +30,7 @@
  */
 
 import { ProcessError } from '../errors.js';
-import type { ParamValue, Spec } from './types.js';
+import type { Input, ParamValue, Spec } from './types.js';
 
 /** Thrown when a slot graph cannot be expanded. */
 export class SlotError extends ProcessError {}
@@ -97,11 +97,31 @@ export function expandSlots(
     }
     const def = slots[name]!;
     visiting.push(name);
-    const inputs = def.in.map((ref) => {
+    const inputs = def.in.map((ref): Input => {
       if (Object.hasOwn(slots, ref)) return expand(ref);
       if (columnSet.has(ref)) return ref;
+      // `bb#Lower` — one named output of a multi-output slot. A suffix
+      // rather than a nested object because `in` is a list of strings
+      // and keeping it that way is what makes the slot schema flat, with
+      // no recursive `$ref` to make portable ([PND-PROCSLOT]).
+      const hash = ref.lastIndexOf('#');
+      if (hash > 0) {
+        const upstream = ref.slice(0, hash);
+        if (Object.hasOwn(slots, upstream)) {
+          return { from: expand(upstream), output: ref.slice(hash + 1) };
+        }
+      }
+      // Name the `#` spelling when the reference looks like an attempt
+      // at one. A model reaching for a band's upper line writes
+      // `bb.Upper` on the first try — reasonably — and a list of valid
+      // slots does not tell it what it got wrong.
+      const guess = /^(.+)[.:/](.+)$/.exec(ref);
+      const hint =
+        guess !== null && Object.hasOwn(slots, guess[1]!)
+          ? ` — to read one output of slot '${guess[1]!}', write '${guess[1]!}#${guess[2]!}'`
+          : '';
       throw new SlotError(
-        `slot '${name}' names '${ref}', which is neither a slot nor a column — slots are ${quoted(names)}; columns are ${quoted(columns)}`,
+        `slot '${name}' names '${ref}', which is neither a slot nor a column${hint} — slots are ${quoted(names)}; columns are ${quoted(columns)}`,
       );
     });
     visiting.pop();

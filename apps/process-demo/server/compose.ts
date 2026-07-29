@@ -108,7 +108,7 @@ export function requestSchema(ctx: ComposerContext): Record<string, unknown> {
         type: 'array',
         minItems: 1,
         description:
-          'What to return, each under a name you choose. Prefer a reduction — the caller is reading JSON, not drawing a chart.',
+          'Which nodes to surface, each under a name you choose. A fold node returns a fact; anything else returns its full column, which is usually far more than you want.',
         items: {
           type: 'object',
           additionalProperties: false,
@@ -121,30 +121,7 @@ export function requestSchema(ctx: ComposerContext): Record<string, unknown> {
             },
             on: {
               type: 'string',
-              description: 'The slot of the node to read.',
-            },
-            columns: {
-              type: 'boolean',
-              const: true,
-              description:
-                'Ask for the full column. Use sparingly: it returns every row.',
-            },
-            reduce: {
-              type: 'string',
-              enum: ['last', 'extremes', 'percentileRank', 'shape'],
-              description:
-                'last: latest defined value. extremes: min and max with timestamps. percentileRank: where the latest value sits in its own history. shape: a bounded sample of the whole series.',
-            },
-            output: {
-              type: 'string',
-              description:
-                'For a multi-output op, which output — e.g. "Upper". Defaults to the first.',
-            },
-            points: {
-              type: 'integer',
-              minimum: 2,
-              maximum: 400,
-              description: 'For `shape`, roughly how many points to return.',
+              description: 'The slot of the node to surface.',
             },
           },
         },
@@ -202,6 +179,7 @@ export function foldSlotRequest(raw: Record<string, unknown>): {
  */
 export function opTable(ctx: ComposerContext): string {
   const rows = ctx.ops.map((op) => {
+    if (op.kind === 'fold') return `- ${op.name} [${op.family}] → a fact`;
     const outs = op.outputs
       .map((o) => `${o.suffix === '' ? '(single)' : o.suffix}:${o.unit}`)
       .join(' ');
@@ -226,13 +204,27 @@ inputs in order, and each input is either a source column name or the slot of
 another node. That is how you express "EMA of the SMA of px": two nodes, where
 the EMA's \`in\` is the SMA's slot. Params you omit take their declared defaults.
 
+**Reading a result is also a node.** \`last\`, \`extremes\`, \`percentileRank\` and
+\`shape\` are ops like any other: to get the current value of a study, add a
+\`last\` node whose \`in\` is that study's slot, then surface *that* slot in
+\`outputs\`. They are terminal — they produce a fact, so nothing can take one as
+an input.
+
+Surface a **study** to get its series back for drawing; surface a **fold** to get
+a value. A request that asks for both — "the bands, and the current upper band" —
+names both: the study slot for the series, and a \`last\` node over it for the
+value.
+
 Emit exactly one call to \`emit_request\`. Rules that are not in the schema:
 
 - A slot must not be the name of a source column.
 - Every \`on\` in \`outputs\` must be a slot you defined in \`nodes\`.
 - Name each output for what it *is* ("upper_band", "annualised_vol"), because
   the caller reads results back by that name.
-- Prefer a reduction over \`columns\`. The caller reads JSON.
+- For one output of a multi-output op, write \`slot#Output\` in \`in\` — a
+  \`last\` node with \`in: ["bb#Upper"]\` reads the upper Bollinger band.
+- Give a value for anything the request asks the current state of. A series on
+  its own rarely answers a question.
 - If the request is ambiguous, choose conventional defaults and say what you
   chose in \`note\` rather than asking.
 - If you cannot express the request with the ops available, still emit a
@@ -325,8 +317,9 @@ export function scriptedComposer(): Composer {
         envelope: {
           from,
           as,
-          nodes,
-          outputs: { latest: { on, reduce: 'last' } },
+          // Reading is a node too, so even the keyword matcher adds one.
+          nodes: { ...nodes, latest: { op: 'last', in: [on] } },
+          outputs: { latest: { on: 'latest' } },
           onError: 'collect',
         } as unknown as Envelope,
         note: 'Built by the offline keyword matcher, not by a model.',

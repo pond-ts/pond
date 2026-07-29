@@ -36,6 +36,7 @@
  */
 
 import type { Registry } from './registry.js';
+import { isFold, isPicked, specOf } from './types.js';
 import type { Params, Spec, SpecRef, UnitSpec, Units } from './types.js';
 
 /** Id format version. Bumping it invalidates persisted ids deliberately. */
@@ -64,7 +65,14 @@ export function specId(registry: Registry, spec: Spec): string {
     .map(([k, v]) => `${k}=${esc(v)}`)
     .join(',');
   const inputs = spec.inputs
-    .map((i) => (typeof i === 'string' ? esc(i) : specId(registry, i)))
+    .map((i) => {
+      if (typeof i === 'string') return esc(i);
+      // `#Lower` rather than a separate field: an input picking a
+      // different output is a different computation, and the id is what
+      // says so.
+      const base = specId(registry, specOf(i));
+      return isPicked(i) ? `${base}#${esc(i.output)}` : base;
+    })
     .join('+');
   return `${VERSION}:${spec.op}(${inputs};${p})`;
 }
@@ -85,7 +93,11 @@ export function explain(registry: Registry, spec: Spec): string {
   const op = registry.get(spec.op);
   const params = registry.resolveParams(op, spec.params);
   const inputs = spec.inputs
-    .map((i) => (typeof i === 'string' ? i : explain(registry, i)))
+    .map((i) => {
+      if (typeof i === 'string') return i;
+      const base = explain(registry, specOf(i));
+      return isPicked(i) ? `${i.output} of ${base}` : base;
+    })
     .join(', ');
   if (op.label) return op.label(params, inputs);
   const p = Object.entries(params)
@@ -107,13 +119,20 @@ export function unitOf(
   outputIndex = 0,
 ): string | null {
   const op = registry.get(spec.op);
-  const declared: UnitSpec = op.outputs[outputIndex]?.unit ?? 'inherit';
+  const declared: UnitSpec = isFold(op)
+    ? op.unit
+    : (op.outputs[outputIndex]?.unit ?? 'inherit');
   if (declared !== 'inherit') return declared;
   const src = spec.inputs[0];
   if (src === undefined) return null;
-  return typeof src === 'string'
-    ? (units[src] ?? null)
-    : unitOf(registry, src, units);
+  if (typeof src === 'string') return units[src] ?? null;
+  const upstream = specOf(src);
+  const index = isPicked(src)
+    ? registry
+        .outputsOf(registry.get(upstream.op))
+        .findIndex((o) => o.id === src.output)
+    : 0;
+  return unitOf(registry, upstream, units, Math.max(0, index));
 }
 
 /**
@@ -128,7 +147,8 @@ export function columnsOf(
   spec: Spec,
   id: string,
 ): string[] {
-  return registry.get(spec.op).outputs.map((o) => id + o.id);
+  const def = registry.get(spec.op);
+  return registry.outputsOf(def).map((o) => id + o.id);
 }
 
 /**
@@ -143,7 +163,7 @@ export function dependsOn(
   outputIndex: number,
 ): string[] {
   const op = registry.get(spec.op);
-  const declared = op.outputs[outputIndex]?.dependsOn;
+  const declared = isFold(op) ? undefined : op.outputs[outputIndex]?.dependsOn;
   return declared ? [...declared] : Object.keys(op.params);
 }
 

@@ -303,6 +303,9 @@ describe('registry as schema', () => {
     expect([...fam.keys()].sort()).toEqual([
       'bands',
       'normalisation',
+      // The standard folds, registered by `createRegistry` and grouped
+      // like anything else — a picker sees one vocabulary.
+      'read',
       'trend',
       'volatility',
     ]);

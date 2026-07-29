@@ -180,6 +180,25 @@ include new features and type-level changes; patch bumps are strictly additive.
   composing model, as `description` prose in the JSON Schema projection
   rather than a custom keyword.
 
+- **process:** **Reductions are nodes.** `last`, `extremes`,
+  `percentileRank` and `shape` were a fixed `reduce` enum on the selector,
+  computed after the graph finished — so the one thing every caller reads
+  sat outside the memo, at 10.85 ms of an 11.6 ms fully-cached run
+  (`percentileRank` alone 6.57 ms, densifying 150,000 values and filtering
+  them twice, every request). They are ordinary registry entries now, with
+  content-addressed ids, cache entries and badges like anything else:
+  **0.09 ms**, a 120× improvement on the warm path. **Breaking** — a
+  selector is `{on, output?}`; `reduce`, `points` and `columns: true` are
+  gone, and what a selector yields is decided by the node it points at.
+- **process:** **`Input` admits `{from, output}`** — `slot#Output` in the
+  flat slot form — so a node can read one named output of a multi-output
+  upstream. A nested input had always read output 0, which nobody hit
+  while `select.output` could pick one at the end.
+- **process:** **Slot-expansion failures are collectable.** They ran
+  before the error policy, so a mistyped input was the only class of bad
+  plan that threw instead of coming back as a `skipped` reason an agent
+  could retry against.
+
 ### Changed
 
 - **process:** `RunResult.explain` now covers **every id in `nodes`**, not only

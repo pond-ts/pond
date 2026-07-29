@@ -982,3 +982,73 @@ read-only view: names, and enough lineage to recognise one.
 **Done when:** a composing agent, given the resident view and no prompt
 instruction about caching, re-reads an earlier turn's node instead of
 declining to compare.
+
+---
+
+### [PND-PROCFOLD] — Reductions are nodes
+
+**Landed.** `last`, `extremes`, `percentileRank` and `shape` were a fixed
+`reduce` enum on the selector, computed after the graph had finished.
+That put the one thing every caller actually reads outside the memo:
+
+```
+warm, 3 studies + 3 facts, 150k rows   11.60 ms
+warm, zero facts                        0.75 ms
+                                       ────────
+the reductions                         10.85 ms   every request, forever
+  last          0.89 ms
+  extremes      1.21 ms
+  percentileRank 6.57 ms
+```
+
+Every node cached, and `percentileRank` still densified 150,000 values
+and filtered them twice. The library's whole claim is memoization, and it
+stopped one step short of the output.
+
+A **fold** is now an ordinary registry entry — `{kind: 'fold', inputs,
+unit, fold}` — compiled into a node with a fact outlet instead of column
+outlets. Same `specId`, same version check, same badge row. It is always
+a leaf: a fact cannot feed anything, and naming a fold as an op's input
+is rejected at compile time with both sides named.
+
+```
+warm, same 3 facts   0.13 ms
+the facts now cost   0.09 ms   (was 10.85)
+```
+
+**120× on the warm path**, and `percentileRank` from 6.57 ms to 0.01 ms.
+In the demo a repeated question went from 199.31 ms to **0.664 ms, `0
+computed, 8 cached`** — a number that was previously impossible to reach
+because three of those eight were not cacheable at all.
+
+**What else it fixed, which is the better argument.**
+
+- **One vocabulary.** A consumer adds a reduction with `define`, not by
+  editing this library. `describe()` reports `kind`, so a picker knows
+  what can be wired onward.
+- **Provenance.** A fact's id is now
+  `p1:percentileRank(p1:annualise(…);)`. Two callers asking the same
+  question share the answer; before, the reduction appeared in no id at
+  all.
+- **`outputs` means what it says.** A selector is `{on, output?}` — it
+  points at a node and names it. No `reduce`, no `points`, no
+  `columns: true`. What comes back is whatever that node produces.
+- **`shape`'s `points` is a param**, so it lands in the id and two
+  callers asking for 40 points share one node rather than computing it
+  twice.
+
+**A gap it exposed, fixed alongside.** Removing `select.output` left no
+way to read a band's middle or lower line — a nested input had always
+read output 0, so `sma` of a Bollinger could only ever smooth `Upper`.
+Nobody hit it while a selector could pick at the end. `Input` now admits
+`{from, output}`, spelled `slot#Output` in the flat slot form, and it is
+in the id: reading a different output is a different computation.
+
+**And a second-order one.** The first live plan using it wrote
+`bb.Upper`, which threw a 500 — slot expansion runs before the error
+policy, so a mistyped input was the one class of bad plan an agent could
+not read and retry against. It is collectable now, the message names the
+`#` spelling when a reference looks like an attempt at one, and the
+convention is in the **schema description** rather than only the system
+prompt. With that in place the model composed `bb#Upper`, `bb#Middle` and
+`bb#Lower` in one plan, first try.
