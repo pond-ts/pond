@@ -927,3 +927,20 @@ button.chip.on {
 .step.source .step-label {
   color: var(--muted);
 }
+
+/* The unit an input demands — why a plan gets rejected, not decoration. */
+.chip-want {
+  font-style: normal;
+  color: var(--warm);
+  opacity: 0.85;
+}
+
+.chip-want::before {
+  content: '⟨';
+  opacity: 0.6;
+}
+
+.chip-want::after {
+  content: '⟩';
+  opacity: 0.6;
+}

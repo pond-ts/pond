@@ -162,6 +162,13 @@ include new features and type-level changes; patch bumps are strictly additive.
   resolution logic and knows nothing about the registry, so there is one
   resolution path, one cache, and the existing plan tests cover it.
 
+- **process:** **`OpDescriptor.inputs` is the declared `InputDef[]`**, not a
+  count. A count checks arity and says nothing else — a consumer labelling a
+  two-input op could not tell which side was which, and one explaining a
+  rejection could not name the unit an input demands, both of which the
+  registry holds and `describe()` was dropping. **Breaking** for anything
+  reading `inputs` as a number; `inputs.length` is the same value.
+
 ### Changed
 
 - **process:** `RunResult.explain` now covers **every id in `nodes`**, not only

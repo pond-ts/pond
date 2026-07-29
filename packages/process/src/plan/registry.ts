@@ -17,6 +17,7 @@ import { ProcessError } from '../errors.js';
 import type {
   BooleanParam,
   EnumParam,
+  InputDef,
   NumberParam,
   OpDef,
   ParamDef,
@@ -101,7 +102,17 @@ export interface OpDescriptor {
   readonly family: string;
   readonly summary: string;
   readonly params: Readonly<Record<string, ParamDef>>;
-  readonly inputs: number;
+  /**
+   * The declared inputs, not a count of them.
+   *
+   * A count is enough to check arity and nothing else. A consumer
+   * labelling a two-input op cannot say which side is which, and one
+   * showing why a plan was rejected cannot name the unit an input
+   * demands — both facts the registry holds and used to drop here. Found
+   * by building a UI that wanted to label a node's wiring and could only
+   * show how many wires there were.
+   */
+  readonly inputs: readonly InputDef[];
   readonly outputs: readonly {
     readonly suffix: string;
     readonly unit: string;
@@ -180,7 +191,7 @@ export class Registry {
       family: op.family,
       summary: op.summary,
       params: op.params,
-      inputs: op.inputs.length,
+      inputs: op.inputs,
       outputs: op.outputs.map((o) => ({ suffix: o.id, unit: o.unit })),
     }));
   }

@@ -26,6 +26,8 @@ interface OpDescriptor {
   family: string;
   summary: string;
   params: Record<string, ParamDef>;
+  /** The declared inputs — roles and any demanded unit, not a count. */
+  inputs: { role: string; unit?: string }[];
   outputs: { suffix: string; unit: string }[];
 }
 interface Context {
@@ -493,7 +495,7 @@ export function App() {
           onFocus={focusNode}
           onTune={tune}
         />
-        <ResultsPanel entry={current} onDraw={draw} />
+        <ResultsPanel entry={current} context={context} onDraw={draw} />
       </main>
     </div>
   );
@@ -796,6 +798,7 @@ function RequestPanel(props: {
 
 function ResultsPanel(props: {
   entry: Entry | undefined;
+  context: Context | undefined;
   onDraw: (entry: Entry) => void;
 }) {
   const { entry } = props;
@@ -839,6 +842,7 @@ function ResultsPanel(props: {
         <VizTab
           entry={entry}
           view={tab === 'workbook' ? 'workbook' : 'output'}
+          ops={props.context?.ops}
           onDraw={props.onDraw}
         />
       )}
@@ -923,6 +927,7 @@ function ResultsPanel(props: {
 function VizTab(props: {
   entry: Entry;
   view: 'output' | 'workbook';
+  ops: OpDescriptor[] | undefined;
   onDraw: (entry: Entry) => void;
 }) {
   const { entry, onDraw } = props;
@@ -946,6 +951,9 @@ function VizTab(props: {
     <Viz
       view={props.view}
       asked={entry.asked ?? []}
+      ops={Object.fromEntries(
+        (props.ops ?? []).map((o) => [o.name, { inputs: o.inputs }]),
+      )}
       defs={
         (
           (entry.ran ?? entry.composed?.envelope) as

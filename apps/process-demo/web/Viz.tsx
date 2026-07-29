@@ -392,6 +392,8 @@ export function Viz(props: {
   asked: readonly string[];
   /** The request's node definitions, keyed by slot — for the param chips. */
   defs: Record<string, { op: string; params?: Record<string, unknown> }>;
+  /** Op metadata by name, for input roles. */
+  ops: Record<string, { inputs: readonly { role: string; unit?: string }[] }>;
   /** A draw is in flight. */
   pending: boolean;
   /** There is no plan to draw from yet — the compose has not landed. */
@@ -465,6 +467,7 @@ export function Viz(props: {
           explain={props.explain}
           colors={colors}
           defs={props.defs}
+          ops={props.ops}
         />
       )}
 
@@ -577,20 +580,30 @@ function Wiring(props: {
   slotOf: Map<string, string>;
   colors: Map<string, string>;
   params: Record<string, unknown> | undefined;
+  /** The op's declared inputs, in order — roles and any demanded unit. */
+  roles: readonly { role: string; unit?: string }[];
 }) {
   const chips = [
-    ...props.inputs.map((ref) => ({
-      kind: 'in' as const,
-      // A slot when the input is another node; the bare column name when
-      // it is the source. `describe()` reports `inputs` as a *count*, so
-      // the op's role names ("source", "against") are not available to a
-      // client — worth knowing before reading these as roles.
-      label: props.slotOf.get(ref) ?? ref,
-      color: props.colors.get(ref),
-    })),
+    ...props.inputs.map((ref, i) => {
+      // `role: what-feeds-it`, which needs the op's declared inputs
+      // rather than a count of them — the reason `OpDescriptor.inputs`
+      // is now the `InputDef[]`. A two-input op reads correctly here
+      // only because of that.
+      const def = props.roles[i];
+      const from = props.slotOf.get(ref) ?? ref;
+      return {
+        kind: 'in' as const,
+        label: def === undefined ? from : `${def.role}: ${from}`,
+        // A demanded unit is the other half: it is why a plan gets
+        // rejected, and it was dropped by the old shape too.
+        want: def?.unit,
+        color: props.colors.get(ref),
+      };
+    }),
     ...Object.entries(props.params ?? {}).map(([k, v]) => ({
       kind: 'param' as const,
       label: `${k}: ${String(v)}`,
+      want: undefined,
       color: undefined,
     })),
   ];
@@ -610,6 +623,7 @@ function Wiring(props: {
             />
           )}
           {c.label}
+          {c.want !== undefined && <em className="chip-want">{c.want}</em>}
         </span>
       ))}
     </div>
@@ -638,6 +652,8 @@ function Workbook(props: {
   colors: Map<string, string>;
   /** The request's node definitions, for params. Keyed by slot. */
   defs: Record<string, { op: string; params?: Record<string, unknown> }>;
+  /** Op metadata by name, for input roles. */
+  ops: Record<string, { inputs: readonly { role: string; unit?: string }[] }>;
 }) {
   const [view, setView] = useState<[number, number] | undefined>();
   // A new response resets the shared view; otherwise a pan survives data
@@ -718,6 +734,7 @@ function Workbook(props: {
                 slotOf={slotOf}
                 colors={props.colors}
                 params={props.defs[slot]?.params}
+                roles={props.ops[props.defs[slot]?.op ?? '']?.inputs ?? []}
               />
 
               {/* A multi-output op draws as one band by default; the chips
