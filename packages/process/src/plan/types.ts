@@ -33,8 +33,23 @@ export type SpecRef = string | Spec;
 export interface NumberParam {
   readonly kind: 'number' | 'integer';
   readonly default: number;
+  /** The legal range. Outside it is an error. */
   readonly min?: number;
   readonly max?: number;
+  /**
+   * The **useful** range — `[lo, hi]`, within `[min, max]`.
+   *
+   * `min`/`max` answer "would this be rejected?", which is a different
+   * question from "what would anyone actually pick?", and the gap between
+   * them is usually enormous: a `period` legal to 5000 is interesting
+   * below about 200, so a slider drawn on the legal range spends 96% of
+   * its travel where nobody goes. Declaring the useful range is what lets
+   * a control be drawn on it and a model be told it.
+   *
+   * Purely advisory — nothing rejects a value outside it, since a bound
+   * that rejects is what `min`/`max` already are.
+   */
+  readonly suggest?: readonly [number, number];
   readonly label?: string;
 }
 

@@ -21,7 +21,15 @@ const registry = createRegistry()
     name: 'sma',
     family: 'trend',
     summary: 'Simple moving average over a bar-count window.',
-    params: { period: int({ min: 2, default: 20, label: 'Period (bars)' }) },
+    params: {
+      period: int({
+        min: 2,
+        max: 5000,
+        suggest: [5, 200],
+        default: 20,
+        label: 'Period (bars)',
+      }),
+    },
     inputs: [{ role: 'source' }],
     outputs: [{ id: '', unit: 'inherit' }],
     label: (p, i) => `SMA(${p['period']}) of ${i}`,
@@ -316,6 +324,67 @@ describe('registry as schema', () => {
     expect(bb.inputs.map((i) => i.role)).toEqual(['source']);
     // Optional where undeclared, rather than absent from the shape.
     expect(bb.inputs[0]!.unit).toBeUndefined();
+  });
+
+  it('separates the range that rejects from the range worth offering', () => {
+    // `min`/`max` answer 'would this be rejected?'. A control needs the
+    // other question — 'what would anyone pick?' — and drawing one on the
+    // legal range put 96% of a slider's travel where nobody goes.
+    const period = registry.describe().find((o) => o.name === 'sma')!.params[
+      'period'
+    ]!;
+    expect(period).toMatchObject({ min: 2, max: 5000, suggest: [5, 200] });
+
+    // Advisory, so a value outside it still resolves.
+    expect(
+      registry.resolveParams(registry.get('sma'), { period: 1000 }),
+    ).toEqual({ period: 1000 });
+  });
+
+  it('tells a composing model the useful range, in prose it can read', () => {
+    // Not an `x-suggest` keyword: this projection already cost three
+    // rounds against a live validator, and `description` is the one
+    // channel every one of them accepts.
+    const schema = registry.toJsonSchema() as {
+      $defs: {
+        spec: { anyOf: { title: string; properties: Record<string, any> }[] };
+      };
+    };
+    const sma = schema.$defs.spec.anyOf.find((o) => o.title === 'sma')!;
+    const period = sma.properties['params'].properties['period'];
+    expect(period).toMatchObject({ minimum: 2, maximum: 5000 });
+    expect(period.description).toMatch(/Typically 5.200/);
+    // The bounds that reject are still projected as bounds.
+    const ema = schema.$defs.spec.anyOf.find((o) => o.title === 'ema')!;
+    expect(ema.properties['params'].properties['period']).not.toHaveProperty(
+      'description',
+    );
+  });
+
+  it('rejects a nonsense suggestion where its author will see it', () => {
+    const base = {
+      name: 'bad',
+      family: 'trend',
+      summary: 'x',
+      inputs: [{ role: 'source' }],
+      outputs: [{ id: '', unit: 'inherit' }],
+      label: () => 'bad',
+      run: noop,
+    } as const;
+    expect(() =>
+      createRegistry().define({
+        ...base,
+        params: { period: int({ min: 2, suggest: [50, 5], default: 20 }) },
+      }),
+    ).toThrow(/suggest \[50, 5\] is inverted/);
+    expect(() =>
+      createRegistry().define({
+        ...base,
+        params: {
+          period: int({ min: 2, max: 100, suggest: [5, 900], default: 20 }),
+        },
+      }),
+    ).toThrow(/escapes the legal range \[2, 100\]/);
   });
 
   it('projects a recursive JSON Schema, which is what allows nesting', () => {

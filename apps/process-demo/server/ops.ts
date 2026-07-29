@@ -72,7 +72,9 @@ export function demoRegistry(): Registry {
       family: 'trend',
       summary:
         'Simple moving average — the unweighted mean of the last `period` values.',
-      params: { period: int({ min: 2, max: 5000, default: 20 }) },
+      params: {
+        period: int({ min: 2, max: 5000, suggest: [5, 200], default: 20 }),
+      },
       inputs: [{ role: 'source' }],
       outputs: [{ id: '', unit: 'inherit' }],
       label: (p, inputs) => `SMA(${p['period']}) of ${inputs}`,
@@ -84,7 +86,9 @@ export function demoRegistry(): Registry {
       family: 'trend',
       summary:
         'Exponential moving average — weights recent values more heavily, so it turns faster than an SMA of the same period.',
-      params: { period: int({ min: 2, max: 5000, default: 20 }) },
+      params: {
+        period: int({ min: 2, max: 5000, suggest: [5, 200], default: 20 }),
+      },
       inputs: [{ role: 'source' }],
       outputs: [{ id: '', unit: 'inherit' }],
       label: (p, inputs) => `EMA(${p['period']}) of ${inputs}`,
@@ -130,7 +134,9 @@ export function demoRegistry(): Registry {
       family: 'momentum',
       summary:
         'Rate of change — percentage move over `period` bars. Output is a percentage regardless of the input’s units.',
-      params: { period: int({ min: 1, max: 5000, default: 12 }) },
+      params: {
+        period: int({ min: 1, max: 5000, suggest: [1, 100], default: 12 }),
+      },
       inputs: [{ role: 'source' }],
       outputs: [{ id: '', unit: '%' }],
       label: (p, inputs) => `ROC(${p['period']}) of ${inputs}`,
@@ -153,7 +159,9 @@ export function demoRegistry(): Registry {
       family: 'momentum',
       summary:
         'Relative strength index — a 0–100 oscillator; conventionally above 70 is overbought and below 30 oversold.',
-      params: { period: int({ min: 2, max: 1000, default: 14 }) },
+      params: {
+        period: int({ min: 2, max: 1000, suggest: [7, 50], default: 14 }),
+      },
       inputs: [{ role: 'source' }],
       outputs: [{ id: '', unit: 'index' }],
       label: (p, inputs) => `RSI(${p['period']}) of ${inputs}`,
@@ -188,7 +196,9 @@ export function demoRegistry(): Registry {
       family: 'volatility',
       summary:
         'Rolling sample standard deviation over `period` bars, in the input’s own units.',
-      params: { period: int({ min: 2, max: 5000, default: 20 }) },
+      params: {
+        period: int({ min: 2, max: 5000, suggest: [5, 200], default: 20 }),
+      },
       inputs: [{ role: 'source' }],
       outputs: [{ id: '', unit: 'inherit' }],
       label: (p, inputs) => `σ(${p['period']}) of ${inputs}`,
@@ -202,7 +212,9 @@ export function demoRegistry(): Registry {
       family: 'volatility',
       summary:
         'Rolling sample variance over `period` bars. Produces a `variance`-unit series, which is what `annualise` consumes.',
-      params: { period: int({ min: 2, max: 5000, default: 20 }) },
+      params: {
+        period: int({ min: 2, max: 5000, suggest: [5, 200], default: 20 }),
+      },
       inputs: [{ role: 'source' }],
       outputs: [{ id: '', unit: 'variance' }],
       label: (p, inputs) => `Var(${p['period']}) of ${inputs}`,
@@ -214,7 +226,9 @@ export function demoRegistry(): Registry {
       family: 'volatility',
       summary:
         'Annualised volatility, in percent per year. Requires a `variance`-unit input, and that variance must be of a percentage series — so the whole chain is annualise(variance(roc(px))), not annualise(variance(px)).',
-      params: { barsPerYear: int({ min: 1, default: 105_120 }) },
+      params: {
+        barsPerYear: int({ min: 1, suggest: [252, 105_120], default: 105_120 }),
+      },
       // The typed input the schema projection cannot express.
       inputs: [{ role: 'source', unit: 'variance' }],
       outputs: [{ id: '', unit: '%/yr' }],
@@ -234,7 +248,9 @@ export function demoRegistry(): Registry {
       family: 'normalisation',
       summary:
         'Rolling z-score — how many standard deviations the latest value sits from its own `period`-bar mean.',
-      params: { period: int({ min: 2, max: 5000, default: 20 }) },
+      params: {
+        period: int({ min: 2, max: 5000, suggest: [5, 200], default: 20 }),
+      },
       inputs: [{ role: 'source' }],
       outputs: [{ id: '', unit: 'σ' }],
       label: (p, inputs) => `z(${p['period']}) of ${inputs}`,
@@ -250,8 +266,8 @@ export function demoRegistry(): Registry {
       summary:
         'Bollinger bands — an SMA with a ±`stdDev`σ envelope. One spec, three columns (Upper, Middle, Lower).',
       params: {
-        period: int({ min: 2, max: 5000, default: 20 }),
-        stdDev: num({ min: 0.1, max: 5, default: 2 }),
+        period: int({ min: 2, max: 5000, suggest: [5, 200], default: 20 }),
+        stdDev: num({ min: 0.1, max: 5, suggest: [1, 3], default: 2 }),
       },
       inputs: [{ role: 'source' }],
       outputs: [
@@ -280,7 +296,7 @@ export function demoRegistry(): Registry {
       name: 'scale',
       family: 'transform',
       summary: 'Multiplies every value by `by`, preserving units.',
-      params: { by: num({ default: 2 }) },
+      params: { by: num({ suggest: [-10, 10], default: 2 }) },
       inputs: [{ role: 'source' }],
       outputs: [{ id: '', unit: 'inherit' }],
       label: (p, inputs) => `${inputs} × ${p['by']}`,

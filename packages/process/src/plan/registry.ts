@@ -96,6 +96,31 @@ function checkParam(
   return v;
 }
 
+/**
+ * Checks a `suggest` range at declaration time, not at call time.
+ *
+ * A suggestion never rejects a value, so a malformed one would otherwise
+ * go unnoticed until a control was drawn backwards. This is a mistake in
+ * the op's own source, and the op's author is the one who can fix it —
+ * so it fires when the op is defined, in front of them.
+ */
+function checkSuggest(op: string, key: string, d: ParamDef): void {
+  if (d.kind === 'enum' || d.kind === 'boolean' || d.suggest === undefined) {
+    return;
+  }
+  const [lo, hi] = d.suggest;
+  const bad =
+    lo > hi
+      ? `is inverted`
+      : (d.min !== undefined && lo < d.min) ||
+          (d.max !== undefined && hi > d.max)
+        ? `escapes the legal range [${d.min ?? '-∞'}, ${d.max ?? '∞'}]`
+        : undefined;
+  if (bad !== undefined) {
+    throw new ProcessError(`${op}.${key} suggest [${lo}, ${hi}] ${bad}`);
+  }
+}
+
 /** Op metadata as a picker or a tool catalog wants it. */
 export interface OpDescriptor {
   readonly name: string;
@@ -131,6 +156,8 @@ export class Registry {
         `op '${op.name}' is multi-output, so every output needs a suffix — '' would collide with the spec id`,
       );
     }
+    for (const [key, d] of Object.entries(op.params))
+      checkSuggest(op.name, key, d);
     this.#ops.set(op.name, op);
     return this;
   }
@@ -370,6 +397,14 @@ function jsonSchemaForParam(d: ParamDef): Record<string, unknown> {
     default: d.default,
     ...(d.min !== undefined && { minimum: d.min }),
     ...(d.max !== undefined && { maximum: d.max }),
+    // Carried as prose, not as an `x-suggest` keyword. A composing model
+    // is a reader of this range too — knowing 5000 is legal but absurd is
+    // what stops it being picked — and getting three portability rounds
+    // out of this projection already ([PND-PROCSCHEMA]) is enough to
+    // distrust a custom keyword. `description` every validator allows.
+    ...(d.suggest !== undefined && {
+      description: `Typically ${d.suggest[0]}–${d.suggest[1]}. Values outside that are legal but unusual.`,
+    }),
   };
 }
 

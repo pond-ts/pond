@@ -169,6 +169,17 @@ include new features and type-level changes; patch bumps are strictly additive.
   registry holds and `describe()` was dropping. **Breaking** for anything
   reading `inputs` as a number; `inputs.length` is the same value.
 
+- **process:** **`suggest` on a numeric param** — the range worth offering,
+  as distinct from `min`/`max`, the range that rejects. Sliders drawn on the
+  legal range spent 96% of their travel where nobody goes, and a param with
+  no `max` had no drawable range at all: `annualise.barsPerYear` defaults to
+  105,120 against a fallback ceiling of 100, so its control sat pinned at the
+  edge and any drag silently destroyed the annualisation. Advisory — nothing
+  rejects a value outside it — but checked at `define()` time so an inverted
+  or escaping range fails in front of the op's author. It also reaches a
+  composing model, as `description` prose in the JSON Schema projection
+  rather than a custom keyword.
+
 ### Changed
 
 - **process:** `RunResult.explain` now covers **every id in `nodes`**, not only
