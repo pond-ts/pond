@@ -11,7 +11,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Viz, type Fact, type Frames } from './Viz.js';
+import { FactCard, Viz, type Fact, type Frames } from './Viz.js';
 import { Pipeline, type NodeTiming } from './Pipeline.js';
 import { Tune, type ParamDef } from './Tune.js';
 
@@ -608,6 +608,64 @@ function PanelTop(props: {
  * status bar. `5 computed, 4 cached` is the claim this whole app exists
  * to make, and it means something next to the sentence it paid for.
  */
+/**
+ * A cited output name, showing its card on hover.
+ *
+ * The prose states a figure and the chip names where it came from; until
+ * now checking one meant finding the matching card in the panel two
+ * columns over. The card is the same component Results renders, so there
+ * is one definition of what a fact looks like.
+ *
+ * Positioned `fixed` from the chip's own rect rather than absolutely
+ * inside it: the transcript scrolls, and an absolutely-positioned
+ * popover would be clipped by that `overflow` the moment it sat near an
+ * edge — which is most of the time in a column this narrow.
+ */
+function Cite(props: {
+  name: string;
+  fact: Fact | undefined;
+  explain: Record<string, string>;
+}) {
+  const [at, setAt] = useState<{ left: number; top: number; above: boolean }>();
+  const show = (e: React.MouseEvent<HTMLElement>) => {
+    if (props.fact === undefined) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    // Above the chip when there is room, below when there is not. The
+    // flag is carried rather than re-derived from `top` below: deciding
+    // twice from two thresholds put the card *over* its own chip for
+    // anything sitting near the boundary.
+    const above = r.top > 200;
+    setAt({
+      left: Math.max(8, Math.min(r.left, window.innerWidth - 300)),
+      top: above ? r.top - 8 : r.bottom + 8,
+      above,
+    });
+  };
+  return (
+    <>
+      <code
+        className={props.fact === undefined ? 'cite' : 'cite has-card'}
+        onMouseEnter={show}
+        onMouseLeave={() => setAt(undefined)}
+      >
+        {props.name}
+      </code>
+      {at !== undefined && props.fact !== undefined && (
+        <ul
+          className="cite-card"
+          style={{
+            left: at.left,
+            top: at.top,
+            transform: at.above ? 'translateY(-100%)' : undefined,
+          }}
+        >
+          <FactCard fact={props.fact} explain={props.explain} />
+        </ul>
+      )}
+    </>
+  );
+}
+
 function Reply(props: { entry: Entry }) {
   const { entry } = props;
   if (entry.pending) {
@@ -626,6 +684,16 @@ function Reply(props: { entry: Entry }) {
   }
   const answer = entry.answer;
   if (answer === undefined) return null;
+  // Every fact the answer read, across every round — a cite may name one
+  // the *first* round returned, which the final response no longer
+  // carries.
+  const facts = new Map(
+    answer.rounds
+      .flatMap((r) => r.reading.facts)
+      .filter((f): f is Fact => typeof f['name'] === 'string')
+      .map((f) => [f.name!, f]),
+  );
+  const explain = entry.result?.explain ?? entry.drawn?.explain ?? {};
   const computed = answer.rounds.reduce((n, r) => n + r.computed, 0);
   const cached = answer.rounds.reduce((n, r) => n + r.cached, 0);
   const engine =
@@ -637,7 +705,7 @@ function Reply(props: { entry: Entry }) {
         {answer.cites.length > 0 && (
           <p className="reply-cites">
             {answer.cites.map((c) => (
-              <code key={c}>{c}</code>
+              <Cite key={c} name={c} fact={facts.get(c)} explain={explain} />
             ))}
           </p>
         )}

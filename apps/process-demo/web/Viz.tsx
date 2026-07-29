@@ -127,7 +127,7 @@ function labelFor(
     : { label: explain[best]!, suffix: id.slice(best.length) };
 }
 
-function FactCard(props: {
+export function FactCard(props: {
   fact: Fact;
   explain: Record<string, string>;
   color?: string | undefined;

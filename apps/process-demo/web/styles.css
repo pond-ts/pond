@@ -1045,12 +1045,40 @@ button.chip.on {
 
 /* The names the prose rests on — the same names the cards in Results
    carry, which is what makes a figure checkable rather than trusted. */
-.reply-cites code {
+.reply-cites .cite {
   border: 1px solid var(--line);
   border-radius: 3px;
   padding: 1px 6px;
   color: var(--accent);
   background: var(--bg);
+}
+
+/* Only cites we can actually show a card for invite a hover. */
+.reply-cites .cite.has-card {
+  cursor: help;
+  border-style: dashed;
+}
+
+.reply-cites .cite.has-card:hover {
+  border-style: solid;
+  border-color: var(--accent);
+}
+
+/* `fixed`, so the scrolling transcript cannot clip it. */
+.cite-card {
+  position: fixed;
+  z-index: 20;
+  width: 280px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  pointer-events: none;
+  filter: drop-shadow(0 6px 16px rgb(0 0 0 / 0.55));
+}
+
+.cite-card .fact {
+  margin: 0;
+  border-color: var(--accent);
 }
 
 .reply-meta {
