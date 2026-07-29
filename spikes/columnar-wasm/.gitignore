@@ -1,0 +1,3 @@
+# Cargo build trees (build.sh recreates them; one per profile/feature build).
+target/
+target-*/

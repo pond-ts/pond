@@ -10,9 +10,18 @@ import { TimeSeries } from '../dist/index.js';
 // both the real path and a naive `Number(bigint)` baseline for the same column
 // so the reclaim is measured, not asserted.
 //
+// [PND-ARROWNULL] added the null-bearing scenarios: a nulled Float64 column
+// now adopts BOTH buffers zero-copy (Arrow's validity bitmap is byte-
+// identical to pond's), where it previously walked `vector.get(i)` per
+// element. Both paths are pinned — the adopted one and, via a sliced
+// (offset ≠ 0) vector that declines adoption, the fallback — so a
+// regression in either shows against the other. Measured when it landed:
+// 19.3 ms → 1.5 ms (12.7×) at 500k rows / 4% nulls.
+//
 // pond doesn't depend on apache-arrow, so we hand fromArrow a structural
 // stand-in for a decoded Table (the same shape a real `tableFromIPC` Table
-// presents to the duck-typed reader).
+// presents to the duck-typed reader), including the `data[0]` chunk the
+// adoption path reads.
 
 function median(values) {
   const sorted = [...values].sort((a, b) => a - b);
@@ -79,6 +88,61 @@ function benchmark(name, table, { repeats = 7 } = {}) {
     medianMs: Number(median(samples).toFixed(3)),
     minMs: Number(Math.min(...samples).toFixed(3)),
     maxMs: Number(Math.max(...samples).toFixed(3)),
+  };
+}
+
+/**
+ * Structural table with ONE nulled Float64 value column (4% nulls, the shape
+ * a real feed with gaps decodes to). `offset: 0` exercises the zero-copy
+ * adoption; `offset: 8` (a "sliced vector") makes adoption decline, landing
+ * on the per-element `get()` fallback — the pre-[PND-ARROWNULL] path. Same
+ * data both ways, so the pair isolates exactly what adoption buys.
+ */
+function makeNulledTable(length, { offset = 0 } = {}) {
+  const raw = length + offset;
+  const time = new Float64Array(length);
+  for (let i = 0; i < length; i += 1) time[i] = i * 1000;
+
+  const values = new Float64Array(raw);
+  const nullBitmap = new Uint8Array(Math.ceil(raw / 8));
+  let nullCount = 0;
+  for (let i = 0; i < raw; i += 1) {
+    if (i % 25 === 7) {
+      // A null slot: bit stays 0; the buffer holds junk, per Arrow.
+      values[i] = -1e9;
+      if (i >= offset) nullCount += 1;
+    } else {
+      values[i] = i % 100;
+      nullBitmap[i >> 3] |= 1 << (i & 7);
+    }
+  }
+
+  const closeVector = {
+    length,
+    nullCount,
+    toArray: () => values.subarray(offset, offset + length),
+    get: (i) =>
+      (nullBitmap[(i + offset) >> 3] >> ((i + offset) & 7)) & 1
+        ? values[i + offset]
+        : null,
+    data: [{ offset, length, values, nullBitmap }],
+  };
+  const timeVector = {
+    length,
+    nullCount: 0,
+    toArray: () => time,
+    get: (i) => time[i],
+  };
+  return {
+    numRows: length,
+    schema: {
+      fields: [
+        { name: 'time', type: {} },
+        { name: 'close', type: {} },
+      ],
+    },
+    getChild: (name) =>
+      name === 'time' ? timeVector : name === 'close' ? closeVector : null,
   };
 }
 
@@ -161,6 +225,14 @@ const results = [
     makeTable(LENGTH, { sparse: true }),
   ),
   benchmark('fromArrow: per-element floor (1k)', makeTable(1_000)),
+  benchmark(
+    'fromArrow: 4% nulls, adopted zero-copy (500k)',
+    makeNulledTable(LENGTH),
+  ),
+  benchmark(
+    'fromArrow: 4% nulls, fallback via sliced vector (500k)',
+    makeNulledTable(LENGTH, { offset: 8 }),
+  ),
   benchmarkBigIntBaseline(LENGTH),
   benchmarkBigIntFree(LENGTH),
 ];

@@ -56,6 +56,25 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **core:** **`TimeSeries.toArrow(options?)` — zero-copy export to the Apache
+  Arrow memory layout**, the counterpart of `fromArrow`. Every other export
+  door is row-shaped, so reaching another columnar engine meant a full
+  re-materialisation; it never had to — pond's validity bitmap is LSB-first
+  one-bit-per-value (Arrow's layout exactly), numeric columns are a contiguous
+  `Float64Array`, booleans a packed bitmap, and dict-encoded strings
+  `Int32Array` indices plus a dictionary. `toArrow` hands those buffers over
+  as they stand and returns `{ length, fields }` rather than an Arrow `Table`
+  — pond does not depend on `apache-arrow`; the caller assembles with
+  `makeData` / `makeVector` in a few lines (shown on the method doc). The
+  buffers are **live storage, not copies** — the same read-only contract
+  `column()` / `keyColumn()` already carry. Two named non-zero-copy cases:
+  chunked columns materialize first, and a non-dict-encoded string column is
+  a plain JS array (Arrow `Utf8` wants offsets + bytes). A `timeRange` /
+  `interval` key exports as `<key>` + `<key>End` (+ `<key>Label` for interval
+  labels), and a value column already using one of those names throws rather
+  than producing duplicate field names. Types: `ArrowExport`,
+  `ArrowExportField`, `ArrowExportType`, `ToArrowOptions`.
+
 - **process:** registry-bound fluent graph authoring via
   `process(registry, from)`. Operation methods, params, named secondary inputs,
   and multi-output suffixes are inferred from the registry while the result
@@ -209,6 +228,188 @@ include new features and type-level changes; patch bumps are strictly additive.
   could retry against.
 
 ### Changed
+
+- **core:** **`fromArrow` now adopts a null-bearing numeric column's buffers
+  zero-copy** — 19.3 ms → 1.5 ms (**12.7×**) on 500k rows with 4% nulls.
+  Arrow's validity bitmap is byte-identical to pond's, so both the values
+  buffer and the bitmap become the column's storage as they stand; the old
+  per-element `vector.get(i)` walk remains only as the fallback. Adoption
+  declines — falling back with the same answer — for a sliced vector
+  (non-zero chunk offset), a multi-chunk vector, a non-`Float64Array` values
+  buffer, a `nullCount` disagreeing with the bitmap's popcount, or a defined
+  cell holding a non-finite value (which keeps pond's NaN-as-gap intake
+  semantics: adopting would have made the same table ingest differently
+  depending on whether adoption was possible). Aliasing note: like the dense
+  path's existing adopt, the resulting column shares memory with the Arrow
+  table — mutating the table's buffers afterwards corrupts the series.
+
+- **core:** **`fromColumns` / `fromArrow` numeric columns with gaps now carry
+  `allFinite: true`.** The ingest predicate ("a cell is defined iff its value
+  is finite") _is_ the finiteness proof, but the flag was previously set only
+  for gap-free columns — so a single missing cell cost the column the
+  unguarded reduction fast path for the life of the series. Same answers,
+  faster reductions on gapped columns; observable as the column's `allFinite`
+  field now being `true` where it was `false`.
+
+- **core:** **`sum` and `mean` are ~2.5× faster on long runs**, and their
+  results may differ from previous versions in the last ulp. Runs of **32 or
+  more** cells (range positions — a gapped range counts its gaps) now
+  accumulate into eight independent partial sums rather than one running
+  total, which breaks the loop's dependency chain — 2.51× on a dense column,
+  2.22× through a validity bitmap, and `close.mean()` over 500k bars goes
+  from 0.47 ms to **0.19 ms**.
+
+  Floating-point addition is not associative, so this **can change the
+  answer** — worth being precise about the direction, though: the blocked
+  result is _generally more accurate_, not less. Sequential summation
+  accumulates rounding error as O(n·ε); eight partial sums accumulate it as
+  O((n/8)·ε + 8·ε). Summing 10⁶ copies of `0.1` lands strictly closer to the
+  true answer than before, and `1e16` followed by 8191 `1`s no longer absorbs
+  every `1` into the exponent gap.
+
+  What is guaranteed: runs of **fewer than 32** cells are unchanged bit for
+  bit; which cells contribute is unchanged (the validity bitmap and the
+  non-finite policy behave exactly as before — only the order of the
+  additions moved); `stdev`, the rolling-window kernel that backs
+  `@pond-ts/financial`'s studies, and the row-API path are all untouched.
+  pond-ts does not guarantee that a columnar sum and a row sum of the same
+  values agree bit for bit. Full rationale, measurements, and the threshold
+  reasoning in [`docs/notes/blocked-summation.md`](docs/notes/blocked-summation.md).
+
+- **core:** **`aggregate()` is up to 2.5× faster**, from two changes to how it
+  produces its result. Neither changes the answer: same values, same interval
+  keys and labels, same `undefined` (not `NaN`) for an empty bucket, and the
+  same `ValidationError` if a reducer overflows to a non-finite result.
+  - It **builds the result columnar** instead of routing it back through row
+    intake. The columnar fast path already computed every bucket in typed
+    arrays, then boxed each one into a frozen `[Interval, …]` row so
+    `new TimeSeries({ rows })` could walk all of them back into columns; the
+    store is now assembled directly.
+  - It **reduces each bucket in place** rather than materialising a
+    `Float64Column` slice for it. Reducers gained a range-scoped kernel
+    (`reduceColumnRange`), so a bucket costs two integers instead of a column
+    instance — plus, on a column with a validity bitmap, a `Uint8Array`
+    allocation, an O(bucket) bit copy and an O(bucket/8) popcount that the
+    slice's constructor performed and then threw away.
+
+  Measured on 1M events, 1-second grid: **2.10× at 1-minute buckets**
+  (6.65 ms → 3.16 ms, one column) and **2.55× at 10-second buckets**
+  (55.52 ms → 21.81 ms, four columns). The win is per output bucket, so it
+  tapers to no change on hourly and daily rollups, where the reduction
+  dominates and there was nothing to save. Whole-column reductions
+  (`series.reduce`, `column.sum()`, …) are unaffected.
+
+- **core:** **`median` / `percentile` are ~13× faster on the columnar path.**
+  `reducePercentileColumn` densified the defined+finite cells and then sorted
+  them; a percentile needs one or two order statistics, not a total order, so
+  it now runs quickselect — O(n) expected instead of O(n log n). Measured at
+  1M rows: `median` 76.18 ms → 5.90 ms, `p95` 75.80 ms → 5.88 ms (**12.9×**).
+  Applies to `series.reduce(col, 'median' | 'pNN')`, `column.median()`,
+  `column.percentile(q)`, and the `aggregate` / `bin` / `binBy` percentile
+  families. Other reducers are unchanged.
+
+  **One behaviour change, and it removes an inconsistency.** The old path used
+  `Float64Array.prototype.sort()`, which places `-0` strictly before `+0`,
+  while the row path sorts with `(a, b) => a - b` — a comparator that reads
+  the pair as equal. On signed-zero input the two paths disagreed: `p0` of
+  `[0, -0, 0, -0, 0]` was `-0` columnar and `+0` row-wise. Quickselect
+  compares with `<` / `>`, under which they are equal, so the columnar path
+  now returns `+0` and matches the row path.
+
+- **core:** **`cumulative`, `diff`, `rate` and `pctChange` are 4–7× faster.**
+  All four were column-native only in the sense of not materialising `Event`s:
+  each still read every cell through the polymorphic `col.read(i)` into a boxed
+  `Array<number | undefined>`, then handed that to `float64ColumnFromArray`,
+  which walked the boxed array twice more — once for the values and once for
+  the validity bitmap. They now walk the source's `Float64Array` and validity
+  bits directly and write into typed output buffers.
+
+  Measured at 200k rows × 4 columns (`scripts/perf-operators-unboxed.mjs`):
+
+  | operation           | dense                  | 4% missing             |
+  | ------------------- | ---------------------- | ---------------------- |
+  | `cumulative('sum')` | 10.22 → 2.56 ms (4.0×) | 22.94 → 3.44 ms (6.7×) |
+  | `cumulative('max')` | 11.84 → 2.54 ms (4.7×) | 22.12 → 3.43 ms (6.4×) |
+  | `diff`              | 19.18 → 2.71 ms (7.1×) | 20.29 → 3.87 ms (5.2×) |
+  | `rate`              | 21.18 → 3.96 ms (5.4×) | 21.92 → 5.14 ms (4.3×) |
+  | `pctChange`         | 19.87 → 2.85 ms (7.0×) | 21.85 → 3.95 ms (5.5×) |
+
+  Output is unchanged: same values, same missing cells, and `allFinite` still
+  derived from the produced values rather than inherited from the source.
+  Chunked and non-numeric sources keep the previous path.
+
+- **core:** **`rolling()`'s per-row contributor test is inlined.** The
+  per-column sweep evaluated it through a small helper — twice per row, once
+  entering the window and once leaving — which is a call per row per column,
+  the exact cost the sweep was restructured to remove. Both its operands are
+  loop-invariant, so on a dense provably-finite column (an OHLCV bar series)
+  the whole predicate now folds away. `sma(20)` over 500k bars: **10.41 →
+  6.48 ms**, and the five-study strategy pass 70.58 → 65.25 ms.
+
+- **core:** **`rolling(count, 'stdev')` runs Welford inline.** `stdev` was the
+  one reducer deliberately left on the reducer-state path when the kernel was
+  restructured, because its order-independent delete has exact `n <= 1` and
+  `n === 1` cases whose value is entirely numerical. The recurrence is now
+  transcribed verbatim into the sweep, removing three virtual calls per row
+  while keeping results **bit-identical** — asserted with `Object.is` against
+  the real state object across 18 shapes (large offsets, gross-outlier
+  eviction, denormals, gaps) plus 150 randomised trials, not with a closeness
+  tolerance that a dropped special case could pass.
+
+  `bollinger(20)` 31.51 → 25.18 ms, `zScore(20)` 26.49 → 19.88 ms, and the
+  five-study strategy pass 84.15 → 70.58 ms.
+
+- **core:** **`rolling()`'s count-window kernel sweeps one column at a time**,
+  making every reducer-state call monomorphic instead of megamorphic, and
+  specialises `avg` inline. The window bounds never depended on the column, so
+  the columns were only sharing a sweep — and sharing it meant a single
+  `states[c].add(...)` site saw every reducer's state shape in turn, costing
+  three uninlinable virtual calls per row per column for what is usually O(1)
+  arithmetic.
+
+  Measured on 500k 1-minute bars through `@pond-ts/financial`
+  (`packages/financial/scripts/perf-agent-queries.mjs`): `sma(20)` 21.48 →
+  15.20 ms, `bollinger(20)` 105.26 → 73.66 ms, `zScore(20)` 98.77 → 61.88 ms,
+  `envelope(20)` 69.33 → 45.03 ms, and a five-study strategy pass **318.30 →
+  212.18 ms (1.50×)**.
+
+  Results are bit-identical: the same reducer states are fed the same values in
+  the same order, and `avg`'s specialisation is a running sum with no accuracy
+  argument to preserve (unlike `stdev`, whose order-independent Welford delete
+  keeps its state path).
+
+- **core:** **`withColumn` accepts a `Float64Array` where `NaN` means missing.**
+  A typed buffer has no `undefined` slot, so `NaN` is the only way to express a
+  gap in one — and requiring gaps to be spelled `undefined` forced every
+  producer holding a typed buffer to box a whole column to say "no value here".
+  A boxed `Array<number | undefined>` keeps the strict reading: it already has
+  `undefined`, so a `NaN` in one is still rejected. `±Infinity` is rejected on
+  both doors. The buffer is copied, not adopted (`fromColumns` remains the
+  documented zero-copy door).
+
+- **financial:** **studies are 2.0–5.6× faster.** The study kernel handed every
+  study an `Array<number | undefined>` built by walking the column with the
+  polymorphic `col.at(i)`, and each study then checked every input for
+  `undefined` per cell — `bollinger` allocated four 500k boxed arrays before
+  three `withColumn` re-ingests. The kernel now returns a `Float64Array` with
+  `NaN` marking a gap, which propagates through arithmetic on its own, so only
+  the genuinely study-specific guards survive (σ = 0 has no band; a zero base
+  has no percent change).
+
+  Measured on 500k 1-minute bars, combined with the `rolling` change above:
+
+  | study                 | before    | after        | ×         |
+  | --------------------- | --------- | ------------ | --------- |
+  | 5-study strategy pass | 318.30 ms | **84.15 ms** | **3.78×** |
+  | `envelope(20)`        | 69.33 ms  | 12.47 ms     | 5.56×     |
+  | `percentChange()`     | 23.66 ms  | 4.51 ms      | 5.24×     |
+  | `zScore(20)`          | 98.77 ms  | 26.49 ms     | 3.73×     |
+  | `bollinger(20)`       | 105.26 ms | 31.51 ms     | 3.34×     |
+  | `sma(20)`             | 21.48 ms  | 10.54 ms     | 2.04×     |
+
+  Output is unchanged — verified against the committed pandas oracle fixtures
+  and, for the gap placement the oracle doesn't cover, byte-identical to the
+  pre-change build.
 
 - **process:** `RunResult.explain` now covers **every id in `nodes`**, not only
   the plan's top-level entries — a nested spec is a node in the timing badges

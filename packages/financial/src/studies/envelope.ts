@@ -60,8 +60,13 @@ export function envelope<
       ? emaValues(wide, column, options.period)
       : rollingValues(wide, column, 'avg', options.period);
   const f = percent / 100;
-  const scale = (factor: number): Array<number | undefined> =>
-    middle.map((m) => (m === undefined ? undefined : m * factor));
+  // A missing centre is `NaN` and survives the multiply, so no per-cell
+  // `undefined` check is needed ([PND-STUDYBOX]).
+  const scale = (factor: number): Float64Array => {
+    const out = new Float64Array(middle.length);
+    for (let i = 0; i < out.length; i += 1) out[i] = middle[i]! * factor;
+    return out;
+  };
 
   return series
     .withColumn(middleName, middle)

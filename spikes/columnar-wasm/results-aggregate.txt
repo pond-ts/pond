@@ -1,0 +1,63 @@
+══════════════════════════════════════════════════════════════════════════════════════════════════
+What if aggregation happened in Rust?
+══════════════════════════════════════════════════════════════════════════════════════════════════
+node v22.15.0 · darwin/arm64 · simd128 build · 1 s sample grid · n = 1M
+
+✓ js-algo and wasm each produce a TimeSeries identical to pond-ts
+
+── the kernel: stage 2 in isolation (what a port actually replaces) ──────────────
+   ev/bkt  C  buckets    pond-ts    js-algo       wasm   algo×  lang×  total×
+  ────────────────────────────────────────────────────────────────────────────────────────────────
+       10  1  100,000    15.80ms     2.93ms     1.12ms   5.40×  2.62×  14.13×
+       10  4  100,000    40.19ms     8.23ms     2.55ms   4.88×  3.23×  15.78×
+       60  1   16,667     4.55ms     2.00ms     0.78ms   2.28×  2.56×   5.84×
+       60  4   16,667    10.04ms     5.27ms     1.81ms   1.91×  2.91×   5.55×
+      600  1    1,667     2.03ms     1.93ms     1.12ms   1.05×  1.73×   1.82×
+      600  4    1,667     5.17ms     4.82ms     3.33ms   1.07×  1.45×   1.55×
+     3597  1      278     2.02ms     1.96ms     1.32ms   1.03×  1.49×   1.53×
+     3597  4      278     5.07ms     4.81ms     4.03ms   1.05×  1.19×   1.26×
+    83333  1       12     1.95ms     1.92ms     1.35ms   1.01×  1.42×   1.44×
+    83333  4       12     4.90ms     4.84ms     4.22ms   1.01×  1.15×   1.16×
+
+── end to end: a whole `aggregate` call, producing the same TimeSeries ───────────
+   ev/bkt  C    pond-ts    js-algo       wasm     js×  wasm×  kernel share
+  ────────────────────────────────────────────────────────────────────────────────────────────────
+       10  1    30.78ms    20.83ms    18.59ms   1.48×  1.66×           51%
+       10  4    60.64ms    35.61ms    30.05ms   1.70×  2.02×           66%
+       60  1     7.09ms     4.18ms     2.83ms   1.70×  2.50×           64%
+       60  4    13.34ms     8.27ms     5.01ms   1.61×  2.66×           75%
+      600  1     2.18ms     2.10ms     1.31ms   1.04×  1.67×           93%
+      600  4     5.48ms     5.11ms     3.69ms   1.07×  1.49×           94%
+     3597  1     1.99ms     2.03ms     1.37ms   0.98×  1.45×          101%
+     3597  4     5.11ms     4.85ms     4.11ms   1.05×  1.25×           99%
+    83333  1     1.95ms     1.94ms     1.35ms   1.00×  1.44×          100%
+    83333  4     4.93ms     4.87ms     4.28ms   1.01×  1.15×           99%
+
+── what the port adds over the JS rewrite, and what it costs ─────────────────────
+   ev/bkt  C  wasm vs js-algo    derive   rows→series    ingest  wasm× w/ ingest
+  ────────────────────────────────────────────────────────────────────────────────────────────────
+       10  1            1.12×    3.64ms       12.39ms    0.35ms            1.63×
+       10  4            1.18×    3.65ms       20.16ms    0.95ms            1.96×
+       60  1            1.47×    0.58ms        1.40ms    0.35ms            2.22×
+       60  4            1.65×    0.57ms        2.51ms    0.92ms            2.25×
+      600  1            1.60×    0.05ms        0.13ms    0.35ms            1.32×
+      600  4            1.39×    0.06ms        0.25ms    0.93ms            1.19×
+     3597  1            1.48×    0.01ms        0.02ms    0.34ms            1.16×
+     3597  4            1.18×    0.01ms        0.04ms    0.93ms            1.02×
+    83333  1            1.44×    0.00ms        0.00ms    0.32ms            1.17×
+    83333  4            1.14×    0.00ms        0.00ms    0.93ms            0.95×
+
+  derive      = `Sequence.bounded().intervals()` — B `Interval` objects. Paid by
+                every implementation; a port cannot remove it without also owning
+                the interval key column.
+  rows→series = materialising the already-computed answer as rows and letting
+                `new TimeSeries` re-columnarise them. Also paid by every
+                implementation, because `aggregate` output is interval-keyed and
+                pond-ts has no columnar door for interval keys. This is the
+                remaining bottleneck once the kernel is fast — and removing it is
+                a TypeScript change, not a Rust one.
+  ingest      = putting key + value columns into linear memory. Zero only if the
+                substrate owns storage end to end; the last column charges it per
+                call, i.e. the drop-in-accelerator case.
+
+raw results → results-aggregate.json

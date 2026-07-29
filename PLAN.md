@@ -184,18 +184,117 @@ consumer signal. Plan:
 - **[PND-PLANNR]** — Aggregate planner (step 5): friction-gated.
 - **[PND-DICT]** — Dictionary/string reducer adaptation (step 6):
   friction-gated.
-- **[PND-WCNAN]** — `withColumn` NaN-canonical `Float64Array` intake
-  (dashboard A/B friction, 2026-07-21): `withColumn` rejects NaN today, so a
-  consumer deriving gated columns boxes into `(number | undefined)[]` — the
-  dominant adapter cost at density (~25 ms/tick @ 360k). Accept NaN-as-missing
-  typed arrays (symmetric with `colToValues` output) to make derivation
-  allocation-free. Ties to the NaN-vs-`undefined` sentinel asymmetry from the
-  wide-schema report.
+- **[PND-KERNEL]** — Kernel algorithm wins surfaced by the Rust/WASM spike
+  (`spikes/columnar-wasm/`, report + benchmarks committed). The spike says
+  **not now, not in this order** on porting the substrate (revised from an
+  earlier "no-go" — see REPORT.md §9: a Rust core is worth 1.3–4.3× on the
+  numeric kernel, and 2.2–2.6× end to end on the reduce family, but the
+  TypeScript work below is 5–10× larger and comes first). The control
+  experiment isolated four wins that are pure algorithm and land in
+  TypeScript. Two have shipped:
+  - **Quickselect for `reducePercentileColumn`** — measured 12.9× on
+    `median`/`p95` at 1M rows.
+  - **Blocked (8-accumulator) `sum`/`mean`** — 2.51× dense, 2.22× through a
+    validity bitmap, **`close.mean()` 0.47 ms → 0.19 ms** end to end. The
+    semantics decision this was blocked on is made and recorded in
+    [blocked-summation.md](docs/notes/blocked-summation.md): reassociate
+    above a 32-cell threshold, leave shorter runs bit-identical. Worth
+    noting the direction — blocked summation is _more_ accurate than
+    sequential (error grows as O((n/k)·ε + k·ε) rather than O(n·ε)), so the
+    trade was speed **and** precision against reproducibility of the exact
+    previous bits, not speed against accuracy.
 
-### Core batch + React backlog
+  Remaining: a branchless finite guard for `allFinite: false` reductions,
+  and blocking the guarded sum path (measured **1.84×**, deliberately not
+  taken — after [PND-WCNAN] almost nothing lands there; see the note).
 
-Plan: [PND_CORE_PLAN.md](docs/plans/PND_CORE_PLAN.md).
+  **Correction: the 4-lane `Float64Column.minMax` is _not_ bit-identical**,
+  as this entry previously claimed. `+0` and `-0` compare equal, so
+  `lo <= x ? lo : x` keeps whichever the traversal reached first, and
+  lane-parallel traversal reaches a different one — verified: 16 cells, all
+  `1` except `values[1] = +0` and `values[4] = -0`, sequential gives `+0`
+  and 4-lane gives `-0` (`===` equal, `Object.is` not — and vitest's `toBe`
+  uses `Object.is`). `minMax` explicitly commits to matching
+  `[col.min(), col.max()]` (PR #153), so the lane form would break that
+  commitment on `±0` input for 1.27–1.50× on an operation already costing
+  0.49 ms. Not worth it as scoped; if it is ever wanted, it needs a signed
+  zero fixup in the combine, not a straight lane split.
 
+  Acceptance benchmarks already exist in
+  `spikes/columnar-wasm/bench/controls.mjs`; each control is checked against
+  pond-ts's answer before it is timed.
+
+- **[PND-NANREP]** — Audit whether the validity bitmap earns its keep on
+  **numeric** columns. Measured on a 1M column with 4% missing, same values
+  and same answer, varying only how "missing" is encoded: dense (no bitmap)
+  0.936 ms, **bitmap 1.398 ms (1.49×)**, **NaN-in-buffer 1.118 ms (1.19×)** —
+  so the bitmap representation costs ~25% more than NaN on a scan kernel.
+  Worse, the two encodings now coexist in the hottest path: after
+  [PND-STUDYBOX] one `sma(20)` converts bitmap→NaN (0.81 ms) and back
+  NaN→bitmap (1.32 ms), **2.12 ms of pure representation churn, ~21% of the
+  call**.
+
+  What the bitmap genuinely earns: it is **irreplaceable for string / boolean /
+  array columns** (no NaN to borrow), and it gives `count()` / `nullCount()` /
+  `hasMissing()` an O(1) answer from the cached `definedCount` — though a NaN
+  scheme could cache the same integer.
+
+  What it buys on numeric columns is thinner than it looks: the ability to
+  distinguish a _defined_ NaN from a gap. The reducer non-finite policy already
+  treats both as missing, row intake rejects non-finite outright, `fromColumns`
+  maps it to a gap, and `withColumn`'s typed door now does too — so a defined
+  NaN only arises from an operator's own arithmetic overflow, and only shows up
+  through `at(i)` / `scan()` on an `allFinite: false` column.
+
+  Not a small change: it moves an observable semantic. Scope it as a design
+  note first, with the `at(i)` behaviour on `allFinite: false` columns as the
+  decision point. Ties to [PND-WCNAN], which already chose NaN-as-missing for
+  typed intake.
+
+- **[PND-AGENTQ]** — The measured shape of the current agent workload, kept as
+  the standing acceptance benchmark:
+  `packages/financial/scripts/perf-agent-queries.mjs` (500k 1-minute OHLCV
+  bars, resident, per-query latency). Run it before and after anything
+  touching studies, `rolling`, or the reducers.
+
+  A 5-study strategy pass has gone **318 ms → 84 ms (3.78×)** across
+  [PND-ROLLKERN] and [PND-STUDYBOX]; summary facts were already under 3 ms and
+  are unchanged. Studies remain the dominant cost by an order of magnitude, so
+  they stay the place effort belongs. Current: `bollinger(20)` 31.5 ms,
+  `zScore(20)` 26.5 ms, `envelope(20)` 12.5 ms, `sma(20)` 10.5 ms,
+  `percentChange()` 4.5 ms, `ema(20)` 3.9 ms.
+
+  **Against the pandas oracle** (`scripts/perf-vs-oracle.mjs`, the timing
+  counterpart to the correctness oracle): the strategy pass has gone from
+  **5.6× slower than pandas to 1.64×**, and `median` / `percentile` are now
+  _faster_ than pandas (0.98× / 0.85×) on the back of the quickselect change.
+  Worst case is 2.39×. Two architectural differences explain most of what is
+  left and are the honest next question: pandas tracks missing values as
+  **inline NaN** in the same float64 buffer where pond-ts tests a **validity
+  bit per cell**, and pandas mutates a frame in place where every pond-ts
+  operation returns a new immutable series.
+
+  Next candidates, in the order the numbers suggest: a `stdev` specialisation
+  in the rolling kernel (now the dominant per-row cost in `bollinger` /
+  `zScore`, and the one reducer deliberately left on the state path because its
+  order-independent Welford delete is not worth duplicating carelessly);
+  `ema`, which is now the only study that did not move because it composes on
+  `smooth` rather than the rolling kernel; and re-asking the Rust question
+  against this new baseline (`spikes/columnar-wasm/REPORT.md` §10).
+
+- **[PND-BOXFREE]** — Element-wise operators box every cell. **`cumulative`,
+  `diff`, `rate` and `pctChange` are done (4.0–7.1×); `fill`, `shift` and
+  `mapColumns` remain.** They are column-native only in the
+  sense of not materialising `Event`s: they still read each cell through the
+  polymorphic `read(i)` into a `ReadonlyArray<number | undefined>` and rebuild
+  via `float64ColumnFromArray`. Measured **~10–20× slower per column than a
+  plain typed-array walk** (exact `diff` control: 9.9× on gappy data, 17.1×
+  dense; `rate`/`fill`/`shift` fitted at 16–27×). At 1M rows × 4 columns
+  `diff` costs ~294 ms against ~16 ms for the same work unboxed. This is the
+  largest single performance finding from the Rust/WASM spike and has nothing
+  to do with Rust — see `spikes/columnar-wasm/REPORT.md` §9.3. Each operator
+  needs its own validity write, since the boxed array is currently how
+  validity gets derived; [PND-IVLCOL] is the worked example of that shape.
 - **[PND-COLAPI]** — Make the column-API augmentation bundle-safe (F-1,
   HIGH — methods tree-shake out of browser bundles) + validity-aware
   `toFloat64Array({ missing })` + `hasAnyDefined()`. Two consumers each.

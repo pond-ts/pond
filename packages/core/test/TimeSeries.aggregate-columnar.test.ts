@@ -5,7 +5,7 @@ import { Sequence, TimeSeries } from '../src/index.js';
 /* Step 3B — aggregate() columnar fast path parity + edges.                    */
 /*                                                                             */
 /* A built-in reducer (`'sum'`) takes the columnar fast path                   */
-/* (tryAggregateColumnarTimeKeyed); an exact custom-function equivalent        */
+/* (tryAggregateColumnarStore); an exact custom-function equivalent           */
 /* forces the row path (typeof reducer !== 'string' → null). Asserting the     */
 /* two produce identical output directly pins the columnar bucket walk +       */
 /* empty-bucket handling against the row path. Float-sensitive reducers        */

@@ -1,0 +1,28 @@
+════════════════════════════════════════════════════════════════════════════════════════════════
+`aggregate` — where the time goes, and what Rust could take
+════════════════════════════════════════════════════════════════════════════════════════════════
+node v22.15.0 · darwin/arm64 · N = 1,000,000 on a 1 s grid · measured against the CURRENT library
+
+   ev/bkt  C  buckets     total  1.derive  2.reduce  3.output  kernel
+  ────────────────────────────────────────────────────────────────────────────────────────
+       10  4  100,000   23.15ms    5.73ms   16.83ms    0.59ms     73%
+       60  1   16,667    3.33ms    0.65ms    2.59ms    0.10ms     78%
+       60  4   16,667    6.66ms    0.65ms    5.91ms    0.10ms     89%
+      600  4    1,667    5.23ms    0.06ms    5.16ms    0.01ms     99%
+     3597  4      278    5.00ms    0.01ms    4.99ms    0.00ms    100%
+
+   ev/bkt  C  reduce (pond)  reduce (rust)  kernel x  CEILING
+  ──────────────────────────────────────────────────────────────────────
+       10  4        16.83ms         2.88ms     5.83x    2.51x
+       60  1         2.59ms         0.79ms     3.28x    2.17x
+       60  4         5.91ms         1.94ms     3.05x    2.48x
+      600  4         5.16ms         3.34ms     1.55x    1.54x
+     3597  4         4.99ms         4.07ms     1.23x    1.23x
+
+  1.derive = Sequence.bounded().intervals() — B Interval objects (JS, unportable)
+  2.reduce = what is left: the per-bucket reduction. What Rust would own.
+  3.output = interval-keyed columnar store construction (JS, unportable)
+  CEILING  = (derive + output + rust reduce) vs today. Upper bound: assumes
+             columns already resident, zero boundary, zero ingest.
+
+raw results → results-aggregate-current.json

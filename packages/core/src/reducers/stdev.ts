@@ -1,3 +1,4 @@
+import type { Float64Column } from '../columnar/index.js';
 import type { ReducerDef } from './types.js';
 
 /**
@@ -51,6 +52,82 @@ function welfordStdev() {
   };
 }
 
+/**
+ * Population standard deviation of the defined (and, on the guarded
+ * path, finite) cells of `col[start, end)`, via Welford's recurrence —
+ * the same recurrence `reduce` / `bucketState` use, which is what keeps
+ * the columnar, row and live paths from drifting (see the module note).
+ *
+ * The single column kernel: `reduceColumn` is this at `(0, length)`. See
+ * the note on `sumRange` for why it is a standalone function rather than
+ * a method delegating through `this`.
+ *
+ * `n` counts only finite contributors, so `n === 0` (no finite cells in
+ * the range) → `undefined`.
+ */
+function stdevRange(
+  col: Float64Column,
+  start: number,
+  end: number,
+): number | undefined {
+  const values = col._values;
+  const validity = col.validity;
+  let n = 0;
+  let mean = 0;
+  let m2 = 0;
+  // Fast path: every defined cell is finite (`Float64Column.allFinite`),
+  // so the Welford recurrence runs over every defined cell with no
+  // per-element `Number.isFinite` guard (reducer non-finite policy,
+  // docs/notes/reducer-nan-policy.md). Same recurrence as the guarded
+  // path → identical result.
+  if (col.allFinite) {
+    if (validity === undefined) {
+      for (let i = start; i < end; i += 1) {
+        const v = values[i]!;
+        n += 1;
+        const delta = v - mean;
+        mean += delta / n;
+        m2 += delta * (v - mean);
+      }
+    } else {
+      const bits = validity.bits;
+      for (let i = start; i < end; i += 1) {
+        if ((bits[i >> 3]! & (1 << (i & 7))) === 0) continue;
+        const v = values[i]!;
+        n += 1;
+        const delta = v - mean;
+        mean += delta / n;
+        m2 += delta * (v - mean);
+      }
+    }
+    return n === 0 ? undefined : Math.sqrt(Math.max(0, m2 / n));
+  }
+  // Guarded path: skip non-finite cells; `n` counts only finite
+  // contributors so `n === 0` (no finite cells) → `undefined`.
+  if (validity === undefined) {
+    for (let i = start; i < end; i += 1) {
+      const v = values[i]!;
+      if (!Number.isFinite(v)) continue;
+      n += 1;
+      const delta = v - mean;
+      mean += delta / n;
+      m2 += delta * (v - mean);
+    }
+  } else {
+    const bits = validity.bits;
+    for (let i = start; i < end; i += 1) {
+      if ((bits[i >> 3]! & (1 << (i & 7))) === 0) continue;
+      const v = values[i]!;
+      if (!Number.isFinite(v)) continue;
+      n += 1;
+      const delta = v - mean;
+      mean += delta / n;
+      m2 += delta * (v - mean);
+    }
+  }
+  return n === 0 ? undefined : Math.sqrt(Math.max(0, m2 / n));
+}
+
 export const stdev: ReducerDef = {
   outputKind: 'number',
   reduce(_d, numeric) {
@@ -59,73 +136,9 @@ export const stdev: ReducerDef = {
     return w.result();
   },
   reduceColumn(col) {
-    // Inlined Welford (mirrors `welfordStdev`) over the packed array — a single
-    // pass, skipping gaps via the validity bitmask and skipping non-finite
-    // cells (reducer non-finite policy, docs/notes/reducer-nan-policy.md). One
-    // division per finite element vs the old two-pass's two divisionless scans,
-    // but identical to the other paths' recurrence so the fast path and row
-    // path cannot diverge. `n` counts only finite contributors, so `n === 0`
-    // (no finite cells) → `undefined`.
-    const values = col._values;
-    const validity = col.validity;
-    let n = 0;
-    let mean = 0;
-    let m2 = 0;
-    // Fast path: every defined cell is finite (`Float64Column.allFinite`),
-    // so the Welford recurrence runs over every defined cell with no
-    // per-element `Number.isFinite` guard (reducer non-finite policy,
-    // docs/notes/reducer-nan-policy.md). Same recurrence as the guarded
-    // path → identical result.
-    if (col.allFinite) {
-      const len = col.length;
-      if (validity === undefined) {
-        for (let i = 0; i < len; i += 1) {
-          const v = values[i]!;
-          n += 1;
-          const delta = v - mean;
-          mean += delta / n;
-          m2 += delta * (v - mean);
-        }
-      } else {
-        const bits = validity.bits;
-        for (let i = 0; i < len; i += 1) {
-          if ((bits[i >> 3]! & (1 << (i & 7))) === 0) continue;
-          const v = values[i]!;
-          n += 1;
-          const delta = v - mean;
-          mean += delta / n;
-          m2 += delta * (v - mean);
-        }
-      }
-      return n === 0 ? undefined : Math.sqrt(Math.max(0, m2 / n));
-    }
-    // Guarded path: skip non-finite cells; `n` counts only finite
-    // contributors so `n === 0` (no finite cells) → `undefined`.
-    if (validity === undefined) {
-      const len = col.length;
-      for (let i = 0; i < len; i += 1) {
-        const v = values[i]!;
-        if (!Number.isFinite(v)) continue;
-        n += 1;
-        const delta = v - mean;
-        mean += delta / n;
-        m2 += delta * (v - mean);
-      }
-    } else {
-      const bits = validity.bits;
-      const len = col.length;
-      for (let i = 0; i < len; i += 1) {
-        if ((bits[i >> 3]! & (1 << (i & 7))) === 0) continue;
-        const v = values[i]!;
-        if (!Number.isFinite(v)) continue;
-        n += 1;
-        const delta = v - mean;
-        mean += delta / n;
-        m2 += delta * (v - mean);
-      }
-    }
-    return n === 0 ? undefined : Math.sqrt(Math.max(0, m2 / n));
+    return stdevRange(col, 0, col.length);
   },
+  reduceColumnRange: stdevRange,
   bucketState() {
     const w = welfordStdev();
     return {

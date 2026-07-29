@@ -70,10 +70,11 @@ import type {
   ValueColumnsForSchema,
   ValueKeyedSchema,
 } from '../schema/index.js';
+import { float64ColumnFromTypedArray } from './operators/numeric-io.js';
 import {
   isAggregateOutputSpec,
   normalizeAggregateColumns,
-  tryAggregateColumnarTimeKeyed,
+  tryAggregateColumnarStore,
   tryRollingCountColumnarNumeric,
 } from './aggregate-columns.js';
 import {
@@ -88,6 +89,11 @@ import {
   type ArrowTableLike,
   type FromArrowOptions,
 } from './operators/from-arrow.js';
+import {
+  storeToArrow,
+  type ArrowExport,
+  type ToArrowOptions,
+} from './operators/to-arrow.js';
 import { ValueSeries } from './value-series.js';
 import { diffRateOp, type DiffRateMode } from './operators/diff-rate.js';
 import { fillOp, type ResolvedFillSpec } from './operators/fill.js';
@@ -791,6 +797,38 @@ type TrustedStoreInput<S extends SeriesSchema> = {
 };
 
 /**
+ * Wraps a pre-built `ColumnarStore` as a `TimeSeries`, bypassing row
+ * intake via the sentinel.
+ *
+ * Module-scoped rather than a method because ES private names
+ * (`TimeSeries.#fromTrustedStore`) are lexically confined to the class
+ * body, and the module-level transform functions at the bottom of this
+ * file — `aggregateInternal` among them — legitimately need the same
+ * door. `#fromTrustedStore` delegates here so there is one
+ * implementation, not two that can drift on how the schema is frozen.
+ *
+ * Callers must have produced the store from data that already satisfies
+ * the intake invariants: keys non-decreasing, column kinds matching the
+ * schema, non-finite numerics rejected.
+ */
+function timeSeriesFromTrustedStore<S extends SeriesSchema>(
+  name: string,
+  schema: S,
+  columnarStore: ColumnarStore<ColumnSchema>,
+): TimeSeries<S> {
+  const frozenSchema = Object.freeze(schema.slice()) as S;
+  const store = SeriesStore.fromTrustedStore(
+    columnarStore as unknown as ColumnarStore<S>,
+  ) as SeriesStore<S>;
+  const trustedInput: TrustedStoreInput<S> = {
+    name,
+    schema: frozenSchema,
+    [TRUSTED_STORE_SENTINEL]: store,
+  };
+  return new TimeSeries<S>(trustedInput as unknown as TimeSeriesInput<S>);
+}
+
+/**
  * An immutable, schema-typed, ordered collection of events — the batch
  * layer's core primitive. A series is constructed whole from complete data
  * and never mutated: every transform (`filter`, `align`, `rollup`, …)
@@ -1018,13 +1056,23 @@ export class TimeSeries<S extends SeriesSchema> {
     table: ArrowTableLike,
     options: FromArrowOptions = {},
   ): TimeSeries<S> {
-    const { name, schema, columns } = arrowToColumns(table, options);
-    return TimeSeries.fromColumns({
-      name,
-      schema: schema as unknown as S,
+    const { name, schema, columns, adopted } = arrowToColumns(table, options);
+    // Goes to the shared ingest engine directly rather than through
+    // `fromColumns`, which has no parameter for `adopted` — the null-bearing
+    // numeric columns built straight from Arrow's buffers, which `RawColumns`
+    // cannot express because it cannot carry a validity bitmap. The engine is
+    // the same one `fromColumns` calls; only the `op` label differs, so a
+    // failure now names the door the caller actually went through.
+    const store = ingestColumnsToStore({
+      op: 'fromArrow',
+      keyNoun: 'timestamps',
+      schema: schema as unknown as ColumnSchema,
       columns,
       sort: options.sort ?? false,
+      adopted,
+      makeKey: (begin, count) => new TimeKeyColumn(begin, count),
     });
+    return timeSeriesFromTrustedStore(name, schema as unknown as S, store);
   }
 
   /**
@@ -1303,24 +1351,17 @@ export class TimeSeries<S extends SeriesSchema> {
    * new store on demand. The caller guarantees `columnarStore`'s
    * shape matches `schema` — that assertion is the single cast, the
    * trust boundary (Step 4).
+   *
+   * Delegates to the module-scoped {@link timeSeriesFromTrustedStore},
+   * which the module-level transform functions also use (a `#name` is
+   * lexically confined to this class body and they sit outside it).
    */
   static #fromTrustedStore<NextSchema extends SeriesSchema>(
     name: string,
     schema: NextSchema,
     columnarStore: ColumnarStore<ColumnSchema>,
   ): TimeSeries<NextSchema> {
-    const frozenSchema = Object.freeze(schema.slice()) as NextSchema;
-    const store = SeriesStore.fromTrustedStore(
-      columnarStore as unknown as ColumnarStore<NextSchema>,
-    ) as SeriesStore<NextSchema>;
-    const trustedInput: TrustedStoreInput<NextSchema> = {
-      name,
-      schema: frozenSchema,
-      [TRUSTED_STORE_SENTINEL]: store,
-    };
-    return new TimeSeries<NextSchema>(
-      trustedInput as unknown as TimeSeriesInput<NextSchema>,
-    );
+    return timeSeriesFromTrustedStore(name, schema, columnarStore);
   }
 
   /**
@@ -1556,6 +1597,49 @@ export class TimeSeries<S extends SeriesSchema> {
   /** Example: `series.toRows()`. Returns normalized row arrays using `Time`/`TimeRange`/`Interval` keys and `undefined` for missing payload values. */
   toRows(): ReadonlyArray<NormalizedRowForSchema<S>> {
     return this.rows;
+  }
+
+  /**
+   * Example: `series.toArrow()`. Hands back this series' columns **in the
+   * Apache Arrow memory layout, without copying** — the export counterpart
+   * of {@link TimeSeries.fromArrow}.
+   *
+   * Every other export door here is row-shaped (`toRows`, `toObjects`,
+   * `toJSON`, `toPoints`, `toArray`), so reaching another columnar engine
+   * meant a full re-materialisation. It does not have to: pond's validity
+   * bitmap is LSB-first with one bit per value — Arrow's layout exactly —
+   * numeric columns are a contiguous `Float64Array`, booleans are a packed
+   * bitmap, and dict-encoded strings are `Int32Array` indices plus a
+   * dictionary. Those buffers are handed over as they stand.
+   *
+   * Returns `{ length, fields }` rather than an Arrow `Table`, because pond
+   * does not depend on `apache-arrow` — the caller brings their own and
+   * assembles with `makeData` / `makeVector`, narrowing each field on its
+   * `type` tag first. See {@link ArrowExportField} for the per-field shape
+   * and the worked adapter (the module doc of `operators/to-arrow.ts`).
+   *
+   * The point is to make "bring your own compute engine" a buffer handoff:
+   * polars is 4–9× faster than pond on whole-column reductions, and a
+   * consumer who wants that should be able to reach it without pond taking
+   * a dependency and without paying a re-ingest to get there.
+   *
+   * **The buffers are live storage, not copies.** Writing to one corrupts
+   * this series — the same read-only contract `column()` and `keyColumn()`
+   * already carry, restated because this hands them to another library.
+   *
+   * Two things are not zero-copy, both named rather than hidden: a
+   * **chunked** column materializes first (chunked storage is several
+   * buffers; an Arrow field is one), and a **non-dict-encoded string**
+   * column is a plain JS array, which Arrow `Utf8` is not.
+   *
+   * A `timeRange` / `interval` key exports as two fields — `<key>` and
+   * `<key>End` — since Arrow has no interval-of-time type; an `interval`
+   * key's labels follow as `<key>Label`. A value column already using one
+   * of those names throws rather than producing a table with duplicate
+   * field names.
+   */
+  toArrow(options: ToArrowOptions = {}): ArrowExport {
+    return storeToArrow(this.#store.store, options);
   }
 
   /** Example: `series.toObjects()`. Returns normalized schema-keyed object rows using temporal key objects and `undefined` for missing payload values. */
@@ -4763,15 +4847,23 @@ export class TimeSeries<S extends SeriesSchema> {
     // construction below bypasses the constructor's strict intake, so a
     // non-finite cell would otherwise pack into the column and break the
     // reducer non-finite policy's NaN-free invariant.
-    assertColumnValuesMatchKind(
-      'number',
-      values as ReadonlyArray<unknown>,
-      `withColumn '${String(name)}'`,
-    );
-    const column = columnFromValuesByKind(
-      'number',
-      values as unknown as unknown[],
-    );
+    //
+    // A `Float64Array` takes the typed door, where **`NaN` means missing**
+    // ([PND-WCNAN]). A typed buffer has no `undefined` slot, so `NaN` is
+    // the only way to express a gap in one — and requiring a gap to be
+    // spelled `undefined` forced every producer holding a typed buffer to
+    // box a whole column just to say "no value here". A boxed array keeps
+    // the strict reading: it already has `undefined`, so a `NaN` in one is
+    // a mistake, not a gap. `±Infinity` is rejected either way.
+    const column =
+      values instanceof Float64Array
+        ? float64ColumnFromTypedArray(values, `withColumn '${String(name)}'`)
+        : (assertColumnValuesMatchKind(
+            'number',
+            values as ReadonlyArray<unknown>,
+            `withColumn '${String(name)}'`,
+          ),
+          columnFromValuesByKind('number', values as unknown as unknown[]));
     const reshaped = withColumnAppended(
       this.#store.store,
       name as string,
@@ -5493,18 +5585,27 @@ function aggregateInternal<S extends SeriesSchema>(
     // `Float64Column` source, reduce each bucket's contiguous index range
     // off the typed arrays — no `series.events` materialization. Returns
     // null (→ the row path below, unchanged) for any non-qualifying column.
-    const columnarRows = tryAggregateColumnarTimeKeyed(
+    //
+    // [PND-IVLCOL]: the result is assembled as a `ColumnarStore` and
+    // adopted via trusted construction, rather than emitted as frozen
+    // `[Interval, …]` rows for `new TimeSeries({ rows })` to walk back
+    // into columns. The reduce already produced typed arrays; the round
+    // trip through rows cost more than the reduce itself at realistic
+    // bucket counts. `tryAggregateColumnarStore` performs every check
+    // row intake performed — see its doc comment.
+    const columnarStore = tryAggregateColumnarStore(
       series.keyColumn().begin,
       (name) => series.column(name as ValueColumnsForSchema<S>[number]['name']),
       buckets,
       columns,
+      resultSchema as unknown as ColumnSchema,
     );
-    if (columnarRows !== null) {
-      return new TimeSeries({
-        name: series.name,
-        schema: resultSchema as unknown as SeriesSchema,
-        rows: columnarRows as unknown as TimeSeriesInput<SeriesSchema>['rows'],
-      });
+    if (columnarStore !== null) {
+      return timeSeriesFromTrustedStore(
+        series.name,
+        resultSchema as unknown as SeriesSchema,
+        columnarStore,
+      );
     }
 
     const builtInOnly = columns.every((column) =>

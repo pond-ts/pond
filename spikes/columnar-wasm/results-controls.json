@@ -1,0 +1,359 @@
+{
+  "rows": [
+    {
+      "op": "sum",
+      "n": 100000,
+      "shape": "dense",
+      "pondMs": 0.09777343750000048,
+      "jsAlgoMs": 0.05295397916666763,
+      "wasmMs": 0.03408707692307699,
+      "algoX": 1.846385088309754,
+      "langX": 1.5534913505832975,
+      "totalX": 2.8683432645351807,
+      "note": "reassociated — NOT bit-identical to sequential sum"
+    },
+    {
+      "op": "minMax",
+      "n": 100000,
+      "shape": "dense",
+      "pondMs": 0.1377321428571463,
+      "jsAlgoMs": 0.09194166666666964,
+      "wasmMs": 0.06750961538461571,
+      "algoX": 1.4980383524750314,
+      "langX": 1.3619047619047995,
+      "totalX": 2.0401855657517656,
+      "note": "lane form — bit-identical, adoptable as-is"
+    },
+    {
+      "op": "median",
+      "n": 100000,
+      "shape": "dense",
+      "pondMs": 6.498916500000064,
+      "jsAlgoMs": 0.6304831999999806,
+      "wasmMs": 0.2688291499999991,
+      "algoX": 10.307834530722252,
+      "langX": 2.345293283856988,
+      "totalX": 24.174895096012044,
+      "note": "quickselect vs full sort"
+    },
+    {
+      "op": "p95",
+      "n": 100000,
+      "shape": "dense",
+      "pondMs": 6.297291000000087,
+      "jsAlgoMs": 0.7472761249999849,
+      "wasmMs": 0.38821128571427316,
+      "algoX": 8.426993435659696,
+      "langX": 1.9249211769438008,
+      "totalX": 16.221298122267747,
+      "note": "quickselect vs full sort"
+    },
+    {
+      "op": "gather(n/4)",
+      "n": 100000,
+      "shape": "dense",
+      "pondMs": 0.12101086956521534,
+      "jsAlgoMs": 0.10760143478261813,
+      "wasmMs": 0.053944010416666785,
+      "algoX": 1.124621338086129,
+      "langX": 1.994687342514918,
+      "totalX": 2.243267948202592,
+      "note": "one fused pass vs two passes over the index array"
+    },
+    {
+      "op": "sum",
+      "n": 100000,
+      "shape": "guarded",
+      "pondMs": 0.09447321428571545,
+      "jsAlgoMs": 0.09442410714286455,
+      "wasmMs": 0.1571568823529453,
+      "algoX": 1.0005200699729848,
+      "langX": 0.6008270572001133,
+      "totalX": 0.6011395293115199,
+      "note": "naive Rust port of the guarded path"
+    },
+    {
+      "op": "sum (rust branchless)",
+      "n": 100000,
+      "shape": "guarded",
+      "pondMs": 0.09402382142856627,
+      "jsAlgoMs": 0.09409375000000507,
+      "wasmMs": 0.09437203571428654,
+      "algoX": 0.9992568202304745,
+      "langX": 0.9970511845784064,
+      "totalX": 0.9963101963088463,
+      "note": "same select-not-branch fix applied in Rust"
+    },
+    {
+      "op": "gather(n/4)",
+      "n": 100000,
+      "shape": "gappy30",
+      "pondMs": 0.21121153846150684,
+      "jsAlgoMs": 0.16653188235292926,
+      "wasmMs": 0.09314507142856396,
+      "algoX": 1.26829490832205,
+      "langX": 1.787876479118362,
+      "totalX": 2.2675546351745726,
+      "note": "validity walk fused into the value walk"
+    },
+    {
+      "op": "sum",
+      "n": 1000000,
+      "shape": "dense",
+      "pondMs": 0.9552499999999782,
+      "jsAlgoMs": 0.5200124999999389,
+      "wasmMs": 0.34415106249997507,
+      "algoX": 1.836975072714772,
+      "langX": 1.5110007106253713,
+      "totalX": 2.7756706402731135,
+      "note": "reassociated — NOT bit-identical to sequential sum"
+    },
+    {
+      "op": "minMax",
+      "n": 1000000,
+      "shape": "dense",
+      "pondMs": 1.1492499999997865,
+      "jsAlgoMs": 0.907097166666669,
+      "wasmMs": 0.6623833999999988,
+      "algoX": 1.2669535770053855,
+      "langX": 1.3694442926357613,
+      "totalX": 1.7350223450644875,
+      "note": "lane form — bit-identical, adoptable as-is"
+    },
+    {
+      "op": "median",
+      "n": 1000000,
+      "shape": "dense",
+      "pondMs": 79.54841599999963,
+      "jsAlgoMs": 7.314416500000334,
+      "wasmMs": 2.8417914999999994,
+      "algoX": 10.875565535541488,
+      "langX": 2.573875141790077,
+      "totalX": 27.992347784839126,
+      "note": "quickselect vs full sort"
+    },
+    {
+      "op": "p95",
+      "n": 1000000,
+      "shape": "dense",
+      "pondMs": 80.40170899999976,
+      "jsAlgoMs": 11.018417000000227,
+      "wasmMs": 3.5896249999996144,
+      "algoX": 7.297029055988542,
+      "langX": 3.0695175679914786,
+      "totalX": 22.398358881501103,
+      "note": "quickselect vs full sort"
+    },
+    {
+      "op": "gather(n/4)",
+      "n": 1000000,
+      "shape": "dense",
+      "pondMs": 1.505437499999971,
+      "jsAlgoMs": 2.2304479999997966,
+      "wasmMs": 0.5938374999999723,
+      "algoX": 0.6749484856854355,
+      "langX": 3.7559904856124793,
+      "totalX": 2.5351000905130463,
+      "note": "one fused pass vs two passes over the index array"
+    },
+    {
+      "op": "sum",
+      "n": 1000000,
+      "shape": "guarded",
+      "pondMs": 0.9555139999999179,
+      "jsAlgoMs": 0.9524723333330863,
+      "wasmMs": 1.579270500000348,
+      "algoX": 1.0031934435892615,
+      "langX": 0.6031090515100969,
+      "totalX": 0.6050350462442675,
+      "note": "naive Rust port of the guarded path"
+    },
+    {
+      "op": "sum (rust branchless)",
+      "n": 1000000,
+      "shape": "guarded",
+      "pondMs": 0.9461666666666133,
+      "jsAlgoMs": 0.9499446666668518,
+      "wasmMs": 0.9416875000000193,
+      "algoX": 0.9960229262473838,
+      "langX": 1.0087684785736588,
+      "totalX": 1.0047565319350569,
+      "note": "same select-not-branch fix applied in Rust"
+    },
+    {
+      "op": "gather(n/4)",
+      "n": 1000000,
+      "shape": "gappy30",
+      "pondMs": 2.8283750000009604,
+      "jsAlgoMs": 3.2180419999986043,
+      "wasmMs": 1.1650519999998323,
+      "algoX": 0.8789117730601984,
+      "langX": 2.7621445223037835,
+      "totalX": 2.427681339546533,
+      "note": "validity walk fused into the value walk"
+    },
+    {
+      "op": "sum",
+      "n": 10000000,
+      "shape": "dense",
+      "pondMs": 9.447791000000507,
+      "jsAlgoMs": 5.169665999999779,
+      "wasmMs": 3.3140000000003056,
+      "algoX": 1.8275437910303896,
+      "langX": 1.5599474954735373,
+      "totalX": 2.8508723596860697,
+      "note": "reassociated — NOT bit-identical to sequential sum"
+    },
+    {
+      "op": "minMax",
+      "n": 10000000,
+      "shape": "dense",
+      "pondMs": 11.090750000001208,
+      "jsAlgoMs": 8.672458000000915,
+      "wasmMs": 6.483604500001093,
+      "algoX": 1.2788473579232136,
+      "langX": 1.3375982449267925,
+      "totalX": 1.710583981487356,
+      "note": "lane form — bit-identical, adoptable as-is"
+    },
+    {
+      "op": "median",
+      "n": 10000000,
+      "shape": "dense",
+      "pondMs": 941.3750839999993,
+      "jsAlgoMs": 97.4249579999996,
+      "wasmMs": 28.260708999998315,
+      "algoX": 9.662565972058239,
+      "langX": 3.4473642540250995,
+      "totalX": 33.31038453423286,
+      "note": "quickselect vs full sort"
+    },
+    {
+      "op": "p95",
+      "n": 10000000,
+      "shape": "dense",
+      "pondMs": 938.7778749999998,
+      "jsAlgoMs": 79.38554199999999,
+      "wasmMs": 39.13199999999779,
+      "algoX": 11.825552252323224,
+      "langX": 2.0286604824697045,
+      "totalX": 23.990030537668734,
+      "note": "quickselect vs full sort"
+    },
+    {
+      "op": "gather(n/4)",
+      "n": 10000000,
+      "shape": "dense",
+      "pondMs": 51.32458300000144,
+      "jsAlgoMs": 70.8092919999981,
+      "wasmMs": 18.07458300000144,
+      "algoX": 0.7248283600971864,
+      "langX": 3.9176169098890115,
+      "totalX": 2.839599840283859,
+      "note": "one fused pass vs two passes over the index array"
+    },
+    {
+      "op": "sum",
+      "n": 10000000,
+      "shape": "guarded",
+      "pondMs": 9.684042000000773,
+      "jsAlgoMs": 9.445749999998952,
+      "wasmMs": 15.758999999998196,
+      "algoX": 1.0252274303260034,
+      "langX": 0.5993876515007319,
+      "totalX": 0.6145086617172334,
+      "note": "naive Rust port of the guarded path"
+    },
+    {
+      "op": "sum (rust branchless)",
+      "n": 10000000,
+      "shape": "guarded",
+      "pondMs": 9.643541999997979,
+      "jsAlgoMs": 9.41570800000045,
+      "wasmMs": 9.429707999999664,
+      "algoX": 1.024197224467615,
+      "langX": 0.9985153304853963,
+      "totalX": 1.0226766300715062,
+      "note": "same select-not-branch fix applied in Rust"
+    },
+    {
+      "op": "gather(n/4)",
+      "n": 10000000,
+      "shape": "gappy30",
+      "pondMs": 63.38120799999888,
+      "jsAlgoMs": 82.03099999999904,
+      "wasmMs": 23.428604000000632,
+      "algoX": 0.7726494617888313,
+      "langX": 3.5013183030451507,
+      "totalX": 2.7052917023992196,
+      "note": "validity walk fused into the value walk"
+    }
+  ],
+  "correctness": [],
+  "summary": [
+    {
+      "key": "sum [dense]",
+      "algo": 1.836975072714772,
+      "lang": 1.5534913505832975,
+      "total": 2.8508723596860697,
+      "jsShare": 0.5804750881227965,
+      "verdict": "both, algorithm dominates"
+    },
+    {
+      "key": "minMax [dense]",
+      "algo": 1.2788473579232136,
+      "lang": 1.3619047619047995,
+      "total": 1.7350223450644875,
+      "jsShare": 0.44637044051547864,
+      "verdict": "both, language dominates"
+    },
+    {
+      "key": "median [dense]",
+      "algo": 10.307834530722252,
+      "lang": 2.573875141790077,
+      "total": 27.992347784839126,
+      "jsShare": 0.7001657941066206,
+      "verdict": "both, algorithm dominates"
+    },
+    {
+      "key": "p95 [dense]",
+      "algo": 8.426993435659696,
+      "lang": 2.0286604824697045,
+      "total": 22.398358881501103,
+      "jsShare": 0.6855736558037192,
+      "verdict": "both, algorithm dominates"
+    },
+    {
+      "key": "gather(n/4) [dense]",
+      "algo": 0.7248283600971864,
+      "lang": 3.7559904856124793,
+      "total": 2.5351000905130463,
+      "jsShare": 0,
+      "verdict": "LANGUAGE — the port is the win"
+    },
+    {
+      "key": "sum [guarded]",
+      "algo": 1.0031934435892615,
+      "lang": 0.6008270572001133,
+      "total": 0.6050350462442675,
+      "jsShare": null,
+      "verdict": "neither — no material win"
+    },
+    {
+      "key": "sum (rust branchless) [guarded]",
+      "algo": 0.9992568202304745,
+      "lang": 0.9985153304853963,
+      "total": 1.0047565319350569,
+      "jsShare": null,
+      "verdict": "neither — no material win"
+    },
+    {
+      "key": "gather(n/4) [gappy30]",
+      "algo": 0.8789117730601984,
+      "lang": 2.7621445223037835,
+      "total": 2.427681339546533,
+      "jsShare": 0,
+      "verdict": "LANGUAGE — the port is the win"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+════════════════════════════════════════════════════════════════════════════════════════════
+Is the interval-keyed columnar gap addressable?
+════════════════════════════════════════════════════════════════════════════════════════════
+node v22.15.0 · darwin/arm64 · n = 1M on a 1 s grid
+
+✓ the columnar door produces a store with identical keys
+  17,665 value cells differ, all of them the empty-bucket sentinel:
+  NaN in the columnar store vs undefined on the row path. That is the one
+  design decision the change forces — see the report.
+
+    bucket  C  buckets   rows→series    columnar   speedup  of which key validation
+  ────────────────────────────────────────────────────────────────────────────────────────
+       10s  1  100,000       11.84ms      0.52ms     22.8×                     100%
+       10s  4  100,000       22.09ms      0.52ms     42.7×                     100%
+       60s  1   16,667        1.37ms      0.09ms     15.6×                      99%
+       60s  4   16,667        2.50ms      0.09ms     27.9×                     100%
+      600s  4    1,667        0.24ms      0.01ms     26.2×                      95%
+
+  rows→series = the current path: frozen `[interval, …]` rows through the
+                validating row intake.
+  columnar    = IntervalKeyColumn + ColumnarStore.fromTrustedStore +
+                SeriesStore.fromTrustedStore, all existing API. The remaining
+                hop to `TimeSeries` is module-private, and `aggregateInternal`
+                already lives in that module.
+  key validation = `IntervalKeyColumn`s constructor: four O(B) passes (finite
+                begin, finite end, begin<=end, per-row label read). This is
+                nearly all of the columnar path — see the report.
+

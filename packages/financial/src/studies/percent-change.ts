@@ -39,12 +39,17 @@ export function percentChange<
   assertNoColumn(wide, output);
 
   const v = columnValues(wide, column);
-  const pc = v.map((cur, i) => {
-    if (i < periods) return undefined;
-    const prev = v[i - periods];
-    return cur === undefined || prev === undefined || prev === 0
-      ? undefined
-      : (cur / prev - 1) * 100;
-  });
+  // Missing cells are `NaN` and propagate through the ratio on their own
+  // ([PND-STUDYBOX]); the surviving guards are the two study-specific ones —
+  // no predecessor yet, and a zero base (an undefined percent change).
+  const pc = new Float64Array(v.length);
+  for (let i = 0; i < pc.length; i += 1) {
+    if (i < periods) {
+      pc[i] = NaN;
+      continue;
+    }
+    const prev = v[i - periods]!;
+    pc[i] = prev === 0 ? NaN : (v[i]! / prev - 1) * 100;
+  }
   return series.withColumn(output, pc);
 }

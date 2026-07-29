@@ -44,8 +44,19 @@ Static constructors on `TimeSeries`: `fromJSON()` (row tuples/objects),
 BigInt-free int64 time; numeric + `Utf8` string columns), `fromEvents()`,
 `fromPoints()` (wide rows with `ts`), `concat()`, `joinMany()`. On
 `ValueSeries`: `fromColumns()`. Arrow-ingest types (`ArrowTableLike`,
-`ArrowVectorLike`, `ArrowFieldLike`, `ArrowSchemaLike`, `ArrowTimeUnit`,
-`FromArrowOptions`) live in `packages/core/src/batch/operators/from-arrow.ts`.
+`ArrowVectorLike`, `ArrowDataLike`, `ArrowFieldLike`, `ArrowSchemaLike`,
+`ArrowTimeUnit`, `FromArrowOptions`) live in
+`packages/core/src/batch/operators/from-arrow.ts`.
+
+Going the other way, `TimeSeries.toArrow()` exports the columns **in Arrow's
+memory layout with no copy** — pond's validity bitmap is already LSB-first
+one-bit-per-value, numerics are a contiguous `Float64Array`, booleans a
+packed bitmap, dict-encoded strings `Int32Array` indices plus a dictionary.
+It returns `{ length, fields }` rather than an Arrow `Table` (pond doesn't
+depend on `apache-arrow`; the caller assembles with `makeData`/`makeVector`),
+so another columnar engine is a buffer handoff instead of a re-ingest.
+Arrow-export types (`ArrowExport`, `ArrowExportField`, `ArrowExportType`,
+`ToArrowOptions`) live in `packages/core/src/batch/operators/to-arrow.ts`.
 
 ### Temporal keys & events
 

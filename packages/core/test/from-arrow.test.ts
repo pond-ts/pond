@@ -392,4 +392,187 @@ describe('TimeSeries.fromArrow', () => {
       expect(() => build(0, [])).toThrow(/no columns/);
     });
   });
+
+  // ── [PND-ARROWNULL] the chunk-offset gate ──────────────────────────
+  //
+  // A sliced Arrow vector has `data[0].offset > 0`: its logical rows start
+  // partway into the shared buffers, and pond's validity bitmap has no
+  // offset to match. Adopting one would silently read the *wrong rows*.
+  //
+  // This needs a hand-built vector rather than a real sliced one. Adoption
+  // also cross-checks the bitmap's popcount against the vector's
+  // `nullCount`, and on a real slice those disagree — so the cross-check
+  // rejects it first and the offset gate is never exercised. (Verified by
+  // mutation: deleting the offset check left the real-Arrow slice test
+  // passing.) The fake below is built so the popcount *agrees*, leaving the
+  // offset gate as the only thing standing between us and wrong data.
+  describe('a non-zero chunk offset declines adoption', () => {
+    // 24-value buffer; the vector is logically rows 8..23. Nulls sit at raw
+    // 2, 9 and 17, chosen so that:
+    //   - bits 0..15 (what a wrongly-adopted bitmap would cover) hold two
+    //     zeros, so its popcount is 14;
+    //   - the logical range 8..23 also holds two nulls, so nullCount is 2;
+    //   - 14 === 16 - 2, so the cross-check passes and cannot save us;
+    //   - the gaps land at *different* logical positions either way
+    //     (1 and 9 correctly, 2 and 9 if adopted), so the two outcomes are
+    //     distinguishable.
+    const RAW = 24;
+    const COUNT = 16;
+    const OFFSET = 8;
+    const NULL_AT = new Set([2, 9, 17]);
+
+    const values = Float64Array.from({ length: RAW }, (_, i) => i * 10);
+    const nullBitmap = new Uint8Array(RAW / 8);
+    for (let i = 0; i < RAW; i += 1) {
+      if (!NULL_AT.has(i)) nullBitmap[i >> 3]! |= 1 << (i & 7);
+    }
+
+    const sliced: ArrowVectorLike = {
+      length: COUNT,
+      nullCount: 2, // logical nulls: raw 9 and 17
+      toArray: () => values.subarray(OFFSET, OFFSET + COUNT),
+      get: (i) => {
+        const raw = i + OFFSET;
+        return NULL_AT.has(raw) ? null : values[raw]!;
+      },
+      data: [{ offset: OFFSET, length: COUNT, values, nullBitmap }],
+    };
+
+    it('reads the logical rows, not the buffer from index 0', () => {
+      const series = build(COUNT, [
+        {
+          name: 'time',
+          vector: f64(Array.from({ length: COUNT }, (_, i) => i * 1000)),
+        },
+        { name: 'value', vector: sliced },
+      ]);
+      const got = col(series, 'value');
+      for (let i = 0; i < COUNT; i += 1) {
+        const raw = i + OFFSET;
+        expect(got[i]).toBe(NULL_AT.has(raw) ? undefined : raw * 10);
+      }
+      // Belt and braces: the two gaps are at logical 1 and 9. Adoption
+      // would have put them at 2 and 9.
+      expect(got[1]).toBeUndefined();
+      expect(got[2]).toBe(100);
+    });
+
+    it('does not adopt the offset buffers', () => {
+      const series = build(COUNT, [
+        {
+          name: 'time',
+          vector: f64(Array.from({ length: COUNT }, (_, i) => i * 1000)),
+        },
+        { name: 'value', vector: sliced },
+      ]);
+      const c = series.column('value' as never) as unknown as {
+        _values: Float64Array;
+        validity?: { bits: Uint8Array };
+      };
+      expect(c._values).not.toBe(values);
+      expect(c.validity?.bits).not.toBe(nullBitmap);
+    });
+  });
+
+  // The last adoption gate: `nullCount` and the bitmap's own popcount must
+  // agree. They disagree only if we have misread the vector — this surface
+  // is duck-typed, so "the shape looked right but meant something else" is a
+  // reachable state, not a hypothetical. Falling back is the safe answer,
+  // and `get()` is then the source of truth.
+  it('declines adoption when nullCount disagrees with the bitmap', () => {
+    const COUNT = 16;
+    const values = Float64Array.from({ length: COUNT }, (_, i) => i * 10);
+    const nullBitmap = new Uint8Array(2).fill(0xff);
+    nullBitmap[0]! &= ~(1 << 3); // one null, at index 3
+
+    const inconsistent: ArrowVectorLike = {
+      length: COUNT,
+      nullCount: 4, // …but the bitmap says exactly one
+      toArray: () => values,
+      get: (i) => (i === 3 ? null : values[i]!),
+      data: [{ offset: 0, length: COUNT, values, nullBitmap }],
+    };
+
+    const series = build(COUNT, [
+      {
+        name: 'time',
+        vector: f64(Array.from({ length: COUNT }, (_, i) => i * 1000)),
+      },
+      { name: 'value', vector: inconsistent },
+    ]);
+    const c = series.column('value' as never) as unknown as {
+      validity?: { bits: Uint8Array };
+    };
+    expect(c.validity?.bits).not.toBe(nullBitmap);
+    // `get()` decided, and it says one gap.
+    expect(col(series, 'value')[3]).toBeUndefined();
+    expect(col(series, 'value')[4]).toBe(40);
+  });
+
+  it('declines adoption on a multi-chunk vector, with the same answer', () => {
+    // A table decoded from a multi-record-batch IPC stream: two chunks.
+    // There is no single buffer pair to adopt; the fallback reads through
+    // `get()`, which spans the chunks.
+    const COUNT = 12;
+    const a = Float64Array.from({ length: 6 }, (_, i) => i);
+    const b = Float64Array.from({ length: 6 }, (_, i) => 100 + i);
+    const all = Float64Array.from({ length: COUNT }, (_, i) =>
+      i < 6 ? i : 94 + i,
+    );
+    const full = new Uint8Array([0xff]);
+    const multiChunk: ArrowVectorLike = {
+      length: COUNT,
+      nullCount: 1,
+      toArray: () => all,
+      get: (i) => (i === 4 ? null : all[i]!),
+      data: [
+        { offset: 0, length: 6, values: a, nullBitmap: full },
+        { offset: 0, length: 6, values: b, nullBitmap: full },
+      ],
+    };
+    const series = build(COUNT, [
+      {
+        name: 'time',
+        vector: f64(Array.from({ length: COUNT }, (_, i) => i * 1000)),
+      },
+      { name: 'value', vector: multiChunk },
+    ]);
+    expect(col(series, 'value')[4]).toBeUndefined();
+    expect(col(series, 'value')[7]).toBe(101);
+  });
+
+  it('declines adoption when padding bits beyond length are set', () => {
+    // Arrow's spec leaves the final byte's padding bits unspecified;
+    // pond's bitmap invariant says they must be zero (validity.ts). We
+    // cannot zero them in place — the buffer is the caller's table — so
+    // dirty padding declines and the per-slot fallback answers.
+    const COUNT = 12; // 4 padding bits in byte 1
+    const values = Float64Array.from({ length: COUNT }, (_, i) => i * 2);
+    const nullBitmap = new Uint8Array(2);
+    for (let i = 0; i < COUNT; i += 1) {
+      if (i !== 5) nullBitmap[i >> 3]! |= 1 << (i & 7);
+    }
+    nullBitmap[1]! |= 0xf0; // dirty padding: bits 12..15 set
+
+    const dirty: ArrowVectorLike = {
+      length: COUNT,
+      nullCount: 1,
+      toArray: () => values,
+      get: (i) => (i === 5 ? null : values[i]!),
+      data: [{ offset: 0, length: COUNT, values, nullBitmap }],
+    };
+    const series = build(COUNT, [
+      {
+        name: 'time',
+        vector: f64(Array.from({ length: COUNT }, (_, i) => i * 1000)),
+      },
+      { name: 'value', vector: dirty },
+    ]);
+    const c = series.column('value' as never) as unknown as {
+      validity?: { bits: Uint8Array };
+    };
+    expect(c.validity?.bits).not.toBe(nullBitmap); // declined, not adopted
+    expect(col(series, 'value')[5]).toBeUndefined();
+    expect(col(series, 'value')[6]).toBe(12);
+  });
 });
