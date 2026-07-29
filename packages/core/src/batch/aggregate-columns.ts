@@ -633,10 +633,16 @@ function sweepRollingColumn(
   // shared sweep chose between: the bare built-in state (safe only when
   // the source is provably all-finite and fully defined) and the
   // `rollingStateFor` wrapper that applies the non-finite policy.
-  const contributes = (i: number): boolean => {
-    if (bits !== null && (bits[i >> 3]! & (1 << (i & 7))) === 0) return false;
-    return allFinite || Number.isFinite(values[i]!);
-  };
+  // The contributor test is written inline at each site rather than through
+  // a helper. It is evaluated twice per row (once entering the window, once
+  // leaving), so a call there is a call per row per column — the exact cost
+  // this kernel was restructured to remove, reintroduced by a tidier-looking
+  // closure.
+  //
+  // Both operands are loop-invariant: `bits === null` and `allFinite` are
+  // fixed for the whole sweep. On a dense, provably-finite column — an OHLCV
+  // bar series, the common case here — the whole predicate folds to `true`
+  // and the test disappears.
 
   // `avg` is a running sum; `stdev` is Welford. Both are inlined to remove
   // the per-row `add` / `remove` / `snapshot` calls; everything else keeps
@@ -691,14 +697,22 @@ function sweepRollingColumn(
 
     if (kind === 'avg') {
       while (windowEnd <= hi) {
-        if (contributes(windowEnd)) {
+        if (
+          (bits === null ||
+            (bits[windowEnd >> 3]! & (1 << (windowEnd & 7))) !== 0) &&
+          (allFinite || Number.isFinite(values[windowEnd]!))
+        ) {
           runningSum += values[windowEnd]!;
           runningCount += 1;
         }
         windowEnd += 1;
       }
       while (windowStart < lo) {
-        if (contributes(windowStart)) {
+        if (
+          (bits === null ||
+            (bits[windowStart >> 3]! & (1 << (windowStart & 7))) !== 0) &&
+          (allFinite || Number.isFinite(values[windowStart]!))
+        ) {
           runningSum -= values[windowStart]!;
           runningCount -= 1;
         }
@@ -706,7 +720,11 @@ function sweepRollingColumn(
       }
     } else if (kind === 'stdev') {
       while (windowEnd <= hi) {
-        if (contributes(windowEnd)) {
+        if (
+          (bits === null ||
+            (bits[windowEnd >> 3]! & (1 << (windowEnd & 7))) !== 0) &&
+          (allFinite || Number.isFinite(values[windowEnd]!))
+        ) {
           const v = values[windowEnd]!;
           wN += 1;
           const delta = v - wMean;
@@ -716,7 +734,11 @@ function sweepRollingColumn(
         windowEnd += 1;
       }
       while (windowStart < lo) {
-        if (contributes(windowStart)) {
+        if (
+          (bits === null ||
+            (bits[windowStart >> 3]! & (1 << (windowStart & 7))) !== 0) &&
+          (allFinite || Number.isFinite(values[windowStart]!))
+        ) {
           const v = values[windowStart]!;
           if (wN <= 1) {
             // Removing the final contributor — reset exactly (no 0/0, no drift).
@@ -744,14 +766,22 @@ function sweepRollingColumn(
       while (windowEnd <= hi) {
         state!.add(
           windowEnd,
-          contributes(windowEnd) ? values[windowEnd]! : undefined,
+          (bits === null ||
+            (bits[windowEnd >> 3]! & (1 << (windowEnd & 7))) !== 0) &&
+            (allFinite || Number.isFinite(values[windowEnd]!))
+            ? values[windowEnd]!
+            : undefined,
         );
         windowEnd += 1;
       }
       while (windowStart < lo) {
         state!.remove(
           windowStart,
-          contributes(windowStart) ? values[windowStart]! : undefined,
+          (bits === null ||
+            (bits[windowStart >> 3]! & (1 << (windowStart & 7))) !== 0) &&
+            (allFinite || Number.isFinite(values[windowStart]!))
+            ? values[windowStart]!
+            : undefined,
         );
         windowStart += 1;
       }

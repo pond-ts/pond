@@ -21,10 +21,12 @@
 // So this measures per-query cost on a resident series, grouped the way an
 // agent actually asks: studies, resamples, and summary facts.
 //
-// Warm-up is by iteration count, not elapsed time — see
-// `scripts/perf-operators-unboxed.mjs` for why that distinction is
-// load-bearing (V8's optimising tier is a cliff, and a time-based warm-up
-// silently reports whichever configuration runs first as 3-7x slow).
+// Warm-up is by iteration count, and the count has to clear V8's optimising
+// tier — see `scripts/perf-operators-unboxed.mjs`. That tier is a cliff, not
+// a curve, so an under-warmed entry is not "slightly slow", it is 1.5-3x slow.
+// Because entries run in order, too small a warm-up penalises whichever query
+// is measured first and nothing else, which reads exactly like a targeted
+// regression in that one query.
 
 import { performance } from 'node:perf_hooks';
 import { TimeSeries } from 'pond-ts';
@@ -38,7 +40,13 @@ import {
 } from '../dist/index.js';
 
 const BARS = Number(process.env.PERF_BARS ?? 500_000);
-const WARMUP_ITERATIONS = Number(process.env.PERF_WARMUP ?? 200);
+// 200 was too few and it produced a false regression: V8's optimising tier
+// is a cliff around ~800 iterations for operations this size, and `sma` runs
+// first here, so it alone was measured cold. It reported 14.67 ms against a
+// true 6.48 ms — making a 1.61x improvement look like a 44% regression.
+// Everything measured later in the script was warm and read correctly, which
+// is what made the contradiction visible.
+const WARMUP_ITERATIONS = Number(process.env.PERF_WARMUP ?? 1000);
 const MINUTE = 60_000;
 
 /** OHLCV bars with a plausible random walk — dense within sessions, which

@@ -132,6 +132,14 @@ and type-level changes; patch bumps are strictly additive.
   derived from the produced values rather than inherited from the source.
   Chunked and non-numeric sources keep the previous path.
 
+- **core:** **`rolling()`'s per-row contributor test is inlined.** The
+  per-column sweep evaluated it through a small helper — twice per row, once
+  entering the window and once leaving — which is a call per row per column,
+  the exact cost the sweep was restructured to remove. Both its operands are
+  loop-invariant, so on a dense provably-finite column (an OHLCV bar series)
+  the whole predicate now folds away. `sma(20)` over 500k bars: **10.41 →
+  6.48 ms**, and the five-study strategy pass 70.58 → 65.25 ms.
+
 - **core:** **`rolling(count, 'stdev')` runs Welford inline.** `stdev` was the
   one reducer deliberately left on the reducer-state path when the kernel was
   restructured, because its order-independent delete has exact `n <= 1` and
