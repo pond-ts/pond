@@ -1052,3 +1052,68 @@ not read and retry against. It is collectable now, the message names the
 convention is in the **schema description** rather than only the system
 prompt. With that in place the model composed `bb#Upper`, `bb#Middle` and
 `bb#Lower` in one plan, first try.
+
+---
+
+### [PND-PROCDRAW] — Surfacing carries no intent
+
+Found by reading an answer that said _"I also included the band series
+output for plotting."_ It had not. It had added three `shape` folds — one
+each over `bb#Upper`, `bb#Middle` and `bb#Lower`, forty points apiece —
+and called 120 numbers a plot. Nothing draws a `shape`.
+
+The band **was** on screen, because the demo adds a `columns` selector for
+every non-fold slot behind the agent's back, and `Figure` renders three
+outputs as a `BandChart` without being told an op name. So the claim was
+wrong and accidentally true at once, which is the worst version.
+
+**The gap.** A selector says _what to surface_; it cannot say _why_.
+`{on: 'bb'}` means "give me what this node produces", and whether that
+becomes a chart, a table or nothing is entirely the consumer's business.
+An agent that wants a curve on screen has no way to ask for one, so it
+reaches for the nearest thing it can name — and `shape` is a sampled list
+that exists for a completely different reason.
+
+Half of this is a prompt bug and is fixed: the brief had conflated "I
+cannot read a column" with "do not ask for one", when the server strips
+columns before the agent sees them and surfacing a study is free. With
+that corrected the same request produces two nodes rather than five, and
+the band reaches the output panel rather than only the workbook.
+
+The other half is real and unbuilt.
+
+**Why it is worth more than it looks.** Today `outputs` serves two
+readers with opposite appetites — an agent that wants a few numbers, and
+a renderer that wants every row — and the server reconciles them by
+quietly dropping columns on the way to the model. That reconciliation
+stops working when the two readers are **the same party**: an MCP client
+whose responses may carry markup, rendering pond charts in the reply
+itself. Then "surface this so it can be seen" is something the requester
+genuinely means, and there is nowhere to put it.
+
+**Open questions.**
+
+- **Where does intent live?** `{on, draw: true}` is the obvious spelling
+  and probably too binary — "as a band", "against this other series",
+  "the last 200 bars" are all things a requester means by "show me".
+  A flag that immediately wants three modifiers is a flag in the wrong
+  place.
+- **Who renders?** `Figure` deciding band-vs-line from `outs.length`
+  proves the response already carries enough to draw correctly without op
+  knowledge. That argues the renderer can stay a consumer. But if a
+  response is to _contain_ a chart, something has to own that, and
+  `@pond-ts/process` depending on `@pond-ts/charts` is a dependency
+  direction worth refusing on purpose.
+- **What crosses the wire?** Not rendered pixels and not 150,000 points
+  of JSON. The frames path already answers this — base64 `Float64Array`
+  plus a validity bitmap, adopted zero-copy by `TimeSeries.fromColumns`
+  ([PND-PROCCOL]) — so a renderable response is the existing wire shape
+  plus a rendering shell, not a new transport.
+- **Does `shape` survive?** It exists because a model pays per point. If
+  the model can hand back a chart instead of describing one, `shape`
+  narrows to its honest use — _the agent itself_ needing a trajectory to
+  reason about — which is a smaller job than it currently advertises.
+
+**Done when:** a requester can express "show this" without the consumer
+having to guess, and an agent that wants a band on screen names one
+rather than approximating it with a fold.
