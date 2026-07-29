@@ -63,16 +63,22 @@ export function bollinger<
   );
   const middle = rolled['middle']!;
   const sd = rolled['sd']!;
-  // σ = 0 (a flat window) has no meaningful band — emit undefined, matching
+  // σ = 0 (a flat window) has no meaningful band — emit missing, matching
   // `TimeSeries.baseline`, so downstream "outside the band" tests don't fire on
   // every bar of a flat stretch.
-  const band = (sign: 1 | -1): Array<number | undefined> =>
-    middle.map((m, i) => {
-      const d = sd[i];
-      return m === undefined || d === undefined || d === 0
-        ? undefined
-        : m + sign * stdDev * d;
-    });
+  //
+  // A missing centre or σ is `NaN` ([PND-STUDYBOX]) and propagates through the
+  // arithmetic on its own, so the only guard left is the study-specific one.
+  // `d === 0` is false when `d` is NaN, so a warm-up bar falls through to the
+  // arithmetic and stays NaN — which is the answer we want.
+  const band = (sign: 1 | -1): Float64Array => {
+    const out = new Float64Array(middle.length);
+    for (let i = 0; i < out.length; i += 1) {
+      const d = sd[i]!;
+      out[i] = d === 0 ? NaN : middle[i]! + sign * stdDev * d;
+    }
+    return out;
+  };
 
   return series
     .withColumn(middleName, middle)

@@ -70,6 +70,7 @@ import type {
   ValueColumnsForSchema,
   ValueKeyedSchema,
 } from '../schema/index.js';
+import { float64ColumnFromTypedArray } from './operators/numeric-io.js';
 import {
   isAggregateOutputSpec,
   normalizeAggregateColumns,
@@ -4788,15 +4789,23 @@ export class TimeSeries<S extends SeriesSchema> {
     // construction below bypasses the constructor's strict intake, so a
     // non-finite cell would otherwise pack into the column and break the
     // reducer non-finite policy's NaN-free invariant.
-    assertColumnValuesMatchKind(
-      'number',
-      values as ReadonlyArray<unknown>,
-      `withColumn '${String(name)}'`,
-    );
-    const column = columnFromValuesByKind(
-      'number',
-      values as unknown as unknown[],
-    );
+    //
+    // A `Float64Array` takes the typed door, where **`NaN` means missing**
+    // ([PND-WCNAN]). A typed buffer has no `undefined` slot, so `NaN` is
+    // the only way to express a gap in one — and requiring a gap to be
+    // spelled `undefined` forced every producer holding a typed buffer to
+    // box a whole column just to say "no value here". A boxed array keeps
+    // the strict reading: it already has `undefined`, so a `NaN` in one is
+    // a mistake, not a gap. `±Infinity` is rejected either way.
+    const column =
+      values instanceof Float64Array
+        ? float64ColumnFromTypedArray(values, `withColumn '${String(name)}'`)
+        : (assertColumnValuesMatchKind(
+            'number',
+            values as ReadonlyArray<unknown>,
+            `withColumn '${String(name)}'`,
+          ),
+          columnFromValuesByKind('number', values as unknown as unknown[]));
     const reshaped = withColumnAppended(
       this.#store.store,
       name as string,

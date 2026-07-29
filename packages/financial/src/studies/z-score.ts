@@ -47,12 +47,14 @@ export function zScore<
   const mean = rolled['mean']!;
   const sd = rolled['sd']!;
   const src = columnValues(wide, column);
-  const z = src.map((v, i) => {
-    const m = mean[i];
-    const s = sd[i];
-    return v === undefined || m === undefined || s === undefined || s === 0
-      ? undefined
-      : (v - m) / s;
-  });
+  // A missing value, mean or σ is `NaN` and propagates ([PND-STUDYBOX]); the
+  // only guard left is σ = 0, where the z-score is undefined rather than
+  // infinite. `s === 0` is false for NaN, so warm-up bars fall through to the
+  // arithmetic and stay NaN.
+  const z = new Float64Array(src.length);
+  for (let i = 0; i < z.length; i += 1) {
+    const s = sd[i]!;
+    z[i] = s === 0 ? NaN : (src[i]! - mean[i]!) / s;
+  }
   return series.withColumn(output, z);
 }

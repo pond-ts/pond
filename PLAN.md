@@ -199,25 +199,27 @@ consumer signal. Plan:
   finite guard for `allFinite: false` reductions. Acceptance benchmarks
   already exist in `spikes/columnar-wasm/bench/controls.mjs`; each control is
   checked against pond-ts's answer before it is timed.
-- **[PND-STUDYBOX]** — `@pond-ts/financial`'s study kernel boxes every cell.
-  `readNumericColumn` (which `rollingValues` / `rollingColumns` /
-  `columnValues` / `emaValues` all route through) walks the result with the
-  polymorphic `col.at(i)` into an `Array<number | undefined>`, and studies then
-  compute over boxed arrays — `bollinger` allocates **four** 500k boxed arrays
-  (two from the kernel, two more from `.map()` with a closure per cell) before
-  three `withColumn` re-ingests. Measured: the boxing step alone is 8.28 ms of
-  `sma(20)`'s 22.17 ms at 500k bars, against **0.40 ms** for the same read into
-  a `Float64Array` — 20× on that stage. `withColumn` already accepts a
-  `Float64Array`, so the round trip is column → boxed → column for no reason.
-  Same shape as [PND-BOXFREE], applied to the six studies.
 - **[PND-AGENTQ]** — The measured shape of the current agent workload, kept as
-  the acceptance benchmark: `packages/financial/scripts/perf-agent-queries.mjs`
-  (500k 1-minute OHLCV bars, resident, per-query latency). Today: a 5-study
-  strategy pass is **318 ms**, individual studies 21–105 ms, while every
-  summary fact (`minMax` / `mean` / `stdev` / `median` / `percentile`) is
-  **under 3 ms**. Studies are ~100× the cost of facts, so they are where all
-  effort belongs. Re-run this before and after [PND-ROLLKERN] and
-  [PND-STUDYBOX].
+  the standing acceptance benchmark:
+  `packages/financial/scripts/perf-agent-queries.mjs` (500k 1-minute OHLCV
+  bars, resident, per-query latency). Run it before and after anything
+  touching studies, `rolling`, or the reducers.
+
+  A 5-study strategy pass has gone **318 ms → 84 ms (3.78×)** across
+  [PND-ROLLKERN] and [PND-STUDYBOX]; summary facts were already under 3 ms and
+  are unchanged. Studies remain the dominant cost by an order of magnitude, so
+  they stay the place effort belongs. Current: `bollinger(20)` 31.5 ms,
+  `zScore(20)` 26.5 ms, `envelope(20)` 12.5 ms, `sma(20)` 10.5 ms,
+  `percentChange()` 4.5 ms, `ema(20)` 3.9 ms.
+
+  Next candidates, in the order the numbers suggest: a `stdev` specialisation
+  in the rolling kernel (now the dominant per-row cost in `bollinger` /
+  `zScore`, and the one reducer deliberately left on the state path because its
+  order-independent Welford delete is not worth duplicating carelessly);
+  `ema`, which is now the only study that did not move because it composes on
+  `smooth` rather than the rolling kernel; and re-asking the Rust question
+  against this new baseline (`spikes/columnar-wasm/REPORT.md` §10).
+
 - **[PND-BOXFREE]** — Element-wise operators box every cell. **`cumulative`,
   `diff`, `rate` and `pctChange` are done (4.0–7.1×); `fill`, `shift` and
   `mapColumns` remain.** They are column-native only in the
@@ -231,18 +233,6 @@ consumer signal. Plan:
   to do with Rust — see `spikes/columnar-wasm/REPORT.md` §9.3. Each operator
   needs its own validity write, since the boxed array is currently how
   validity gets derived; [PND-IVLCOL] is the worked example of that shape.
-- **[PND-WCNAN]** — `withColumn` NaN-canonical `Float64Array` intake
-  (dashboard A/B friction, 2026-07-21): `withColumn` rejects NaN today, so a
-  consumer deriving gated columns boxes into `(number | undefined)[]` — the
-  dominant adapter cost at density (~25 ms/tick @ 360k). Accept NaN-as-missing
-  typed arrays (symmetric with `colToValues` output) to make derivation
-  allocation-free. Ties to the NaN-vs-`undefined` sentinel asymmetry from the
-  wide-schema report.
-
-### Core batch + React backlog
-
-Plan: [PND_CORE_PLAN.md](docs/plans/PND_CORE_PLAN.md).
-
 - **[PND-COLAPI]** — Make the column-API augmentation bundle-safe (F-1,
   HIGH — methods tree-shake out of browser bundles) + validity-aware
   `toFloat64Array({ missing })` + `hasAnyDefined()`. Two consumers each.

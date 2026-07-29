@@ -151,6 +151,39 @@ and type-level changes; patch bumps are strictly additive.
   argument to preserve (unlike `stdev`, whose order-independent Welford delete
   keeps its state path).
 
+- **core:** **`withColumn` accepts a `Float64Array` where `NaN` means missing.**
+  A typed buffer has no `undefined` slot, so `NaN` is the only way to express a
+  gap in one — and requiring gaps to be spelled `undefined` forced every
+  producer holding a typed buffer to box a whole column to say "no value here".
+  A boxed `Array<number | undefined>` keeps the strict reading: it already has
+  `undefined`, so a `NaN` in one is still rejected. `±Infinity` is rejected on
+  both doors. The buffer is copied, not adopted (`fromColumns` remains the
+  documented zero-copy door).
+
+- **financial:** **studies are 2.0–5.6× faster.** The study kernel handed every
+  study an `Array<number | undefined>` built by walking the column with the
+  polymorphic `col.at(i)`, and each study then checked every input for
+  `undefined` per cell — `bollinger` allocated four 500k boxed arrays before
+  three `withColumn` re-ingests. The kernel now returns a `Float64Array` with
+  `NaN` marking a gap, which propagates through arithmetic on its own, so only
+  the genuinely study-specific guards survive (σ = 0 has no band; a zero base
+  has no percent change).
+
+  Measured on 500k 1-minute bars, combined with the `rolling` change above:
+
+  | study                 | before    | after        | ×         |
+  | --------------------- | --------- | ------------ | --------- |
+  | 5-study strategy pass | 318.30 ms | **84.15 ms** | **3.78×** |
+  | `envelope(20)`        | 69.33 ms  | 12.47 ms     | 5.56×     |
+  | `percentChange()`     | 23.66 ms  | 4.51 ms      | 5.24×     |
+  | `zScore(20)`          | 98.77 ms  | 26.49 ms     | 3.73×     |
+  | `bollinger(20)`       | 105.26 ms | 31.51 ms     | 3.34×     |
+  | `sma(20)`             | 21.48 ms  | 10.54 ms     | 2.04×     |
+
+  Output is unchanged — verified against the committed pandas oracle fixtures
+  and, for the gap placement the oracle doesn't cover, byte-identical to the
+  pre-change build.
+
 - **charts (Storybook):** the `Charts/Histogram` story group moved to
   **`Charts/BarChart/Histogram`** — the histogram is `BarChart` in its `bins`
   mode, not a separate component, and the sidebar now says so. Story IDs under

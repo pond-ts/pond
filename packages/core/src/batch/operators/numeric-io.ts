@@ -5,6 +5,7 @@ import {
   bitmapByteCount,
   validityFromBits,
 } from '../../columnar/index.js';
+import { ValidationError } from '../../core/errors.js';
 
 /**
  * Unboxed read/write helpers for element-wise numeric operators —
@@ -129,4 +130,62 @@ export class NumericOutput {
       this.#allFinite,
     );
   }
+}
+
+/**
+ * Builds a numeric column from a `Float64Array` in which **`NaN` means
+ * missing** — [PND-WCNAN].
+ *
+ * The asymmetry with the boxed intake is deliberate and is the whole
+ * point. A `ReadonlyArray<number | undefined>` already has a missing
+ * marker (`undefined`), so a `NaN` in one is a mistake and stays
+ * rejected. A `Float64Array` has no such slot: the only way to express a
+ * gap in a typed buffer is `NaN`, so a producer holding one was forced to
+ * box into `(number | undefined)[]` purely to say "no value here".
+ *
+ * That box is the cost this removes. Every `@pond-ts/financial` study
+ * produces a length-preserving column with an `undefined` warm-up head,
+ * and every one of them was boxing a whole column to express it — 8.28 ms
+ * of `sma(20)`'s 22 ms at 500k bars. The dashboard adapter hit the same
+ * wall from the other side (~25 ms/tick at 360k rows).
+ *
+ * `±Infinity` is still rejected. It is not a gap, it is a value the
+ * numeric intake contract excludes — the reducer non-finite policy needs
+ * defined cells to be finite so `allFinite` can be claimed, and letting
+ * it through here would put a non-finite cell into a column flagged
+ * all-finite.
+ *
+ * The buffer is **copied, not adopted**. `TimeSeries.fromColumns` adopts,
+ * but it is documented as the zero-copy door and callers opt into that by
+ * choosing it. `withColumn` has always copied, and silently starting to
+ * alias a caller's array would mean a later write through it mutates an
+ * already-constructed series. The copy is a memcpy against what was a
+ * per-cell boxing walk, so the win survives it.
+ */
+export function float64ColumnFromTypedArray(
+  values: Float64Array,
+  label: string,
+): Float64Column {
+  const length = values.length;
+  const owned = new Float64Array(length);
+  const bits = new Uint8Array(bitmapByteCount(length));
+  let defined = 0;
+  for (let i = 0; i < length; i += 1) {
+    const v = values[i]!;
+    // `v !== v` is the NaN test — the gap marker, not an error.
+    if (v !== v) continue;
+    if (v === Infinity || v === -Infinity) {
+      throw new ValidationError(
+        `${label}: index ${i} is ${v > 0 ? 'Infinity' : '-Infinity'}; ` +
+          'numeric columns accept finite values, or NaN to mark a gap',
+      );
+    }
+    owned[i] = v;
+    bits[i >> 3]! |= 1 << (i & 7);
+    defined += 1;
+  }
+  const validity =
+    defined === length ? undefined : validityFromBits(bits, length);
+  // Every defined cell was finite-checked above.
+  return new Float64Column(owned, length, validity, true);
 }

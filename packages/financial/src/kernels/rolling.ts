@@ -53,13 +53,13 @@ export function rollingColumns(
   series: TimeSeries<SeriesSchema>,
   specs: Record<string, { from: string; using: RollingReducer }>,
   period: number,
-): Record<string, Array<number | undefined>> {
+): Record<string, Float64Array> {
   const rolled = series.rolling(
     { count: period },
     specs as AggregateOutputMap<SeriesSchema>,
     { minSamples: period },
   );
-  const out: Record<string, Array<number | undefined>> = {};
+  const out: Record<string, Float64Array> = {};
   for (const name of Object.keys(specs)) {
     // Read the result column directly off the columnar store — materializing
     // `rolled.events` costs ~50× the whole rolling scan at 1M rows (one Event
@@ -78,7 +78,7 @@ export function rollingValues(
   column: string,
   reducer: RollingReducer,
   period: number,
-): Array<number | undefined> {
+): Float64Array {
   return rollingColumns(
     series,
     { value: { from: column, using: reducer } },
@@ -91,34 +91,76 @@ export function rollingValues(
 export function columnValues(
   series: TimeSeries<SeriesSchema>,
   column: string,
-): Array<number | undefined> {
+): Float64Array {
   return readNumericColumn(series, column);
 }
 
 /**
- * Row-aligned `(number | undefined)[]` read of one numeric column via the
- * public column API — no `series.events` materialization (an Event + data
- * object per row), which dominated study cost on large series. A column
- * that doesn't exist, or a non-number cell, reads as `undefined` — the same
- * values the old `event.data()[column]` walk produced.
+ * Row-aligned read of one numeric column into a `Float64Array`, with
+ * **`NaN` marking a missing cell** — [PND-STUDYBOX].
+ *
+ * This used to build an `Array<number | undefined>` by walking the column
+ * with the polymorphic `col.at(i)`: `n` megamorphic reads and `n` boxed
+ * slots, per study, per source column. Measured at 8.28 ms of `sma(20)`'s
+ * 22 ms on 500k bars, against 0.40 ms for the same read into a typed
+ * buffer.
+ *
+ * `NaN` as the gap marker is what makes the rest of the package
+ * simplify: it **propagates through arithmetic for free**, so a study's
+ * derivation (`m + sign * k * d`, `(v - m) / s`) no longer needs a
+ * per-cell `undefined` check on every input — only the genuinely
+ * study-specific guards survive, like "a zero standard deviation has no
+ * band". `TimeSeries.withColumn` accepts the same convention on its
+ * typed door ([PND-WCNAN]), so the result goes back without boxing.
+ *
+ * A column that doesn't exist, or a non-numeric one, reads as all-`NaN` —
+ * the same all-missing answer the boxed version produced.
+ *
+ * The buffer is a fresh copy: `toFloat64Array()` can hand back the
+ * column's own storage, and callers here derive in place.
  */
 function readNumericColumn(
   series: TimeSeries<SeriesSchema>,
   column: string,
-): Array<number | undefined> {
+): Float64Array {
+  const length = series.length;
+  const out = new Float64Array(length);
   const col = series.column(
     column as Parameters<TimeSeries<SeriesSchema>['column']>[0],
-  ) as { at(i: number): unknown } | undefined;
-  const length = series.length;
-  const values = new Array<number | undefined>(length);
-  if (col === undefined) {
-    return values.fill(undefined);
+  ) as
+    | {
+        kind?: string;
+        storage?: string;
+        validity?: { bits: Uint8Array };
+        toFloat64Array?: () => Float64Array;
+        at(i: number): unknown;
+      }
+    | undefined;
+
+  if (col === undefined || col.kind !== 'number') {
+    out.fill(NaN);
+    return out;
   }
+
+  if (col.storage === 'packed' && col.toFloat64Array !== undefined) {
+    out.set(col.toFloat64Array());
+    const bits = col.validity?.bits;
+    if (bits !== undefined) {
+      // Gap slots hold an arbitrary buffer value (typically 0); punch the
+      // marker in so downstream arithmetic propagates it.
+      for (let i = 0; i < length; i += 1) {
+        if ((bits[i >> 3]! & (1 << (i & 7))) === 0) out[i] = NaN;
+      }
+    }
+    return out;
+  }
+
+  // Chunked or otherwise non-packed: fall back to the polymorphic read.
   for (let i = 0; i < length; i += 1) {
     const v = col.at(i);
-    values[i] = typeof v === 'number' ? v : undefined;
+    out[i] = typeof v === 'number' ? v : NaN;
   }
-  return values;
+  return out;
 }
 
 /** Row-aligned `period`-span EMA values over `column` (`α = 2/(period+1)`),
@@ -128,7 +170,7 @@ export function emaValues(
   series: TimeSeries<SeriesSchema>,
   column: string,
   period: number,
-): Array<number | undefined> {
+): Float64Array {
   const smoothed = series.smooth(
     column as NumericColumnNameForSchema<SeriesSchema>,
     'ema',
