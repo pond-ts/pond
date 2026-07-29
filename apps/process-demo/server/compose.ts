@@ -15,6 +15,15 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { openaiComposer } from './compose-openai.js';
+import {
+  ANALYST,
+  ANSWER_TOOL,
+  MAX_ROUNDS,
+  resultText,
+  type Answer,
+  type Round,
+  type Runner,
+} from './agent.js';
 import type { DatasetInfo, Envelope, OpDescriptor } from '@pond-ts/process';
 
 export interface ComposerContext {
@@ -50,6 +59,17 @@ export interface Composer {
     ctx: ComposerContext,
     history: readonly Turn[],
   ): Promise<Composed>;
+  /**
+   * The same seam, one step further: compose, **read the result back**,
+   * and answer. `run` is supplied by the server so the loop never learns
+   * what a `Host` is.
+   */
+  converse(
+    prompt: string,
+    ctx: ComposerContext,
+    history: readonly Turn[],
+    run: Runner,
+  ): Promise<Answer>;
 }
 
 // ── the tool contract ────────────────────────────────────────
@@ -223,6 +243,38 @@ export function scriptedComposer(): Composer {
   return {
     kind: 'scripted',
     why: 'No API key — falling back to a keyword matcher.',
+
+    /**
+     * One round, and a reading of the facts rather than an answer.
+     *
+     * A keyword matcher cannot answer a question, and pretending
+     * otherwise would put prose on screen that looks like analysis and
+     * is not. It restates what came back and says who wrote it.
+     */
+    async converse(prompt, ctx, history, run: Runner): Promise<Answer> {
+      const t0 = performance.now();
+      const composed = await this.compose(prompt, ctx, history);
+      const round: Round = {
+        ...run(composed.envelope),
+        ...(composed.note !== undefined && { note: composed.note }),
+      };
+      const read = round.reading.facts
+        .map((f) => `${String(f['name'])} = ${String(f['value'] ?? '—')}`)
+        .join('; ');
+      return {
+        text:
+          read === ''
+            ? 'The plan produced no facts.'
+            : `Read back: ${read}. No model was involved, so this is a restatement rather than an answer.`,
+        cites: round.reading.facts.map((f) => String(f['name'])),
+        rounds: [round],
+        source: 'scripted',
+        ms: Math.round((performance.now() - t0) * 1000) / 1000,
+        warning:
+          'The offline keyword matcher cannot analyse a result — it only echoes the facts the engine returned.',
+      };
+    },
+
     async compose(prompt, ctx) {
       const t0 = performance.now();
       const text = prompt.toLowerCase();
@@ -287,6 +339,37 @@ export function scriptedComposer(): Composer {
   };
 }
 
+/** The plan tool, shared by the one-shot path and the answer loop. */
+function emitTool(ctx: ComposerContext): Anthropic.Tool {
+  return {
+    name: 'emit_request',
+    description:
+      'Emit the process request that answers the user’s prompt. Call this exactly once.',
+    input_schema: requestSchema(ctx) as Anthropic.Tool['input_schema'],
+  };
+}
+
+/** History and the op table, as the opening messages of either path. */
+function opening(
+  prompt: string,
+  ctx: ComposerContext,
+  history: readonly Turn[],
+): Anthropic.MessageParam[] {
+  const messages: Anthropic.MessageParam[] = [];
+  for (const turn of history) {
+    messages.push({ role: 'user', content: turn.prompt });
+    messages.push({
+      role: 'assistant',
+      content: `Previous request:\n${JSON.stringify(turn.envelope)}`,
+    });
+  }
+  messages.push({
+    role: 'user',
+    content: `${opTable(ctx)}\n\nRequest: ${prompt}`,
+  });
+  return messages;
+}
+
 export function anthropicComposer(options: {
   model: string;
   fallbacks: boolean;
@@ -295,36 +378,113 @@ export function anthropicComposer(options: {
   return {
     kind: 'anthropic',
     why: `Composing with ${options.model}.`,
-    async compose(prompt, ctx, history) {
-      const t0 = performance.now();
-      const tool = {
-        name: 'emit_request',
-        description:
-          'Emit the process request that answers the user’s prompt. Call this exactly once.',
-        input_schema: requestSchema(ctx) as Anthropic.Tool['input_schema'],
-      };
 
-      const messages: Anthropic.MessageParam[] = [];
-      for (const turn of history) {
-        messages.push({ role: 'user', content: turn.prompt });
+    /**
+     * Compose, run, read back, answer.
+     *
+     * The assistant's content blocks go back verbatim each round —
+     * thinking blocks included — because with adaptive thinking the
+     * model's reasoning about round one is what makes round two a
+     * *sharper* question rather than a differently-worded one.
+     */
+    async converse(prompt, ctx, history, run: Runner): Promise<Answer> {
+      const t0 = performance.now();
+      const answerTool: Anthropic.Tool = {
+        name: ANSWER_TOOL.name,
+        description: ANSWER_TOOL.description,
+        input_schema: ANSWER_TOOL.schema as Anthropic.Tool['input_schema'],
+      };
+      const messages = opening(prompt, ctx, history);
+      const rounds: Round[] = [];
+      const usage = { input: 0, output: 0, cacheRead: 0 };
+      let model: string | undefined;
+
+      for (let round = 0; round < MAX_ROUNDS; round += 1) {
+        // The last round may only answer, so the cap can never surface
+        // as a missing reply.
+        const last = round === MAX_ROUNDS - 1;
+        const response = await createWithFallbacks(
+          client,
+          {
+            model: options.model,
+            max_tokens: 16000,
+            system: ANALYST,
+            thinking: { type: 'adaptive' },
+            tools: last ? [answerTool] : [emitTool(ctx), answerTool],
+            tool_choice: last
+              ? { type: 'tool', name: ANSWER_TOOL.name }
+              : { type: 'any' },
+            messages,
+          },
+          options,
+        );
+        model = response.model;
+        usage.input += response.usage.input_tokens;
+        usage.output += response.usage.output_tokens;
+        usage.cacheRead += response.usage.cache_read_input_tokens ?? 0;
+
+        if (response.stop_reason === 'refusal') {
+          throw new Error(
+            `The model declined this prompt (${response.stop_details?.category ?? 'unspecified'}).`,
+          );
+        }
+        messages.push({ role: 'assistant', content: response.content });
+        const call = response.content.find(
+          (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use',
+        );
+        if (call === undefined) {
+          throw new Error('The model ended its turn without calling a tool.');
+        }
+
+        if (call.name === ANSWER_TOOL.name) {
+          const { answer, cites } = call.input as {
+            answer?: string;
+            cites?: string[];
+          };
+          return {
+            text: answer ?? '',
+            cites: cites ?? [],
+            rounds,
+            source: 'anthropic',
+            ...(model !== undefined && { model }),
+            ms: Math.round((performance.now() - t0) * 1000) / 1000,
+            usage,
+            ...(rounds.length === 0 && {
+              warning: 'The model answered without reading anything back.',
+            }),
+          };
+        }
+
+        const { envelope, note } = foldSlotRequest(
+          call.input as Record<string, unknown>,
+        );
+        const result = run({ ...envelope, onError: 'collect' } as Envelope);
+        rounds.push({ ...result, ...(note !== undefined && { note }) });
         messages.push({
-          role: 'assistant',
-          content: `Previous request:\n${JSON.stringify(turn.envelope)}`,
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: call.id,
+              content: resultText(rounds[rounds.length - 1]!),
+            },
+          ],
         });
       }
-      messages.push({
-        role: 'user',
-        content: `${opTable(ctx)}\n\nRequest: ${prompt}`,
-      });
 
+      throw new Error(`The model did not answer within ${MAX_ROUNDS} rounds.`);
+    },
+
+    async compose(prompt, ctx, history) {
+      const t0 = performance.now();
       const params: Anthropic.MessageCreateParamsNonStreaming = {
         model: options.model,
         max_tokens: 16000,
         system: SYSTEM,
         thinking: { type: 'adaptive' },
-        tools: [tool],
+        tools: [emitTool(ctx)],
         tool_choice: { type: 'tool', name: 'emit_request' },
-        messages,
+        messages: opening(prompt, ctx, history),
       };
 
       const response = await createWithFallbacks(client, params, options);

@@ -944,3 +944,52 @@ button.chip.on {
   content: '⟩';
   opacity: 0.6;
 }
+
+/* ── the answer ──────────────────────────────────────────────
+   Set apart from everything below it. The panel's other rows are
+   instrumentation — timings, badges, ids — and the reply is the one
+   thing on screen written for a person, so it reads at body size in
+   full-strength ink while the evidence stays muted. */
+.answer {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  padding: 12px 14px;
+  margin: 0 0 12px;
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.answer-text {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.answer-cites {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 0;
+}
+
+/* The names the prose rests on. Every figure in the answer came from
+   one of these, and they are the same names the cards below carry —
+   which is what makes a claim checkable rather than trusted. */
+.answer-cites code {
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px 6px;
+  color: var(--accent);
+  background: var(--bg);
+}
+
+.answer-meta {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.answer .notice {
+  margin: 10px 0 0;
+}

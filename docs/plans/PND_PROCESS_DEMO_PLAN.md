@@ -335,6 +335,67 @@ Reproducible: `apps/process-demo/scripts/refinement-run.mjs`.
 
 ---
 
+### M6 — The agent answers
+
+The app asked a question and showed the material for an answer: a z-score
+of `-1.94 σ`, a percentile, a chart. The last step — the one the person
+actually asked for — was left to the reader. M6 closes the loop. The
+model composes a plan, the engine runs it, **the facts go back to the
+model**, and it replies in prose.
+
+Two tools, `emit_request` and `answer`, and a loop of up to four rounds
+with the last forced to answer. The reading handed back is **facts only**
+— a reduction is a few numbers with a unit; the column behind it is
+150,000 points, and `select` exists precisely so a consumer can ask the
+graph a question instead of downloading it. A model is that consumer,
+several orders of magnitude more expensive per point.
+
+**The engine is 2% of the wall clock.** A seven-fact analysis of
+volatility, trend and momentum: **196.03 ms in the engine of 8,825 ms
+total**. Everything this library has been optimised for is a rounding
+error next to one model call — which is the argument for caching
+aggressively and for answering from reductions rather than columns, not
+against it. The 8.6 seconds are the budget; the way to spend fewer of
+them is to need fewer calls, and that is what a rich `select` buys.
+
+**One round almost always suffices.** The loop was built expecting the
+model to look, then look again. It rarely does — because it does not need
+to. Asked "whichever of RSI or the 50-bar z-score is more extreme, dig
+into that one", it fetched **all four facts in one request** and chose,
+rather than fetching two and coming back. That is a result about the
+reduction vocabulary: `select` is expressive enough that the branch
+collapses into a single plan. The rounds that do happen are the narrow
+cases — a rejected plan to retry against, or a value from an earlier turn.
+
+**Zero rounds is a real outcome.** Asked to annualise the price series
+directly, the model read the op table, saw the `variance` unit
+`annualise` demands, and declined **without running anything** — naming
+the chain that would work. The typed input the schema projection cannot
+express still did its job, one layer earlier than expected.
+
+#### Friction note: the cache is invisible until you mention it
+
+The sharpest finding, and it is not about the engine. Asked a follow-up —
+"is that high or low compared with the rest of the history?" — the model
+replied that it _could not_ compare against the previous turn's value
+because it did not have that result in hand. The nodes were **still
+resident and still free**. It simply had no reason to believe re-asking
+was cheap.
+
+Adding one line to the brief — "the cache outlives the turn; if an
+earlier result would help, ask for it again" — changed the same follow-up
+from a refusal to a full comparison at **`computed=2, cached=3`**. The
+capability was there the whole time; nothing exposed it.
+
+So: a response reports `cached` per node _after the fact_, and there is
+no way for a caller to ask **what is already resident** before composing.
+An agent that could see the resident set would plan differently — reach
+for the study it already has rather than the one it would have to build.
+That is a registry-adjacent gap worth a ticket, and it is the one thing
+this milestone found that a person driving the UI could never have.
+
+---
+
 ## Risks worth naming up front
 
 - **Cold-graph demo.** Covered by decision 1; it is listed again because

@@ -61,11 +61,37 @@ interface Composed {
   usage?: Record<string, number>;
   warning?: string;
 }
+/**
+ * The agent's reply, and the trips through the engine it rests on.
+ *
+ * `rounds` is the part worth showing. It is the record of the model
+ * looking twice — and of the second look costing nothing, which is the
+ * library claim the whole demo exists to test.
+ */
+interface AnswerBody {
+  text: string;
+  cites: string[];
+  rounds: {
+    note?: string;
+    ms: number;
+    computed: number;
+    cached: number;
+    reading: { facts: Fact[]; skipped?: unknown[] };
+  }[];
+  source: 'anthropic' | 'openai' | 'scripted';
+  model?: string;
+  ms: number;
+  usage?: Record<string, number>;
+  warning?: string;
+}
+
 interface Entry {
   id: number;
   prompt: string;
   composed?: Composed | undefined;
   result?: RunResult | undefined;
+  /** The prose reply. Absent until `/api/ask` lands. */
+  answer?: AnswerBody | undefined;
   /**
    * The envelope that actually produced `result` — which is not
    * `composed.envelope` once the request panel has been edited. The draw
@@ -214,17 +240,18 @@ export function App() {
       .map((e) => ({ prompt: e.prompt, envelope: e.composed!.envelope }));
 
     try {
-      const body = await post<{ composed: Composed; result: RunResult }>(
-        '/api/ask',
-        { prompt: trimmed, history },
-      );
+      const body = await post<{
+        answer: AnswerBody;
+        composed?: Composed;
+        result?: RunResult;
+      }>('/api/ask', { prompt: trimmed, history });
       setEntries((prev) =>
         prev.map((e) =>
           e.id === id
             ? {
                 ...e,
                 ...body,
-                ran: body.composed.envelope,
+                ran: body.composed?.envelope,
                 drawn: undefined,
                 drawError: undefined,
                 pending: false,
@@ -796,6 +823,46 @@ function RequestPanel(props: {
   );
 }
 
+/**
+ * The reply, above the work it rests on.
+ *
+ * The panel is called Results and for five milestones it showed
+ * everything except a result: reductions, charts, timings, all of it the
+ * *material* for an answer and none of it the answer. The question was
+ * "how stretched is the price right now" and the app replied with a
+ * z-score of 1.87 σ, leaving the last step — the one the person actually
+ * asked for — to the reader.
+ *
+ * The rounds line is not decoration. It is the claim under test, stated
+ * in the units that matter: how many times the agent went back to the
+ * engine, and how much of that it paid for.
+ */
+function AnswerCard(props: { answer: AnswerBody }) {
+  const { answer } = props;
+  const computed = answer.rounds.reduce((n, r) => n + r.computed, 0);
+  const cached = answer.rounds.reduce((n, r) => n + r.cached, 0);
+  const engine =
+    Math.round(answer.rounds.reduce((n, r) => n + r.ms, 0) * 100) / 100;
+  return (
+    <div className="answer">
+      <p className="answer-text">{answer.text}</p>
+      {answer.cites.length > 0 && (
+        <p className="answer-cites">
+          {answer.cites.map((c) => (
+            <code key={c}>{c}</code>
+          ))}
+        </p>
+      )}
+      <p className="answer-meta">
+        {answer.rounds.length} round{answer.rounds.length === 1 ? '' : 's'} ·{' '}
+        {computed} computed, {cached} cached · {engine} ms in the engine of{' '}
+        {answer.ms} ms total
+      </p>
+      {answer.warning && <p className="notice warn">{answer.warning}</p>}
+    </div>
+  );
+}
+
 function ResultsPanel(props: {
   entry: Entry | undefined;
   context: Context | undefined;
@@ -809,6 +876,8 @@ function ResultsPanel(props: {
   // drawing tab that is the columns fetch, and its all-cached row is the
   // point. The workbook shows the same data as its own step list.
   const shown = drawing ? (entry?.drawn ?? result) : result;
+  const answeredWithoutPlan =
+    entry?.answer !== undefined && entry.answer.rounds.length === 0;
   return (
     <section className="panel">
       <PanelTop
@@ -838,7 +907,16 @@ function ResultsPanel(props: {
         }
       />
 
-      {drawing && entry !== undefined && (
+      {tab === 'output' && entry?.answer && (
+        <AnswerCard answer={entry.answer} />
+      )}
+
+      {/* An answer with no plan behind it is a real outcome, not a
+          missing one: asked to annualise a price directly, the model
+          reads the op table, sees the unit `annualise` demands, and
+          declines without running anything. There is nothing to draw,
+          and "Waiting for a plan…" would be a lie. */}
+      {drawing && entry !== undefined && !answeredWithoutPlan && (
         <VizTab
           entry={entry}
           view={tab === 'workbook' ? 'workbook' : 'output'}
