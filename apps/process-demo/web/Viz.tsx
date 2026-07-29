@@ -66,6 +66,8 @@ export interface OutputInfo {
  */
 export interface Fact {
   id: string;
+  /** The caller's own name for this output — what a card is keyed by. */
+  name?: string;
   reduce: 'last' | 'extremes' | 'percentileRank' | 'shape';
   unit: string | null;
   [k: string]: unknown;
@@ -183,16 +185,23 @@ function FactCard(props: { fact: Fact; explain: Record<string, string> }) {
 
   return (
     <li className="fact">
-      {/* One row, not an absolutely-positioned chip: a long label and a
-          long reduction name (`percentileRank`) overlapped. */}
+      {/* The **name** leads. It is what the caller asked for, and the only
+          thing distinguishing two outputs that read the same node the same
+          way — which rendered as two identical cards until it was shown.
+          The lineage is where the number came from, so it goes underneath. */}
       <div className="fact-head">
         <span className="fact-name" title={fact.id}>
-          {label}
-          {suffix && <span className="fact-suffix">· {suffix}</span>}
+          {fact.name ?? label}
         </span>
         <span className="fact-reduce">{fact.reduce}</span>
       </div>
       {body}
+      {fact.name !== undefined && (
+        <div className="fact-lineage" title={fact.id}>
+          {label}
+          {suffix && <span className="fact-suffix">· {suffix}</span>}
+        </div>
+      )}
     </li>
   );
 }
