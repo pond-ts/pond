@@ -199,6 +199,33 @@ consumer signal. Plan:
   finite guard for `allFinite: false` reductions. Acceptance benchmarks
   already exist in `spikes/columnar-wasm/bench/controls.mjs`; each control is
   checked against pond-ts's answer before it is timed.
+- **[PND-NANREP]** — Audit whether the validity bitmap earns its keep on
+  **numeric** columns. Measured on a 1M column with 4% missing, same values
+  and same answer, varying only how "missing" is encoded: dense (no bitmap)
+  0.936 ms, **bitmap 1.398 ms (1.49×)**, **NaN-in-buffer 1.118 ms (1.19×)** —
+  so the bitmap representation costs ~25% more than NaN on a scan kernel.
+  Worse, the two encodings now coexist in the hottest path: after
+  [PND-STUDYBOX] one `sma(20)` converts bitmap→NaN (0.81 ms) and back
+  NaN→bitmap (1.32 ms), **2.12 ms of pure representation churn, ~21% of the
+  call**.
+
+  What the bitmap genuinely earns: it is **irreplaceable for string / boolean /
+  array columns** (no NaN to borrow), and it gives `count()` / `nullCount()` /
+  `hasMissing()` an O(1) answer from the cached `definedCount` — though a NaN
+  scheme could cache the same integer.
+
+  What it buys on numeric columns is thinner than it looks: the ability to
+  distinguish a _defined_ NaN from a gap. The reducer non-finite policy already
+  treats both as missing, row intake rejects non-finite outright, `fromColumns`
+  maps it to a gap, and `withColumn`'s typed door now does too — so a defined
+  NaN only arises from an operator's own arithmetic overflow, and only shows up
+  through `at(i)` / `scan()` on an `allFinite: false` column.
+
+  Not a small change: it moves an observable semantic. Scope it as a design
+  note first, with the `at(i)` behaviour on `allFinite: false` columns as the
+  decision point. Ties to [PND-WCNAN], which already chose NaN-as-missing for
+  typed intake.
+
 - **[PND-AGENTQ]** — The measured shape of the current agent workload, kept as
   the standing acceptance benchmark:
   `packages/financial/scripts/perf-agent-queries.mjs` (500k 1-minute OHLCV
