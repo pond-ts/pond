@@ -89,6 +89,11 @@ import {
   type ArrowTableLike,
   type FromArrowOptions,
 } from './operators/from-arrow.js';
+import {
+  storeToArrow,
+  type ArrowExport,
+  type ToArrowOptions,
+} from './operators/to-arrow.js';
 import { ValueSeries } from './value-series.js';
 import { diffRateOp, type DiffRateMode } from './operators/diff-rate.js';
 import { fillOp, type ResolvedFillSpec } from './operators/fill.js';
@@ -1051,13 +1056,23 @@ export class TimeSeries<S extends SeriesSchema> {
     table: ArrowTableLike,
     options: FromArrowOptions = {},
   ): TimeSeries<S> {
-    const { name, schema, columns } = arrowToColumns(table, options);
-    return TimeSeries.fromColumns({
-      name,
-      schema: schema as unknown as S,
+    const { name, schema, columns, adopted } = arrowToColumns(table, options);
+    // Goes to the shared ingest engine directly rather than through
+    // `fromColumns`, which has no parameter for `adopted` — the null-bearing
+    // numeric columns built straight from Arrow's buffers, which `RawColumns`
+    // cannot express because it cannot carry a validity bitmap. The engine is
+    // the same one `fromColumns` calls; only the `op` label differs, so a
+    // failure now names the door the caller actually went through.
+    const store = ingestColumnsToStore({
+      op: 'fromArrow',
+      keyNoun: 'timestamps',
+      schema: schema as unknown as ColumnSchema,
       columns,
       sort: options.sort ?? false,
+      adopted,
+      makeKey: (begin, count) => new TimeKeyColumn(begin, count),
     });
+    return timeSeriesFromTrustedStore(name, schema as unknown as S, store);
   }
 
   /**
@@ -1582,6 +1597,49 @@ export class TimeSeries<S extends SeriesSchema> {
   /** Example: `series.toRows()`. Returns normalized row arrays using `Time`/`TimeRange`/`Interval` keys and `undefined` for missing payload values. */
   toRows(): ReadonlyArray<NormalizedRowForSchema<S>> {
     return this.rows;
+  }
+
+  /**
+   * Example: `series.toArrow()`. Hands back this series' columns **in the
+   * Apache Arrow memory layout, without copying** — the export counterpart
+   * of {@link TimeSeries.fromArrow}.
+   *
+   * Every other export door here is row-shaped (`toRows`, `toObjects`,
+   * `toJSON`, `toPoints`, `toArray`), so reaching another columnar engine
+   * meant a full re-materialisation. It does not have to: pond's validity
+   * bitmap is LSB-first with one bit per value — Arrow's layout exactly —
+   * numeric columns are a contiguous `Float64Array`, booleans are a packed
+   * bitmap, and dict-encoded strings are `Int32Array` indices plus a
+   * dictionary. Those buffers are handed over as they stand.
+   *
+   * Returns `{ length, fields }` rather than an Arrow `Table`, because pond
+   * does not depend on `apache-arrow` — the caller brings their own and
+   * assembles with `makeData` / `makeVector`. See
+   * {@link ArrowExportField} for the per-field shape and the four-line
+   * adapter.
+   *
+   * The point is to make "bring your own compute engine" a buffer handoff:
+   * polars is 4–9× faster than pond on whole-column reductions, and a
+   * consumer who wants that should be able to reach it without pond taking
+   * a dependency and without paying a re-ingest to get there.
+   *
+   * **The buffers are live storage, not copies.** Writing to one corrupts
+   * this series — the same read-only contract `column()` and `keyColumn()`
+   * already carry, restated because this hands them to another library.
+   *
+   * Two things are not zero-copy, both named rather than hidden: a
+   * **chunked** column materializes first (chunked storage is several
+   * buffers; an Arrow field is one), and a **non-dict-encoded string**
+   * column is a plain JS array, which Arrow `Utf8` is not.
+   *
+   * A `timeRange` / `interval` key exports as two fields — `<key>` and
+   * `<key>End` — since Arrow has no interval-of-time type; an `interval`
+   * key's labels follow as `<key>Label`. A value column already using one
+   * of those names throws rather than producing a table with duplicate
+   * field names.
+   */
+  toArrow(options: ToArrowOptions = {}): ArrowExport {
+    return storeToArrow(this.#store.store, options);
   }
 
   /** Example: `series.toObjects()`. Returns normalized schema-keyed object rows using temporal key objects and `undefined` for missing payload values. */

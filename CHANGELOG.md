@@ -56,6 +56,25 @@ and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **core:** **`TimeSeries.toArrow(options?)` — zero-copy export to the Apache
+  Arrow memory layout**, the counterpart of `fromArrow`. Every other export
+  door is row-shaped, so reaching another columnar engine meant a full
+  re-materialisation; it never had to — pond's validity bitmap is LSB-first
+  one-bit-per-value (Arrow's layout exactly), numeric columns are a contiguous
+  `Float64Array`, booleans a packed bitmap, and dict-encoded strings
+  `Int32Array` indices plus a dictionary. `toArrow` hands those buffers over
+  as they stand and returns `{ length, fields }` rather than an Arrow `Table`
+  — pond does not depend on `apache-arrow`; the caller assembles with
+  `makeData` / `makeVector` in a few lines (shown on the method doc). The
+  buffers are **live storage, not copies** — the same read-only contract
+  `column()` / `keyColumn()` already carry. Two named non-zero-copy cases:
+  chunked columns materialize first, and a non-dict-encoded string column is
+  a plain JS array (Arrow `Utf8` wants offsets + bytes). A `timeRange` /
+  `interval` key exports as `<key>` + `<key>End` (+ `<key>Label` for interval
+  labels), and a value column already using one of those names throws rather
+  than producing duplicate field names. Types: `ArrowExport`,
+  `ArrowExportField`, `ArrowExportType`, `ToArrowOptions`.
+
 - **charts:** **`<BarChart binColors>` now works on the single-series
   time-axis path** — per-bar colours for a plain `series={…} column="…"` bar
   layer, the shape a **direction-coloured financial volume row** needs (derive
@@ -69,6 +88,28 @@ and type-level changes; patch bumps are strictly additive.
   visible bar draws.
 
 ### Changed
+
+- **core:** **`fromArrow` now adopts a null-bearing numeric column's buffers
+  zero-copy** — 19.3 ms → 1.5 ms (**12.7×**) on 500k rows with 4% nulls.
+  Arrow's validity bitmap is byte-identical to pond's, so both the values
+  buffer and the bitmap become the column's storage as they stand; the old
+  per-element `vector.get(i)` walk remains only as the fallback. Adoption
+  declines — falling back with the same answer — for a sliced vector
+  (non-zero chunk offset), a multi-chunk vector, a non-`Float64Array` values
+  buffer, a `nullCount` disagreeing with the bitmap's popcount, or a defined
+  cell holding a non-finite value (which keeps pond's NaN-as-gap intake
+  semantics: adopting would have made the same table ingest differently
+  depending on whether adoption was possible). Aliasing note: like the dense
+  path's existing adopt, the resulting column shares memory with the Arrow
+  table — mutating the table's buffers afterwards corrupts the series.
+
+- **core:** **`fromColumns` / `fromArrow` numeric columns with gaps now carry
+  `allFinite: true`.** The ingest predicate ("a cell is defined iff its value
+  is finite") _is_ the finiteness proof, but the flag was previously set only
+  for gap-free columns — so a single missing cell cost the column the
+  unguarded reduction fast path for the life of the series. Same answers,
+  faster reductions on gapped columns; observable as the column's `allFinite`
+  field now being `true` where it was `false`.
 
 - **core:** **`sum` and `mean` are ~2.5× faster on long runs**, and their
   results may differ from previous versions in the last ulp. Runs of **32 or

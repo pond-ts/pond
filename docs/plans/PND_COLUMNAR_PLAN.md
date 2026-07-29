@@ -616,3 +616,67 @@ The composite path does not need Rust — it is already competitive per core.
 The reduction path plausibly does, but the first ~2× there is a TypeScript
 change ([PND-KERNEL] item 3) and the rest is SIMD, which WASM offers and the
 spike measured at 1.00× only because it was benchmarking the wrong algorithm.
+
+### [PND-KERNEL] item 3 — blocked summation — SHIPPED
+
+Runs of ≥ 32 cells in `sum` / `mean` accumulate into eight independent
+partial sums (`packages/core/src/reducers/blocked.ts`): **2.51×** dense,
+**2.22×** through a validity bitmap, `close.mean()` **0.47 → 0.19 ms** end
+to end — the polars gap on `mean` closes from 8.98× to ~3.8× with no Rust.
+The semantics decision that blocked this is made and recorded in
+[blocked-summation.md](../notes/blocked-summation.md): reassociation is not
+bit-identical to the previous output, but it is _more_ accurate
+(O((n/k)·ε + k·ε) vs O(n·ε) error growth — pinned as tests); runs below the
+32-cell threshold stay sequential and bit-identical, which keeps the
+exact-equality row-path parity tests meaningful. Deliberately left
+sequential: the guarded `allFinite: false` path (measured 1.84×, but cold
+after [PND-WCNAN]), `stdev` (a Welford recurrence, not an accumulation), and
+the rolling kernel (add/remove windows — never calls these; the financial
+oracle is untouched). The same pass **corrected the plan's `minMax` claim**:
+the 4-lane form is _not_ bit-identical (signed-zero selection differs;
+counterexample in the note) and is not taken.
+
+### [PND-TOARROW] / [PND-ARROWNULL] — Arrow doors both ways — SHIPPED
+
+The follow-through on the polars assessment
+([polars-as-core-assessment-2026-07.md](../notes/polars-as-core-assessment-2026-07.md)):
+make Arrow the interop boundary in both directions instead of adopting any
+engine as a core.
+
+**`toArrow`** (`packages/core/src/batch/operators/to-arrow.ts`,
+`TimeSeries.toArrow()`): hands the live buffers over in Arrow's layout —
+numerics as the `Float64Array` itself, validity bitmap as-is (LSB-first,
+bit-identical to Arrow's), booleans as the packed bitmap, dict-encoded
+strings as `Int32Array` indices + dictionary. Returns `{ length, fields }`,
+not an Arrow `Table` — pond takes no dependency; the caller assembles with
+`makeData`/`makeVector` (adapter on the method doc). Two named
+non-zero-copy cases: chunked columns materialize; non-dict strings are a
+plain JS array. Two-edged keys flatten to `<key>` + `<key>End`
+(+ `<key>Label`), with a named error on collision rather than duplicate
+Arrow field names.
+
+**`fromArrow` null path** — a null-bearing `Float64` column now adopts
+**both** buffers zero-copy: **19.3 → 1.5 ms (12.7×)** at 500k rows / 4%
+nulls, faster than the dense path (which still pays a
+closure-per-cell `validityFromPredicate`). Adoption declines to the old
+`get()` walk (same answers — differential-tested, gates mutation-tested)
+for: sliced vectors (chunk offset ≠ 0), multi-chunk, non-`Float64Array`
+values, `nullCount` disagreeing with the bitmap popcount, or a **defined
+non-finite cell** — that last one is the semantics gate keeping NaN-as-gap
+intake uniform whether or not adoption is possible. The finiteness scan
+doubles as the `allFinite` proof, so adopted columns land on the unguarded
+reduction path.
+
+Ingest-side enabler, worth knowing on its own: `ingestColumnsToStore` gained
+an `adopted` channel for pre-built columns, and — a separate observable
+change — **numeric columns with gaps now carry `allFinite: true`** (the
+ingest predicate _is_ the finiteness proof; the flag was previously dropped
+whenever a bitmap existed, costing every gapped column the fast reduction
+path for the life of the series).
+
+Round trip pinned against real `apache-arrow`:
+`toArrow → Table → fromArrow` shares the original storage (values buffer by
+object identity; key and bitmap by `ArrayBuffer` — arrow re-wraps views).
+Deferred, none blocking: `ValueSeries.toArrow` (same store walk, no puller
+yet), IPC-bytes convenience (`tableToIPC` is the caller's two-liner), and a
+how-to showing the polars sidecar pattern end to end.

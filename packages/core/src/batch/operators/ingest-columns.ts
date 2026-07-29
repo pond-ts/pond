@@ -52,8 +52,22 @@ export function ingestColumnsToStore(input: {
   columns: RawColumns;
   sort: boolean;
   makeKey: (begin: Float64Array, count: number) => KeyColumn;
+  /**
+   * Value columns that are **already built** and should be installed as they
+   * stand, bypassing the packing loop. The escape hatch for a source whose
+   * buffers are already in pond's layout and so has nothing to pack —
+   * currently only `fromArrow`'s null-bearing numeric columns, where Arrow's
+   * validity bitmap is byte-identical to pond's and `RawColumns` has no way
+   * to carry a bitmap alongside the values.
+   *
+   * A name here must **not** also appear in `columns`, and is incompatible
+   * with `sort` (sorting permutes rows into fresh buffers, so there is
+   * nothing to adopt). Callers decide not to adopt when sorting rather than
+   * handing over a column that would have to be taken apart again.
+   */
+  adopted?: ReadonlyMap<string, ColumnarColumn>;
 }): ColumnarStore<ColumnSchema> {
-  const { op, keyNoun, schema, columns, sort, makeKey } = input;
+  const { op, keyNoun, schema, columns, sort, makeKey, adopted } = input;
 
   const keyDef = schema[0];
   if (keyDef === undefined) {
@@ -130,6 +144,31 @@ export function ingestColumnsToStore(input: {
           `'${def.name}' is '${def.kind}'`,
       );
     }
+    // Already-built column (see `adopted`) — install it and skip packing.
+    const ready = adopted?.get(def.name);
+    if (ready !== undefined) {
+      if (order !== null) {
+        throw new Error(
+          `${op}: internal — column '${def.name}' was adopted but the rows ` +
+            `are being sorted; adoption and sort are mutually exclusive`,
+        );
+      }
+      if (ready.length !== count) {
+        throw new ValidationError(
+          `${op}: column '${def.name}' length ${ready.length} does not match ` +
+            `key length ${count}`,
+        );
+      }
+      if (ready.kind !== def.kind) {
+        throw new ValidationError(
+          `${op}: column '${def.name}' is '${ready.kind}' but the schema ` +
+            `declares '${def.kind}'`,
+        );
+      }
+      columnMap.set(def.name, ready);
+      continue;
+    }
+
     const raw = columns[def.name];
     if (raw === undefined) {
       throw new ValidationError(`${op}: missing column '${def.name}'`);
@@ -212,10 +251,15 @@ export function ingestColumnsToStore(input: {
     const validity = validityFromPredicate(count, (j) =>
       Number.isFinite(values[j]!),
     );
-    columnMap.set(
-      def.name,
-      new Float64Column(values, count, validity, validity === undefined),
-    );
+    // `allFinite: true` is **proven**, not assumed. The predicate above IS
+    // the finiteness test: a cell is defined iff its value is finite, and
+    // `values` is not touched afterwards. So "every defined cell is finite"
+    // — the exact contract of the flag — holds by construction, whether or
+    // not gaps exist. (This previously passed `validity === undefined`,
+    // which was conservative to the point of being wasteful: any column
+    // with a single gap lost the unguarded reduction path for the life of
+    // the series, even though its defined cells were provably finite.)
+    columnMap.set(def.name, new Float64Column(values, count, validity, true));
   }
 
   return ColumnarStore.fromTrustedStore(schema, keys, columnMap);

@@ -30,11 +30,18 @@ export { TimeSeries, type KeyLike } from './batch/time-series.js';
 export type {
   ArrowTableLike,
   ArrowVectorLike,
+  ArrowDataLike,
   ArrowFieldLike,
   ArrowSchemaLike,
   ArrowTimeUnit,
   FromArrowOptions,
 } from './batch/operators/from-arrow.js';
+export type {
+  ArrowExport,
+  ArrowExportField,
+  ArrowExportType,
+  ToArrowOptions,
+} from './batch/operators/to-arrow.js';
 export { ValueSeries } from './batch/value-series.js';
 export { top } from './reducers/index.js';
 export { ValidationError } from './core/errors.js';
