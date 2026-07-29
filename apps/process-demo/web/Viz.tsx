@@ -31,6 +31,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { TimeSeries, type SeriesSchema } from 'pond-ts';
+import { colorsForNodes, PALETTE } from './palette.js';
 import {
   BandChart,
   ChartContainer,
@@ -98,6 +99,20 @@ function show(value: number): string {
  * while `explain` is keyed by the spec id alone. Longest-prefix wins, so
  * a band's `…Upper` finds its parent and keeps the suffix as the label.
  */
+/** The node a fact's column belongs to — longest matching id wins. */
+function ownerOf(id: string, ids: Iterable<string>): string | undefined {
+  let best: string | undefined;
+  for (const key of ids) {
+    if (
+      id.startsWith(key) &&
+      (best === undefined || key.length > best.length)
+    ) {
+      best = key;
+    }
+  }
+  return best;
+}
+
 function labelFor(
   id: string,
   explain: Record<string, string>,
@@ -111,7 +126,11 @@ function labelFor(
     : { label: explain[best]!, suffix: id.slice(best.length) };
 }
 
-function FactCard(props: { fact: Fact; explain: Record<string, string> }) {
+function FactCard(props: {
+  fact: Fact;
+  explain: Record<string, string>;
+  color?: string | undefined;
+}) {
   const { fact } = props;
   const { label, suffix } = labelFor(fact.id, props.explain);
   const unit = fact.unit === null ? '' : fact.unit;
@@ -186,7 +205,14 @@ function FactCard(props: { fact: Fact; explain: Record<string, string> }) {
   })();
 
   return (
-    <li className="fact">
+    <li
+      className="fact"
+      // The node's colour, so a card and the curve it came from read as
+      // the same thing without either being labelled.
+      style={
+        props.color === undefined ? undefined : { borderLeftColor: props.color }
+      }
+    >
       {/* The **name** leads. It is what the caller asked for, and the only
           thing distinguishing two outputs that read the same node the same
           way — which rendered as two identical cards until it was shown.
@@ -215,8 +241,6 @@ function decode(b64: string): Float64Array {
   for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
   return new Float64Array(bytes.buffer);
 }
-
-const PALETTE = ['#6fb3ff', '#f0b429', '#4fd1a5', '#c792ea', '#ff7a7a'];
 
 /** Styling is a theme channel, not a per-layer prop — one theme per figure. */
 function themeFor(color: string): ChartTheme {
@@ -369,6 +393,10 @@ export function Viz(props: {
   const drawn = useDrawn(props.frames);
   const [ref, width] = useWidth();
   const groups = Object.entries(props.outputs).filter(([, o]) => o.length > 0);
+  // One colour map for the whole panel, derived the same way the pipeline
+  // derives its own — so a box and its curve match without either being
+  // told about the other.
+  const colors = useMemo(() => colorsForNodes(props.nodes), [props.nodes]);
   // Anything already drawn keeps rendering; only a panel with nothing in
   // it yet gets a message instead of content.
   const blank = drawn === undefined;
@@ -407,6 +435,7 @@ export function Viz(props: {
           asked={props.asked}
           facts={props.facts}
           explain={props.explain}
+          colors={colors}
         />
       )}
 
@@ -418,6 +447,7 @@ export function Viz(props: {
           nodes={props.nodes}
           facts={props.facts}
           explain={props.explain}
+          colors={colors}
         />
       )}
 
@@ -462,6 +492,7 @@ function Output(props: {
   asked: readonly string[];
   facts: readonly Fact[];
   explain: Record<string, string>;
+  colors: Map<string, string>;
 }) {
   // An empty `asked` means the request named nothing — an older nested
   // plan, say — so everything is shown rather than nothing.
@@ -489,18 +520,19 @@ function Output(props: {
               key={`${f.id}:${f.reduce}:${i}`}
               fact={f}
               explain={props.explain}
+              color={props.colors.get(ownerOf(f.id, props.colors.keys()) ?? '')}
             />
           ))}
         </ul>
       )}
-      {named.map(([id, outs], g) => (
+      {named.map(([id, outs]) => (
         <Figure
           key={id}
           id={id}
           outs={outs}
           drawn={props.drawn}
           width={props.width}
-          color={PALETTE[g % PALETTE.length]!}
+          color={props.colors.get(id) ?? PALETTE[0]!}
           caption={
             <>
               {outs[0]?.name ?? props.explain[id] ?? id}
@@ -529,6 +561,7 @@ function Workbook(props: {
   nodes: readonly NodeTiming[];
   facts: readonly Fact[];
   explain: Record<string, string>;
+  colors: Map<string, string>;
 }) {
   return (
     <div className="workbook">
@@ -536,10 +569,17 @@ function Workbook(props: {
         {props.nodes.map((n, i) => {
           const outs = props.outputs[n.id] ?? [];
           const state = !n.pulled ? 'idle' : n.cached ? 'cached' : 'computed';
+          const color = props.colors.get(n.id) ?? PALETTE[0]!;
           return (
-            <li key={n.id} className={`step ${state}`}>
+            <li
+              key={n.id}
+              className={`step ${state}`}
+              style={{ borderLeftColor: color }}
+            >
               <div className="step-head">
-                <span className="step-n">{i + 1}</span>
+                <span className="step-n" style={{ borderColor: color, color }}>
+                  {i + 1}
+                </span>
                 {n.slot !== undefined && (
                   <span className="step-slot">{n.slot}</span>
                 )}
@@ -558,7 +598,7 @@ function Workbook(props: {
                   outs={outs}
                   drawn={props.drawn}
                   width={props.width - 26}
-                  color={PALETTE[i % PALETTE.length]!}
+                  color={color}
                   caption={
                     outs[0]?.unit ? (
                       <span className="meta">{outs[0].unit}</span>
@@ -586,6 +626,9 @@ function Workbook(props: {
                 key={`${f.id}:${f.reduce}:${i}`}
                 fact={f}
                 explain={props.explain}
+                color={props.colors.get(
+                  ownerOf(f.id, props.colors.keys()) ?? '',
+                )}
               />
             ))}
           </ul>

@@ -388,17 +388,17 @@ button.tab.on {
   overflow: hidden;
 }
 
-.flow-node.cached {
-  border-left-color: var(--cold);
-}
-
-.flow-node.computed {
-  border-left-color: var(--warm);
-}
-
 .flow-node.idle {
-  border-left-color: var(--line);
   opacity: 0.72;
+}
+
+/* Warm/cold moved off the border, which now carries identity. */
+.flow-badge.cached {
+  color: var(--cold);
+}
+
+.flow-badge.computed {
+  color: var(--warm);
 }
 
 .flow-node.source {
@@ -708,13 +708,12 @@ button.tab.on {
   text-align: center;
 }
 
-.step.computed .step-n {
-  border-color: var(--warm);
+/* The step number carries the node's colour; the badge carries state. */
+.step.computed .step-badge {
   color: var(--warm);
 }
 
-.step.cached .step-n {
-  border-color: var(--cold);
+.step.cached .step-badge {
   color: var(--cold);
 }
 
