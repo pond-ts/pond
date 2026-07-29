@@ -499,6 +499,40 @@ export function App() {
   );
 }
 
+/**
+ * The top of a column: title and its one action, the run's numbers on
+ * their own line, anything the run wants to say, then the views.
+ *
+ * Shared so the three columns line up — the rules land at the same
+ * height whether or not a panel has meta or notes to show, which is what
+ * makes them read as one header rather than three.
+ */
+function PanelTop(props: {
+  title: string;
+  meta?: React.ReactNode;
+  action?: React.ReactNode;
+  notes?: React.ReactNode;
+  tabs?: React.ReactNode;
+}) {
+  return (
+    <header className="panel-top">
+      <div className="panel-title">
+        <h2>{props.title}</h2>
+        {props.action}
+      </div>
+      <p className="panel-meta">{props.meta}</p>
+      {props.notes !== undefined && (
+        <div className="panel-notes">{props.notes}</div>
+      )}
+      {props.tabs !== undefined && (
+        <nav className="panel-tabs">
+          <div className="tabs">{props.tabs}</div>
+        </nav>
+      )}
+    </header>
+  );
+}
+
 function Composer(props: {
   context: Context | undefined;
   entries: Entry[];
@@ -512,12 +546,14 @@ function Composer(props: {
   const { context } = props;
   return (
     <section className="panel composer">
-      <div className="panel-head">
-        <h2>Composer</h2>
-        <button onClick={props.onClear} disabled={props.entries.length === 0}>
-          Clear
-        </button>
-      </div>
+      <PanelTop
+        title="Composer"
+        action={
+          <button onClick={props.onClear} disabled={props.entries.length === 0}>
+            Clear
+          </button>
+        }
+      />
 
       <form
         onSubmit={(e) => {
@@ -668,43 +704,56 @@ function RequestPanel(props: {
 
   return (
     <section className="panel">
-      <div className="panel-head">
-        <h2>Request</h2>
-        {composed && entry && (
-          <>
-            <span className="meta">
+      <PanelTop
+        title="Request"
+        meta={
+          composed && (
+            <>
               {composed.source === 'scripted'
                 ? 'scripted'
                 : `${composed.model ?? 'model'} · ${Math.round(composed.ms)} ms`}
               {composed.usage && ` · ${composed.usage['output']} out`}
               {edited && ' · edited'}
-            </span>
-            {/* In the head, not under the JSON: the envelope is long
-                enough that a button below it is off-screen, and re-running
-                the same plan is how you see the badges flip to cached. */}
+            </>
+          )
+        }
+        action={
+          /* Beside the title, not under the JSON: the envelope is long
+             enough that a button below it is off-screen, and re-running
+             the same plan is how you see the badges flip to cached. */
+          composed &&
+          entry && (
             <button
               onClick={() => props.onRerun(entry, parsed.value)}
               disabled={entry.pending || parsed.error !== undefined}
             >
-              Re-run
+              Rerun
             </button>
+          )
+        }
+        notes={
+          <>
+            {composed?.warning && (
+              <p className="notice warn">{composed.warning}</p>
+            )}
+            {composed?.note && <p className="notice">{composed.note}</p>}
+            {parsed.error && <p className="notice bad">{parsed.error}</p>}
           </>
-        )}
-        <div className="tabs">
-          {(['json', 'graph'] as const).map((t) => (
-            <button
-              key={t}
-              className={t === tab ? 'tab on' : 'tab'}
-              onClick={() => setTab(t)}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-      </div>
-      {composed?.warning && <p className="notice warn">{composed.warning}</p>}
-      {composed?.note && <p className="notice">{composed.note}</p>}
-      {parsed.error && <p className="notice bad">{parsed.error}</p>}
+        }
+        tabs={
+          <>
+            {(['json', 'graph'] as const).map((t) => (
+              <button
+                key={t}
+                className={t === tab ? 'tab on' : 'tab'}
+                onClick={() => setTab(t)}
+              >
+                {t}
+              </button>
+            ))}
+          </>
+        }
+      />
       {tab === 'graph' && entry !== undefined ? (
         <>
           <Pipeline
@@ -757,27 +806,32 @@ function ResultsPanel(props: {
   const shown = drawing ? (entry?.drawn ?? result) : result;
   return (
     <section className="panel">
-      <div className="panel-head">
-        <h2>Results</h2>
-        {shown && (
-          <span className="meta">
-            {shown.as ? `${shown.as} · ` : ''}
-            {shown.ms} ms
-            {shown.encodeMs !== undefined && ` · +${shown.encodeMs} ms encode`}
-          </span>
-        )}
-        <div className="tabs">
-          {(['output', 'workbook', 'raw'] as const).map((t) => (
-            <button
-              key={t}
-              className={t === tab ? 'tab on' : 'tab'}
-              onClick={() => setTab(t)}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-      </div>
+      <PanelTop
+        title="Output"
+        meta={
+          shown && (
+            <>
+              {shown.as ? `${shown.as} · ` : ''}
+              {shown.ms} ms
+              {shown.encodeMs !== undefined &&
+                ` · +${shown.encodeMs} ms encode`}
+            </>
+          )
+        }
+        tabs={
+          <>
+            {(['output', 'workbook', 'raw'] as const).map((t) => (
+              <button
+                key={t}
+                className={t === tab ? 'tab on' : 'tab'}
+                onClick={() => setTab(t)}
+              >
+                {t}
+              </button>
+            ))}
+          </>
+        }
+      />
 
       {drawing && entry !== undefined && (
         <VizTab

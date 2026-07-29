@@ -42,7 +42,9 @@ kbd {
   height: 100vh;
 }
 
-header {
+/* Scoped: a bare `header` selector also caught every panel's own
+   `<header>`, laying its rows out in a row. */
+.app > header {
   display: flex;
   align-items: baseline;
   gap: 12px;
@@ -50,7 +52,7 @@ header {
   border-bottom: 1px solid var(--line);
 }
 
-header h1 {
+.app > header h1 {
   font-size: 15px;
   font-weight: 600;
   margin: 0;
@@ -88,18 +90,65 @@ main {
   min-height: 0;
 }
 
-.panel-head {
+/* ── column header ─────────────────────────────────────────── */
+
+.panel-top {
+  display: block;
+  margin-bottom: 12px;
+}
+
+/* Fixed, not minimum: a column with no action button was 5px shorter
+   than one with, so the rules beneath drifted out of line. */
+.panel-title {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 10px;
+  height: 33px;
+}
+
+/* Always present, and a fixed height even when empty, so the rule below
+   lands at the same place in every column whether or not there is
+   anything to say. */
+.panel-meta {
+  margin: 2px 0 0;
+  height: 27px;
+  line-height: 18px;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-notes,
+.panel-meta {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 8px;
+}
+
+.panel-notes {
+  margin-top: 8px;
+}
+
+.panel-notes:empty {
+  display: none;
+}
+
+.panel-notes .notice:last-child {
+  margin-bottom: 0;
+}
+
+.panel-tabs {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
 }
 
 .panel h2 {
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.09em;
-  color: var(--muted);
+  color: var(--ink);
   margin: 0 auto 0 0;
   font-weight: 600;
 }
