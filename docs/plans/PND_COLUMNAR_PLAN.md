@@ -554,3 +554,65 @@ commit (`206ef18`), with the same 1000-iteration warm-up now used everywhere.
 
 The headline (strategy pass ~4.9×) held up. The per-query numbers moved in
 both directions, and two of them were entirely artefacts.
+
+### External reference: polars (Rust kernels)
+
+pandas answers "how fast is what a practitioner would otherwise reach for".
+**polars answers the sharper question — how fast is this work when the kernels
+are Rust?** That makes it the most relevant external number this project has:
+the Rust/WASM spike asked whether porting the substrate would pay, and polars
+is that port, done by someone else, on the same workload.
+
+`packages/financial/scripts/perf-vs-polars.mjs`, 500k 1-minute OHLCV bars,
+polars 1.36.1. `st` = 1 thread (the per-core comparison); `mt` = 10 threads
+(what polars gives a user by default). **< 1.00× means pond-ts is faster.**
+
+| query                     | pond-ts        | polars st      | polars mt      | vs st         | vs mt         |
+| ------------------------- | -------------- | -------------- | -------------- | ------------- | ------------- |
+| `ema(20)`                 | 2.08 ms        | 6.33 ms        | 6.27 ms        | **0.33×**     | **0.33×**     |
+| `bollinger(20)`           | 23.23 ms       | 43.16 ms       | 13.78 ms       | **0.54×**     | 1.69×         |
+| `envelope(20)`            | 11.78 ms       | 16.75 ms       | 6.06 ms        | **0.70×**     | 1.94×         |
+| **5-study strategy pass** | **64.32 ms**   | **77.35 ms**   | 18.95 ms       | **0.83×**     | 3.39×         |
+| `zScore(20)`              | 17.83 ms       | 18.37 ms       | 13.19 ms       | **0.97×**     | 1.35×         |
+| `sma(20)` / `sma(200)`    | 6.48 / 6.99 ms | 5.55 / 5.49 ms | 5.52 / 5.48 ms | 1.17× / 1.27× | 1.17× / 1.28× |
+| `close.median()`          | 2.46 ms        | 1.72 ms        | 1.63 ms        | 1.43×         | 1.51×         |
+| `close.percentile(95)`    | 2.44 ms        | 0.67 ms        | 0.67 ms        | 3.64×         | 3.67×         |
+| `close.minMax()`          | 0.47 ms        | 0.10 ms        | 0.09 ms        | 4.85×         | 5.05×         |
+| `volume.sum() + minMax()` | 0.95 ms        | 0.16 ms        | 0.15 ms        | 5.88×         | 6.30×         |
+| `close.stdev()`           | 2.52 ms        | 0.31 ms        | 0.30 ms        | 8.16×         | 8.32×         |
+| `percentChange()`         | 3.25 ms        | 0.36 ms        | 0.40 ms        | 8.92×         | 8.05×         |
+| `close.mean()`            | 0.47 ms        | 0.05 ms        | 0.05 ms        | 8.98×         | 9.34×         |
+
+**The result splits cleanly by shape, and the split is informative.**
+
+**Composite studies: pond-ts is level or ahead per core.** The five-study
+strategy pass — the thing agents actually run — is **0.83×**, i.e. pond-ts
+beats single-threaded polars. `ema` is **0.33×**, three times faster (checked:
+the warm-up gate this benchmark adds to polars' `ewm_mean` costs 0.12 ms of
+its 6.17 ms, so the gap is real and not the harness).
+
+**Whole-column reductions: polars is 4–9× ahead.** `mean` 8.98×, `stdev`
+8.16×, `sum`+`minMax` 5.88×, `minMax` 4.85×. These are the simplest kernels in
+the library and the largest gap — which is exactly what a SIMD, multi-
+accumulator implementation buys and a scalar sequential loop does not.
+
+**This is the same finding the WASM spike made, from the other side.** The
+spike measured dense `sum` at **1.00×** against a hand-written Rust kernel and
+read it as "there is nothing here". Both were doing scalar sequential
+accumulation, so of course they tied. polars shows what the kernel is
+_capable_ of: ~9×. The spike's conclusion was right about the language and
+wrong about the ceiling — the headroom is in vectorisation and reassociation,
+which [PND-KERNEL] already lists (8-accumulator `sum`/`mean`, measured
+1.83–1.85×, blocked on a semantics decision because reassociation is not
+bit-identical).
+
+**Threads are the other half.** polars at 10 threads takes the strategy pass to
+18.95 ms — 3.39× ahead. Nothing in pond-ts is parallel, and for a
+load-once/query-many agent workload on a multi-core box that is a real
+structural gap, independent of any kernel work.
+
+**What this says about the Rust question.** It sharpens rather than settles it.
+The composite path does not need Rust — it is already competitive per core.
+The reduction path plausibly does, but the first ~2× there is a TypeScript
+change ([PND-KERNEL] item 3) and the rest is SIMD, which WASM offers and the
+spike measured at 1.00× only because it was benchmarking the wrong algorithm.
