@@ -17,8 +17,14 @@ import {
   defineNode,
   derive,
   fromLive,
+  process,
+  createRegistry,
+  int,
+  num,
   port,
   source,
+  type AsyncEnvelope,
+  type Envelope,
   type GraphJson,
   type Node,
   type Outlet,
@@ -80,4 +86,103 @@ for (const node of graph.order()) {
 
 // Port handles keep their value type when passed around.
 const outlet: Outlet<number> = extent.out.max;
-void [rowCount, lo, snapshot, json, outlet];
+
+// Synchronous envelopes stay string-bound even though runAsync also accepts
+// opaque source references. Local-host callers may rely on this narrowing.
+declare const localEnvelope: Envelope;
+const localDatasetId: string = localEnvelope.from;
+declare const eitherEnvelope: AsyncEnvelope;
+const asyncSource = eitherEnvelope.from;
+
+// Registry-bound fluent plans retain op params, extra input roles and outputs.
+const ops = createRegistry()
+  .define({
+    name: 'scale',
+    family: 'test',
+    summary: 'Scale.',
+    params: { by: num({ default: 2 }) },
+    inputs: [{ role: 'source' }],
+    outputs: [{ id: '', unit: 'inherit' }],
+    run: () => [],
+  })
+  .define({
+    name: 'band',
+    family: 'test',
+    summary: 'Band.',
+    params: { period: int({ default: 20 }) },
+    inputs: [{ role: 'source' }],
+    outputs: [
+      { id: 'Upper', unit: 'inherit' },
+      { id: 'Lower', unit: 'inherit' },
+    ],
+    run: () => [[], []],
+  })
+  .define({
+    name: 'difference',
+    family: 'test',
+    summary: 'Difference.',
+    params: {},
+    inputs: [{ role: 'left' }, { role: 'right' }],
+    outputs: [{ id: '', unit: 'inherit' }],
+    run: () => [],
+  });
+
+const fluent = process(ops, 'prices');
+const px = fluent.column('px');
+const scaled = px.scale({ as: 'scaled', by: 4 });
+const band = scaled.band({ as: 'band', period: 20 });
+const difference = band
+  .output('Upper')
+  .difference({ as: 'width', right: band.output('Lower') });
+fluent.outputs({
+  band: band.columns(),
+  upper: band.output('Upper').columns(),
+  latest: difference.last(),
+});
+
+// @ts-expect-error `by` is numeric.
+px.scale({ as: 'bad-param', by: '4' });
+// @ts-expect-error Params come from the selected op only.
+px.scale({ as: 'bad-name', period: 20 });
+// @ts-expect-error Multi-output suffixes come from the registry.
+band.output('Middle');
+// @ts-expect-error The second input role is required and named.
+band.output('Upper').difference({ as: 'missing-right' });
+
+// Redefining a name replaces the old definition in the accumulated type,
+// matching the registry's runtime Map semantics.
+const replacedOps = createRegistry()
+  .define({
+    name: 'scale',
+    family: 'test',
+    summary: 'Original scale.',
+    params: { by: num({ default: 2 }) },
+    inputs: [{ role: 'source' }],
+    outputs: [{ id: '', unit: 'inherit' }],
+    run: () => [],
+  })
+  .define({
+    name: 'scale',
+    family: 'test',
+    summary: 'Replacement scale.',
+    params: { factor: num({ default: 3 }) },
+    inputs: [{ role: 'source' }],
+    outputs: [{ id: '', unit: 'inherit' }],
+    run: () => [],
+  });
+const replacedPx = process(replacedOps, 'prices').column('px');
+replacedPx.scale({ as: 'replacement', factor: 4 });
+// @ts-expect-error The old definition's params were replaced, not intersected.
+replacedPx.scale({ as: 'old-definition', by: 4 });
+
+void [
+  rowCount,
+  lo,
+  snapshot,
+  json,
+  outlet,
+  localDatasetId,
+  asyncSource,
+  difference,
+  replacedPx,
+];

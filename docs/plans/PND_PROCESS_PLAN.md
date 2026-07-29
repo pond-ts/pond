@@ -860,9 +860,86 @@ for slots. Slot names are required rather than derived: a counter would
 renumber the moment a node is inserted above it, destroying the stability
 the slot exists to provide.
 
-**Still open, unchanged:** typing params off the registry's `ParamDef`,
-and whether `specId` ships to the client so a consumer can pre-compute
-cache keys.
+**Typed authoring landed in the follow-up pass.** `Registry.define()` now
+accumulates each definition's literal type and `process(registry, from)` reads
+that type into a fluent facade:
+
+```ts
+const graph = process(
+  registry,
+  marketBars.ref({
+    symbol: 'ACME',
+    interval: '5m',
+  }),
+);
+const bands = graph.column('close').bollinger({
+  as: 'bands',
+  period: 20,
+  stdDev: 2,
+});
+const request = graph.outputs({
+  bands: bands.columns(),
+  upper: bands.output('Upper').columns(),
+  latest: bands.output('Upper').last(),
+});
+```
+
+Op names are methods, params are inferred from `ParamDef`, extra inputs use
+their declared role names, output suffixes are a literal union, and folds are
+terminal handles. The facade still emits the exact slot envelope: no ids,
+resolution, or cache logic moved into authoring. The emitted declarations pin
+invalid params, suffixes, and missing secondary inputs with
+`@ts-expect-error` consumer tests.
+
+The implementation uses a small proxy on a column reference to project the
+runtime registry as methods. This was chosen over generating a second financial
+API because the registry is already the vocabulary authority; a generated
+facade would recreate the drift risk this package is meant to remove. Unknown
+wire plans still validate at runtime. `specId` deliberately does not move into
+the builder: a caller that needs ids reads the resolved response, keeping the
+encoding free to evolve behind its version prefix.
+
+---
+
+### [PND-PROCSOURCE] — Harden opaque asynchronous source bindings
+
+The fluent pass exposed that `from: 'ACME_5m'` assumed a dataset had already
+been loaded into the host. Application code wants the same graph over a remote
+call without putting a URL, token, callback, or executable loader in the plan.
+
+**First slice landed.** `defineSource` produces a typed `{ source, params }`
+reference and keeps its async loader on a `SourceRegistry`; `Host.runAsync`
+loads it, keys a long-lived graph by canonical source identity, and only calls
+`setSource` when the loader's required `revision` changes. Equal revisions
+therefore revalidate remotely while preserving all node caches. Param key order
+does not affect source identity, and value types are encoded so `1` and `"1"`
+cannot collide. Concurrent requests for the same source identity share one
+in-flight load and one revision update, preventing duplicate invalidation and a
+stale response winning a race. Local string datasets and synchronous `Host.run`
+are unchanged.
+An end-to-end tutorial covering the registry, fluent graph, remote binding,
+column/fact selection, cache diagnostics, and refinement now lives at
+`website/docs/process/tutorial.mdx`; it is deliberately unlisted and absent
+from the sidebar until the package is published.
+
+The revision is intentionally supplied by the adapter — ETag, cursor, object
+version, or another stable token — because the host cannot cheaply or honestly
+derive freshness from a `TimeSeries`.
+
+**Remaining before this is a durable remote-execution surface:**
+
+- thread cancellation through a coalesced load without one caller cancelling
+  work another caller still needs;
+- separate caller freshness policy (`cache-only`, max-age, revalidate, reload)
+  from the processing plan;
+- project source names and param schemas for a remote/model composer without
+  exposing loaders;
+- measure polling and refresh workloads, and state what a loader promises when
+  a revision is equal.
+
+**Done when:** freshness is explicit and tested, the source catalog is
+embeddable beside the op schema, and equal revisions are demonstrated to keep
+both source and node work flat.
 
 ---
 

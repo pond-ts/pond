@@ -393,24 +393,14 @@ export function App() {
       let body: Record<string, unknown>;
       let asked: string[] = [];
       if (envelope.nodes !== undefined) {
-        // Two selectors on one node collapse: `outputs` is keyed by id,
-        // so the *last* name wins. Adding `bb_columns` beside the
-        // request's own `bollinger_bands` therefore renamed it, and the
-        // output panel — which filters on the names the request asked
-        // for — dropped the very figure the prompt wanted.
-        //
-        // So: skip a slot the request already surfaces, and skip folds,
-        // which yield a fact rather than columns and would come back
-        // twice under a name nobody asked for.
+        // Add a drawable selection for every non-fold node. A node the
+        // request already surfaces may now have several caller names:
+        // the host reports every selection while materializing each
+        // physical column only once.
         const drawable = (envelope.nodes ?? {}) as Record<
           string,
           { op: string }
         >;
-        const already = new Set(
-          Object.values(envelope.outputs ?? {}).map(
-            (sel) => (sel as { on?: string }).on,
-          ),
-        );
         const outputs: Record<string, unknown> =
           entry.focus !== undefined
             ? { focused: { on: entry.focus } }
@@ -418,9 +408,7 @@ export function App() {
                 ...(envelope.outputs ?? {}),
                 ...Object.fromEntries(
                   Object.entries(drawable)
-                    .filter(
-                      ([slot, def]) => !folds.has(def.op) && !already.has(slot),
-                    )
+                    .filter(([, def]) => !folds.has(def.op))
                     .map(([slot]) => [`${slot}_columns`, { on: slot }]),
                 ),
               };

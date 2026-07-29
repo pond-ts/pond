@@ -1,0 +1,730 @@
+---
+title: Build a processing graph
+description: Define a processing vocabulary, load a remote time series, and author a typed graph that returns columns and facts.
+unlisted: true
+pagination_prev: null
+pagination_next: null
+---
+
+# Build a processing graph
+
+Most pond code should be a chain:
+
+```ts
+const average = series.smooth('ema', { column: 'close', span: 20 });
+```
+
+That is the clearest form when you know the computation while writing the
+application. A processing graph solves a different problem: the computation
+itself needs to become data.
+
+You might need to:
+
+- construct a pipeline from saved configuration;
+- let a user add and reconnect operations in an editor;
+- let an agent compose a request from a declared vocabulary;
+- share one expensive intermediate between a chart and a summary;
+- persist a plan and run it again against refreshed source data.
+
+In this tutorial we'll build one such graph. It will load five-minute ACME bars
+from a remote API, calculate a moving average and a band around it, derive the
+band width, and return both drawable columns and a few small facts.
+
+The finished authoring code looks like this:
+
+```ts
+const graph = process(
+  registry,
+  marketBars.ref({ symbol: 'ACME', interval: '5m' }),
+);
+
+const close = graph.column('close');
+const average = close.sma({ as: 'average', period: 20 });
+const bands = average.bands({ as: 'bands', width: 2 });
+const width = bands.output('Upper').subtract({
+  as: 'bandWidth',
+  right: bands.output('Lower'),
+});
+
+const request = graph.outputs({
+  average: average.columns(),
+  bands: bands.columns(),
+  upper: bands.output('Upper').columns(),
+  latestWidth: width.last(),
+  widthShape: width.shape({ points: 80 }),
+});
+
+const result = await host.runAsync(request);
+```
+
+There are three layers in that example:
+
+1. The **registry** declares which operations exist.
+2. The **request** is a plain-data description of one graph.
+3. The **host** resolves a source, keeps its graph warm, and executes requests.
+
+Keeping those roles separate is the important part. The fluent API is a typed
+way to emit a request; it is not a second execution engine.
+
+:::caution[Work in progress]
+`@pond-ts/process` is not published yet. This tutorial describes its in-repo
+WIP API, which may change before the first release. Work from a pond monorepo
+checkout rather than installing it from npm.
+:::
+
+## 1. Start with a source schema
+
+Our API returns time-keyed OHLC bars:
+
+```ts
+import { TimeSeries } from 'pond-ts';
+import type { SeriesSchema } from 'pond-ts';
+
+const barSchema = [
+  { name: 'time', kind: 'time' },
+  { name: 'open', kind: 'number' },
+  { name: 'high', kind: 'number' },
+  { name: 'low', kind: 'number' },
+  { name: 'close', kind: 'number' },
+  { name: 'volume', kind: 'number' },
+] as const satisfies SeriesSchema;
+
+type BarSchema = typeof barSchema;
+```
+
+The graph does not own this data or fetch it itself. It will eventually receive
+a `TimeSeries<BarSchema>` from the host.
+
+For this tutorial, assume the remote response has this shape:
+
+```ts
+interface BarsResponse {
+  rows: Array<{
+    time: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+  }>;
+}
+```
+
+`revision` matters later. It may be an ETag, a database version, an object
+version, or a cursor. It needs only one property: equal revisions mean equal
+source data.
+
+## 2. Declare the operation vocabulary
+
+A plan is allowed to name only operations in a `Registry`. The registry is
+simultaneously:
+
+- the runtime lookup table;
+- the parameter validator;
+- the source for a JSON Schema projection;
+- the metadata behind a picker or node editor;
+- the compile-time vocabulary used by fluent authoring.
+
+We'll register three small operations:
+
+- `sma(source, period)` — one input, one output;
+- `bands(source, width)` — one input, two outputs;
+- `subtract(left, right)` — two inputs, one output.
+
+First add a helper that reads one graph input as dense values:
+
+```ts
+import type { Column } from 'pond-ts';
+import type { OpContext } from '@pond-ts/process';
+
+function dense(context: OpContext, role: string): Array<number | undefined> {
+  const column = context.series.column(
+    context.inputs[role]!,
+  ) as unknown as Column;
+
+  return Array.from({ length: column.length }, (_, index) => {
+    const value = column.read(index);
+    return typeof value === 'number' && Number.isFinite(value)
+      ? value
+      : undefined;
+  });
+}
+```
+
+Now declare the registry:
+
+```ts
+import { createRegistry, int, num } from '@pond-ts/process';
+
+const registry = createRegistry()
+  .define({
+    name: 'sma',
+    family: 'trend',
+    summary: 'Simple moving average over a fixed number of bars.',
+    params: {
+      period: int({
+        min: 2,
+        max: 5_000,
+        suggest: [5, 200],
+        default: 20,
+      }),
+    },
+    inputs: [{ role: 'source' }],
+    outputs: [{ id: '', unit: 'inherit' }],
+    label: (params, inputs) => `SMA(${params['period']}) of ${inputs}`,
+    run: (context) => {
+      const source = dense(context, 'source');
+      const period = context.params['period'] as number;
+      const output = new Array<number | undefined>(source.length).fill(
+        undefined,
+      );
+
+      for (let index = period - 1; index < source.length; index += 1) {
+        let total = 0;
+        let complete = true;
+
+        for (let cursor = index - period + 1; cursor <= index; cursor += 1) {
+          const value = source[cursor];
+          if (value === undefined) {
+            complete = false;
+            break;
+          }
+          total += value;
+        }
+
+        if (complete) output[index] = total / period;
+      }
+
+      return output;
+    },
+  })
+  .define({
+    name: 'bands',
+    family: 'range',
+    summary: 'A fixed-width upper and lower band around a source.',
+    params: {
+      width: num({
+        min: 0,
+        suggest: [0.5, 5],
+        default: 2,
+      }),
+    },
+    inputs: [{ role: 'source' }],
+    outputs: [
+      { id: 'Upper', unit: 'inherit' },
+      { id: 'Lower', unit: 'inherit' },
+    ],
+    label: (params, inputs) => `±${params['width']} band around ${inputs}`,
+    run: (context) => {
+      const source = dense(context, 'source');
+      const width = context.params['width'] as number;
+
+      return [
+        source.map((value) =>
+          value === undefined ? undefined : value + width,
+        ),
+        source.map((value) =>
+          value === undefined ? undefined : value - width,
+        ),
+      ];
+    },
+  })
+  .define({
+    name: 'subtract',
+    family: 'arithmetic',
+    summary: 'Subtract the right input from the left input.',
+    params: {},
+    inputs: [{ role: 'left' }, { role: 'right' }],
+    outputs: [{ id: '', unit: 'inherit' }],
+    label: (_params, inputs) => `difference of ${inputs}`,
+    run: (context) => {
+      const left = dense(context, 'left');
+      const right = dense(context, 'right');
+
+      return left.map((value, index) => {
+        const other = right[index];
+        return value === undefined || other === undefined
+          ? undefined
+          : value - other;
+      });
+    },
+  });
+```
+
+The declarations do more than populate a map. TypeScript remembers their
+literal shapes. Once this registry is passed to `process()`, a column reference
+has `.sma()`, `.bands()`, and `.subtract()` methods with the corresponding
+options.
+
+For example, these mistakes are caught before a request is sent:
+
+```ts
+const graph = process(registry, 'ACME_5m');
+const close = graph.column('close');
+
+close.sma({ as: 'average', period: 20 }); // valid
+
+close.sma({
+  as: 'average',
+  period: '20', // error: period must be a number
+});
+
+close.subtract({
+  as: 'difference',
+  // error: the declared `right` input is required
+});
+```
+
+Runtime validation still matters. A saved plan or agent-composed request
+arrives as JSON and has no TypeScript compiler protecting it, so the resolver
+checks the same declarations again.
+
+## 3. Register the remote source
+
+The graph should not contain a URL, an API token, or a callback. Those are
+execution details and often secrets. Instead, define an opaque source:
+
+```ts
+import { defineSource } from '@pond-ts/process';
+
+const marketBars = defineSource({
+  name: 'market.bars',
+
+  async load(
+    {
+      symbol,
+      interval,
+    }: {
+      readonly symbol: string;
+      readonly interval: '1m' | '5m' | '1h';
+    },
+    { previous },
+  ) {
+    const response = await fetch(
+      `${MARKET_API}/bars?symbol=${encodeURIComponent(symbol)}` +
+        `&interval=${encodeURIComponent(interval)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${MARKET_API_TOKEN}`,
+          ...(previous !== undefined && {
+            'If-None-Match': previous.revision,
+          }),
+        },
+      },
+    );
+
+    if (response.status === 304 && previous !== undefined) {
+      return previous;
+    }
+
+    if (!response.ok) {
+      throw new Error(`Market API returned ${response.status}`);
+    }
+
+    const payload = (await response.json()) as BarsResponse;
+    const revision = response.headers.get('etag');
+    if (revision === null) {
+      throw new Error('Market API response has no ETag');
+    }
+
+    return {
+      value: TimeSeries.fromJSON<BarSchema>({
+        name: `${symbol}-${interval}`,
+        schema: barSchema,
+        rows: payload.rows,
+      }),
+      revision,
+    };
+  },
+});
+```
+
+There are two halves to this object:
+
+- `marketBars.ref(params)` is safe request data;
+- `marketBars.load(params, context)` is host-side executable code.
+
+Only the reference crosses a wire:
+
+```ts
+marketBars.ref({ symbol: 'ACME', interval: '5m' });
+
+// {
+//   source: 'market.bars',
+//   params: { symbol: 'ACME', interval: '5m' }
+// }
+```
+
+Register the loader with the long-lived host:
+
+```ts
+import { createHost, createSourceRegistry } from '@pond-ts/process';
+
+const sources = createSourceRegistry().define(marketBars);
+
+const host = createHost({
+  registry,
+  sources,
+  units: {
+    open: 'USD',
+    high: 'USD',
+    low: 'USD',
+    close: 'USD',
+    volume: 'shares',
+  },
+});
+```
+
+The host should outlive individual requests. Recreating it for every call would
+also recreate every bound graph and throw away the cache.
+
+## 4. Author a branched graph
+
+Start a graph against one invocation of the remote source:
+
+```ts
+import { process } from '@pond-ts/process';
+
+const graph = process(
+  registry,
+  marketBars.ref({
+    symbol: 'ACME',
+    interval: '5m',
+  }),
+).as('acme_bands');
+```
+
+`graph.column('close')` is a reference to a raw source column. It does not read
+the data:
+
+```ts
+const close = graph.column('close');
+```
+
+Add the moving average:
+
+```ts
+const average = close.sma({
+  as: 'average',
+  period: 20,
+});
+```
+
+`as: 'average'` is the node's **slot**: a caller-owned name for its position in
+the graph. The computed node also gets a content-addressed ID, but the slot is
+the stable handle used while authoring.
+
+Now create a multi-output node:
+
+```ts
+const bands = average.bands({
+  as: 'bands',
+  width: 2,
+});
+```
+
+`bands` represents the operation as a whole. Because the registry declared two
+outputs, choose one by suffix before feeding it to another operation:
+
+```ts
+const upper = bands.output('Upper');
+const lower = bands.output('Lower');
+```
+
+The output name is typed:
+
+```ts
+bands.output('Upper'); // valid
+bands.output('Lower'); // valid
+bands.output('Middle'); // error
+```
+
+Finally, branch both lines into the two-input operation:
+
+```ts
+const width = upper.subtract({
+  as: 'bandWidth',
+  right: lower,
+});
+```
+
+The value before `.subtract()` supplies the first declared input (`left`).
+Secondary inputs are named by their registry roles (`right`). This makes a
+two-input graph read naturally without relying on positional arrays.
+
+## 5. Choose what the request returns
+
+Building a node does not automatically copy its value into the response.
+Surface only what this caller needs:
+
+```ts
+const request = graph.outputs({
+  average: average.columns(),
+  bands: bands.columns(),
+  upper: upper.columns(),
+  latestWidth: width.last(),
+  widthRange: width.extremes(),
+  widthShape: width.shape({ points: 80 }),
+});
+```
+
+The object keys are caller-owned result names. The values choose one of two
+response shapes:
+
+- `.columns()` asks for complete packed columns, suitable for a chart;
+- `.last()`, `.extremes()`, `.percentileRank()`, and `.shape()` add cached
+  terminal nodes that return small facts.
+
+The folds are nodes rather than post-processing callbacks. Asking for
+`width.last()` twice adds one node and both result names point at it.
+
+At this point no remote call and no study computation has happened. The request
+is plain data:
+
+```ts
+console.log(JSON.stringify(request, null, 2));
+```
+
+The important part of the output is recognizable:
+
+```json
+{
+  "from": {
+    "source": "market.bars",
+    "params": {
+      "symbol": "ACME",
+      "interval": "5m"
+    }
+  },
+  "as": "acme_bands",
+  "nodes": {
+    "average": {
+      "op": "sma",
+      "params": { "period": 20 },
+      "in": ["close"]
+    },
+    "bands": {
+      "op": "bands",
+      "params": { "width": 2 },
+      "in": ["average"]
+    },
+    "bandWidth": {
+      "op": "subtract",
+      "in": ["bands#Upper", "bands#Lower"]
+    }
+  }
+}
+```
+
+The fluent handles and methods do not survive serialization. That is
+deliberate: application-authored and remotely composed plans use the same
+format, resolver, identities, and cache.
+
+## 6. Run it
+
+A structured source makes execution asynchronous:
+
+```ts
+const first = await host.runAsync(request);
+```
+
+`runAsync()` performs four jobs:
+
+1. Canonicalize `{ source, params }` into a source identity.
+2. Ask the matching source loader for a value and revision.
+3. Create or refresh that source's long-lived bound graph.
+4. Resolve and pull the selected nodes.
+
+The response contains columns, facts, lineage, errors, and per-node timings:
+
+```ts
+console.table(
+  first.nodes.map((node) => ({
+    slot: node.slot,
+    computed: !node.cached,
+    pulled: node.pulled,
+    milliseconds: node.ms,
+  })),
+);
+```
+
+A typical cold request reports each selected branch as computed. Nodes that
+were declared but not needed for an output still appear with `pulled: false`,
+which lets a pipeline view draw the whole requested graph.
+
+Facts carry the names from `graph.outputs()`:
+
+```ts
+const latestWidth = first.facts.find((fact) => fact.name === 'latestWidth');
+
+console.log(latestWidth);
+// {
+//   name: 'latestWidth',
+//   op: 'last',
+//   value: 4,
+//   at: '2026-07-29',
+//   unit: 'USD',
+//   ...
+// }
+```
+
+Column metadata tells you which packed response column belongs to a caller
+name:
+
+```ts
+const upperInfo = Object.values(first.outputs)
+  .flat()
+  .find((output) => output.name === 'upper');
+
+const upperColumn =
+  upperInfo === undefined ? undefined : first.columns?.[upperInfo.column];
+```
+
+A renderer can either consume those columns directly or assemble a
+`TimeSeries` when the request runs in process. Across a worker or network
+boundary, use `assemble: false` and transfer packed columns instead.
+
+## 7. See the cache
+
+Run exactly the same request again:
+
+```ts
+const second = await host.runAsync(request);
+
+console.table(
+  second.nodes.map((node) => ({
+    slot: node.slot,
+    cached: node.cached,
+    milliseconds: node.ms,
+  })),
+);
+```
+
+The loader is allowed to revalidate the remote API on every call. If it returns
+the same revision, the host leaves the source and graph untouched. Every node
+requested above can then be served warm.
+
+This is why source identity and source revision are separate:
+
+```text
+identity: market.bars(interval="5m", symbol="ACME")
+revision: W/"bars-0194"
+```
+
+The identity answers “which graph?” The revision answers “is its source value
+still current?”
+
+When the API returns a new revision, the host updates the existing graph in
+place. Its compiled nodes survive, but dirty propagation causes affected values
+to recompute on the next pull.
+
+## 8. Refine the graph without losing the old answer
+
+Suppose a user changes the moving-average period from 20 to 50. Build the next
+request with the same source and slots:
+
+```ts
+const refined = process(
+  registry,
+  marketBars.ref({
+    symbol: 'ACME',
+    interval: '5m',
+  }),
+).as('acme_bands');
+
+const refinedClose = refined.column('close');
+const refinedAverage = refinedClose.sma({
+  as: 'average',
+  period: 50,
+});
+const refinedBands = refinedAverage.bands({
+  as: 'bands',
+  width: 2,
+});
+
+const refinedRequest = refined.outputs({
+  average: refinedAverage.columns(),
+  bands: refinedBands.columns(),
+});
+
+const next = await host.runAsync(refinedRequest);
+```
+
+The topology names remain `average` and `bands`, so a UI does not have to
+re-layout the graph. The content-addressed IDs change because the computation
+changed.
+
+The previous `sma(period=20)` node remains a separate cached computation. If a
+later conversational request says “go back to 20,” it can hit the old node
+instead of recomputing it. That behavior is useful for conversational and
+saved-plan workloads; interactive slider sweeps need a bounded cache policy,
+which remains active design work.
+
+## 9. Use a local dataset when no fetch is needed
+
+Remote sources are optional. For data already in memory, register it under a
+string key and keep execution synchronous:
+
+```ts
+const host = createHost({ registry, units });
+host.add('ACME_5m', bars);
+
+const local = process(registry, 'ACME_5m');
+const average = local.column('close').sma({ as: 'average', period: 20 });
+
+const result = host.run(
+  local.outputs({
+    average: average.columns(),
+    latest: average.last(),
+  }),
+);
+```
+
+The graph authoring and emitted node plan are otherwise identical. Only the
+source binding and execution boundary differ.
+
+## 10. Handle plans that did not come from TypeScript
+
+The fluent API makes invalid application-authored graphs hard to express, but a
+saved view or model-composed request can still be malformed. Choose an error
+policy when such requests should return diagnostics as data:
+
+```ts
+const result = await host.runAsync({
+  ...request,
+  onError: 'collect',
+});
+
+for (const skipped of result.skipped) {
+  console.warn(skipped.reason);
+}
+```
+
+Policies are:
+
+| Policy      | Behavior                                                        |
+| ----------- | --------------------------------------------------------------- |
+| `'throw'`   | Stop at the first invalid spec or selector. The default.        |
+| `'collect'` | Continue where possible and return reasons in `result.skipped`. |
+| `'skip'`    | Continue where possible without making failure fatal.           |
+
+`collect` is usually the best fit for an agent tool: the diagnostic includes
+the received value and its type, so the caller has enough information to
+repair and retry. A renderer with stale persisted configuration may prefer
+`skip` to keep valid branches on screen.
+
+## What to keep in mind
+
+- Prefer ordinary `TimeSeries` chains when topology is known in code.
+- Keep the host long-lived; its bound graphs are the cache boundary.
+- Treat `as` as stable topology identity, not computed-value identity.
+- Select only the columns and facts the caller needs.
+- Keep remote loaders, credentials, and URLs out of serialized requests.
+- Return a stable revision from every source loader.
+- Use registry metadata as the vocabulary authority for validation, tooling,
+  and fluent TypeScript.
+
+The result is a graph that can be authored comfortably in application code,
+stored as JSON, composed by a remote caller, inspected as a pipeline, and run
+repeatedly against refreshed data without splitting into separate execution
+paths.
