@@ -206,6 +206,14 @@ export function App() {
    * id rather than assigning it.
    */
   const held = useRef(new Map<string, string>());
+  /**
+   * The transcript, so a new turn scrolls itself into view.
+   *
+   * Pinned to the bottom on every change rather than only on a new
+   * entry: a turn arrives empty and grows when the answer lands, and
+   * scrolling once at the start leaves the reply below the fold.
+   */
+  const transcript = useRef<HTMLOListElement>(null);
   const refreshContext = useCallback(() => {
     fetch('/api/context')
       .then((r) => r.json())
@@ -219,6 +227,11 @@ export function App() {
       .catch(() => undefined);
   }, []);
   useEffect(refreshContext, [refreshContext]);
+
+  useEffect(() => {
+    const el = transcript.current;
+    if (el !== null) el.scrollTop = el.scrollHeight;
+  }, [entries]);
 
   const current = useMemo(
     () => entries.find((e) => e.id === selected) ?? entries[entries.length - 1],
@@ -513,6 +526,7 @@ export function App() {
             setEntries([]);
             setSelected(undefined);
           }}
+          transcript={transcript}
         />
         <RequestPanel
           entry={current}
@@ -562,6 +576,52 @@ function PanelTop(props: {
   );
 }
 
+/**
+ * One turn's reply: the prose, what it rests on, and what it cost.
+ *
+ * This lives in the composer rather than in Results because that is
+ * where a person looks for it. Results is the *evidence* — the plan, the
+ * badges, the charts — and putting the answer there made the reply to a
+ * question appear two panels away from the question.
+ *
+ * The cost line stays attached to the answer rather than moving to a
+ * status bar. `5 computed, 4 cached` is the claim this whole app exists
+ * to make, and it means something next to the sentence it paid for.
+ */
+function Reply(props: { entry: Entry }) {
+  const { entry } = props;
+  if (entry.pending) return <p className="reply working">Working…</p>;
+  if (entry.error !== undefined) {
+    return <p className="reply notice bad">{entry.error}</p>;
+  }
+  const answer = entry.answer;
+  if (answer === undefined) return null;
+  const computed = answer.rounds.reduce((n, r) => n + r.computed, 0);
+  const cached = answer.rounds.reduce((n, r) => n + r.cached, 0);
+  const engine =
+    Math.round(answer.rounds.reduce((n, r) => n + r.ms, 0) * 100) / 100;
+  return (
+    <div className="reply">
+      <p className="reply-text">{answer.text}</p>
+      {answer.cites.length > 0 && (
+        <p className="reply-cites">
+          {answer.cites.map((c) => (
+            <code key={c}>{c}</code>
+          ))}
+        </p>
+      )}
+      <p className="reply-meta">
+        {answer.rounds.length} round{answer.rounds.length === 1 ? '' : 's'} ·{' '}
+        {computed} computed, {cached} cached · {engine} ms in the engine of{' '}
+        {answer.ms} ms
+      </p>
+      {answer.warning !== undefined && (
+        <p className="notice warn">{answer.warning}</p>
+      )}
+    </div>
+  );
+}
+
 function Composer(props: {
   context: Context | undefined;
   entries: Entry[];
@@ -571,6 +631,7 @@ function Composer(props: {
   onAsk: (v: string) => void;
   onSelect: (id: number) => void;
   onClear: () => void;
+  transcript: React.RefObject<HTMLOListElement | null>;
 }) {
   const { context } = props;
   return (
@@ -583,6 +644,31 @@ function Composer(props: {
           </button>
         }
       />
+
+      <ol className="chat" ref={props.transcript}>
+        {props.entries.map((entry) => (
+          <li
+            key={entry.id}
+            className={`turn${entry.id === props.selectedId ? ' selected' : ''}`}
+            onClick={() => props.onSelect(entry.id)}
+          >
+            <p className="asked">{entry.prompt}</p>
+            <Reply entry={entry} />
+          </li>
+        ))}
+      </ol>
+
+      {props.entries.length === 0 && (
+        <ul className="examples">
+          {EXAMPLES.map((e) => (
+            <li key={e}>
+              <button className="link" onClick={() => props.onAsk(e)}>
+                {e}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
 
       <form
         onSubmit={(e) => {
@@ -606,42 +692,6 @@ function Composer(props: {
           Compose <kbd>⌘↵</kbd>
         </button>
       </form>
-
-      {props.entries.length === 0 && (
-        <ul className="examples">
-          {EXAMPLES.map((e) => (
-            <li key={e}>
-              <button className="link" onClick={() => props.onAsk(e)}>
-                {e}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <ol className="history">
-        {props.entries.map((entry) => (
-          <li
-            key={entry.id}
-            className={entry.id === props.selectedId ? 'selected' : ''}
-          >
-            <button className="link" onClick={() => props.onSelect(entry.id)}>
-              {entry.prompt}
-            </button>
-            <span className="meta">
-              {entry.pending && '…'}
-              {entry.error && <span className="bad">failed</span>}
-              {entry.result && `${entry.result.ms} ms`}
-              {entry.result?.skipped.length ? (
-                <span className="warn">
-                  {' '}
-                  {entry.result.skipped.length} skipped
-                </span>
-              ) : null}
-            </span>
-          </li>
-        ))}
-      </ol>
 
       {context && (
         <details className="vocab">
@@ -823,46 +873,6 @@ function RequestPanel(props: {
   );
 }
 
-/**
- * The reply, above the work it rests on.
- *
- * The panel is called Results and for five milestones it showed
- * everything except a result: reductions, charts, timings, all of it the
- * *material* for an answer and none of it the answer. The question was
- * "how stretched is the price right now" and the app replied with a
- * z-score of 1.87 σ, leaving the last step — the one the person actually
- * asked for — to the reader.
- *
- * The rounds line is not decoration. It is the claim under test, stated
- * in the units that matter: how many times the agent went back to the
- * engine, and how much of that it paid for.
- */
-function AnswerCard(props: { answer: AnswerBody }) {
-  const { answer } = props;
-  const computed = answer.rounds.reduce((n, r) => n + r.computed, 0);
-  const cached = answer.rounds.reduce((n, r) => n + r.cached, 0);
-  const engine =
-    Math.round(answer.rounds.reduce((n, r) => n + r.ms, 0) * 100) / 100;
-  return (
-    <div className="answer">
-      <p className="answer-text">{answer.text}</p>
-      {answer.cites.length > 0 && (
-        <p className="answer-cites">
-          {answer.cites.map((c) => (
-            <code key={c}>{c}</code>
-          ))}
-        </p>
-      )}
-      <p className="answer-meta">
-        {answer.rounds.length} round{answer.rounds.length === 1 ? '' : 's'} ·{' '}
-        {computed} computed, {cached} cached · {engine} ms in the engine of{' '}
-        {answer.ms} ms total
-      </p>
-      {answer.warning && <p className="notice warn">{answer.warning}</p>}
-    </div>
-  );
-}
-
 function ResultsPanel(props: {
   entry: Entry | undefined;
   context: Context | undefined;
@@ -907,15 +917,18 @@ function ResultsPanel(props: {
         }
       />
 
-      {tab === 'output' && entry?.answer && (
-        <AnswerCard answer={entry.answer} />
-      )}
-
       {/* An answer with no plan behind it is a real outcome, not a
           missing one: asked to annualise a price directly, the model
           reads the op table, sees the unit `annualise` demands, and
           declines without running anything. There is nothing to draw,
-          and "Waiting for a plan…" would be a lie. */}
+          and "Waiting for a plan…" would be a lie — the reply itself is
+          in the composer, where it says why. */}
+      {answeredWithoutPlan && (
+        <p className="muted">
+          Nothing ran — the model answered from the op table alone.
+        </p>
+      )}
+
       {drawing && entry !== undefined && !answeredWithoutPlan && (
         <VizTab
           entry={entry}

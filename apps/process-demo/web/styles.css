@@ -945,38 +945,79 @@ button.chip.on {
   opacity: 0.6;
 }
 
-/* ── the answer ──────────────────────────────────────────────
-   Set apart from everything below it. The panel's other rows are
-   instrumentation — timings, badges, ids — and the reply is the one
-   thing on screen written for a person, so it reads at body size in
-   full-strength ink while the evidence stays muted. */
-.answer {
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--accent);
-  border-radius: 4px;
-  padding: 12px 14px;
-  margin: 0 0 12px;
-  background: color-mix(in srgb, var(--accent) 5%, transparent);
+/* ── the conversation ────────────────────────────────────────
+   The composer is a chat: the transcript scrolls, the input stays put
+   at the bottom. That needs the panel to be a flex column rather than
+   the plain scrolling block every other panel is — `.panel` sets
+   `overflow: auto`, which here has to move down onto the transcript so
+   the form below it cannot scroll away. */
+.panel.composer {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-.answer-text {
+.chat {
+  list-style: none;
   margin: 0;
-  font-size: 15px;
+  padding: 0 2px 0 0;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* A turn is the unit of selection — clicking anywhere in it drives the
+   other two panels — so the whole block gets the accent bar, not just
+   the question. */
+.turn {
+  border-left: 2px solid transparent;
+  padding: 0 0 14px 10px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.turn:last-child {
+  border-bottom: none;
+}
+
+.turn.selected {
+  border-left-color: var(--accent);
+}
+
+.turn:not(.selected) .reply-text {
+  color: var(--muted);
+}
+
+.asked {
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+
+.reply {
+  margin: 0;
+}
+
+.reply.working {
+  color: var(--muted);
+}
+
+.reply-text {
+  margin: 0;
   line-height: 1.55;
   white-space: pre-wrap;
 }
 
-.answer-cites {
+.reply-cites {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin: 10px 0 0;
+  gap: 5px;
+  margin: 9px 0 0;
 }
 
-/* The names the prose rests on. Every figure in the answer came from
-   one of these, and they are the same names the cards below carry —
-   which is what makes a claim checkable rather than trusted. */
-.answer-cites code {
+/* The names the prose rests on — the same names the cards in Results
+   carry, which is what makes a figure checkable rather than trusted. */
+.reply-cites code {
   border: 1px solid var(--line);
   border-radius: 3px;
   padding: 1px 6px;
@@ -984,12 +1025,28 @@ button.chip.on {
   background: var(--bg);
 }
 
-.answer-meta {
-  margin: 10px 0 0;
+.reply-meta {
+  margin: 8px 0 0;
   font-size: 12px;
   color: var(--muted);
 }
 
-.answer .notice {
-  margin: 10px 0 0;
+.reply .notice {
+  margin: 9px 0 0;
+}
+
+/* Below the transcript, and not scrolling with it. */
+.composer form {
+  flex: none;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.composer .examples {
+  flex: none;
+}
+
+.composer .vocab {
+  flex: none;
+  margin-top: 12px;
 }

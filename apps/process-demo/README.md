@@ -47,12 +47,15 @@ nothing about the registry**.
 
 ## What to look at
 
-- **The answer, at the top of Results.** The app's last step, and the one
-  it went five milestones without: the facts go **back to the model**, and
-  it replies in prose with the output names it rested on. Watch the meta
-  line under it — `196.03 ms in the engine of 8825.007 ms total` is a fair
-  summary of where the time in an agentic tool actually goes, and the
-  argument for answering from reductions rather than columns.
+- **The reply, in the composer.** The app's last step, and the one it went
+  five milestones without: the facts go **back to the model**, and it
+  answers in the pane you asked in, with the output names it rested on.
+  Ask a follow-up and read the line under it — a first turn costs
+  `2 computed, 0 cached · 215.3 ms`, and the follow-up that reuses those
+  nodes costs `0 computed, 2 cached · 43.22 ms`. Both sit inside a model
+  call of 8–12 seconds, which is a fair summary of where the time in an
+  agentic tool actually goes, and the argument for answering from
+  reductions rather than columns.
 - **The badge row in Results.** Amber `computed`, green `cached`, per node,
   in dependency order. Hit **Re-run** and watch a 100 ms request become a
   5 ms one. That is the whole architectural claim from M1, made visible —

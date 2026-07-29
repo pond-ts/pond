@@ -350,9 +350,17 @@ with the last forced to answer. The reading handed back is **facts only**
 graph a question instead of downloading it. A model is that consumer,
 several orders of magnitude more expensive per point.
 
+**The reply lands in the composer, not in Results.** It was built into
+the Results panel first, which put the answer to a question two panels
+away from the question. The composer is a transcript now: prompt, reply,
+and the cost line under it, with the selected turn still driving the
+plan and evidence panels to its right.
+
 **The engine is 2% of the wall clock.** A seven-fact analysis of
 volatility, trend and momentum: **196.03 ms in the engine of 8,825 ms
-total**. Everything this library has been optimised for is a rounding
+total**. A follow-up turn is starker still — **`0 computed, 2 cached`,
+43.22 ms** against the first turn's 215.3 ms, the whole plan served from
+nodes an earlier question built. Everything this library has been optimised for is a rounding
 error next to one model call — which is the argument for caching
 aggressively and for answering from reductions rather than columns, not
 against it. The 8.6 seconds are the budget; the way to spend fewer of
