@@ -199,6 +199,25 @@ consumer signal. Plan:
   finite guard for `allFinite: false` reductions. Acceptance benchmarks
   already exist in `spikes/columnar-wasm/bench/controls.mjs`; each control is
   checked against pond-ts's answer before it is timed.
+- **[PND-TOARROW]** — A zero-copy Arrow **export** door. pond-ts's columnar
+  buffers are already Arrow-shaped — the validity bitmap is
+  `bits[i >> 3] & (1 << (i & 7))`, LSB-first one bit per value, which is
+  Arrow's layout exactly, and numeric values are a contiguous `Float64Array`.
+  A `Float64Column` **is** an Arrow array in memory. But every export door
+  today is row-shaped (`toRows` / `toObjects` / `toJSON` / `toPoints` /
+  `toArray`), so handing a column to polars / DuckDB / arrow-js means a full
+  re-materialisation. `toArrow()` would make "bring your own compute engine" a
+  buffer handoff. Measured motivation: polars is **4–9× faster on
+  whole-column reductions** (`mean` 8.98×, `stdev` 8.16×), so a consumer who
+  wants that should be able to reach it without pond-ts depending on anything.
+  Design record: [polars-as-core-assessment-2026-07.md](docs/notes/polars-as-core-assessment-2026-07.md).
+- **[PND-ARROWNULL]** — `fromArrow` leaves zero-copy on the table exactly
+  where copying costs most. It adopts a `Float64Array` values buffer when
+  `nullCount === 0`, but a column carrying nulls falls to `numericWithNulls`,
+  a per-element `vector.get(i)` walk — despite Arrow's null bitmap being
+  **byte-identical** to pond-ts's validity bitmap, so both buffers could be
+  adopted as-is. Sibling of [PND-TOARROW]; together they make Arrow the
+  interop boundary in both directions.
 - **[PND-NANREP]** — Audit whether the validity bitmap earns its keep on
   **numeric** columns. Measured on a 1M column with 4% missing, same values
   and same answer, varying only how "missing" is encoded: dense (no bitmap)
