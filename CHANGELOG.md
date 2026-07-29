@@ -75,6 +75,15 @@ include new features and type-level changes; patch bumps are strictly additive.
   than producing duplicate field names. Types: `ArrowExport`,
   `ArrowExportField`, `ArrowExportType`, `ToArrowOptions`.
 
+- **process:** registry-bound fluent graph authoring via
+  `process(registry, from)`. Operation methods, params, named secondary inputs,
+  and multi-output suffixes are inferred from the registry while the result
+  remains the same plain slot request accepted over a wire. Added opaque async
+  sources (`defineSource`, `SourceRegistry`, `Host.runAsync`): requests carry
+  only `{ source, params }`, loaders and credentials stay host-side, and equal
+  remote revisions reuse the existing bound graph and all node caches.
+  Concurrent calls for one source identity share a single in-flight load and
+  revision update.
 - **charts:** **`<BarChart binColors>` now works on the single-series
   time-axis path** — per-bar colours for a plain `series={…} column="…"` bar
   layer, the shape a **direction-coloured financial volume row** needs (derive
@@ -101,8 +110,8 @@ include new features and type-level changes; patch bumps are strictly additive.
   declarative plan layer is the consumer surface and this engine belongs
   underneath it as an internal module — see **[PND-PROCSUB]** in
   [PLAN.md](PLAN.md), and [PND_PROCESS_PLAN.md](docs/plans/PND_PROCESS_PLAN.md)
-  for the nine other tickets the investigation produced (node eviction is
-  blocking; column-valued nodes and dirty-per-range are the large wins).
+  for the measured follow-ups (node identity/lifetime is blocking for
+  interactive use; column-valued nodes and dirty-per-range are the large wins).
 
 - **process:** **`registry.toJsonSchema({ defs })`** replaces the `base` option
   added earlier in this cycle — the recursive `$ref` now lives in `$defs` and

@@ -533,6 +533,30 @@ describe('run — columns are the wire shape, assembly is the convenience', () =
     );
   });
 
+  it('reports several selectors on one node but materializes each column once', () => {
+    const { registry, ran } = makeRegistry();
+    const graph = bind(series(50), { registry, units });
+    const bb = { op: 'band', params: { width: 2 }, inputs: ['px'] };
+    const res = run(graph, {
+      plan: [bb],
+      select: [
+        { on: bb, name: 'bands' },
+        { on: bb, output: 'Upper', name: 'upper' },
+      ],
+    });
+    const id = specId(registry, bb);
+
+    expect(res.outputs[id]!.map((output) => output.name)).toEqual([
+      'bands',
+      'bands',
+      'bands',
+      'upper',
+    ]);
+    expect(Object.keys(res.columns!)).toHaveLength(3);
+    expect(ran['band']).toBe(1);
+    expect(res.nodes.filter((node) => node.id === id)).toHaveLength(1);
+  });
+
   it('skips assembly when the consumer is across a wire', () => {
     // `assemble: false` is not an optimization flag — a `TimeSeries`
     // cannot be serialized, so building one for a wire consumer is pure
