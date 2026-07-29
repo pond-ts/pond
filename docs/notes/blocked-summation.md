@@ -35,36 +35,54 @@ End to end on the agent-query benchmark, `close.mean()` over 500k bars:
 Blocking is **not free at every size**. Eight accumulator inits plus
 seven combining adds is ~15 fixed operations, and below eight elements
 the blocked loop does not execute at all — every cell falls through to
-the scalar tail, so the fixed cost is pure loss. Measured over 4096
-sliding windows:
+the scalar tail, so at tiny sizes the fixed cost buys nothing. Measured
+over 4096 sliding windows with a monomorphic call site per kernel
+(`scripts/perf-blocked-sum.mjs`, the durable form of this table):
 
-| n    | speedup |                       |
-| ---- | ------- | --------------------- |
-| 4    | 0.26×   | ← a 3.8× _regression_ |
-| 8    | 1.11×   |                       |
-| 16   | 1.20×   |                       |
-| 32   | 1.51×   |                       |
-| 64   | 1.68×   |                       |
-| 256  | 2.12×   |                       |
-| 4096 | 2.40×   |                       |
+| n    | speedup |                          |
+| ---- | ------- | ------------------------ |
+| 4    | ~1×     | ← noise floor; see below |
+| 8    | 1.1×    |                          |
+| 16   | 1.2×    |                          |
+| 32   | 1.5×    |                          |
+| 64   | 1.8×    |                          |
+| 256  | 2.2×    |                          |
+| 4096 | 2.4×    |                          |
 
 So `BLOCKED_MIN = 32`: the point where the win is unambiguous, and above
 any bucket size a reader would check by hand.
 
-That threshold is doing **two** jobs. The obvious one is avoiding the
-small-`n` regression. The load-bearing one is that every run below it
+That threshold is doing **two** jobs. The lesser one is not bothering
+where the win is noise. The load-bearing one is that every run below it
 stays on the sequential path and therefore stays **bit-identical to what
 pond-ts returned before blocking existed** — which is what keeps the
 exact-equality row-path parity tests (`aggregate() columnar fast path —
 parity with the row path`, comparing 3–4 element buckets with `toEqual`)
 meaningful rather than merely passing.
 
-An earlier version of this measurement put the crossover at n=8 and
-showed blocking winning at _every_ size, including 2.69× at n=4. That
-was an artifact: the benchmark called `sum(v, 0, n)` repeatedly with
-identical arguments, so V8 hoisted the call out of the repeat loop
-entirely. Re-measured with sliding windows, n=4 is a **regression**. The
-threshold exists because the corrected measurement found it.
+### Two measurement artifacts, both worth keeping
+
+This table was wrong twice before it was right, in instructive ways.
+
+The first version showed blocking winning at _every_ size, including
+2.69× at n=4. Artifact: the benchmark called `sum(v, 0, n)` with
+identical arguments each rep, so V8 hoisted the loop-invariant call
+entirely. Fixed with sliding windows.
+
+The second version (and the one this note originally published) showed
+n=4 as a **0.26× regression**. Also an artifact, of the opposite kind:
+both kernels were timed through one shared harness closure `mk(f)`, so
+the inner `f(...)` call site turned megamorphic after the first kernel
+— deoptimizing whichever was measured later. Measured seq-first that
+reads "blocked is 3.8× worse"; a later variant of the same bias read
+"blocked is 1.9× better". With a separate, monomorphic harness per
+kernel, n=4 is **near parity and unresolvable** — the work is a handful
+of nanoseconds, below what an in-process microbenchmark can separate.
+
+The a0659bc commit message repeats the 0.26× figure; this section is
+its correction. The threshold's justification never rested on n=4: the
+robust facts are the clear wins at ≥ 32 and the bit-identity guarantee
+below.
 
 ## Blocking is _more_ accurate, not less
 
@@ -92,8 +110,12 @@ and that is the property a caller may have been relying on.
 
 ## What a caller can observe
 
-- A `sum()` / `mean()` over **≥ 32 cells** may differ from the pre-change
-  result in the last ulp or two. It will generally be the better answer.
+- A `sum()` / `mean()` over a run of **≥ 32 cells** may differ from the
+  pre-change result in the last ulp or two. It will generally be the
+  better answer. ("32 cells" counts **range positions, not defined
+  values** — a 32-cell range with gaps still blocks; the gate is O(1) by
+  design, and the threshold is a perf crossover, not a semantic
+  boundary.)
 - A `sum()` / `mean()` over **< 32 cells** is unchanged, bit for bit.
 - The **row path** (`reduce(_d, numeric)`, a plain
   `numeric.reduce((s, v) => s + v, 0)`) is still sequential, so a

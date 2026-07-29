@@ -39,16 +39,23 @@ import { ValidationError } from '../../core/errors.js';
  * For the same reason `fromArrow` takes a duck-typed table: **pond does not
  * depend on `apache-arrow`**, and adding a dependency to hand data *out*
  * would be a strange price for interop. The caller brings their own Arrow
- * and assembles in four lines:
+ * and assembles per field, narrowing on `type` first (the union means
+ * `f.values` doesn't typecheck against `makeData`'s `data:` unnarrowed):
  *
  * ```ts
- * import { Table, makeData, makeVector, Float64 } from 'apache-arrow';
- * const { length, fields } = series.toArrow();
+ * import { makeData, makeVector, Float64 } from 'apache-arrow';
+ * const { fields } = series.toArrow();
  * const f = fields.find((x) => x.name === 'close')!;
- * const vec = makeVector(makeData({
- *   type: new Float64(), length: f.length,
- *   nullCount: f.nullCount, nullBitmap: f.nullBitmap, data: f.values,
- * }));
+ * if (f.type !== 'float64' && f.type !== 'timestamp') throw new Error(f.type);
+ * const vec = makeVector(
+ *   makeData({
+ *     type: new Float64(),
+ *     length: f.length,
+ *     nullCount: f.nullCount,
+ *     nullBitmap: f.nullBitmap,
+ *     data: f.values, // narrowed to Float64Array by the guard above
+ *   }),
+ * );
  * ```
  *
  * From there a consumer can reach whatever engine they like — polars,
@@ -299,18 +306,24 @@ export function storeToArrow(
   const requested =
     options.columns ?? store.schema.slice(1).map((def) => def.name);
 
-  // A range key's synthesized names could collide with a real column.
-  // Better a named error than an Arrow table with two fields called the
-  // same thing, where `getChild` silently picks one.
+  // Every output field name must be unique. Arrow tolerates duplicate field
+  // names and `getChild` then silently picks one — so a collision (with a
+  // synthesized key-edge name, or a name simply requested twice) is an error
+  // here, not a quirk there. `taken` grows as names are claimed, so a
+  // duplicate `columns` entry is caught the same way a key clash is.
   const taken = new Set(fields.map((f) => f.name));
   for (const name of requested) {
     if (taken.has(name)) {
       throw new ValidationError(
-        `toArrow: column '${name}' collides with the key field of the same ` +
-          `name — a '${keys.kind}' key exports as ` +
-          `'${keyName}' + '${keyName}${END_SUFFIX}'; rename the column first`,
+        `toArrow: field name '${name}' would appear twice — it collides ` +
+          `with a key field (a '${keys.kind}' key exports as '${keyName}'` +
+          (keys.kind === 'time' || keys.kind === 'value'
+            ? ''
+            : ` + '${keyName}${END_SUFFIX}'`) +
+          `) or with an earlier entry in { columns: [...] }`,
       );
     }
+    taken.add(name);
   }
 
   for (const name of requested) {
@@ -323,12 +336,18 @@ export function storeToArrow(
 
   // An interval key carries labels; they are part of the key's identity
   // (an `aggregate` result is the motivating case), so they ride along.
+  // (`taken` already holds every exported name, so this also catches a
+  // requested column called `<key>Label`. A schema column of that name that
+  // was NOT requested doesn't collide — the output then has one field of
+  // that name, the labels — but it is a confusing schema to export; the
+  // error only fires when both would actually appear.)
   if (keys.kind === 'interval') {
     const labelName = `${keyName}${LABEL_SUFFIX}`;
-    if (taken.has(labelName) || requested.includes(labelName)) {
+    if (taken.has(labelName)) {
       throw new ValidationError(
         `toArrow: interval labels export as '${labelName}', which collides ` +
-          `with an existing column — rename the column first`,
+          `with an exported column of the same name — rename the column or ` +
+          `select it out via { columns: [...] }`,
       );
     }
     fields.push(valueField(labelName, keys.labels));

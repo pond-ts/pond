@@ -217,6 +217,86 @@ describe('toArrow — two-edged keys', () => {
     const s = numericSeries(120).aggregate(Sequence.every('10m'), {
       intervalEnd: { from: 'close', using: 'avg' },
     });
-    expect(() => s.toArrow()).toThrow(/collides with the key field/);
+    expect(() => s.toArrow()).toThrow(/would appear twice/);
+  });
+
+  it('throws on a duplicate columns entry (Layer-2 review find)', () => {
+    // ['close', 'close'] used to sail through and emit two identical
+    // fields — exactly the silent-duplicate outcome the collision error
+    // exists to prevent. `taken` now grows as names are claimed.
+    expect(() =>
+      numericSeries(8).toArrow({ columns: ['close', 'close'] }),
+    ).toThrow(/would appear twice/);
+  });
+
+  it('throws when a requested column collides with the label field', () => {
+    const s = numericSeries(120).aggregate(Sequence.every('10m'), {
+      intervalLabel: { from: 'close', using: 'avg' },
+    });
+    expect(() => s.toArrow()).toThrow(/interval labels export as/);
+  });
+});
+
+describe('toArrow — store-level paths (storeToArrow)', () => {
+  // These exercise storeToArrow directly on hand-built stores — the shapes
+  // TimeSeries construction doesn't reach from public doors in this file:
+  // chunked storage (materializes — the one named copy) and numeric
+  // interval labels.
+
+  it('materializes a chunked column — correct values, necessarily a copy', async () => {
+    const { storeToArrow } = await import('../src/batch/operators/to-arrow.js');
+    const { ColumnarStore, concatSorted, float64ColumnFromArray } =
+      await import('../src/columnar/index.js');
+    const { timeKeyColumnFromArray } = await import('../src/columnar/index.js');
+    const part = (times: number[], values: number[]) =>
+      ColumnarStore.fromTrustedStore(
+        [
+          { name: 'time', kind: 'time' },
+          { name: 'v', kind: 'number' },
+        ] as const,
+        timeKeyColumnFromArray(times),
+        new Map([['v', float64ColumnFromArray(values)]]),
+      );
+    const chunked = concatSorted([
+      part([1000, 2000], [1.5, 2.5]),
+      part([3000, 4000], [3.5, 4.5]),
+    ]);
+    expect(chunked.columns.get('v')!.storage).toBe('chunked'); // guard
+
+    const { fields } = storeToArrow(chunked);
+    const f = fields.find((x) => x.name === 'v')!;
+    if (f.type !== 'float64')
+      throw new Error(`expected float64, got ${f.type}`);
+    expect([...f.values]).toEqual([1.5, 2.5, 3.5, 4.5]);
+    expect(f.nullCount).toBe(0);
+  });
+
+  it('exports numeric interval labels as a float64 field', async () => {
+    const { storeToArrow } = await import('../src/batch/operators/to-arrow.js');
+    const { ColumnarStore, Float64Column, IntervalKeyColumn } =
+      await import('../src/columnar/index.js');
+    const n = 3;
+    const begin = new Float64Array([0, 1000, 2000]);
+    const end = new Float64Array([1000, 2000, 3000]);
+    const labels = new Float64Column(new Float64Array([7, 8, 9]), n);
+    const store = ColumnarStore.fromTrustedStore(
+      [
+        { name: 'interval', kind: 'interval' },
+        { name: 'v', kind: 'number' },
+      ] as const,
+      new IntervalKeyColumn(begin, end, labels, n),
+      new Map([
+        [
+          'v',
+          new Float64Column(new Float64Array([1, 2, 3]), n, undefined, true),
+        ],
+      ]),
+    );
+    const { fields } = storeToArrow(store);
+    const label = fields.find((x) => x.name === 'intervalLabel')!;
+    if (label.type !== 'float64')
+      throw new Error(`expected float64 labels, got ${label.type}`);
+    expect(label.values).toBe(labels._values); // zero-copy, same as any numeric
+    expect([...label.values]).toEqual([7, 8, 9]);
   });
 });

@@ -133,17 +133,18 @@ function percentileOfUnsorted(dense: Float64Array, q: number): number {
  * Shared `reduceColumn` body for percentile-shaped reducers
  * (`median`, `p50`, `p95`, etc.). Walks the validity bitmap to
  * gather defined **and finite** cells into a dense `Float64Array`,
- * sorts with the typed-array intrinsic, and reads the percentile
- * from the sorted view.
+ * then selects the percentile's one or two order statistics with
+ * {@link quickselect} — O(n) expected, no full sort (see the
+ * "Why not just sort" note above).
  *
  * Non-finite cells (`NaN` / `±Infinity`) are excluded by the
  * reducer non-finite policy (docs/notes/reducer-nan-policy.md) —
  * uniformly, across every path. With non-finite filtered out
- * before the sort, `Float64Array.prototype.sort()` (the numeric,
- * NaN-free intrinsic, ~2× faster than `Array.sort` with a
- * comparator) produces the same total order as the row path's
- * `Array.sort((a, b) => a - b)` over the same finite values — so
- * there is no longer any NaN-ordering seam to special-case.
+ * before selection, the `<` / `>` partition comparisons are
+ * total-order-equivalent to the row path's
+ * `Array.sort((a, b) => a - b)` over the same finite values, so
+ * both paths read the same order statistics — there is no
+ * NaN-ordering seam to special-case.
  *
  * Empty (no defined+finite values) → `undefined`.
  */

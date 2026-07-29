@@ -113,10 +113,11 @@ and type-level changes; patch bumps are strictly additive.
 
 - **core:** **`sum` and `mean` are ~2.5× faster on long runs**, and their
   results may differ from previous versions in the last ulp. Runs of **32 or
-  more** cells now accumulate into eight independent partial sums rather than
-  one running total, which breaks the loop's dependency chain — 2.51× on a
-  dense column, 2.22× through a validity bitmap, and `close.mean()` over 500k
-  bars goes from 0.47 ms to **0.19 ms**.
+  more** cells (range positions — a gapped range counts its gaps) now
+  accumulate into eight independent partial sums rather than one running
+  total, which breaks the loop's dependency chain — 2.51× on a dense column,
+  2.22× through a validity bitmap, and `close.mean()` over 500k bars goes
+  from 0.47 ms to **0.19 ms**.
 
   Floating-point addition is not associative, so this **can change the
   answer** — worth being precise about the direction, though: the blocked

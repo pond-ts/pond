@@ -508,4 +508,71 @@ describe('TimeSeries.fromArrow', () => {
     expect(col(series, 'value')[3]).toBeUndefined();
     expect(col(series, 'value')[4]).toBe(40);
   });
+
+  it('declines adoption on a multi-chunk vector, with the same answer', () => {
+    // A table decoded from a multi-record-batch IPC stream: two chunks.
+    // There is no single buffer pair to adopt; the fallback reads through
+    // `get()`, which spans the chunks.
+    const COUNT = 12;
+    const a = Float64Array.from({ length: 6 }, (_, i) => i);
+    const b = Float64Array.from({ length: 6 }, (_, i) => 100 + i);
+    const all = Float64Array.from({ length: COUNT }, (_, i) =>
+      i < 6 ? i : 94 + i,
+    );
+    const full = new Uint8Array([0xff]);
+    const multiChunk: ArrowVectorLike = {
+      length: COUNT,
+      nullCount: 1,
+      toArray: () => all,
+      get: (i) => (i === 4 ? null : all[i]!),
+      data: [
+        { offset: 0, length: 6, values: a, nullBitmap: full },
+        { offset: 0, length: 6, values: b, nullBitmap: full },
+      ],
+    };
+    const series = build(COUNT, [
+      {
+        name: 'time',
+        vector: f64(Array.from({ length: COUNT }, (_, i) => i * 1000)),
+      },
+      { name: 'value', vector: multiChunk },
+    ]);
+    expect(col(series, 'value')[4]).toBeUndefined();
+    expect(col(series, 'value')[7]).toBe(101);
+  });
+
+  it('declines adoption when padding bits beyond length are set', () => {
+    // Arrow's spec leaves the final byte's padding bits unspecified;
+    // pond's bitmap invariant says they must be zero (validity.ts). We
+    // cannot zero them in place — the buffer is the caller's table — so
+    // dirty padding declines and the per-slot fallback answers.
+    const COUNT = 12; // 4 padding bits in byte 1
+    const values = Float64Array.from({ length: COUNT }, (_, i) => i * 2);
+    const nullBitmap = new Uint8Array(2);
+    for (let i = 0; i < COUNT; i += 1) {
+      if (i !== 5) nullBitmap[i >> 3]! |= 1 << (i & 7);
+    }
+    nullBitmap[1]! |= 0xf0; // dirty padding: bits 12..15 set
+
+    const dirty: ArrowVectorLike = {
+      length: COUNT,
+      nullCount: 1,
+      toArray: () => values,
+      get: (i) => (i === 5 ? null : values[i]!),
+      data: [{ offset: 0, length: COUNT, values, nullBitmap }],
+    };
+    const series = build(COUNT, [
+      {
+        name: 'time',
+        vector: f64(Array.from({ length: COUNT }, (_, i) => i * 1000)),
+      },
+      { name: 'value', vector: dirty },
+    ]);
+    const c = series.column('value' as never) as unknown as {
+      validity?: { bits: Uint8Array };
+    };
+    expect(c.validity?.bits).not.toBe(nullBitmap); // declined, not adopted
+    expect(col(series, 'value')[5]).toBeUndefined();
+    expect(col(series, 'value')[6]).toBe(12);
+  });
 });

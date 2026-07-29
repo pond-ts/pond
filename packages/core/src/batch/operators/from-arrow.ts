@@ -377,6 +377,18 @@ function adoptNumericWithNulls(
     return null;
   }
 
+  // Padding bits beyond `count` in the final byte must be zero — pond's
+  // bitmap invariant (validity.ts: "reserved (must be zero)"). Arrow's spec
+  // leaves them unspecified, and we cannot zero them here: the buffer is
+  // shared with the caller's table, so writing would mutate their data.
+  // Dirty padding → decline; the `get()` fallback reads per-slot and never
+  // sees the padding.
+  const padBits = count & 7;
+  if (padBits !== 0) {
+    const mask = (0xff << padBits) & 0xff;
+    if ((bits[count >> 3]! & mask) !== 0) return null;
+  }
+
   // `validityFromBits` popcounts on construction, so this cross-check of the
   // vector's own `nullCount` is free.
   const validity = validityFromBits(bits, count);

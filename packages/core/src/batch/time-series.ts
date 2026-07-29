@@ -1614,9 +1614,9 @@ export class TimeSeries<S extends SeriesSchema> {
    *
    * Returns `{ length, fields }` rather than an Arrow `Table`, because pond
    * does not depend on `apache-arrow` — the caller brings their own and
-   * assembles with `makeData` / `makeVector`. See
-   * {@link ArrowExportField} for the per-field shape and the four-line
-   * adapter.
+   * assembles with `makeData` / `makeVector`, narrowing each field on its
+   * `type` tag first. See {@link ArrowExportField} for the per-field shape
+   * and the worked adapter (the module doc of `operators/to-arrow.ts`).
    *
    * The point is to make "bring your own compute engine" a buffer handoff:
    * polars is 4–9× faster than pond on whole-column reductions, and a

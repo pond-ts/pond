@@ -62,6 +62,13 @@
  * Minimum run length before blocked accumulation is used. Shorter runs
  * take the sequential path, which is both faster at that size and
  * bit-identical to pond-ts's historical result.
+ *
+ * "Run length" is `end - start` — **range positions, not defined
+ * cells**. On the masked path a 32-cell range with gaps blocks even
+ * though fewer than 32 values contribute. Deliberate: the gate must be
+ * O(1), a defined-count popcount would cost a scan, and the threshold
+ * is a perf crossover, not a semantic boundary — the masked kernel is
+ * correct at any density.
  */
 export const BLOCKED_MIN = 32;
 
