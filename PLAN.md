@@ -125,6 +125,16 @@ work is bounded and future studies inherit. Two consequences fall out before
 any code: K7 (rolling regression) and K8 (bivariate moments) are `unbounded`,
 and K6 (path-dependent state machines) is not partitionable at all.
 
+Extended to the **whole** composable surface, not just the financial kernels:
+core operators (`align`/`fill`/`aggregate`/`diff`/`pctChange`/…), the transforms
+an agent reaches for when exploring visually (`byValue`, `byColumn` histograms),
+and the folds that become facts. Two findings there stand independent of any
+parallelism: **`pctChange` is unbounded and already shipped unflagged** (it
+divides by the previous value), and a fourth idea is needed — **discretising**
+operators (bins, ranks, crossings, `argmax`) turn _any_ upstream inexactness
+into a categorical difference, so `bollinger` → "crossed the band" is discretely
+unstable on `main` today from blocked summation alone, with no workers involved.
+
 Not a commitment. Red-team it before anything commits to it.
 
 ### `@pond-ts/financial`
