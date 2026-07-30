@@ -78,9 +78,14 @@ include new features and type-level changes; patch bumps are strictly additive.
   state fresh. `sma`, `envelope` and `bollinger` shift by rounding error
   (3.9e-14, 3.9e-14, 5.1e-13 observed; no cell beyond 1e-9).
 
-  **`zScore` is different in kind, not degree.** It divides by the rolling σ,
-  and where a window is nearly flat that σ carries almost no significant
-  digits — so a last-ulp difference becomes an arbitrarily large relative one.
+  **`zScore` is different in kind, not degree** — though not for the reason
+  first published here. The divergence is **catastrophic cancellation in the
+  numerator**, not the division by σ: at the worst row, σ differs by 0.97%
+  while `v − mean` differs by 60%, because `ulp(1e15)` is `0.125` and a window
+  spanning ±3 covers ~48 ulps. The sequential study computes the same
+  subtraction and carries the same exposure; partitioning only perturbs it.
+  A shifted-frame formulation removes it (650% → 8.8e-15, prototyped in
+  `spikes/shifted-frame/`, tracked as [PND-SHIFTFRAME]).
   On a benign random walk the difference is ~2.6e-6 across ~0.8% of cells; on
   a legal near-flat series at large magnitude it is **38%** (counterexample
   from a Codex review, now a regression test). Do not opt in if you threshold

@@ -21,11 +21,24 @@ four chunks — on which the partitioned answer differs from the
 sequential one by **38% relative**, with 5–15% at other offsets
 (verified independently; now a regression test).
 
-The mechanism is not a bug. `zScore` divides by the rolling σ. On a
-near-flat window σ carries almost no significant digits, so a last-ulp
-difference between two sweeps becomes an arbitrarily large relative
-difference in the quotient. **No care in the kernel fixes it, and no
-quantity of testing establishes a bound, because there isn't one.**
+The mechanism is not a bug — but the first explanation of it here was
+wrong, and the correction matters more than the original finding.
+
+It is **not** the division by σ. Decomposed at the worst row: σ differs
+between the two sweeps by 0.97%, while the numerator `v − mean` differs
+by **60%**. `ulp(1e15)` is `0.125`, so a window spanning ±3 covers ~48
+ulps, and computing `v − mean` with both operands ≈1e15 and the answer
+≈1.0 leaves roughly three bits. It is **catastrophic cancellation in the
+numerator**, governed by the data's magnitude-to-spread ratio.
+
+Two consequences. First, **it is not caused by parallelism** — the
+sequential study performs the same subtraction and carries the same
+exposure; partitioning only perturbs which rounding history each cell
+holds. Second, **it is fixable**: accumulating in a shifted frame
+(`v − anchor`, mean carried as `anchor + offset`, deviation as
+`(v − anchor) − offset`) takes the counterexample from **650% error to
+8.8e-15**, and improves benign data ~40× as well
+([`spikes/shifted-frame/`](../../spikes/shifted-frame/)).
 
 Four claim-or-measurement errors in that single work stream were caught
 only by adversarial review. That is a base rate, not bad luck, and the
@@ -55,11 +68,11 @@ Numerical robustness under partitioning (and under reassociation
 generally) is a property of an operator's **form**, derivable by reading
 it once, rather than of any workload.
 
-| Class             | Meaning                                                                                                        | Examples                                                                                         |
-| ----------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| **E — exact**     | Associative and state-free. Partitioning cannot change the answer at all.                                      | `min`, `max`, `first`, `last`, `count`, `sum` of exact integers                                  |
-| **B — bounded**   | Reassociation shifts the result, with an error bound that is provable and small (relative, O(ε·√n) or better). | `sum`, `mean`, rolling mean, blocked summation, `bollinger`'s bands                              |
-| **U — unbounded** | Divides by, or subtracts, a quantity that can cancel to near zero. Relative error has no bound.                | `zScore`, `percentChange` near a zero base, σ on flat windows, ratios and correlations generally |
+| Class                             | Meaning                                                                                                                                                             | Examples                                                                                           |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| **E — exact**                     | Associative and state-free. Partitioning cannot change the answer at all.                                                                                           | `min`, `max`, `first`, `last`, `count`, `sum` of exact integers                                    |
+| **B — bounded**                   | Reassociation shifts the result, with an error bound that is provable and small (relative, O(ε·√n) or better).                                                      | `sum`, `mean`, rolling mean, blocked summation, `bollinger`'s bands                                |
+| **U — unbounded _as formulated_** | Subtracts or divides quantities that can cancel. Relative error has no bound **in this arrangement** — the first question is whether another arrangement avoids it. | `zScore` (removable — see §1), `percentChange` near a zero base, ratios and correlations generally |
 
 Three claims, each cheap to check and each stronger than a benchmark:
 
@@ -67,9 +80,18 @@ Three claims, each cheap to check and each stronger than a benchmark:
   all, only a partition-equivalence test.
 - **B is provable** from the reassociation argument already written down
   in [`blocked-summation.md`](../notes/blocked-summation.md).
-- **U is a refusal.** There is nothing to measure and nothing to
-  document that makes it safe; the only honest options are "do not
-  parallelise this" or "the caller states they accept it".
+- **U is a prompt to reformulate, not merely a refusal.** This is the
+  RFC's biggest correction. `zScore` was classified `U` as though the
+  unboundedness were a property of the _operator_; the shifted-frame
+  prototype shows it was a property of the _formulation_. So `U` should
+  read: "this arrangement of the arithmetic cancels — find one that does
+  not, and if none exists, then refuse."
+
+  The diagnostic that generalises is a property of the **data**, not the
+  op: **how many ulps does a window's spread span?** At a few hundred or
+  fewer, the quantity has few significant bits left no matter who
+  computes it. That check is cheap, applies single-threaded, and is a far
+  better guard than a per-op tolerance.
 
 ## 4. Composition is where this earns its keep
 

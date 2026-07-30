@@ -124,6 +124,19 @@ questions is missing _primitives_: unpivoting a wide row into a value-axis
 series (a term structure is the object these people think in), tall→wide pivot,
 and ranking across partitions.
 
+- **[PND-SHIFTFRAME]** — Reformulate the rolling deviation in a **shifted frame**,
+  for the sequential study as much as the parallel one. `zScore` computes
+  `(v − mean) / σ` from an _absolute_ rolling mean; where a window's spread is
+  a small number of ulps of its magnitude, that subtraction has almost no
+  significant bits. Measured: **650% error → 8.8e-15** on a legal near-flat
+  series at 1e15, and **~40× better on a benign random walk** — so this is a
+  correctness improvement for every caller, not a parallel-only fix.
+  Accumulate `v − anchor`, carry the mean as `anchor + offset`, emit the
+  deviation as `(v − anchor) − offset`. Prototype and the decomposition that
+  found it: [`spikes/shifted-frame/`](spikes/shifted-frame/). Needs a kernel
+  contract that can return a deviation rather than only mean+σ, since the
+  cancellation happens in the _consumer_ — `mean` as a double simply cannot
+  carry enough resolution at those magnitudes.
 - **[PND-AGENTBENCH]** — Build the cross-sectional + flurry benchmark (Q11/Q12
   in the note) before any more optimisation. N symbols × a rolling study ×
   a rank across symbols, then the same question re-asked with varying windows.

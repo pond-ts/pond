@@ -76,13 +76,27 @@
  * differs from the sequential one by **38% relative** — verified, and
  * now pinned as a regression test.
  *
- * The mechanism is cancellation, and it is unbounded by construction.
- * `zScore` divides by the rolling σ. Where a window is nearly flat, σ is
- * near zero and carries almost no significant digits; a last-ulp
- * difference in σ between the sequential and partitioned sweeps is then
- * an *arbitrarily large* relative difference in the quotient. No amount
- * of care in the kernel fixes that — it is a property of dividing by a
- * cancelled quantity.
+ * **The mechanism is not the division, and it is fixable.** Decomposed at
+ * the worst-disagreeing row: σ differs between the two sweeps by 0.97%,
+ * while `v − mean` differs by **60%**. `ulp(1e15)` is `0.125`, so a
+ * window spanning ±3 covers ~48 ulps — computing `v − mean` with both
+ * operands ≈1e15 and the answer ≈1.0 leaves about three bits. A one-ulp
+ * disagreement in `mean` is then ~12% of the answer.
+ *
+ * So the exposure is **catastrophic cancellation in the numerator**, set
+ * by the data's magnitude-to-spread ratio, and **it is not caused by
+ * parallelism** — the sequential study computes the same subtraction and
+ * has the same exposure. Partitioning only changes which rounding
+ * history each cell carries, landing one ulp apart, which this input
+ * amplifies.
+ *
+ * A shifted-frame formulation removes it: accumulate `v − anchor`, carry
+ * the mean as `anchor + offset`, and compute the deviation as
+ * `(v − anchor) − offset` — both operands small, nothing cancels.
+ * Prototyped in [`spikes/shifted-frame/`](../../../../spikes/shifted-frame/):
+ * **650% error → 8.8e-15** on the counterexample, and ~40× better on
+ * benign data. Tracked as [PND-SHIFTFRAME]; until it lands, the caveat
+ * below stands.
  *
  * **So: `sma`, `envelope` and `bollinger` shift by rounding error.
  * `zScore` can shift arbitrarily on near-flat windows, and you should
