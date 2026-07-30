@@ -56,6 +56,28 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **process:** **`HostPool` (`@pond-ts/process/pool`) — whole requests across
+  resident worker threads** ([PND-PROCPAR], Node-only). N workers, each holding
+  a long-lived `Host`, with the pool as a router: a plan is already JSON, a
+  registry is a module both isolates import (functions cannot be structured-
+  cloned, so the caller names a `setup` module rather than passing a value),
+  and a result's columns cross as transferable buffers. No engine change.
+
+  Measured (`packages/process/scripts/perf-pool.mjs`, 32 requests, 8 workers):
+  **3.6×** on distinct requests costing ~58 ms each, **2.6×** at ~2.4 ms —
+  and **0.94×** at ~0.7 ms, or **0.14×** on a cache-hit-heavy repeat workload.
+  Every answer is shipped whether or not it was cheap to compute, and pooling
+  competes with the in-process memo rather than complementing it, so the rule
+  is: worth it when requests are numerous, mostly distinct, and cost more than
+  a millisecond or two each. The script sweeps request size so a caller can
+  find their own crossover rather than trusting one number.
+
+  Supporting: `columnBuffers` / `columnFromBuffers` — a packed numeric column
+  as the buffer pair it already is, for crossing an isolate boundary. The
+  buffers are **copies**, deliberately: transferring a column's own buffer
+  detaches it in the sending isolate, which would silently empty the cache the
+  worker exists to keep warm.
+
 - **core:** **`TimeSeries.toArrow(options?)` — zero-copy export to the Apache
   Arrow memory layout**, the counterpart of `fromArrow`. Every other export
   door is row-shaped, so reaching another columnar engine meant a full

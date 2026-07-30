@@ -17,6 +17,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/cjs-fallback.cjs"
+    },
+    "./pool": {
+      "types": "./dist/pool/index.d.ts",
+      "import": "./dist/pool/index.js"
     }
   },
   "engines": {

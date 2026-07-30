@@ -83,10 +83,13 @@ copies inputs per call is dead before it is benchmarked.
   critical path. Helps the slow queries (composites ≥ 10 ms), which is
   where the agent workload hurts.
 - **Throughput** under concurrent queries: a pool of resident workers
-  each running _whole queries_ single-threaded scales near-linearly
-  with zero decomposition logic and zero numeric-semantics questions.
-  For multi-agent load this may be worth more than the latency shape,
-  and it is strictly simpler.
+  each running _whole queries_ single-threaded, with zero decomposition
+  logic and zero numeric-semantics questions. For multi-agent load this
+  may be worth more than the latency shape, and it is strictly simpler.
+
+  **Built and measured** — `HostPool`, `@pond-ts/process/pool`. It does
+  **not** scale near-linearly, as predicted above; see
+  [the correction](#correction-throughput-does-not-scale-near-linearly).
 
 ## Why `@pond-ts/process` is the scheduling layer
 
@@ -133,6 +136,48 @@ Sequential recurrences (`ema`, `cumulative`, `smooth`); anything already
 under ~3 ms (every summary fact); a _lone_ rolling-window query (polars'
 own mt data says as much). Browser is out of scope by the question's own
 framing (SAB there needs COOP/COEP headers).
+
+## Correction: throughput does not scale near-linearly
+
+This note predicted the throughput shape would scale "near-linearly".
+**It does not.** `HostPool` shipped and was measured
+(`packages/process/scripts/perf-pool.mjs`, 32 requests, 8 workers,
+10 cores); the ceiling is ~3.6×, not ~8×, and below a threshold the pool
+is a **loss**:
+
+| workload | rows | per request | in-process | pool(8) |           |
+| -------- | ---- | ----------- | ---------- | ------- | --------- |
+| distinct | 50k  | 0.7 ms      | 22 ms      | 24 ms   | **0.94×** |
+| distinct | 200k | 2.4 ms      | 77 ms      | 29 ms   | 2.61×     |
+| distinct | 500k | 8.9 ms      | 285 ms     | 93 ms   | 3.08×     |
+| distinct | 2M   | 57.6 ms     | 1842 ms    | 509 ms  | **3.62×** |
+| repeated | 50k  | 0.1 ms      | 2 ms       | 14 ms   | **0.14×** |
+| repeated | 2M   | 7.1 ms      | 228 ms     | 93 ms   | 2.44×     |
+
+Three things the prediction missed:
+
+1. **Every answer is shipped, and shipping is not free.** A result column
+   must be copied out of the worker's live memo before transfer
+   (transferring the memo's own buffer would detach it and silently empty
+   the cache), so each answer costs one `slice` plus a `postMessage`. That
+   is a per-request floor no amount of parallelism amortises.
+2. **Caching and pooling compete.** The `repeated` rows are the sharp
+   case: in-process, a re-asked question is a memo hit costing ~0.1 ms,
+   and a pool still pays full wire cost for it — so the pool starts
+   **7× behind** and never catches up at small sizes. Each worker also
+   warms its _own_ graph, so N workers hold up to N copies of a hot
+   column. Pooling helps a workload that computes; it actively hurts one
+   that mostly re-reads.
+3. **The crossover is workload-relative, not absolute.** Earlier in this
+   note, four ~1 ms toy jobs scaled at only 1.4× and the conclusion drawn
+   was "jobs must be ≳10 ms". With 32 jobs rather than 4, the crossover
+   sits nearer **1–2 ms per request** — more jobs means more overlap and
+   the fixed costs amortise further. Both measurements are right; the
+   ≳10 ms figure was over-generalised from a four-job probe.
+
+The honest rule: **a pool pays off when requests are numerous, mostly
+distinct, and individually cost more than a millisecond or two.** That is
+a real slice of the agent workload, and nothing like all of it.
 
 ## What's missing (the task)
 

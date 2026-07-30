@@ -420,22 +420,31 @@ whether it stays one.
   `LiveSource<S>`, because its `on('event')` overload widens the listener's
   event type. Narrow the overload, or give the incremental operators their own
   named contract. Touches a public type — needs sign-off.
-- **[PND-PROCPAR]** — Worker-thread parallel node execution. Measured
-  (spike committed at `spikes/worker-threads/`): the real 5-study strategy
-  stack, one study per worker over `SharedArrayBuffer`-resident inputs, goes
-  **66.3 → 27.4 ms (2.42×)** with **bit-identical** answers — and polars' own
-  st→mt data shows inter-operator parallelism is the only kind that pays at
-  this size (`sma`/`ema`/reductions 1.00× from 10 threads; `bollinger` 3.1×,
-  stack 4.1×). The plan layer already provides the hard parts: plans are JSON
-  - a registry both isolates import (the closure wall dissolved), `specId`
-    gives dedup/cache/deterministic merge, columns are the wire shape. Needs an
-    async engine path (ready-set dispatch over the compiled DAG), the financial
-    studies as registry ops over shared rolling primitives (estimated ~15 ms
-    critical path — polars-mt territory — via mean/std dedup), and pool
-    plumbing. `fromColumns` already adopts SAB views zero-copy, so residency
-    needs no core change. Queues behind [PND-PROCIDENT] like every interactive
-    consumer. Full assessment:
-    [worker-threads-assessment-2026-07.md](docs/notes/worker-threads-assessment-2026-07.md).
+- **[PND-PROCPAR]** — Worker-thread parallelism. Two shapes; the **throughput**
+  half has shipped and the **latency** half has not.
+
+  **Shipped: `HostPool` (`@pond-ts/process/pool`)** — whole requests routed
+  across workers, each holding a long-lived `Host`. No engine change: a plan
+  is JSON, a registry is a module both isolates import, and a result's columns
+  travel as transferable buffers. Measured
+  (`packages/process/scripts/perf-pool.mjs`, 32 requests, 8 workers): **3.6×**
+  on distinct requests over 2M rows, **2.6×** at 200k — but **0.94× at 50k and
+  0.14× on a cache-hit-heavy repeat workload**, because every answer is shipped
+  whether or not it was cheap to compute. This corrected the assessment's
+  "near-linear" prediction; the honest rule is that a pool pays off when
+  requests are numerous, mostly distinct, and cost more than a millisecond or
+  two each. Correction recorded in the note.
+
+  **Remaining: the latency half** — split one composite query's nodes across
+  workers (spike measured 2.42× on the 5-study stack, bit-identical). Blocked
+  on an engine change the spike did not surface: a node's value can only be
+  produced by its own `compute`, which is contractually pure, so a result
+  computed in another isolate **has nowhere to land**. That injection seam, plus
+  a ready-set scheduler over the compiled DAG and the financial studies as
+  registry ops over shared rolling primitives (mean/std dedup → estimated ~15 ms
+  critical path, polars-mt territory), is the rest of this ticket. Full
+  assessment:
+  [worker-threads-assessment-2026-07.md](docs/notes/worker-threads-assessment-2026-07.md).
 
 ### Process demo — composer / request / results
 

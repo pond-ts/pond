@@ -1262,3 +1262,69 @@ demo's worker topology is coupled to it (48.6 ms boxed vs 0.5 ms
 transferred per 500k-value answer). This ticket arriving is the friction
 signal the RFC model wants — a consumer with measurements — not a queue
 jump.
+
+### [PND-PROCPAR] — Worker threads: throughput half SHIPPED, latency half open
+
+Two shapes, and the ticket is only half done. Assessment:
+[worker-threads-assessment-2026-07.md](../notes/worker-threads-assessment-2026-07.md).
+
+**Shipped — `HostPool`, `@pond-ts/process/pool`.** N workers, each a
+long-lived `Host`; the pool is a router. Nothing in the engine changed,
+which is the point: a plan is JSON, a registry is a module _both_
+isolates import (functions cannot be cloned, so the caller names a setup
+module rather than passing a value), and a result's columns cross as
+transferable buffers via `columnBuffers` / `columnFromBuffers`.
+
+Measured, 32 requests, 8 workers, 10 cores:
+
+| workload | per request | speedup   |
+| -------- | ----------- | --------- |
+| distinct | 0.7 ms      | **0.94×** |
+| distinct | 2.4 ms      | 2.61×     |
+| distinct | 57.6 ms     | **3.62×** |
+| repeated | 0.1 ms      | **0.14×** |
+| repeated | 7.1 ms      | 2.44×     |
+
+**The ceiling is ~3.6×, not ~8×, and below ~1–2 ms per request the pool
+loses.** Three reasons, all now recorded as the correction in the note:
+every answer is shipped whether or not it was cheap (a copy out of the
+live memo — transferring the memo's own buffer would detach it and empty
+the cache); caching and pooling _compete_, so a repeat-heavy workload
+starts 7× behind and never catches up; and the earlier "jobs must be
+≳10 ms" figure was over-generalised from a four-job probe (with 32 jobs
+the crossover is nearer 1–2 ms).
+
+Two bugs found while building it, both worth knowing:
+
+- A worker that died **before** any request left the pool silently
+  broken — only in-flight requests were rejected, so everything sent
+  afterwards hung forever. The pool now latches a fatal state and fails
+  fast. It deliberately does not self-heal: replacing a worker would
+  discard its warm graph without telling anyone.
+- Locating the worker entry relative to `import.meta.url` resolves to a
+  `.ts` file when the package is loaded from source (a test runner, a
+  bundler), which no worker can execute. Now a named error at `start`
+  rather than a hang.
+
+**Open — the latency half.** Splitting one composite query's nodes across
+workers (spike: 2.42× on the 5-study stack, bit-identical answers) needs
+an engine change the spike did not surface: `Node.compute` is the only
+producer of a node's value and is contractually pure, so **a result
+computed in another isolate has nowhere to land**. Required, in order:
+
+1. **A value-injection seam** on the node layer — set an output plus its
+   version without running `compute`, without breaking the
+   input-version-compare that makes the memo correct. This is the real
+   blocker and deserves its own design pass.
+2. **A ready-set scheduler** over the compiled DAG. Cheaper than it
+   sounds: `run()`'s `warm(id)` is already the single point where compute
+   happens, and warming in topological order makes every subsequent pull
+   shallow.
+3. **The financial studies as registry ops** over shared rolling
+   primitives, so `bollinger` and `zScore` dedup their mean/std nodes by
+   `specId` — the estimated ~15 ms critical path that would put the stack
+   in polars-mt territory.
+
+Sequencing note: the throughput half shipped ahead of [PND-PROCIDENT]
+because it needed nothing from the engine. The latency half does not get
+that exemption.

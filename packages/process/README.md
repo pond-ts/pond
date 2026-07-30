@@ -145,6 +145,45 @@ new revision updates the source in place and lets ordinary graph invalidation
 run. Use synchronous `host.run()` for string-keyed datasets added with
 `host.add()`.
 
+## Worker pool (Node)
+
+`@pond-ts/process/pool` runs **whole requests** across worker threads, each
+holding a long-lived `Host`. It scales throughput under concurrent load; it
+does not make one request faster.
+
+```ts
+// setup.mjs — imported by BOTH isolates, because a registry is functions
+// and functions do not survive structured clone.
+export default function setup() {
+  return { registry, datasets: { px: series } };
+}
+```
+
+```ts
+import { HostPool } from '@pond-ts/process/pool';
+
+const pool = await HostPool.start({
+  setup: new URL('./setup.mjs', import.meta.url),
+  size: 4,
+});
+const result = await pool.run({ from: 'px', process: plan, select });
+await pool.close();
+```
+
+Requests run with `assemble: false` — the pool answers `columns` (which cross
+as transferable buffers) and the caller assembles a `TimeSeries` if it wants
+one. Pass an `affinity` key as the second argument to pin related requests to
+one worker, so its warm nodes get reused.
+
+**When it pays.** Measured at 32 requests over 8 workers: 3.6× when each
+request costs ~58 ms, 2.6× at ~2.4 ms, **0.94× at ~0.7 ms**, and **0.14×** on a
+workload of repeated questions that the in-process memo already answers for
+free. Every answer is shipped whether or not it was cheap, and each worker
+warms its _own_ graph — so pooling competes with caching rather than
+complementing it. Worth it when requests are numerous, mostly distinct, and
+individually cost more than a millisecond or two. Find your own crossover with
+`node packages/process/scripts/perf-pool.mjs`.
+
 ## Quick start
 
 ```ts
