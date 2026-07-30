@@ -15,9 +15,13 @@ import { TimeSeries } from 'pond-ts';
  * nine tests that passed without once running the code they name.
  * (Caught by instrumenting the hook, not by any of them failing.)
  *
- * The `zScore` case is now also the canary: the parallel path *must*
- * shift its values slightly, so a worst-difference of exactly zero means
- * the accelerator never engaged.
+ * That canary used to be `zScore`: the parallel path shifted its values,
+ * so a worst-difference of exactly zero proved the accelerator had never
+ * engaged. [PND-SHIFTFRAME] removed the shift — `zScore` no longer goes
+ * through the rolling kernel at all — and with it a canary that only
+ * worked because the accelerated answer was worse. `parallelDispatches()`
+ * replaced it: an explicit count of passes that ran on workers, which
+ * does not depend on acceleration being detectably wrong.
  *
  * Two questions decide whether this is shippable, and both are here:
  *
@@ -162,8 +166,9 @@ describe('[PND-SCANKERN] withWorkers', () => {
     // at the documented bound, and the tail is asserted to be a small
     // FRACTION rather than merely "some cells" — if it grew, the
     // documentation would be wrong.
-    const { withWorkers, studies } = await load();
+    const { withWorkers, studies, parallelDispatches } = await load();
     const series = bars(N);
+    const before = parallelDispatches();
     const expected = studies.zScore(series, { period: P });
     const actual = studies.zScore(withWorkers(series, { workers: 4 }), {
       period: P,
@@ -173,20 +178,20 @@ describe('[PND-SCANKERN] withWorkers', () => {
       cells(expected as never, 'zscore'),
     );
     expect(mismatchedGaps, 'gaps must still line up exactly').toBe(0);
-    // Pinned AT the documented figures, not 38x and 6x looser than them
-    // — a tolerance that cannot fail is not pinning anything.
-    expect(worst, 'documented as ~2.6e-6').toBeLessThan(3e-6);
-    expect(over / N, 'documented as ~0.8% of cells').toBeLessThan(0.01);
-    // THE CANARY. The parallel path necessarily shifts zScore, so a
-    // difference of exactly zero means the accelerator never engaged and
-    // every assertion in this file was comparing sequential to itself —
-    // which is precisely what happened while the studies were imported
-    // from `src` and the pool from `dist`.
+    // BIT-IDENTICAL, where this once had a documented 2.6e-6 tail across
+    // ~0.8% of cells. Not because the pool got more accurate: because
+    // [PND-SHIFTFRAME] moved `zScore` off `rollingColumns` onto
+    // `rollingDeviationSd`, and the accelerator only hooks the former.
+    // The study opted itself out of parallelism by being fixed.
+    expect(worst, 'zScore no longer has a parallel tail').toBe(0);
+    expect(over, 'and therefore no cells over tolerance').toBe(0);
+    // Which is asserted directly rather than inferred from the zero
+    // above — zero difference is exactly what a silently-broken harness
+    // produces too, and that is the bug this file already shipped once.
     expect(
-      worst,
-      'zero difference ⇒ the parallel path never ran',
-    ).toBeGreaterThan(0);
-    expect(over, 'zero tail ⇒ the parallel path never ran').toBeGreaterThan(0);
+      parallelDispatches(),
+      'zScore must not dispatch to workers at all',
+    ).toBe(before);
   });
 
   it('a gapped column agrees gap for gap', async () => {
@@ -273,7 +278,7 @@ describe('[PND-SCANKERN] withWorkers', () => {
     // standalone studies bound to `this`, so they route through the same
     // kernel — and each link returns a derived series, which is exactly
     // the case key-buffer registration exists to keep accelerated.
-    const { withWorkers, studies } = await load();
+    const { withWorkers, studies, parallelDispatches } = await load();
     await import(new URL('../dist/fluent.js', import.meta.url).href);
 
     const chain = (b: unknown) =>
@@ -292,7 +297,14 @@ describe('[PND-SCANKERN] withWorkers', () => {
       studies.bollinger(studies.sma(bars(N), { period: P }), { period: P }),
       { period: P },
     );
+    const before = parallelDispatches();
     const actual = chain(withWorkers(bars(N), { workers: 4 }));
+    // `sma` is one pass and `bollinger` another; `zScore` is none, since
+    // it no longer routes through the rolling kernel.
+    expect(
+      parallelDispatches() - before,
+      'the chain must have dispatched to workers',
+    ).toBe(2);
 
     const names = (actual as { schema: { name: string }[] }).schema.map(
       (c) => c.name,
@@ -306,23 +318,15 @@ describe('[PND-SCANKERN] withWorkers', () => {
       'bbLower',
       'zscore',
     ]);
-    // Every link agrees; only zScore carries its documented tail.
-    for (const [column, tail] of [
-      ['sma', false],
-      ['bbMiddle', false],
-      ['zscore', true],
-    ] as const) {
-      const { mismatchedGaps, over, worst } = compare(
+    // Every link agrees, `zscore` now included — the accelerated links
+    // stay within rounding error and the unaccelerated one is exact.
+    for (const column of ['sma', 'bbMiddle', 'zscore'] as const) {
+      const { mismatchedGaps, over } = compare(
         cells(actual as never, column),
         cells(expected as never, column),
       );
       expect(mismatchedGaps, `${column}: gaps`).toBe(0);
-      if (tail)
-        expect(
-          worst,
-          `${column}: the parallel path must have run`,
-        ).toBeGreaterThan(0);
-      else expect(over, `${column}: cells beyond 1e-9`).toBe(0);
+      expect(over, `${column}: cells beyond 1e-9`).toBe(0);
     }
   });
 
@@ -331,7 +335,7 @@ describe('[PND-SCANKERN] withWorkers', () => {
     // same series, so it reads as a no-op link — but it is only a no-op
     // for the studies BEFORE it, which is worth pinning rather than
     // leaving to the prose.
-    const { studies } = await load();
+    const { studies, parallelDispatches } = await load();
     await import(new URL('../dist/fluent.js', import.meta.url).href);
     await import(new URL('../dist/parallel/index.js', import.meta.url).href);
 
@@ -342,10 +346,16 @@ describe('[PND-SCANKERN] withWorkers', () => {
       schema: { name: string }[];
     };
 
+    const before = parallelDispatches();
     const first = (bars(N) as unknown as Chainable)
       .withWorkers({ workers: 4 })
       .sma({ period: P })
       .zScore({ period: P });
+    // `sma` sits after the opt-in, so it dispatches; `zScore` never does.
+    expect(
+      parallelDispatches() - before,
+      'the studies after .withWorkers() must have run on workers',
+    ).toBe(1);
 
     expect(first.schema.map((c) => c.name)).toEqual([
       'time',
@@ -362,8 +372,6 @@ describe('[PND-SCANKERN] withWorkers', () => {
       cells(expected as never, 'zscore'),
     );
     expect(mismatchedGaps).toBe(0);
-    // Canary again: zScore must have shifted, or the chain ran sequentially.
-    expect(worst, 'the parallel path must have run').toBeGreaterThan(0);
     expect(worst).toBeLessThan(1e-4);
   });
 
@@ -378,7 +386,7 @@ describe('[PND-SCANKERN] withWorkers', () => {
     //
     // Reproduced here without Arrow: two series over one shared buffer,
     // at different offsets, exactly the shape `tableFromIPC` produces.
-    const { withWorkers, studies } = await load();
+    const { withWorkers, studies, parallelDispatches } = await load();
     const shared = new ArrayBuffer(N * 8 * 4);
     const view = (slot: number) => new Float64Array(shared, slot * N * 8, N);
     const build = (timeSlot: number, closeSlot: number) => {
@@ -403,26 +411,34 @@ describe('[PND-SCANKERN] withWorkers', () => {
       (other.keyColumn() as unknown as { begin: Float64Array }).begin.buffer,
     );
 
+    // `sma`, because it is a study the pool actually accelerates —
+    // `zScore` would dispatch for neither series and prove nothing.
     const reference = cells(
-      studies.zScore(build(2, 3), { period: P }) as never,
-      'zscore',
+      studies.sma(build(2, 3), { period: P }) as never,
+      'sma',
     );
     withWorkers(optedIn, { workers: 4 });
 
-    // `other` never opted in ⇒ bit-identical to a plain run.
-    expect(
-      cells(studies.zScore(other, { period: P }) as never, 'zscore'),
-    ).toEqual(reference);
-
-    // …while the series that did opt in shows the parallel path's shift.
-    const { worst } = compare(
-      cells(studies.zScore(optedIn, { period: P }) as never, 'zscore'),
+    // `other` never opted in ⇒ no dispatch, and bit-identical output.
+    const beforeOther = parallelDispatches();
+    expect(cells(studies.sma(other, { period: P }) as never, 'sma')).toEqual(
       reference,
     );
     expect(
-      worst,
+      parallelDispatches(),
+      'the series that did not opt in must not dispatch',
+    ).toBe(beforeOther);
+
+    // …while the one that did opt in runs on workers. Asserted on the
+    // dispatch count rather than on a numerical difference: `sma` is
+    // bounded, so it may well come back bit-identical, and "identical"
+    // must not be the same evidence as "never ran".
+    const beforeIn = parallelDispatches();
+    studies.sma(optedIn, { period: P });
+    expect(
+      parallelDispatches() - beforeIn,
       'the opted-in series must actually be accelerated',
-    ).toBeGreaterThan(0);
+    ).toBe(1);
   });
 
   it('zScore is NOT bounded on near-flat windows — the documented caveat', async () => {

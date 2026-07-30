@@ -1,3 +1,11 @@
+> **Shipped.** This prototype became `rollingDeviationSd` in
+> `packages/financial/src/kernels/rolling.ts`, and `zScore` now uses it.
+> The landed kernel differs from the probe in one way that mattered: it
+> shifts the **Welford accumulator** as well as the mean. Shifting only
+> the mean left σ computing `x − wMean` on raw values — the same
+> cancellation — and capped the improvement three orders of magnitude
+> short. See [PND-SHIFTFRAME] in PLAN.md.
+
 # Shifted-frame rolling — the `zScore` hazard is removable
 
 A correction to

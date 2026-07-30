@@ -65,16 +65,23 @@
  * | `sma`        | 1.85×   | 3.9e-14                        |
  * | `envelope`   | 1.35×   | 3.9e-14                        |
  * | `bollinger`  | 1.92×   | 5.1e-13                        |
- * | `zScore`     | 2.44×   | 2.6e-6 on ~0.8% of cells       |
- * | 3-study stack | 2.00×  | (as `zScore`)                  |
+ * | 3-study stack | 2.00×  | 5.1e-13                        |
+ *
+ * `zScore` is absent because it is **no longer accelerated**. It used to
+ * be the fastest entry here at 2.44×, and the only one with a caveat —
+ * 2.6e-6 on ~0.8% of cells. [PND-SHIFTFRAME] moved it onto
+ * `rollingDeviationSd`, which this pool does not hook, so opting in
+ * neither speeds it up nor changes its answer by a single bit. That is
+ * the right trade: the speedup was real and the answer was wrong.
  *
  * **Those are observations on a benign workload, not bounds.** An
- * earlier version of this doc presented the `zScore` figure as if it
- * bounded the error. It does not, and a Codex review supplied the
+ * earlier version of this doc presented a `zScore` figure as if it
+ * bounded the error. It did not, and a Codex review supplied the
  * counterexample: on a legal near-flat series at large magnitude
  * (`1e15 + ((i % 7) - 3)`, period 20, 4 chunks) the partitioned z-score
- * differs from the sequential one by **38% relative** — verified, and
- * now pinned as a regression test.
+ * differed from the sequential one by **38% relative** — verified, and
+ * still pinned as a regression test, now as the reason `zScore` is
+ * formulated the way it is.
  *
  * **The mechanism is not the division, and it is fixable.** Decomposed at
  * the worst-disagreeing row: σ differs between the two sweeps by 0.97%,
@@ -83,25 +90,23 @@
  * operands ≈1e15 and the answer ≈1.0 leaves about three bits. A one-ulp
  * disagreement in `mean` is then ~12% of the answer.
  *
- * So the exposure is **catastrophic cancellation in the numerator**, set
- * by the data's magnitude-to-spread ratio, and **it is not caused by
- * parallelism** — the sequential study computes the same subtraction and
- * has the same exposure. Partitioning only changes which rounding
- * history each cell carries, landing one ulp apart, which this input
+ * So the exposure was **catastrophic cancellation in the numerator**,
+ * set by the data's magnitude-to-spread ratio, and **not caused by
+ * parallelism** — the sequential study computed the same subtraction and
+ * had the same exposure. Partitioning only changed which rounding
+ * history each cell carried, landing one ulp apart, which this input
  * amplifies.
  *
- * A shifted-frame formulation removes it: accumulate `v − anchor`, carry
- * the mean as `anchor + offset`, and compute the deviation as
- * `(v − anchor) − offset` — both operands small, nothing cancels.
- * Prototyped in [`spikes/shifted-frame/`](../../../../spikes/shifted-frame/):
- * **650% error → 8.8e-15** on the counterexample, and ~40× better on
- * benign data. Tracked as [PND-SHIFTFRAME]; until it lands, the caveat
- * below stands.
+ * [PND-SHIFTFRAME] fixed the formulation rather than the caveat.
+ * `rollingDeviationSd` accumulates `v − anchor` and emits the deviation
+ * directly, so nothing cancels: **100% → 4.1e-15** on the counterexample,
+ * and better on benign data too. It is a study-level fix, so the
+ * sequential path gained the same accuracy — which is the point, since
+ * the sequential path was never actually safe here.
  *
- * **So: `sma`, `envelope` and `bollinger` shift by rounding error.
- * `zScore` can shift arbitrarily on near-flat windows, and you should
- * not opt into it if you threshold z-scores, reproduce the pandas
- * oracle, or work with near-constant series at large magnitude.**
+ * **So: `sma`, `envelope` and `bollinger` shift by rounding error, and
+ * `zScore` does not shift at all.** The studies this pool accelerates
+ * are exactly the ones whose error it bounds.
  *
  * There is also a semantic gap worth knowing: core rejects a non-finite
  * rolling result outright, where this kernel can emit `Infinity` or
@@ -294,7 +299,7 @@ function dispatch(reg: Registration, period: number): void {
  * Declines (returns `null`) unless every condition holds: the series was
  * registered, it is big enough to be worth partitioning, and every spec
  * asks for `avg` or `stdev` off **one** column — which is exactly what
- * `sma`, `envelope`, `bollinger` and `zScore` ask for. Anything else
+ * `sma`, `envelope` and `bollinger` ask for. Anything else
  * runs sequentially, unchanged.
  */
 function accelerate(
@@ -319,6 +324,7 @@ function accelerate(
   if (!readInto(reg.values, series, column)) return null;
 
   dispatch(reg, period);
+  dispatched += 1;
 
   const out: Record<string, Float64Array> = {};
   for (const [name, spec] of entries) {
@@ -427,6 +433,34 @@ function defaultParallelism(): number {
  * Workers are `unref`'d, so a program will exit without this; call it
  * when you want the threads gone sooner, or between test cases.
  */
+let dispatched = 0;
+
+/**
+ * How many rolling passes have actually run on worker threads since the
+ * process started.
+ *
+ * Acceleration is otherwise invisible: {@link withWorkers} is a no-op
+ * when the pool declines a series (too few rows, a crop that no longer
+ * matches the arena, a reducer the kernel does not implement, a study
+ * that does not go through the rolling kernel at all), and a declined
+ * pass returns the same answer the sequential path would — just slower
+ * than the caller expected. This is how you check.
+ *
+ * ```ts
+ * const before = parallelDispatches();
+ * const out = sma(withWorkers(bars, { workers: 8 }), { period: 20 });
+ * if (parallelDispatches() === before) console.warn('ran sequentially');
+ * ```
+ *
+ * It counts passes, not studies: a study asking for both a mean and a σ
+ * over the same column is one pass. The counter is process-wide and
+ * never resets, including across {@link shutdownWorkers} — compare two
+ * readings rather than testing against zero.
+ */
+export function parallelDispatches(): number {
+  return dispatched;
+}
+
 export function shutdownWorkers(): void {
   for (const reg of live) {
     reg.stopped = true;

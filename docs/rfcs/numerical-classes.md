@@ -5,6 +5,19 @@ tasks adopted into [PLAN.md](../../PLAN.md) are.
 
 **Author:** pond-ts library agent (Claude), 2026-07
 
+> **Update, 2026-07-31 — the central claim has been tested.** This RFC
+> argued that `U` is a property of a _formulation_ rather than of an
+> operator, using `zScore` as the case. [PND-SHIFTFRAME] has since landed
+> that reformulation: `zScore` moved from **U to B**, its worst error on
+> the counterexample below going **100% → 4.1e-15**. Two consequences the
+> draft did not anticipate are folded in throughout. First, the fix
+> belongs to the _study_, not to the parallel path — the sequential
+> answer was equally wrong and gained equally. Second, `zScore` is now
+> **slower and unaccelerated**, because the stable kernel is not the one
+> the worker pool hooks; the class improved and the speed regressed, and
+> a classification scheme that only tracked accuracy would have missed
+> that trade entirely.
+
 ---
 
 ## 1. The problem, stated by a failure
@@ -68,11 +81,16 @@ Numerical robustness under partitioning (and under reassociation
 generally) is a property of an operator's **form**, derivable by reading
 it once, rather than of any workload.
 
-| Class                             | Meaning                                                                                                                                                             | Examples                                                                                           |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| **E — exact**                     | Associative and state-free. Partitioning cannot change the answer at all.                                                                                           | `min`, `max`, `first`, `last`, `count`, `sum` of exact integers                                    |
-| **B — bounded**                   | Reassociation shifts the result, with an error bound that is provable and small (relative, O(ε·√n) or better).                                                      | `sum`, `mean`, rolling mean, blocked summation, `bollinger`'s bands                                |
-| **U — unbounded _as formulated_** | Subtracts or divides quantities that can cancel. Relative error has no bound **in this arrangement** — the first question is whether another arrangement avoids it. | `zScore` (removable — see §1), `percentChange` near a zero base, ratios and correlations generally |
+| Class                             | Meaning                                                                                                                                                             | Examples                                                                                   |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| **E — exact**                     | Associative and state-free. Partitioning cannot change the answer at all.                                                                                           | `min`, `max`, `first`, `last`, `count`, `sum` of exact integers                            |
+| **B — bounded**                   | Reassociation shifts the result, with an error bound that is provable and small (relative, O(ε·√n) or better).                                                      | `sum`, `mean`, rolling mean, blocked summation, `bollinger`'s bands                        |
+| **U — unbounded _as formulated_** | Subtracts or divides quantities that can cancel. Relative error has no bound **in this arrangement** — the first question is whether another arrangement avoids it. | `pctChange` near a zero base, rolling regression slopes, ratios and correlations generally |
+
+`zScore` was the entry in that last row when this was written, and is now
+in **B**: [PND-SHIFTFRAME] reformulated it and the class followed. It is
+kept as the worked example of the row's own advice rather than as a
+member of it.
 
 Three claims, each cheap to check and each stronger than a benchmark:
 
@@ -81,11 +99,18 @@ Three claims, each cheap to check and each stronger than a benchmark:
 - **B is provable** from the reassociation argument already written down
   in [`blocked-summation.md`](../notes/blocked-summation.md).
 - **U is a prompt to reformulate, not merely a refusal.** This is the
-  RFC's biggest correction. `zScore` was classified `U` as though the
-  unboundedness were a property of the _operator_; the shifted-frame
-  prototype shows it was a property of the _formulation_. So `U` should
-  read: "this arrangement of the arithmetic cancels — find one that does
-  not, and if none exists, then refuse."
+  RFC's biggest correction, and the one that has now been tested rather
+  than argued. `zScore` was classified `U` as though the unboundedness
+  were a property of the _operator_; the shifted-frame formulation showed
+  it was a property of the _arrangement_, and shipping it moved the study
+  to `B`. So `U` reads: "this arrangement of the arithmetic cancels —
+  find one that does not, and if none exists, then refuse."
+
+  With one lesson the prototype did not surface: **reformulating can cost
+  you the fast path.** The stable kernel returns a deviation rather than a
+  mean, so it no longer matches the shape the worker pool accelerates, and
+  `zScore` went from the fastest parallel study to a sequential one. A
+  class label is not a full account of an operator; `(class, cost)` is.
 
   The diagnostic that generalises is a property of the **data**, not the
   op: **how many ulps does a window's spread span?** At a few hundred or
@@ -232,10 +257,19 @@ shape of thing and should work the same way.
    `allFinite` lesson: a missed `true` is slower, a wrong `true` is a
    silent wrong answer.)
 2. **`withWorkers` refuses a `U` op** unless the caller passes something
-   explicit — `{ workers: 8, allowUnbounded: ['zScore'] }`, naming what
-   they are accepting. Today the hazard lives only in prose; this
+   explicit — `{ workers: 8, allowUnbounded: ['pctChange'] }`, naming
+   what they are accepting. Today the hazard lives only in prose; this
    inverts the default from _opt into parallel and inherit a footgun_ to
    _opt into the footgun specifically_.
+
+   The `zScore` fix is a hint that this rule may rarely fire. Its stable
+   formulation is not the shape the pool accelerates, so it fell out of
+   the parallel path by construction rather than by refusal. If that
+   generalises — if `U` ops tend to become `B` by taking an arrangement
+   the reassociating kernel cannot use — then the interesting control is
+   not a refusal at the pool boundary but a **cost** the classification
+   makes visible.
+
 3. **`registry.toJsonSchema()` carries the class**, so a composing agent
    can see it before building a plan, and a refusal names the operator
    and the reason in terms it can act on.
@@ -262,6 +296,14 @@ An `E` claim that fails is a real bug. A `B` claim that fails means the
 bound is wrong. Neither can be papered over by widening a tolerance —
 which is what the `zScore` test did, asserting `<1e-4` against a
 documented `2.6e-6`, 38× looser than the claim it existed to protect.
+
+[PND-SHIFTFRAME] took the first step here: `zScore`'s tests now assert
+against an **exact reference** — the deviation summed over within-window
+differences, which is `O(period)` and therefore useless as an
+implementation but exact and therefore ideal as an oracle — across four
+adversarial generators rather than one benign walk. That is a pattern
+worth lifting: for most `B` ops there exists a slow arrangement that is
+exact, and it makes a better assertion than any tolerance.
 
 ## 9. What this costs
 

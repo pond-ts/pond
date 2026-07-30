@@ -54,6 +54,52 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`zScore` computes its deviation in a shifted frame, and is accurate at
+  large magnitudes for the first time** ([PND-SHIFTFRAME]). The study derived
+  its numerator as `value − rollingMean`, which is catastrophic cancellation
+  whenever the values are large next to the window's spread: `ulp(1e15)` is
+  `0.125`, so a window spanning ±3 leaves the deviation about three bits. The
+  new `rollingDeviationSd` kernel accumulates `value − anchor` and emits the
+  deviation directly — both operands small, nothing cancels — re-anchoring
+  periodically, and on magnitude, so a trending series stays in frame.
+
+  Measured against an exact reference over 200k rows, worst relative error:
+
+  | input                     | before | after   |
+  | ------------------------- | ------ | ------- |
+  | `1e15 + ((i % 7) − 3)`    | 1.0e+0 | 4.1e-15 |
+  | `1e9 + sin` (mid)         | 4.1e+0 | 3.0e-11 |
+  | random walk ≈100 (benign) | 1.7e-5 | 2.1e-12 |
+  | `1e12·(1+i/N)` (trending) | 9.0e-6 | 3.2e-11 |
+
+  **This was never a parallelism bug**, though it was found through one and
+  first documented as one. The sequential study computed the same subtraction
+  and carried the same exposure; partitioning only made two equally-wrong
+  answers visibly disagree. Anyone thresholding z-scores on large-magnitude
+  data was affected on the default path.
+
+  Two consequences worth reading before upgrading. **`zScore` values change**
+  — by rounding error on ordinary data, and by a lot on the cases above, where
+  they were wrong. And **`zScore` is no longer accelerated by `withWorkers`**:
+  the stable kernel is not the shape the worker pool hooks, so opting in no
+  longer speeds it up (it was 2.44×, the fastest study there) and no longer
+  changes its answer by a bit. The remaining accelerated studies — `sma`,
+  `envelope`, `bollinger` — are exactly those whose error is bounded.
+
+  `zScore` costs ~1.8× its previous formulation as an upper bound (~21 ns/row
+  at 500k), flat in `period`. `scripts/perf-shifted-frame.mjs`.
+
+### Added
+
+- **`parallelDispatches()`** in `@pond-ts/financial/parallel` — how many rolling
+  passes have actually run on worker threads. `withWorkers` is a silent no-op
+  when the pool declines a series, and a declined pass returns the same answer,
+  just slower than the caller expected; this is how you check. It also replaces
+  a test canary that had proved the parallel path ran _by it being wrong_ —
+  which stopped working the moment the wrongness was fixed.
+
 ### Added
 
 - **financial:** **`withWorkers` (`@pond-ts/financial/parallel`) — rolling

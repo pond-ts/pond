@@ -124,19 +124,34 @@ questions is missing _primitives_: unpivoting a wide row into a value-axis
 series (a term structure is the object these people think in), tall→wide pivot,
 and ranking across partitions.
 
-- **[PND-SHIFTFRAME]** — Reformulate the rolling deviation in a **shifted frame**,
-  for the sequential study as much as the parallel one. `zScore` computes
-  `(v − mean) / σ` from an _absolute_ rolling mean; where a window's spread is
-  a small number of ulps of its magnitude, that subtraction has almost no
-  significant bits. Measured: **650% error → 8.8e-15** on a legal near-flat
-  series at 1e15, and **~40× better on a benign random walk** — so this is a
-  correctness improvement for every caller, not a parallel-only fix.
-  Accumulate `v − anchor`, carry the mean as `anchor + offset`, emit the
-  deviation as `(v − anchor) − offset`. Prototype and the decomposition that
-  found it: [`spikes/shifted-frame/`](spikes/shifted-frame/). Needs a kernel
-  contract that can return a deviation rather than only mean+σ, since the
-  cancellation happens in the _consumer_ — `mean` as a double simply cannot
-  carry enough resolution at those magnitudes.
+- **[PND-SHIFTFRAME]** — **Shipped.** `rollingDeviationSd` in
+  `packages/financial/src/kernels/rolling.ts`; `zScore` rewired onto it.
+  Worst relative error against an exact reference over 200k rows:
+  `1e15 + ((i%7)−3)` **1.0e+0 → 4.1e-15**, `1e9 + sin` **4.1e+0 → 3.0e-11**,
+  benign random walk **1.7e-5 → 2.1e-12**. Two things the plan did not
+  anticipate, both worth carrying forward:
+  - **Welford needed shifting too.** The first cut shifted only the mean and
+    left σ on the raw values, which improved the pathological case by three
+    orders of magnitude and stopped there — `d = x − wMean` is the same
+    subtraction of two near-equal large numbers. Welford is stable relative
+    to the _conditioning_ of the problem, and raw large-magnitude values are
+    what make it ill-conditioned. "Variance is translation-invariant so
+    Welford is fine" was the wrong reading, and only an exact reference
+    caught it.
+  - **The fix cost `zScore` its parallelism.** The stable kernel returns a
+    deviation, not a mean, so `withWorkers` no longer hooks it: the study
+    went from the fastest accelerated one (2.44×) to sequential. Accepted —
+    a 2.44× on an answer that could be 100% wrong is not a speedup — but it
+    says a numerical class is not a full account of an operator. See
+    [`docs/rfcs/numerical-classes.md`](docs/rfcs/numerical-classes.md), where
+    this is now the tested case rather than the hypothetical one.
+
+    It also cost a test canary, which is the more general lesson: four tests
+    proved the parallel path had run by observing that `zScore` disagreed
+    with the sequential answer. That only ever worked because the accelerated
+    result was inferior, and it evaporated the moment that was fixed.
+    Replaced with `parallelDispatches()`, an explicit count.
+
 - **[PND-AGENTBENCH]** — **Built and measured** —
   `packages/financial/scripts/perf-agent-bench.mjs`. Q11 (500 symbols × 1000
   bars, per-symbol `zScore`, rank across symbols) answers in **39 ms**, and

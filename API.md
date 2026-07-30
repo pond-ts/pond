@@ -356,21 +356,23 @@ by studies) — `packages/financial/src/kernels/rolling.ts`.
 ### `@pond-ts/financial/parallel` (Node-only, opt-in)
 
 `withWorkers(series, { workers })` — opts a series into partitioned rolling
-studies and returns it unchanged; `shutdownWorkers()`; `MIN_ROWS`; type
-`WithWorkersOptions`. Chosen **once at ingest**: the studies keep their
+studies and returns it unchanged; `shutdownWorkers()`; `parallelDispatches()`;
+`MIN_ROWS`; type `WithWorkersOptions`. Chosen **once at ingest**: the studies keep their
 signatures and stay synchronous, and derived series inherit it (registration is
 keyed on the key-column buffer). **Single-threaded remains the default** — the
 main package never imports this. Node-only by construction: `Atomics.wait` on
 the main thread is what keeps the studies synchronous, and browsers forbid it.
 
 Accelerates any rolling study asking for `avg`/`stdev` off one column — `sma`,
-`envelope`, `bollinger`, `zScore`. Partitioning shifts the answer slightly:
-measured 1.85×/1.92×/2.44×. `sma` / `envelope` / `bollinger` shift by rounding
-error (≤5.1e-13 observed). **`zScore` is unbounded**: it divides by the rolling
-σ, so on a near-flat series at large magnitude the partitioned answer differs
-from the sequential one by ~38% — an observation of ~2.6e-6 on a benign walk is
-not a bound. Below `MIN_ROWS` a registered series
-still runs sequentially and is bit-identical. Source:
+`envelope`, `bollinger`. Partitioning shifts the answer slightly, by rounding
+error only: measured 1.85×/1.35×/1.92× at ≤5.1e-13. **`zScore` is not
+accelerated**: [PND-SHIFTFRAME] moved it onto a shifted-frame kernel this pool
+does not hook, so opting in neither speeds it up nor changes its answer. It used
+to be the fastest entry here at 2.44×, and the only one whose error had no bound.
+Below `MIN_ROWS` a registered series still runs sequentially and is
+bit-identical. `parallelDispatches()` returns how many passes have actually run
+on workers — acceleration is otherwise invisible, since a declined pass returns
+the same answer, only slower than you expected. Source:
 `packages/financial/src/parallel/`.
 
 ## @pond-ts/process

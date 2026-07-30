@@ -33,7 +33,12 @@ import type { SeriesSchema } from 'pond-ts';
 import { withWorkers as withWorkersFn } from './pool.js';
 import type { WithWorkersOptions } from './pool.js';
 
-export { withWorkers, shutdownWorkers, MIN_ROWS } from './pool.js';
+export {
+  withWorkers,
+  shutdownWorkers,
+  parallelDispatches,
+  MIN_ROWS,
+} from './pool.js';
 export type { WithWorkersOptions } from './pool.js';
 export { rollingMeanSd } from './kernel.js';
 
@@ -51,7 +56,7 @@ declare module 'pond-ts' {
      * sequentially.
      *
      * See the free {@link withWorkers} for the per-study accuracy table
-     * — `zScore` in particular shifts by ~2.6e-6 on ~0.8% of cells.
+     * — bounded at ~5.1e-13 across the studies it accelerates.
      */
     withWorkers(options?: WithWorkersOptions): TimeSeries<S>;
   }
