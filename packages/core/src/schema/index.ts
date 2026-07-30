@@ -67,6 +67,19 @@ export type {
   TimeSeriesJsonOutputObject,
 } from './json.js';
 export type {
+  ValueSeriesColumnarInput,
+  ValueSeriesColumnarOutput,
+  ValueSeriesJsonCell,
+  ValueSeriesJsonColumns,
+  ValueSeriesJsonInput,
+  ValueSeriesJsonObjectRow,
+  ValueSeriesJsonOutputArray,
+  ValueSeriesJsonOutputObject,
+  ValueSeriesJsonRow,
+  ValueSeriesObjectRow,
+  ValueSeriesRow,
+} from './value-io.js';
+export type {
   AggregateColumns,
   AggregateFunction,
   AggregateMap,

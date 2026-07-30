@@ -105,6 +105,13 @@ financial hub, and the in-site API reference for core + charts). Plan:
 - **[PND-APIREF]** — In-site API reference completion: `{@link}` resolution,
   react/fit/financial tranches, big-page ergonomics, missing class-level
   docstrings.
+- **[PND-VSDOC]** — Give `creating.mdx` its `ValueSeries` section. PR #564
+  restructured the ingest page around JSON / columnar / Arrow and
+  deliberately skipped `ValueSeries` because its whole surface was
+  `fromColumns` — "two-thirds empty". [PND-VSIO] filled the other
+  two-thirds (`fromJSON` / `fromArrow` in, `toJSON` / `toColumns` /
+  `toArrow` out), so the section now has content: one subsection per door
+  shape, cross-linked to the deep dive.
 - **[PND-OBSDOC]** — "Observing pond-ts in production" how-to: the
   documentation-backlog items (pushMany guidance, bench-honesty callout, GC
   snippet, no-NaN guarantee, tie semantics, latency pattern) as one MDX pass.
@@ -177,6 +184,14 @@ consumer signal. Plan:
 
 - **[PND-COLOUT]** — Column-native output (§A): removes the dominant
   emit-side allocation slice; spike plan exists.
+- **[PND-TSCOLS]** — `TimeSeries.toColumns()`: wire the store-generic
+  columnar-JSON exporter (`operators/to-columns.ts`, shipped with
+  [PND-VSIO] for `ValueSeries`) onto `TimeSeries`, closing the one-way
+  `fromColumns` door there too. The exporter already handles a `time` key;
+  what's undecided is the **two-edged** case — a `timeRange` / `interval`
+  key currently throws rather than inventing a `<key>End` / `<key>Label`
+  wire shape no ingest door reads back. Pick that shape (or keep the throw)
+  when a consumer actually needs it.
 - **[PND-REORD]** — Columnar reorder corral (§B): unearned, RFC context
   until a signal arrives.
 - **[PND-LROLL]** — Live rolling columnar reducer state (Step 3C-live): the

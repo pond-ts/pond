@@ -677,6 +677,79 @@ path for the life of the series).
 Round trip pinned against real `apache-arrow`:
 `toArrow → Table → fromArrow` shares the original storage (values buffer by
 object identity; key and bitmap by `ArrayBuffer` — arrow re-wraps views).
-Deferred, none blocking: `ValueSeries.toArrow` (same store walk, no puller
-yet), IPC-bytes convenience (`tableToIPC` is the caller's two-liner), and a
-how-to showing the polars sidecar pattern end to end.
+Deferred, none blocking: IPC-bytes convenience (`tableToIPC` is the caller's
+two-liner) and a how-to showing the polars sidecar pattern end to end. (The
+third deferral, `ValueSeries.toArrow`, shipped with [PND-VSIO] below.)
+
+### [PND-VSIO] — `ValueSeries` ingest / export parity — SHIPPED
+
+`ValueSeries` had one door in (`fromColumns`, plus the `byValue` projection)
+and **none out** — no way to get rows, a wire payload, or buffers back. The
+gap was visible enough that PR #564 declined to document `ValueSeries` on the
+ingest page for want of anything to document. Closed here: three ingest doors
+(`fromJSON`, `fromColumns`, `fromArrow`) and five export doors (`toRows`,
+`toObjects`, `toJSON`, `toColumns`, `toArrow`), each ingress paired with its
+inverse.
+
+**Decisions worth keeping:**
+
+- **Separate wire types, not widened time ones** (`schema/value-io.ts`).
+  `JsonValueForKind<'value'>` resolves to `never`, so every row type built on
+  the time-side helpers collapses for a value schema. Parallel types preserve
+  the `SeriesSchema` / `ValueSeriesSchema` disjointness the value-axis RFC
+  is built on — a time row can't reach a value door by accident.
+- **`fromJSON` is the strict door; the columnar doors stay loose.** Per-cell
+  kind checks (shared `assertCellKind`, so the strictness contract is one
+  fact), `required` enforced, non-finite numbers **rejected**. `fromColumns` /
+  `fromArrow` keep "non-finite ⇒ gap" and ignore `required`, because a decoded
+  buffer cannot distinguish absent from not-a-number. Exactly the asymmetry
+  `TimeSeries` already has between its row and columnar doors — matching it
+  was preferred over making the two `ValueSeries` doors agree with each other.
+- **No axis-name convention on `fromArrow`.** The time door defaults to a
+  field named `'time'`; `{ axis }` is **required** on the value door because
+  `strike` / `frequency` / `depth` / `cumDist` are all equally plausible and
+  silently keying on the wrong column is worse than an error. No `timeUnit`
+  either — an axis carries no unit, so the raw values are taken at face value.
+- **`toColumns` emits every column kind, and the two legs report the one
+  asymmetry differently.** A `boolean` / array column can only arrive by
+  `byValue` projection, and the ingest engine takes `number` / `string` value
+  columns only. Considered throwing on export (which would make the round trip
+  a runtime guarantee) — rejected: `ValueSeries` has no `select`, so a caller
+  with a projected boolean column would have no way out. So it exports, and:
+  - **columnar leg** — the precise return type isn't assignable to
+    `ValueSeriesColumnarInput`, so the broken round trip fails to **compile**;
+  - **row leg** — `ValueSeriesJsonRow` is honest about the `boolean` `toJSON`
+    really emits, stays assignable, and `fromJSON` **throws at ingest**, naming
+    the column and its kind.
+
+  The Layer-2 review (PR #565) caught the PR body over-claiming a uniform
+  "fails to compile" here. Making the row types `never` for those kinds was
+  considered as the symmetric fix and rejected twice over: it would produce an
+  unreadable `not assignable to 'never'` error at a call site where the caller
+  did nothing wrong, and it would require a second set of output row types (or
+  an output type that lies about what `toJSON` emits). The runtime message is
+  the better diagnostic. The real fix, if a consumer ever hits this, is
+  teaching `ingestColumnsToStore` `boolean` — which would also give
+  `fromColumns` boolean ingest, a separate decision nobody has asked for.
+
+- **`storeToColumns` is store-generic** (`operators/to-columns.ts`) and
+  handles single-edge keys only; two-edged (`timeRange` / `interval`) keys
+  throw rather than inventing a `<key>End` wire shape no door reads back.
+  `TimeSeries.toColumns` is the obvious next wiring — deliberately **not**
+  done here to keep this PR to its title (see PLAN.md).
+
+**Perf** (`scripts/perf-value-series-io.mjs`, 100k rows × 7 columns, median of
+7). No optimization landed: a probe of a dense-numeric fast path for
+`toColumns` (copy `_values` directly instead of `read()` per cell) measured
+_slower_ (3.3 ms vs 2.8 ms) — V8 already inlines the monomorphic `read`, so
+the current loops are at the floor for an allocating export.
+
+| Door                             | Median   | Note                                     |
+| -------------------------------- | -------- | ---------------------------------------- |
+| `fromColumns` (baseline)         | 3.7 ms   | the door the others are measured against |
+| `fromJSON`, tuple rows           | 13.2 ms  | the per-cell kind check is the product   |
+| `fromJSON`, object rows          | 24.2 ms  | + a property lookup per cell             |
+| `toRows` / `toJSON` (tuples)     | ~11 ms   | N frozen tuples                          |
+| `toObjects` / `toJSON` (objects) | ~21 ms   | N objects, C property writes each        |
+| `toColumns`                      | 5–12 ms  | C arrays, **no** per-row allocation      |
+| `toArrow`                        | 0.008 ms | a buffer handoff — O(C), not O(N·C)      |

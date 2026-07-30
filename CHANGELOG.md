@@ -56,6 +56,30 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **core:** **`ValueSeries` gets the full ingest / export surface** — the
+  value-keyed series is no longer a one-way street with a single columnar door.
+  In: **`ValueSeries.fromJSON`** (row tuples _or_ objects; strict per-cell kind
+  checking, `required` enforced, and — unlike the time door — no timestamp
+  parsing, because a value axis has no calendar to read `'2026-01-01'`
+  against), and **`ValueSeries.fromArrow(table, { axis })`** (`axis` is
+  required: there is no `'time'` field convention to fall back on, and the axis
+  is read unscaled since it carries no `TimeUnit`). Out:
+  **`toRows()` / `toObjects()` / `toJSON({ rowFormat })`** (rows, gaps as
+  `undefined` / `null` respectively), **`toColumns()`** (columnar JSON — one
+  plain array per column, gaps as `null`, the exact envelope `fromColumns`
+  takes back), and **`toArrow()`** (Arrow's memory layout, no copy — the
+  exporter `TimeSeries.toArrow` already used; a `'value'` axis exports as a
+  plain `float64` field). Every door pairs with its inverse and the round trips
+  are **typed**: `ValueSeries.fromColumns(vs.toColumns())` and
+  `ValueSeries.fromJSON(vs.toJSON())` compile without a cast. All four ingest
+  doors share one engine, so the monotonic-axis contract, `sort: true`, and the
+  packing rules are identical whichever you use. Types:
+  `ValueSeriesJsonInput`, `ValueSeriesJsonRow`, `ValueSeriesJsonObjectRow`,
+  `ValueSeriesJsonOutputArray`, `ValueSeriesJsonOutputObject`,
+  `ValueSeriesJsonCell`, `ValueSeriesRow`, `ValueSeriesObjectRow`,
+  `ValueSeriesJsonColumns`, `ValueSeriesColumnarInput`,
+  `ValueSeriesColumnarOutput`, `FromArrowValueOptions`, `JsonColumn`.
+
 - **core:** **`TimeSeries.toArrow(options?)` — zero-copy export to the Apache
   Arrow memory layout**, the counterpart of `fromArrow`. Every other export
   door is row-shaped, so reaching another columnar engine meant a full
