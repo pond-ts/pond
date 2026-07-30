@@ -156,11 +156,20 @@ and ranking across partitions.
   content-addressed cache rather than infer it (repetition is 68% of the work in
   a realistic 21-from-7 session).
 
-- **[PND-SPLITCOST]** — Make `partitionBy` + `toMap` cheaper. 17 ms to cut 500k
-  rows into 500 groups, 35 ms for 1000 — it builds a full `TimeSeries` per
-  group, schema and all, when the consumer usually wants a scoped view. The
-  single highest-leverage number in the agent benchmark, and it needs no
-  threads.
+- **[PND-SPLITCOST]** — **Shipped.** `partitionBy`+`toMap` **18.1 → 12.7 ms**
+  at 500×1000 (**25.2 → 12.4 ms** interleaved, **33.9 → 22.3 ms** at 1M), and
+  `_distinctPartitionKeys` **4.9 → 1.0 ms** (9.2 → 1.2 interleaved). Two
+  changes: a **dict-encoded fast path** (a dictionary-backed string column
+  already carries an integer per row, so grouping indexes an array instead of
+  building and hashing a key string per row — symbols are exactly what dict
+  encoding is for) and a **two-pass fill** (count, then fill an exactly sized
+  `Int32Array`, replacing a boxed push per row plus a copy per group).
+  Benchmark: `packages/core/scripts/perf-partition.mjs`, which also covers the
+  interleaved layout so the fast path is not measured only where it flatters.
+  Q11 is now 36.5 ms with the split at 30% (was 43%). Remaining, unmeasured:
+  the ~7 ms of `withRowSelection` + `TimeSeries` construction per group — a
+  contiguous-range slice could avoid the gather where partitions happen to be
+  consecutive.
 - **[PND-UNPIVOT]** — Ingest a **long** value-axis result cleanly (tenor/strike
   as a key column). Narrowed by the ClickHouse boundary in §8 of the note:
   unpivot and pivot are `arrayZip`+`ARRAY JOIN` and conditional aggregation
