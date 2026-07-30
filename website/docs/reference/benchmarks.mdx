@@ -164,6 +164,43 @@ column to polars or DuckDB" a zero-copy buffer handoff, so the 9× `stdev`
 is reachable when a workload wants it — without pond-ts taking a
 dependency.
 
+## A different axis: concurrent throughput
+
+Every number above is **per-query latency** — one question, answered as
+fast as possible. An agent asking several questions at once cares about
+something the tables cannot show, and pond-ts has recently gained a way
+to serve that: `HostPool` in `@pond-ts/process`, which routes whole
+requests across worker threads, each holding a long-lived graph.
+
+Measured on the same studies at the same size (500k bars, 16 queries in
+flight, 8 workers, `node packages/process/scripts/perf-pool-studies.mjs`):
+
+| workload                      | in-process | pooled |           |
+| ----------------------------- | ---------- | ------ | --------- |
+| 16 **distinct** study queries | 227 ms     | 87 ms  | **2.60×** |
+| 16 **repeated** queries       | 1 ms       | 84 ms  | **0.01×** |
+
+Both rows matter.
+
+**It does not improve a single number in the tables above.** One query
+still runs single-threaded on one worker; the pool adds throughput, not
+speed. If your agent asks one question at a time, this changes nothing.
+
+**And it is catastrophic on repeated questions.** In-process, a re-asked
+question is a memoized hit that returns the same column object for
+essentially nothing — 1 ms for all sixteen. A pool copies and ships every
+answer regardless of how cheap it was, and each worker warms its own
+graph, so they cannot share the hit. **Pooling and caching compete rather
+than compose.** Reach for a pool when queries are numerous and mostly
+distinct; rely on the graph's cache when they repeat.
+
+One finding from that work generalises well beyond the pool: an
+operation writing a `Float64Array` rather than a boxed `Array` ran
+**482 ms single-threaded where the boxed version needed 632 ms across
+eight workers**. Fixing the allocation beat adding eight cores — and
+boxing parallelises worse besides, because it contends on memory
+bandwidth and GC, which is the one resource extra workers cannot add.
+
 ## vs pondjs: the predecessor
 
 pond-ts is a ground-up TypeScript rewrite of pondjs. Across all shared
@@ -322,6 +359,9 @@ node packages/financial/scripts/perf-agent-queries.mjs
 python -m venv /tmp/pondvenv && /tmp/pondvenv/bin/pip install pandas polars
 PYTHON=/tmp/pondvenv/bin/python node packages/financial/scripts/perf-vs-oracle.mjs
 PYTHON=/tmp/pondvenv/bin/python node packages/financial/scripts/perf-vs-polars.mjs
+
+# 5. concurrent throughput (the worker pool, on these same studies)
+node packages/process/scripts/perf-pool-studies.mjs
 ```
 
 ## Capabilities only in pond-ts
