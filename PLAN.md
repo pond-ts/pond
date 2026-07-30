@@ -451,6 +451,22 @@ whether it stays one.
   — but that the same reasoning reaches the operations that _are_ slow, and
   that "inherently sequential" is a far weaker claim than it looks.
 
+  **And rolling windows partition too ([PND-SCANKERN], measured).** The two
+  slowest studies are not recurrences — each output cell depends only on
+  `[i-p+1, i]`, so an output-range partition with `p-1` overlap is
+  embarrassingly parallel. Measured (`spikes/parallel-rolling/`, 500k bars,
+  8 workers): **`bollinger` 26.0 → 1.89 ms (13.8×)** and **`zScore`
+  21.2 → 2.14 ms (9.9×)**, against a single-worker spike that lands within a
+  few percent of pond's own study. Superlinear because partitioning buys cache
+  locality as well as parallelism (52 ns/element sweeping, 30 ns/element
+  chunked). **Numerics split by study:** `bollinger` is safe — not one cell in
+  1.5M differs by more than 1e-9 — while `zScore` divides by the rolling
+  stdev and amplifies last-ulp differences wherever the window is flat
+  (~1% of cells beyond 1e-9, worst 5.3e-6). Since the studies are pinned
+  bar-for-bar against a pandas oracle, `zScore` needs a decision rather than
+  just a benchmark. Caveat on the headline numbers: the spike writes into
+  pre-allocated buffers, so end-to-end will be slower than the kernel time.
+
   **Remaining: the latency half** — split one composite query's nodes across
   workers (spike measured 2.42× on the 5-study stack, bit-identical). Blocked
   on an engine change the spike did not surface: a node's value can only be
