@@ -146,6 +146,13 @@ void boolColumn;
 // @ts-expect-error — fromColumns takes number / string columns only
 ValueSeries.fromColumns(withBool.toColumns());
 
+// The ROW leg is the other way round, and this line is the assertion of that:
+// `toJSON` types its boolean cells honestly (it really does emit them), so the
+// payload is assignable and this **compiles** — the ingest engine then throws,
+// naming the column (pinned in `test/ValueSeries.rows.test.ts`). A
+// `@ts-expect-error` here would be the bug: it would fail this type test.
+ValueSeries.fromJSON(withBool.toJSON());
+
 // fromArrow requires the axis to be named — there is no 'time' convention.
 declare const table: Parameters<typeof ValueSeries.fromArrow>[0];
 ValueSeries.fromArrow(table, { axis: 'strike' });

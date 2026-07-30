@@ -218,10 +218,19 @@ JSON, and a `Float64Array` doesn't stringify as an array).
 **Round trips are typed, not just documented.**
 `ValueSeries.fromColumns(chain.toColumns())` and
 `ValueSeries.fromJSON(chain.toJSON())` compile with no cast — that
-assignability _is_ the contract. The one exception is deliberate: a `boolean`
-or array-kind column, which only a `byValue` projection can introduce, exports
-fine but can't be ingested back by `fromColumns`, and the types say so at
-compile time rather than at runtime.
+assignability _is_ the contract, for the `number` / `string` columns the ingest
+engine carries (which is every series built through a direct door).
+
+:::note[The one column kind that doesn't come back]
+A `boolean` or array-kind column can only reach a `ValueSeries` by `byValue`
+projection — the direct doors take `number` and `string`. It **exports** on
+every door, but no door takes it back, and the two legs report that
+differently: `fromColumns` refuses the payload **at compile time** (the
+columnar return type isn't assignable to the ingest type), while `toJSON`
+types its `boolean` cells honestly, so `fromJSON` accepts the shape and
+**throws at ingest**, naming the column and its kind. Drop the column before
+projecting (`series.select(…).byValue(axis)`) if you need the round trip.
+:::
 
 ### `toArrow()` — the zero-copy handoff
 

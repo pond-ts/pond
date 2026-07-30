@@ -710,13 +710,28 @@ inverse.
   `strike` / `frequency` / `depth` / `cumDist` are all equally plausible and
   silently keying on the wrong column is worse than an error. No `timeUnit`
   either — an axis carries no unit, so the raw values are taken at face value.
-- **`toColumns` emits every column kind, and the type catches the one
-  asymmetry.** A `boolean` / array column can only arrive by `byValue`
-  projection, and `fromColumns` can't ingest it back. Considered throwing on
-  export (which would make the round trip a runtime guarantee) — rejected:
-  `ValueSeries` has no `select`, so a caller with a projected boolean column
-  would have no way out. Instead the precise return type is simply not
-  assignable to the ingest type, so the broken round trip fails to **compile**.
+- **`toColumns` emits every column kind, and the two legs report the one
+  asymmetry differently.** A `boolean` / array column can only arrive by
+  `byValue` projection, and the ingest engine takes `number` / `string` value
+  columns only. Considered throwing on export (which would make the round trip
+  a runtime guarantee) — rejected: `ValueSeries` has no `select`, so a caller
+  with a projected boolean column would have no way out. So it exports, and:
+  - **columnar leg** — the precise return type isn't assignable to
+    `ValueSeriesColumnarInput`, so the broken round trip fails to **compile**;
+  - **row leg** — `ValueSeriesJsonRow` is honest about the `boolean` `toJSON`
+    really emits, stays assignable, and `fromJSON` **throws at ingest**, naming
+    the column and its kind.
+
+  The Layer-2 review (PR #565) caught the PR body over-claiming a uniform
+  "fails to compile" here. Making the row types `never` for those kinds was
+  considered as the symmetric fix and rejected twice over: it would produce an
+  unreadable `not assignable to 'never'` error at a call site where the caller
+  did nothing wrong, and it would require a second set of output row types (or
+  an output type that lies about what `toJSON` emits). The runtime message is
+  the better diagnostic. The real fix, if a consumer ever hits this, is
+  teaching `ingestColumnsToStore` `boolean` — which would also give
+  `fromColumns` boolean ingest, a separate decision nobody has asked for.
+
 - **`storeToColumns` is store-generic** (`operators/to-columns.ts`) and
   handles single-edge keys only; two-edged (`timeRange` / `interval`) keys
   throw rather than inventing a `<key>End` wire shape no door reads back.

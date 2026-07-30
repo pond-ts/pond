@@ -110,10 +110,18 @@ export type ValueSeriesObjectRow<VS extends ValueSeriesSchema> = {
  *
  * `boolean` / `array` columns — which only reach a `ValueSeries` by projection
  * from a `TimeSeries`, since the direct doors take `number` and `string` —
- * export as themselves. They are valid JSON but **not** ingestable by
- * `fromColumns`, so a payload carrying one is not assignable to
- * {@link ValueSeriesColumnarInput}: the round-trip fails to compile instead of
- * failing at runtime.
+ * export as themselves. They are valid JSON but **not** ingestable: the
+ * columnar engine takes `number` and `string` value columns only.
+ *
+ * On **this** (columnar) leg that shows up at compile time — such a payload is
+ * not assignable to {@link ValueSeriesColumnarInput}. The **row** leg
+ * ({@link ValueSeriesJsonRow}) is honest about the `boolean` it really emits
+ * and so stays assignable, and `fromJSON` throws at ingest instead, naming the
+ * column and its kind. Making the row types `never` for those kinds would buy
+ * symmetry at the price of an unreadable assignability error and an output
+ * type that lies about what `toJSON` emits; the runtime message is the better
+ * diagnostic. (The real fix, if a consumer ever needs it, is teaching the
+ * shared ingest engine `boolean` — see `docs/plans/PND_COLUMNAR_PLAN.md`.)
  */
 export type ValueSeriesJsonColumns<VS extends ValueSeriesSchema> = {
   [C in VS[number] as C['name']]: C extends ColumnDef<any, infer K>

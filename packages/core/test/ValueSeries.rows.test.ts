@@ -21,6 +21,22 @@ const SPARSE = [
   { name: 'venue', kind: 'string', required: false },
 ] as const;
 
+/** A ValueSeries carrying a `boolean` column — only reachable by projection. */
+function projectedWithBoolean() {
+  return new TimeSeries({
+    name: 'ride',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'cumDist', kind: 'number' },
+      { name: 'moving', kind: 'boolean' },
+    ] as const,
+    rows: [
+      [0, 0, false],
+      [1000, 500, true],
+    ],
+  }).byValue('cumDist');
+}
+
 function smile() {
   return ValueSeries.fromJSON({
     name: 'smile',
@@ -329,19 +345,7 @@ describe('ValueSeries row exports', () => {
   it('exports a projected series — boolean columns and all', () => {
     // `byValue` carries every non-axis column through, including kinds the
     // direct doors don't ingest. The row exports read them fine.
-    const track = new TimeSeries({
-      name: 'ride',
-      schema: [
-        { name: 'time', kind: 'time' },
-        { name: 'cumDist', kind: 'number' },
-        { name: 'moving', kind: 'boolean' },
-      ] as const,
-      rows: [
-        [0, 0, false],
-        [1000, 500, true],
-      ],
-    });
-    const vs = track.byValue('cumDist');
+    const vs = projectedWithBoolean();
     expect(vs.toRows()).toEqual([
       [0, false],
       [500, true],
@@ -350,5 +354,19 @@ describe('ValueSeries row exports', () => {
       [0, false],
       [500, true],
     ]);
+  });
+
+  it('…but that JSON does not come back: fromJSON throws, naming the column', () => {
+    // The row leg's half of the boolean-column asymmetry. `toJSON` types its
+    // boolean cells honestly, so the payload IS assignable to `fromJSON`'s
+    // input (unlike the columnar leg, which the type system rejects outright)
+    // — the ingest engine takes number/string value columns only, so the
+    // failure is a runtime one. Pinned here because "it compiles" would
+    // otherwise read as "it works".
+    const json = projectedWithBoolean().toJSON();
+    expect(() => ValueSeries.fromJSON(json)).toThrow(ValidationError);
+    expect(() => ValueSeries.fromJSON(json)).toThrow(
+      /supports 'number' and 'string' value columns; column 'moving' is 'boolean'/,
+    );
   });
 });

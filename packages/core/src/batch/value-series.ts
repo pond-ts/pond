@@ -60,7 +60,11 @@ import type {
  * {@link ValueSeries.toObjects} (rows), {@link ValueSeries.toColumns}
  * (columnar JSON), {@link ValueSeries.toArrow} (Arrow's memory layout, no
  * copy). Each export pairs with the matching ingress: `fromX(series.toX())`
- * reconstructs the series.
+ * reconstructs the series — for the `number` / `string` columns the ingest
+ * engine carries, which is every series built through a direct door. The one
+ * exception is a `boolean` / array column arriving by `byValue` projection: it
+ * exports on every door but no door takes it back (`fromColumns` refuses at
+ * compile time, `fromJSON` throws at ingest, naming the column).
  *
  * `ValueSeries` carries the **ordering-based** operators (read the axis, read
  * value columns, nearest-by-value, slice-by-value) — the part of the series
@@ -440,8 +444,11 @@ export class ValueSeries<VS extends ValueSeriesSchema> {
    *
    * A `boolean` or array-kind column (which only a `byValue` projection can
    * introduce — the direct doors take `number` and `string`) exports fine here
-   * but cannot be ingested back by `fromColumns`; the return type reflects
-   * that, so such a round-trip fails to compile rather than at runtime.
+   * but cannot be ingested back; the return type reflects that, so **this**
+   * round trip fails to compile rather than at runtime. The row leg is the
+   * other way round: `toJSON` types its `boolean` cells honestly, so
+   * `fromJSON` accepts the payload's shape and throws at ingest instead,
+   * naming the column and its kind.
    */
   toColumns(): ValueSeriesColumnarOutput<VS> {
     return {
