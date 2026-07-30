@@ -137,15 +137,30 @@ and ranking across partitions.
   contract that can return a deviation rather than only mean+σ, since the
   cancellation happens in the _consumer_ — `mean` as a double simply cannot
   carry enough resolution at those magnitudes.
-- **[PND-AGENTBENCH]** — Build the cross-sectional + flurry benchmark (Q11/Q12
-  in the note) before any more optimisation. N symbols × a rolling study ×
-  a rank across symbols, then the same question re-asked with varying windows.
-  These are the shapes an agent produces unprompted, the shapes the process
-  graph's content-addressed cache exists to serve, and **the two nobody has ever
-  timed**. Commercially decisive, most likely to surprise — and it settles the
-  architectural question in §8 of the note: if a resident panel beats N
-  round trips to ClickHouse, pond is the client; if it does not, pond is a
-  viewer and the analytics belong in SQL.
+- **[PND-AGENTBENCH]** — **Built and measured** —
+  `packages/financial/scripts/perf-agent-bench.mjs`. Q11 (500 symbols × 1000
+  bars, per-symbol `zScore`, rank across symbols) answers in **39 ms**, and
+  **79 ms at 1M points** — both inside the 100 ms gate, so **pond is the client,
+  not the viewer**: a resident panel answers a 7-question flurry in 266 ms
+  against ~140–350 ms of round trips for the same questions, and that is before
+  any caching. Two findings reorder what comes next:
+  - **`withWorkers` does nothing here (1.00×)** — it partitions _within_ a
+    series, and every partition is 1000 rows, far below `MIN_ROWS`. The panel
+    shape wants parallelism _across_ partitions. Right idea, wrong axis.
+  - **`partitionBy`+`toMap` is 43–44% of the time and it is serial.** The
+    studies are only ~53%, so the Amdahl ceiling for partition-level
+    parallelism is **2.0×**, not 8×. Making the split cheaper is worth as much
+    as threading it, and is worth doing first.
+
+  Remaining: a flurry variant driven through the process graph, to measure the
+  content-addressed cache rather than infer it (repetition is 68% of the work in
+  a realistic 21-from-7 session).
+
+- **[PND-SPLITCOST]** — Make `partitionBy` + `toMap` cheaper. 17 ms to cut 500k
+  rows into 500 groups, 35 ms for 1000 — it builds a full `TimeSeries` per
+  group, schema and all, when the consumer usually wants a scoped view. The
+  single highest-leverage number in the agent benchmark, and it needs no
+  threads.
 - **[PND-UNPIVOT]** — Ingest a **long** value-axis result cleanly (tenor/strike
   as a key column). Narrowed by the ClickHouse boundary in §8 of the note:
   unpivot and pivot are `arrayZip`+`ARRAY JOIN` and conditional aggregation
