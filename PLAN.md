@@ -109,6 +109,24 @@ financial hub, and the in-site API reference for core + charts). Plan:
   documentation-backlog items (pushMany guidance, bench-honesty callout, GC
   snippet, no-NaN guarantee, tie semantics, latency pattern) as one MDX pass.
 
+### Numerical classes (RFC — not adopted)
+
+[`docs/rfcs/numerical-classes.md`](docs/rfcs/numerical-classes.md) argues that
+accuracy under partitioning is a **property of an operator's form**, not a
+measurement of a workload — prompted by a shipped `zScore` accuracy figure that
+turned out to be an artifact of the author's own test data (a Codex pass found
+a legal input giving **38% relative error** where the docs claimed 2.6e-6).
+
+Three classes (exact / bounded / unbounded), a composition rule that makes them
+survive arbitrary agent-assembled pipelines, and enforcement in the registry
+alongside `unit` — because a docstring is not a control surface for an agent.
+The unit of classification is the **11 kernels**, not the ~120 studies, so the
+work is bounded and future studies inherit. Two consequences fall out before
+any code: K7 (rolling regression) and K8 (bivariate moments) are `unbounded`,
+and K6 (path-dependent state machines) is not partitionable at all.
+
+Not a commitment. Red-team it before anything commits to it.
+
 ### `@pond-ts/financial`
 
 Calendar engine + trading-time axis + the first studies batch (10 studies,
