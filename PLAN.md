@@ -109,6 +109,32 @@ financial hub, and the in-site API reference for core + charts). Plan:
   documentation-backlog items (pushMany guidance, bench-honesty callout, GC
   snippet, no-NaN guarantee, tie semantics, latency pattern) as one MDX pass.
 
+### Agent workloads — the defensible bench
+
+[`docs/notes/agent-workloads-2026-07.md`](docs/notes/agent-workloads-2026-07.md)
+distils a real derivatives-analytics catalog into six generic data shapes, six
+practitioner personas, and twelve questions written the way an agent receives
+them — each with the plan a process graph would compose, what it stresses, and
+whether pond can do it today. Acceptance gate: **< 100 ms over 500k–1M points**.
+
+The finding that reorders the roadmap: **the gaps are shape problems, not speed
+problems.** Rolling studies, aggregation, calendars, histograms and folds — the
+things these questions lean on hardest — pond already does well. What blocks
+questions is missing _primitives_: unpivoting a wide row into a value-axis
+series (a term structure is the object these people think in), tall→wide pivot,
+and ranking across partitions.
+
+- **[PND-AGENTBENCH]** — Build the cross-sectional + flurry benchmark (Q11/Q12
+  in the note) before any more optimisation. N symbols × a rolling study ×
+  a rank across symbols, then the same question re-asked with varying windows.
+  These are the shapes an agent produces unprompted, the shapes the process
+  graph's content-addressed cache exists to serve, and **the two nobody has ever
+  timed**. Commercially decisive and most likely to surprise.
+- **[PND-UNPIVOT]** — Wide row → value-axis series. Highest-value missing
+  primitive; blocks the term-structure and factor-attribution questions.
+- **[PND-XSECT]** — Rank/reduce across partitions. `partitionBy` gets you
+  per-symbol; nothing ranks across.
+
 ### Numerical classes (RFC — not adopted)
 
 [`docs/rfcs/numerical-classes.md`](docs/rfcs/numerical-classes.md) argues that
