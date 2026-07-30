@@ -20,7 +20,7 @@ schema contract and the same operator surface; the live door builds a
 | Typed arrays off a binary decoder                       | `TimeSeries.fromColumns`     | [Float64Array columnar](#float64array-columnar) |
 | A decoded Apache Arrow `Table`                          | `TimeSeries.fromArrow`       | [Arrow](#arrow)                                 |
 | Events arriving one at a time, forever                  | `new LiveSeries(…)` + `push` | [Live data](#live-data)                         |
-| Rows keyed by a value, not a time                       | `ValueSeries.fromColumns`    | [ValueSeries](./value-series)                   |
+| Rows keyed by a value, not a time                       | `ValueSeries.from*`          | [ValueSeries](#valueseries)                     |
 
 Going the other way: `toJSON` serializes for the wire, `toRows` / `toObjects`
 hand back in-memory rows, and `toArrow` hands the raw column buffers to another
@@ -399,10 +399,8 @@ those.
 `fromColumns` builds a **time**-keyed series. If your rows are keyed by a
 monotonic _value_ instead — an options chain keyed by strike, a spectrum keyed by
 frequency — don't launder the axis through a fake `time` column:
-**`ValueSeries.fromColumns({ name, schema, columns, sort })`** is the same door
-with a `'value'`-kind axis column in place of time. Same inputs, same zero-copy
-adoption, same `sort: true`. Data that _starts_ time-keyed projects into
-value-land with [`byValue`](./concepts/value-axis) instead.
+`ValueSeries.fromColumns` is the same door with a `'value'`-kind axis column in
+place of time. See [ValueSeries](#valueseries) below.
 :::
 
 ### JSON columnar
@@ -569,8 +567,9 @@ rather than an adopt, and the aliasing warning above doesn't apply to it.
 
 #### `toArrow`
 
-The counterpart, and the only export door that isn't row-shaped. pond's columnar
-substrate is already laid out the way Arrow wants: the validity bitmap is
+The counterpart, and the only `TimeSeries` export door that isn't row-shaped.
+pond's columnar substrate is already laid out the way Arrow wants: the validity
+bitmap is
 LSB-first, one bit per value, 1 = valid; numeric columns are a contiguous
 `Float64Array`; booleans a packed bitmap; dict-encoded strings `Int32Array`
 indices plus a dictionary. So `toArrow` hands back the buffers pond is already
@@ -624,6 +623,116 @@ defensive cloning. This is the same read-only contract `column(name)`,
 the buffers cross into another library. Copy first
 (`new Float64Array(f.values)`) if the consumer mutates in place.
 :::
+
+## ValueSeries
+
+Everything above builds a **time**-keyed series. When the key is a monotonic
+_value_ instead — an options chain by strike, a spectrum by frequency, a ride by
+cumulative distance — `ValueSeries` is the counterpart, and every door on this
+page has a twin:
+
+| Time-keyed                  | Value-keyed                              |
+| --------------------------- | ---------------------------------------- |
+| `TimeSeries.fromJSON`       | `ValueSeries.fromJSON`                   |
+| `TimeSeries.fromColumns`    | `ValueSeries.fromColumns`                |
+| `TimeSeries.fromArrow`      | `ValueSeries.fromArrow(table, { axis })` |
+| `series.toJSON()`           | `chain.toJSON()`                         |
+| `series.toRows/toObjects()` | `chain.toRows/toObjects()`               |
+| `series.toArrow()`          | `chain.toArrow()`                        |
+| — (see below)               | `chain.toColumns()`                      |
+
+They share **one ingest engine**, so the monotonic-key contract, `sort: true`,
+the gap rules, and the zero-copy adoption behave identically — reread the
+sections above and substitute the axis for time. `schema[0]` is a `'value'`-kind
+axis column instead of a `'time'`-kind one; every direct door checks that first
+and names itself in the error if you got it wrong.
+
+```ts
+import { ValueSeries } from 'pond-ts';
+
+const schema = [
+  { name: 'strike', kind: 'value' }, // schema[0] is the axis
+  { name: 'iv', kind: 'number' },
+  { name: 'oi', kind: 'number' },
+] as const;
+
+ValueSeries.fromJSON({ name: 'chain', schema, rows });
+ValueSeries.fromColumns({ name: 'chain', schema, columns });
+ValueSeries.fromArrow(table, { axis: 'strike' });
+```
+
+Data that _starts_ time-keyed doesn't use these doors at all — it projects with
+[`byValue(axis)`](./concepts/value-axis), which re-keys a `TimeSeries` onto one
+of its own monotonic columns. The direct doors are for rows that were **never**
+time-keyed. The full tour is the
+[ValueSeries deep dive](./value-series); what follows is only where the value
+axis genuinely diverges from what you just read.
+
+### JSON
+
+`ValueSeries.fromJSON` is the `TimeSeries` contract minus the one thing a value
+axis has no use for: **there is no timestamp parsing and no `parse.timeZone`.**
+The axis cell must be a finite `number` — a value axis has no calendar to
+interpret `'2026-01-01'` against — so a string axis is an error naming the row
+rather than a silent `NaN`.
+
+Everything else carries over: array or object rows, `null` as missing,
+`required: false` for sometimes-present columns, `sort: true` for an unordered
+payload, and strict per-cell kind checking (a `NaN` in a `number` column is
+**rejected**, not read as a gap).
+
+### Columnar
+
+`ValueSeries.fromColumns` takes the same `number[]` / `Float64Array` /
+`string[]` inputs with the same adopt-vs-copy costs, and is looser than the JSON
+door in the same way — a non-finite number is a gap, and `required` isn't
+checked, because a decoded buffer can't tell "absent" from "not a number".
+
+The one thing `ValueSeries` has that `TimeSeries` doesn't yet is the columnar
+door **out**:
+
+```ts
+const payload = chain.toColumns();
+// { name, schema, columns: { strike: [...], iv: [...], oi: [...] } }
+
+ValueSeries.fromColumns(payload); // round-trips, and it type-checks
+```
+
+`toColumns()` emits one plain array per column with gaps as `null` — the
+`JSON.stringify`-safe wire shape, and exactly the envelope `fromColumns` reads
+back. Reach for it when the destination speaks JSON; reach for `toArrow` when it
+speaks Arrow and lives in the same process.
+
+:::note[Round trips are typed, and honest about what won't survive]
+`ValueSeries.fromColumns(vs.toColumns())` and `ValueSeries.fromJSON(vs.toJSON())`
+compile without a cast. A `boolean` or array column — which only a `byValue`
+projection can introduce, since the direct doors take `number` and `string` —
+exports fine but can't be ingested back, and the **columnar** round trip fails to
+_compile_ rather than at runtime. The row leg is the other way round: `toJSON`
+types its `boolean` cells honestly, so `fromJSON` accepts the payload's shape and
+throws at ingest, naming the column and its kind.
+:::
+
+`TimeSeries.toColumns()` doesn't exist yet — the exporter underneath is
+store-generic and already handles a `time` key, but the two-edged case
+(`timeRange` / `interval`) has no agreed wire shape any ingest door reads back,
+so it's parked until a consumer needs it.
+
+### Arrow
+
+`ValueSeries.fromArrow(table, { axis })` differs from the time door in exactly
+two ways:
+
+- **`axis` is required.** There's no `'time'` field convention to fall back on —
+  `strike`, `frequency`, `depth`, `cumDist` are all equally plausible names, and
+  silently keying on the wrong column is worse than an error.
+- **The axis is read unscaled.** No `timeUnit`, no `TimeUnit` to consult; the
+  numbers are taken at face value. int64 still recombines BigInt-free.
+
+`chain.toArrow()` is the same exporter `TimeSeries.toArrow` uses and returns the
+same `{ length, fields }` — a `'value'` axis simply exports as a plain `float64`
+field rather than a `timestamp` one. The live-storage warning above applies
+identically.
 
 ## Common ingest issues
 
@@ -702,10 +811,11 @@ Hand over a buffer you're done writing to, or pass a copy
 
 ### Unsupported kinds on the columnar doors
 
-`fromColumns` / `fromArrow` build a `time`-keyed series with `number` and
-`string` value columns. An `interval` or `timerange` key, or a `boolean` / array
-value column, throws naming the column and its kind. Route those through
-`fromJSON` or the constructor, or select a supported subset via `columns`.
+`TimeSeries.fromColumns` / `fromArrow` build a `time`-keyed series with `number`
+and `string` value columns (the `ValueSeries` twins take the same value kinds on
+a `'value'` axis). An `interval` or `timerange` key, or a `boolean` / array value
+column, throws naming the column and its kind. Route those through `fromJSON` or
+the constructor, or select a supported subset via `columns`.
 
 ### Object-row JSON from non-pond-ts sources
 
@@ -729,6 +839,10 @@ The library isn't trying to guess remaps.
 
 - [Concepts → Series](./concepts/series) — `TimeSeries` vs `LiveSeries`, schema
   shape, mental model.
+- [ValueSeries deep dive](./value-series) — the full door-by-door tour of the
+  value-keyed type, plus reading, slicing, and when _not_ to reach for it.
+- [Value axis concept](./concepts/value-axis) — _when and why_ a value axis, and
+  the `byValue` projection route.
 - [Cleaning data](../pond-ts/transforms/cleaning) — what to do about the bad rows
   once they're in.
 - [Columns](../pond-ts/advanced/columns) — the typed-column API that columnar
