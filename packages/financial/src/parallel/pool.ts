@@ -138,19 +138,40 @@ interface Registration {
 }
 
 /**
- * Keyed on the **key column's buffer**, not the series object, so every
- * series derived from a registered one is registered too. A study
- * returns a new `TimeSeries` and `withColumn` shares the key column, so
- * without this a chained study would silently fall back to sequential
- * after the first step.
+ * Keyed on the key column's **`Float64Array` object**, not the series and
+ * not its `ArrayBuffer`.
+ *
+ * Not the series, because a study returns a new `TimeSeries` and
+ * `withColumn` shares the key column — keying on the series would drop
+ * acceleration after the first link of a chain.
+ *
+ * Not the buffer, because `fromArrow` views the IPC byte array directly:
+ * two independent `tableFromIPC(bytes)` decodes of the same bytes share
+ * one `ArrayBuffer`, so buffer-keying let `withWorkers(a)` silently opt
+ * in an unrelated `b`. Harmless to the answers (identical data) but a
+ * leak in an explicit opt-in, and it quietly accelerated the baseline of
+ * the first benchmark written against this API.
  */
-const registry = new WeakMap<ArrayBufferLike, Registration>();
+const registry = new WeakMap<Float64Array, Registration>();
 const live = new Set<Registration>();
+/**
+ * Started pools, keyed `rows:workers` — so re-ingesting a same-shaped
+ * series reuses its threads instead of starting more.
+ *
+ * This matters because `withWorkers` reads naturally *inside* a pipeline
+ * (`fromArrow(...).withWorkers({ workers: 8 }).sma(...)`), and a pipeline
+ * gets re-run. Without reuse each run minted a fresh pool: measured at
+ * 1.03× — all the speedup spent starting threads. Workers are bound to
+ * their arena at construction (a thread parked in `Atomics.wait` cannot
+ * be sent new buffers), so the arena size is part of the key; the arena
+ * is refilled from the series on every pass anyway, so sharing one
+ * across same-length series is safe.
+ */
+const pools = new Map<string, Registration>();
 let installed = false;
 
-function keyBufferOf(series: TimeSeries<SeriesSchema>): ArrayBufferLike {
-  return (series.keyColumn() as unknown as { begin: Float64Array }).begin
-    .buffer;
+function keyBufferOf(series: TimeSeries<SeriesSchema>): Float64Array {
+  return (series.keyColumn() as unknown as { begin: Float64Array }).begin;
 }
 
 /** Reads one numeric column into the arena, NaN marking missing. */
@@ -262,9 +283,19 @@ function accelerate(
  * Opts `series` into partitioned rolling studies, and returns it
  * unchanged.
  *
- * Idempotent per series. Starting the pool is the expensive part
- * (~25–85 ms of worker start-up plus an arena of 24 bytes per row), so
- * do it once at ingest rather than per query.
+ * Idempotent per series, and pools are reused across same-shaped series
+ * — so this is safe to write inside a pipeline that gets re-run, which
+ * is how it reads most naturally:
+ *
+ * ```ts
+ * TimeSeries.fromArrow(table, { time: 'ts' })
+ *   .withWorkers({ workers: 8 })
+ *   .sma({ period: 20 })
+ * ```
+ *
+ * Even so, starting the first pool costs ~25–85 ms of thread start-up
+ * plus an arena of 24 bytes per row, so the natural place for it is
+ * where the data is ingested.
  */
 export function withWorkers<S extends SeriesSchema>(
   series: TimeSeries<S>,
@@ -294,6 +325,13 @@ export function withWorkers<S extends SeriesSchema>(
   }
 
   const rows = wide.length;
+  const poolKey = `${rows}:${size}`;
+  const reusable = pools.get(poolKey);
+  if (reusable !== undefined && !reusable.stopped) {
+    registry.set(key, reusable);
+    return series;
+  }
+
   const control = new SharedArrayBuffer(ctrl.BYTES);
   const arena = new SharedArrayBuffer(rows * 8 * ARENA_SLOTS);
   const sig = new Int32Array(control);
@@ -319,6 +357,7 @@ export function withWorkers<S extends SeriesSchema>(
   };
   registry.set(key, reg);
   live.add(reg);
+  pools.set(poolKey, reg);
   if (!installed) {
     setRollingAccelerator(accelerate);
     installed = true;
@@ -347,6 +386,7 @@ export function shutdownWorkers(): void {
     for (const w of reg.workers) void w.terminate();
   }
   live.clear();
+  pools.clear();
   setRollingAccelerator(undefined);
   installed = false;
 }

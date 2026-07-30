@@ -323,4 +323,103 @@ describe('[PND-SCANKERN] withWorkers', () => {
       else expect(over, `${column}: cells beyond 1e-9`).toBe(0);
     }
   });
+
+  it('chains as a method, and takes effect from where it appears', async () => {
+    // The calling style the docs lead with. `.withWorkers()` returns the
+    // same series, so it reads as a no-op link — but it is only a no-op
+    // for the studies BEFORE it, which is worth pinning rather than
+    // leaving to the prose.
+    const { studies } = await load();
+    await import(new URL('../dist/fluent.js', import.meta.url).href);
+    await import(new URL('../dist/parallel/index.js', import.meta.url).href);
+
+    type Chainable = {
+      withWorkers: (o?: { workers?: number }) => Chainable;
+      sma: (o: unknown) => Chainable;
+      zScore: (o: unknown) => Chainable;
+      schema: { name: string }[];
+    };
+
+    const first = (bars(N) as unknown as Chainable)
+      .withWorkers({ workers: 4 })
+      .sma({ period: P })
+      .zScore({ period: P });
+
+    expect(first.schema.map((c) => c.name)).toEqual([
+      'time',
+      'close',
+      'sma',
+      'zscore',
+    ]);
+
+    const expected = studies.zScore(studies.sma(bars(N), { period: P }), {
+      period: P,
+    });
+    const { mismatchedGaps, worst } = compare(
+      cells(first as never, 'zscore'),
+      cells(expected as never, 'zscore'),
+    );
+    expect(mismatchedGaps).toBe(0);
+    // Canary again: zScore must have shifted, or the chain ran sequentially.
+    expect(worst, 'the parallel path must have run').toBeGreaterThan(0);
+    expect(worst).toBeLessThan(1e-4);
+  });
+
+  it('opting one series in does not opt in an unrelated one', async () => {
+    // `fromArrow` views the IPC byte array directly, so two independent
+    // decodes of the same bytes are distinct `Float64Array` views over
+    // ONE `ArrayBuffer`. Registration keyed on that buffer leaked:
+    // `withWorkers(a)` silently accelerated `b`. Harmless to the answers,
+    // but an explicit opt-in that did not stay opted-in-to — and it
+    // quietly accelerated the baseline of the first benchmark written
+    // against this API, hiding the speedup entirely.
+    //
+    // Reproduced here without Arrow: two series over one shared buffer,
+    // at different offsets, exactly the shape `tableFromIPC` produces.
+    const { withWorkers, studies } = await load();
+    const shared = new ArrayBuffer(N * 8 * 4);
+    const view = (slot: number) => new Float64Array(shared, slot * N * 8, N);
+    const build = (timeSlot: number, closeSlot: number) => {
+      const time = view(timeSlot);
+      const close = view(closeSlot);
+      for (let i = 0; i < N; i += 1) {
+        time[i] = i * 60_000;
+        close[i] = 100 + Math.sin(i / 50);
+      }
+      return TimeSeries.fromColumns({
+        name: 'bars',
+        schema: SCHEMA,
+        columns: { time, close },
+      });
+    };
+
+    const optedIn = build(0, 1);
+    const other = build(2, 3); // same ArrayBuffer, different views
+    expect(
+      (optedIn.keyColumn() as unknown as { begin: Float64Array }).begin.buffer,
+    ).toBe(
+      (other.keyColumn() as unknown as { begin: Float64Array }).begin.buffer,
+    );
+
+    const reference = cells(
+      studies.zScore(build(2, 3), { period: P }) as never,
+      'zscore',
+    );
+    withWorkers(optedIn, { workers: 4 });
+
+    // `other` never opted in ⇒ bit-identical to a plain run.
+    expect(
+      cells(studies.zScore(other, { period: P }) as never, 'zscore'),
+    ).toEqual(reference);
+
+    // …while the series that did opt in shows the parallel path's shift.
+    const { worst } = compare(
+      cells(studies.zScore(optedIn, { period: P }) as never, 'zscore'),
+      reference,
+    );
+    expect(
+      worst,
+      'the opted-in series must actually be accelerated',
+    ).toBeGreaterThan(0);
+  });
 });
