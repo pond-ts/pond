@@ -146,3 +146,36 @@ export function bollingerBands(
     lower[i] = d === 0 ? NaN : m - stdDev * d;
   }
 }
+
+/* ── the shared control block ────────────────────────────────────── */
+
+/**
+ * The job description lives in an `Int32Array`, not in a message: the
+ * main thread cannot `postMessage` to a worker parked in `Atomics.wait`,
+ * so everything a worker needs has to be readable from shared memory.
+ *
+ * There is exactly **one** job kind — "compute rolling mean and sd for
+ * this range". Every rolling study reduces to that: `sma` and `envelope`
+ * want the mean, `bollinger` and `zScore` want both, and each study's own
+ * pointwise arithmetic (`m ± k·d`, `(v − m)/d`) stays in the main thread
+ * where it already lives, costs a millisecond, and needs no second
+ * implementation to drift from the first.
+ */
+export const MAX_WORKERS = 32;
+
+/** Index layout of the shared `Int32Array` control block. */
+export const ctrl = {
+  /** Per-worker job flag: 0 idle, 1 job posted. */
+  JOB: 0,
+  /** Completion counter, reset per dispatch. */
+  DONE: MAX_WORKERS,
+  PERIOD: MAX_WORKERS + 1,
+  /** Set to 1 to tell workers to exit their loop. */
+  STOP: MAX_WORKERS + 2,
+  /** Per-worker `[start, end)`, two slots each. */
+  RANGE: MAX_WORKERS + 4,
+  BYTES: (MAX_WORKERS * 3 + 8) * 4,
+} as const;
+
+/** Arena slots per series: the source values, then mean and sd. */
+export const ARENA_SLOTS = 3;

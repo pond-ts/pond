@@ -1,16 +1,17 @@
 /**
- * `@pond-ts/financial/parallel` — studies partitioned across worker
- * threads ([PND-SCANKERN]).
+ * `@pond-ts/financial/parallel` — partitioned rolling studies
+ * ([PND-SCANKERN]).
  *
- * A separate entry point because it is **Node-only** (`worker_threads`)
- * and **asynchronous**, neither of which the ordinary studies are. The
- * main package stays runtime-neutral and synchronous.
+ * A separate entry point because it is **Node-only**: it needs worker
+ * threads, and `Atomics.wait` on the main thread — which browsers forbid
+ * — is what lets the studies stay synchronous while workers do the work.
+ * The main package never imports this and stays portable.
  *
- * See {@link StudyPool} for what is parallelised, what it costs, why the
- * answer is not bit-identical to the sequential study, and why small
- * inputs fall back instead of losing.
+ * Opt in once, at ingest. See {@link withWorkers} for what it costs in
+ * accuracy, which differs per study and is the reason this is a
+ * documented choice rather than a default.
  */
 
-export { StudyPool } from './pool.js';
-export type { StudyPoolOptions } from './pool.js';
-export { rollingMeanSd, bollingerBands } from './kernel.js';
+export { withWorkers, shutdownWorkers, MIN_ROWS } from './pool.js';
+export type { WithWorkersOptions } from './pool.js';
+export { rollingMeanSd } from './kernel.js';

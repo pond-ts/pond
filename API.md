@@ -355,14 +355,21 @@ by studies) — `packages/financial/src/kernels/rolling.ts`.
 
 ### `@pond-ts/financial/parallel` (Node-only, opt-in)
 
-`StudyPool` (`start`, `bollinger`, `close`, `size`, `MIN_ROWS`); types
-`StudyPoolOptions`; kernels `rollingMeanSd`, `bollingerBands`. Rolling studies
-partitioned across worker threads — a rolling window is not a recurrence, so
-the output splits into ranges with a `period-1` overlap. Async and Node-only,
-hence a separate entry point. Band values may differ from the sequential study
-in the last few ulps (measured: no cell beyond 1e-9 relative); below
-`StudyPool.MIN_ROWS` it runs the sequential study and is bit-identical.
-Source: `packages/financial/src/parallel/`.
+`withWorkers(series, { workers })` — opts a series into partitioned rolling
+studies and returns it unchanged; `shutdownWorkers()`; `MIN_ROWS`; type
+`WithWorkersOptions`. Chosen **once at ingest**: the studies keep their
+signatures and stay synchronous, and derived series inherit it (registration is
+keyed on the key-column buffer). **Single-threaded remains the default** — the
+main package never imports this. Node-only by construction: `Atomics.wait` on
+the main thread is what keeps the studies synchronous, and browsers forbid it.
+
+Accelerates any rolling study asking for `avg`/`stdev` off one column — `sma`,
+`envelope`, `bollinger`, `zScore`. Partitioning shifts the answer slightly:
+measured 1.83×/1.86×/2.45× with worst relative differences of 3.9e-14
+(`sma`), 5.1e-13 (`bollinger`) and **2.6e-6 on ~0.8% of cells (`zScore`,
+which divides by a near-zero rolling σ)**. Below `MIN_ROWS` a registered series
+still runs sequentially and is bit-identical. Source:
+`packages/financial/src/parallel/`.
 
 ## @pond-ts/process
 

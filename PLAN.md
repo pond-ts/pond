@@ -451,21 +451,22 @@ whether it stays one.
   — but that the same reasoning reaches the operations that _are_ slow, and
   that "inherently sequential" is a far weaker claim than it looks.
 
-  **And rolling windows partition too ([PND-SCANKERN], measured).** The two
-  slowest studies are not recurrences — each output cell depends only on
-  `[i-p+1, i]`, so an output-range partition with `p-1` overlap is
-  embarrassingly parallel. Measured (`spikes/parallel-rolling/`, 500k bars,
-  8 workers): **`bollinger` 26.0 → 1.89 ms (13.8×)** and **`zScore`
-  21.2 → 2.14 ms (9.9×)**, against a single-worker spike that lands within a
-  few percent of pond's own study. Superlinear because partitioning buys cache
-  locality as well as parallelism (52 ns/element sweeping, 30 ns/element
-  chunked). **Numerics split by study:** `bollinger` is safe — not one cell in
-  1.5M differs by more than 1e-9 — while `zScore` divides by the rolling
-  stdev and amplifies last-ulp differences wherever the window is flat
-  (~1% of cells beyond 1e-9, worst 5.3e-6). Since the studies are pinned
-  bar-for-bar against a pandas oracle, `zScore` needs a decision rather than
-  just a benchmark. Caveat on the headline numbers: the spike writes into
-  pre-allocated buffers, so end-to-end will be slower than the kernel time.
+  **Rolling windows partition — SHIPPED as [PND-SCANKERN].**
+  `withWorkers` in `@pond-ts/financial/parallel` (Node-only, opt-in at ingest;
+  studies stay synchronous via `Atomics.wait`, which is also why it is absent
+  in browsers). One accelerator hook on `rollingColumns` serves `sma`,
+  `envelope`, `bollinger` and `zScore`. Measured over 500k bars, 8 workers:
+  1.83× / 1.32× / 1.86× / 2.45×, three-study stack 1.98×. Answers shift
+  slightly — 3.9e-14 to 5.1e-13 for everything except **`zScore` at 2.6e-6
+  across ~0.8% of cells**, which divides by a near-zero rolling σ; documented
+  as the reason the opt-in is a choice rather than a default. Below 100k rows a
+  registered series still runs sequentially, bit-identical. The bare kernel
+  partitions 13.8× (`spikes/parallel-rolling/`); the gap to the shipped numbers
+  is the arena copies and each study's own pointwise arithmetic, both of which
+  stay on the main thread so that one hook can serve every study without a
+  second copy of any study's logic. Remaining in this family: `ema` /
+  `cumulative` via parallel scan (`spikes/parallel-scan/`, 3.14× measured,
+  99.91% bit-identical), not yet wired to a study.
 
   **Remaining: the latency half** — split one composite query's nodes across
   workers (spike measured 2.42× on the 5-study stack, bit-identical). Blocked

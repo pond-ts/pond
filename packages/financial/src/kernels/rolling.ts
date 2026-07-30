@@ -49,11 +49,52 @@ export function assertNoColumn(
  * `rolling` scan for all specs (so a multi-output study like Bollinger reduces
  * avg + stdev in one pass); the bar-count window is correct across session gaps.
  */
+/**
+ * An optional accelerator for {@link rollingColumns} — [PND-SCANKERN].
+ *
+ * A rolling window is not a recurrence: output cell `i` reads only rows
+ * `[i-period+1, i]`, so the output can be cut into ranges and computed
+ * in parallel. That needs worker threads, which are Node-only and would
+ * make this package non-portable if imported here — so the parallel
+ * implementation lives behind `@pond-ts/financial/parallel` and installs
+ * itself through this hook.
+ *
+ * Returning `null` means "not accelerating this call" — a series the
+ * caller never opted in, a reducer the accelerator does not implement,
+ * an input too small to be worth partitioning. The sequential path then
+ * runs exactly as it always has. **Nothing changes unless a caller opts
+ * in**, which is the whole point of the hook rather than a flag.
+ */
+export type RollingAccelerator = (
+  series: TimeSeries<SeriesSchema>,
+  specs: Record<string, { from: string; using: RollingReducer }>,
+  period: number,
+) => Record<string, Float64Array> | null;
+
+let accelerator: RollingAccelerator | undefined;
+
+/**
+ * Installs (or clears, with `undefined`) the rolling accelerator.
+ *
+ * @internal Called by `@pond-ts/financial/parallel`. Not part of the
+ * package's public surface — a caller opts in with `withWorkers`.
+ */
+export function setRollingAccelerator(
+  next: RollingAccelerator | undefined,
+): void {
+  accelerator = next;
+}
+
 export function rollingColumns(
   series: TimeSeries<SeriesSchema>,
   specs: Record<string, { from: string; using: RollingReducer }>,
   period: number,
 ): Record<string, Float64Array> {
+  // Opted-in callers only; `null` means run sequentially, as always.
+  if (accelerator !== undefined) {
+    const accelerated = accelerator(series, specs, period);
+    if (accelerated !== null) return accelerated;
+  }
   const rolled = series.rolling(
     { count: period },
     specs as AggregateOutputMap<SeriesSchema>,
