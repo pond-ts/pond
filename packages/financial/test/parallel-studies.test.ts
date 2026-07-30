@@ -2,14 +2,22 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { TimeSeries } from 'pond-ts';
-import { bollinger, sma, zScore } from '../src/index.js';
 
 /**
  * [PND-SCANKERN] — `withWorkers`, the per-ingest opt-in.
  *
- * **Loaded from `dist/`**: a worker is a real Node thread and cannot
- * execute TypeScript, so the entry point resolves its worker relative to
- * its own built module. `npm test` builds first via `test:type`.
+ * **Everything is loaded from `dist/`, including the studies** — and that
+ * is load-bearing, not incidental. A worker cannot execute TypeScript, so
+ * the parallel entry point must come from `dist`; but it installs its
+ * accelerator into `dist`'s copy of the rolling kernel, and `src`'s
+ * studies consult `src`'s copy. Importing the studies from `src` here
+ * made every assertion below compare **sequential against sequential** —
+ * nine tests that passed without once running the code they name.
+ * (Caught by instrumenting the hook, not by any of them failing.)
+ *
+ * The `zScore` case is now also the canary: the parallel path *must*
+ * shift its values slightly, so a worst-difference of exactly zero means
+ * the accelerator never engaged.
  *
  * Two questions decide whether this is shippable, and both are here:
  *
@@ -22,13 +30,18 @@ import { bollinger, sma, zScore } from '../src/index.js';
  */
 
 const DIST = new URL('../dist/parallel/index.js', import.meta.url);
+const DIST_STUDIES = new URL('../dist/index.js', import.meta.url);
 type Parallel = typeof import('../src/parallel/index.js');
+type Studies = typeof import('../src/index.js');
 
-async function load(): Promise<Parallel> {
+async function load(): Promise<Parallel & { studies: Studies }> {
   if (!existsSync(fileURLToPath(DIST))) {
     throw new Error('needs dist/ — run `npm run build` first (npm test does)');
   }
-  return (await import(DIST.href)) as Parallel;
+  const parallel = (await import(DIST.href)) as Parallel;
+  // Same graph as the accelerator, or nothing is being tested.
+  const studies = (await import(DIST_STUDIES.href)) as Studies;
+  return { ...parallel, studies };
 }
 
 const SCHEMA = [
@@ -97,18 +110,24 @@ describe('[PND-SCANKERN] withWorkers', () => {
   it('leaves studies untouched when nobody opts in', async () => {
     // The default. Importing the entry point must not change a thing —
     // only calling `withWorkers` may.
-    await load();
+    const { studies } = await load();
     const series = bars(N);
-    const before = cells(bollinger(series, { period: P }) as never, 'bbMiddle');
-    const after = cells(bollinger(series, { period: P }) as never, 'bbMiddle');
+    const before = cells(
+      studies.bollinger(series, { period: P }) as never,
+      'bbMiddle',
+    );
+    const after = cells(
+      studies.bollinger(series, { period: P }) as never,
+      'bbMiddle',
+    );
     expect(after).toEqual(before);
   });
 
   it('bollinger: every cell within 1e-9 of the sequential study', async () => {
-    const { withWorkers } = await load();
+    const { withWorkers, studies } = await load();
     const series = bars(N);
-    const expected = bollinger(series, { period: P });
-    const actual = bollinger(withWorkers(series, { workers: 4 }), {
+    const expected = studies.bollinger(series, { period: P });
+    const actual = studies.bollinger(withWorkers(series, { workers: 4 }), {
       period: P,
     });
     for (const band of ['bbMiddle', 'bbUpper', 'bbLower']) {
@@ -123,10 +142,12 @@ describe('[PND-SCANKERN] withWorkers', () => {
   });
 
   it('sma: every cell within 1e-9', async () => {
-    const { withWorkers } = await load();
+    const { withWorkers, studies } = await load();
     const series = bars(N);
-    const expected = sma(series, { period: P });
-    const actual = sma(withWorkers(series, { workers: 4 }), { period: P });
+    const expected = studies.sma(series, { period: P });
+    const actual = studies.sma(withWorkers(series, { workers: 4 }), {
+      period: P,
+    });
     const { mismatchedGaps, over } = compare(
       cells(actual as never, 'sma'),
       cells(expected as never, 'sma'),
@@ -141,24 +162,36 @@ describe('[PND-SCANKERN] withWorkers', () => {
     // at the documented bound, and the tail is asserted to be a small
     // FRACTION rather than merely "some cells" — if it grew, the
     // documentation would be wrong.
-    const { withWorkers } = await load();
+    const { withWorkers, studies } = await load();
     const series = bars(N);
-    const expected = zScore(series, { period: P });
-    const actual = zScore(withWorkers(series, { workers: 4 }), { period: P });
+    const expected = studies.zScore(series, { period: P });
+    const actual = studies.zScore(withWorkers(series, { workers: 4 }), {
+      period: P,
+    });
     const { worst, mismatchedGaps, over } = compare(
       cells(actual as never, 'zscore'),
       cells(expected as never, 'zscore'),
     );
     expect(mismatchedGaps, 'gaps must still line up exactly').toBe(0);
-    expect(worst, 'documented as ~5e-6').toBeLessThan(1e-4);
-    expect(over / N, 'documented as ~1% of cells').toBeLessThan(0.05);
+    expect(worst, 'documented as ~2.6e-6').toBeLessThan(1e-4);
+    expect(over / N, 'documented as ~0.8% of cells').toBeLessThan(0.05);
+    // THE CANARY. The parallel path necessarily shifts zScore, so a
+    // difference of exactly zero means the accelerator never engaged and
+    // every assertion in this file was comparing sequential to itself —
+    // which is precisely what happened while the studies were imported
+    // from `src` and the pool from `dist`.
+    expect(
+      worst,
+      'zero difference ⇒ the parallel path never ran',
+    ).toBeGreaterThan(0);
+    expect(over, 'zero tail ⇒ the parallel path never ran').toBeGreaterThan(0);
   });
 
   it('a gapped column agrees gap for gap', async () => {
-    const { withWorkers } = await load();
+    const { withWorkers, studies } = await load();
     const series = bars(N, 37);
-    const expected = bollinger(series, { period: P });
-    const actual = bollinger(withWorkers(series, { workers: 4 }), {
+    const expected = studies.bollinger(series, { period: P });
+    const actual = studies.bollinger(withWorkers(series, { workers: 4 }), {
       period: P,
     });
     for (const band of ['bbMiddle', 'bbUpper', 'bbLower']) {
@@ -175,11 +208,13 @@ describe('[PND-SCANKERN] withWorkers', () => {
     // Registration is keyed on the key buffer precisely so this holds.
     // If it regressed, the second study would quietly run sequentially —
     // correct, but not what the caller asked for.
-    const { withWorkers } = await load();
+    const { withWorkers, studies } = await load();
     const series = withWorkers(bars(N), { workers: 4 });
-    const once = sma(series, { period: P });
-    const twice = bollinger(once, { period: P });
-    const expected = bollinger(sma(bars(N), { period: P }), { period: P });
+    const once = studies.sma(series, { period: P });
+    const twice = studies.bollinger(once, { period: P });
+    const expected = studies.bollinger(studies.sma(bars(N), { period: P }), {
+      period: P,
+    });
     const { mismatchedGaps, over } = compare(
       cells(twice as never, 'bbMiddle'),
       cells(expected as never, 'bbMiddle'),
@@ -189,11 +224,11 @@ describe('[PND-SCANKERN] withWorkers', () => {
   });
 
   it('runs sequentially below MIN_ROWS, bit-identical', async () => {
-    const { withWorkers, MIN_ROWS } = await load();
+    const { withWorkers, MIN_ROWS, studies } = await load();
     const series = bars(1_000);
     expect(series.length).toBeLessThan(MIN_ROWS);
-    const expected = bollinger(series, { period: P });
-    const actual = bollinger(withWorkers(series, { workers: 4 }), {
+    const expected = studies.bollinger(series, { period: P });
+    const actual = studies.bollinger(withWorkers(series, { workers: 4 }), {
       period: P,
     });
     for (const band of ['bbMiddle', 'bbUpper', 'bbLower']) {
@@ -204,12 +239,12 @@ describe('[PND-SCANKERN] withWorkers', () => {
   });
 
   it('shutdownWorkers restores the sequential path exactly', async () => {
-    const { withWorkers, shutdownWorkers } = await load();
+    const { withWorkers, shutdownWorkers, studies } = await load();
     const series = bars(N);
-    const expected = bollinger(series, { period: P });
-    bollinger(withWorkers(series, { workers: 4 }), { period: P });
+    const expected = studies.bollinger(series, { period: P });
+    studies.bollinger(withWorkers(series, { workers: 4 }), { period: P });
     shutdownWorkers();
-    const after = bollinger(series, { period: P });
+    const after = studies.bollinger(series, { period: P });
     for (const band of ['bbMiddle', 'bbUpper', 'bbLower']) {
       expect(cells(after as never, band)).toEqual(
         cells(expected as never, band),
@@ -218,10 +253,10 @@ describe('[PND-SCANKERN] withWorkers', () => {
   });
 
   it('one worker still partitions, and still agrees', async () => {
-    const { withWorkers } = await load();
+    const { withWorkers, studies } = await load();
     const series = bars(N);
-    const expected = bollinger(series, { period: P });
-    const actual = bollinger(withWorkers(series, { workers: 1 }), {
+    const expected = studies.bollinger(series, { period: P });
+    const actual = studies.bollinger(withWorkers(series, { workers: 1 }), {
       period: P,
     });
     const { over } = compare(
@@ -229,5 +264,63 @@ describe('[PND-SCANKERN] withWorkers', () => {
       cells(expected as never, 'bbMiddle'),
     );
     expect(over).toBe(0);
+  });
+
+  it('accelerates a fluent chain end to end', async () => {
+    // The calling style people actually use. The fluent methods are the
+    // standalone studies bound to `this`, so they route through the same
+    // kernel — and each link returns a derived series, which is exactly
+    // the case key-buffer registration exists to keep accelerated.
+    const { withWorkers, studies } = await load();
+    await import(new URL('../dist/fluent.js', import.meta.url).href);
+
+    const chain = (b: unknown) =>
+      (
+        b as {
+          sma: (o: unknown) => {
+            bollinger: (o: unknown) => { zScore: (o: unknown) => unknown };
+          };
+        }
+      )
+        .sma({ period: P })
+        .bollinger({ period: P })
+        .zScore({ period: P });
+
+    const expected = studies.zScore(
+      studies.bollinger(studies.sma(bars(N), { period: P }), { period: P }),
+      { period: P },
+    );
+    const actual = chain(withWorkers(bars(N), { workers: 4 }));
+
+    const names = (actual as { schema: { name: string }[] }).schema.map(
+      (c) => c.name,
+    );
+    expect(names).toEqual([
+      'time',
+      'close',
+      'sma',
+      'bbMiddle',
+      'bbUpper',
+      'bbLower',
+      'zscore',
+    ]);
+    // Every link agrees; only zScore carries its documented tail.
+    for (const [column, tail] of [
+      ['sma', false],
+      ['bbMiddle', false],
+      ['zscore', true],
+    ] as const) {
+      const { mismatchedGaps, over, worst } = compare(
+        cells(actual as never, column),
+        cells(expected as never, column),
+      );
+      expect(mismatchedGaps, `${column}: gaps`).toBe(0);
+      if (tail)
+        expect(
+          worst,
+          `${column}: the parallel path must have run`,
+        ).toBeGreaterThan(0);
+      else expect(over, `${column}: cells beyond 1e-9`).toBe(0);
+    }
   });
 });

@@ -9,6 +9,26 @@
  * const bands = bollinger(bars, { period: 20 });   // still synchronous
  * ```
  *
+ * Without it, nothing changes at all — the same call, single-threaded:
+ *
+ * ```ts
+ * const bands = bollinger(loadBars(), { period: 20 });
+ * ```
+ *
+ * The fluent layer needs nothing special either. Each link returns a
+ * derived series, and derived series stay registered (see below), so a
+ * whole chain is accelerated — measured 55.95 ms → 25.63 ms (2.18×) for
+ * `.sma().bollinger().zScore()` over 500k bars:
+ *
+ * ```ts
+ * import '@pond-ts/financial/fluent';
+ *
+ * const study = withWorkers(loadBars(), { workers: 8 })
+ *   .sma({ period: 20 })
+ *   .bollinger({ period: 20 })
+ *   .zScore({ period: 20 });
+ * ```
+ *
  * ## The shape of the opt-in
  *
  * You choose it **once, where the data is ingested**, and every rolling
