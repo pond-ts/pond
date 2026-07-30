@@ -1194,3 +1194,71 @@ genuinely means, and there is nowhere to put it.
 **Done when:** a requester can express "show this" without the consumer
 having to guess, and an agent that wants a band on screen names one
 rather than approximating it with a fold.
+
+### [PND-PROCPAR] — Worker-thread parallel node execution
+
+**Where it came from.** The polars comparison
+(`packages/financial/scripts/perf-vs-polars.mjs`) left one gap no planned
+kernel work touches: 10 threads take the strategy pass to 18.95 ms, 3.39×
+ahead. The question "can Node Worker Threads close that?" was assessed and
+measured 2026-07 — full write-up in
+[worker-threads-assessment-2026-07.md](../notes/worker-threads-assessment-2026-07.md),
+reproducible spike committed at
+[`spikes/worker-threads/`](../../spikes/worker-threads/).
+
+**The measured facts.**
+
+- polars' own st→mt split says **only inter-operator parallelism pays** at
+  500k rows: `sma`/`ema`/reductions gain 1.00× from 10 threads; every win
+  is a multi-output expression (`bollinger` 3.13×, stack 4.08×).
+- Node's fixed costs are noise at query scale: 10 µs dispatch/join round
+  trip, 72 µs 8-way fan-out join, pool spin-up ≤ 84 ms once.
+- **The real 5-study stack, real pond kernels, one study per worker over
+  SAB-resident inputs: 66.27 → 27.41 ms (2.42×), bit-identical answers**,
+  against a 22.91 ms critical path (`bollinger`).
+- `TimeSeries.fromColumns` already adopts SAB-backed views zero-copy —
+  the input-residency door exists today, unmodified.
+- Jobs below ~10 ms don't amortize scheduling jitter (four ~1 ms jobs
+  scaled 1.4×); intra-kernel chunking reaches ~2× but reopens the
+  last-ulp/fixed-grid determinism question for a shape polars itself
+  doesn't parallelize — wrong first move.
+
+**Why this is a process ticket, not a core one.** Parallelism needs
+computation to cross an isolate boundary, and closures can't. The plan
+layer already made the three commitments that solve it: plans are JSON
+data + a registry both isolates import; `specId` is simultaneously dedup
+(shared `rollingMean(close,20)` between `bollinger` and `zScore` is one
+node), cache key (an agent's repeated sub-expressions skip dispatch
+entirely), and deterministic merge; `packColumn` / `appendColumn` /
+`columnBytes` are the wire shape for outputs. Scheduling-order
+independence means answers never vary with worker count or completion
+order.
+
+**Scope, in order:**
+
+1. **Async engine seam** — `run()`'s synchronous memoized pull becomes a
+   ready-set loop over the compiled DAG (dispatch ready nodes, mark
+   dependents on completion), per-node timing badges as cost estimates
+   for critical-path-first order. `RunResult` unchanged; worker failures
+   map onto the collectable error policy.
+2. **Financial op pack** — the studies as registry ops decomposed over
+   shared rolling primitives. This is where the dedup win lives:
+   mean20/std20 computed once takes the stack's estimated critical path
+   to ~15 ms (polars-mt territory) — estimate, unlike the 2.42×, which
+   is measured.
+3. **Pool plumbing** — lifecycle, per-isolate JIT warm-up (the tier-up
+   cliff applies per worker), source-version invalidation broadcast, the
+   SAB residency convention at ingest. Cache stays main-side; workers
+   are stateless compute.
+
+**Also in scope as the possibly-larger win:** the throughput shape —
+whole queries per worker for concurrent agent load, near-linear, no
+decomposition logic, no semantics questions. May land first precisely
+because it is simpler.
+
+**Sequencing.** Queues behind [PND-PROCIDENT] like every interactive
+consumer, and behind [PND-PROCCOL] for the same marshalling reason the
+demo's worker topology is coupled to it (48.6 ms boxed vs 0.5 ms
+transferred per 500k-value answer). This ticket arriving is the friction
+signal the RFC model wants — a consumer with measurements — not a queue
+jump.
