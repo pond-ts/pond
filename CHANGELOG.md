@@ -63,14 +63,18 @@ include new features and type-level changes; patch bumps are strictly additive.
   cloned, so the caller names a `setup` module rather than passing a value),
   and a result's columns cross as transferable buffers. No engine change.
 
-  Measured (`packages/process/scripts/perf-pool.mjs`, 32 requests, 8 workers):
-  **3.6×** on distinct requests costing ~58 ms each, **2.6×** at ~2.4 ms —
-  and **0.94×** at ~0.7 ms, or **0.14×** on a cache-hit-heavy repeat workload.
-  Every answer is shipped whether or not it was cheap to compute, and pooling
-  competes with the in-process memo rather than complementing it, so the rule
-  is: worth it when requests are numerous, mostly distinct, and cost more than
-  a millisecond or two each. The script sweeps request size so a caller can
-  find their own crossover rather than trusting one number.
+  Measured (`packages/process/scripts/perf-pool.mjs`, 32 requests/batch,
+  8 workers, median of 3 distinct batches): **3.1–4.0× on distinct requests**
+  at every size from 0.5 ms to 10 ms each, and **~0.01× on repeated ones**.
+  What decides it is the cache-hit rate, not request size — in-process, a
+  re-asked question is a memo hit returning the same column for nothing, while
+  a pool copies and ships every answer however cheap it was, and each worker
+  warms its own graph. Pooling and caching compete rather than compose.
+
+  Worth checking before reaching for it: the same rolling mean writing a
+  `Float64Array` instead of `new Array(n)` runs **482 ms single-threaded where
+  the boxed version needs 632 ms across eight workers**. Fixing the op beat
+  adding eight cores, and boxing parallelises worse besides.
 
   Supporting: `columnBuffers` / `columnFromBuffers` — a packed numeric column
   as the buffer pair it already is, for crossing an isolate boundary. The

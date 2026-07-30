@@ -1275,24 +1275,46 @@ isolates import (functions cannot be cloned, so the caller names a setup
 module rather than passing a value), and a result's columns cross as
 transferable buffers via `columnBuffers` / `columnFromBuffers`.
 
-Measured, 32 requests, 8 workers, 10 cores:
+Measured (32 requests/batch, 8 workers, median of 3 distinct batches):
 
 | workload | per request | speedup   |
 | -------- | ----------- | --------- |
-| distinct | 0.7 ms      | **0.94×** |
-| distinct | 2.4 ms      | 2.61×     |
-| distinct | 57.6 ms     | **3.62×** |
-| repeated | 0.1 ms      | **0.14×** |
-| repeated | 7.1 ms      | 2.44×     |
+| distinct | 0.5 ms      | **4.02×** |
+| distinct | 1.1 ms      | 3.14×     |
+| distinct | 2.8 ms      | 3.39×     |
+| distinct | 10.3 ms     | 3.17×     |
+| repeated | ~0 ms       | **0.01×** |
 
-**The ceiling is ~3.6×, not ~8×, and below ~1–2 ms per request the pool
-loses.** Three reasons, all now recorded as the correction in the note:
-every answer is shipped whether or not it was cheap (a copy out of the
-live memo — transferring the memo's own buffer would detach it and empty
-the cache); caching and pooling _compete_, so a repeat-heavy workload
-starts 7× behind and never catches up; and the earlier "jobs must be
-≳10 ms" figure was over-generalised from a four-job probe (with 32 jobs
-the crossover is nearer 1–2 ms).
+**Cache-hit rate decides it, not request size.** On distinct work the pool
+wins 3.1–4.0× at every size swept; on repeated work it is catastrophic,
+because in-process a re-asked question is a memo hit returning the same
+column object for nothing while a pool copies and ships every answer
+regardless, and each worker warms its own graph. Pooling and caching
+compete rather than compose.
+
+An earlier reading of this table reported a **crossover** — the pool
+losing below ~2 ms per request. That was a warm-up artifact, and from a
+cause this repo had already written down: one warm-up request per worker
+leaves it running unoptimised code while the in-process baseline is fully
+JIT-warm, and V8's optimising tier is a cliff near 800 iterations
+([blocked-summation.md](../notes/blocked-summation.md)). Third time that
+cliff has produced a false result in this codebase; the benchmark now
+medians over distinct batches with warm-up plans outside every timed
+batch, and says so in its header.
+
+**The op matters more than the worker count.** The same rolling mean,
+32 requests over 2M rows:
+
+| op output              | in-process | pool(8) | speedup |
+| ---------------------- | ---------- | ------- | ------- |
+| boxed (`new Array`)    | 1849 ms    | 632 ms  | 2.92×   |
+| typed (`Float64Array`) | **482 ms** | 121 ms  | 3.98×   |
+
+Fixing the op was worth 3.8× on one thread — more than eight workers
+bought the unfixed one. Boxing also parallelises worse, contending on
+memory bandwidth and per-isolate GC, which is the one resource extra
+workers cannot add. Corollary worth keeping: **a high pool speedup can be
+a symptom of a slow op.**
 
 Two bugs found while building it, both worth knowing:
 

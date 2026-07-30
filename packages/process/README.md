@@ -175,14 +175,20 @@ as transferable buffers) and the caller assembles a `TimeSeries` if it wants
 one. Pass an `affinity` key as the second argument to pin related requests to
 one worker, so its warm nodes get reused.
 
-**When it pays.** Measured at 32 requests over 8 workers: 3.6× when each
-request costs ~58 ms, 2.6× at ~2.4 ms, **0.94× at ~0.7 ms**, and **0.14×** on a
-workload of repeated questions that the in-process memo already answers for
-free. Every answer is shipped whether or not it was cheap, and each worker
-warms its _own_ graph — so pooling competes with caching rather than
-complementing it. Worth it when requests are numerous, mostly distinct, and
-individually cost more than a millisecond or two. Find your own crossover with
-`node packages/process/scripts/perf-pool.mjs`.
+**When it pays — it is about cache-hit rate, not request size.** Measured
+at 32 requests over 8 workers (`node packages/process/scripts/perf-pool.mjs`):
+**3.1–4.0× on distinct requests** at every size from 0.5 ms to 10 ms each, and
+**~0.01× on repeated ones**. In-process, a re-asked question is a memo hit that
+returns the same column for nothing; a pool copies and ships every answer
+however cheap it was, and each worker warms its own graph. Pooling and caching
+compete rather than compose.
+
+**Check your ops before you reach for the pool.** The same rolling mean writing
+a `Float64Array` instead of `new Array(n)` runs **482 ms single-threaded where
+the boxed version needs 632 ms across eight workers** — fixing the op beat
+adding eight cores. Boxing also parallelises worse, contending on memory
+bandwidth and per-isolate GC. A high pool speedup can be a symptom of a slow
+op.
 
 ## Quick start
 

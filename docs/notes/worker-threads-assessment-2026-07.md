@@ -137,47 +137,60 @@ under ~3 ms (every summary fact); a _lone_ rolling-window query (polars'
 own mt data says as much). Browser is out of scope by the question's own
 framing (SAB there needs COOP/COEP headers).
 
-## Correction: throughput does not scale near-linearly
+## Correction: what decides whether a pool pays
 
-This note predicted the throughput shape would scale "near-linearly".
-**It does not.** `HostPool` shipped and was measured
-(`packages/process/scripts/perf-pool.mjs`, 32 requests, 8 workers,
-10 cores); the ceiling is ~3.6×, not ~8×, and below a threshold the pool
-is a **loss**:
+This note predicted "near-linear" scaling. **It measures 3.1–4.0× on 8
+workers** (`packages/process/scripts/perf-pool.mjs`, 32 requests/batch,
+median of 3 distinct batches) — real, but not 8×.
+
+The more useful correction is about _what_ decides it. An earlier version
+of this section reported a **crossover**: the pool losing below ~2 ms per
+request (0.94× at 50k rows), with a rule that requests had to be big
+enough to be worth routing. **That was a measurement artifact**, and from
+a cause this repo had already documented: each worker was warmed with a
+single request, so it ran unoptimised code while the in-process baseline
+— timed over repeated passes — was fully JIT-warm. V8's optimising tier
+is a cliff around 800 iterations, not a curve
+([blocked-summation.md](blocked-summation.md) says so in as many words).
+Warm against cold.
+
+Warmed properly, there is **no crossover in the swept range**:
 
 | workload | rows | per request | in-process | pool(8) |           |
 | -------- | ---- | ----------- | ---------- | ------- | --------- |
-| distinct | 50k  | 0.7 ms      | 22 ms      | 24 ms   | **0.94×** |
-| distinct | 200k | 2.4 ms      | 77 ms      | 29 ms   | 2.61×     |
-| distinct | 500k | 8.9 ms      | 285 ms     | 93 ms   | 3.08×     |
-| distinct | 2M   | 57.6 ms     | 1842 ms    | 509 ms  | **3.62×** |
-| repeated | 50k  | 0.1 ms      | 2 ms       | 14 ms   | **0.14×** |
-| repeated | 2M   | 7.1 ms      | 228 ms     | 93 ms   | 2.44×     |
+| distinct | 50k  | 0.5 ms      | 15 ms      | 4 ms    | **4.02×** |
+| distinct | 200k | 1.1 ms      | 35 ms      | 11 ms   | 3.14×     |
+| distinct | 500k | 2.8 ms      | 89 ms      | 26 ms   | 3.39×     |
+| distinct | 2M   | 10.3 ms     | 330 ms     | 104 ms  | 3.17×     |
+| repeated | any  | ~0 ms       | ~0 ms      | 2–26 ms | **0.01×** |
 
-Three things the prediction missed:
+**What actually decides it is the cache-hit rate.** On distinct work the
+pool wins ~3–4× at every size tested. On _repeated_ work it is
+catastrophic — in-process, a re-asked question is a memo hit that returns
+the same column object for approximately nothing, while a pool copies and
+ships every answer no matter how cheap it was. Each worker also warms its
+own graph, so N workers hold up to N copies of a hot column. **Pooling
+and caching compete; they do not compose.**
 
-1. **Every answer is shipped, and shipping is not free.** A result column
-   must be copied out of the worker's live memo before transfer
-   (transferring the memo's own buffer would detach it and silently empty
-   the cache), so each answer costs one `slice` plus a `postMessage`. That
-   is a per-request floor no amount of parallelism amortises.
-2. **Caching and pooling compete.** The `repeated` rows are the sharp
-   case: in-process, a re-asked question is a memo hit costing ~0.1 ms,
-   and a pool still pays full wire cost for it — so the pool starts
-   **7× behind** and never catches up at small sizes. Each worker also
-   warms its _own_ graph, so N workers hold up to N copies of a hot
-   column. Pooling helps a workload that computes; it actively hurts one
-   that mostly re-reads.
-3. **The crossover is workload-relative, not absolute.** Earlier in this
-   note, four ~1 ms toy jobs scaled at only 1.4× and the conclusion drawn
-   was "jobs must be ≳10 ms". With 32 jobs rather than 4, the crossover
-   sits nearer **1–2 ms per request** — more jobs means more overlap and
-   the fixed costs amortise further. Both measurements are right; the
-   ≳10 ms figure was over-generalised from a four-job probe.
+### The op matters more than the worker count
 
-The honest rule: **a pool pays off when requests are numerous, mostly
-distinct, and individually cost more than a millisecond or two.** That is
-a real slice of the agent workload, and nothing like all of it.
+The pool's ceiling turned out to be a property of the _op_, not the pool.
+The same rolling mean, written two ways, 32 requests over 2M rows:
+
+| op output              | in-process | pool(8) | speedup |
+| ---------------------- | ---------- | ------- | ------- |
+| boxed (`new Array`)    | 1849 ms    | 632 ms  | 2.92×   |
+| typed (`Float64Array`) | **482 ms** | 121 ms  | 3.98×   |
+
+Read the in-process column first. **Fixing the op was worth 3.8× on one
+thread — more than eight workers bought the unfixed one** (482 ms
+single-threaded versus 632 ms across eight). Boxing does not merely cost
+more; it parallelises worse, because it contends on memory bandwidth and
+per-isolate GC, which is exactly the resource extra workers cannot add.
+
+A corollary worth keeping: **a high pool speedup can be a symptom of a
+slow op.** The boxing version showed a _better_ ratio before the op was
+fixed, because parallelism was hiding the waste.
 
 ## What's missing (the task)
 

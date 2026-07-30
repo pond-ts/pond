@@ -427,13 +427,15 @@ whether it stays one.
   across workers, each holding a long-lived `Host`. No engine change: a plan
   is JSON, a registry is a module both isolates import, and a result's columns
   travel as transferable buffers. Measured
-  (`packages/process/scripts/perf-pool.mjs`, 32 requests, 8 workers): **3.6×**
-  on distinct requests over 2M rows, **2.6×** at 200k — but **0.94× at 50k and
-  0.14× on a cache-hit-heavy repeat workload**, because every answer is shipped
-  whether or not it was cheap to compute. This corrected the assessment's
-  "near-linear" prediction; the honest rule is that a pool pays off when
-  requests are numerous, mostly distinct, and cost more than a millisecond or
-  two each. Correction recorded in the note.
+  (`packages/process/scripts/perf-pool.mjs`): **3.1–4.0× on distinct requests**
+  at every size from 0.5 to 10 ms each — but **~0.01× on repeated ones**, where
+  the in-process memo returns the same column for nothing and a pool ships
+  every answer regardless. **Cache-hit rate decides it, not request size**; an
+  earlier "crossover below 2 ms" reading was a warm-up artifact (one warm-up
+  request per worker against a JIT-warm baseline — the same V8 tier cliff
+  `blocked-summation.md` documents). Also measured: the same op writing a
+  `Float64Array` rather than `new Array(n)` beats eight workers on the boxed
+  version from a single thread, so op shape matters more than worker count.
 
   **Remaining: the latency half** — split one composite query's nodes across
   workers (spike measured 2.42× on the 5-study stack, bit-identical). Blocked

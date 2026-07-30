@@ -21,6 +21,26 @@
 //              column and wins less than the distinct case — the cost of
 //              the simple shape, measured rather than hand-waved.
 //
+// ── A correction this script exists to prevent ──────────────────────
+//
+// The first version of this benchmark warmed each worker with ONE
+// request and timed a single pass. It reported the pool LOSING below
+// ~2 ms per request (0.94x at 50k rows) and concluded there was a
+// crossover. That was wrong, and wrong for a cause already documented in
+// `docs/notes/blocked-summation.md`: **V8's optimising tier is a cliff
+// at roughly 800 iterations, not a curve.** One warm-up request leaves a
+// worker running unoptimised code, while the in-process baseline —
+// timed over repeated passes — was fully warm. The comparison was warm
+// against cold.
+//
+// Warmed properly, the same configuration scales 3.7-4.0x at 50k rows,
+// and no crossover exists anywhere in the swept range. What actually
+// decides whether a pool pays is the CACHE-HIT RATE, not request size.
+//
+// Hence: median of several batches, each batch distinct (re-timing one
+// batch would measure cache hits), and warm-up plans deliberately
+// outside every timed batch.
+//
 // Run:
 //   npm run build --workspaces
 //   node packages/process/scripts/perf-pool.mjs
@@ -42,6 +62,7 @@ function setRows(rows) {
   ROWS = rows;
 }
 const REQUESTS = Number(process.env.PERF_REQUESTS ?? 32);
+const N_LABEL = String(REQUESTS);
 
 function median(xs) {
   const a = [...xs].sort((p, q) => p - q);
@@ -49,28 +70,47 @@ function median(xs) {
 }
 
 /** `n` distinct studies — every request is fresh compute. */
-function distinctPlans(n) {
+function distinctPlans(n, op = 'smaTyped') {
   return Array.from({ length: n }, (_, i) => {
-    const spec = { op: 'sma', params: { period: 5 + i }, inputs: ['px'] };
+    const spec = { op, params: { period: 5 + i }, inputs: ['px'] };
     return { process: [spec], select: [{ on: spec }] };
   });
 }
 
 /** `n` requests drawn from 4 distinct questions — cache-friendly. */
-function repeatedPlans(n) {
-  const pool = distinctPlans(4);
+function repeatedPlans(n, op = 'smaTyped') {
+  const pool = distinctPlans(4, op);
   return Array.from({ length: n }, (_, i) => pool[i % pool.length]);
 }
 
-async function inProcess(plans) {
+// Each measurement is the MEDIAN of `PASSES` batches, and every batch
+// holds DISTINCT plans. Re-timing the same batch would be meaningless —
+// the second pass would be all cache hits — so the batches are carved
+// out of one long list of distinct requests. Single-sample pool runs
+// varied by ±40% between runs, which is more than several of the
+// differences being reported.
+const PASSES = Number(process.env.PERF_PASSES ?? 3);
+
+function batches(plans) {
+  const per = Math.floor(plans.length / PASSES);
+  return Array.from({ length: PASSES }, (_, i) =>
+    plans.slice(i * per, (i + 1) * per),
+  );
+}
+
+function inProcess(plans) {
   const { registry } = setup({ rows: ROWS });
   const graph = bind(makeSeries(ROWS), { registry });
   // `run` takes `plan`; an envelope carries the same list as `process`.
-  const start = performance.now();
-  for (const p of plans) {
-    run(graph, { plan: p.process, select: p.select, assemble: false });
-  }
-  return performance.now() - start;
+  return median(
+    batches(plans).map((batch) => {
+      const start = performance.now();
+      for (const p of batch) {
+        run(graph, { plan: p.process, select: p.select, assemble: false });
+      }
+      return performance.now() - start;
+    }),
+  );
 }
 
 async function viaPool(plans, size) {
@@ -80,17 +120,30 @@ async function viaPool(plans, size) {
     setupOptions: { rows: ROWS },
   });
   try {
-    // Warm every worker: the first request per worker pays module import
-    // and JIT tier-up, which is start-up cost, not per-request cost.
+    // Warm every worker: the first requests pay module import and JIT
+    // tier-up, which is start-up cost, not per-request cost. Warmed with
+    // plans NOT in the timed batches, so no batch starts cached.
     await Promise.all(
-      Array.from({ length: size }, () => pool.run({ from: 'px', ...plans[0] })),
+      Array.from({ length: size }, (_, i) =>
+        pool.run({ from: 'px', ...warmPlan(i) }),
+      ),
     );
-    const start = performance.now();
-    await Promise.all(plans.map((p) => pool.run({ from: 'px', ...p })));
-    return performance.now() - start;
+    const times = [];
+    for (const batch of batches(plans)) {
+      const start = performance.now();
+      await Promise.all(batch.map((p) => pool.run({ from: 'px', ...p })));
+      times.push(performance.now() - start);
+    }
+    return median(times);
   } finally {
     await pool.close();
   }
+}
+
+/** A request outside every timed batch — warm-up must not prime the cache. */
+function warmPlan(i) {
+  const spec = { op: 'smaTyped', params: { period: 900 + i }, inputs: ['px'] };
+  return { process: [spec], select: [{ on: spec }] };
 }
 
 const cores = availableParallelism();
@@ -123,7 +176,7 @@ for (const [name, build] of [
 ]) {
   for (const rows of SIZES) {
     setRows(rows);
-    const plans = build(REQUESTS);
+    const plans = build(REQUESTS * PASSES);
     const base = median([
       await inProcess(plans),
       await inProcess(plans),
@@ -145,5 +198,43 @@ for (const [name, build] of [
 console.log(
   '  distinct = every request a different study (no cache reuse).\n' +
     '  repeated = 4 questions re-asked; in-process serves those from cache,\n' +
-    '  while a pool still ships every answer — so it wins less, not more.',
+    '  while a pool still ships every answer — so it wins less, not more.\n',
+);
+
+// ── 2. What the op does matters more than how many workers you have ──
+//
+// The ceiling above is not a property of the pool. It is a property of
+// the op. `sma` returns `new Array(n)` — a boxed array, one JS number
+// object per cell — and `smaTyped` writes the same arithmetic into a
+// `Float64Array`. Allocation on that scale does not just cost more, it
+// PARALLELISES WORSE: it contends on memory bandwidth and on each
+// isolate's GC, which is exactly the resource extra workers cannot add.
+//
+// Read the two in-process numbers against the two pool numbers before
+// concluding anything about workers.
+const HEAVY = Number(process.env.PERF_HEAVY_ROWS ?? 2_000_000);
+setRows(HEAVY);
+console.log(
+  `  output shape — ${N_LABEL} requests · ${HEAVY.toLocaleString()} rows\n`,
+);
+console.log('  op output               in-process       pool   speedup');
+console.log(`  ${'─'.repeat(56)}`);
+for (const [label, op] of [
+  ['boxed (new Array)', 'sma'],
+  ['typed (Float64Array)', 'smaTyped'],
+]) {
+  const plans = distinctPlans(REQUESTS * PASSES, op);
+  const base = inProcess(plans);
+  const ms = await viaPool(plans, WORKERS);
+  console.log(
+    `  ${label.padEnd(22)} ${(base.toFixed(0) + 'ms').padStart(10)}` +
+      ` ${(ms.toFixed(0) + 'ms').padStart(10)}` +
+      ` ${((base / ms).toFixed(2) + 'x').padStart(9)}`,
+  );
+}
+console.log(
+  '\n  If typed-on-one-thread beats boxed-on-N-threads, fix the op before\n' +
+    '  reaching for the pool. The sweep above uses the typed op, so its\n' +
+    '  crossover is the honest one; a boxing op both costs more per request\n' +
+    '  and caps lower.',
 );
