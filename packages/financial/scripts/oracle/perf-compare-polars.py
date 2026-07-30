@@ -191,6 +191,21 @@ def main() -> None:
     ]:
         results.append(bench(label, "summary", fn, 25))
 
+    # Ingest: matched to pond's `fromColumns` over typed buffers — all
+    # sides adopt numeric arrays rather than convert rows. Arrays are
+    # prepared outside the timed body. MUST stay the last group, in the
+    # same position as in perf-agent-queries.mjs — the vs-* printers zip
+    # by index.
+    arrays = {c: df[c].to_numpy() for c in df.columns}
+    results.append(
+        bench(
+            "ingest: 6 numeric columns, typed adopt",
+            "ingest",
+            lambda: pl.DataFrame(arrays),
+            25,
+        )
+    )
+
     print(
         json.dumps(
             {
