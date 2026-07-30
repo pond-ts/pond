@@ -251,16 +251,174 @@ risk is entirely in the unmeasured classes — particularly Q11, where 500
 symbols × a rolling study is 500 partitioned sweeps, and where nothing
 in the current numbers predicts the answer.
 
+## 8. The ClickHouse boundary: what the API should parameterise
+
+Assumed architecture: an API in front of the cluster runs a parameterised
+query and returns **Arrow** to pond's ingest. That makes "where does the
+work happen" a design choice rather than a given, and three of §4's gaps
+turn out to be **query-side reshaping, not missing pond primitives**.
+
+### The principle
+
+> **Push down what is invariant across a flurry. Keep local what
+> varies.**
+
+An agent asks twenty questions about the same working set. Anything
+re-parameterised between questions — window lengths, thresholds, grains,
+rankings — must stay local, or every question becomes a network round
+trip and the sub-100 ms budget is gone on the first hop. Anything fixed
+for the whole session — the symbol universe, the date range, the session
+enum, the _shape_ of the data — should be done once, in the query, where
+it also collapses bytes on the wire.
+
+That line is not arbitrary. It is exactly where pond's value is: holding
+a resident working set and answering many questions about it cheaply.
+Push analytics down and pond becomes a renderer; push nothing down and
+we ship gigabytes to reshape them in JS.
+
+### Three gaps that are really query parameters
+
+**Unpivot a wide row → value-axis series** (Q2, Q10 — §4's highest-value
+gap). ClickHouse does this natively, and the result is exactly the tall
+shape a `ValueSeries` wants:
+
+```sql
+SELECT ts, p.1 AS tenorDays, p.2 AS atm
+FROM (
+  SELECT tradingDate AS ts,
+         arrayZip([5,10,21,42,63,84,105,126,189,252,378,504],
+                  [atm_5d, atm_10d, atm_21d, atm_42d, atm_63d, atm_84d,
+                   atm_105d, atm_126d, atm_189d, atm_252d, atm_378d, atm_504d])
+           AS pairs
+  FROM surface_fixed_term
+  WHERE ticker = {symbol:String}
+    AND tradingSession = {session:String}
+    AND tradingDate = {date:Date}
+) ARRAY JOIN pairs AS p
+ORDER BY tenorDays
+FORMAT Arrow
+```
+
+→ API parameter `shape: 'long' | 'wide'`. A term structure arrives as a
+12-row value-axis series and pond never needs an unpivot operator.
+
+**Tall → wide pivot** (Q4). Conditional aggregation, the canonical
+ClickHouse idiom:
+
+```sql
+SELECT date AS ts,
+       anyIf(value, windowType = 'cc')   AS cc,
+       anyIf(value, windowType = 'iv63') AS iv63
+FROM hist_vol
+WHERE ticker = {symbol:String}
+  AND date BETWEEN {from:Date} AND {to:Date}
+  AND windowType IN {measures:Array(String)}
+GROUP BY ts ORDER BY ts
+FORMAT Arrow
+```
+
+→ API parameter `measures: string[]`. The tall/wide split in the catalog
+stops being pond's problem.
+
+**Session pinning.** A `WHERE` clause. It must be a _required_ parameter
+rather than an optional filter, because omitting it silently returns
+several rows per date — the quiet correctness trap in §1.
+
+### Two that are a genuine trade, not a free win
+
+**Pre-binning a histogram** (Q6) collapses 1M prints to ~200 bins before
+they cross the wire:
+
+```sql
+SELECT floor(price / {width:Float64}) * {width:Float64} AS bin,
+       sum(size) AS vol, count() AS n
+FROM prints
+WHERE ticker = {symbol:String} AND ts BETWEEN {from:DateTime} AND {to:DateTime}
+GROUP BY bin ORDER BY bin FORMAT Arrow
+```
+
+Enormous byte saving — and it **freezes the bin width**. An agent that
+re-bins at a different resolution pays a round trip. Same story for
+pre-rolling ticks to 1-minute (Q7): it freezes the grain.
+
+So both should be _available_ and neither should be the default. The
+right call depends on whether the flurry will re-parameterise them,
+which the plan knows and the API does not.
+
+**Cross-sectional reduction** (Q3, Q11) is the sharpest case. Pushed
+down it is one query and a tiny result:
+
+```sql
+SELECT ticker, argMax(skewSlope, tradingDate) AS slope
+FROM surface_atm
+WHERE tradingDate = {date:Date} AND tradingSession = {session:String}
+  AND ticker IN {universe:Array(String)}
+GROUP BY ticker ORDER BY slope DESC LIMIT {n:UInt32}
+FORMAT Arrow
+```
+
+But Q11 is the _flurry_ shape — the same 500 symbols re-examined with
+varying windows. Pushed down, that is N round trips. Held resident, it
+is N cache hits over one panel. **This is the question that decides
+whether the architecture is "pond as client" or "pond as viewer",** and
+it is also `[PND-AGENTBENCH]`. Measure before choosing.
+
+### The parameter surface that falls out
+
+| Parameter                 | Purpose                                    | Pushdown                      |
+| ------------------------- | ------------------------------------------ | ----------------------------- |
+| `dataset`                 | which shape (S1–S6)                        | —                             |
+| `universe: string[]`      | symbols; one, a list, or a screen          | **always**                    |
+| `from` / `to`             | date or timestamp range                    | **always**                    |
+| `session`                 | **required** — key dimension, not a filter | **always**                    |
+| `columns` / `measures`    | projection; `measures` triggers the pivot  | **always**                    |
+| `shape: 'wide' \| 'long'` | unpivot tenor/strike into a value axis     | **always**                    |
+| `grain`                   | pre-roll ticks → bar interval              | opt-in; freezes grain         |
+| `bin`                     | pre-bin to a value-domain histogram        | opt-in; freezes width         |
+| `reduce`                  | cross-sectional aggregate + top-N          | opt-in; forecloses the flurry |
+
+The first six are session-invariant and should always be pushed down.
+The last three are the flurry trade.
+
+### Why the Arrow handoff is already built
+
+ClickHouse's `FORMAT Arrow` lands directly on the ingest work shipped
+this session: `fromArrow` adopts a `Float64Array` values buffer
+zero-copy, and — since [PND-ARROWNULL] — adopts the **validity bitmap**
+too, which matters because query results are full of nulls. A 500k-row
+result becomes a resident `TimeSeries` in ~1.5 ms with no per-element
+walk. `toArrow` closes the loop if a result ever needs to go back out.
+
+That was built for a polars sidecar and turns out to be the ingest path
+for this architecture. Worth noting only because it means the boundary
+above costs nothing to cross.
+
+### What must never be pushed down
+
+Rolling studies, folds, and crossings stay in pond — not for
+performance, but because they are **oracle-pinned**. `@pond-ts/financial`
+guarantees bar-for-bar agreement with a documented pandas convention
+(`ddof=0`, `adjust=False`, linear quantile interpolation). A ClickHouse
+window function is a _different_ implementation of "the same" study, and
+the divergence would be silent, unversioned, and impossible to
+reconcile. One definition of a study, in one place.
+
 ## 7. Proposed order of work
 
 1. **Build the Q11/Q12 benchmark first** — cross-sectional and flurry,
    over synthetic data in these shapes. It is the commercially decisive
-   number and the one most likely to surprise.
-2. **Then the unpivot primitive** (Q2/Q10). Highest-value gap, and it
-   makes the term structure a first-class object rather than 12 columns.
-3. **Then cross-sectional rank** (Q3/Q11), which the benchmark in step 1
-   will have already forced a shape for.
-4. Pivot (Q4), as-of-event join (Q5), run-length (Q9) as pulled.
+   number, the one most likely to surprise, **and it decides the
+   `reduce` pushdown question in §8**: if a resident panel answers a
+   flurry faster than N round trips, pond is the client; if not, it is a
+   viewer.
+2. **Then cross-sectional rank** (Q3/Q11), which step 1 will have forced
+   a shape for.
+3. **Unpivot and pivot are now query parameters, not pond operators**
+   (§8) — so `[PND-UNPIVOT]` narrows to "ingest a long value-axis result
+   well" rather than "reshape a wide row in JS". Cheaper, and it puts
+   the reshaping where the engine is good at it.
+4. As-of-event join (Q5) and run-length (Q9) as pulled — neither has a
+   clean ClickHouse pushdown, so both stay pond's problem.
 
 K8/K7 stay parked: they are `U`-class, and the numerical RFC should
 settle how those are surfaced before more of them exist.

@@ -129,9 +129,15 @@ and ranking across partitions.
   a rank across symbols, then the same question re-asked with varying windows.
   These are the shapes an agent produces unprompted, the shapes the process
   graph's content-addressed cache exists to serve, and **the two nobody has ever
-  timed**. Commercially decisive and most likely to surprise.
-- **[PND-UNPIVOT]** — Wide row → value-axis series. Highest-value missing
-  primitive; blocks the term-structure and factor-attribution questions.
+  timed**. Commercially decisive, most likely to surprise — and it settles the
+  architectural question in §8 of the note: if a resident panel beats N
+  round trips to ClickHouse, pond is the client; if it does not, pond is a
+  viewer and the analytics belong in SQL.
+- **[PND-UNPIVOT]** — Ingest a **long** value-axis result cleanly (tenor/strike
+  as a key column). Narrowed by the ClickHouse boundary in §8 of the note:
+  unpivot and pivot are `arrayZip`+`ARRAY JOIN` and conditional aggregation
+  respectively, so they belong in the query — pond's job is to receive the long
+  shape, not reshape a wide row in JS.
 - **[PND-XSECT]** — Rank/reduce across partitions. `partitionBy` gets you
   per-symbol; nothing ranks across.
 
