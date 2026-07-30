@@ -365,9 +365,11 @@ the main thread is what keeps the studies synchronous, and browsers forbid it.
 
 Accelerates any rolling study asking for `avg`/`stdev` off one column — `sma`,
 `envelope`, `bollinger`, `zScore`. Partitioning shifts the answer slightly:
-measured 1.83×/1.86×/2.45× with worst relative differences of 3.9e-14
-(`sma`), 5.1e-13 (`bollinger`) and **2.6e-6 on ~0.8% of cells (`zScore`,
-which divides by a near-zero rolling σ)**. Below `MIN_ROWS` a registered series
+measured 1.85×/1.92×/2.44×. `sma` / `envelope` / `bollinger` shift by rounding
+error (≤5.1e-13 observed). **`zScore` is unbounded**: it divides by the rolling
+σ, so on a near-flat series at large magnitude the partitioned answer differs
+from the sequential one by ~38% — an observation of ~2.6e-6 on a benign walk is
+not a bound. Below `MIN_ROWS` a registered series
 still runs sequentially and is bit-identical. Source:
 `packages/financial/src/parallel/`.
 

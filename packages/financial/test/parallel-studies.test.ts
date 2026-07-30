@@ -173,8 +173,10 @@ describe('[PND-SCANKERN] withWorkers', () => {
       cells(expected as never, 'zscore'),
     );
     expect(mismatchedGaps, 'gaps must still line up exactly').toBe(0);
-    expect(worst, 'documented as ~2.6e-6').toBeLessThan(1e-4);
-    expect(over / N, 'documented as ~0.8% of cells').toBeLessThan(0.05);
+    // Pinned AT the documented figures, not 38x and 6x looser than them
+    // — a tolerance that cannot fail is not pinning anything.
+    expect(worst, 'documented as ~2.6e-6').toBeLessThan(3e-6);
+    expect(over / N, 'documented as ~0.8% of cells').toBeLessThan(0.01);
     // THE CANARY. The parallel path necessarily shifts zScore, so a
     // difference of exactly zero means the accelerator never engaged and
     // every assertion in this file was comparing sequential to itself —
@@ -421,5 +423,60 @@ describe('[PND-SCANKERN] withWorkers', () => {
       worst,
       'the opted-in series must actually be accelerated',
     ).toBeGreaterThan(0);
+  });
+
+  it('zScore is NOT bounded on near-flat windows — the documented caveat', async () => {
+    // Supplied by a Codex adversarial pass, and it invalidated the bound
+    // this feature was originally documented with. A legal near-flat
+    // series at large magnitude leaves the rolling sigma with almost no
+    // significant digits, so a last-ulp difference between the
+    // sequential and partitioned sweeps becomes an arbitrarily large
+    // relative difference in `(v - mean) / sigma`.
+    //
+    // Asserted as a LOWER bound: this must stay visibly bad, because the
+    // documentation now promises only that `sma`/`envelope`/`bollinger`
+    // shift by rounding error — and warns that `zScore` does not.
+    const { rollingMeanSd } = (await import(
+      new URL('../dist/parallel/kernel.js', import.meta.url).href
+    )) as typeof import('../src/parallel/kernel.js');
+
+    const n = 200_000;
+    const period = 20;
+    const chunks = 4;
+    const v = new Float64Array(n);
+    for (let i = 0; i < n; i += 1) v[i] = 1e15 + ((i % 7) - 3);
+
+    const seqM = new Float64Array(n);
+    const seqS = new Float64Array(n);
+    rollingMeanSd(v, period, 0, n, seqM, seqS);
+
+    const parM = new Float64Array(n);
+    const parS = new Float64Array(n);
+    const step = Math.ceil(n / chunks);
+    for (let c = 0; c < chunks; c += 1) {
+      rollingMeanSd(
+        v,
+        period,
+        c * step,
+        Math.min(n, (c + 1) * step),
+        parM,
+        parS,
+      );
+    }
+
+    let worst = 0;
+    for (let i = period; i < n; i += 1) {
+      const a = seqS[i] === 0 ? NaN : (v[i]! - seqM[i]!) / seqS[i]!;
+      const b = parS[i] === 0 ? NaN : (v[i]! - parM[i]!) / parS[i]!;
+      if (Number.isNaN(a) && Number.isNaN(b)) continue;
+      const d = Math.abs((b - a) / (Math.abs(a) || 1));
+      if (d > worst) worst = d;
+    }
+    // Measured at ~0.38. If this ever drops to rounding-error scale the
+    // documentation has become too pessimistic and should be revisited —
+    // which is a better failure than the reverse.
+    expect(worst, 'zScore must remain visibly unbounded here').toBeGreaterThan(
+      0.01,
+    );
   });
 });

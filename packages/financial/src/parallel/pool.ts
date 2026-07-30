@@ -60,30 +60,39 @@
  * Measured over 500k bars, period 20, 8 workers
  * (`scripts/perf-parallel-studies.mjs`):
  *
- * | study        | speedup | worst rel. difference | cells beyond 1e-9 |
- * | ------------ | ------- | --------------------- | ----------------- |
- * | `sma`        | 1.83×   | 3.9e-14               | none              |
- * | `envelope`   | 1.32×   | 3.9e-14               | none              |
- * | `bollinger`  | 1.86×   | 5.1e-13               | none              |
- * | **`zScore`** | 2.45×   | **2.6e-6**            | **4,051 (0.8%)**  |
- * | 3-study stack | 1.98×  | (as `zScore`)         |                   |
+ * | study        | speedup | observed worst rel. difference |
+ * | ------------ | ------- | ------------------------------ |
+ * | `sma`        | 1.85×   | 3.9e-14                        |
+ * | `envelope`   | 1.35×   | 3.9e-14                        |
+ * | `bollinger`  | 1.92×   | 5.1e-13                        |
+ * | `zScore`     | 2.44×   | 2.6e-6 on ~0.8% of cells       |
+ * | 3-study stack | 2.00×  | (as `zScore`)                  |
  *
- * `zScore` is the outlier and the reason this is a documented opt-in
- * rather than a default. It divides by the rolling standard deviation,
- * so wherever a window is nearly flat, a last-ulp difference in the mean
- * or σ is amplified without bound. If you compare z-scores against a
- * fixed threshold, or reproduce numbers against `@pond-ts/financial`'s
- * pandas oracle, that difference is visible. Nothing else measured here
- * moves by more than a rounding error.
+ * **Those are observations on a benign workload, not bounds.** An
+ * earlier version of this doc presented the `zScore` figure as if it
+ * bounded the error. It does not, and a Codex review supplied the
+ * counterexample: on a legal near-flat series at large magnitude
+ * (`1e15 + ((i % 7) - 3)`, period 20, 4 chunks) the partitioned z-score
+ * differs from the sequential one by **38% relative** — verified, and
+ * now pinned as a regression test.
  *
- * The speedups are modest next to the raw kernel, which partitions
- * 13.8× (`spikes/parallel-rolling/`). The gap is the work that stays on
- * the main thread either way: copying the source column into the arena,
- * copying each answer back out, and each study's own pointwise
- * arithmetic (`m ± k·σ`). Accelerating only the rolling pass — rather
- * than reimplementing every study inside the worker — is what lets one
- * hook serve `sma`, `envelope`, `bollinger` and `zScore` with no second
- * copy of any study's logic to drift from the first.
+ * The mechanism is cancellation, and it is unbounded by construction.
+ * `zScore` divides by the rolling σ. Where a window is nearly flat, σ is
+ * near zero and carries almost no significant digits; a last-ulp
+ * difference in σ between the sequential and partitioned sweeps is then
+ * an *arbitrarily large* relative difference in the quotient. No amount
+ * of care in the kernel fixes that — it is a property of dividing by a
+ * cancelled quantity.
+ *
+ * **So: `sma`, `envelope` and `bollinger` shift by rounding error.
+ * `zScore` can shift arbitrarily on near-flat windows, and you should
+ * not opt into it if you threshold z-scores, reproduce the pandas
+ * oracle, or work with near-constant series at large magnitude.**
+ *
+ * There is also a semantic gap worth knowing: core rejects a non-finite
+ * rolling result outright, where this kernel can emit `Infinity` or
+ * clamp a `NaN` variance to zero. Same class of exposure, same
+ * near-degenerate windows.
  *
  * ## When it pays
  *
@@ -126,6 +135,18 @@ export interface WithWorkersOptions {
  * the boundary and this threshold is, if anything, conservative.
  */
 export const MIN_ROWS = 100_000;
+
+/**
+ * How long one partitioned pass may take before it is treated as a dead
+ * worker rather than a slow one.
+ *
+ * Generous on purpose — a 10M-row pass on a loaded machine sits well
+ * inside it — because the two failure directions are not symmetric: too
+ * short aborts real work, too long is merely a slower failure. What it
+ * must never be is absent, which is what turned a dead worker into a
+ * permanent hang.
+ */
+const DISPATCH_TIMEOUT_MS = 30_000;
 
 interface Registration {
   readonly workers: Worker[];
@@ -226,14 +247,30 @@ function dispatch(reg: Registration, period: number): void {
     Atomics.store(reg.sig, ctrl.JOB + i, 1);
     Atomics.notify(reg.sig, ctrl.JOB + i);
   }
+  // Bounded, not merely timed out per iteration. The earlier version
+  // looped forever on a 100 ms wait and checked `reg.stopped`, which only
+  // `shutdownWorkers` ever sets — so a worker that threw, exited, or
+  // failed to start left `DONE` short of `k` and the "death detector"
+  // spun for good. Worse, a worker's `error` / `exit` callbacks **cannot
+  // run at all** while the main thread is parked in `Atomics.wait`: the
+  // event loop is precisely what blocking gives up. Liveness therefore
+  // has to come from a deadline, never from an event handler.
+  const deadline = Date.now() + DISPATCH_TIMEOUT_MS;
   for (;;) {
     const done = Atomics.load(reg.sig, ctrl.DONE);
     if (done >= k) break;
-    // A timeout rather than an indefinite park: a worker that died would
-    // otherwise hang the main thread with no way to notice.
-    Atomics.wait(reg.sig, ctrl.DONE, done, 100);
-    if (reg.stopped)
+    if (reg.stopped) {
       throw new Error('withWorkers: pool was shut down mid-pass');
+    }
+    if (Date.now() > deadline) {
+      reg.stopped = true;
+      throw new Error(
+        `withWorkers: ${k - done} of ${k} workers did not report within ` +
+          `${DISPATCH_TIMEOUT_MS} ms — a worker has probably died. The pool ` +
+          `is now stopped; studies fall back to the sequential path.`,
+      );
+    }
+    Atomics.wait(reg.sig, ctrl.DONE, done, 100);
   }
 }
 

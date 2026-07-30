@@ -73,15 +73,22 @@ include new features and type-level changes; patch bumps are strictly additive.
   Measured over 500k bars, 8 workers: `sma` **1.83×**, `bollinger` **1.86×**,
   `zScore` **2.45×**, a three-study stack **1.98×**.
 
-  **It changes the answer slightly, and by different amounts per study.**
-  Chunk 0 reproduces the sequential sweep exactly; later chunks start their
-  Welford state fresh. Worst relative difference: 3.9e-14 for `sma` /
-  `envelope`, 5.1e-13 for `bollinger` — no cell beyond 1e-9 in any of them —
-  but **2.6e-6 across ~0.8% of cells for `zScore`**, which divides by a
-  near-zero rolling σ and so amplifies a last-ulp difference without bound.
-  That is the reason this is a documented opt-in rather than a default: if you
-  threshold z-scores or reproduce the pandas oracle, it is visible. Below
-  `MIN_ROWS` (100k) a registered series still runs sequentially and is
+  **It changes the answer, and how much depends on the study.** Chunk 0
+  reproduces the sequential sweep exactly; later chunks start their Welford
+  state fresh. `sma`, `envelope` and `bollinger` shift by rounding error
+  (3.9e-14, 3.9e-14, 5.1e-13 observed; no cell beyond 1e-9).
+
+  **`zScore` is different in kind, not degree.** It divides by the rolling σ,
+  and where a window is nearly flat that σ carries almost no significant
+  digits — so a last-ulp difference becomes an arbitrarily large relative one.
+  On a benign random walk the difference is ~2.6e-6 across ~0.8% of cells; on
+  a legal near-flat series at large magnitude it is **38%** (counterexample
+  from a Codex review, now a regression test). Do not opt in if you threshold
+  z-scores, reproduce the pandas oracle, or work with near-constant series.
+  Related: core rejects a non-finite rolling result, where this kernel can
+  emit `Infinity` or clamp a `NaN` variance to zero.
+
+  Below `MIN_ROWS` (100k) a registered series still runs sequentially and is
   bit-identical.
 
 - **process:** **`HostPool` (`@pond-ts/process/pool`) — whole requests across
