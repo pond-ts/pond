@@ -152,4 +152,33 @@ for (const [label, fn] of [
   results.push(benchmark(label, 'summary', fn, 25));
 }
 
+/* ── ingest: standing up the resident series from typed buffers ─────── */
+// The load-once phase of the load-once / query-many model. Buffers are
+// prepared outside the timed body — the benchmark is construction
+// (adoption + validity derivation + ordering check), matching
+// `pd.DataFrame(dict-of-numpy)` / `pl.DataFrame(dict-of-numpy)` on the
+// python side: all three adopt numeric buffers rather than convert rows.
+{
+  const names = ['open', 'high', 'low', 'close', 'volume'];
+  const typed = {
+    time: new Float64Array(bars.keyColumn().begin),
+    ...Object.fromEntries(
+      names.map((c) => [c, bars.column(c).toFloat64Array()]),
+    ),
+  };
+  const schema = [
+    { name: 'time', kind: 'time' },
+    ...names.map((name) => ({ name, kind: 'number' })),
+  ];
+  results.push(
+    benchmark(
+      'ingest: 6 numeric columns, typed adopt',
+      'ingest',
+      () =>
+        TimeSeries.fromColumns({ name: 'bars', schema, columns: typed }).length,
+      25,
+    ),
+  );
+}
+
 console.log(JSON.stringify({ bars: BARS, results }, null, 2));
