@@ -353,6 +353,17 @@ by studies) — `packages/financial/src/kernels/rolling.ts`.
 
 ---
 
+### `@pond-ts/financial/parallel` (Node-only, opt-in)
+
+`StudyPool` (`start`, `bollinger`, `close`, `size`, `MIN_ROWS`); types
+`StudyPoolOptions`; kernels `rollingMeanSd`, `bollingerBands`. Rolling studies
+partitioned across worker threads — a rolling window is not a recurrence, so
+the output splits into ranges with a `period-1` overlap. Async and Node-only,
+hence a separate entry point. Band values may differ from the sequential study
+in the last few ulps (measured: no cell beyond 1e-9 relative); below
+`StudyPool.MIN_ROWS` it runs the sequential study and is bit-identical.
+Source: `packages/financial/src/parallel/`.
+
 ## @pond-ts/process
 
 **Work in progress — `private: true`, not published, public shape expected to

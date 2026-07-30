@@ -56,6 +56,29 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **financial:** **`StudyPool` (`@pond-ts/financial/parallel`) — `bollinger`
+  partitioned across worker threads** ([PND-SCANKERN], Node-only, opt-in). A
+  rolling window is not a recurrence: output cell `i` reads only rows
+  `[i-period+1, i]`, so the output splits into ranges sharing a `period-1`
+  overlap, with no communication between workers.
+
+  Measured end to end (`scripts/perf-parallel-bollinger.mjs`, 8 workers):
+  **2.40× at 100k rows, 2.69× at 500k (24.9 → 9.2 ms), 2.85× at 2M**. The
+  partitioned _kernel_ is much faster still (~26 → ~1.9 ms, superlinear
+  because a chunk stays in cache), but the caller sees 2.69×, because copying
+  the source column into shared memory and the three `withColumn` appends are
+  work neither implementation avoids. The benchmark reports end to end so the
+  kernel figure cannot be mistaken for the study's speedup.
+
+  **Not bit-identical, and bounded:** chunk 0 reproduces the sequential sweep
+  exactly; later chunks start their Welford state fresh rather than carrying
+  the rounding history before them. Measured, no cell of 1.5M moves by more
+  than 1e-9 relative (worst 5.3e-13). Below `StudyPool.MIN_ROWS` (100k) the
+  sequential study runs instead and the result _is_ bit-identical. `zScore` is
+  deliberately **not** offered: dividing by a near-zero rolling σ amplifies
+  the same difference to ~5e-6, which needs a decision about the pandas oracle
+  first.
+
 - **process:** **`HostPool` (`@pond-ts/process/pool`) — whole requests across
   resident worker threads** ([PND-PROCPAR], Node-only). N workers, each holding
   a long-lived `Host`, with the pool as a router: a plan is already JSON, a
