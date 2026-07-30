@@ -72,9 +72,10 @@ The exact `TimeSeries.fromColumns` contract, with the axis in place of time:
 - **`schema[0]` is the `'value'`-kind axis column**; the rest are value columns.
   Each `columns` entry is one column's values, keyed by schema column name and
   **aligned by index**.
-- Values may be a plain **`number[]`** _or_ a **`Float64Array`**. A cell is a
-  **gap** (missing) iff it is `null`/`undefined` or non-finite — identical for
-  both input types.
+- A `number`-kind column may be a plain **`number[]`** _or_ a **`Float64Array`**;
+  a `string`-kind column is a `string[]`. A cell is a **gap** (missing) iff it is
+  `null`/`undefined`, or — for numbers — non-finite, identical for both input
+  types.
 - **`Float64Array` inputs are adopted, not copied** (zero-copy): the resulting
   columns alias your buffers — pass a fresh buffer if that matters. Passing
   **`sort: true`** disables the adoption (a reorder needs its own buffers).
@@ -82,12 +83,13 @@ The exact `TimeSeries.fromColumns` contract, with the axis in place of time:
   the index. An out-of-order axis **throws** by default; pass **`sort: true`** to
   stably sort rows by axis value first (the right move for an unordered snapshot,
   e.g. a keyed live feed that arrives in update order, not axis order).
-- **v1 scope:** `number` value columns, matching `TimeSeries.fromColumns`.
+- **Scope:** `number` and `string` value columns, matching
+  `TimeSeries.fromColumns`. Other kinds (`boolean`, arrays) throw.
 
 It throws `ValidationError` on a non-`'value'` axis kind, a missing column, a
-length mismatch, a non-`number` value column, or an out-of-order axis without
+length mismatch, an unsupported value-column kind, or an out-of-order axis without
 `sort`; and `RangeError` on a non-finite axis cell (sorting can't rescue it) or a
-duplicate column name. See [Creating series → Columnar ingest](creating#columnar-ingest).
+duplicate column name. See [Creating series → Columnar ingest](creating#columnar).
 
 ## Reading a ValueSeries
 
