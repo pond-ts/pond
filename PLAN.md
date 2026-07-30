@@ -437,6 +437,20 @@ whether it stays one.
   `Float64Array` rather than `new Array(n)` beats eight workers on the boxed
   version from a single thread, so op shape matters more than worker count.
 
+  **Also open: parallel-scan kernels ([PND-SCANKERN], new).** The note's
+  "sequential recurrences cannot be helped" was wrong. `y[i] = a·y[i-1] + b[i]`
+  is the textbook parallel-scan case; measured (`spikes/parallel-scan/`) EMA
+  over 2M rows goes **4.45 → 1.42 ms (3.14×)** with **99.91% of cells
+  bit-identical** — a decaying recurrence's correction term underflows to zero
+  a few hundred cells into each chunk, so most cells are literally the same
+  arithmetic. Two barriers, no log-depth tree. Needs **no process-engine
+  change** (raw workers over a `SharedArrayBuffer`), so it belongs to the
+  kernels and is not blocked behind the injection seam. Costs: ~72 µs per
+  barrier, so it needs work above ~150 µs and will not pay below ~100k rows;
+  and SAB-backed (or copied) inputs. The prize is not `ema` — already 2.08 ms
+  — but that the same reasoning reaches the operations that _are_ slow, and
+  that "inherently sequential" is a far weaker claim than it looks.
+
   **Remaining: the latency half** — split one composite query's nodes across
   workers (spike measured 2.42× on the 5-study stack, bit-identical). Blocked
   on an engine change the spike did not surface: a node's value can only be

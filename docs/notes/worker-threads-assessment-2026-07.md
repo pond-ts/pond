@@ -130,12 +130,42 @@ scheduling order, or completion order — nodes are single-threaded
 kernels merged by id. The semantics question that intra-kernel chunking
 raises never arises.
 
-## What it cannot help
+## What it cannot help — substantially wrong, corrected below
 
-Sequential recurrences (`ema`, `cumulative`, `smooth`); anything already
-under ~3 ms (every summary fact); a _lone_ rolling-window query (polars'
-own mt data says as much). Browser is out of scope by the question's own
-framing (SAB there needs COOP/COEP headers).
+The original text here read: "Sequential recurrences (`ema`,
+`cumulative`, `smooth`); anything already under ~3 ms; a _lone_
+rolling-window query." Only the middle clause survives.
+
+**Sequential recurrences are not sequential.** `y[i] = a·y[i-1] + b[i]`
+is the textbook parallel-scan case: affine maps compose associatively,
+so the prefixes parallelise even though each value "depends on" the last.
+Measured (`spikes/parallel-scan/`, 2M rows, 8 workers): EMA runs
+**4.45 ms → 1.42 ms, 3.14×**, and — because a real EMA's correction term
+`aᵏ` underflows to zero a few hundred cells into each chunk —
+**99.91% of cells come out bit-identical**, the rest within 2 ulps. A
+non-decaying recurrence (a cumulative sum) reassociates instead, which is
+the trade [`blocked-summation.md`](blocked-summation.md) already makes
+deliberately.
+
+Two barriers, not a log-depth tree: chunks compute locally, K summaries
+fold sequentially (K is the worker count, not the row count), chunks
+apply their correction.
+
+**A lone rolling-window query** parallelises too, by output range with a
+`period`-element overlap — measured ~2× in this note's own spike, at
+last-ulp cost from each chunk's fresh running sum.
+
+What genuinely remains: **work below roughly 150 µs**, since two barriers
+measured ~72 µs; and the browser, which is out of scope by the question's
+framing.
+
+The general point, and the reason this section was wrong: the test is not
+"does this look sequential" but **"is there an associative
+reformulation"**. That covers far more than it appears to.
+
+Note also that none of this needs [PND-PROCPAR]'s blocked injection seam
+— it is raw workers over a `SharedArrayBuffer`, so it belongs to the
+kernels rather than the process engine.
 
 ## Correction: what decides whether a pool pays
 
