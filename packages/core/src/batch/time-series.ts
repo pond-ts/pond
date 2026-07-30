@@ -1428,7 +1428,10 @@ export class TimeSeries<S extends SeriesSchema> {
     const keys: string[] = [];
     let members: Int32Array[];
 
-    const dict = by.length === 1 ? dictionaryPartitionSource(columnarStore, by[0]!) : undefined;
+    const dict =
+      by.length === 1
+        ? dictionaryPartitionSource(columnarStore, by[0]!)
+        : undefined;
     if (dict !== undefined) {
       // **Dict-encoded fast path.** A dictionary-backed string column
       // already carries an integer per row, so the partition key never
@@ -1443,8 +1446,7 @@ export class TimeSeries<S extends SeriesSchema> {
       const slotOf = new Int32Array(length);
       for (let i = 0; i < length; i += 1) {
         const defined =
-          validity === undefined ||
-          (validity[i >> 3]! & (1 << (i & 7))) !== 0;
+          validity === undefined || (validity[i >> 3]! & (1 << (i & 7))) !== 0;
         const slot = defined ? indices[i]! : MISSING;
         slotOf[i] = slot;
         counts[slot]! += 1;
@@ -1529,15 +1531,15 @@ export class TimeSeries<S extends SeriesSchema> {
     // a dictionary-backed column carries an integer per row, so distinct
     // keys are a seen-flag per dictionary slot rather than a string built
     // and hashed per row.
-    const dict = by.length === 1 ? dictionaryPartitionSource(store, by[0]!) : undefined;
+    const dict =
+      by.length === 1 ? dictionaryPartitionSource(store, by[0]!) : undefined;
     if (dict !== undefined) {
       const { indices, dictionary, validity } = dict;
       const MISSING = dictionary.length;
       const seen = new Uint8Array(dictionary.length + 1);
       for (let i = 0; i < length; i += 1) {
         const defined =
-          validity === undefined ||
-          (validity[i >> 3]! & (1 << (i & 7))) !== 0;
+          validity === undefined || (validity[i >> 3]! & (1 << (i & 7))) !== 0;
         const slot = defined ? indices[i]! : MISSING;
         if (seen[slot] === 0) {
           seen[slot] = 1;
@@ -5883,7 +5885,8 @@ function dictionaryPartitionSource(
   if (col === undefined || col.kind !== 'string' || col.storage !== 'packed') {
     return undefined;
   }
-  if (col.indices === undefined || col.dictionary === undefined) return undefined;
+  if (col.indices === undefined || col.dictionary === undefined)
+    return undefined;
   return {
     indices: col.indices,
     dictionary: col.dictionary,
