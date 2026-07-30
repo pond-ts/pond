@@ -236,30 +236,35 @@ describe('per-node timing — the badge', () => {
 
   it('attributes time to the node that spent it, not its consumer', () => {
     // Pulling a leaf without warming its inputs first would charge the
-    // whole subtree to the leaf, and the badge would lie. Tested with a
-    // deliberately slow op rather than by comparing two ops' incidental
-    // costs — an earlier version asserted `scale` beat `sma` and flipped,
-    // because a nested input pays an `appendColumn` before `run` is even
-    // called (see the note below).
+    // whole subtree to the leaf, and the badge would lie. Two designs
+    // flaked before this one: comparing `scale` to `sma` flipped on the
+    // nested input's `appendColumn` cost (see the note below), and a
+    // fixed 3M-iteration spin flipped on a loaded CI runner, where the
+    // spin came to ~13ms while the consumer's incidental first-call
+    // overhead reached ~6.6ms — inside that version's 2× ratio. So the
+    // slow op now spins until a wall-clock deadline: the producer's
+    // timed window contains the whole spin by construction, on any
+    // machine, and both sides are compared against that known duration
+    // rather than against each other's jitter.
+    const SPIN_MS = 30;
     const { registry, ran } = makeRegistry();
     registry.define({
       name: 'slow',
       family: 'test',
       summary: 'Deliberately expensive.',
-      params: { spin: int({ min: 0, default: 3_000_000 }) },
+      params: { ms: int({ min: 1, default: SPIN_MS }) },
       inputs: [{ role: 'source' }],
       outputs: [{ id: '', unit: 'inherit' }],
       run: (ctx) => {
         ran.n += 1;
+        const until = performance.now() + (ctx.params['ms'] as number);
         let acc = 0;
-        for (let i = 0; i < (ctx.params['spin'] as number); i += 1) {
-          acc += Math.sqrt(i);
-        }
+        for (let i = 0; performance.now() < until; i += 1) acc += Math.sqrt(i);
         void acc;
         return values(ctx, 'source');
       },
     });
-    const host = createHost({ registry, units }).add('prices', series(2_000));
+    const host = createHost({ registry, units }).add('prices', series(200));
     const slowInner = { op: 'slow', inputs: ['px'] };
     const fastOuter = { op: 'scale', params: { by: 2 }, inputs: [slowInner] };
     const res = host.run({
@@ -269,8 +274,13 @@ describe('per-node timing — the badge', () => {
     });
     const [inner, outer] = res.nodes;
     expect(inner!.id).toBe(specId(registry, slowInner));
-    // The producer carries its own cost; the consumer is not charged it.
-    expect(inner!.ms).toBeGreaterThan(outer!.ms * 2);
+    // The producer's clock contains its own spin; the consumer's does
+    // not. Mischarge the subtree and the spin lands on a consumer's
+    // clock while the producer reads near zero — whichever side it
+    // lands on, a bound catches it, and each bound has the full
+    // SPIN_MS of headroom against jitter.
+    expect(inner!.ms).toBeGreaterThanOrEqual(SPIN_MS);
+    expect(outer!.ms).toBeLessThan(SPIN_MS);
   });
 
   it('charges a nested input its materialization, which is real cost', () => {
@@ -300,10 +310,13 @@ describe('per-node timing — the badge', () => {
       select: [{ on: fold('last', sma3) }],
     };
     const cold = host.run(req).nodes[0]!;
-    const warm = host.run(req).nodes[0]!;
+    // A warm pull's window is microseconds wide, so a single GC pause
+    // landing inside it can outweigh the whole cold compute. Judging by
+    // the fastest of five pulls makes that a five-way coincidence.
+    const warms = Array.from({ length: 5 }, () => host.run(req).nodes[0]!);
     expect(cold.cached).toBe(false);
-    expect(warm.cached).toBe(true);
-    expect(warm.ms).toBeLessThan(cold.ms);
+    for (const warm of warms) expect(warm.cached).toBe(true);
+    expect(Math.min(...warms.map((w) => w.ms))).toBeLessThan(cold.ms);
   });
 });
 
