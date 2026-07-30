@@ -15,13 +15,16 @@
  *   whole schema-bearing object to rebuild something the columns already
  *   describe.
  *
- * A column this cannot express as buffers (chunked storage, a
- * non-numeric kind) falls back to a boxed array rather than failing the
- * request — a correct slow answer beats a fast error on a column the
- * caller may not even have asked to be fast.
+ * A **numeric** column this cannot express as buffers (chunked storage)
+ * falls back to a boxed array rather than failing the request — a
+ * correct slow answer beats a fast error. A **non-numeric** column has
+ * no wire form at all and is refused; see {@link toWireColumn} for why
+ * boxing one would produce plausible-looking nonsense rather than an
+ * error.
  */
 
 import { columnBuffers, columnFromBuffers, packColumn } from '../column.js';
+import { ProcessError } from '../errors.js';
 import type { ColumnBuffers } from '../column.js';
 import type { Column } from 'pond-ts';
 import type { RunResult } from '../plan/run.js';
@@ -42,6 +45,22 @@ export interface WireResult extends Omit<RunResult, 'series' | 'columns'> {
 function toWireColumn(column: Column): WireColumn {
   const data = columnBuffers(column);
   if (data !== undefined) return { kind: 'buffers', data };
+
+  // The fallback is for a **numeric** column `columnBuffers` cannot take
+  // as buffers — chunked storage, in practice. It is not a general
+  // escape hatch: the boxed form is rebuilt with `packColumn`, which
+  // reads numbers, so a `string` / `boolean` / `array` column would pack
+  // every cell as a defined `NaN` (`Number.isNaN('x')` is false) and
+  // arrive as plausible-looking nonsense. Refusing is the only honest
+  // answer until the wire grows those kinds.
+  if (column.kind !== 'number') {
+    throw new ProcessError(
+      `HostPool: cannot send a '${column.kind}' column across a worker ` +
+        `boundary — only numeric columns have a wire form. Select numeric ` +
+        `outputs, or run this request in-process.`,
+    );
+  }
+
   const at = column as unknown as { at(i: number): number | undefined };
   const values = new Array<number | undefined>(column.length);
   for (let i = 0; i < column.length; i += 1) values[i] = at.at(i);

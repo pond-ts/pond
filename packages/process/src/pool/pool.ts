@@ -159,8 +159,13 @@ export class HostPool {
     for (const slot of slots) {
       slot.worker.on('message', (m: WorkerResponse) => pool.#settle(slot, m));
       slot.worker.on('error', (e: Error) => pool.#die(e));
+      // ANY unexpected exit is fatal, not just a non-zero one. A worker
+      // that left cleanly is exactly as unable to answer as one that
+      // crashed, and treating `code === 0` as benign left every later
+      // request routed to that slot hanging forever — the same silent
+      // hang the fatal latch exists to stop.
       slot.worker.on('exit', (code: number) => {
-        if (code !== 0 && !pool.#closed) {
+        if (!pool.#closed) {
           pool.#die(
             new ProcessError(`HostPool: worker exited with code ${code}`),
           );
@@ -236,11 +241,18 @@ export class HostPool {
   }
 
   #settle(slot: Slot, message: WorkerResponse): void {
-    slot.inFlight = Math.max(0, slot.inFlight - 1);
-    if (slot.inFlight === 0) slot.worker.unref();
+    // Identify the request FIRST. A worker's `parentPort` is in scope for
+    // the caller's own setup module, so a stray `postMessage` from it
+    // reaches here — and decrementing on that would `unref` a worker with
+    // real work outstanding, letting the process exit before the answer
+    // arrived. That is exactly the hang ref/unref exists to prevent, and
+    // a `Math.max(0, …)` guard hides it as an early unref rather than a
+    // negative count. Only a message we are actually waiting on counts.
     const pending = this.#pending.get(message.id);
     if (pending === undefined) return;
     this.#pending.delete(message.id);
+    slot.inFlight = Math.max(0, slot.inFlight - 1);
+    if (slot.inFlight === 0) slot.worker.unref();
     if (message.ok) {
       pending.resolve(fromWire(message.wire));
     } else {

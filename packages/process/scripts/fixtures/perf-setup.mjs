@@ -20,17 +20,47 @@ function sma(ctx) {
   return out;
 }
 
+/**
+ * The SAME arithmetic, writing a `Float64Array` instead of a boxed
+ * array. `NaN` marks the warm-up, which `packColumn` reads as missing —
+ * so the answer is identical, and only the allocation differs.
+ */
+function smaTyped(ctx) {
+  const col = ctx.series.column(ctx.inputs['source']);
+  const period = ctx.params.period;
+  const n = col.length;
+  const src = col.toFloat64Array();
+  const out = new Float64Array(n);
+  let sum = 0;
+  for (let i = 0; i < n; i += 1) {
+    sum += src[i];
+    if (i >= period) sum -= src[i - period];
+    out[i] = i >= period - 1 ? sum / period : NaN;
+  }
+  return out;
+}
+
 export default function setup(options) {
   const rows = Number(options?.rows ?? 200_000);
-  const registry = createRegistry().define({
-    name: 'sma',
-    family: 'trend',
-    summary: 'Rolling mean.',
-    params: { period: int({ min: 2, default: 20 }) },
-    inputs: [{ role: 'source' }],
-    outputs: [{ id: '', unit: 'inherit' }],
-    run: sma,
-  });
+  const registry = createRegistry()
+    .define({
+      name: 'sma',
+      family: 'trend',
+      summary: 'Rolling mean, boxed output.',
+      params: { period: int({ min: 2, default: 20 }) },
+      inputs: [{ role: 'source' }],
+      outputs: [{ id: '', unit: 'inherit' }],
+      run: sma,
+    })
+    .define({
+      name: 'smaTyped',
+      family: 'trend',
+      summary: 'Rolling mean, typed output.',
+      params: { period: int({ min: 2, default: 20 }) },
+      inputs: [{ role: 'source' }],
+      outputs: [{ id: '', unit: 'inherit' }],
+      run: smaTyped,
+    });
   return { registry, datasets: { px: makeSeries(rows) } };
 }
 

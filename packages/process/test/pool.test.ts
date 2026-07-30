@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { bind, run } from '../src/index.js';
 import type { RunResult } from '../src/index.js';
 import type { HostPool as HostPoolType } from '../src/pool/index.js';
@@ -24,6 +26,8 @@ import type { HostPool as HostPoolType } from '../src/pool/index.js';
  * worker must equal the answer computed in-process, cell for cell. A
  * pool that returns *nearly* the right column is worse than no pool.
  */
+
+const execFileAsync = promisify(execFile);
 
 const SETUP = new URL('./fixtures/pool-setup.mjs', import.meta.url);
 const DIST = new URL('../dist/pool/index.js', import.meta.url);
@@ -217,4 +221,52 @@ describe('HostPool — loaded from source', () => {
       /worker entry not found/,
     );
   });
+});
+
+describe('HostPool — worker lifecycle (Layer-2 review finds)', () => {
+  let HostPool: typeof HostPoolType;
+  beforeAll(async () => {
+    HostPool = await loadPool();
+  });
+
+  it('latches fatal when a worker exits CLEANLY, instead of hanging', async () => {
+    // Reported by adversarial review: `exit` was only treated as fatal on
+    // a non-zero code, so a worker that left cleanly took every later
+    // request with it — each one routed to a dead slot and never
+    // answered. Without the fix this test hangs rather than fails.
+    const pool = await HostPool.start({
+      setup: SETUP,
+      size: 1,
+      setupOptions: { rows: ROWS, exitAfterMs: 150 },
+    });
+    try {
+      await pool.run({ from: 'px', process: PLAN, select: SELECT });
+      // Give the worker's scheduled clean exit time to land.
+      await new Promise((r) => setTimeout(r, 500));
+      await expect(
+        pool.run({ from: 'px', process: PLAN, select: SELECT }),
+      ).rejects.toThrow(/worker exited/);
+    } finally {
+      await pool.close();
+    }
+  });
+
+  it('survives a stray worker message with work outstanding', async () => {
+    // Reported by adversarial review: `#settle` decremented `inFlight`
+    // for ANY message, including one matching no pending request — so a
+    // stray could `unref` a worker with real work in flight and let the
+    // process exit before the answer arrived.
+    //
+    // Run as a SUBPROCESS deliberately. Under vitest the runner keeps the
+    // process alive, so the bug is invisible; only a standalone process
+    // can show that nothing was left holding the event loop open. With
+    // the fix reverted, this prints nothing and exits 0.
+    const probe = fileURLToPath(
+      new URL('./fixtures/stray-probe.mjs', import.meta.url),
+    );
+    const { stdout } = await execFileAsync(process.execPath, [probe], {
+      timeout: 20_000,
+    });
+    expect(stdout).toContain('ANSWERED');
+  }, 30_000);
 });

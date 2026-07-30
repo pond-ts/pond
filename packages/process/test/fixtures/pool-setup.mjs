@@ -4,6 +4,7 @@
 // a real Node thread: it cannot load TypeScript. That is also why the
 // pool suite runs against the built output (see the note in
 // `pool.test.ts`).
+import { parentPort } from 'node:worker_threads';
 import { TimeSeries } from 'pond-ts';
 import { createRegistry, int, num } from '../../dist/index.js';
 
@@ -16,6 +17,29 @@ const values = (ctx, role) => {
 
 export default function setup(options) {
   const rows = Number(options?.rows ?? 64);
+  // `stray` posts a message matching no pending request — the caller's
+  // setup module has `parentPort` in scope, so this is reachable in real
+  // code, not a contrivance. Registered as a listener so it fires while
+  // a REAL request is outstanding: the pool's own handler was registered
+  // first and awaits, so this stray reaches the main thread before the
+  // genuine answer does. That ordering is what made the bug dangerous.
+  if (options?.stray) {
+    parentPort?.on('message', () => {
+      parentPort.postMessage({
+        id: -1,
+        ok: true,
+        wire: { outputs: {}, facts: [], explain: {}, skipped: [], nodes: [] },
+      });
+    });
+  }
+  // `exitAfterMs` makes the worker leave CLEANLY on a timer — the case
+  // that used to be treated as benign, leaving the pool silently unable
+  // to answer anything afterwards. Time-based rather than message-based
+  // because setup is imported lazily on the first request, so a message
+  // handler registered here would miss that request entirely.
+  if (typeof options?.exitAfterMs === 'number') {
+    setTimeout(() => process.exit(0), options.exitAfterMs).unref();
+  }
   const registry = createRegistry()
     .define({
       name: 'sma',
