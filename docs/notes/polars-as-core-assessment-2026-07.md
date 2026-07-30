@@ -115,6 +115,11 @@ buffers, not a core. Nothing measured so far demands it.
 polars at 10 threads takes the strategy pass to 18.95 ms — 3.39× ahead of
 pond-ts. Nothing in pond-ts is parallel. For a load-once / query-many agent
 workload on a multi-core box that is a real structural gap, and it is
-independent of any kernel or language choice. Not currently a task; recorded
-because it is the one axis where the gap is not closeable by the work
-already planned.
+independent of any kernel or language choice.
+
+**Since resolved into a task:** Node Worker Threads were assessed and
+measured at **2.42×** on the real strategy stack with bit-identical
+answers — see
+[worker-threads-assessment-2026-07.md](worker-threads-assessment-2026-07.md)
+and [PND-PROCPAR] in
+[PND_PROCESS_PLAN.md](../plans/PND_PROCESS_PLAN.md).
