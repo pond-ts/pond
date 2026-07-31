@@ -533,20 +533,61 @@ whenever the consumer is column-oriented or the payload is large.
 still — ~0.006 ms — because it hands over the buffers rather than
 copying them.)
 
-Two limits, both deliberate and both reported rather than hidden:
-
-- **Point keys only.** A `timeRange` / `interval` key — what `aggregate`
-  produces — spans two edges, and no columnar ingest door reads such a key
-  back, so it throws rather than emitting a dialect nothing accepts.
-  Collapse it first (`series.asTime({ at: 'begin' })`), or use
-  [`toJSON`](#tojson), whose row envelope does carry range and interval
-  keys.
-- **`boolean` / array columns** export fine but can't be ingested back
-  (the columnar engine takes `number` and `string`). The return type says
-  so, so that round trip fails to compile rather than at runtime;
-  `select()` them out, or use the row doors.
+**`boolean` / array columns** export fine but can't be ingested back (the
+columnar engine takes `number` and `string`). The return type says so, so
+that round trip fails to compile rather than at runtime; `select()` them
+out, or use the row doors.
 
 `ValueSeries` has the same method with the same contract.
+
+### Two-edged keys: the flattened convention
+
+A `timeRange` or `interval` key — what `aggregate` produces — spans two
+edges, and JSON has no interval-of-time type. Both doors flatten it into
+extra columns named off the key:
+
+```ts
+const daily = trades.aggregate(Sequence.every('1d'), { price: 'avg' });
+
+daily.toColumns();
+// {
+//   schema:  [{ name: 'interval', kind: 'interval' }, { name: 'price', … }],
+//   columns: {
+//     interval:      [ …begins ],
+//     intervalEnd:   [ …ends ],
+//     intervalLabel: [ …labels ],
+//     price:         [ … ],
+//   },
+// }
+
+TimeSeries.fromColumns(daily.toColumns()); // round-trips, key and all
+```
+
+A `timeRange` key is `timeRange` + `timeRangeEnd`; an `interval` key adds
+`intervalLabel`. **The names are fully determined** — a key column's name
+always equals its kind — so there's nothing to configure. Note what stays
+put: the `schema` keeps declaring the _logical_ key, and the edge columns
+are derived from it rather than described by it, which is what lets the
+envelope round-trip as the series' own schema.
+
+This is the same convention `toArrow` has always emitted (Arrow has no
+interval type either), so one payload spelling now serves the JSON and
+Arrow doors alike — `fromArrow(table, { keyKind: 'interval' })` reads the
+Arrow side back.
+
+Two consequences worth knowing:
+
+- **A value column may not take a derived name.** A column called
+  `timeRangeEnd` alongside a `timeRange` key means one array with two
+  claimants, so both `fromColumns` and `toColumns` throw, naming the
+  collision.
+- **Ordering is by `(begin, end)`.** Equal begins must be non-decreasing in
+  `end` — matching the row door. `sort: true` sorts the same way.
+
+Why flattened rather than `[[begin, end], …]` pairs? Because the substrate
+stores the edges as separate buffers, a paired spelling would need a
+per-row un-zip on the way in — a row walk in the middle of the door that
+exists to avoid row walks.
 
 ## Calendar-aware sequences
 

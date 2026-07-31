@@ -61,6 +61,7 @@ export type {
   JsonRowFormat,
   JsonTimeRangeInput,
   JsonTimestampInput,
+  FlatKeyColumns,
   JsonValueForKind,
   TimeSeriesColumnarInput,
   TimeSeriesColumnarOutput,

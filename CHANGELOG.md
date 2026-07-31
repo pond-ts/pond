@@ -56,6 +56,31 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **core:** **the flattened key convention — two-edged keys now survive a
+  columnar round trip.** `toArrow` has always flattened a `timeRange` /
+  `interval` key into `<key>` + `<key>End` (+ `<key>Label`), because Arrow has
+  no interval-of-time type — but no ingest door read that shape back, so
+  anything aggregated was columnar-export-only. Now `fromColumns` reads it,
+  `toColumns` emits it (where it previously threw), and `fromArrow` gains
+  `{ keyKind: 'timeRange' | 'interval' }` to read it out of Arrow. One spelling
+  across all four doors, so `TimeSeries.fromColumns(daily.toColumns())`
+  round-trips an aggregated series, key and all.
+
+  The names are fully determined — a key column's name equals its kind — so
+  there is nothing to configure. The envelope's `schema` keeps declaring the
+  **logical** key; the edge columns are derived from it. Two rules follow: a
+  value column may not take a derived name (it throws on ingest, naming the
+  collision), and ordering for a two-edged key is by `(begin, end)`, matching
+  the row door — as does `sort: true`. Interval labels must be present in every
+  row and all of one type, again matching the row door (and throwing the same
+  `RangeError` when they aren't). Types: `FlatKeyColumns`, plus `keyKind` on
+  `FromArrowOptions`.
+
+  Two incidental improvements fell out: `TimeSeries.fromColumns` no longer
+  rejects non-`time` keys at all (it accepted only `'time'` since it shipped),
+  and the ingest engine's `makeKey` callback is gone — the schema's key kind
+  fully determines the column class, so every door stopped passing one.
+
 - **core:** **`TimeSeries.toColumns()`** — the columnar-JSON export door, and
   the inverse `fromColumns` never had. Returns the same
   `{ name, schema, columns }` envelope `fromColumns` accepts (one plain array

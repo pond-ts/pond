@@ -3,11 +3,17 @@ import {
   type Column as ColumnarColumn,
   type ColumnSchema,
   Float64Column,
+  IntervalKeyColumn,
   type KeyColumn,
   stringColumnFromArray,
+  type StringColumn,
+  TimeKeyColumn,
+  TimeRangeKeyColumn,
+  ValueKeyColumn,
   validityFromPredicate,
 } from '../../columnar/index.js';
 import { ValidationError } from '../../core/errors.js';
+import { assertNoFlatKeyCollision, flatKeyNames } from './flat-keys.js';
 
 /**
  * The per-column raw input the `fromColumns` doors accept. A `'number'` column
@@ -51,7 +57,6 @@ export function ingestColumnsToStore(input: {
   schema: ColumnSchema;
   columns: RawColumns;
   sort: boolean;
-  makeKey: (begin: Float64Array, count: number) => KeyColumn;
   /**
    * Value columns that are **already built** and should be installed as they
    * stand, bypassing the packing loop. The escape hatch for a source whose
@@ -67,32 +72,70 @@ export function ingestColumnsToStore(input: {
    */
   adopted?: ReadonlyMap<string, ColumnarColumn>;
 }): ColumnarStore<ColumnSchema> {
-  const { op, keyNoun, schema, columns, sort, makeKey, adopted } = input;
+  const { op, keyNoun, schema, columns, sort, adopted } = input;
 
   const keyDef = schema[0];
   if (keyDef === undefined) {
     throw new ValidationError(`${op}: schema must have at least a key column`);
   }
-  const keyRaw = columns[keyDef.name];
+  // A two-edged key occupies more than its own name (see `./flat-keys.ts`);
+  // check that before reading anything, so a colliding schema fails on the
+  // schema rather than on a confusing length mismatch downstream.
+  assertNoFlatKeyCollision(op, schema);
+  const keyNames = flatKeyNames(keyDef);
+
+  const keyRaw = columns[keyNames.begin];
   if (keyRaw === undefined) {
-    throw new ValidationError(`${op}: missing key column '${keyDef.name}'`);
+    throw new ValidationError(`${op}: missing key column '${keyNames.begin}'`);
   }
-  // Key buffer; the key-column constructor asserts all finite. A manual loop,
-  // not `Float64Array.from(arr, mapFn)`: supplying a map function forces V8's
-  // generic iterable-protocol path even for a plain array, ~15-20x slower
-  // than a preallocated-buffer copy at 100k-element scale — measured, not
-  // theoretical (see the pond-columnar-ingest spike's ingest regression).
-  let rawBegin: Float64Array;
-  if (keyRaw instanceof Float64Array) {
-    rawBegin = keyRaw;
-  } else {
-    rawBegin = new Float64Array(keyRaw.length);
-    for (let j = 0; j < keyRaw.length; j += 1) {
-      const v = keyRaw[j];
-      rawBegin[j] = v == null ? NaN : Number(v);
+  const rawBegin = toFloat64(keyRaw);
+  const count = rawBegin.length;
+
+  // The second edge of a two-edged key. Required — a `timeRange` with no ends
+  // is not a partially-specified key, it is a different key kind.
+  let rawEnd: Float64Array | undefined;
+  if (keyNames.end !== undefined) {
+    const endRaw = columns[keyNames.end];
+    if (endRaw === undefined) {
+      throw new ValidationError(
+        `${op}: missing key column '${keyNames.end}' — a '${keyDef.kind}' key ` +
+          `flattens to '${keyNames.begin}' + '${keyNames.end}'` +
+          (keyNames.label === undefined ? '' : ` + '${keyNames.label}'`),
+      );
+    }
+    rawEnd = toFloat64(endRaw);
+    if (rawEnd.length !== count) {
+      throw new ValidationError(
+        `${op}: key column '${keyNames.end}' length ${rawEnd.length} does not ` +
+          `match '${keyNames.begin}' length ${count}`,
+      );
     }
   }
-  const count = rawBegin.length;
+
+  // An interval key's labels are part of its identity, so they are required
+  // and must be present in every row — a gap here is a corrupt key, not a
+  // missing value.
+  let rawLabels: ReadonlyArray<unknown> | undefined;
+  if (keyNames.label !== undefined) {
+    const labelRaw = columns[keyNames.label];
+    if (labelRaw === undefined) {
+      throw new ValidationError(
+        `${op}: missing key column '${keyNames.label}' — an 'interval' key ` +
+          `flattens to '${keyNames.begin}' + '${keyNames.end}' + ` +
+          `'${keyNames.label}'`,
+      );
+    }
+    // A typed array is accepted and means *numeric* labels — unambiguous, and
+    // the only spelling a binary/Arrow decoder has for them. Strings arrive as
+    // a plain array; `buildLabelColumn` dispatches on content either way.
+    rawLabels = labelRaw as ReadonlyArray<unknown>;
+    if (rawLabels.length !== count) {
+      throw new ValidationError(
+        `${op}: key column '${keyNames.label}' length ${rawLabels.length} ` +
+          `does not match '${keyNames.begin}' length ${count}`,
+      );
+    }
+  }
 
   // `sort: true` — reorder every column by ascending key before construction.
   // Compute the row permutation once (a stable sort of the index array; V8's
@@ -101,20 +144,41 @@ export function ingestColumnsToStore(input: {
   // `order` stays null on the (default) trusted fast path, so no allocation /
   // copy is paid unless asked. A non-finite key is left for the key column's
   // constructor to reject — sorting can't make it valid.
+  //
+  // Two-edged keys sort by `(begin, end)`, matching the row path's
+  // `compareKeys` — otherwise two rows sharing a begin could come out in an
+  // order the ordering scan below then rejects.
   let begin: Float64Array;
+  let end: Float64Array | undefined;
+  let labels: ReadonlyArray<unknown> | undefined = rawLabels;
   let order: Uint32Array | null = null;
   if (sort) {
     const idx = Array.from({ length: count }, (_, i) => i);
-    idx.sort((a, b) => rawBegin[a]! - rawBegin[b]!);
+    idx.sort((a, b) => {
+      const d = rawBegin[a]! - rawBegin[b]!;
+      if (d !== 0 || rawEnd === undefined) return d;
+      return rawEnd[a]! - rawEnd[b]!;
+    });
     order = Uint32Array.from(idx);
     begin = new Float64Array(count);
     for (let j = 0; j < count; j += 1) begin[j] = rawBegin[order[j]!]!;
+    if (rawEnd !== undefined) {
+      end = new Float64Array(count);
+      for (let j = 0; j < count; j += 1) end[j] = rawEnd[order[j]!]!;
+    }
+    if (rawLabels !== undefined) {
+      const reordered = new Array<unknown>(count);
+      for (let j = 0; j < count; j += 1) reordered[j] = rawLabels[order[j]!];
+      labels = reordered;
+    }
   } else {
     begin = rawBegin;
+    end = rawEnd;
   }
 
-  // Throws on any non-finite key value.
-  const keys = makeKey(begin, count);
+  // Throws on any non-finite key value (and, for a two-edged key, on any row
+  // whose begin exceeds its end).
+  const keys = makeKeyColumn(op, keyDef.kind, begin, end, labels, count);
   // Enforce the non-decreasing-key invariant that `fromJSON`'s
   // `validateAndNormalize` guarantees. Trusted construction skips row
   // materialization + kind re-validation, but NOT this correctness contract:
@@ -123,12 +187,27 @@ export function ingestColumnsToStore(input: {
   // broken series. One O(N) scan over already-finite values — negligible next
   // to decode. (When `sort` is set the keys are now non-decreasing, so this is
   // a cheap post-condition check rather than a rejection.)
+  //
+  // The `end` tiebreak mirrors the row path: equal begins are ordered by end,
+  // so `[0,5], [0,3]` is out of order even though the begins are not.
   for (let j = 1; j < count; j += 1) {
     if (begin[j]! < begin[j - 1]!) {
       throw new ValidationError(
-        `${op}: key column '${keyDef.name}' is out of order at index ${j} ` +
+        `${op}: key column '${keyNames.begin}' is out of order at index ${j} ` +
           `(${begin[j]} < ${begin[j - 1]}) — ${keyNoun} must be non-decreasing; ` +
           `pass { sort: true } or pre-sort the columns`,
+      );
+    }
+    if (
+      end !== undefined &&
+      begin[j]! === begin[j - 1]! &&
+      end[j]! < end[j - 1]!
+    ) {
+      throw new ValidationError(
+        `${op}: key column '${keyNames.begin}' is out of order at index ${j} ` +
+          `(equal begins ${begin[j]}, but end ${end[j]} < ${end[j - 1]}) — ` +
+          `${keyNoun} must be non-decreasing by (begin, end); pass ` +
+          `{ sort: true } or pre-sort the columns`,
       );
     }
   }
@@ -263,4 +342,130 @@ export function ingestColumnsToStore(input: {
   }
 
   return ColumnarStore.fromTrustedStore(schema, keys, columnMap);
+}
+
+/**
+ * Normalize a raw key edge to a `Float64Array` — adopted as-is when it already
+ * is one (the zero-copy fast path), converted otherwise. A manual loop, not
+ * `Float64Array.from(arr, mapFn)`: supplying a map function forces V8's generic
+ * iterable-protocol path even for a plain array, ~15-20x slower than a
+ * preallocated-buffer copy at 100k-element scale — measured, not theoretical
+ * (see the pond-columnar-ingest spike's ingest regression). `null` / `undefined`
+ * become `NaN`, which the key-column constructor then rejects.
+ */
+function toFloat64(raw: RawColumns[string]): Float64Array {
+  if (raw instanceof Float64Array) return raw;
+  const out = new Float64Array(raw.length);
+  for (let j = 0; j < raw.length; j += 1) {
+    const v = raw[j];
+    out[j] = v == null ? NaN : Number(v);
+  }
+  return out;
+}
+
+/**
+ * Build the key column for a schema's declared key kind. The kind **fully
+ * determines** the class, which is why the doors no longer pass a `makeKey`
+ * callback: `time` and `value` differ only in which single-edge class they
+ * mint, and the two-edged kinds have exactly one shape each.
+ *
+ * Every constructor here validates what only it can: finiteness of each edge,
+ * and `begin <= end` per row for the two-edged kinds.
+ */
+function makeKeyColumn(
+  op: string,
+  kind: string,
+  begin: Float64Array,
+  end: Float64Array | undefined,
+  labels: ReadonlyArray<unknown> | undefined,
+  count: number,
+): KeyColumn {
+  switch (kind) {
+    case 'time':
+      return new TimeKeyColumn(begin, count);
+    case 'value':
+      return new ValueKeyColumn(begin, count);
+    case 'timeRange':
+      return new TimeRangeKeyColumn(begin, end!, count);
+    case 'interval':
+      return new IntervalKeyColumn(
+        begin,
+        end!,
+        buildLabelColumn(op, labels!, count),
+        count,
+      );
+    default:
+      throw new ValidationError(
+        `${op}: unsupported key kind '${kind}' — supported: 'time', ` +
+          `'timeRange', 'interval', 'value'`,
+      );
+  }
+}
+
+/**
+ * Pack interval labels into their column, dispatching on content: strings
+ * become a dict-encoded `StringColumn` (labels repeat by nature — a bucket
+ * label like `'2026-07-30'` recurs across partitions), numbers a
+ * `Float64Column`.
+ *
+ * **One label type throughout**, matching the row path's rule, and every label
+ * must be present: a label is part of the key's identity, so a gap is a
+ * corrupt key rather than a missing value. The row path throws `RangeError`
+ * for a mixed-type label (`validateAndNormalizeColumnar`), so this one does
+ * too — a caller catching by class sees the same thing whichever door the data
+ * came through.
+ */
+function buildLabelColumn(
+  op: string,
+  labels: ReadonlyArray<unknown>,
+  count: number,
+): StringColumn | Float64Column {
+  let labelKind: 'string' | 'number' | undefined;
+  for (let j = 0; j < count; j += 1) {
+    const label = labels[j];
+    if (label == null) {
+      throw new ValidationError(
+        `${op}: interval label at index ${j} is missing — a label is part of ` +
+          `the key's identity and must be present in every row`,
+      );
+    }
+    const t = typeof label;
+    if (t !== 'string' && t !== 'number') {
+      throw new ValidationError(
+        `${op}: interval label at index ${j} is a ${t} — labels must be ` +
+          `string or number`,
+      );
+    }
+    if (t === 'number' && !Number.isFinite(label)) {
+      // Also the shape a missing label takes once a decoder has mapped null to
+      // NaN — so this catches the gap the `== null` test above cannot see.
+      throw new ValidationError(
+        `${op}: interval label at index ${j} is ${String(label)} — a label is ` +
+          `part of the key's identity and must be a finite number or a string`,
+      );
+    }
+    if (labelKind === undefined) {
+      labelKind = t;
+    } else if (t !== labelKind) {
+      throw new RangeError(
+        `row ${j} has interval label of type ${t} but earlier rows had ` +
+          `${labelKind} labels — interval-keyed series must use one label ` +
+          `type throughout`,
+      );
+    }
+  }
+
+  if (labelKind === 'number') {
+    // Already a numeric buffer (a binary decode, or `toArrow`'s output round
+    // -tripping back in) → adopt it; a plain array copies, as everywhere else.
+    if (labels instanceof Float64Array) return new Float64Column(labels, count);
+    const buf = new Float64Array(count);
+    for (let j = 0; j < count; j += 1) buf[j] = labels[j] as number;
+    return new Float64Column(buf, count);
+  }
+  // `forceDict` matches the row path (`validateAndNormalizeColumnar`), so an
+  // interval key's labels have the same storage whichever door built them.
+  return stringColumnFromArray(labels as ReadonlyArray<string>, {
+    forceDict: true,
+  });
 }
