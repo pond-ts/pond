@@ -388,6 +388,28 @@ by studies) — `packages/financial/src/kernels/rolling.ts`.
 
 ---
 
+### `@pond-ts/financial/parallel` (Node-only, opt-in)
+
+`withWorkers(series, { workers })` — opts a series into partitioned rolling
+studies and returns it unchanged; `shutdownWorkers()`; `parallelDispatches()`;
+`MIN_ROWS`; type `WithWorkersOptions`. Chosen **once at ingest**: the studies keep their
+signatures and stay synchronous, and derived series inherit it (registration is
+keyed on the key-column buffer). **Single-threaded remains the default** — the
+main package never imports this. Node-only by construction: `Atomics.wait` on
+the main thread is what keeps the studies synchronous, and browsers forbid it.
+
+Accelerates any rolling study asking for `avg`/`stdev` off one column — `sma`,
+`envelope`, `bollinger`. Partitioning shifts the answer slightly, by rounding
+error only: measured 1.85×/1.35×/1.92× at ≤5.1e-13. **`zScore` is not
+accelerated**: [PND-SHIFTFRAME] moved it onto a shifted-frame kernel this pool
+does not hook, so opting in neither speeds it up nor changes its answer. It used
+to be the fastest entry here at 2.44×, and the only one whose error had no bound.
+Below `MIN_ROWS` a registered series still runs sequentially and is
+bit-identical. `parallelDispatches()` returns how many passes have actually run
+on workers — acceleration is otherwise invisible, since a declined pass returns
+the same answer, only slower than you expected. Source:
+`packages/financial/src/parallel/`.
+
 ## @pond-ts/process
 
 **Work in progress — `private: true`, not published, public shape expected to
@@ -402,12 +424,13 @@ the default for pipelines known at authoring time — see the package README.
 
 | Group                   | Exports                                                                                                                                                                                                                                                                                                                            | Source                                               |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Worker pool (Node)      | `HostPool` (`start`, `run`, `close`, `size`, `inFlight`); types `HostPoolOptions`, `PoolSetup`, `PoolSetupConfig`; `toWire` / `fromWire`, types `WireResult`, `WireColumn` — subpath `@pond-ts/process/pool`                                                                                                                       | `packages/process/src/pool/index.ts`                 |
 | Ports                   | `Inlet`, `Outlet` (typed fields on `node.in` / `node.out`; `get()`, `peek()`, `version`, `connect`, `disconnect`)                                                                                                                                                                                                                  | `packages/process/src/port.ts`                       |
 | Nodes                   | `Node` (`in`, `out`, `dirty`, `error`, `invalidate()`), `defineNode` (reusable multi-output node type), `derive` (single-output, wired inline)                                                                                                                                                                                     | `packages/process/src/node.ts`                       |
 | Port declaration        | `port<T>({ equals, defaultValue })`; types `PortSpec`, `PortSpecMap`, `PortValue`, `PortValues`                                                                                                                                                                                                                                    | `packages/process/src/types.ts`                      |
 | Sources                 | `source<T>()` → `SourceNode` (`set()`), `fromLive(liveSource)` → `LiveSourceNode` (`dispose()`); `GraphSource` (bind contract — looser than core's `LiveSource`, accepts `LiveAggregation`), `SnapshotSource`, `NoInputs`                                                                                                          | `packages/process/src/source.ts`                     |
 | Graph view              | `Graph` (`Graph.from(...roots)`, `nodes`, `order()`, `edges()`, `toJSON()`); types `GraphEdge`, `GraphJson`, `GraphNodeJson`, `GraphEdgeJson`                                                                                                                                                                                      | `packages/process/src/graph.ts`                      |
-| Column values           | `packColumn` (values → packed `Float64Column`, NaN = missing), `columnBytes` (retained size, for a byte budget), `appendColumn` (column → series; boxing-free when gapless)                                                                                                                                                        | `packages/process/src/column.ts`                     |
+| Column values           | `packColumn` (values → packed `Float64Column`, NaN = missing), `columnBytes` (retained size, for a byte budget), `appendColumn` (column → series; boxing-free when gapless), `columnBuffers` / `columnFromBuffers` (the buffer pair a column is, for an isolate boundary; type `ColumnBuffers`)                                    | `packages/process/src/column.ts`                     |
 | Plan — registry         | `createRegistry({ folds })` / `Registry` (`define`, `get`, `foldFor`, `outputsOf`, `resolveParams`, `byFamily`, `describe`, `toJsonSchema`), param builders `int` / `num` / `choice` / `flag`, `UnknownOpError`, `ParamError`                                                                                                      | `packages/process/src/plan/registry.ts`, `params.ts` |
 | Plan — identity         | `specId` (content-addressed, param-order invariant, defaults materialized), `refToId`, `explain`, `unitOf`, `columnsOf`, `dependsOn`, `outputKey`                                                                                                                                                                                  | `packages/process/src/plan/identity.ts`              |
 | Plan — types            | `Spec`, `Plan`, `Input` (column name \| `Spec` \| `PickedOutput`), `SpecRef`, `Def` (`OpDef` \| `FoldDef`), `OpContext`, `OpResult`, `FoldContext`, `FactBody`, `isFold`, `ParamDef`, `Params`, `Units`, `InputDef`, `OutputDef`                                                                                                   | `packages/process/src/plan/types.ts`                 |

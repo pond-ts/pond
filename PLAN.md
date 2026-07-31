@@ -116,6 +116,131 @@ financial hub, and the in-site API reference for core + charts). Plan:
   documentation-backlog items (pushMany guidance, bench-honesty callout, GC
   snippet, no-NaN guarantee, tie semantics, latency pattern) as one MDX pass.
 
+### Agent workloads — the defensible bench
+
+[`docs/notes/agent-workloads-2026-07.md`](docs/notes/agent-workloads-2026-07.md)
+distils a real derivatives-analytics catalog into six generic data shapes, six
+practitioner personas, and twelve questions written the way an agent receives
+them — each with the plan a process graph would compose, what it stresses, and
+whether pond can do it today. Acceptance gate: **< 100 ms over 500k–1M points**.
+
+The finding that reorders the roadmap: **the gaps are shape problems, not speed
+problems.** Rolling studies, aggregation, calendars, histograms and folds — the
+things these questions lean on hardest — pond already does well. What blocks
+questions is missing _primitives_: unpivoting a wide row into a value-axis
+series (a term structure is the object these people think in), tall→wide pivot,
+and ranking across partitions.
+
+- **[PND-SHIFTFRAME]** — **Shipped.** `rollingDeviationSd` in
+  `packages/financial/src/kernels/rolling.ts`; `zScore` rewired onto it.
+  Worst relative error against an exact reference over 200k rows:
+  `1e15 + ((i%7)−3)` **1.0e+0 → 4.1e-15**, `1e9 + sin` **4.1e+0 → 4.9e-12**,
+  benign random walk **3.9e-6 → 4.4e-11**. Three things the plan did not
+  anticipate, all worth carrying forward:
+  - **Welford needed shifting too.** The first cut shifted only the mean and
+    left σ on the raw values, which improved the pathological case by three
+    orders of magnitude and stopped there — `d = x − wMean` is the same
+    subtraction of two near-equal large numbers. Welford is stable relative
+    to the _conditioning_ of the problem, and raw large-magnitude values are
+    what make it ill-conditioned. "Variance is translation-invariant so
+    Welford is fine" was the wrong reading, and only an exact reference
+    caught it.
+  - **The fix cost `zScore` its parallelism.** The stable kernel returns a
+    deviation, not a mean, so `withWorkers` no longer hooks it: the study
+    went from the fastest accelerated one (2.44×) to sequential. Accepted —
+    a 2.44× on an answer that could be 100% wrong is not a speedup — but it
+    says a numerical class is not a full account of an operator. See
+    [`docs/rfcs/numerical-classes.md`](docs/rfcs/numerical-classes.md), where
+    this is now the tested case rather than the hypothetical one.
+
+    It also cost a test canary, which is the more general lesson: four tests
+    proved the parallel path had run by observing that `zScore` disagreed
+    with the sequential answer. That only ever worked because the accelerated
+    result was inferior, and it evaporated the moment that was fixed.
+    Replaced with `parallelDispatches()`, an explicit count.
+
+  - **A constant rebuild interval was wrong at both ends**, found by a Codex
+    pass and fixed in `20639a4`. The kernel rebuilt its incremental state
+    every 1024 rows. Too rarely for a short window — at `period 2`, where
+    every non-flat window has `|z|` exactly 1, drift through ~500 turnovers
+    reached **1.7e-6**, breaking the `<1e-9` claim outright. Too often for a
+    long one — the rebuild is `O(period)`, so firing it on a row count made
+    the kernel `O(N + N·period/1024)`: **81 ms at `period 100k`** against 7 ms
+    at `period 20`, with the "flat in `period`" claim only ever tested to 1024. Rebuilding once per **window turnover** (`period` rows) fixes both
+    with one rule, and is _faster_ — the magnitude heuristic it replaced was
+    computing a `sqrt` on every row. Now 22.8–26.1 ns/row across `period` 2 to
+    100k. The lesson for the next kernel: a threshold in rows is a threshold
+    in the wrong unit when the work per row scales with a window.
+
+- **[PND-AGENTBENCH]** — **Built and measured** —
+  `packages/financial/scripts/perf-agent-bench.mjs`. Q11 (500 symbols × 1000
+  bars, per-symbol `zScore`, rank across symbols) answers in **39 ms**, and
+  **79 ms at 1M points** — both inside the 100 ms gate, so **pond is the client,
+  not the viewer**: a resident panel answers a 7-question flurry in 266 ms
+  against ~140–350 ms of round trips for the same questions, and that is before
+  any caching. Two findings reorder what comes next:
+  - **`withWorkers` does nothing here (1.00×)** — it partitions _within_ a
+    series, and every partition is 1000 rows, far below `MIN_ROWS`. The panel
+    shape wants parallelism _across_ partitions. Right idea, wrong axis.
+  - **`partitionBy`+`toMap` is 43–44% of the time and it is serial.** The
+    studies are only ~53%, so the Amdahl ceiling for partition-level
+    parallelism is **2.0×**, not 8×. Making the split cheaper is worth as much
+    as threading it, and is worth doing first.
+
+  Remaining: a flurry variant driven through the process graph, to measure the
+  content-addressed cache rather than infer it (repetition is 68% of the work in
+  a realistic 21-from-7 session).
+
+- **[PND-SPLITCOST]** — **Shipped.** `partitionBy`+`toMap` **18.1 → 12.7 ms**
+  at 500×1000 (**25.2 → 12.4 ms** interleaved, **33.9 → 22.3 ms** at 1M), and
+  `_distinctPartitionKeys` **4.9 → 1.0 ms** (9.2 → 1.2 interleaved). Two
+  changes: a **dict-encoded fast path** (a dictionary-backed string column
+  already carries an integer per row, so grouping indexes an array instead of
+  building and hashing a key string per row — symbols are exactly what dict
+  encoding is for) and a **two-pass fill** (count, then fill an exactly sized
+  `Int32Array`, replacing a boxed push per row plus a copy per group).
+  Benchmark: `packages/core/scripts/perf-partition.mjs`, which also covers the
+  interleaved layout so the fast path is not measured only where it flatters.
+  Q11 is now 36.5 ms with the split at 30% (was 43%). Remaining, unmeasured:
+  the ~7 ms of `withRowSelection` + `TimeSeries` construction per group — a
+  contiguous-range slice could avoid the gather where partitions happen to be
+  consecutive.
+- **[PND-UNPIVOT]** — Ingest a **long** value-axis result cleanly (tenor/strike
+  as a key column). Narrowed by the ClickHouse boundary in §8 of the note:
+  unpivot and pivot are `arrayZip`+`ARRAY JOIN` and conditional aggregation
+  respectively, so they belong in the query — pond's job is to receive the long
+  shape, not reshape a wide row in JS.
+- **[PND-XSECT]** — Rank/reduce across partitions. `partitionBy` gets you
+  per-symbol; nothing ranks across.
+
+### Numerical classes (RFC — not adopted)
+
+[`docs/rfcs/numerical-classes.md`](docs/rfcs/numerical-classes.md) argues that
+accuracy under partitioning is a **property of an operator's form**, not a
+measurement of a workload — prompted by a shipped `zScore` accuracy figure that
+turned out to be an artifact of the author's own test data (a Codex pass found
+a legal input giving **38% relative error** where the docs claimed 2.6e-6).
+
+Three classes (exact / bounded / unbounded), a composition rule that makes them
+survive arbitrary agent-assembled pipelines, and enforcement in the registry
+alongside `unit` — because a docstring is not a control surface for an agent.
+The unit of classification is the **11 kernels**, not the ~120 studies, so the
+work is bounded and future studies inherit. Two consequences fall out before
+any code: K7 (rolling regression) and K8 (bivariate moments) are `unbounded`,
+and K6 (path-dependent state machines) is not partitionable at all.
+
+Extended to the **whole** composable surface, not just the financial kernels:
+core operators (`align`/`fill`/`aggregate`/`diff`/`pctChange`/…), the transforms
+an agent reaches for when exploring visually (`byValue`, `byColumn` histograms),
+and the folds that become facts. Two findings there stand independent of any
+parallelism: **`pctChange` is unbounded and already shipped unflagged** (it
+divides by the previous value), and a fourth idea is needed — **discretising**
+operators (bins, ranks, crossings, `argmax`) turn _any_ upstream inexactness
+into a categorical difference, so `bollinger` → "crossed the band" is discretely
+unstable on `main` today from blocked summation alone, with no workers involved.
+
+Not a commitment. Red-team it before anything commits to it.
+
 ### `@pond-ts/financial`
 
 Calendar engine + trading-time axis + the first studies batch (10 studies,
@@ -449,22 +574,64 @@ whether it stays one.
   `LiveSource<S>`, because its `on('event')` overload widens the listener's
   event type. Narrow the overload, or give the incremental operators their own
   named contract. Touches a public type — needs sign-off.
-- **[PND-PROCPAR]** — Worker-thread parallel node execution. Measured
-  (spike committed at `spikes/worker-threads/`): the real 5-study strategy
-  stack, one study per worker over `SharedArrayBuffer`-resident inputs, goes
-  **66.3 → 27.4 ms (2.42×)** with **bit-identical** answers — and polars' own
-  st→mt data shows inter-operator parallelism is the only kind that pays at
-  this size (`sma`/`ema`/reductions 1.00× from 10 threads; `bollinger` 3.1×,
-  stack 4.1×). The plan layer already provides the hard parts: plans are JSON
-  - a registry both isolates import (the closure wall dissolved), `specId`
-    gives dedup/cache/deterministic merge, columns are the wire shape. Needs an
-    async engine path (ready-set dispatch over the compiled DAG), the financial
-    studies as registry ops over shared rolling primitives (estimated ~15 ms
-    critical path — polars-mt territory — via mean/std dedup), and pool
-    plumbing. `fromColumns` already adopts SAB views zero-copy, so residency
-    needs no core change. Queues behind [PND-PROCIDENT] like every interactive
-    consumer. Full assessment:
-    [worker-threads-assessment-2026-07.md](docs/notes/worker-threads-assessment-2026-07.md).
+- **[PND-PROCPAR]** — Worker-thread parallelism. Two shapes; the **throughput**
+  half has shipped and the **latency** half has not.
+
+  **Shipped: `HostPool` (`@pond-ts/process/pool`)** — whole requests routed
+  across workers, each holding a long-lived `Host`. No engine change: a plan
+  is JSON, a registry is a module both isolates import, and a result's columns
+  travel as transferable buffers. Measured
+  (`packages/process/scripts/perf-pool.mjs`): **3.1–4.0× on distinct requests**
+  at every size from 0.5 to 10 ms each — but **~0.01× on repeated ones**, where
+  the in-process memo returns the same column for nothing and a pool ships
+  every answer regardless. **Cache-hit rate decides it, not request size**; an
+  earlier "crossover below 2 ms" reading was a warm-up artifact (one warm-up
+  request per worker against a JIT-warm baseline — the same V8 tier cliff
+  `blocked-summation.md` documents). Also measured: the same op writing a
+  `Float64Array` rather than `new Array(n)` beats eight workers on the boxed
+  version from a single thread, so op shape matters more than worker count.
+
+  **Also open: parallel-scan kernels ([PND-SCANKERN], new).** The note's
+  "sequential recurrences cannot be helped" was wrong. `y[i] = a·y[i-1] + b[i]`
+  is the textbook parallel-scan case; measured (`spikes/parallel-scan/`) EMA
+  over 2M rows goes **4.45 → 1.42 ms (3.14×)** with **99.91% of cells
+  bit-identical** — a decaying recurrence's correction term underflows to zero
+  a few hundred cells into each chunk, so most cells are literally the same
+  arithmetic. Two barriers, no log-depth tree. Needs **no process-engine
+  change** (raw workers over a `SharedArrayBuffer`), so it belongs to the
+  kernels and is not blocked behind the injection seam. Costs: ~72 µs per
+  barrier, so it needs work above ~150 µs and will not pay below ~100k rows;
+  and SAB-backed (or copied) inputs. The prize is not `ema` — already 2.08 ms
+  — but that the same reasoning reaches the operations that _are_ slow, and
+  that "inherently sequential" is a far weaker claim than it looks.
+
+  **Rolling windows partition — SHIPPED as [PND-SCANKERN].**
+  `withWorkers` in `@pond-ts/financial/parallel` (Node-only, opt-in at ingest;
+  studies stay synchronous via `Atomics.wait`, which is also why it is absent
+  in browsers). One accelerator hook on `rollingColumns` serves `sma`,
+  `envelope`, `bollinger` and `zScore`. Measured over 500k bars, 8 workers:
+  1.83× / 1.32× / 1.86× / 2.45×, three-study stack 1.98×. Answers shift
+  slightly — 3.9e-14 to 5.1e-13 for everything except **`zScore` at 2.6e-6
+  across ~0.8% of cells**, which divides by a near-zero rolling σ; documented
+  as the reason the opt-in is a choice rather than a default. Below 100k rows a
+  registered series still runs sequentially, bit-identical. The bare kernel
+  partitions 13.8× (`spikes/parallel-rolling/`); the gap to the shipped numbers
+  is the arena copies and each study's own pointwise arithmetic, both of which
+  stay on the main thread so that one hook can serve every study without a
+  second copy of any study's logic. Remaining in this family: `ema` /
+  `cumulative` via parallel scan (`spikes/parallel-scan/`, 3.14× measured,
+  99.91% bit-identical), not yet wired to a study.
+
+  **Remaining: the latency half** — split one composite query's nodes across
+  workers (spike measured 2.42× on the 5-study stack, bit-identical). Blocked
+  on an engine change the spike did not surface: a node's value can only be
+  produced by its own `compute`, which is contractually pure, so a result
+  computed in another isolate **has nowhere to land**. That injection seam, plus
+  a ready-set scheduler over the compiled DAG and the financial studies as
+  registry ops over shared rolling primitives (mean/std dedup → estimated ~15 ms
+  critical path, polars-mt territory), is the rest of this ticket. Full
+  assessment:
+  [worker-threads-assessment-2026-07.md](docs/notes/worker-threads-assessment-2026-07.md).
 
 ### Process demo — composer / request / results
 

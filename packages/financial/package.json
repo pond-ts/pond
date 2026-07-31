@@ -2,7 +2,7 @@
   "name": "@pond-ts/financial",
   "version": "0.53.1",
   "private": false,
-  "description": "Financial-market domain library on pond-ts — trading calendars, session-aligned bar building, and market analytics",
+  "description": "Financial-market domain library on pond-ts \u2014 trading calendars, session-aligned bar building, and market analytics",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -21,6 +21,10 @@
     "./fluent": {
       "types": "./dist/fluent.d.ts",
       "import": "./dist/fluent.js"
+    },
+    "./parallel": {
+      "types": "./dist/parallel/index.d.ts",
+      "import": "./dist/parallel/index.js"
     }
   },
   "engines": {

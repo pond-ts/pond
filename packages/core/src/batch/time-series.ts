@@ -1452,23 +1452,93 @@ export class TimeSeries<S extends SeriesSchema> {
   _partitionByColumns(by: ReadonlyArray<string>): Map<string, TimeSeries<S>> {
     const columnarStore = this.#store.store;
     const length = columnarStore.length;
-    const encode = this.#partitionKeyEncoder(by);
-    const groups = new Map<string, number[]>();
-    for (let i = 0; i < length; i += 1) {
-      const key = encode(i);
-      let indices = groups.get(key);
-      if (indices === undefined) {
-        indices = [];
-        groups.set(key, indices);
+
+    // Row indices per group, in first-encountered group order. Two
+    // strategies, both **two-pass**: count first, then fill an exactly
+    // sized `Int32Array`. The single-pass version pushed into a
+    // `number[]` per group and converted each to a typed array at the
+    // end — one boxed push per row plus a full copy per group. Counting
+    // costs a second scan of one column and removes both.
+    const keys: string[] = [];
+    let members: Int32Array[];
+
+    const dict =
+      by.length === 1
+        ? dictionaryPartitionSource(columnarStore, by[0]!)
+        : undefined;
+    if (dict !== undefined) {
+      // **Dict-encoded fast path.** A dictionary-backed string column
+      // already carries an integer per row, so the partition key never
+      // has to be built or hashed: group by the dictionary index and
+      // index an array, instead of materialising a string per row and
+      // hashing it into a `Map`. This is the panel shape — one row per
+      // (symbol, bar) — and symbols are exactly what dict encoding is for.
+      const { indices, dictionary, validity } = dict;
+      const slots = dictionary.length + 1; // +1 for the missing bucket
+      const MISSING = dictionary.length;
+      const counts = new Int32Array(slots);
+      const slotOf = new Int32Array(length);
+      for (let i = 0; i < length; i += 1) {
+        const defined =
+          validity === undefined || (validity[i >> 3]! & (1 << (i & 7))) !== 0;
+        const slot = defined ? indices[i]! : MISSING;
+        slotOf[i] = slot;
+        counts[slot]! += 1;
       }
-      indices.push(i);
+      // First-encountered order, matching the Map-insertion order the
+      // previous implementation produced and callers may rely on.
+      const order = new Int32Array(slots).fill(-1);
+      for (let i = 0; i < length; i += 1) {
+        const slot = slotOf[i]!;
+        if (order[slot] === -1) {
+          order[slot] = keys.length;
+          keys.push(slot === MISSING ? ' undefined' : dictionary[slot]!);
+        }
+      }
+      members = keys.map(() => new Int32Array(0));
+      const buffers: Int32Array[] = new Array(keys.length);
+      for (let slot = 0; slot < slots; slot += 1) {
+        const at = order[slot]!;
+        if (at !== -1) buffers[at] = new Int32Array(counts[slot]!);
+      }
+      const fill = new Int32Array(keys.length);
+      for (let i = 0; i < length; i += 1) {
+        const at = order[slotOf[i]!]!;
+        buffers[at]![fill[at]!++] = i;
+      }
+      members = buffers;
+    } else {
+      // General path: still two-pass, but the key must be built.
+      const encode = this.#partitionKeyEncoder(by);
+      const index = new Map<string, number>();
+      const slotOf = new Int32Array(length);
+      const counts: number[] = [];
+      for (let i = 0; i < length; i += 1) {
+        const key = encode(i);
+        let at = index.get(key);
+        if (at === undefined) {
+          at = keys.length;
+          index.set(key, at);
+          keys.push(key);
+          counts.push(0);
+        }
+        slotOf[i] = at;
+        counts[at]! += 1;
+      }
+      const buffers = counts.map((n) => new Int32Array(n));
+      const fill = new Int32Array(keys.length);
+      for (let i = 0; i < length; i += 1) {
+        const at = slotOf[i]!;
+        buffers[at]![fill[at]!++] = i;
+      }
+      members = buffers;
     }
 
     const result = new Map<string, TimeSeries<S>>();
-    for (const [key, rowIndices] of groups) {
-      const sub = withRowSelection(columnarStore, new Int32Array(rowIndices));
+    for (let g = 0; g < keys.length; g += 1) {
+      const sub = withRowSelection(columnarStore, members[g]!);
       result.set(
-        key,
+        keys[g]!,
         TimeSeries.#fromTrustedStore(
           this.name,
           this.schema,
@@ -1487,10 +1557,34 @@ export class TimeSeries<S extends SeriesSchema> {
    * membership check so that path is materialization-free too.
    */
   _distinctPartitionKeys(by: ReadonlyArray<string>): string[] {
-    const length = this.#store.store.length;
+    const store = this.#store.store;
+    const length = store.length;
+    const keys: string[] = [];
+
+    // Same dict-encoded fast path as `_partitionByColumns` ([PND-SPLITCOST]):
+    // a dictionary-backed column carries an integer per row, so distinct
+    // keys are a seen-flag per dictionary slot rather than a string built
+    // and hashed per row.
+    const dict =
+      by.length === 1 ? dictionaryPartitionSource(store, by[0]!) : undefined;
+    if (dict !== undefined) {
+      const { indices, dictionary, validity } = dict;
+      const MISSING = dictionary.length;
+      const seen = new Uint8Array(dictionary.length + 1);
+      for (let i = 0; i < length; i += 1) {
+        const defined =
+          validity === undefined || (validity[i >> 3]! & (1 << (i & 7))) !== 0;
+        const slot = defined ? indices[i]! : MISSING;
+        if (seen[slot] === 0) {
+          seen[slot] = 1;
+          keys.push(slot === MISSING ? ' undefined' : dictionary[slot]!);
+        }
+      }
+      return keys;
+    }
+
     const encode = this.#partitionKeyEncoder(by);
     const seen = new Set<string>();
-    const keys: string[] = [];
     for (let i = 0; i < length; i += 1) {
       const key = encode(i);
       if (!seen.has(key)) {
@@ -5863,4 +5957,48 @@ function alignLinearAt<S extends SeriesSchema>(
   }
 
   return result as EventDataForSchema<S>;
+}
+
+/**
+ * The integer-per-row view of a **dictionary-encoded** string column, if
+ * `name` is one — [PND-SPLITCOST].
+ *
+ * `partitionBy` on a single string column used to build a key string per
+ * row and hash it into a `Map`. A dict-encoded column already stores an
+ * integer per row, so the grouping can index an array instead: no string
+ * is materialised, nothing is hashed, and the common case (partitioning a
+ * panel by symbol) is exactly what dictionary encoding exists for.
+ *
+ * Returns `undefined` for anything else — a fallback-storage string
+ * column, a chunked one, a non-string kind — and the general path runs.
+ */
+function dictionaryPartitionSource(
+  store: { columns: ReadonlyMap<string, unknown> },
+  name: string,
+):
+  | {
+      indices: Int32Array;
+      dictionary: ReadonlyArray<string>;
+      validity: Uint8Array | undefined;
+    }
+  | undefined {
+  const col = store.columns.get(name) as
+    | {
+        kind?: string;
+        storage?: string;
+        indices?: Int32Array;
+        dictionary?: ReadonlyArray<string>;
+        validity?: { bits: Uint8Array };
+      }
+    | undefined;
+  if (col === undefined || col.kind !== 'string' || col.storage !== 'packed') {
+    return undefined;
+  }
+  if (col.indices === undefined || col.dictionary === undefined)
+    return undefined;
+  return {
+    indices: col.indices,
+    dictionary: col.dictionary,
+    validity: col.validity?.bits,
+  };
 }

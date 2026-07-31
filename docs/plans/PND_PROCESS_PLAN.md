@@ -1262,3 +1262,91 @@ demo's worker topology is coupled to it (48.6 ms boxed vs 0.5 ms
 transferred per 500k-value answer). This ticket arriving is the friction
 signal the RFC model wants — a consumer with measurements — not a queue
 jump.
+
+### [PND-PROCPAR] — Worker threads: throughput half SHIPPED, latency half open
+
+Two shapes, and the ticket is only half done. Assessment:
+[worker-threads-assessment-2026-07.md](../notes/worker-threads-assessment-2026-07.md).
+
+**Shipped — `HostPool`, `@pond-ts/process/pool`.** N workers, each a
+long-lived `Host`; the pool is a router. Nothing in the engine changed,
+which is the point: a plan is JSON, a registry is a module _both_
+isolates import (functions cannot be cloned, so the caller names a setup
+module rather than passing a value), and a result's columns cross as
+transferable buffers via `columnBuffers` / `columnFromBuffers`.
+
+Measured (32 requests/batch, 8 workers, median of 3 distinct batches):
+
+| workload | per request | speedup   |
+| -------- | ----------- | --------- |
+| distinct | 0.5 ms      | **4.02×** |
+| distinct | 1.1 ms      | 3.14×     |
+| distinct | 2.8 ms      | 3.39×     |
+| distinct | 10.3 ms     | 3.17×     |
+| repeated | ~0 ms       | **0.01×** |
+
+**Cache-hit rate decides it, not request size.** On distinct work the pool
+wins 3.1–4.0× at every size swept; on repeated work it is catastrophic,
+because in-process a re-asked question is a memo hit returning the same
+column object for nothing while a pool copies and ships every answer
+regardless, and each worker warms its own graph. Pooling and caching
+compete rather than compose.
+
+An earlier reading of this table reported a **crossover** — the pool
+losing below ~2 ms per request. That was a warm-up artifact, and from a
+cause this repo had already written down: one warm-up request per worker
+leaves it running unoptimised code while the in-process baseline is fully
+JIT-warm, and V8's optimising tier is a cliff near 800 iterations
+([blocked-summation.md](../notes/blocked-summation.md)). Third time that
+cliff has produced a false result in this codebase; the benchmark now
+medians over distinct batches with warm-up plans outside every timed
+batch, and says so in its header.
+
+**The op matters more than the worker count.** The same rolling mean,
+32 requests over 2M rows:
+
+| op output              | in-process | pool(8) | speedup |
+| ---------------------- | ---------- | ------- | ------- |
+| boxed (`new Array`)    | 1849 ms    | 632 ms  | 2.92×   |
+| typed (`Float64Array`) | **482 ms** | 121 ms  | 3.98×   |
+
+Fixing the op was worth 3.8× on one thread — more than eight workers
+bought the unfixed one. Boxing also parallelises worse, contending on
+memory bandwidth and per-isolate GC, which is the one resource extra
+workers cannot add. Corollary worth keeping: **a high pool speedup can be
+a symptom of a slow op.**
+
+Two bugs found while building it, both worth knowing:
+
+- A worker that died **before** any request left the pool silently
+  broken — only in-flight requests were rejected, so everything sent
+  afterwards hung forever. The pool now latches a fatal state and fails
+  fast. It deliberately does not self-heal: replacing a worker would
+  discard its warm graph without telling anyone.
+- Locating the worker entry relative to `import.meta.url` resolves to a
+  `.ts` file when the package is loaded from source (a test runner, a
+  bundler), which no worker can execute. Now a named error at `start`
+  rather than a hang.
+
+**Open — the latency half.** Splitting one composite query's nodes across
+workers (spike: 2.42× on the 5-study stack, bit-identical answers) needs
+an engine change the spike did not surface: `Node.compute` is the only
+producer of a node's value and is contractually pure, so **a result
+computed in another isolate has nowhere to land**. Required, in order:
+
+1. **A value-injection seam** on the node layer — set an output plus its
+   version without running `compute`, without breaking the
+   input-version-compare that makes the memo correct. This is the real
+   blocker and deserves its own design pass.
+2. **A ready-set scheduler** over the compiled DAG. Cheaper than it
+   sounds: `run()`'s `warm(id)` is already the single point where compute
+   happens, and warming in topological order makes every subsequent pull
+   shallow.
+3. **The financial studies as registry ops** over shared rolling
+   primitives, so `bollinger` and `zScore` dedup their mean/std nodes by
+   `specId` — the estimated ~15 ms critical path that would put the stack
+   in polars-mt territory.
+
+Sequencing note: the throughput half shipped ahead of [PND-PROCIDENT]
+because it needed nothing from the engine. The latency half does not get
+that exemption.
