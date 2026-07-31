@@ -210,8 +210,10 @@ Rows must be in non-decreasing key order, same as the constructor; pass
 - **Number** — milliseconds since the Unix epoch, UTC. No ambiguity.
 - **ISO string** — parsed by the same rules as `Date.parse`. If the string
   carries an offset (`Z`, `+02:00`), the offset is used as-is. If it doesn't (a
-  **wall-clock string** like `'2025-01-01T09:00'`), you must supply
-  `parse.timeZone` or the library doesn't know what wall you mean.
+  **wall-clock string** like `'2025-01-01T09:00'`), the library has no way to
+  know which wall you mean and reads it in `parse.timeZone` — which
+  **defaults to UTC**. Supply it whenever the data isn't UTC: getting this
+  wrong is silent, not loud.
 
 #### Wall-clock strings: `parse.timeZone`
 
@@ -241,7 +243,7 @@ Does your input need it?
 | Number (ms since epoch)       | `1735689600000`            | Ignored — UTC by definition.       |
 | String with offset (`Z`)      | `'2025-01-01T09:00Z'`      | Ignored — offset is authoritative. |
 | String with offset (`±hh:mm`) | `'2025-01-01T09:00+01:00'` | Ignored — offset is authoritative. |
-| Wall-clock string (no offset) | `'2025-01-01T09:00'`       | **Required.** Throws without it.   |
+| Wall-clock string (no offset) | `'2025-01-01T09:00'`       | **Read it.** Defaults to UTC.      |
 
 If your upstream source is a spreadsheet, a log scraper, or a database export
 without a zone column, you're almost certainly in the wall-clock row — pass
@@ -821,7 +823,9 @@ identically.
 
 ## Common ingest issues
 
-### Wall-clock strings without `parse.timeZone`
+### Wall-clock strings silently become UTC
+
+This is the sharpest edge on the page, because nothing goes wrong loudly:
 
 ```ts
 TimeSeries.fromJSON({
@@ -830,11 +834,19 @@ TimeSeries.fromJSON({
   rows: [['2025-01-01T09:00', 0.42]],
   // no parse.timeZone
 });
-// Throws — ambiguous local string; needs a zone context.
+// No error. `parse.timeZone` defaults to 'UTC', so this is 09:00Z —
+// an hour off if the data was actually 09:00 in Madrid.
 ```
 
-Either add `parse.timeZone`, or switch to an offset-qualified string
-(`'2025-01-01T09:00Z'`) or a number (`Date.parse('2025-01-01T09:00Z')`).
+An ambiguous local string doesn't throw; it resolves in `parse.timeZone`,
+which defaults to `'UTC'`. If your timestamps came out of a spreadsheet, a log
+scraper, or a database export without a zone column, that default is a
+wrong-answer bug that no test will surface for you — every timestamp is
+consistently shifted, so the series still looks plausible.
+
+Pass `parse.timeZone` explicitly whenever the source isn't UTC, or remove the
+ambiguity upstream with an offset-qualified string (`'2025-01-01T09:00Z'`) or
+a number (`Date.parse('2025-01-01T09:00Z')`).
 
 ### Mixed timestamp formats
 
