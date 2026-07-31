@@ -51,6 +51,18 @@ types (`ArrowTableLike`, `ArrowVectorLike`, `ArrowDataLike`, `ArrowFieldLike`,
 `FromArrowValueOptions`) live in
 `packages/core/src/batch/operators/from-arrow.ts`.
 
+Both classes also export **columnar JSON** — `toColumns()`, one plain array
+per column with gaps as `null`, the exact `{ name, schema, columns }` envelope
+`fromColumns()` takes back (`packages/core/src/batch/operators/to-columns.ts`).
+A **two-edged key** (`timeRange` / `interval`) flattens into extra columns
+named off it — `timeRange` + `timeRangeEnd`, `interval` + `intervalEnd` +
+`intervalLabel` — the convention `toArrow` already emitted, now read by
+`fromColumns` and by `fromArrow({ keyKind })` as well
+(`packages/core/src/batch/operators/flat-keys.ts` owns the naming + collision
+rules). Columnar wire types live beside their row siblings:
+`TimeSeriesJsonColumns` / `FlatKeyColumns` / `TimeSeriesColumnarInput` /
+`TimeSeriesColumnarOutput` in `packages/core/src/schema/json.ts`.
+
 Going the other way, `TimeSeries.toArrow()` / `ValueSeries.toArrow()` export
 the columns **in Arrow's memory layout with no copy** — pond's validity bitmap
 is already LSB-first one-bit-per-value, numerics are a contiguous
@@ -62,10 +74,8 @@ instead of a re-ingest. Arrow-export types (`ArrowExport`, `ArrowExportField`,
 `ArrowExportType`, `ToArrowOptions`) live in
 `packages/core/src/batch/operators/to-arrow.ts`.
 
-`ValueSeries` also exports rows (`toRows()`, `toObjects()`, `toJSON()`) and
-**columnar JSON** (`toColumns()` — one plain array per column, gaps as `null`,
-the exact envelope `fromColumns()` takes back;
-`packages/core/src/batch/operators/to-columns.ts`). Value-axis wire types
+`ValueSeries` also exports rows (`toRows()`, `toObjects()`, `toJSON()`).
+Value-axis wire types
 (`ValueSeriesJsonInput`, `ValueSeriesJsonRow`, `ValueSeriesJsonObjectRow`,
 `ValueSeriesJsonOutputArray`, `ValueSeriesJsonOutputObject`,
 `ValueSeriesJsonCell`, `ValueSeriesRow`, `ValueSeriesObjectRow`,
@@ -88,7 +98,7 @@ the exact envelope `fromColumns()` takes back;
   `atOrBefore(key)`, `atOrAfter(key)`, `nearest(key)`, `find()`, `some()`,
   `every()`
 - **Export/access**: `column(name)`, `keyColumn()`, `toRows()`, `toObjects()`,
-  `toArray()`, `toJSON()`, `toPoints()`
+  `toArray()`, `toJSON()`, `toColumns()`, `toArrow()`, `toPoints()`
 - **Temporal range**: `timeRange()`, `overlaps()`, `contains()`,
   `intersection()`, `overlapping(range)`, `containedBy(range)`, `trim(range)`,
   `after()`, `before()`, `within()`, `tail(duration)`

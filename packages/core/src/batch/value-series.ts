@@ -157,7 +157,6 @@ export class ValueSeries<VS extends ValueSeriesSchema> {
       schema: schema as unknown as ColumnSchema,
       columns,
       sort,
-      makeKey: (begin, count) => new ValueKeyColumn(begin, count),
     });
     return new ValueSeries(name, schema, store);
   }
@@ -220,7 +219,6 @@ export class ValueSeries<VS extends ValueSeriesSchema> {
       schema: schema as unknown as ColumnSchema,
       columns,
       sort,
-      makeKey: (begin, count) => new ValueKeyColumn(begin, count),
     });
     return new ValueSeries(name, schema, store);
   }
@@ -278,7 +276,6 @@ export class ValueSeries<VS extends ValueSeriesSchema> {
       columns,
       sort: options.sort ?? false,
       adopted,
-      makeKey: (begin, count) => new ValueKeyColumn(begin, count),
     });
     return new ValueSeries(name, schema as unknown as VS, store);
   }

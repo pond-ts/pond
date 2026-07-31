@@ -136,12 +136,16 @@ PR (#564, after merging main).
   the sections above and substitute the axis for time." What's spelled out is
   only what actually differs: no timestamp parsing / no `parse.timeZone`,
   `axis` required on `fromArrow`, the axis read unscaled, and `toColumns()`.
-- **The `TimeSeries.toColumns()` asymmetry is stated, not hidden.** The page
-  says plainly that it doesn't exist yet and why (the exporter is
-  store-generic and handles a `time` key, but the two-edged `timeRange` /
-  `interval` wire shape is undecided — [PND-TSCOLS]). A reader who notices
-  `ValueSeries` has a columnar door out and `TimeSeries` doesn't should find
-  the answer on the page rather than assume it's an oversight.
+- **The `TimeSeries.toColumns()` asymmetry was stated, not hidden — and then
+  it evaporated.** The section originally said plainly that `toColumns` was
+  `ValueSeries`-only, and why (store-generic exporter, but the two-edged
+  `timeRange` / `interval` wire shape undecided — [PND-TSCOLS]). [PND-TSCOLS]
+  then shipped it and [PND-FLATKEY] decided the wire shape, both while this
+  PR was open, so the asymmetry and its explanation came back out. The
+  instinct still generalizes: **document a gap with its reason rather than
+  omitting it**, and the prose stays cheap to retract when the gap closes —
+  a paragraph naming a specific parked decision is easy to find and delete,
+  where a silent omission leaves nothing to notice.
 - **The deep dive stays the tour.** `value-series.mdx` (rewritten by
   [PND-VSIO] into Doors in / Doors out) keeps door-by-door depth plus reading
   and slicing; `creating.mdx` cross-links to it rather than competing.

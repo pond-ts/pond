@@ -22,9 +22,10 @@ schema contract and the same operator surface; the live door builds a
 | Events arriving one at a time, forever                  | `new LiveSeries(…)` + `push` | [Live data](#live-data)                         |
 | Rows keyed by a value, not a time                       | `ValueSeries.from*`          | [ValueSeries](#valueseries)                     |
 
-Going the other way: `toJSON` serializes for the wire, `toRows` / `toObjects`
-hand back in-memory rows, and `toArrow` hands the raw column buffers to another
-columnar engine.
+Going the other way, each door has an inverse: `toJSON` serializes rows for the
+wire, `toRows` / `toObjects` hand back in-memory rows, `toColumns` emits the
+columnar-JSON envelope `fromColumns` reads back, and `toArrow` hands the raw
+column buffers to another columnar engine.
 
 Two smaller doors round out the set: `TimeSeries.fromEvents(events, { schema })`
 for `Event` objects you already hold, and
@@ -146,7 +147,7 @@ kind:
 | Kind          | JSON shape                                                         |
 | ------------- | ------------------------------------------------------------------ |
 | `'time'`      | `number` (ms since epoch) or ISO string (`"2025-01-01T00:00:00Z"`) |
-| `'timerange'` | `[startMs, endMs]` or `{ start, end }`                             |
+| `'timeRange'` | `[startMs, endMs]` or `{ start, end }`                             |
 | `'interval'`  | `[label, startMs, endMs]` or `{ value, start, end }`               |
 
 Everything else is the obvious thing — numbers become numbers, strings become
@@ -156,7 +157,7 @@ back to `undefined` on ingest).
 :::note[Coming from pondjs?]
 pondjs serialized `TimeRangeEvent` as a nested shape — `[[startMs, endMs], data]`
 — with the temporal key wrapped inside the event payload. pond-ts flattens: the
-timerange key is the first positional element (or the `timerange` key on an
+timeRange key is the first positional element (or the `timeRange` key on an
 object row), and payload columns follow. A legacy pondjs JSON payload needs a
 small remap before it round-trips through `TimeSeries.fromJSON`.
 :::
@@ -379,7 +380,7 @@ rows just to hand them to `fromJSON` costs a transpose pass you don't need — a
 throws away the fact that pond's own storage is columnar underneath, so a
 columnar input can often be adopted rather than copied.
 
-Three variants, same underlying ingest engine:
+Three ways in, one ingest engine:
 
 | Input                                         | Door          | Cost                                     |
 | --------------------------------------------- | ------------- | ---------------------------------------- |
@@ -387,13 +388,17 @@ Three variants, same underlying ingest engine:
 | `{ time: Float64Array, close: Float64Array }` | `fromColumns` | **Zero-copy** — buffers adopted          |
 | A decoded Apache Arrow `Table`                | `fromArrow`   | **Zero-copy** for single-chunk `Float64` |
 
-All three share the same rules for missing values, ordering, and `sort` — see
-[Missing values and ordering](#missing-values-and-ordering).
+And two ways back out — [`toColumns`](#columnar-out-tocolumns) for a
+JSON-shaped payload, [`toArrow`](#arrow) for the buffers themselves. Each
+ingress pairs with its inverse, so a columnar payload round-trips.
 
-**Supported kinds.** The columnar doors build a `time`-keyed series with
-`number` and `string` value columns. Other key kinds (`interval`, `timerange`)
-and other value kinds (`boolean`, arrays) throw for now — the row doors take
-those.
+All of them share the same rules for missing values, ordering, and `sort` —
+see [Missing values and ordering](#missing-values-and-ordering).
+
+**Supported kinds.** Any key kind — a `timeRange` or `interval` key flattens
+into extra columns, see [Two-edged keys](#two-edged-keys) — and `number` /
+`string` value columns. `boolean` and array columns export fine but can't be
+ingested back; the row doors take those.
 
 :::info[Value-keyed data has its own door]
 `fromColumns` builds a **time**-keyed series. If your rows are keyed by a
@@ -513,6 +518,99 @@ fraction of a millisecond per column, instead of a multi-frame freeze. A plain
 specifically wants the columnar + typed-array path.
 :::
 
+### Columnar out: `toColumns`
+
+`series.toColumns()` is the inverse — the same `{ name, schema, columns }`
+envelope, one plain array per column, which `fromColumns` takes straight back:
+
+```ts
+// In process, the round trip is typed end to end — no cast, and the result
+// is a TimeSeries<typeof schema>, not a widened one.
+const restored = TimeSeries.fromColumns(series.toColumns());
+```
+
+That assignability is the contract: `toColumns()`'s return type is typed per
+column (`{ time: number[]; cpu: Array<number | null>; … }`) and is accepted by
+`fromColumns` as it stands. Gaps come out as `null` (`NaN` isn't JSON, and a
+`Float64Array` doesn't stringify as an array), which is what makes the envelope
+safe to send:
+
+```ts
+const wire = JSON.stringify(series.toColumns());
+// … over HTTP / a WebSocket / postMessage …
+const parsed = JSON.parse(wire) as ReturnType<typeof series.toColumns>;
+const restored = TimeSeries.fromColumns(parsed);
+```
+
+Across a wire the types are your assertion to make, not the library's —
+`JSON.parse` returns `any`, so annotate it (as above) if you want the restored
+series typed rather than widened.
+
+**It is dramatically cheaper than the row export.** `toColumns` reads the
+columnar store directly, where `toJSON` materializes a row per event — measured
+at 100k rows × 6 columns, **~2.5–3 ms vs ~26 ms** (an 8–10× gap across runs)
+that widens with row count, because the row door allocates per row and this one
+allocates per column. Reach for it whenever the consumer is column-oriented or
+the payload is large. In-process, going to another columnar engine, `toArrow` is
+cheaper still — ~0.006 ms — because it hands over the buffers rather than
+copying them.
+
+**`boolean` / array columns** export fine but can't be ingested back (the
+columnar engine takes `number` and `string`). The return type says so, so that
+round trip fails to _compile_ rather than at runtime; `select()` them out, or
+use the row doors.
+
+`ValueSeries` has the same method with the same contract.
+
+### Two-edged keys
+
+A `timeRange` or `interval` key — what `aggregate` produces — spans two edges,
+and JSON has no interval-of-time type. Every columnar door flattens it into
+extra columns named off the key:
+
+```ts
+const daily = trades.aggregate(Sequence.every('1d'), { price: 'avg' });
+
+daily.toColumns();
+// {
+//   schema:  [{ name: 'interval', kind: 'interval' }, { name: 'price', … }],
+//   columns: {
+//     interval:      [ …begins ],
+//     intervalEnd:   [ …ends ],
+//     intervalLabel: [ …labels ],
+//     price:         [ … ],
+//   },
+// }
+
+TimeSeries.fromColumns(daily.toColumns()); // round-trips, key and all
+```
+
+A `timeRange` key is `timeRange` + `timeRangeEnd`; an `interval` key adds
+`intervalLabel`. **The names are fully determined** — a key column's name always
+equals its kind — so there's nothing to configure. Note what stays put: the
+`schema` keeps declaring the _logical_ key, and the edge columns are derived
+from it rather than described by it, which is what lets the envelope round-trip
+as the series' own schema.
+
+This is the same convention `toArrow` has always emitted (Arrow has no interval
+type either), so one payload spelling serves the JSON and Arrow doors alike —
+`fromArrow(table, { keyKind: 'interval' })` reads the Arrow side back.
+
+Two consequences worth knowing:
+
+- **A value column may not take a derived name.** A column called
+  `timeRangeEnd` alongside a `timeRange` key means one array with two
+  claimants, so both `fromColumns` and `toColumns` throw, naming the collision.
+- **Ordering is by `(begin, end)`.** Equal begins must be non-decreasing in
+  `end` — matching the row door. `sort: true` sorts the same way. Interval
+  labels must be present in every row and all of one type, again matching the
+  row door.
+
+Why flattened rather than `[[begin, end], …]` pairs? Because the substrate
+stores the edges as separate buffers, a paired spelling would need a per-row
+un-zip on the way in — a row walk in the middle of the door that exists to
+avoid row walks.
+
 ### Arrow
 
 pond does **not** depend on `apache-arrow`. You bring your own Arrow, decode the
@@ -545,6 +643,7 @@ schema.)
 | `time`     | the field named `'time'`             | Which column is the time key. Throws if absent.                                              |
 | `timeUnit` | read from the Arrow `Timestamp` type | `'second' \| 'millisecond' \| 'microsecond' \| 'nanosecond'`. An explicit value always wins. |
 | `columns`  | every non-time field                 | Value columns to include, in order.                                                          |
+| `keyKind`  | `'time'`                             | `'timeRange'` / `'interval'` to read a [flattened two-edged key](#two-edged-keys) back.      |
 | `sort`     | `false`                              | Sort by time key first (disables adoption).                                                  |
 
 **Column handling.** The time key accepts `Timestamp`, `Date32`/`Date64`, and
@@ -567,9 +666,9 @@ rather than an adopt, and the aliasing warning above doesn't apply to it.
 
 #### `toArrow`
 
-The counterpart, and the only `TimeSeries` export door that isn't row-shaped.
-pond's columnar substrate is already laid out the way Arrow wants: the validity
-bitmap is
+The other columnar door out — `toColumns` copies into JSON-safe arrays, this one
+hands over the buffers themselves. pond's columnar substrate is already laid out
+the way Arrow wants: the validity bitmap is
 LSB-first, one bit per value, 1 = valid; numeric columns are a contiguous
 `Float64Array`; booleans a packed bitmap; dict-encoded strings `Int32Array`
 indices plus a dictionary. So `toArrow` hands back the buffers pond is already
@@ -638,8 +737,8 @@ page has a twin:
 | `TimeSeries.fromArrow`      | `ValueSeries.fromArrow(table, { axis })` |
 | `series.toJSON()`           | `chain.toJSON()`                         |
 | `series.toRows/toObjects()` | `chain.toRows/toObjects()`               |
+| `series.toColumns()`        | `chain.toColumns()`                      |
 | `series.toArrow()`          | `chain.toArrow()`                        |
-| — (see below)               | `chain.toColumns()`                      |
 
 They share **one ingest engine**, so the monotonic-key contract, `sort: true`,
 the gap rules, and the zero-copy adoption behave identically — reread the
@@ -688,20 +787,9 @@ payload, and strict per-cell kind checking (a `NaN` in a `number` column is
 door in the same way — a non-finite number is a gap, and `required` isn't
 checked, because a decoded buffer can't tell "absent" from "not a number".
 
-The one thing `ValueSeries` has that `TimeSeries` doesn't yet is the columnar
-door **out**:
-
-```ts
-const payload = chain.toColumns();
-// { name, schema, columns: { strike: [...], iv: [...], oi: [...] } }
-
-ValueSeries.fromColumns(payload); // round-trips, and it type-checks
-```
-
-`toColumns()` emits one plain array per column with gaps as `null` — the
-`JSON.stringify`-safe wire shape, and exactly the envelope `fromColumns` reads
-back. Reach for it when the destination speaks JSON; reach for `toArrow` when it
-speaks Arrow and lives in the same process.
+`chain.toColumns()` is the same envelope with the same contract as the
+[time-keyed one](#columnar-out-tocolumns) — minus the two-edged case, since a
+value axis is always one number per row and has nothing to flatten.
 
 :::note[Round trips are typed, and honest about what won't survive]
 `ValueSeries.fromColumns(vs.toColumns())` and `ValueSeries.fromJSON(vs.toJSON())`
@@ -712,11 +800,6 @@ _compile_ rather than at runtime. The row leg is the other way round: `toJSON`
 types its `boolean` cells honestly, so `fromJSON` accepts the payload's shape and
 throws at ingest, naming the column and its kind.
 :::
-
-`TimeSeries.toColumns()` doesn't exist yet — the exporter underneath is
-store-generic and already handles a `time` key, but the two-edged case
-(`timeRange` / `interval`) has no agreed wire shape any ingest door reads back,
-so it's parked until a consumer needs it.
 
 ### Arrow
 
@@ -809,13 +892,17 @@ Hand over a buffer you're done writing to, or pass a copy
 (`new Float64Array(closes)`). The same applies in reverse to `toArrow`'s output.
 `number[]` columns are always copied, so they're never affected.
 
-### Unsupported kinds on the columnar doors
+### `boolean` / array columns don't survive a columnar round trip
 
-`TimeSeries.fromColumns` / `fromArrow` build a `time`-keyed series with `number`
-and `string` value columns (the `ValueSeries` twins take the same value kinds on
-a `'value'` axis). An `interval` or `timerange` key, or a `boolean` / array value
-column, throws naming the column and its kind. Route those through `fromJSON` or
-the constructor, or select a supported subset via `columns`.
+Every key kind goes through the columnar doors — a two-edged key
+[flattens](#two-edged-keys) — but the value kinds are `number` and `string`. A
+`boolean` or array column **exports** fine through `toColumns` / `toArrow` and
+then can't come back: the ingest engine has no branch for it.
+
+The failure is a compile error rather than a runtime one, because
+`toColumns()`'s return type encodes it — `fromColumns(series.toColumns())` won't
+typecheck on a series carrying either kind. `select()` those columns out first,
+or round-trip through the row doors, which take every kind.
 
 ### Object-row JSON from non-pond-ts sources
 
@@ -847,6 +934,8 @@ The library isn't trying to guess remaps.
   once they're in.
 - [Columns](../pond-ts/advanced/columns) — the typed-column API that columnar
   ingest feeds, and the other zero-copy exports (`toFloat64Array`, `keyColumn`).
+- [Aggregation](../pond-ts/transforms/aggregation) — where `interval` keys come
+  from, the ones [Two-edged keys](#two-edged-keys) exists to carry.
 - [Array columns](../pond-ts/advanced/arrays) — array cells serialize as JSON
   arrays and round-trip without special handling.
 - [Sequences](./concepts/sequences) — including `Sequence.calendar` for

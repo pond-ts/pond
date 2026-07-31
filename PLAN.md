@@ -177,14 +177,28 @@ consumer signal. Plan:
 
 - **[PND-COLOUT]** — Column-native output (§A): removes the dominant
   emit-side allocation slice; spike plan exists.
-- **[PND-TSCOLS]** — `TimeSeries.toColumns()`: wire the store-generic
-  columnar-JSON exporter (`operators/to-columns.ts`, shipped with
-  [PND-VSIO] for `ValueSeries`) onto `TimeSeries`, closing the one-way
-  `fromColumns` door there too. The exporter already handles a `time` key;
-  what's undecided is the **two-edged** case — a `timeRange` / `interval`
-  key currently throws rather than inventing a `<key>End` / `<key>Label`
-  wire shape no ingest door reads back. Pick that shape (or keep the throw)
-  when a consumer actually needs it.
+- **[PND-COLBOOL]** — `boolean` / array value columns through the columnar
+  ingest engine. `ingestColumnsToStore` takes `number` and `string` only, so
+  a series carrying either kind exports through `toColumns` / `toArrow` but
+  cannot come back — the round trip is a compile error on the columnar door
+  and a throw on `ValueSeries.fromJSON`. On `TimeSeries` those kinds are
+  ordinary (the row constructor takes them), so this bites more often than
+  the `ValueSeries` case that surfaced it. The engine work is small — a
+  `'boolean'` branch building a packed bitmap and an `'array'` branch over
+  `arrayColumnFromArray`, plus the sort permutation for both — but it widens
+  `RawColumns` and `fromColumns`' contract, so it wants its own PR.
+  Friction-gated: no consumer has asked yet.
+- **[PND-TSJSONT]** — narrow `TimeSeries.toJSON`'s return type on
+  `rowFormat`, as `LiveSeries.toJSON` already does. Long blocked by the
+  TS2394 cascade, which [PND-TSCOLS] isolated: the trigger is a
+  key-remapped mapped type in a **method return position on `TimeSeries`**,
+  and a method-level type parameter defers past it (the workaround
+  `toColumns` now uses, written up on its doc comment). Unblocked, but it
+  changes an existing public return type, so it needs its own decision.
+  While in there: `toJSON()`'s **tuple** rows measure consistently _slower_
+  than its object rows (25.9 ms vs 18.6 ms at 100k × 6) — the tuple path
+  allocates a `.map()` plus a spread per row where the object path writes
+  properties into one literal. Probably a free win.
 - **[PND-REORD]** — Columnar reorder corral (§B): unearned, RFC context
   until a signal arrives.
 - **[PND-LROLL]** — Live rolling columnar reducer state (Step 3C-live): the

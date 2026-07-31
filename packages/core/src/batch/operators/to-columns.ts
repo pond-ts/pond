@@ -28,42 +28,60 @@
 import type { ColumnarStore } from '../../columnar/index.js';
 import { ValidationError } from '../../core/errors.js';
 import type { ColumnValue } from '../../schema/index.js';
+import { assertNoFlatKeyCollision, flatKeyNames } from './flat-keys.js';
 
 /** One exported column: the cells in row order, `null` where the cell is a gap. */
 export type JsonColumn = Array<ColumnValue | null>;
 
 /**
  * Build the columnar-JSON view of a store: `{ [columnName]: values }`, the key
- * column included under its own name so the payload is self-contained.
+ * included under its own name(s) so the payload is self-contained.
  *
- * Store-generic, but **single-edge keys only** (`time` / `value`) — those are
- * one number per row and need no naming decision. A two-edged key
- * (`timeRange` / `interval`) would have to flatten into synthesized
- * `<key>End` / `<key>Label` fields the way `storeToArrow` does, and nothing
- * ingests that shape back yet, so it throws rather than inventing a wire
- * format no door reads.
+ * Store-generic — `TimeSeries.toColumns` and `ValueSeries.toColumns` are the
+ * same walk over the same substrate — and **every key kind exports**. A point
+ * key (`time` / `value`) is one column; a two-edged key flattens into extra
+ * columns named off it (`timeRange` + `timeRangeEnd`, `interval` +
+ * `intervalEnd` + `intervalLabel`), which is the same convention `storeToArrow`
+ * emits and `ingestColumnsToStore` reads. See `./flat-keys.ts` for why the
+ * flattened spelling rather than pairs.
+ *
+ * The payload's `schema` still declares the **logical** key
+ * (`{ name: 'timeRange', kind: 'timeRange' }`), not the physical edges — so it
+ * round-trips as the series' own schema, and the edge columns are decoded from
+ * it rather than described by it.
  */
 export function storeToColumns(
   store: ColumnarStore,
 ): Record<string, JsonColumn> {
   const keys = store.keys;
-  const keyName = store.schema[0]!.name;
-  if (keys.kind !== 'time' && keys.kind !== 'value') {
-    throw new ValidationError(
-      `toColumns: a '${keys.kind}' key spans two edges and has no columnar-JSON ` +
-        `spelling yet; re-key to a point ('time' / 'value') key first`,
-    );
-  }
-
+  const keyDef = store.schema[0]!;
+  // Unconditional, unlike `storeToArrow`'s equivalent: that door has a
+  // `columns` option, so a colliding name is only fatal when it is actually
+  // selected. This one exports everything, so a collision would mean the value
+  // column silently overwrote the key's second edge — a payload contradicting
+  // its own schema. (Reachable: the row door builds such a series happily.)
+  assertNoFlatKeyCollision('toColumns', store.schema);
+  const keyNames = flatKeyNames(keyDef);
   const count = store.length;
   const out: Record<string, JsonColumn> = {};
 
-  // The key: always defined (both key kinds reject non-finite cells at
+  // Key edges: always defined (every key column rejects non-finite cells at
   // construction), so no validity walk and no `null` case.
-  const axis = keys.begin;
-  const keyValues = new Array<ColumnValue | null>(count);
-  for (let i = 0; i < count; i += 1) keyValues[i] = axis[i]!;
-  out[keyName] = keyValues;
+  out[keyNames.begin] = edgeColumn(keys.begin, count);
+  if (keyNames.end !== undefined) {
+    out[keyNames.end] = edgeColumn(keys.end, count);
+  }
+  if (keyNames.label !== undefined) {
+    // An interval's labels are a real column (dict-encoded strings or a
+    // numeric buffer), so they read like any other — but they are part of the
+    // key's identity, never a gap.
+    const labels = (
+      keys as { labels: { read(i: number): ColumnValue | undefined } }
+    ).labels;
+    const values = new Array<ColumnValue | null>(count);
+    for (let i = 0; i < count; i += 1) values[i] = labels.read(i) ?? null;
+    out[keyNames.label] = values;
+  }
 
   for (let c = 1; c < store.schema.length; c += 1) {
     const name = store.schema[c]!.name;
@@ -82,4 +100,11 @@ export function storeToColumns(
   }
 
   return out;
+}
+
+/** One key edge as a plain array — trimmed to the store's logical length. */
+function edgeColumn(edge: Float64Array, count: number): JsonColumn {
+  const values = new Array<ColumnValue | null>(count);
+  for (let i = 0; i < count; i += 1) values[i] = edge[i]!;
+  return values;
 }

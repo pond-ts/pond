@@ -681,6 +681,147 @@ Deferred, none blocking: IPC-bytes convenience (`tableToIPC` is the caller's
 two-liner) and a how-to showing the polars sidecar pattern end to end. (The
 third deferral, `ValueSeries.toArrow`, shipped with [PND-VSIO] below.)
 
+### [PND-FLATKEY] — the flattened key convention — SHIPPED
+
+Two-edged keys now survive a columnar round trip. `fromColumns` reads the
+flattened spelling `toArrow` has always emitted, `toColumns` emits it (where
+[PND-TSCOLS] had it throw), and `fromArrow` gained `{ keyKind }` to read it
+out of Arrow:
+
+```text
+timeRange  →  timeRange   timeRangeEnd
+interval   →  interval    intervalEnd    intervalLabel
+```
+
+**Why this shape, settled.** The substrate stores `begin` / `end` / `labels`
+as separate buffers, so flattening mirrors storage: each edge lands straight
+in its buffer, O(1) per column. The two paired alternatives
+(`[[begin, end], …]`, and the row-JSON `[value, start, end]` vocabulary) both
+need a per-row un-zip on ingest — a row walk inside the door that exists to
+avoid row walks. That, not aesthetics, is the argument.
+
+**Naming and collisions — the part that was actually open.** `FirstColumn`
+forces a key column's name to equal its kind, so the derived names are fully
+determined (`timeRange` is always `timeRange` + `timeRangeEnd`); nothing to
+configure, and export and ingest cannot disagree because both call
+`flatKeyNames`. The envelope's `schema` keeps declaring the **logical** key,
+so it round-trips as the series' own schema. Collisions reduce to one rule
+with one asymmetry: a value column may not take a derived name, checked
+**unconditionally on ingest** — where export (`toArrow`) only errors when the
+colliding column is actually selected, because ingest has one array and two
+claimants and no "not selected" escape. `KEY_END_SUFFIX` / `KEY_LABEL_SUFFIX`
+moved out of `to-arrow.ts` into the shared `flat-keys.ts` so the four doors
+cannot drift.
+
+**Engine changes.** `ingestColumnsToStore` now reads a key spec rather than
+one buffer: the second edge and labels are required when the kind calls for
+them, sorting permutes by `(begin, end)` (matching the row path's
+`compareKeys`), the ordering scan gained the same tiebreak, and interval
+labels dispatch string → dict-encoded `StringColumn` / number →
+`Float64Column` with the row path's "one type throughout" rule (and its
+`RangeError`, for cross-door parity). The `makeKey` callback is **gone** — the
+key kind fully determines the column class, so no door needs to pass one.
+`TimeSeries.fromColumns` also stopped rejecting non-`time` keys, which it had
+done since it shipped.
+
+**Two defects caught in Layer-2 review**, both from the same root — the new
+paths were tested with the shapes that were convenient rather than the shapes
+that occur. (1) `fromArrow({ keyKind: 'interval' })` threw on any series
+`aggregate` produced: those label buckets _numerically_, `toArrow` emits that
+column as float64, and the engine was rejecting typed-array labels outright —
+while both new Arrow interval tests happened to use string labels. The
+rejection is gone (a typed array unambiguously means numeric labels, and is
+now adopted zero-copy); numeric labels must be finite, which also catches the
+null-becomes-NaN case the Arrow reader produces. (2) The `toColumns` collision
+hole above. Both now have regression tests naming the case they missed.
+
+**Perf** (`scripts/perf-from-columns.mjs`, 100k × 7, median of 7). The
+point-key path is unchanged — the adopt path sits at ~2.05 ms before and
+after, and the `number[]` dense scenario's apparent swing is first-scenario
+JIT noise (re-measured 3× each side; the distributions overlap).
+
+| Ingest (100k × 7)                          | Median  |
+| ------------------------------------------ | ------- |
+| `time` key, `Float64Array` (adopt)         | 2.05 ms |
+| `timeRange` key, `Float64Array` edges      | 2.40 ms |
+| `interval` key, numeric labels             | 3.18 ms |
+| `interval` key, string labels (dict)       | 4.58 ms |
+| `timeRange`, `sort: true` — `(begin, end)` | 8.90 ms |
+
+One extra edge buffer costs ~17%; a label column costs what packing a column
+costs. All linear, no surprises.
+
+### [PND-TSCOLS] — `TimeSeries.toColumns` — SHIPPED
+
+Wired the store-generic columnar-JSON exporter (shipped with [PND-VSIO]
+below) onto `TimeSeries`, closing the one-way `fromColumns` door there too.
+
+**The two-edged-key decision — WALKED BACK one PR later; see [PND-FLATKEY]
+below.** This shipped with `toColumns` throwing on a `timeRange` / `interval`
+key. The stated reason: a flattened `<key>End` / `<key>Label` spelling (and
+two alternatives — an array-of-pairs key column, and reusing
+`serializeJsonKey`'s row vocabulary) would be an **export-only dialect**,
+since `fromColumns` builds one key buffer from one column and so reads none
+of them back.
+
+That reasoning was circular and is recorded here because the shape of the
+error is worth remembering: _"no ingest door reads it back"_ is a fact about
+`fromColumns`' current contract, not about the shape — and it is not a reason
+to refuse the shape when the alternative on the table is **teaching
+`fromColumns` to read it**. It was also applied inconsistently: `toArrow`
+already emitted exactly this flattening, with no reader, and shipped. The
+walk-back came from review (the user, on PR #566), not from the author.
+
+**The TS2394 cascade, isolated at last.** Declaring the precise return type
+(a key-remapped mapped type, `{ [C in S[number] as C['name']]: … }`) on
+`toColumns` reproduced the cascade `TimeSeries.toJSON`'s doc had recorded as
+having "defeated several time-boxed attempts to isolate": TS2394 on four
+unrelated overload sets in `time-series.ts` plus four in the live layer.
+Narrowed to one line by probe:
+
+- the trigger is the **construct, not its cost** — a trivial
+  `{ [C in S[number] as C['name']]: unknown }` cascades identically;
+- it is the **return position on this class**, not the type's definition —
+  an `interface` wrapper and a deferred `S extends unknown ? … : never`
+  inside the alias both change nothing;
+- an **overload declaration** (precise signature + loose implementation
+  signature) makes it worse;
+- a **method-level type parameter** (`toColumns<T extends S = S>()`) defers
+  the instantiation past whatever resolution order trips it, and the cascade
+  disappears. `T` defaults to `S`, so callers see no difference.
+
+The workaround's one sharp edge, caught in review: an **explicit** `T` is
+_unchecked_, not merely redundant. On a wide `TimeSeries<SeriesSchema>` the
+`extends S` bound admits any schema, so `toColumns<Other>()` describes columns
+the runtime never produces. It takes a type argument nobody has reason to
+write, and the bound cannot catch it — so it is documented on the method and
+pinned in `test-d/` rather than defended against.
+
+That unblocks narrowing `toJSON` on `rowFormat` — filed as [PND-TSJSONT]
+rather than done here, since it changes an existing public return type.
+
+**Perf** (`scripts/perf-to-columns.mjs`, median of 7). The headline is the
+comparison, not the absolute: `toColumns` reads the columnar store directly
+where `toJSON` materialises a row per event.
+
+| Export (100k × 6, dense numeric)  | Median         |
+| --------------------------------- | -------------- |
+| `toColumns()`                     | 2.5–3.0 ms     |
+| `toJSON()` (tuple rows)           | 25.9 ms        |
+| `toJSON({ rowFormat: 'object' })` | 18.5–18.6 ms   |
+| `toArrow()`                       | 0.005–0.006 ms |
+
+Ranges are across runs and machines: the Layer-2 reviewer reproduced the whole
+table independently and landed at 3.0 ms for `toColumns`, so the honest
+headline is **8–10×**, not a crisp 10×. Worth keeping as a calibration note —
+the first write-up quoted the single fastest run.
+
+Two findings worth keeping: a string column costs ~3× a numeric one (dict
+reads), ~10% gaps cost ~3× dense (per-cell validity), and — counter-intuitive
+enough to be worth a look — **`toJSON`'s tuple rows are consistently slower
+than its object rows**, which the tuple path's per-row `.map()` + spread
+plausibly explains. Filed under [PND-TSJSONT].
+
 ### [PND-VSIO] — `ValueSeries` ingest / export parity — SHIPPED
 
 `ValueSeries` had one door in (`fromColumns`, plus the `byValue` projection)
