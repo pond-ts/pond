@@ -44,6 +44,7 @@ import type {
   ValidatedAggregateMap,
 } from '../schema/index.js';
 import type {
+  ColumnDef,
   RenameSchema,
   RollingAlignment,
   RollingSchema,
@@ -965,8 +966,20 @@ export class TimeSeries<S extends SeriesSchema> {
    *
    * **Value columns:** `number` (→ `Float64Column`; `Float64Array` adopted) and
    * `string` (→ `StringColumn`, dict-encoded when it pays; `null`/`undefined`
-   * missing). Other key kinds (`interval` / `timeRange`) and other value kinds
-   * (`boolean` / array) throw for now — extend as consumers need.
+   * missing). Other value kinds (`boolean` / array) throw for now — extend as
+   * consumers need.
+   *
+   * **Key kinds: all three.** A `time` key is one column. A **two-edged** key
+   * arrives flattened across extra columns named off it — `timeRange` +
+   * `timeRangeEnd`, or `interval` + `intervalEnd` + `intervalLabel` — the same
+   * convention {@link TimeSeries.toColumns} and {@link TimeSeries.toArrow}
+   * emit, so an aggregated series round-trips through this door. The schema
+   * still declares the **logical** key (`{ name: 'interval', kind: 'interval'
+   * }`); the edge columns are derived from it, which is why a value column may
+   * not take one of those names (it throws, naming the collision). Ordering
+   * for a two-edged key is by `(begin, end)`, matching the row path — equal
+   * begins must be non-decreasing in `end`. Interval labels must be present in
+   * every row and all of one type (string or number).
    *
    * @throws ValidationError on a missing column, a length mismatch, an
    *   unsupported kind, or an out-of-order (decreasing) timestamp when `sort`
@@ -987,16 +1000,32 @@ export class TimeSeries<S extends SeriesSchema> {
   ): TimeSeries<S> {
     const { name, schema, columns, sort = false } = input;
 
-    // Key column (schema[0]). v1: point-in-time (`time`) keys only.
+    // Key column (schema[0]). Every temporal key kind is accepted; a two-edged
+    // one (`timeRange` / `interval`) arrives flattened across extra columns
+    // named off the key — see `operators/flat-keys.ts` for the convention and
+    // why it is spelled that way.
     const keyDef = schema[0];
     if (keyDef === undefined) {
       throw new ValidationError(
         'fromColumns: schema must have at least a key column',
       );
     }
-    if (keyDef.kind !== 'time') {
+    // Widened deliberately: `FirstColumn` already excludes every other kind at
+    // the type level, so narrowing would make this branch `never` — but a
+    // caller who casts (or hands over a runtime-built schema) still reaches it.
+    const { name: keyName, kind: keyKind } = keyDef as ColumnDef<
+      string,
+      string
+    >;
+    if (
+      keyKind !== 'time' &&
+      keyKind !== 'timeRange' &&
+      keyKind !== 'interval'
+    ) {
       throw new ValidationError(
-        `fromColumns: v1 supports a 'time' key; schema[0] '${keyDef.name}' is '${keyDef.kind}'`,
+        `fromColumns: schema[0] '${keyName}' is '${keyKind}'; a TimeSeries ` +
+          `key is 'time', 'timeRange' or 'interval' (a 'value' axis is ` +
+          `ValueSeries.fromColumns)`,
       );
     }
 
@@ -1009,7 +1038,6 @@ export class TimeSeries<S extends SeriesSchema> {
       schema: schema as unknown as ColumnSchema,
       columns,
       sort,
-      makeKey: (begin, count) => new TimeKeyColumn(begin, count),
     });
     return TimeSeries.#fromTrustedStore(name, schema, store);
   }
@@ -1068,7 +1096,6 @@ export class TimeSeries<S extends SeriesSchema> {
       columns,
       sort: options.sort ?? false,
       adopted,
-      makeKey: (begin, count) => new TimeKeyColumn(begin, count),
     });
     return timeSeriesFromTrustedStore(name, schema as unknown as S, store);
   }
@@ -1668,12 +1695,16 @@ export class TimeSeries<S extends SeriesSchema> {
    * conversion somewhere. For a **zero-copy** columnar handoff in-process (no
    * JSON, no per-cell walk) use {@link TimeSeries.toArrow} instead.
    *
-   * **Point keys only.** A `timeRange` / `interval` key spans two edges and
-   * throws here, because `fromColumns` has no way to read such a key back —
-   * emitting a `<key>End` column the way `toArrow` flattens one would produce
-   * a payload no ingest door accepts. Collapse the key first
-   * (`series.asTime({ at: 'begin' })`), or use {@link TimeSeries.toJSON},
-   * whose row envelope does carry range and interval keys.
+   * **Every key kind exports.** A point (`time`) key is one column; a
+   * two-edged key **flattens** into extra columns named off it —
+   * `timeRange` + `timeRangeEnd`, or `interval` + `intervalEnd` +
+   * `intervalLabel` — which is the same convention {@link TimeSeries.toArrow}
+   * emits, and which {@link TimeSeries.fromColumns} reads back, so an
+   * aggregated series round-trips like any other. The `schema` in the envelope
+   * still declares the **logical** key, not the physical edges. See
+   * `operators/flat-keys.ts` for why flattened rather than paired, and for the
+   * one collision rule it implies (a value column may not be named
+   * `${key}End` / `${key}Label`).
    *
    * **`boolean` / array columns** export fine but are not ingestable —
    * `fromColumns` takes `number` and `string` value columns — and the return

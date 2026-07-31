@@ -142,39 +142,95 @@ describe('TimeSeries.toColumns', () => {
     expect(series.at(0)!.get('close')).toBe(100);
   });
 
-  describe('two-edged keys', () => {
+  describe('two-edged keys flatten', () => {
     const aggregated = () =>
       bars().aggregate(Sequence.every('1m'), { close: 'avg' });
 
-    it('refuses an interval key, naming both ways out', () => {
+    it('an interval key exports as begin + end + label', () => {
       const series = aggregated();
       expect(series.schema[0]!.kind).toBe('interval');
-      const fail = () => series.toColumns();
+      const out = series.toColumns();
+      // The SCHEMA still declares the logical key…
+      expect(out.schema[0]).toEqual({ name: 'interval', kind: 'interval' });
+      // …while the COLUMNS carry the physical edges, named off it.
+      expect(out.columns).toEqual({
+        interval: [0, 60_000, 120_000],
+        intervalEnd: [60_000, 120_000, 180_000],
+        intervalLabel: [0, 60_000, 120_000],
+        close: [100, 101, 99],
+      });
+    });
+
+    it('a timeRange key exports as begin + end', () => {
+      const out = bars().asTimeRange().toColumns();
+      expect(out.schema[0]).toEqual({ name: 'timeRange', kind: 'timeRange' });
+      expect(Object.keys(out.columns).sort()).toEqual([
+        'close',
+        'symbol',
+        'timeRange',
+        'timeRangeEnd',
+      ]);
+    });
+
+    it('and both round-trip back through fromColumns, key and all', () => {
+      for (const series of [aggregated(), bars().asTimeRange()]) {
+        const back = TimeSeries.fromColumns(series.toColumns() as never);
+        expect(back.schema).toEqual(series.schema);
+        expect(back.toRows()).toEqual(series.toRows());
+        // The key survives as the same kind, not collapsed to a point.
+        expect(back.at(0)!.key().begin()).toBe(series.at(0)!.key().begin());
+        expect(back.at(0)!.key().end()).toBe(series.at(0)!.key().end());
+      }
+    });
+
+    it('survives JSON.stringify — the point of the flattened spelling', () => {
+      const series = aggregated();
+      const wire = JSON.parse(JSON.stringify(series.toColumns()));
+      expect(TimeSeries.fromColumns(wire).toRows()).toEqual(series.toRows());
+    });
+
+    it('carries string interval labels too, not just numeric ones', () => {
+      // `aggregate` labels buckets numerically; a hand-built interval series
+      // is the string-label case, and the engine dict-encodes those.
+      const labelled = new TimeSeries({
+        name: 'shifts',
+        schema: [
+          { name: 'interval', kind: 'interval' },
+          { name: 'load', kind: 'number' },
+        ] as const,
+        rows: [
+          [['morning', 0, 60_000], 1],
+          [['evening', 60_000, 120_000], 2],
+        ],
+      });
+      const out = labelled.toColumns();
+      expect(out.columns.intervalLabel).toEqual(['morning', 'evening']);
+      const back = TimeSeries.fromColumns(out as never);
+      expect(back.toRows()).toEqual(labelled.toRows());
+    });
+
+    it('matches what toArrow emits — one convention, two formats', () => {
+      const series = aggregated();
+      const arrowNames = series.toArrow().fields.map((f) => f.name);
+      const columnNames = Object.keys(series.toColumns().columns);
+      expect(new Set(columnNames)).toEqual(new Set(arrowNames));
+    });
+
+    it('rejects a value column colliding with a synthesized edge name', () => {
+      // One array cannot serve both the key's second edge and a value column.
+      const fail = () =>
+        TimeSeries.fromColumns({
+          name: 'clash',
+          schema: [
+            { name: 'timeRange', kind: 'timeRange' },
+            { name: 'timeRangeEnd', kind: 'number' },
+          ] as const,
+          columns: { timeRange: [0], timeRangeEnd: [1] },
+        });
       expect(fail).toThrow(ValidationError);
-      expect(fail).toThrow(/the 'interval' key spans two edges/);
-      expect(fail).toThrow(/asTime\(\{ at: 'begin' \}\)/);
-      expect(fail).toThrow(/toJSON\(\)/);
-    });
-
-    it('refuses a timeRange key', () => {
-      const ranged = bars().asTimeRange();
-      expect(() => ranged.toColumns()).toThrow(
-        /the 'timeRange' key spans two edges/,
+      expect(fail).toThrow(
+        /value column 'timeRangeEnd' collides with the second edge/,
       );
-    });
-
-    it('…and the named remedy actually works', () => {
-      const collapsed = aggregated().asTime({ at: 'begin' });
-      const out = collapsed.toColumns();
-      expect(out.columns.time).toEqual([0, 60_000, 120_000]);
-      expect(TimeSeries.fromColumns(out).toRows()).toEqual(collapsed.toRows());
-    });
-
-    it('…as does the other one (toJSON carries interval keys)', () => {
-      const json = aggregated().toJSON();
-      // The row envelope spells an interval key `[value, start, end]`.
-      expect(Array.isArray(json.rows[0]![0])).toBe(true);
-      expect(TimeSeries.fromJSON(json as never).length).toBe(3);
     });
   });
 });

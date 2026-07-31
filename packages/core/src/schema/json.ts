@@ -1,4 +1,9 @@
-import type { ArrayValue, ColumnDef, SeriesSchema } from './series.js';
+import type {
+  ArrayValue,
+  ColumnDef,
+  FirstColumn,
+  SeriesSchema,
+} from './series.js';
 
 export type JsonTimestampInput = number | string;
 export type JsonTimeRangeInput =
@@ -80,9 +85,13 @@ export type JsonRowFormat = 'array' | 'object';
 
 /**
  * The columnar-JSON payload: one plain array per column, keyed by schema
- * column name and aligned by index. The `time` key is `number[]` (epoch ms,
- * always defined); a value column carries `null` where the cell is a gap, so
- * the whole envelope survives `JSON.stringify` (`NaN` does not).
+ * column name and aligned by index. Key edges are `number[]` (epoch ms, always
+ * defined); a value column carries `null` where the cell is a gap, so the
+ * whole envelope survives `JSON.stringify` (`NaN` does not).
+ *
+ * A two-edged key contributes **more columns than the schema lists** — see
+ * {@link FlatKeyColumns}. The schema keeps declaring the logical key
+ * (`{ name: 'timeRange', kind: 'timeRange' }`); the edges are derived from it.
  *
  * `boolean` / `array` columns export as themselves — valid JSON, but the
  * columnar ingest engine takes `number` and `string` value columns only, so a
@@ -93,7 +102,7 @@ export type JsonRowFormat = 'array' | 'object';
  */
 export type TimeSeriesJsonColumns<S extends SeriesSchema> = {
   [C in S[number] as C['name']]: C extends ColumnDef<any, infer K>
-    ? K extends 'time'
+    ? K extends 'time' | 'timeRange' | 'interval'
       ? number[]
       : K extends 'string'
         ? Array<string | null>
@@ -105,7 +114,31 @@ export type TimeSeriesJsonColumns<S extends SeriesSchema> = {
               ? Array<ArrayValue | null>
               : never
     : never;
-};
+} & FlatKeyColumns<S[0]>;
+
+/**
+ * The extra columns a two-edged key flattens into. A `timeRange` key adds its
+ * second edge; an `interval` key adds that plus its label column. A point
+ * (`time`) key adds nothing.
+ *
+ * The names are literals rather than template types because `FirstColumn`
+ * forces a key column's name to equal its kind — a `timeRange` key is always
+ * spelled `timeRange` + `timeRangeEnd`, never anything else. See
+ * `batch/operators/flat-keys.ts` for the convention and the collision rule.
+ *
+ * `intervalLabel` is `string[] | number[]`, **not** `Array<string | number>`:
+ * the runtime rule is one label type throughout (the engine rejects a mixed
+ * column), and only the homogeneous form is assignable back into
+ * {@link TimeSeriesColumnarInput} — so the honest type is also the one that
+ * keeps the round trip compiling.
+ */
+export type FlatKeyColumns<K extends FirstColumn> =
+  K['kind'] extends 'timeRange'
+    ? { timeRangeEnd: number[] }
+    : K['kind'] extends 'interval'
+      ? { intervalEnd: number[]; intervalLabel: string[] | number[] }
+      : // eslint-disable-next-line @typescript-eslint/ban-types
+        {};
 
 /**
  * The envelope `TimeSeries.fromColumns` accepts. Deliberately **loose** on the

@@ -95,3 +95,50 @@ const fabricated: Array<number | null> =
     ]
   >().columns.notThere;
 void fabricated;
+
+// --- flattened two-edged keys ----------------------------------------------
+// A two-edged key contributes MORE columns than the schema lists, and the type
+// knows their names because a key column's name always equals its kind.
+declare const ranged: TimeSeries<
+  readonly [
+    { name: 'timeRange'; kind: 'timeRange' },
+    { name: 'load'; kind: 'number' },
+  ]
+>;
+const rangedColumns = ranged.toColumns().columns;
+const begins: number[] = rangedColumns.timeRange;
+const ends: number[] = rangedColumns.timeRangeEnd;
+void begins;
+void ends;
+// @ts-expect-error — a timeRange key has no label column
+rangedColumns.timeRangeLabel;
+
+declare const bucketed: TimeSeries<
+  readonly [
+    { name: 'interval'; kind: 'interval' },
+    { name: 'load'; kind: 'number' },
+  ]
+>;
+const bucketedColumns = bucketed.toColumns().columns;
+// `string[] | number[]`, not `Array<string | number>` — one label type
+// throughout is the runtime rule, and the homogeneous form is what stays
+// assignable back into the ingest type.
+const labels: string[] | number[] = bucketedColumns.intervalLabel;
+void labels;
+// Asserted in the assignable direction — array covariance means
+// `string[] → (string | number)[]` would pass and prove nothing. A mixed
+// array is what the type refuses to BE.
+declare const mixedLabels: Array<string | number>;
+// @ts-expect-error — labels are all-string or all-number, never mixed
+const asLabels: typeof bucketedColumns.intervalLabel = mixedLabels;
+void asLabels;
+
+// And both round-trip without a cast — the point of teaching `fromColumns`
+// the same convention.
+TimeSeries.fromColumns(ranged.toColumns());
+TimeSeries.fromColumns(bucketed.toColumns());
+
+// A point key gains nothing: `timeEnd` is not a column on a `time`-keyed
+// series, however suggestive the name.
+// @ts-expect-error — a point key flattens to nothing
+out.columns.timeEnd;

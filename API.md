@@ -53,11 +53,15 @@ types (`ArrowTableLike`, `ArrowVectorLike`, `ArrowDataLike`, `ArrowFieldLike`,
 
 Both classes also export **columnar JSON** — `toColumns()`, one plain array
 per column with gaps as `null`, the exact `{ name, schema, columns }` envelope
-`fromColumns()` takes back (`packages/core/src/batch/operators/to-columns.ts`;
-point keys only — a `timeRange` / `interval` key throws, naming the two ways
-out). Columnar wire types live beside their row siblings:
-`TimeSeriesJsonColumns` / `TimeSeriesColumnarInput` / `TimeSeriesColumnarOutput`
-in `packages/core/src/schema/json.ts`.
+`fromColumns()` takes back (`packages/core/src/batch/operators/to-columns.ts`).
+A **two-edged key** (`timeRange` / `interval`) flattens into extra columns
+named off it — `timeRange` + `timeRangeEnd`, `interval` + `intervalEnd` +
+`intervalLabel` — the convention `toArrow` already emitted, now read by
+`fromColumns` and by `fromArrow({ keyKind })` as well
+(`packages/core/src/batch/operators/flat-keys.ts` owns the naming + collision
+rules). Columnar wire types live beside their row siblings:
+`TimeSeriesJsonColumns` / `FlatKeyColumns` / `TimeSeriesColumnarInput` /
+`TimeSeriesColumnarOutput` in `packages/core/src/schema/json.ts`.
 
 Going the other way, `TimeSeries.toArrow()` / `ValueSeries.toArrow()` export
 the columns **in Arrow's memory layout with no copy** — pond's validity bitmap

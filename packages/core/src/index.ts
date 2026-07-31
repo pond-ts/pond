@@ -195,6 +195,7 @@ export type {
   SelectSchema,
   SeriesSchema,
   TimeKeyedSchema,
+  FlatKeyColumns,
   TimeSeriesColumnarInput,
   TimeSeriesColumnarOutput,
   TimeSeriesInput,

@@ -16,7 +16,7 @@
  * Run: `node scripts/perf-to-columns.mjs` (after `npm run build`).
  */
 import { performance } from 'node:perf_hooks';
-import { TimeSeries } from '../dist/index.js';
+import { Sequence, TimeSeries } from '../dist/index.js';
 
 const NUMERIC = ['open', 'high', 'low', 'close', 'volume'];
 
@@ -101,6 +101,13 @@ const wide = new TimeSeries({
   ]),
 });
 
+// 100k one-second rows aggregated to 1-minute buckets — an interval key with
+// numeric labels, the shape `aggregate` actually produces.
+const bucketed = makeSeries(LENGTH).aggregate(Sequence.every('1m'), {
+  close: 'avg',
+  volume: 'sum',
+});
+
 const results = [
   benchmark('toColumns — dense numeric (100k x 6)', LENGTH, () =>
     numeric.toColumns(),
@@ -114,6 +121,16 @@ const results = [
   benchmark('toColumns — wide (10k x 41)', 10_000, () => wide.toColumns()),
   benchmark('toColumns — per-element floor (1k x 6)', FLOOR, () =>
     floor.toColumns(),
+  ),
+  // A two-edged key flattens into extra columns, so it walks one more edge
+  // buffer plus the label column. Note the row count: aggregating 100k
+  // one-second rows to 1-minute buckets leaves ~1.7k rows, so this is a
+  // per-row cost comparison against the 1k floor above, NOT against the 100k
+  // rows.
+  benchmark(
+    `toColumns — interval key, flattened (${bucketed.length} x 3)`,
+    bucketed.length,
+    () => bucketed.toColumns(),
   ),
 
   // The comparison that motivates the door: same data, three export shapes.
