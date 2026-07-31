@@ -61,6 +61,9 @@ import type {
   SelectSchema,
   SeriesSchema,
   TimeKeyedSchema,
+  TimeSeriesColumnarInput,
+  TimeSeriesColumnarOutput,
+  TimeSeriesJsonColumns,
   TimeSeriesJsonInput,
   TimeSeriesInput,
   TimeRangeKeyedSchema,
@@ -94,6 +97,7 @@ import {
   type ArrowExport,
   type ToArrowOptions,
 } from './operators/to-arrow.js';
+import { storeToColumns } from './operators/to-columns.js';
 import { ValueSeries } from './value-series.js';
 import { diffRateOp, type DiffRateMode } from './operators/diff-rate.js';
 import { fillOp, type ResolvedFillSpec } from './operators/fill.js';
@@ -970,23 +974,17 @@ export class TimeSeries<S extends SeriesSchema> {
    *   RangeError on a non-finite timestamp key (from the key-column
    *   constructor) or a duplicate column name.
    */
-  static fromColumns<S extends SeriesSchema>(input: {
-    name: string;
-    schema: S;
-    columns: Record<
-      string,
-      | ReadonlyArray<number | null | undefined>
-      | Float64Array
-      | ReadonlyArray<string | null | undefined>
-    >;
-    /**
-     * Sort the rows by key before construction (off by default), for a columnar
-     * payload whose rows aren't guaranteed ordered — the counterpart of
-     * `fromJSON`'s `sort`. Stable; disables the `Float64Array` zero-copy adoption
-     * (columns are reordered into fresh buffers).
-     */
-    sort?: boolean;
-  }): TimeSeries<S> {
+  static fromColumns<S extends SeriesSchema>(
+    input: TimeSeriesColumnarInput<S> & {
+      /**
+       * Sort the rows by key before construction (off by default), for a columnar
+       * payload whose rows aren't guaranteed ordered — the counterpart of
+       * `fromJSON`'s `sort`. Stable; disables the `Float64Array` zero-copy adoption
+       * (columns are reordered into fresh buffers).
+       */
+      sort?: boolean;
+    },
+  ): TimeSeries<S> {
     const { name, schema, columns, sort = false } = input;
 
     // Key column (schema[0]). v1: point-in-time (`time`) keys only.
@@ -1249,12 +1247,21 @@ export class TimeSeries<S extends SeriesSchema> {
    * (return-type-keyed on `rowFormat`) cascades TS2394 errors
    * through several unrelated overload sets in this file
    * (`pivotByGroup`, `rolling`, `arrayAggregate`, `arrayExplode`).
-   * The cascade is specific to `TimeSeries.toJSON`'s shape and has
-   * defeated several time-boxed attempts to isolate. The
-   * counterpart on {@link LiveSeries.toJSON} DOES narrow — for
+   * The counterpart on {@link LiveSeries.toJSON} DOES narrow — for
    * the networked snapshot path, the ergonomic win is already
-   * there. Re-attempt if a TS upgrade or refactor unblocks the
-   * cascade.
+   * there.
+   *
+   * The cascade was long recorded here as un-isolated. It is now
+   * isolated, on {@link TimeSeries.toColumns}: the trigger is a
+   * **key-remapped mapped type** (`{ [C in S[number] as C['name']]:
+   * … }` — which is what `JsonObjectRowForSchema<S>` is) in a
+   * **method return position on this class**, and a method-level
+   * type parameter defers it past whatever resolution order trips
+   * it. `toColumns` carries the full write-up and the three
+   * workarounds that do *not* work. Narrowing this method is
+   * therefore unblocked, but it changes an existing public return
+   * type, so it wants its own decision rather than a drive-by —
+   * tracked as [PND-TSJSONT] in PLAN.md.
    */
   toJSON(
     options: { rowFormat?: JsonRowFormat } = {},
@@ -1640,6 +1647,72 @@ export class TimeSeries<S extends SeriesSchema> {
    */
   toArrow(options: ToArrowOptions = {}): ArrowExport {
     return storeToArrow(this.#store.store, options);
+  }
+
+  /**
+   * Example: `series.toColumns()`.
+   *
+   * The **columnar wire envelope**: `{ name, schema, columns }` with one plain
+   * array per column (the `time` key included, under its own name) — exactly
+   * what {@link TimeSeries.fromColumns} takes back, so
+   * `TimeSeries.fromColumns(series.toColumns())` round-trips without a cast.
+   *
+   * The columnar counterpart of {@link TimeSeries.toJSON}: same data, one
+   * array per column instead of one array per row. Prefer it when the consumer
+   * is itself column-oriented, or when the payload is dense enough that C
+   * arrays beat N×C-element rows on size and parse time — it allocates one
+   * array per **column** where the row exports mint one object per **row**.
+   *
+   * Gaps emit as `null`: `NaN` is not JSON, and a `Float64Array` does not
+   * stringify as an array, so a JSON-bound columnar payload pays that
+   * conversion somewhere. For a **zero-copy** columnar handoff in-process (no
+   * JSON, no per-cell walk) use {@link TimeSeries.toArrow} instead.
+   *
+   * **Point keys only.** A `timeRange` / `interval` key spans two edges and
+   * throws here, because `fromColumns` has no way to read such a key back —
+   * emitting a `<key>End` column the way `toArrow` flattens one would produce
+   * a payload no ingest door accepts. Collapse the key first
+   * (`series.asTime({ at: 'begin' })`), or use {@link TimeSeries.toJSON},
+   * whose row envelope does carry range and interval keys.
+   *
+   * **`boolean` / array columns** export fine but are not ingestable —
+   * `fromColumns` takes `number` and `string` value columns — and the return
+   * type says so, making that round trip a compile error rather than a runtime
+   * one. `series.select(…)` them out first, or use the row doors.
+   *
+   * **Why the `<T extends S = S>` parameter.** It is load-bearing, not
+   * decoration, and it is the workaround for the TS2394 cascade the
+   * {@link TimeSeries.toJSON} doc describes. Declaring a **key-remapped mapped
+   * type** (`{ [C in S[number] as C['name']]: … }`) directly as a method return
+   * type on this class makes TypeScript report "overload signature is not
+   * compatible with its implementation signature" on four *unrelated* overload
+   * sets (`pivotByGroup`, `rolling`, `arrayAggregate`, `arrayExplode`) plus
+   * four in the live layer. Isolated here, since the `toJSON` note records the
+   * cascade as un-isolated:
+   *
+   * - the trigger is the **construct, not its cost** — a trivial
+   *   `{ [C in S[number] as C['name']]: unknown }` cascades identically;
+   * - it is the **return position on this class** that matters, not the type's
+   *   definition: wrapping it in an `interface`, or deferring inside the alias
+   *   with `S extends unknown ? … : never`, changes nothing;
+   * - adding an **overload declaration** (precise signature, loose
+   *   implementation signature) makes it worse, not better;
+   * - a **method-level type parameter** defers the instantiation past whatever
+   *   resolution order trips it, and the cascade disappears.
+   *
+   * `T` defaults to `S`, so `series.toColumns()` — the only way anyone should
+   * call this — is exactly `TimeSeriesColumnarOutput<S>`. Passing an explicit
+   * `T` is possible but pointless; it is bounded by `S` and would only narrow
+   * the type below what the method actually returns.
+   */
+  toColumns<T extends S = S>(): TimeSeriesColumnarOutput<T> {
+    return {
+      name: this.name,
+      schema: this.schema as unknown as T,
+      columns: storeToColumns(
+        this.#store.store,
+      ) as unknown as TimeSeriesJsonColumns<T>,
+    };
   }
 
   /** Example: `series.toObjects()`. Returns normalized schema-keyed object rows using temporal key objects and `undefined` for missing payload values. */

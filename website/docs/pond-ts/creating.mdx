@@ -107,8 +107,8 @@ timestamp-parsing rules, and the one genuinely tricky corner
   strings.
 - [**`toJSON`**](#tojson) — array and object row formats.
 - [**Round-trip fidelity**](#round-trip-fidelity) — what's preserved.
-- [**Columnar ingest**](#columnar-ingest) — `fromColumns`, the
-  struct-of-arrays door for bulk/binary wire formats.
+- [**Columnar ingest**](#columnar-ingest) — `fromColumns` / `toColumns`,
+  the struct-of-arrays doors for bulk/binary wire formats.
 - [**Calendar-aware sequences**](#calendar-aware-sequences) — the
   timezone-sensitive sibling to `Sequence.every`.
 - [**Pitfalls**](#pitfalls).
@@ -494,6 +494,47 @@ millisecond per column, instead of a multi-frame freeze. A plain
 pattern specifically wants the columnar + typed-array path.
 :::
 
+### Getting it back out: `toColumns`
+
+`series.toColumns()` is the inverse — the same `{ name, schema, columns }`
+envelope, one plain array per column, which `fromColumns` takes straight
+back:
+
+```ts
+const wire = JSON.stringify(series.toColumns());
+// … over HTTP / a WebSocket / postMessage …
+const restored = TimeSeries.fromColumns(JSON.parse(wire));
+```
+
+No cast is needed in either direction — `toColumns()`'s return type is
+typed per column and is assignable to `fromColumns`' input. Gaps come out
+as `null` (`NaN` isn't JSON, and a `Float64Array` doesn't stringify as an
+array).
+
+**It is dramatically cheaper than the row export.** `toColumns` reads the
+columnar store directly, where `toJSON` materialises a row per event —
+measured at 100k rows × 6 columns, **2.5 ms vs 25.9 ms**, a 10× gap that
+widens with row count because the row door allocates per row and this one
+allocates per column. Reach for it whenever the consumer is
+column-oriented or the payload is large. (In-process, going to another
+columnar engine, `toArrow` is cheaper still: 0.006 ms, because it hands
+over the buffers rather than copying them.)
+
+Two limits, both deliberate and both reported rather than hidden:
+
+- **Point keys only.** A `timeRange` / `interval` key — what `aggregate`
+  produces — spans two edges, and no columnar ingest door reads such a key
+  back, so it throws rather than emitting a dialect nothing accepts.
+  Collapse it first (`series.asTime({ at: 'begin' })`), or use
+  [`toJSON`](#tojson), whose row envelope does carry range and interval
+  keys.
+- **`boolean` / array columns** export fine but can't be ingested back
+  (the columnar engine takes `number` and `string`). The return type says
+  so, so that round trip fails to compile rather than at runtime;
+  `select()` them out, or use the row doors.
+
+`ValueSeries` has the same method with the same contract.
+
 ## Calendar-aware sequences
 
 For timezone-sensitive bucketing, `Sequence.every(duration)` is
@@ -603,8 +644,8 @@ Library isn't trying to guess remaps.
 
 ## See also
 
-- [Columnar ingest](#columnar-ingest) — `fromColumns` for struct-of-arrays
-  / typed-array wire formats.
+- [Columnar ingest](#columnar-ingest) — `fromColumns` / `toColumns` for
+  struct-of-arrays / typed-array wire formats.
 - [Concepts → Series](./concepts/series)
   — `TimeSeries` vs `LiveSeries`, schema shape, mental model.
 - [Array columns](../pond-ts/advanced/arrays) — array cells

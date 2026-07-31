@@ -681,6 +681,60 @@ Deferred, none blocking: IPC-bytes convenience (`tableToIPC` is the caller's
 two-liner) and a how-to showing the polars sidecar pattern end to end. (The
 third deferral, `ValueSeries.toArrow`, shipped with [PND-VSIO] below.)
 
+### [PND-TSCOLS] — `TimeSeries.toColumns` — SHIPPED
+
+Wired the store-generic columnar-JSON exporter (shipped with [PND-VSIO]
+below) onto `TimeSeries`, closing the one-way `fromColumns` door there too.
+
+**The two-edged-key decision the task left open: keep the throw.** A
+`timeRange` / `interval` key could flatten into `<key>End` / `<key>Label`
+columns the way `storeToArrow` does; two other spellings were considered (an
+array-of-pairs key column, and reusing `serializeJsonKey`'s row vocabulary).
+All three were rejected for the same reason: `fromColumns` builds one key
+buffer from one column, so **no ingest door reads any of them back**, and a
+door whose whole value is "its output is `fromColumns`' input" should not
+grow an export-only dialect. The error now names the two ways out that exist
+today — `asTime({ at: 'begin' })` and `toJSON()`, whose row envelope does
+carry both key kinds — and a test asserts both remedies actually work.
+
+**The TS2394 cascade, isolated at last.** Declaring the precise return type
+(a key-remapped mapped type, `{ [C in S[number] as C['name']]: … }`) on
+`toColumns` reproduced the cascade `TimeSeries.toJSON`'s doc had recorded as
+having "defeated several time-boxed attempts to isolate": TS2394 on four
+unrelated overload sets in `time-series.ts` plus four in the live layer.
+Narrowed to one line by probe:
+
+- the trigger is the **construct, not its cost** — a trivial
+  `{ [C in S[number] as C['name']]: unknown }` cascades identically;
+- it is the **return position on this class**, not the type's definition —
+  an `interface` wrapper and a deferred `S extends unknown ? … : never`
+  inside the alias both change nothing;
+- an **overload declaration** (precise signature + loose implementation
+  signature) makes it worse;
+- a **method-level type parameter** (`toColumns<T extends S = S>()`) defers
+  the instantiation past whatever resolution order trips it, and the cascade
+  disappears. `T` defaults to `S`, so callers see no difference.
+
+That unblocks narrowing `toJSON` on `rowFormat` — filed as [PND-TSJSONT]
+rather than done here, since it changes an existing public return type.
+
+**Perf** (`scripts/perf-to-columns.mjs`, median of 7). The headline is the
+comparison, not the absolute: `toColumns` reads the columnar store directly
+where `toJSON` materialises a row per event.
+
+| Export (100k × 6, dense numeric)  | Median   |
+| --------------------------------- | -------- |
+| `toColumns()`                     | 2.5 ms   |
+| `toJSON()` (tuple rows)           | 25.9 ms  |
+| `toJSON({ rowFormat: 'object' })` | 18.6 ms  |
+| `toArrow()`                       | 0.006 ms |
+
+Two findings worth keeping: a string column costs ~3× a numeric one (dict
+reads), ~10% gaps cost ~3× dense (per-cell validity), and — counter-intuitive
+enough to be worth a look — **`toJSON`'s tuple rows are consistently slower
+than its object rows**, which the tuple path's per-row `.map()` + spread
+plausibly explains. Filed under [PND-TSJSONT].
+
 ### [PND-VSIO] — `ValueSeries` ingest / export parity — SHIPPED
 
 `ValueSeries` had one door in (`fromColumns`, plus the `byValue` projection)
