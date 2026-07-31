@@ -6,10 +6,13 @@
 // the amortised cost of the rebuilds — which is the part that could have
 // been quadratic (see the rate limit in the kernel).
 //
-// Complexity: O(N) for the sweep + O(period) per re-anchor. Re-anchors
-// fire at most once per max(period, …) rows, so the rebuild term is O(N)
-// amortised and the whole kernel is O(N) — independent of `period`. The
-// `period` sweep below is the test of that claim: flat is the pass.
+// Complexity: O(N) for the sweep + O(period) per rebuild, rebuilding once
+// per `period` rows — so the rebuild term is exactly one extra
+// accumulation per row and the whole kernel is O(N), independent of
+// `period`. The sweep below is the test of that claim: flat is the pass,
+// and it goes to 100k because a Codex pass broke an earlier version that
+// was flat to 1024 and 11x worse at 100k (a fixed 1024-row rebuild
+// interval makes the cost O(N + N*period/1024)).
 //
 // Run: node packages/financial/scripts/perf-shifted-frame.mjs
 
@@ -131,7 +134,7 @@ console.log(`
 
 console.log('  period sweep — the O(N)-independent-of-period claim');
 console.log(`  ${'─'.repeat(56)}`);
-for (const p of [5, 20, 63, 252, 1024]) {
+for (const p of [2, 5, 20, 63, 252, 1024, 10_000, 100_000]) {
   const t = bench(() => zScore(walk, { period: p }));
   console.log(
     `    period ${String(p).padStart(4)}       ${t.toFixed(1).padStart(7)} ms   ${((t / N) * 1e6).toFixed(1)} ns/row`,

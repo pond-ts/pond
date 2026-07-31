@@ -101,16 +101,16 @@ describe('[PND-SHIFTFRAME] zScore in a shifted frame', () => {
     return z;
   }
 
-  function worstError(gen: (i: number) => number) {
+  function worstError(gen: (i: number) => number, period = P) {
     const { close, series } = build(gen);
-    const got = zScore(series, { period: P }).column('zscore');
-    const was = naive(close, P);
+    const got = zScore(series, { period }).column('zscore');
+    const was = naive(close, period);
     let shifted = 0;
     let previous = 0;
-    for (let i = P - 1; i < N; i += 1) {
-      const sd = refSd(close, i, P);
+    for (let i = period - 1; i < N; i += 1) {
+      const sd = refSd(close, i, period);
       if (sd === 0) continue;
-      const want = refDeviation(close, i, P) / sd;
+      const want = refDeviation(close, i, period) / sd;
       if (!Number.isFinite(want) || Math.abs(want) < 1e-12) continue;
       const a = got.at(i) as number;
       if (Number.isFinite(a))
@@ -167,6 +167,43 @@ describe('[PND-SHIFTFRAME] zScore in a shifted frame', () => {
     // while the window spread stays ~1 — so a test with only the flat
     // cases above would pass with that trigger deleted.
     const { shifted } = worstError((i) => 1e12 * (1 + i / N) + Math.sin(i / 7));
+    expect(shifted).toBeLessThan(1e-9);
+  });
+
+  it('holds at period 2, where every non-flat window has |z| exactly 1', () => {
+    // A Codex adversarial pass found this. At period 2 the mean is the
+    // midpoint, so the deviation is ±spread/2 and σ is spread/2 — the
+    // exact z-score is ±1 for any non-flat window, with no reference
+    // needed. That makes it the sharpest oracle available, and the
+    // kernel failed it: rebuilding state on a fixed 1024-row interval
+    // left the reverse-Welford removal drifting through ~500 window
+    // turnovers, reaching |z| − 1 = 1.7e-6. Rebuilding once per turnover
+    // fixed it. Keep this test at period 2 — it is the only one that
+    // exercises the removal path at its most fragile.
+    let seed = 0x12345678;
+    const rnd = () =>
+      (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 2 ** 32;
+    const base = 1.0665e-21;
+    const spread = 7.1167e-25;
+    const { series } = build(
+      (i) => (i < 739 ? base : -base) + (rnd() - 0.5) * spread,
+    );
+    const col = zScore(series, { period: 2 }).column('zscore');
+    let worst = 0;
+    for (let i = 1; i < N; i += 1) {
+      const z = col.at(i);
+      if (typeof z !== 'number') continue;
+      worst = Math.max(worst, Math.abs(Math.abs(z) - 1));
+    }
+    expect(worst).toBeLessThan(1e-9);
+  });
+
+  it('holds at a period longer than any fixed rebuild interval', () => {
+    // The other half of the same finding: the rebuild interval used to be
+    // a constant, which is wrong at both ends. 2048 is past the 1024 it
+    // used to be, so the state here would once have been rebuilt twice
+    // per window rather than once per turnover.
+    const { shifted } = worstError((i) => 1e13 + Math.sin(i / 97) * 3, 2048);
     expect(shifted).toBeLessThan(1e-9);
   });
 

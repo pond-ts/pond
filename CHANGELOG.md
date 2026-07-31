@@ -70,9 +70,9 @@ include new features and type-level changes; patch bumps are strictly additive.
   | input                     | before | after   |
   | ------------------------- | ------ | ------- |
   | `1e15 + ((i % 7) − 3)`    | 1.0e+0 | 4.1e-15 |
-  | `1e9 + sin` (mid)         | 4.1e+0 | 3.0e-11 |
-  | random walk ≈100 (benign) | 1.7e-5 | 2.1e-12 |
-  | `1e12·(1+i/N)` (trending) | 9.0e-6 | 3.2e-11 |
+  | `1e9 + sin` (mid)         | 4.1e+0 | 4.9e-12 |
+  | random walk ≈100 (benign) | 3.9e-6 | 4.4e-11 |
+  | `1e12·(1+i/N)` (trending) | 9.0e-6 | 4.9e-15 |
 
   **This was never a parallelism bug**, though it was found through one and
   first documented as one. The sequential study computed the same subtraction
@@ -88,8 +88,9 @@ include new features and type-level changes; patch bumps are strictly additive.
   changes its answer by a bit. The remaining accelerated studies — `sma`,
   `envelope`, `bollinger` — are exactly those whose error is bounded.
 
-  `zScore` costs ~1.8× its previous formulation as an upper bound (~21 ns/row
-  at 500k), flat in `period`. `scripts/perf-shifted-frame.mjs`.
+  `zScore` costs ~2.3× its previous formulation as an upper bound (~26 ns/row
+  at 500k), and is flat in `period` — 22.8 to 26.1 ns/row from `period 2` to
+  `period 100_000`. `scripts/perf-shifted-frame.mjs`.
 
 ### Added
 

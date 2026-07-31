@@ -127,9 +127,9 @@ and ranking across partitions.
 - **[PND-SHIFTFRAME]** — **Shipped.** `rollingDeviationSd` in
   `packages/financial/src/kernels/rolling.ts`; `zScore` rewired onto it.
   Worst relative error against an exact reference over 200k rows:
-  `1e15 + ((i%7)−3)` **1.0e+0 → 4.1e-15**, `1e9 + sin` **4.1e+0 → 3.0e-11**,
-  benign random walk **1.7e-5 → 2.1e-12**. Two things the plan did not
-  anticipate, both worth carrying forward:
+  `1e15 + ((i%7)−3)` **1.0e+0 → 4.1e-15**, `1e9 + sin` **4.1e+0 → 4.9e-12**,
+  benign random walk **3.9e-6 → 4.4e-11**. Three things the plan did not
+  anticipate, all worth carrying forward:
   - **Welford needed shifting too.** The first cut shifted only the mean and
     left σ on the raw values, which improved the pathological case by three
     orders of magnitude and stopped there — `d = x − wMean` is the same
@@ -151,6 +151,19 @@ and ranking across partitions.
     with the sequential answer. That only ever worked because the accelerated
     result was inferior, and it evaporated the moment that was fixed.
     Replaced with `parallelDispatches()`, an explicit count.
+
+  - **A constant rebuild interval was wrong at both ends**, found by a Codex
+    pass and fixed in `47f0c0b`. The kernel rebuilt its incremental state
+    every 1024 rows. Too rarely for a short window — at `period 2`, where
+    every non-flat window has `|z|` exactly 1, drift through ~500 turnovers
+    reached **1.7e-6**, breaking the `<1e-9` claim outright. Too often for a
+    long one — the rebuild is `O(period)`, so firing it on a row count made
+    the kernel `O(N + N·period/1024)`: **81 ms at `period 100k`** against 7 ms
+    at `period 20`, with the "flat in `period`" claim only ever tested to 1024. Rebuilding once per **window turnover** (`period` rows) fixes both
+    with one rule, and is _faster_ — the magnitude heuristic it replaced was
+    computing a `sqrt` on every row. Now 22.8–26.1 ns/row across `period` 2 to
+    100k. The lesson for the next kernel: a threshold in rows is a threshold
+    in the wrong unit when the work per row scales with a window.
 
 - **[PND-AGENTBENCH]** — **Built and measured** —
   `packages/financial/scripts/perf-agent-bench.mjs`. Q11 (500 symbols × 1000

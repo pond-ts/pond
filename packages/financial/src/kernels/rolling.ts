@@ -247,15 +247,31 @@ export function emaValues(
  * Accumulate `v − anchor` rather than `v`, so the mean is carried as
  * `anchor + offset` with `offset` small, and emit the deviation as
  * `(v − anchor) − offset` — both operands small, so nothing cancels.
- * The anchor is re-taken every {@link REANCHOR_INTERVAL} rows from a
- * value inside the current window, which keeps the shifted values small
- * even on a trending series and bounds the drift the incremental sum
- * accumulates. Re-anchoring rebuilds the shifted sum from the window,
- * which is `O(period)` amortised over `REANCHOR_INTERVAL` rows — under
- * 2% at the default.
+ * The state is rebuilt from the window every `period` rows — **one full
+ * window turnover** — which is the only interval that is scale-free. It
+ * does two jobs at once. The anchor never goes more than one turnover
+ * stale, so `x - anchor` stays small even while the series trends. And
+ * no incremental add or remove survives longer than the window it
+ * describes, which bounds the drift that the reverse-Welford removal
+ * accumulates.
  *
- * σ needs none of this: variance is translation-invariant, and the
- * Welford recurrence is already stable. It is carried unchanged.
+ * A fixed interval fails at both ends, and a Codex pass found both.
+ * Too long for a short window: at `period 2` a 1024-row interval left the
+ * removal recurrence drifting through ~500 turnovers, and `|z| - 1` — which
+ * is exactly 0 for any non-flat 2-row window — reached **1.7e-6**. Too
+ * short for a long one: the `O(period)` rebuild fired every 1024 rows
+ * regardless of `period`, making the kernel `O(N + N·period/1024)`, which
+ * at `period 100k` over 200k rows was **81 ms** against 7 ms at `period 20`.
+ * Tying the interval to `period` makes the rebuild exactly one extra
+ * accumulation per row at every scale.
+ *
+ * σ is carried the same way. "Variance is translation-invariant, so
+ * Welford is already stable" is the intuition, and it is wrong: Welford's
+ * `x - wMean` is the same subtraction of two near-equal large numbers,
+ * and it cancels just as badly. Welford is stable relative to the
+ * *conditioning* of the problem; raw large-magnitude values are what make
+ * the problem ill-conditioned. So the variance accumulator sees `x -
+ * anchor` too.
  *
  * Measured over 200k rows against an exact reference:
  *
@@ -268,8 +284,6 @@ export function emaValues(
  * too, because the cancellation is a matter of degree everywhere rather
  * than a cliff at one magnitude.
  */
-const REANCHOR_INTERVAL = 1024;
-
 export function rollingDeviationSd(
   series: TimeSeries<SeriesSchema>,
   column: string,
@@ -296,7 +310,7 @@ export function rollingDeviationSd(
   let wM2 = 0;
   let windowStart = 0;
   let windowEnd = 0;
-  let sinceAnchor = REANCHOR_INTERVAL;
+  let sinceAnchor = period;
 
   for (let i = 0; i < n; i += 1) {
     const lo = i - period + 1 > 0 ? i - period + 1 : 0;
@@ -339,32 +353,22 @@ export function rollingDeviationSd(
       windowStart += 1;
     }
 
-    // Re-anchor, and rebuild the whole state from the window rather than
-    // translating it. Same `O(period)` pass either way, and a rebuild
-    // also discards the drift the incremental adds and removes have
-    // accumulated — so the error since the last anchor never compounds
-    // into the next stretch.
+    // Rebuild the whole state from the window rather than translating the
+    // anchor across it. Same `O(period)` pass either way, and a rebuild
+    // also discards every rounding error the incremental adds and removes
+    // have accumulated — which is the half of this that matters for short
+    // windows, where the reverse-Welford removal is the weak step.
     //
-    // Two triggers. The periodic one bounds that drift. The magnitude
-    // one is what keeps a TRENDING series honest: an anchor 1024 rows
-    // back can sit far from the current window, and `x - anchor` is only
-    // useful while it stays small next to the spread we are trying to
-    // resolve. `2^20 · σ` keeps ~32 bits of the deviation.
-    //
-    // The magnitude trigger is rate-limited to once per `period` rows,
-    // which is what keeps this `O(N)`. Unlimited, a series with a tiny
-    // but non-zero σ fires it on nearly every row and each firing costs
-    // `O(period)` — quadratic in disguise. One rebuild per `period` rows
-    // is `O(1)` amortised, and the window has turned over at most once
-    // in that span, so the bound costs no accuracy.
+    // `period` ops per `period` rows: one extra accumulation per row, at
+    // any `period`. An earlier version rebuilt on a fixed 1024-row
+    // interval plus a magnitude test, and was wrong in both directions at
+    // once — see the note above. The magnitude test is gone with it: it
+    // had to be rate-limited to `period` rows to stay `O(N)`, which is the
+    // cadence this rebuilds at anyway, so it could never fire sooner than
+    // the unconditional rebuild already does.
     sinceAnchor += 1;
     const x = v[i]!;
-    if (
-      Number.isFinite(x) &&
-      (sinceAnchor >= REANCHOR_INTERVAL ||
-        (sinceAnchor >= period &&
-          Math.abs(x - anchor) > (1 << 20) * Math.sqrt(wN > 0 ? wM2 / wN : 0)))
-    ) {
+    if (Number.isFinite(x) && sinceAnchor >= period) {
       anchor = x;
       sinceAnchor = 0;
       shiftedSum = 0;
