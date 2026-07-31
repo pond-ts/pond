@@ -36,12 +36,21 @@ export type JsonColumn = Array<ColumnValue | null>;
  * Build the columnar-JSON view of a store: `{ [columnName]: values }`, the key
  * column included under its own name so the payload is self-contained.
  *
- * Store-generic, but **single-edge keys only** (`time` / `value`) — those are
- * one number per row and need no naming decision. A two-edged key
- * (`timeRange` / `interval`) would have to flatten into synthesized
- * `<key>End` / `<key>Label` fields the way `storeToArrow` does, and nothing
- * ingests that shape back yet, so it throws rather than inventing a wire
- * format no door reads.
+ * Store-generic — `TimeSeries.toColumns` and `ValueSeries.toColumns` are the
+ * same walk over the same substrate — but **single-edge keys only** (`time` /
+ * `value`), which are one number per row and need no naming decision.
+ *
+ * A two-edged key (`timeRange` / `interval`) throws. It *could* flatten into
+ * synthesized `<key>End` / `<key>Label` columns the way `storeToArrow` does,
+ * and that shape was considered; it was rejected because **no ingest door
+ * reads it back**. `fromColumns` builds one key buffer from one column, so a
+ * flattened payload would be an export-only dialect — and this door's whole
+ * value is that its output is `fromColumns`' input. Two other candidate
+ * spellings (an array-of-pairs key column, and reusing `serializeJsonKey`'s
+ * row vocabulary) were rejected for the same reason. The error names the two
+ * ways out, both of which exist today. (Only the `TimeSeries` door can reach
+ * that error — a `ValueSeries`' key is always the single-edge `'value'` axis —
+ * which is why the message may safely name `asTime`.)
  */
 export function storeToColumns(
   store: ColumnarStore,
@@ -50,8 +59,10 @@ export function storeToColumns(
   const keyName = store.schema[0]!.name;
   if (keys.kind !== 'time' && keys.kind !== 'value') {
     throw new ValidationError(
-      `toColumns: a '${keys.kind}' key spans two edges and has no columnar-JSON ` +
-        `spelling yet; re-key to a point ('time' / 'value') key first`,
+      `toColumns: the '${keys.kind}' key spans two edges, and no columnar ` +
+        `ingest door reads such a key back — collapse it first ` +
+        `(series.asTime({ at: 'begin' })), or use toJSON(), whose row envelope ` +
+        `does carry range and interval keys`,
     );
   }
 
