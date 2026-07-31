@@ -153,7 +153,7 @@ and ranking across partitions.
     Replaced with `parallelDispatches()`, an explicit count.
 
   - **A constant rebuild interval was wrong at both ends**, found by a Codex
-    pass and fixed in `47f0c0b`. The kernel rebuilt its incremental state
+    pass and fixed in `20639a4`. The kernel rebuilt its incremental state
     every 1024 rows. Too rarely for a short window — at `period 2`, where
     every non-flat window has `|z|` exactly 1, drift through ~500 turnovers
     reached **1.7e-6**, breaking the `<1e-9` claim outright. Too often for a
