@@ -1,14 +1,14 @@
 import { TimeSeries } from 'pond-ts';
-import { RIDE_WATTS } from './ride-watts';
+import { RIDE_ELEVATION_M, RIDE_WATTS } from './ride-samples';
 
 /**
  * A real ride, as a pond `TimeSeries` — the Getting-started worked example's
- * data. See `ride-watts.ts` for provenance: 1 Hz power from a Garmin head unit,
- * gaps and coasting zeros left intact.
+ * data. See `ride-samples.ts` for provenance: 1 Hz power and altitude from a
+ * Garmin head unit, gaps and coasting zeros left intact.
  *
- * The samples are already columnar (one array, one value per elapsed second),
- * so this takes `fromColumns` rather than building row tuples — the same
- * struct-of-arrays door the page's ingest tip points at.
+ * The samples are already columnar (one array per channel, one value per
+ * elapsed second), so this takes `fromColumns` rather than building row tuples
+ * — the same struct-of-arrays door the page's ingest tip points at.
  */
 
 /** Functional threshold power, watts — the rider's own setting on the head unit. */
@@ -25,6 +25,7 @@ export const RIDE_SCHEMA = [
   // Optional: the recorder's dropouts ride as gaps rather than as zeros, which
   // would be a lie — 0 W means coasting, and this ride does plenty of that.
   { name: 'watts', kind: 'number', required: false },
+  { name: 'elevation', kind: 'number', required: false },
 ] as const;
 
 export function ride(): TimeSeries<typeof RIDE_SCHEMA> {
@@ -34,6 +35,7 @@ export function ride(): TimeSeries<typeof RIDE_SCHEMA> {
     columns: {
       time: RIDE_WATTS.map((_, i) => RIDE_START_MS + i * 1000),
       watts: RIDE_WATTS,
+      elevation: RIDE_ELEVATION_M,
     },
   });
 }
