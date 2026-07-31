@@ -27,7 +27,8 @@ wire, `toRows` / `toObjects` hand back in-memory rows, `toColumns` emits the
 columnar-JSON envelope `fromColumns` reads back, and `toArrow` hands the raw
 column buffers to another columnar engine.
 
-Two smaller doors round out the set: `TimeSeries.fromEvents(events, { schema })`
+Two smaller doors round out the set:
+`TimeSeries.fromEvents(events, { schema, name })`
 for `Event` objects you already hold, and
 `TimeSeries.fromPoints(points, { schema })` for wide `{ ts, … }` objects (the
 shape charts hand back).
@@ -230,7 +231,7 @@ const ts = TimeSeries.fromJSON({
 });
 
 ts.at(0)!.begin();
-// 1735714800000 — i.e. 2025-01-01T08:00:00Z
+// 1735718400000 — i.e. 2025-01-01T08:00:00Z
 ```
 
 Does your input need it?
@@ -485,6 +486,7 @@ const bars = TimeSeries.fromColumns({
     time: Float64Array.from([1735689600000, 1735689660000, 1735689720000]),
     open: Float64Array.from([193.1, 193.4, 193.2]),
     close: Float64Array.from([193.4, 193.2, 193.6]),
+    venue: ['XNAS', 'XNAS', 'XNAS'], // strings stay a string[]
   },
 });
 ```
@@ -882,7 +884,7 @@ const closes = Float64Array.from([193.4, 193.2, 193.6]);
 const bars = TimeSeries.fromColumns({
   name: 'AAPL',
   schema,
-  columns: { time, open, close: closes },
+  columns: { time, open, close: closes, venue },
 });
 
 closes[0] = 0; // bars now reports 0 for the first close
