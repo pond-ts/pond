@@ -5,7 +5,8 @@ import {
   validityFromBits,
 } from '../../columnar/index.js';
 import { ValidationError } from '../../core/errors.js';
-import type { SeriesSchema } from '../../schema/index.js';
+import type { SeriesSchema, ValueSeriesSchema } from '../../schema/index.js';
+import { flatKeyNames } from './flat-keys.js';
 import type { RawColumns } from './ingest-columns.js';
 
 /**
@@ -94,10 +95,24 @@ export interface FromArrowOptions {
   /** Series name. Default `'arrow'`. */
   name?: string;
   /**
-   * Which Arrow column is the time key. Default: the field named `'time'`.
-   * Throws if neither `time` is given nor a `'time'` field exists.
+   * Which Arrow column is the time key — for a two-edged key, the field
+   * holding its **begin** edge. Default: the field named `'time'`, or, when
+   * `keyKind` is set, the field named for that kind (`'timeRange'` /
+   * `'interval'`). Throws if the field can't be resolved.
    */
   time?: string;
+  /**
+   * The pond key kind to build. Default `'time'` — one field, one timestamp
+   * per row.
+   *
+   * Set `'timeRange'` / `'interval'` for a table whose key is **flattened**
+   * across `<begin>End` (and `<begin>Label` for an interval) — the convention
+   * `toArrow` emits, so a pond-exported range- or interval-keyed table reads
+   * back through this door. It is explicit rather than sniffed: a table that
+   * merely happens to carry `time` and `timeEnd` columns should not silently
+   * become range-keyed.
+   */
+  keyKind?: 'time' | 'timeRange' | 'interval';
   /**
    * Unit of the time column's raw integer values. Default: read from the Arrow
    * `Timestamp` field's `TimeUnit` when present, otherwise `'millisecond'`.
@@ -115,6 +130,31 @@ export interface FromArrowOptions {
    * Sort rows by time key before construction (off by default — Arrow feeds
    * are usually already time-ordered). Forwarded to `fromColumns`; disables
    * zero-copy adoption when set (rows are permuted into fresh buffers).
+   */
+  sort?: boolean;
+}
+
+/** Options for {@link ValueSeries.fromArrow}. */
+export interface FromArrowValueOptions {
+  /** Series name. Default `'arrow'`. */
+  name?: string;
+  /**
+   * Which Arrow column is the **axis** (the key). Required — unlike the
+   * time-keyed door there is no conventional field name to fall back on
+   * (`strike`, `frequency`, `depth`, `cumDist` are all equally plausible), and
+   * silently keying on the wrong column is worse than an error.
+   */
+  axis: string;
+  /**
+   * Value columns to include, in order. Default: every non-axis field. Each
+   * must be numeric (→ `Float64Column`) or a string column (→ `StringColumn`);
+   * any other Arrow type (list/struct/…) throws, naming it.
+   */
+  columns?: readonly string[];
+  /**
+   * Sort rows by axis value before construction (off by default). Forwarded to
+   * the shared ingest engine; disables zero-copy adoption when set (rows are
+   * permuted into fresh buffers).
    */
   sort?: boolean;
 }
@@ -567,14 +607,27 @@ export function arrowToColumns(
     throw new ValidationError('fromArrow: table has no columns');
   }
 
-  // Resolve the time column: explicit `time`, else a field named 'time'.
+  // Resolve the key column: explicit `time`, else the field named for the key
+  // kind (`'time'` by default, so the pre-existing behaviour is unchanged).
+  const keyKind = options.keyKind ?? 'time';
+  const defaultKeyName = keyKind;
   const timeName =
     options.time ??
-    (fields.some((f) => f.name === 'time') ? 'time' : undefined);
+    (fields.some((f) => f.name === defaultKeyName)
+      ? defaultKeyName
+      : undefined);
   if (timeName === undefined) {
     throw new ValidationError(
-      "fromArrow: no time column — pass { time: '<column>' } or include a " +
-        "field named 'time'",
+      `fromArrow: no time column — pass { time: '<column>' } or include a ` +
+        `field named '${defaultKeyName}'`,
+    );
+  }
+  if (keyKind !== 'time' && timeName !== keyKind) {
+    throw new ValidationError(
+      `fromArrow: a '${keyKind}' key is read from fields named for its kind ` +
+        `('${keyKind}', '${keyKind}End'${keyKind === 'interval' ? `, '${keyKind}Label'` : ''}), ` +
+        `so { time: '${timeName}' } cannot name it — rename the table's ` +
+        `fields, or drop { time } to use the convention`,
     );
   }
   const timeField = fields.find((f) => f.name === timeName);
@@ -593,23 +646,87 @@ export function arrowToColumns(
   // Time unit → ms scale, gated on the Arrow type family (see resolveMsScale).
   const scale = resolveMsScale(timeField, options.timeUnit);
 
-  // Value column selection: explicit `columns` (in order), else every non-time
-  // field. Every selected column must be numeric (checked in readValueColumn).
-  const valueNames =
-    options.columns ??
-    fields.map((f) => f.name).filter((name) => name !== timeName);
-
+  // A two-edged key is flattened across further fields, named off the begin
+  // edge by the shared convention (`./flat-keys.ts`) — the same shape
+  // `toArrow` emits, which is what makes that pair a round trip.
+  const keyNames = flatKeyNames({ name: timeName, kind: keyKind });
   const columns: RawColumns = {
     [timeName]: readTimeColumn(timeVector, timeName, scale),
   };
+  const keyFieldNames = new Set<string>([timeName]);
+  if (keyNames.end !== undefined) {
+    columns[keyNames.end] = readKeyEdge(table, keyNames.end, scale, keyKind);
+    keyFieldNames.add(keyNames.end);
+  }
+  if (keyNames.label !== undefined) {
+    columns[keyNames.label] = readLabelField(table, keyNames.label);
+    keyFieldNames.add(keyNames.label);
+  }
+
+  // Value column selection: explicit `columns` (in order), else every field
+  // that isn't part of the key. Every selected column must be numeric or a
+  // string column (checked in readColumn).
+  const valueNames =
+    options.columns ??
+    fields.map((f) => f.name).filter((name) => !keyFieldNames.has(name));
+
   const adopted = new Map<string, ColumnarColumn>();
-  const schema: Array<{ name: string; kind: 'time' | 'number' | 'string' }> = [
-    { name: timeName, kind: 'time' },
-  ];
+  const schema: Array<{
+    name: string;
+    kind: 'time' | 'timeRange' | 'interval' | 'number' | 'string';
+  }> = [{ name: timeName, kind: keyKind }];
+  readValueColumns({
+    table,
+    valueNames,
+    keyNames: keyFieldNames,
+    keyNoun: 'the time key',
+    allowAdopt: options.sort !== true,
+    columns,
+    adopted,
+    schema,
+  });
+
+  return {
+    name: options.name ?? 'arrow',
+    schema: schema as unknown as SeriesSchema,
+    columns,
+    adopted,
+  };
+}
+
+/**
+ * Read the selected value columns into the ingest payload — the half of the
+ * Arrow read that is identical whichever key the series is built on. Appends
+ * to the caller's `columns` / `adopted` / `schema`, which are the three
+ * channels the ingest engine takes (see {@link arrowToColumns}'s note on why a
+ * fully-built column can't travel through `RawColumns`).
+ *
+ * `keyNoun` names the key in the "column is also the key" error, so each door
+ * says `the time key` / `the axis` in its own words.
+ */
+function readValueColumns(input: {
+  table: ArrowTableLike;
+  valueNames: readonly string[];
+  /**
+   * Every field the key occupies — one name for a point key, and for a
+   * two-edged key its flattened edges / label as well. A value column may not
+   * claim any of them.
+   */
+  keyNames: ReadonlySet<string>;
+  keyNoun: string;
+  allowAdopt: boolean;
+  columns: RawColumns;
+  adopted: Map<string, ColumnarColumn>;
+  schema: Array<{
+    name: string;
+    kind: 'time' | 'timeRange' | 'interval' | 'value' | 'number' | 'string';
+  }>;
+}): void {
+  const { table, valueNames, keyNames, keyNoun, allowAdopt } = input;
   for (const name of valueNames) {
-    if (name === timeName) {
+    if (keyNames.has(name)) {
       throw new ValidationError(
-        `fromArrow: column '${name}' is the time key and can't also be a ` +
+        `fromArrow: column '${name}' is ${keyNoun} and can't also be a ` +
           `value column`,
       );
     }
@@ -622,15 +739,163 @@ export function arrowToColumns(
     // Sorting permutes rows into fresh buffers, so there would be nothing
     // left to adopt — decide it here, once, rather than handing the ingest
     // engine a column it would have to take apart again.
-    const result = readColumn(vector, name, options.sort !== true);
-    if ('column' in result) adopted.set(name, result.column);
-    else columns[name] = result.values;
-    schema.push({ name, kind: result.kind });
+    const result = readColumn(vector, name, allowAdopt);
+    if ('column' in result) input.adopted.set(name, result.column);
+    else input.columns[name] = result.values;
+    input.schema.push({ name, kind: result.kind });
   }
+}
+
+/**
+ * Read a flattened key edge (`<key>End`) into a `Float64Array`. The same
+ * reader the begin edge uses — an end edge is a timestamp column in every
+ * respect — with the field's absence reported against the convention, so the
+ * error explains what the caller was expected to supply.
+ */
+function readKeyEdge(
+  table: ArrowTableLike,
+  name: string,
+  scale: number,
+  keyKind: string,
+): Float64Array {
+  const vector = table.getChild(name);
+  if (vector == null) {
+    throw new ValidationError(
+      `fromArrow: key column '${name}' not found — a '${keyKind}' key is read ` +
+        `from its flattened edges, so the table must carry '${name}'`,
+    );
+  }
+  return readTimeColumn(vector, name, scale);
+}
+
+/**
+ * Read an interval key's label field. Labels are `string` or `number` (the
+ * two `IntervalValue` shapes), so this is an ordinary value-column read — the
+ * ingest engine validates presence and single-typedness.
+ */
+function readLabelField(
+  table: ArrowTableLike,
+  name: string,
+): ReadonlyArray<string | null> | Float64Array {
+  const vector = table.getChild(name);
+  if (vector == null) {
+    throw new ValidationError(
+      `fromArrow: key column '${name}' not found — an 'interval' key is read ` +
+        `from its flattened edges plus labels, so the table must carry ` +
+        `'${name}'`,
+    );
+  }
+  // `allowAdopt: false`, so this never returns a pre-built column — the two
+  // `values` shapes are all there is. A null label reads as `NaN` here and the
+  // ingest engine rejects it against its row index, which is a better message
+  // than anything this function could produce.
+  const result = readColumn(vector, name, false);
+  return 'column' in result
+    ? result.column._values.subarray(0, result.column.length)
+    : result.values;
+}
+
+/**
+ * Read the **axis** column into a `Float64Array`. The value-axis counterpart of
+ * {@link readTimeColumn}, and simpler by one whole concern: an axis carries no
+ * unit, so there is no `TimeUnit` to resolve and no scaling pass — a
+ * `Float64Array` is adopted exactly as it stands.
+ *
+ * Like the time key, the axis must be **present at every row** (it becomes the
+ * index, and a null can't be placed in an ordering). Finiteness and
+ * monotonicity are left to the shared engine — `ValueKeyColumn` rejects a
+ * non-finite cell, the engine's ordering scan rejects a backwards one — so the
+ * same two errors surface whichever door the data came through.
+ */
+function readAxisColumn(vector: ArrowVectorLike, name: string): Float64Array {
+  if (vector.nullCount > 0) {
+    throw new ValidationError(
+      `fromArrow: axis column '${name}' has ${vector.nullCount} null value(s) ` +
+        `— axis values must be present`,
+    );
+  }
+  const raw = vector.toArray();
+  if (raw instanceof Float64Array) return raw;
+  if (isBigIntArray(raw)) return int64ToFloat64(raw, 1);
+  if (isNumberTypedArray(raw)) return new Float64Array(raw);
+  if (Array.isArray(raw) && classifyArray(raw) === 'number') {
+    return readNumbersFromArray(raw);
+  }
+  throw new ValidationError(
+    `fromArrow: axis column '${name}' is not a numeric Arrow column`,
+  );
+}
+
+/**
+ * Translate an Arrow `Table` into the ingest payload for a **value-keyed**
+ * series — {@link arrowToColumns}'s counterpart for
+ * {@link ValueSeries.fromArrow}.
+ *
+ * Same reader, same zero-copy adoption, same three return channels; the
+ * differences are the whole of the value axis's story: the key column is named
+ * explicitly (no `'time'` convention to fall back on), it is read unscaled
+ * (an axis has no `TimeUnit`), and `schema[0]` comes out `'value'`-kind, which
+ * is what makes the result a `ValueSeries` rather than a `TimeSeries` whose
+ * clock happens to hold strike prices.
+ */
+export function arrowToValueColumns(
+  table: ArrowTableLike,
+  options: FromArrowValueOptions,
+): {
+  name: string;
+  schema: ValueSeriesSchema;
+  columns: RawColumns;
+  adopted: ReadonlyMap<string, ColumnarColumn>;
+} {
+  const fields = table.schema?.fields;
+  if (!fields || fields.length === 0) {
+    throw new ValidationError('fromArrow: table has no columns');
+  }
+
+  const axisName = options.axis;
+  if (typeof axisName !== 'string' || axisName.length === 0) {
+    throw new ValidationError(
+      "fromArrow: no axis column — pass { axis: '<column>' } naming the " +
+        'column to key on',
+    );
+  }
+  if (!fields.some((f) => f.name === axisName)) {
+    throw new ValidationError(
+      `fromArrow: axis column '${axisName}' not found in the table schema`,
+    );
+  }
+  const axisVector = table.getChild(axisName);
+  if (axisVector == null) {
+    throw new ValidationError(
+      `fromArrow: axis column '${axisName}' has no vector`,
+    );
+  }
+
+  const valueNames =
+    options.columns ??
+    fields.map((f) => f.name).filter((name) => name !== axisName);
+
+  const columns: RawColumns = {
+    [axisName]: readAxisColumn(axisVector, axisName),
+  };
+  const adopted = new Map<string, ColumnarColumn>();
+  const schema: Array<{ name: string; kind: 'value' | 'number' | 'string' }> = [
+    { name: axisName, kind: 'value' },
+  ];
+  readValueColumns({
+    table,
+    valueNames,
+    keyNames: new Set([axisName]),
+    keyNoun: 'the axis',
+    allowAdopt: options.sort !== true,
+    columns,
+    adopted,
+    schema,
+  });
 
   return {
     name: options.name ?? 'arrow',
-    schema: schema as unknown as SeriesSchema,
+    schema: schema as unknown as ValueSeriesSchema,
     columns,
     adopted,
   };

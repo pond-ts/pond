@@ -13,6 +13,7 @@ import {
 } from '../../columnar/index.js';
 import type { ColumnarStore } from '../../columnar/index.js';
 import { ValidationError } from '../../core/errors.js';
+import { KEY_END_SUFFIX, KEY_LABEL_SUFFIX } from './flat-keys.js';
 
 /**
  * Zero-copy **export** to the Apache Arrow memory layout — the counterpart of
@@ -152,13 +153,12 @@ export interface ToArrowOptions {
   columns?: readonly string[];
 }
 
-/**
- * The suffix appended to a range key's second edge, and to an interval
- * key's label column. Arrow has no interval-of-time type, so a two-edged
- * pond key becomes two flat fields.
- */
-const END_SUFFIX = 'End';
-const LABEL_SUFFIX = 'Label';
+// The suffixes a two-edged key's fields take. Imported, not redeclared:
+// `fromColumns` / `toColumns` / `fromArrow` read the same two constants, so
+// the four doors cannot drift into speaking different dialects of the same
+// convention. See `./flat-keys.ts`.
+const END_SUFFIX = KEY_END_SUFFIX;
+const LABEL_SUFFIX = KEY_LABEL_SUFFIX;
 
 function nullCountOf(col: {
   length: number;

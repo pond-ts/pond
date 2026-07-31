@@ -43,20 +43,44 @@ Static constructors on `TimeSeries`: `fromJSON()` (row tuples/objects),
 `fromArrow()` (bring-your-own Apache Arrow `Table`; zero-copy Float64 adopt +
 BigInt-free int64 time; numeric + `Utf8` string columns), `fromEvents()`,
 `fromPoints()` (wide rows with `ts`), `concat()`, `joinMany()`. On
-`ValueSeries`: `fromColumns()`. Arrow-ingest types (`ArrowTableLike`,
-`ArrowVectorLike`, `ArrowDataLike`, `ArrowFieldLike`, `ArrowSchemaLike`,
-`ArrowTimeUnit`, `FromArrowOptions`) live in
+`ValueSeries`, the same three shapes keyed on the axis instead of time:
+`fromJSON()`, `fromColumns()`, `fromArrow()` (`{ axis }` is required — no
+`'time'` field convention to fall back on, and no unit scaling). Arrow-ingest
+types (`ArrowTableLike`, `ArrowVectorLike`, `ArrowDataLike`, `ArrowFieldLike`,
+`ArrowSchemaLike`, `ArrowTimeUnit`, `FromArrowOptions`,
+`FromArrowValueOptions`) live in
 `packages/core/src/batch/operators/from-arrow.ts`.
 
-Going the other way, `TimeSeries.toArrow()` exports the columns **in Arrow's
-memory layout with no copy** — pond's validity bitmap is already LSB-first
-one-bit-per-value, numerics are a contiguous `Float64Array`, booleans a
-packed bitmap, dict-encoded strings `Int32Array` indices plus a dictionary.
-It returns `{ length, fields }` rather than an Arrow `Table` (pond doesn't
-depend on `apache-arrow`; the caller assembles with `makeData`/`makeVector`),
-so another columnar engine is a buffer handoff instead of a re-ingest.
-Arrow-export types (`ArrowExport`, `ArrowExportField`, `ArrowExportType`,
-`ToArrowOptions`) live in `packages/core/src/batch/operators/to-arrow.ts`.
+Both classes also export **columnar JSON** — `toColumns()`, one plain array
+per column with gaps as `null`, the exact `{ name, schema, columns }` envelope
+`fromColumns()` takes back (`packages/core/src/batch/operators/to-columns.ts`).
+A **two-edged key** (`timeRange` / `interval`) flattens into extra columns
+named off it — `timeRange` + `timeRangeEnd`, `interval` + `intervalEnd` +
+`intervalLabel` — the convention `toArrow` already emitted, now read by
+`fromColumns` and by `fromArrow({ keyKind })` as well
+(`packages/core/src/batch/operators/flat-keys.ts` owns the naming + collision
+rules). Columnar wire types live beside their row siblings:
+`TimeSeriesJsonColumns` / `FlatKeyColumns` / `TimeSeriesColumnarInput` /
+`TimeSeriesColumnarOutput` in `packages/core/src/schema/json.ts`.
+
+Going the other way, `TimeSeries.toArrow()` / `ValueSeries.toArrow()` export
+the columns **in Arrow's memory layout with no copy** — pond's validity bitmap
+is already LSB-first one-bit-per-value, numerics are a contiguous
+`Float64Array`, booleans a packed bitmap, dict-encoded strings `Int32Array`
+indices plus a dictionary. It returns `{ length, fields }` rather than an Arrow
+`Table` (pond doesn't depend on `apache-arrow`; the caller assembles with
+`makeData`/`makeVector`), so another columnar engine is a buffer handoff
+instead of a re-ingest. Arrow-export types (`ArrowExport`, `ArrowExportField`,
+`ArrowExportType`, `ToArrowOptions`) live in
+`packages/core/src/batch/operators/to-arrow.ts`.
+
+`ValueSeries` also exports rows (`toRows()`, `toObjects()`, `toJSON()`).
+Value-axis wire types
+(`ValueSeriesJsonInput`, `ValueSeriesJsonRow`, `ValueSeriesJsonObjectRow`,
+`ValueSeriesJsonOutputArray`, `ValueSeriesJsonOutputObject`,
+`ValueSeriesJsonCell`, `ValueSeriesRow`, `ValueSeriesObjectRow`,
+`ValueSeriesJsonColumns`, `ValueSeriesColumnarInput`,
+`ValueSeriesColumnarOutput`) live in `packages/core/src/schema/value-io.ts`.
 
 ### Temporal keys & events
 
@@ -74,7 +98,7 @@ Arrow-export types (`ArrowExport`, `ArrowExportField`, `ArrowExportType`,
   `atOrBefore(key)`, `atOrAfter(key)`, `nearest(key)`, `find()`, `some()`,
   `every()`
 - **Export/access**: `column(name)`, `keyColumn()`, `toRows()`, `toObjects()`,
-  `toArray()`, `toJSON()`, `toPoints()`
+  `toArray()`, `toJSON()`, `toColumns()`, `toArrow()`, `toPoints()`
 - **Temporal range**: `timeRange()`, `overlaps()`, `contains()`,
   `intersection()`, `overlapping(range)`, `containedBy(range)`, `trim(range)`,
   `after()`, `before()`, `within()`, `tail(duration)`
@@ -94,6 +118,17 @@ method)` (EMA / Butterworth / Savitzky-Golay), `align(method, opts)`
   `cumulative()`, `scan()` (custom stateful reducer), `shift()`, `baseline()`
   (rolling avg/sd/bands), `outliers()` (deviation from baseline)
 - **Join/pivot**: `join(other, opts)`, `pivotByGroup(group, opts)`
+
+### ValueSeries methods (all in `packages/core/src/batch/value-series.ts`)
+
+Deliberately small — the ordering-based slice of the algebra, no calendar ops
+(see `docs/rfcs/value-axis.md`) — except for ingest/export, which is at full
+`TimeSeries` parity.
+
+- **Query/read**: `length`, `axisName`, `axisValues()`, `axisAt(i)`,
+  `column(name)`, `nearestIndex(value)`, `sliceByValue(lo, hi)`
+- **Export**: `toRows()`, `toObjects()`, `toJSON({ rowFormat })`,
+  `toColumns()`, `toArrow(opts)`
 
 ### Columnar layer & support
 
