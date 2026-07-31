@@ -125,14 +125,9 @@ export function ingestColumnsToStore(input: {
           `'${keyNames.label}'`,
       );
     }
-    if (ArrayBuffer.isView(labelRaw)) {
-      // A typed array can only carry numeric labels and loses the string case;
-      // reject rather than silently narrowing what an interval label may be.
-      throw new ValidationError(
-        `${op}: key column '${keyNames.label}' must be a plain array of ` +
-          `string or number labels — got a typed array`,
-      );
-    }
+    // A typed array is accepted and means *numeric* labels — unambiguous, and
+    // the only spelling a binary/Arrow decoder has for them. Strings arrive as
+    // a plain array; `buildLabelColumn` dispatches on content either way.
     rawLabels = labelRaw as ReadonlyArray<unknown>;
     if (rawLabels.length !== count) {
       throw new ValidationError(
@@ -441,6 +436,14 @@ function buildLabelColumn(
           `string or number`,
       );
     }
+    if (t === 'number' && !Number.isFinite(label)) {
+      // Also the shape a missing label takes once a decoder has mapped null to
+      // NaN — so this catches the gap the `== null` test above cannot see.
+      throw new ValidationError(
+        `${op}: interval label at index ${j} is ${String(label)} — a label is ` +
+          `part of the key's identity and must be a finite number or a string`,
+      );
+    }
     if (labelKind === undefined) {
       labelKind = t;
     } else if (t !== labelKind) {
@@ -453,6 +456,9 @@ function buildLabelColumn(
   }
 
   if (labelKind === 'number') {
+    // Already a numeric buffer (a binary decode, or `toArrow`'s output round
+    // -tripping back in) → adopt it; a plain array copies, as everywhere else.
+    if (labels instanceof Float64Array) return new Float64Column(labels, count);
     const buf = new Float64Array(count);
     for (let j = 0; j < count; j += 1) buf[j] = labels[j] as number;
     return new Float64Column(buf, count);

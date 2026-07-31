@@ -28,7 +28,7 @@
 import type { ColumnarStore } from '../../columnar/index.js';
 import { ValidationError } from '../../core/errors.js';
 import type { ColumnValue } from '../../schema/index.js';
-import { flatKeyNames } from './flat-keys.js';
+import { assertNoFlatKeyCollision, flatKeyNames } from './flat-keys.js';
 
 /** One exported column: the cells in row order, `null` where the cell is a gap. */
 export type JsonColumn = Array<ColumnValue | null>;
@@ -55,6 +55,12 @@ export function storeToColumns(
 ): Record<string, JsonColumn> {
   const keys = store.keys;
   const keyDef = store.schema[0]!;
+  // Unconditional, unlike `storeToArrow`'s equivalent: that door has a
+  // `columns` option, so a colliding name is only fatal when it is actually
+  // selected. This one exports everything, so a collision would mean the value
+  // column silently overwrote the key's second edge — a payload contradicting
+  // its own schema. (Reachable: the row door builds such a series happily.)
+  assertNoFlatKeyCollision('toColumns', store.schema);
   const keyNames = flatKeyNames(keyDef);
   const count = store.length;
   const out: Record<string, JsonColumn> = {};

@@ -622,6 +622,14 @@ export function arrowToColumns(
         `field named '${defaultKeyName}'`,
     );
   }
+  if (keyKind !== 'time' && timeName !== keyKind) {
+    throw new ValidationError(
+      `fromArrow: a '${keyKind}' key is read from fields named for its kind ` +
+        `('${keyKind}', '${keyKind}End'${keyKind === 'interval' ? `, '${keyKind}Label'` : ''}), ` +
+        `so { time: '${timeName}' } cannot name it — rename the table's ` +
+        `fields, or drop { time } to use the convention`,
+    );
+  }
   const timeField = fields.find((f) => f.name === timeName);
   if (timeField === undefined) {
     throw new ValidationError(
@@ -777,16 +785,14 @@ function readLabelField(
         `'${name}'`,
     );
   }
+  // `allowAdopt: false`, so this never returns a pre-built column — the two
+  // `values` shapes are all there is. A null label reads as `NaN` here and the
+  // ingest engine rejects it against its row index, which is a better message
+  // than anything this function could produce.
   const result = readColumn(vector, name, false);
-  if ('column' in result) {
-    // Only the null-bearing numeric adopt path returns a built column, and a
-    // label may not be null — let the engine report it against the row.
-    throw new ValidationError(
-      `fromArrow: key column '${name}' has null label(s) — an interval label ` +
-        `is part of the key's identity and must be present in every row`,
-    );
-  }
-  return result.values;
+  return 'column' in result
+    ? result.column._values.subarray(0, result.column.length)
+    : result.values;
 }
 
 /**

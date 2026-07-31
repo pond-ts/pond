@@ -27,14 +27,20 @@
  * avoid row walks. Flattened lands each edge straight in its buffer, which is
  * why it stays O(1) per column rather than O(N).
  *
- * ## The one asymmetry between export and ingest
+ * ## Collisions
  *
- * A **collision** — a value column that happens to be named `timeRangeEnd` —
- * is fatal on ingest but only conditionally fatal on export. Export can
- * tolerate the name when that column isn't selected (`toArrow`'s `columns`
- * option), because then it never appears. Ingest has no such out: the payload
- * carries one array and two claimants, and the schema is the whole story. So
- * {@link assertNoFlatKeyCollision} runs unconditionally on the way in.
+ * A value column named `timeRangeEnd` alongside a `timeRange` key means one
+ * array with two claimants. {@link assertNoFlatKeyCollision} rejects it
+ * **unconditionally** on both `fromColumns` and `toColumns` — neither has a
+ * way to say "export only some columns", so there is no case in which the
+ * collision doesn't matter. `storeToArrow` is the one door that checks
+ * *conditionally*, because its `columns` option can select the colliding
+ * column out, and then it genuinely never appears.
+ *
+ * (The export check is not optional politeness: without it `toColumns` writes
+ * the key edges first and the value-column loop overwrites them, emitting a
+ * payload that contradicts its own schema with the second edge silently gone.
+ * The row door builds such a series happily, so it is reachable.)
  */
 import { ValidationError } from '../../core/errors.js';
 import type { ColumnDef, ColumnSchema } from '../../columnar/index.js';

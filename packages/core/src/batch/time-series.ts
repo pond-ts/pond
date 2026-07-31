@@ -1703,8 +1703,9 @@ export class TimeSeries<S extends SeriesSchema> {
    * aggregated series round-trips like any other. The `schema` in the envelope
    * still declares the **logical** key, not the physical edges. See
    * `operators/flat-keys.ts` for why flattened rather than paired, and for the
-   * one collision rule it implies (a value column may not be named
-   * `${key}End` / `${key}Label`).
+   * one collision rule it implies: a value column may not be named
+   * `<key>End` / `<key>Label`, and this door throws rather than emit a payload
+   * whose value column has overwritten the key's second edge.
    *
    * **`boolean` / array columns** export fine but are not ingestable —
    * `fromColumns` takes `number` and `string` value columns — and the return

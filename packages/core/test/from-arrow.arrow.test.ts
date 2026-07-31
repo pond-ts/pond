@@ -14,7 +14,7 @@ import {
   tableFromIPC,
   tableToIPC,
 } from 'apache-arrow';
-import { TimeSeries } from '../src/index.js';
+import { Sequence, TimeSeries } from '../src/index.js';
 
 // Integration tests against REAL apache-arrow — the structural fakes in
 // from-arrow.test.ts can't validate what apache-arrow's `Vector.toArray()`
@@ -262,6 +262,54 @@ describe('[PND-FLATKEY] two-edged keys round-trip through Arrow', () => {
       ['time', 'time'],
       ['timeEnd', 'number'],
     ]);
+  });
+
+  it('round-trips an AGGREGATED series — numeric interval labels', () => {
+    // The case the option exists for, and the one the first cut of this PR
+    // got wrong: `aggregate` labels buckets numerically, `toArrow` emits that
+    // label column as float64, and the ingest engine was rejecting typed-array
+    // labels outright. Both original Arrow interval tests used STRING labels,
+    // which is exactly why it slipped through (Layer-2 review of #567).
+    const agg = new TimeSeries({
+      name: 'bars',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'v', kind: 'number' },
+      ] as const,
+      rows: [
+        [0, 1],
+        [30_000, 3],
+        [60_000, 2],
+      ],
+    }).aggregate(Sequence.every('1m'), { v: 'avg' });
+
+    const back = TimeSeries.fromArrow(assembled(agg as never) as never, {
+      name: 'bars',
+      keyKind: 'interval',
+    });
+    // Names and kinds round-trip; `required: false` does not, because an Arrow
+    // field carries no such flag — `fromArrow` derives its schema from the
+    // table, as its trust contract says. The KEY is what this test is about.
+    expect(back.schema.map((c) => [c.name, c.kind])).toEqual(
+      agg.schema.map((c) => [c.name, c.kind]),
+    );
+    expect(back.toRows()).toEqual(agg.toRows());
+    expect(back.at(0)!.key().end()).toBe(agg.at(0)!.key().end());
+  });
+
+  it('refuses to key a two-edged kind off a differently-named field', () => {
+    // The flattened names are derived from the kind, so a key named anything
+    // else would mint a schema whose key name disagrees with its kind.
+    const table = tableFromArrays({
+      bucket: Float64Array.from([0]),
+      bucketEnd: Float64Array.from([60_000]),
+    });
+    expect(() =>
+      TimeSeries.fromArrow(table as never, {
+        time: 'bucket',
+        keyKind: 'timeRange',
+      }),
+    ).toThrow(/cannot name it — rename the table's fields/);
   });
 
   it('names the missing edge when a keyKind has nothing to read', () => {

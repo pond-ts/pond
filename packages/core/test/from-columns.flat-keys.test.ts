@@ -187,14 +187,29 @@ describe('fromColumns — flattened interval key', () => {
     ).toThrow(RangeError);
   });
 
-  it('rejects a typed array of labels (it cannot carry the string case)', () => {
+  it('takes a Float64Array of labels, adopting the buffer', () => {
+    // Unambiguous — a typed array can only mean numeric labels — and it is the
+    // only spelling a binary or Arrow decoder has for them. An earlier version
+    // rejected it, which broke `fromArrow({ keyKind: 'interval' })` on exactly
+    // the series `aggregate` produces (Layer-2 review of #567).
+    const labels = Float64Array.from([0, 60_000]);
+    const series = TimeSeries.fromColumns({
+      name: 'buckets',
+      schema: INTERVAL,
+      columns: { ...columns, intervalLabel: labels },
+    });
+    expect(series.toRows()[1]![0]).toMatchObject({ value: 60_000 });
+    expect(series.toColumns().columns.intervalLabel).toEqual([0, 60_000]);
+  });
+
+  it('rejects a NaN label — what a null becomes after a decode', () => {
     expect(() =>
       TimeSeries.fromColumns({
-        name: 'shifts',
+        name: 'buckets',
         schema: INTERVAL,
-        columns: { ...columns, intervalLabel: Float64Array.from([0, 1]) },
+        columns: { ...columns, intervalLabel: Float64Array.from([0, NaN]) },
       }),
-    ).toThrow(/must be a plain array of string or number labels/);
+    ).toThrow(/interval label at index 1 is NaN/);
   });
 
   it('agrees with the row door, cell for cell', () => {

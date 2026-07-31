@@ -216,6 +216,31 @@ describe('TimeSeries.toColumns', () => {
       expect(new Set(columnNames)).toEqual(new Set(arrowNames));
     });
 
+    it('refuses to EXPORT a series whose value column collides', () => {
+      // The row door builds such a series happily, so this is reachable. The
+      // first cut of this PR wrote the key edges first and let the value-column
+      // loop overwrite them — emitting a payload that contradicted its own
+      // schema, with the end edge silently gone (Layer-2 review of #567).
+      // `toArrow` throws on the same series; these two must agree.
+      const clashing = new TimeSeries({
+        name: 'clash',
+        schema: [
+          { name: 'timeRange', kind: 'timeRange' },
+          { name: 'timeRangeEnd', kind: 'number' },
+        ] as const,
+        rows: [
+          [[0, 60_000], 7],
+          [[60_000, 120_000], 8],
+        ],
+      });
+      const fail = () => clashing.toColumns();
+      expect(fail).toThrow(ValidationError);
+      expect(fail).toThrow(
+        /value column 'timeRangeEnd' collides with the second edge/,
+      );
+      expect(() => clashing.toArrow()).toThrow(/would appear twice/);
+    });
+
     it('rejects a value column colliding with a synthesized edge name', () => {
       // One array cannot serve both the key's second edge and a value column.
       const fail = () =>

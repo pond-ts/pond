@@ -724,6 +724,17 @@ key kind fully determines the column class, so no door needs to pass one.
 `TimeSeries.fromColumns` also stopped rejecting non-`time` keys, which it had
 done since it shipped.
 
+**Two defects caught in Layer-2 review**, both from the same root — the new
+paths were tested with the shapes that were convenient rather than the shapes
+that occur. (1) `fromArrow({ keyKind: 'interval' })` threw on any series
+`aggregate` produced: those label buckets _numerically_, `toArrow` emits that
+column as float64, and the engine was rejecting typed-array labels outright —
+while both new Arrow interval tests happened to use string labels. The
+rejection is gone (a typed array unambiguously means numeric labels, and is
+now adopted zero-copy); numeric labels must be finite, which also catches the
+null-becomes-NaN case the Arrow reader produces. (2) The `toColumns` collision
+hole above. Both now have regression tests naming the case they missed.
+
 **Perf** (`scripts/perf-from-columns.mjs`, 100k × 7, median of 7). The
 point-key path is unchanged — the adopt path sits at ~2.05 ms before and
 after, and the `number[]` dense scenario's apparent swing is first-scenario

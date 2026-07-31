@@ -579,7 +579,8 @@ Two consequences worth knowing:
 
 - **A value column may not take a derived name.** A column called
   `timeRangeEnd` alongside a `timeRange` key means one array with two
-  claimants, so it throws on ingest, naming the collision.
+  claimants, so both `fromColumns` and `toColumns` throw, naming the
+  collision.
 - **Ordering is by `(begin, end)`.** Equal begins must be non-decreasing in
   `end` — matching the row door. `sort: true` sorts the same way.
 
