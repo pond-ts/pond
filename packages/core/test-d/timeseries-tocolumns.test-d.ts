@@ -10,6 +10,7 @@
  * kind the ingest engine can't take back makes it *not* type-check.
  */
 import { TimeSeries } from '../src/index.js';
+import type { SeriesSchema } from '../src/index.js';
 
 const schema = [
   { name: 'time', kind: 'time' },
@@ -62,10 +63,11 @@ const mixed = new TimeSeries({
   name: 'mixed',
   schema: [
     { name: 'time', kind: 'time' },
+    { name: 'cpu', kind: 'number' },
     { name: 'ok', kind: 'boolean' },
     { name: 'tags', kind: 'array' },
   ] as const,
-  rows: [[0, true, ['a']]],
+  rows: [[0, 0.4, true, ['a']]],
 });
 
 // They export with their real types — `toColumns` does not pretend otherwise…
@@ -75,5 +77,21 @@ void ok;
 // @ts-expect-error — fromColumns takes number / string value columns only
 TimeSeries.fromColumns(mixed.toColumns());
 
-// Selecting the unsupported columns out restores the round trip.
-TimeSeries.fromColumns(mixed.select().toColumns());
+// Selecting down to the ingestable columns restores the round trip.
+TimeSeries.fromColumns(mixed.select('cpu').toColumns());
+
+// --- the type parameter is a cascade workaround, not an API ----------------
+// `toColumns<T extends S = S>()` exists only to defer instantiation (see the
+// method's doc). The default is the whole story: an explicit `T` is UNCHECKED,
+// because on a wide `TimeSeries<SeriesSchema>` the `extends S` bound admits
+// any schema — so this compiles while describing a column that does not exist
+// at runtime. Pinned so the doc's warning stays true rather than aspirational.
+declare const wide: TimeSeries<SeriesSchema>;
+const fabricated: Array<number | null> =
+  wide.toColumns<
+    readonly [
+      { name: 'time'; kind: 'time' },
+      { name: 'notThere'; kind: 'number' },
+    ]
+  >().columns.notThere;
+void fabricated;

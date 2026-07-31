@@ -1701,9 +1701,13 @@ export class TimeSeries<S extends SeriesSchema> {
    *   resolution order trips it, and the cascade disappears.
    *
    * `T` defaults to `S`, so `series.toColumns()` — the only way anyone should
-   * call this — is exactly `TimeSeriesColumnarOutput<S>`. Passing an explicit
-   * `T` is possible but pointless; it is bounded by `S` and would only narrow
-   * the type below what the method actually returns.
+   * call this — is exactly `TimeSeriesColumnarOutput<S>`. An explicit `T` is
+   * **unchecked**, not merely redundant: on a `TimeSeries<SeriesSchema>` (the
+   * wide type the join overloads hand back) the `extends S` bound admits any
+   * schema at all, so `toColumns<SomeOtherSchema>()` describes columns the
+   * runtime does not produce. Nothing forces that on a caller — it takes an
+   * explicit type argument nobody has reason to write — but it is a lie the
+   * bound cannot catch, so don't write one.
    */
   toColumns<T extends S = S>(): TimeSeriesColumnarOutput<T> {
     return {

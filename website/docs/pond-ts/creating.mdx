@@ -501,24 +501,37 @@ envelope, one plain array per column, which `fromColumns` takes straight
 back:
 
 ```ts
-const wire = JSON.stringify(series.toColumns());
-// … over HTTP / a WebSocket / postMessage …
-const restored = TimeSeries.fromColumns(JSON.parse(wire));
+// In process, the round trip is typed end to end — no cast, and the
+// result is a TimeSeries<typeof schema>, not a widened one.
+const restored = TimeSeries.fromColumns(series.toColumns());
 ```
 
-No cast is needed in either direction — `toColumns()`'s return type is
-typed per column and is assignable to `fromColumns`' input. Gaps come out
-as `null` (`NaN` isn't JSON, and a `Float64Array` doesn't stringify as an
-array).
+That assignability is the contract: `toColumns()`'s return type is typed
+per column (`{ time: number[]; cpu: Array<number | null>; … }`) and is
+accepted by `fromColumns` as it stands. Gaps come out as `null` (`NaN`
+isn't JSON, and a `Float64Array` doesn't stringify as an array), which is
+what makes the envelope safe to send:
+
+```ts
+const wire = JSON.stringify(series.toColumns());
+// … over HTTP / a WebSocket / postMessage …
+const parsed = JSON.parse(wire) as ReturnType<typeof series.toColumns>;
+const restored = TimeSeries.fromColumns(parsed);
+```
+
+Across a wire the types are your assertion to make, not the library's —
+`JSON.parse` returns `any`, so annotate it (as above) if you want the
+restored series typed rather than widened.
 
 **It is dramatically cheaper than the row export.** `toColumns` reads the
 columnar store directly, where `toJSON` materialises a row per event —
-measured at 100k rows × 6 columns, **2.5 ms vs 25.9 ms**, a 10× gap that
-widens with row count because the row door allocates per row and this one
-allocates per column. Reach for it whenever the consumer is
-column-oriented or the payload is large. (In-process, going to another
-columnar engine, `toArrow` is cheaper still: 0.006 ms, because it hands
-over the buffers rather than copying them.)
+measured at 100k rows × 6 columns, **~2.5–3 ms vs ~26 ms** (an 8–10×
+gap across runs) that widens with row count, because the row door
+allocates per row and this one allocates per column. Reach for it
+whenever the consumer is column-oriented or the payload is large.
+(In-process, going to another columnar engine, `toArrow` is cheaper
+still — ~0.006 ms — because it hands over the buffers rather than
+copying them.)
 
 Two limits, both deliberate and both reported rather than hidden:
 

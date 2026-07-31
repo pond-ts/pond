@@ -62,8 +62,9 @@ include new features and type-level changes; patch bumps are strictly additive.
   per column, gaps as `null`), typed per column, so
   `TimeSeries.fromColumns(series.toColumns())` round-trips **with no cast**.
   It reads the columnar store directly where `toJSON` materialises a row per
-  event: measured **2.5 ms vs 25.9 ms** at 100k rows × 6 columns, a 10× gap
-  that widens with row count (`scripts/perf-to-columns.mjs`). Two deliberate
+  event: measured **~2.5–3 ms vs ~26 ms** at 100k rows × 6 columns — an
+  8–10× gap across runs, widening with row count
+  (`scripts/perf-to-columns.mjs`). Two deliberate
   limits, both reported rather than hidden — a `timeRange` / `interval` key
   spans two edges and no columnar ingest door reads it back, so it throws
   naming the two ways out (`asTime({ at: 'begin' })` or `toJSON()`); and

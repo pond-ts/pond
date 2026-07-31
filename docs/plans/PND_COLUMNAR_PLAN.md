@@ -715,6 +715,13 @@ Narrowed to one line by probe:
   the instantiation past whatever resolution order trips it, and the cascade
   disappears. `T` defaults to `S`, so callers see no difference.
 
+The workaround's one sharp edge, caught in review: an **explicit** `T` is
+_unchecked_, not merely redundant. On a wide `TimeSeries<SeriesSchema>` the
+`extends S` bound admits any schema, so `toColumns<Other>()` describes columns
+the runtime never produces. It takes a type argument nobody has reason to
+write, and the bound cannot catch it — so it is documented on the method and
+pinned in `test-d/` rather than defended against.
+
 That unblocks narrowing `toJSON` on `rowFormat` — filed as [PND-TSJSONT]
 rather than done here, since it changes an existing public return type.
 
@@ -722,12 +729,17 @@ rather than done here, since it changes an existing public return type.
 comparison, not the absolute: `toColumns` reads the columnar store directly
 where `toJSON` materialises a row per event.
 
-| Export (100k × 6, dense numeric)  | Median   |
-| --------------------------------- | -------- |
-| `toColumns()`                     | 2.5 ms   |
-| `toJSON()` (tuple rows)           | 25.9 ms  |
-| `toJSON({ rowFormat: 'object' })` | 18.6 ms  |
-| `toArrow()`                       | 0.006 ms |
+| Export (100k × 6, dense numeric)  | Median         |
+| --------------------------------- | -------------- |
+| `toColumns()`                     | 2.5–3.0 ms     |
+| `toJSON()` (tuple rows)           | 25.9 ms        |
+| `toJSON({ rowFormat: 'object' })` | 18.5–18.6 ms   |
+| `toArrow()`                       | 0.005–0.006 ms |
+
+Ranges are across runs and machines: the Layer-2 reviewer reproduced the whole
+table independently and landed at 3.0 ms for `toColumns`, so the honest
+headline is **8–10×**, not a crisp 10×. Worth keeping as a calibration note —
+the first write-up quoted the single fastest run.
 
 Two findings worth keeping: a string column costs ~3× a numeric one (dict
 reads), ~10% gaps cost ~3× dense (per-cell validity), and — counter-intuitive
