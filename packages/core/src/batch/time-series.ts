@@ -1064,11 +1064,28 @@ export class TimeSeries<S extends SeriesSchema> {
    *   `Date64` already arrives as epoch-ms via Arrow's `toArray()` and passes
    *   through; a plain int/float is taken as ms. `timeUnit` overrides.
    * - **Value columns** — every non-time field by default, or the subset named
-   *   by `columns` (in order). Numeric columns (`Float32`/int convert to
-   *   `Float64Array`; int64 recombines BigInt-free; nulls → `NaN`) and string
-   *   columns (Arrow `Utf8` → `StringColumn`, dict-encoded when it pays; nulls →
-   *   missing) are supported. Any other Arrow type (list/struct/…) throws,
-   *   naming it. A null in the time key throws.
+   *   by `columns` (in order). A null in the time key throws.
+   *
+   * **The readable types, and only these** (checked against each field's
+   * *declared* Arrow type, so an unreadable one is refused by name rather than
+   * misread — see `operators/arrow-types.ts`):
+   *
+   * | Arrow type | Becomes |
+   * | --- | --- |
+   * | `Int` (any width; int64 recombines BigInt-free) | `number` |
+   * | `Float32` / `Float64` | `number` |
+   * | `Date32` / `Date64` (already epoch-ms) | `number` |
+   * | `Timestamp` | `number` — **raw unit** as a value column; unit-scaled to ms only as the key |
+   * | `Utf8` / `LargeUtf8` | `string` |
+   * | `Dictionary<Utf8>` | `string` |
+   *
+   * Everything else throws, naming the type and what to cast it to.
+   * `Float16` and `Decimal` are worth calling out because they *look*
+   * readable and are not: a `Decimal128` is four machine words per value and a
+   * `Float16` is a half-float bit pattern, so before the type gate existed
+   * both could ingest silently wrong numbers. `Bool` is refused for a
+   * different reason — the columnar ingest engine carries `number` and
+   * `string` value columns only.
    *
    * The rows must be time-ordered (as `fromColumns` requires); pass
    * `{ sort: true }` for an unordered table (disables zero-copy adoption).

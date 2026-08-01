@@ -54,6 +54,36 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **core:** **`fromArrow` now reads a field's declared Arrow type instead of
+  guessing from the runtime shape of `toArray()`** — closing a
+  silent-corruption class. The reader worked out what a column held from what
+  `toArray()` handed back, which is correct for the types it supports and
+  quietly wrong outside them, because Arrow's physical layouts do not all store
+  one machine word per logical value. Measured, before the fix: **`Float16`
+  ingested `1.5` as `15872`** (its half-float bit pattern — the length matched,
+  so nothing caught it), and a **`Decimal128` column with a single null
+  ingested `123.45` as `12345`** (the per-element path produced exactly `rows`
+  values, so the length check never fired). A dense `Decimal` merely threw the
+  wrong error, blaming a length mismatch.
+
+  The readable set is now an explicit allowlist — `Int` (any width),
+  `Float32`/`Float64`, `Date32`/`Date64`, `Timestamp`, `Utf8`/`LargeUtf8`,
+  `Dictionary<Utf8>` — checked per field, on the key and value columns of every
+  Arrow door (`TimeSeries.fromArrow`, `ValueSeries.fromArrow`, and the
+  flattened key edges). Anything else is refused **by name**, with the cast
+  that would fix it: `Decimal` names the float64 precision trade-off, `Float16`
+  says to cast, `Bool` names the real reason (the columnar ingest engine
+  carries `number` and `string` value columns only). A duck-typed stand-in
+  carrying no `typeId` keeps working — the `ArrowTableLike` contract is
+  deliberately structural — and gains a width check that catches the Decimal
+  shape anyway.
+
+  Behavioural change worth noting: a `Utf8` **key** now throws on its declared
+  type rather than on its shape, so the message names the type and points at
+  passing it as a value column instead.
+
 ### Changed
 
 - **A fold no longer builds a `TimeSeries`** ([PND-PROCTERM]). Every node's

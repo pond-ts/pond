@@ -681,6 +681,59 @@ Deferred, none blocking: IPC-bytes convenience (`tableToIPC` is the caller's
 two-liner) and a how-to showing the polars sidecar pattern end to end. (The
 third deferral, `ValueSeries.toArrow`, shipped with [PND-VSIO] below.)
 
+### [PND-ARROWTYPE] — read the declared Arrow type — SHIPPED
+
+**Source:** the user, reviewing the Arrow doors after [PND-FLATKEY]: _"if we
+support fromArrow and expect a seamless path, the concern is we don't really
+support it beyond float64 arrays."_ Correct, and worse than it sounded.
+
+`fromArrow` decided what a column held from the **runtime shape** of
+`vector.toArray()`. That is right for every type it supports and silently
+wrong outside them, because Arrow's physical layouts do not all store one
+machine word per logical value. Measured against real `apache-arrow`:
+
+| Arrow type                    | Before                                                                          |
+| ----------------------------- | ------------------------------------------------------------------------------- |
+| `Float16`                     | `1.5` → **`15872`** (half-float bit pattern; length matched, nothing caught it) |
+| `Decimal128` + ≥1 null        | `123.45` → **`12345`** (per-element path produced exactly `rows` values)        |
+| `Decimal128` dense            | threw — but blamed a length mismatch, not the type                              |
+| `Decimal128` as key, all-zero | 2 rows in, **8 rows of timestamp 0** out                                        |
+
+The type list looked respectable; the _mechanism_ knew none of it. Every
+supported type was supported by coincidence — it happened to hand back one
+machine word per value — so the failure mode outside the set was not
+"unsupported type" but "wrong numbers".
+
+**Fixed by gating on the declared type** (`operators/arrow-types.ts`): an
+allowlist of `Int`, `Float32`/`Float64`, `Date`, `Timestamp`, `Utf8`/
+`LargeUtf8`, `Dictionary<Utf8>`, checked per field on every Arrow door
+including the flattened key edges, with refusals naming the type and the cast
+that would fix it.
+
+**Decisions worth keeping:**
+
+- **Gate, don't rewrite the reader.** The shape reading is _correct for the
+  allowlisted set_ — the matrix proves it row by row. The bug was an
+  unrestricted input domain, so restricting the domain fixes it without
+  touching the hot path.
+- **Narrow and honest over broad.** Considered descaling `Decimal` into
+  float64 and supporting `Bool`; both rejected for now. A high-precision
+  `Decimal` cannot round-trip through a double, so silently descaling would
+  trade one wrong-number bug for a subtler one, and `Bool` needs
+  [PND-COLBOOL] in the ingest engine first. Refusing by name is the honest
+  version of "we support Arrow".
+- **The stand-in exemption.** `ArrowTableLike` is duck-typed by design, and
+  the structural fakes carry no `typeId`, so a missing `typeId` falls back to
+  shape reading plus a **width check** (`toArray().length === vector.length`),
+  which is what actually catches a Decimal-shaped buffer. Every real
+  `apache-arrow` table carries `typeId`, so real data takes the strict path.
+- **A width guard alone was not enough**, which is why the first proposed fix
+  was dropped: `Float16` has one word per row, so its length matches and only
+  the declared type distinguishes it from `Float64`.
+
+No perf work: the gate is a handful of integer comparisons per **column**, once
+per ingest, nowhere near a per-row path.
+
 ### [PND-FLATKEY] — the flattened key convention — SHIPPED
 
 Two-edged keys now survive a columnar round trip. `fromColumns` reads the

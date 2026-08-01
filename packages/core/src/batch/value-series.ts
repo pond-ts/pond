@@ -244,9 +244,11 @@ export class ValueSeries<VS extends ValueSeriesSchema> {
    *   only, taken at face value (no unit scaling — an axis has no `TimeUnit`);
    *   int64 recombines BigInt-free. A null in the axis throws.
    * - **Value columns** — every non-axis field by default, or the subset named
-   *   by `columns` (in order). Numeric (`Float32`/int → `Float64Array`; nulls
-   *   → gaps) and string (`Utf8` → `StringColumn`, dict-encoded when it pays)
-   *   are supported; any other Arrow type (list/struct/…) throws, naming it.
+   *   by `columns` (in order). The readable Arrow types are exactly those
+   *   `TimeSeries.fromArrow` lists — `Int`, `Float32`/`Float64`, `Date`,
+   *   `Timestamp`, `Utf8`, `Dictionary<Utf8>` — checked against each field's
+   *   **declared** type, so anything else (`Decimal`, `Float16`, `Bool`,
+   *   list/struct/…) is refused by name rather than misread.
    *
    * The rows must be axis-ordered (as every door requires); pass
    * `{ sort: true }` for an unordered table (which disables the adoption).
