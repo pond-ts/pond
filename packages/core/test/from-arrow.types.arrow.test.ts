@@ -4,6 +4,11 @@ import {
   Bool,
   DateDay,
   Decimal,
+  Dictionary,
+  Duration,
+  TimeMicrosecond,
+  TimeMillisecond,
+  Utf8View,
   Float16,
   Float32,
   Float64,
@@ -94,7 +99,90 @@ describe('fromArrow — supported types read correctly', () => {
   }
 });
 
+describe('fromArrow — types the gate must NOT refuse', () => {
+  /**
+   * The allowlist's characteristic failure: refusing something that already
+   * worked. Each of these read correctly *before* the type gate existed and
+   * regressed when it landed — measured against the base commit, then
+   * restored (Layer-2 review of #572). The lesson is that an allowlist has to
+   * be derived from what the reader demonstrably reads, not from what the
+   * author believes the library supports.
+   */
+  it('Utf8View — the string layout newer producers emit', () => {
+    const s = TimeSeries.fromArrow(
+      tableWith(vectorFromArray(['a', 'b'], new Utf8View()), 2),
+    );
+    expect(s.toColumns().columns.col).toEqual(['a', 'b']);
+  });
+
+  it('Dictionary<Float64> — a dictionary is an encoding, not a type', () => {
+    // Readability follows the VALUE type: `toArray()` resolves the indices, so
+    // pond sees exactly what the value type would have given it.
+    const dictionary = vectorFromArray([1.5, 2.5], new Float64());
+    const encoded = makeVector(
+      makeData({
+        type: new Dictionary(new Float64(), new Int32()),
+        length: 2,
+        data: Int32Array.from([0, 1]),
+        dictionary,
+      }),
+    );
+    const s = TimeSeries.fromArrow(tableWith(encoded as never, 2));
+    expect(s.toColumns().columns.col).toEqual([1.5, 2.5]);
+  });
+
+  it('Null — a legitimate all-missing value column', () => {
+    const s = TimeSeries.fromArrow(
+      tableWith(vectorFromArray([null, null], new Null()), 2),
+    );
+    expect(s.toColumns().columns.col).toEqual([null, null]);
+  });
+
+  it('Time32 / Time64 — same int-plus-unit shape as Timestamp', () => {
+    // Refusing these while blessing Timestamp was the inconsistency the review
+    // flagged; both read as their raw unit values, as Timestamp does.
+    const ms = TimeSeries.fromArrow(
+      tableWith(vectorFromArray([5, 6], new TimeMillisecond()), 2),
+    );
+    expect(ms.toColumns().columns.col).toEqual([5, 6]);
+    const us = TimeSeries.fromArrow(
+      tableWith(vectorFromArray([5n, 6n], new TimeMicrosecond()), 2),
+    );
+    expect(us.toColumns().columns.col).toEqual([5, 6]);
+  });
+
+  it('Dictionary<Decimal> is still refused — the value type decides', () => {
+    const dictionary = decimalVector([150, 250]);
+    const encoded = makeVector(
+      makeData({
+        type: new Dictionary(new Decimal(10, 2, 128), new Int32()),
+        length: 2,
+        data: Int32Array.from([0, 1]),
+        dictionary: dictionary as never,
+      }),
+    );
+    expect(() => TimeSeries.fromArrow(tableWith(encoded as never, 2))).toThrow(
+      /has Arrow type Decimal/,
+    );
+  });
+});
+
 describe('fromArrow — refused types name themselves', () => {
+  it('every refusal names the type rather than a bare typeId', () => {
+    // `TYPE_NAMES` fell short of Arrow's newer ordinals, so `Utf8View` was
+    // refused as "typeId 24" — breaking the "refused by name" contract at the
+    // same time as refusing something readable.
+    const fail = () =>
+      TimeSeries.fromArrow(
+        tableWith(
+          vectorFromArray([5n, 6n], new Duration(TimeUnit.MILLISECOND)),
+          2,
+        ),
+      );
+    expect(fail).toThrow(/has Arrow type Duration/);
+    expect(fail).not.toThrow(/typeId \d+/);
+  });
+
   it('Decimal — dense (was: a misleading length-mismatch error)', () => {
     const fail = () =>
       TimeSeries.fromArrow(tableWith(decimalVector([150, 250]), 2));
@@ -139,15 +227,6 @@ describe('fromArrow — refused types name themselves', () => {
     expect(fail).toThrow(/has Arrow type Binary/);
   });
 
-  it('Null', () => {
-    const fail = () =>
-      TimeSeries.fromArrow(
-        tableWith(vectorFromArray([null, null], new Null()), 2),
-      );
-    expect(fail).toThrow(/has Arrow type Null/);
-    expect(fail).toThrow(/carries no values to read/);
-  });
-
   it('List and Struct', () => {
     expect(() =>
       TimeSeries.fromArrow(
@@ -168,12 +247,21 @@ describe('fromArrow — the key is gated too', () => {
     );
   });
 
-  it('refuses a Utf8 key, and says to pass it as a value column', () => {
+  it('refuses a Utf8 key', () => {
     const table = new Table({
       time: vectorFromArray(['a', 'b'], new Utf8()),
     }) as never;
     expect(() => TimeSeries.fromArrow(table)).toThrow(
-      /cannot read as a key.*pass it as a value column instead/s,
+      /column 'time' has Arrow type Utf8, which pond cannot read as a key/,
+    );
+  });
+
+  it('refuses an all-Null key — readable as a value, never as an axis', () => {
+    const table = new Table({
+      time: vectorFromArray([null, null], new Null()),
+    }) as never;
+    expect(() => TimeSeries.fromArrow(table)).toThrow(
+      /a key cannot be all-null/,
     );
   });
 

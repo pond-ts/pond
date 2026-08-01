@@ -1075,11 +1075,14 @@ export class TimeSeries<S extends SeriesSchema> {
    * | `Int` (any width; int64 recombines BigInt-free) | `number` |
    * | `Float32` / `Float64` | `number` |
    * | `Date32` / `Date64` (already epoch-ms) | `number` |
-   * | `Timestamp` | `number` — **raw unit** as a value column; unit-scaled to ms only as the key |
-   * | `Utf8` / `LargeUtf8` | `string` |
-   * | `Dictionary<Utf8>` | `string` |
+   * | `Timestamp`, `Time32` / `Time64` | `number` — **raw unit** as a value column; a `Timestamp` key is unit-scaled to ms |
+   * | `Utf8` / `LargeUtf8` / `Utf8View` | `string` |
+   * | `Null` | an all-missing `number` column (value columns only) |
+   * | `Dictionary<T>` | whatever `T` becomes — the encoding is transparent |
    *
-   * Everything else throws, naming the type and what to cast it to.
+   * A **key** additionally rejects the string and `Null` types: it must be an
+   * ordered axis. Everything else throws, naming the type and what to cast
+   * it to.
    * `Float16` and `Decimal` are worth calling out because they *look*
    * readable and are not: a `Decimal128` is four machine words per value and a
    * `Float16` is a half-float bit pattern, so before the type gate existed

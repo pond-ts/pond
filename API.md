@@ -43,8 +43,9 @@ Static constructors on `TimeSeries`: `fromJSON()` (row tuples/objects),
 `fromArrow()` (bring-your-own Apache Arrow `Table`; zero-copy Float64 adopt +
 BigInt-free int64 time. Readable Arrow types are an **allowlist checked
 against each field's declared type** — `Int`, `Float32`/`Float64`, `Date`,
-`Timestamp`, `Utf8`, `Dictionary<Utf8>` — and anything else, notably `Decimal`
-and `Float16`, is refused by name rather than misread;
+`Time`, `Timestamp`, `Utf8`/`Utf8View`, `Null`, and a `Dictionary` of any of
+those — and anything else, notably `Decimal` and `Float16`, is refused by name
+rather than misread; see
 `packages/core/src/batch/operators/arrow-types.ts`), `fromEvents()`,
 `fromPoints()` (wide rows with `ts`), `concat()`, `joinMany()`. On
 `ValueSeries`, the same three shapes keyed on the axis instead of time:

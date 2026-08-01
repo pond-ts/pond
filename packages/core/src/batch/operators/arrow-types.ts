@@ -44,8 +44,10 @@ const TYPE_UTF8 = 5;
 const TYPE_BOOL = 6;
 const TYPE_DECIMAL = 7;
 const TYPE_DATE = 8;
+const TYPE_TIME = 9;
 const TYPE_TIMESTAMP = 10;
 const TYPE_LARGE_UTF8 = 20;
+const TYPE_UTF8_VIEW = 24;
 
 /** `Precision.HALF` — the one `Float` width pond cannot read (see the note above). */
 const PRECISION_HALF = 0;
@@ -75,6 +77,11 @@ const TYPE_NAMES: Record<number, string> = {
   19: 'LargeBinary',
   20: 'LargeUtf8',
   21: 'LargeList',
+  22: 'RunEndEncoded',
+  23: 'BinaryView',
+  24: 'Utf8View',
+  25: 'ListView',
+  26: 'LargeListView',
 };
 
 /** The slice of an Arrow `DataType` this gate reads. All optional — see the module note. */
@@ -98,12 +105,9 @@ function typeName(type: ArrowTypeLike): string {
 
 function isStringType(type: ArrowTypeLike): boolean {
   const id = type.typeId;
-  if (id === TYPE_UTF8 || id === TYPE_LARGE_UTF8) return true;
-  if (id === TYPE_DICTIONARY) {
-    const valueId = type.dictionary?.typeId;
-    return valueId === TYPE_UTF8 || valueId === TYPE_LARGE_UTF8;
-  }
-  return false;
+  // `Utf8View` is the layout newer Arrow producers emit for strings; its
+  // `toArray()` yields the same plain array of JS strings as `Utf8`.
+  return id === TYPE_UTF8 || id === TYPE_LARGE_UTF8 || id === TYPE_UTF8_VIEW;
 }
 
 function isNumericType(type: ArrowTypeLike): boolean {
@@ -113,9 +117,23 @@ function isNumericType(type: ArrowTypeLike): boolean {
   // bit patterns — numeric-looking and completely wrong. Single and double
   // read correctly.
   if (id === TYPE_FLOAT) return type.precision !== PRECISION_HALF;
-  // `Date` normalizes to epoch-ms JS numbers; `Timestamp` reads as its raw
-  // int64 (unit-scaled only when it is the key — see `resolveMsScale`).
-  return id === TYPE_DATE || id === TYPE_TIMESTAMP;
+  // `Date` normalizes to epoch-ms JS numbers. `Timestamp` and `Time` read as
+  // their raw int values (a `Timestamp` key is unit-scaled to ms — see
+  // `resolveMsScale` — but neither is scaled as a value column).
+  return id === TYPE_DATE || id === TYPE_TIMESTAMP || id === TYPE_TIME;
+}
+
+/**
+ * A `Dictionary` is an **encoding, not a type**: `toArray()` resolves the
+ * indices against the dictionary, so what pond sees is whatever the *value*
+ * type would have given it. Readability therefore follows the value type —
+ * `Dictionary<Utf8>` reads as strings, `Dictionary<Float64>` as numbers, and
+ * `Dictionary<Decimal>` is refused for the same reason a bare `Decimal` is.
+ */
+function unwrapDictionary(type: ArrowTypeLike): ArrowTypeLike {
+  return type.typeId === TYPE_DICTIONARY && type.dictionary !== undefined
+    ? type.dictionary
+    : type;
 }
 
 /**
@@ -137,32 +155,38 @@ export function assertReadableArrowType(
   // to gate on; the shape reader (and its width check) takes it from here.
   if (type?.typeId === undefined) return;
 
-  if (isNumericType(type)) return;
-  if (role === 'value' && isStringType(type)) return;
+  // A dictionary is judged by what it decodes to, not by being a dictionary.
+  const effective = unwrapDictionary(type);
+  if (isNumericType(effective)) return;
+  // String and all-`Null` columns are readable as values but not as a key:
+  // a key must be an ordered axis, and neither can supply one.
+  if (role === 'value' && isStringType(effective)) return;
+  if (role === 'value' && effective.typeId === TYPE_NULL) return;
 
-  const name = typeName(type);
+  const name = typeName(effective);
   const accepted =
     role === 'key'
-      ? `an Int, Float32/64, Date or Timestamp column`
-      : `an Int, Float32/64, Date, Timestamp, Utf8 or Dictionary<Utf8> column`;
+      ? `an Int, Float32/64, Date, Time or Timestamp column`
+      : `an Int, Float32/64, Date, Time, Timestamp, Utf8/Utf8View, Null, or ` +
+        `a Dictionary of any of those`;
 
   // Name the fix where there is an obvious one — these are the types a caller
   // is most likely to actually be holding.
   let hint = '';
-  if (type.typeId === TYPE_DECIMAL) {
+  if (effective.typeId === TYPE_DECIMAL) {
     hint =
       ` — pond stores numbers as float64, so a Decimal cannot round-trip ` +
       `exactly; cast it in Arrow first if that precision loss is acceptable`;
-  } else if (type.typeId === TYPE_FLOAT) {
+  } else if (effective.typeId === TYPE_FLOAT) {
     hint = ` — cast it to Float32 or Float64 in Arrow first`;
-  } else if (type.typeId === TYPE_BOOL) {
+  } else if (effective.typeId === TYPE_BOOL) {
     hint =
       ` — the columnar ingest engine carries 'number' and 'string' value ` +
       `columns only; use the row doors, or cast to Int in Arrow`;
-  } else if (type.typeId === TYPE_NULL) {
-    hint = ` — an all-null column carries no values to read`;
-  } else if (isStringType(type)) {
-    hint = ` — pass it as a value column instead`;
+  } else if (effective.typeId === TYPE_NULL) {
+    // Only reachable for a key — an all-null column is a legitimate
+    // all-missing *value* column, but nothing can be keyed on it.
+    hint = ` — a key cannot be all-null`;
   }
 
   // No indefinite article: 'Utf8' and 'Union' read as consonant-initial
