@@ -3,7 +3,10 @@ import { TimeSeries } from 'pond-ts';
 import {
   createHost,
   createRegistry,
+  createSourceRegistry,
+  defineSource,
   int,
+  sourceId,
   specId,
   toWire,
   UnknownDatasetError,
@@ -136,6 +139,67 @@ describe('Host — the graph outlives requests', () => {
     expect(ran.n).toBe(2);
     // Removing what is not there says so rather than throwing.
     expect(host.remove('ghost')).toBe(false);
+  });
+
+  it('evicts the least-recently-used loaded source over maxSources', async () => {
+    // `runAsync` binds a graph per distinct caller-supplied SourceRef,
+    // so an untrusted caller could grow the host without bound — the
+    // request-driven half of the footprint, which `budgetBytes` alone
+    // does not cover.
+    const { registry } = makeRegistry();
+    let loads = 0;
+    const bars = defineSource({
+      name: 'bars',
+      async load(params: { readonly symbol: string }) {
+        loads += 1;
+        return { value: series(10), revision: `r-${params.symbol}` };
+      },
+    });
+    const sources = createSourceRegistry().define(bars);
+    const host = createHost({ registry, units, sources, maxSources: 2 });
+    const ask = (symbol: string) =>
+      host.runAsync({
+        from: bars.ref({ symbol }),
+        process: [sma3],
+        select: [{ on: fold('last', sma3) }],
+      });
+    await ask('A');
+    await ask('B');
+    await ask('C');
+    expect(host.datasets).toHaveLength(2);
+    expect(host.has(sourceId(bars.ref({ symbol: 'A' })))).toBe(false);
+    expect(host.has(sourceId(bars.ref({ symbol: 'C' })))).toBe(true);
+    // An evicted source is reloaded on demand, not failed.
+    const again = await ask('A');
+    expect(again.facts).toHaveLength(1);
+    expect(loads).toBe(4);
+  });
+
+  it('a removal mid-load wins — the landing load does not resurrect', async () => {
+    const { registry } = makeRegistry();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const bars = defineSource({
+      name: 'bars',
+      async load(_params: { readonly symbol: string }) {
+        await gate;
+        return { value: series(10), revision: 'r1' };
+      },
+    });
+    const sources = createSourceRegistry().define(bars);
+    const host = createHost({ registry, units, sources });
+    const ref = bars.ref({ symbol: 'A' });
+    const id = sourceId(ref);
+    const pending = host.runAsync({ from: ref, process: [sma3] });
+    // Nothing installed yet, so nothing was "known" — but the removal
+    // must still win over the load in flight.
+    expect(host.remove(id)).toBe(false);
+    release();
+    await expect(pending).rejects.toThrow(UnknownDatasetError);
+    expect(host.has(id)).toBe(false);
+    expect(host.datasets).toHaveLength(0);
   });
 
   it('keeps two datasets disjoint under identical ids', () => {

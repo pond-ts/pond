@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ChunkedFloat64Column, TimeSeries } from 'pond-ts';
+import { ChunkedFloat64Column, Float64Column, TimeSeries } from 'pond-ts';
 import { bind, createRegistry, run } from '../src/index.js';
 import {
   appendColumn,
@@ -116,7 +116,7 @@ describe('columnBytes', () => {
     expect(columnBytes(large) / columnBytes(small)).toBe(1000);
   });
 
-  it('sums a chunked column: every chunk plus the aggregate bitmap', () => {
+  it('sums a chunked column: chunks, aggregate bitmap, offset index', () => {
     // Reading `_values` reported 0 for a chunked column — "free" to a
     // byte budget, which is the one thing an approximation must not be.
     const chunked = new ChunkedFloat64Column([
@@ -124,8 +124,16 @@ describe('columnBytes', () => {
       packColumn([4, undefined, 6]),
     ]);
     // Chunk 1: 3·8 gapless. Chunk 2: 3·8 + ceil(3/8) validity. The
-    // aggregate bitmap over 6 cells adds ceil(6/8).
-    expect(columnBytes(chunked)).toBe(24 + 25 + 1);
+    // aggregate bitmap over 6 cells adds ceil(6/8), and the chunk-offset
+    // index is an Int32Array of chunks+1 entries: 3·4.
+    expect(columnBytes(chunked)).toBe(24 + 25 + 1 + 12);
+  });
+
+  it('counts backing capacity, not logical length', () => {
+    // A one-row column viewing a 1000-slot buffer retains all 8000
+    // bytes; reporting 8 is the undercount that defeats the budget.
+    const oversized = new Float64Column(new Float64Array(1000), 1);
+    expect(columnBytes(oversized)).toBe(8000);
   });
 });
 

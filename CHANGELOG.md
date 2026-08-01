@@ -84,6 +84,22 @@ include new features and type-level changes; patch bumps are strictly additive.
   host shape) and grows `remove(id)`, and CI's package-content check covers
   `@pond-ts/process`. Package remains **unpublished** (`private: true`).
 
+  A second audit round tightened the same seams. `columnBytes` now counts
+  what is actually retained: the **backing buffer's capacity** rather than
+  the column's logical length (core documents `_values` as possibly
+  oversized, so a one-row column viewing a 1000-slot buffer retains 8,000
+  bytes, not 8 — an undercount that defeats the budget), the chunk-offset
+  index and the bitmap's real bytes on chunked columns. The
+  **request-driven half of a `Host`'s footprint is now boundable**:
+  `runAsync` binds a graph per distinct caller-supplied `SourceRef`, so
+  `maxSources` caps registry-loaded sources LRU (author-added datasets are
+  never evicted), and a `remove()` racing an in-flight load now wins — the
+  landing load discards its result instead of resurrecting the dataset.
+  And an omitted param now unifies with its explicit default in the fluent
+  layer's derived fold slots (`shape()` ≡ `shape({points: 40})`, the same
+  rule `specId` applies), while the response labels a computation with the
+  **first** slot that named it rather than whichever was declared last.
+
 ## [0.54.0] — 2026-08-02
 
 ### Fixed

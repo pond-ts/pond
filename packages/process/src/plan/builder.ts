@@ -53,6 +53,14 @@ export class BuilderError extends ProcessError {}
  * slot and the second call silently kept 20. Sorted by key so two
  * spellings of one param set collide deliberately, the same rule
  * `specId` applies one layer down.
+ *
+ * One asymmetry is inherent: this builder holds no registry, so it
+ * cannot resolve defaults — `shape()` and `shape({points: 40})` derive
+ * two slots here even though `specId` resolves them to one computation.
+ * That is safe: resolution collapses them to one node, and the response
+ * labels it with the first slot that named it. The registry-bound
+ * fluent layer canonicalizes params before calling this, so it does not
+ * split.
  */
 export function foldSlot(
   on: string,

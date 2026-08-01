@@ -249,9 +249,15 @@ function normalize(
   const columns = graph.series.schema.slice(1).map((c) => c.name);
   const expanded = expandSlots(request.nodes, columns);
 
+  // First slot wins. Two slots may legally resolve to ONE id — the
+  // registry-free builder cannot canonicalize defaults, so `shape()`
+  // and `shape({points: 40})` arrive as two slots naming the same
+  // computation. Attribution must not depend on which happened to be
+  // declared last; "the first slot to name it labels it" is the rule.
   const slotOf = new Map<string, string>();
   for (const [slot, spec] of expanded) {
-    slotOf.set(specId(graph.registry, spec), slot);
+    const id = specId(graph.registry, spec);
+    if (!slotOf.has(id)) slotOf.set(id, slot);
   }
 
   const select = Object.entries(request.outputs ?? {}).map(([name, sel]) => {

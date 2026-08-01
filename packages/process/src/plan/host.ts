@@ -97,11 +97,20 @@ export class Host {
   readonly registry: Registry;
   readonly #units: Units;
   readonly #budgetBytes: number | undefined;
+  readonly #maxSources: number | undefined;
   readonly #graphs = new Map<string, BoundGraph>();
   readonly #sources = new Map<string, TimeSeries<SeriesSchema>>();
   readonly #sourceRegistry: SourceRegistry | undefined;
+  /** Insertion order is LRU order for {@link Host.#maxSources} eviction. */
   readonly #loadedSources = new Map<string, LoadedSource>();
   readonly #loadingSources = new Map<string, Promise<void>>();
+  /**
+   * Bumped by {@link remove} while a load for that id is in flight, so
+   * the landing load discards its result instead of resurrecting the
+   * dataset. Entries are consumed by the discarding load — the map only
+   * holds ids removed mid-flight.
+   */
+  readonly #sourceEpochs = new Map<string, number>();
 
   constructor(options: {
     registry: Registry;
@@ -113,14 +122,34 @@ export class Host {
      * every distinct spec ever asked of every dataset, so memory scales
      * with questions asked rather than with anything bounded. A host
      * whose plans arrive from callers it does not control should set
-     * this; the total across the host is `budgetBytes × datasets`, since
-     * datasets are added by the host's own author, not by requests.
+     * this.
+     *
+     * What bounds the *number* of graphs is a separate question with two
+     * answers. Datasets registered with {@link add} are the host
+     * author's own, bounded by what the author adds and released with
+     * {@link remove}. Sources resolved through a source registry by
+     * `runAsync` are **request-driven** — every distinct `SourceRef` a
+     * caller supplies binds another graph — so a host exposed to
+     * untrusted callers must also set {@link maxSources}. The retained
+     * total is then at most `budgetBytes × (author datasets +
+     * maxSources)`.
      */
     budgetBytes?: number;
+    /**
+     * Cap on sources resolved through the source registry, LRU — the
+     * request-driven half of the host's footprint. `runAsync` binds a
+     * graph per distinct `SourceRef`, and a caller chooses the refs, so
+     * without a cap an untrusted caller grows the host without bound.
+     * Author-added datasets ({@link add}) are never evicted by this.
+     * Unbounded when omitted — acceptable only when every `SourceRef`
+     * the host will see comes from code the author controls.
+     */
+    maxSources?: number;
   }) {
     this.registry = options.registry;
     this.#units = options.units ?? {};
     this.#budgetBytes = options.budgetBytes;
+    this.#maxSources = options.maxSources;
     this.#sourceRegistry = options.sources;
   }
 
@@ -180,13 +209,18 @@ export class Host {
    * counterpart to {@link add} for a host that cycles datasets, where
    * "kept until the process dies" is not a policy.
    *
-   * Returns whether the dataset was known. An in-flight `runAsync`
-   * against the same source id may re-register it when its load lands.
+   * Returns whether the dataset was known. A load in flight for the
+   * same source id **discards its result** rather than resurrecting the
+   * removed dataset — its `runAsync` callers get `UnknownDatasetError`,
+   * which is what asking for a concurrently-removed dataset means.
    */
   remove(id: string): boolean {
     const known = this.#sources.delete(id);
     this.#graphs.delete(id);
     this.#loadedSources.delete(id);
+    if (this.#loadingSources.has(id)) {
+      this.#sourceEpochs.set(id, (this.#sourceEpochs.get(id) ?? 0) + 1);
+    }
     return known;
   }
 
@@ -249,11 +283,45 @@ export class Host {
    * graph or race to install an older revision.
    */
   async #refreshSource(id: string, ref: SourceRef): Promise<void> {
+    const epoch = this.#sourceEpochs.get(id);
     const previous = this.#loadedSources.get(id);
     const loaded = await this.#sourceRegistry!.load(ref, previous);
+    if (this.#sourceEpochs.get(id) !== epoch) {
+      // Removed while loading. Installing now would resurrect a dataset
+      // the author explicitly ended; dropping the result is the only
+      // reading of `remove` that means anything. The entry is consumed
+      // so the map holds nothing once the flight lands.
+      this.#sourceEpochs.delete(id);
+      return;
+    }
+    // Delete-then-set keeps `#loadedSources` in recency order whether or
+    // not the revision moved — the LRU the source cap evicts from.
+    this.#loadedSources.delete(id);
     if (previous === undefined || previous.revision !== loaded.revision) {
       this.#loadedSources.set(id, loaded);
       this.add(id, loaded.value);
+    } else {
+      this.#loadedSources.set(id, previous);
+    }
+    this.#enforceSourceCap(id);
+  }
+
+  /**
+   * Evicts least-recently-used registry-loaded sources over the cap —
+   * whole datasets, via {@link remove}, so the graph and its cached
+   * nodes go with them. Never touches an author-added dataset: those
+   * are not in `#loadedSources`. `current` is exempt — evicting the
+   * source this call just loaded would fail the very request that paid
+   * for it.
+   */
+  #enforceSourceCap(current: string): void {
+    if (this.#maxSources === undefined) return;
+    while (this.#loadedSources.size > this.#maxSources) {
+      const oldest = this.#loadedSources.keys().next().value as
+        | string
+        | undefined;
+      if (oldest === undefined || oldest === current) break;
+      this.remove(oldest);
     }
   }
 }
@@ -264,6 +332,8 @@ export function createHost(options: {
   sources?: SourceRegistry;
   /** Per-graph cap on retained node values, in bytes — see {@link Host}. */
   budgetBytes?: number;
+  /** LRU cap on registry-loaded sources — see {@link Host}. */
+  maxSources?: number;
 }): Host {
   return new Host(options);
 }

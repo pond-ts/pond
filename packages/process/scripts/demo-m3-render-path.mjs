@@ -113,11 +113,7 @@ for (const { label, ms } of [
     readPerElement(gapped, ROWS),
   ),
   ...(hasBulk
-    ? [
-        timeIt('bulk toFloat64Array  [blocked]', () =>
-          gapped.toFloat64Array(),
-        ),
-      ]
+    ? [timeIt('bulk toFloat64Array  [blocked]', () => gapped.toFloat64Array())]
     : []),
 ]) {
   console.log(`  ${label.padEnd(38)} ${ms.toFixed(3)} ms`);

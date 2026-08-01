@@ -168,6 +168,19 @@ describe('registry-bound fluent authoring', () => {
     ]);
   });
 
+  it('unifies an omitted param with its explicit default', () => {
+    // `specId` resolves defaults, so `shape()` and `shape({points: 40})`
+    // are one computation — the registry-bound layer canonicalizes the
+    // slot the same way, so they are one slot too.
+    const graph = process(vocabulary(), 'prices');
+    const scaled = graph.column('close').scale({ as: 'scaled', by: 3 });
+    graph.outputs({ a: scaled.shape(), b: scaled.shape({ points: 40 }) });
+    expect(Object.keys(graph.outputs({}).nodes)).toEqual([
+      'scaled',
+      'scaled:shape(points=40)',
+    ]);
+  });
+
   it('keys a fluent fold by its params, not just its name', () => {
     // The memo key used to omit params, so `shape({points: 100})` after
     // `shape({points: 20})` silently returned the 20-point node.

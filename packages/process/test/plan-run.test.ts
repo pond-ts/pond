@@ -834,6 +834,30 @@ describe('run — the error policy covers column execution', () => {
   });
 });
 
+describe('run — slot attribution is declaration-order deterministic', () => {
+  it('labels a computation with the first slot that names it', () => {
+    // The registry-free builder cannot resolve defaults, so `shape()`
+    // and `shape({points: 40})` arrive as two slots for ONE computation
+    // (specId resolves defaults). Attribution used to depend on which
+    // slot happened to be declared last.
+    const { registry } = makeRegistry();
+    const graph = bind(series(10), { registry, units });
+    const res = run(graph, {
+      nodes: {
+        s: { op: 'sma', params: { period: 3 }, in: ['px'] },
+        first: { op: 'shape', in: ['s'] },
+        second: { op: 'shape', params: { points: 40 }, in: ['s'] },
+      },
+      outputs: { a: { on: 'first' }, b: { on: 'second' } },
+    });
+    const folds = res.nodes.filter((n) => n.id.includes('shape'));
+    expect(folds).toHaveLength(1);
+    expect(folds[0]!.slot).toBe('first');
+    // Both caller names still answer, off the one node.
+    expect(res.facts.map((f) => f.name).sort()).toEqual(['a', 'b']);
+  });
+});
+
 describe('run — fact provenance wins over the fold body', () => {
   it('drops reserved keys a custom fold returns', () => {
     // `id`, `name`, `op` and `unit` are the graph's to state — a fold

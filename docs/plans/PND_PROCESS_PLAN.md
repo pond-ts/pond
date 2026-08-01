@@ -30,13 +30,28 @@ self-contained — run them after `npm run build --workspaces`:
 If the package is restructured or withdrawn (see [PND-PROCSUB]), these
 should move with it — they are the evidence base for every decision here.
 
+**Two measurement traps, both hit while producing these numbers**, worth
+knowing before trusting or extending them:
+
+1. Comparing two representations inside one process gives GC-dominated,
+   sometimes negative deltas. Run one configuration per process, with
+   `--expose-gc` and an explicit `global.gc()` before reading
+   `memoryUsage()`.
+2. `Float64Array` backing stores are **not** in `heapUsed` — they land in
+   `arrayBuffers` / `external`. Reading heap alone once reported an
+   identical 21 MB for two configurations that actually differed by
+   300 MB. Report `heapUsed` when the question is GC pressure and
+   `arrayBuffers` / `rss` when it is footprint; they answer different
+   questions and the gap between them is the whole point of
+   [PND-PROCCOL].
+
 ## 2026-08 external audit (Codex): publication-readiness hardening
 
 An adversarial pre-publication audit answered "not yet" on publishing —
 low-level engine solid, plan/host surface with paths that return wrong
 data or accept invalid plans silently. Every blocking finding was
-reproduced against the tree, and all landed as one hardening PR with
-regressions. The recurring shape is worth keeping: **each was a
+reproduced against the tree, and all landed as one hardening PR (#575)
+with regressions. The recurring shape is worth keeping: **each was a
 validation that existed somewhere adjacent** — assembly checked lengths
 but `assemble: false` skipped assembly; `unitOf` in `identity.ts` was
 picked-output-aware while `graph.ts` kept its own copy that was not; the
@@ -60,26 +75,26 @@ fields; `columnBytes` sums chunked columns instead of reporting 0 —
 "free" to a byte budget; the nested JSON Schema can express
 `PickedOutput`; CI's package-content check covers `@pond-ts/process`.
 
+**The re-review round caught the fixes' own gaps**, which is the reason
+to keep running it: `columnBytes` still undercounted — it priced the
+logical length where core documents `_values` as possibly **oversized**
+(a one-row column on a 1000-slot buffer retains 8,000 bytes, not 8),
+and a chunked column's offset index and real bitmap bytes went
+uncounted. The `budgetBytes` doc claimed datasets are only
+author-added, which `runAsync` falsifies: it binds a graph per distinct
+caller-supplied `SourceRef`. `maxSources` now caps registry-loaded
+sources LRU (author datasets exempt), and `remove()` racing an
+in-flight load wins — the landing load discards rather than
+resurrects. And the fold-slot fix had not canonicalized defaults:
+`shape()` vs `shape({points: 40})` split slots the fluent layer now
+unifies (the plain builder cannot — no registry — so `normalize` labels
+a computation with the first slot that names it, deterministically).
+
 Still open from the audit, tracked where they already live: units in the
 schema projection ([PND-PROCSCHEMA]), and the identity-vs-lifetime
 policy question ([PND-PROCIDENT]) — the budget is now reachable
 everywhere, but choosing a default for interactive hosts remains that
 ticket's call.
-
-**Two measurement traps, both hit while producing these numbers**, worth
-knowing before trusting or extending them:
-
-1. Comparing two representations inside one process gives GC-dominated,
-   sometimes negative deltas. Run one configuration per process, with
-   `--expose-gc` and an explicit `global.gc()` before reading
-   `memoryUsage()`.
-2. `Float64Array` backing stores are **not** in `heapUsed` — they land in
-   `arrayBuffers` / `external`. Reading heap alone once reported an
-   identical 21 MB for two configurations that actually differed by
-   300 MB. Report `heapUsed` when the question is GC pressure and
-   `arrayBuffers` / `rss` when it is footprint; they answer different
-   questions and the gap between them is the whole point of
-   [PND-PROCCOL].
 
 ---
 
