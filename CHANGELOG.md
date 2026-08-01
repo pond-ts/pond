@@ -62,8 +62,9 @@ include new features and type-level changes; patch bumps are strictly additive.
   window, `k·t` and `b` are huge near-cancelling terms whose rounding residue
   reaches ~0.16 px at a 1 ms window and ~24 px at 1 µs. The interior affinity
   probe detected the drift and rejected the scale, so every deep-zoomed frame
-  (≲1 s visible window on an epoch-ms axis) silently fell back to the slow
-  per-point d3-scale path. The map is now recovered, verified, and evaluated
+  (sub-second visible windows on an epoch-ms axis — the rejection crossover
+  measures around a few hundred ms at typical plot widths) silently fell back
+  to the slow per-point d3-scale path. The map is now recovered, verified, and evaluated
   in the rebased form `px = (t − t0)·k + px0` (the association d3 itself
   uses), which matches the exact scale to ≲1e-9 px at every zoom depth — the
   fast path stays engaged at the `minDuration` floor and below (line/area
