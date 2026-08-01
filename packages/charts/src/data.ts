@@ -604,7 +604,10 @@ function neighbourSpans(
  * The getter is deliberately **enumerable**, so a `{...bs}` spread carries the
  * marks through (materializing them) rather than silently dropping them — a
  * perf surprise beats a correctness one. Nothing in the package spreads a
- * `BarSeries`; this is for outside callers.
+ * `BarSeries` today; this is for outside callers. If one ever appears **in the
+ * draw path**, it would force materialization on every frame — but
+ * `perf-barmarks.mjs`'s `marks untouched` row is measured on exactly that, so
+ * it would show up as a reader regression rather than pass silently.
  */
 function withKeyMarks(
   bars: {
