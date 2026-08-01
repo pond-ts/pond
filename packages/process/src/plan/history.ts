@@ -1,6 +1,12 @@
 import { ProcessError } from '../errors.js';
 import type { Registry } from './registry.js';
-import { isFold, type Params, type Spec } from './types.js';
+import {
+  isFold,
+  isPicked,
+  type Input,
+  type Params,
+  type Spec,
+} from './types.js';
 
 /**
  * The minimum safe tail for a plan, in rows — [PND-PROCHIST].
@@ -48,7 +54,15 @@ export interface HistoryResult {
   readonly rows?: number;
   /** Ops with no declared lookback, deduplicated, in encounter order. */
   readonly undeclared: readonly string[];
-  /** Per-spec depth, for `explain`-style output. Keyed by op name. */
+  /**
+   * The deepest history any spec of a given op needed, by op name.
+   *
+   * Not per spec: `sma(5)` and `sma(100)` in one plan collapse to
+   * `{ sma: 99 }`. That is a diagnostic aid for `explain`-style output,
+   * not something to slice against — {@link rows} is the number a caller
+   * uses. The doc previously said "per-spec depth … keyed by op name",
+   * which is self-contradictory and was flagged in review.
+   */
   readonly byOp: Readonly<Record<string, number>>;
 }
 
@@ -118,10 +132,15 @@ export function requiredHistory(
     : { known: true, rows, undeclared: [], byOp };
 }
 
-/** A nested input is either a spec or a `{ spec, output }` selection. */
-function specOf(input: unknown): Spec {
-  const raw = input as { op?: string; spec?: Spec };
-  return raw.op !== undefined ? (raw as Spec) : raw.spec!;
+/**
+ * A nested input is either a spec or a picked output of one.
+ *
+ * The picked form nests under `from`, not `spec` — an earlier guess at
+ * the field name silently produced `undefined` here, which only surfaced
+ * once this ran on a plan using multi-output studies.
+ */
+function specOf(input: Input): Spec {
+  return isPicked(input) ? input.from : (input as Spec);
 }
 
 /**

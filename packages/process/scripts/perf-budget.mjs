@@ -59,6 +59,7 @@ function measure(label, budgetBytes) {
 
   console.log(
     `  ${label.padEnd(22)} rss ${mb(after.rss - before.rss).padStart(7)}   ` +
+      `buffers ${mb(after.arrayBuffers - before.arrayBuffers).padStart(7)}   ` +
       `retained ${mb(graph.retainedBytes).padStart(7)}   ` +
       `nodes ${String(graph.ids.length).padStart(3)}   ` +
       `evicted ${String(graph.evictions).padStart(3)}`,
@@ -71,19 +72,35 @@ function measure(label, budgetBytes) {
   return { rss: after.rss - before.rss, repeatMs };
 }
 
-console.log(
-  `${DISTINCT} distinct params x ${ROWS.toLocaleString()} rows · node ${process.versions.node}\n`,
-);
-const unbounded = measure('unbounded', 0);
-console.log();
+// ONE CONFIGURATION PER PROCESS. Measuring both in one process reads the
+// first from a small RSS baseline and the second from an already-grown
+// one, which is worth 5.6x of pure artifact — reversing the order
+// inverted the result to 0.6x. Caught by a Layer 2 review of PR #571,
+// and it is the same measurement-order trap as a JIT warm-up, one level
+// up. A subprocess per configuration is the only honest fix.
+const MODE = process.env.MODE;
 const budget = 8 * ROWS * 8;
-const bounded = measure(`budget ${mb(budget)}`, budget);
-console.log(
-  `\n  ${(unbounded.rss / Math.max(1, bounded.rss)).toFixed(1)}x less rss, ` +
-    `repeats ${(bounded.repeatMs / unbounded.repeatMs).toFixed(2)}x the unbounded cost.`,
-);
-console.log(
-  `  The second number is the one to watch: a budget that bounds memory by\n` +
-    `  discarding what the caller asks for next reads as ~1.0x on the first\n` +
-    `  and badly on the second.`,
-);
+
+if (MODE === 'unbounded') {
+  measure('unbounded', 0);
+} else if (MODE === 'bounded') {
+  measure(`budget ${mb(budget)}`, budget);
+} else {
+  const { execFileSync } = await import('node:child_process');
+  const url = new URL(import.meta.url);
+  console.log(
+    `${DISTINCT} distinct params x ${ROWS.toLocaleString()} rows · node ${process.versions.node}\n`,
+  );
+  for (const mode of ['unbounded', 'bounded']) {
+    const out = execFileSync(process.execPath, ['--expose-gc', url.pathname], {
+      env: { ...process.env, MODE: mode },
+      encoding: 'utf8',
+    });
+    process.stdout.write(out);
+  }
+  console.log(
+    `\n  Each line above is a FRESH PROCESS. Comparing rss between two\n` +
+      `  configurations measured in one process is meaningless — whichever\n` +
+      `  runs second starts from the first one's heap.`,
+  );
+}

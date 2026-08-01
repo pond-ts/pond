@@ -75,6 +75,27 @@ describe('[PND-PROCCACHE] engine-wide byte budget', () => {
     inputs: ['px'],
   });
 
+  /**
+   * How many inlets are still attached to the bound source's outlet.
+   *
+   * The honest measure of eviction: a node is gone only once nothing
+   * references it, and `graph.ids` cannot tell you that — it is the
+   * lookup, not the graph. Reached through a live node's own `src`
+   * inlet, which is the public path every node is wired through.
+   */
+  function downstreamCount(graph: ReturnType<typeof bind>): number {
+    const anyId = graph.ids[0];
+    if (anyId === undefined) return 0;
+    const node = graph.get(anyId)!.node as unknown as {
+      in: Record<string, { source?: { connections: readonly unknown[] } }>;
+    };
+    const outlet = node.in['src']?.source;
+    if (outlet === undefined) {
+      throw new Error('no source outlet reachable — this probe is broken');
+    }
+    return outlet.connections.length;
+  }
+
   /** Walks distinct params, the way a slider does. */
   function sweep(graph: ReturnType<typeof bind>, periods: readonly number[]) {
     for (const p of periods) {
@@ -153,25 +174,104 @@ describe('[PND-PROCCACHE] engine-wide byte budget', () => {
     expect([...graph.ids].sort()).toEqual(ids.sort());
   });
 
-  it('never evicts a node whose consumer still holds its outlet', () => {
-    // Dropping an upstream node while a retained node reads from it
-    // frees nothing — the consumer holds the outlet — and would only
-    // force a recompile on the next pull. So it is skipped, even when
-    // it is the least-recently-used thing in the graph.
+  it('never leaves a live node with an evicted upstream', () => {
+    // The invariant, stated correctly. Being depended-on does not make a
+    // node permanent — it protects it only while its dependent survives,
+    // and once that is evicted the input is fair game. What must never
+    // happen is the reverse order, leaving a retained node whose upstream
+    // lookup is gone. Checked across the whole graph rather than on one
+    // pair, because the eviction loop now repeats and any pass could
+    // break it.
+    const reg = registry();
     const inner = sma(50);
     const outer = { op: 'sma', params: { period: 3 }, inputs: [inner] };
-    const graph = bind(bars(), { registry: registry(), budgetBytes: 1 });
+    const graph = bind(bars(), { registry: reg, budgetBytes: 3 * N * 8 });
     run(graph, { plan: [outer], select: [{ on: outer }], assemble: false });
-    // Budget is 1 byte, so everything evictable has gone; the inner node
-    // must remain because `outer` depends on it.
-    const ids = graph.ids;
-    expect(ids.length).toBeGreaterThanOrEqual(1);
+    sweep(graph, [7, 8, 9, 10, 11, 12]);
+    expect(graph.evictions).toBeGreaterThan(0);
+
+    const live = new Set(graph.ids);
+    for (const id of live) {
+      for (const up of graph.get(id)!.upstream) {
+        expect(
+          live.has(up),
+          `${id} kept, but its upstream ${up} was dropped`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('keeps evicting after unpinning, rather than stopping at one pass', () => {
+    // Evicting a consumer unpins its inputs, but a single pass over a
+    // snapshot of the LRU has already walked past them. A two-node chain
+    // under a 1-byte budget therefore kept 8,000 bytes and reported
+    // success (found by a Codex pass on PR #571). The bound must hold
+    // after `enforceBudget` returns, not after some later call.
+    const reg = registry();
+    const inner = sma(50);
+    const outer = { op: 'sma', params: { period: 3 }, inputs: [inner] };
+    const graph = bind(bars(), { registry: reg, budgetBytes: 1 });
+    run(graph, { plan: [outer], select: [{ on: outer }], assemble: false });
+    expect(graph.retainedBytes).toBeLessThanOrEqual(1);
+    // And it still answers, by recompiling.
     const again = run(graph, {
       plan: [outer],
       select: [{ on: outer }],
       assemble: false,
     });
     expect(Object.keys(again.columns ?? {})).toHaveLength(1);
+  });
+
+  it('counts bytes materialized outside the run path', () => {
+    // Byte accounting used to be written in `columnOf`, so pulling a
+    // value through the compiled node directly materialized a column the
+    // budget could not see: `retainedBytes` read 0 while the memory was
+    // real (Codex, PR #571). Reading the ports with `peek()` closes it.
+    const reg = registry();
+    const graph = bind(bars(), { registry: reg });
+    const compiled = graph.compile(sma(20));
+    expect(graph.retainedBytes).toBe(0); // compiled, not computed
+    const outlet = Object.values(compiled.outlets)[0]!;
+    (compiled.node.out[outlet] as { get(): unknown }).get();
+    expect(graph.retainedBytes).toBeGreaterThan(0);
+  });
+
+  it('actually disconnects an evicted node from the source', () => {
+    // THE test this suite was missing. Every other assertion here reads
+    // the graph's own bookkeeping — `retainedBytes`, `ids`, `evictions` —
+    // and all of them passed while eviction freed nothing at all.
+    // `Outlet.#downstream` is a strong Set and `Inlet.node` points back,
+    // so a node whose lookup was deleted but whose inlets stayed
+    // connected remained reachable from the source forever. Found by a
+    // Layer 2 review of PR #571. This asserts on the graph structure,
+    // which is what "freed" actually means.
+    const reg = registry();
+    const budgeted = bind(bars(), { registry: reg, budgetBytes: 3 * N * 8 });
+    sweep(
+      budgeted,
+      Array.from({ length: 30 }, (_, i) => 5 + i),
+    );
+    expect(budgeted.evictions).toBeGreaterThan(20);
+    expect(
+      downstreamCount(budgeted),
+      'evicted nodes must not remain attached to the source',
+    ).toBeLessThanOrEqual(budgeted.ids.length);
+  });
+
+  it('does not grow when an evicted spec is re-asked repeatedly', () => {
+    // The leak's sharpest form: evict-then-re-ask used to compile a
+    // SECOND node onto the same source, so churn grew memory without
+    // bound while `ids.length` stayed flat — worse than no budget.
+    const reg = registry();
+    const graph = bind(bars(), { registry: reg, budgetBytes: 2 * N * 8 });
+    const cycle = [5, 6, 7, 8, 9, 10, 11, 12];
+    sweep(graph, cycle);
+    const afterFirst = downstreamCount(graph);
+    for (let round = 0; round < 6; round += 1) sweep(graph, cycle);
+    expect(
+      downstreamCount(graph),
+      'repeated churn must not accumulate attached nodes',
+    ).toBeLessThanOrEqual(afterFirst);
   });
 
   it('is unbounded by default, so no existing caller changes behaviour', () => {

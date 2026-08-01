@@ -21,6 +21,7 @@ import { defineNode, type Node } from '../node.js';
 import { port } from '../types.js';
 import { source, type SourceNode } from '../source.js';
 import type { Column, SeriesSchema, TimeSeries } from 'pond-ts';
+import { requiredHistory } from './history.js';
 import { columnsOf, specId } from './identity.js';
 import type { Registry } from './registry.js';
 import {
@@ -74,12 +75,6 @@ interface Compiled {
   readonly upstream: readonly string[];
   /** Ids reading from this node. Non-empty ⇒ evicting it frees nothing. */
   readonly dependents: Set<string>;
-  /**
-   * Bytes of materialized column value, counted once a value is pulled.
-   * Zero until then, which is correct: an uncomputed node retains
-   * nothing and is not worth evicting.
-   */
-  bytes: number;
 }
 
 /** The outlet a fold's fact arrives on. Not a column, so not in `outlets`. */
@@ -136,8 +131,20 @@ export class BoundGraph {
   readonly #lru = new Set<string>();
   readonly #budgetBytes: number;
   #evicted = 0;
-  /** First changed row, when the caller declared one. */
-  #changedFrom: number | undefined;
+  /**
+   * First changed row still owed to each node, by id.
+   *
+   * Per node, not graph-wide, and accumulated as a running **minimum**
+   * until that node actually recomputes. A single global marker is wrong
+   * because nodes compute lazily: one that is not pulled at V1 and is
+   * pulled at V2 would patch its V0 output using V2's boundary and skip
+   * everything V1 changed — silently, since the result is still defined.
+   * Found by a Codex pass on PR #571, with a repro: rows 20–22 kept
+   * `[57,60,63]` where a from-scratch pass gave `[1036,1039,1042]`.
+   */
+  readonly #pendingFrom = new Map<string, number>();
+  /** Nodes owed a whole recompute, which no partial claim can downgrade. */
+  readonly #fullDirty = new Set<string>();
   /** Ranged recomputes and full ones, for tests and for `explain`. */
   #ranged = 0;
   #full = 0;
@@ -155,7 +162,28 @@ export class BoundGraph {
   /** Bytes currently retained across every materialized node value. */
   get retainedBytes(): number {
     let total = 0;
-    for (const c of this.#nodes.values()) total += c.bytes;
+    for (const c of this.#nodes.values()) total += this.#bytesOf(c);
+    return total;
+  }
+
+  /**
+   * A node's retained bytes, read from its ports rather than from a
+   * field written when a value happens to be surfaced.
+   *
+   * Caching this in `columnOf` left an escape hatch: pulling a value
+   * through `compile(spec).node.out[…].get()` materialized a column that
+   * the budget could not see, so `retainedBytes` reported 0 while the
+   * memory was real (Codex, PR #571). `peek()` never forces a compute,
+   * so asking every node is cheap and cannot itself cause work.
+   */
+  #bytesOf(compiled: Compiled): number {
+    let total = 0;
+    for (const outlet of Object.values(compiled.outlets)) {
+      const held = (
+        compiled.node.out[outlet] as { peek?(): Column | undefined }
+      ).peek?.();
+      if (held !== undefined) total += columnBytes(held);
+    }
     return total;
   }
 
@@ -175,9 +203,9 @@ export class BoundGraph {
     return { ranged: this.#ranged, full: this.#full };
   }
 
-  /** The declared first-changed row, or `undefined` after a full set. */
-  get changedFrom(): number | undefined {
-    return this.#changedFrom;
+  /** Rows still owed per node, for tests and for `explain`. */
+  get pendingFrom(): ReadonlyMap<string, number> {
+    return this.#pendingFrom;
   }
 
   /**
@@ -191,20 +219,45 @@ export class BoundGraph {
   enforceBudget(): void {
     if (!Number.isFinite(this.#budgetBytes)) return;
     let total = this.retainedBytes;
-    if (total <= this.#budgetBytes) return;
-    for (const id of [...this.#lru]) {
-      if (total <= this.#budgetBytes) break;
-      const compiled = this.#nodes.get(id);
-      if (compiled === undefined) continue;
-      if (compiled.dependents.size > 0) continue;
-      total -= compiled.bytes;
-      this.#nodes.delete(id);
-      this.#lru.delete(id);
-      this.#evicted += 1;
-      // Its inputs may now be evictable in turn — the chain unwinds from
-      // the consumer end, which is the only end that frees anything.
-      for (const upstream of compiled.upstream) {
-        this.#nodes.get(upstream)?.dependents.delete(id);
+    // Repeat until a whole pass frees nothing. Evicting a consumer
+    // unpins its inputs, and a single pass over a snapshot of the LRU
+    // has already walked past them — so a two-node chain under a 1-byte
+    // budget kept 8,000 bytes and reported success (Codex, PR #571). The
+    // loop terminates because every iteration that continues has evicted
+    // at least one node, and nodes are finite.
+    let progress = true;
+    while (progress && total > this.#budgetBytes) {
+      progress = false;
+      for (const id of [...this.#lru]) {
+        if (total <= this.#budgetBytes) break;
+        const compiled = this.#nodes.get(id);
+        if (compiled === undefined) continue;
+        if (compiled.dependents.size > 0) continue;
+        total -= this.#bytesOf(compiled);
+        // Dropping the lookup is not eviction. `Outlet.#downstream` is a
+        // strong `Set<Inlet>` and `Inlet.node` points back, so a node
+        // left connected stays reachable from the source forever —
+        // `#nodes.delete` alone freed NOTHING, and re-asking an evicted
+        // spec compiled a second node onto the same source, so churn grew
+        // memory without bound while `ids.length` stayed flat. Found by a
+        // Layer 2 review of PR #571.
+        for (const inlet of Object.values(
+          compiled.node.in as Record<string, { disconnect(): unknown }>,
+        )) {
+          inlet.disconnect();
+        }
+        this.#nodes.delete(id);
+        this.#lru.delete(id);
+        this.#pendingFrom.delete(id);
+        this.#fullDirty.delete(id);
+        this.#evicted += 1;
+        progress = true;
+        // Its inputs may now be evictable in turn — the chain unwinds
+        // from the consumer end, which is the only end that frees
+        // anything.
+        for (const upstream of compiled.upstream) {
+          this.#nodes.get(upstream)?.dependents.delete(id);
+        }
       }
     }
   }
@@ -216,7 +269,14 @@ export class BoundGraph {
 
   /** Replaces the bound data. Every node downstream goes dirty. */
   setSource(series: TimeSeries<SeriesSchema>): void {
-    this.#changedFrom = undefined;
+    // "No claim", owed to every node — and it DOMINATES any later partial
+    // claim. If a node misses a full replacement and is then handed a
+    // `setSourceFrom`, it must still recompute wholly: the rows before
+    // that boundary changed too, and nothing remembers by how much.
+    for (const id of this.#nodes.keys()) {
+      this.#fullDirty.add(id);
+      this.#pendingFrom.delete(id);
+    }
     this.#source.set(series);
   }
 
@@ -237,8 +297,29 @@ export class BoundGraph {
    * doubt use {@link setSource}, which recomputes everything.
    */
   setSourceFrom(series: TimeSeries<SeriesSchema>, changedFrom: number): void {
-    this.#changedFrom = Math.max(0, Math.floor(changedFrom));
+    const from = Math.max(0, Math.floor(changedFrom));
+    for (const id of this.#nodes.keys()) {
+      if (this.#fullDirty.has(id)) continue; // a full dirty outranks this
+      const owed = this.#pendingFrom.get(id);
+      this.#pendingFrom.set(
+        id,
+        owed === undefined ? from : Math.min(owed, from),
+      );
+    }
     this.#source.set(series);
+  }
+
+  /**
+   * The row a node must recompute from, and clears the debt.
+   *
+   * `undefined` means "no claim was made", which forces a full recompute
+   * — the safe answer, and what a freshly compiled node gets.
+   */
+  #takePending(id: string): number | undefined {
+    const owed = this.#pendingFrom.get(id);
+    this.#pendingFrom.delete(id);
+    if (this.#fullDirty.delete(id)) return undefined;
+    return owed;
   }
 
   get series(): TimeSeries<SeriesSchema> {
@@ -347,6 +428,11 @@ export class BoundGraph {
     const outputs = terminal
       ? { [FACT]: port<FactBody>() }
       : Object.fromEntries(declared.map((o) => [outletKey(o), port<Column>()]));
+
+    // `undefined` when any op in this chain declares no lookback, which
+    // is what disables ranging for it — the boundary is unknowable.
+    const history = requiredHistory(this.registry, [spec]);
+    const chainLookback = history.known ? history.rows : undefined;
 
     // The node's last output, held by the GRAPH and handed to `runRange`
     // as an argument. That split is the design: the graph is a cache and
@@ -458,19 +544,27 @@ export class BoundGraph {
         //      dirty range into this node's,
         //   4. there is a previous output to patch.
         //
-        // The lookback is this node's own, not the plan's maximum: a
-        // change at row r reaches back `lookback` rows HERE, and any
-        // deeper reach is already accounted for by the upstream node
-        // recomputing its own wider range first.
-        const changedFrom = this.#changedFrom;
+        // The lookback is the ACCUMULATED one down this spec's whole
+        // input chain, not this node's own. Using its own is wrong for a
+        // non-causal chain: with `win(5)` over `win(30)`, a change at row
+        // 70 reaches the outer node's row 37, but its own lookback only
+        // walks back to 66. Found by a Codex pass on PR #571, which
+        // produced exactly that — incremental 70, from-scratch 999. The
+        // trailing-window tests all passed because a trailing change
+        // propagates forward, where `to = length` already covers it.
+        //
+        // `requiredHistory` over this one spec is precisely that sum, so
+        // the two tickets compose rather than each carrying their own
+        // arithmetic.
+        const changedFrom = this.#takePending(id);
         let columns: Column[];
         if (
           changedFrom !== undefined &&
           op.runRange !== undefined &&
-          op.lookback !== undefined &&
+          chainLookback !== undefined &&
           previous !== undefined
         ) {
-          const from = Math.max(0, changedFrom - op.lookback(params));
+          const from = Math.max(0, changedFrom - chainLookback);
           columns = toColumns(
             op,
             id,
@@ -505,7 +599,6 @@ export class BoundGraph {
       outlets: Object.fromEntries(declared.map((o) => [o.id, outletKey(o)])),
       upstream,
       dependents: new Set<string>(),
-      bytes: 0,
     };
     for (const up of upstream) this.#nodes.get(up)?.dependents.add(id);
     this.#nodes.set(id, compiled);
@@ -526,19 +619,7 @@ export class BoundGraph {
           : `'${compiled.spec.op}' has no output '${suffix}' (has ${have})`,
       );
     }
-    const column = (compiled.node.out[key] as { get(): Column }).get();
-    // Counted here because this is where a value becomes materialized —
-    // and per outlet, so a multi-output study reports what it actually
-    // retains rather than one column's worth.
-    compiled.bytes = 0;
-    for (const outlet of Object.values(compiled.outlets)) {
-      const held = (
-        compiled.node.out[outlet] as { peek?(): Column | undefined }
-      ).peek?.();
-      if (held !== undefined) compiled.bytes += columnBytes(held);
-    }
-    if (compiled.bytes === 0) compiled.bytes = columnBytes(column);
-    return column;
+    return (compiled.node.out[key] as { get(): Column }).get();
   }
 
   /**

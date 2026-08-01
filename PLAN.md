@@ -498,8 +498,26 @@ whether it stays one.
 - **[PND-PROCCACHE]** — **Shipped**, and half of it turned out to be already
   built. `bind(…, { budgetBytes })` caps retained node values engine-wide,
   LRU, enforced after each run; `retainedBytes` / `evictions` observe it.
-  60 distinct params × 200k rows: **147 → 26 MB rss** (5.6×), 60 nodes → 7,
-  with repeats still hitting and no eviction churn.
+  60 distinct params × 200k rows, one process per configuration:
+  **arrayBuffers 104 → 42 MB** (2.5×), retained 93 → 11 MB, 60 nodes → 7,
+  with repeats still hitting and no eviction churn. RSS moves only 1.2×;
+  freed buffers are not promptly returned to the OS and the bound series is
+  the floor.
+
+  **Two review findings worth keeping.** Eviction originally deleted the
+  node from `#nodes` and stopped there — but `Outlet.#downstream` is a
+  strong `Set<Inlet>` with a back-reference, so an evicted node stayed
+  reachable from the source and **nothing was freed**; re-asking an evicted
+  spec compiled a _second_ node onto the same source, growing memory without
+  bound while `ids.length` stayed flat. Every test in the suite passed
+  throughout, because they all asserted the graph's own bookkeeping.
+  Eviction now disconnects the inlets, and there is a test that counts what
+  is actually attached to the source outlet.
+
+  And the first headline number here was **5.6× of pure measurement-order
+  artifact**: two configurations timed in one process, the second starting
+  from the first's heap. The benchmark now forks a process per
+  configuration. Same class of error as a JIT warm-up, one level up.
 
   **The half not to rebuild:** the ticket wanted an op to declare which Ins
   key its result. `specId` is already content-addressed over op, params and

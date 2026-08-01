@@ -280,6 +280,175 @@ describe('[PND-PROCRANGE] ranged recompute', () => {
     expect(cells(incremental)).toEqual(cells(scratch));
   });
 
+  it('widens by the ACCUMULATED chain lookback, not its own', () => {
+    // Found by a Codex pass on PR #571. With `win(5)` over `win(30)`, a
+    // change at source row 70 reaches the outer node's row 37 — its input
+    // changed from row 70-29=41, and the outer reads 4 rows further back
+    // still. Using only the node's OWN lookback started it at 70-4=66, so
+    // row 37 kept its stale value: incremental 70, from-scratch 999.
+    //
+    // Every trailing-window test passed throughout, because a trailing
+    // change propagates FORWARD and `to = length` already covers it. Only
+    // a non-causal chain exposes it. `requiredHistory` over the one spec
+    // is exactly the accumulated sum, so the fix is the other ticket.
+    const N = 200;
+    const AHEAD = 'period';
+    const forward = createRegistry().define({
+      name: 'win',
+      family: 'trend',
+      summary: 'Mean of the NEXT period-1 rows — deliberately non-causal.',
+      params: { period: int({ min: 2, default: 3 }) },
+      inputs: [{ role: 'source' }],
+      outputs: [{ id: '', unit: 'inherit' }],
+      lookback: (p) => (p[AHEAD] as number) - 1,
+      run: (ctx) =>
+        forwardMean(read(ctx, 'source'), ctx.params[AHEAD] as number),
+      runRange: (ctx) => {
+        const v = read(ctx, 'source');
+        const fresh = forwardMean(v, ctx.params[AHEAD] as number);
+        const prior = ctx.previous[0] as unknown as {
+          at(i: number): number | undefined;
+          length: number;
+        };
+        const out = new Array<number | undefined>(v.length);
+        for (let i = 0; i < ctx.from && i < prior.length; i += 1)
+          out[i] = prior.at(i);
+        for (let i = ctx.from; i < ctx.to; i += 1) out[i] = fresh[i];
+        return out;
+      },
+    });
+    function forwardMean(v: readonly (number | undefined)[], period: number) {
+      return v.map((_, i) => {
+        if (i + period > v.length) return undefined;
+        let sum = 0;
+        for (let k = i; k < i + period; k += 1) {
+          const x = v[k];
+          if (x === undefined) return undefined;
+          sum += x;
+        }
+        return sum / period;
+      });
+    }
+
+    const chain = {
+      op: 'win',
+      params: { period: 5 },
+      inputs: [{ op: 'win', params: { period: 30 }, inputs: ['px'] }],
+    };
+    const graph = bind(bars(N), { registry: forward });
+    run(graph, { plan: [chain], select: [{ on: chain }], assemble: false });
+
+    const edited = bars(N);
+    const px = (
+      edited as unknown as { column(n: string): { _values: Float64Array } }
+    ).column('px')._values;
+    px[70] = 999;
+    expect(
+      (edited as unknown as { column(n: string): { at(i: number): number } })
+        .column('px')
+        .at(70),
+      'the edit must be visible, or this test proves nothing',
+    ).toBe(999);
+
+    graph.setSourceFrom(edited as never, 70);
+    const incremental = run(graph, {
+      plan: [chain],
+      select: [{ on: chain }],
+      assemble: false,
+    });
+    const scratch = run(bind(edited as never, { registry: forward }), {
+      plan: [chain],
+      select: [{ on: chain }],
+      assemble: false,
+    });
+    expect(cells(incremental)).toEqual(cells(scratch));
+  });
+
+  it('does not skip a generation it was not pulled for', () => {
+    // Found by a Codex pass on PR #571, and it produced silently wrong
+    // answers. The dirty marker used to be graph-wide. Nodes compute
+    // LAZILY, so a node computed at V0, not pulled at V1, and pulled at
+    // V2 patched its V0 output using V2's boundary — skipping everything
+    // V1 changed. Repro then: rows 20-22 kept [57,60,63] where a
+    // from-scratch pass gave [1036,1039,1042]. The marker is now per node
+    // and accumulates as a running minimum until that node recomputes.
+    const counter = { runs: 0, ranges: 0 };
+    const reg = registry(counter);
+    const s0 = spec(3);
+    const N = 200;
+
+    const graph = bind(bars(N), { registry: reg });
+    run(graph, { plan: [s0], select: [{ on: s0 }], assemble: false });
+
+    const edit = (at: number, value: number) => {
+      const next = bars(N);
+      (
+        next as unknown as { column(n: string): { _values: Float64Array } }
+      ).column('px')._values[at] = value;
+      return next;
+    };
+
+    // V1 changes row 20 — and is deliberately NOT pulled.
+    graph.setSourceFrom(edit(20, 1000) as never, 20);
+
+    // V2 changes row 80 as well, and now we pull. Both edits must land.
+    const both = bars(N);
+    const px = (
+      both as unknown as { column(n: string): { _values: Float64Array } }
+    ).column('px')._values;
+    px[20] = 1000;
+    px[80] = 2000;
+    graph.setSourceFrom(both as never, 80);
+
+    const incremental = run(graph, {
+      plan: [s0],
+      select: [{ on: s0 }],
+      assemble: false,
+    });
+    const scratch = run(
+      bind(both as never, { registry: registry({ runs: 0, ranges: 0 }) }),
+      {
+        plan: [s0],
+        select: [{ on: s0 }],
+        assemble: false,
+      },
+    );
+    expect(cells(incremental)).toEqual(cells(scratch));
+  });
+
+  it('a missed full replacement is not downgraded by a later partial claim', () => {
+    // The same lazy-pull hazard from the other side. If a node misses a
+    // `setSource` and is then handed a `setSourceFrom`, it must still
+    // recompute wholly — the rows before that boundary changed too, and
+    // nothing remembers by how much.
+    const counter = { runs: 0, ranges: 0 };
+    const reg = registry(counter);
+    const s0 = spec(3);
+    const N = 120;
+
+    const graph = bind(bars(N), { registry: reg });
+    run(graph, { plan: [s0], select: [{ on: s0 }], assemble: false });
+
+    const replaced = bars(N);
+    const px = (
+      replaced as unknown as { column(n: string): { _values: Float64Array } }
+    ).column('px')._values;
+    for (let i = 0; i < N; i += 1) px[i] = i * 3;
+    graph.setSource(replaced as never); // not pulled
+    graph.setSourceFrom(replaced as never, N - 2); // a narrow claim
+
+    const incremental = run(graph, {
+      plan: [s0],
+      select: [{ on: s0 }],
+      assemble: false,
+    });
+    const scratch = run(
+      bind(replaced as never, { registry: registry({ runs: 0, ranges: 0 }) }),
+      { plan: [s0], select: [{ on: s0 }], assemble: false },
+    );
+    expect(cells(incremental)).toEqual(cells(scratch));
+  });
+
   it('falls back to a full recompute when anything is missing', () => {
     const counter = { runs: 0, ranges: 0 };
     const reg = registry(counter);
