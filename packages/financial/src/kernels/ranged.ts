@@ -80,6 +80,23 @@ export function rollingReadBack(start: number, period: number): number {
  * Pass `undefined` for either output to skip it — `sma` wants no σ, and
  * the σ accumulator is the expensive half.
  */
+/**
+ * **Known behaviour change at overflow scale**, found by a Codex pass on
+ * PR #571 and left unguarded deliberately.
+ *
+ * The shifted frame computes `x - anchor`, which can overflow when both
+ * operands are near `Number.MAX_VALUE` even though each is finite. On
+ * `[Number.MAX_VALUE, -Number.MAX_VALUE]` at period 2 this emits a mean
+ * of `-Infinity` where the deleted raw-sum kernel emitted `0` — the
+ * true answer. Range exactness and parallel/sequential identity both
+ * still hold; the two implementations simply differ here.
+ *
+ * Not guarded because the check would be per row on a kernel that costs
+ * ~20 ns/row, to correct an input no price, size or rate series can
+ * produce. Recorded rather than fixed so the trade is visible: if a
+ * caller ever feeds values within a factor of two of `MAX_VALUE`, this
+ * is where the answer goes wrong.
+ */
 export function rollingMeanSdInto(
   values: Float64Array,
   period: number,

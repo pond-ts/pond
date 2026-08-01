@@ -287,6 +287,14 @@ changedFrom)` declares which row first changed, and an op opts in with
   changes its answer by a bit. The remaining accelerated studies — `sma`,
   `envelope`, `bollinger` — are exactly those whose error is bounded.
 
+  **One behaviour change at overflow scale**, verified by a Codex pass and
+  left unguarded: the shifted frame computes `x - anchor`, which can
+  overflow when both operands are near `Number.MAX_VALUE` even though each
+  is finite. `[MAX_VALUE, -MAX_VALUE]` at period 2 gives a mean of
+  `-Infinity` where the previous raw-sum kernel gave the true `0`. Not
+  guarded, because the check is per row on a ~20 ns/row kernel to correct
+  an input no price, size or rate series can produce.
+
   `zScore` costs ~2.3× its previous formulation as an upper bound (~26 ns/row
   at 500k), and is flat in `period` — 22.8 to 26.1 ns/row from `period 2` to
   `period 100_000`. `scripts/perf-shifted-frame.mjs`.
