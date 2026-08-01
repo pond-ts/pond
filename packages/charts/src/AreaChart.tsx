@@ -36,6 +36,14 @@ export interface AreaChartProps<
   /** Name of the numeric value column to fill from. */
   column: string;
   /**
+   * Optional column to **read out** at the cursor instead of the plotted
+   * `column` — the area still fills `column`, but each tracker sample also
+   * carries this column's value as {@link TrackerSample.readout}, so an
+   * off-chart readout can show a **source** value while the area draws a derived
+   * one. Mirrors `<LineChart readout>`. **Omitted ⇒ no readout channel.**
+   */
+  readout?: string;
+  /**
    * The series' semantic identifier — what the data _is_ / how it should read
    * (e.g. `elevation`, or a signed-traffic role like `in` / `out`). The theme
    * maps it to an {@link AreaStyle} (`theme.area[as] ?? theme.area.default`) —
@@ -143,6 +151,7 @@ export function AreaChart<
 >({
   series,
   column,
+  readout,
   as: semantic,
   axis,
   baseline,
@@ -167,6 +176,16 @@ export function AreaChart<
         ? fromValueSeries(series, column)
         : fromTimeSeries(series, column),
     [series, column],
+  );
+  // Readout column values for a value-axis series (time path reads it off the
+  // event) — the tracker reports it alongside the plotted fill so an off-chart
+  // readout can show a source value. See AreaChartProps.readout.
+  const readoutY = useMemo(
+    () =>
+      readout !== undefined && series instanceof ValueSeries
+        ? fromValueSeries(series, readout).y
+        : undefined,
+    [series, readout],
   );
   // Styling: semantic identifier → theme area style. The single styling channel.
   const { area } = container.theme;
@@ -200,8 +219,19 @@ export function AreaChart<
             const i = series.nearestIndex(x);
             if (i < 0) return [];
             const v = cs.y[i]!;
+            const rv = readoutY?.[i];
             return Number.isFinite(v)
-              ? [{ x: cs.x[i]!, value: v, color: style.color, label }]
+              ? [
+                  {
+                    x: cs.x[i]!,
+                    value: v,
+                    color: style.color,
+                    label,
+                    ...(rv !== undefined && Number.isFinite(rv)
+                      ? { readout: rv }
+                      : {}),
+                  },
+                ]
               : [];
           }
           const e = series.nearest(x);
@@ -209,13 +239,25 @@ export function AreaChart<
           // get() wants a literal key; column is a runtime string. Cast the
           // *event* (not the method — that would detach `this`) to a
           // string-keyed get; runtime-safe read + guard.
-          const v = (e as unknown as { get(field: string): unknown }).get(
-            column,
-          );
+          const getField = (e as unknown as { get(field: string): unknown })
+            .get;
+          const v = getField.call(e, column);
+          const rv =
+            readout !== undefined ? getField.call(e, readout) : undefined;
           // The readout dot rides the value line (not the baseline), coloured by
           // the outline stroke. A gap yields no readout (like the fill).
           return typeof v === 'number' && Number.isFinite(v)
-            ? [{ x: e.begin(), value: v, color: style.color, label }]
+            ? [
+                {
+                  x: e.begin(),
+                  value: v,
+                  color: style.color,
+                  label,
+                  ...(typeof rv === 'number' && Number.isFinite(rv)
+                    ? { readout: rv }
+                    : {}),
+                },
+              ]
             : [];
         },
         draw: (ctx, xScale, yScale) =>
@@ -242,6 +284,8 @@ export function AreaChart<
       cs,
       series,
       column,
+      readout,
+      readoutY,
       style,
       label,
       baseline,

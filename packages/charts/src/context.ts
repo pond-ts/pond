@@ -637,6 +637,15 @@ export interface TrackerSample {
    *  quote) emits `"<as> <role>"` composites (`iv lower`, `SPY high`) when its
    *  `as` is set, else the raw column / role word. */
   readonly label: string;
+  /**
+   * Optional **source value for the off-chart readout**, when the layer plots a
+   * *derived* column but a `readout` column names the raw value (see
+   * `LineChart`/`AreaChart` `readout`). `value` stays the plotted number — so
+   * the in-chart cursor dot is unchanged — while an off-chart consumer shows
+   * `readout ?? value`. `undefined` when the layer has no `readout` column (the
+   * common case: the plotted value *is* the value to show).
+   */
+  readonly readout?: number;
 }
 
 /** One line of a {@link CursorFlag} — a labelled, coloured value. */
