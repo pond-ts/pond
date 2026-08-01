@@ -807,10 +807,20 @@ describe('[PND-PROCRANGE] the void path, through the graph', () => {
     // as an answer — 16 of 21 cells wrong, silently (Layer 2, PR #573).
     //
     // Reached by returning a Column-shaped value that is NOT packed:
-    // `toColumns` passes anything carrying a `kind` straight through, so
-    // this is the shape core's chunked columns arrive in. An op result
-    // built from loose values always packs, which is why the first
-    // version of this test could not reach the branch at all.
+    // `toColumns` passes anything carrying a `kind` straight through.
+    //
+    // A Codex pass checked whether this is reachable in practice and the
+    // answer is "not today, but legally yes": `fromColumns` packs numeric
+    // inputs, `concat` rebuilds rows, live `toTimeSeries` materializes
+    // rows and `appendColumn` repacks — so every ordinary construction
+    // path yields a packed column. A custom op may still legally return
+    // a real `ChunkedFloat64Column`, which is preserved. So this is a
+    // shim standing in for a legal-but-unused shape, not for how core
+    // columns currently arrive, and the guard is future-proofing.
+    //
+    // Packing the prior in the graph instead would be an O(N) scan on
+    // every update, often costing as much as the full run it avoids —
+    // which is why declining to range is the policy.
     const unpacked = (values: readonly (number | undefined)[]) => ({
       kind: 'number' as const,
       storage: 'chunked' as const,
@@ -873,5 +883,168 @@ describe('[PND-PROCRANGE] the void path, through the graph', () => {
       assemble: false,
     });
     expect(cellsOf(out)).toEqual(cellsOf(scratch));
+  });
+});
+
+describe('[PND-PROCRANGE] multi-output ranged recompute', () => {
+  // Codex, PR #573: ablating the outlet mapping so every declared output
+  // received `columns[0]` left all 22 range tests green — nothing here
+  // had more than one output. And an op writing only `out[0]` of three
+  // shipped a silent incomplete answer: outputs 1 and 2 kept their
+  // prefixes and reported the new rows as missing.
+  const N = 40;
+
+  function bars(n: number): TimeSeries<never> {
+    const time = new Float64Array(n);
+    const px = new Float64Array(n);
+    for (let i = 0; i < n; i += 1) {
+      time[i] = i * 60_000;
+      px[i] = i;
+    }
+    return TimeSeries.fromColumns({
+      name: 'bars',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'px', kind: 'number' },
+      ],
+      columns: { time, px },
+    }) as never;
+  }
+
+  /** Three outputs: x, x+10, x+20 — distinct, so a swap is visible. */
+  function bandsRegistry(writes: number): Registry {
+    return createRegistry().define({
+      name: 'bands',
+      family: 'volatility',
+      summary: 'Three offset outputs.',
+      params: {},
+      inputs: [{ role: 'source' }],
+      outputs: [
+        { id: 'Mid', unit: 'inherit' },
+        { id: 'Upper', unit: 'inherit' },
+        { id: 'Lower', unit: 'inherit' },
+      ],
+      lookback: () => 0,
+      run: (ctx) => {
+        const col = ctx.series.column(ctx.inputs['source']!) as unknown as {
+          length: number;
+          at(i: number): number | undefined;
+        };
+        const n = col.length;
+        const mk = (add: number) =>
+          Array.from({ length: n }, (_, i) => (col.at(i) ?? 0) + add);
+        return [mk(0), mk(10), mk(20)];
+      },
+      runRange: (ctx) => {
+        const col = ctx.series.column(ctx.inputs['source']!) as unknown as {
+          at(i: number): number | undefined;
+        };
+        for (let k = 0; k < writes; k += 1) {
+          const out = ctx.out[k]!;
+          for (let i = ctx.from; i < ctx.to; i += 1) {
+            out.set(i, (col.at(i) ?? 0) + k * 10);
+          }
+        }
+      },
+    });
+  }
+
+  const spec = { op: 'bands', inputs: ['px'] };
+  const columnsOf = (out: ReturnType<typeof run>) =>
+    Object.fromEntries(
+      Object.entries(out.columns ?? {}).map(([name, col]) => [
+        name,
+        Array.from(
+          { length: (col as unknown as { length: number }).length },
+          (_, i) => (col as unknown as { at(i: number): unknown }).at(i),
+        ),
+      ]),
+    );
+
+  it('keeps each output on its own outlet', () => {
+    // The ablation nobody caught: every declared output receiving
+    // `columns[0]`. The three outputs differ by 10 and 20, so a
+    // collapsed mapping is immediately visible.
+    const reg = bandsRegistry(3);
+    const graph = bind(bars(N), { registry: reg });
+    run(graph, { plan: [spec], select: [{ on: spec }], assemble: false });
+    graph.setSourceFrom(bars(N + 1) as never, N);
+    const incremental = run(graph, {
+      plan: [spec],
+      select: [{ on: spec }],
+      assemble: false,
+    });
+    const scratch = run(bind(bars(N + 1) as never, { registry: reg }), {
+      plan: [spec],
+      select: [{ on: spec }],
+      assemble: false,
+    });
+    expect(graph.recomputes.ranged).toBe(1);
+    expect(columnsOf(incremental)).toEqual(columnsOf(scratch));
+
+    // And explicitly: the three must not be equal to each other.
+    const cols = Object.values(columnsOf(incremental));
+    expect(cols).toHaveLength(3);
+    expect(cols[0]![N]).not.toEqual(cols[1]![N]);
+    expect(cols[1]![N]).not.toEqual(cols[2]![N]);
+  });
+
+  it('rejects an op that writes only some of its outputs', () => {
+    // Previously silent: outputs 1 and 2 kept their prefixes and
+    // reported the appended row as missing. A plausible, incomplete,
+    // wrong answer is worse than a throw.
+    const graph = bind(bars(N), { registry: bandsRegistry(1) });
+    run(graph, { plan: [spec], select: [{ on: spec }], assemble: false });
+    graph.setSourceFrom(bars(N + 1) as never, N);
+    expect(() =>
+      run(graph, { plan: [spec], select: [{ on: spec }], assemble: false }),
+    ).toThrow(/wrote no ranged output for 'Upper', 'Lower'/);
+  });
+
+  it('rejects an op that writes none of them', () => {
+    const graph = bind(bars(N), { registry: bandsRegistry(0) });
+    run(graph, { plan: [spec], select: [{ on: spec }], assemble: false });
+    graph.setSourceFrom(bars(N + 1) as never, N);
+    expect(() =>
+      run(graph, { plan: [spec], select: [{ on: spec }], assemble: false }),
+    ).toThrow(/wrote no ranged output/);
+  });
+
+  it('prepares no buffer for a return-style op', () => {
+    // `ctx.out` is lazy, so a `runRange` that returns a whole result
+    // never pays to prepare and copy a prefix per output — which for a
+    // three-output op was three prefix copies, allocated and discarded.
+    let touched = 0;
+    const reg = createRegistry().define({
+      ...(bandsRegistry(0).get('bands') as OpDef),
+      runRange: (ctx) => {
+        // Reading `.length` must not prepare anything.
+        expect(ctx.out.length).toBe(3);
+        touched = ctx.out.length;
+        const col = ctx.series.column(ctx.inputs['source']!) as unknown as {
+          length: number;
+          at(i: number): number | undefined;
+        };
+        const n = col.length;
+        const mk = (add: number) =>
+          Array.from({ length: n }, (_, i) => (col.at(i) ?? 0) + add);
+        return [mk(0), mk(10), mk(20)];
+      },
+    });
+    const graph = bind(bars(N), { registry: reg });
+    run(graph, { plan: [spec], select: [{ on: spec }], assemble: false });
+    graph.setSourceFrom(bars(N + 1) as never, N);
+    const out = run(graph, {
+      plan: [spec],
+      select: [{ on: spec }],
+      assemble: false,
+    });
+    expect(touched).toBe(3);
+    const scratch = run(bind(bars(N + 1) as never, { registry: reg }), {
+      plan: [spec],
+      select: [{ on: spec }],
+      assemble: false,
+    });
+    expect(columnsOf(out)).toEqual(columnsOf(scratch));
   });
 });

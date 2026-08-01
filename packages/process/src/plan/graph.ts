@@ -16,6 +16,7 @@ import {
   packColumn,
   prepareRange,
   sealRange,
+  type RangeOutput,
   type ColumnView,
 } from '../column.js';
 import { ProcessError } from '../errors.js';
@@ -596,7 +597,24 @@ export class BoundGraph {
         let columns: Column[];
         if (rangeable) {
           const priors = views;
-          const out = priors.map((v) => prepareRange(to, from, v));
+          // `out` is LAZY, and that does two jobs. A return-style
+          // `runRange` never touches it, so it stops paying to prepare
+          // and copy a prefix per output that is then discarded. And
+          // touching an entry is the op's statement of intent, which is
+          // what lets a partial write be caught below instead of
+          // silently shipping.
+          const prepared = new Array<RangeOutput | undefined>(
+            op.outputs.length,
+          );
+          const out: RangeOutput[] = [];
+          op.outputs.forEach((_, n) => {
+            Object.defineProperty(out, n, {
+              enumerable: true,
+              configurable: true,
+              get: () => (prepared[n] ??= prepareRange(to, from, priors[n])),
+            });
+          });
+          out.length = op.outputs.length;
           const produced = op.runRange({
             ...ctx,
             from,
@@ -608,10 +626,31 @@ export class BoundGraph {
           // Returning nothing means "written into `ctx.out`" — the path
           // that carries the prefix as a block. An op may still return a
           // whole result, which is simply the slower way to say it.
-          columns =
-            produced === undefined || produced === null
-              ? out.map((o) => sealRange(o, to) as unknown as Column)
-              : toColumns(op, id, produced);
+          if (produced === undefined || produced === null) {
+            // Every declared output must have been written. Sealing an
+            // untouched buffer produces a column that keeps its prefix
+            // and reports the new rows as MISSING — a plausible, silent,
+            // incomplete answer (Codex, PR #573). An op that writes
+            // `out[0]` of three declared outputs is a contract error, so
+            // it is one here rather than a wrong number downstream.
+            const missing = op.outputs
+              .map((o, n) => (prepared[n] === undefined ? o.id || `${n}` : ''))
+              .filter(Boolean);
+            if (missing.length > 0) {
+              throw new ProcessError(
+                `op '${spec.op}' wrote no ranged output for ${missing
+                  .map((m) => `'${m}'`)
+                  .join(', ')} — a \`runRange\` that returns nothing must ` +
+                  `write every declared output through \`ctx.out\`, or ` +
+                  `return a whole result instead`,
+              );
+            }
+            columns = prepared.map(
+              (o) => sealRange(o!, to) as unknown as Column,
+            );
+          } else {
+            columns = toColumns(op, id, produced);
+          }
           this.#ranged += 1;
         } else {
           columns = toColumns(op, id, op.run(ctx));
