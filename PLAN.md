@@ -594,12 +594,40 @@ whether it stays one.
   PROCRANGE does — and does not extend to a re-indexed copy. Worth stating
   before PROCRANGE lands, because the two are easy to conflate.
 
-- **[PND-PROCRANGE]** — Track dirty state per range (and per column, via the
-  join). 26× measured with identical results, and ~7000× once node values stop
-  reallocating. Requires `markDirty()` to carry a payload and makes a node's
-  `compute` an incremental update over its previous output rather than a pure
-  function of its inputs — weigh that against "transforms are views or
-  accumulators" rather than slipping it in. **Blocked by [PND-PROCKERN].**
+- **[PND-PROCRANGE]** — **Mechanism shipped; the ceiling is not reached.**
+  `setSourceFrom(series, changedFrom)` plus an opt-in `OpDef.runRange`.
+  500k rows, 5 studies, 20 ticks: **209 → 55 ms/tick (4×)**, bit-identical to
+  a from-scratch pass every tick.
+
+  **The purity question resolved better than expected.** Rather than
+  `markDirty()` carrying a payload and `compute` reading its own last output
+  as state, the previous output is passed **as an argument** — so an op stays
+  a pure function of declared inputs and `explain` keeps describing what a
+  value depends on. The mutable part lives in the graph, which is a cache and
+  was already stateful. No purity was traded.
+
+  **Opt-in, and that is the safety property.** An incremental result must be
+  bit-identical to a from-scratch one or answers depend on edit history —
+  invisible to any test that only computes from scratch. True for
+  [PND-PROCKERN]'s range-exact kernel; **false** for `median`, percentiles,
+  `min`, `max`. Declaring nothing means full recomputes: correct, slower.
+
+  **Remaining, and it is the larger half of the projected win:** 4× against a
+  projected 26×/~7000×. The gap is in the _op_, not the graph — a `runRange`
+  that copies the whole prefix out of `previous` before patching is O(n) per
+  tick, which is what the plan meant by "reallocating its output array". This
+  needs a **capacity-buffer contract** so an op can extend the previous column
+  rather than rebuild it, on top of [PND-PROCCOL]'s packed values.
+
+  **A correction to the plan's range formula.** It said an upstream dirty
+  range `[a,b)` becomes `[a-lookback, b)`. For a **trailing** window a change
+  at row `r` dirties output cells `[r, r+period)` — _forward_ — and since the
+  graph always recomputes to the series end, `[changedFrom, length)` already
+  covers it. Removing the backward widening fails no trailing-window test,
+  which is how this was found. The widening is kept because it is what makes a
+  **non-causal** op correct, and the graph cannot tell the two apart; there is
+  now a centered-window test that fails without it.
+
 - **[PND-PROCKERN]** — **Shipped**, and it turned out to be a correctness
   task wearing a performance task's clothes. `rollingMeanSdInto` in
   `packages/financial/src/kernels/ranged.ts` fills any `[lo, hi)` with the

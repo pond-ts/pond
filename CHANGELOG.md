@@ -80,6 +80,40 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **Ranged recompute** ([PND-PROCRANGE]): `graph.setSourceFrom(series,
+changedFrom)` declares which row first changed, and an op opts in with
+  `OpDef.runRange(ctx)` — which receives `{ from, to, previous }` and rebuilds
+  only that slice. `graph.recomputes` reports `{ ranged, full }`.
+
+  **The previous output is an argument, not state.** Letting a node reach for
+  its own last output would make `compute` a function of history: two callers
+  with the same data but different edit sequences could disagree, and
+  `explain` would stop describing what a value depends on. Passing it in keeps
+  the op a pure function of declared inputs; the mutable part stays in the
+  graph, which is a cache and was already stateful.
+
+  **It is opt-in because it is only safe for some ops.** An incremental result
+  must be _bit-identical_ to a from-scratch one, or answers start depending on
+  the sequence of edits that produced them — invisible to any test that only
+  computes from scratch. That holds for [PND-PROCKERN]'s range-exact kernel
+  and does **not** hold for `median`, percentiles, `min` or `max`, which still
+  sweep whole-series. An op that declares nothing gets full recomputes: always
+  correct, merely slower.
+
+  Measured 500k rows, 5 studies, 20 ticks: **209 → 55 ms/tick (4×)**, verified
+  bit-identical against a from-scratch pass every tick. That is short of the
+  plan's 26×, and the gap is in the _op_, not the graph — a `runRange` that
+  copies the whole prefix out of `previous` before patching is `O(n)` per
+  tick. Reaching the projected ceiling needs a capacity-buffer contract
+  letting an op _extend_ the previous column instead of rebuilding it.
+
+  For scale: [PND-PROCHIST] answers the same hot-edge workload at ~1.3 ms/tick
+  by slicing, with no incremental machinery. Ranging earns its keep where the
+  whole column must stay materialized — a chart drawing every point while one
+  row arrives.
+
+### Added
+
 - **An engine-wide byte budget over retained node values** ([PND-PROCCACHE]):
   `bind(series, { registry, budgetBytes })`, plus `graph.retainedBytes`,
   `graph.evictions` and `graph.enforceBudget()`. Unbounded when omitted, so

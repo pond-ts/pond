@@ -136,6 +136,11 @@ export class BoundGraph {
   readonly #lru = new Set<string>();
   readonly #budgetBytes: number;
   #evicted = 0;
+  /** First changed row, when the caller declared one. */
+  #changedFrom: number | undefined;
+  /** Ranged recomputes and full ones, for tests and for `explain`. */
+  #ranged = 0;
+  #full = 0;
 
   constructor(
     series: TimeSeries<SeriesSchema>,
@@ -157,6 +162,22 @@ export class BoundGraph {
   /** How many nodes the budget has dropped over this graph's life. */
   get evictions(): number {
     return this.#evicted;
+  }
+
+  /**
+   * Recomputes that ran ranged, and that ran whole — [PND-PROCRANGE].
+   *
+   * Worth having as a counter rather than inferring it from timings: a
+   * node silently falling back to a full recompute is the failure mode
+   * here, and it looks exactly like "the optimisation did not help much".
+   */
+  get recomputes(): { ranged: number; full: number } {
+    return { ranged: this.#ranged, full: this.#full };
+  }
+
+  /** The declared first-changed row, or `undefined` after a full set. */
+  get changedFrom(): number | undefined {
+    return this.#changedFrom;
   }
 
   /**
@@ -195,6 +216,28 @@ export class BoundGraph {
 
   /** Replaces the bound data. Every node downstream goes dirty. */
   setSource(series: TimeSeries<SeriesSchema>): void {
+    this.#changedFrom = undefined;
+    this.#source.set(series);
+  }
+
+  /**
+   * Replaces the bound data, declaring that rows before `changedFrom`
+   * are unchanged — [PND-PROCRANGE].
+   *
+   * This is the whole input to ranged recompute: a node that declares a
+   * `lookback` and a `runRange` then rebuilds only
+   * `[changedFrom - lookback, length)` instead of the whole column.
+   *
+   * **The claim is the caller's to keep.** Nothing here verifies that
+   * the earlier rows really are untouched, because verifying costs the
+   * scan the whole feature exists to avoid. Pass a row that is genuinely
+   * at or before the first difference — a live feed appending a bar
+   * passes the old length, which is the case this is built for. Getting
+   * it wrong yields a stale prefix rather than an error, so when in
+   * doubt use {@link setSource}, which recomputes everything.
+   */
+  setSourceFrom(series: TimeSeries<SeriesSchema>, changedFrom: number): void {
+    this.#changedFrom = Math.max(0, Math.floor(changedFrom));
     this.#source.set(series);
   }
 
@@ -305,6 +348,13 @@ export class BoundGraph {
       ? { [FACT]: port<FactBody>() }
       : Object.fromEntries(declared.map((o) => [outletKey(o), port<Column>()]));
 
+    // The node's last output, held by the GRAPH and handed to `runRange`
+    // as an argument. That split is the design: the graph is a cache and
+    // was already stateful, while the op stays a pure function — of more
+    // things than before, but declared ones, so `explain` still describes
+    // what a value depends on.
+    let previous: Column[] | undefined;
+
     const factory = defineNode({
       kind: spec.op,
       inputs: Object.fromEntries(
@@ -395,8 +445,43 @@ export class BoundGraph {
             series = appendColumn(series, b.column, vals[`in${i}`] as Column);
           }
         });
-        const produced = op.run({ series, inputs: inputsByRole, params, id });
-        const columns = toColumns(op, id, produced);
+        const ctx = { series, inputs: inputsByRole, params, id };
+
+        // Ranged, or whole? Four things must hold, and any one missing
+        // falls back to a full recompute — which is always correct and
+        // merely slower ([PND-PROCRANGE]).
+        //
+        //   1. the caller declared which row changed (`setSourceFrom`),
+        //   2. this op opted in with `runRange` — meaning it claims a
+        //      patched result is bit-identical to a from-scratch one,
+        //   3. it declared a `lookback`, which is what widens an upstream
+        //      dirty range into this node's,
+        //   4. there is a previous output to patch.
+        //
+        // The lookback is this node's own, not the plan's maximum: a
+        // change at row r reaches back `lookback` rows HERE, and any
+        // deeper reach is already accounted for by the upstream node
+        // recomputing its own wider range first.
+        const changedFrom = this.#changedFrom;
+        let columns: Column[];
+        if (
+          changedFrom !== undefined &&
+          op.runRange !== undefined &&
+          op.lookback !== undefined &&
+          previous !== undefined
+        ) {
+          const from = Math.max(0, changedFrom - op.lookback(params));
+          columns = toColumns(
+            op,
+            id,
+            op.runRange({ ...ctx, from, to: series.length, previous }),
+          );
+          this.#ranged += 1;
+        } else {
+          columns = toColumns(op, id, op.run(ctx));
+          this.#full += 1;
+        }
+        previous = columns;
         return Object.fromEntries(
           op.outputs.map((o, n) => [outletKey(o), columns[n]!]),
         );

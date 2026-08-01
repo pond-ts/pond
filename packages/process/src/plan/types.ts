@@ -157,6 +157,48 @@ export interface OpContext {
 }
 
 /**
+ * What a ranged recompute is given — [PND-PROCRANGE].
+ *
+ * ## The previous output is an argument, not state
+ *
+ * The obvious way to make recompute incremental is to let a node reach
+ * for its own last output and patch it. That makes `compute` a function
+ * of its inputs *and* of history, which is a real loss: two callers with
+ * the same data but different edit sequences can disagree, and `explain`
+ * stops describing what a value actually depends on.
+ *
+ * Passing {@link previous} in as an argument keeps the op a pure
+ * function — of more things than before, but declared things. The
+ * mutable part stays in the graph, which is a cache and was already
+ * impure.
+ *
+ * ## Why this is safe now and was not before
+ *
+ * Incremental recompute is only honest if a patched result equals a
+ * from-scratch one. Until [PND-PROCKERN] it did not: a ranged fill over
+ * the rolling kernel differed on **every cell**, because the accumulator
+ * carried a different rounding history. That is fixed for `avg`/`stdev`,
+ * which is why an op **opts in** rather than getting this by default —
+ * an op whose kernel is not range-exact must not declare `runRange`, or
+ * its answers become dependent on the sequence of edits that produced
+ * them. `median`, percentiles, `min` and `max` are in that category
+ * today.
+ */
+export interface RangeContext extends OpContext {
+  /** First row that must be recomputed, already widened by the lookback. */
+  readonly from: number;
+  /** One past the last row — the series length. */
+  readonly to: number;
+  /**
+   * This node's previous output, one entry per declared output.
+   *
+   * Shorter than the current series when rows were appended. An op
+   * copies what it keeps and fills `[from, to)`.
+   */
+  readonly previous: readonly Column[];
+}
+
+/**
  * An op's result: one entry per declared output, in declaration order.
  *
  * A `Column` is returned as-is (already packed); loose values are packed
@@ -206,6 +248,28 @@ export interface OpDef {
    */
   readonly lookback?: (params: Params) => number;
   readonly run: (ctx: OpContext) => OpResult;
+  /**
+   * Recompute only `[from, to)`, given the previous output —
+   * [PND-PROCRANGE]. Optional, and **opt-in for a reason**.
+   *
+   * The graph calls this instead of {@link run} when it knows which rows
+   * changed and this node has a previous output to patch; otherwise it
+   * falls back to a full {@link run}, so declaring nothing is always
+   * correct and merely slower.
+   *
+   * **Only declare it if a patched result is bit-identical to a
+   * from-scratch one.** That holds for the range-exact rolling kernel
+   * ([PND-PROCKERN]) and does not hold for `median`, percentiles, `min`
+   * or `max`, which still sweep whole-series. An op that declares this
+   * without that property makes its answers depend on the sequence of
+   * edits that produced them — which is invisible in a test that only
+   * ever computes from scratch.
+   *
+   * Requires {@link lookback}, since that is what widens an upstream
+   * dirty range into this node's. Without it the graph cannot know how
+   * far back a change reaches and will not range.
+   */
+  readonly runRange?: (ctx: RangeContext) => OpResult;
 }
 
 // ── folds ────────────────────────────────────────────────────
