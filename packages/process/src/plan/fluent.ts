@@ -11,6 +11,7 @@ import type { OpDef, ParamDef } from './types.js';
 import { isFold } from './types.js';
 import {
   BuilderError,
+  foldSlot,
   PlanBuilder,
   type BuiltRequest,
   type InputRef,
@@ -261,15 +262,16 @@ export class ProcessBuilder<
         : 'output' in input
           ? `${input.slot}#${input.output}`
           : input.slot;
-    const slot = `${inputName}:${op}`;
+    // The slot carries the fold's params — `foldSlot` — so asking the
+    // same node for `shape({points: 20})` and `shape({points: 100})`
+    // yields two nodes rather than the second silently reusing the
+    // first's 20.
+    const given =
+      params.points === undefined ? undefined : { points: params.points };
+    const slot = foldSlot(inputName, op, given);
     let handle = this.#folds.get(slot);
     if (handle === undefined) {
-      handle = this.#builder.add(
-        slot,
-        op,
-        params.points === undefined ? undefined : { points: params.points },
-        [input],
-      );
+      handle = this.#builder.add(slot, op, given, [input]);
       this.#folds.set(slot, handle);
     }
     return { selection: { handle } };

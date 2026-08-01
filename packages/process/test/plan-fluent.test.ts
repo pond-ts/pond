@@ -168,6 +168,22 @@ describe('registry-bound fluent authoring', () => {
     ]);
   });
 
+  it('keys a fluent fold by its params, not just its name', () => {
+    // The memo key used to omit params, so `shape({points: 100})` after
+    // `shape({points: 20})` silently returned the 20-point node.
+    const graph = process(vocabulary(), 'prices');
+    const scaled = graph.column('close').scale({ as: 'scaled', by: 3 });
+    graph.outputs({
+      coarse: scaled.shape({ points: 20 }),
+      fine: scaled.shape({ points: 100 }),
+    });
+    const request = graph.outputs({});
+    expect(request.nodes).toMatchObject({
+      'scaled:shape(points=20)': { op: 'shape', params: { points: 20 } },
+      'scaled:shape(points=100)': { op: 'shape', params: { points: 100 } },
+    });
+  });
+
   it("reserves 'as' for the fluent node slot", () => {
     expect(() =>
       createRegistry().define({

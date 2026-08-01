@@ -30,6 +30,42 @@ self-contained — run them after `npm run build --workspaces`:
 If the package is restructured or withdrawn (see [PND-PROCSUB]), these
 should move with it — they are the evidence base for every decision here.
 
+## 2026-08 external audit (Codex): publication-readiness hardening
+
+An adversarial pre-publication audit answered "not yet" on publishing —
+low-level engine solid, plan/host surface with paths that return wrong
+data or accept invalid plans silently. Every blocking finding was
+reproduced against the tree, and all landed as one hardening PR with
+regressions. The recurring shape is worth keeping: **each was a
+validation that existed somewhere adjacent** — assembly checked lengths
+but `assemble: false` skipped assembly; `unitOf` in `identity.ts` was
+picked-output-aware while `graph.ts` kept its own copy that was not; the
+fact loop honoured `onError` while the column loop did not; `specId`
+folds params in while the builders' derived fold slots did not. A
+guarantee implemented twice is implemented once.
+
+Fixed (P1): picked-output unit validation read `outputs[0]` (both
+rejection directions wrong, one silent); `Registry.define()` accepted
+duplicate input roles / output ids (both collapse rather than fail at
+run time), invalid defaults, and `dependsOn` naming unknown params; op
+result lengths were unchecked at the producer; the column-selection loop
+escaped `onError` and a selector naming a nonexistent output surfaced
+_nothing_; and the [PND-PROCCACHE] budget was unreachable from `Host` —
+`budgetBytes` now passes through (per graph), plus `Host.remove(id)` as
+the explicit lifecycle end. Follow-ups: fold slots in both builders now
+key by params (`shape({points:100})` after `({points:20})` silently kept
+20); `shape` uses a `ceil` stride (399 rows at 200 points returned all
+399); fact provenance (`id`/`name`/`op`/`unit`) wins over a fold body's
+fields; `columnBytes` sums chunked columns instead of reporting 0 —
+"free" to a byte budget; the nested JSON Schema can express
+`PickedOutput`; CI's package-content check covers `@pond-ts/process`.
+
+Still open from the audit, tracked where they already live: units in the
+schema projection ([PND-PROCSCHEMA]), and the identity-vs-lifetime
+policy question ([PND-PROCIDENT]) — the budget is now reachable
+everywhere, but choosing a default for interactive hosts remains that
+ticket's call.
+
 **Two measurement traps, both hit while producing these numbers**, worth
 knowing before trusting or extending them:
 

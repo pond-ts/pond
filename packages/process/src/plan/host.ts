@@ -96,6 +96,7 @@ export interface DatasetInfo {
 export class Host {
   readonly registry: Registry;
   readonly #units: Units;
+  readonly #budgetBytes: number | undefined;
   readonly #graphs = new Map<string, BoundGraph>();
   readonly #sources = new Map<string, TimeSeries<SeriesSchema>>();
   readonly #sourceRegistry: SourceRegistry | undefined;
@@ -106,9 +107,20 @@ export class Host {
     registry: Registry;
     units?: Units;
     sources?: SourceRegistry;
+    /**
+     * Cap on retained node values **per bound graph**, in bytes — see
+     * {@link bind}. Without one, a host accepting runtime plans retains
+     * every distinct spec ever asked of every dataset, so memory scales
+     * with questions asked rather than with anything bounded. A host
+     * whose plans arrive from callers it does not control should set
+     * this; the total across the host is `budgetBytes × datasets`, since
+     * datasets are added by the host's own author, not by requests.
+     */
+    budgetBytes?: number;
   }) {
     this.registry = options.registry;
     this.#units = options.units ?? {};
+    this.#budgetBytes = options.budgetBytes;
     this.#sourceRegistry = options.sources;
   }
 
@@ -151,9 +163,31 @@ export class Host {
         `unknown dataset '${id}'${have ? ` — have ${have}` : ''}`,
       );
     }
-    const graph = bind(series, { registry: this.registry, units: this.#units });
+    const graph = bind(series, {
+      registry: this.registry,
+      units: this.#units,
+      ...(this.#budgetBytes !== undefined && {
+        budgetBytes: this.#budgetBytes,
+      }),
+    });
     this.#graphs.set(id, graph);
     return graph;
+  }
+
+  /**
+   * Forgets a dataset: its source, its graph, and every cached node
+   * value with them. The explicit end of a binding's lifecycle — the
+   * counterpart to {@link add} for a host that cycles datasets, where
+   * "kept until the process dies" is not a policy.
+   *
+   * Returns whether the dataset was known. An in-flight `runAsync`
+   * against the same source id may re-register it when its load lands.
+   */
+  remove(id: string): boolean {
+    const known = this.#sources.delete(id);
+    this.#graphs.delete(id);
+    this.#loadedSources.delete(id);
+    return known;
   }
 
   /** Resolves an envelope against its dataset's long-lived graph. */
@@ -228,6 +262,8 @@ export function createHost(options: {
   registry: Registry;
   units?: Units;
   sources?: SourceRegistry;
+  /** Per-graph cap on retained node values, in bytes — see {@link Host}. */
+  budgetBytes?: number;
 }): Host {
   return new Host(options);
 }

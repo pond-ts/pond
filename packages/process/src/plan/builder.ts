@@ -46,6 +46,28 @@ import type { ParamValue } from './types.js';
 /** Thrown when a graph is built wrong — before it is ever sent. */
 export class BuilderError extends ProcessError {}
 
+/**
+ * The derived slot for a fold over `on` — a function of the node, the
+ * fold, **and its params**. Params used to be omitted, so
+ * `shape({points: 20})` followed by `shape({points: 100})` landed on one
+ * slot and the second call silently kept 20. Sorted by key so two
+ * spellings of one param set collide deliberately, the same rule
+ * `specId` applies one layer down.
+ */
+export function foldSlot(
+  on: string,
+  op: string,
+  params?: Readonly<Record<string, ParamValue>>,
+): string {
+  const entries = Object.entries(params ?? {});
+  if (entries.length === 0) return `${on}:${op}`;
+  const p = entries
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([k, v]) => `${k}=${String(v)}`)
+    .join(',');
+  return `${on}:${op}(${p})`;
+}
+
 /** One named output of a multi-output node. */
 export interface OutputHandle {
   readonly slot: string;
@@ -63,10 +85,13 @@ export type InputRef = string | NodeHandle | OutputHandle;
  * [PND-PROCFOLD] at the authoring layer: `z.percentileRank()` always
  * read like an op call, and now it is one.
  *
- * The derived slot is `<slot>:<fold>`, which is deterministic — so
- * calling `.last()` twice on the same node returns the same node rather
- * than colliding — and safe against a source column name, which cannot
- * contain a colon.
+ * The derived slot is `<slot>:<fold>` — with the fold's params folded in
+ * when it has any, e.g. `<slot>:shape(points=100)`. Deterministic in all
+ * three, so calling `.last()` twice on the same node returns the same
+ * node rather than colliding, while `shape({points: 20})` and
+ * `shape({points: 100})` are two nodes rather than the second silently
+ * answering with the first's 20. Safe against a source column name,
+ * which cannot contain a colon.
  */
 export interface NodeHandle {
   readonly slot: string;
@@ -142,16 +167,17 @@ export class PlanBuilder<From extends string | SourceRef = string> {
   /**
    * Adds a fold over `on`, or returns the one already added.
    *
-   * Idempotent because the derived slot is a function of the node and
-   * the fold: writing `z.percentileRank()` in two places is one node,
-   * which is the same thing content-addressing does one layer down.
+   * Idempotent because the derived slot is a function of the node, the
+   * fold and its params: writing `z.percentileRank()` in two places is
+   * one node, which is the same thing content-addressing does one layer
+   * down — while two different param sets are two nodes.
    */
   #fold(
     on: string,
     op: string,
     params?: Readonly<Record<string, ParamValue>>,
   ): NodeHandle {
-    const slot = `${on}:${op}`;
+    const slot = foldSlot(on, op, params);
     if (!this.#nodes.has(slot)) {
       this.#nodes.set(slot, {
         op,

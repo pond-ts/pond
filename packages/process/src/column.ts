@@ -91,7 +91,21 @@ export function columnBytes(column: Column): number {
     kind: string;
     _values?: { BYTES_PER_ELEMENT?: number; length: number };
     validity?: { length: number };
+    chunks?: readonly unknown[];
   };
+  // A chunked column owns no buffer of its own — its bytes are its
+  // chunks' (each a packed column, sized recursively) plus the aggregate
+  // validity bitmap built at construction. Reading `_values` here
+  // returned 0 for every chunked column, while the doc above promised
+  // the sum — an undercount a byte budget would treat as free.
+  const chunks = anyColumn.chunks;
+  if (Array.isArray(chunks)) {
+    let total = anyColumn.validity
+      ? bitmapByteCount(anyColumn.validity.length)
+      : 0;
+    for (const chunk of chunks) total += columnBytes(chunk as Column);
+    return total;
+  }
   const values = anyColumn._values;
   if (values === undefined) return 0;
   const perElement = values.BYTES_PER_ELEMENT ?? 8;

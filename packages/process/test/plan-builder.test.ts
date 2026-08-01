@@ -144,14 +144,32 @@ describe('the builder emits a plan, it does not replace one', () => {
       'n:extremes': { op: 'extremes', in: ['n'] },
       'n:percentileRank': { op: 'percentileRank', in: ['n'] },
       // A param, not a selector field — so it lands in the id, and two
-      // callers asking for 40 points share one node.
-      'n:shape': { op: 'shape', params: { points: 40 }, in: ['n'] },
+      // callers asking for 40 points share one node. It is in the SLOT
+      // too, so a different point count is a different node.
+      'n:shape(points=40)': { op: 'shape', params: { points: 40 }, in: ['n'] },
     });
 
-    // Idempotent: the slot is a function of the node and the fold, so
-    // asking twice is one node rather than a collision.
+    // Idempotent: the slot is a function of the node, the fold and its
+    // params, so asking twice is one node rather than a collision.
     expect(n.last().slot).toBe('n:last');
     expect(Object.keys(g.toJSON().nodes)).toHaveLength(5);
+  });
+
+  it('keys a derived fold by its params, not just its name', () => {
+    // The slot used to omit params, so `shape({points: 100})` after
+    // `shape({points: 20})` found the first slot taken and silently
+    // returned the 20-point node.
+    const g = plan('ACME_5m');
+    const n = g.add('n', 'sma', { period: 3 }, ['px']);
+    const a = n.shape({ points: 20 });
+    const b = n.shape({ points: 100 });
+    expect(a.slot).not.toBe(b.slot);
+    expect(g.toJSON().nodes).toMatchObject({
+      'n:shape(points=20)': { op: 'shape', params: { points: 20 } },
+      'n:shape(points=100)': { op: 'shape', params: { points: 100 } },
+    });
+    // Same params still dedupe to one node.
+    expect(n.shape({ points: 20 }).slot).toBe(a.slot);
   });
 
   it('refuses a duplicate slot before the request is ever sent', () => {

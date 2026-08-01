@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TimeSeries } from 'pond-ts';
+import { ChunkedFloat64Column, TimeSeries } from 'pond-ts';
 import { bind, createRegistry, run } from '../src/index.js';
 import {
   appendColumn,
@@ -114,6 +114,18 @@ describe('columnBytes', () => {
     const small = packColumn(Array.from({ length: 100 }, (_, i) => i));
     const large = packColumn(Array.from({ length: 100_000 }, (_, i) => i));
     expect(columnBytes(large) / columnBytes(small)).toBe(1000);
+  });
+
+  it('sums a chunked column: every chunk plus the aggregate bitmap', () => {
+    // Reading `_values` reported 0 for a chunked column — "free" to a
+    // byte budget, which is the one thing an approximation must not be.
+    const chunked = new ChunkedFloat64Column([
+      packColumn([1, 2, 3]),
+      packColumn([4, undefined, 6]),
+    ]);
+    // Chunk 1: 3·8 gapless. Chunk 2: 3·8 + ceil(3/8) validity. The
+    // aggregate bitmap over 6 cells adds ceil(6/8).
+    expect(columnBytes(chunked)).toBe(24 + 25 + 1);
   });
 });
 

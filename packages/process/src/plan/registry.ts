@@ -161,6 +161,21 @@ export class Registry<Defs extends DefMap = {}> {
         `definition '${def.name}' uses reserved input role 'as' — fluent plans use it for the node slot`,
       );
     }
+    // Duplicates are checked at definition time because at run time they
+    // do not fail — they collapse. Inputs resolve by role, so a repeated
+    // role makes every reader see the last input; outputs key node
+    // outlets by id, so a repeated id silently discards the earlier
+    // column. Both are mistakes in the definition's own source, surfaced
+    // in front of the author who can fix them.
+    const roles = new Set<string>();
+    for (const input of def.inputs) {
+      if (roles.has(input.role)) {
+        throw new ProcessError(
+          `definition '${def.name}' declares input role '${input.role}' twice`,
+        );
+      }
+      roles.add(input.role);
+    }
     if (!isFold(def)) {
       if (def.outputs.length === 0) {
         throw new ProcessError(`op '${def.name}' declares no outputs`);
@@ -170,9 +185,35 @@ export class Registry<Defs extends DefMap = {}> {
           `op '${def.name}' is multi-output, so every output needs a suffix — '' would collide with the spec id`,
         );
       }
+      const outputIds = new Set<string>();
+      for (const output of def.outputs) {
+        if (outputIds.has(output.id)) {
+          throw new ProcessError(
+            `op '${def.name}' declares output '${output.id}' twice`,
+          );
+        }
+        outputIds.add(output.id);
+        for (const key of output.dependsOn ?? []) {
+          if (!Object.hasOwn(def.params, key)) {
+            throw new ProcessError(
+              `op '${def.name}' output '${output.id}' dependsOn unknown param '${key}'`,
+            );
+          }
+        }
+      }
     }
-    for (const [key, d] of Object.entries(def.params))
+    for (const [key, d] of Object.entries(def.params)) {
       checkSuggest(def.name, key, d);
+      // A bad default fails every spec that omits the param — checked
+      // here so it fails the one caller who wrote it instead.
+      try {
+        checkParam(def.name, key, d, d.default);
+      } catch (e) {
+        throw new ProcessError(
+          `definition '${def.name}' has an invalid default for '${key}': ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
     this.#ops.set(def.name, def);
     return this as Registry<WithDef<Defs, D>>;
   }
@@ -336,7 +377,28 @@ export class Registry<Defs extends DefMap = {}> {
                 minItems: op.inputs.length,
                 maxItems: op.inputs.length,
                 items: {
-                  anyOf: [{ type: 'string' }, { $ref: ref }],
+                  anyOf: [
+                    { type: 'string' },
+                    { $ref: ref },
+                    // The picked-output form — one named output of a
+                    // nested spec. Without this branch the public
+                    // `PickedOutput` input was legal to the resolver but
+                    // inexpressible to a caller composing against the
+                    // schema, so a band's Lower output was unreachable
+                    // from exactly the callers the projection exists for.
+                    {
+                      title: 'picked output',
+                      description:
+                        'One named output of a nested spec — e.g. the Lower column of a multi-output op.',
+                      type: 'object',
+                      required: ['from', 'output'],
+                      additionalProperties: false,
+                      properties: {
+                        from: { $ref: ref },
+                        output: { type: 'string' },
+                      },
+                    },
+                  ],
                 },
               },
               params: {

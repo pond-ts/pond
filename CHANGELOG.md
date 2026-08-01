@@ -56,6 +56,33 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Fixed
 
+- **process:** **audit hardening — five wrong-answer / silent-acceptance paths
+  in the plan layer closed** (external Codex audit, 2026-08; all reproduced,
+  all regression-pinned). Unit validation of a **picked output** read
+  `outputs[0]` instead of the selected output, so a picked `variance` was
+  refused where variance was demanded and — worse, silently — accepted where
+  price was. `Registry.define()` now rejects duplicate input roles and
+  duplicate output ids (both used to _collapse_ at run time rather than fail:
+  inputs resolved to the last role, outputs dropped the earlier column),
+  invalid param defaults, and `dependsOn` naming unknown params. An op result
+  whose length does not match the bound series is refused at the producer —
+  it used to ride out unchecked whenever `assemble: false` skipped the only
+  length check. The column-selection loop now honours `onError` (an operator
+  exception escaped `'collect'`), and a selector naming a nonexistent output
+  is a `skipped` entry instead of silently surfacing nothing. Fact provenance
+  (`id`, `name`, `op`, `unit`) now wins over a custom fold body's fields, and
+  `columnBytes` sums a chunked column's chunks instead of reporting 0 — which
+  a byte budget would read as "free".
+
+  Also: the derived fold slots in both builders now key by **params** —
+  `shape({points: 100})` after `shape({points: 20})` silently returned the
+  20-point node — and `shape` itself uses a `ceil` stride, so 200 points
+  asked of 399 rows returns ≤200 rather than all 399. The nested JSON Schema
+  projection can now express the `PickedOutput` input form, `Host` accepts
+  `budgetBytes` (the [PND-PROCCACHE] cap was unreachable from the long-lived
+  host shape) and grows `remove(id)`, and CI's package-content check covers
+  `@pond-ts/process`. Package remains **unpublished** (`private: true`).
+
 - **core:** **`fromArrow` now reads a field's declared Arrow type instead of
   guessing from the runtime shape of `toArray()`** — closing a
   silent-corruption class. The reader worked out what a column held from what

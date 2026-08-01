@@ -102,6 +102,42 @@ describe('Host — the graph outlives requests', () => {
     expect(ran.n).toBe(1);
   });
 
+  it('passes its byte budget to every graph it binds', () => {
+    // `bind` grew `budgetBytes` in [PND-PROCCACHE], but the Host — the
+    // long-lived shape whose plans arrive from callers it does not
+    // control — had no way to set it, so a public host retained every
+    // spec ever asked of it.
+    const { registry } = makeRegistry();
+    const host = createHost({ registry, units, budgetBytes: 1 }).add(
+      'prices',
+      series(500),
+    );
+    host.run({ from: 'prices', process: [sma3], select: [{ on: sma3 }] });
+    const graph = host.graphFor('prices');
+    expect(graph.evictions).toBeGreaterThan(0);
+    expect(graph.retainedBytes).toBeLessThanOrEqual(1);
+  });
+
+  it('removes a dataset: source, graph, and cache go together', () => {
+    const { registry, ran } = makeRegistry();
+    const host = createHost({ registry, units }).add('prices', series(500));
+    const envelope = {
+      from: 'prices',
+      process: [sma3],
+      select: [{ on: fold('last', sma3) }],
+    };
+    host.run(envelope);
+    expect(host.remove('prices')).toBe(true);
+    expect(host.has('prices')).toBe(false);
+    expect(() => host.run(envelope)).toThrow(UnknownDatasetError);
+    // Re-adding starts a fresh binding — the old nodes are gone.
+    host.add('prices', series(500));
+    host.run(envelope);
+    expect(ran.n).toBe(2);
+    // Removing what is not there says so rather than throwing.
+    expect(host.remove('ghost')).toBe(false);
+  });
+
   it('keeps two datasets disjoint under identical ids', () => {
     const { registry } = makeRegistry();
     const host = createHost({ registry, units })
