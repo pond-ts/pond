@@ -534,10 +534,38 @@ whether it stays one.
   `compute` an incremental update over its previous output rather than a pure
   function of its inputs — weigh that against "transforms are views or
   accumulators" rather than slipping it in. **Blocked by [PND-PROCKERN].**
-- **[PND-PROCKERN]** — Range-aware kernel entry point in `@pond-ts/financial`.
-  The kernels are whole-series today, so no corpus study can fill a slice and
-  none of `PROCRANGE`'s speedup is reachable. Worth doing on its own merits —
-  it removes a full-array allocation per study call.
+- **[PND-PROCKERN]** — **Shipped**, and it turned out to be a correctness
+  task wearing a performance task's clothes. `rollingMeanSdInto` in
+  `packages/financial/src/kernels/ranged.ts` fills any `[lo, hi)` with the
+  exact bits a full pass writes — a 100-row fill is **3964× cheaper** than
+  recomputing the column and **bit-identical**, which is the ceiling
+  [PND-PROCRANGE] can now aim at.
+
+  **The finding that reorders PROCRANGE:** a ranged recompute on the old
+  sweep differed on _every cell_ of the range (~1e-10 relative), because an
+  accumulator carries rounding history from row 0. PROCRANGE's recorded "26×
+  with identical results" was therefore not achievable as specified — the
+  value would have depended on which ranges happened to be dirty, i.e. on
+  edit history rather than data. Two callers with the same data would
+  disagree. Fixed by rebuilding the accumulators every `period` rows and
+  pinning the rebuilds to **absolute** row index, so a ranged sweep
+  reconstructs the state a full sweep held; read-back is ≤ `2·period`.
+
+  Three things came free, and one nearly went wrong:
+  - **`withWorkers` is now bit-identical** to sequential for every study, at
+    any magnitude. The whole per-study accuracy table collapses — chunk
+    boundaries stopped existing rather than being characterised better.
+  - **Everything got faster**: `bollinger(20)` **46.5 → 18.4 ms** (avg and σ
+    fuse into one sweep instead of core running two reducers), `envelope`
+    13.1 → 10.6, `sma` 6.7 → 6.2, the 5-study stack 58.3 → 49.9.
+  - **Accuracy improved at every magnitude**, 3.6e-3 → 4.4e-16 at 1e15 —
+    which retires the `bollinger` instability logged as debt below.
+  - **The near-miss:** aligning the rebuilds _without_ also shifting the
+    frame made large-magnitude σ **worse** (3.6e-3 → 1.7e-2), because
+    rebuilding more often only re-does ill-conditioned arithmetic more
+    often. Caught by measuring rather than reasoning. The two are one
+    change, not two.
+
 - **[PND-PROCREG]** — Plan rehydration across processes. Ids round-trip, a
   compiled graph does not; persisted views recompile from the stored plan.
   Deliberately no `fromJSON` yet. Two verified properties must become stated

@@ -52,61 +52,40 @@
  *
  * ## What it costs in accuracy — read this before opting in
  *
- * Partitioning changes the answer slightly, and by different amounts for
- * different studies. Chunk 0 reproduces the sequential sweep exactly;
- * every later chunk starts its Welford state fresh at its own warm-up
- * row rather than carrying the rounding history of the rows before it.
+ * **Partitioning does not change the answer.** Not "by a bounded amount"
+ * — at all. Every study this pool accelerates comes back bit-identical to
+ * the sequential one, verified at both ordinary and large magnitudes.
+ *
+ * That is new, and it is not because the pool got more careful.
+ * [PND-PROCKERN] pinned the kernel's accumulator rebuilds to **absolute**
+ * row index, so a chunk starting anywhere reconstructs exactly the state a
+ * whole-column pass held there. Chunk boundaries stopped being a thing
+ * that exists.
+ *
+ * What this replaced is worth keeping in view, because the shape of the
+ * mistake recurs. Each study used to carry its own measured difference —
+ * `sma` 3.9e-14, `bollinger` 5.1e-13, `zScore` 2.6e-6 across ~0.8% of
+ * cells — presented as though those were bounds. They were observations
+ * on one benign random walk. A Codex pass broke the `zScore` figure in a
+ * single attempt with a legal near-flat series at 1e15, on which the
+ * partitioned answer differed by **38% relative**. The lesson was not
+ * "measure more inputs": it was that a per-study tolerance is the wrong
+ * instrument, and the fix was to remove the difference rather than
+ * characterise it better.
  *
  * Measured over 500k bars, period 20, 8 workers
  * (`scripts/perf-parallel-studies.mjs`):
  *
- * | study        | speedup | observed worst rel. difference |
- * | ------------ | ------- | ------------------------------ |
- * | `sma`        | 1.85×   | 3.9e-14                        |
- * | `envelope`   | 1.35×   | 3.9e-14                        |
- * | `bollinger`  | 1.92×   | 5.1e-13                        |
- * | 3-study stack | 2.00×  | 5.1e-13                        |
+ * | study         | speedup | difference from sequential |
+ * | ------------- | ------- | -------------------------- |
+ * | `sma`         | 1.85×   | none                       |
+ * | `envelope`    | 1.35×   | none                       |
+ * | `bollinger`   | 1.92×   | none                       |
+ * | 3-study stack | 2.00×   | none                       |
  *
- * `zScore` is absent because it is **no longer accelerated**. It used to
- * be the fastest entry here at 2.44×, and the only one with a caveat —
- * 2.6e-6 on ~0.8% of cells. [PND-SHIFTFRAME] moved it onto
- * `rollingDeviationSd`, which this pool does not hook, so opting in
- * neither speeds it up nor changes its answer by a single bit. That is
- * the right trade: the speedup was real and the answer was wrong.
- *
- * **Those are observations on a benign workload, not bounds.** An
- * earlier version of this doc presented a `zScore` figure as if it
- * bounded the error. It did not, and a Codex review supplied the
- * counterexample: on a legal near-flat series at large magnitude
- * (`1e15 + ((i % 7) - 3)`, period 20, 4 chunks) the partitioned z-score
- * differed from the sequential one by **38% relative** — verified, and
- * still pinned as a regression test, now as the reason `zScore` is
- * formulated the way it is.
- *
- * **The mechanism is not the division, and it is fixable.** Decomposed at
- * the worst-disagreeing row: σ differs between the two sweeps by 0.97%,
- * while `v − mean` differs by **60%**. `ulp(1e15)` is `0.125`, so a
- * window spanning ±3 covers ~48 ulps — computing `v − mean` with both
- * operands ≈1e15 and the answer ≈1.0 leaves about three bits. A one-ulp
- * disagreement in `mean` is then ~12% of the answer.
- *
- * So the exposure was **catastrophic cancellation in the numerator**,
- * set by the data's magnitude-to-spread ratio, and **not caused by
- * parallelism** — the sequential study computed the same subtraction and
- * had the same exposure. Partitioning only changed which rounding
- * history each cell carried, landing one ulp apart, which this input
- * amplifies.
- *
- * [PND-SHIFTFRAME] fixed the formulation rather than the caveat.
- * `rollingDeviationSd` accumulates `v − anchor` and emits the deviation
- * directly, so nothing cancels: **100% → 4.1e-15** on the counterexample,
- * and better on benign data too. It is a study-level fix, so the
- * sequential path gained the same accuracy — which is the point, since
- * the sequential path was never actually safe here.
- *
- * **So: `sma`, `envelope` and `bollinger` shift by rounding error, and
- * `zScore` does not shift at all.** The studies this pool accelerates
- * are exactly the ones whose error it bounds.
+ * `zScore` is absent because it is **not accelerated**. [PND-SHIFTFRAME]
+ * moved it onto `rollingDeviationSd`, which this pool does not hook, so
+ * opting in neither speeds it up nor changes its answer.
  *
  * There is also a semantic gap worth knowing: core rejects a non-finite
  * rolling result outright, where this kernel can emit `Infinity` or

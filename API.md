@@ -399,8 +399,10 @@ main package never imports this. Node-only by construction: `Atomics.wait` on
 the main thread is what keeps the studies synchronous, and browsers forbid it.
 
 Accelerates any rolling study asking for `avg`/`stdev` off one column — `sma`,
-`envelope`, `bollinger`. Partitioning shifts the answer slightly, by rounding
-error only: measured 1.85×/1.35×/1.92× at ≤5.1e-13. **`zScore` is not
+`envelope`, `bollinger` — at 1.85×/1.35×/1.92×. **Partitioning does not change
+the answer**: since [PND-PROCKERN] the kernel's accumulator rebuilds are pinned
+to absolute row index, so a chunk reconstructs exactly the state a whole-column
+pass held and the partitioned result is bit-identical. **`zScore` is not
 accelerated**: [PND-SHIFTFRAME] moved it onto a shifted-frame kernel this pool
 does not hook, so opting in neither speeds it up nor changes its answer. It used
 to be the fastest entry here at 2.44×, and the only one whose error had no bound.

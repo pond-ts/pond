@@ -54,6 +54,51 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **The rolling mean/σ kernel is now _range-exact_, and every rolling study
+  is faster and more accurate for it** ([PND-PROCKERN]). `sma`, `bollinger`
+  and `envelope` move off core's general sweep onto a dedicated
+  `rollingMeanSdInto`, which fills any `[lo, hi)` with **exactly the bits a
+  full pass would have written there** — not "within rounding", the same
+  doubles.
+
+  That property is the point. An ordinary sliding accumulator carries
+  rounding history from row 0, so restarting it mid-column lands a few ulps
+  off on _every_ cell of the range. Harmless-sounding, until you notice it
+  means the value depends on which ranges happened to be recomputed — on a
+  caller's edit history rather than their data. Two mechanisms get it: the
+  accumulators are rebuilt from the window every `period` rows so history
+  cannot accumulate, and those rebuilds are pinned to **absolute** row index
+  so a ranged sweep reconstructs the state a full sweep held. They also work
+  in a shifted frame, for the reason [PND-SHIFTFRAME] established — aligning
+  _without_ shifting made large-magnitude σ **worse** (3.6e-3 → 1.7e-2),
+  which is why the two ship together.
+
+  Worst relative error against an exact reference, 200k rows, period 20:
+
+  | input                  | before | after   |
+  | ---------------------- | ------ | ------- |
+  | random walk ≈100       | 5.3e-9 | 3.9e-14 |
+  | `1e9 + sin`            | 1.4e-3 | 6.3e-14 |
+  | `1e15 + ((i % 7) − 3)` | 3.6e-3 | 4.4e-16 |
+
+  **Values change** in the last ulps on ordinary data, and materially where
+  they were previously wrong — the `1e9` row is an ordinary notional, not a
+  contrived extreme. Faster too, on 500k bars: `bollinger(20)` **46.5 → 18.4
+  ms** (avg and σ now fuse into one sweep instead of core running two
+  reducers), `envelope(20)` 13.1 → 10.6, `sma(20)` 6.7 → 6.2, a five-study
+  stack 58.3 → 49.9. `scripts/perf-ranged-kernel.mjs`.
+
+- **`withWorkers` no longer changes the answer at all.** The per-study
+  accuracy table is gone, replaced by one word: identical. Partitioned and
+  sequential results are bit-identical for every accelerated study, at
+  ordinary and large magnitudes, because a chunk starting anywhere now
+  reconstructs the state a whole-column pass held there. The previous
+  figures — `sma` 3.9e-14, `bollinger` 5.1e-13 — were observations on one
+  benign random walk presented as bounds, and a Codex pass had already
+  broken the `zScore` one with a legal input.
+
 ### Fixed
 
 - **`zScore` computes its deviation in a shifted frame, and is accurate at
