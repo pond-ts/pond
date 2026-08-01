@@ -281,3 +281,77 @@ describe('[PND-PROCCACHE] engine-wide byte budget', () => {
     expect(graph.ids).toHaveLength(3);
   });
 });
+
+describe('[PND-PROCCACHE] a Compiled handle across an eviction', () => {
+  it('re-compiling after eviction gives a working node', () => {
+    // The sharp edge the disconnect introduced, disclosed by the second
+    // Layer 2 pass on PR #571. Eviction severs a node's inlets, so a
+    // handle held across a run can throw `UnconnectedInputError` — which
+    // names the input, not the budget that took it. `run` re-resolves and
+    // never hits it; this pins the documented recovery for a caller that
+    // holds its own handle.
+    const N = 4_000;
+    const time = new Float64Array(N);
+    const px = new Float64Array(N);
+    for (let i = 0; i < N; i += 1) {
+      time[i] = i * 60_000;
+      px[i] = 100 + Math.sin(i / 5) * 10;
+    }
+    const series = TimeSeries.fromColumns({
+      name: 'bars',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'px', kind: 'number' },
+      ],
+      columns: { time, px },
+    });
+    const reg = createRegistry().define({
+      name: 'sma',
+      family: 'trend',
+      summary: 'Rolling mean.',
+      params: { period: int({ min: 2, default: 3 }) },
+      inputs: [{ role: 'source' }],
+      outputs: [{ id: '', unit: 'inherit' }],
+      lookback: (p) => (p['period'] as number) - 1,
+      run: (ctx) => {
+        const col = ctx.series.column(ctx.inputs['source']!) as unknown as {
+          length: number;
+          at(i: number): number | undefined;
+        };
+        const period = ctx.params['period'] as number;
+        const out = new Array<number | undefined>(col.length).fill(undefined);
+        for (let i = period - 1; i < col.length; i += 1) {
+          let sum = 0;
+          for (let k = i - period + 1; k <= i; k += 1) sum += col.at(k)!;
+          out[i] = sum / period;
+        }
+        return out;
+      },
+    });
+
+    const graph = bind(series as never, {
+      registry: reg,
+      budgetBytes: 2 * N * 8,
+    });
+    const first = { op: 'sma', params: { period: 5 }, inputs: ['px'] };
+    run(graph, { plan: [first], select: [{ on: first }], assemble: false });
+
+    // Evict it by asking for enough other work.
+    for (const period of [11, 12, 13, 14, 15, 16]) {
+      const other = { op: 'sma', params: { period }, inputs: ['px'] };
+      run(graph, { plan: [other], select: [{ on: other }], assemble: false });
+    }
+    expect(graph.evictions).toBeGreaterThan(0);
+
+    // The documented recovery: re-compile rather than reuse the handle.
+    const again = run(graph, {
+      plan: [first],
+      select: [{ on: first }],
+      assemble: false,
+    });
+    const col = Object.values(again.columns ?? {})[0] as unknown as {
+      at(i: number): number | undefined;
+    };
+    expect(typeof col.at(N - 1)).toBe('number');
+  });
+});

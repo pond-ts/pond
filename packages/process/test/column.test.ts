@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TimeSeries } from 'pond-ts';
+import { bind, createRegistry, run } from '../src/index.js';
 import {
   appendColumn,
   columnBuffers,
@@ -230,5 +231,67 @@ describe('[PND-PROCCOL] columnView — the zero-copy read path', () => {
     for (let i = 0; i < raw.length; i += 1) {
       expect(view.at(i), `cell ${i}`).toBe(raw[i]);
     }
+  });
+});
+
+describe('[PND-PROCCOL] the boxed fold context stays lazy', () => {
+  it('exposes `values` as a getter, not a materialized array', () => {
+    // Disclosed by the second Layer 2 pass on PR #571: making `values`
+    // eager passed all 213 tests. Laziness is the entire PROCCOL win for
+    // a fold like `last`, which reads one cell and would otherwise pay to
+    // densify 500,000 — so it needs a test that fails when it is lost,
+    // and none of the behavioural ones can see it.
+    //
+    // Asserted structurally because there is no observable difference in
+    // a fold's ANSWER between lazy and eager. A property descriptor is
+    // the only place the distinction is visible.
+    let captured: object | undefined;
+    const reg = createRegistry().define({
+      kind: 'fold',
+      name: 'peek',
+      family: 'read',
+      summary: 'Captures its context so the test can inspect it.',
+      params: {},
+      inputs: [{ role: 'source' }],
+      unit: 'inherit',
+      fold: (ctx) => {
+        captured = ctx.values;
+        return { value: null };
+      },
+    });
+
+    const n = 40;
+    const time = new Float64Array(n);
+    const px = new Float64Array(n);
+    for (let i = 0; i < n; i += 1) {
+      time[i] = i * 1000;
+      px[i] = i;
+    }
+    const series = TimeSeries.fromColumns({
+      name: 'b',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'px', kind: 'number' },
+      ],
+      columns: { time, px },
+    });
+    const spec = { op: 'peek', inputs: ['px'] };
+    run(bind(series as never, { registry: reg }), {
+      plan: [spec],
+      select: [{ on: spec }],
+      assemble: false,
+    });
+
+    expect(captured, 'the fold must have run').toBeDefined();
+    const descriptor = Object.getOwnPropertyDescriptor(captured!, 'source');
+    expect(descriptor, 'role must be present on the context').toBeDefined();
+    expect(
+      descriptor!.get,
+      '`values` must densify on access, not up front',
+    ).toBeTypeOf('function');
+    expect(
+      descriptor!.value,
+      'an eager array would appear as a data property',
+    ).toBeUndefined();
   });
 });

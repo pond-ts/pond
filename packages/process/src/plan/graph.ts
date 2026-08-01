@@ -340,6 +340,15 @@ export class BoundGraph {
   /**
    * Compiles a spec (and its inputs) into nodes, memoized by `specId`.
    *
+   * **A returned handle is not durable under a byte budget.** Eviction
+   * disconnects a node's inlets, so a `Compiled` held across a `run` can
+   * throw `UnconnectedInputError` on a later pull, naming the input
+   * rather than the budget that took it. `run` re-resolves through
+   * `columnOf` and never hits this; a caller holding its own handle
+   * should re-`compile` after any run, which is a memoized lookup when
+   * the node survived. Only relevant with `budgetBytes` set — without
+   * one, nothing is ever evicted.
+   *
    * Validation happens here rather than at pull time so a bad plan is
    * rejected before any work: params first, then arity, then the typed
    * input check.

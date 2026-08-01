@@ -122,10 +122,22 @@ changedFrom)` declares which row first changed, and an op opts in with
   Every distinct spec ever compiled was retained forever, so memory scaled
   with _questions asked_. A session walking a slider from period 20 to 200
   left 180 nodes holding 180 result columns and dropped none. 60 distinct
-  params × 200k rows: **147 → 26 MB rss** (5.6×), 60 nodes → 7 — while a
-  repeat-heavy sweep still hits, with no eviction churn and no measurable
-  penalty. Both halves matter: a budget that bounds memory by discarding
-  what the caller asks for next is not a cache.
+  params × 200k rows, each configuration in its own process:
+  **arrayBuffers 104 → 42 MB** (2.5×), retained 93 → 11 MB, 60 nodes → 7 —
+  while a repeat-heavy sweep still hits, with no eviction churn and no
+  measurable penalty. Both halves matter: a budget that bounds memory by
+  discarding what the caller asks for next is not a cache.
+
+  **No `rss` figure is quoted, deliberately.** An earlier draft claimed
+  5.6× on rss; that was a measurement-order artifact — two configurations
+  timed in one process, the second starting from the first's heap, and
+  reversing them inverted the result. Forking a process per configuration
+  fixed the ordering, but the replacement 1.2× did not survive either:
+  across five forked pairs, bounded rss exceeded unbounded in two. Freed
+  buffers are not promptly returned to the OS and the bound series is the
+  floor, so rss cannot support a direction here at this scale.
+  `arrayBuffers` and `retainedBytes` can, and are what the benchmark
+  reports.
 
   The ticket framed this as an op-level cache where an op declares which
   inputs key its result. **Half of that is already true and was not

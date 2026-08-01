@@ -500,9 +500,11 @@ whether it stays one.
   LRU, enforced after each run; `retainedBytes` / `evictions` observe it.
   60 distinct params × 200k rows, one process per configuration:
   **arrayBuffers 104 → 42 MB** (2.5×), retained 93 → 11 MB, 60 nodes → 7,
-  with repeats still hitting and no eviction churn. RSS moves only 1.2×;
-  freed buffers are not promptly returned to the OS and the bound series is
-  the floor.
+  with repeats still hitting and no eviction churn. **No rss figure**: the
+  replacement 1.2× did not survive re-measurement either — across five
+  forked pairs bounded rss exceeded unbounded in two. Freed buffers are not
+  promptly returned to the OS and the bound series is the floor, so rss
+  cannot support a direction at this scale.
 
   **Two review findings worth keeping.** Eviction originally deleted the
   node from `#nodes` and stopped there — but `Outlet.#downstream` is a
@@ -517,7 +519,11 @@ whether it stays one.
   And the first headline number here was **5.6× of pure measurement-order
   artifact**: two configurations timed in one process, the second starting
   from the first's heap. The benchmark now forks a process per
-  configuration. Same class of error as a JIT warm-up, one level up.
+  configuration. Same class of error as a JIT warm-up, one level up — and
+  the correction needed a second correction, because the replacement rss
+  figure was not reproducible either. The lesson is narrower than "fork the
+  process": **rss is the wrong instrument for this question**, since a
+  freed buffer need not be returned to the OS. Measure `arrayBuffers`.
 
   **The half not to rebuild:** the ticket wanted an op to declare which Ins
   key its result. `specId` is already content-addressed over op, params and
