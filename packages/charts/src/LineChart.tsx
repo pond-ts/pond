@@ -1,7 +1,11 @@
 import { useContext, useEffect, useMemo } from 'react';
 import { ValueSeries } from 'pond-ts';
 import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
-import { fromTimeSeries, fromValueSeries } from './data.js';
+import {
+  assertNumericColumn,
+  fromTimeSeries,
+  fromValueSeries,
+} from './data.js';
 import { drawLine, yExtent } from './line.js';
 import type { DecimateOption } from './decimate.js';
 import { resolveCurve, type Curve } from './curve.js';
@@ -36,6 +40,17 @@ export interface LineChartProps<
   series: TimeSeries<S> | ValueSeries<VS>;
   /** Name of the numeric value column to plot. */
   column: string;
+  /**
+   * Optional column to **read out** at the cursor instead of the plotted
+   * `column`. The layer still plots `column`; each tracker sample additionally
+   * carries this column's value as {@link TrackerSample.readout}, so an
+   * off-chart readout can show the **source** value while the line draws a
+   * derived one — a smoothed / transformed / normalized plot with a raw-value
+   * readout (estela plots pace-space + Gaussian-smoothed, reads the native m/s).
+   * The plotted `value` (hence the in-chart cursor dot) is unchanged.
+   * **Omitted ⇒ no readout channel** (`readout` is `undefined` on the sample).
+   */
+  readout?: string;
   /**
    * The series' semantic identifier — what the data _is_ / how it should read
    * (e.g. `heartrate`, `power`, or a role name like `foam`). The theme maps it
@@ -123,6 +138,7 @@ export function LineChart<
 >({
   series,
   column,
+  readout,
   as: semantic,
   axis,
   curve,
@@ -148,6 +164,21 @@ export function LineChart<
         : fromTimeSeries(series, column),
     [series, column],
   );
+  // Readout column values for a value-axis series (the time path reads it off
+  // the event in `sampleAt`). Built once per (series, readout) so the tracker
+  // can report a source value the line doesn't plot — see LineChartProps.readout.
+  //
+  // The time path buffers nothing (it has an event, not an index), so it
+  // validates the name here instead: otherwise a mistyped `readout` throws on a
+  // value axis but silently yields no readout on a time axis, and the same typo
+  // fails two different ways. Both now throw the reader's errors.
+  const readoutY = useMemo(() => {
+    if (readout === undefined) return undefined;
+    if (series instanceof ValueSeries)
+      return fromValueSeries(series, readout).y;
+    assertNumericColumn(series, readout);
+    return undefined;
+  }, [series, readout]);
   // Styling: semantic identifier → theme style. The single styling channel.
   const { line } = container.theme;
   const style =
@@ -191,8 +222,19 @@ export function LineChart<
             const i = series.nearestIndex(x);
             if (i < 0) return [];
             const v = cs.y[i]!;
+            const rv = readoutY?.[i];
             return Number.isFinite(v)
-              ? [{ x: cs.x[i]!, value: v, color: style.color, label }]
+              ? [
+                  {
+                    x: cs.x[i]!,
+                    value: v,
+                    color: style.color,
+                    label,
+                    ...(rv !== undefined && Number.isFinite(rv)
+                      ? { readout: rv }
+                      : {}),
+                  },
+                ]
               : [];
           }
           const e = series.nearest(x);
@@ -200,11 +242,21 @@ export function LineChart<
           // get() wants a literal key; column is a runtime string. Cast the
           // *event* (not the method — that would detach `this`) to a
           // string-keyed get; runtime-safe read + guard.
-          const v = (e as unknown as { get(field: string): unknown }).get(
-            column,
-          );
+          const ev = e as unknown as { get(field: string): unknown };
+          const v = ev.get(column);
+          const rv = readout !== undefined ? ev.get(readout) : undefined;
           return typeof v === 'number' && Number.isFinite(v)
-            ? [{ x: e.begin(), value: v, color: style.color, label }]
+            ? [
+                {
+                  x: e.begin(),
+                  value: v,
+                  color: style.color,
+                  label,
+                  ...(typeof rv === 'number' && Number.isFinite(rv)
+                    ? { readout: rv }
+                    : {}),
+                },
+              ]
             : [];
         },
         draw: (ctx, xScale, yScale) =>
@@ -228,6 +280,8 @@ export function LineChart<
       cs,
       series,
       column,
+      readout,
+      readoutY,
       style,
       label,
       curveFactory,

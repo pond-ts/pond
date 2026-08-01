@@ -198,6 +198,42 @@ export interface StackedBarSeries {
 }
 
 /**
+ * Assert `column` names an existing **numeric** column of `series`, returning
+ * it. The single source of the reader's two errors, so a caller that reads a
+ * column **per event** rather than buffering it — the time-axis `readout` path
+ * in `LineChart` / `AreaChart` — rejects a bad name identically to one that
+ * materializes. Without it a mistyped `readout` throws on a `ValueSeries` (via
+ * {@link readValueColumn}) but silently produced no readout on a `TimeSeries`,
+ * where the per-event `get()` just returns `undefined`.
+ *
+ * The `undefined` guard is runtime-necessary even though it reads as dead code:
+ * `column()` returns `undefined` for an unknown name at runtime, but core's
+ * public overload currently types the result as non-`undefined` (see F-3 in the
+ * M1 friction note). Keep it — the "throws on unknown column" tests exercise it.
+ *
+ * @throws RangeError if `column` does not exist.
+ * @throws TypeError if `column` is not a numeric column.
+ */
+export function assertNumericColumn<S extends SeriesSchema>(
+  series: TimeSeries<S>,
+  column: string,
+): { kind: string; read(i: number): number | undefined } {
+  const col = series.column(column);
+  if (col === undefined) {
+    throw new RangeError(`unknown column '${column}'`);
+  }
+  if (col.kind !== 'number') {
+    throw new TypeError(
+      `column '${column}' must be numeric (got '${col.kind}')`,
+    );
+  }
+  return col as unknown as {
+    kind: string;
+    read(i: number): number | undefined;
+  };
+}
+
+/**
  * Read a numeric column into a `Float64Array`, missing cells as `NaN`.
  *
  * Uses `read(i)` — a method on the column *class* — rather than the bulk
@@ -216,19 +252,7 @@ function readNumericColumn<S extends SeriesSchema>(
   series: TimeSeries<S>,
   column: string,
 ): Float64Array {
-  // Runtime-necessary even though it reads as dead code: `column()` returns
-  // `undefined` for an unknown name at runtime, but core's public overload
-  // currently types the result as non-`undefined` (see F-3 in the M1 friction
-  // note). Keep the guard — the "throws on unknown column" test exercises it.
-  const col = series.column(column);
-  if (col === undefined) {
-    throw new RangeError(`unknown column '${column}'`);
-  }
-  if (col.kind !== 'number') {
-    throw new TypeError(
-      `column '${column}' must be numeric (got '${col.kind}')`,
-    );
-  }
+  const col = assertNumericColumn(series, column);
   const length = series.length;
   const out = new Float64Array(length);
   for (let i = 0; i < length; i += 1) {

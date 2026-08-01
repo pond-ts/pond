@@ -41,6 +41,10 @@ export function recordingContext(): RecordingContext {
       return (...args: unknown[]) => {
         calls.push({ type: 'call', name: prop, args });
         if (prop === 'measureText') return { width: 0 };
+        // A minimal gradient so fill code (`AreaChart`) can chain
+        // `addColorStop` without crashing; the call itself is still recorded.
+        if (prop === 'createLinearGradient' || prop === 'createRadialGradient')
+          return { addColorStop: () => {} };
         return undefined;
       };
     },
