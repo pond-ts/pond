@@ -410,6 +410,32 @@ describe('registry as schema', () => {
     expect(JSON.stringify(schema)).not.toContain('undefined');
   });
 
+  it('can express a picked output, so bands are reachable remotely', () => {
+    // The resolver accepted `{from, output}` from the start, but the
+    // projection could not say so — a caller composing against the
+    // schema alone had no way to reach a multi-output op's Lower band.
+    const schema = registry.toJsonSchema() as {
+      $defs: {
+        spec: { anyOf: { title: string; properties: Record<string, any> }[] };
+      };
+    };
+    const sma = schema.$defs.spec.anyOf.find((o) => o.title === 'sma')!;
+    const branches = sma.properties['inputs'].items.anyOf as Record<
+      string,
+      any
+    >[];
+    const picked = branches.find((b) => b['title'] === 'picked output');
+    expect(picked).toMatchObject({
+      type: 'object',
+      required: ['from', 'output'],
+      additionalProperties: false,
+    });
+    expect(picked!['properties']).toEqual({
+      from: { $ref: '#/$defs/spec' },
+      output: { type: 'string' },
+    });
+  });
+
   it('is embeddable, because the ref points at a top-level definition', () => {
     // Three attempts to get this right, each failing differently:
     //   `#/items`                     — dangles once nested (M2)
@@ -491,5 +517,72 @@ describe('registry guards', () => {
         run: noop,
       }),
     ).toThrow(/declares no outputs/);
+  });
+
+  it('rejects a duplicate input role, which collapses at run time', () => {
+    // Inputs resolve by role, so a repeated role makes every reader see
+    // the LAST input — both bind to one column, silently.
+    expect(() =>
+      createRegistry().define({
+        name: 'bad',
+        family: 'x',
+        summary: '',
+        params: {},
+        inputs: [{ role: 'a' }, { role: 'a' }],
+        outputs: [{ id: '', unit: 'inherit' }],
+        run: noop,
+      }),
+    ).toThrow(/declares input role 'a' twice/);
+  });
+
+  it('rejects a duplicate output id, which discards a column', () => {
+    // Node outlets key by output id, so the second 'Upper' silently
+    // replaced the first's column.
+    expect(() =>
+      createRegistry().define({
+        name: 'bad',
+        family: 'x',
+        summary: '',
+        params: {},
+        inputs: [{ role: 'source' }],
+        outputs: [
+          { id: 'Upper', unit: 'inherit' },
+          { id: 'Upper', unit: 'inherit' },
+        ],
+        run: noop,
+      }),
+    ).toThrow(/declares output 'Upper' twice/);
+  });
+
+  it('rejects a default its own param declaration refuses', () => {
+    // A bad default fails every spec that omits the param; checked at
+    // definition time so it fails the author who wrote it instead.
+    expect(() =>
+      createRegistry().define({
+        name: 'bad',
+        family: 'x',
+        summary: '',
+        params: { period: int({ min: 5, default: 2 }) },
+        inputs: [{ role: 'source' }],
+        outputs: [{ id: '', unit: 'inherit' }],
+        run: noop,
+      }),
+    ).toThrow(/invalid default for 'period'/);
+  });
+
+  it('rejects a dependsOn naming a param the op does not take', () => {
+    // dependsOn drives selective invalidation — a name that matches no
+    // param would never fire and never be noticed.
+    expect(() =>
+      createRegistry().define({
+        name: 'bad',
+        family: 'x',
+        summary: '',
+        params: { width: int({ default: 2 }) },
+        inputs: [{ role: 'source' }],
+        outputs: [{ id: '', unit: 'inherit', dependsOn: ['widht'] }],
+        run: noop,
+      }),
+    ).toThrow(/dependsOn unknown param 'widht'/);
   });
 });

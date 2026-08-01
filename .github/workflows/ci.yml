@@ -38,4 +38,4 @@ jobs:
 
       - name: Verify package contents
         if: matrix.node-version == '24.x'
-        run: npm pack --dry-run --workspace=pond-ts
+        run: npm pack --dry-run --workspace=pond-ts --workspace=@pond-ts/process

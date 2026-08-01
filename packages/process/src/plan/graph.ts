@@ -25,7 +25,7 @@ import { port } from '../types.js';
 import { source, type SourceNode } from '../source.js';
 import type { Column, SeriesSchema, TimeSeries } from 'pond-ts';
 import { requiredHistory } from './history.js';
-import { columnsOf, specId } from './identity.js';
+import { columnsOf, specId, unitOf } from './identity.js';
 import type { Registry } from './registry.js';
 import {
   isFold,
@@ -47,7 +47,12 @@ function outletKey(output: { id: string }): string {
 }
 
 /** Normalizes an op's return into one column per declared output. */
-function toColumns(op: OpDef, id: string, result: unknown): Column[] {
+function toColumns(
+  op: OpDef,
+  id: string,
+  length: number,
+  result: unknown,
+): Column[] {
   const list =
     Array.isArray(result) && op.outputs.length > 1 ? result : [result];
   if (list.length !== op.outputs.length) {
@@ -55,13 +60,24 @@ function toColumns(op: OpDef, id: string, result: unknown): Column[] {
       `op '${op.name}' declares ${op.outputs.length} output(s) but returned ${list.length} for '${id}'`,
     );
   }
-  return list.map((v) => {
+  return list.map((v, n) => {
     // A Column is already packed; loose values are packed once here
     // rather than retained boxed ([PND-PROCCOL]).
-    if (v !== null && typeof v === 'object' && 'kind' in (v as object)) {
-      return v as Column;
+    const column =
+      v !== null && typeof v === 'object' && 'kind' in (v as object)
+        ? (v as Column)
+        : packColumn(v as ArrayLike<number | undefined>);
+    // Every output must match the bound series row-for-row — a warm-up
+    // is expressed as gaps, never as a shorter column. Checked here, at
+    // the producer, because the only other thing that catches it is
+    // assembly's own length check, and `assemble: false` skips assembly:
+    // a one-row result from a three-row source came back as a success.
+    if (column.length !== length) {
+      throw new ProcessError(
+        `op '${op.name}' returned ${column.length} row(s) for output '${outletKey(op.outputs[n]!)}' of '${id}', expected ${length} — an output must match the bound series length, with warm-up as gaps`,
+      );
     }
-    return packColumn(v as ArrayLike<number | undefined>);
+    return column;
   });
 }
 
@@ -378,13 +394,30 @@ export class BoundGraph {
     op.inputs.forEach((def, i) => {
       if (def.unit === undefined) return;
       const raw = spec.inputs[i]!;
-      const got =
-        typeof raw === 'string'
-          ? (this.units[raw] ?? null)
-          : unitOfCompiled(this.registry, specOf(raw), this.units);
+      let got: string | null;
+      if (typeof raw === 'string') {
+        got = this.units[raw] ?? null;
+      } else {
+        // The unit of the output actually picked, not output 0. Dropping
+        // the pick failed both ways: a picked `variance` was refused by
+        // an op requiring variance, and accepted by one requiring price —
+        // the second silently, which is the worse half. An output name
+        // the upstream op does not declare defers to the binding pass
+        // below, whose error names both sides.
+        const from = specOf(raw);
+        const declaredUp = this.registry.outputsOf(this.registry.get(from.op));
+        const index = isPicked(raw)
+          ? declaredUp.findIndex((o) => o.id === raw.output)
+          : 0;
+        if (isPicked(raw) && index === -1) return;
+        got = unitOf(this.registry, from, this.units, index);
+      }
       if (got !== def.unit) {
         const name =
-          typeof raw === 'string' ? raw : specId(this.registry, specOf(raw));
+          typeof raw === 'string'
+            ? raw
+            : specId(this.registry, specOf(raw)) +
+              (isPicked(raw) ? `#${raw.output}` : '');
         throw new UnitError(
           `${spec.op} needs a '${def.unit}' input for '${def.role}', but '${name}' is '${got ?? 'unitless'}'`,
         );
@@ -649,11 +682,15 @@ export class BoundGraph {
               (o) => sealRange(o!, to) as unknown as Column,
             );
           } else {
-            columns = toColumns(op, id, produced);
+            // The same length contract as a whole result: a ranged op
+            // that returns a short column is as wrong as a full one.
+            // (The `ctx.out` path above is exact by construction —
+            // `sealRange(…, to)` cannot produce another length.)
+            columns = toColumns(op, id, to, produced);
           }
           this.#ranged += 1;
         } else {
-          columns = toColumns(op, id, op.run(ctx));
+          columns = toColumns(op, id, series.length, op.run(ctx));
           this.#full += 1;
         }
         previous = columns;
@@ -718,22 +755,6 @@ export class BoundGraph {
     }
     return (compiled.node.out[FACT] as { get(): FactBody }).get();
   }
-}
-
-/** Unit fold that does not require the spec to be compiled yet. */
-function unitOfCompiled(
-  registry: Registry,
-  spec: Spec,
-  units: Units,
-): string | null {
-  const op = registry.get(spec.op);
-  const declared = isFold(op) ? op.unit : (op.outputs[0]?.unit ?? 'inherit');
-  if (declared !== 'inherit') return declared;
-  const src = spec.inputs[0];
-  if (src === undefined) return null;
-  return typeof src === 'string'
-    ? (units[src] ?? null)
-    : unitOfCompiled(registry, specOf(src), units);
 }
 
 /**

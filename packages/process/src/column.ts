@@ -90,14 +90,41 @@ export function columnBytes(column: Column): number {
     length: number;
     kind: string;
     _values?: { BYTES_PER_ELEMENT?: number; length: number };
-    validity?: { length: number };
+    validity?: { length: number; bits?: { length: number } };
+    chunks?: readonly unknown[];
+    chunkOffsets?: { BYTES_PER_ELEMENT?: number; length: number };
   };
+  // The aggregate bitmap's REAL bytes, not the minimum its cell count
+  // implies: a bitmap over a larger buffer retains that buffer.
+  const validity = anyColumn.validity;
+  const validityBytes =
+    validity === undefined
+      ? 0
+      : (validity.bits?.length ?? bitmapByteCount(validity.length));
+  // A chunked column owns no value buffer of its own — its bytes are its
+  // chunks' (each a packed column, sized recursively) plus the aggregate
+  // validity bitmap and the chunk-offset index built at construction.
+  // Reading `_values` here returned 0 for every chunked column, while
+  // the doc above promised the sum — an undercount a byte budget would
+  // treat as free.
+  const chunks = anyColumn.chunks;
+  if (Array.isArray(chunks)) {
+    const offsets = anyColumn.chunkOffsets;
+    let total =
+      validityBytes +
+      (offsets === undefined
+        ? 0
+        : offsets.length * (offsets.BYTES_PER_ELEMENT ?? 4));
+    for (const chunk of chunks) total += columnBytes(chunk as Column);
+    return total;
+  }
   const values = anyColumn._values;
   if (values === undefined) return 0;
   const perElement = values.BYTES_PER_ELEMENT ?? 8;
-  const bytes = anyColumn.length * perElement;
-  const validity = anyColumn.validity;
-  return bytes + (validity ? bitmapByteCount(validity.length) : 0);
+  // The BACKING buffer's capacity, not the column's logical length — a
+  // one-row column viewing an 8 MB buffer retains 8 MB, and sizing it
+  // at 8 bytes is exactly the undercount that defeats a byte budget.
+  return values.length * perElement + validityBytes;
 }
 
 /**

@@ -45,6 +45,57 @@ knowing before trusting or extending them:
    questions and the gap between them is the whole point of
    [PND-PROCCOL].
 
+## 2026-08 external audit (Codex): publication-readiness hardening
+
+An adversarial pre-publication audit answered "not yet" on publishing —
+low-level engine solid, plan/host surface with paths that return wrong
+data or accept invalid plans silently. Every blocking finding was
+reproduced against the tree, and all landed as one hardening PR (#575)
+with regressions. The recurring shape is worth keeping: **each was a
+validation that existed somewhere adjacent** — assembly checked lengths
+but `assemble: false` skipped assembly; `unitOf` in `identity.ts` was
+picked-output-aware while `graph.ts` kept its own copy that was not; the
+fact loop honoured `onError` while the column loop did not; `specId`
+folds params in while the builders' derived fold slots did not. A
+guarantee implemented twice is implemented once.
+
+Fixed (P1): picked-output unit validation read `outputs[0]` (both
+rejection directions wrong, one silent); `Registry.define()` accepted
+duplicate input roles / output ids (both collapse rather than fail at
+run time), invalid defaults, and `dependsOn` naming unknown params; op
+result lengths were unchecked at the producer; the column-selection loop
+escaped `onError` and a selector naming a nonexistent output surfaced
+_nothing_; and the [PND-PROCCACHE] budget was unreachable from `Host` —
+`budgetBytes` now passes through (per graph), plus `Host.remove(id)` as
+the explicit lifecycle end. Follow-ups: fold slots in both builders now
+key by params (`shape({points:100})` after `({points:20})` silently kept
+20); `shape` uses a `ceil` stride (399 rows at 200 points returned all
+399); fact provenance (`id`/`name`/`op`/`unit`) wins over a fold body's
+fields; `columnBytes` sums chunked columns instead of reporting 0 —
+"free" to a byte budget; the nested JSON Schema can express
+`PickedOutput`; CI's package-content check covers `@pond-ts/process`.
+
+**The re-review round caught the fixes' own gaps**, which is the reason
+to keep running it: `columnBytes` still undercounted — it priced the
+logical length where core documents `_values` as possibly **oversized**
+(a one-row column on a 1000-slot buffer retains 8,000 bytes, not 8),
+and a chunked column's offset index and real bitmap bytes went
+uncounted. The `budgetBytes` doc claimed datasets are only
+author-added, which `runAsync` falsifies: it binds a graph per distinct
+caller-supplied `SourceRef`. `maxSources` now caps registry-loaded
+sources LRU (author datasets exempt), and `remove()` racing an
+in-flight load wins — the landing load discards rather than
+resurrects. And the fold-slot fix had not canonicalized defaults:
+`shape()` vs `shape({points: 40})` split slots the fluent layer now
+unifies (the plain builder cannot — no registry — so `normalize` labels
+a computation with the first slot that names it, deterministically).
+
+Still open from the audit, tracked where they already live: units in the
+schema projection ([PND-PROCSCHEMA]), and the identity-vs-lifetime
+policy question ([PND-PROCIDENT]) — the budget is now reachable
+everywhere, but choosing a default for interactive hosts remains that
+ticket's call.
+
 ---
 
 ## Tasks

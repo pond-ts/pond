@@ -147,7 +147,11 @@ export const shape: FoldDef = {
   fold: (ctx) => {
     const v = read(ctx);
     const want = ctx.params['points'] as number;
-    const step = Math.max(1, Math.floor(v.length / want));
+    // `ceil`, not `floor`: `floor` rounds the stride DOWN, which rounds
+    // the sample count UP — 200 points asked of 399 rows gave a stride
+    // of 1 and returned all 399, defeating the token bound this fold
+    // exists to keep. With `ceil` the sample never exceeds `points`.
+    const step = Math.max(1, Math.ceil(v.length / want));
     const points: [string, number][] = [];
     for (let i = 0; i < v.length; i += step) {
       if (v.defined(i)) points.push([day(ctx.at(i)), round(v.value(i))]);

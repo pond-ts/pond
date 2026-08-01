@@ -249,9 +249,15 @@ function normalize(
   const columns = graph.series.schema.slice(1).map((c) => c.name);
   const expanded = expandSlots(request.nodes, columns);
 
+  // First slot wins. Two slots may legally resolve to ONE id — the
+  // registry-free builder cannot canonicalize defaults, so `shape()`
+  // and `shape({points: 40})` arrive as two slots naming the same
+  // computation. Attribution must not depend on which happened to be
+  // declared last; "the first slot to name it labels it" is the rule.
   const slotOf = new Map<string, string>();
   for (const [slot, spec] of expanded) {
-    slotOf.set(specId(graph.registry, spec), slot);
+    const id = specId(graph.registry, spec);
+    if (!slotOf.has(id)) slotOf.set(id, slot);
   }
 
   const select = Object.entries(request.outputs ?? {}).map(([name, sel]) => {
@@ -453,25 +459,53 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
       if (report) outputs[id] = [];
       const selections = selectors.filter((selection) => selection.id === id);
       for (const { sel } of selections) {
-        registry.outputsOf(registry.get(compiled.spec.op)).forEach((o, n) => {
-          if (sel.output !== undefined && o.id !== sel.output) return;
-          const columnName = cols[n]!;
-          const col = columnFor(id, o.id);
-          // Several selectors may surface the same node or column under
-          // different caller names. Report every selection, but materialize
-          // each physical column once.
-          if (drawn![columnName] === undefined) {
-            drawn![columnName] = col;
-            if (assemble) assembled = appendColumn(assembled!, columnName, col);
-          }
-          if (report) {
-            outputs[id]!.push({
-              column: columnName,
-              unit: unitOf(registry, compiled.spec, graph.units, n),
-              ...(sel.name !== undefined && { name: sel.name }),
-            });
-          }
-        });
+        const declared = registry.outputsOf(registry.get(compiled.spec.op));
+        // A selector naming an output the node does not declare used to
+        // filter every iteration below and surface NOTHING — no columns,
+        // no error, no `skipped` entry. Silent is the worst of the three.
+        if (
+          sel.output !== undefined &&
+          !declared.some((o) => o.id === sel.output)
+        ) {
+          const have = declared.map((o) => `'${o.id}'`).join(', ');
+          fail({
+            select: sel,
+            reason: `'${compiled.spec.op}' has no output '${sel.output}' (has ${have})`,
+          });
+          continue;
+        }
+        // Pulling a column runs op code, which can throw like anything
+        // else a request does — so it answers to the same error policy
+        // the fact loop already honours. Under 'throw' the original
+        // error propagates untouched.
+        try {
+          declared.forEach((o, n) => {
+            if (sel.output !== undefined && o.id !== sel.output) return;
+            const columnName = cols[n]!;
+            const col = columnFor(id, o.id);
+            // Several selectors may surface the same node or column under
+            // different caller names. Report every selection, but materialize
+            // each physical column once.
+            if (drawn![columnName] === undefined) {
+              drawn![columnName] = col;
+              if (assemble)
+                assembled = appendColumn(assembled!, columnName, col);
+            }
+            if (report) {
+              outputs[id]!.push({
+                column: columnName,
+                unit: unitOf(registry, compiled.spec, graph.units, n),
+                ...(sel.name !== undefined && { name: sel.name }),
+              });
+            }
+          });
+        } catch (e) {
+          if (onError === 'throw') throw e;
+          fail({
+            select: sel,
+            reason: e instanceof Error ? e.message : String(e),
+          });
+        }
       }
     }
   }
@@ -487,12 +521,18 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
     if (!compiled.fold) continue;
     try {
       warm(id);
+      // Provenance wins. The body is spread FIRST and its reserved keys
+      // are dropped, so a custom fold cannot masquerade as another node,
+      // rename an output the caller did not, or forge a unit — `id`,
+      // `name`, `op` and `unit` always mean what the graph says.
+      const body: Record<string, unknown> = { ...graph.factOf(compiled) };
+      for (const key of ['id', 'name', 'op', 'unit']) delete body[key];
       facts.push({
+        ...body,
         id,
         ...(sel.name !== undefined && { name: sel.name }),
         op: compiled.spec.op,
         unit: unitOf(registry, compiled.spec, graph.units),
-        ...graph.factOf(compiled),
       });
     } catch (e) {
       fail({ select: sel, reason: e instanceof Error ? e.message : String(e) });

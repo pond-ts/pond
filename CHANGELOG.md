@@ -55,7 +55,108 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **process:** **audit hardening — five wrong-answer / silent-acceptance paths
+  in the plan layer closed** (external Codex audit, 2026-08; all reproduced,
+  all regression-pinned). Unit validation of a **picked output** read
+  `outputs[0]` instead of the selected output, so a picked `variance` was
+  refused where variance was demanded and — worse, silently — accepted where
+  price was. `Registry.define()` now rejects duplicate input roles and
+  duplicate output ids (both used to _collapse_ at run time rather than fail:
+  inputs resolved to the last role, outputs dropped the earlier column),
+  invalid param defaults, and `dependsOn` naming unknown params. An op result
+  whose length does not match the bound series is refused at the producer —
+  it used to ride out unchecked whenever `assemble: false` skipped the only
+  length check. The column-selection loop now honours `onError` (an operator
+  exception escaped `'collect'`), and a selector naming a nonexistent output
+  is a `skipped` entry instead of silently surfacing nothing. Fact provenance
+  (`id`, `name`, `op`, `unit`) now wins over a custom fold body's fields, and
+  `columnBytes` sums a chunked column's chunks instead of reporting 0 — which
+  a byte budget would read as "free".
+
+  Also: the derived fold slots in both builders now key by **params** —
+  `shape({points: 100})` after `shape({points: 20})` silently returned the
+  20-point node — and `shape` itself uses a `ceil` stride, so 200 points
+  asked of 399 rows returns ≤200 rather than all 399. The nested JSON Schema
+  projection can now express the `PickedOutput` input form, `Host` accepts
+  `budgetBytes` (the [PND-PROCCACHE] cap was unreachable from the long-lived
+  host shape) and grows `remove(id)`, and CI's package-content check covers
+  `@pond-ts/process`. Package remains **unpublished** (`private: true`).
+
+  A second audit round tightened the same seams. `columnBytes` now counts
+  what is actually retained: the **backing buffer's capacity** rather than
+  the column's logical length (core documents `_values` as possibly
+  oversized, so a one-row column viewing a 1000-slot buffer retains 8,000
+  bytes, not 8 — an undercount that defeats the budget), the chunk-offset
+  index and the bitmap's real bytes on chunked columns. The
+  **request-driven half of a `Host`'s footprint is now boundable**:
+  `runAsync` binds a graph per distinct caller-supplied `SourceRef`, so
+  `maxSources` caps registry-loaded sources LRU (author-added datasets are
+  never evicted), and a `remove()` racing an in-flight load now wins — the
+  landing load discards its result instead of resurrecting the dataset.
+  And an omitted param now unifies with its explicit default in the fluent
+  layer's derived fold slots (`shape()` ≡ `shape({points: 40})`, the same
+  rule `specId` applies), while the response labels a computation with the
+  **first** slot that named it rather than whichever was declared last.
+
 ## [0.54.0] — 2026-08-02
+
+### Fixed
+
+- **core:** **`fromArrow` now reads a field's declared Arrow type instead of
+  guessing from the runtime shape of `toArray()`** — closing a
+  silent-corruption class. The reader worked out what a column held from what
+  `toArray()` handed back, which is correct for the types it supports and
+  quietly wrong outside them, because Arrow's physical layouts do not all store
+  one machine word per logical value. Measured, before the fix: **`Float16`
+  ingested `1.5` as `15872`** (its half-float bit pattern — the length matched,
+  so nothing caught it), and a **`Decimal128` column with a single null
+  ingested `123.45` as `12345`** (the per-element path produced exactly `rows`
+  values, so the length check never fired). A dense `Decimal` merely threw the
+  wrong error, blaming a length mismatch.
+
+  The readable set is now an explicit allowlist — `Int` (any width),
+  `Float32`/`Float64`, `Date32`/`Date64`, `Time32`/`Time64`, `Timestamp`,
+  `Utf8`/`LargeUtf8`/`Utf8View`, `Null` (an all-missing value column), and a
+  `Dictionary` of any of those (the encoding is transparent; readability
+  follows the value type) — checked per field, on the key and value columns of every
+  Arrow door (`TimeSeries.fromArrow`, `ValueSeries.fromArrow`, and the
+  flattened key edges). Anything else is refused **by name**, with the cast
+  that would fix it: `Decimal` names the float64 precision trade-off, `Float16`
+  says to cast, `Bool` names the real reason (the columnar ingest engine
+  carries `number` and `string` value columns only). A duck-typed stand-in
+  carrying no `typeId` keeps working — the `ArrowTableLike` contract is
+  deliberately structural — and gains a width check that catches the Decimal
+  shape anyway.
+
+  Behavioural change worth noting: a `Utf8` **key** now throws on its declared
+  type rather than on its shape, so the message names the type and points at
+  passing it as a value column instead.
+
+### Changed
+
+- **A fold no longer builds a `TimeSeries`** ([PND-PROCTERM]). Every node's
+  `compute` widened the source with `appendColumn` for each nested input, so
+  an op could call the corpus normally — the studies take
+  `(series, { column })`. For a fold that was waste twice over: the column it
+  reads is already in its inputs, and it was being packed into a series only
+  to be read straight back out.
+
+  The cost was not incidental. `appendColumn` **boxes a gapped column** on
+  the way in, because core's `withColumn` takes values rather than a column —
+  22.4 ms per column at 1M rows. Every rolling study is gapped, so the
+  expensive path was the ordinary one.
+
+  20 folds × 500k rows, on top of the columnar fold context below:
+  **383 → 129 ms** (2.96×), rss 173 → 113 MB. Against the boxed, assembling
+  baseline the two changes together are **606 → 129 ms**.
+
+  A facts-only request now returns no `series` at all, and the upstream
+  column still resolves through the node graph rather than the terminal's
+  `needed` set — so the failure the plan warned about, a fact silently
+  coming back with no value because its column was never selected, cannot
+  happen.
 
 ### Added
 

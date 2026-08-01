@@ -3,7 +3,10 @@ import { TimeSeries } from 'pond-ts';
 import {
   createHost,
   createRegistry,
+  createSourceRegistry,
+  defineSource,
   int,
+  sourceId,
   specId,
   toWire,
   UnknownDatasetError,
@@ -100,6 +103,103 @@ describe('Host — the graph outlives requests', () => {
     expect(first.nodes.every((n) => !n.cached)).toBe(true);
     expect(second.nodes.every((n) => n.cached)).toBe(true);
     expect(ran.n).toBe(1);
+  });
+
+  it('passes its byte budget to every graph it binds', () => {
+    // `bind` grew `budgetBytes` in [PND-PROCCACHE], but the Host — the
+    // long-lived shape whose plans arrive from callers it does not
+    // control — had no way to set it, so a public host retained every
+    // spec ever asked of it.
+    const { registry } = makeRegistry();
+    const host = createHost({ registry, units, budgetBytes: 1 }).add(
+      'prices',
+      series(500),
+    );
+    host.run({ from: 'prices', process: [sma3], select: [{ on: sma3 }] });
+    const graph = host.graphFor('prices');
+    expect(graph.evictions).toBeGreaterThan(0);
+    expect(graph.retainedBytes).toBeLessThanOrEqual(1);
+  });
+
+  it('removes a dataset: source, graph, and cache go together', () => {
+    const { registry, ran } = makeRegistry();
+    const host = createHost({ registry, units }).add('prices', series(500));
+    const envelope = {
+      from: 'prices',
+      process: [sma3],
+      select: [{ on: fold('last', sma3) }],
+    };
+    host.run(envelope);
+    expect(host.remove('prices')).toBe(true);
+    expect(host.has('prices')).toBe(false);
+    expect(() => host.run(envelope)).toThrow(UnknownDatasetError);
+    // Re-adding starts a fresh binding — the old nodes are gone.
+    host.add('prices', series(500));
+    host.run(envelope);
+    expect(ran.n).toBe(2);
+    // Removing what is not there says so rather than throwing.
+    expect(host.remove('ghost')).toBe(false);
+  });
+
+  it('evicts the least-recently-used loaded source over maxSources', async () => {
+    // `runAsync` binds a graph per distinct caller-supplied SourceRef,
+    // so an untrusted caller could grow the host without bound — the
+    // request-driven half of the footprint, which `budgetBytes` alone
+    // does not cover.
+    const { registry } = makeRegistry();
+    let loads = 0;
+    const bars = defineSource({
+      name: 'bars',
+      async load(params: { readonly symbol: string }) {
+        loads += 1;
+        return { value: series(10), revision: `r-${params.symbol}` };
+      },
+    });
+    const sources = createSourceRegistry().define(bars);
+    const host = createHost({ registry, units, sources, maxSources: 2 });
+    const ask = (symbol: string) =>
+      host.runAsync({
+        from: bars.ref({ symbol }),
+        process: [sma3],
+        select: [{ on: fold('last', sma3) }],
+      });
+    await ask('A');
+    await ask('B');
+    await ask('C');
+    expect(host.datasets).toHaveLength(2);
+    expect(host.has(sourceId(bars.ref({ symbol: 'A' })))).toBe(false);
+    expect(host.has(sourceId(bars.ref({ symbol: 'C' })))).toBe(true);
+    // An evicted source is reloaded on demand, not failed.
+    const again = await ask('A');
+    expect(again.facts).toHaveLength(1);
+    expect(loads).toBe(4);
+  });
+
+  it('a removal mid-load wins — the landing load does not resurrect', async () => {
+    const { registry } = makeRegistry();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const bars = defineSource({
+      name: 'bars',
+      async load(_params: { readonly symbol: string }) {
+        await gate;
+        return { value: series(10), revision: 'r1' };
+      },
+    });
+    const sources = createSourceRegistry().define(bars);
+    const host = createHost({ registry, units, sources });
+    const ref = bars.ref({ symbol: 'A' });
+    const id = sourceId(ref);
+    const pending = host.runAsync({ from: ref, process: [sma3] });
+    // Nothing installed yet, so nothing was "known" — but the removal
+    // must still win over the load in flight.
+    expect(host.remove(id)).toBe(false);
+    release();
+    await expect(pending).rejects.toThrow(UnknownDatasetError);
+    expect(host.has(id)).toBe(false);
+    expect(host.datasets).toHaveLength(0);
   });
 
   it('keeps two datasets disjoint under identical ids', () => {

@@ -421,7 +421,24 @@ describe('run — reductions', () => {
       plan: [sma3],
       select: [{ on: fold('shape', sma3, { points: 3 }) }],
     });
-    expect(res.facts[0]!['points'] as number).toBeLessThanOrEqual(4);
+    expect(res.facts[0]!['points'] as number).toBeLessThanOrEqual(3);
+  });
+
+  it('shape holds its bound when the series is under 2× the request', () => {
+    // The floor() stride rounded to 1 whenever length < 2·points, so a
+    // 200-point request over 399 rows returned all 399 — the token bound
+    // is the fold's whole purpose.
+    const { registry } = makeRegistry();
+    const graph = bind(series(399), { registry, units });
+    const res = run(graph, {
+      plan: [sma3],
+      select: [{ on: fold('shape', sma3, { points: 200 }) }],
+    });
+    const points = res.facts[0]!['points'] as number;
+    expect(points).toBeLessThanOrEqual(200);
+    // Bounded, not starved: a stride of ceil(399/200)=2 still samples
+    // the whole series.
+    expect(points).toBeGreaterThan(150);
   });
 
   it('a facts-only response is JSON-safe by construction', () => {
@@ -651,5 +668,227 @@ describe('run — a selector describes its own computation', () => {
     expect(
       res.nodes.filter((n) => n.id === specId(registry, sma3)),
     ).toHaveLength(1);
+  });
+});
+
+describe('run — typed inputs check the picked output, not output 0', () => {
+  // A multi-output op whose first output does NOT carry the interesting
+  // unit, so a check that always reads output 0 fails in both
+  // directions from here.
+  const setup = () => {
+    const { registry } = makeRegistry();
+    registry.define({
+      name: 'stats',
+      family: 'summary',
+      summary: 'Average, and variance beside it.',
+      params: {},
+      inputs: [{ role: 'source' }],
+      outputs: [
+        { id: 'Avg', unit: 'inherit' },
+        { id: 'Var', unit: 'variance' },
+      ],
+      run: (ctx) => {
+        const v = values(ctx, 'source');
+        return [v, v.map((x) => (x === undefined ? undefined : x * x))];
+      },
+    });
+    return { registry, graph: bind(series(10), { registry, units }) };
+  };
+  const stats: Spec = { op: 'stats', inputs: ['px'] };
+
+  it('accepts a picked output whose unit matches the demand', () => {
+    // Used to be REJECTED: the check resolved output 0 ('Avg' → '%')
+    // for an input that picked 'Var'.
+    const { graph } = setup();
+    const annualised: Spec = {
+      op: 'annualise',
+      inputs: [{ from: stats, output: 'Var' }],
+    };
+    const res = run(graph, {
+      plan: [annualised],
+      select: [{ on: fold('last', annualised) }],
+    });
+    expect(res.skipped).toHaveLength(0);
+    expect(res.facts).toHaveLength(1);
+  });
+
+  it('rejects a picked output whose unit does not match', () => {
+    // The silent direction, which is the worse one: an op demanding '%'
+    // fed the 'Var' output used to pass — the check read 'Avg' — and the
+    // computation ran on wrong-unit data.
+    const { registry, graph } = setup();
+    registry.define({
+      name: 'pct',
+      family: 'transform',
+      summary: 'Demands a % input.',
+      params: {},
+      inputs: [{ role: 'source', unit: '%' }],
+      outputs: [{ id: '', unit: '%' }],
+      run: (ctx) => values(ctx, 'source'),
+    });
+    const res = run(graph, {
+      plan: [{ op: 'pct', inputs: [{ from: stats, output: 'Var' }] }],
+      onError: 'collect',
+    });
+    expect(res.skipped[0]!.reason).toMatch(/needs a '%' input/);
+    expect(res.skipped[0]!.reason).toMatch(/#Var' is 'variance'/);
+  });
+});
+
+describe('run — an op result must match the series length', () => {
+  const short = (registry: Registry): Spec => {
+    registry.define({
+      name: 'halve',
+      family: 'broken',
+      summary: 'Returns half the rows it was given.',
+      params: {},
+      inputs: [{ role: 'source' }],
+      outputs: [{ id: '', unit: 'inherit' }],
+      run: (ctx) => values(ctx, 'source').slice(0, 5),
+    });
+    return { op: 'halve', inputs: ['px'] };
+  };
+
+  it('rejects a short output even when nothing assembles', () => {
+    // Assembly's own length check used to be the only thing catching
+    // this, so `assemble: false` — the wire path — returned the short
+    // column as a success.
+    const { registry } = makeRegistry();
+    const spec = short(registry);
+    const graph = bind(series(10), { registry, units });
+    const res = run(graph, {
+      plan: [spec],
+      select: [{ on: spec }],
+      assemble: false,
+      onError: 'collect',
+    });
+    expect(res.skipped[0]!.reason).toMatch(/returned 5 row\(s\)/);
+    expect(res.skipped[0]!.reason).toMatch(/expected 10/);
+    expect(res.columns).toEqual({});
+  });
+
+  it('throws it under the default policy', () => {
+    const { registry } = makeRegistry();
+    const spec = short(registry);
+    const graph = bind(series(10), { registry, units });
+    expect(() =>
+      run(graph, { plan: [spec], select: [{ on: spec }], assemble: false }),
+    ).toThrow(/expected 10/);
+  });
+});
+
+describe('run — the error policy covers column execution', () => {
+  const boom = (registry: Registry): Spec => {
+    registry.define({
+      name: 'boom',
+      family: 'broken',
+      summary: 'Throws mid-kernel.',
+      params: {},
+      inputs: [{ role: 'source' }],
+      outputs: [{ id: '', unit: 'inherit' }],
+      run: () => {
+        throw new Error('kernel exploded');
+      },
+    });
+    return { op: 'boom', inputs: ['px'] };
+  };
+
+  it('collects an operator exception instead of escaping the policy', () => {
+    // The fact loop honoured `onError`; the column loop did not, so the
+    // same failing op was a `skipped` entry when surfaced as a fact and
+    // an escaped throw when surfaced as columns.
+    const { registry } = makeRegistry();
+    const spec = boom(registry);
+    const graph = bind(series(10), { registry, units });
+    const res = run(graph, {
+      plan: [spec],
+      select: [{ on: spec }],
+      onError: 'collect',
+    });
+    expect(res.skipped[0]!.reason).toMatch(/kernel exploded/);
+  });
+
+  it('propagates the original error under the default policy', () => {
+    const { registry } = makeRegistry();
+    const spec = boom(registry);
+    const graph = bind(series(10), { registry, units });
+    expect(() => run(graph, { plan: [spec], select: [{ on: spec }] })).toThrow(
+      'kernel exploded',
+    );
+  });
+
+  it('reports a selector naming an output the node does not declare', () => {
+    // This used to filter every declared output and surface NOTHING —
+    // no columns, no error, no skipped entry.
+    const { registry } = makeRegistry();
+    const graph = bind(series(10), { registry, units });
+    const band: Spec = { op: 'band', inputs: [sma3] };
+    const res = run(graph, {
+      plan: [band],
+      select: [{ on: band, output: 'Nope' }],
+      onError: 'collect',
+    });
+    expect(res.skipped[0]!.reason).toMatch(
+      /has no output 'Nope' \(has 'Upper', 'Middle', 'Lower'\)/,
+    );
+  });
+});
+
+describe('run — slot attribution is declaration-order deterministic', () => {
+  it('labels a computation with the first slot that names it', () => {
+    // The registry-free builder cannot resolve defaults, so `shape()`
+    // and `shape({points: 40})` arrive as two slots for ONE computation
+    // (specId resolves defaults). Attribution used to depend on which
+    // slot happened to be declared last.
+    const { registry } = makeRegistry();
+    const graph = bind(series(10), { registry, units });
+    const res = run(graph, {
+      nodes: {
+        s: { op: 'sma', params: { period: 3 }, in: ['px'] },
+        first: { op: 'shape', in: ['s'] },
+        second: { op: 'shape', params: { points: 40 }, in: ['s'] },
+      },
+      outputs: { a: { on: 'first' }, b: { on: 'second' } },
+    });
+    const folds = res.nodes.filter((n) => n.id.includes('shape'));
+    expect(folds).toHaveLength(1);
+    expect(folds[0]!.slot).toBe('first');
+    // Both caller names still answer, off the one node.
+    expect(res.facts.map((f) => f.name).sort()).toEqual(['a', 'b']);
+  });
+});
+
+describe('run — fact provenance wins over the fold body', () => {
+  it('drops reserved keys a custom fold returns', () => {
+    // `id`, `name`, `op` and `unit` are the graph's to state — a fold
+    // body spread over them could masquerade as another node or forge a
+    // unit, and `name` could claim a caller-name the caller never gave.
+    const { registry } = makeRegistry();
+    registry.define({
+      kind: 'fold',
+      name: 'impostor',
+      family: 'read',
+      summary: 'Returns forged provenance fields beside a real value.',
+      params: {},
+      inputs: [{ role: 'source' }],
+      unit: 'inherit',
+      fold: () => ({
+        id: 'forged',
+        name: 'forged',
+        op: 'forged',
+        unit: 'forged',
+        value: 7,
+      }),
+    });
+    const graph = bind(series(10), { registry, units });
+    const sel = fold('impostor', sma3);
+    const res = run(graph, { plan: [sma3], select: [{ on: sel }] });
+    expect(res.facts[0]).toMatchObject({
+      id: specId(registry, sel),
+      op: 'impostor',
+      unit: '%',
+      value: 7,
+    });
+    expect(res.facts[0]!.name).toBeUndefined();
   });
 });
