@@ -142,6 +142,44 @@ for (const n of [100_000, 500_000, 1_000_000]) {
   );
 }
 
+// Deep zoom (§5.4 precision fix): N points packed into a **1 ms window at
+// epoch-ms magnitude** (t ≈ 1.79e12) — the regime where the expanded `k·v + b`
+// reconstruction was ill-conditioned, so `affineOf`'s probe rejected the scale
+// and the "FAST" arm silently ran the d3-shape path anyway. With the rebased
+// `(v − v0)·k + p0` form the fast path stays engaged; the before/after of this
+// scenario's FAST arm is the win the fix buys back at deep zoom. The SLOW arm
+// (stripped scale) is the unchanged reference floor.
+const T0 = Date.UTC(2026, 7, 1, 13, 30, 21, 123);
+for (const n of [100_000, 1_000_000]) {
+  const x = new Float64Array(n);
+  const y = new Float64Array(n);
+  for (let i = 0; i < n; i += 1) {
+    x[i] = T0 + (i / n) * 1; // 1 ms window; values quantize to the f64 grid
+    y[i] = 50 + 35 * Math.sin(i / 5_000) + 10 * Math.sin(i / 137);
+  }
+  const cs = { x, y, length: n };
+  const ctx = stubContext();
+  const fast = affineScale(T0, T0 + 1, PLOT_WIDTH);
+  const fastY = affineScale(0, 100, 400);
+  const slow = stripped(fast);
+  const slowY = stripped(fastY);
+  results.push(
+    benchmark(`line deepzoom N=${n} SLOW (d3-shape)`, () =>
+      drawLine(ctx, cs, slow, slowY, lineStyle),
+    ),
+  );
+  results.push(
+    benchmark(`line deepzoom N=${n} FAST (affine)`, () =>
+      drawLine(ctx, cs, fast, fastY, lineStyle),
+    ),
+  );
+  results.push(
+    benchmark(`area deepzoom N=${n} FAST (affine)`, () =>
+      drawArea(ctx, cs, fast, fastY, areaStyle, 0),
+    ),
+  );
+}
+
 // PND-GRADX — the gradient-extent computation in isolation (the O(N) min/max
 // walk `buildGradient` ran on **every** repaint, including each y-zoom frame
 // where the data is unchanged). "walk/frame" calls a distinct pre-allocated

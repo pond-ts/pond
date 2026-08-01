@@ -50,8 +50,8 @@ export function strokeAffinePolyline(
       penDown = false;
       continue;
     }
-    const px = ax.k * xs[j]! + ax.b;
-    const py = ay.k * v + ay.b;
+    const px = (xs[j]! - ax.v0) * ax.k + ax.p0;
+    const py = (v - ay.v0) * ay.k + ay.p0;
     if (penDown) ctx.lineTo(px, py);
     else {
       ctx.moveTo(px, py);

@@ -91,8 +91,8 @@ export function fillAffineArea(
   for (let j = 0; j <= n; j += 1) {
     const finite = j < n && Number.isFinite(ys[j]!);
     if (finite) {
-      const px = ax.k * xs[j]! + ax.b;
-      const py = ay.k * ys[j]! + ay.b;
+      const px = (xs[j]! - ax.v0) * ax.k + ax.p0;
+      const py = (ys[j]! - ay.v0) * ay.k + ay.p0;
       if (runStart < 0) {
         runStart = j;
         ctx.moveTo(px, py);
@@ -102,8 +102,8 @@ export function fillAffineArea(
     } else if (runStart >= 0) {
       // Close the run: drop to the baseline under the last point, run flat back
       // to the first point's x, close. (j-1 is the run's last finite index.)
-      ctx.lineTo(ax.k * xs[j - 1]! + ax.b, baselinePx);
-      ctx.lineTo(ax.k * xs[runStart]! + ax.b, baselinePx);
+      ctx.lineTo((xs[j - 1]! - ax.v0) * ax.k + ax.p0, baselinePx);
+      ctx.lineTo((xs[runStart]! - ax.v0) * ax.k + ax.p0, baselinePx);
       ctx.closePath();
       runStart = -1;
     }

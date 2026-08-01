@@ -796,11 +796,11 @@ export function decimateScatter(
 ): ChartSeries {
   const cell = cellPx > 0 ? cellPx : 1;
   // Affine fast path ([PND-AFFINE]) for the per-point pixel mapping the sweep
-  // needs — an inline `k·v + b` over the typed arrays instead of a d3-scale
-  // closure per point (each axis independently; a non-affine axis, e.g. a
-  // real-gap trading x, falls back to the exact scale call). Without this the
-  // sweep would re-introduce the per-point d3-scale cost the line/area paths
-  // shed, making the decimation's own cost dominate.
+  // needs — an inline rebased `(v − v0)·k + p0` over the typed arrays instead
+  // of a d3-scale closure per point (each axis independently; a non-affine
+  // axis, e.g. a real-gap trading x, falls back to the exact scale call).
+  // Without this the sweep would re-introduce the per-point d3-scale cost the
+  // line/area paths shed, making the decimation's own cost dominate.
   const ax = affineOf(xScale);
   const ay = affineOf(yScale);
   const outX: number[] = [];
@@ -811,13 +811,13 @@ export function decimateScatter(
     const y = cs.y[i]!;
     if (!Number.isFinite(y)) continue; // gap — no mark
     const xv = cs.x[i]!;
-    const px = ax !== null ? ax.k * xv + ax.b : xScale(xv);
+    const px = ax !== null ? (xv - ax.v0) * ax.k + ax.p0 : xScale(xv);
     const col = Math.floor(px / cell);
     if (col !== curCol) {
       rows.clear();
       curCol = col;
     }
-    const py = ay !== null ? ay.k * y + ay.b : yScale(y);
+    const py = ay !== null ? (y - ay.v0) * ay.k + ay.p0 : yScale(y);
     const row = Math.floor(py / cell);
     if (!rows.has(row)) {
       rows.add(row);
