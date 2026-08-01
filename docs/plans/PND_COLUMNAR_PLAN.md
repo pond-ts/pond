@@ -731,6 +731,24 @@ that would fix it.
   was dropped: `Float16` has one word per row, so its length matches and only
   the declared type distinguishes it from `Float64`.
 
+**The allowlist's own failure mode, hit immediately.** The first cut refused
+four types the reader had been handling correctly — `Utf8View` (the string
+layout newer Arrow producers emit), `Dictionary<Float64>`, an all-`Null`
+column, and `Time32`/`Time64` — caught by Layer-2 review differentially
+measuring the base commit against the branch. Restored, with the value type
+now decided _through_ a `Dictionary` rather than the encoding being treated as
+a type of its own.
+
+The lesson is worth more than the fix: **an allowlist must be derived from what
+the code demonstrably reads, not from what its author believes the library
+supports.** This one was written from a mental model of pond's semantics —
+which is why it also refused `Time32` while blessing `Timestamp`, two types
+with the same int-plus-unit shape. The matrix test now asserts both directions,
+so refusing something readable fails as loudly as reading something unreadable.
+(A related gap fixed at the same time: `TYPE_NAMES` stopped at ordinal 21, so
+`Utf8View` was refused as "typeId 24" — breaking the "refused by name" contract
+in the same stroke.)
+
 No perf work: the gate is a handful of integer comparisons per **column**, once
 per ingest, nowhere near a per-row path.
 

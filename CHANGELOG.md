@@ -69,8 +69,10 @@ include new features and type-level changes; patch bumps are strictly additive.
   wrong error, blaming a length mismatch.
 
   The readable set is now an explicit allowlist — `Int` (any width),
-  `Float32`/`Float64`, `Date32`/`Date64`, `Timestamp`, `Utf8`/`LargeUtf8`,
-  `Dictionary<Utf8>` — checked per field, on the key and value columns of every
+  `Float32`/`Float64`, `Date32`/`Date64`, `Time32`/`Time64`, `Timestamp`,
+  `Utf8`/`LargeUtf8`/`Utf8View`, `Null` (an all-missing value column), and a
+  `Dictionary` of any of those (the encoding is transparent; readability
+  follows the value type) — checked per field, on the key and value columns of every
   Arrow door (`TimeSeries.fromArrow`, `ValueSeries.fromArrow`, and the
   flattened key edges). Anything else is refused **by name**, with the cast
   that would fix it: `Decimal` names the float64 precision trade-off, `Float16`
