@@ -373,6 +373,26 @@ describe('drawBars — stable per-bar mark selection', () => {
     expect(outlines(draw(marked(), { id: 'count', key: 200 }))).toBe(0);
   });
 
+  it('does not touch `marks` when neither selection nor hover carries one', () => {
+    // The laziness contract: the readers build the mark strings on first read,
+    // so the draw must not read them on the key-pinned / unselected path (see
+    // BarSeries.marks). A throwing getter stands in for "was this read?".
+    let reads = 0;
+    const spy: BarSeries = {
+      ...bars([50, 150, 250], [150, 250, 350], [10, 20, 30]),
+      get marks(): readonly string[] {
+        reads += 1;
+        return ['100', '200', '300'];
+      },
+    };
+    draw(spy, null, null);
+    draw(spy, { id: 'count', key: 150 }, null);
+    expect(reads).toBe(0);
+    // …and exactly once (hoisted out of the per-bar loop) when one does.
+    draw(spy, { id: 'count', key: -1, mark: '200' }, null);
+    expect(reads).toBe(1);
+  });
+
   it('falls back to the key when the SERIES carries no marks (hand-built view)', () => {
     // A mark-carrying selection against a marks-free series can't match by
     // name; the key still decides, so nothing silently stops highlighting.

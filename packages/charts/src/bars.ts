@@ -117,16 +117,23 @@ export interface BarMark {
 }
 
 /**
- * Does `m` identify the bar with stable identity `stable` and key `begin`? The
- * `mark`-first rule {@link drawStacks} applies, with one deliberate difference:
- * it falls back to the `key` whenever the **selection** carries no `mark`,
- * where `drawStacks` falls back whenever the **series** carries none.
+ * Does `m` identify the bar with stable identity `stable` and key `begin`?
+ * The mark decides **only when both sides have one** — `m.mark` (the selection
+ * names a bar) and `stable` (this series names its bars). Either missing falls
+ * back to `m.key === begin`, so both of these keep working unchanged:
  *
- * `drawStacks` can switch on the series alone because only `categoryStack`
- * produces marks and it never had key-pinned consumers. Every reader-built bar
- * series now carries marks, so the same unconditional switch would silently
- * stop matching each shipped controlled `selected={{ id, key }}` — key-pinning
- * is the only selection bars ever had.
+ * - a selection with **no `mark`** — every controlled `selected={{ id, key }}`
+ *   that predates this channel, against a series that now carries marks;
+ * - a series with **no `marks`** — a hand-built {@link BarSeries} (tests, an
+ *   outside caller assembling the view themselves).
+ *
+ * This is the `mark`-first rule {@link drawStacks} applies, with one deliberate
+ * difference: it falls back on the **selection** carrying no mark, where
+ * `drawStacks` falls back on the **series** carrying none. `drawStacks` can
+ * switch on the series alone because only `categoryStack` produces marks and it
+ * never had key-pinned consumers. Every reader-built bar series now carries
+ * marks, so that unconditional switch would silently stop matching each shipped
+ * key-pinned selection — key-pinning is the only selection bars ever had.
  */
 function barMatches(
   m: BarMark | null,
@@ -247,8 +254,11 @@ export function drawBars(
     return { sourceCount, drawnCount: drawn, decimated: true };
   }
   // The stable per-bar identity is consulted only when the live selection /
-  // hover actually carries a `mark`: `cs.marks` builds its strings lazily, so a
-  // dense chart with a key-pinned (or absent) selection never materializes them.
+  // hover actually carries a `mark` — `cs.marks` builds its strings lazily, so
+  // the *draw* never materializes them on its own. (The component's `hitTest`
+  // may already have: an interactive layer echoes the hovered bar's mark on
+  // every pointer move. See BarSeries.marks — this hoist keeps the draw path
+  // clean, it doesn't make the channel free.)
   const marks =
     selection?.mark !== undefined || hovered?.mark !== undefined
       ? cs.marks

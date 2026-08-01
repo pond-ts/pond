@@ -140,24 +140,46 @@ change (no benefit — the fallback costs one branch).
 its mark is a stringified number, so the single path keeps the series label and
 adds `mark` alongside.
 
-**Decision — lazy marks.** One `string` per bar is ~an order of magnitude
-dearer per element than a typed-array write, so eager marks would have taxed
-every chart on every data update for a channel most never touch. The readers
-expose `marks` through a memoized getter and `drawBars` reads it only when the
-live selection / hover carries a `mark`. `scripts/perf-barmarks.mjs` pins the
-three invariants:
+**Decision — lazy marks, and what that actually buys (corrected after L2).**
+One `string` per bar is ~an order of magnitude dearer per element than a
+typed-array write, so eager marks would have taxed every chart on every data
+update for a channel most never touch. The readers expose `marks` through a
+memoized getter and `drawBars` reads it only when the live selection / hover
+carries a `mark`.
 
-| case (100k point-keyed bars)               | median  |
-| ------------------------------------------ | ------- |
-| `barsFromTimeSeries`, marks untouched      | 0.77 ms |
-| …forcing the marks (the deferred one-off)  | 9.78 ms |
-| `drawBars`, no selection                   | 6.78 ms |
-| `drawBars`, key-pinned selection (no mark) | 7.05 ms |
-| `drawBars`, mark-pinned (marks warm)       | 7.44 ms |
+The **first cut of this claimed too much**, and the Layer-2 review
+([PR #568](https://github.com/pond-ts/pond/pull/568)) caught it: `Layers`
+hit-tests on every _pointer move_, and `<BarChart>`'s `hitTest` echoes
+`bs.marks?.[bi]` — so an **interactive** layer materializes the array on the
+first move that lands on a bar, on the input path, re-armed per data identity.
+The original bench measured a `drawBars`-only path the component doesn't take.
+`scripts/perf-barmarks.mjs` now covers the hover path too:
 
-i.e. eager marks would have been a ~12x reader regression; the key-pinned draw
-is indistinguishable from no selection (the strings are never built); and a
-live mark selection costs ~10% on the draw for the string compare.
+| case (100k point-keyed bars)               | median    |
+| ------------------------------------------ | --------- |
+| `barsFromTimeSeries`, marks untouched      | 0.74 ms   |
+| …forcing the marks (the deferred one-off)  | 9.27 ms   |
+| `drawBars`, no selection                   | 6.51 ms   |
+| `drawBars`, key-pinned selection (no mark) | 6.74 ms   |
+| `drawBars`, mark-pinned (marks warm)       | 7.21 ms   |
+| **first `hitTest` hit, cold series**       | 11.124 ms |
+| **subsequent `hitTest` hit, marks warm**   | 1.72 ms   |
+
+So the honest statement: **non-interactive layers never pay; interactive ones
+pay ~9 ms once per data identity at 100k bars, on the first hover.** Lazy still
+strictly dominates eager (which charges every chart on every update regardless),
+and at realistic bar counts it is under a millisecond either way — but it is not
+"free", and the docs no longer say it is.
+
+**Considered, not taken: drop the strings entirely.** Carrying the key buffer
+(`keys: Float64Array`, a zero-copy view) instead of `marks` would make `hitTest`
+O(1) (`String(keys[bi])`) and let `drawBars` compare numerically against a
+once-parsed `Number(selection.mark)` — zero allocation on every path, and no
+getter. Rejected _for this PR_ because it stops mirroring
+`StackedBarSeries.marks` (the shape the ask specified and the stack path uses)
+and forecloses non-numeric identities. Worth revisiting if the 100k interactive
+case ever bites — the change is local to `withKeyMarks`, `barMatches`, and the
+one `hitTest` line.
 
 No public export added, removed, or renamed (`BarSeries` gained an optional
 field; `barsFromTimeSeries`'s signature is unchanged) ⇒ no API.md change.
@@ -166,6 +188,11 @@ field; `barsFromTimeSeries`'s signature is unchanged) ⇒ no API.md change.
 provenance rather than the sample key — changing it would be a behaviour shift
 on a shipped field, and `mark` already carries the identity. Revisit under
 [PND-SELECT] if the provenance value proves confusing.
+
+**Second L2 finding, fixed:** `SelectInfo.mark`'s own JSDoc (`src/context.ts`)
+still said `undefined` "for a time / value bar" — false once every single-series
+bar carries one. Rewritten to enumerate both mark-carrying layers and to state
+that a mark-less selection still matches on `key` everywhere.
 
 ### [PND-AFFINE] — Affine fast path for the per-point draw pipeline — DONE
 

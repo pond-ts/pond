@@ -707,13 +707,25 @@ export interface SelectInfo {
   /** Display label (`as` ?? column ?? id) — labels the selection in a readout. */
   readonly label: string;
   /**
-   * An optional **stable per-mark identity within the layer** — a *category's
-   * column name* on the categorical axis, where every bar shares the layer's
-   * `id` but each column needs its own stable handle. When present, the
-   * highlight match + controlled `selected` echo key on `(id, mark)` instead of
-   * the sample `key`, so a pinned selection survives a column reorder / data
-   * update (the slot index is not stable; the column name is). `undefined` for
-   * marks whose sample `key` is already their identity (a time / value bar).
+   * An optional **stable per-mark identity within the layer** — every mark
+   * shares the layer's `id`, so this is the handle that picks one *within* it.
+   * When a selection carries it, the highlight match + controlled `selected`
+   * echo key on `(id, mark)` instead of the sample `key`, so a pin survives a
+   * reorder / data update that renumbers the slot.
+   *
+   * Two layers report one today:
+   *
+   * - A **categorical** bar reports its *column name* — the slot index is not
+   *   stable across a reorder, the name is.
+   * - A **single-series** bar (`<BarChart series column>`) reports its own axis
+   *   key, stringified. On a **point-keyed** series the sample `key` is *not*
+   *   its identity: the bar span is synthesized from neighbour spacing, so
+   *   `key` is a derived edge (`t - halfGap`) rather than the sample's own
+   *   time. See `BarSeries.marks`.
+   *
+   * `undefined` for every other mark (scatter, box, candle), whose sample `key`
+   * *is* its identity. A selection without a `mark` still matches on `key`
+   * everywhere — the mark is an additional channel, not a replacement.
    */
   readonly mark?: string;
 }

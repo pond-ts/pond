@@ -145,10 +145,19 @@ export interface BarSeries {
    * see {@link neighbourSpans}) and pinning a selection by key meant
    * re-deriving the neighbour spacing. `undefined` on a hand-built view.
    *
-   * Built **lazily** on first read and then memoized — a dense chart that never
-   * selects by mark never pays for the strings (~9 ms per 100k bars, on top of
-   * a ~0.8 ms reader), and `drawBars` reads it only when the live selection /
-   * hover actually carries a `mark`. See `scripts/perf-barmarks.mjs`.
+   * Built **lazily** on first read and then memoized (~9 ms per 100k bars, on
+   * top of a ~0.8 ms reader). Who pays, precisely:
+   *
+   * - A **non-interactive** layer (no `id`, so no `hitTest`) never reads them.
+   * - An **interactive** one hit-tests on every *pointer move*, and that echo
+   *   reads the hovered bar's mark — so the first move that lands on a bar
+   *   materializes the array, once per data identity, on the input path
+   *   (11.1 ms vs 1.7 ms for a warm 100k-bar hover).
+   *
+   * So this is not free for an interactive chart; it is bounded and paid once,
+   * where an eager array would cost every chart on every data update. At
+   * realistic bar counts it is under a millisecond either way. See
+   * `scripts/perf-barmarks.mjs`.
    */
   readonly marks?: readonly string[];
 }
@@ -584,11 +593,18 @@ function neighbourSpans(
  * column's `begin` for a `TimeSeries`, `axisValues()` for a `ValueSeries`), not
  * the possibly-derived bar span, and must already be trimmed to `bars.length`.
  *
- * The strings are built on first read and then memoized, so a chart that never
- * selects by mark never allocates them (the reason this is a getter rather than
- * an eager array: 100k bars is ~9 ms of string allocation on top of a ~0.8 ms
- * reader — a >10x regression on every data update, to pay for a channel most
- * charts never touch. `scripts/perf-barmarks.mjs` pins it).
+ * The strings are built on first read and then memoized. That is why this is a
+ * getter rather than an eager array: 100k bars is ~9 ms of string allocation on
+ * top of a ~0.8 ms reader, and eager would charge it to every chart on every
+ * data update, for a channel a non-interactive one never uses at all. An
+ * interactive chart *does* pay it, once per data identity, on its first hover
+ * over a bar — see {@link BarSeries.marks}. `scripts/perf-barmarks.mjs` pins
+ * both halves.
+ *
+ * The getter is deliberately **enumerable**, so a `{...bs}` spread carries the
+ * marks through (materializing them) rather than silently dropping them — a
+ * perf surprise beats a correctness one. Nothing in the package spreads a
+ * `BarSeries`; this is for outside callers.
  */
 function withKeyMarks(
   bars: {

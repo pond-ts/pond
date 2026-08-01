@@ -6,8 +6,7 @@
 // in `barsFromTimeSeries` / `barsFromValueSeries` would put ~10 ms of string
 // allocation per 100k bars in front of *every* chart on *every* data update —
 // a >10x reader regression to pay for a channel most charts never touch. So the
-// readers expose `marks` through a memoized getter, and `drawBars` reads it only
-// when the live selection / hover actually carries a `mark`.
+// readers expose `marks` through a memoized getter.
 //
 // Complexity: the reader is O(N) over events either way (it already allocates
 // the two Float64Array spans); the marks add O(N) *string* allocations, which
@@ -15,19 +14,37 @@
 // write. `drawBars` is O(visible) with an O(1) match per bar in both modes —
 // the mark match replaces a number compare with a string compare, no allocation.
 //
-// The three invariants the numbers must show:
+// WHO ACTUALLY PAYS (L2 review, PR #568 — the first cut of this bench measured
+// a path `<BarChart>` does not take, and claimed too much for the getter):
+//
+//   * A **non-interactive** layer (no `id`) registers no `hitTest`, so nothing
+//     ever reads `marks` — it genuinely never pays.
+//   * An **interactive** layer (`id` set) hit-tests on every *pointer move*
+//     (`Layers` → `resolveSelection`), and that echo reads `marks` for the bar
+//     under the cursor. So the **first pointer move that lands on a bar**
+//     materializes the array — once per data identity, on the input path.
+//     From then on the hover carries a `mark`, so `drawBars` takes the mark
+//     branch too (already warm — no further cost).
+//
+// The getter still strictly dominates an eager array — eager pays on *every*
+// data update for *every* chart, interactive or not, hovered or not — but
+// "never pays" only holds for the non-interactive case. The `hover N=…` case
+// below is the honest one: it is what an interactive chart's first hover costs.
+//
+// The invariants the numbers must show:
 //   1. `barsFromTimeSeries` is unchanged when nothing reads `marks`.
-//   2. `drawBars` with a key-pinned (or absent) selection never materializes
-//      them — its cost matches the no-selection draw.
-//   3. Materializing them, when a mark-pinned selection asks, is a bounded
-//      one-off (memoized per series object), not a per-frame cost.
+//   2. `drawBars` never materializes them on its own — a key-pinned (or absent)
+//      selection costs the same as no selection. (This is the *draw* path in
+//      isolation; see the hover case for what the component actually does.)
+//   3. The first hover on an interactive layer materializes them: a bounded
+//      one-off, memoized per series object, not a per-frame or per-move cost.
 //
 // Run: node scripts/perf-barmarks.mjs   (build first: npm run build)
 
 import { performance } from 'node:perf_hooks';
 import { TimeSeries } from 'pond-ts';
 import { barsFromTimeSeries } from '../dist/data.js';
-import { drawBars } from '../dist/bars.js';
+import { barAt, drawBars } from '../dist/bars.js';
 
 const SIZES = [10_000, 100_000];
 const BASE = 1.7e12;
@@ -103,6 +120,8 @@ function benchmark(label, fn, repeats = 30) {
 
 const results = [];
 const ctx = stubContext();
+/** Consumes each hover case's result so the read can't be optimized away. */
+let sink = 0;
 
 for (const n of SIZES) {
   const series = makeSeries(n);
@@ -144,6 +163,53 @@ for (const n of SIZES) {
     benchmark(`draw N=${n} mark-pinned selection (marks warm)`, () =>
       draw(warm, { id: 'v', key: NaN, mark: String(midKey) }),
     ),
+  );
+
+  // (3) What an **interactive** layer's first pointer-move-over-a-bar costs —
+  // `<BarChart>`'s `hitTest` echoes `bs.marks?.[bi]`, so the hit materializes
+  // the array on a cold series. This is the case the first cut of this bench
+  // missed. A fresh series per rep, since the point is the *cold* read.
+  const hitPx = xScale(midKey);
+  // Bars rest on baseline 0 and every value is >= 15, so any y inside
+  // [yScale(0), yScale(15)] is inside the bar under `hitPx`. Assert the hit
+  // rather than trust it — an off-rect probe would silently measure a full
+  // no-hit scan and never read `marks` at all (which is exactly what the first
+  // version of this case did).
+  const hitPy = yScale(10);
+  const probe = barAt(
+    barsFromTimeSeries(series, 'v'),
+    hitPx,
+    hitPy,
+    xScale,
+    yScale,
+    0,
+    0,
+    1,
+  );
+  if (probe === null) {
+    throw new Error(
+      `perf-barmarks: hover probe missed every bar at N=${n} — the case would measure nothing`,
+    );
+  }
+  results.push(
+    benchmark(
+      `hover N=${n} first hitTest hit on a cold series (materializes)`,
+      () => {
+        const cold = barsFromTimeSeries(series, 'v');
+        const hit = barAt(cold, hitPx, hitPy, xScale, yScale, 0, 0, 1);
+        sink += cold.marks[hit[0]].length;
+      },
+      10,
+    ),
+  );
+  // The same move on a warm series — every subsequent pointer move.
+  const hovered = barsFromTimeSeries(series, 'v');
+  void hovered.marks;
+  results.push(
+    benchmark(`hover N=${n} subsequent hitTest hit (marks warm)`, () => {
+      const hit = barAt(hovered, hitPx, hitPy, xScale, yScale, 0, 0, 1);
+      sink += hovered.marks[hit[0]].length;
+    }),
   );
 }
 
