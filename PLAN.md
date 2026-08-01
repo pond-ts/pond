@@ -495,14 +495,25 @@ whether it stays one.
   length. The RFC's two consumers want opposite policies, so this is a design
   call, not a leak to patch; an earlier framing of this ticket blamed the graph
   for what was a plan-layer map. **Blocking for any interactive consumer.**
-- **[PND-PROCCACHE]** — Op-level result cache under an engine-wide budget.
-  Two modes of In: a **value In** drives invalidation and discards superseded
-  values; a **cache-key In** also keys a node-level cache, so repeats hit
-  (14.3× on a repeat-heavy sweep, and 1.9× when the capacity is undersized and
-  thrashes). The split that works: the **decision** to cache is per-op — only it
-  knows what is expensive and which Ins key the result — but the **capacity**
-  must be engine-wide, because a per-op cap is a per-op promise and nothing
-  supervises the total (20 nodes × 5 entries = 157 MB vs 35 MB shared).
+- **[PND-PROCCACHE]** — **Shipped**, and half of it turned out to be already
+  built. `bind(…, { budgetBytes })` caps retained node values engine-wide,
+  LRU, enforced after each run; `retainedBytes` / `evictions` observe it.
+  60 distinct params × 200k rows: **147 → 26 MB rss** (5.6×), 60 nodes → 7,
+  with repeats still hitting and no eviction churn.
+
+  **The half not to rebuild:** the ticket wanted an op to declare which Ins
+  key its result. `specId` is already content-addressed over op, params and
+  inputs, so the same question hits the same node by construction — a per-op
+  key would sit beside a correct one. What was genuinely missing is the
+  capacity, and the ticket is right that it cannot be the op's: a per-op cap
+  is a per-op promise and nothing supervises the total.
+
+  **The open question is closed: bytes, not entries.** Entries are not the
+  unit anyone has a limit in (one node over 1M rows outweighs fifty over
+  5,000), and bytes only became knowable once [PND-PROCCOL] made node values
+  columns. Eviction skips a node whose consumer still holds its outlet —
+  dropping it frees nothing and forces a recompile.
+
 - **[PND-PROCSEL]** — Selective per-Out invalidation already works: a
   bollinger-shaped node changing `stdDev` leaves `middle`'s version untouched
   and its consumer idle, because the op hands back the same instance. Document

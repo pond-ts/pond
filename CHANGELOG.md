@@ -80,6 +80,36 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **An engine-wide byte budget over retained node values** ([PND-PROCCACHE]):
+  `bind(series, { registry, budgetBytes })`, plus `graph.retainedBytes`,
+  `graph.evictions` and `graph.enforceBudget()`. Unbounded when omitted, so
+  no existing caller changes behaviour.
+
+  Every distinct spec ever compiled was retained forever, so memory scaled
+  with _questions asked_. A session walking a slider from period 20 to 200
+  left 180 nodes holding 180 result columns and dropped none. 60 distinct
+  params × 200k rows: **147 → 26 MB rss** (5.6×), 60 nodes → 7 — while a
+  repeat-heavy sweep still hits, with no eviction churn and no measurable
+  penalty. Both halves matter: a budget that bounds memory by discarding
+  what the caller asks for next is not a cache.
+
+  The ticket framed this as an op-level cache where an op declares which
+  inputs key its result. **Half of that is already true and was not
+  rebuilt** — `specId` is content-addressed over op, params and inputs, so
+  asking the same question twice hits the same node by construction, and a
+  per-op key would be a second key beside a correct one. What was missing is
+  the capacity, and the ticket is right that it cannot belong to the op: a
+  per-op cap is a per-op promise, and nothing supervises the total.
+
+  Bounded in **bytes**, resolving the ticket's open question. Entries are not
+  the unit anyone has a limit in — one node over 1M rows outweighs fifty over
+  5,000 — and bytes only became knowable once [PND-PROCCOL] made node values
+  columns with a reportable `columnBytes`. Eviction is LRU with one
+  constraint: a node whose consumer still holds its outlet is skipped,
+  because dropping it frees nothing and forces a recompile.
+
+### Added
+
 - **`requiredHistory(registry, plan)` in `@pond-ts/process`** ([PND-PROCHIST]),
   with a per-op `OpDef.lookback`. The hot leading edge is the design's worst
   cliff — an 8-study stack over 500k rows costs ~100 ms/tick — and the fix is

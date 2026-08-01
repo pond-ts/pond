@@ -503,6 +503,10 @@ export function run(graph: BoundGraph, request: RunRequest): RunResult {
   // a node that *was* read keeps its timing rather than being shadowed.
   for (const { id } of resolved) record(id);
 
+  // The budget is enforced once the run has resolved, not during it:
+  // evicting a node this run is about to read would only recompile it.
+  graph.enforceBudget();
+
   return {
     ...(assembled !== undefined && { series: assembled }),
     ...(drawn !== undefined && { columns: drawn }),

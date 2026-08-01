@@ -11,6 +11,7 @@
 
 import {
   appendColumn,
+  columnBytes,
   columnView,
   packColumn,
   type ColumnView,
@@ -69,6 +70,16 @@ interface Compiled {
   readonly outlets: Readonly<Record<string, string>>;
   /** True when the node ends in a fact. Its `outlets` are then empty. */
   readonly fold: boolean;
+  /** Ids this node reads from — for unwinding a chain on eviction. */
+  readonly upstream: readonly string[];
+  /** Ids reading from this node. Non-empty ⇒ evicting it frees nothing. */
+  readonly dependents: Set<string>;
+  /**
+   * Bytes of materialized column value, counted once a value is pulled.
+   * Zero until then, which is correct: an uncomputed node retains
+   * nothing and is not worth evicting.
+   */
+  bytes: number;
 }
 
 /** The outlet a fold's fact arrives on. Not a column, so not in `outlets`. */
@@ -85,20 +96,101 @@ function densify(column: Column): (number | undefined)[] {
   return out;
 }
 
-/** A source plus every node compiled against it. */
+/**
+ * A source plus every node compiled against it.
+ *
+ * ## The budget — [PND-PROCCACHE]
+ *
+ * Every distinct spec ever compiled used to be retained forever, so
+ * memory scaled with *questions asked* rather than with anything
+ * bounded. A session that walks a slider from period 20 to 200 leaves
+ * 180 nodes holding 180 result columns, and nothing ever drops one.
+ *
+ * The ticket framed this as an op-level cache: an op declares which of
+ * its inputs key a result, and the engine memoizes around `compute`.
+ * **Half of that is already true here and should not be rebuilt.** A
+ * spec's `specId` is content-addressed over its op, params and inputs,
+ * so asking the same question twice hits the same node by construction —
+ * there is nothing for an op to declare, and a per-op cache would be a
+ * second key beside a correct one.
+ *
+ * What was genuinely missing is the other half, and the ticket is right
+ * that it does not belong to the op: **a per-op capacity is a per-op
+ * promise, and nothing supervises the total.** Measured at 20 nodes ×
+ * 5 entries of a 200k-row result, a per-op cap held 100 entries and
+ * 157 MB where one engine-wide cap held 10 and 35 MB.
+ *
+ * So the budget is graph-wide, in **bytes** rather than entries — the
+ * unit that means anything, and only knowable since [PND-PROCCOL] made
+ * node values columns with a reportable `columnBytes`. Eviction is LRU
+ * with one constraint: a node feeding a retained node is skipped,
+ * because dropping it frees nothing while its consumer still holds the
+ * outlet.
+ */
 export class BoundGraph {
   readonly registry: Registry;
   readonly units: Units;
   readonly #source: SourceNode<TimeSeries<SeriesSchema>>;
   readonly #nodes = new Map<string, Compiled>();
+  /** Insertion order is LRU order: a touch deletes and re-adds. */
+  readonly #lru = new Set<string>();
+  readonly #budgetBytes: number;
+  #evicted = 0;
 
   constructor(
     series: TimeSeries<SeriesSchema>,
-    options: { registry: Registry; units?: Units },
+    options: { registry: Registry; units?: Units; budgetBytes?: number },
   ) {
     this.registry = options.registry;
     this.units = options.units ?? {};
+    this.#budgetBytes = options.budgetBytes ?? Number.POSITIVE_INFINITY;
     this.#source = source({ initial: series, kind: 'source' });
+  }
+
+  /** Bytes currently retained across every materialized node value. */
+  get retainedBytes(): number {
+    let total = 0;
+    for (const c of this.#nodes.values()) total += c.bytes;
+    return total;
+  }
+
+  /** How many nodes the budget has dropped over this graph's life. */
+  get evictions(): number {
+    return this.#evicted;
+  }
+
+  /**
+   * Drops least-recently-used nodes until the graph is inside its byte
+   * budget. Called after a run resolves; safe to call at any time.
+   *
+   * A node that feeds a retained node is skipped — its consumer holds
+   * the outlet, so dropping the lookup frees nothing and would only
+   * force a recompile on the next pull.
+   */
+  enforceBudget(): void {
+    if (!Number.isFinite(this.#budgetBytes)) return;
+    let total = this.retainedBytes;
+    if (total <= this.#budgetBytes) return;
+    for (const id of [...this.#lru]) {
+      if (total <= this.#budgetBytes) break;
+      const compiled = this.#nodes.get(id);
+      if (compiled === undefined) continue;
+      if (compiled.dependents.size > 0) continue;
+      total -= compiled.bytes;
+      this.#nodes.delete(id);
+      this.#lru.delete(id);
+      this.#evicted += 1;
+      // Its inputs may now be evictable in turn — the chain unwinds from
+      // the consumer end, which is the only end that frees anything.
+      for (const upstream of compiled.upstream) {
+        this.#nodes.get(upstream)?.dependents.delete(id);
+      }
+    }
+  }
+
+  #touch(id: string): void {
+    this.#lru.delete(id);
+    this.#lru.add(id);
   }
 
   /** Replaces the bound data. Every node downstream goes dirty. */
@@ -116,7 +208,9 @@ export class BoundGraph {
   }
 
   get(id: string): Compiled | undefined {
-    return this.#nodes.get(id);
+    const hit = this.#nodes.get(id);
+    if (hit !== undefined) this.#touch(id);
+    return hit;
   }
 
   /**
@@ -129,7 +223,10 @@ export class BoundGraph {
   compile(spec: Spec): Compiled {
     const id = specId(this.registry, spec);
     const existing = this.#nodes.get(id);
-    if (existing) return existing;
+    if (existing) {
+      this.#touch(id);
+      return existing;
+    }
 
     const op = this.registry.get(spec.op);
     const params = this.registry.resolveParams(op, spec.params);
@@ -193,6 +290,7 @@ export class BoundGraph {
         column,
         outlet: upstream.node.out[key] as { get(): Column },
         nested: true as const,
+        upstreamId: upstream.id,
       };
     });
 
@@ -310,6 +408,9 @@ export class BoundGraph {
       (outlet as { connect(i: unknown): void }).connect(node.in[key]);
     }
 
+    const upstream = bound
+      .filter((b) => b.nested)
+      .map((b) => (b as { upstreamId: string }).upstreamId);
     const compiled: Compiled = {
       id,
       spec,
@@ -317,8 +418,13 @@ export class BoundGraph {
       node,
       fold: terminal,
       outlets: Object.fromEntries(declared.map((o) => [o.id, outletKey(o)])),
+      upstream,
+      dependents: new Set<string>(),
+      bytes: 0,
     };
+    for (const up of upstream) this.#nodes.get(up)?.dependents.add(id);
     this.#nodes.set(id, compiled);
+    this.#touch(id);
     return compiled;
   }
 
@@ -335,7 +441,19 @@ export class BoundGraph {
           : `'${compiled.spec.op}' has no output '${suffix}' (has ${have})`,
       );
     }
-    return (compiled.node.out[key] as { get(): Column }).get();
+    const column = (compiled.node.out[key] as { get(): Column }).get();
+    // Counted here because this is where a value becomes materialized —
+    // and per outlet, so a multi-output study reports what it actually
+    // retains rather than one column's worth.
+    compiled.bytes = 0;
+    for (const outlet of Object.values(compiled.outlets)) {
+      const held = (
+        compiled.node.out[outlet] as { peek?(): Column | undefined }
+      ).peek?.();
+      if (held !== undefined) compiled.bytes += columnBytes(held);
+    }
+    if (compiled.bytes === 0) compiled.bytes = columnBytes(column);
+    return column;
   }
 
   /**
@@ -379,7 +497,20 @@ function unitOfCompiled(
  */
 export function bind(
   series: TimeSeries<SeriesSchema>,
-  options: { registry: Registry; units?: Units },
+  options: {
+    registry: Registry;
+    units?: Units;
+    /**
+     * Cap on retained node values, in bytes — [PND-PROCCACHE]. Unbounded
+     * when omitted, which is the behaviour every existing caller has.
+     *
+     * Bytes rather than entries because entries are not the unit anyone
+     * has a limit in: one node over 1M rows outweighs fifty over 5,000.
+     * Enforced after each `run`, LRU, skipping any node whose consumer
+     * still holds its outlet.
+     */
+    budgetBytes?: number;
+  },
 ): BoundGraph {
   return new BoundGraph(series, options);
 }
