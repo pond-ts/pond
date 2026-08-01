@@ -371,7 +371,15 @@ export interface RangeOutput {
   readonly bits: Uint8Array;
   /** Marks a cell present, with its value. */
   set(i: number, v: number): void;
-  /** Marks a cell missing. */
+  /**
+   * Marks a cell missing.
+   *
+   * **Only needed to undo a {@link RangeOutput.set} made in the same
+   * pass.** Cells in `[from, to)` start unset and an unwritten cell
+   * seals as missing, so clearing one the op never set does nothing —
+   * which is why an empty `clear` passed the whole suite until a
+   * set-then-clear case was written (Layer 2, PR #573).
+   */
   clear(i: number): void;
 }
 
@@ -392,7 +400,10 @@ export function prepareRange(
 ): RangeOutput {
   const values = new Float64Array(length);
   const bits = new Uint8Array(validityByteCount(length));
-  const copy = prior === undefined ? 0 : Math.min(keep, prior.length);
+  // Clamped to `length` as well as to the prior: a series that SHRANK
+  // gives `keep > length`, and `values.set` then throws
+  // `RangeError: offset is out of bounds` before the op ever runs.
+  const copy = prior === undefined ? 0 : Math.min(keep, prior.length, length);
   if (prior !== undefined && copy > 0) {
     values.set(prior.values.subarray(0, copy));
     if (prior.bits === undefined) {

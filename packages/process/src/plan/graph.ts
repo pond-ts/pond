@@ -568,30 +568,48 @@ export class BoundGraph {
         // the two tickets compose rather than each carrying their own
         // arithmetic.
         const changedFrom = this.#takePending(id);
-        let columns: Column[];
-        if (
-          changedFrom !== undefined &&
+        // Ranged, or whole? Every precondition below must hold, and any
+        // one missing falls back to a full recompute — always correct,
+        // merely slower ([PND-PROCRANGE]).
+        const from =
+          changedFrom === undefined || chainLookback === undefined
+            ? undefined
+            : Math.max(0, changedFrom - chainLookback);
+        const to = series.length;
+        // A prefix that cannot be VIEWED cannot be carried. `columnView`
+        // declines anything not packed numeric — a chunked column, say —
+        // and preparing from `undefined` seals `[0, from)` as ALL MISSING
+        // and returns it as an answer: 16 of 21 cells wrong, no error
+        // raised (Layer 2, PR #573). Every other precondition here falls
+        // back; this one must too. Silence is the bug, not slowness.
+        const views =
+          from === undefined || previous === undefined
+            ? undefined
+            : previous.map((c) => columnView(c));
+        const rangeable =
+          from !== undefined &&
           op.runRange !== undefined &&
-          chainLookback !== undefined &&
-          previous !== undefined
-        ) {
-          const from = Math.max(0, changedFrom - chainLookback);
-          const to = series.length;
-          const views = previous.map((c) => columnView(c));
-          const out = views.map((v) => prepareRange(to, from, v));
+          previous !== undefined &&
+          views !== undefined &&
+          (from === 0 || views.every((v) => v !== undefined));
+
+        let columns: Column[];
+        if (rangeable) {
+          const priors = views;
+          const out = priors.map((v) => prepareRange(to, from, v));
           const produced = op.runRange({
             ...ctx,
             from,
             to,
-            previous,
-            previousView: views,
+            previous: previous as readonly Column[],
+            previousView: priors,
             out,
           });
           // Returning nothing means "written into `ctx.out`" — the path
           // that carries the prefix as a block. An op may still return a
           // whole result, which is simply the slower way to say it.
           columns =
-            produced === undefined
+            produced === undefined || produced === null
               ? out.map((o) => sealRange(o, to) as unknown as Column)
               : toColumns(op, id, produced);
           this.#ranged += 1;
