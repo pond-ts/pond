@@ -54,7 +54,120 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`zScore` computes its deviation in a shifted frame, and is accurate at
+  large magnitudes for the first time** ([PND-SHIFTFRAME]). The study derived
+  its numerator as `value − rollingMean`, which is catastrophic cancellation
+  whenever the values are large next to the window's spread: `ulp(1e15)` is
+  `0.125`, so a window spanning ±3 leaves the deviation about three bits. The
+  new `rollingDeviationSd` kernel accumulates `value − anchor` and emits the
+  deviation directly — both operands small, nothing cancels — re-anchoring
+  periodically, and on magnitude, so a trending series stays in frame.
+
+  Measured against an exact reference over 200k rows, worst relative error:
+
+  | input                     | before | after   |
+  | ------------------------- | ------ | ------- |
+  | `1e15 + ((i % 7) − 3)`    | 1.0e+0 | 4.1e-15 |
+  | `1e9 + sin` (mid)         | 4.1e+0 | 4.9e-12 |
+  | random walk ≈100 (benign) | 3.9e-6 | 4.4e-11 |
+  | `1e12·(1+i/N)` (trending) | 9.0e-6 | 4.9e-15 |
+
+  **This was never a parallelism bug**, though it was found through one and
+  first documented as one. The sequential study computed the same subtraction
+  and carried the same exposure; partitioning only made two equally-wrong
+  answers visibly disagree. Anyone thresholding z-scores on large-magnitude
+  data was affected on the default path.
+
+  Two consequences worth reading before upgrading. **`zScore` values change**
+  — by rounding error on ordinary data, and by a lot on the cases above, where
+  they were wrong. And **`zScore` is no longer accelerated by `withWorkers`**:
+  the stable kernel is not the shape the worker pool hooks, so opting in no
+  longer speeds it up (it was 2.44×, the fastest study there) and no longer
+  changes its answer by a bit. The remaining accelerated studies — `sma`,
+  `envelope`, `bollinger` — are exactly those whose error is bounded.
+
+  `zScore` costs ~2.3× its previous formulation as an upper bound (~26 ns/row
+  at 500k), and is flat in `period` — 22.8 to 26.1 ns/row from `period 2` to
+  `period 100_000`. `scripts/perf-shifted-frame.mjs`.
+
 ### Added
+
+- **`parallelDispatches()`** in `@pond-ts/financial/parallel` — how many rolling
+  passes have actually run on worker threads. `withWorkers` is a silent no-op
+  when the pool declines a series, and a declined pass returns the same answer,
+  just slower than the caller expected; this is how you check. It also replaces
+  a test canary that had proved the parallel path ran _by it being wrong_ —
+  which stopped working the moment the wrongness was fixed.
+
+### Added
+
+- **financial:** **`withWorkers` (`@pond-ts/financial/parallel`) — rolling
+  studies partitioned across worker threads** ([PND-SCANKERN], Node-only,
+  opt-in). A rolling window is not a recurrence: output cell `i` reads only
+  rows `[i-period+1, i]`, so the output splits into ranges with a `period-1`
+  overlap and no communication between workers.
+
+  **Opt in once, at ingest** — `withWorkers(bars, { workers: 8 })` returns the
+  series unchanged, and every rolling study over it (or over anything derived
+  from it) is partitioned from then on. The studies keep their signatures and
+  stay **synchronous**: `Atomics.wait` lets the main thread dispatch and join
+  without yielding, which is also why this is Node-only and simply absent in a
+  browser. **Single-threaded is unchanged and remains the default**; the main
+  package never imports this entry point.
+
+  Measured over 500k bars, 8 workers: `sma` **1.83×**, `bollinger` **1.86×**,
+  `zScore` **2.45×**, a three-study stack **1.98×**.
+
+  **It changes the answer, and how much depends on the study.** Chunk 0
+  reproduces the sequential sweep exactly; later chunks start their Welford
+  state fresh. `sma`, `envelope` and `bollinger` shift by rounding error
+  (3.9e-14, 3.9e-14, 5.1e-13 observed; no cell beyond 1e-9).
+
+  **`zScore` is different in kind, not degree** — though not for the reason
+  first published here. The divergence is **catastrophic cancellation in the
+  numerator**, not the division by σ: at the worst row, σ differs by 0.97%
+  while `v − mean` differs by 60%, because `ulp(1e15)` is `0.125` and a window
+  spanning ±3 covers ~48 ulps. The sequential study computes the same
+  subtraction and carries the same exposure; partitioning only perturbs it.
+  A shifted-frame formulation removes it (650% → 8.8e-15, prototyped in
+  `spikes/shifted-frame/`, tracked as [PND-SHIFTFRAME]).
+  On a benign random walk the difference is ~2.6e-6 across ~0.8% of cells; on
+  a legal near-flat series at large magnitude it is **38%** (counterexample
+  from a Codex review, now a regression test). Do not opt in if you threshold
+  z-scores, reproduce the pandas oracle, or work with near-constant series.
+  Related: core rejects a non-finite rolling result, where this kernel can
+  emit `Infinity` or clamp a `NaN` variance to zero.
+
+  Below `MIN_ROWS` (100k) a registered series still runs sequentially and is
+  bit-identical.
+
+- **process:** **`HostPool` (`@pond-ts/process/pool`) — whole requests across
+  resident worker threads** ([PND-PROCPAR], Node-only). N workers, each holding
+  a long-lived `Host`, with the pool as a router: a plan is already JSON, a
+  registry is a module both isolates import (functions cannot be structured-
+  cloned, so the caller names a `setup` module rather than passing a value),
+  and a result's columns cross as transferable buffers. No engine change.
+
+  Measured (`packages/process/scripts/perf-pool.mjs`, 32 requests/batch,
+  8 workers, median of 3 distinct batches): **3.1–4.0× on distinct requests**
+  at every size from 0.5 ms to 10 ms each, and **~0.01× on repeated ones**.
+  What decides it is the cache-hit rate, not request size — in-process, a
+  re-asked question is a memo hit returning the same column for nothing, while
+  a pool copies and ships every answer however cheap it was, and each worker
+  warms its own graph. Pooling and caching compete rather than compose.
+
+  Worth checking before reaching for it: the same rolling mean writing a
+  `Float64Array` instead of `new Array(n)` runs **482 ms single-threaded where
+  the boxed version needs 632 ms across eight workers**. Fixing the op beat
+  adding eight cores, and boxing parallelises worse besides.
+
+  Supporting: `columnBuffers` / `columnFromBuffers` — a packed numeric column
+  as the buffer pair it already is, for crossing an isolate boundary. The
+  buffers are **copies**, deliberately: transferring a column's own buffer
+  detaches it in the sending isolate, which would silently empty the cache the
+  worker exists to keep warm.
 
 - **core:** **the flattened key convention — two-edged keys now survive a
   columnar round trip.** `toArrow` has always flattened a `timeRange` /

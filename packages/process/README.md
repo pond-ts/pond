@@ -145,6 +145,51 @@ new revision updates the source in place and lets ordinary graph invalidation
 run. Use synchronous `host.run()` for string-keyed datasets added with
 `host.add()`.
 
+## Worker pool (Node)
+
+`@pond-ts/process/pool` runs **whole requests** across worker threads, each
+holding a long-lived `Host`. It scales throughput under concurrent load; it
+does not make one request faster.
+
+```ts
+// setup.mjs — imported by BOTH isolates, because a registry is functions
+// and functions do not survive structured clone.
+export default function setup() {
+  return { registry, datasets: { px: series } };
+}
+```
+
+```ts
+import { HostPool } from '@pond-ts/process/pool';
+
+const pool = await HostPool.start({
+  setup: new URL('./setup.mjs', import.meta.url),
+  size: 4,
+});
+const result = await pool.run({ from: 'px', process: plan, select });
+await pool.close();
+```
+
+Requests run with `assemble: false` — the pool answers `columns` (which cross
+as transferable buffers) and the caller assembles a `TimeSeries` if it wants
+one. Pass an `affinity` key as the second argument to pin related requests to
+one worker, so its warm nodes get reused.
+
+**When it pays — it is about cache-hit rate, not request size.** Measured
+at 32 requests over 8 workers (`node packages/process/scripts/perf-pool.mjs`):
+**3.1–4.0× on distinct requests** at every size from 0.5 ms to 10 ms each, and
+**~0.01× on repeated ones**. In-process, a re-asked question is a memo hit that
+returns the same column for nothing; a pool copies and ships every answer
+however cheap it was, and each worker warms its own graph. Pooling and caching
+compete rather than compose.
+
+**Check your ops before you reach for the pool.** The same rolling mean writing
+a `Float64Array` instead of `new Array(n)` runs **482 ms single-threaded where
+the boxed version needs 632 ms across eight workers** — fixing the op beat
+adding eight cores. Boxing also parallelises worse, contending on memory
+bandwidth and per-isolate GC. A high pool speedup can be a symptom of a slow
+op.
+
 ## Quick start
 
 ```ts

@@ -83,10 +83,13 @@ copies inputs per call is dead before it is benchmarked.
   critical path. Helps the slow queries (composites ≥ 10 ms), which is
   where the agent workload hurts.
 - **Throughput** under concurrent queries: a pool of resident workers
-  each running _whole queries_ single-threaded scales near-linearly
-  with zero decomposition logic and zero numeric-semantics questions.
-  For multi-agent load this may be worth more than the latency shape,
-  and it is strictly simpler.
+  each running _whole queries_ single-threaded, with zero decomposition
+  logic and zero numeric-semantics questions. For multi-agent load this
+  may be worth more than the latency shape, and it is strictly simpler.
+
+  **Built and measured** — `HostPool`, `@pond-ts/process/pool`. It does
+  **not** scale near-linearly, as predicted above; see
+  [the correction](#correction-throughput-does-not-scale-near-linearly).
 
 ## Why `@pond-ts/process` is the scheduling layer
 
@@ -127,12 +130,97 @@ scheduling order, or completion order — nodes are single-threaded
 kernels merged by id. The semantics question that intra-kernel chunking
 raises never arises.
 
-## What it cannot help
+## What it cannot help — substantially wrong, corrected below
 
-Sequential recurrences (`ema`, `cumulative`, `smooth`); anything already
-under ~3 ms (every summary fact); a _lone_ rolling-window query (polars'
-own mt data says as much). Browser is out of scope by the question's own
-framing (SAB there needs COOP/COEP headers).
+The original text here read: "Sequential recurrences (`ema`,
+`cumulative`, `smooth`); anything already under ~3 ms; a _lone_
+rolling-window query." Only the middle clause survives.
+
+**Sequential recurrences are not sequential.** `y[i] = a·y[i-1] + b[i]`
+is the textbook parallel-scan case: affine maps compose associatively,
+so the prefixes parallelise even though each value "depends on" the last.
+Measured (`spikes/parallel-scan/`, 2M rows, 8 workers): EMA runs
+**4.45 ms → 1.42 ms, 3.14×**, and — because a real EMA's correction term
+`aᵏ` underflows to zero a few hundred cells into each chunk —
+**99.91% of cells come out bit-identical**, the rest within 2 ulps. A
+non-decaying recurrence (a cumulative sum) reassociates instead, which is
+the trade [`blocked-summation.md`](blocked-summation.md) already makes
+deliberately.
+
+Two barriers, not a log-depth tree: chunks compute locally, K summaries
+fold sequentially (K is the worker count, not the row count), chunks
+apply their correction.
+
+**A lone rolling-window query** parallelises too, by output range with a
+`period`-element overlap — measured ~2× in this note's own spike, at
+last-ulp cost from each chunk's fresh running sum.
+
+What genuinely remains: **work below roughly 150 µs**, since two barriers
+measured ~72 µs; and the browser, which is out of scope by the question's
+framing.
+
+The general point, and the reason this section was wrong: the test is not
+"does this look sequential" but **"is there an associative
+reformulation"**. That covers far more than it appears to.
+
+Note also that none of this needs [PND-PROCPAR]'s blocked injection seam
+— it is raw workers over a `SharedArrayBuffer`, so it belongs to the
+kernels rather than the process engine.
+
+## Correction: what decides whether a pool pays
+
+This note predicted "near-linear" scaling. **It measures 3.1–4.0× on 8
+workers** (`packages/process/scripts/perf-pool.mjs`, 32 requests/batch,
+median of 3 distinct batches) — real, but not 8×.
+
+The more useful correction is about _what_ decides it. An earlier version
+of this section reported a **crossover**: the pool losing below ~2 ms per
+request (0.94× at 50k rows), with a rule that requests had to be big
+enough to be worth routing. **That was a measurement artifact**, and from
+a cause this repo had already documented: each worker was warmed with a
+single request, so it ran unoptimised code while the in-process baseline
+— timed over repeated passes — was fully JIT-warm. V8's optimising tier
+is a cliff around 800 iterations, not a curve
+([blocked-summation.md](blocked-summation.md) says so in as many words).
+Warm against cold.
+
+Warmed properly, there is **no crossover in the swept range**:
+
+| workload | rows | per request | in-process | pool(8) |           |
+| -------- | ---- | ----------- | ---------- | ------- | --------- |
+| distinct | 50k  | 0.5 ms      | 15 ms      | 4 ms    | **4.02×** |
+| distinct | 200k | 1.1 ms      | 35 ms      | 11 ms   | 3.14×     |
+| distinct | 500k | 2.8 ms      | 89 ms      | 26 ms   | 3.39×     |
+| distinct | 2M   | 10.3 ms     | 330 ms     | 104 ms  | 3.17×     |
+| repeated | any  | ~0 ms       | ~0 ms      | 2–26 ms | **0.01×** |
+
+**What actually decides it is the cache-hit rate.** On distinct work the
+pool wins ~3–4× at every size tested. On _repeated_ work it is
+catastrophic — in-process, a re-asked question is a memo hit that returns
+the same column object for approximately nothing, while a pool copies and
+ships every answer no matter how cheap it was. Each worker also warms its
+own graph, so N workers hold up to N copies of a hot column. **Pooling
+and caching compete; they do not compose.**
+
+### The op matters more than the worker count
+
+The pool's ceiling turned out to be a property of the _op_, not the pool.
+The same rolling mean, written two ways, 32 requests over 2M rows:
+
+| op output              | in-process | pool(8) | speedup |
+| ---------------------- | ---------- | ------- | ------- |
+| boxed (`new Array`)    | 1849 ms    | 632 ms  | 2.92×   |
+| typed (`Float64Array`) | **482 ms** | 121 ms  | 3.98×   |
+
+Read the in-process column first. **Fixing the op was worth 3.8× on one
+thread — more than eight workers bought the unfixed one** (482 ms
+single-threaded versus 632 ms across eight). Boxing does not merely cost
+more; it parallelises worse, because it contends on memory bandwidth and
+per-isolate GC, which is exactly the resource extra workers cannot add.
+
+A corollary worth keeping: **a high pool speedup can be a symptom of a
+slow op.** The boxing version showed a _better_ ratio before the op was
+fixed, because parallelism was hiding the waste.
 
 ## What's missing (the task)
 

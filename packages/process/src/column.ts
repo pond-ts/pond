@@ -25,6 +25,9 @@
  *   op whose kernel hands back an array.
  * - {@link appendColumn} — put a column back onto a series for the
  *   renderer path, avoiding the round trip where the column is gapless.
+ * - {@link columnBuffers} / {@link columnFromBuffers} — the buffer pair a
+ *   column *is*, for moving one across an isolate boundary
+ *   ([PND-PROCPAR]).
  */
 
 import { Float64Column, TimeSeries } from 'pond-ts';
@@ -193,4 +196,72 @@ export function appendColumn<S extends SeriesSchema>(
     boxed[i] = v === undefined || Number.isNaN(v as number) ? undefined : v;
   }
   return wide.withColumn(name, boxed);
+}
+
+/**
+ * The buffer pair a packed numeric column **is** — for moving one across
+ * an isolate boundary ([PND-PROCPAR]).
+ *
+ * `RunResult.columns` is already described as the wire-shaped answer: a
+ * `Float64Array` plus a validity bitmap. This makes that literal, so a
+ * worker can hand a result back as two transferable buffers rather than
+ * 500k boxed values (48.6 ms per answer boxed vs 0.5 ms transferred).
+ *
+ * **The buffers are copies, deliberately.** A column's own buffers are
+ * shared with the node's memo, and transferring a buffer *detaches* it in
+ * the sending isolate — which would silently empty the cache the worker
+ * exists to keep warm. One `slice()` per surfaced column is the price of
+ * the cache staying valid, and it is still the cheap direction.
+ *
+ * Falls back to `undefined` for a column this cannot express (chunked
+ * storage, or a non-numeric kind), so a caller can box that one rather
+ * than the pool failing over a column it did not need packed.
+ */
+export interface ColumnBuffers {
+  readonly length: number;
+  readonly values: Float64Array;
+  /** Absent ⇒ every cell defined (the framework's no-bitmap convention). */
+  readonly bits?: Uint8Array;
+  readonly definedCount: number;
+  readonly allFinite: boolean;
+}
+
+export function columnBuffers(column: Column): ColumnBuffers | undefined {
+  const packed = column as unknown as {
+    kind: string;
+    storage?: string;
+    length: number;
+    _values?: Float64Array;
+    validity?: ValidityBitmap;
+    allFinite?: boolean;
+  };
+  if (packed.kind !== 'number' || packed.storage !== 'packed') return undefined;
+  const values = packed._values;
+  if (!(values instanceof Float64Array)) return undefined;
+
+  const length = packed.length;
+  const validity = packed.validity;
+  return {
+    length,
+    // `slice`, not `subarray`: the result is transferred, and transferring
+    // a view detaches the buffer it borrows from — here, the live memo.
+    values: values.slice(0, length),
+    ...(validity === undefined
+      ? {}
+      : { bits: validity.bits.slice(0, bitmapByteCount(length)) }),
+    definedCount: validity === undefined ? length : validity.definedCount,
+    allFinite: packed.allFinite ?? false,
+  };
+}
+
+/** Rebuilds a column from {@link columnBuffers}, adopting both buffers. */
+export function columnFromBuffers(wire: ColumnBuffers): Float64Column {
+  return new Float64Column(
+    wire.values,
+    wire.length,
+    wire.bits === undefined
+      ? undefined
+      : new PackedValidity(wire.bits, wire.length, wire.definedCount),
+    wire.allFinite,
+  );
 }
