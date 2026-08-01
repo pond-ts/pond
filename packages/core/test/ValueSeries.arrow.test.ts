@@ -180,9 +180,12 @@ describe('ValueSeries.fromArrow', () => {
         strike: vectorFromArray(['a', 'b'], new Utf8()),
         iv: vectorFromArray([0.31, 0.27], new Float64()),
       });
-      expect(() =>
-        ValueSeries.fromArrow(strings as never, { axis: 'strike' }),
-      ).toThrow(/axis column 'strike' is not a numeric Arrow column/);
+      expect(
+        () => ValueSeries.fromArrow(strings as never, { axis: 'strike' }),
+        // Refused on its declared type, before any bytes are read.
+      ).toThrow(
+        /column 'strike' has Arrow type Utf8, which pond cannot read as a key/,
+      );
     });
 
     it('the axis listed again as a value column', () => {

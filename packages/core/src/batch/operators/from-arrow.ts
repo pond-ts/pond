@@ -6,6 +6,7 @@ import {
 } from '../../columnar/index.js';
 import { ValidationError } from '../../core/errors.js';
 import type { SeriesSchema, ValueSeriesSchema } from '../../schema/index.js';
+import { assertReadableArrowType, type ArrowTypeLike } from './arrow-types.js';
 import { flatKeyNames } from './flat-keys.js';
 import type { RawColumns } from './ingest-columns.js';
 
@@ -75,7 +76,7 @@ export interface ArrowFieldLike {
    * Both are optional so a bare structural stand-in — and a real `DataType`,
    * which carries far more — satisfy the shape.
    */
-  readonly type: { readonly typeId?: number; readonly unit?: number };
+  readonly type: ArrowTypeLike;
 }
 
 /** Structural view of an Arrow `Schema`. */
@@ -306,6 +307,39 @@ function int64ToFloat64(
   return out;
 }
 
+/**
+ * A numeric Arrow buffer must be **one machine word per row**. Anything wider
+ * is a physical layout this reader does not understand — a `Decimal128` is
+ * four `uint32` words per value, and read as numbers it yields four times the
+ * rows, each of them meaningless.
+ *
+ * The declared-type gate (`./arrow-types.ts`) already refuses those on a real
+ * Arrow table. This is the backstop for a duck-typed stand-in, which has no
+ * `typeId` to gate on — and it is cheap: one comparison per column.
+ */
+function assertOneWordPerRow(
+  raw: ArrayLike<unknown>,
+  rows: number,
+  name: string,
+): void {
+  if (raw.length !== rows) {
+    throw new ValidationError(
+      `fromArrow: column '${name}' hands back ${raw.length} values for ` +
+        `${rows} rows — pond reads numeric columns that store one value per ` +
+        `row, so this is a layout it cannot interpret (an Arrow Decimal, for ` +
+        `instance, is several machine words per value)`,
+    );
+  }
+}
+
+/** {@link assertOneWordPerRow} for a key edge, which reads before its kind is known. */
+function assertKeyOneWordPerRow(vector: ArrowVectorLike, name: string): void {
+  const raw = vector.toArray();
+  if (ArrayBuffer.isView(raw) || Array.isArray(raw)) {
+    assertOneWordPerRow(raw as ArrayLike<unknown>, vector.length, name);
+  }
+}
+
 /** A read value column, tagged with the pond kind its data maps to. */
 type ReadColumn =
   | { kind: 'number'; values: Float64Array }
@@ -514,6 +548,7 @@ function readColumn(
 ): ReadColumn {
   const raw = vector.toArray();
   if (isNumberTypedArray(raw)) {
+    assertOneWordPerRow(raw, vector.length, name);
     if (vector.nullCount > 0) {
       const adopted = allowAdopt
         ? adoptNumericWithNulls(vector, vector.length)
@@ -550,6 +585,7 @@ function readTimeColumn(
   name: string,
   scale: number,
 ): Float64Array {
+  assertKeyOneWordPerRow(vector, name);
   if (vector.nullCount > 0) {
     throw new ValidationError(
       `fromArrow: time column '${name}' has ${vector.nullCount} null value(s) ` +
@@ -643,6 +679,8 @@ export function arrowToColumns(
     );
   }
 
+  assertReadableArrowType(timeField.type, timeName, 'key');
+
   // Time unit → ms scale, gated on the Arrow type family (see resolveMsScale).
   const scale = resolveMsScale(timeField, options.timeUnit);
 
@@ -677,6 +715,7 @@ export function arrowToColumns(
   }> = [{ name: timeName, kind: keyKind }];
   readValueColumns({
     table,
+    fields,
     valueNames,
     keyNames: keyFieldNames,
     keyNoun: 'the time key',
@@ -706,6 +745,8 @@ export function arrowToColumns(
  */
 function readValueColumns(input: {
   table: ArrowTableLike;
+  /** The table's fields, for the declared-type gate (`./arrow-types.ts`). */
+  fields: ReadonlyArray<ArrowFieldLike>;
   valueNames: readonly string[];
   /**
    * Every field the key occupies — one name for a point key, and for a
@@ -722,7 +763,7 @@ function readValueColumns(input: {
     kind: 'time' | 'timeRange' | 'interval' | 'value' | 'number' | 'string';
   }>;
 }): void {
-  const { table, valueNames, keyNames, keyNoun, allowAdopt } = input;
+  const { table, fields, valueNames, keyNames, keyNoun, allowAdopt } = input;
   for (const name of valueNames) {
     if (keyNames.has(name)) {
       throw new ValidationError(
@@ -736,6 +777,12 @@ function readValueColumns(input: {
         `fromArrow: column '${name}' not found in the table`,
       );
     }
+    // Refuse a type the shape reader below would misread rather than reject.
+    assertReadableArrowType(
+      fields.find((f) => f.name === name)?.type,
+      name,
+      'value',
+    );
     // Sorting permutes rows into fresh buffers, so there would be nothing
     // left to adopt — decide it here, once, rather than handing the ingest
     // engine a column it would have to take apart again.
@@ -758,6 +805,11 @@ function readKeyEdge(
   scale: number,
   keyKind: string,
 ): Float64Array {
+  assertReadableArrowType(
+    table.schema?.fields?.find((f) => f.name === name)?.type,
+    name,
+    'key',
+  );
   const vector = table.getChild(name);
   if (vector == null) {
     throw new ValidationError(
@@ -777,6 +829,12 @@ function readLabelField(
   table: ArrowTableLike,
   name: string,
 ): ReadonlyArray<string | null> | Float64Array {
+  // A label is string or number, so it gates as a value column, not a key.
+  assertReadableArrowType(
+    table.schema?.fields?.find((f) => f.name === name)?.type,
+    name,
+    'value',
+  );
   const vector = table.getChild(name);
   if (vector == null) {
     throw new ValidationError(
@@ -808,6 +866,7 @@ function readLabelField(
  * same two errors surface whichever door the data came through.
  */
 function readAxisColumn(vector: ArrowVectorLike, name: string): Float64Array {
+  assertKeyOneWordPerRow(vector, name);
   if (vector.nullCount > 0) {
     throw new ValidationError(
       `fromArrow: axis column '${name}' has ${vector.nullCount} null value(s) ` +
@@ -875,6 +934,12 @@ export function arrowToValueColumns(
     options.columns ??
     fields.map((f) => f.name).filter((name) => name !== axisName);
 
+  assertReadableArrowType(
+    fields.find((f) => f.name === axisName)?.type,
+    axisName,
+    'key',
+  );
+
   const columns: RawColumns = {
     [axisName]: readAxisColumn(axisVector, axisName),
   };
@@ -884,6 +949,7 @@ export function arrowToValueColumns(
   ];
   readValueColumns({
     table,
+    fields,
     valueNames,
     keyNames: new Set([axisName]),
     keyNoun: 'the axis',
