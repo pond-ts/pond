@@ -265,3 +265,81 @@ export function columnFromBuffers(wire: ColumnBuffers): Float64Column {
     wire.allFinite,
   );
 }
+
+/**
+ * A **zero-copy** read view over a packed numeric column — [PND-PROCCOL].
+ *
+ * The counterpart to {@link columnBuffers}, which copies because its
+ * result crosses a thread. This one borrows: `values` and `bits` are
+ * `subarray`s of the column's own storage, valid only while the memo
+ * that produced the column holds it. Read, never retain.
+ *
+ * `undefined` for anything not packed numeric — a string column, or a
+ * value that arrived boxed — so a caller keeps its slow path.
+ *
+ * ## Why a view rather than `scan`
+ *
+ * Measured folding a max over 500k cells:
+ *
+ * | read path                     | ms   |
+ * | ----------------------------- | ---- |
+ * | boxed `(number\|undefined)[]` | 0.91 |
+ * | `Column.scan()`               | 4.27 |
+ * | buffer + bitmap               | 0.96 |
+ *
+ * The columnar form is **not faster to read** — a buffer walk only
+ * reaches parity with the boxed array, and `scan` is 4.7× slower than
+ * either because it takes a callback per cell. The case for it is that
+ * it does not *allocate*: no `Array` of 500k boxed slots per version,
+ * and nothing at all for a fold like `latest`, which reads one cell.
+ * Core's design principles recommend `scan` as the columnar read path,
+ * which is worth revisiting on this evidence.
+ */
+export interface ColumnView {
+  readonly length: number;
+  /** Column storage. A cell is meaningful only where {@link ColumnView.defined}. */
+  readonly values: Float64Array;
+  /** Absent ⇒ every cell is defined. */
+  readonly bits?: Uint8Array;
+  readonly definedCount: number;
+  defined(i: number): boolean;
+  at(i: number): number | undefined;
+}
+
+export function columnView(column: Column): ColumnView | undefined {
+  const packed = column as unknown as {
+    kind: string;
+    storage?: string;
+    length: number;
+    _values?: Float64Array;
+    validity?: ValidityBitmap;
+  };
+  if (packed.kind !== 'number' || packed.storage !== 'packed') return undefined;
+  const values = packed._values;
+  if (!(values instanceof Float64Array)) return undefined;
+
+  const length = packed.length;
+  const validity = packed.validity;
+  const view = values.subarray(0, length);
+  if (validity === undefined) {
+    return {
+      length,
+      values: view,
+      definedCount: length,
+      defined: () => true,
+      at: (i) => (i >= 0 && i < length ? view[i] : undefined),
+    };
+  }
+  const bits = validity.bits;
+  // LSB-first, one bit per cell — pond's layout, and Arrow's.
+  const defined = (i: number): boolean =>
+    i >= 0 && i < length && (bits[i >> 3]! & (1 << (i & 7))) !== 0;
+  return {
+    length,
+    values: view,
+    bits,
+    definedCount: validity.definedCount,
+    defined,
+    at: (i) => (defined(i) ? view[i] : undefined),
+  };
+}

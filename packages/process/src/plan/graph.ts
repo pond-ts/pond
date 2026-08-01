@@ -9,7 +9,12 @@
  * memoization.
  */
 
-import { appendColumn, packColumn } from '../column.js';
+import {
+  appendColumn,
+  columnView,
+  packColumn,
+  type ColumnView,
+} from '../column.js';
 import { ProcessError } from '../errors.js';
 import { defineNode, type Node } from '../node.js';
 import { port } from '../types.js';
@@ -221,23 +226,51 @@ export class BoundGraph {
           bound.map((b) => [b.role, b.column]),
         );
         if (isFold(op)) {
-          // Densifying happens here — inside the memo, once per version.
-          // As a selector-side reduction it happened once per *request*,
-          // forever, on a column the graph had already cached.
-          const values = Object.fromEntries(
+          // Both accessors resolve inside the memo, so whatever a fold
+          // reads is prepared once per version rather than once per
+          // request. The difference is what "prepared" costs.
+          //
+          // `numeric` is a zero-copy view: no allocation at any length.
+          // `values` densifies into a boxed array and is therefore LAZY —
+          // a getter per role, memoized — because it was the graph's
+          // largest heap cost and `latest`, which reads a single cell,
+          // was paying for 500,000 of them ([PND-PROCCOL]).
+          const columnOfRole = new Map<string, Column>(
             bound.map((b) => [
               b.role,
-              densify(
-                series.column(b.column) as unknown as Column,
-              ) as readonly (number | undefined)[],
+              series.column(b.column) as unknown as Column,
             ]),
           );
+          const views = new Map<string, ColumnView | undefined>();
+          const numeric = (role: string): ColumnView | undefined => {
+            if (views.has(role)) return views.get(role);
+            const col = columnOfRole.get(role);
+            const view = col === undefined ? undefined : columnView(col);
+            views.set(role, view);
+            return view;
+          };
+          const values: Record<string, readonly (number | undefined)[]> = {};
+          const densified = new Map<string, readonly (number | undefined)[]>();
+          for (const b of bound) {
+            Object.defineProperty(values, b.role, {
+              enumerable: true,
+              get: () => {
+                let dense = densified.get(b.role);
+                if (dense === undefined) {
+                  dense = densify(columnOfRole.get(b.role)!);
+                  densified.set(b.role, dense);
+                }
+                return dense;
+              },
+            });
+          }
           const keyColumn = series.keyColumn() as unknown as {
             at(i: number): number;
           };
           return {
             [FACT]: op.fold({
               values,
+              numeric,
               at: (i) => keyColumn.at(i),
               params,
               id,

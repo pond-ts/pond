@@ -509,10 +509,28 @@ whether it stays one.
   it, and let the registry declare which params each output depends on so the
   corpus gets it by declaration rather than by hand. Sharpens the RFC's "the
   cutoff cannot fire" — true for whole-series identity compares, false per-Out.
-- **[PND-PROCCOL]** — Node values should be pond columns, not boxed JS arrays
-  with `undefined` holes. Measured at 20 columns × 500k rows: 160 MB heap
-  versus 3 MB packed (~50× less GC-managed heap, ~2× smaller overall).
-  Prerequisite for byte-bounded eviction and for the ranged-recompute ceiling.
+- **[PND-PROCCOL]** — **Shipped.** Node _column_ outputs were already packed;
+  what stayed boxed was the **fold context**, which densified an
+  `Array<number | undefined>` per input per version. `columnView` gives folds
+  a zero-copy borrowed view, `FoldContext.numeric(role)` hands it over, and
+  `FoldContext.values` became a **lazy getter** so an untouched role costs
+  nothing. All four built-in folds migrated. 20 folds × 500k rows: warm run
+  **606 → 383 ms**, heap at peak **35 → 25 MB**, rss **204 → 173 MB**.
+
+  **The result is about fold shape, not representation, and the distinction
+  is the reusable part.** Columnar is _not_ faster to read — a buffer walk
+  reaches parity with a boxed array, and `Column.scan()` is **4.7× slower
+  than either** because it takes a callback per cell. The 1.58× is the
+  densify disappearing for folds that read a few cells: `last` reads **one**
+  and was paying to densify 500,000. A whole-column fold gets the memory win
+  and nothing else. Core's design principles recommend `scan` as the
+  columnar read path, which is worth revisiting on this evidence.
+
+  Also worth keeping: measuring `heapUsed` _after_ a `gc()` reported ~0 MB
+  for both paths and said nothing, because the densified arrays are garbage
+  the moment the fold returns. What costs pause time is garbage produced,
+  not bytes retained — so the benchmark samples the heap before collecting.
+
 - **[PND-PROCTERM]** — Assembly into a `TimeSeries` should be requested, not
   assumed. Reductions read node values directly (52× on an agent session;
   441× once facts memoize on `node.out.value.version`), and a renderer pulls

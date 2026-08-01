@@ -49,8 +49,9 @@ export {
   appendColumn,
   columnBuffers,
   columnFromBuffers,
+  columnView,
 } from './column.js';
-export type { ColumnBuffers } from './column.js';
+export type { ColumnBuffers, ColumnView } from './column.js';
 export { Graph } from './graph.js';
 export type {
   GraphEdge,

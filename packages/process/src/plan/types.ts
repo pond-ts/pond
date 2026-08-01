@@ -6,6 +6,7 @@
  * shape and the op declarations it resolves against.
  */
 
+import type { ColumnView } from '../column.js';
 import type { Column, TimeSeries, SeriesSchema } from 'pond-ts';
 
 /** A JSON-safe param value. Params arrive off a wire, not from code. */
@@ -201,11 +202,33 @@ export interface FoldContext {
    * Dense values per input role, gaps as `undefined`.
    *
    * Prepared by the graph rather than by each fold, and — the point of
-   * the whole exercise — prepared **inside the memo**, so densifying a
-   * 150,000-row column happens once per version rather than once per
+   * the original exercise — prepared **inside the memo**, so densifying
+   * a 150,000-row column happens once per version rather than once per
    * request.
+   *
+   * **Prefer {@link FoldContext.numeric}.** This is the boxed form, and
+   * it is now **lazy**: touching a role allocates an `Array` of that
+   * column's length and fills it, which is the single largest heap cost
+   * in the graph ([PND-PROCCOL]). `latest` reads one cell and used to
+   * pay for 500,000 of them. Untouched roles cost nothing, so a fold
+   * that never reads this never allocates.
    */
   readonly values: Readonly<Record<string, readonly (number | undefined)[]>>;
+  /**
+   * A **zero-copy** columnar view of one input role — no allocation, at
+   * any length.
+   *
+   * `values` is the column's own storage and a cell is meaningful only
+   * where `defined(i)`; both are borrowed and must not be retained past
+   * the fold. `undefined` when the role's column is not packed numeric
+   * (a string column, or a value an op returned boxed), which is the
+   * caller's cue to fall back to {@link FoldContext.values}.
+   *
+   * Reading is **not faster** this way — a buffer walk reaches parity
+   * with the boxed array and `Column.scan()` is 4.7× slower than either.
+   * What changes is that nothing is allocated to do it.
+   */
+  numeric(role: string): ColumnView | undefined;
   /**
    * Timestamp at a row index.
    *

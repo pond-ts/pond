@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { TimeSeries } from 'pond-ts';
-import { appendColumn, columnBytes, packColumn } from '../src/index.js';
+import {
+  appendColumn,
+  columnBuffers,
+  columnBytes,
+  columnView,
+  packColumn,
+} from '../src/index.js';
 
 /**
  * Reads a dynamically-named column off a loosely-typed series.
@@ -146,5 +152,83 @@ describe('appendColumn', () => {
     expect(() =>
       appendColumn(series([1, 2, 3]), 'bad', packColumn([1, 2])),
     ).toThrow(/does not match series length/);
+  });
+});
+
+describe('[PND-PROCCOL] columnView — the zero-copy read path', () => {
+  it('borrows the column storage rather than copying it', () => {
+    // The difference from `columnBuffers`, which slices because its result
+    // crosses a thread. A fold reads in-process, so it should borrow.
+    const col = packColumn([1, 2, 3, 4]);
+    const view = columnView(col)!;
+    const buffers = columnBuffers(col)!;
+    expect(view.values.length).toBe(4);
+    expect(buffers.values).not.toBe(view.values);
+    // Same underlying memory, so a write through one is visible in the
+    // other — which is exactly why the contract says read, never retain.
+    expect(view.values.buffer).toBe(
+      (col as unknown as { _values: Float64Array })._values.buffer,
+    );
+  });
+
+  it('reports gaps from the validity bitmap', () => {
+    const col = packColumn([1, undefined, 3, undefined, 5]);
+    const view = columnView(col)!;
+    expect(view.length).toBe(5);
+    expect(view.definedCount).toBe(3);
+    expect([0, 1, 2, 3, 4].map((i) => view.defined(i))).toEqual([
+      true,
+      false,
+      true,
+      false,
+      true,
+    ]);
+    expect([0, 1, 2, 3, 4].map((i) => view.at(i))).toEqual([
+      1,
+      undefined,
+      3,
+      undefined,
+      5,
+    ]);
+  });
+
+  it('treats a bitmap-free column as wholly defined', () => {
+    const view = columnView(packColumn([1, 2, 3]))!;
+    expect(view.bits).toBeUndefined();
+    expect(view.definedCount).toBe(3);
+    expect(view.defined(0)).toBe(true);
+    expect(view.defined(2)).toBe(true);
+  });
+
+  it('is out-of-range safe at both ends', () => {
+    // A fold walking backwards from `length - 1` is one off-by-one away
+    // from reading past the bitmap, where a raw bit test returns garbage
+    // rather than throwing.
+    const view = columnView(packColumn([1, undefined, 3]))!;
+    expect(view.defined(-1)).toBe(false);
+    expect(view.defined(3)).toBe(false);
+    expect(view.defined(9999)).toBe(false);
+    expect(view.at(-1)).toBeUndefined();
+    expect(view.at(3)).toBeUndefined();
+  });
+
+  it('declines anything it cannot read as packed numeric', () => {
+    // The caller's cue to keep its boxed fallback rather than guess.
+    const notAColumn = { kind: 'string', storage: 'packed', length: 3 };
+    expect(columnView(notAColumn as never)).toBeUndefined();
+    const unpacked = { kind: 'number', storage: 'boxed', length: 3 };
+    expect(columnView(unpacked as never)).toBeUndefined();
+  });
+
+  it('agrees cell for cell with the boxed form it replaces', () => {
+    // The migration's safety property: every fold reads the same values
+    // either way, so switching a fold to `numeric` cannot change a fact.
+    const raw = Array.from({ length: 500 }, (_, i) =>
+      i % 7 === 0 ? undefined : Math.sin(i) * 100,
+    );
+    const view = columnView(packColumn(raw))!;
+    for (let i = 0; i < raw.length; i += 1) {
+      expect(view.at(i), `cell ${i}`).toBe(raw[i]);
+    }
   });
 });

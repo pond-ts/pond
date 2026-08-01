@@ -54,6 +54,33 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **`columnView(column)` in `@pond-ts/process` — a zero-copy read view over a
+  packed numeric column** ([PND-PROCCOL]), and `FoldContext.numeric(role)`,
+  which hands one to a fold. `values` and `bits` are `subarray`s of the
+  column's own storage: read, never retain.
+
+  `FoldContext.values` — the boxed `(number | undefined)[]` — is now a **lazy
+  getter** rather than eagerly densified, so a fold that never touches it
+  never allocates. It was the graph's largest heap cost, and `last` reads a
+  single cell while paying to densify 500,000 of them.
+
+  20 folds × 500k rows, `scripts/perf-proccol.mjs`:
+
+  |              | boxed  | columnar   |
+  | ------------ | ------ | ---------- |
+  | warm run     | 606 ms | **383 ms** |
+  | heap at peak | 35 MB  | **25 MB**  |
+  | rss          | 204 MB | **173 MB** |
+
+  Read that as a fold-shape result, not a representation result. **Columnar
+  is not faster to read** — a buffer walk reaches parity with a boxed array,
+  and `Column.scan()` is 4.7× slower than either because it takes a callback
+  per cell. The 1.58× is the densify disappearing for folds that read a few
+  cells. A fold that walks the whole column should expect parity, and gets
+  the memory win only.
+
 ### Changed
 
 - **The rolling mean/σ kernel is now _range-exact_, and every rolling study
