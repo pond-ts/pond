@@ -19,6 +19,7 @@ export default function setup(options) {
   const registry = createRegistry()
     .define({
       name: 'sma',
+      lookback: (p) => p.period - 1,
       family: 'trend',
       summary: 'SMA.',
       params: { period: int({ min: 2, default: 20 }) },
@@ -31,6 +32,12 @@ export default function setup(options) {
     })
     .define({
       name: 'ema',
+      // IIR: an EMA depends on every row before it, decaying but never
+      // reaching zero, so there is no exact finite warm-up. 4x period is
+      // the usual engineering answer and belongs here rather than in the
+      // folder, because the multiplier is a claim about acceptable error
+      // and only this op knows what it is.
+      lookback: (p) => 4 * p.period,
       family: 'trend',
       summary: 'EMA.',
       params: { period: int({ min: 2, default: 20 }) },
@@ -43,6 +50,7 @@ export default function setup(options) {
     })
     .define({
       name: 'bollinger',
+      lookback: (p) => p.period - 1,
       family: 'bands',
       summary: 'Bollinger.',
       params: { period: int({ min: 2, default: 20 }) },
@@ -62,6 +70,7 @@ export default function setup(options) {
     })
     .define({
       name: 'zscore',
+      lookback: (p) => p.period - 1,
       family: 'stats',
       summary: 'Z-score.',
       params: { period: int({ min: 2, default: 20 }) },
@@ -75,6 +84,7 @@ export default function setup(options) {
     })
     .define({
       name: 'envelope',
+      lookback: (p) => p.period - 1,
       family: 'bands',
       summary: 'Envelope.',
       params: { period: int({ min: 2, default: 20 }) },
@@ -98,6 +108,7 @@ export default function setup(options) {
     })
     .define({
       name: 'pctChange',
+      lookback: () => 1,
       family: 'returns',
       summary: 'Percent change.',
       params: {},

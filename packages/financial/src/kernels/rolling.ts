@@ -1,3 +1,4 @@
+import { rollingMeanSdInto } from './ranged.js';
 import type {
   AggregateOutputMap,
   NumericColumnNameForSchema,
@@ -95,6 +96,15 @@ export function rollingColumns(
     const accelerated = accelerator(series, specs, period);
     if (accelerated !== null) return accelerated;
   }
+  // `avg` / `stdev` off one column is the overwhelming majority of what the
+  // studies ask for, and the one shape with a range-exact kernel — so it
+  // takes that path rather than core's general sweep. The answers differ
+  // from core's in the last ulps and are the more accurate of the two; see
+  // [PND-PROCKERN] on `ranged.ts`. Everything else (min/max/median/sum/pN,
+  // or more than one source column) still goes to core.
+  const ranged = rollingMeanSdColumns(series, specs, period);
+  if (ranged !== null) return ranged;
+
   const rolled = series.rolling(
     { count: period },
     specs as AggregateOutputMap<SeriesSchema>,
@@ -106,6 +116,47 @@ export function rollingColumns(
     // `rolled.events` costs ~50× the whole rolling scan at 1M rows (one Event
     // + one data object per row) for what is a single numeric column read.
     out[name] = readNumericColumn(rolled, name);
+  }
+  return out;
+}
+
+/**
+ * The `avg`/`stdev`-off-one-column case of {@link rollingColumns}, on the
+ * range-exact kernel. `null` means "not this shape" and the caller falls
+ * through to core's general sweep.
+ */
+function rollingMeanSdColumns(
+  series: TimeSeries<SeriesSchema>,
+  specs: Record<string, { from: string; using: RollingReducer }>,
+  period: number,
+): Record<string, Float64Array> | null {
+  const entries = Object.entries(specs);
+  if (entries.length === 0) return null;
+  const column = entries[0]![1].from;
+  let wantMean = false;
+  let wantSd = false;
+  for (const [, spec] of entries) {
+    if (spec.from !== column) return null;
+    if (spec.using === 'avg') wantMean = true;
+    else if (spec.using === 'stdev') wantSd = true;
+    else return null;
+  }
+
+  const values = readNumericColumn(series, column);
+  const n = values.length;
+  const mean = wantMean ? new Float64Array(n) : undefined;
+  const sd = wantSd ? new Float64Array(n) : undefined;
+  rollingMeanSdInto(values, period, 0, n, mean, sd);
+
+  // Both buffers are fresh, so the first name asking for one takes it and
+  // only a second name asking for the same reducer pays a copy — callers
+  // derive in place, so two outputs must never alias.
+  const out: Record<string, Float64Array> = {};
+  const taken = new Set<string>();
+  for (const [name, spec] of entries) {
+    const src = (spec.using === 'avg' ? mean : sd)!;
+    out[name] = taken.has(spec.using) ? src.slice() : src;
+    taken.add(spec.using);
   }
   return out;
 }

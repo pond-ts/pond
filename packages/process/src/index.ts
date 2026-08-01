@@ -49,8 +49,11 @@ export {
   appendColumn,
   columnBuffers,
   columnFromBuffers,
+  columnView,
 } from './column.js';
-export type { ColumnBuffers } from './column.js';
+export type { ColumnBuffers, ColumnView } from './column.js';
+export { requiredHistory } from './plan/history.js';
+export type { HistoryResult } from './plan/history.js';
 export { Graph } from './graph.js';
 export type {
   GraphEdge,

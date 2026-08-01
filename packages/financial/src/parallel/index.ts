@@ -55,8 +55,8 @@ declare module 'pond-ts' {
      * partitioned; put it after `.sma()` and that `sma` has already run
      * sequentially.
      *
-     * See the free {@link withWorkers} for the per-study accuracy table
-     * — bounded at ~5.1e-13 across the studies it accelerates.
+     * Since [PND-PROCKERN] the partitioned answer is **bit-identical**
+     * to the sequential one; see the free {@link withWorkers}.
      */
     withWorkers(options?: WithWorkersOptions): TimeSeries<S>;
   }

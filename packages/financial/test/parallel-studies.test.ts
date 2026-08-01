@@ -141,7 +141,9 @@ describe('[PND-SCANKERN] withWorkers', () => {
       );
       expect(mismatchedGaps, `${band}: gaps`).toBe(0);
       expect(over, `${band}: cells beyond 1e-9`).toBe(0);
-      expect(worst).toBeLessThan(1e-9);
+      // Bit-identical since [PND-PROCKERN], not merely close. A tolerance
+      // that a stronger property already satisfies pins nothing.
+      expect(worst, `${band}: partitioning must change nothing`).toBe(0);
     }
   });
 
@@ -152,12 +154,13 @@ describe('[PND-SCANKERN] withWorkers', () => {
     const actual = studies.sma(withWorkers(series, { workers: 4 }), {
       period: P,
     });
-    const { mismatchedGaps, over } = compare(
+    const { worst, mismatchedGaps, over } = compare(
       cells(actual as never, 'sma'),
       cells(expected as never, 'sma'),
     );
     expect(mismatchedGaps).toBe(0);
     expect(over).toBe(0);
+    expect(worst, 'partitioning must change nothing').toBe(0);
   });
 
   it('zScore: agrees except for the documented amplified tail', async () => {
@@ -202,12 +205,13 @@ describe('[PND-SCANKERN] withWorkers', () => {
       period: P,
     });
     for (const band of ['bbMiddle', 'bbUpper', 'bbLower']) {
-      const { mismatchedGaps, over } = compare(
+      const { worst, mismatchedGaps, over } = compare(
         cells(actual as never, band),
         cells(expected as never, band),
       );
       expect(mismatchedGaps, `${band}: gap placement`).toBe(0);
       expect(over, `${band}: beyond 1e-9`).toBe(0);
+      expect(worst, `${band}: partitioning must change nothing`).toBe(0);
     }
   });
 
@@ -222,7 +226,7 @@ describe('[PND-SCANKERN] withWorkers', () => {
     const expected = studies.bollinger(studies.sma(bars(N), { period: P }), {
       period: P,
     });
-    const { mismatchedGaps, over } = compare(
+    const { worst, mismatchedGaps, over } = compare(
       cells(twice as never, 'bbMiddle'),
       cells(expected as never, 'bbMiddle'),
     );
@@ -266,7 +270,7 @@ describe('[PND-SCANKERN] withWorkers', () => {
     const actual = studies.bollinger(withWorkers(series, { workers: 1 }), {
       period: P,
     });
-    const { over } = compare(
+    const { worst, over } = compare(
       cells(actual as never, 'bbMiddle'),
       cells(expected as never, 'bbMiddle'),
     );
@@ -321,12 +325,13 @@ describe('[PND-SCANKERN] withWorkers', () => {
     // Every link agrees, `zscore` now included — the accelerated links
     // stay within rounding error and the unaccelerated one is exact.
     for (const column of ['sma', 'bbMiddle', 'zscore'] as const) {
-      const { mismatchedGaps, over } = compare(
+      const { worst, mismatchedGaps, over } = compare(
         cells(actual as never, column),
         cells(expected as never, column),
       );
       expect(mismatchedGaps, `${column}: gaps`).toBe(0);
       expect(over, `${column}: cells beyond 1e-9`).toBe(0);
+      expect(worst, `${column}: partitioning must change nothing`).toBe(0);
     }
   });
 
@@ -372,7 +377,7 @@ describe('[PND-SCANKERN] withWorkers', () => {
       cells(expected as never, 'zscore'),
     );
     expect(mismatchedGaps).toBe(0);
-    expect(worst).toBeLessThan(1e-4);
+    expect(worst, 'partitioning must change nothing').toBe(0);
   });
 
   it('opting one series in does not opt in an unrelated one', async () => {
@@ -441,17 +446,30 @@ describe('[PND-SCANKERN] withWorkers', () => {
     ).toBe(1);
   });
 
-  it('zScore is NOT bounded on near-flat windows — the documented caveat', async () => {
-    // Supplied by a Codex adversarial pass, and it invalidated the bound
-    // this feature was originally documented with. A legal near-flat
-    // series at large magnitude leaves the rolling sigma with almost no
-    // significant digits, so a last-ulp difference between the
-    // sequential and partitioned sweeps becomes an arbitrarily large
-    // relative difference in `(v - mean) / sigma`.
+  it('partitioning is bit-identical, even on the counterexample', async () => {
+    // This test has been inverted, and the history is the point.
     //
-    // Asserted as a LOWER bound: this must stay visibly bad, because the
-    // documentation now promises only that `sma`/`envelope`/`bollinger`
-    // shift by rounding error — and warns that `zScore` does not.
+    // A Codex adversarial pass supplied this input to break the accuracy
+    // bound the parallel studies originally shipped with: a legal
+    // near-flat series at large magnitude, where a last-ulp difference
+    // between the sequential and partitioned sweeps became a 38%
+    // relative difference in `(v - mean) / sigma`. It was then asserted
+    // as a LOWER bound — "this must stay visibly bad" — because the
+    // documentation promised only that the difference was characterised,
+    // not that it was small.
+    //
+    // [PND-PROCKERN] removed the difference entirely. Pinning the
+    // accumulator rebuilds to absolute row index means a chunk starting
+    // anywhere reconstructs exactly the state a whole-column pass held
+    // there, so there is no boundary effect left to amplify. The
+    // assertion is now equality, on the hardest input anyone has found.
+    //
+    // What that does NOT say: `(v - mean) / sigma` is still a terrible
+    // way to compute a z-score at this magnitude — both sweeps are now
+    // equally and identically wrong about it. That hazard belongs to the
+    // formulation, is fixed separately by [PND-SHIFTFRAME], and is
+    // pinned in `shifted-frame.test.ts`. Two different failures that the
+    // original version of this test conflated.
     const { rollingMeanSd } = (await import(
       new URL('../dist/parallel/kernel.js', import.meta.url).href
     )) as typeof import('../src/parallel/kernel.js');
@@ -480,19 +498,20 @@ describe('[PND-SCANKERN] withWorkers', () => {
       );
     }
 
+    // Compared on the raw mean/sd as well as the ratio: the ratio alone
+    // could agree by luck where the inputs did not.
     let worst = 0;
     for (let i = period; i < n; i += 1) {
+      if (!Object.is(seqM[i], parM[i]) || !Object.is(seqS[i], parS[i])) {
+        worst = Infinity;
+        break;
+      }
       const a = seqS[i] === 0 ? NaN : (v[i]! - seqM[i]!) / seqS[i]!;
       const b = parS[i] === 0 ? NaN : (v[i]! - parM[i]!) / parS[i]!;
       if (Number.isNaN(a) && Number.isNaN(b)) continue;
       const d = Math.abs((b - a) / (Math.abs(a) || 1));
       if (d > worst) worst = d;
     }
-    // Measured at ~0.38. If this ever drops to rounding-error scale the
-    // documentation has become too pessimistic and should be revisited —
-    // which is a better failure than the reverse.
-    expect(worst, 'zScore must remain visibly unbounded here').toBeGreaterThan(
-      0.01,
-    );
+    expect(worst, 'partitioning must introduce no difference').toBe(0);
   });
 });

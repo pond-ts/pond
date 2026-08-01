@@ -495,49 +495,195 @@ whether it stays one.
   length. The RFC's two consumers want opposite policies, so this is a design
   call, not a leak to patch; an earlier framing of this ticket blamed the graph
   for what was a plan-layer map. **Blocking for any interactive consumer.**
-- **[PND-PROCCACHE]** — Op-level result cache under an engine-wide budget.
-  Two modes of In: a **value In** drives invalidation and discards superseded
-  values; a **cache-key In** also keys a node-level cache, so repeats hit
-  (14.3× on a repeat-heavy sweep, and 1.9× when the capacity is undersized and
-  thrashes). The split that works: the **decision** to cache is per-op — only it
-  knows what is expensive and which Ins key the result — but the **capacity**
-  must be engine-wide, because a per-op cap is a per-op promise and nothing
-  supervises the total (20 nodes × 5 entries = 157 MB vs 35 MB shared).
+- **[PND-PROCCACHE]** — **Shipped**, and half of it turned out to be already
+  built. `bind(…, { budgetBytes })` caps retained node values engine-wide,
+  LRU, enforced after each run; `retainedBytes` / `evictions` observe it.
+  60 distinct params × 200k rows, one process per configuration:
+  **arrayBuffers 104 → 42 MB** (2.5×), retained 93 → 11 MB, 60 nodes → 7,
+  with repeats still hitting and no eviction churn. **No rss figure**: the
+  replacement 1.2× did not survive re-measurement either — across five
+  forked pairs bounded rss exceeded unbounded in two. Freed buffers are not
+  promptly returned to the OS and the bound series is the floor, so rss
+  cannot support a direction at this scale.
+
+  **Two review findings worth keeping.** Eviction originally deleted the
+  node from `#nodes` and stopped there — but `Outlet.#downstream` is a
+  strong `Set<Inlet>` with a back-reference, so an evicted node stayed
+  reachable from the source and **nothing was freed**; re-asking an evicted
+  spec compiled a _second_ node onto the same source, growing memory without
+  bound while `ids.length` stayed flat. Every test in the suite passed
+  throughout, because they all asserted the graph's own bookkeeping.
+  Eviction now disconnects the inlets, and there is a test that counts what
+  is actually attached to the source outlet.
+
+  And the first headline number here was **5.6× of pure measurement-order
+  artifact**: two configurations timed in one process, the second starting
+  from the first's heap. The benchmark now forks a process per
+  configuration. Same class of error as a JIT warm-up, one level up — and
+  the correction needed a second correction, because the replacement rss
+  figure was not reproducible either. The lesson is narrower than "fork the
+  process": **rss is the wrong instrument for this question**, since a
+  freed buffer need not be returned to the OS. Measure `arrayBuffers`.
+
+  **The half not to rebuild:** the ticket wanted an op to declare which Ins
+  key its result. `specId` is already content-addressed over op, params and
+  inputs, so the same question hits the same node by construction — a per-op
+  key would sit beside a correct one. What was genuinely missing is the
+  capacity, and the ticket is right that it cannot be the op's: a per-op cap
+  is a per-op promise and nothing supervises the total.
+
+  **The open question is closed: bytes, not entries.** Entries are not the
+  unit anyone has a limit in (one node over 1M rows outweighs fifty over
+  5,000), and bytes only became knowable once [PND-PROCCOL] made node values
+  columns. Eviction skips a node whose consumer still holds its outlet —
+  dropping it frees nothing and forces a recompile.
+
 - **[PND-PROCSEL]** — Selective per-Out invalidation already works: a
   bollinger-shaped node changing `stdDev` leaves `middle`'s version untouched
   and its consumer idle, because the op hands back the same instance. Document
   it, and let the registry declare which params each output depends on so the
   corpus gets it by declaration rather than by hand. Sharpens the RFC's "the
   cutoff cannot fire" — true for whole-series identity compares, false per-Out.
-- **[PND-PROCCOL]** — Node values should be pond columns, not boxed JS arrays
-  with `undefined` holes. Measured at 20 columns × 500k rows: 160 MB heap
-  versus 3 MB packed (~50× less GC-managed heap, ~2× smaller overall).
-  Prerequisite for byte-bounded eviction and for the ranged-recompute ceiling.
-- **[PND-PROCTERM]** — Assembly into a `TimeSeries` should be requested, not
-  assumed. Reductions read node values directly (52× on an agent session;
-  441× once facts memoize on `node.out.value.version`), and a renderer pulls
+- **[PND-PROCCOL]** — **Shipped.** Node _column_ outputs were already packed;
+  what stayed boxed was the **fold context**, which densified an
+  `Array<number | undefined>` per input per version. `columnView` gives folds
+  a zero-copy borrowed view, `FoldContext.numeric(role)` hands it over, and
+  `FoldContext.values` became a **lazy getter** so an untouched role costs
+  nothing. All four built-in folds migrated. 20 folds × 500k rows: warm run
+  **606 → 383 ms**, heap at peak **35 → 25 MB**, rss **204 → 173 MB**.
+
+  **The result is about fold shape, not representation, and the distinction
+  is the reusable part.** Columnar is _not_ faster to read — a buffer walk
+  reaches parity with a boxed array, and `Column.scan()` is **4.7× slower
+  than either** because it takes a callback per cell. The 1.58× is the
+  densify disappearing for folds that read a few cells: `last` reads **one**
+  and was paying to densify 500,000. A whole-column fold gets the memory win
+  and nothing else. Core's design principles recommend `scan` as the
+  columnar read path, which is worth revisiting on this evidence.
+
+  Also worth keeping: measuring `heapUsed` _after_ a `gc()` reported ~0 MB
+  for both paths and said nothing, because the densified arrays are garbage
+  the moment the fold returns. What costs pause time is garbage produced,
+  not bytes retained — so the benchmark samples the heap before collecting.
+
+- **[PND-PROCTERM]** — **Shipped**, though the win was not where the ticket
+  looked. It framed this as the _terminal_ rebuilding a series so a
+  reduction had a column to read — and that part was already handled: a
+  facts-only request has an empty `needed` set and assembles nothing. The
+  live cost was one layer down, in **every node's `compute`**, which widened
+  the source with `appendColumn` per nested input so an op could call the
+  corpus normally. A fold needs no series at all; the column it reads is
+  already in its inputs.
+
+  What made it expensive is a core gap: `appendColumn` **boxes a gapped
+  column**, because core's `withColumn` takes values rather than a column —
+  22.4 ms per column at 1M rows, and every rolling study is gapped. The
+  costly path was the ordinary one. Exposing `withColumnAppended` would
+  remove the fallback for column-producing ops too, which still pay it.
+
+  20 folds × 500k rows: **383 → 129 ms** (2.96×), rss 173 → 113 MB; with
+  [PND-PROCCOL] together, **606 → 129 ms**. The old 52×/441× figures were
+  measured against a different baseline (whole-series assembly per
+  reduction, at 1M rows) and are not comparable to these.
+
+  Reductions read node values directly, and a renderer pulls
   per-study arrays. Sharp edge: the terminal must resolve the closure of every
   id a selector mentions, including `crossings`' `against` — assembling only
   the column-selectors yields a fact with no value rather than an error.
+
 - **[PND-PROCJOIN]** — Make the join a node: n series in, one aligned column
   set out, alignment policy in the id (inner vs as-of changes the answer). This
   is what lets a cross-source spec exist at all — separate graphs cannot hold
   one, and hand-combining misaligned instruments silently pairs different
   dates. Needs no engine change; `Graph` has no per-graph boundary today.
-- **[PND-PROCHIST]** — `requiredHistory(plan)`. The hot leading edge costs
-  765 ms/tick over 500k rows and 5.4 ms/tick over a 5,000-row tail, and the
-  registry already knows every op's lookback — so the safe window is derivable
-  rather than a consumer guess.
-- **[PND-PROCRANGE]** — Track dirty state per range (and per column, via the
-  join). 26× measured with identical results, and ~7000× once node values stop
-  reallocating. Requires `markDirty()` to carry a payload and makes a node's
-  `compute` an incremental update over its previous output rather than a pure
-  function of its inputs — weigh that against "transforms are views or
-  accumulators" rather than slipping it in. **Blocked by [PND-PROCKERN].**
-- **[PND-PROCKERN]** — Range-aware kernel entry point in `@pond-ts/financial`.
-  The kernels are whole-series today, so no corpus study can fill a slice and
-  none of `PROCRANGE`'s speedup is reachable. Worth doing on its own merits —
-  it removes a full-array allocation per study call.
+- **[PND-PROCHIST]** — **Shipped.** `requiredHistory(registry, plan)` plus a
+  per-op `OpDef.lookback`. On an 8-study stack over 500k rows with a 5,000-row
+  display: **97 → 1.3 ms/tick, 75×** (10 → 773 ticks/sec), **zero truncated
+  cells** at the derived tail and **exactly one** at a tail one row shorter —
+  so the bound is tight rather than merely safe, which is the half of the
+  acceptance bar that arithmetic alone would have passed.
+
+  Two design calls worth keeping. Lookbacks **sum along a nested chain**
+  (`sma(20)` over `sma(50)` is 69, not 50); a max under-provisions by exactly
+  the amount that yields defined, plausible, truncated answers. And an
+  undeclared lookback reports `known: false` naming the op instead of
+  defaulting to zero — a missing declaration and an element-wise op are the
+  same value with opposite meanings.
+
+  **Interaction with [PND-PROCKERN], found by measuring rather than
+  predicted:** a sliced tail agrees to ≤5.8e-13, _not_ bit-for-bit. Slicing
+  builds a new shorter series, which re-indexes every row, and the rolling
+  kernel pins its accumulator rebuilds to absolute row index. So PROCKERN's
+  bit-identity covers **a range of the same column** — which is what
+  PROCRANGE does — and does not extend to a re-indexed copy. Worth stating
+  before PROCRANGE lands, because the two are easy to conflate.
+
+- **[PND-PROCRANGE]** — **Mechanism shipped; the ceiling is not reached.**
+  `setSourceFrom(series, changedFrom)` plus an opt-in `OpDef.runRange`.
+  500k rows, 5 studies, 20 ticks: **209 → 55 ms/tick (4×)**, bit-identical to
+  a from-scratch pass every tick.
+
+  **The purity question resolved better than expected.** Rather than
+  `markDirty()` carrying a payload and `compute` reading its own last output
+  as state, the previous output is passed **as an argument** — so an op stays
+  a pure function of declared inputs and `explain` keeps describing what a
+  value depends on. The mutable part lives in the graph, which is a cache and
+  was already stateful. No purity was traded.
+
+  **Opt-in, and that is the safety property.** An incremental result must be
+  bit-identical to a from-scratch one or answers depend on edit history —
+  invisible to any test that only computes from scratch. True for
+  [PND-PROCKERN]'s range-exact kernel; **false** for `median`, percentiles,
+  `min`, `max`. Declaring nothing means full recomputes: correct, slower.
+
+  **Remaining, and it is the larger half of the projected win:** 4× against a
+  projected 26×/~7000×. The gap is in the _op_, not the graph — a `runRange`
+  that copies the whole prefix out of `previous` before patching is O(n) per
+  tick, which is what the plan meant by "reallocating its output array". This
+  needs a **capacity-buffer contract** so an op can extend the previous column
+  rather than rebuild it, on top of [PND-PROCCOL]'s packed values.
+
+  **A correction to the plan's range formula.** It said an upstream dirty
+  range `[a,b)` becomes `[a-lookback, b)`. For a **trailing** window a change
+  at row `r` dirties output cells `[r, r+period)` — _forward_ — and since the
+  graph always recomputes to the series end, `[changedFrom, length)` already
+  covers it. Removing the backward widening fails no trailing-window test,
+  which is how this was found. The widening is kept because it is what makes a
+  **non-causal** op correct, and the graph cannot tell the two apart; there is
+  now a centered-window test that fails without it.
+
+- **[PND-PROCKERN]** — **Shipped**, and it turned out to be a correctness
+  task wearing a performance task's clothes. `rollingMeanSdInto` in
+  `packages/financial/src/kernels/ranged.ts` fills any `[lo, hi)` with the
+  exact bits a full pass writes — a 100-row fill is **3964× cheaper** than
+  recomputing the column and **bit-identical**, which is the ceiling
+  [PND-PROCRANGE] can now aim at.
+
+  **The finding that reorders PROCRANGE:** a ranged recompute on the old
+  sweep differed on _every cell_ of the range (~1e-10 relative), because an
+  accumulator carries rounding history from row 0. PROCRANGE's recorded "26×
+  with identical results" was therefore not achievable as specified — the
+  value would have depended on which ranges happened to be dirty, i.e. on
+  edit history rather than data. Two callers with the same data would
+  disagree. Fixed by rebuilding the accumulators every `period` rows and
+  pinning the rebuilds to **absolute** row index, so a ranged sweep
+  reconstructs the state a full sweep held; read-back is ≤ `2·period`.
+
+  Three things came free, and one nearly went wrong:
+  - **`withWorkers` is now bit-identical** to sequential for every study, at
+    any magnitude. The whole per-study accuracy table collapses — chunk
+    boundaries stopped existing rather than being characterised better.
+  - **Everything got faster**: `bollinger(20)` **46.5 → 18.4 ms** (avg and σ
+    fuse into one sweep instead of core running two reducers), `envelope`
+    13.1 → 10.6, `sma` 6.7 → 6.2, the 5-study stack 58.3 → 49.9.
+  - **Accuracy improved at every magnitude**, 3.6e-3 → 4.4e-16 at 1e15 —
+    which retires the `bollinger` instability logged as debt below.
+  - **The near-miss:** aligning the rebuilds _without_ also shifting the
+    frame made large-magnitude σ **worse** (3.6e-3 → 1.7e-2), because
+    rebuilding more often only re-does ill-conditioned arithmetic more
+    often. Caught by measuring rather than reasoning. The two are one
+    change, not two.
+
 - **[PND-PROCREG]** — Plan rehydration across processes. Ids round-trip, a
   compiled graph does not; persisted views recompile from the stored plan.
   Deliberately no `fromJSON` yet. Two verified properties must become stated

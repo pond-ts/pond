@@ -6,6 +6,7 @@
  * shape and the op declarations it resolves against.
  */
 
+import type { ColumnView } from '../column.js';
 import type { Column, TimeSeries, SeriesSchema } from 'pond-ts';
 
 /** A JSON-safe param value. Params arrive off a wire, not from code. */
@@ -156,6 +157,48 @@ export interface OpContext {
 }
 
 /**
+ * What a ranged recompute is given — [PND-PROCRANGE].
+ *
+ * ## The previous output is an argument, not state
+ *
+ * The obvious way to make recompute incremental is to let a node reach
+ * for its own last output and patch it. That makes `compute` a function
+ * of its inputs *and* of history, which is a real loss: two callers with
+ * the same data but different edit sequences can disagree, and `explain`
+ * stops describing what a value actually depends on.
+ *
+ * Passing {@link previous} in as an argument keeps the op a pure
+ * function — of more things than before, but declared things. The
+ * mutable part stays in the graph, which is a cache and was already
+ * impure.
+ *
+ * ## Why this is safe now and was not before
+ *
+ * Incremental recompute is only honest if a patched result equals a
+ * from-scratch one. Until [PND-PROCKERN] it did not: a ranged fill over
+ * the rolling kernel differed on **every cell**, because the accumulator
+ * carried a different rounding history. That is fixed for `avg`/`stdev`,
+ * which is why an op **opts in** rather than getting this by default —
+ * an op whose kernel is not range-exact must not declare `runRange`, or
+ * its answers become dependent on the sequence of edits that produced
+ * them. `median`, percentiles, `min` and `max` are in that category
+ * today.
+ */
+export interface RangeContext extends OpContext {
+  /** First row that must be recomputed, already widened by the lookback. */
+  readonly from: number;
+  /** One past the last row — the series length. */
+  readonly to: number;
+  /**
+   * This node's previous output, one entry per declared output.
+   *
+   * Shorter than the current series when rows were appended. An op
+   * copies what it keeps and fills `[from, to)`.
+   */
+  readonly previous: readonly Column[];
+}
+
+/**
  * An op's result: one entry per declared output, in declaration order.
  *
  * A `Column` is returned as-is (already packed); loose values are packed
@@ -181,7 +224,52 @@ export interface OpDef {
    * better in a legend chip or a graph node.
    */
   readonly label?: (params: Params, inputs: string) => string;
+  /**
+   * Rows of history this op needs **before** a requested range for its
+   * output over that range to be fully defined — [PND-PROCHIST].
+   *
+   * A count-window study of `period` bars needs `period - 1`. Declaring
+   * it lets {@link requiredHistory} derive the minimum safe tail for a
+   * whole plan, so a consumer slicing a hot leading edge stops guessing:
+   * an 8-study stack over 500k rows costs 765 ms/tick, and the same stack
+   * over a 5,000-row tail 5.4 ms/tick. The window is the difference
+   * between 1.3 ticks/sec and interactive.
+   *
+   * **An IIR op has no exact finite warm-up** — an EMA depends on every
+   * row before it, decaying but never reaching zero. `4 * period` is the
+   * usual engineering answer and each such op should declare it rather
+   * than have the folder assume one, because the multiplier is a claim
+   * about acceptable error and only the op knows what it is.
+   *
+   * Omitted means **unknown, not zero**, and {@link requiredHistory}
+   * reports that rather than returning a number a caller would slice
+   * against. An op that genuinely needs no history — anything
+   * element-wise — should say `() => 0`.
+   */
+  readonly lookback?: (params: Params) => number;
   readonly run: (ctx: OpContext) => OpResult;
+  /**
+   * Recompute only `[from, to)`, given the previous output —
+   * [PND-PROCRANGE]. Optional, and **opt-in for a reason**.
+   *
+   * The graph calls this instead of {@link run} when it knows which rows
+   * changed and this node has a previous output to patch; otherwise it
+   * falls back to a full {@link run}, so declaring nothing is always
+   * correct and merely slower.
+   *
+   * **Only declare it if a patched result is bit-identical to a
+   * from-scratch one.** That holds for the range-exact rolling kernel
+   * ([PND-PROCKERN]) and does not hold for `median`, percentiles, `min`
+   * or `max`, which still sweep whole-series. An op that declares this
+   * without that property makes its answers depend on the sequence of
+   * edits that produced them — which is invisible in a test that only
+   * ever computes from scratch.
+   *
+   * Requires {@link lookback}, since that is what widens an upstream
+   * dirty range into this node's. Without it the graph cannot know how
+   * far back a change reaches and will not range.
+   */
+  readonly runRange?: (ctx: RangeContext) => OpResult;
 }
 
 // ── folds ────────────────────────────────────────────────────
@@ -201,11 +289,33 @@ export interface FoldContext {
    * Dense values per input role, gaps as `undefined`.
    *
    * Prepared by the graph rather than by each fold, and — the point of
-   * the whole exercise — prepared **inside the memo**, so densifying a
-   * 150,000-row column happens once per version rather than once per
+   * the original exercise — prepared **inside the memo**, so densifying
+   * a 150,000-row column happens once per version rather than once per
    * request.
+   *
+   * **Prefer {@link FoldContext.numeric}.** This is the boxed form, and
+   * it is now **lazy**: touching a role allocates an `Array` of that
+   * column's length and fills it, which is the single largest heap cost
+   * in the graph ([PND-PROCCOL]). `latest` reads one cell and used to
+   * pay for 500,000 of them. Untouched roles cost nothing, so a fold
+   * that never reads this never allocates.
    */
   readonly values: Readonly<Record<string, readonly (number | undefined)[]>>;
+  /**
+   * A **zero-copy** columnar view of one input role — no allocation, at
+   * any length.
+   *
+   * `values` is the column's own storage and a cell is meaningful only
+   * where `defined(i)`; both are borrowed and must not be retained past
+   * the fold. `undefined` when the role's column is not packed numeric
+   * (a string column, or a value an op returned boxed), which is the
+   * caller's cue to fall back to {@link FoldContext.values}.
+   *
+   * Reading is **not faster** this way — a buffer walk reaches parity
+   * with the boxed array and `Column.scan()` is 4.7× slower than either.
+   * What changes is that nothing is allocated to do it.
+   */
+  numeric(role: string): ColumnView | undefined;
   /**
    * Timestamp at a row index.
    *

@@ -17,7 +17,7 @@
  */
 
 import { int } from './params.js';
-import type { FoldDef, Params } from './types.js';
+import type { FoldContext, FoldDef, Params } from './types.js';
 
 const day = (t: number): string => new Date(t).toISOString().slice(0, 10);
 
@@ -42,10 +42,11 @@ export const last: FoldDef = {
   unit: 'inherit',
   label: (_p, inputs) => `latest ${inputs}`,
   fold: (ctx) => {
-    const v = ctx.values['source']!;
+    // The fold that makes [PND-PROCCOL] worth doing: it reads one cell,
+    // and on the boxed path it paid to densify all 500,000 first.
+    const v = read(ctx);
     for (let i = v.length - 1; i >= 0; i -= 1) {
-      if (v[i] !== undefined)
-        return { value: round(v[i]!), at: day(ctx.at(i)) };
+      if (v.defined(i)) return { value: round(v.value(i)), at: day(ctx.at(i)) };
     }
     return { value: null };
   },
@@ -62,14 +63,14 @@ export const extremes: FoldDef = {
   unit: 'inherit',
   label: (_p, inputs) => `range of ${inputs}`,
   fold: (ctx) => {
-    const v = ctx.values['source']!;
+    const v = read(ctx);
     let lo = Infinity;
     let hi = -Infinity;
     let loAt = -1;
     let hiAt = -1;
     for (let i = 0; i < v.length; i += 1) {
-      const x = v[i];
-      if (x === undefined) continue;
+      if (!v.defined(i)) continue;
+      const x = v.value(i);
       if (x < lo) {
         lo = x;
         loAt = i;
@@ -100,23 +101,23 @@ export const percentileRank: FoldDef = {
   unit: '%ile',
   label: (_p, inputs) => `rank of ${inputs}`,
   fold: (ctx) => {
-    const v = ctx.values['source']!;
+    const v = read(ctx);
     // One pass, not the three the old reduction took: it densified, then
     // filtered to find the last defined value, then filtered again to
     // count below it.
     let last: number | undefined;
     let seen = 0;
     for (let i = v.length - 1; i >= 0; i -= 1) {
-      if (v[i] !== undefined) {
-        last = v[i];
+      if (v.defined(i)) {
+        last = v.value(i);
         break;
       }
     }
     if (last === undefined) return { value: null };
     let below = 0;
     for (let i = 0; i < v.length; i += 1) {
-      const x = v[i];
-      if (x === undefined) continue;
+      if (!v.defined(i)) continue;
+      const x = v.value(i);
       seen += 1;
       if (x < last) below += 1;
     }
@@ -144,16 +145,48 @@ export const shape: FoldDef = {
   unit: 'inherit',
   label: (p: Params, inputs) => `shape(${String(p['points'])}) of ${inputs}`,
   fold: (ctx) => {
-    const v = ctx.values['source']!;
+    const v = read(ctx);
     const want = ctx.params['points'] as number;
     const step = Math.max(1, Math.floor(v.length / want));
     const points: [string, number][] = [];
     for (let i = 0; i < v.length; i += step) {
-      if (v[i] !== undefined) points.push([day(ctx.at(i)), round(v[i]!)]);
+      if (v.defined(i)) points.push([day(ctx.at(i)), round(v.value(i))]);
     }
     return { points: points.length, series: points };
   },
 };
+
+/**
+ * One reader over the `source` role, columnar where it can be.
+ *
+ * `ctx.numeric` is a zero-copy view and allocates nothing; `ctx.values`
+ * is the boxed fallback for a role that is not packed numeric, and is a
+ * lazy getter, so this only pays for densifying when it has to
+ * ([PND-PROCCOL]). Both are behind one shape so a fold body reads the
+ * same either way — `defined(i)` then `value(i)`, never a cell that
+ * might be `undefined`.
+ */
+function read(ctx: FoldContext): {
+  length: number;
+  defined(i: number): boolean;
+  value(i: number): number;
+} {
+  const view = ctx.numeric('source');
+  if (view !== undefined) {
+    const { values } = view;
+    return {
+      length: view.length,
+      defined: (i) => view.defined(i),
+      value: (i) => values[i]!,
+    };
+  }
+  const boxed = ctx.values['source']!;
+  return {
+    length: boxed.length,
+    defined: (i) => boxed[i] !== undefined,
+    value: (i) => boxed[i]!,
+  };
+}
 
 /** Registered by `createRegistry()`; nothing stops a consumer replacing one. */
 export const STANDARD_FOLDS: readonly FoldDef[] = [

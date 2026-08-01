@@ -9,12 +9,19 @@
  * memoization.
  */
 
-import { appendColumn, packColumn } from '../column.js';
+import {
+  appendColumn,
+  columnBytes,
+  columnView,
+  packColumn,
+  type ColumnView,
+} from '../column.js';
 import { ProcessError } from '../errors.js';
 import { defineNode, type Node } from '../node.js';
 import { port } from '../types.js';
 import { source, type SourceNode } from '../source.js';
 import type { Column, SeriesSchema, TimeSeries } from 'pond-ts';
+import { requiredHistory } from './history.js';
 import { columnsOf, specId } from './identity.js';
 import type { Registry } from './registry.js';
 import {
@@ -64,6 +71,10 @@ interface Compiled {
   readonly outlets: Readonly<Record<string, string>>;
   /** True when the node ends in a fact. Its `outlets` are then empty. */
   readonly fold: boolean;
+  /** Ids this node reads from — for unwinding a chain on eviction. */
+  readonly upstream: readonly string[];
+  /** Ids reading from this node. Non-empty ⇒ evicting it frees nothing. */
+  readonly dependents: Set<string>;
 }
 
 /** The outlet a fold's fact arrives on. Not a column, so not in `outlets`. */
@@ -80,25 +91,235 @@ function densify(column: Column): (number | undefined)[] {
   return out;
 }
 
-/** A source plus every node compiled against it. */
+/**
+ * A source plus every node compiled against it.
+ *
+ * ## The budget — [PND-PROCCACHE]
+ *
+ * Every distinct spec ever compiled used to be retained forever, so
+ * memory scaled with *questions asked* rather than with anything
+ * bounded. A session that walks a slider from period 20 to 200 leaves
+ * 180 nodes holding 180 result columns, and nothing ever drops one.
+ *
+ * The ticket framed this as an op-level cache: an op declares which of
+ * its inputs key a result, and the engine memoizes around `compute`.
+ * **Half of that is already true here and should not be rebuilt.** A
+ * spec's `specId` is content-addressed over its op, params and inputs,
+ * so asking the same question twice hits the same node by construction —
+ * there is nothing for an op to declare, and a per-op cache would be a
+ * second key beside a correct one.
+ *
+ * What was genuinely missing is the other half, and the ticket is right
+ * that it does not belong to the op: **a per-op capacity is a per-op
+ * promise, and nothing supervises the total.** Measured at 20 nodes ×
+ * 5 entries of a 200k-row result, a per-op cap held 100 entries and
+ * 157 MB where one engine-wide cap held 10 and 35 MB.
+ *
+ * So the budget is graph-wide, in **bytes** rather than entries — the
+ * unit that means anything, and only knowable since [PND-PROCCOL] made
+ * node values columns with a reportable `columnBytes`. Eviction is LRU
+ * with one constraint: a node feeding a retained node is skipped,
+ * because dropping it frees nothing while its consumer still holds the
+ * outlet.
+ */
 export class BoundGraph {
   readonly registry: Registry;
   readonly units: Units;
   readonly #source: SourceNode<TimeSeries<SeriesSchema>>;
   readonly #nodes = new Map<string, Compiled>();
+  /** Insertion order is LRU order: a touch deletes and re-adds. */
+  readonly #lru = new Set<string>();
+  readonly #budgetBytes: number;
+  #evicted = 0;
+  /**
+   * First changed row still owed to each node, by id.
+   *
+   * Per node, not graph-wide, and accumulated as a running **minimum**
+   * until that node actually recomputes. A single global marker is wrong
+   * because nodes compute lazily: one that is not pulled at V1 and is
+   * pulled at V2 would patch its V0 output using V2's boundary and skip
+   * everything V1 changed — silently, since the result is still defined.
+   * Found by a Codex pass on PR #571, with a repro: rows 20–22 kept
+   * `[57,60,63]` where a from-scratch pass gave `[1036,1039,1042]`.
+   */
+  readonly #pendingFrom = new Map<string, number>();
+  /** Nodes owed a whole recompute, which no partial claim can downgrade. */
+  readonly #fullDirty = new Set<string>();
+  /** Ranged recomputes and full ones, for tests and for `explain`. */
+  #ranged = 0;
+  #full = 0;
 
   constructor(
     series: TimeSeries<SeriesSchema>,
-    options: { registry: Registry; units?: Units },
+    options: { registry: Registry; units?: Units; budgetBytes?: number },
   ) {
     this.registry = options.registry;
     this.units = options.units ?? {};
+    this.#budgetBytes = options.budgetBytes ?? Number.POSITIVE_INFINITY;
     this.#source = source({ initial: series, kind: 'source' });
+  }
+
+  /** Bytes currently retained across every materialized node value. */
+  get retainedBytes(): number {
+    let total = 0;
+    for (const c of this.#nodes.values()) total += this.#bytesOf(c);
+    return total;
+  }
+
+  /**
+   * A node's retained bytes, read from its ports rather than from a
+   * field written when a value happens to be surfaced.
+   *
+   * Caching this in `columnOf` left an escape hatch: pulling a value
+   * through `compile(spec).node.out[…].get()` materialized a column that
+   * the budget could not see, so `retainedBytes` reported 0 while the
+   * memory was real (Codex, PR #571). `peek()` never forces a compute,
+   * so asking every node is cheap and cannot itself cause work.
+   */
+  #bytesOf(compiled: Compiled): number {
+    let total = 0;
+    for (const outlet of Object.values(compiled.outlets)) {
+      const held = (
+        compiled.node.out[outlet] as { peek?(): Column | undefined }
+      ).peek?.();
+      if (held !== undefined) total += columnBytes(held);
+    }
+    return total;
+  }
+
+  /** How many nodes the budget has dropped over this graph's life. */
+  get evictions(): number {
+    return this.#evicted;
+  }
+
+  /**
+   * Recomputes that ran ranged, and that ran whole — [PND-PROCRANGE].
+   *
+   * Worth having as a counter rather than inferring it from timings: a
+   * node silently falling back to a full recompute is the failure mode
+   * here, and it looks exactly like "the optimisation did not help much".
+   */
+  get recomputes(): { ranged: number; full: number } {
+    return { ranged: this.#ranged, full: this.#full };
+  }
+
+  /** Rows still owed per node, for tests and for `explain`. */
+  get pendingFrom(): ReadonlyMap<string, number> {
+    return this.#pendingFrom;
+  }
+
+  /**
+   * Drops least-recently-used nodes until the graph is inside its byte
+   * budget. Called after a run resolves; safe to call at any time.
+   *
+   * A node that feeds a retained node is skipped — its consumer holds
+   * the outlet, so dropping the lookup frees nothing and would only
+   * force a recompile on the next pull.
+   */
+  enforceBudget(): void {
+    if (!Number.isFinite(this.#budgetBytes)) return;
+    let total = this.retainedBytes;
+    // Repeat until a whole pass frees nothing. Evicting a consumer
+    // unpins its inputs, and a single pass over a snapshot of the LRU
+    // has already walked past them — so a two-node chain under a 1-byte
+    // budget kept 8,000 bytes and reported success (Codex, PR #571). The
+    // loop terminates because every iteration that continues has evicted
+    // at least one node, and nodes are finite.
+    let progress = true;
+    while (progress && total > this.#budgetBytes) {
+      progress = false;
+      for (const id of [...this.#lru]) {
+        if (total <= this.#budgetBytes) break;
+        const compiled = this.#nodes.get(id);
+        if (compiled === undefined) continue;
+        if (compiled.dependents.size > 0) continue;
+        total -= this.#bytesOf(compiled);
+        // Dropping the lookup is not eviction. `Outlet.#downstream` is a
+        // strong `Set<Inlet>` and `Inlet.node` points back, so a node
+        // left connected stays reachable from the source forever —
+        // `#nodes.delete` alone freed NOTHING, and re-asking an evicted
+        // spec compiled a second node onto the same source, so churn grew
+        // memory without bound while `ids.length` stayed flat. Found by a
+        // Layer 2 review of PR #571.
+        for (const inlet of Object.values(
+          compiled.node.in as Record<string, { disconnect(): unknown }>,
+        )) {
+          inlet.disconnect();
+        }
+        this.#nodes.delete(id);
+        this.#lru.delete(id);
+        this.#pendingFrom.delete(id);
+        this.#fullDirty.delete(id);
+        this.#evicted += 1;
+        progress = true;
+        // Its inputs may now be evictable in turn — the chain unwinds
+        // from the consumer end, which is the only end that frees
+        // anything.
+        for (const upstream of compiled.upstream) {
+          this.#nodes.get(upstream)?.dependents.delete(id);
+        }
+      }
+    }
+  }
+
+  #touch(id: string): void {
+    this.#lru.delete(id);
+    this.#lru.add(id);
   }
 
   /** Replaces the bound data. Every node downstream goes dirty. */
   setSource(series: TimeSeries<SeriesSchema>): void {
+    // "No claim", owed to every node — and it DOMINATES any later partial
+    // claim. If a node misses a full replacement and is then handed a
+    // `setSourceFrom`, it must still recompute wholly: the rows before
+    // that boundary changed too, and nothing remembers by how much.
+    for (const id of this.#nodes.keys()) {
+      this.#fullDirty.add(id);
+      this.#pendingFrom.delete(id);
+    }
     this.#source.set(series);
+  }
+
+  /**
+   * Replaces the bound data, declaring that rows before `changedFrom`
+   * are unchanged — [PND-PROCRANGE].
+   *
+   * This is the whole input to ranged recompute: a node that declares a
+   * `lookback` and a `runRange` then rebuilds only
+   * `[changedFrom - lookback, length)` instead of the whole column.
+   *
+   * **The claim is the caller's to keep.** Nothing here verifies that
+   * the earlier rows really are untouched, because verifying costs the
+   * scan the whole feature exists to avoid. Pass a row that is genuinely
+   * at or before the first difference — a live feed appending a bar
+   * passes the old length, which is the case this is built for. Getting
+   * it wrong yields a stale prefix rather than an error, so when in
+   * doubt use {@link setSource}, which recomputes everything.
+   */
+  setSourceFrom(series: TimeSeries<SeriesSchema>, changedFrom: number): void {
+    const from = Math.max(0, Math.floor(changedFrom));
+    for (const id of this.#nodes.keys()) {
+      if (this.#fullDirty.has(id)) continue; // a full dirty outranks this
+      const owed = this.#pendingFrom.get(id);
+      this.#pendingFrom.set(
+        id,
+        owed === undefined ? from : Math.min(owed, from),
+      );
+    }
+    this.#source.set(series);
+  }
+
+  /**
+   * The row a node must recompute from, and clears the debt.
+   *
+   * `undefined` means "no claim was made", which forces a full recompute
+   * — the safe answer, and what a freshly compiled node gets.
+   */
+  #takePending(id: string): number | undefined {
+    const owed = this.#pendingFrom.get(id);
+    this.#pendingFrom.delete(id);
+    if (this.#fullDirty.delete(id)) return undefined;
+    return owed;
   }
 
   get series(): TimeSeries<SeriesSchema> {
@@ -111,11 +332,22 @@ export class BoundGraph {
   }
 
   get(id: string): Compiled | undefined {
-    return this.#nodes.get(id);
+    const hit = this.#nodes.get(id);
+    if (hit !== undefined) this.#touch(id);
+    return hit;
   }
 
   /**
    * Compiles a spec (and its inputs) into nodes, memoized by `specId`.
+   *
+   * **A returned handle is not durable under a byte budget.** Eviction
+   * disconnects a node's inlets, so a `Compiled` held across a `run` can
+   * throw `UnconnectedInputError` on a later pull, naming the input
+   * rather than the budget that took it. `run` re-resolves through
+   * `columnOf` and never hits this; a caller holding its own handle
+   * should re-`compile` after any run, which is a memoized lookup when
+   * the node survived. Only relevant with `budgetBytes` set — without
+   * one, nothing is ever evicted.
    *
    * Validation happens here rather than at pull time so a bad plan is
    * rejected before any work: params first, then arity, then the typed
@@ -124,7 +356,10 @@ export class BoundGraph {
   compile(spec: Spec): Compiled {
     const id = specId(this.registry, spec);
     const existing = this.#nodes.get(id);
-    if (existing) return existing;
+    if (existing) {
+      this.#touch(id);
+      return existing;
+    }
 
     const op = this.registry.get(spec.op);
     const params = this.registry.resolveParams(op, spec.params);
@@ -188,6 +423,7 @@ export class BoundGraph {
         column,
         outlet: upstream.node.out[key] as { get(): Column },
         nested: true as const,
+        upstreamId: upstream.id,
       };
     });
 
@@ -202,6 +438,18 @@ export class BoundGraph {
       ? { [FACT]: port<FactBody>() }
       : Object.fromEntries(declared.map((o) => [outletKey(o), port<Column>()]));
 
+    // `undefined` when any op in this chain declares no lookback, which
+    // is what disables ranging for it — the boundary is unknowable.
+    const history = requiredHistory(this.registry, [spec]);
+    const chainLookback = history.known ? history.rows : undefined;
+
+    // The node's last output, held by the GRAPH and handed to `runRange`
+    // as an argument. That split is the design: the graph is a cache and
+    // was already stateful, while the op stays a pure function — of more
+    // things than before, but declared ones, so `explain` still describes
+    // what a value depends on.
+    let previous: Column[] | undefined;
+
     const factory = defineNode({
       kind: spec.op,
       inputs: Object.fromEntries(
@@ -209,43 +457,134 @@ export class BoundGraph {
       ),
       outputs,
       compute: (vals: Record<string, any>) => {
-        // Widen the source with each nested input's column so the op can
-        // call the corpus normally — the studies take (series, {column}).
-        let series = vals['src'] as TimeSeries<SeriesSchema>;
-        bound.forEach((b, i) => {
-          if (b.nested) {
-            series = appendColumn(series, b.column, vals[`in${i}`] as Column);
-          }
-        });
+        const src = vals['src'] as TimeSeries<SeriesSchema>;
         const inputsByRole = Object.fromEntries(
           bound.map((b) => [b.role, b.column]),
         );
         if (isFold(op)) {
-          // Densifying happens here — inside the memo, once per version.
-          // As a selector-side reduction it happened once per *request*,
-          // forever, on a column the graph had already cached.
-          const values = Object.fromEntries(
-            bound.map((b) => [
+          // A fold reads columns; it never needs a series ([PND-PROCTERM]).
+          //
+          // Every node used to widen the source with `appendColumn` for
+          // each nested input, so an op could call the corpus normally —
+          // the studies take `(series, { column })`. For a fold that was
+          // pure waste twice over: the column it wants is already sitting
+          // in `vals`, and it was being packed into a `TimeSeries` only to
+          // be read straight back out. Worse, `appendColumn` boxes a
+          // GAPPED column on the way in (core's `withColumn` takes values,
+          // not a column), which is 22.4 ms at 1M rows — and every rolling
+          // study is gapped, so the expensive path was the common one.
+          const columnOfRole = new Map<string, Column>(
+            bound.map((b, i) => [
               b.role,
-              densify(
-                series.column(b.column) as unknown as Column,
-              ) as readonly (number | undefined)[],
+              b.nested
+                ? (vals[`in${i}`] as Column)
+                : (src.column(
+                    b.column as Parameters<
+                      TimeSeries<SeriesSchema>['column']
+                    >[0],
+                  ) as unknown as Column),
             ]),
           );
-          const keyColumn = series.keyColumn() as unknown as {
+          // Both accessors resolve inside the memo, so whatever a fold
+          // reads is prepared once per version rather than once per
+          // request. The difference is what "prepared" costs.
+          //
+          // `numeric` is a zero-copy view: no allocation at any length.
+          // `values` densifies into a boxed array and is therefore LAZY —
+          // a getter per role, memoized — because it was the graph's
+          // largest heap cost and `latest`, which reads a single cell,
+          // was paying for 500,000 of them ([PND-PROCCOL]).
+          const views = new Map<string, ColumnView | undefined>();
+          const numeric = (role: string): ColumnView | undefined => {
+            if (views.has(role)) return views.get(role);
+            const col = columnOfRole.get(role);
+            const view = col === undefined ? undefined : columnView(col);
+            views.set(role, view);
+            return view;
+          };
+          const values: Record<string, readonly (number | undefined)[]> = {};
+          const densified = new Map<string, readonly (number | undefined)[]>();
+          for (const b of bound) {
+            Object.defineProperty(values, b.role, {
+              enumerable: true,
+              get: () => {
+                let dense = densified.get(b.role);
+                if (dense === undefined) {
+                  dense = densify(columnOfRole.get(b.role)!);
+                  densified.set(b.role, dense);
+                }
+                return dense;
+              },
+            });
+          }
+          // The source's key column, not a widened copy's — appending a
+          // value column never changes it.
+          const keyColumn = src.keyColumn() as unknown as {
             at(i: number): number;
           };
           return {
             [FACT]: op.fold({
               values,
+              numeric,
               at: (i) => keyColumn.at(i),
               params,
               id,
             }),
           };
         }
-        const produced = op.run({ series, inputs: inputsByRole, params, id });
-        const columns = toColumns(op, id, produced);
+        // Only a column-producing op needs the widened series, because the
+        // corpus studies take `(series, { column })`.
+        let series = src;
+        bound.forEach((b, i) => {
+          if (b.nested) {
+            series = appendColumn(series, b.column, vals[`in${i}`] as Column);
+          }
+        });
+        const ctx = { series, inputs: inputsByRole, params, id };
+
+        // Ranged, or whole? Four things must hold, and any one missing
+        // falls back to a full recompute — which is always correct and
+        // merely slower ([PND-PROCRANGE]).
+        //
+        //   1. the caller declared which row changed (`setSourceFrom`),
+        //   2. this op opted in with `runRange` — meaning it claims a
+        //      patched result is bit-identical to a from-scratch one,
+        //   3. it declared a `lookback`, which is what widens an upstream
+        //      dirty range into this node's,
+        //   4. there is a previous output to patch.
+        //
+        // The lookback is the ACCUMULATED one down this spec's whole
+        // input chain, not this node's own. Using its own is wrong for a
+        // non-causal chain: with `win(5)` over `win(30)`, a change at row
+        // 70 reaches the outer node's row 37, but its own lookback only
+        // walks back to 66. Found by a Codex pass on PR #571, which
+        // produced exactly that — incremental 70, from-scratch 999. The
+        // trailing-window tests all passed because a trailing change
+        // propagates forward, where `to = length` already covers it.
+        //
+        // `requiredHistory` over this one spec is precisely that sum, so
+        // the two tickets compose rather than each carrying their own
+        // arithmetic.
+        const changedFrom = this.#takePending(id);
+        let columns: Column[];
+        if (
+          changedFrom !== undefined &&
+          op.runRange !== undefined &&
+          chainLookback !== undefined &&
+          previous !== undefined
+        ) {
+          const from = Math.max(0, changedFrom - chainLookback);
+          columns = toColumns(
+            op,
+            id,
+            op.runRange({ ...ctx, from, to: series.length, previous }),
+          );
+          this.#ranged += 1;
+        } else {
+          columns = toColumns(op, id, op.run(ctx));
+          this.#full += 1;
+        }
+        previous = columns;
         return Object.fromEntries(
           op.outputs.map((o, n) => [outletKey(o), columns[n]!]),
         );
@@ -257,6 +596,9 @@ export class BoundGraph {
       (outlet as { connect(i: unknown): void }).connect(node.in[key]);
     }
 
+    const upstream = bound
+      .filter((b) => b.nested)
+      .map((b) => (b as { upstreamId: string }).upstreamId);
     const compiled: Compiled = {
       id,
       spec,
@@ -264,8 +606,12 @@ export class BoundGraph {
       node,
       fold: terminal,
       outlets: Object.fromEntries(declared.map((o) => [o.id, outletKey(o)])),
+      upstream,
+      dependents: new Set<string>(),
     };
+    for (const up of upstream) this.#nodes.get(up)?.dependents.add(id);
     this.#nodes.set(id, compiled);
+    this.#touch(id);
     return compiled;
   }
 
@@ -326,7 +672,20 @@ function unitOfCompiled(
  */
 export function bind(
   series: TimeSeries<SeriesSchema>,
-  options: { registry: Registry; units?: Units },
+  options: {
+    registry: Registry;
+    units?: Units;
+    /**
+     * Cap on retained node values, in bytes — [PND-PROCCACHE]. Unbounded
+     * when omitted, which is the behaviour every existing caller has.
+     *
+     * Bytes rather than entries because entries are not the unit anyone
+     * has a limit in: one node over 1M rows outweighs fifty over 5,000.
+     * Enforced after each `run`, LRU, skipping any node whose consumer
+     * still holds its outlet.
+     */
+    budgetBytes?: number;
+  },
 ): BoundGraph {
   return new BoundGraph(series, options);
 }

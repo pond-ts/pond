@@ -187,8 +187,25 @@ and each hand-rolled one is a place to leak. Prototype in
 `rfc543-op-cache.mjs` (`withOpCache` + `CacheBudget`) is ~40 lines and
 sized the numbers above.
 
-**Open:** bound by entry count or by bytes. Bytes is the meaningful unit
-and only becomes knowable under [PND-PROCCOL].
+**Closed: bytes.** [PND-PROCCOL] landed and made `columnBytes` reportable
+over node values, so the meaningful unit is available. Entries were never
+the unit anyone has a limit in — one node over 1M rows outweighs fifty
+over 5,000.
+
+**Shipped as** `bind(series, { registry, budgetBytes })`, LRU, enforced
+after each `run`, with `retainedBytes` / `evictions` / `enforceBudget()`
+to observe it. 60 distinct params × 200k rows: **147 → 26 MB rss**, 60
+nodes → 7, repeats still hitting with no eviction churn.
+
+**What was not built, deliberately:** the per-op `port({ cacheKey: true })`
+declaration. `specId` is content-addressed over op, params and inputs, so
+the same question already hits the same node — a per-op key would be a
+second key beside a correct one. Only the capacity half was missing.
+
+**One constraint the prototype did not have:** eviction skips any node
+whose consumer still holds its outlet. Dropping such a node frees nothing
+(the consumer holds the reference) and forces a recompile on the next
+pull, so LRU order alone is not a safe eviction order in a DAG.
 
 **Done when:** an op opts in by declaration, the budget is graph-level and
 configurable, and a repeat-heavy sweep holds steady-state memory while

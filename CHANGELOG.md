@@ -54,6 +54,205 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **A fold no longer builds a `TimeSeries`** ([PND-PROCTERM]). Every node's
+  `compute` widened the source with `appendColumn` for each nested input, so
+  an op could call the corpus normally — the studies take
+  `(series, { column })`. For a fold that was waste twice over: the column it
+  reads is already in its inputs, and it was being packed into a series only
+  to be read straight back out.
+
+  The cost was not incidental. `appendColumn` **boxes a gapped column** on
+  the way in, because core's `withColumn` takes values rather than a column —
+  22.4 ms per column at 1M rows. Every rolling study is gapped, so the
+  expensive path was the ordinary one.
+
+  20 folds × 500k rows, on top of the columnar fold context below:
+  **383 → 129 ms** (2.96×), rss 173 → 113 MB. Against the boxed, assembling
+  baseline the two changes together are **606 → 129 ms**.
+
+  A facts-only request now returns no `series` at all, and the upstream
+  column still resolves through the node graph rather than the terminal's
+  `needed` set — so the failure the plan warned about, a fact silently
+  coming back with no value because its column was never selected, cannot
+  happen.
+
+### Added
+
+- **Ranged recompute** ([PND-PROCRANGE]): `graph.setSourceFrom(series,
+changedFrom)` declares which row first changed, and an op opts in with
+  `OpDef.runRange(ctx)` — which receives `{ from, to, previous }` and rebuilds
+  only that slice. `graph.recomputes` reports `{ ranged, full }`.
+
+  **The previous output is an argument, not state.** Letting a node reach for
+  its own last output would make `compute` a function of history: two callers
+  with the same data but different edit sequences could disagree, and
+  `explain` would stop describing what a value depends on. Passing it in keeps
+  the op a pure function of declared inputs; the mutable part stays in the
+  graph, which is a cache and was already stateful.
+
+  **It is opt-in because it is only safe for some ops.** An incremental result
+  must be _bit-identical_ to a from-scratch one, or answers start depending on
+  the sequence of edits that produced them — invisible to any test that only
+  computes from scratch. That holds for [PND-PROCKERN]'s range-exact kernel
+  and does **not** hold for `median`, percentiles, `min` or `max`, which still
+  sweep whole-series. An op that declares nothing gets full recomputes: always
+  correct, merely slower.
+
+  Measured 500k rows, 5 studies, 20 ticks: **209 → 55 ms/tick (4×)**, verified
+  bit-identical against a from-scratch pass every tick. That is short of the
+  plan's 26×, and the gap is in the _op_, not the graph — a `runRange` that
+  copies the whole prefix out of `previous` before patching is `O(n)` per
+  tick. Reaching the projected ceiling needs a capacity-buffer contract
+  letting an op _extend_ the previous column instead of rebuilding it.
+
+  For scale: [PND-PROCHIST] answers the same hot-edge workload at ~1.3 ms/tick
+  by slicing, with no incremental machinery. Ranging earns its keep where the
+  whole column must stay materialized — a chart drawing every point while one
+  row arrives.
+
+### Added
+
+- **An engine-wide byte budget over retained node values** ([PND-PROCCACHE]):
+  `bind(series, { registry, budgetBytes })`, plus `graph.retainedBytes`,
+  `graph.evictions` and `graph.enforceBudget()`. Unbounded when omitted, so
+  no existing caller changes behaviour.
+
+  Every distinct spec ever compiled was retained forever, so memory scaled
+  with _questions asked_. A session walking a slider from period 20 to 200
+  left 180 nodes holding 180 result columns and dropped none. 60 distinct
+  params × 200k rows, each configuration in its own process:
+  **arrayBuffers 104 → 42 MB** (2.5×), retained 93 → 11 MB, 60 nodes → 7 —
+  while a repeat-heavy sweep still hits, with no eviction churn and no
+  measurable penalty. Both halves matter: a budget that bounds memory by
+  discarding what the caller asks for next is not a cache.
+
+  **No `rss` figure is quoted, deliberately.** An earlier draft claimed
+  5.6× on rss; that was a measurement-order artifact — two configurations
+  timed in one process, the second starting from the first's heap, and
+  reversing them inverted the result. Forking a process per configuration
+  fixed the ordering, but the replacement 1.2× did not survive either:
+  across five forked pairs, bounded rss exceeded unbounded in two. Freed
+  buffers are not promptly returned to the OS and the bound series is the
+  floor, so rss cannot support a direction here at this scale.
+  `arrayBuffers` and `retainedBytes` can, and are what the benchmark
+  reports.
+
+  The ticket framed this as an op-level cache where an op declares which
+  inputs key its result. **Half of that is already true and was not
+  rebuilt** — `specId` is content-addressed over op, params and inputs, so
+  asking the same question twice hits the same node by construction, and a
+  per-op key would be a second key beside a correct one. What was missing is
+  the capacity, and the ticket is right that it cannot belong to the op: a
+  per-op cap is a per-op promise, and nothing supervises the total.
+
+  Bounded in **bytes**, resolving the ticket's open question. Entries are not
+  the unit anyone has a limit in — one node over 1M rows outweighs fifty over
+  5,000 — and bytes only became knowable once [PND-PROCCOL] made node values
+  columns with a reportable `columnBytes`. Eviction is LRU with one
+  constraint: a node whose consumer still holds its outlet is skipped,
+  because dropping it frees nothing and forces a recompile.
+
+### Added
+
+- **`requiredHistory(registry, plan)` in `@pond-ts/process`** ([PND-PROCHIST]),
+  with a per-op `OpDef.lookback`. The hot leading edge is the design's worst
+  cliff — an 8-study stack over 500k rows costs ~100 ms/tick — and the fix is
+  to slice a tail, which until now was the consumer's guess. The registry
+  already knows every op's lookback, so the minimum safe tail is derivable.
+
+  Measured on that stack: **97 → 1.3 ms/tick, 75×** (10 → 773 ticks/sec), with
+  **zero truncated cells** at the derived tail and **exactly one** at a tail
+  one row shorter. The bound is tight, not merely safe.
+
+  Two things it is careful about. Lookbacks **sum along a nested chain** —
+  `sma(20)` over `sma(50)` needs 69 rows, not 50, and taking the max
+  under-provisions in the way that produces defined, plausible, truncated
+  answers. And an op that declares no lookback yields `known: false` naming
+  it, rather than a number: a missing declaration and a genuinely
+  element-wise op are the same value with opposite meanings, so an
+  element-wise op should say `() => 0`.
+
+  Slicing a tail gives answers that agree to **≤5.8e-13**, not bit-for-bit.
+  An `ema` lookback (`4 × period`) is an approximation by construction, and
+  slicing builds a new shorter series, which re-indexes every row — the
+  rolling kernel pins its rebuilds to absolute row index, so
+  [PND-PROCKERN]'s bit-identity covers a range of the _same_ column, not a
+  re-indexed copy.
+
+### Added
+
+- **`columnView(column)` in `@pond-ts/process` — a zero-copy read view over a
+  packed numeric column** ([PND-PROCCOL]), and `FoldContext.numeric(role)`,
+  which hands one to a fold. `values` and `bits` are `subarray`s of the
+  column's own storage: read, never retain.
+
+  `FoldContext.values` — the boxed `(number | undefined)[]` — is now a **lazy
+  getter** rather than eagerly densified, so a fold that never touches it
+  never allocates. It was the graph's largest heap cost, and `last` reads a
+  single cell while paying to densify 500,000 of them.
+
+  20 folds × 500k rows, `scripts/perf-proccol.mjs`:
+
+  |              | boxed  | columnar   |
+  | ------------ | ------ | ---------- |
+  | warm run     | 606 ms | **383 ms** |
+  | heap at peak | 35 MB  | **25 MB**  |
+  | rss          | 204 MB | **173 MB** |
+
+  Read that as a fold-shape result, not a representation result. **Columnar
+  is not faster to read** — a buffer walk reaches parity with a boxed array,
+  and `Column.scan()` is 4.7× slower than either because it takes a callback
+  per cell. The 1.58× is the densify disappearing for folds that read a few
+  cells. A fold that walks the whole column should expect parity, and gets
+  the memory win only.
+
+### Changed
+
+- **The rolling mean/σ kernel is now _range-exact_, and every rolling study
+  is faster and more accurate for it** ([PND-PROCKERN]). `sma`, `bollinger`
+  and `envelope` move off core's general sweep onto a dedicated
+  `rollingMeanSdInto`, which fills any `[lo, hi)` with **exactly the bits a
+  full pass would have written there** — not "within rounding", the same
+  doubles.
+
+  That property is the point. An ordinary sliding accumulator carries
+  rounding history from row 0, so restarting it mid-column lands a few ulps
+  off on _every_ cell of the range. Harmless-sounding, until you notice it
+  means the value depends on which ranges happened to be recomputed — on a
+  caller's edit history rather than their data. Two mechanisms get it: the
+  accumulators are rebuilt from the window every `period` rows so history
+  cannot accumulate, and those rebuilds are pinned to **absolute** row index
+  so a ranged sweep reconstructs the state a full sweep held. They also work
+  in a shifted frame, for the reason [PND-SHIFTFRAME] established — aligning
+  _without_ shifting made large-magnitude σ **worse** (3.6e-3 → 1.7e-2),
+  which is why the two ship together.
+
+  Worst relative error against an exact reference, 200k rows, period 20:
+
+  | input                  | before | after   |
+  | ---------------------- | ------ | ------- |
+  | random walk ≈100       | 5.3e-9 | 3.9e-14 |
+  | `1e9 + sin`            | 1.4e-3 | 6.3e-14 |
+  | `1e15 + ((i % 7) − 3)` | 3.6e-3 | 4.4e-16 |
+
+  **Values change** in the last ulps on ordinary data, and materially where
+  they were previously wrong — the `1e9` row is an ordinary notional, not a
+  contrived extreme. Faster too, on 500k bars: `bollinger(20)` **46.5 → 18.4
+  ms** (avg and σ now fuse into one sweep instead of core running two
+  reducers), `envelope(20)` 13.1 → 10.6, `sma(20)` 6.7 → 6.2, a five-study
+  stack 58.3 → 49.9. `scripts/perf-ranged-kernel.mjs`.
+
+- **`withWorkers` no longer changes the answer at all.** The per-study
+  accuracy table is gone, replaced by one word: identical. Partitioned and
+  sequential results are bit-identical for every accelerated study, at
+  ordinary and large magnitudes, because a chunk starting anywhere now
+  reconstructs the state a whole-column pass held there. The previous
+  figures — `sma` 3.9e-14, `bollinger` 5.1e-13 — were observations on one
+  benign random walk presented as bounds, and a Codex pass had already
+  broken the `zScore` one with a legal input.
+
 ### Fixed
 
 - **Charts' affine fast path evaluates in a rebased frame, and survives deep
@@ -102,6 +301,14 @@ include new features and type-level changes; patch bumps are strictly additive.
   longer speeds it up (it was 2.44×, the fastest study there) and no longer
   changes its answer by a bit. The remaining accelerated studies — `sma`,
   `envelope`, `bollinger` — are exactly those whose error is bounded.
+
+  **One behaviour change at overflow scale**, verified by a Codex pass and
+  left unguarded: the shifted frame computes `x - anchor`, which can
+  overflow when both operands are near `Number.MAX_VALUE` even though each
+  is finite. `[MAX_VALUE, -MAX_VALUE]` at period 2 gives a mean of
+  `-Infinity` where the previous raw-sum kernel gave the true `0`. Not
+  guarded, because the check is per row on a ~20 ns/row kernel to correct
+  an input no price, size or rate series can produce.
 
   `zScore` costs ~2.3× its previous formulation as an upper bound (~26 ns/row
   at 500k), and is flat in `period` — 22.8 to 26.1 ns/row from `period 2` to
