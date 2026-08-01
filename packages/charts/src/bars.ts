@@ -104,17 +104,61 @@ export function barRect(
 }
 
 /**
+ * The narrowed selection / hover identity a **single-series** bar matches
+ * against: the layer's series `id`, the sample's `key` (its `begin`), and — when
+ * the series carries {@link BarSeries.marks} — the stable per-bar `mark`. The
+ * single-series sibling of {@link StackMark}, which additionally carries the
+ * stack's group `label` (a single-series bar has no group to disambiguate).
+ */
+export interface BarMark {
+  readonly id: string;
+  readonly key: number;
+  readonly mark?: string;
+}
+
+/**
+ * Does `m` identify the bar with stable identity `stable` and key `begin`? The
+ * `mark`-first rule {@link drawStacks} applies, with one deliberate difference:
+ * it falls back to the `key` whenever the **selection** carries no `mark`,
+ * where `drawStacks` falls back whenever the **series** carries none.
+ *
+ * `drawStacks` can switch on the series alone because only `categoryStack`
+ * produces marks and it never had key-pinned consumers. Every reader-built bar
+ * series now carries marks, so the same unconditional switch would silently
+ * stop matching each shipped controlled `selected={{ id, key }}` — key-pinning
+ * is the only selection bars ever had.
+ */
+function barMatches(
+  m: BarMark | null,
+  seriesId: string | undefined,
+  stable: string | undefined,
+  begin: number,
+): boolean {
+  if (m === null || m.id !== seriesId) return false;
+  return m.mark !== undefined && stable !== undefined
+    ? m.mark === stable
+    : m.key === begin;
+}
+
+/**
  * Fill one rectangle per bar in `cs`, each spanning its key's `[begin, end]`
  * (inset by `gapPx`) from the resolved `baseline` to the value.
  *
  * A gap (non-finite value) is skipped — no bar, no zero-height sliver. A bar
- * matching the current `selection` (same sample `key` **and** the layer's own
- * series `id` — `seriesId`; a no-id layer passes `undefined` and never matches)
- * draws in the style's `highlight` colour **and outlined**, so a click reads back
- * on the canvas; a bar matching `hovered` draws in `highlight` **without** the
- * outline (a lighter "this bar is live" on pointer-over); all others use the flat
- * `fill`. `globalAlpha` carries the fill opacity and is restored so it doesn't
- * leak into later layers.
+ * matching the current `selection` (the layer's own series `id` — `seriesId`; a
+ * no-id layer passes `undefined` and never matches — plus the bar's identity,
+ * see {@link barMatches}) draws in the style's `highlight` colour **and
+ * outlined**, so a click reads back on the canvas; a bar matching `hovered`
+ * draws in `highlight` **without** the outline (a lighter "this bar is live" on
+ * pointer-over); all others use the flat `fill`. `globalAlpha` carries the fill
+ * opacity and is restored so it doesn't leak into later layers.
+ *
+ * **Which identity.** A selection carrying a `mark` matches against the series'
+ * stable per-bar name ({@link BarSeries.marks} — the sample's own axis key,
+ * which the readers always supply); one without falls back to the sample `key`
+ * (the bar's `begin`). The mark path is what lets a caller pin a bar on a
+ * **point-keyed** series without re-deriving the neighbour-spaced span, since
+ * there `begin` is not the sample's key but an edge computed from it.
  *
  * O(N) over the events, one fill (+ optional stroke) per bar, no per-bar
  * allocation beyond the rect tuple.
@@ -153,8 +197,8 @@ export function drawBars(
   baseline: number,
   gapPx: number,
   seriesId: string | undefined,
-  selection: { key: number; id: string } | null,
-  hovered: { key: number; id: string } | null,
+  selection: BarMark | null,
+  hovered: BarMark | null,
   decimate: DecimateOption = true,
   binFills?: readonly (string | undefined)[],
 ): LayerDrawStats {
@@ -202,6 +246,13 @@ export function drawBars(
     ctx.restore();
     return { sourceCount, drawnCount: drawn, decimated: true };
   }
+  // The stable per-bar identity is consulted only when the live selection /
+  // hover actually carries a `mark`: `cs.marks` builds its strings lazily, so a
+  // dense chart with a key-pinned (or absent) selection never materializes them.
+  const marks =
+    selection?.mark !== undefined || hovered?.mark !== undefined
+      ? cs.marks
+      : undefined;
   let drawn = 0;
   for (let i = vStart; i < vEnd; i += 1) {
     const rect = barRect(
@@ -215,20 +266,16 @@ export function drawBars(
     );
     if (rect === null) continue;
     const [x0, x1, yTop, yBottom] = rect;
-    // Match by the series `id` **and** the sample `key` (begin), so two series
-    // sharing a timestamp don't both light up (a no-id, non-selectable layer
-    // passes `seriesId === undefined` and never matches). Both the committed
-    // selection and the transient hover use the `highlight` fill; only the
-    // selection adds the outline, so hover reads as a lighter "this bar is live"
-    // and select as the committed pick.
-    const selected =
-      selection !== null &&
-      selection.id === seriesId &&
-      selection.key === cs.begin[i];
-    const isHovered =
-      hovered !== null &&
-      hovered.id === seriesId &&
-      hovered.key === cs.begin[i];
+    // Match by the series `id` **and** the bar's identity — its stable `mark`
+    // when the selection carries one, else the sample `key` (begin) — so two
+    // series sharing a timestamp don't both light up (a no-id, non-selectable
+    // layer passes `seriesId === undefined` and never matches). Both the
+    // committed selection and the transient hover use the `highlight` fill; only
+    // the selection adds the outline, so hover reads as a lighter "this bar is
+    // live" and select as the committed pick.
+    const stable = marks?.[i];
+    const selected = barMatches(selection, seriesId, stable, cs.begin[i]!);
+    const isHovered = barMatches(hovered, seriesId, stable, cs.begin[i]!);
     if (fills !== undefined) {
       // Per-bar fills: the bar keeps its own colour under hover / selection —
       // highlight pops the alpha to 1 and outlines the selection in the bar's

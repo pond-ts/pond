@@ -94,6 +94,28 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts:** **single-series bars gained the stable per-bar `mark` identity**
+  the categorical stack already had. `<BarChart series column>`'s `hitTest` now
+  echoes a `SelectInfo.mark` — the bar's **own axis key**, stringified — and a
+  controlled `selected` / `hovered` carrying a `mark` matches on that name
+  instead of the bar's `key`. This closes a gap on **point-keyed** series,
+  where the bar span is synthesized from neighbour spacing so its `key` is a
+  _derived_ edge (`t - halfGap`), not the sample's time: pinning a selection
+  previously meant re-deriving that geometry, and now a caller matches on the
+  centre it already owns. The readers (`barsFromTimeSeries` /
+  `barsFromValueSeries`) supply the identity, exposed as the new optional
+  `BarSeries.marks`.
+
+  **Strictly additive.** A selection with no `mark` — every one that exists
+  today — still matches on the `key`, so key-pinned controlled selections are
+  untouched. (This is a deliberate divergence from `drawStacks`, which switches
+  on the _series_ carrying marks rather than the _selection_; bars have shipped
+  key-pinning, category stacks never did.) `marks` build lazily and memoize, so
+  a chart that never selects by mark pays nothing for them —
+  `scripts/perf-barmarks.mjs` pins all three invariants (reader unchanged at
+  0.77 ms/100k bars; a key-pinned draw costs the same as no selection; the
+  strings, when a mark selection does ask, are a bounded one-off 9.0 ms/100k).
+
 - **`parallelDispatches()`** in `@pond-ts/financial/parallel` — how many rolling
   passes have actually run on worker threads. `withWorkers` is a silent no-op
   when the pool declines a series, and a declined pass returns the same answer,

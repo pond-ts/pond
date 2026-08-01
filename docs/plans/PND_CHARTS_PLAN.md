@@ -106,6 +106,67 @@ parity (conceded). M4 stays the auto-on default; LTTB the explicit opt-in.
 [#518]: https://github.com/pond-ts/pond/pull/518
 [#519]: https://github.com/pond-ts/pond/pull/519
 
+### [PND-BARMARK] — Stable per-bar identity for single-series bars — DONE
+
+**Shipped ([Unreleased]).** The categorical stack's `(id, mark)` selection
+identity, mirrored onto the single-series bar path. Three edits: `BarSeries`
+gained an optional `marks` (`src/data.ts`), which the readers
+(`barsFromTimeSeries` / `barsFromValueSeries`) fill with **the sample's own
+axis key** stringified; `drawBars` matches on it (`src/bars.ts`); and
+`<BarChart>`'s single-series `hitTest` echoes it (`src/BarChart.tsx`), as the
+stacked `hitTest` already did.
+
+**The gap it closes.** `drawBars` matched `selection.key === cs.begin[i]`. On a
+**point-keyed** series `begin[i]` is not the sample's key at all — the span is
+synthesized by `neighbourSpans`, so it's `key - prevGap/2`, a derived edge. A
+consumer holding the sample (estela's split centres) had to re-derive the
+neighbour spacing just to name the bar it wanted selected. The mark is the
+centre it already owns.
+
+**Decision — mark-first falls back on the _selection_, not the _series_.**
+`drawStacks` switches to mark-matching whenever the _series_ carries marks. Bar
+series now always carry them, so copying that rule verbatim would have silently
+stopped matching every shipped controlled `selected={{ id, key }}` (the
+`ControlledSelection` story, and estela's own bar). So `barMatches` uses the
+mark only when the **selection** carries one. The two rules coincide wherever
+both marks exist; they differ exactly on the legacy path, which is the point.
+Considered and rejected: matching `mark || key` (two different bars could
+match, lighting both); switching unconditionally and calling it a breaking
+change (no benefit — the fallback costs one branch).
+
+**Decision — `label` is not the mark.** The stacked `hitTest` reports
+`stableMark ?? name` because a category stack's group name is the placeholder
+`'value'`. A single series' `label` (`as ?? column ?? id`) is meaningful and
+its mark is a stringified number, so the single path keeps the series label and
+adds `mark` alongside.
+
+**Decision — lazy marks.** One `string` per bar is ~an order of magnitude
+dearer per element than a typed-array write, so eager marks would have taxed
+every chart on every data update for a channel most never touch. The readers
+expose `marks` through a memoized getter and `drawBars` reads it only when the
+live selection / hover carries a `mark`. `scripts/perf-barmarks.mjs` pins the
+three invariants:
+
+| case (100k point-keyed bars)               | median  |
+| ------------------------------------------ | ------- |
+| `barsFromTimeSeries`, marks untouched      | 0.77 ms |
+| …forcing the marks (the deferred one-off)  | 9.78 ms |
+| `drawBars`, no selection                   | 6.78 ms |
+| `drawBars`, key-pinned selection (no mark) | 7.05 ms |
+| `drawBars`, mark-pinned (marks warm)       | 7.44 ms |
+
+i.e. eager marks would have been a ~12x reader regression; the key-pinned draw
+is indistinguishable from no selection (the strings are never built); and a
+live mark selection costs ~10% on the draw for the string compare.
+
+No public export added, removed, or renamed (`BarSeries` gained an optional
+field; `barsFromTimeSeries`'s signature is unchanged) ⇒ no API.md change.
+
+**Not done here:** `SelectInfo.key` still reports the bar's `begin` as click
+provenance rather than the sample key — changing it would be a behaviour shift
+on a shipped field, and `mark` already carries the identity. Revisit under
+[PND-SELECT] if the provenance value proves confusing.
+
 ### [PND-AFFINE] — Affine fast path for the per-point draw pipeline — DONE
 
 **Shipped ([Unreleased]).** A `curveLinear` fast path in `drawLine`

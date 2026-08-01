@@ -288,6 +288,117 @@ describe('drawBars', () => {
   });
 });
 
+/**
+ * The stable per-bar identity ({@link BarSeries.marks}) mirrored from the
+ * stacked path onto single-series bars: a selection carrying a `mark` matches
+ * on that name rather than on the bar's `begin` edge — which on a point-keyed
+ * series is derived geometry, not the sample's own key.
+ */
+describe('drawBars — stable per-bar mark selection', () => {
+  /** Three neighbour-spanned bars whose marks are the sample keys they came
+   *  from (centres 100/200/300, edges 50/150/250 — as the reader derives them). */
+  const marked = (): BarSeries => ({
+    ...bars([50, 150, 250], [150, 250, 350], [10, 20, 30]),
+    marks: ['100', '200', '300'],
+  });
+
+  /** Outline count = the number of bars drawn as *selected*. */
+  const outlines = (calls: readonly CtxCall[]) =>
+    calls.filter((c) => c.name === 'strokeRect').length;
+
+  const draw = (
+    cs: BarSeries,
+    selection: { id: string; key: number; mark?: string } | null,
+    hovered: { id: string; key: number; mark?: string } | null = null,
+  ) => {
+    const { ctx, calls } = recordingContext();
+    drawBars(
+      ctx,
+      cs,
+      identity,
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      selection,
+      hovered,
+      false, // no decimation — the per-bar highlight path
+    );
+    return calls;
+  };
+
+  it('outlines the bar whose mark matches — the centre, not the begin edge', () => {
+    // key 200 is the sample's own timestamp; the bar's `begin` there is 150.
+    const calls = draw(marked(), { id: 'count', key: -1, mark: '200' });
+    expect(outlines(calls)).toBe(1);
+  });
+
+  it('does not match a mark that is not present', () => {
+    expect(
+      outlines(draw(marked(), { id: 'count', key: -1, mark: '250' })),
+    ).toBe(0);
+  });
+
+  it('does not match a mark from a different series id', () => {
+    expect(
+      outlines(draw(marked(), { id: 'other', key: -1, mark: '200' })),
+    ).toBe(0);
+  });
+
+  it('follows the sample across a reorder of the underlying bars', () => {
+    // The same selection {mark:'200'} lights exactly one bar wherever it sits —
+    // it tracks the sample key, not the slot (the categorical stack's win).
+    const reordered: BarSeries = {
+      ...bars([250, 50, 150], [350, 150, 250], [30, 10, 20]),
+      marks: ['300', '100', '200'],
+    };
+    expect(
+      outlines(draw(reordered, { id: 'count', key: -1, mark: '200' })),
+    ).toBe(1);
+  });
+
+  it('highlights a hovered mark with fill only — no outline', () => {
+    const calls = draw(marked(), null, { id: 'count', key: -1, mark: '200' });
+    expect(calls.some((c) => c.type === 'set' && c.args[0] === '#fff')).toBe(
+      true,
+    );
+    expect(outlines(calls)).toBe(0);
+  });
+
+  it('falls back to the key when the selection carries NO mark (shipped path)', () => {
+    // A controlled `selected={{ id, key }}` predates marks and must keep
+    // matching on the bar's `begin`, even though the series now has marks.
+    expect(outlines(draw(marked(), { id: 'count', key: 150 }))).toBe(1);
+    expect(outlines(draw(marked(), { id: 'count', key: 200 }))).toBe(0);
+  });
+
+  it('falls back to the key when the SERIES carries no marks (hand-built view)', () => {
+    // A mark-carrying selection against a marks-free series can't match by
+    // name; the key still decides, so nothing silently stops highlighting.
+    const plain = bars([50, 150, 250], [150, 250, 350], [10, 20, 30]);
+    expect(outlines(draw(plain, { id: 'count', key: 150, mark: '200' }))).toBe(
+      1,
+    );
+  });
+
+  it('mixes channels: a marked selection with a key-only hover', () => {
+    const calls = draw(
+      marked(),
+      { id: 'count', key: -1, mark: '100' }, // selected by mark (bar 0)
+      { id: 'count', key: 250 }, // hovered by key, no mark (bar 2)
+    );
+    expect(outlines(calls)).toBe(1); // only the selected bar is outlined…
+    // …and two bars fill with the highlight: the selected one and the hovered one.
+    expect(
+      calls.filter(
+        (c) =>
+          c.type === 'set' && c.name === 'fillStyle' && c.args[0] === '#fff',
+      ).length,
+    ).toBe(2);
+  });
+});
+
 describe('barIndexAtTime', () => {
   // Three contiguous bars: [0,10], [10,20], [20,30].
   const cs = bars([0, 10, 20], [10, 20, 30], [5, 6, 7]);
