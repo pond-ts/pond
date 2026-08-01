@@ -1,7 +1,11 @@
 import { useContext, useEffect, useMemo } from 'react';
 import { ValueSeries } from 'pond-ts';
 import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
-import { fromTimeSeries, fromValueSeries } from './data.js';
+import {
+  assertNumericColumn,
+  fromTimeSeries,
+  fromValueSeries,
+} from './data.js';
 import { drawLine, yExtent } from './line.js';
 import type { DecimateOption } from './decimate.js';
 import { resolveCurve, type Curve } from './curve.js';
@@ -163,13 +167,18 @@ export function LineChart<
   // Readout column values for a value-axis series (the time path reads it off
   // the event in `sampleAt`). Built once per (series, readout) so the tracker
   // can report a source value the line doesn't plot — see LineChartProps.readout.
-  const readoutY = useMemo(
-    () =>
-      readout !== undefined && series instanceof ValueSeries
-        ? fromValueSeries(series, readout).y
-        : undefined,
-    [series, readout],
-  );
+  //
+  // The time path buffers nothing (it has an event, not an index), so it
+  // validates the name here instead: otherwise a mistyped `readout` throws on a
+  // value axis but silently yields no readout on a time axis, and the same typo
+  // fails two different ways. Both now throw the reader's errors.
+  const readoutY = useMemo(() => {
+    if (readout === undefined) return undefined;
+    if (series instanceof ValueSeries)
+      return fromValueSeries(series, readout).y;
+    assertNumericColumn(series, readout);
+    return undefined;
+  }, [series, readout]);
   // Styling: semantic identifier → theme style. The single styling channel.
   const { line } = container.theme;
   const style =
@@ -233,11 +242,9 @@ export function LineChart<
           // get() wants a literal key; column is a runtime string. Cast the
           // *event* (not the method — that would detach `this`) to a
           // string-keyed get; runtime-safe read + guard.
-          const getField = (e as unknown as { get(field: string): unknown })
-            .get;
-          const v = getField.call(e, column);
-          const rv =
-            readout !== undefined ? getField.call(e, readout) : undefined;
+          const ev = e as unknown as { get(field: string): unknown };
+          const v = ev.get(column);
+          const rv = readout !== undefined ? ev.get(readout) : undefined;
           return typeof v === 'number' && Number.isFinite(v)
             ? [
                 {

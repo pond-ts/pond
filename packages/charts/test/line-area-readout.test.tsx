@@ -115,3 +115,89 @@ describe('AreaChart readout', () => {
     expect(s?.readout).toBe(70);
   });
 });
+
+describe('readout — gaps and bad column names', () => {
+  /** The plotted column is finite everywhere; `raw` is missing at t=1000. */
+  const gappy = () =>
+    new TimeSeries({
+      name: 's',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'sm', kind: 'number' },
+        { name: 'raw', kind: 'number', required: false },
+      ] as const,
+      rows: [
+        [0, 5, 50],
+        [1000, 6, undefined],
+        [2000, 7, 70],
+      ] as never,
+    });
+
+  it('drops a non-finite readout but keeps the plotted sample', () => {
+    // The readout is a *second* channel: losing it must not lose the sample,
+    // or the cursor would blank wherever the source column has a hole.
+    const [s] = samplesOf(
+      <LineChart series={gappy()} column="sm" readout="raw" axis="a" />,
+      [0, 2000],
+      1000,
+    );
+    expect(s?.value).toBe(6); // the plotted sample survives…
+    expect(s?.readout).toBeUndefined(); // …without a readout
+  });
+
+  // A mistyped `readout` used to throw on a value axis (via the reader) but
+  // silently produce nothing on a time axis. Both now reject it the same way.
+  it('throws on an unknown readout column — time axis', () => {
+    expect(() =>
+      samplesOf(
+        <LineChart series={series()} column="sm" readout="nope" axis="a" />,
+        [0, 2000],
+        1000,
+      ),
+    ).toThrow(/unknown column/);
+  });
+
+  it('throws on an unknown readout column — value axis', () => {
+    expect(() =>
+      samplesOf(
+        <LineChart
+          series={series().byValue('dist')}
+          column="sm"
+          readout="nope"
+          axis="a"
+        />,
+        [0, 200],
+        100,
+      ),
+    ).toThrow(/unknown column/);
+  });
+
+  it('throws on a non-numeric readout column — time axis', () => {
+    const withText = new TimeSeries({
+      name: 's',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'sm', kind: 'number' },
+        { name: 'note', kind: 'string' },
+      ] as const,
+      rows: [[0, 5, 'a']],
+    });
+    expect(() =>
+      samplesOf(
+        <LineChart series={withText} column="sm" readout="note" axis="a" />,
+        [0, 2000],
+        0,
+      ),
+    ).toThrow(/must be numeric/);
+  });
+
+  it('AreaChart rejects a bad readout column the same way', () => {
+    expect(() =>
+      samplesOf(
+        <AreaChart series={series()} column="sm" readout="nope" axis="a" />,
+        [0, 2000],
+        1000,
+      ),
+    ).toThrow(/unknown column/);
+  });
+});

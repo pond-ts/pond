@@ -28,6 +28,7 @@ how it renders is the `gaps` prop. The explicit adapter is
 | --------------- | --------------------------- | ----------- | ------------------------------------------------------- |
 | `series`        | `TimeSeries \| ValueSeries` | — (req)     | The source series.                                      |
 | `column`        | `string`                    | — (req)     | Numeric column to plot as y.                            |
+| `readout`       | `string`                    | —           | Second column reported at the cursor (see below).       |
 | `as`            | `string`                    | `'default'` | Style role → `theme.line[as]`.                          |
 | `axis`          | `string`                    | row default | Which `<YAxis id>` to scale against.                    |
 | `curve`         | `Curve`                     | `'linear'`  | Path interpolation (see variants).                      |
@@ -52,6 +53,13 @@ how it renders is the `gaps` prop. The explicit adapter is
 - **Cursor:** participates in every readout mode (line/point/inline/flag/
   crosshair) — the dot rides the line at the cursor, no readout past the data
   span.
+- **`readout` (a second column):** the tracker sample carries `readout` from
+  another column while `value` stays the plotted number, so an off-chart readout
+  can show a _source_ value behind a derived plot (a smoothed / log / normalized
+  line reading its raw sample). The in-chart dot and chips keep showing the
+  plotted value — the dot has to sit on the line — so an off-chart consumer is
+  the one that renders `readout ?? value`. A mistyped column name throws on both
+  axis kinds.
 - **Selection:** not selectable (no `id`); it's a display + readout layer.
 - **Theming:** the `theme.line` slot (`LineStyle` = `{ color, width, dash? }`).
   A dashed line for a _modeled_ series comes from the theme role's `dash`, not a

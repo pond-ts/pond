@@ -1,7 +1,11 @@
 import { useContext, useEffect, useMemo } from 'react';
 import { ValueSeries } from 'pond-ts';
 import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
-import { fromTimeSeries, fromValueSeries } from './data.js';
+import {
+  assertNumericColumn,
+  fromTimeSeries,
+  fromValueSeries,
+} from './data.js';
 import { areaExtent, drawArea } from './area.js';
 import type { DecimateOption } from './decimate.js';
 import { resolveCurve, type Curve } from './curve.js';
@@ -180,13 +184,18 @@ export function AreaChart<
   // Readout column values for a value-axis series (time path reads it off the
   // event) — the tracker reports it alongside the plotted fill so an off-chart
   // readout can show a source value. See AreaChartProps.readout.
-  const readoutY = useMemo(
-    () =>
-      readout !== undefined && series instanceof ValueSeries
-        ? fromValueSeries(series, readout).y
-        : undefined,
-    [series, readout],
-  );
+  //
+  // The time path buffers nothing (it has an event, not an index), so it
+  // validates the name here instead, so a mistyped `readout` fails the same way
+  // on both axis kinds rather than throwing on one and silently doing nothing
+  // on the other. Mirrors `<LineChart>`.
+  const readoutY = useMemo(() => {
+    if (readout === undefined) return undefined;
+    if (series instanceof ValueSeries)
+      return fromValueSeries(series, readout).y;
+    assertNumericColumn(series, readout);
+    return undefined;
+  }, [series, readout]);
   // Styling: semantic identifier → theme area style. The single styling channel.
   const { area } = container.theme;
   const style =
@@ -239,11 +248,9 @@ export function AreaChart<
           // get() wants a literal key; column is a runtime string. Cast the
           // *event* (not the method — that would detach `this`) to a
           // string-keyed get; runtime-safe read + guard.
-          const getField = (e as unknown as { get(field: string): unknown })
-            .get;
-          const v = getField.call(e, column);
-          const rv =
-            readout !== undefined ? getField.call(e, readout) : undefined;
+          const ev = e as unknown as { get(field: string): unknown };
+          const v = ev.get(column);
+          const rv = readout !== undefined ? ev.get(readout) : undefined;
           // The readout dot rides the value line (not the baseline), coloured by
           // the outline stroke. A gap yields no readout (like the fill).
           return typeof v === 'number' && Number.isFinite(v)

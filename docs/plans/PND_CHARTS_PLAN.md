@@ -106,6 +106,45 @@ parity (conceded). M4 stays the auto-on default; LTTB the explicit opt-in.
 [#518]: https://github.com/pond-ts/pond/pull/518
 [#519]: https://github.com/pond-ts/pond/pull/519
 
+### [PND-READOUT] — `readout` column: tracked value ≠ plotted value — DONE
+
+**Shipped ([Unreleased]).** `<LineChart readout>` / `<AreaChart readout>` name a
+second column whose value rides each tracker sample as
+`TrackerSample.readout`, while the layer keeps plotting `column`. Plotting a
+derived series but reading the source number is the common case behind it (a
+log / normalized / unit-transformed / smoothed line); estela's DATA chart plots
+pace-space Gaussian-smoothed and wants the native m/s in the scrub readout.
+
+**Decision — `value` does not move.** The plotted number stays `value`, so the
+in-chart cursor **dot** keeps sitting on the line; a `readout` that displaced it
+would put the dot off the curve. In-chart **flag / inline chips** likewise keep
+rendering `value`. That is a real asymmetry — with `readout` set, the in-chart
+chip and an off-chart readout show two different numbers for the same cursor —
+accepted deliberately: the chips annotate the drawn line, the off-chart readout
+answers "what is the underlying measurement". If the divergence proves
+confusing in use, the fix is a chip that prefers `readout`, not a change to
+`value`.
+
+**Decision — a bad `readout` name throws on both axis kinds.** As first written,
+a typo threw on a `ValueSeries` (the value path buffers the column via
+`fromValueSeries`) but silently produced no readout on a `TimeSeries` (the time
+path reads per-event, and `get()` just returns `undefined`) — the same mistake
+failing loudly one way and invisibly the other, on the more common path.
+`assertNumericColumn` (factored out of `readNumericColumn`, so the errors are
+literally the same ones) now validates the time path in the same memo. Pinned by
+tests on both kinds, for both charts.
+
+**Not done here — the follow-on the consumer wiring surfaced.** `readout` fully
+replaces estela's hand-rolled scrub on the **distance axis** (a value-axis
+sample's own `x` _is_ the distance). The residual is the **time-axis map-dot
+distance** — the cursor's _paired_ coordinate — which `readout` alone can't
+give. The natural shape is a tracker sample carrying its **source index**
+(`TrackerSample.index` + a `TimeSeries.nearestIndex`, since `ValueSeries`
+already has one), so a consumer can read _any_ paired column at the cursor
+rather than naming one in advance. Deliberately a separate change: it widens
+core (`TimeSeries`), where `readout` is charts-local. Promote to a PLAN.md task
+when estela pulls on it.
+
 ### [PND-BARMARK] — Stable per-bar identity for single-series bars — DONE
 
 **Shipped ([Unreleased]).** The categorical stack's `(id, mark)` selection

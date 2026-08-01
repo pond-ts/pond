@@ -94,6 +94,27 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts:** **`<LineChart readout>` / `<AreaChart readout>` — the tracked
+  value, decoupled from the plotted one** ([PND-READOUT]). Name a **second
+  column** and its value rides each tracker sample as the new
+  `TrackerSample.readout`, while the layer keeps plotting `column`. Plotting a
+  _derived_ series but reading the _source_ number is common — a log,
+  normalized, unit-transformed or smoothed line whose readout should show the
+  raw sample — and until now a consumer had to reconstruct that off-chart from
+  its own data. (Motivating case: estela's DATA chart plots pace-space,
+  Gaussian-smoothed, but the scrub readout wants the native m/s formatted as
+  pace.)
+
+  `value` is unchanged, so **the in-chart cursor dot still sits on the plotted
+  value** — as it must, or the dot would leave the line. In-chart flag / inline
+  chips likewise keep showing the plotted number; `readout` is for the
+  off-chart consumer, which shows `readout ?? value`. **Additive**: omit
+  `readout` and every sample is identical to before.
+
+  A mistyped `readout` throws the readers' `RangeError` / `TypeError` on
+  **both** axis kinds, rather than throwing on a value axis and silently
+  producing no readout on a time axis.
+
 - **charts:** **single-series bars gained the stable per-bar `mark` identity**
   the categorical stack already had. `<BarChart series column>`'s `hitTest` now
   echoes a `SelectInfo.mark` — the bar's **own axis key**, stringified — and a
