@@ -80,6 +80,33 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`requiredHistory(registry, plan)` in `@pond-ts/process`** ([PND-PROCHIST]),
+  with a per-op `OpDef.lookback`. The hot leading edge is the design's worst
+  cliff — an 8-study stack over 500k rows costs ~100 ms/tick — and the fix is
+  to slice a tail, which until now was the consumer's guess. The registry
+  already knows every op's lookback, so the minimum safe tail is derivable.
+
+  Measured on that stack: **97 → 1.3 ms/tick, 75×** (10 → 773 ticks/sec), with
+  **zero truncated cells** at the derived tail and **exactly one** at a tail
+  one row shorter. The bound is tight, not merely safe.
+
+  Two things it is careful about. Lookbacks **sum along a nested chain** —
+  `sma(20)` over `sma(50)` needs 69 rows, not 50, and taking the max
+  under-provisions in the way that produces defined, plausible, truncated
+  answers. And an op that declares no lookback yields `known: false` naming
+  it, rather than a number: a missing declaration and a genuinely
+  element-wise op are the same value with opposite meanings, so an
+  element-wise op should say `() => 0`.
+
+  Slicing a tail gives answers that agree to **≤5.8e-13**, not bit-for-bit.
+  An `ema` lookback (`4 × period`) is an approximation by construction, and
+  slicing builds a new shorter series, which re-indexes every row — the
+  rolling kernel pins its rebuilds to absolute row index, so
+  [PND-PROCKERN]'s bit-identity covers a range of the _same_ column, not a
+  re-indexed copy.
+
+### Added
+
 - **`columnView(column)` in `@pond-ts/process` — a zero-copy read view over a
   packed numeric column** ([PND-PROCCOL]), and `FoldContext.numeric(role)`,
   which hands one to a fold. `values` and `bits` are `subarray`s of the

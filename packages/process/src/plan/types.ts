@@ -182,6 +182,29 @@ export interface OpDef {
    * better in a legend chip or a graph node.
    */
   readonly label?: (params: Params, inputs: string) => string;
+  /**
+   * Rows of history this op needs **before** a requested range for its
+   * output over that range to be fully defined — [PND-PROCHIST].
+   *
+   * A count-window study of `period` bars needs `period - 1`. Declaring
+   * it lets {@link requiredHistory} derive the minimum safe tail for a
+   * whole plan, so a consumer slicing a hot leading edge stops guessing:
+   * an 8-study stack over 500k rows costs 765 ms/tick, and the same stack
+   * over a 5,000-row tail 5.4 ms/tick. The window is the difference
+   * between 1.3 ticks/sec and interactive.
+   *
+   * **An IIR op has no exact finite warm-up** — an EMA depends on every
+   * row before it, decaying but never reaching zero. `4 * period` is the
+   * usual engineering answer and each such op should declare it rather
+   * than have the folder assume one, because the multiplier is a claim
+   * about acceptable error and only the op knows what it is.
+   *
+   * Omitted means **unknown, not zero**, and {@link requiredHistory}
+   * reports that rather than returning a number a caller would slice
+   * against. An op that genuinely needs no history — anything
+   * element-wise — should say `() => 0`.
+   */
+  readonly lookback?: (params: Params) => number;
   readonly run: (ctx: OpContext) => OpResult;
 }
 

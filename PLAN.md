@@ -561,10 +561,28 @@ whether it stays one.
   is what lets a cross-source spec exist at all — separate graphs cannot hold
   one, and hand-combining misaligned instruments silently pairs different
   dates. Needs no engine change; `Graph` has no per-graph boundary today.
-- **[PND-PROCHIST]** — `requiredHistory(plan)`. The hot leading edge costs
-  765 ms/tick over 500k rows and 5.4 ms/tick over a 5,000-row tail, and the
-  registry already knows every op's lookback — so the safe window is derivable
-  rather than a consumer guess.
+- **[PND-PROCHIST]** — **Shipped.** `requiredHistory(registry, plan)` plus a
+  per-op `OpDef.lookback`. On an 8-study stack over 500k rows with a 5,000-row
+  display: **97 → 1.3 ms/tick, 75×** (10 → 773 ticks/sec), **zero truncated
+  cells** at the derived tail and **exactly one** at a tail one row shorter —
+  so the bound is tight rather than merely safe, which is the half of the
+  acceptance bar that arithmetic alone would have passed.
+
+  Two design calls worth keeping. Lookbacks **sum along a nested chain**
+  (`sma(20)` over `sma(50)` is 69, not 50); a max under-provisions by exactly
+  the amount that yields defined, plausible, truncated answers. And an
+  undeclared lookback reports `known: false` naming the op instead of
+  defaulting to zero — a missing declaration and an element-wise op are the
+  same value with opposite meanings.
+
+  **Interaction with [PND-PROCKERN], found by measuring rather than
+  predicted:** a sliced tail agrees to ≤5.8e-13, _not_ bit-for-bit. Slicing
+  builds a new shorter series, which re-indexes every row, and the rolling
+  kernel pins its accumulator rebuilds to absolute row index. So PROCKERN's
+  bit-identity covers **a range of the same column** — which is what
+  PROCRANGE does — and does not extend to a re-indexed copy. Worth stating
+  before PROCRANGE lands, because the two are easy to conflate.
+
 - **[PND-PROCRANGE]** — Track dirty state per range (and per column, via the
   join). 26× measured with identical results, and ~7000× once node values stop
   reallocating. Requires `markDirty()` to carry a payload and makes a node's
