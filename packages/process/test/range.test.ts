@@ -4,8 +4,11 @@ import {
   bind,
   createRegistry,
   int,
+  columnView,
   packColumn,
+  prepareRange,
   run,
+  sealRange,
   type Input,
   type OpDef,
   type Registry,
@@ -538,5 +541,93 @@ describe('[PND-PROCRANGE] ranged recompute', () => {
     graph.setSourceFrom(bars(101) as never, 100);
     const out = run(graph, { plan: [s], select: [{ on: s }], assemble: false });
     expect(cells(out).at(-1)).toBe(100);
+  });
+});
+
+describe('[PND-PROCRANGE] the prepared output contract', () => {
+  it('carries a gapped prefix as gaps, not as defined zeros', () => {
+    // The bug this contract exists to make unwritable. Packed storage
+    // holds `0` at a missing cell, not `NaN`, so an op copying only
+    // `values` forward turns every warm-up gap into a defined zero —
+    // 1,875 wrong cells on a 5-study pass, and nothing in the type
+    // system objects. `prepareRange` moves validity with the values.
+    const prior = packColumn([undefined, undefined, 3, 4, undefined, 6]);
+    const view = columnView(prior)!;
+    const out = prepareRange(8, 5, view);
+    // Rows the op will not touch keep their exact prior state.
+    expect(out.values[2]).toBe(3);
+    expect((out.bits[0]! & (1 << 0)) !== 0, 'row 0 was a gap').toBe(false);
+    expect((out.bits[0]! & (1 << 1)) !== 0, 'row 1 was a gap').toBe(false);
+    expect((out.bits[0]! & (1 << 2)) !== 0, 'row 2 was defined').toBe(true);
+    expect((out.bits[0]! & (1 << 4)) !== 0, 'row 4 was a gap').toBe(false);
+  });
+
+  it('masks the byte straddling the boundary', () => {
+    // `keep` rarely lands on a byte edge. The bits past it in that byte
+    // describe rows the op is about to rewrite, and carrying them over
+    // would leave a cell marked defined before anything wrote to it.
+    // Gapped on purpose: a gapless prior carries no bitmap at all and
+    // takes the other branch, so this test passed with the mask deleted
+    // until the prior was given a gap.
+    const prior = packColumn([1, 2, 3, 4, 5, undefined, 7, 8, 9, 10]);
+    const out = prepareRange(10, 3, columnView(prior)!);
+    expect((out.bits[0]! & (1 << 2)) !== 0, 'row 2 is kept').toBe(true);
+    expect(
+      (out.bits[0]! & (1 << 3)) !== 0,
+      'row 3 is past the boundary and must not be marked',
+    ).toBe(false);
+    expect(out.bits[0]! & 0b11111000).toBe(0);
+  });
+
+  it('treats a bitmap-free prior as wholly defined', () => {
+    const out = prepareRange(6, 4, columnView(packColumn([1, 2, 3, 4]))!);
+    for (let i = 0; i < 4; i += 1) {
+      expect((out.bits[0]! & (1 << i)) !== 0, `row ${i}`).toBe(true);
+    }
+    expect((out.bits[0]! & (1 << 4)) !== 0, 'row 4 unwritten').toBe(false);
+  });
+
+  it('seals to a column that round-trips values and gaps', () => {
+    const out = prepareRange(5, 0, undefined);
+    out.set(0, 10);
+    out.clear(1);
+    out.set(2, 30);
+    out.set(3, 40);
+    out.clear(4);
+    const sealed = sealRange(out, 5) as unknown as {
+      length: number;
+      at(i: number): number | undefined;
+    };
+    expect(sealed.length).toBe(5);
+    expect([0, 1, 2, 3, 4].map((i) => sealed.at(i))).toEqual([
+      10,
+      undefined,
+      30,
+      40,
+      undefined,
+    ]);
+  });
+
+  it('omits the bitmap when nothing is missing', () => {
+    // The gapless convention the rest of the package relies on — a
+    // column with no gaps carries no bitmap, which is also what lets
+    // `appendColumn` round-trip it without boxing.
+    const out = prepareRange(4, 0, undefined);
+    for (let i = 0; i < 4; i += 1) out.set(i, i + 1);
+    const sealed = sealRange(out, 4) as unknown as { validity?: unknown };
+    expect(sealed.validity).toBeUndefined();
+  });
+
+  it('carries no prefix when there is no previous output', () => {
+    const out = prepareRange(4, 3, undefined);
+    expect(out.bits.every((b) => b === 0)).toBe(true);
+  });
+
+  it('stops at the prior length when the series grew', () => {
+    // `keep` is derived from the CURRENT length; the previous output is
+    // shorter after an append, and reading past it would copy garbage.
+    const out = prepareRange(10, 8, columnView(packColumn([1, 2, 3]))!);
+    expect((out.bits[0]! & (1 << 2)) !== 0).toBe(true);
+    expect((out.bits[0]! & (1 << 3)) !== 0, 'past the prior end').toBe(false);
   });
 });

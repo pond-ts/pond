@@ -14,6 +14,8 @@ import {
   columnBytes,
   columnView,
   packColumn,
+  prepareRange,
+  sealRange,
   type ColumnView,
 } from '../column.js';
 import { ProcessError } from '../errors.js';
@@ -574,11 +576,24 @@ export class BoundGraph {
           previous !== undefined
         ) {
           const from = Math.max(0, changedFrom - chainLookback);
-          columns = toColumns(
-            op,
-            id,
-            op.runRange({ ...ctx, from, to: series.length, previous }),
-          );
+          const to = series.length;
+          const views = previous.map((c) => columnView(c));
+          const out = views.map((v) => prepareRange(to, from, v));
+          const produced = op.runRange({
+            ...ctx,
+            from,
+            to,
+            previous,
+            previousView: views,
+            out,
+          });
+          // Returning nothing means "written into `ctx.out`" — the path
+          // that carries the prefix as a block. An op may still return a
+          // whole result, which is simply the slower way to say it.
+          columns =
+            produced === undefined
+              ? out.map((o) => sealRange(o, to) as unknown as Column)
+              : toColumns(op, id, produced);
           this.#ranged += 1;
         } else {
           columns = toColumns(op, id, op.run(ctx));

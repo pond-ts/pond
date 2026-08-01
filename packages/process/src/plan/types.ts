@@ -6,7 +6,7 @@
  * shape and the op declarations it resolves against.
  */
 
-import type { ColumnView } from '../column.js';
+import type { ColumnView, RangeOutput } from '../column.js';
 import type { Column, TimeSeries, SeriesSchema } from 'pond-ts';
 
 /** A JSON-safe param value. Params arrive off a wire, not from code. */
@@ -196,6 +196,58 @@ export interface RangeContext extends OpContext {
    * copies what it keeps and fills `[from, to)`.
    */
   readonly previous: readonly Column[];
+  /**
+   * The same outputs as **zero-copy views**, positionally aligned with
+   * {@link previous} — `undefined` for any that is not packed numeric.
+   *
+   * This is what makes ranged recompute worth doing, and reading
+   * {@link previous} cell by cell instead is the difference between a
+   * `memcpy` and a walk. An op carries `[0, from)` forward unchanged, so
+   * that prefix should move as a block:
+   *
+   * ```ts
+   * const prior = ctx.previousView[0];
+   * const out = new Float64Array(ctx.to);
+   * if (prior) out.set(prior.values.subarray(0, ctx.from));
+   * for (let i = ctx.from; i < ctx.to; i += 1) out[i] = …;
+   * ```
+   *
+   * Measured over 500k rows × 5 studies: the boxed form — a `.at(i)`
+   * per cell into an `Array` — left ranged recompute at **4×** against a
+   * full pass. The same op reading this view runs at **31×**. The graph
+   * was never the bottleneck; the prefix walk was.
+   *
+   * Borrowed, like any {@link ColumnView}: read within the call, never
+   * retain.
+   */
+  readonly previousView: readonly (ColumnView | undefined)[];
+  /**
+   * Prepared output buffers, one per declared output, each of length
+   * {@link to} and already carrying `[0, from)` from the previous
+   * result — values **and** validity, copied as blocks.
+   *
+   * **This is the fast path, and also the correct one.** Writing here
+   * and returning nothing lets the graph seal the buffers directly.
+   * Rebuilding the whole output instead means carrying the prefix by
+   * hand, and the obvious way to do that is silently wrong: packed
+   * storage holds `0` at a missing cell rather than `NaN`, so copying
+   * only the values turns every warm-up gap into a defined zero — 1,875
+   * wrong cells on a 5-study pass, caught by comparing against a
+   * from-scratch run rather than by any type.
+   *
+   * ```ts
+   * runRange: (ctx) => {
+   *   const out = ctx.out[0]!;
+   *   for (let i = ctx.from; i < ctx.to; i += 1) {
+   *     const v = compute(i);
+   *     if (v === undefined) out.clear(i);
+   *     else out.set(i, v);
+   *   }
+   *   // no return
+   * }
+   * ```
+   */
+  readonly out: readonly RangeOutput[];
 }
 
 /**
@@ -269,7 +321,7 @@ export interface OpDef {
    * dirty range into this node's. Without it the graph cannot know how
    * far back a change reaches and will not range.
    */
-  readonly runRange?: (ctx: RangeContext) => OpResult;
+  readonly runRange?: (ctx: RangeContext) => OpResult | void;
 }
 
 // ── folds ────────────────────────────────────────────────────

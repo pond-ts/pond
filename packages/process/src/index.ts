@@ -50,8 +50,11 @@ export {
   columnBuffers,
   columnFromBuffers,
   columnView,
+  prepareRange,
+  sealRange,
+  validityByteCount,
 } from './column.js';
-export type { ColumnBuffers, ColumnView } from './column.js';
+export type { ColumnBuffers, ColumnView, RangeOutput } from './column.js';
 export { requiredHistory } from './plan/history.js';
 export type { HistoryResult } from './plan/history.js';
 export { Graph } from './graph.js';

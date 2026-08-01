@@ -1,10 +1,13 @@
 // [PND-PROCRANGE] — recompute only the rows a change reached.
 //
-// The plan measured 319.5 -> 12.5 ms/tick on 500k rows, 5 studies, 20
-// ticks. That baseline has since moved: [PND-PROCHIST] ships a derived
-// tail that answers the same hot-edge workload at 1.3 ms/tick, purely.
-// So the number to care about is not the ratio against a full recompute
-// — it is whether ranging beats slicing, and where each applies.
+// Measured: 209 -> 6.5 ms/tick, 32x, bit-identical. The plan projected
+// 26x, and getting there took the `ctx.out` contract — see the note at
+// the foot of this script for the two wrong turns on the way.
+//
+// [PND-PROCHIST] answers the same hot-edge workload at 1.3 ms/tick by
+// slicing, with no incremental machinery. So the number to care about is
+// not the ratio against a full recompute — it is whether ranging beats
+// slicing, and where each applies.
 //
 // Slicing wins when the consumer only needs the visible window. Ranging
 // wins when it needs the WHOLE column materialized while one row
@@ -76,13 +79,15 @@ const registry = createRegistry().define({
   runRange: (ctx) => {
     const v = readRaw(ctx, 'source');
     const period = ctx.params.period;
-    const prior = ctx.previous[0];
-    const out = new Array(ctx.to);
-    for (let i = 0; i < ctx.from && i < prior.length; i += 1)
-      out[i] = prior.at(i);
-    for (let i = ctx.from; i < ctx.to; i += 1)
-      out[i] = windowMean(v, i, period);
-    return out;
+    // Writes ONLY [from, to). The prefix — values and validity both —
+    // arrived as a block in `ctx.out`, which is what makes this O(dirty)
+    // instead of O(n), and what keeps warm-up gaps as gaps.
+    const out = ctx.out[0];
+    for (let i = ctx.from; i < ctx.to; i += 1) {
+      const m = windowMean(v, i, period);
+      if (m === undefined) out.clear(i);
+      else out.set(i, m);
+    }
   },
 });
 
@@ -160,17 +165,18 @@ console.log(
     `${(full.ms / ranged.ms).toFixed(0)}×`,
 );
 console.log(
-  `\n  4x, not the 26x the plan measured — and the gap is in this script's\n` +
-    `  own op, not in the graph. \`runRange\` above COPIES the ${ROWS.toLocaleString()}-cell\n` +
-    `  prefix out of \`previous\` into a fresh array before patching ~200\n` +
-    `  cells, so it is O(n) per study per tick and the copy dominates. The\n` +
-    `  plan saw the same thing and named it: "most of the residual was the\n` +
-    `  prototype reallocating its output array as length grew".\n\n` +
-    `  Reaching the ~7000x ceiling needs an op to EXTEND the previous\n` +
-    `  column rather than rebuild it — a capacity-buffer contract on top of\n` +
-    `  [PND-PROCCOL]'s packed values. The graph-side mechanism measured here\n` +
-    `  is what that would sit on; it is not itself the bottleneck.\n\n` +
+  `\n  The op writes ONLY [from, to). An earlier version rebuilt the whole\n` +
+    `  output, carrying the ${ROWS.toLocaleString()}-cell prefix by hand with a \`.at(i)\` per\n` +
+    `  cell into a boxed Array — O(n) per study per tick, and it held this\n` +
+    `  at 4x. The graph was never the bottleneck; the prefix walk was.\n\n` +
+    `  Copying the prefix as a typed-array block got 13x AND 1,875 WRONG\n` +
+    `  CELLS: packed storage holds 0 at a missing cell, not NaN, so the\n` +
+    `  memcpy turned every warm-up gap into a defined zero. Validity has to\n` +
+    `  move with the values, which is why \`ctx.out\` exists rather than a\n` +
+    `  documented convention — the graph prepares both as blocks and the op\n` +
+    `  cannot get it wrong by omission.\n\n` +
     `  For scale: [PND-PROCHIST] answers the hot-edge workload at ~1.3\n` +
     `  ms/tick by slicing, with no incremental machinery at all. Ranging\n` +
-    `  earns its keep where the whole column must stay materialized.`,
+    `  earns its keep where the whole column must stay materialized — a\n` +
+    `  chart drawing every point while one row arrives.`,
 );
