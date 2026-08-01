@@ -531,12 +531,31 @@ whether it stays one.
   the moment the fold returns. What costs pause time is garbage produced,
   not bytes retained — so the benchmark samples the heap before collecting.
 
-- **[PND-PROCTERM]** — Assembly into a `TimeSeries` should be requested, not
-  assumed. Reductions read node values directly (52× on an agent session;
-  441× once facts memoize on `node.out.value.version`), and a renderer pulls
+- **[PND-PROCTERM]** — **Shipped**, though the win was not where the ticket
+  looked. It framed this as the _terminal_ rebuilding a series so a
+  reduction had a column to read — and that part was already handled: a
+  facts-only request has an empty `needed` set and assembles nothing. The
+  live cost was one layer down, in **every node's `compute`**, which widened
+  the source with `appendColumn` per nested input so an op could call the
+  corpus normally. A fold needs no series at all; the column it reads is
+  already in its inputs.
+
+  What made it expensive is a core gap: `appendColumn` **boxes a gapped
+  column**, because core's `withColumn` takes values rather than a column —
+  22.4 ms per column at 1M rows, and every rolling study is gapped. The
+  costly path was the ordinary one. Exposing `withColumnAppended` would
+  remove the fallback for column-producing ops too, which still pay it.
+
+  20 folds × 500k rows: **383 → 129 ms** (2.96×), rss 173 → 113 MB; with
+  [PND-PROCCOL] together, **606 → 129 ms**. The old 52×/441× figures were
+  measured against a different baseline (whole-series assembly per
+  reduction, at 1M rows) and are not comparable to these.
+
+  Reductions read node values directly, and a renderer pulls
   per-study arrays. Sharp edge: the terminal must resolve the closure of every
   id a selector mentions, including `crossings`' `against` — assembling only
   the column-selectors yields a fact with no value rather than an error.
+
 - **[PND-PROCJOIN]** — Make the join a node: n series in, one aligned column
   set out, alignment policy in the id (inner vs as-of changes the answer). This
   is what lets a cross-source spec exist at all — separate graphs cannot hold

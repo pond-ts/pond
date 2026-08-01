@@ -214,18 +214,34 @@ export class BoundGraph {
       ),
       outputs,
       compute: (vals: Record<string, any>) => {
-        // Widen the source with each nested input's column so the op can
-        // call the corpus normally — the studies take (series, {column}).
-        let series = vals['src'] as TimeSeries<SeriesSchema>;
-        bound.forEach((b, i) => {
-          if (b.nested) {
-            series = appendColumn(series, b.column, vals[`in${i}`] as Column);
-          }
-        });
+        const src = vals['src'] as TimeSeries<SeriesSchema>;
         const inputsByRole = Object.fromEntries(
           bound.map((b) => [b.role, b.column]),
         );
         if (isFold(op)) {
+          // A fold reads columns; it never needs a series ([PND-PROCTERM]).
+          //
+          // Every node used to widen the source with `appendColumn` for
+          // each nested input, so an op could call the corpus normally —
+          // the studies take `(series, { column })`. For a fold that was
+          // pure waste twice over: the column it wants is already sitting
+          // in `vals`, and it was being packed into a `TimeSeries` only to
+          // be read straight back out. Worse, `appendColumn` boxes a
+          // GAPPED column on the way in (core's `withColumn` takes values,
+          // not a column), which is 22.4 ms at 1M rows — and every rolling
+          // study is gapped, so the expensive path was the common one.
+          const columnOfRole = new Map<string, Column>(
+            bound.map((b, i) => [
+              b.role,
+              b.nested
+                ? (vals[`in${i}`] as Column)
+                : (src.column(
+                    b.column as Parameters<
+                      TimeSeries<SeriesSchema>['column']
+                    >[0],
+                  ) as unknown as Column),
+            ]),
+          );
           // Both accessors resolve inside the memo, so whatever a fold
           // reads is prepared once per version rather than once per
           // request. The difference is what "prepared" costs.
@@ -235,12 +251,6 @@ export class BoundGraph {
           // a getter per role, memoized — because it was the graph's
           // largest heap cost and `latest`, which reads a single cell,
           // was paying for 500,000 of them ([PND-PROCCOL]).
-          const columnOfRole = new Map<string, Column>(
-            bound.map((b) => [
-              b.role,
-              series.column(b.column) as unknown as Column,
-            ]),
-          );
           const views = new Map<string, ColumnView | undefined>();
           const numeric = (role: string): ColumnView | undefined => {
             if (views.has(role)) return views.get(role);
@@ -264,7 +274,9 @@ export class BoundGraph {
               },
             });
           }
-          const keyColumn = series.keyColumn() as unknown as {
+          // The source's key column, not a widened copy's — appending a
+          // value column never changes it.
+          const keyColumn = src.keyColumn() as unknown as {
             at(i: number): number;
           };
           return {
@@ -277,6 +289,14 @@ export class BoundGraph {
             }),
           };
         }
+        // Only a column-producing op needs the widened series, because the
+        // corpus studies take `(series, { column })`.
+        let series = src;
+        bound.forEach((b, i) => {
+          if (b.nested) {
+            series = appendColumn(series, b.column, vals[`in${i}`] as Column);
+          }
+        });
         const produced = op.run({ series, inputs: inputsByRole, params, id });
         const columns = toColumns(op, id, produced);
         return Object.fromEntries(

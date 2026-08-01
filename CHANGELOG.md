@@ -54,6 +54,30 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **A fold no longer builds a `TimeSeries`** ([PND-PROCTERM]). Every node's
+  `compute` widened the source with `appendColumn` for each nested input, so
+  an op could call the corpus normally — the studies take
+  `(series, { column })`. For a fold that was waste twice over: the column it
+  reads is already in its inputs, and it was being packed into a series only
+  to be read straight back out.
+
+  The cost was not incidental. `appendColumn` **boxes a gapped column** on
+  the way in, because core's `withColumn` takes values rather than a column —
+  22.4 ms per column at 1M rows. Every rolling study is gapped, so the
+  expensive path was the ordinary one.
+
+  20 folds × 500k rows, on top of the columnar fold context below:
+  **383 → 129 ms** (2.96×), rss 173 → 113 MB. Against the boxed, assembling
+  baseline the two changes together are **606 → 129 ms**.
+
+  A facts-only request now returns no `series` at all, and the upstream
+  column still resolves through the node graph rather than the terminal's
+  `needed` set — so the failure the plan warned about, a fact silently
+  coming back with no value because its column was never selected, cannot
+  happen.
+
 ### Added
 
 - **`columnView(column)` in `@pond-ts/process` — a zero-copy read view over a

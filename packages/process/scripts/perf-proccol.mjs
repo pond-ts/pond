@@ -1,4 +1,9 @@
-// [PND-PROCCOL] — what the boxed fold path costs, and what removing it saves.
+// [PND-PROCCOL] + [PND-PROCTERM] — what the fold path used to cost.
+//
+// Two separate wastes, measured by the same script because they compound
+// on the same workload: a fold densifying its input into a boxed array
+// (PROCCOL), and a fold's node widening the source into a `TimeSeries` it
+// then reads one column back out of (PROCTERM).
 //
 // Node values became columns some time ago; what stayed boxed was the fold
 // context. `densify()` allocated an `Array<number | undefined>` per fold
