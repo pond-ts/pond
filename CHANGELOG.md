@@ -112,6 +112,26 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`ctx.out` — prepared output buffers for a ranged recompute**
+  ([PND-PROCRANGE]), plus `prepareRange` / `sealRange` / `RangeOutput` on the
+  package surface. An op writes only `[from, to)` and returns nothing; the
+  rows it keeps arrive already copied, **values and validity both**.
+
+  500k rows × 5 studies: **209 → 6.5 ms/tick, 32×**, bit-identical to a
+  from-scratch pass every tick. The mechanism shipped at 4× because the
+  example op rebuilt its whole output, carrying the prefix with a `.at(i)`
+  per cell into a boxed `Array`.
+
+  **The contract exists because the obvious shortcut is silently wrong.**
+  Copying the prefix as a typed-array block gets 13× — and 1,875 wrong
+  cells, because packed storage holds `0` at a missing cell rather than
+  `NaN`, so every warm-up gap becomes a defined zero. Nothing in the type
+  system objects. Validity has to move with the values, and doing that per
+  cell is the `O(n)` walk the ticket exists to remove — so the graph
+  prepares both as blocks and an op cannot get it wrong by omission.
+  `previousView` is also exposed for ops that want to read the prior
+  output directly.
+
 - **Ranged recompute** ([PND-PROCRANGE]): `graph.setSourceFrom(series,
 changedFrom)` declares which row first changed, and an op opts in with
   `OpDef.runRange(ctx)` — which receives `{ from, to, previous }` and rebuilds

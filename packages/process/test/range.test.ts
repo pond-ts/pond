@@ -4,8 +4,11 @@ import {
   bind,
   createRegistry,
   int,
+  columnView,
   packColumn,
+  prepareRange,
   run,
+  sealRange,
   type Input,
   type OpDef,
   type Registry,
@@ -538,5 +541,510 @@ describe('[PND-PROCRANGE] ranged recompute', () => {
     graph.setSourceFrom(bars(101) as never, 100);
     const out = run(graph, { plan: [s], select: [{ on: s }], assemble: false });
     expect(cells(out).at(-1)).toBe(100);
+  });
+});
+
+describe('[PND-PROCRANGE] the prepared output contract', () => {
+  it('carries a gapped prefix as gaps, not as defined zeros', () => {
+    // The bug this contract exists to make unwritable. Packed storage
+    // holds `0` at a missing cell, not `NaN`, so an op copying only
+    // `values` forward turns every warm-up gap into a defined zero —
+    // 1,875 wrong cells on a 5-study pass, and nothing in the type
+    // system objects. `prepareRange` moves validity with the values.
+    const prior = packColumn([undefined, undefined, 3, 4, undefined, 6]);
+    const view = columnView(prior)!;
+    const out = prepareRange(8, 5, view);
+    // Rows the op will not touch keep their exact prior state.
+    expect(out.values[2]).toBe(3);
+    expect((out.bits[0]! & (1 << 0)) !== 0, 'row 0 was a gap').toBe(false);
+    expect((out.bits[0]! & (1 << 1)) !== 0, 'row 1 was a gap').toBe(false);
+    expect((out.bits[0]! & (1 << 2)) !== 0, 'row 2 was defined').toBe(true);
+    expect((out.bits[0]! & (1 << 4)) !== 0, 'row 4 was a gap').toBe(false);
+  });
+
+  it('masks the byte straddling the boundary', () => {
+    // `keep` rarely lands on a byte edge. The bits past it in that byte
+    // describe rows the op is about to rewrite, and carrying them over
+    // would leave a cell marked defined before anything wrote to it.
+    // Gapped on purpose: a gapless prior carries no bitmap at all and
+    // takes the other branch, so this test passed with the mask deleted
+    // until the prior was given a gap.
+    const prior = packColumn([1, 2, 3, 4, 5, undefined, 7, 8, 9, 10]);
+    const out = prepareRange(10, 3, columnView(prior)!);
+    expect((out.bits[0]! & (1 << 2)) !== 0, 'row 2 is kept').toBe(true);
+    expect(
+      (out.bits[0]! & (1 << 3)) !== 0,
+      'row 3 is past the boundary and must not be marked',
+    ).toBe(false);
+    expect(out.bits[0]! & 0b11111000).toBe(0);
+  });
+
+  it('treats a bitmap-free prior as wholly defined', () => {
+    const out = prepareRange(6, 4, columnView(packColumn([1, 2, 3, 4]))!);
+    for (let i = 0; i < 4; i += 1) {
+      expect((out.bits[0]! & (1 << i)) !== 0, `row ${i}`).toBe(true);
+    }
+    expect((out.bits[0]! & (1 << 4)) !== 0, 'row 4 unwritten').toBe(false);
+  });
+
+  it('seals to a column that round-trips values and gaps', () => {
+    const out = prepareRange(5, 0, undefined);
+    out.set(0, 10);
+    out.clear(1);
+    out.set(2, 30);
+    out.set(3, 40);
+    out.clear(4);
+    const sealed = sealRange(out, 5) as unknown as {
+      length: number;
+      at(i: number): number | undefined;
+    };
+    expect(sealed.length).toBe(5);
+    expect([0, 1, 2, 3, 4].map((i) => sealed.at(i))).toEqual([
+      10,
+      undefined,
+      30,
+      40,
+      undefined,
+    ]);
+  });
+
+  it('omits the bitmap when nothing is missing', () => {
+    // The gapless convention the rest of the package relies on — a
+    // column with no gaps carries no bitmap, which is also what lets
+    // `appendColumn` round-trip it without boxing.
+    const out = prepareRange(4, 0, undefined);
+    for (let i = 0; i < 4; i += 1) out.set(i, i + 1);
+    const sealed = sealRange(out, 4) as unknown as { validity?: unknown };
+    expect(sealed.validity).toBeUndefined();
+  });
+
+  it('carries no prefix when there is no previous output', () => {
+    const out = prepareRange(4, 3, undefined);
+    expect(out.bits.every((b) => b === 0)).toBe(true);
+  });
+
+  it('stops at the prior length when the series grew', () => {
+    // `keep` is derived from the CURRENT length; the previous output is
+    // shorter after an append, and reading past it would copy garbage.
+    const out = prepareRange(10, 8, columnView(packColumn([1, 2, 3]))!);
+    expect((out.bits[0]! & (1 << 2)) !== 0).toBe(true);
+    expect((out.bits[0]! & (1 << 3)) !== 0, 'past the prior end').toBe(false);
+  });
+});
+
+describe('[PND-PROCRANGE] the void path, through the graph', () => {
+  // The gap a Layer 2 review found on PR #573: three separate ablations
+  // in `graph.ts` — deleting the seal branch, passing `keep: 0`, passing
+  // `prior: undefined` — each left 222/222 green, because every
+  // graph-level op in this file returned a whole result. The feature's
+  // headline path was exercised only by an uncommitted perf script.
+  const N = 300;
+  const P = 8;
+
+  function bars(n: number, bump = 0): TimeSeries<never> {
+    const time = new Float64Array(n);
+    const px = new Float64Array(n);
+    for (let i = 0; i < n; i += 1) {
+      time[i] = i * 60_000;
+      px[i] = 100 + Math.sin(i / 5) * 10 + bump;
+    }
+    return TimeSeries.fromColumns({
+      name: 'bars',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'px', kind: 'number' },
+      ],
+      columns: { time, px },
+    }) as never;
+  }
+
+  /** Writes into `ctx.out` and returns nothing — the path under test. */
+  function voidRegistry(): Registry {
+    return createRegistry().define({
+      name: 'sma',
+      family: 'trend',
+      summary: 'Rolling mean, written into the prepared buffer.',
+      params: { period: int({ min: 2, default: 3 }) },
+      inputs: [{ role: 'source' }],
+      outputs: [{ id: '', unit: 'inherit' }],
+      lookback: (p) => (p['period'] as number) - 1,
+      run: (ctx) => {
+        const v = readCol(ctx);
+        return v.map((_, i) => mean(v, i, ctx.params['period'] as number));
+      },
+      runRange: (ctx) => {
+        const v = readCol(ctx);
+        const period = ctx.params['period'] as number;
+        const out = ctx.out[0]!;
+        for (let i = ctx.from; i < ctx.to; i += 1) {
+          const m = mean(v, i, period);
+          if (m === undefined) out.clear(i);
+          else out.set(i, m);
+        }
+      },
+    });
+  }
+  function readCol(ctx: Parameters<OpDef['run']>[0]) {
+    const col = ctx.series.column(ctx.inputs['source']!) as unknown as {
+      length: number;
+      at(i: number): number | undefined;
+    };
+    return Array.from({ length: col.length }, (_, i) => col.at(i));
+  }
+  function mean(
+    v: readonly (number | undefined)[],
+    i: number,
+    period: number,
+  ): number | undefined {
+    if (i < period - 1) return undefined;
+    let sum = 0;
+    for (let k = i - period + 1; k <= i; k += 1) {
+      const x = v[k];
+      if (x === undefined) return undefined;
+      sum += x;
+    }
+    return sum / period;
+  }
+
+  const s0 = { op: 'sma', params: { period: P }, inputs: ['px'] };
+  const cellsOf = (out: ReturnType<typeof run>) => {
+    const col = Object.values(out.columns ?? {})[0] as unknown as {
+      length: number;
+      at(i: number): number | undefined;
+    };
+    return Array.from({ length: col.length }, (_, i) => col.at(i));
+  };
+
+  it('an op that writes into ctx.out matches a from-scratch pass', () => {
+    // Fails if the seal branch is deleted, if `keep` is forced to 0 (the
+    // prefix comes back all-missing), or if the prior view is dropped.
+    const reg = voidRegistry();
+    const graph = bind(bars(N), { registry: reg });
+    run(graph, { plan: [s0], select: [{ on: s0 }], assemble: false });
+
+    for (let step = 1; step <= 12; step += 1) {
+      const grown = bars(N + step);
+      graph.setSourceFrom(grown, N + step - 1);
+      const incremental = run(graph, {
+        plan: [s0],
+        select: [{ on: s0 }],
+        assemble: false,
+      });
+      const scratch = run(bind(grown, { registry: voidRegistry() }), {
+        plan: [s0],
+        select: [{ on: s0 }],
+        assemble: false,
+      });
+      expect(cellsOf(incremental), `append ${step}`).toEqual(cellsOf(scratch));
+    }
+    expect(graph.recomputes.ranged).toBe(12);
+  });
+
+  it('keeps the warm-up head as GAPS, not as defined zeros', () => {
+    // The specific failure the contract exists to prevent, asserted
+    // through the graph rather than on `prepareRange` directly. Packed
+    // storage holds 0 at a missing cell, so a prefix carried without its
+    // validity reads as a run of zeros here.
+    const reg = voidRegistry();
+    const graph = bind(bars(N), { registry: reg });
+    run(graph, { plan: [s0], select: [{ on: s0 }], assemble: false });
+    graph.setSourceFrom(bars(N + 1) as never, N);
+    const out = run(graph, {
+      plan: [s0],
+      select: [{ on: s0 }],
+      assemble: false,
+    });
+    const cells = cellsOf(out);
+    for (let i = 0; i < P - 1; i += 1) {
+      expect(cells[i], `warm-up row ${i} must be a gap, not 0`).toBeUndefined();
+    }
+    expect(typeof cells[P - 1]).toBe('number');
+  });
+
+  it('clear() undoes a set() made in the same pass', () => {
+    // `clear` was vacuously tested — replacing its body with `{}` left
+    // the suite green. Working out why is the finding: cells in
+    // `[from, to)` start unset and unwritten cells seal as MISSING, so
+    // clearing one that was never set is a no-op by construction.
+    //
+    // `clear` is load-bearing in exactly one situation: undoing a `set`
+    // within the same pass, which is what an op does when it computes a
+    // provisional value and then discovers the window was incomplete.
+    // That is the case worth pinning, and it is documented on
+    // `RangeOutput` rather than left for the next author to rediscover.
+    const reg = createRegistry().define({
+      name: 'sma',
+      family: 'trend',
+      summary: 'Sets every cell, then retracts the odd ones.',
+      params: { period: int({ min: 2, default: 3 }) },
+      inputs: [{ role: 'source' }],
+      outputs: [{ id: '', unit: 'inherit' }],
+      lookback: () => 0,
+      run: (ctx) => readCol(ctx).map((_, i) => i),
+      runRange: (ctx) => {
+        const out = ctx.out[0]!;
+        for (let i = ctx.from; i < ctx.to; i += 1) out.set(i, i * 100);
+        for (let i = ctx.from; i < ctx.to; i += 1) {
+          if (i % 2 === 1) out.clear(i);
+        }
+      },
+    });
+    const graph = bind(bars(20), { registry: reg });
+    run(graph, { plan: [s0], select: [{ on: s0 }], assemble: false });
+    graph.setSourceFrom(bars(20, 1) as never, 15);
+    const cells = cellsOf(
+      run(graph, { plan: [s0], select: [{ on: s0 }], assemble: false }),
+    );
+    expect(cells[14], 'before the boundary — carried from the prefix').toBe(14);
+    expect(cells[16], 'set, and kept').toBe(1600);
+    expect(cells[15], 'set, then cleared').toBeUndefined();
+    expect(cells[19], 'set, then cleared').toBeUndefined();
+  });
+
+  it('falls back to a full run when the prefix cannot be viewed', () => {
+    // `columnView` declines anything not packed numeric. Preparing from
+    // `undefined` would seal the prefix as all-missing and hand it back
+    // as an answer — 16 of 21 cells wrong, silently (Layer 2, PR #573).
+    //
+    // Reached by returning a Column-shaped value that is NOT packed:
+    // `toColumns` passes anything carrying a `kind` straight through.
+    //
+    // A Codex pass checked whether this is reachable in practice and the
+    // answer is "not today, but legally yes": `fromColumns` packs numeric
+    // inputs, `concat` rebuilds rows, live `toTimeSeries` materializes
+    // rows and `appendColumn` repacks — so every ordinary construction
+    // path yields a packed column. A custom op may still legally return
+    // a real `ChunkedFloat64Column`, which is preserved. So this is a
+    // shim standing in for a legal-but-unused shape, not for how core
+    // columns currently arrive, and the guard is future-proofing.
+    //
+    // Packing the prior in the graph instead would be an O(N) scan on
+    // every update, often costing as much as the full run it avoids —
+    // which is why declining to range is the policy.
+    const unpacked = (values: readonly (number | undefined)[]) => ({
+      kind: 'number' as const,
+      storage: 'chunked' as const,
+      length: values.length,
+      at: (i: number) => values[i],
+    });
+    const reg = createRegistry().define({
+      name: 'sma',
+      family: 'trend',
+      summary: 'Returns an unpacked column.',
+      params: { period: int({ min: 2, default: 3 }) },
+      inputs: [{ role: 'source' }],
+      outputs: [{ id: '', unit: 'inherit' }],
+      lookback: () => 0,
+      run: (ctx) =>
+        unpacked(readCol(ctx).map((_, i) => i)) as unknown as ReturnType<
+          OpDef['run']
+        >,
+      runRange: (ctx) => {
+        const out = ctx.out[0]!;
+        for (let i = ctx.from; i < ctx.to; i += 1) out.set(i, i);
+      },
+    });
+
+    const graph = bind(bars(40), { registry: reg });
+    run(graph, { plan: [s0], select: [{ on: s0 }], assemble: false });
+    graph.setSourceFrom(bars(41) as never, 40);
+    const out = run(graph, {
+      plan: [s0],
+      select: [{ on: s0 }],
+      assemble: false,
+    });
+
+    // It must decline to range rather than seal an all-missing prefix.
+    expect(
+      graph.recomputes.ranged,
+      'an unviewable prior must not be ranged',
+    ).toBe(0);
+    const cells = cellsOf(out);
+    expect(cells[0], 'the prefix must not come back missing').toBe(0);
+    expect(cells[39]).toBe(39);
+  });
+
+  it('survives a series that shrank', () => {
+    // `keep` is derived from the current length, so a shrinking series
+    // gives `from > to`; `values.set` then threw `RangeError: offset is
+    // out of bounds` before the op ever ran (Layer 2, PR #573).
+    const reg = voidRegistry();
+    const graph = bind(bars(N), { registry: reg });
+    run(graph, { plan: [s0], select: [{ on: s0 }], assemble: false });
+    graph.setSourceFrom(bars(20) as never, N - 2);
+    const out = run(graph, {
+      plan: [s0],
+      select: [{ on: s0 }],
+      assemble: false,
+    });
+    const scratch = run(bind(bars(20) as never, { registry: voidRegistry() }), {
+      plan: [s0],
+      select: [{ on: s0 }],
+      assemble: false,
+    });
+    expect(cellsOf(out)).toEqual(cellsOf(scratch));
+  });
+});
+
+describe('[PND-PROCRANGE] multi-output ranged recompute', () => {
+  // Codex, PR #573: ablating the outlet mapping so every declared output
+  // received `columns[0]` left all 22 range tests green — nothing here
+  // had more than one output. And an op writing only `out[0]` of three
+  // shipped a silent incomplete answer: outputs 1 and 2 kept their
+  // prefixes and reported the new rows as missing.
+  const N = 40;
+
+  function bars(n: number): TimeSeries<never> {
+    const time = new Float64Array(n);
+    const px = new Float64Array(n);
+    for (let i = 0; i < n; i += 1) {
+      time[i] = i * 60_000;
+      px[i] = i;
+    }
+    return TimeSeries.fromColumns({
+      name: 'bars',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'px', kind: 'number' },
+      ],
+      columns: { time, px },
+    }) as never;
+  }
+
+  /** Three outputs: x, x+10, x+20 — distinct, so a swap is visible. */
+  function bandsRegistry(writes: number): Registry {
+    return createRegistry().define({
+      name: 'bands',
+      family: 'volatility',
+      summary: 'Three offset outputs.',
+      params: {},
+      inputs: [{ role: 'source' }],
+      outputs: [
+        { id: 'Mid', unit: 'inherit' },
+        { id: 'Upper', unit: 'inherit' },
+        { id: 'Lower', unit: 'inherit' },
+      ],
+      lookback: () => 0,
+      run: (ctx) => {
+        const col = ctx.series.column(ctx.inputs['source']!) as unknown as {
+          length: number;
+          at(i: number): number | undefined;
+        };
+        const n = col.length;
+        const mk = (add: number) =>
+          Array.from({ length: n }, (_, i) => (col.at(i) ?? 0) + add);
+        return [mk(0), mk(10), mk(20)];
+      },
+      runRange: (ctx) => {
+        const col = ctx.series.column(ctx.inputs['source']!) as unknown as {
+          at(i: number): number | undefined;
+        };
+        for (let k = 0; k < writes; k += 1) {
+          const out = ctx.out[k]!;
+          for (let i = ctx.from; i < ctx.to; i += 1) {
+            out.set(i, (col.at(i) ?? 0) + k * 10);
+          }
+        }
+      },
+    });
+  }
+
+  const spec = { op: 'bands', inputs: ['px'] };
+  const columnsOf = (out: ReturnType<typeof run>) =>
+    Object.fromEntries(
+      Object.entries(out.columns ?? {}).map(([name, col]) => [
+        name,
+        Array.from(
+          { length: (col as unknown as { length: number }).length },
+          (_, i) => (col as unknown as { at(i: number): unknown }).at(i),
+        ),
+      ]),
+    );
+
+  it('keeps each output on its own outlet', () => {
+    // The ablation nobody caught: every declared output receiving
+    // `columns[0]`. The three outputs differ by 10 and 20, so a
+    // collapsed mapping is immediately visible.
+    const reg = bandsRegistry(3);
+    const graph = bind(bars(N), { registry: reg });
+    run(graph, { plan: [spec], select: [{ on: spec }], assemble: false });
+    graph.setSourceFrom(bars(N + 1) as never, N);
+    const incremental = run(graph, {
+      plan: [spec],
+      select: [{ on: spec }],
+      assemble: false,
+    });
+    const scratch = run(bind(bars(N + 1) as never, { registry: reg }), {
+      plan: [spec],
+      select: [{ on: spec }],
+      assemble: false,
+    });
+    expect(graph.recomputes.ranged).toBe(1);
+    expect(columnsOf(incremental)).toEqual(columnsOf(scratch));
+
+    // And explicitly: the three must not be equal to each other.
+    const cols = Object.values(columnsOf(incremental));
+    expect(cols).toHaveLength(3);
+    expect(cols[0]![N]).not.toEqual(cols[1]![N]);
+    expect(cols[1]![N]).not.toEqual(cols[2]![N]);
+  });
+
+  it('rejects an op that writes only some of its outputs', () => {
+    // Previously silent: outputs 1 and 2 kept their prefixes and
+    // reported the appended row as missing. A plausible, incomplete,
+    // wrong answer is worse than a throw.
+    const graph = bind(bars(N), { registry: bandsRegistry(1) });
+    run(graph, { plan: [spec], select: [{ on: spec }], assemble: false });
+    graph.setSourceFrom(bars(N + 1) as never, N);
+    expect(() =>
+      run(graph, { plan: [spec], select: [{ on: spec }], assemble: false }),
+    ).toThrow(/wrote no ranged output for 'Upper', 'Lower'/);
+  });
+
+  it('rejects an op that writes none of them', () => {
+    const graph = bind(bars(N), { registry: bandsRegistry(0) });
+    run(graph, { plan: [spec], select: [{ on: spec }], assemble: false });
+    graph.setSourceFrom(bars(N + 1) as never, N);
+    expect(() =>
+      run(graph, { plan: [spec], select: [{ on: spec }], assemble: false }),
+    ).toThrow(/wrote no ranged output/);
+  });
+
+  it('prepares no buffer for a return-style op', () => {
+    // `ctx.out` is lazy, so a `runRange` that returns a whole result
+    // never pays to prepare and copy a prefix per output — which for a
+    // three-output op was three prefix copies, allocated and discarded.
+    let touched = 0;
+    const reg = createRegistry().define({
+      ...(bandsRegistry(0).get('bands') as OpDef),
+      runRange: (ctx) => {
+        // Reading `.length` must not prepare anything.
+        expect(ctx.out.length).toBe(3);
+        touched = ctx.out.length;
+        const col = ctx.series.column(ctx.inputs['source']!) as unknown as {
+          length: number;
+          at(i: number): number | undefined;
+        };
+        const n = col.length;
+        const mk = (add: number) =>
+          Array.from({ length: n }, (_, i) => (col.at(i) ?? 0) + add);
+        return [mk(0), mk(10), mk(20)];
+      },
+    });
+    const graph = bind(bars(N), { registry: reg });
+    run(graph, { plan: [spec], select: [{ on: spec }], assemble: false });
+    graph.setSourceFrom(bars(N + 1) as never, N);
+    const out = run(graph, {
+      plan: [spec],
+      select: [{ on: spec }],
+      assemble: false,
+    });
+    expect(touched).toBe(3);
+    const scratch = run(bind(bars(N + 1) as never, { registry: reg }), {
+      plan: [spec],
+      select: [{ on: spec }],
+      assemble: false,
+    });
+    expect(columnsOf(out)).toEqual(columnsOf(scratch));
   });
 });
