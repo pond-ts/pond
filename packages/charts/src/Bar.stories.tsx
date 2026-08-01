@@ -39,6 +39,30 @@ function hourlyVolume() {
 }
 
 /**
+ * The same daily traffic curve as a **point-keyed** series — one sample per
+ * hour, no bucket span. The bars get their width from neighbour spacing (each
+ * centred on its timestamp, reaching halfway to each neighbour), so a bar's
+ * `begin` is derived geometry the caller never computed — the case the stable
+ * `mark` identity exists for (the MarkSelection story).
+ */
+function hourlySamples() {
+  const rows: Array<[number, number]> = [];
+  for (let i = 0; i < N; i += 1) {
+    const hump = 60 * Math.max(0, Math.sin(((i - 6) / 18) * Math.PI));
+    const wiggle = 8 + 6 * Math.sin(i * 1.7);
+    rows.push([BASE + i * HOUR, Math.round(hump + wiggle)]);
+  }
+  return new TimeSeries({
+    name: 'volume',
+    schema: [
+      { name: 'time', kind: 'time' },
+      { name: 'count', kind: 'number' },
+    ] as const,
+    rows,
+  });
+}
+
+/**
  * A net-flow series straddling zero (timeRange-keyed): hourly inflow minus
  * outflow, some hours net-positive, some net-negative. Drives the diverging-bar
  * baseline — `barExtent` pulls `0` into the domain so the bars grow up from /
@@ -219,6 +243,50 @@ export const ControlledSelection: Story = {
       value,
       color: docsTheme.bar.default.fill,
       label: 'count',
+    };
+    return (
+      <ChartContainer
+        range={TIME_RANGE}
+        width={640}
+        theme={docsTheme}
+        selected={pinned}
+      >
+        <ChartRow height={240}>
+          <YAxis id="count" label="req" min={0} />
+          <Layers>
+            <BarChart series={v} column="count" id="count" gap={3} />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};
+
+/**
+ * **Controlled selection by `mark`** — the stable per-bar identity, on a
+ * **point-keyed** series (one sample per hour, no bucket span). Here the bar
+ * widths are *derived*: each bar is centred on its timestamp and reaches halfway
+ * to each neighbour, so its `begin` is `t - 30min` — a number the app never
+ * computed. Pinning by `key` alone would mean re-deriving that spacing.
+ *
+ * `mark` is the sample's own key stringified (`String(t)`), which the app
+ * already owns, so the pin is exact with no geometry: the 12:00 bar lights up
+ * even though its span starts at 11:30. `key` still rides along as click
+ * provenance. A click echoes the same `mark` back, so an app can round-trip a
+ * selection — and it survives a data update that re-derives every span.
+ */
+export const MarkSelection: Story = {
+  render: () => {
+    const v = hourlySamples();
+    const key = BASE + 12 * HOUR;
+    const value = v.nearest(key)!.get('count') as number;
+    const pinned: SelectInfo = {
+      id: 'count',
+      key, // provenance — the sample's own time, not the bar's begin edge
+      value,
+      color: docsTheme.bar.default.fill,
+      label: 'count',
+      mark: String(key), // the identity the highlight matches on
     };
     return (
       <ChartContainer

@@ -71,7 +71,12 @@ Adapters: `barsFromTimeSeries` / `barsFromValueSeries` (single),
   vertical only** — stacked and horizontal bars don't report a per-point
   readout.
 - **Selection:** **id-gated** — set `id` for clickable / hover-lit bars (a
-  stack segment's identity is `(id, key, group)`).
+  stack segment's identity is `(id, key, group)`). A single-series bar also
+  reports a stable **`mark`** — its own axis key, stringified — and a
+  controlled `selected` carrying one matches on that instead of the bar's
+  `key`. Pin by `mark` on a **point-keyed** series, where the bar's `key` is
+  the _derived_ left edge of a neighbour-spaced span (`t - halfGap`) rather
+  than the sample's own time; pinning by `key` still works and is unchanged.
 - **Theming:** the `theme.bar` slot (`BarStyle`); stacks colour per group via
   `colors`, so `as` is single-series only.
 

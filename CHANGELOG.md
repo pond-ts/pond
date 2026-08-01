@@ -94,6 +94,36 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts:** **single-series bars gained the stable per-bar `mark` identity**
+  the categorical stack already had. `<BarChart series column>`'s `hitTest` now
+  echoes a `SelectInfo.mark` — the bar's **own axis key**, stringified — and a
+  controlled `selected` / `hovered` carrying a `mark` matches on that name
+  instead of the bar's `key`. This closes a gap on **point-keyed** series,
+  where the bar span is synthesized from neighbour spacing so its `key` is a
+  _derived_ edge (`t - halfGap`), not the sample's time: pinning a selection
+  previously meant re-deriving that geometry, and now a caller matches on the
+  centre it already owns. The readers (`barsFromTimeSeries` /
+  `barsFromValueSeries`) supply the identity, exposed as the new optional
+  `BarSeries.marks`.
+
+  **The match rule is strictly additive.** A selection with no `mark` — every
+  one that exists today — still matches on the `key`, so key-pinned controlled
+  selections are untouched. (A deliberate divergence from `drawStacks`, which
+  switches on the _series_ carrying marks rather than the _selection_; bars have
+  shipped key-pinning, category stacks never did.) The **payload** does change,
+  additively: an interactive single-series bar's `SelectInfo` now carries a
+  `mark` where it previously carried none, so a consumer that round-trips a hit
+  back as a controlled `selected` pins by mark rather than key. Both resolve to
+  the same bar.
+
+  `marks` build lazily and memoize (~9 ms per 100k bars, on a ~0.8 ms reader).
+  A **non-interactive** layer never reads them; an **interactive** one echoes
+  the hovered bar's mark from `hitTest` on every pointer move, so its first
+  hover over a bar materializes the array — once per data identity, on the input
+  path (11.1 ms cold vs 1.7 ms warm, at 100k). Bounded and paid once, where an
+  eager array would charge every chart on every data update.
+  `scripts/perf-barmarks.mjs` pins both halves.
+
 - **`parallelDispatches()`** in `@pond-ts/financial/parallel` — how many rolling
   passes have actually run on worker threads. `withWorkers` is a silent no-op
   when the pool declines a series, and a declined pass returns the same answer,

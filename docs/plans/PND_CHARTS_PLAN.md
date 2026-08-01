@@ -106,6 +106,94 @@ parity (conceded). M4 stays the auto-on default; LTTB the explicit opt-in.
 [#518]: https://github.com/pond-ts/pond/pull/518
 [#519]: https://github.com/pond-ts/pond/pull/519
 
+### [PND-BARMARK] — Stable per-bar identity for single-series bars — DONE
+
+**Shipped ([Unreleased]).** The categorical stack's `(id, mark)` selection
+identity, mirrored onto the single-series bar path. Three edits: `BarSeries`
+gained an optional `marks` (`src/data.ts`), which the readers
+(`barsFromTimeSeries` / `barsFromValueSeries`) fill with **the sample's own
+axis key** stringified; `drawBars` matches on it (`src/bars.ts`); and
+`<BarChart>`'s single-series `hitTest` echoes it (`src/BarChart.tsx`), as the
+stacked `hitTest` already did.
+
+**The gap it closes.** `drawBars` matched `selection.key === cs.begin[i]`. On a
+**point-keyed** series `begin[i]` is not the sample's key at all — the span is
+synthesized by `neighbourSpans`, so it's `key - prevGap/2`, a derived edge. A
+consumer holding the sample (estela's split centres) had to re-derive the
+neighbour spacing just to name the bar it wanted selected. The mark is the
+centre it already owns.
+
+**Decision — mark-first falls back on the _selection_, not the _series_.**
+`drawStacks` switches to mark-matching whenever the _series_ carries marks. Bar
+series now always carry them, so copying that rule verbatim would have silently
+stopped matching every shipped controlled `selected={{ id, key }}` (the
+`ControlledSelection` story, and estela's own bar). So `barMatches` uses the
+mark only when the **selection** carries one. The two rules coincide wherever
+both marks exist; they differ exactly on the legacy path, which is the point.
+Considered and rejected: matching `mark || key` (two different bars could
+match, lighting both); switching unconditionally and calling it a breaking
+change (no benefit — the fallback costs one branch).
+
+**Decision — `label` is not the mark.** The stacked `hitTest` reports
+`stableMark ?? name` because a category stack's group name is the placeholder
+`'value'`. A single series' `label` (`as ?? column ?? id`) is meaningful and
+its mark is a stringified number, so the single path keeps the series label and
+adds `mark` alongside.
+
+**Decision — lazy marks, and what that actually buys (corrected after L2).**
+One `string` per bar is ~an order of magnitude dearer per element than a
+typed-array write, so eager marks would have taxed every chart on every data
+update for a channel most never touch. The readers expose `marks` through a
+memoized getter and `drawBars` reads it only when the live selection / hover
+carries a `mark`.
+
+The **first cut of this claimed too much**, and the Layer-2 review
+([PR #568](https://github.com/pond-ts/pond/pull/568)) caught it: `Layers`
+hit-tests on every _pointer move_, and `<BarChart>`'s `hitTest` echoes
+`bs.marks?.[bi]` — so an **interactive** layer materializes the array on the
+first move that lands on a bar, on the input path, re-armed per data identity.
+The original bench measured a `drawBars`-only path the component doesn't take.
+`scripts/perf-barmarks.mjs` now covers the hover path too:
+
+| case (100k point-keyed bars)               | median    |
+| ------------------------------------------ | --------- |
+| `barsFromTimeSeries`, marks untouched      | 0.74 ms   |
+| …forcing the marks (the deferred one-off)  | 9.27 ms   |
+| `drawBars`, no selection                   | 6.51 ms   |
+| `drawBars`, key-pinned selection (no mark) | 6.74 ms   |
+| `drawBars`, mark-pinned (marks warm)       | 7.21 ms   |
+| **first `hitTest` hit, cold series**       | 11.124 ms |
+| **subsequent `hitTest` hit, marks warm**   | 1.72 ms   |
+
+So the honest statement: **non-interactive layers never pay; interactive ones
+pay ~9 ms once per data identity at 100k bars, on the first hover.** Lazy still
+strictly dominates eager (which charges every chart on every update regardless),
+and at realistic bar counts it is under a millisecond either way — but it is not
+"free", and the docs no longer say it is.
+
+**Considered, not taken: drop the strings entirely.** Carrying the key buffer
+(`keys: Float64Array`, a zero-copy view) instead of `marks` would make `hitTest`
+O(1) (`String(keys[bi])`) and let `drawBars` compare numerically against a
+once-parsed `Number(selection.mark)` — zero allocation on every path, and no
+getter. Rejected _for this PR_ because it stops mirroring
+`StackedBarSeries.marks` (the shape the ask specified and the stack path uses)
+and forecloses non-numeric identities. Worth revisiting if the 100k interactive
+case ever bites — the change is local to `withKeyMarks`, `barMatches`, and the
+one `hitTest` line.
+
+No public export added, removed, or renamed (`BarSeries` gained an optional
+field; `barsFromTimeSeries`'s signature is unchanged) ⇒ no API.md change.
+
+**Not done here:** `SelectInfo.key` still reports the bar's `begin` as click
+provenance rather than the sample key — changing it would be a behaviour shift
+on a shipped field, and `mark` already carries the identity. Revisit under
+[PND-SELECT] if the provenance value proves confusing.
+
+**Second L2 finding, fixed:** `SelectInfo.mark`'s own JSDoc (`src/context.ts`)
+still said `undefined` "for a time / value bar" — false once every single-series
+bar carries one. Rewritten to enumerate both mark-carrying layers and to state
+that a mark-less selection still matches on `key` everywhere.
+
 ### [PND-AFFINE] — Affine fast path for the per-point draw pipeline — DONE
 
 **Shipped ([Unreleased]).** A `curveLinear` fast path in `drawLine`

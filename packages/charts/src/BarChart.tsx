@@ -526,6 +526,13 @@ export function BarChart<
                   );
                   if (hit === null) return null;
                   const [bi, begin, value] = hit;
+                  // The bar's stable `mark` (its own axis key) rides the
+                  // selection, so the highlight match and a controlled echo key
+                  // on the *sample* rather than on the `begin` edge — which on a
+                  // point-keyed series is derived geometry, not the sample's key
+                  // (see BarSeries.marks). `bi` is the exact bar index from the
+                  // hit, as the stacked path uses it.
+                  const stableMark = bs.marks?.[bi];
                   return {
                     id,
                     key: begin,
@@ -534,6 +541,7 @@ export function BarChart<
                     // parity: the readout pill matches the pixels).
                     color: binColors?.[bi] ?? singleStyle.fill,
                     label,
+                    ...(stableMark !== undefined ? { mark: stableMark } : {}),
                   };
                 },
               }),

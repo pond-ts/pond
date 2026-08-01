@@ -131,6 +131,35 @@ export interface BarSeries {
   readonly end: Float64Array;
   readonly y: Float64Array;
   readonly length: number;
+  /**
+   * Optional **stable per-bar identity** — `marks[i]` names bar `i`. The
+   * single-series sibling of {@link StackedBarSeries.marks}: when present, the
+   * draw / hit-test / selection can key on this name instead of the bar's
+   * `begin` **edge**.
+   *
+   * The readers ({@link barsFromTimeSeries} / {@link barsFromValueSeries}) fill
+   * it with the **sample's own axis key** — `String(key[i])`, the timestamp or
+   * axis value the row is keyed on. That is the identity a caller already
+   * owns, and for a **point-keyed** series it is *not* `begin[i]`: there the
+   * span is synthesized, so `begin[i]` is a derived edge (`key - prevGap/2`,
+   * see {@link neighbourSpans}) and pinning a selection by key meant
+   * re-deriving the neighbour spacing. `undefined` on a hand-built view.
+   *
+   * Built **lazily** on first read and then memoized (~9 ms per 100k bars, on
+   * top of a ~0.8 ms reader). Who pays, precisely:
+   *
+   * - A **non-interactive** layer (no `id`, so no `hitTest`) never reads them.
+   * - An **interactive** one hit-tests on every *pointer move*, and that echo
+   *   reads the hovered bar's mark — so the first move that lands on a bar
+   *   materializes the array, once per data identity, on the input path
+   *   (11.1 ms vs 1.7 ms for a warm 100k-bar hover).
+   *
+   * So this is not free for an interactive chart; it is bounded and paid once,
+   * where an eager array would cost every chart on every data update. At
+   * realistic bar counts it is under a millisecond either way. See
+   * `scripts/perf-barmarks.mjs`.
+   */
+  readonly marks?: readonly string[];
 }
 
 /**
@@ -559,6 +588,51 @@ function neighbourSpans(
 }
 
 /**
+ * Attach the lazy stable per-bar identity to a bar view — see
+ * {@link BarSeries.marks}. `keys` is the **sample's own** axis buffer (the key
+ * column's `begin` for a `TimeSeries`, `axisValues()` for a `ValueSeries`), not
+ * the possibly-derived bar span, and must already be trimmed to `bars.length`.
+ *
+ * The strings are built on first read and then memoized. That is why this is a
+ * getter rather than an eager array: 100k bars is ~9 ms of string allocation on
+ * top of a ~0.8 ms reader, and eager would charge it to every chart on every
+ * data update, for a channel a non-interactive one never uses at all. An
+ * interactive chart *does* pay it, once per data identity, on its first hover
+ * over a bar — see {@link BarSeries.marks}. `scripts/perf-barmarks.mjs` pins
+ * both halves.
+ *
+ * The getter is deliberately **enumerable**, so a `{...bs}` spread carries the
+ * marks through (materializing them) rather than silently dropping them — a
+ * perf surprise beats a correctness one. Nothing in the package spreads a
+ * `BarSeries` today; this is for outside callers. If one ever appears **in the
+ * draw path**, it would force materialization on every frame — but
+ * `perf-barmarks.mjs`'s `marks untouched` row is measured on exactly that, so
+ * it would show up as a reader regression rather than pass silently.
+ */
+function withKeyMarks(
+  bars: {
+    begin: Float64Array;
+    end: Float64Array;
+    y: Float64Array;
+    length: number;
+  },
+  keys: Float64Array,
+): BarSeries {
+  let marks: readonly string[] | undefined;
+  return {
+    ...bars,
+    get marks(): readonly string[] {
+      if (marks === undefined) {
+        const out = new Array<string>(bars.length);
+        for (let i = 0; i < bars.length; i += 1) out[i] = String(keys[i]!);
+        marks = out;
+      }
+      return marks;
+    },
+  };
+}
+
+/**
  * Build a {@link BarSeries} from a pond `TimeSeries` — one bar per event, the
  * key's `[begin, end]` as the x-span and `column` as the height.
  *
@@ -576,6 +650,10 @@ function neighbourSpans(
  * interval-keyed series (e.g. an `aggregate`/`window` rollup) draws its true
  * bucket spans. Detected by `keyColumn().kind === 'time'`.
  *
+ * Each bar also carries its **own key** as a stable {@link BarSeries.marks}
+ * identity, so a selection can be pinned on the sample rather than on the span
+ * this derived for it.
+ *
  * @throws RangeError if `column` does not exist.
  * @throws TypeError if `column` is not a numeric column.
  */
@@ -586,15 +664,16 @@ export function barsFromTimeSeries<S extends SeriesSchema>(
   const y = readNumericColumn(series, column);
   const n = series.length;
   const kind = series.keyColumn().kind;
-  if (kind !== 'time') {
-    // Interval / timeRange: the key's own endpoints are the bar span.
-    const { begin, end } = keyBeginEnd(series);
-    return { begin, end, y, length: n };
-  }
-  // Point key (begin === end): synthesize a span from neighbour spacing so the
-  // bars have width (see neighbourSpans).
-  const { begin, end } = neighbourSpans(series.keyColumn().begin, n);
-  return { begin, end, y, length: n };
+  // Interval / timeRange: the key's own endpoints are the bar span. Point key
+  // (begin === end): synthesize a span from neighbour spacing so the bars have
+  // width (see neighbourSpans).
+  const { begin, end } =
+    kind !== 'time'
+      ? keyBeginEnd(series)
+      : neighbourSpans(series.keyColumn().begin, n);
+  // The marks key on the event's own timestamp — which for a point key is the
+  // bar's *centre*, not the `begin` edge derived above (see BarSeries.marks).
+  return withKeyMarks({ begin, end, y, length: n }, timeAxis(series));
 }
 
 /**
@@ -613,6 +692,10 @@ export function barsFromTimeSeries<S extends SeriesSchema>(
  * (a slight drift from a true segment edge — fine for the bar look; key an
  * interval/timeRange `TimeSeries` instead if exact edges matter).
  *
+ * Each bar also carries its **axis value** as a stable {@link BarSeries.marks}
+ * identity — the centre it is drawn around, not the derived edge — so a
+ * selection can be pinned without re-deriving the neighbour spacing.
+ *
  * @throws RangeError if `column` does not exist.
  * @throws TypeError if `column` is not a numeric column.
  */
@@ -624,8 +707,9 @@ export function barsFromValueSeries<VS extends ValueSeriesSchema>(
   const n = series.length;
   // axisValues() is the monotonic key buffer (zero-copy); neighbourSpans reads it
   // and allocates fresh span buffers (never mutates the source).
-  const { begin, end } = neighbourSpans(series.axisValues(), n);
-  return { begin, end, y, length: n };
+  const axis = series.axisValues();
+  const { begin, end } = neighbourSpans(axis, n);
+  return withKeyMarks({ begin, end, y, length: n }, axis);
 }
 
 /**
