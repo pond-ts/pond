@@ -1,6 +1,6 @@
 {
   "name": "@pond-ts/process",
-  "version": "0.53.1",
+  "version": "0.54.0",
   "private": true,
   "description": "WORK IN PROGRESS, NOT PUBLISHED. Typed dataflow engine over pond-ts; the consumer surface is expected to be the declarative plan layer in RFC #543, with this underneath it.",
   "license": "MIT",
@@ -42,7 +42,7 @@
     "verify": "npm run format:check && npm run build && npm test"
   },
   "peerDependencies": {
-    "pond-ts": "^0.53.0"
+    "pond-ts": "^0.54.0"
   },
   "devDependencies": {
     "typescript": "^5.6.3",

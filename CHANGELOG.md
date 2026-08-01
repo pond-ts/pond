@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
 include new features and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.53.1...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.54.0...HEAD
+[0.54.0]: https://github.com/pond-ts/pond/compare/v0.53.1...v0.54.0
 [0.53.1]: https://github.com/pond-ts/pond/compare/v0.53.0...v0.53.1
 [0.53.0]: https://github.com/pond-ts/pond/compare/v0.52.0...v0.53.0
 [0.52.0]: https://github.com/pond-ts/pond/compare/v0.51.0...v0.52.0
@@ -83,6 +84,10 @@ include new features and type-level changes; patch bumps are strictly additive.
   host shape) and grows `remove(id)`, and CI's package-content check covers
   `@pond-ts/process`. Package remains **unpublished** (`private: true`).
 
+## [0.54.0] — 2026-08-02
+
+### Fixed
+
 - **core:** **`fromArrow` now reads a field's declared Arrow type instead of
   guessing from the runtime shape of `toArray()`** — closing a
   silent-corruption class. The reader worked out what a column held from what
@@ -139,6 +144,26 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **`ctx.out` — prepared output buffers for a ranged recompute**
+  ([PND-PROCRANGE]), plus `prepareRange` / `sealRange` / `RangeOutput` on the
+  package surface. An op writes only `[from, to)` and returns nothing; the
+  rows it keeps arrive already copied, **values and validity both**.
+
+  500k rows × 5 studies: **209 → 6.5 ms/tick, 32×**, bit-identical to a
+  from-scratch pass every tick. The mechanism shipped at 4× because the
+  example op rebuilt its whole output, carrying the prefix with a `.at(i)`
+  per cell into a boxed `Array`.
+
+  **The contract exists because the obvious shortcut is silently wrong.**
+  Copying the prefix as a typed-array block gets 13× — and 1,875 wrong
+  cells, because packed storage holds `0` at a missing cell rather than
+  `NaN`, so every warm-up gap becomes a defined zero. Nothing in the type
+  system objects. Validity has to move with the values, and doing that per
+  cell is the `O(n)` walk the ticket exists to remove — so the graph
+  prepares both as blocks and an op cannot get it wrong by omission.
+  `previousView` is also exposed for ops that want to read the prior
+  output directly.
+
 - **Ranged recompute** ([PND-PROCRANGE]): `graph.setSourceFrom(series,
 changedFrom)` declares which row first changed, and an op opts in with
   `OpDef.runRange(ctx)` — which receives `{ from, to, previous }` and rebuilds
@@ -170,8 +195,6 @@ changedFrom)` declares which row first changed, and an op opts in with
   by slicing, with no incremental machinery. Ranging earns its keep where the
   whole column must stay materialized — a chart drawing every point while one
   row arrives.
-
-### Added
 
 - **An engine-wide byte budget over retained node values** ([PND-PROCCACHE]):
   `bind(series, { registry, budgetBytes })`, plus `graph.retainedBytes`,
@@ -213,8 +236,6 @@ changedFrom)` declares which row first changed, and an op opts in with
   constraint: a node whose consumer still holds its outlet is skipped,
   because dropping it frees nothing and forces a recompile.
 
-### Added
-
 - **`requiredHistory(registry, plan)` in `@pond-ts/process`** ([PND-PROCHIST]),
   with a per-op `OpDef.lookback`. The hot leading edge is the design's worst
   cliff — an 8-study stack over 500k rows costs ~100 ms/tick — and the fix is
@@ -240,8 +261,6 @@ changedFrom)` declares which row first changed, and an op opts in with
   [PND-PROCKERN]'s bit-identity covers a range of the _same_ column, not a
   re-indexed copy.
 
-### Added
-
 - **`columnView(column)` in `@pond-ts/process` — a zero-copy read view over a
   packed numeric column** ([PND-PROCCOL]), and `FoldContext.numeric(role)`,
   which hands one to a fold. `values` and `bits` are `subarray`s of the
@@ -266,114 +285,6 @@ changedFrom)` declares which row first changed, and an op opts in with
   per cell. The 1.58× is the densify disappearing for folds that read a few
   cells. A fold that walks the whole column should expect parity, and gets
   the memory win only.
-
-### Changed
-
-- **The rolling mean/σ kernel is now _range-exact_, and every rolling study
-  is faster and more accurate for it** ([PND-PROCKERN]). `sma`, `bollinger`
-  and `envelope` move off core's general sweep onto a dedicated
-  `rollingMeanSdInto`, which fills any `[lo, hi)` with **exactly the bits a
-  full pass would have written there** — not "within rounding", the same
-  doubles.
-
-  That property is the point. An ordinary sliding accumulator carries
-  rounding history from row 0, so restarting it mid-column lands a few ulps
-  off on _every_ cell of the range. Harmless-sounding, until you notice it
-  means the value depends on which ranges happened to be recomputed — on a
-  caller's edit history rather than their data. Two mechanisms get it: the
-  accumulators are rebuilt from the window every `period` rows so history
-  cannot accumulate, and those rebuilds are pinned to **absolute** row index
-  so a ranged sweep reconstructs the state a full sweep held. They also work
-  in a shifted frame, for the reason [PND-SHIFTFRAME] established — aligning
-  _without_ shifting made large-magnitude σ **worse** (3.6e-3 → 1.7e-2),
-  which is why the two ship together.
-
-  Worst relative error against an exact reference, 200k rows, period 20:
-
-  | input                  | before | after   |
-  | ---------------------- | ------ | ------- |
-  | random walk ≈100       | 5.3e-9 | 3.9e-14 |
-  | `1e9 + sin`            | 1.4e-3 | 6.3e-14 |
-  | `1e15 + ((i % 7) − 3)` | 3.6e-3 | 4.4e-16 |
-
-  **Values change** in the last ulps on ordinary data, and materially where
-  they were previously wrong — the `1e9` row is an ordinary notional, not a
-  contrived extreme. Faster too, on 500k bars: `bollinger(20)` **46.5 → 18.4
-  ms** (avg and σ now fuse into one sweep instead of core running two
-  reducers), `envelope(20)` 13.1 → 10.6, `sma(20)` 6.7 → 6.2, a five-study
-  stack 58.3 → 49.9. `scripts/perf-ranged-kernel.mjs`.
-
-- **`withWorkers` no longer changes the answer at all.** The per-study
-  accuracy table is gone, replaced by one word: identical. Partitioned and
-  sequential results are bit-identical for every accelerated study, at
-  ordinary and large magnitudes, because a chunk starting anywhere now
-  reconstructs the state a whole-column pass held there. The previous
-  figures — `sma` 3.9e-14, `bollinger` 5.1e-13 — were observations on one
-  benign random walk presented as bounds, and a Codex pass had already
-  broken the `zScore` one with a legal input.
-
-### Fixed
-
-- **Charts' affine fast path evaluates in a rebased frame, and survives deep
-  zoom for the first time.** The canvas draw loops reconstructed each affine
-  scale as `px = k·t + b` on absolute epoch-ms values — on a deeply zoomed
-  window, `k·t` and `b` are huge near-cancelling terms whose rounding residue
-  reaches ~0.16 px at a 1 ms window and ~24 px at 1 µs. The interior affinity
-  probe detected the drift and rejected the scale, so every deep-zoomed frame
-  (sub-second visible windows on an epoch-ms axis — the rejection crossover
-  measures around a few hundred ms at typical plot widths) silently fell back
-  to the slow per-point d3-scale path. The map is now recovered, verified, and evaluated
-  in the rebased form `px = (t − t0)·k + px0` (the association d3 itself
-  uses), which matches the exact scale to ≲1e-9 px at every zoom depth — the
-  fast path stays engaged at the `minDuration` floor and below (line/area
-  deep-zoom draws ~3.1–3.4× faster; wide-domain draws pay ~1–2%, one extra
-  subtraction per point per axis).
-
-- **`zScore` computes its deviation in a shifted frame, and is accurate at
-  large magnitudes for the first time** ([PND-SHIFTFRAME]). The study derived
-  its numerator as `value − rollingMean`, which is catastrophic cancellation
-  whenever the values are large next to the window's spread: `ulp(1e15)` is
-  `0.125`, so a window spanning ±3 leaves the deviation about three bits. The
-  new `rollingDeviationSd` kernel accumulates `value − anchor` and emits the
-  deviation directly — both operands small, nothing cancels — re-anchoring
-  periodically, and on magnitude, so a trending series stays in frame.
-
-  Measured against an exact reference over 200k rows, worst relative error:
-
-  | input                     | before | after   |
-  | ------------------------- | ------ | ------- |
-  | `1e15 + ((i % 7) − 3)`    | 1.0e+0 | 4.1e-15 |
-  | `1e9 + sin` (mid)         | 4.1e+0 | 4.9e-12 |
-  | random walk ≈100 (benign) | 3.9e-6 | 4.4e-11 |
-  | `1e12·(1+i/N)` (trending) | 9.0e-6 | 4.9e-15 |
-
-  **This was never a parallelism bug**, though it was found through one and
-  first documented as one. The sequential study computed the same subtraction
-  and carried the same exposure; partitioning only made two equally-wrong
-  answers visibly disagree. Anyone thresholding z-scores on large-magnitude
-  data was affected on the default path.
-
-  Two consequences worth reading before upgrading. **`zScore` values change**
-  — by rounding error on ordinary data, and by a lot on the cases above, where
-  they were wrong. And **`zScore` is no longer accelerated by `withWorkers`**:
-  the stable kernel is not the shape the worker pool hooks, so opting in no
-  longer speeds it up (it was 2.44×, the fastest study there) and no longer
-  changes its answer by a bit. The remaining accelerated studies — `sma`,
-  `envelope`, `bollinger` — are exactly those whose error is bounded.
-
-  **One behaviour change at overflow scale**, verified by a Codex pass and
-  left unguarded: the shifted frame computes `x - anchor`, which can
-  overflow when both operands are near `Number.MAX_VALUE` even though each
-  is finite. `[MAX_VALUE, -MAX_VALUE]` at period 2 gives a mean of
-  `-Infinity` where the previous raw-sum kernel gave the true `0`. Not
-  guarded, because the check is per row on a ~20 ns/row kernel to correct
-  an input no price, size or rate series can produce.
-
-  `zScore` costs ~2.3× its previous formulation as an upper bound (~26 ns/row
-  at 500k), and is flat in `period` — 22.8 to 26.1 ns/row from `period 2` to
-  `period 100_000`. `scripts/perf-shifted-frame.mjs`.
-
-### Added
 
 - **charts:** **`<LineChart readout>` / `<AreaChart readout>` — the tracked
   value, decoupled from the plotted one** ([PND-READOUT]). Name a **second
@@ -432,8 +343,6 @@ changedFrom)` declares which row first changed, and an op opts in with
   just slower than the caller expected; this is how you check. It also replaces
   a test canary that had proved the parallel path ran _by it being wrong_ —
   which stopped working the moment the wrongness was fixed.
-
-### Added
 
 - **financial:** **`withWorkers` (`@pond-ts/financial/parallel`) — rolling
   studies partitioned across worker threads** ([PND-SCANKERN], Node-only,
@@ -740,6 +649,71 @@ changedFrom)` declares which row first changed, and an op opts in with
 
 ### Changed
 
+- **A fold no longer builds a `TimeSeries`** ([PND-PROCTERM]). Every node's
+  `compute` widened the source with `appendColumn` for each nested input, so
+  an op could call the corpus normally — the studies take
+  `(series, { column })`. For a fold that was waste twice over: the column it
+  reads is already in its inputs, and it was being packed into a series only
+  to be read straight back out.
+
+  The cost was not incidental. `appendColumn` **boxes a gapped column** on
+  the way in, because core's `withColumn` takes values rather than a column —
+  22.4 ms per column at 1M rows. Every rolling study is gapped, so the
+  expensive path was the ordinary one.
+
+  20 folds × 500k rows, on top of the columnar fold context below:
+  **383 → 129 ms** (2.96×), rss 173 → 113 MB. Against the boxed, assembling
+  baseline the two changes together are **606 → 129 ms**.
+
+  A facts-only request now returns no `series` at all, and the upstream
+  column still resolves through the node graph rather than the terminal's
+  `needed` set — so the failure the plan warned about, a fact silently
+  coming back with no value because its column was never selected, cannot
+  happen.
+
+- **The rolling mean/σ kernel is now _range-exact_, and every rolling study
+  is faster and more accurate for it** ([PND-PROCKERN]). `sma`, `bollinger`
+  and `envelope` move off core's general sweep onto a dedicated
+  `rollingMeanSdInto`, which fills any `[lo, hi)` with **exactly the bits a
+  full pass would have written there** — not "within rounding", the same
+  doubles.
+
+  That property is the point. An ordinary sliding accumulator carries
+  rounding history from row 0, so restarting it mid-column lands a few ulps
+  off on _every_ cell of the range. Harmless-sounding, until you notice it
+  means the value depends on which ranges happened to be recomputed — on a
+  caller's edit history rather than their data. Two mechanisms get it: the
+  accumulators are rebuilt from the window every `period` rows so history
+  cannot accumulate, and those rebuilds are pinned to **absolute** row index
+  so a ranged sweep reconstructs the state a full sweep held. They also work
+  in a shifted frame, for the reason [PND-SHIFTFRAME] established — aligning
+  _without_ shifting made large-magnitude σ **worse** (3.6e-3 → 1.7e-2),
+  which is why the two ship together.
+
+  Worst relative error against an exact reference, 200k rows, period 20:
+
+  | input                  | before | after   |
+  | ---------------------- | ------ | ------- |
+  | random walk ≈100       | 5.3e-9 | 3.9e-14 |
+  | `1e9 + sin`            | 1.4e-3 | 6.3e-14 |
+  | `1e15 + ((i % 7) − 3)` | 3.6e-3 | 4.4e-16 |
+
+  **Values change** in the last ulps on ordinary data, and materially where
+  they were previously wrong — the `1e9` row is an ordinary notional, not a
+  contrived extreme. Faster too, on 500k bars: `bollinger(20)` **46.5 → 18.4
+  ms** (avg and σ now fuse into one sweep instead of core running two
+  reducers), `envelope(20)` 13.1 → 10.6, `sma(20)` 6.7 → 6.2, a five-study
+  stack 58.3 → 49.9. `scripts/perf-ranged-kernel.mjs`.
+
+- **`withWorkers` no longer changes the answer at all.** The per-study
+  accuracy table is gone, replaced by one word: identical. Partitioned and
+  sequential results are bit-identical for every accelerated study, at
+  ordinary and large magnitudes, because a chunk starting anywhere now
+  reconstructs the state a whole-column pass held there. The previous
+  figures — `sma` 3.9e-14, `bollinger` 5.1e-13 — were observations on one
+  benign random walk presented as bounds, and a Codex pass had already
+  broken the `zScore` one with a legal input.
+
 - **core:** **`fromArrow` now adopts a null-bearing numeric column's buffers
   zero-copy** — 19.3 ms → 1.5 ms (**12.7×**) on 500k rows with 4% nulls.
   Arrow's validity bitmap is byte-identical to pond's, so both the values
@@ -933,6 +907,97 @@ changedFrom)` declares which row first changed, and an op opts in with
   mode, not a separate component, and the sidebar now says so. Story IDs under
   the group changed accordingly (`charts-histogram--*` →
   `charts-barchart-histogram--*`).
+
+### Fixed
+
+- **core:** **`fromArrow` now reads a field's declared Arrow type instead of
+  guessing from the runtime shape of `toArray()`** — closing a
+  silent-corruption class. The reader worked out what a column held from what
+  `toArray()` handed back, which is correct for the types it supports and
+  quietly wrong outside them, because Arrow's physical layouts do not all store
+  one machine word per logical value. Measured, before the fix: **`Float16`
+  ingested `1.5` as `15872`** (its half-float bit pattern — the length matched,
+  so nothing caught it), and a **`Decimal128` column with a single null
+  ingested `123.45` as `12345`** (the per-element path produced exactly `rows`
+  values, so the length check never fired). A dense `Decimal` merely threw the
+  wrong error, blaming a length mismatch.
+
+  The readable set is now an explicit allowlist — `Int` (any width),
+  `Float32`/`Float64`, `Date32`/`Date64`, `Time32`/`Time64`, `Timestamp`,
+  `Utf8`/`LargeUtf8`/`Utf8View`, `Null` (an all-missing value column), and a
+  `Dictionary` of any of those (the encoding is transparent; readability
+  follows the value type) — checked per field, on the key and value columns of every
+  Arrow door (`TimeSeries.fromArrow`, `ValueSeries.fromArrow`, and the
+  flattened key edges). Anything else is refused **by name**, with the cast
+  that would fix it: `Decimal` names the float64 precision trade-off, `Float16`
+  says to cast, `Bool` names the real reason (the columnar ingest engine
+  carries `number` and `string` value columns only). A duck-typed stand-in
+  carrying no `typeId` keeps working — the `ArrowTableLike` contract is
+  deliberately structural — and gains a width check that catches the Decimal
+  shape anyway.
+
+  Behavioural change worth noting: a `Utf8` **key** now throws on its declared
+  type rather than on its shape, so the message names the type and points at
+  passing it as a value column instead.
+
+- **Charts' affine fast path evaluates in a rebased frame, and survives deep
+  zoom for the first time.** The canvas draw loops reconstructed each affine
+  scale as `px = k·t + b` on absolute epoch-ms values — on a deeply zoomed
+  window, `k·t` and `b` are huge near-cancelling terms whose rounding residue
+  reaches ~0.16 px at a 1 ms window and ~24 px at 1 µs. The interior affinity
+  probe detected the drift and rejected the scale, so every deep-zoomed frame
+  (sub-second visible windows on an epoch-ms axis — the rejection crossover
+  measures around a few hundred ms at typical plot widths) silently fell back
+  to the slow per-point d3-scale path. The map is now recovered, verified, and evaluated
+  in the rebased form `px = (t − t0)·k + px0` (the association d3 itself
+  uses), which matches the exact scale to ≲1e-9 px at every zoom depth — the
+  fast path stays engaged at the `minDuration` floor and below (line/area
+  deep-zoom draws ~3.1–3.4× faster; wide-domain draws pay ~1–2%, one extra
+  subtraction per point per axis).
+
+- **`zScore` computes its deviation in a shifted frame, and is accurate at
+  large magnitudes for the first time** ([PND-SHIFTFRAME]). The study derived
+  its numerator as `value − rollingMean`, which is catastrophic cancellation
+  whenever the values are large next to the window's spread: `ulp(1e15)` is
+  `0.125`, so a window spanning ±3 leaves the deviation about three bits. The
+  new `rollingDeviationSd` kernel accumulates `value − anchor` and emits the
+  deviation directly — both operands small, nothing cancels — re-anchoring
+  periodically, and on magnitude, so a trending series stays in frame.
+
+  Measured against an exact reference over 200k rows, worst relative error:
+
+  | input                     | before | after   |
+  | ------------------------- | ------ | ------- |
+  | `1e15 + ((i % 7) − 3)`    | 1.0e+0 | 4.1e-15 |
+  | `1e9 + sin` (mid)         | 4.1e+0 | 4.9e-12 |
+  | random walk ≈100 (benign) | 3.9e-6 | 4.4e-11 |
+  | `1e12·(1+i/N)` (trending) | 9.0e-6 | 4.9e-15 |
+
+  **This was never a parallelism bug**, though it was found through one and
+  first documented as one. The sequential study computed the same subtraction
+  and carried the same exposure; partitioning only made two equally-wrong
+  answers visibly disagree. Anyone thresholding z-scores on large-magnitude
+  data was affected on the default path.
+
+  Two consequences worth reading before upgrading. **`zScore` values change**
+  — by rounding error on ordinary data, and by a lot on the cases above, where
+  they were wrong. And **`zScore` is no longer accelerated by `withWorkers`**:
+  the stable kernel is not the shape the worker pool hooks, so opting in no
+  longer speeds it up (it was 2.44×, the fastest study there) and no longer
+  changes its answer by a bit. The remaining accelerated studies — `sma`,
+  `envelope`, `bollinger` — are exactly those whose error is bounded.
+
+  **One behaviour change at overflow scale**, verified by a Codex pass and
+  left unguarded: the shifted frame computes `x - anchor`, which can
+  overflow when both operands are near `Number.MAX_VALUE` even though each
+  is finite. `[MAX_VALUE, -MAX_VALUE]` at period 2 gives a mean of
+  `-Infinity` where the previous raw-sum kernel gave the true `0`. Not
+  guarded, because the check is per row on a ~20 ns/row kernel to correct
+  an input no price, size or rate series can produce.
+
+  `zScore` costs ~2.3× its previous formulation as an upper bound (~26 ns/row
+  at 500k), and is flat in `period` — 22.8 to 26.1 ns/row from `period 2` to
+  `period 100_000`. `scripts/perf-shifted-frame.mjs`.
 
 ## [0.53.1] — 2026-07-25
 

@@ -357,3 +357,111 @@ export function columnView(column: Column): ColumnView | undefined {
     at: (i) => (defined(i) ? view[i] : undefined),
   };
 }
+
+/**
+ * A writable output buffer for a ranged recompute — [PND-PROCRANGE].
+ *
+ * The rows an op keeps unchanged are already here, values **and**
+ * validity, copied as blocks. The op fills `[from, to)` and nothing else.
+ *
+ * This exists because carrying a prefix forward correctly is harder than
+ * it looks and the obvious shortcut is silently wrong. Packed storage
+ * holds `0` at a missing cell, not `NaN`, so copying only `values` turns
+ * every warm-up gap in the prefix into a defined zero — measured at 1,875
+ * wrong cells on a 5-study pass, caught by a from-scratch comparison
+ * rather than by any type. Validity has to move with the values, and
+ * doing that per cell is the `O(n)` walk the whole ticket exists to
+ * remove.
+ */
+export interface RangeOutput {
+  /** Length `to`. `[0, from)` already carries the previous output. */
+  readonly values: Float64Array;
+  /**
+   * Validity bits, LSB-first, already carrying `[0, from)`.
+   *
+   * Exposed so an op can write a run of cells as bytes rather than
+   * through {@link RangeOutput.set} per cell; most ops want `set`.
+   */
+  readonly bits: Uint8Array;
+  /** Marks a cell present, with its value. */
+  set(i: number, v: number): void;
+  /**
+   * Marks a cell missing.
+   *
+   * **Only needed to undo a {@link RangeOutput.set} made in the same
+   * pass.** Cells in `[from, to)` start unset and an unwritten cell
+   * seals as missing, so clearing one the op never set does nothing —
+   * which is why an empty `clear` passed the whole suite until a
+   * set-then-clear case was written (Layer 2, PR #573).
+   */
+  clear(i: number): void;
+}
+
+/** Bytes needed for `length` validity bits. */
+export function validityByteCount(length: number): number {
+  return (length + 7) >> 3;
+}
+
+/**
+ * Prepares a {@link RangeOutput} of `length`, carrying `[0, keep)` from
+ * `prior` — a `Float64Array.set` for the values and a byte-wise copy for
+ * the bitmap, with the straddling byte masked.
+ */
+export function prepareRange(
+  length: number,
+  keep: number,
+  prior: ColumnView | undefined,
+): RangeOutput {
+  const values = new Float64Array(length);
+  const bits = new Uint8Array(validityByteCount(length));
+  // Clamped to `length` as well as to the prior: a series that SHRANK
+  // gives `keep > length`, and `values.set` then throws
+  // `RangeError: offset is out of bounds` before the op ever runs.
+  const copy = prior === undefined ? 0 : Math.min(keep, prior.length, length);
+  if (prior !== undefined && copy > 0) {
+    values.set(prior.values.subarray(0, copy));
+    if (prior.bits === undefined) {
+      // No bitmap ⇒ every prior cell was defined.
+      for (let i = 0; i < copy; i += 1) bits[i >> 3]! |= 1 << (i & 7);
+    } else {
+      const whole = copy >> 3;
+      bits.set(prior.bits.subarray(0, whole));
+      // The byte straddling `copy` carries bits past it that belong to
+      // rows this range is about to rewrite — mask them off.
+      const rest = copy & 7;
+      if (rest !== 0) bits[whole] = prior.bits[whole]! & ((1 << rest) - 1);
+    }
+  }
+  return {
+    values,
+    bits,
+    set(i, v) {
+      values[i] = v;
+      bits[i >> 3]! |= 1 << (i & 7);
+    },
+    clear(i) {
+      values[i] = 0;
+      bits[i >> 3]! &= ~(1 << (i & 7));
+    },
+  };
+}
+
+/** Seals a {@link RangeOutput} into a column, counting validity once. */
+export function sealRange(out: RangeOutput, length: number): Float64Column {
+  const bits = out.bits;
+  let defined = 0;
+  let allFinite = true;
+  for (let i = 0; i < length; i += 1) {
+    if ((bits[i >> 3]! & (1 << (i & 7))) === 0) continue;
+    defined += 1;
+    if (!Number.isFinite(out.values[i]!)) allFinite = false;
+  }
+  if (defined === length)
+    return new Float64Column(out.values, length, undefined, allFinite);
+  return new Float64Column(
+    out.values,
+    length,
+    new PackedValidity(bits, length, defined),
+    allFinite,
+  );
+}
