@@ -493,6 +493,34 @@ relitigating any of them. [PND-CHARTAPI] and [PND-VSADAPT] are
 public-surface changes: human merge gate, and [PND-CHARTAPI] additionally
 wants a design spike on union × generics error messages plus a Codex pass.
 
+**[PND-VSADAPT] direction settled by the owner (2026-08-02):** _"any use of
+an adaptor when starting with a timeseries is a core api failure."_ So: **do
+not** export the ValueSeries adapters (the earlier export-for-symmetry
+recommendation is withdrawn); adapters are internal normalization. The task
+becomes a de-adapterization pass:
+
+- **Docs stop teaching adapters as the data contract.** The cheat-sheet's
+  "Adapter" column and the type pages' "Adapter:" lines go; the contract is
+  "the component takes your series + column names". The already-exported
+  TimeSeries adapters stay exported (removing them is breaking) but are
+  re-documented as **interop escape hatches** — hand-building a chart-ready
+  view from non-pond data — not as steps in the pond pipeline. The stale M1
+  `index.ts` package header is rewritten in the same pass.
+- **The list family gains a direct `series` input** for the rows-are-events
+  case: `<BarList series={splits} columns label>` reading internally what
+  `listRowsFromTimeSeries` reads today (the reader stays exported for the
+  record-shaped door, but the happy path stops requiring it — it is exactly
+  the failure the principle names, shipped in #585/#587 before the principle
+  was stated). Public-surface addition → human gate.
+- **Open design point:** rows-from-facts (`partitionBy → reduce → rows`)
+  cannot be adapter-free without the chart choosing reducers — data policy.
+  A `Map` + facts-mapping input that _delegates_ to core's `reduce` (the
+  chart still computes nothing) would close it; decide when a second
+  consumer hits the friction.
+- **`transposeRow`** remains the one exported series-in adapter; expected to
+  be absorbed by categorical Phase 2's row binding (`at` / cursor-bound row
+  on the component), not deleted before then.
+
 ### [PND-LISTS] — BarList + BoxList ranked row lists — DONE
 
 Shipped in [#585](https://github.com/pond-ts/pond/pull/585): the
