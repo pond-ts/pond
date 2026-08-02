@@ -117,6 +117,19 @@ export function ListTable<R extends ListRow>({
                 onClick={
                   onRowClick === undefined ? undefined : () => onRowClick(row)
                 }
+                // A clickable row is keyboard-reachable too: focusable, and
+                // Enter / Space activate it (Space's default scroll is eaten).
+                tabIndex={interactive ? 0 : undefined}
+                onKeyDown={
+                  onRowClick === undefined
+                    ? undefined
+                    : (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          onRowClick(row);
+                        }
+                      }
+                }
                 onPointerEnter={
                   interactive ? () => setHovered(row.key) : undefined
                 }
@@ -152,14 +165,14 @@ export function ListTable<R extends ListRow>({
                   data-list-cell="glyphs"
                   // 100% absorbs the table's free width; every text cell
                   // shrinks to its content, staying aligned down the list.
-                  // The baseline rule sits ON the scale origin: left padding
-                  // drops to 0 so fraction 0 lands exactly at the border, and
-                  // border-collapse joins the rows' rules into one continuous
-                  // vertical — the same thin `axis.grid` ink as the row
-                  // dividers, so the two read as one quiet reference grid.
+                  // The baseline rule marks the scale origin: left padding
+                  // narrows to a 5px breath so the glyphs start just off the
+                  // rule, and border-collapse joins the rows' rules into one
+                  // continuous vertical — the same thin `axis.grid` ink as
+                  // the row dividers, so the two read as one quiet grid.
                   style={{
                     width: '100%',
-                    padding: baseline ? '6px 8px 6px 0' : '6px 8px',
+                    padding: baseline ? '6px 8px 6px 5px' : '6px 8px',
                     verticalAlign: 'middle',
                     borderLeft: baseline
                       ? `1px solid ${theme.axis.grid}`

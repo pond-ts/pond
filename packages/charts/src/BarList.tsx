@@ -32,6 +32,12 @@ export interface BarListProps<R extends ListRow = ListRow> {
    * `[min(0, data min), data max]` over every bar column of every row. Set it
    * to pin the scale across live updates (a re-sorting traffic list whose max
    * changes every tick) or across sibling lists.
+   *
+   * Bars are **length-encoded from the domain minimum** — the component
+   * assumes non-negative values. A negative value stays in-domain (the auto
+   * fit widens below zero) but draws as a short left-anchored bar, not a
+   * diverging one; diverging bar lists are out of scope (transform upstream,
+   * or use {@link BoxList}, whose marks are positional).
    */
   domain?: readonly [number, number];
   /**
@@ -162,12 +168,14 @@ export function BarList<R extends ListRow = ListRow>({
       theme={theme}
       renderGlyphs={(row) => (
         <>
-          {columns.map((col) => {
+          {columns.map((col, ci) => {
             const style = theme.bar[col.as ?? 'default'] ?? theme.bar.default;
             const frac = listFraction(row.values[col.column], scale);
             return (
               <div
-                key={col.column}
+                // Index-qualified so the same values entry drawn twice (say,
+                // styled differently) never collides.
+                key={`${ci} ${col.column}`}
                 data-list-track={col.column}
                 style={{
                   position: 'relative',

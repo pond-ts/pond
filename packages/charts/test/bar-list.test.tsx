@@ -13,7 +13,7 @@ const rows: ListRow[] = [
 ];
 
 const rowKeys = (el: HTMLElement) =>
-  [...el.querySelectorAll('[data-list-row]')].map((r) =>
+  Array.from(el.querySelectorAll('[data-list-row]')).map((r) =>
     r.getAttribute('data-list-row'),
   );
 
@@ -23,7 +23,9 @@ describe('<BarList>', () => {
       <BarList rows={rows} columns={[{ column: 'in' }]} />,
     );
     expect(rowKeys(container)).toEqual(['if-a', 'if-b', 'if-c']);
-    const labels = [...container.querySelectorAll('[data-list-cell="label"]')];
+    const labels = Array.from(
+      container.querySelectorAll('[data-list-cell="label"]'),
+    );
     expect(labels.map((l) => l.textContent)).toEqual([
       'Interface A',
       'if-b',
@@ -35,9 +37,9 @@ describe('<BarList>', () => {
     const { container } = render(
       <BarList rows={rows} columns={[{ column: 'in' }]} />,
     );
-    const bars = [
-      ...container.querySelectorAll('[data-list-bar="in"]'),
-    ] as HTMLElement[];
+    const bars = Array.from(
+      container.querySelectorAll('[data-list-bar="in"]'),
+    ) as HTMLElement[];
     // Domain resolves [0, 100]: 50 → 50%, 100 → 100%, 25 → 25%.
     expect(bars.map((b) => b.style.width)).toEqual(['50%', '100%', '25%']);
   });
@@ -46,9 +48,9 @@ describe('<BarList>', () => {
     const { container } = render(
       <BarList rows={rows} columns={[{ column: 'in' }]} domain={[0, 200]} />,
     );
-    const bars = [
-      ...container.querySelectorAll('[data-list-bar="in"]'),
-    ] as HTMLElement[];
+    const bars = Array.from(
+      container.querySelectorAll('[data-list-bar="in"]'),
+    ) as HTMLElement[];
     expect(bars.map((b) => b.style.width)).toEqual(['25%', '50%', '12.5%']);
   });
 
@@ -60,7 +62,7 @@ describe('<BarList>', () => {
       />,
     );
     const first = container.querySelector('[data-list-row="if-a"]')!;
-    const tracks = [...first.querySelectorAll('[data-list-track]')];
+    const tracks = Array.from(first.querySelectorAll('[data-list-track]'));
     expect(tracks.map((t) => t.getAttribute('data-list-track'))).toEqual([
       'in',
       'out',
@@ -119,11 +121,11 @@ describe('<BarList>', () => {
         ]}
       />,
     );
-    const cells = [
-      ...container
+    const cells = Array.from(
+      container
         .querySelector('[data-list-row="if-a"]')!
         .querySelectorAll('[data-list-cell]'),
-    ];
+    );
     expect(cells.map((c) => c.getAttribute('data-list-cell'))).toEqual([
       'label',
       'type',
@@ -194,6 +196,33 @@ describe('<BarList>', () => {
     expect(onRowClick).toHaveBeenCalledTimes(1);
   });
 
+  it('clickable rows are keyboard-reachable: focusable, Enter activates', () => {
+    const onRowClick = vi.fn();
+    const { container } = render(
+      <BarList
+        rows={rows}
+        columns={[{ column: 'in' }]}
+        onRowClick={onRowClick}
+      />,
+    );
+    const rowEl = container.querySelector(
+      '[data-list-row="if-a"]',
+    ) as HTMLElement;
+    expect(rowEl.getAttribute('tabindex')).toBe('0');
+    fireEvent.keyDown(rowEl, { key: 'Enter' });
+    expect(onRowClick).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(rowEl, { key: ' ' });
+    expect(onRowClick).toHaveBeenCalledTimes(2);
+    // A display-only list exposes no tab stops on its rows.
+    cleanup();
+    const bare = render(<BarList rows={rows} columns={[{ column: 'in' }]} />);
+    expect(
+      bare.container
+        .querySelector('[data-list-row="if-a"]')!
+        .getAttribute('tabindex'),
+    ).toBeNull();
+  });
+
   it('the selected row is stamped and accent-edged', () => {
     const { container } = render(
       <BarList rows={rows} columns={[{ column: 'in' }]} selected="if-b" />,
@@ -228,18 +257,18 @@ describe('<BarList>', () => {
 
   it('dividers rule every row after the first; divided={false} removes them', () => {
     const ruled = render(<BarList rows={rows} columns={[{ column: 'in' }]} />);
-    const trs = [
-      ...ruled.container.querySelectorAll('[data-list-row]'),
-    ] as HTMLElement[];
+    const trs = Array.from(
+      ruled.container.querySelectorAll('[data-list-row]'),
+    ) as HTMLElement[];
     expect(trs[0]!.style.borderTop).toBe('');
     expect(trs[1]!.style.borderTop).toContain('1px solid');
     ruled.unmount();
     const plain = render(
       <BarList rows={rows} columns={[{ column: 'in' }]} divided={false} />,
     );
-    const bare = [
-      ...plain.container.querySelectorAll('[data-list-row]'),
-    ] as HTMLElement[];
+    const bare = Array.from(
+      plain.container.querySelectorAll('[data-list-row]'),
+    ) as HTMLElement[];
     expect(bare[1]!.style.borderTop).toBe('');
   });
 });

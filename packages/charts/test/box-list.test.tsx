@@ -143,8 +143,8 @@ describe('<BoxList>', () => {
         sortBy="now"
       />,
     );
-    const keys = [...container.querySelectorAll('[data-list-row]')].map((r) =>
-      r.getAttribute('data-list-row'),
+    const keys = Array.from(container.querySelectorAll('[data-list-row]')).map(
+      (r) => r.getAttribute('data-list-row'),
     );
     expect(keys).toEqual(['fast', 'slow']);
   });
@@ -159,8 +159,8 @@ describe('<BoxList>', () => {
     expect(glyphs.style.borderLeft).toContain('1px solid');
     // The rule inks like the row dividers — one quiet reference grid.
     expect(glyphs.style.borderLeft).toContain(defaultTheme.axis.grid);
-    // Left padding drops to 0 so fraction 0 sits exactly on the rule.
-    expect(glyphs.style.padding).toBe('6px 8px 6px 0px');
+    // Left padding narrows to a 5px breath off the rule.
+    expect(glyphs.style.padding).toBe('6px 8px 6px 5px');
     on.unmount();
     const off = render(
       <BoxList
@@ -192,7 +192,7 @@ describe('<BoxList>', () => {
         ]}
       />,
     );
-    const lines = [...container.querySelectorAll('[data-list-boxline]')];
+    const lines = Array.from(container.querySelectorAll('[data-list-boxline]'));
     expect(lines).toHaveLength(2);
     const second = lines[1]!.querySelector('[data-list-range]') as HTMLElement;
     expect(second.style.background).toBe(defaultTheme.box.secondary!.whisker);

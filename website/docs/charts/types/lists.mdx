@@ -112,6 +112,11 @@ range-only band), `median` optional. `value` adds the current-value tick;
 `format` prints its inline label. Styles resolve `theme.box[as]` (both
 built-in themes ship a `secondary` role).
 
+`BarList` bars are **length-encoded from the domain minimum** and assume
+non-negative values — a negative value stays in-domain but draws as a short
+left-anchored bar, not a diverging one (diverging bar lists are out of scope;
+transform upstream, or use `BoxList`, whose marks are positional).
+
 Because box columns name plain `values` entries, **any stat can rank the
 list** — `sortBy="now"` for the current value, `sortBy="p95"` for tail
 latency; there is no stat-picking rule to remember.

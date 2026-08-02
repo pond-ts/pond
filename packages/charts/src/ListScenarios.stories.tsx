@@ -4,7 +4,8 @@ import { TimeSeries } from 'pond-ts';
 import { BarList } from './BarList.js';
 import { BoxList } from './BoxList.js';
 import { listRowsFromTimeSeries } from './list.js';
-import { estelaTheme } from './theme.js';
+import { defaultTheme, estelaTheme } from './theme.js';
+import type { ChartTheme } from './theme.js';
 import type { ListRow } from './list.js';
 
 /**
@@ -92,10 +93,33 @@ function trafficByInterface() {
 }
 
 /**
+ * A story-local restyle: the same roles, paler — the printed rate labels sit
+ * over the bands, so the bands step back (lighter whisker hues + a thinner
+ * body fill) while the tick keeps its full-strength ink.
+ */
+const trafficTheme: ChartTheme = {
+  ...defaultTheme,
+  box: {
+    ...defaultTheme.box,
+    default: {
+      ...defaultTheme.box.default,
+      fillOpacity: 0.16,
+      whisker: '#c9d8f3',
+    },
+    secondary: {
+      ...defaultTheme.box.secondary!,
+      fillOpacity: 0.16,
+      whisker: '#f6dcd2',
+    },
+  },
+};
+
+/**
  * The esnet "Traffic by Interface" table: link labels, a type cell, one box
  * line per direction (`in` on the default role, `out` on `secondary`) showing
  * where traffic *ranges* vs where it *is now*, ranked by current inbound rate,
- * with a selectable row.
+ * with a selectable row. No median line — the story reads range + IQR + now;
+ * the label ink stays legible over the paled bands.
  */
 export const TrafficByInterface: StoryObj = {
   render: function TrafficStory() {
@@ -112,7 +136,6 @@ export const TrafficByInterface: StoryObj = {
             {
               lower: 'in_p5',
               q1: 'in_p25',
-              median: 'in_p50',
               q3: 'in_p75',
               upper: 'in_p95',
               value: 'in_now',
@@ -121,7 +144,6 @@ export const TrafficByInterface: StoryObj = {
             {
               lower: 'out_p5',
               q1: 'out_p25',
-              median: 'out_p50',
               q3: 'out_p75',
               upper: 'out_p95',
               value: 'out_now',
@@ -141,6 +163,7 @@ export const TrafficByInterface: StoryObj = {
           selected={selected}
           onRowClick={(r) => setSelected(r.key === selected ? null : r.key)}
           barHeight={12}
+          theme={trafficTheme}
         />
       </div>
     );
