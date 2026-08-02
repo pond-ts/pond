@@ -275,6 +275,24 @@ color props (see Theming).
 | `Marker`         | `at`, `label?`, `indicator?`, `onChange?`             | Vertical x line                                | `packages/charts/src/annotations.tsx` |
 | `YAxisIndicator` | `value?` \| `source?`, `axis?`, `format?`             | Live value pill pinned to a y-axis edge        | `packages/charts/src/indicators.tsx`  |
 
+### Components — standalone row lists (DOM tables, no `<ChartContainer>`)
+
+One row per _entity_ (interface, split, symbol) on one shared value scale;
+label + data cells, `sortBy`/`sort`, optional per-row expander. The in-plot
+histogram stays `<BarChart orientation="horizontal">` — these are the table
+shape (react-timeseries-charts' `HorizontalBarChart`).
+
+| Component | Data props                                                                           | Purpose                                                             | Source                            |
+| --------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------- | --------------------------------- |
+| `BarList` | `rows`, `columns` (`values` names), `sortBy?`, `before?`/`after?`, `renderExpanded?` | Ranked bar list — one proportional bar line per column per row      | `packages/charts/src/BarList.tsx` |
+| `BoxList` | `rows`, `columns` (five-number names + `value?` tick), same table props              | Distribution list — range band / q1→q3 body / median / current tick | `packages/charts/src/BoxList.tsx` |
+
+Row/option types + readers (`packages/charts/src/list.ts`): `ListRow`,
+`ListValue`, `ListCellSpec`, `ListSortDirection`, `BarListColumn`,
+`BoxListColumn`, `ListRowsOptions`; `listRowsFromTimeSeries` /
+`listRowsFromValueSeries` build one `ListRow` per event / axis key (numeric +
+string columns land in `values`).
+
 ### Data adapters (all in `packages/charts/src/data.ts`)
 
 | Export               | Signature gist                                         | Feeds                             |

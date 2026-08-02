@@ -435,6 +435,18 @@ export const defaultTheme: ChartTheme = {
       whisker: '#aabee9',
       whiskerWidth: 1,
     },
+    // The warm accent box — the second series of a paired distribution (an
+    // in/out traffic list), mirroring `bar.secondary` / `line.secondary`.
+    secondary: {
+      fill: '#e8836b',
+      fillOpacity: 0.3,
+      stroke: '#d65f43',
+      strokeWidth: 1.5,
+      median: '#b4442a',
+      medianWidth: 2,
+      whisker: '#f0c2b2',
+      whiskerWidth: 1,
+    },
   },
   candle: {
     // Neutral / unbranded up-down pair — *not* market green/red (a consumer
@@ -585,6 +597,18 @@ export const estelaTheme: ChartTheme = {
       median: '#F1FBF9', // --es-foam
       medianWidth: 2,
       whisker: '#a4e4d9', // --es-reef
+      whiskerWidth: 1.5,
+    },
+    // The warm filament accent — the paired second distribution, mirroring
+    // `bar.secondary` / `line.hr` on the dark ground.
+    secondary: {
+      fill: '#E0B36A', // --es-filament
+      fillOpacity: 0.28,
+      stroke: '#E0B36A',
+      strokeWidth: 1.5,
+      median: '#F1FBF9', // --es-foam
+      medianWidth: 2,
+      whisker: '#EDD5A8',
       whiskerWidth: 1.5,
     },
   },

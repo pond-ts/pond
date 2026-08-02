@@ -1,0 +1,136 @@
+---
+title: BarList & BoxList
+sidebar_position: 9
+---
+
+# BarList & BoxList — ranked row lists
+
+Standalone, DOM-rendered **row lists**: one row per _entity_ (an interface, a
+split, a symbol), a label cell, one glyph line per configured column, optional
+data cells, custom sort, and an optional per-row expander. `<BarList>` draws a
+proportional **value bar** per line; its sister `<BoxList>` draws a
+**five-number distribution** — range band, `q1`→`q3` body, median line — plus
+an optional current-value tick with a printed label (the classic
+traffic-by-interface table).
+
+This pattern is a **table, not a plot**, and the components embrace that: they
+render a real `<table>` (labels can be links, cells align by table layout, the
+expander is a spanning row) and take **no `<ChartContainer>`** — there is no
+time axis here. The in-plot histogram remains
+[`<BarChart orientation="horizontal">`](./barchart.mdx); reach for the lists
+when the rows are entities rather than buckets.
+
+## Data contract
+
+Rows are plain records — `{ key, label?, values }` — where `values` is a flat
+`Record<string, number | string | undefined>`:
+
+- **`key`** is the row's stable identity (selection, expansion, React keys).
+- **`label`** is the first cell's content (any node — a link is fine); the
+  `key` renders when omitted.
+- **`values`** feeds everything else by name: bar lengths, box quantiles,
+  `sortBy`, and whatever your data cells read. A missing / non-numeric entry
+  is a **gap** — an empty track / line, sorting last in either direction.
+
+Both components are generic over `R extends ListRow`, so extra fields on your
+rows flow into `render` / `renderExpanded` fully typed.
+
+Build rows by hand, or read a per-event series (a per-split `aggregate`
+rollup) with `listRowsFromTimeSeries(series, { label })` /
+`listRowsFromValueSeries` — every value column lands in `values` under its own
+name. For per-entity distributions, compute the quantiles upstream with
+`reduce` facts (the chart **never** computes them — the same stance as
+[`<BoxPlot>`](./boxplot.mdx)):
+
+```tsx
+const rows = [...traffic.partitionBy('iface').toMap()].map(([name, s]) => ({
+  key: name,
+  label: <a href={`/ifaces/${name}`}>{name}</a>,
+  values: s.reduce({
+    p5: { from: 'in', using: 'p5' },
+    p25: { from: 'in', using: 'p25' },
+    p50: { from: 'in', using: 'p50' },
+    p75: { from: 'in', using: 'p75' },
+    p95: { from: 'in', using: 'p95' },
+    now: { from: 'in', using: 'last' },
+  }),
+}));
+
+<BoxList
+  rows={rows}
+  columns={[
+    {
+      lower: 'p5',
+      q1: 'p25',
+      median: 'p50',
+      q3: 'p75',
+      upper: 'p95',
+      value: 'now',
+      format: (v) => `${(v / 1000).toFixed(1)}Gbps`,
+    },
+  ]}
+  sortBy="now"
+/>;
+```
+
+## One shared scale
+
+Every glyph line of every row maps through **one** `[min, max]` — cross-row
+comparison is the point of a ranked list. The domain resolves from the data
+(`[min(0, data min), data max]` over every bar column, or every box
+`lower`/`upper`/`value`); pass `domain={[min, max]}` to pin it across live
+updates or sibling lists.
+
+## Shared table props
+
+| Prop                                 | Type                       | Default     | Purpose                                                                                                                                                                   |
+| ------------------------------------ | -------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rows`                               | `readonly R[]`             | — (req)     | One entity per row.                                                                                                                                                       |
+| `columns`                            | see below                  | — (req)     | The glyph lines, top→bottom within each row.                                                                                                                              |
+| `domain`                             | `[number, number]`         | data fit    | Pin the shared scale.                                                                                                                                                     |
+| `sortBy`                             | `string`                   | input order | `values` entry that ranks the list (with several columns, this picks the driver).                                                                                         |
+| `sortDirection`                      | `'asc' \| 'desc'`          | `'desc'`    | Largest on top by default.                                                                                                                                                |
+| `sort`                               | `(a, b) => number`         | —           | Full comparator; overrides `sortBy`.                                                                                                                                      |
+| `before` / `after`                   | `ListCellSpec[]`           | —           | Data cell columns flanking the glyphs (`{ key, align?, render(row) }`).                                                                                                   |
+| `renderExpanded`                     | `(row) => ReactNode`       | —           | Per-row detail; providing it adds the chevron column.                                                                                                                     |
+| `defaultExpanded` / `onExpandToggle` | `string[]` / `(key, open)` | —           | Seed + observe expansion (uncontrolled, keyed on `row.key`).                                                                                                              |
+| `selected` / `onRowClick`            | `string \| null` / `(row)` | —           | Consumer-owned selection (inset accent edge) + row clicks.                                                                                                                |
+| `barHeight`                          | `number`                   | `8` / `10`  | Height per glyph line in px (bar / box).                                                                                                                                  |
+| `divided`                            | `boolean`                  | `true`      | Rules between rows.                                                                                                                                                       |
+| `baseline`                           | `boolean`                  | box / bar   | Vertical rule at the scale origin — **on** for `BoxList` (its lines float at `lower`; the origin is what relates rows), **off** for `BarList` (tracks already show zero). |
+| `theme`                              | `ChartTheme`               | default     | The same one styling channel the canvas charts read.                                                                                                                      |
+
+## Column specs
+
+**`BarList`** — `{ column, as? }`: the `values` entry for the bar's length,
+plus a `theme.bar[as]` role (`secondary` pairs a second direction).
+
+**`BoxList`** — `{ lower, q1?, median?, q3?, upper, value?, as?, format? }`,
+each naming a `values` entry — the [`<BoxPlot>`](./boxplot.mdx) vocabulary:
+`lower`/`upper` required, `q1`+`q3` both-or-neither (omit both for a
+range-only band), `median` optional. `value` adds the current-value tick;
+`format` prints its inline label. Styles resolve `theme.box[as]` (both
+built-in themes ship a `secondary` role).
+
+Because box columns name plain `values` entries, **any stat can rank the
+list** — `sortBy="now"` for the current value, `sortBy="p95"` for tail
+latency; there is no stat-picking rule to remember.
+
+## Sorting semantics
+
+Numbers order numerically, strings lexicographically; numbers rank before
+strings; **missing / non-finite sorts last regardless of direction** (a dead
+interface stays at the bottom whether you rank best-first or worst-first).
+Ties keep input order (stable).
+
+## Theming
+
+No new theme surface: bars read `theme.bar[as]`, boxes `theme.box[as]`, text
+takes the axis inks, the row hover tint reuses the legend border, and the
+selected-row edge draws in the **annotation register** (a selection is a
+user's mark, not data). Swap `defaultTheme` for `estelaTheme` (or a
+`cssVarTheme`) and the list restyles wholesale.
+
+Storybook: `Lists/BarList` and `Lists/BoxList` fan out every knob;
+`Lists/Scenarios` composes both full tables (traffic by interface, activity
+splits) from real pond pipelines.
