@@ -33,6 +33,9 @@ import GalleryBand from '@site/src/examples/gallery-band';
 import GalleryHistogram from '@site/src/examples/gallery-histogram';
 import GalleryScatter from '@site/src/examples/gallery-scatter';
 import GalleryBoxplot from '@site/src/examples/gallery-boxplot';
+import GalleryGridMix from '@site/src/examples/gallery-grid-mix';
+import GalleryRenewables from '@site/src/examples/gallery-renewables';
+import GalleryPowerPrices from '@site/src/examples/gallery-power-prices';
 
 {/* ------------------------------------------------------------------ */}
 {/* Each domain section below is owned by one track (gallery plan §4). */}
@@ -132,11 +135,50 @@ _Cards land here as Track C ships._
 
 ## Energy
 
-{/* TRACK D — replace this line with the section's blurb. */}
-
-_Cards land here as Track D ships._
+Grid data is where composition, crossover and signed values all turn up at
+once. All three cards are the same real weekend — Easter 2025 in Germany, the
+quietest demand day of the year meeting a big solar peak.
 
 <GalleryGrid>
+
+<GalleryCard
+  title="Grid mix"
+  blurb="Eight generation sources stacked — the case the tonal ramp exists for, drawn as cumulative areas."
+  storybookHref="pathname:///storybook/?path=/story/charts-areachart--elevation"
+  pageHref="/docs/charts/gallery/grid-mix"
+  height={212}
+  autoplay={{ period: 16000, staticPhase: 0.52 }}
+>
+  {(width, phase) => (
+    <GalleryGridMix width={width} phase={phase} height={190} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Renewables vs demand"
+  blurb="Two translucent areas that cross: for 1 h 45 m, wind and solar out-produced the whole country's load."
+  storybookHref="pathname:///storybook/?path=/story/charts-areachart--traffic-areas"
+  pageHref="/docs/charts/gallery/renewables-vs-demand"
+  height={212}
+  autoplay={{ period: 16000, staticPhase: 0.5 }}
+>
+  {(width, phase) => (
+    <GalleryRenewables width={width} phase={phase} height={190} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Negative prices"
+  blurb="Day-ahead power prices above and below zero — eight hours where sellers paid to deliver."
+  storybookHref="pathname:///storybook/?path=/story/charts-barchart--diverging"
+  pageHref="/docs/charts/gallery/negative-prices"
+  height={212}
+  autoplay={{ period: 16000, staticPhase: 0.55 }}
+>
+  {(width, phase) => (
+    <GalleryPowerPrices width={width} phase={phase} height={190} />
+  )}
+</GalleryCard>
 
 {/* TRACK D — append energy cards above this line. */}
 

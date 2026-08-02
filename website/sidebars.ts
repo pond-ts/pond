@@ -124,7 +124,12 @@ const sidebars: SidebarsConfig = {
           // tutorial each card's "Build it →" link opens. Each track appends
           // its own slugs here, grouped as they are on the Gallery page;
           // `_template.mdx` is the shape they all follow.
-          items: [],
+          items: [
+            // Track D — Energy
+            'charts/gallery/grid-mix',
+            'charts/gallery/renewables-vs-demand',
+            'charts/gallery/negative-prices',
+          ],
         },
         {
           type: 'category',

@@ -1,0 +1,139 @@
+---
+title: Grid mix
+sidebar_label: Grid mix
+---
+
+# Grid mix
+
+Where did a country's electricity come from, minute by minute? A stacked area
+answers it in one shape: the top edge is total generation, and each band's
+_thickness_ is one source's contribution to it.
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryGridMix from '@site/src/examples/gallery-grid-mix';
+
+## The chart
+
+<ChartExample name="gallery-grid-mix" height={360} collapsed>
+  <GalleryGridMix width={720} height={300} legend />
+</ChartExample>
+
+Hover across the Sunday bulge: the top edge climbs from 23.4 GW at night to
+54.7 GW at 12:15, and almost all of the difference is the pale band on top.
+
+## The data
+
+**Real measured data.** The German power system over Easter weekend 2025 —
+Saturday 19 to Monday 21 April, at the grid's native **15-minute** cadence
+(288 rows). From
+[energy-charts.info](https://api.energy-charts.info) (Fraunhofer ISE),
+**CC BY 4.0**, whose upstream is ENTSO-E / SMARD.
+
+Easter Sunday the 20th is the day worth plotting: it had the **lowest average
+demand of any day in 2025** (39.59 GW), and a public holiday's worth of idle
+industry met a 38.48 GW solar peak.
+
+| Column                                | Meaning                                  |
+| ------------------------------------- | ---------------------------------------- |
+| `time`                                | 15-minute instant, UTC ms                |
+| `other`, `lignite`, `hardCoal`, `gas` | Dispatchable generation, GW              |
+| `biomass`, `hydro`, `wind`, `solar`   | The rest of the mix, GW                  |
+| `load`                                | Total demand, GW (used by the next card) |
+
+The API reports **fifteen** production types. Eight bands is what the tonal
+ramp has steps for, so the seven smallest — waste, pumped-storage discharge,
+coal-derived gas, oil, geothermal, hydro reservoir and the API's own "Others" —
+are folded into `other` rather than dropped. The bands therefore sum to _total
+domestic generation_, not to an arbitrary top-eight. Over the weekend they
+split: solar 31.6%, lignite 17.0%, wind 12.2%, biomass 11.9%, other 9.6%, gas
+8.1%, hard coal 4.8%, hydro 4.7%.
+
+Quirks that survived on purpose:
+
+- **Solar is exactly `0.00` for 82 of the 288 samples.** Night is a real zero,
+  not a floor, and the stack has to look right when a band vanishes.
+- **Gas and hard coal collapse at the solar peak** — 1.22 GW and 0.98 GW at
+  12:30 Sunday, against weekend maxima of 4.92 and 4.64. That squeeze is the
+  merit order being pushed off the system, and it is the reason the next two
+  cards exist.
+- **There is no nuclear band.** Germany's last reactors shut down in April
+  2023, so the column simply isn't in the data.
+- The time axis renders in **your** browser's timezone; every clock time on
+  this page is CEST, the grid's own.
+
+## Build it
+
+A stacked area is not a chart type in `@pond-ts/charts` — it's a **stack of
+plain areas over cumulative columns**. Two steps, and the first one is pond,
+not charts.
+
+**1. Build the running totals.** `collapse` reduces named columns into a new
+one; `{ append: true }` keeps the originals, so each call widens the same
+series by one column:
+
+```tsx
+const stacked = gridMix()
+  .collapse(['other', 'lignite'], 's2', (v) => v.other + v.lignite, {
+    append: true,
+  })
+  .collapse(['s2', 'hardCoal'], 's3', (v) => v.s2 + v.hardCoal, {
+    append: true,
+  })
+  .collapse(['s3', 'gas'], 's4', (v) => v.s3 + v.gas, { append: true });
+// …through s8, which is total generation
+```
+
+`s4` is "everything up to and including gas". `other` is already its own
+cumulative total, so only seven `collapse` calls are needed for eight bands.
+
+**2. Draw the cumulative columns top-down.** Every area fills from `0` to its
+own cumulative total, so a later, _smaller_ one paints over the lower part of
+the one before it. What is left showing for band _k_ is exactly the slab
+between cumulative _k−1_ and cumulative _k_:
+
+```tsx
+<Layers>
+  <AreaChart series={stacked} column="s8" as="seq8" baseline={0} />
+  <AreaChart series={stacked} column="s7" as="seq7" baseline={0} />
+  {/* … */}
+  <AreaChart series={stacked} column="other" as="seq1" baseline={0} />
+</Layers>
+```
+
+That covering trick only works because the `seq1…seq8` roles fill **flat**. An
+area's default fill is a gradient that fades to transparent at the baseline —
+right for a single elevation profile, fatal for a stack, where it lets all
+eight bands show through each other. The ramp roles set
+[`AreaStyle.flatFill`](../theming.mdx) and go fully opaque for exactly this
+reason.
+
+**3. Colour is the role, not a prop.** Eight series is past the point where
+distinct hues help — `--pond-viz-1…5` is the categorical set and stays five
+wide. `seq1…seq8` step tonally through one brand hue instead, darkest at the
+bottom, so the stack reads as one family and solar ends up the brightest slab
+on top.
+
+## Options to try
+
+| Option                          | What it does                            | Reach for it when                                                             |
+| ------------------------------- | --------------------------------------- | ----------------------------------------------------------------------------- |
+| `legend={label}`                | Names the layer's `<Legend>` row        | Always, on a stack — `s6` means nothing to a reader                           |
+| `<Legend placement="top-left">` | Draws the key inside the plot           | The band order is the legend order, so it doubles as a reading guide          |
+| `curve="monotone"`              | Smooths every outline                   | Coarser cadences, where 15-minute steps would read as noise                   |
+| `gaps="none"`                   | Bridges straight across missing samples | A feed with dropouts, where a hole in the middle of a stack reads as bad data |
+| `as="seqN"` order               | Which band is dark and which is pale    | Flip it when the interesting band is at the bottom rather than the top        |
+
+Two things a stack **can't** do here: negative bands (a source that consumes,
+like pumped storage while pumping) and per-band selection — the layers are
+cumulative columns, so a click lands on whichever area is on top.
+
+## See also
+
+- [`<AreaChart>`](../types/areachart.mdx) — every prop, and the `baseline`
+  forms
+- [`<Legend>`](../interaction/legend.mdx) — the key, and the headless variant
+- [Theming](../theming.mdx) — `AreaStyle.flatFill` and the `seq1…seq8` ramp
+- [Renewables vs demand](./renewables-vs-demand.mdx) — the same weekend, two
+  overlapping areas instead of eight stacked ones
+- [**Storybook**](pathname:///storybook/?path=/story/charts-areachart--elevation) —
+  the systematic knob walk
