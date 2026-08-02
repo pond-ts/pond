@@ -294,11 +294,12 @@ label above; joins the auto domain fit), `ListSortDirection`, `BarListColumn`,
 `listRowsFromValueSeries` build one `ListRow` per event / axis key (numeric +
 string columns land in `values`).
 
-### Interop escape hatches (all in `packages/charts/src/data.ts`)
+### View builders (all in `packages/charts/src/data.ts`)
 
 With a pond series, the components are the whole data contract (pass the
-series directly) — these exports hand-build the same views from **non-pond**
-data. The ValueSeries siblings (`fromValueSeries` etc.) are deliberately
+series directly) — these exports expose the chart-ready view shapes for
+consumers writing custom draw code; no shipped layer needs their output.
+The ValueSeries siblings (`fromValueSeries` etc.) are deliberately
 **unexported** (adapters are internal; see [PND-VSADAPT]).
 
 | Export               | Signature gist                                         | Feeds                             |

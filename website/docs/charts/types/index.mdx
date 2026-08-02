@@ -40,12 +40,13 @@ ranked-entity shape: one row per interface / split / symbol, a proportional
 bar or five-number distribution per row, data cells, custom sort, and a
 per-row expander.
 
-## Interop escape hatches (non-pond data)
+## View builders (for custom draw code)
 
 Starting from a pond series, **the series is the whole contract** — every
 layer accepts it directly and shapes internally; there is no adapter step to
 learn. The exported `from*` / `stacksFrom*` functions (`fromTimeSeries`,
-`boxFromTimeSeries`, `stacksFromColumns`, …) exist for one case only:
-hand-building a chart-ready view from **non-pond** data. If you find
-yourself calling one while holding a `TimeSeries`, that's an API gap — file
-it. Each page's **Data contract** section names the columns its layer reads.
+`boxFromTimeSeries`, `stacksFromColumns`, …) expose the package's
+chart-ready **view shapes** (`ChartSeries`, `BoxSeries`, …) for one audience:
+consumers writing their own draw code on top of them. No shipped layer needs
+their output — if you find yourself calling one to feed a layer, that's an
+API gap; file it. Each page's **Data contract** section names the columns its layer reads.

@@ -20,7 +20,7 @@ First-class OHLC candles. Pairs with the
 Takes a `TimeSeries` (only — no `ValueSeries`) with four OHLC columns, default
 names `open` / `high` / `low` / `close` (all overridable). Point-keyed raw daily
 bars feed straight in; an interval key is an aggregate rollup (weekly / monthly).
-A candle with any of the four prices missing draws nothing. Interop (non-pond data):
+A candle with any of the four prices missing draws nothing. View builder (for custom draw code):
 `ohlcFromTimeSeries(series, { open, high, low, close })`.
 
 ## Props

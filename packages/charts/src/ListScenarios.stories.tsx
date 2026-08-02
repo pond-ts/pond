@@ -19,6 +19,8 @@ const meta: Meta = {
 export default meta;
 
 const BASE = Date.UTC(2026, 7, 2, 8, 0, 0);
+// Split 2 opens by default; named so the story data and the key cannot drift.
+const SPLIT2_TS = BASE + 500_000;
 
 /** Human traffic-rate formatting (values in Mbps). */
 const fmtRate = (mbps: number) =>
@@ -191,7 +193,7 @@ function splitSeries() {
     ] as const,
     rows: [
       [BASE, 7.3, 21, 493],
-      [BASE + 500_000, 15.3, 10, 146],
+      [SPLIT2_TS, 15.3, 10, 146],
       [BASE + 1_000_000, 11.8, 31, 305],
       [BASE + 1_500_000, 16.0, 0, 225],
       [BASE + 2_000_000, 13.5, 51, 267],
@@ -271,7 +273,7 @@ export const Splits: StoryObj = {
               </div>
             );
           }}
-          defaultExpanded={[String(BASE + 500_000)]}
+          defaultExpanded={[String(SPLIT2_TS)]}
         />
       </div>
     );

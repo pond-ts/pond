@@ -102,15 +102,15 @@ into a row's `values` — see
 | `YAxisIndicator`  | A live value pill pinned to a y-axis edge.                 |
 | `createLiveValue` | High-frequency pill updates with an isolated repaint.      |
 
-### Interop escape hatches & theming
+### View builders & theming
 
 With a pond series, the components above are the whole data contract — the
-`from*` exports below are for hand-building views from **non-pond** data
-only.
+`from*` exports below expose the chart-ready view shapes for consumers
+writing **custom draw code**; no shipped layer needs them.
 
 | Export                                                                                                  | What it is                                                                                                           |
 | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `fromTimeSeries`, `bandFromTimeSeries`, `boxFromTimeSeries`, `barsFromTimeSeries`, `ohlcFromTimeSeries` | Hand-build a layer view from non-pond data (with a pond series, pass it directly).                                   |
+| `fromTimeSeries`, `bandFromTimeSeries`, `boxFromTimeSeries`, `barsFromTimeSeries`, `ohlcFromTimeSeries` | Build the chart-ready view shapes for custom draw code (no shipped layer needs them).                                |
 | `stacksFromGroups`, `stacksFromColumns`, `stacksFromBins`, `categoryStack`, `transposeRow`              | Stacked / histogram / categorical view builders (`bins` and `categories` inputs also accept their sources directly). |
 | `defaultTheme`                                                                                          | The neutral built-in `ChartTheme`.                                                                                   |
 | `cssVarTheme`, `useChartTheme`                                                                          | Build a theme from CSS custom properties and follow a dark/light toggle.                                             |

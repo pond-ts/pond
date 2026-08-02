@@ -39,6 +39,10 @@ export interface BarListProps<
    * a pond series, the series *is* the contract (an adapter you must call
    * is an API failure — the 2026-08 review's settled principle). Pair with
    * `label` for the first cell. Provide **exactly one** of `rows` / `series`.
+   *
+   * **Typing hazard:** with `series`, cell / expander callbacks receive plain
+   * `ListRow` — don't annotate them with a custom row type (that inference is
+   * only sound through `rows`; the [PND-CHARTAPI] mode union will enforce it).
    */
   series?: TimeSeries<S> | ValueSeries<VS>;
   /**
