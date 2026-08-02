@@ -55,6 +55,34 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts:** **`<BarList>` + `<BoxList>` — standalone ranked row lists** (the
+  react-timeseries-charts `HorizontalBarChart` shape, rebuilt as what it
+  always was: a table). One DOM row per _entity_ — an interface, a split, a
+  symbol — with a label cell (any node, links included), one glyph line per
+  configured column on **one shared value scale**, optional data cells
+  before/after the glyphs, `sortBy`/`sortDirection` or a full custom
+  comparator (missing values sort last either direction), an optional per-row
+  expander (`renderExpanded`, keyed on row identity so it survives a re-sort),
+  and consumer-owned row selection with an accent edge in the marks register.
+  A vertical **baseline rule** at the scale origin anchors the rows to one
+  reference (on by default for `<BoxList>`, whose lines float at their lower
+  quantile; opt-in for `<BarList>`, whose tracks already show zero).
+  `<BarList>` draws proportional value bars; its sister `<BoxList>` draws a
+  five-number distribution per line — range band, `q1`→`q3` body, median line
+  — plus an optional **current-value tick** with a formatted inline label (the
+  esnet traffic-by-interface look), using the same quantile vocabulary as the
+  canvas `<BoxPlot>` (`lower`/`q1`/`median`/`q3`/`upper`, both-or-neither
+  body, quantiles computed upstream — `reduce` facts — never by the chart).
+  Styling stays on the one channel: bars resolve `theme.bar[as]`, boxes
+  `theme.box[as]`; both built-in themes gain a `box.secondary` role for the
+  paired-direction case. Readers `listRowsFromTimeSeries` /
+  `listRowsFromValueSeries` build one row per event / axis key. The in-plot
+  histogram remains `<BarChart orientation="horizontal">` — the lists are for
+  the table-shaped cases it can't be (link labels, cells, expanders, custom
+  sort).
+
 ### Changed
 
 - **charts:** **a bar's hover / click target is now its whole slot**, not the

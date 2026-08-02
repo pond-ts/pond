@@ -53,6 +53,26 @@ export type { BarChartProps } from './BarChart.js';
 export { Candlestick } from './Candlestick.js';
 export type { CandlestickProps } from './Candlestick.js';
 export type { CandleVariant, ColorBy } from './ohlc.js';
+// The list family — DOM-rendered *ranked row lists* (the react-timeseries-charts
+// `HorizontalBarChart` shape, reconceived as a table): one row per entity, a
+// proportional bar / five-number box line per configured column, data cells,
+// custom sort, per-row expander. Standalone — no <ChartContainer> (the in-plot
+// horizontal bars remain `<BarChart orientation="horizontal">`).
+export { BarList } from './BarList.js';
+export type { BarListProps } from './BarList.js';
+export { BoxList } from './BoxList.js';
+export type { BoxListProps } from './BoxList.js';
+export { listRowsFromTimeSeries, listRowsFromValueSeries } from './list.js';
+export type {
+  ListRow,
+  ListValue,
+  ListCellSpec,
+  ListSortDirection,
+  ListRowsOptions,
+  BarListColumn,
+  BoxListColumn,
+} from './list.js';
+
 // The series key: rows enumerate the registered layers' resolved styles.
 export { Legend } from './Legend.js';
 export type { LegendProps, LegendPlacement } from './Legend.js';

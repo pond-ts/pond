@@ -34,6 +34,12 @@ Every layer draws identically across a **time**, **value**, or (for `BarChart`)
 in its `bins` mode _is_ the histogram; there's no separate `Histogram`
 component.
 
+Beside the draw layers sit two **standalone row lists** —
+[BarList & BoxList](./lists.mdx) — DOM tables (no `<ChartContainer>`) for the
+ranked-entity shape: one row per interface / split / symbol, a proportional
+bar or five-number distribution per row, data cells, custom sort, and a
+per-row expander.
+
 ## Data adapters
 
 Most layers accept a pond `series` directly and shape it internally. The
