@@ -324,6 +324,39 @@ export interface BarStyle {
   readonly gap: number;
   readonly minWidth: number;
   readonly outlineWidth: number;
+  /**
+   * Optional distinct **hover** fill, so a bar can read a three-step emphasis —
+   * `fill` at rest → `hover` under the pointer → `highlight` (+ outline) when
+   * selected. **Omitted ⇒ `highlight`**, which is the shipped behaviour: hover
+   * and select share one colour and differ only by the selected bar's outline.
+   *
+   * The scatter analogue is `outline` vs {@link ScatterStyle.selectedOutline} —
+   * bars were the less expressive layer for the same two-state interaction
+   * ([#577](https://github.com/pond-ts/pond/issues/577)). This is the *hover*
+   * half rather than a rename of `highlight`, so no existing theme changes
+   * meaning; a theme that wants the distinction opts in by adding one colour.
+   *
+   * **Where it applies — narrower than it looks.** Only the `drawBars`
+   * single-series path reads this, which `<BarChart>` uses for a **`series=`
+   * chart that is `vertical` and has no `binColors`**. Everything else routes
+   * through `drawStacks`, whose {@link StackStyle} has no hover channel, so
+   * `hover` is **silently ignored** by:
+   *
+   * - `bins=` (a histogram) and `categories=` — *even with a single column*;
+   * - `orientation="horizontal"` — even a single `series=` + `column`, which
+   *   `<BarChart>` routes through the stacked path as a one-group stack;
+   * - a genuine multi-group stack (`columns=` / a `Map` series);
+   * - `binColors` (per-bar colours), which pops each bar's *own* fill for both
+   *   states so a red/green volume bar keeps its meaning while live.
+   *
+   * Only the last of those is a *design* exclusion — the rest are a
+   * consequence of `<BarChart>`'s shape dispatch, and extending the three-step
+   * emphasis to `drawStacks` would mean giving `StackStyle` its own hover
+   * channel (not done here; see [#577](https://github.com/pond-ts/pond/issues/577)).
+   * The **decimated** dense-bar pass also draws the flat fill only, as it
+   * already did for `highlight` — per-bar highlight is suppressed there.
+   */
+  readonly hover?: string;
 }
 
 /**

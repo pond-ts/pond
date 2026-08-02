@@ -6,10 +6,11 @@ import {
   barIndexAtTime,
   barRect,
   drawBars,
+  drawStacks,
   resolveBarBaseline,
 } from '../src/bars.js';
 import { recordingContext, type CtxCall } from './canvas-mock.js';
-import type { BarSeries } from '../src/data.js';
+import type { BarSeries, StackedBarSeries } from '../src/data.js';
 import type { BarStyle } from '../src/theme.js';
 
 /** A bar series from parallel begin/end/value arrays. */
@@ -558,6 +559,153 @@ describe('drawBars — highlight fill alpha (single series)', () => {
       style.opacity,
       style.opacity,
     ]);
+  });
+});
+
+/**
+ * #577 — an optional `hover` colour on `BarStyle`, so a bar can carry the same
+ * three-step emphasis a consumer's list does (rest → hover → selected) instead
+ * of one `highlight` for both live states. Omitted, everything renders exactly
+ * as before.
+ */
+describe('drawBars — distinct hover colour (BarStyle.hover)', () => {
+  const threeStep: BarStyle = { ...style, hover: '#0ff' };
+
+  const draw = (
+    s: BarStyle,
+    selection: { id: string; key: number } | null,
+    hovered: { id: string; key: number } | null = null,
+  ) => {
+    const { ctx, calls } = recordingContext();
+    drawBars(
+      ctx,
+      bars([0, 1, 2], [1, 2, 3], [10, 20, 30]),
+      identity,
+      identity,
+      s,
+      0,
+      0,
+      'count',
+      selection,
+      hovered,
+      false,
+    );
+    return calls
+      .filter((c) => c.type === 'set' && c.name === 'fillStyle')
+      .map((c) => c.args[0]);
+  };
+
+  it('fills a hovered bar with `hover` when the theme sets one', () => {
+    expect(draw(threeStep, null, { key: 1, id: 'count' })).toEqual([
+      style.fill,
+      '#0ff',
+      style.fill,
+    ]);
+  });
+
+  it('still fills a selected bar with `highlight`, not `hover`', () => {
+    expect(draw(threeStep, { key: 1, id: 'count' })).toEqual([
+      style.fill,
+      style.highlight,
+      style.fill,
+    ]);
+  });
+
+  it('selection outranks hover on a bar that is both', () => {
+    const both = { key: 1, id: 'count' };
+    expect(draw(threeStep, both, both)).toEqual([
+      style.fill,
+      style.highlight,
+      style.fill,
+    ]);
+  });
+
+  it('renders three distinct colours across rest / hover / selected', () => {
+    // The point of the feature: one draw showing all three steps at once.
+    const fills = draw(
+      threeStep,
+      { key: 0, id: 'count' },
+      { key: 2, id: 'count' },
+    );
+    expect(fills).toEqual([style.highlight, style.fill, '#0ff']);
+    expect(new Set(fills).size).toBe(3);
+  });
+
+  it('falls back to `highlight` for hover when no `hover` is set (unchanged)', () => {
+    expect(draw(style, null, { key: 1, id: 'count' })).toEqual([
+      style.fill,
+      style.highlight,
+      style.fill,
+    ]);
+  });
+
+  it('is ignored on the per-bar-colours path (binColors keeps its own fill)', () => {
+    // Not an oversight — a per-bar-coloured bar pops its OWN colour for both
+    // states so a red/green volume bar keeps its meaning while live. Pinned so
+    // that stays a decision rather than drifting.
+    const { ctx, calls } = recordingContext();
+    drawBars(
+      ctx,
+      bars([0, 1, 2], [1, 2, 3], [10, 20, 30]),
+      identity,
+      identity,
+      threeStep,
+      0,
+      0,
+      'count',
+      null,
+      { key: 1, id: 'count' },
+      false,
+      ['#r', '#g', '#b'],
+    );
+    const fills = calls
+      .filter((c) => c.type === 'set' && c.name === 'fillStyle')
+      .map((c) => c.args[0]);
+    expect(fills).toEqual(['#r', '#g', '#b']); // never '#0ff'
+  });
+});
+
+/**
+ * The other half of the scope: `drawStacks` has no hover channel at all, so
+ * every `<BarChart>` shape routed through it ignores `BarStyle.hover` —
+ * including a *single-column* histogram and a single-series **horizontal**
+ * chart, which `<BarChart>` builds as one-group stacks. Pinned because
+ * `BarStyle.hover`'s first draft claimed "single-series only", which reads as
+ * though those two would honour it (Layer-2 review of #581).
+ */
+describe('drawStacks — no hover channel (the BarStyle.hover exclusion)', () => {
+  it('fills a hovered one-group stack with its own group fill', () => {
+    const ss: StackedBarSeries = {
+      begin: Float64Array.from([0, 1, 2]),
+      end: Float64Array.from([1, 2, 3]),
+      groups: ['value'],
+      values: Float64Array.from([10, 20, 30]),
+      length: 3,
+    };
+    const { ctx, calls } = recordingContext();
+    drawStacks(
+      ctx,
+      ss,
+      'vertical',
+      identity,
+      identity,
+      { fills: ['#0a0'], opacity: 0.85, outlineWidth: 2 },
+      0,
+      1,
+      'count',
+      null,
+      { id: 'count', key: 1, label: 'value' },
+    );
+    const fills = calls
+      .filter((c) => c.type === 'set' && c.name === 'fillStyle')
+      .map((c) => c.args[0]);
+    // Every bin — hovered included — uses the group fill; the hovered one is
+    // distinguished by alpha alone, which is the stacked convention.
+    expect(fills).toEqual(['#0a0', '#0a0', '#0a0']);
+    const alphas = calls
+      .filter((c) => c.type === 'set' && c.name === 'globalAlpha')
+      .map((c) => c.args[0]);
+    expect(alphas).toContain(1); // the hovered bin still pops
   });
 });
 
