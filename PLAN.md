@@ -83,6 +83,27 @@ milestone. Plan:
   [PND-PARITY] / the live layer.
 - **[PND-ANNRFC]** — Write the short `docs/rfcs/annotations.md` design
   record the owner asked for (confirm still wanted).
+- **[PND-CHARTAPI]** — Type-seam hardening from the 2026-08 API review
+  ([charts-api-review-2026-08.md](docs/notes/charts-api-review-2026-08.md)):
+  `BarChartProps` as valid-mode unions, schema-derived numeric column names
+  across the layers (core's `NumericColumnNameForSchema` exists). Same JSX,
+  compile-time rejection of today's runtime throws. Deep type-system work —
+  design-spike the union × generics error-message cost first; Codex pass +
+  human gate (it narrows what compiles).
+- **[PND-BARSEM]** — Normalize one-segment bar semantics: a single-column
+  `bins` / one-group stack / horizontal single bar adopts the single-series
+  capabilities (whole-slot hit, `hover`, readout) where axis semantics
+  permit, so behavior follows the visible mark, not the input prop. The
+  `BarStyle.hover` scope-warning shrinking is the acceptance test.
+- **[PND-HCAT]** — Horizontal categorical bars: lift `<BarChart categories>`
+  vertical-only (category band on y, `CategoryAxis` orientation, transposed
+  hit-test/readout). Driver: the gallery funnel hand-builds ordinal bins +
+  `i + 0.5` ticks today.
+- **[PND-VSADAPT]** — Decide the ValueSeries adapter surface: `fromValueSeries`
+  / `bandFromValueSeries` / `boxFromValueSeries` / `barsFromValueSeries` are
+  documented in the cheat-sheet but not exported. Export for symmetry
+  (recommended) or demote to internal and fix the docs; the stale M1
+  `index.ts` package header rides along. Public-surface change — human gate.
 
 ### Docs site, landing, and API reference
 
