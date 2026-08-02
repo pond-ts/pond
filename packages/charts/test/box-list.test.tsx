@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render } from '@testing-library/react';
+import { TimeSeries } from 'pond-ts';
 import { BoxList } from '../src/BoxList.js';
 import { defaultTheme, estelaTheme } from '../src/theme.js';
 import type { BoxListColumn, ListRow } from '../src/list.js';
@@ -190,6 +191,31 @@ describe('<BoxList>', () => {
     expect(
       container.querySelector('[data-list-marker-label]')!.textContent,
     ).toBe('SLA');
+  });
+
+  it('the series door: quantile columns per event feed directly', () => {
+    const s = new TimeSeries({
+      name: 'q',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'lo', kind: 'number' },
+        { name: 'hi', kind: 'number' },
+      ] as const,
+      rows: [[1000, 10, 90]] as Array<[number, number, number]>,
+    });
+    const { container } = render(
+      <BoxList
+        series={s}
+        columns={[{ lower: 'lo', upper: 'hi' }]}
+        domain={[0, 100]}
+      />,
+    );
+    expect(container.querySelector('[data-list-row="1000"]')).not.toBeNull();
+    const range = container.querySelector('[data-list-range]') as HTMLElement;
+    expect(range.style.left).toBe('10%');
+    expect(() =>
+      render(<BoxList columns={[{ lower: 'lo', upper: 'hi' }]} />),
+    ).toThrow(/exactly one/);
   });
 
   it('two box columns stack top→bottom within a row', () => {

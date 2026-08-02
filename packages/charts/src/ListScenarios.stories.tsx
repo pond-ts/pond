@@ -3,7 +3,6 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { TimeSeries } from 'pond-ts';
 import { BarList } from './BarList.js';
 import { BoxList } from './BoxList.js';
-import { listRowsFromTimeSeries } from './list.js';
 import { defaultTheme, estelaTheme } from './theme.js';
 import type { ChartTheme } from './theme.js';
 import type { ListRow } from './list.js';
@@ -11,7 +10,7 @@ import type { ListRow } from './list.js';
 /**
  * The list family's use-case anchors — full compositions from real pond
  * pipelines (`partitionBy` + `reduce` facts; a per-split rollup through
- * `listRowsFromTimeSeries`), the "how would I build X" demos beside the
+ * the series door), the "how would I build X" demos beside the
  * per-knob fan-outs in `Lists/BarList` / `Lists/BoxList`.
  */
 const meta: Meta = {
@@ -20,6 +19,8 @@ const meta: Meta = {
 export default meta;
 
 const BASE = Date.UTC(2026, 7, 2, 8, 0, 0);
+// Split 2 opens by default; named so the story data and the key cannot drift.
+const SPLIT2_TS = BASE + 500_000;
 
 /** Human traffic-rate formatting (values in Mbps). */
 const fmtRate = (mbps: number) =>
@@ -192,7 +193,7 @@ function splitSeries() {
     ] as const,
     rows: [
       [BASE, 7.3, 21, 493],
-      [BASE + 500_000, 15.3, 10, 146],
+      [SPLIT2_TS, 15.3, 10, 146],
       [BASE + 1_000_000, 11.8, 31, 305],
       [BASE + 1_500_000, 16.0, 0, 225],
       [BASE + 2_000_000, 13.5, 51, 267],
@@ -205,20 +206,14 @@ function splitSeries() {
 /**
  * The activity **splits** table on the dark register: numbered rows, one speed
  * bar per split on a shared scale, speed + climb data cells, and an expander
- * revealing the split's full stat line — `listRowsFromTimeSeries` straight off
+ * revealing the split's full stat line — the series fed straight off
  * the per-split series.
  */
 export const Splits: StoryObj = {
   render: function SplitsStory() {
-    const rows = useMemo(
-      () =>
-        listRowsFromTimeSeries(splitSeries(), {
-          label: (i) => (
-            <span style={{ color: '#4E6B6B' }}>{String(i + 1)}</span>
-          ),
-        }),
-      [],
-    );
+    // The series door: no shaping step — the per-split series feeds straight
+    // in, `label` names the rows.
+    const series = useMemo(splitSeries, []);
     const bright = { color: '#F1FBF9' };
     const dim = { color: '#4E6B6B' };
     return (
@@ -234,7 +229,10 @@ export const Splits: StoryObj = {
           SPLITS
         </div>
         <BarList
-          rows={rows}
+          series={series}
+          label={(i) => (
+            <span style={{ color: '#4E6B6B' }}>{String(i + 1)}</span>
+          )}
           columns={[{ column: 'speed' }]}
           divided={false}
           theme={estelaTheme}
@@ -275,7 +273,7 @@ export const Splits: StoryObj = {
               </div>
             );
           }}
-          defaultExpanded={[rows[1]!.key]}
+          defaultExpanded={[String(SPLIT2_TS)]}
         />
       </div>
     );

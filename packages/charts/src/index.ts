@@ -2,19 +2,19 @@
  * `@pond-ts/charts` — the visualization end of pond.
  *
  * Canvas-rendered, streaming-first time-series charts with a
- * react-timeseries-charts-style declarative layout. The architecture (hard
- * layers: adapter → typed-array store → decimator → canvas renderer → React
- * shell) is documented in the charts RFC at `docs/rfcs/charts.md`; the
- * milestone plan lives in `PLAN.md`. (A Path2D path cache was explored and
- * deferred — it doesn't help the pan case, which re-decimates every frame; see
- * the [PND-DECIM] floor decision.)
+ * react-timeseries-charts-style declarative layout: compose
+ * `<ChartContainer>` → `<ChartRow>` → `<Layers>` → draw layers
+ * (line/area/band/scatter/bar/box/candle), plus the standalone DOM row lists
+ * ({@link BarList} / {@link BoxList}). **The data contract is the pond series
+ * itself** — every layer takes a `TimeSeries` / `ValueSeries` (or a
+ * partition `Map`, `byColumn` bins, category records) directly and shapes
+ * internally; an adapter you must call when starting from a series is an API
+ * failure (`docs/notes/charts-api-review-2026-08.md`). The exported `from*`
+ * view builders are **interop escape hatches** for non-pond data only.
  *
- * **M1 — rendering spine.** The layout shell + the first draw layer:
- * `<ChartContainer>` (time axis) → `<ChartRow>` (y-axis + canvas) →
- * `<LineChart>` (a gap-aware line), fed from a pond `TimeSeries` via
- * {@link fromTimeSeries}. Axes, themes, the variance band, and interactions
- * land in M2–M4. {@link Canvas} is the low-level DPR-aware primitive the rows
- * sit on.
+ * Architecture (typed-array store → decimator → canvas renderer → React
+ * shell): `docs/rfcs/charts.md`; roadmap: `PLAN.md`. {@link Canvas} is the
+ * low-level DPR-aware primitive the rows sit on.
  *
  * @packageDocumentation
  */

@@ -1,6 +1,10 @@
 import { useMemo, type ReactNode } from 'react';
+import { ValueSeries } from 'pond-ts';
+import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
 import {
   listFraction,
+  listRowsFromTimeSeries,
+  listRowsFromValueSeries,
   resolveListDomain,
   sortListRows,
   validateBoxListColumn,
@@ -8,14 +12,29 @@ import {
   type ListCellSpec,
   type ListMarker,
   type ListRow,
+  type ListRowsOptions,
   type ListSortDirection,
 } from './list.js';
 import { ListTable, listInk } from './ListTable.js';
 import { defaultTheme, type BoxStyle, type ChartTheme } from './theme.js';
 
-export interface BoxListProps<R extends ListRow = ListRow> {
-  /** The rows — same shape and generics as `BarListProps.rows`. */
-  rows: readonly R[];
+export interface BoxListProps<
+  R extends ListRow = ListRow,
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> {
+  /** The **record door** — same shape and generics as `BarListProps.rows`
+   *  (partition facts, hand-built entities). Provide **exactly one** of
+   *  `rows` / `series`. */
+  rows?: readonly R[];
+  /**
+   * The **series door** — one row per event, for a series whose columns
+   * carry the quantiles per row (a rolling / per-bucket percentile pass):
+   * see `BarListProps.series`. Provide **exactly one** of `rows` / `series`.
+   */
+  series?: TimeSeries<S> | ValueSeries<VS>;
+  /** The label cell per row when `series` is given — see `BarListProps.label`. */
+  label?: ListRowsOptions['label'];
   /**
    * The box lines, **top→bottom within each row** — each names the `values`
    * entries for its five-number summary (`lower`/`upper` required; `q1`+`q3`
@@ -104,8 +123,14 @@ export interface BoxListProps<R extends ListRow = ListRow> {
  * />
  * ```
  */
-export function BoxList<R extends ListRow = ListRow>({
+export function BoxList<
+  R extends ListRow = ListRow,
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+>({
   rows,
+  series,
+  label,
   columns,
   domain,
   sortBy,
@@ -123,16 +148,34 @@ export function BoxList<R extends ListRow = ListRow>({
   divided,
   baseline = true,
   theme = defaultTheme,
-}: BoxListProps<R>) {
+}: BoxListProps<R, S, VS>) {
+  if ((rows === undefined) === (series === undefined)) {
+    throw new Error(
+      '<BoxList>: provide exactly one of `rows` (records) or `series` (one row per event)',
+    );
+  }
   for (const col of columns) validateBoxListColumn(col);
+  // The series door reads internally — starting from a pond series there is
+  // no shaping step (with `series`, R stays the default ListRow).
+  const allRows = useMemo(
+    () =>
+      rows ??
+      ((series instanceof ValueSeries
+        ? listRowsFromValueSeries(series, label !== undefined ? { label } : {})
+        : listRowsFromTimeSeries(
+            series as TimeSeries<S>,
+            label !== undefined ? { label } : {},
+          )) as unknown as readonly R[]),
+    [rows, series, label],
+  );
   const sorted = useMemo(
-    () => sortListRows(rows, sortBy, sortDirection, sort),
-    [rows, sortBy, sortDirection, sort],
+    () => sortListRows(allRows, sortBy, sortDirection, sort),
+    [allRows, sortBy, sortDirection, sort],
   );
   const scale = useMemo(
     () =>
       resolveListDomain(
-        rows,
+        allRows,
         columns.flatMap((c) =>
           c.value !== undefined
             ? [c.lower, c.upper, c.value]
@@ -141,7 +184,7 @@ export function BoxList<R extends ListRow = ListRow>({
         domain,
         markers?.map((m) => m.value),
       ),
-    [rows, columns, domain, markers],
+    [allRows, columns, domain, markers],
   );
   const resolvedMarkers = useMemo(
     () =>

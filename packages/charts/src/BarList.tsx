@@ -1,26 +1,57 @@
 import { useMemo, type ReactNode } from 'react';
+import { ValueSeries } from 'pond-ts';
+import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
 import {
   listFraction,
+  listRowsFromTimeSeries,
+  listRowsFromValueSeries,
   resolveListDomain,
   sortListRows,
   type BarListColumn,
   type ListCellSpec,
   type ListMarker,
   type ListRow,
+  type ListRowsOptions,
   type ListSortDirection,
 } from './list.js';
 import { ListTable } from './ListTable.js';
 import { defaultTheme, type ChartTheme } from './theme.js';
 
-export interface BarListProps<R extends ListRow = ListRow> {
+export interface BarListProps<
+  R extends ListRow = ListRow,
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> {
   /**
    * The rows, one entity each (`key` is the stable identity; `label` the
    * first cell; `values` the flat data record). Generic — extra fields on a
-   * row ride through to cell `render` / `renderExpanded` fully typed. Build
-   * by hand, or read a per-event series with `listRowsFromTimeSeries` /
-   * `listRowsFromValueSeries`.
+   * row ride through to cell `render` / `renderExpanded` fully typed. This is
+   * the **record door** — partition facts, hand-built entities. For
+   * rows-are-events, pass `series` instead. Provide **exactly one** of
+   * `rows` / `series`.
    */
-  rows: readonly R[];
+  rows?: readonly R[];
+  /**
+   * The **series door** — one row per event, every value column (numeric
+   * *and* string) landing in `values` under its own name; a per-split
+   * `aggregate` rollup feeds straight in, a `ValueSeries`
+   * (`run.byValue('km')`) rows per axis key. No shaping step: starting from
+   * a pond series, the series *is* the contract (an adapter you must call
+   * is an API failure — the 2026-08 review's settled principle). Pair with
+   * `label` for the first cell. Provide **exactly one** of `rows` / `series`.
+   *
+   * **Typing hazard:** with `series`, cell / expander callbacks receive plain
+   * `ListRow` — don't annotate them with a custom row type (that inference is
+   * only sound through `rows`; the [PND-CHARTAPI] mode union will enforce it).
+   */
+  series?: TimeSeries<S> | ValueSeries<VS>;
+  /**
+   * The built-in label cell per row when `series` is given — from the row's
+   * ordinal and its axis key (epoch ms / axis value). **Omitted ⇒ the
+   * stringified key renders.** Ignored with `rows` (records carry their own
+   * `label`).
+   */
+  label?: ListRowsOptions['label'];
   /**
    * The bar lines, **top→bottom within each row** — each names a `values`
    * entry for its length and optionally a theme role (`as`). Several columns
@@ -128,8 +159,14 @@ export interface BarListProps<R extends ListRow = ListRow> {
  * />
  * ```
  */
-export function BarList<R extends ListRow = ListRow>({
+export function BarList<
+  R extends ListRow = ListRow,
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+>({
   rows,
+  series,
+  label,
   columns,
   domain,
   sortBy,
@@ -147,20 +184,38 @@ export function BarList<R extends ListRow = ListRow>({
   divided,
   baseline,
   theme = defaultTheme,
-}: BarListProps<R>) {
+}: BarListProps<R, S, VS>) {
+  if ((rows === undefined) === (series === undefined)) {
+    throw new Error(
+      '<BarList>: provide exactly one of `rows` (records) or `series` (one row per event)',
+    );
+  }
+  // The series door reads internally — starting from a pond series there is
+  // no shaping step (with `series`, R stays the default ListRow).
+  const allRows = useMemo(
+    () =>
+      rows ??
+      ((series instanceof ValueSeries
+        ? listRowsFromValueSeries(series, label !== undefined ? { label } : {})
+        : listRowsFromTimeSeries(
+            series as TimeSeries<S>,
+            label !== undefined ? { label } : {},
+          )) as unknown as readonly R[]),
+    [rows, series, label],
+  );
   const sorted = useMemo(
-    () => sortListRows(rows, sortBy, sortDirection, sort),
-    [rows, sortBy, sortDirection, sort],
+    () => sortListRows(allRows, sortBy, sortDirection, sort),
+    [allRows, sortBy, sortDirection, sort],
   );
   const scale = useMemo(
     () =>
       resolveListDomain(
-        rows,
+        allRows,
         columns.map((c) => c.column),
         domain,
         markers?.map((m) => m.value),
       ),
-    [rows, columns, domain, markers],
+    [allRows, columns, domain, markers],
   );
   const resolvedMarkers = useMemo(
     () =>
