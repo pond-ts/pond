@@ -150,6 +150,7 @@ describe('readout — gaps and bad column names', () => {
   it('throws on an unknown readout column — time axis', () => {
     expect(() =>
       samplesOf(
+        // @ts-expect-error — [PND-CHARTAPI]: rejected at compile time now.
         <LineChart series={series()} column="sm" readout="nope" axis="a" />,
         [0, 2000],
         1000,
@@ -160,6 +161,7 @@ describe('readout — gaps and bad column names', () => {
   it('throws on an unknown readout column — value axis', () => {
     expect(() =>
       samplesOf(
+        // @ts-expect-error — [PND-CHARTAPI]: rejected at compile time now.
         <LineChart
           series={series().byValue('dist')}
           column="sm"
@@ -184,6 +186,7 @@ describe('readout — gaps and bad column names', () => {
     });
     expect(() =>
       samplesOf(
+        // @ts-expect-error — [PND-CHARTAPI]: rejected at compile time now.
         <LineChart series={withText} column="sm" readout="note" axis="a" />,
         [0, 2000],
         0,
@@ -194,6 +197,7 @@ describe('readout — gaps and bad column names', () => {
   it('AreaChart rejects a bad readout column the same way', () => {
     expect(() =>
       samplesOf(
+        // @ts-expect-error — [PND-CHARTAPI]: rejected at compile time now.
         <AreaChart series={series()} column="sm" readout="nope" axis="a" />,
         [0, 2000],
         1000,

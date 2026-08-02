@@ -214,6 +214,7 @@ describe('<BoxList>', () => {
     const range = container.querySelector('[data-list-range]') as HTMLElement;
     expect(range.style.left).toBe('10%');
     expect(() =>
+      // @ts-expect-error — neither door is a compile error now ([PND-CHARTAPI]).
       render(<BoxList columns={[{ lower: 'lo', upper: 'hi' }]} />),
     ).toThrow(/exactly one/);
   });

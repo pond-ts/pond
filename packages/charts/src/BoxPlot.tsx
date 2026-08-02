@@ -2,6 +2,7 @@ import { useContext, useEffect, useMemo } from 'react';
 import { ValueSeries } from 'pond-ts';
 import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
 import { boxFromTimeSeries, boxFromValueSeries } from './data.js';
+import type { NumericColumn, ValueNumericColumn } from './column-names.js';
 import {
   boxAt,
   boxExtent,
@@ -26,39 +27,18 @@ import {
 } from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
-export interface BoxPlotProps<
+export interface BoxPlotCommon<
   S extends SeriesSchema = SeriesSchema,
   VS extends ValueSeriesSchema = ValueSeriesSchema,
 > {
-  /**
-   * The source series. A `TimeSeries` plots against the time axis; a `ValueSeries`
-   * (`series.byValue('strike')`, or `ValueSeries.fromColumns` for natively
-   * value-keyed data — a per-strike IV distribution) against its value axis — the
-   * container infers which from the data, no axis-type prop (mirrors `<LineChart>`
-   * / `<ScatterChart>`). The box x-span is the key's `[begin, end)` for an
-   * interval-keyed `TimeSeries`, else synthesized from neighbour spacing (a
-   * point-keyed `TimeSeries`, or a `ValueSeries`) so the box keeps real width.
-   */
-  series: TimeSeries<S> | ValueSeries<VS>;
   /** Name of the numeric column for the lower whisker end (e.g. `p5` / `min`).
    *  **Required** — with `upper` it's the whisker reach. */
-  lower: string;
-  /**
-   * Name of the numeric column for the box bottom — first quartile (e.g. `p25`).
-   * **Optional:** omit `q1` **and** `q3` together for a **range-only** box — a
-   * whisker-only `lower→upper` segment, no body (a bid→ask IV mark). Giving just
-   * one of `q1`/`q3` throws.
-   */
-  q1?: string;
   /** Name of the numeric column for the median line (e.g. `p50`). **Optional** —
    *  omit for no centre line (independent of the box body). */
-  median?: string;
   /** Name of the numeric column for the box top — third quartile (e.g. `p75`).
    *  **Optional** — omit with `q1` for a range-only box (see `q1`). */
-  q3?: string;
   /** Name of the numeric column for the upper whisker end (e.g. `p95` / `max`).
    *  **Required** — with `lower` it's the whisker reach. */
-  upper: string;
   /**
    * The box series' semantic identifier — what the spread _is_ (e.g. `latency`).
    * The theme maps it to a {@link BoxStyle} (`theme.box[as] ?? theme.box.default`
@@ -149,6 +129,41 @@ export interface BoxPlotProps<
    */
   index?: number;
 }
+
+/**
+ * BoxPlot's source + column props, a **union over the series kind** so the
+ * column names are checked against the schema that was actually passed
+ * ([PND-CHARTAPI]). A single member carrying `NumericColumn<S> |
+ * ValueNumericColumn<VS>` would silently widen to `string`: only one of the
+ * two generics is ever inferred, and the other falls back (measured in
+ * `spikes/charts-type-seam/`). Loosely-typed series still accept any name.
+ */
+type BoxPlotSource<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> =
+  | {
+      series: TimeSeries<S>;
+      lower: NumericColumn<S>;
+      q1?: NumericColumn<S>;
+      median?: NumericColumn<S>;
+      q3?: NumericColumn<S>;
+      upper: NumericColumn<S>;
+    }
+  | {
+      series: ValueSeries<VS>;
+      lower: ValueNumericColumn<VS>;
+      q1?: ValueNumericColumn<VS>;
+      median?: ValueNumericColumn<VS>;
+      q3?: ValueNumericColumn<VS>;
+      upper: ValueNumericColumn<VS>;
+    };
+
+/** `<BoxPlot>`'s props: the shared knobs plus one series-kind source shape. */
+export type BoxPlotProps<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> = BoxPlotCommon<S, VS> & BoxPlotSource<S, VS>;
 
 /** Whisker collapse floor (px) — a too-thin box still draws a 1px mark. */
 const MIN_BOX_WIDTH_PX = 1;

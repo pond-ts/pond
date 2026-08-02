@@ -7,6 +7,7 @@ import type {
   ValueSeriesSchema,
 } from 'pond-ts';
 import { fromTimeSeries, fromValueSeries } from './data.js';
+import type { NumericColumn, ValueNumericColumn } from './column-names.js';
 import {
   drawScatter,
   hitTestScatter,
@@ -27,26 +28,10 @@ import {
 } from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
-export interface ScatterChartProps<
+export interface ScatterChartCommon<
   S extends SeriesSchema = SeriesSchema,
   VS extends ValueSeriesSchema = ValueSeriesSchema,
 > {
-  /**
-   * The source series. A `TimeSeries` scatters against the time axis; a
-   * `ValueSeries` (`series.byValue('cumDist')`, or `ValueSeries.fromColumns`
-   * for natively value-keyed data — IV marks keyed by strike) against its
-   * value axis — the container infers which from the data, no axis-type prop
-   * (mirrors `<LineChart>`). Either way the key / axis column supplies each
-   * point's x and `column` supplies y.
-   *
-   * **Live charts:** `series.byValue(…)` mints a *fresh* projection each call,
-   * so passing `series={s.byValue('dist')}` inline re-registers this layer
-   * every render — memoize the projection (`useMemo`) on a frequently
-   * re-rendering chart.
-   */
-  series: TimeSeries<S> | ValueSeries<VS>;
-  /** Name of the numeric value column — each point's y. */
-  column: string;
   /**
    * The scatter's semantic identifier — what the marks _are_ / how they should
    * read. The theme maps it to a {@link ScatterStyle} (`theme.scatter[as] ??
@@ -137,6 +122,33 @@ export interface ScatterChartProps<
    */
   index?: number;
 }
+
+/**
+ * ScatterChart's source + column props, a **union over the series kind** so the
+ * column names are checked against the schema that was actually passed
+ * ([PND-CHARTAPI]). A single member carrying `NumericColumn<S> |
+ * ValueNumericColumn<VS>` would silently widen to `string`: only one of the
+ * two generics is ever inferred, and the other falls back (measured in
+ * `spikes/charts-type-seam/`). Loosely-typed series still accept any name.
+ */
+type ScatterChartSource<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> =
+  | {
+      series: TimeSeries<S>;
+      column: NumericColumn<S>;
+    }
+  | {
+      series: ValueSeries<VS>;
+      column: ValueNumericColumn<VS>;
+    };
+
+/** `<ScatterChart>`'s props: the shared knobs plus one series-kind source shape. */
+export type ScatterChartProps<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> = ScatterChartCommon<S, VS> & ScatterChartSource<S, VS>;
 
 /** Runtime field read off an event without detaching `get` (which would lose
  *  `this`); `column`/`label` are runtime strings, so a typed `.get(literal)`

@@ -15,26 +15,16 @@ import {
   type ListRowsOptions,
   type ListSortDirection,
 } from './list.js';
+import {
+  isSeriesSource,
+  type ListRowsSource,
+  type ListSeriesSource,
+} from './list-source.js';
 import { ListTable, listInk } from './ListTable.js';
 import { defaultTheme, type BoxStyle, type ChartTheme } from './theme.js';
 
-export interface BoxListProps<
-  R extends ListRow = ListRow,
-  S extends SeriesSchema = SeriesSchema,
-  VS extends ValueSeriesSchema = ValueSeriesSchema,
-> {
-  /** The **record door** — same shape and generics as `BarListProps.rows`
-   *  (partition facts, hand-built entities). Provide **exactly one** of
-   *  `rows` / `series`. */
-  rows?: readonly R[];
-  /**
-   * The **series door** — one row per event, for a series whose columns
-   * carry the quantiles per row (a rolling / per-bucket percentile pass):
-   * see `BarListProps.series`. Provide **exactly one** of `rows` / `series`.
-   */
-  series?: TimeSeries<S> | ValueSeries<VS>;
-  /** The label cell per row when `series` is given — see `BarListProps.label`. */
-  label?: ListRowsOptions['label'];
+/** The props both BoxList source doors share. */
+export interface BoxListCommon<R extends ListRow = ListRow> {
   /**
    * The box lines, **top→bottom within each row** — each names the `values`
    * entries for its five-number summary (`lower`/`upper` required; `q1`+`q3`
@@ -98,6 +88,25 @@ export interface BoxListProps<
 }
 
 /**
+ * `<BoxList>`'s props: the shared knobs ({@link BoxListCommon}) plus **exactly
+ * one** source door ([PND-CHARTAPI]). Passing both `rows` and `series`, or
+ * neither, is now a **compile** error rather than a render-time throw.
+ *
+ * The two members differ in their row type on purpose. Through `rows`, a
+ * caller's `R` flows into every callback. Through `series` the rows are read
+ * internally and are plain {@link ListRow}s, so that member pins the callbacks
+ * to `ListRow` — annotating a callback with a custom row type while passing
+ * `series` no longer compiles, where before it silently lied (#590 review).
+ */
+export type BoxListProps<
+  R extends ListRow = ListRow,
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> =
+  | (BoxListCommon<R> & ListRowsSource<R>)
+  | (BoxListCommon<ListRow> & ListSeriesSource<S, VS>);
+
+/**
  * A **distribution row list** — {@link BarList}'s sister, drawing a horizontal
  * five-number box per configured column instead of a value bar: the light
  * `lower→upper` range band, the stronger `q1→q3` body, the `median` line, and
@@ -127,29 +136,40 @@ export function BoxList<
   R extends ListRow = ListRow,
   S extends SeriesSchema = SeriesSchema,
   VS extends ValueSeriesSchema = ValueSeriesSchema,
->({
-  rows,
-  series,
-  label,
-  columns,
-  domain,
-  sortBy,
-  sortDirection = 'desc',
-  sort,
-  before,
-  after,
-  renderExpanded,
-  defaultExpanded,
-  onExpandToggle,
-  selected,
-  onRowClick,
-  markers,
-  barHeight = 10,
-  divided,
-  baseline = true,
-  theme = defaultTheme,
-}: BoxListProps<R, S, VS>) {
-  if ((rows === undefined) === (series === undefined)) {
+>(props: BoxListProps<R, S, VS>) {
+  // One normalized view of the union — `isSeriesSource` is the runtime
+  // narrowing; the doors are mutually exclusive by construction now.
+  const source = props as BoxListCommon<R> & {
+    rows?: readonly R[];
+    series?: TimeSeries<S> | ValueSeries<VS>;
+    label?: ListRowsOptions['label'];
+  };
+  const {
+    rows,
+    series,
+    label,
+    columns,
+    domain,
+    sortBy,
+    sortDirection = 'desc',
+    sort,
+    before,
+    after,
+    renderExpanded,
+    defaultExpanded,
+    onExpandToggle,
+    selected,
+    onRowClick,
+    markers,
+    barHeight = 10,
+    divided,
+    baseline = true,
+    theme = defaultTheme,
+  } = source;
+  // A runtime guard for JS consumers and `any`-typed call sites — the
+  // props union makes both branches unreachable from typed TS, but a
+  // silently-ignored source prop is a worse failure than a throw.
+  if (isSeriesSource(props) === (rows !== undefined)) {
     throw new Error(
       '<BoxList>: provide exactly one of `rows` (records) or `series` (one row per event)',
     );

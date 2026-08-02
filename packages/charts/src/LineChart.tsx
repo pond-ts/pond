@@ -6,6 +6,7 @@ import {
   fromTimeSeries,
   fromValueSeries,
 } from './data.js';
+import type { NumericColumn, ValueNumericColumn } from './column-names.js';
 import { drawLine, yExtent } from './line.js';
 import type { DecimateOption } from './decimate.js';
 import { resolveCurve, type Curve } from './curve.js';
@@ -22,35 +23,10 @@ import {
 } from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
-export interface LineChartProps<
+export interface LineChartCommon<
   S extends SeriesSchema = SeriesSchema,
   VS extends ValueSeriesSchema = ValueSeriesSchema,
 > {
-  /**
-   * The source series. A `TimeSeries` plots against the time axis; a
-   * `ValueSeries` (`series.byValue('cumDist')`) against its value axis — the
-   * container infers which from the data, no axis-type prop. Either way the key
-   * / axis column supplies x and `column` supplies y.
-   *
-   * **Live charts:** `series.byValue(…)` mints a *fresh* projection each call, so
-   * passing `series={s.byValue('dist')}` inline re-registers this layer every
-   * render — on a frequently re-rendering (e.g. scrub-driven) chart, memoize the
-   * projection (`useMemo`) so the layer isn't rebuilt each frame.
-   */
-  series: TimeSeries<S> | ValueSeries<VS>;
-  /** Name of the numeric value column to plot. */
-  column: string;
-  /**
-   * Optional column to **read out** at the cursor instead of the plotted
-   * `column`. The layer still plots `column`; each tracker sample additionally
-   * carries this column's value as {@link TrackerSample.readout}, so an
-   * off-chart readout can show the **source** value while the line draws a
-   * derived one — a smoothed / transformed / normalized plot with a raw-value
-   * readout (estela plots pace-space + Gaussian-smoothed, reads the native m/s).
-   * The plotted `value` (hence the in-chart cursor dot) is unchanged.
-   * **Omitted ⇒ no readout channel** (`readout` is `undefined` on the sample).
-   */
-  readout?: string;
   /**
    * The series' semantic identifier — what the data _is_ / how it should read
    * (e.g. `heartrate`, `power`, or a role name like `foam`). The theme maps it
@@ -121,6 +97,35 @@ export interface LineChartProps<
    */
   index?: number;
 }
+
+/**
+ * LineChart's source + column props, a **union over the series kind** so the
+ * column names are checked against the schema that was actually passed
+ * ([PND-CHARTAPI]). A single member carrying `NumericColumn<S> |
+ * ValueNumericColumn<VS>` would silently widen to `string`: only one of the
+ * two generics is ever inferred, and the other falls back (measured in
+ * `spikes/charts-type-seam/`). Loosely-typed series still accept any name.
+ */
+type LineChartSource<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> =
+  | {
+      series: TimeSeries<S>;
+      column: NumericColumn<S>;
+      readout?: NumericColumn<S>;
+    }
+  | {
+      series: ValueSeries<VS>;
+      column: ValueNumericColumn<VS>;
+      readout?: ValueNumericColumn<VS>;
+    };
+
+/** `<LineChart>`'s props: the shared knobs plus one series-kind source shape. */
+export type LineChartProps<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> = LineChartCommon<S, VS> & LineChartSource<S, VS>;
 
 /** Stable empty boundary list — so `sessionBreaks={false}` keeps a referentially
  *  constant array and the layer entry isn't rebuilt every render. */

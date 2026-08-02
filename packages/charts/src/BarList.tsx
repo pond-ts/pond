@@ -14,44 +14,16 @@ import {
   type ListRowsOptions,
   type ListSortDirection,
 } from './list.js';
+import {
+  isSeriesSource,
+  type ListRowsSource,
+  type ListSeriesSource,
+} from './list-source.js';
 import { ListTable } from './ListTable.js';
 import { defaultTheme, type ChartTheme } from './theme.js';
 
-export interface BarListProps<
-  R extends ListRow = ListRow,
-  S extends SeriesSchema = SeriesSchema,
-  VS extends ValueSeriesSchema = ValueSeriesSchema,
-> {
-  /**
-   * The rows, one entity each (`key` is the stable identity; `label` the
-   * first cell; `values` the flat data record). Generic — extra fields on a
-   * row ride through to cell `render` / `renderExpanded` fully typed. This is
-   * the **record door** — partition facts, hand-built entities. For
-   * rows-are-events, pass `series` instead. Provide **exactly one** of
-   * `rows` / `series`.
-   */
-  rows?: readonly R[];
-  /**
-   * The **series door** — one row per event, every value column (numeric
-   * *and* string) landing in `values` under its own name; a per-split
-   * `aggregate` rollup feeds straight in, a `ValueSeries`
-   * (`run.byValue('km')`) rows per axis key. No shaping step: starting from
-   * a pond series, the series *is* the contract (an adapter you must call
-   * is an API failure — the 2026-08 review's settled principle). Pair with
-   * `label` for the first cell. Provide **exactly one** of `rows` / `series`.
-   *
-   * **Typing hazard:** with `series`, cell / expander callbacks receive plain
-   * `ListRow` — don't annotate them with a custom row type (that inference is
-   * only sound through `rows`; the [PND-CHARTAPI] mode union will enforce it).
-   */
-  series?: TimeSeries<S> | ValueSeries<VS>;
-  /**
-   * The built-in label cell per row when `series` is given — from the row's
-   * ordinal and its axis key (epoch ms / axis value). **Omitted ⇒ the
-   * stringified key renders.** Ignored with `rows` (records carry their own
-   * `label`).
-   */
-  label?: ListRowsOptions['label'];
+/** The props both BarList source doors share. */
+export interface BarListCommon<R extends ListRow = ListRow> {
   /**
    * The bar lines, **top→bottom within each row** — each names a `values`
    * entry for its length and optionally a theme role (`as`). Several columns
@@ -133,6 +105,25 @@ export interface BarListProps<
 }
 
 /**
+ * `<BarList>`'s props: the shared knobs ({@link BarListCommon}) plus **exactly
+ * one** source door ([PND-CHARTAPI]). Passing both `rows` and `series`, or
+ * neither, is now a **compile** error rather than a render-time throw.
+ *
+ * The two members differ in their row type on purpose. Through `rows`, a
+ * caller's `R` flows into every callback. Through `series` the rows are read
+ * internally and are plain {@link ListRow}s, so that member pins the callbacks
+ * to `ListRow` — annotating a callback with a custom row type while passing
+ * `series` no longer compiles, where before it silently lied (#590 review).
+ */
+export type BarListProps<
+  R extends ListRow = ListRow,
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> =
+  | (BarListCommon<R> & ListRowsSource<R>)
+  | (BarListCommon<ListRow> & ListSeriesSource<S, VS>);
+
+/**
  * A **ranked bar list** — the DOM sister of `<BarChart orientation="horizontal">`,
  * for the table-shaped cases: one row per *entity* (interface, split, symbol),
  * a label cell, one proportional bar line per configured column, optional data
@@ -163,29 +154,40 @@ export function BarList<
   R extends ListRow = ListRow,
   S extends SeriesSchema = SeriesSchema,
   VS extends ValueSeriesSchema = ValueSeriesSchema,
->({
-  rows,
-  series,
-  label,
-  columns,
-  domain,
-  sortBy,
-  sortDirection = 'desc',
-  sort,
-  before,
-  after,
-  renderExpanded,
-  defaultExpanded,
-  onExpandToggle,
-  selected,
-  onRowClick,
-  markers,
-  barHeight = 8,
-  divided,
-  baseline,
-  theme = defaultTheme,
-}: BarListProps<R, S, VS>) {
-  if ((rows === undefined) === (series === undefined)) {
+>(props: BarListProps<R, S, VS>) {
+  // One normalized view of the union — `isSeriesSource` is the runtime
+  // narrowing; the doors are mutually exclusive by construction now.
+  const source = props as BarListCommon<R> & {
+    rows?: readonly R[];
+    series?: TimeSeries<S> | ValueSeries<VS>;
+    label?: ListRowsOptions['label'];
+  };
+  const {
+    rows,
+    series,
+    label,
+    columns,
+    domain,
+    sortBy,
+    sortDirection = 'desc',
+    sort,
+    before,
+    after,
+    renderExpanded,
+    defaultExpanded,
+    onExpandToggle,
+    selected,
+    onRowClick,
+    markers,
+    barHeight = 8,
+    divided,
+    baseline,
+    theme = defaultTheme,
+  } = source;
+  // A runtime guard for JS consumers and `any`-typed call sites — the
+  // props union makes both branches unreachable from typed TS, but a
+  // silently-ignored source prop is a worse failure than a throw.
+  if (isSeriesSource(props) === (rows !== undefined)) {
     throw new Error(
       '<BarList>: provide exactly one of `rows` (records) or `series` (one row per event)',
     );

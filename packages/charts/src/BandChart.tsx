@@ -2,6 +2,7 @@ import { useContext, useEffect, useMemo } from 'react';
 import { ValueSeries } from 'pond-ts';
 import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
 import { bandFromTimeSeries, bandFromValueSeries } from './data.js';
+import type { NumericColumn, ValueNumericColumn } from './column-names.js';
 import { bandExtent, drawBand } from './band.js';
 import { resolveCurve, type Curve } from './curve.js';
 import type { DecimateOption } from './decimate.js';
@@ -13,26 +14,10 @@ import {
 } from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
-export interface BandChartProps<
+export interface BandChartCommon<
   S extends SeriesSchema = SeriesSchema,
   VS extends ValueSeriesSchema = ValueSeriesSchema,
 > {
-  /**
-   * The source series. A `TimeSeries` fills the envelope against the time axis;
-   * a `ValueSeries` (`series.byValue('dist')`) against its value axis — the
-   * container infers which from the data, no axis-type prop (mirrors
-   * `<LineChart>` / `<AreaChart>`). Either way `lower`/`upper` name the numeric
-   * edge columns.
-   *
-   * **Live charts:** `series.byValue(…)` mints a *fresh* projection each call, so
-   * an inline `series={s.byValue('dist')}` re-registers this layer every render —
-   * on a frequently re-rendering chart, memoize the projection (`useMemo`).
-   */
-  series: TimeSeries<S> | ValueSeries<VS>;
-  /** Name of the numeric column for the band's lower edge (e.g. `p25`). */
-  lower: string;
-  /** Name of the numeric column for the band's upper edge (e.g. `p75`). */
-  upper: string;
   /**
    * The band's semantic identifier — what the spread _is_ (e.g. `outer` for a
    * p5/p95 envelope, `inner` for p25/p75). The theme maps it to a
@@ -78,6 +63,35 @@ export interface BandChartProps<
    */
   index?: number;
 }
+
+/**
+ * BandChart's source + column props, a **union over the series kind** so the
+ * column names are checked against the schema that was actually passed
+ * ([PND-CHARTAPI]). A single member carrying `NumericColumn<S> |
+ * ValueNumericColumn<VS>` would silently widen to `string`: only one of the
+ * two generics is ever inferred, and the other falls back (measured in
+ * `spikes/charts-type-seam/`). Loosely-typed series still accept any name.
+ */
+type BandChartSource<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> =
+  | {
+      series: TimeSeries<S>;
+      lower: NumericColumn<S>;
+      upper: NumericColumn<S>;
+    }
+  | {
+      series: ValueSeries<VS>;
+      lower: ValueNumericColumn<VS>;
+      upper: ValueNumericColumn<VS>;
+    };
+
+/** `<BandChart>`'s props: the shared knobs plus one series-kind source shape. */
+export type BandChartProps<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> = BandChartCommon<S, VS> & BandChartSource<S, VS>;
 
 /**
  * A variance-band draw layer: fills the envelope between the `lower` and `upper`
