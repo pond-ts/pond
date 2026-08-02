@@ -119,8 +119,51 @@ Guidance for Track A:
 - **Take the top 6–8 SAPs by volume**, which conveniently matches the tonal
   ramp's step count. The 11 near-idle ones would be invisible slivers in a
   stack; mention them on the page rather than plotting them.
-- **Format as Gbps**, not raw bits — and the in/out pair is a natural
-  mirrored-axis or two-row chart, not two lines fighting on one scale.
+- **Format as Gbps**, not raw bits.
+
+##### The reference visualization, and what it implies
+
+pjm shared the production dashboard this data actually drives. Two panels:
+
+1. **Total site traffic** — a **mirrored area chart**: "to site" filling
+   upward from zero, "from site" filling downward, on a symmetric ±350 G axis.
+   Two tones per direction (an aggregate wash behind a darker highlighted
+   series). Bursty: a flat-ish morning, then 250–300 G spikes after 11:00.
+2. **Traffic by interface** — a table, one row per SAP, each with **inline
+   in/out bullet bars** (a light extent track, a darker segment, a value tick)
+   and a category (`LHCONE` / `OTHER`). Rows are **selectable**, and selection
+   drives the chart above ("Clear Selection").
+
+**The mirrored form is already first-class.** `AreaChart`'s own docs name this
+exact look: _"For the esnet two-colour traffic look, compose two `<AreaChart>`s
+(an 'in' column and an 'out' column, distinct `as` roles)"_ — `baseline={0}`,
+values above filling up and below filling down, and the site theme already ships
+the `area.in` / `area.out` roles. So A1's canonical shape is a composition the
+library was designed for and the gallery has simply never shown. Negate the
+`out` column so it draws below the line.
+
+**The table panel is the page's "complex example."** It's the interactivity half
+of §2b — `selected`/`onSelect` linking a row list to the chart — and it answers
+pjm's original ask for "a network traffic page dashboard" rather than a single
+chart. Whether the bullet bars are `BarChart horizontal` or plain DOM is a call
+for the track; the linking is the teachable part.
+
+##### The same data, used more than once
+
+pjm: _"we might use it in different ways too."_ This one file can honestly carry
+several cards, and re-use is a feature — the reader sees one dataset asked
+different questions:
+
+| Card                    | Question it answers                            |
+| ----------------------- | ---------------------------------------------- |
+| A1 mirrored traffic     | In vs out over time, one site                  |
+| A1b interface dashboard | Which interface, and linked selection          |
+| Stacked by interface    | Composition of the total (top 6–8, tonal ramp) |
+| Large-data / decimation | All 24 × 718 points at once, pan/zoom          |
+| Small multiples         | 24 sparklines — scanning for the odd one out   |
+
+Track A owns A1 and A1b; the others are candidates the track can hand on rather
+than build, and should be logged in the roster if they earn a card.
 
 ### 2d. Colour policy — the theme is the only channel
 
