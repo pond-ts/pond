@@ -94,16 +94,16 @@ export function useSiteChartTheme(): ChartTheme {
       default: { color: v('--pond-viz-1'), fill: v('--pond-viz-1') },
       in: { color: v('--pond-viz-1'), fill: v('--pond-viz-1') },
       out: { color: v('--pond-viz-4'), fill: v('--pond-viz-4') },
-      // Near-opaque (0.9), unlike the 0.28 wash the single-accent areas use:
-      // these are the *stacking* roles and each band has to read as its own
-      // slab. NB the fill is still a gradient to the baseline — for a true
-      // stack, draw cumulative columns top-down so each fill covers the one
-      // beneath it.
+      // The *stacking* roles: each band has to read as its own slab, so they
+      // fill **flat** (`flatFill`) rather than grading to transparent at the
+      // baseline — a graded band lets every band beneath show through it. Draw
+      // cumulative columns top-down and the slabs cover each other cleanly.
       ...seqRoles(v, (step) => ({
         color: step,
         width: 1,
         fill: step,
-        fillOpacity: 0.9,
+        fillOpacity: 1,
+        flatFill: true,
       })),
     },
     scatter: {

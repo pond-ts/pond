@@ -176,14 +176,16 @@ function buildDocsTheme(c: Ramp): ChartTheme {
       default: { color: c.viz1, width: 1.5, fill: c.viz1, fillOpacity: 0.28 },
       in: { color: c.viz1, width: 1.5, fill: c.viz1, fillOpacity: 0.28 },
       out: { color: c.viz4, width: 1.5, fill: c.viz4, fillOpacity: 0.28 },
-      // Ramp areas run near-opaque (0.9, not the 0.28 of a single accent
-      // area): these are the *stacking* roles, and a band in a stack has to
-      // read as its own solid slab, not as a wash over its neighbour.
+      // Ramp areas are the *stacking* roles: a band in a stack has to read as
+      // its own solid slab, not as a wash over its neighbour. So they fill
+      // **flat** rather than grading to transparent at the baseline — a graded
+      // band lets every band beneath it show through.
       ...seqRoles(c, (step) => ({
         color: step,
         width: 1,
         fill: step,
-        fillOpacity: 0.9,
+        fillOpacity: 1,
+        flatFill: true,
       })),
     },
     scatter: {

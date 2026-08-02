@@ -308,6 +308,18 @@ export interface AreaStyle {
   readonly width: number;
   readonly fill: string;
   readonly fillOpacity: number;
+  /**
+   * Fill flat instead of grading to transparent at the baseline. Default
+   * (omitted / `false`) keeps the gradient — the elevation look a single area
+   * wants.
+   *
+   * Set it for **stacked** areas. A stack is drawn as overlapping cumulative
+   * bands, so a fade to transparent at the baseline lets every band below show
+   * through the one above it and the composition reads as mush. A flat fill is
+   * what makes the slabs opaque to each other. (`fillOpacity` still applies, so
+   * a stack can be uniformly translucent — just not *graded*.)
+   */
+  readonly flatFill?: boolean;
 }
 
 /**
