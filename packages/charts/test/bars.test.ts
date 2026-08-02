@@ -419,6 +419,148 @@ describe('drawBars — stable per-bar mark selection', () => {
   });
 });
 
+/**
+ * #576 — the single-series highlight **fill** pops to full opacity, as the
+ * per-bar-fills branch and `drawStacks` already did. It used to draw at the
+ * resting `style.opacity`, so on an alpha'd theme a hovered bar (which has no
+ * outline) barely changed, and a selected one read only by its outline.
+ */
+describe('drawBars — highlight fill alpha (single series)', () => {
+  const three = () => bars([0, 1, 2], [1, 2, 3], [10, 20, 30]);
+
+  const draw = (
+    selection: { id: string; key: number } | null,
+    hovered: { id: string; key: number } | null = null,
+  ) => {
+    const { ctx, calls } = recordingContext();
+    drawBars(
+      ctx,
+      three(),
+      identity,
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      selection,
+      hovered,
+      false, // no decimation — the per-bar highlight path
+    );
+    return calls;
+  };
+
+  const alphasOf = (calls: readonly CtxCall[]) =>
+    calls
+      .filter((c) => c.type === 'set' && c.name === 'globalAlpha')
+      .map((c) => c.args[0]);
+
+  /** The `globalAlpha` in effect when call `index` was issued. */
+  const alphaAt = (calls: readonly CtxCall[], index: number) => {
+    let a: unknown;
+    for (let i = 0; i < index; i += 1) {
+      const c = calls[i]!;
+      if (c.type === 'set' && c.name === 'globalAlpha') a = c.args[0];
+    }
+    return a;
+  };
+
+  it('pops the hovered bar to alpha 1 and drops back for the rest', () => {
+    // Leading set is drawBars' save-bracket opacity, then one set per bar.
+    expect(alphasOf(draw(null, { key: 1, id: 'count' }))).toEqual([
+      style.opacity,
+      style.opacity,
+      1,
+      style.opacity,
+    ]);
+  });
+
+  it('fills the hovered bar with the highlight colour AT alpha 1', () => {
+    // The colour and the alpha have to land together — asserting the colour
+    // alone is what let the dim-highlight bug through.
+    const calls = draw(null, { key: 1, id: 'count' });
+    const fills = calls
+      .map((c, i) => ({ c, i }))
+      .filter(({ c }) => c.name === 'fillRect');
+    expect(fills).toHaveLength(3);
+    expect(alphaAt(calls, fills[1]!.i)).toBe(1);
+    expect(alphaAt(calls, fills[0]!.i)).toBe(style.opacity);
+    expect(alphaAt(calls, fills[2]!.i)).toBe(style.opacity);
+    // …and the colour half of the claim, which the name makes and the
+    // assertions above did not (L2 review of #580).
+    const colourAt = (index: number) => {
+      let c: unknown;
+      for (let i = 0; i < index; i += 1) {
+        const call = calls[i]!;
+        if (call.type === 'set' && call.name === 'fillStyle') c = call.args[0];
+      }
+      return c;
+    };
+    expect(colourAt(fills[1]!.i)).toBe(style.highlight);
+    expect(colourAt(fills[0]!.i)).toBe(style.fill);
+  });
+
+  it('a gap bar next to a highlighted one cannot mis-alpha either (leak guard)', () => {
+    // Both `continue` paths — a gap bar (rect === null) and the binFills
+    // branch — skip the alpha set entirely, so the guarantee that every fill
+    // is preceded by its own set is what rules a leak out. Bar 1 is a gap,
+    // sitting between a hovered bar 0 and a resting bar 2.
+    const { ctx, calls } = recordingContext();
+    drawBars(
+      ctx,
+      bars([0, 1, 2], [1, 2, 3], [10, NaN, 30]),
+      identity,
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      null,
+      { key: 0, id: 'count' },
+      false,
+    );
+    const fills = calls
+      .map((c, i) => ({ c, i }))
+      .filter(({ c }) => c.name === 'fillRect');
+    expect(fills).toHaveLength(2); // the gap draws nothing
+    expect(alphaAt(calls, fills[0]!.i)).toBe(1); // hovered
+    expect(alphaAt(calls, fills[1]!.i)).toBe(style.opacity); // past the gap
+  });
+
+  it('pops the selected bar too, and still strokes its outline at alpha 1', () => {
+    const calls = draw({ key: 1, id: 'count' });
+    expect(alphasOf(calls)).toEqual([
+      style.opacity,
+      style.opacity,
+      1,
+      style.opacity,
+    ]);
+    const stroke = calls.findIndex((c) => c.name === 'strokeRect');
+    expect(stroke).toBeGreaterThan(-1);
+    // The outline no longer sets alpha itself — it inherits the fill's pop.
+    expect(alphaAt(calls, stroke)).toBe(1);
+  });
+
+  it('leaves every bar at the resting opacity when nothing is live', () => {
+    expect(alphasOf(draw(null, null))).toEqual([
+      style.opacity,
+      style.opacity,
+      style.opacity,
+      style.opacity,
+    ]);
+  });
+
+  it('restores the resting opacity after a selected bar (no leak onward)', () => {
+    // Bar 0 selected: bar 1 and 2 must be back at the flat opacity.
+    const calls = draw({ key: 0, id: 'count' });
+    expect(alphasOf(calls)).toEqual([
+      style.opacity,
+      1,
+      style.opacity,
+      style.opacity,
+    ]);
+  });
+});
+
 describe('barIndexAtTime', () => {
   // Three contiguous bars: [0,10], [10,20], [20,30].
   const cs = bars([0, 10, 20], [10, 20, 30], [5, 6, 7]);
