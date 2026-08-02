@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import Markdown from 'react-markdown';
 import CodeBlock from '@theme/CodeBlock';
+import useBrokenLinks from '@docusaurus/useBrokenLinks';
 import styles from './styles.module.css';
 
 /**
@@ -129,6 +130,17 @@ function TypeStr({
       })}
     </>
   );
+}
+
+/**
+ * Register the raw `id=` anchors a page renders with Docusaurus's
+ * broken-anchor checker. The checker only knows anchors emitted through the
+ * theme's own Heading component, so without this every intra-page `#member`
+ * jump-link below is reported as a broken anchor at build time.
+ */
+function useCollectAnchors(ids: string[]): void {
+  const brokenLinks = useBrokenLinks();
+  for (const id of ids) brokenLinks.collectAnchor(id);
 }
 
 /** Docstring prose — markdown, in the site's body style. */
@@ -260,6 +272,15 @@ export function ApiClassPage({
   model: ClassModel;
   types?: TypeDict;
 }): ReactNode {
+  useCollectAnchors([
+    ...(model.constructorSigs.length ? ['constructor'] : []),
+    ...(model.properties.length ? ['properties'] : []),
+    ...model.properties.map((p) => p.name),
+    ...(model.staticMethods.length ? ['static-methods'] : []),
+    ...model.staticMethods.map((m) => m.name),
+    ...(model.methods.length ? ['methods'] : []),
+    ...model.methods.map((m) => m.name),
+  ]);
   return (
     <div className={styles.page}>
       <Header
@@ -341,6 +362,7 @@ export function ApiComponentPage({
   model: ComponentModel;
   types?: TypeDict;
 }): ReactNode {
+  useCollectAnchors(['props', ...model.props.map((p) => `prop-${p.name}`)]);
   return (
     <div className={styles.page}>
       <Header
@@ -385,6 +407,7 @@ export function ApiFunctionsPage({
   types?: TypeDict;
 }): ReactNode {
   void types; // signatures render as plain highlighted TS for now
+  useCollectAnchors(model.functions.map((f) => f.name));
   return (
     <div className={styles.page}>
       <Header title={model.name} pkg={model.package} kind="functions" />
