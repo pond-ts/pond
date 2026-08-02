@@ -1,0 +1,108 @@
+---
+title: <Chart name>
+sidebar_label: <Short name>
+---
+
+{/*
+  ===================================================================
+  GALLERY PAGE TEMPLATE — copy me, don't edit me.
+
+      cp _template.mdx <slug>.mdx
+
+  The leading underscore keeps this file out of the build (Docusaurus
+  skips `_`-prefixed docs), so it stays a template rather than a page.
+  It's also listed in the root `.prettierignore`: prettier reformats
+  multi-line MDX comments into escaped markdown, which shreds a file
+  that is mostly comment.
+
+  Every Gallery page has the SAME five sections in the SAME order
+  (gallery plan §2b). Twenty-eight pages drifting into twenty-eight
+  shapes is the failure mode this file exists to prevent: a reader
+  who learns one page's layout has learned all of them.
+
+  Rules that outrank your own taste here:
+
+  - No hex literals. Colour comes from theme roles, or from
+    `useSequentialRamp()` for the >4-series case. If the colour you
+    want has no role, the fix is a role in
+    `src/theme/useSiteChartTheme.ts`, not a constant in an example.
+  - Every number in the prose is computed, not estimated. If you
+    write "the p99 triples during the incident", it triples.
+  - The fixture header carries provenance — source, licence,
+    retrieval date, what was kept and dropped. See
+    `src/examples/lib/README.md`.
+  - Check dark mode, don't assume it.
+
+  Delete this comment block in your copy.
+  ===================================================================
+*/}
+
+# \<Chart name\>
+
+{/* One or two sentences: what this chart is FOR, in the reader's terms — the
+    question it answers, not the primitives it uses. The reader arrived from a
+    card; they already know what it looks like. */}
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryXxx from '@site/src/examples/gallery-xxx';
+
+## The chart
+
+{/* SECTION 1 — the finished thing, full size and interactive, source folded
+    behind the expander. `collapsed` because the build-up below is the
+    tutorial; the whole source up front is the reference. */}
+
+<ChartExample name="gallery-xxx" height={320} collapsed>
+  <GalleryXxx />
+</ChartExample>
+
+{/* One line on what to try in it — the interaction that makes the point.
+    "Drag across the spike to zoom"; "hover a bar for the per-host split." */}
+
+## The data
+
+{/* SECTION 2 — where it came from, its shape, its quirks.
+    Source and licence, linked. If it's modelled rather than real, say so
+    HERE in the prose, not only in the fixture header.
+    The schema, as a fenced block or a short table.
+    The quirks that matter for the chart: dropouts, weekends, a sensor that
+    coasts, a unit that changes mid-series. The quirks are why the chart
+    looks load-bearing rather than generated. */}
+
+## Build it
+
+{/* SECTION 3 — the mini-tutorial, and the section that earns the page.
+    Start with the MINIMAL version, 10–20 lines, that draws something
+    recognisable. Then two or three additions, each its own short block with
+    one sentence saying what it bought you.
+    Minimal, then recognisable, then finished — don't open with the finished
+    composition; that's section 1's job. */}
+
+```tsx
+// the minimal version
+```
+
+{/* Then: "…which gets you the shape but not the <thing>. Adding <X>:" */}
+
+```tsx
+// + the first addition
+```
+
+## Options to try
+
+{/* SECTION 4 — the knobs that matter FOR THIS SHAPE, not every prop the
+    layers take (that's Storybook). Each one a one-liner plus a sentence on
+    when to reach for it. Three to six is the right number; a table is fine:
+
+    | Option | What it does | Reach for it when |
+    | ------ | ------------ | ----------------- | */}
+
+## See also
+
+{/* SECTION 5 — links out. The reference page for every component used, the
+    axis kind if it's an unusual one, any concept page the data leaned on, and
+    last (demoted, deliberately) the Storybook story for every prop. */}
+
+- [`<LineChart>`](../types/linechart.mdx) — every prop
+- [**Storybook**](pathname:///storybook/?path=/story/charts-linechart--basic) —
+  the systematic knob walk
