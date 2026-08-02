@@ -57,6 +57,15 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts:** **the list family's series door** — `<BarList series={splits}
+label={…}>` / `<BoxList series>` take a `TimeSeries` / `ValueSeries`
+  directly (one row per event; exactly-one-of with `rows`), closing the
+  "required adapter" gap the 2026-08 API review named: starting from a pond
+  series there is no shaping step. The `listRowsFrom*` readers remain for
+  record rows. Docs across the charts hub, cheat sheet, and type pages now
+  present the series as the whole data contract, with the exported `from*`
+  builders re-documented as **interop escape hatches for non-pond data**.
+
 - **charts:** **`<BarList>` + `<BoxList>` — standalone ranked row lists** (the
   react-timeseries-charts `HorizontalBarChart` shape, rebuilt as what it
   always was: a table). One DOM row per _entity_ — an interface, a split, a

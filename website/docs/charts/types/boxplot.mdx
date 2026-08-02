@@ -22,7 +22,7 @@ quantiles — the chart does **not** compute them (feed a `rolling` / `aggregate
 percentile pass). `lower` and `upper` are required; `q1` + `q3` (both or
 neither) and `median` are optional. A full box is five columns; a range-only box
 is just `lower` / `upper`. The box's x-span is the interval key `[begin, end)`
-or neighbour spacing. Adapter: `boxFromTimeSeries(series, { lower, q1, median,
+or neighbour spacing. Interop (non-pond data): `boxFromTimeSeries(series, { lower, q1, median,
 q3, upper })` / `boxFromValueSeries`.
 
 ## Props

@@ -1,10 +1,82 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render } from '@testing-library/react';
+import { TimeSeries, ValueSeries } from 'pond-ts';
 import { BarList } from '../src/BarList.js';
 import { defaultTheme } from '../src/theme.js';
 import type { ListRow } from '../src/list.js';
 
 afterEach(cleanup);
+
+describe('<BarList series> — the series door', () => {
+  const splits = () =>
+    new TimeSeries({
+      name: 'splits',
+      schema: [
+        { name: 'time', kind: 'time' },
+        { name: 'speed', kind: 'number' },
+      ] as const,
+      rows: [
+        [1000, 7.3],
+        [2000, 15.3],
+      ] as Array<[number, number]>,
+    });
+
+  it('one row per event, no shaping step; label option feeds the first cell', () => {
+    const { container } = render(
+      <BarList
+        series={splits()}
+        columns={[{ column: 'speed' }]}
+        label={(i) => `${i + 1}`}
+      />,
+    );
+    const keys = Array.from(container.querySelectorAll('[data-list-row]')).map(
+      (r) => r.getAttribute('data-list-row'),
+    );
+    expect(keys).toEqual(['1000', '2000']);
+    const labels = Array.from(
+      container.querySelectorAll('[data-list-cell="label"]'),
+    );
+    expect(labels.map((l) => l.textContent)).toEqual(['1', '2']);
+    const bars = Array.from(
+      container.querySelectorAll('[data-list-bar="speed"]'),
+    ) as HTMLElement[];
+    // Shared [0, 15.3] fit.
+    expect(bars[1]!.style.width).toBe('100%');
+  });
+
+  it('a ValueSeries rows per axis key', () => {
+    const vs = ValueSeries.fromColumns({
+      name: 'byKm',
+      schema: [
+        { name: 'km', kind: 'value' },
+        { name: 'pace', kind: 'number' },
+      ] as const,
+      columns: { km: [1, 2], pace: [4.1, 3.9] },
+    });
+    const { container } = render(
+      <BarList series={vs} columns={[{ column: 'pace' }]} />,
+    );
+    const keys = Array.from(container.querySelectorAll('[data-list-row]')).map(
+      (r) => r.getAttribute('data-list-row'),
+    );
+    expect(keys).toEqual(['1', '2']);
+  });
+
+  it('rows and series are exactly-one-of', () => {
+    expect(() => render(<BarList columns={[{ column: 'speed' }]} />)).toThrow(
+      /exactly one/,
+    );
+    expect(() =>
+      render(
+        <BarList
+          rows={[{ key: 'a', values: { speed: 1 } }]}
+          series={splits()}
+          columns={[{ column: 'speed' }]}
+        />,
+      ),
+    ).toThrow(/exactly one/);
+  });
+});
 
 const rows: ListRow[] = [
   { key: 'if-a', label: 'Interface A', values: { in: 50, out: 10 } },

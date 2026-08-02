@@ -11,10 +11,11 @@ follow the links; this page is the scan.
 
 ## Draw layers — data contract
 
-What each layer reads, the adapter that shapes it, its theme slot, and its one
-sharp edge.
+What each layer reads, its theme slot, and its one sharp edge. (The Interop
+column is the escape hatch for hand-building a view from non-pond data —
+starting from a pond series, the component itself is the whole contract.)
 
-| Layer                                    | Series / input                                                       | Key columns                                   | Adapter                                       | Theme slot      | Sharp edge                                                             |
+| Layer                                    | Series / input                                                       | Key columns                                   | Interop (non-pond)                            | Theme slot      | Sharp edge                                                             |
 | ---------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------- | --------------------------------------------- | --------------- | ---------------------------------------------------------------------- |
 | [LineChart](./types/linechart.mdx)       | `TimeSeries` \| `ValueSeries`                                        | one numeric `column`                          | `fromTimeSeries` / `fromValueSeries`          | `theme.line`    | `curve` smooths the drawing, not the data — denoise with `smooth()`.   |
 | [AreaChart](./types/areachart.mdx)       | `TimeSeries` \| `ValueSeries`                                        | one `column`, fill from `baseline`            | `fromTimeSeries` / `fromValueSeries`          | `theme.area`    | Gaps couple fill+outline; `fill` must be CSS hex.                      |
@@ -32,7 +33,7 @@ the in-plot histogram stays `<BarChart orientation="horizontal">`.
 
 | Component                    | Input                                         | Key props                                                     | Reader                                          | Theme slot  | Sharp edge                                                        |
 | ---------------------------- | --------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------- | ----------- | ----------------------------------------------------------------- |
-| [BarList](./types/lists.mdx) | `rows: ListRow[]` (`{ key, label?, values }`) | `columns` (values names), cells, sort, `renderExpanded`       | `listRowsFromTimeSeries` / `…ValueSeries`       | `theme.bar` | Non-negative values assumed (length-encoded from the domain min). |
+| [BarList](./types/lists.mdx) | `rows: ListRow[]` (`{ key, label?, values }`) | `columns` (values names), cells, sort, `renderExpanded`       | `series` direct (or `ListRow[]` records)        | `theme.bar` | Non-negative values assumed (length-encoded from the domain min). |
 | [BoxList](./types/lists.mdx) | `rows: ListRow[]`                             | five-number names + `value` tick per column, same table props | facts by hand (`partitionBy` + `reduce` spread) | `theme.box` | Doesn't compute quantiles; `q1`/`q3` both-or-neither throws.      |
 
 ## Capability matrix

@@ -19,7 +19,7 @@ continuous series — over time, or over a [value axis](../axes/value-axis.mdx).
 
 Takes a `TimeSeries` or `ValueSeries` and one numeric `column` (the y value);
 x comes from the series key (time) or axis (value). A `NaN` run is a **gap** —
-how it renders is the `gaps` prop. The explicit adapter is
+how it renders is the `gaps` prop. For non-pond data the same view builds by hand via
 `fromTimeSeries(series, column)` / `fromValueSeries(series, column)`.
 
 ## Props

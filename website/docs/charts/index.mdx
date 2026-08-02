@@ -86,10 +86,11 @@ separate channels by design (no per-component colour/width props).
 | `BarList` | A ranked row table — one proportional bar line per column per entity, data cells, sort, expander ([guide](./types/lists.mdx)).               |
 | `BoxList` | Its distribution sister — a five-number box per line plus a current-value tick (the traffic-by-interface table; [guide](./types/lists.mdx)). |
 
-One row per _entity_ rather than per bucket; `listRowsFromTimeSeries` /
-`listRowsFromValueSeries` read a per-event series straight into rows, and
-partition facts (`partitionBy` + `reduce`) spread straight into a row's
-`values` — see [the acquisition recipes](./types/lists.mdx#from-your-timeseries).
+One row per _entity_ rather than per bucket. A per-event series feeds
+**directly** (`<BarList series={splits} label={…}>` — one row per event, no
+shaping step), and partition facts (`partitionBy` + `reduce`) spread straight
+into a row's `values` — see
+[the acquisition recipes](./types/lists.mdx#from-your-timeseries).
 
 ### Annotations & indicators
 
@@ -101,14 +102,18 @@ partition facts (`partitionBy` + `reduce`) spread straight into a row's
 | `YAxisIndicator`  | A live value pill pinned to a y-axis edge.                 |
 | `createLiveValue` | High-frequency pill updates with an isolated repaint.      |
 
-### Data adapters & theming
+### Interop escape hatches & theming
 
-| Export                                                                                                  | What it is                                                                  |
-| ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `fromTimeSeries`, `bandFromTimeSeries`, `boxFromTimeSeries`, `barsFromTimeSeries`, `ohlcFromTimeSeries` | Adapters shaping a `TimeSeries` for the matching layer.                     |
-| `stacksFromGroups`, `stacksFromColumns`, `stacksFromBins`, `categoryStack`, `transposeRow`              | Stacked-bar / histogram / categorical readers over pond aggregation output. |
-| `defaultTheme`                                                                                          | The neutral built-in `ChartTheme`.                                          |
-| `cssVarTheme`, `useChartTheme`                                                                          | Build a theme from CSS custom properties and follow a dark/light toggle.    |
+With a pond series, the components above are the whole data contract — the
+`from*` exports below are for hand-building views from **non-pond** data
+only.
+
+| Export                                                                                                  | What it is                                                                                                           |
+| ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `fromTimeSeries`, `bandFromTimeSeries`, `boxFromTimeSeries`, `barsFromTimeSeries`, `ohlcFromTimeSeries` | Hand-build a layer view from non-pond data (with a pond series, pass it directly).                                   |
+| `stacksFromGroups`, `stacksFromColumns`, `stacksFromBins`, `categoryStack`, `transposeRow`              | Stacked / histogram / categorical view builders (`bins` and `categories` inputs also accept their sources directly). |
+| `defaultTheme`                                                                                          | The neutral built-in `ChartTheme`.                                                                                   |
+| `cssVarTheme`, `useChartTheme`                                                                          | Build a theme from CSS custom properties and follow a dark/light toggle.                                             |
 
 ## Why @pond-ts/charts — and when not to use it
 

@@ -43,20 +43,26 @@ own vocabulary (the list never computes statistics — the same stance as
 
 ### Rows are events — a per-split rollup
 
-An `aggregate` produces one event per split; `listRowsFromTimeSeries` lifts
-every value column (numeric **and** string) into `values` under its own name.
-Distance-keyed splits (`byValue('km')`) go through `listRowsFromValueSeries`
-identically.
+An `aggregate` produces one event per split; the series feeds **directly** —
+one row per event, every value column (numeric **and** string) landing in
+`values` under its own name, `label` naming the first cell. A `ValueSeries`
+(`run.byValue('km')`) rows per axis key identically. No shaping step.
 
 ```tsx
 const splits = run.aggregate(Sequence.every('5m'), {
   speed: { from: 'speed', using: 'avg' },
   climb: { from: 'elevGain', using: 'sum' },
 });
-const rows = listRowsFromTimeSeries(splits, { label: (i) => `${i + 1}` });
 
-<BarList rows={rows} columns={[{ column: 'speed' }]} />;
+<BarList
+  series={splits}
+  label={(i) => `${i + 1}`}
+  columns={[{ column: 'speed' }]}
+/>;
 ```
+
+(The `listRowsFromTimeSeries` / `listRowsFromValueSeries` readers remain for
+building **record** rows you want to post-process before passing as `rows`.)
 
 ### Rows are entities — partition facts
 
@@ -178,7 +184,7 @@ updates or sibling lists.
 
 | Prop                                 | Type                       | Default     | Purpose                                                                                                                                                                   |
 | ------------------------------------ | -------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rows`                               | `readonly R[]`             | — (req)     | One entity per row.                                                                                                                                                       |
+| `rows` / `series`                    | `R[]` / `TimeSeries`       | one-of      | The record door (entities) / the series door (one row per event, `label` names the cell).                                                                                 |
 | `columns`                            | see below                  | — (req)     | The glyph lines, top→bottom within each row.                                                                                                                              |
 | `domain`                             | `[number, number]`         | data fit    | Pin the shared scale.                                                                                                                                                     |
 | `sortBy`                             | `string`                   | input order | `values` entry that ranks the list (with several columns, this picks the driver).                                                                                         |
