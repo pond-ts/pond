@@ -19,7 +19,7 @@ import {
  * - {@link sapSeries} — one interface, `in` / `out` in Gbps.
  * - {@link siteTotal} — every kept interface summed: the mirrored in/out
  *   chart's source.
- * - {@link stackedOutbound} — the site's outbound broken down by interface as
+ * - {@link stackedTraffic} — one direction broken down by interface as
  *   **cumulative** columns, which is how you stack areas (each slab is drawn
  *   from zero to its running total, biggest first, and covers the one behind).
  */
@@ -120,10 +120,26 @@ export function siteTotal(): TimeSeries<typeof trafficSchema> {
 
 let totalCache: TimeSeries<typeof trafficSchema> | undefined;
 
+/** Which direction a stacked view breaks down. */
+export type Direction = 'in' | 'out';
+
 /**
- * The site's **outbound** traffic broken down by interface, as cumulative
- * columns `stack0 … stackN-1`: `stack0` is the busiest interface alone,
- * `stack1` is that plus the second, and the last column is the site total.
+ * Interfaces ordered **biggest first for that direction** — which is the order
+ * a stack wants them in, so the largest slab sits on the bottom and takes the
+ * darkest tone.
+ *
+ * Not the same order for both: `111-lag-3-522` carries 82.5% of the mean
+ * outbound but only 18.0% of the inbound, where `7061-lag-3-3525` leads.
+ */
+export function stackOrder(direction: Direction): readonly string[] {
+  return orderCache(direction).map((i) => SAPS[i]!.name);
+}
+
+/**
+ * One direction's traffic broken down by interface, as cumulative columns
+ * `stack0 … stackN-1`: `stack0` is the busiest interface alone, `stack1` is
+ * that plus the second, and the last column is the site total. Interfaces are
+ * in {@link stackOrder} for the same direction.
  *
  * Cumulative rather than per-interface because that is what stacking an area
  * chart means — draw the *largest* running total first and each smaller one
@@ -131,27 +147,42 @@ let totalCache: TimeSeries<typeof trafficSchema> | undefined;
  * contribution. `theme.area.seq1…seq8` fill flat for exactly this reason: a
  * graded fill would let the slabs behind show through.
  */
-export function stackedOutbound(): TimeSeries<SeriesSchema> {
-  if (stackCache) return stackCache;
+export function stackedTraffic(direction: Direction): TimeSeries<SeriesSchema> {
+  const hit = stackCache.get(direction);
+  if (hit) return hit;
+  const order = orderCache(direction);
   const rows: Array<[number, ...number[]]> = [];
   for (let i = 0; i < COUNT; i += 1) {
     const row: [number, ...number[]] = [at(i)];
     let running = 0;
-    for (const sap of SAPS) {
-      running += sap.out[i]!;
+    for (const s of order) {
+      running += SAPS[s]![direction][i]!;
       row.push(round2(running));
     }
     rows.push(row);
   }
-  stackCache = new TimeSeries({
-    name: `${DEVICE} outbound by interface`,
+  const series = new TimeSeries({
+    name: `${DEVICE} ${direction} by interface`,
     schema: stackSchema,
     rows,
   });
-  return stackCache;
+  stackCache.set(direction, series);
+  return series;
 }
 
-let stackCache: TimeSeries<SeriesSchema> | undefined;
+const stackCache = new Map<Direction, TimeSeries<SeriesSchema>>();
+const orderMemo = new Map<Direction, number[]>();
+
+/** SAP indices sorted by total carried in `direction`, descending. */
+function orderCache(direction: Direction): number[] {
+  const hit = orderMemo.get(direction);
+  if (hit) return hit;
+  const order = SAPS.map((_, i) => i).sort(
+    (a, b) => sum(SAPS[b]![direction]) - sum(SAPS[a]![direction]),
+  );
+  orderMemo.set(direction, order);
+  return order;
+}
 
 /** Column name for the running total through interface `i` (0-based). */
 export const stackColumn = (i: number): string => `stack${i}`;

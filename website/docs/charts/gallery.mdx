@@ -33,6 +33,12 @@ import GalleryBand from '@site/src/examples/gallery-band';
 import GalleryHistogram from '@site/src/examples/gallery-histogram';
 import GalleryScatter from '@site/src/examples/gallery-scatter';
 import GalleryBoxplot from '@site/src/examples/gallery-boxplot';
+import GalleryNetworkTraffic from '@site/src/examples/gallery-network-traffic';
+import GalleryTrafficByInterface from '@site/src/examples/gallery-traffic-by-interface';
+import GalleryMultiHostCpu from '@site/src/examples/gallery-multi-host-cpu';
+import GalleryLatencyPercentiles from '@site/src/examples/gallery-latency-percentiles';
+import GallerySlaIncidents from '@site/src/examples/gallery-sla-incidents';
+import GalleryLiveTail from '@site/src/examples/gallery-live-tail';
 
 {/* ------------------------------------------------------------------ */}
 {/* Each domain section below is owned by one track (gallery plan §4). */}
@@ -84,6 +90,84 @@ incident you're explaining on Monday.
   height={246}
 >
   {(width) => <GalleryBoxplot width={width} />}
+</GalleryCard>
+
+<GalleryCard
+  title="Network traffic"
+  blurb="Six hours of a real CERN border router — in filling up, out filling down from a shared zero line."
+  storybookHref="pathname:///storybook/?path=/story/charts-areachart--baseline"
+  pageHref="/docs/charts/gallery/network-traffic"
+  height={218}
+  autoplay={{ period: 16000, staticPhase: 0.72 }}
+>
+  {(width, phase) => (
+    <GalleryNetworkTraffic width={width} phase={phase} height={196} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Traffic by interface"
+  blurb="The same six hours, stacked: seven interfaces as tonal slabs adding up to the site total."
+  storybookHref="pathname:///storybook/?path=/story/charts-areachart--stacked"
+  pageHref="/docs/charts/gallery/traffic-by-interface"
+  height={218}
+  autoplay={{ period: 18000, staticPhase: 0.68 }}
+>
+  {(width, phase) => (
+    <GalleryTrafficByInterface width={width} phase={phase} height={196} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Multi-host CPU"
+  blurb="One line per host out of one long-form series — plus the 24-minute hole a node recycle leaves."
+  storybookHref="pathname:///storybook/?path=/story/charts-linechart--gaps"
+  pageHref="/docs/charts/gallery/multi-host-cpu"
+  height={218}
+  autoplay={{ period: 20000, staticPhase: 0.66 }}
+>
+  {(width, phase) => (
+    <GalleryMultiHostCpu width={width} phase={phase} height={196} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Latency envelope"
+  blurb="p50 inside a p90 band inside a p99 band — watch the tail tear open while the median holds."
+  storybookHref="pathname:///storybook/?path=/story/charts-bandchart--rolling-percentiles"
+  pageHref="/docs/charts/gallery/latency-percentiles"
+  height={218}
+  autoplay={{ period: 17000, staticPhase: 0.58 }}
+>
+  {(width, phase) => (
+    <GalleryLatencyPercentiles width={width} phase={phase} height={196} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="SLA & incidents"
+  blurb="A week of error rate over the budget it spent — incident regions, deploy markers, an objective line."
+  storybookHref="pathname:///storybook/?path=/story/annotations-scenarios--editable"
+  pageHref="/docs/charts/gallery/sla-incidents"
+  height={218}
+  autoplay={{ period: 22000, staticPhase: 0.3 }}
+>
+  {(width, phase) => (
+    <GallerySlaIncidents width={width} phase={phase} height={196} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Live tail"
+  blurb="Genuinely streaming: a LiveSeries with a retention window and a value pill at the leading edge."
+  storybookHref="pathname:///storybook/?path=/story/indicators-y-axis--live"
+  pageHref="/docs/charts/gallery/live-tail"
+  height={218}
+  autoplay={{ period: 14000, staticPhase: 0.9 }}
+>
+  {(width, phase) => (
+    <GalleryLiveTail width={width} phase={phase} height={196} />
+  )}
 </GalleryCard>
 
 {/* TRACK A — append ops & infrastructure cards above this line. */}
