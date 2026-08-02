@@ -55,6 +55,26 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Changed
+
+- **charts:** **a bar's hover / click target is now its whole slot**, not the
+  rectangle it draws. A bar _is_ the full width of its interval; the `gap` that
+  separates adjacent columns is a display affordance. Hit-testing the drawn
+  rect made that affordance interactive — the gap was a dead channel you could
+  point at and select nothing, and so was the empty plot space above a short
+  bar, even though the x-scrub cursor at that same x reported the bar quite
+  happily. `barAt` now tests the bar's full interval width and the full plot
+  height, so hover, click and the cursor readout all agree on which bar you are
+  on, and slots tile the axis.
+
+  **Strictly widening** — every point that selected a bar before still selects
+  it. What changes is that points which previously selected _nothing_ now
+  select the bar whose slot they fall in. Unchanged: a genuine hole between
+  non-contiguous intervals still misses (the change makes the drawing gap
+  hittable, it doesn't invent coverage the data lacks), a gap (`NaN`) bar owns
+  no slot, and a shared edge goes to the left bar — the rule `barIndexAtTime`
+  already documented, so the two now agree by construction.
+
 ### Added
 
 - **charts:** **`BarStyle.hover` — a distinct hover colour for bars**

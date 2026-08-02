@@ -360,16 +360,72 @@ export function barIndexAtTime(cs: BarSeries, time: number): number {
 }
 
 /**
+ * The pixel rect of bar `i`'s **slot** — the region that *belongs* to the bar,
+ * as opposed to the ink {@link barRect} puts on the canvas. It spans the key's
+ * full `[begin, end]` in x (**no `gapPx` inset**) and the **whole plot height**
+ * in y. `null` for a gap (non-finite value), which owns no slot to select.
+ *
+ * The distinction is the point: a bar *is* the full width of its interval, and
+ * the drawing gap is a display affordance so adjacent columns read as discrete.
+ * Hit-testing the drawn rect made that affordance interactive — the gap became
+ * a dead channel you could point at and select nothing, and the empty plot
+ * space above a short bar likewise. Slots tile the axis, so every x inside the
+ * data range belongs to exactly one bar, which is what a column chart's hover
+ * should feel like and what {@link barIndexAtTime} (the x-scrub cursor) has
+ * always done.
+ *
+ * The plot's y extent is read from the `yScale`'s own domain, the same
+ * localized shape {@link resolveBarBaseline} uses. When it isn't readable (a
+ * bare test stub with no `.domain()`), this falls back to {@link barRect}'s
+ * value→baseline span, so a scale-less caller keeps the old behaviour rather
+ * than getting an unbounded hit region.
+ *
+ * `minWidthPx` still floors the span, so a lone point-keyed bar (zero-width
+ * key) stays selectable.
+ */
+export function barSlotRect(
+  cs: BarSeries,
+  i: number,
+  xScale: Scale,
+  yScale: Scale,
+  baseline: number,
+  minWidthPx: number,
+): [x0: number, x1: number, yTop: number, yBottom: number] | null {
+  const v = cs.y[i]!;
+  if (!Number.isFinite(v)) return null;
+  // Gap-free: the slot is the key's own span.
+  const [x0, x1] = barSpanPx(cs.begin[i]!, cs.end[i]!, xScale, 0, minWidthPx);
+  const d = (yScale as unknown as { domain?: () => number[] }).domain?.();
+  if (!d || d.length === 0) {
+    // No readable domain (test stub): keep the drawn rect's y span.
+    const yValue = yScale(v);
+    const yBase = yScale(baseline);
+    return [x0, x1, Math.min(yValue, yBase), Math.max(yValue, yBase)];
+  }
+  const yA = yScale(d[0]!);
+  const yB = yScale(d[d.length - 1]!);
+  return [x0, x1, Math.min(yA, yB), Math.max(yA, yB)];
+}
+
+/**
  * Hit-test plot-pixel `(px, py)` against `cs`'s bars — the **first** bar whose
- * rect contains the point, or `null`. The geometry is {@link barRect}, so the
- * hit rect is exactly the drawn rect (same `baseline`/`gapPx`/`minWidth`). The
- * returned tuple is `[index, begin, value]` for the chart to assemble a
- * `SelectInfo` (it owns the colour + label); keeping this layer free of the
- * theme keeps it unit-testable without a `ChartTheme`.
+ * **slot** contains the point, or `null`. The geometry is {@link barSlotRect}:
+ * the bar's full interval width and the full plot height, *not* the drawn rect.
+ * Pointing at the gap between two columns, or above a short one, selects the
+ * bar whose slot you are in. The returned tuple is `[index, begin, value]` for
+ * the chart to assemble a `SelectInfo` (it owns the colour + label); keeping
+ * this layer free of the theme keeps it unit-testable without a `ChartTheme`.
+ *
+ * **Shared edges.** Contiguous bars meet exactly (`end[i] === begin[i+1]`) once
+ * the gap is gone, and both ends are inclusive, so a point landing precisely on
+ * the boundary matches **the left bar** — first match wins, the same rule
+ * {@link barIndexAtTime} documents, so hover and the x-scrub cursor agree.
+ *
+ * A **gap** bar (non-finite value) owns no slot and is skipped, so hovering
+ * where the data is missing selects nothing rather than a `NaN`.
  *
  * O(N) over the events (no spatial index — bar counts are view-scale, hundreds
- * not millions; click is a rare event). Bars don't overlap in x for a sorted
- * series, so "first match" is unambiguous in practice.
+ * not millions; click is a rare event).
  */
 export function barAt(
   cs: BarSeries,
@@ -378,11 +434,10 @@ export function barAt(
   xScale: Scale,
   yScale: Scale,
   baseline: number,
-  gapPx: number,
   minWidthPx: number,
 ): [index: number, begin: number, value: number] | null {
   for (let i = 0; i < cs.length; i += 1) {
-    const rect = barRect(cs, i, xScale, yScale, baseline, gapPx, minWidthPx);
+    const rect = barSlotRect(cs, i, xScale, yScale, baseline, minWidthPx);
     if (rect === null) continue;
     const [x0, x1, yTop, yBottom] = rect;
     if (px >= x0 && px <= x1 && py >= yTop && py <= yBottom) {

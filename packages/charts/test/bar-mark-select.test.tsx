@@ -132,8 +132,18 @@ describe('<BarChart> single-series hitTest — mark echo', () => {
     expect(mount(points()).hitAt(1, 1)?.label).toBe('v');
   });
 
+  it('hits above a bar too — the slot is the whole column', () => {
+    // t=1's bar only reaches value 2, but the slot runs the full plot height,
+    // so pointing at empty space above it still selects that bar (and still
+    // echoes its mark). Before slot hit-testing this missed entirely.
+    const hit = mount(points()).hitAt(1, 4.5);
+    expect(hit?.mark).toBe('1');
+    expect(hit?.value).toBe(2); // the bar's own value, not the pointed-at y
+  });
+
   it('misses cleanly outside every bar (no mark, no hit)', () => {
-    expect(mount(points()).hitAt(1, 4.5)).toBeNull(); // above the bar's top
+    // Past the last bar's slot on the x axis — the honest miss.
+    expect(mount(points()).hitAt(9, 1)).toBeNull();
   });
 });
 

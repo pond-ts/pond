@@ -738,34 +738,93 @@ describe('barIndexAtTime', () => {
 });
 
 describe('barAt', () => {
+  // Non-contiguous keys: spans [0,5], [10,15], [20,25] with REAL holes between
+  // them — axis space no bar's interval covers.
   const cs = bars([0, 10, 20], [5, 15, 25], [30, 50, 20]);
 
   it('returns [index, begin, value] for a click inside a bar', () => {
-    // bar 1: x in [10,15], y between baseline(0) and value(50) → click (12, 25).
-    expect(barAt(cs, 12, 25, identity, identity, 0, 0, 1)).toEqual([1, 10, 50]);
+    expect(barAt(cs, 12, 25, identity, identity, 0, 1)).toEqual([1, 10, 50]);
   });
 
-  it('hits the first bar (x in [0,5], y in [0,30])', () => {
-    expect(barAt(cs, 2, 10, identity, identity, 0, 0, 1)).toEqual([0, 0, 30]);
+  it('hits the first bar', () => {
+    expect(barAt(cs, 2, 10, identity, identity, 0, 1)).toEqual([0, 0, 30]);
   });
 
-  it('misses in the x-gap between bars', () => {
-    // x=7 falls between bar 0 ([0,5]) and bar 1 ([10,15]).
-    expect(barAt(cs, 7, 10, identity, identity, 0, 0, 1)).toBeNull();
+  it('still misses a genuine hole between non-contiguous intervals', () => {
+    // x=7 is inside no key's span. Widening the hit region to the slot makes
+    // the *drawing* gap hittable; it does not invent coverage where the data
+    // has none.
+    expect(barAt(cs, 7, 10, identity, identity, 0, 1)).toBeNull();
   });
 
-  it('misses above the bar (y beyond the value)', () => {
-    // bar 1 reaches value 50; y=60 is past it (identity: larger y is "below"
-    // the value pixel, i.e. outside the [0,50] rect).
-    expect(barAt(cs, 12, 60, identity, identity, 0, 0, 1)).toBeNull();
+  it('falls back to the drawn y-span when the scale has no domain', () => {
+    // A bare stub can't report the plot height, so barSlotRect keeps the
+    // value→baseline span rather than an unbounded region: bar 1 reaches 50,
+    // and y=60 is past it.
+    expect(barAt(cs, 12, 60, identity, identity, 0, 1)).toBeNull();
   });
 
   it('skips a gap bar (non-finite value)', () => {
     const g = bars([0, 10], [5, 15], [NaN, 50]);
-    // a click where the gap bar would be → no hit on it.
-    expect(barAt(g, 2, 10, identity, identity, 0, 0, 1)).toBeNull();
-    // the finite neighbour still hits.
-    expect(barAt(g, 12, 25, identity, identity, 0, 0, 1)).toEqual([1, 10, 50]);
+    expect(barAt(g, 2, 10, identity, identity, 0, 1)).toBeNull();
+    expect(barAt(g, 12, 25, identity, identity, 0, 1)).toEqual([1, 10, 50]);
+  });
+});
+
+/**
+ * A bar *is* the full width of its interval; the drawing gap is a display
+ * affordance so adjacent columns read as discrete. Hit-testing the drawn rect
+ * made that affordance interactive — the gap became a dead channel, and so did
+ * the empty plot space above a short bar, even though the x-scrub cursor
+ * (`barIndexAtTime`) happily reported the bar at that same x. `barAt` now tests
+ * the **slot**: full interval width, full plot height.
+ */
+describe('barAt — slot hit-testing', () => {
+  // Contiguous keys, so the slots tile: [0,10], [10,20], [20,30].
+  const cs = bars([0, 10, 20], [10, 20, 30], [30, 50, 20]);
+  // A y scale that CAN report the plot height (0..100 in identity pixels).
+  const yScale = scaleWithDomain(0, 100);
+
+  it('hits well above a short bar — the whole column is its slot', () => {
+    // Bar 2's value is 20, so the drawn rect is y [0,20]; y=90 is far above it
+    // and used to miss entirely.
+    expect(barAt(cs, 25, 90, identity, yScale, 0, 1)).toEqual([2, 20, 20]);
+  });
+
+  it('hits inside what the drawing gap would carve out', () => {
+    // x=19.8 sits where a gapPx inset would have removed the bar's ink.
+    expect(barAt(cs, 19.8, 5, identity, yScale, 0, 1)).toEqual([1, 10, 50]);
+  });
+
+  it('gives a shared edge to the LEFT bar, as barIndexAtTime does', () => {
+    // x=10 is bar 0's end and bar 1's begin; first match wins.
+    expect(barAt(cs, 10, 5, identity, yScale, 0, 1)?.[0]).toBe(0);
+    expect(barIndexAtTime(cs, 10)).toBe(0); // the two agree
+  });
+
+  it('agrees with the x-scrub cursor across the whole data range', () => {
+    // The property that motivated the change: for any x inside the range, the
+    // bar you hover is the bar the cursor reads out.
+    for (const x of [0, 3, 9.9, 10, 14, 20, 27, 30]) {
+      expect(barAt(cs, x, 50, identity, yScale, 0, 1)?.[0]).toBe(
+        barIndexAtTime(cs, x),
+      );
+    }
+  });
+
+  it('still misses outside the data range', () => {
+    expect(barAt(cs, -1, 50, identity, yScale, 0, 1)).toBeNull();
+    expect(barAt(cs, 31, 50, identity, yScale, 0, 1)).toBeNull();
+  });
+
+  it('still misses outside the plot height', () => {
+    expect(barAt(cs, 15, 101, identity, yScale, 0, 1)).toBeNull();
+  });
+
+  it('a gap bar owns no slot — its column selects nothing', () => {
+    const g = bars([0, 10, 20], [10, 20, 30], [30, NaN, 20]);
+    expect(barAt(g, 15, 50, identity, yScale, 0, 1)).toBeNull();
+    expect(barAt(g, 5, 50, identity, yScale, 0, 1)?.[0]).toBe(0);
   });
 });
 
