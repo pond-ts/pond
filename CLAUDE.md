@@ -584,17 +584,48 @@ To cut a release from `main`:
    to spot-check before releasing.
 1. Bump the `version` field in **every** `packages/*/package.json`. Keep
    them lock-step — the release tag covers the whole monorepo.
-2. If `@pond-ts/react`'s `dependencies.pond-ts` caret needs to widen to
-   the new minor (e.g. `^0.4.0` → `^0.5.0`), update it in the same pass.
+2. **Widen every inter-package range to the new minor** — on a minor bump this
+   is not optional, and it is easy to miss. The cross-package references are
+   **`peerDependencies`** (not `dependencies`) and they live in **five**
+   manifests: `react`, `charts`, `fit`, `financial`, `process` all peer on
+   `pond-ts`, and `charts` additionally peers on `@pond-ts/react`. Sweep with:
+
+   ```
+   grep -n '"\^0\.<previous-minor>' packages/*/package.json
+   ```
+
+   **Why it must be done:** pre-1.0 a caret does **not** span minors —
+   `^0.53.0` means `>=0.53.0 <0.54.0`. Publishing the set at `0.54.0` while the
+   peer ranges still say `^0.53.0` ships a release where every package's peer
+   range excludes the very versions shipping alongside it, and consumers get
+   unmet-peer errors on a clean install. (Missed during the v0.54.0 prep, which
+   is why this step now names the field, the count, and the reason.)
+
 3. **Promote the `## [Unreleased]` section** to a new `## [X.Y.Z] — YYYY-MM-DD`
    heading (leaving a fresh empty `## [Unreleased]` above it), and update the
    compare-link footnotes. Entries should already be there — each feature PR
    adds its own as it lands (see "Before opening a PR"). **Still sweep**
    `git log v<previous>..HEAD` for any user-facing change that slipped in without
    an `[Unreleased]` entry and add it now — the promote-not-reconstruct flow is
-   the safety net, not a licence to skip the sweep. Group notes under
-   `Added` / `Changed` / `Fixed` / `Deprecated`. Consumers upgrading between
-   versions rely on this; skipping it compounds every release.
+   the safety net, not a licence to skip the sweep.
+
+   **Consolidate the group headings before promoting.** `[Unreleased]`
+   accumulates a _fresh_ `### Added` / `### Changed` / `### Fixed` from each
+   merge that touches it, so by release time the same heading appears many
+   times over (v0.54.0 had **eleven** — six `Added`, three `Changed`, two
+   `Fixed`). Promoting as-is ships a version section with one entry type
+   scattered across a dozen headings. Merge them into **one group each**,
+   ordered `Added` / `Changed` / `Deprecated` / `Removed` / `Fixed` /
+   `Security`, preserving entry order within a group. Check what you're about
+   to promote:
+
+   ```
+   awk '/^## \[Unreleased\]/{f=1} /^## \[[0-9]/{if(f&&!/Unreleased/)exit} f&&/^### /' CHANGELOG.md | sort | uniq -c
+   ```
+
+   Consumers upgrading between versions rely on this; skipping it compounds
+   every release.
+
 4. Commit with a message like `chore: bump to vX.Y.Z`.
 5. Tag the commit: `git tag vX.Y.Z`.
 6. Push the branch, then push the tag:
