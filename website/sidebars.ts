@@ -124,7 +124,13 @@ const sidebars: SidebarsConfig = {
           // tutorial each card's "Build it →" link opens. Each track appends
           // its own slugs here, grouped as they are on the Gallery page;
           // `_template.mdx` is the shape they all follow.
-          items: [],
+          items: [
+            // Weather & climate (Track C)
+            'charts/gallery/temperature-range',
+            'charts/gallery/rainfall',
+            'charts/gallery/climate-stripes',
+            'charts/gallery/wind-rose',
+          ],
         },
         {
           type: 'category',

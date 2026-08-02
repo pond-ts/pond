@@ -33,6 +33,10 @@ import GalleryBand from '@site/src/examples/gallery-band';
 import GalleryHistogram from '@site/src/examples/gallery-histogram';
 import GalleryScatter from '@site/src/examples/gallery-scatter';
 import GalleryBoxplot from '@site/src/examples/gallery-boxplot';
+import GalleryTemperatureRange from '@site/src/examples/gallery-temperature-range';
+import GalleryRainfall from '@site/src/examples/gallery-rainfall';
+import GalleryClimateStripes from '@site/src/examples/gallery-climate-stripes';
+import GalleryWindRose from '@site/src/examples/gallery-wind-rose';
 
 {/* ------------------------------------------------------------------ */}
 {/* Each domain section below is owned by one track (gallery plan §4). */}
@@ -120,11 +124,55 @@ incident you're explaining on Monday.
 
 ## Weather & climate
 
-{/* TRACK C — replace this line with the section's blurb. */}
-
-_Cards land here as Track C ships._
+The domain with the best public data — every card here draws **measured**
+NOAA or NASA numbers, not a model of them. Three of the four are one airport's
+2024: the same station asked about its temperature, its rain and its wind.
 
 <GalleryGrid>
+
+<GalleryCard
+  title="Temperature range"
+  blurb="A year of daily min/max as a band, with a 15-day mean drawn through it — the band widens into summer."
+  pageHref="/docs/charts/gallery/temperature-range"
+  storybookHref="pathname:///storybook/?path=/story/charts-bandchart--san-francisco-temperature"
+  height={246}
+  autoplay={{ period: 15000, staticPhase: 0.52 }}
+>
+  {(width, phase) => <GalleryTemperatureRange width={width} phase={phase} />}
+</GalleryCard>
+
+<GalleryCard
+  title="Rainfall & running total"
+  blurb="Daily rain as bars, the year's cumulative total as a line — two units, two y-axes, one row."
+  pageHref="/docs/charts/gallery/rainfall"
+  storybookHref="pathname:///storybook/?path=/story/axes--dual-axis"
+  height={246}
+  autoplay={{ period: 17000, staticPhase: 0.72 }}
+>
+  {(width, phase) => <GalleryRainfall width={width} phase={phase} />}
+</GalleryCard>
+
+<GalleryCard
+  title="Climate stripes"
+  blurb="146 years of global temperature anomaly, one bar per year — every bar the same height, the colour carrying the value."
+  pageHref="/docs/charts/gallery/climate-stripes"
+  storybookHref="pathname:///storybook/?path=/story/charts-barchart--bin-colors"
+  height={226}
+  autoplay={{ period: 16000, staticPhase: 0.5 }}
+>
+  {(width, phase) => <GalleryClimateStripes width={width} phase={phase} />}
+</GalleryCard>
+
+<GalleryCard
+  title="Wind direction"
+  blurb="Hourly reports binned into 16 compass sectors on an ordinal axis. Stepping month by month, the whole distribution swings."
+  pageHref="/docs/charts/gallery/wind-rose"
+  storybookHref="pathname:///storybook/?path=/story/axes-categoryaxis--tickers"
+  height={246}
+  autoplay={{ period: 18000, staticPhase: 0.55 }}
+>
+  {(width, phase) => <GalleryWindRose width={width} phase={phase} />}
+</GalleryCard>
 
 {/* TRACK C — append weather & climate cards above this line. */}
 
