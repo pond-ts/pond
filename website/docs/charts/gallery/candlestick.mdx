@@ -1,0 +1,166 @@
+---
+title: Candles on a trading calendar
+sidebar_label: Candlestick
+---
+
+# Candles on a trading calendar
+
+Daily OHLC bars, drawn on an axis that only contains **open market time**. A
+year of daily bars spans 364 calendar days but only 251 sessions, and the
+market is actually open for 18.6% of the wall clock between the first bar and
+the last. A plain time axis spends the other 81.4% of the pixels drawing
+nothing.
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryCandlestick from '@site/src/examples/gallery-candlestick';
+
+## The chart
+
+<ChartExample name="gallery-candlestick" height={320} collapsed>
+  <GalleryCandlestick />
+</ChartExample>
+
+Hover a candle: `showOHLC` fans the full quote to the readout instead of the
+single close. Drag across a week to zoom in; the axis relabels itself from
+months to days to sessions as you go. The last 60 sessions are in view, which
+here covers Memorial Day, Juneteenth and the observed Independence Day — none
+of which take up any room.
+
+## The data
+
+**The prices are modelled, not measured.** Market price data is the sharp
+licensing case for a public docs site: essentially every feed forbids
+redistribution, so rather than quietly ship someone's bars, the Gallery's
+finance cards run on a process model
+([`src/examples/lib/financial-fixtures.ts`](https://github.com/pond-ts/pond/blob/main/website/src/examples/lib/financial-fixtures.ts)),
+and the fixture header says exactly what it does.
+
+What is _not_ modelled is the **calendar**. NYSE hours (09:30–16:00
+`America/New_York`), the ten 2025-26 US market holidays and the two 13:00
+half-days are calendar facts, and they're what this chart is about.
+
+```ts
+// one row per session, point-keyed at the session's open
+[time, open, high, low, close, volume];
+```
+
+251 rows, 2025-08-01 → 2026-07-31. The quirks that matter here:
+
+| Quirk                             | Number                                                 |
+| --------------------------------- | ------------------------------------------------------ |
+| Sessions in the year              | 251, over 364 calendar days — 114 days have **no bar** |
+| Wall time the market is open      | 18.6%                                                  |
+| Bars that gap off the prior close | 249 of 250 — `open` is drawn separately from `close`   |
+| Median absolute gap               | 0.45%, largest 3.20%, 40 gaps wider than 1%            |
+| Session lengths                   | two: 6.5 h, and 3.5 h on the two half-days             |
+
+The gaps are **in the data**, not painted on: weekends and holidays simply have
+no row. That's what makes the two axis modes interesting — the same series
+drawn on a plain time axis shows the weekends as dead space, and on a calendar
+axis shows nothing at all.
+
+## Build it
+
+A `<Candlestick>` reads four price columns off a point-keyed series and derives
+each candle's slot from neighbour spacing. No aggregation pass, no precomputed
+body extents:
+
+```tsx
+import {
+  Candlestick,
+  ChartContainer,
+  ChartRow,
+  Layers,
+  YAxis,
+} from '@pond-ts/charts';
+
+<ChartContainer range={[from, to]} width={680} theme={theme}>
+  <ChartRow height={240}>
+    <YAxis id="price" side="right" format="$,.2f" width={62} />
+    <Layers>
+      <Candlestick series={bars} />
+    </Layers>
+  </ChartRow>
+</ChartContainer>;
+```
+
+That draws correctly — and leaves a two-day hole every five candles. Hand the
+container a **calendar** and the closed time collapses:
+
+```tsx
+import { TradingCalendar } from '@pond-ts/financial';
+
+const calendar = TradingCalendar.fromRules(
+  {
+    timeZone: 'America/New_York',
+    open: '09:30',
+    close: '16:00',
+    holidays: ['2025-09-01', '2025-11-27' /* … */],
+    earlyCloses: [{ date: '2025-11-28', close: '13:00' }],
+  },
+  { from: '2025-08-01', to: '2026-07-31' },
+);
+
+<ChartContainer calendar={calendar} range={[from, to]} width={680} theme={theme}>
+```
+
+`@pond-ts/charts` never imports `@pond-ts/financial` — the `calendar` prop is
+typed against a structural shape, and a `TradingCalendar` satisfies it. Build
+it **once** and pass a stable reference; the x scale rebuilds whenever its
+identity changes, which on an animating chart is every frame.
+
+Two more things get you the finished chart. `showOHLC` turns the readout from
+one close pill into the full quote, and `as` names the series so the readout
+labels it:
+
+```tsx
+<Candlestick series={bars} as="ACME" showOHLC gap={2} />
+```
+
+Last, the **view range**. A point-keyed candle's slot reaches halfway to a
+notional neighbour, so a range that stops exactly on the first and last bar
+slices both down the middle. Pad by half a session each side:
+
+```ts
+const sessions = calendar.sessions();
+const half = (sessions[0].close - sessions[0].open) / 2;
+const range = [sessions[i].open - half, sessions[j].open + half];
+```
+
+:::tip[Crop the series to the window you're showing]
+A `<YAxis>` with no explicit `min`/`max` auto-fits the union of its layers'
+extents — and a layer's extent covers **every point in the series it was
+handed**, not the points inside the container's `range`. Hand it a year and
+show 60 sessions and the price axis still spans the year, so the candles crowd
+into a third of the row. Crop first:
+
+```ts
+const bars = allBars.slice(i, j + 1); // column-native row range, not a filter
+```
+
+The trade is that panning past the crop shows no data. If you want the whole
+series available to pan across, set `<YAxis min max>` explicitly from the
+window instead.
+:::
+
+## Options to try
+
+| Option                  | What it does                                              | Reach for it when                                                                         |
+| ----------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `spacing="uniform"`     | Every session gets equal width regardless of its length   | Half-days shouldn't render as narrower candles than full ones                             |
+| `variant="hollow"`      | Rising candles draw hollow, falling filled                | The classic Japanese two-tone reads as too heavy at density                               |
+| `variant="bar"`         | OHLC tick bars instead of bodies                          | You want the open/close ticks without the body's visual weight                            |
+| `colorBy="series"`      | One colour off the `as` role instead of green/red         | Two instruments on one chart, where direction colour would make them indistinguishable    |
+| `sessionDividers="all"` | A rule at every collapse seam                             | Readers need to see _where_ the axis skipped, not just that it's continuous               |
+| `decimate={false}`      | Draw every candle rather than per-pixel aggregate candles | You're zoomed out far enough that the aggregation is doing real work and you'd rather not |
+
+## See also
+
+- [Trading-time axis](../axes/trading-time-axis.mdx) — the `calendar` prop,
+  `spacing`, session dividers, and how the tick ladder changes
+- [`<Candlestick>`](../types/candlestick.mdx) — every prop
+- [`@pond-ts/financial`](../../financial/index.mdx) — `TradingCalendar`,
+  sessions, and the studies that append columns to these bars
+- [Price and volume](./price-volume.mdx) — the same bars with the volume row
+- [**Storybook**](pathname:///storybook/?path=/story/charts-candlestick--show-ohlc)
+  — the systematic knob walk

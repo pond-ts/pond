@@ -1,0 +1,137 @@
+---
+title: Price and volume
+sidebar_label: Price + volume
+---
+
+# Price and volume
+
+The two-row layout every trading screen opens with: price against a dollar
+axis, share volume on its own axis underneath. Two quantities four orders of
+magnitude apart, sharing one x range, one pan/zoom and one cursor — which is
+the whole reason it's **one** `<ChartContainer>` with two `<ChartRow>`s rather
+than two charts stacked.
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryPriceVolume from '@site/src/examples/gallery-price-volume';
+
+## The chart
+
+<ChartExample name="gallery-price-volume" height={330} collapsed>
+  <GalleryPriceVolume />
+</ChartExample>
+
+Move the cursor: one crosshair, both rows, both readouts. Drag to zoom and both
+rows follow — the x range lives on the container, the y scales don't.
+
+The tall red bars near the left edge are 2026-03-23 through 2026-03-26: the
+−7.5% session and its aftermath, trading 12.9 M shares against a 4.08 M median.
+Volume answering price is what a volume row is _for_, and it's the first thing
+you lose if you plot the two in separate charts.
+
+## The data
+
+**The prices are modelled, not measured** — see the
+[fixture header](https://github.com/pond-ts/pond/blob/main/website/src/examples/lib/financial-fixtures.ts)
+for the process and the
+[candlestick page](./candlestick.mdx#the-data) for why. The same 251-session
+year as the other three finance cards, asked a different question.
+
+```ts
+[time, open, high, low, close, volume];
+```
+
+What the volume column does, and why it isn't noise:
+
+- **It rises with the size of the day's move** and stays elevated for several
+  sessions after — a decaying memory, not just a same-day spike. Median 4.08 M,
+  peak 13.34 M on 2026-03-26.
+- **It scales with the session's actual length.** The two 13:00 half-days are
+  multiplied by (3.5 / 6.5)<sup>0.9</sup> ≈ 0.58 before anything else, so they
+  print 3.27 M and 3.36 M despite both landing in busy weeks.
+
+## Build it
+
+Two `<ChartRow>`s inside one `<ChartContainer>`. Each row carries its own
+`<YAxis id>`, and each layer names the axis it scales against:
+
+```tsx
+<ChartContainer range={range} width={680} theme={theme}>
+  <ChartRow height={170}>
+    <YAxis id="price" side="right" format="$,.2f" width={62} />
+    <Layers>
+      <AreaChart series={bars} column="close" axis="price" />
+    </Layers>
+  </ChartRow>
+  <ChartRow height={74}>
+    <YAxis id="volume" side="right" format=".2s" width={62} />
+    <Layers>
+      <BarChart series={bars} column="volume" axis="volume" />
+    </Layers>
+  </ChartRow>
+</ChartContainer>
+```
+
+Two axes, two scales, one x range — that's the whole multi-row model. The
+`format` strings are [d3-format](https://d3js.org/d3-format) specifiers:
+`$,.2f` for dollars, `.2s` for SI-prefixed share counts (`4.1M`).
+
+That gets you the layout with a single-colour volume row. Colouring each bar by
+its own session's direction is `binColors` — one entry per bar, in series
+order:
+
+```tsx
+const open = bars.column('open').toFloat64Array();
+const close = bars.column('close').toFloat64Array();
+const { rising, falling } = theme.candle.default;
+const volumeColors = Array.from(close, (c, i) =>
+  c >= open[i] ? rising.body : falling.body,
+);
+
+<BarChart
+  series={bars}
+  column="volume"
+  axis="volume"
+  binColors={volumeColors}
+/>;
+```
+
+Note where the colours come from: **the theme**, not literals. `rising.body` /
+`falling.body` are the same pair the candles use, so a volume row and a
+candle row agree by construction and both follow the site's dark/light toggle.
+Deriving `binColors` from the data is the pattern — direction here, but power
+zones or value bands read identically.
+
+Two details worth knowing. `binColors` **disables the dense-bar envelope
+decimation** (an envelope rect can't carry many bars' colours), so every
+visible bar draws — fine at 250 bars, worth knowing at 250 000. And a
+per-bar-coloured bar keeps its own colour under hover: the highlight pops
+opacity rather than swapping the fill.
+
+Both rows here are drawn from a series **cropped to the window**, for the
+reason the [candlestick page](./candlestick.mdx#build-it) spells out: each
+`<YAxis>` auto-fits every point of the series it's handed, not the ones inside
+the container's `range`. `binColors` is indexed against that same cropped
+series — build it from the series the layer draws, not the one you cropped
+from.
+
+## Options to try
+
+| Option                                    | What it does                                                | Reach for it when                                                       |
+| ----------------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `<Candlestick>` in place of `<AreaChart>` | Full OHLC on the price row                                  | The open/close relationship matters, not just the close path            |
+| `<YAxis side="left">`                     | Axis on the other edge                                      | Convention in your shop, or you're pairing this with a right-axis chart |
+| `baseline={0}` on the area                | Fills from zero instead of the axis floor                   | The row is a _change_ or a spread, where zero is meaningful             |
+| `format=",.3~s"`                          | Trims trailing zeros off the SI label (`4.1M`, not `4.10M`) | The volume axis reads noisy at narrow widths                            |
+| `cursor="crosshair"`                      | Full-height crosshair rather than the default tracker       | Reading values across both rows at once is the main job                 |
+| `<Legend>`                                | A key naming each layer, with its resolved swatch           | More than two layers, or colours that aren't self-evident               |
+
+## See also
+
+- [Multi-row layout](../layout.mdx) — rows, axes, and what the container owns
+- [`<BarChart>`](../types/barchart.mdx) — `binColors`, stacks, orientation
+- [`<AreaChart>`](../types/areachart.mdx) — baselines, gaps, curves
+- [Candles on a trading calendar](./candlestick.mdx) — the same bars, OHLC
+- [**Storybook**](pathname:///storybook/?path=/story/charts-candlestick--scenario-price-volume)
+  — the price/volume scenario; the
+  [multi-panel layout stories](pathname:///storybook/?path=/story/layout-multi-panel--resizable-fill)
+  walk the row knobs

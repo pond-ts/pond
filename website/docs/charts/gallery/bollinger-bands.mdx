@@ -1,0 +1,141 @@
+---
+title: Bollinger bands
+sidebar_label: Bollinger bands
+---
+
+# Bollinger bands
+
+The seam between **studies** and **charts**. `bollinger()` is a pure
+`(series, options) => series` from `@pond-ts/financial` that appends three
+columns to a bar series and knows nothing about rendering. A `<BandChart>` then
+reads two of those columns as its edges and a `<LineChart>` reads the third.
+There is no adapter, no "indicator" type, and no chart-side plugin — the study's
+output is an ordinary `TimeSeries` with more columns on it.
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryBollinger from '@site/src/examples/gallery-bollinger';
+
+## The chart
+
+<ChartExample name="gallery-bollinger" height={340} collapsed>
+  <GalleryBollinger />
+</ChartExample>
+
+Hover to read the band edges and the middle line alongside the candle. The
+band is a **volatility** measure, so it does what volatility does: at a 20-session
+window it narrows to 2.7% of price at its quietest (2026-05-08) and flares to
+30.0% at its widest (2026-04-07), an eleven-fold range across one year.
+
+The Gallery card for this chart sweeps the window length from 10 to 40 sessions
+and back, because the period is the parameter worth _seeing_ rather than
+reading about.
+
+## The data
+
+**The prices are modelled, not measured** — see the
+[fixture header](https://github.com/pond-ts/pond/blob/main/website/src/examples/lib/financial-fixtures.ts)
+for the process and the [candlestick page](./candlestick.mdx#the-data) for
+why. The same 251-session year as the other three finance cards; this chart
+draws the last 120 sessions of it, which covers the −23.5% drawdown's trough.
+
+The study appends three columns to those bars:
+
+| Column     | What it is                             |
+| ---------- | -------------------------------------- |
+| `bbMiddle` | The `period`-bar simple moving average |
+| `bbUpper`  | `bbMiddle + stdDev × σ` (population σ) |
+| `bbLower`  | `bbMiddle − stdDev × σ`                |
+
+Two properties of that output shape matter more than the arithmetic:
+
+- **It is length-preserving.** The 19 warm-up rows before the first full
+  window emit `undefined`, they are not dropped. Row counts stay aligned with
+  the bars, and the chart's gap handling draws the warm-up as a hole rather
+  than a fabricated value.
+- **A flat window emits nothing.** Where σ is exactly 0 the bands are
+  `undefined` rather than collapsed onto the middle, so an "outside the band"
+  test doesn't fire on every bar of a flat stretch.
+
+One honest note on this data: **59 of the 232 non-warm-up closes (25%) sit
+outside the 2σ band.** On a mean-reverting series you'd expect roughly 5–10%.
+This series trends hard through two regimes, and a lagging moving average
+against a trending price is exactly where that assumption breaks. Worth seeing,
+rather than tuning away.
+
+## Build it
+
+The study first. It's a plain function call on a plain series — no chart in
+sight:
+
+```ts
+import { bollinger } from '@pond-ts/financial';
+
+const study = bollinger(bars, { period: 20 });
+// study now has bbMiddle / bbUpper / bbLower alongside open/high/low/close
+```
+
+Then draw those columns. Back-to-front: the band fills first so the line and
+candles sit on top of it.
+
+```tsx
+<ChartRow height={250}>
+  <YAxis id="price" side="right" format="$,.2f" width={62} />
+  <Layers>
+    <BandChart
+      series={study}
+      lower="bbLower"
+      upper="bbUpper"
+      axis="price"
+      as="inner"
+    />
+    <LineChart series={study} column="bbMiddle" axis="price" as="secondary" />
+    <Candlestick series={bars} as="ACME" gap={1} />
+  </Layers>
+</ChartRow>
+```
+
+Declaration order **is** z-order. `as` picks the style from the theme —
+`inner` is the more opaque of the two band tones (0.2 against `outer`'s 0.1),
+`secondary` the second line hue. There is no per-component colour prop, on
+purpose: the theme is the single styling channel.
+
+One ordering choice worth calling out: the series is **cropped to the window
+before** the study runs (the reason is on the
+[candlestick page](./candlestick.mdx#build-it) — an auto-fit `<YAxis>` sees
+every point of the series it's handed). That means the warm-up hole belongs to
+the window: the band starts 19 candles in, exactly as it would on a chart that
+began there. Run the study first and crop after, and the warm-up would be
+somewhere off-screen and the band would start at the left edge — which is a
+different, and less honest, chart.
+
+Studies compose, because each one returns a series:
+
+```ts
+import { bollinger, ema } from '@pond-ts/financial';
+
+const study = ema(bollinger(bars, { period: 20 }), { period: 10 });
+// …or, with the opt-in fluent import:
+import '@pond-ts/financial/fluent';
+const study = bars.bollinger({ period: 20 }).ema({ period: 10 });
+```
+
+## Options to try
+
+| Option                  | What it does                                   | Reach for it when                                                          |
+| ----------------------- | ---------------------------------------------- | -------------------------------------------------------------------------- |
+| `{ stdDev: 1 }`         | Narrower band — roughly the interquartile look | 2σ is so wide it never gets touched on your data                           |
+| `{ column: 'typical' }` | Runs the study off another column              | You want HLC/3 or VWAP rather than the close                               |
+| `{ prefix: 'bb20' }`    | Renames the appended family (`bb20Upper`, …)   | Two Bollingers at different periods on one series — otherwise they collide |
+| A second `<BandChart>`  | Nested envelopes, wider one declared first     | Showing 1σ inside 2σ, the percentile-fan look                              |
+| `as="outer"`            | The lighter band tone                          | The band is context behind a busier foreground                             |
+| `curve="natural"`       | Smooths both band edges                        | The band is drawn from sparse aggregated bars and reads as jagged          |
+
+## See also
+
+- [`<BandChart>`](../types/bandchart.mdx) — every prop, and nesting two bands
+- [Financial charts](../financial.mdx) — the studies-to-chart walkthrough
+- [`@pond-ts/financial`](../../financial/index.mdx) — the study catalogue, the
+  pandas/TA-Lib oracle they're verified against, and the fluent import
+- [Candles on a trading calendar](./candlestick.mdx) — the same bars, bare
+- [**Storybook**](pathname:///storybook/?path=/story/charts-bandchart--rolling-percentiles)
+  — the systematic knob walk
