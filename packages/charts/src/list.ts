@@ -123,6 +123,25 @@ export interface ListCellSpec<R extends ListRow = ListRow> {
   readonly render: (row: R) => ReactNode;
 }
 
+/**
+ * A **reference marker** on the list's shared value scale — a labelled
+ * vertical dotted rule through every row (an SLA threshold, a capacity line,
+ * the fleet average). The list-family counterpart of the canvas `<Marker>` /
+ * `<Baseline>`: user-authored reference, so it draws in the **annotation
+ * (marks) register**, never a data hue.
+ *
+ * `value` is in data units on the shared scale. When the domain is
+ * auto-fitted, marker values **join the fit** — a threshold above the data
+ * max widens the scale rather than clamping to the edge (an explicit
+ * `domain` prop still wins, and then an out-of-domain marker clamps).
+ */
+export interface ListMarker {
+  /** Position in data units on the shared scale. */
+  readonly value: number;
+  /** Printed above the list, centred on the rule. Omit for a bare rule. */
+  readonly label?: string;
+}
+
 /** Row order: `'desc'` puts the largest value at the top (the ranked-list
  *  default), `'asc'` the smallest. */
 export type ListSortDirection = 'asc' | 'desc';
@@ -174,26 +193,31 @@ export function sortListRows<R extends ListRow>(
  * a ranked list). Resolved from the data — `keys` names every `values` entry
  * that lands on the scale (bar columns; box lower/upper/value) — as
  * `[min(0, data min), data max]`: bars grow from zero, but a below-zero
- * whisker still fits. An explicit `domain` prop overrides both ends. An empty
- * / all-missing list resolves `[0, 1]` so the mapping stays finite.
+ * whisker still fits. `extra` values (reference {@link ListMarker}s) **join
+ * the auto fit**, so a threshold above the data max widens the scale instead
+ * of clamping to the right edge. An explicit `domain` prop overrides both
+ * ends (and ignores `extra`). An empty / all-missing list resolves `[0, 1]`
+ * so the mapping stays finite.
  */
 export function resolveListDomain(
   rows: readonly ListRow[],
   keys: readonly string[],
   explicit?: readonly [number, number],
+  extra?: readonly number[],
 ): readonly [number, number] {
   if (explicit !== undefined) return explicit;
   let min = Infinity;
   let max = -Infinity;
-  for (const row of rows) {
-    for (const key of keys) {
-      const v = row.values[key];
-      if (typeof v === 'number' && Number.isFinite(v)) {
-        if (v < min) min = v;
-        if (v > max) max = v;
-      }
+  const take = (v: unknown) => {
+    if (typeof v === 'number' && Number.isFinite(v)) {
+      if (v < min) min = v;
+      if (v > max) max = v;
     }
+  };
+  for (const row of rows) {
+    for (const key of keys) take(row.values[key]);
   }
+  if (extra !== undefined) for (const v of extra) take(v);
   if (min === Infinity) return [0, 1];
   return [Math.min(0, min), max];
 }

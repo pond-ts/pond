@@ -79,6 +79,18 @@ Every draw layer takes a pond `series` + a `column`, an `as` **style**
 identifier (theme lookup), and an `axis` **scale** id — style and scale are
 separate channels by design (no per-component colour/width props).
 
+### Row lists (standalone — no `ChartContainer`)
+
+| Export    | What it is                                                                                                                                   |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BarList` | A ranked row table — one proportional bar line per column per entity, data cells, sort, expander ([guide](./types/lists.mdx)).               |
+| `BoxList` | Its distribution sister — a five-number box per line plus a current-value tick (the traffic-by-interface table; [guide](./types/lists.mdx)). |
+
+One row per _entity_ rather than per bucket; `listRowsFromTimeSeries` /
+`listRowsFromValueSeries` read a per-event series straight into rows, and
+partition facts (`partitionBy` + `reduce`) spread straight into a row's
+`values` — see [the acquisition recipes](./types/lists.mdx#from-your-timeseries).
+
 ### Annotations & indicators
 
 | Export            | What it is                                                 |

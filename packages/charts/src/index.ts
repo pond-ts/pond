@@ -67,6 +67,7 @@ export type {
   ListRow,
   ListValue,
   ListCellSpec,
+  ListMarker,
   ListSortDirection,
   ListRowsOptions,
   BarListColumn,

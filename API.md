@@ -288,7 +288,8 @@ shape (react-timeseries-charts' `HorizontalBarChart`).
 | `BoxList` | `rows`, `columns` (five-number names + `value?` tick), same table props              | Distribution list — range band / q1→q3 body / median / current tick | `packages/charts/src/BoxList.tsx` |
 
 Row/option types + readers (`packages/charts/src/list.ts`): `ListRow`,
-`ListValue`, `ListCellSpec`, `ListSortDirection`, `BarListColumn`,
+`ListValue`, `ListCellSpec`, `ListMarker` (reference rule through every row,
+label above; joins the auto domain fit), `ListSortDirection`, `BarListColumn`,
 `BoxListColumn`, `ListRowsOptions`; `listRowsFromTimeSeries` /
 `listRowsFromValueSeries` build one `ListRow` per event / axis key (numeric +
 string columns land in `values`).

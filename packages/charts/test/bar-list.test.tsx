@@ -255,6 +255,51 @@ describe('<BarList>', () => {
     expect(glyphs.style.borderLeft).toContain('1px solid');
   });
 
+  it('markers rule every row and print a label strip; values join the auto fit', () => {
+    const { container } = render(
+      <BarList
+        rows={rows}
+        columns={[{ column: 'in' }]}
+        markers={[{ value: 200, label: 'capacity' }]}
+      />,
+    );
+    // One dotted segment per data row, all at the marker's fraction — and the
+    // 200 marker WIDENED the auto domain (data max 100), so bars halve.
+    const segs = Array.from(
+      container.querySelectorAll('[data-list-marker]'),
+    ) as HTMLElement[];
+    expect(segs).toHaveLength(3);
+    expect(segs[0]!.style.left).toBe('calc(100% - 0.5px)');
+    expect(segs[0]!.style.borderLeft).toContain('dotted');
+    const bar = container.querySelector('[data-list-bar="in"]') as HTMLElement;
+    expect(bar.style.width).toBe('25%'); // 50 / 200
+    // The label strip sits above the data rows, centred on the rule.
+    const strip = container.querySelector('[data-list-marker-labels]');
+    expect(strip).not.toBeNull();
+    const label = container.querySelector(
+      '[data-list-marker-label]',
+    ) as HTMLElement;
+    expect(label.textContent).toBe('capacity');
+    expect(label.style.left).toBe('100%');
+  });
+
+  it('an unlabelled marker draws rules but no strip; explicit domain clamps', () => {
+    const { container } = render(
+      <BarList
+        rows={rows}
+        columns={[{ column: 'in' }]}
+        domain={[0, 100]}
+        markers={[{ value: 250 }]}
+      />,
+    );
+    expect(container.querySelector('[data-list-marker-labels]')).toBeNull();
+    const seg = container.querySelector('[data-list-marker]') as HTMLElement;
+    // Explicit domain wins: the out-of-domain marker clamps to the edge.
+    expect(seg.style.left).toBe('calc(100% - 0.5px)');
+    const bar = container.querySelector('[data-list-bar="in"]') as HTMLElement;
+    expect(bar.style.width).toBe('50%'); // domain untouched by the marker
+  });
+
   it('dividers rule every row after the first; divided={false} removes them', () => {
     const ruled = render(<BarList rows={rows} columns={[{ column: 'in' }]} />);
     const trs = Array.from(

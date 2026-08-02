@@ -24,6 +24,17 @@ sharp edge.
 | [BoxPlot](./types/boxplot.mdx)           | `TimeSeries` \| `ValueSeries`                                        | `lower`+`upper` req; `q1`/`q3`/`median` opt   | `boxFromTimeSeries` / `…ValueSeries`          | `theme.box`     | Doesn't compute quantiles; `q1`/`q3` both-or-neither throws.           |
 | [Candlestick](./types/candlestick.mdx)   | `TimeSeries` **only**                                                | `open`/`high`/`low`/`close`                   | `ohlcFromTimeSeries`                          | `theme.candle`  | Any price missing ⇒ no candle; default pair is neutral, not red/green. |
 
+## Row lists — standalone (no `ChartContainer`)
+
+One DOM table row per _entity_ on one shared value scale; label + data cells,
+`sortBy`/custom sort, per-row expander, reference `markers`. Not draw layers —
+the in-plot histogram stays `<BarChart orientation="horizontal">`.
+
+| Component                    | Input                                         | Key props                                                     | Reader                                          | Theme slot  | Sharp edge                                                        |
+| ---------------------------- | --------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------- | ----------- | ----------------------------------------------------------------- |
+| [BarList](./types/lists.mdx) | `rows: ListRow[]` (`{ key, label?, values }`) | `columns` (values names), cells, sort, `renderExpanded`       | `listRowsFromTimeSeries` / `…ValueSeries`       | `theme.bar` | Non-negative values assumed (length-encoded from the domain min). |
+| [BoxList](./types/lists.mdx) | `rows: ListRow[]`                             | five-number names + `value` tick per column, same table props | facts by hand (`partitionBy` + `reduce` spread) | `theme.box` | Doesn't compute quantiles; `q1`/`q3` both-or-neither throws.      |
+
 ## Capability matrix
 
 Which x-axis kinds each layer supports, whether it reads out under the cursor,
