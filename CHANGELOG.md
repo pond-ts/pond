@@ -73,6 +73,19 @@ include new features and type-level changes; patch bumps are strictly additive.
   its _own_ fill, so a red/green volume bar keeps its meaning while live), and
   that convention is unchanged.
 
+- **docs theme:** **a sequential ramp — `seq1…seq8` — for charts with more
+  series than the categorical set has hues.** `--pond-viz-1…5` were, and
+  remain, the categorical set; a chart needing more slots (an eight-source
+  stack, a wall of climate stripes) now steps **tonally** through the brand
+  teal instead of introducing competing hues. Eight steps, evenly spaced
+  (~ΔL\* 9 in CIELAB), defined for light and dark, each mode's ramp containing
+  that mode's `--pond-viz-1` exactly. Exposed as `line` / `area` / `bar` theme
+  roles on `docsTheme` (Storybook) and the docs site's `useSiteChartTheme`,
+  and as an array from the site's `useSequentialRamp()`. Dev-only: the ramp
+  lives in the `docs-theme.fixture.ts` Storybook fixture and the website's
+  CSS, both excluded from the published `@pond-ts/charts` build — the library
+  still ships no palette.
+
 ### Fixed
 
 - **process:** **audit hardening — five wrong-answer / silent-acceptance paths

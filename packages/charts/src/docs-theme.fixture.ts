@@ -37,6 +37,19 @@ import type { ChartTheme } from './theme.js';
  * (spec §07, `tokens.viz.css` — copied verbatim). `ink`/`body`/`muted`/
  * `surface`/`surface2` are the SAME tokens `website/src/css/custom.css`
  * defines for site chrome — one `ink`, not two ships-in-the-night values.
+ *
+ * **`viz1…viz5` are the categorical set, and they stay that way.** Five hues
+ * is the ceiling on how many *competing* colours the design will carry; a
+ * chart needing more slots (an eight-source grid mix, a climate-stripe wall)
+ * goes **tonal, not chromatic** — `vizSeq1…vizSeq8`, a sequential ramp that
+ * steps lightness *inside* the brand teal so eight series read as one family
+ * getting lighter rather than as a pie chart. The steps are ~ΔL\* 9 apart
+ * (CIELAB), evenly spaced end to end, and each mode's ramp contains that
+ * mode's `viz1` **exactly** — step 4 in light, step 7 in dark, since the
+ * accent is deliberately brighter against the dark ground.
+ *
+ * Rule of thumb: **≤ 4 series categorical (`viz1…`), > 4 sequential
+ * (`vizSeq1…`).**
  */
 const light = {
   // UI neutrals (brand spec §02)
@@ -54,6 +67,16 @@ const light = {
   vizMark: '#c2790f', // annotations — a deliberately different hue family
   vizUp: '#1f9d63', // candle up/down — the conventional exception
   vizDown: '#d8473f',
+  // Sequential ramp — see the block comment above `vizSeq` in this file.
+  // Eight tonal steps inside the brand teal, ~ΔL* 9 apart; step 4 IS `viz1`.
+  vizSeq1: '#0c444b',
+  vizSeq2: '#0d5c60',
+  vizSeq3: '#0d7474',
+  vizSeq4: '#0e8f86', // === viz1
+  vizSeq5: '#27a79a',
+  vizSeq6: '#38c2af',
+  vizSeq7: '#7ed6c8',
+  vizSeq8: '#bbe8df',
 } as const;
 
 const dark = {
@@ -70,6 +93,16 @@ const dark = {
   vizMark: '#f2b94a',
   vizUp: '#3ddc8f',
   vizDown: '#ff6e68',
+  // Same ramp on the dark ground: the accent is *brighter* against dark, so
+  // the brand hue lands at step 7 rather than step 4.
+  vizSeq1: '#15474a',
+  vizSeq2: '#1a5c5d',
+  vizSeq3: '#1e7270',
+  vizSeq4: '#228a83',
+  vizSeq5: '#26a195',
+  vizSeq6: '#29baa7',
+  vizSeq7: '#34d3c0', // === viz1
+  vizSeq8: '#7ee7d2',
 } as const;
 
 /** `color` at `alpha` opacity, as an rgba() string — the grid derives from
@@ -94,6 +127,31 @@ const FONT = {
 
 type Ramp = Record<keyof typeof light, string>;
 
+/** The ramp keys, darkest → lightest — the order `seq1…seq8` maps onto. */
+const SEQ_KEYS = [
+  'vizSeq1',
+  'vizSeq2',
+  'vizSeq3',
+  'vizSeq4',
+  'vizSeq5',
+  'vizSeq6',
+  'vizSeq7',
+  'vizSeq8',
+] as const satisfies readonly (keyof typeof light)[];
+
+/**
+ * `seq1…seq8` role entries for one theme slot, built from the ramp — so a
+ * many-series layer is styled the one-channel way (`<AreaChart as="seq3">`)
+ * instead of taking a colour prop. Every slot that can carry more than a
+ * handful of series gets the same eight names, so switching a chart from
+ * lines to areas doesn't renumber its colours.
+ */
+function seqRoles<T>(c: Ramp, style: (step: string) => T): Record<string, T> {
+  return Object.fromEntries(
+    SEQ_KEYS.map((key, i) => [`seq${i + 1}`, style(c[key])]),
+  );
+}
+
 /** Build the light/dark variants from one structure so they cannot drift. */
 function buildDocsTheme(c: Ramp): ChartTheme {
   return {
@@ -107,6 +165,7 @@ function buildDocsTheme(c: Ramp): ChartTheme {
       // teal vs magenta, maximally distinct rather than adjacent-in-ramp.
       fast: { color: c.viz1, width: 1.5 },
       slow: { color: c.viz4, width: 1.5 },
+      ...seqRoles(c, (step) => ({ color: step, width: 1.5 })),
     },
     band: {
       default: { fill: c.viz1, opacity: 0.14 },
@@ -117,6 +176,15 @@ function buildDocsTheme(c: Ramp): ChartTheme {
       default: { color: c.viz1, width: 1.5, fill: c.viz1, fillOpacity: 0.28 },
       in: { color: c.viz1, width: 1.5, fill: c.viz1, fillOpacity: 0.28 },
       out: { color: c.viz4, width: 1.5, fill: c.viz4, fillOpacity: 0.28 },
+      // Ramp areas run near-opaque (0.9, not the 0.28 of a single accent
+      // area): these are the *stacking* roles, and a band in a stack has to
+      // read as its own solid slab, not as a wash over its neighbour.
+      ...seqRoles(c, (step) => ({
+        color: step,
+        width: 1,
+        fill: step,
+        fillOpacity: 0.9,
+      })),
     },
     scatter: {
       default: {
@@ -185,6 +253,17 @@ function buildDocsTheme(c: Ramp): ChartTheme {
         minWidth: 1,
         outlineWidth: 1.5,
       },
+      // A stacked bar reads only `.fill` per group (`colors[g] ?? theme.bar[g]
+      // ?? bar.default`), so these carry the whole style for the single-series
+      // case and the fill alone for the stacked one.
+      ...seqRoles(c, (step) => ({
+        fill: step,
+        opacity: 0.92,
+        highlight: c.viz2,
+        gap: 1,
+        minWidth: 1,
+        outlineWidth: 1.5,
+      })),
     },
     axis: {
       label: c.body,

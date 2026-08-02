@@ -1,4 +1,45 @@
-import { defaultTheme, useChartTheme, type ChartTheme } from '@pond-ts/charts';
+import {
+  defaultTheme,
+  useChartTheme,
+  type ChartTheme,
+  type VarReader,
+} from '@pond-ts/charts';
+
+/**
+ * How many steps the sequential ramp has (`--pond-viz-seq-1…8`). Eight is the
+ * stress case the Gallery was scoped around — an eight-source grid mix.
+ */
+export const SEQ_STEPS = 8;
+
+/** `seq1…seq8`, in ramp order (darkest → lightest). */
+export const SEQ_ROLES = Array.from(
+  { length: SEQ_STEPS },
+  (_, i) => `seq${i + 1}`,
+) as readonly string[];
+
+/**
+ * The `seq1…seq8` entries for one theme slot, resolved from
+ * `--pond-viz-seq-N`. See the ramp block in `src/css/custom.css`: the
+ * `--pond-viz-1…5` categorical set stays five hues wide, and anything needing
+ * more slots than that steps **tonally** through one brand hue instead of
+ * introducing competing ones (gallery plan §8.2).
+ *
+ * A step that doesn't resolve (SSR, where there's no `getComputedStyle`) is
+ * **omitted** rather than emitted as `{ color: undefined }` — the merge treats
+ * a brand-new key as "the partial wins wholesale", so a half-built role would
+ * shadow `default` with a colourless style instead of falling back to it.
+ */
+function seqRoles<T>(
+  v: VarReader,
+  style: (step: string) => T,
+): Record<string, T> {
+  const out: Record<string, T> = {};
+  SEQ_ROLES.forEach((role, i) => {
+    const step = v(`--pond-viz-seq-${i + 1}`);
+    if (step) out[role] = style(step);
+  });
+  return out;
+}
 
 /**
  * Add an alpha channel to a resolved `#rrggbb` custom property. Canvas takes
@@ -42,6 +83,7 @@ export function useSiteChartTheme(): ChartTheme {
       // under a moving average). Every viz-N hue competes with the line it's
       // meant to sit behind, and at full opacity dense noise swallows it.
       muted: { color: fade(v('--pond-muted'), 0.55), width: 1 },
+      ...seqRoles(v, (step) => ({ color: step, width: 1.5 })),
     },
     band: {
       default: { fill: v('--pond-viz-1') },
@@ -52,6 +94,17 @@ export function useSiteChartTheme(): ChartTheme {
       default: { color: v('--pond-viz-1'), fill: v('--pond-viz-1') },
       in: { color: v('--pond-viz-1'), fill: v('--pond-viz-1') },
       out: { color: v('--pond-viz-4'), fill: v('--pond-viz-4') },
+      // Near-opaque (0.9), unlike the 0.28 wash the single-accent areas use:
+      // these are the *stacking* roles and each band has to read as its own
+      // slab. NB the fill is still a gradient to the baseline — for a true
+      // stack, draw cumulative columns top-down so each fill covers the one
+      // beneath it.
+      ...seqRoles(v, (step) => ({
+        color: step,
+        width: 1,
+        fill: step,
+        fillOpacity: 0.9,
+      })),
     },
     scatter: {
       default: { color: v('--pond-viz-1'), label: v('--pond-ink') },
@@ -75,6 +128,12 @@ export function useSiteChartTheme(): ChartTheme {
     bar: {
       default: { fill: v('--pond-viz-1'), highlight: v('--pond-viz-2') },
       secondary: { fill: v('--pond-viz-2'), highlight: v('--pond-viz-1') },
+      // A stack reads only `.fill` per group (`colors[g] ?? theme.bar[g] ??
+      // bar.default`); a single-series `as="seq3"` bar reads the whole style.
+      ...seqRoles(v, (step) => ({
+        fill: step,
+        highlight: v('--pond-viz-2'),
+      })),
     },
     axis: {
       label: v('--pond-body'),
@@ -87,4 +146,38 @@ export function useSiteChartTheme(): ChartTheme {
     chip: { background: v('--pond-surface-2') },
     annotation: { color: v('--pond-viz-mark') },
   }));
+}
+
+/**
+ * The resolved sequential ramp — eight steps, darkest first — flipping with
+ * the site's dark/light toggle because it's read straight off the same live
+ * theme every embed renders with.
+ *
+ * Use it where a layer takes **colours as data** rather than as a role: a
+ * stacked `<BarChart colors={…}>` keyed by group name, `binColors`, a scatter
+ * encoding. When the layer can take a *role* instead, prefer that — the
+ * `seq1…seq8` line/area/bar roles say the same thing through the one styling
+ * channel:
+ *
+ * ```tsx
+ * const ramp = useSequentialRamp();
+ * const bySource = Object.fromEntries(SOURCES.map((s, i) => [s, ramp[i]!]));
+ * <BarChart series={byHost} column="mw" colors={bySource} />
+ * ```
+ *
+ * Pass `count` for the first `n` steps stretched across the whole ramp, so a
+ * five-series chart spans dark→light instead of crowding into the dark end.
+ *
+ * The ramp is built for **fills**, where each slab's neighbours supply the
+ * contrast. A lone *line* at step 1 or 2 sits nearly on the ground colour —
+ * give a single line `line.default` / `--pond-viz-1` instead.
+ */
+export function useSequentialRamp(count: number = SEQ_STEPS): string[] {
+  const theme = useSiteChartTheme();
+  const n = Math.max(1, Math.min(count, SEQ_STEPS));
+  return Array.from({ length: n }, (_, i) => {
+    // Even spread across the ramp: n=8 → 0..7, n=5 → 0,1,3,5,7.
+    const step = n === 1 ? 0 : Math.round((i * (SEQ_STEPS - 1)) / (n - 1));
+    return theme.bar[SEQ_ROLES[step]!]?.fill ?? theme.bar.default.fill;
+  });
 }
