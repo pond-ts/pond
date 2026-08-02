@@ -478,6 +478,21 @@ per-mark idiom the codebase already uses). **Still open in this wave:**
 `ValueSeries` widening, range-only mode polish, px `offset`, line-only shape,
 and the `cursorFlag` x-snap reconciliation.
 
+### [PND-CHARTAPI] / [PND-BARSEM] / [PND-HCAT] / [PND-VSADAPT] — the 2026-08 API review intake
+
+Four tasks from the owner's holistic bar/box/chart/list API review
+([docs/notes/charts-api-review-2026-08.md](../notes/charts-api-review-2026-08.md)
+— verdict: excellent data seam, good composition, uneven type/behavior seam).
+Summaries in PLAN.md; the note carries the full argument. Ordering per the
+review: consistency ([PND-VSADAPT] + the docs fixes already landed with the
+intake) → type hardening ([PND-CHARTAPI]) → one-segment normalization
+([PND-BARSEM]) → horizontal categories ([PND-HCAT]). The review also
+_endorses_ three standing decisions (histogram stays a BarChart mode;
+lists stay DOM tables; BoxPlot never computes quantiles) — cite it before
+relitigating any of them. [PND-CHARTAPI] and [PND-VSADAPT] are
+public-surface changes: human merge gate, and [PND-CHARTAPI] additionally
+wants a design spike on union × generics error messages plus a Codex pass.
+
 ### [PND-LISTS] — BarList + BoxList ranked row lists — DONE
 
 Shipped in [#585](https://github.com/pond-ts/pond/pull/585): the
