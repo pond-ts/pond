@@ -70,6 +70,7 @@ const rows = [...traffic.partitionBy('iface').toMap()].map(([name, s]) => ({
   values: s.reduce({
     p5: { from: 'in', using: 'p5' },
     p25: { from: 'in', using: 'p25' },
+    p50: { from: 'in', using: 'p50' },
     p75: { from: 'in', using: 'p75' },
     p95: { from: 'in', using: 'p95' },
     now: { from: 'in', using: 'last' },
@@ -82,6 +83,7 @@ const rows = [...traffic.partitionBy('iface').toMap()].map(([name, s]) => ({
     {
       lower: 'p5',
       q1: 'p25',
+      median: 'p50',
       q3: 'p75',
       upper: 'p95',
       value: 'now',
@@ -159,6 +161,10 @@ Markers draw in the **annotation (marks) register** (the canvas
 siblings' colour), never a data hue. Under an auto-fitted domain, marker values **join the fit** — a
 threshold above the data max widens the scale instead of clamping to the
 edge; under an explicit `domain` an out-of-range marker clamps.
+
+Labels are positioned, not laid out: two markers close together overlap their
+labels, and a label near a domain edge overhangs it. Keep marker sets small
+and spaced (they are reference lines, not an axis).
 
 ## One shared scale
 
