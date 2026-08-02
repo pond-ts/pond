@@ -70,6 +70,15 @@ Adapters: `barsFromTimeSeries` / `barsFromValueSeries` (single),
 - **Cursor:** the in-chart value cursor (flag / crosshair) is **single-series
   vertical only** — stacked and horizontal bars don't report a per-point
   readout.
+- **Hit target (single-series vertical):** a bar's hover / click region is its
+  **whole slot** — the full interval width and the full plot height — not the
+  drawn rect. The `gap` only separates the ink, so pointing between columns or
+  above a short bar still selects the bar you're over, and hover agrees with the
+  cursor readout. A shared edge goes to the left bar. Because the region spans
+  the plot height, declare a bar layer **below** any `<ScatterChart>` /
+  `<BoxPlot>` that should stay clickable. **Stacked, `bins`, `categories` and
+  horizontal** charts instead hit the drawn segment — a stack's segments share a
+  bin's x-range, so only y distinguishes them.
 - **Selection:** **id-gated** — set `id` for clickable / hover-lit bars (a
   stack segment's identity is `(id, key, group)`). A single-series bar also
   reports a stable **`mark`** — its own axis key, stringified — and a
