@@ -821,6 +821,18 @@ describe('barAt — slot hit-testing', () => {
     expect(barAt(cs, 15, 101, identity, yScale, 0, 1)).toBeNull();
   });
 
+  it('treats a one-element domain as unusable, not as a zero-height slot', () => {
+    // Both endpoints would be the same value, collapsing the slot to zero
+    // height and making the bar unhittable — so the guard is `< 2`, not
+    // `=== 0`, and this falls back to the drawn y-span (L2 review of #584).
+    const degenerate = (v: number) => v;
+    (degenerate as unknown as { domain: () => number[] }).domain = () => [0];
+    // Bar 1 draws y [0,50] under the fallback, so a mid-bar point hits…
+    expect(barAt(cs, 15, 25, identity, degenerate, 0, 1)).toEqual([1, 10, 50]);
+    // …and one above its value misses, as the no-domain stub does.
+    expect(barAt(cs, 15, 80, identity, degenerate, 0, 1)).toBeNull();
+  });
+
   it('a gap bar owns no slot — its column selects nothing', () => {
     const g = bars([0, 10, 20], [10, 20, 30], [30, NaN, 20]);
     expect(barAt(g, 15, 50, identity, yScale, 0, 1)).toBeNull();

@@ -77,8 +77,10 @@ export function resolveBarBaseline(yScale: Scale): number {
  * from {@link barSpanPx} (the key's `[begin, end]`, inset by `gapPx`, floored at
  * `minWidthPx`); the y-span runs between the value and the `baseline` pixel,
  * normalized so a value above *or* below the baseline both yield an ascending
- * rect. Shared by {@link drawBars} and {@link barAt} so the drawn rect and the
- * hit rect are the same geometry.
+ * rect. This is the **ink** — what {@link drawBars} paints. Hit-testing uses
+ * {@link barSlotRect} instead (the bar's whole slot), so the drawn rect and the
+ * hit region are deliberately *not* the same geometry: the `gapPx` inset
+ * separates columns visually without carving a dead channel out of the target.
  */
 export function barRect(
   cs: BarSeries,
@@ -382,6 +384,22 @@ export function barIndexAtTime(cs: BarSeries, time: number): number {
  *
  * `minWidthPx` still floors the span, so a lone point-keyed bar (zero-width
  * key) stays selectable.
+ *
+ * **Two consequences worth knowing before you compose with it.**
+ *
+ * 1. **It reaches across the whole plot height, so it can shadow layers below
+ *    it.** `resolveSelection` returns the topmost hit, so a `<BarChart>`
+ *    declared *after* a `<ScatterChart>` / `<BoxPlot>` / another `<BarChart>`
+ *    in the same row now claims every hit inside its x-range, at any y — where
+ *    the drawn-rect target only claimed the bar's own ink. Declare a bar layer
+ *    **below** the marks you want to stay clickable (which is also the usual
+ *    z-order for bars-as-context). No shipped story composes that way, so this
+ *    is latent rather than a live regression.
+ * 2. **Only the single-series vertical path uses it.** A stacked, `bins`,
+ *    `categories` or horizontal `<BarChart>` hit-tests through
+ *    {@link stackAt}, which still targets the drawn segment — a stack has to,
+ *    since segments share a bin's x-range and only y tells them apart. So
+ *    `<BarChart>` has two hit models; this is the one for a plain bar.
  */
 export function barSlotRect(
   cs: BarSeries,
@@ -396,8 +414,12 @@ export function barSlotRect(
   // Gap-free: the slot is the key's own span.
   const [x0, x1] = barSpanPx(cs.begin[i]!, cs.end[i]!, xScale, 0, minWidthPx);
   const d = (yScale as unknown as { domain?: () => number[] }).domain?.();
-  if (!d || d.length === 0) {
-    // No readable domain (test stub): keep the drawn rect's y span.
+  // `< 2`, not `=== 0`: a one-element domain would make both endpoints the same
+  // value, collapsing the slot to zero height and making the bar unhittable —
+  // worse than the fallback it was meant to skip. (`resolveBarBaseline`'s
+  // `=== 0` is fine because it clamps against min/max of the same endpoints.)
+  if (!d || d.length < 2) {
+    // No usable domain (a bare test stub): keep the drawn rect's y span.
     const yValue = yScale(v);
     const yBase = yScale(baseline);
     return [x0, x1, Math.min(yValue, yBase), Math.max(yValue, yBase)];

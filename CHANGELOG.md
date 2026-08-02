@@ -67,13 +67,28 @@ include new features and type-level changes; patch bumps are strictly additive.
   height, so hover, click and the cursor readout all agree on which bar you are
   on, and slots tile the axis.
 
-  **Strictly widening** — every point that selected a bar before still selects
-  it. What changes is that points which previously selected _nothing_ now
-  select the bar whose slot they fall in. Unchanged: a genuine hole between
-  non-contiguous intervals still misses (the change makes the drawing gap
-  hittable, it doesn't invent coverage the data lacks), a gap (`NaN`) bar owns
-  no slot, and a shared edge goes to the left bar — the rule `barIndexAtTime`
-  already documented, so the two now agree by construction.
+  **Widening, with one exception.** Points that previously selected _nothing_
+  now select the bar whose slot they fall in. The exception: a bar whose value
+  exceeds an explicit `<YAxis max>` used to draw — and be clickable — above the
+  plot top, in the strip a `'top'` axis title reserves; the slot stops at the
+  axis domain, so that sliver no longer hits. Everything inside the plot that
+  hit before still hits.
+
+  **It reaches across the full plot height, so it can shadow layers beneath
+  it.** The topmost hit wins, so a `<BarChart>` declared _after_ a
+  `<ScatterChart>` / `<BoxPlot>` / another `<BarChart>` in the same row now
+  claims every hit in its x-range at any y. Declare a bar layer **below** the
+  marks that should stay clickable.
+
+  **Single-series vertical only** — a stacked, `bins`, `categories` or
+  horizontal chart still hit-tests the drawn segment, because a stack's
+  segments share a bin's x-range and only y tells them apart.
+
+  Unchanged: a genuine hole between non-contiguous intervals still misses (the
+  change makes the drawing gap hittable, it doesn't invent coverage the data
+  lacks), a gap (`NaN`) bar owns no slot, and a shared edge goes to the left
+  bar — the rule `barIndexAtTime` already documented, so the two now agree by
+  construction.
 
 ### Added
 
