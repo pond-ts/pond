@@ -302,17 +302,21 @@ export function drawBars(
       }
       continue;
     }
+    // A hovered / selected bar pops to full opacity, as the binFills branch
+    // above and `drawStacks` both do — without this the highlight *fill* drew
+    // at the resting `style.opacity`, so on an alpha'd theme a hovered bar
+    // (which has no outline) barely changed at all, and a selected one read
+    // only by its outline (#576).
+    ctx.globalAlpha = selected || isHovered ? 1 : style.opacity;
     ctx.fillStyle = selected || isHovered ? style.highlight : style.fill;
     ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
     drawn += 1;
     if (selected) {
       // The selected bar gets an outline so it reads at full strength over the
-      // (alpha'd) fills. Stroke at full opacity (reset within the save bracket).
-      ctx.globalAlpha = 1;
+      // (alpha'd) fills. Already at alpha 1 from the fill above.
       ctx.lineWidth = style.outlineWidth;
       ctx.strokeStyle = style.highlight;
       ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);
-      ctx.globalAlpha = style.opacity;
     }
   }
   ctx.restore();

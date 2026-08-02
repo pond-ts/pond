@@ -100,6 +100,21 @@ include new features and type-level changes; patch bumps are strictly additive.
   rule `specId` applies), while the response labels a computation with the
   **first** slot that named it rather than whichever was declared last.
 
+- **charts:** **a hovered or selected single-series bar now pops to full
+  opacity** ([#576](https://github.com/pond-ts/pond/issues/576)). `drawBars`
+  set `globalAlpha` once to the resting `style.opacity` and never lifted it for
+  the highlight **fill** on the single-series path — only for the selected
+  bar's outline. The per-bar-`binColors` branch in the same function and
+  `drawStacks` both already popped to 1, and `drawBars`' own docstring claimed
+  it did too. So on a theme with `opacity < 1` a **hovered** bar (which has no
+  outline) barely changed, and a **selected** one read only by its outline.
+  All three paths now treat the highlight fill identically.
+
+  **This changes pixels** on any single-series `<BarChart>` with an alpha'd
+  theme: highlighted bars are brighter. A theme that raised its base `opacity`
+  to compensate may now want it back down.
+
+
 ## [0.54.0] — 2026-08-02
 
 ### Fixed
