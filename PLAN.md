@@ -99,11 +99,22 @@ milestone. Plan:
   vertical-only (category band on y, `CategoryAxis` orientation, transposed
   hit-test/readout). Driver: the gallery funnel hand-builds ordinal bins +
   `i + 0.5` ticks today.
-- **[PND-VSADAPT]** — Decide the ValueSeries adapter surface: `fromValueSeries`
-  / `bandFromValueSeries` / `boxFromValueSeries` / `barsFromValueSeries` are
-  documented in the cheat-sheet but not exported. Export for symmetry
-  (recommended) or demote to internal and fix the docs; the stale M1
-  `index.ts` package header rides along. Public-surface change — human gate.
+- **[PND-VSADAPT]** — **Adapters are internal** — decided by the owner
+  (2026-08-02): _"any use of an adaptor when starting with a timeseries is a
+  core api failure."_ This flips the earlier export-for-symmetry
+  recommendation: the ValueSeries adapters stay **unexported**; the docs stop
+  presenting adapters as the data contract (the cheat-sheet "Adapter" column,
+  type pages) and re-document the already-exported ones as interop escape
+  hatches for non-pond data; the stale M1 `index.ts` header rides along.
+  Consequences: (a) `BarList` / `BoxList` gain a **direct `series` input**
+  for the rows-are-events case — `listRowsFromTimeSeries` is exactly the
+  failure the principle names (public-surface addition, human gate); (b) the
+  rows-from-facts path stays record-shaped for now (the reducer choice is
+  data policy, unless a facts-mapping input that _delegates_ to core's
+  `reduce` is judged acceptable — open design point); (c) `transposeRow`
+  is the remaining series-adapter, expected to be absorbed by the
+  categorical RFC's Phase 2 row-binding. Details in
+  [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md).
 
 ### Docs site, landing, and API reference
 
