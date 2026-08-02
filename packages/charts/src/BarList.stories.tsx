@@ -182,6 +182,23 @@ export const Undivided: Story = {
   ),
 };
 
+/** Reference markers: a dotted rule through every row in the marks register,
+ *  label printed above, centred on the rule. The 150 Mbps capacity marker
+ *  exceeds the data max, so it WIDENS the auto domain rather than clamping. */
+export const Markers: Story = {
+  render: () => (
+    <BarList
+      rows={hosts.slice(0, 4)}
+      columns={[{ column: 'in' }]}
+      sortBy="in"
+      markers={[
+        { value: 150, label: 'capacity' },
+        { value: 52.25, label: 'avg' },
+      ]}
+    />
+  ),
+};
+
 /** The origin baseline is opt-in for bars (the tracks already show zero);
  *  `baseline` draws the same rule `<BoxList>` defaults on. */
 export const Baseline: Story = {

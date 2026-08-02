@@ -6,6 +6,7 @@ import {
   validateBoxListColumn,
   type BoxListColumn,
   type ListCellSpec,
+  type ListMarker,
   type ListRow,
   type ListSortDirection,
 } from './list.js';
@@ -60,6 +61,13 @@ export interface BoxListProps<R extends ListRow = ListRow> {
   /** Rule between rows. **Omitted ⇒ `true`.** */
   divided?: boolean;
   /**
+   * Reference **markers** on the shared scale — a dotted vertical rule
+   * through every row with the `label` printed above the list (see
+   * `BarListProps.markers`; identical semantics, including joining the auto
+   * domain fit).
+   */
+  markers?: readonly ListMarker[];
+  /**
    * The vertical **baseline rule** at the scale origin (the glyph cell's left
    * edge, the row dividers' `axis.grid` ink). **Omitted ⇒ `true`** — box lines float
    * at their `lower` quantile, so the shared origin is what lets the eye
@@ -110,6 +118,7 @@ export function BoxList<R extends ListRow = ListRow>({
   onExpandToggle,
   selected,
   onRowClick,
+  markers,
   barHeight = 10,
   divided,
   baseline = true,
@@ -130,14 +139,24 @@ export function BoxList<R extends ListRow = ListRow>({
             : [c.lower, c.upper],
         ),
         domain,
+        markers?.map((m) => m.value),
       ),
-    [rows, columns, domain],
+    [rows, columns, domain, markers],
+  );
+  const resolvedMarkers = useMemo(
+    () =>
+      markers?.map((m) => ({
+        frac: listFraction(m.value, scale),
+        ...(m.label !== undefined ? { label: m.label } : {}),
+      })),
+    [markers, scale],
   );
 
   return (
     <ListTable
       rows={sorted}
       kind="box"
+      markers={resolvedMarkers}
       before={before}
       after={after}
       renderExpanded={renderExpanded}

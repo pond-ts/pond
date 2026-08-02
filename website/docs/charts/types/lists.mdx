@@ -35,12 +35,33 @@ Rows are plain records — `{ key, label?, values }` — where `values` is a fla
 Both components are generic over `R extends ListRow`, so extra fields on your
 rows flow into `render` / `renderExpanded` fully typed.
 
-Build rows by hand, or read a per-event series (a per-split `aggregate`
-rollup) with `listRowsFromTimeSeries(series, { label })` /
-`listRowsFromValueSeries` — every value column lands in `values` under its own
-name. For per-entity distributions, compute the quantiles upstream with
-`reduce` facts (the chart **never** computes them — the same stance as
-[`<BoxPlot>`](./boxplot.mdx)):
+## From your TimeSeries
+
+Three acquisition shapes cover the real cases; every one composes from core's
+own vocabulary (the list never computes statistics — the same stance as
+[`<BoxPlot>`](./boxplot.mdx) takes on quantiles).
+
+### Rows are events — a per-split rollup
+
+An `aggregate` produces one event per split; `listRowsFromTimeSeries` lifts
+every value column (numeric **and** string) into `values` under its own name.
+Distance-keyed splits (`byValue('km')`) go through `listRowsFromValueSeries`
+identically.
+
+```tsx
+const splits = run.aggregate(Sequence.every('5m'), {
+  speed: { from: 'speed', using: 'avg' },
+  climb: { from: 'elevGain', using: 'sum' },
+});
+const rows = listRowsFromTimeSeries(splits, { label: (i) => `${i + 1}` });
+
+<BarList rows={rows} columns={[{ column: 'speed' }]} />;
+```
+
+### Rows are entities — partition facts
+
+`reduce`'s **mapping form returns exactly a row's `values` shape**, so
+partition facts spread straight in. Quantiles come from pond's reducers:
 
 ```tsx
 const rows = [...traffic.partitionBy('iface').toMap()].map(([name, s]) => ({
@@ -49,7 +70,6 @@ const rows = [...traffic.partitionBy('iface').toMap()].map(([name, s]) => ({
   values: s.reduce({
     p5: { from: 'in', using: 'p5' },
     p25: { from: 'in', using: 'p25' },
-    p50: { from: 'in', using: 'p50' },
     p75: { from: 'in', using: 'p75' },
     p95: { from: 'in', using: 'p95' },
     now: { from: 'in', using: 'last' },
@@ -62,7 +82,6 @@ const rows = [...traffic.partitionBy('iface').toMap()].map(([name, s]) => ({
     {
       lower: 'p5',
       q1: 'p25',
-      median: 'p50',
       q3: 'p75',
       upper: 'p95',
       value: 'now',
@@ -72,6 +91,74 @@ const rows = [...traffic.partitionBy('iface').toMap()].map(([name, s]) => ({
   sortBy="now"
 />;
 ```
+
+### Rows are entities, distributed over buckets — grouped aggregate
+
+For "what does each band _typically_ see per window vs now", bucket first,
+then summarize the bucket column. Two semantics matter:
+
+- **`{ groups }` keeps silent entities as rows** — empty declared groups
+  still appear as empty series in the map, in declared order. For an ordinal
+  scale (risk bands low → severe), omit `sortBy` and the declared order **is**
+  the display order.
+- **Pass a shared `{ range }` to `aggregate`.** The default range is each
+  partition's _own_ extent, so bands get different reporting windows and
+  quiet periods fall outside the grid — biasing a count distribution upward.
+  With a shared range, empty buckets emit honest `n = 0` rows (`count` of an
+  empty bucket is `0`, not a gap) and every band lands on one comparable
+  scale.
+
+```tsx
+const range = riskReadings.timeRange()!;
+const byBand = riskReadings
+  .partitionBy('band', { groups: RISK_BANDS })
+  .aggregate(
+    Sequence.every('5m'),
+    { n: { from: 'band', using: 'count' } },
+    { range },
+  )
+  .toMap();
+
+const rows = [...byBand].map(([band, s]) => ({
+  key: band,
+  values: s.reduce({
+    p5: { from: 'n', using: 'p5' },
+    q1: { from: 'n', using: 'p25' },
+    q3: { from: 'n', using: 'p75' },
+    p95: { from: 'n', using: 'p95' },
+    now: { from: 'n', using: 'last' },
+  }),
+}));
+
+<BoxList
+  rows={rows}
+  columns={[
+    {
+      lower: 'p5',
+      q1: 'q1',
+      q3: 'q3',
+      upper: 'p95',
+      value: 'now',
+      format: (n) => `${n}/5m`,
+    },
+  ]}
+/>;
+```
+
+The same `byBand` map feeds `stacksFromGroups` → a stacked
+[`<BarChart>`](./barchart.mdx) — the list is the "typical vs now" summary
+view and the stack the time view of one acquisition.
+
+## Reference markers
+
+`markers={[{ value, label? }]}` draws a **dotted vertical rule through every
+row** at a value on the shared scale, with the label printed above the list,
+centred on the rule — an SLA threshold, a capacity line, the fleet average.
+Markers draw in the **annotation (marks) register** (the canvas
+[`<Marker>` / `<Baseline>`](../annotations/region-baseline-marker.mdx)
+siblings' colour), never a data hue. Under an auto-fitted domain, marker values **join the fit** — a
+threshold above the data max widens the scale instead of clamping to the
+edge; under an explicit `domain` an out-of-range marker clamps.
 
 ## One shared scale
 
@@ -97,6 +184,7 @@ updates or sibling lists.
 | `selected` / `onRowClick`            | `string \| null` / `(row)` | —           | Consumer-owned selection (inset accent edge) + row clicks.                                                                                                                |
 | `barHeight`                          | `number`                   | `8` / `10`  | Height per glyph line in px (bar / box).                                                                                                                                  |
 | `divided`                            | `boolean`                  | `true`      | Rules between rows.                                                                                                                                                       |
+| `markers`                            | `ListMarker[]`             | —           | Dotted reference rules through every row + a label strip above (see [Reference markers](#reference-markers)).                                                             |
 | `baseline`                           | `boolean`                  | box / bar   | Vertical rule at the scale origin — **on** for `BoxList` (its lines float at `lower`; the origin is what relates rows), **off** for `BarList` (tracks already show zero). |
 | `theme`                              | `ChartTheme`               | default     | The same one styling channel the canvas charts read.                                                                                                                      |
 

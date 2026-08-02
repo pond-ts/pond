@@ -5,6 +5,7 @@ import {
   sortListRows,
   type BarListColumn,
   type ListCellSpec,
+  type ListMarker,
   type ListRow,
   type ListSortDirection,
 } from './list.js';
@@ -80,6 +81,14 @@ export interface BarListProps<R extends ListRow = ListRow> {
   /** Rule between rows (`theme.axis.grid`). **Omitted ⇒ `true`.** */
   divided?: boolean;
   /**
+   * Reference **markers** on the shared scale — each draws a dotted vertical
+   * rule through every row (annotation-register ink) with its `label` printed
+   * above the list, centred on the rule. An SLA line, a capacity, the fleet
+   * average. Marker values **join the auto domain fit** (a threshold above
+   * the data max widens the scale); under an explicit `domain` they clamp.
+   */
+  markers?: readonly ListMarker[];
+  /**
    * The vertical **baseline rule** at the scale origin (the glyph cell's left
    * edge, the row dividers' `axis.grid` ink). **Omitted ⇒ `false`** — a bar's track
    * already shows where zero is; opt in when the tracks are visually quiet.
@@ -133,6 +142,7 @@ export function BarList<R extends ListRow = ListRow>({
   onExpandToggle,
   selected,
   onRowClick,
+  markers,
   barHeight = 8,
   divided,
   baseline,
@@ -148,14 +158,24 @@ export function BarList<R extends ListRow = ListRow>({
         rows,
         columns.map((c) => c.column),
         domain,
+        markers?.map((m) => m.value),
       ),
-    [rows, columns, domain],
+    [rows, columns, domain, markers],
+  );
+  const resolvedMarkers = useMemo(
+    () =>
+      markers?.map((m) => ({
+        frac: listFraction(m.value, scale),
+        ...(m.label !== undefined ? { label: m.label } : {}),
+      })),
+    [markers, scale],
   );
 
   return (
     <ListTable
       rows={sorted}
       kind="bar"
+      markers={resolvedMarkers}
       before={before}
       after={after}
       renderExpanded={renderExpanded}

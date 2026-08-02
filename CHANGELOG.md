@@ -68,7 +68,10 @@ include new features and type-level changes; patch bumps are strictly additive.
   and consumer-owned row selection with an accent edge in the marks register.
   A vertical **baseline rule** at the scale origin anchors the rows to one
   reference (on by default for `<BoxList>`, whose lines float at their lower
-  quantile; opt-in for `<BarList>`, whose tracks already show zero).
+  quantile; opt-in for `<BarList>`, whose tracks already show zero), and
+  reference **`markers`** (`{ value, label? }`) draw a labelled dotted rule
+  through every row in the annotation register — an SLA / capacity line —
+  with marker values joining the auto domain fit.
   `<BarList>` draws proportional value bars; its sister `<BoxList>` draws a
   five-number distribution per line — range band, `q1`→`q3` body, median line
   — plus an optional **current-value tick** with a formatted inline label (the

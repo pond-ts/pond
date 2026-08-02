@@ -39,6 +39,15 @@ export interface ListTableProps<R extends ListRow> {
   /** Draw the vertical **baseline rule** at the scale origin (the glyph
    *  cell's left edge) — the shared reference the eye aligns rows against. */
   readonly baseline?: boolean | undefined;
+  /**
+   * Reference markers, **pre-resolved to track fractions** by the caller (the
+   * shell knows pixels, not the scale): each draws a dotted vertical rule
+   * through every row's glyph area, plus a label strip above the list when
+   * any carries a `label`. A `null` fraction (out-of-scale gap) is skipped.
+   */
+  readonly markers?:
+    | ReadonlyArray<{ readonly frac: number | null; readonly label?: string }>
+    | undefined;
   readonly theme: ChartTheme;
 }
 
@@ -61,6 +70,7 @@ export function ListTable<R extends ListRow>({
   onRowClick,
   divided = true,
   baseline = false,
+  markers = [],
   theme,
 }: ListTableProps<R>) {
   // Uncontrolled expansion, keyed on row identity so it survives a re-sort.
@@ -94,6 +104,21 @@ export function ListTable<R extends ListRow>({
     verticalAlign: 'middle',
   });
 
+  // The glyph cell's shared horizontal geometry — the label strip must use
+  // the SAME left/right padding (and baseline border) as the data rows, or
+  // its percentages would resolve against a different content width and the
+  // labels would sit off their rules.
+  const glyphCellStyle = (vertical: string): CSSProperties => ({
+    width: '100%',
+    padding: baseline ? `${vertical} 8px ${vertical} 5px` : `${vertical} 8px`,
+    verticalAlign: 'middle',
+    borderLeft: baseline ? `1px solid ${theme.axis.grid}` : undefined,
+  });
+
+  const drawnMarkers = markers.filter(
+    (m): m is { frac: number; label?: string } => m.frac !== null,
+  );
+
   return (
     <table
       data-list={kind}
@@ -106,6 +131,49 @@ export function ListTable<R extends ListRow>({
       }}
     >
       <tbody>
+        {drawnMarkers.some((m) => m.label !== undefined) && (
+          // The marker label strip: one synthetic row above the data, its
+          // glyph cell sharing the data rows' horizontal geometry so each
+          // label centres exactly on its rule below.
+          <tr data-list-marker-labels="">
+            <td style={textCell()} />
+            {before.map((cell) => (
+              <td key={cell.key} style={textCell(cell.align)} />
+            ))}
+            <td style={glyphCellStyle('0px')}>
+              <div
+                style={{
+                  position: 'relative',
+                  height: theme.font.size + 6,
+                }}
+              >
+                {drawnMarkers.map(
+                  (m, mi) =>
+                    m.label !== undefined && (
+                      <span
+                        key={mi}
+                        data-list-marker-label=""
+                        style={{
+                          position: 'absolute',
+                          left: `${m.frac * 100}%`,
+                          bottom: 0,
+                          transform: 'translateX(-50%)',
+                          whiteSpace: 'nowrap',
+                          color: accent,
+                        }}
+                      >
+                        {m.label}
+                      </span>
+                    ),
+                )}
+              </div>
+            </td>
+            {after.map((cell) => (
+              <td key={cell.key} style={textCell(cell.align)} />
+            ))}
+            {renderExpanded !== undefined && <td />}
+          </tr>
+        )}
         {rows.map((row, i) => {
           const isSelected = selected != null && selected === row.key;
           const isOpen = renderExpanded !== undefined && expanded.has(row.key);
@@ -170,16 +238,30 @@ export function ListTable<R extends ListRow>({
                   // rule, and border-collapse joins the rows' rules into one
                   // continuous vertical — the same thin `axis.grid` ink as
                   // the row dividers, so the two read as one quiet grid.
-                  style={{
-                    width: '100%',
-                    padding: baseline ? '6px 8px 6px 5px' : '6px 8px',
-                    verticalAlign: 'middle',
-                    borderLeft: baseline
-                      ? `1px solid ${theme.axis.grid}`
-                      : undefined,
-                  }}
+                  style={glyphCellStyle('6px')}
                 >
-                  {renderGlyphs(row)}
+                  <div style={{ position: 'relative' }}>
+                    {renderGlyphs(row)}
+                    {drawnMarkers.map((m, mi) => (
+                      // One dotted segment per row, bleeding through the
+                      // row's vertical padding (+ divider) so adjacent rows'
+                      // segments join into one continuous rule. Annotation
+                      // register — a reference is a user's mark, not data.
+                      <div
+                        key={mi}
+                        data-list-marker=""
+                        style={{
+                          position: 'absolute',
+                          top: -7,
+                          bottom: -7,
+                          left: `calc(${m.frac * 100}% - 0.5px)`,
+                          width: 0,
+                          borderLeft: `1px dotted ${accent}`,
+                          pointerEvents: 'none',
+                        }}
+                      />
+                    ))}
+                  </div>
                 </td>
                 {after.map((cell) => (
                   <td

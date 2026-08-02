@@ -142,6 +142,20 @@ export const SortByCurrent: Story = {
   render: () => <BoxList rows={services} columns={[FULL]} sortBy="now" />,
 };
 
+/** A reference marker over the distributions — the 150 ms SLA as a dotted
+ *  rule through every row, labelled above. Which services' tails cross it
+ *  reads at a glance. */
+export const Markers: Story = {
+  render: () => (
+    <BoxList
+      rows={services}
+      columns={[FULL]}
+      sortBy="now"
+      markers={[{ value: 150, label: 'SLA 150 ms' }]}
+    />
+  ),
+};
+
 /** The origin baseline is on by default (box lines float at `lower`, so the
  *  shared origin is what relates rows); `baseline={false}` drops the rule. */
 export const NoBaseline: Story = {

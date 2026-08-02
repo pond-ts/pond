@@ -176,6 +176,22 @@ describe('<BoxList>', () => {
     expect(bare.style.borderLeft).toBe('');
   });
 
+  it('markers draw through box rows at their fraction', () => {
+    const { container } = render(
+      <BoxList
+        rows={rows}
+        columns={[FULL]}
+        domain={[0, 100]}
+        markers={[{ value: 50, label: 'SLA' }]}
+      />,
+    );
+    const seg = container.querySelector('[data-list-marker]') as HTMLElement;
+    expect(seg.style.left).toBe('calc(50% - 0.5px)');
+    expect(
+      container.querySelector('[data-list-marker-label]')!.textContent,
+    ).toBe('SLA');
+  });
+
   it('two box columns stack top→bottom within a row', () => {
     const twoDir: ListRow[] = [
       {
