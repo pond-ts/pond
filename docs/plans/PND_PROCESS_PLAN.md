@@ -987,8 +987,16 @@ stale response winning a race. Local string datasets and synchronous `Host.run`
 are unchanged.
 An end-to-end tutorial covering the registry, fluent graph, remote binding,
 column/fact selection, cache diagnostics, and refinement now lives at
-`website/docs/process/tutorial.mdx`; it is deliberately unlisted and absent
-from the sidebar until the package is published.
+`website/docs/process/tutorial.mdx`. The tutorial has since grown into a
+full six-page section (`index`, `plans`, `registry`, `requests`, `host`,
+`performance`) documenting the plan-layer consumer surface — the data
+model and identity, the registry and its JSON Schema projection, request
+forms and error policies, host/source lifecycle including the audit's
+`budgetBytes` / `maxSources` dials, and the caching/ranged-recompute
+story with its honest numbers. All pages are deliberately `unlisted` and
+absent from the sidebar until the package is published; listing them (and
+adding the sidebar category) is part of the publication checklist, not a
+docs task.
 
 The revision is intentionally supplied by the adapter — ETag, cursor, object
 version, or another stable token — because the host cannot cheaply or honestly

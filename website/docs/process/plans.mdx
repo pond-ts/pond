@@ -1,0 +1,138 @@
+---
+title: Plans and identity
+description: The data model — specs, inputs, picked outputs, content-addressed ids, lineage, and units.
+unlisted: true
+pagination_prev: null
+pagination_next: null
+---
+
+# Plans and identity
+
+A plan is **data**: an array of specs, each naming an operation, its
+parameters, and where its inputs come from. Nothing in a plan is
+executable — no callbacks, no URLs, no closures — which is what lets one
+arrive as JSON from a saved view, a UI, or a model.
+
+```json
+[
+  {
+    "op": "sma",
+    "params": { "period": 20 },
+    "inputs": ["close"]
+  }
+]
+```
+
+## Specs and inputs
+
+```ts
+interface Spec {
+  readonly op: string;
+  readonly params?: Readonly<Record<string, string | number | boolean>>;
+  readonly inputs: readonly Input[];
+}
+```
+
+An input is one of three things:
+
+| Form                     | Meaning                                      |
+| ------------------------ | -------------------------------------------- |
+| `'close'`                | A raw column of the bound series             |
+| `{ op, params, inputs }` | Another spec, nested inline                  |
+| `{ from: spec, output }` | One named output of a nested multi-output op |
+
+Nesting is how composition works — _EMA of SMA of close_ is a spec whose
+input is a spec. The third form, a **picked output**, exists because a
+nested input otherwise reads the upstream op's first output: with a
+Bollinger-shaped op declaring `Upper` / `Middle` / `Lower`, feeding the
+lower band onward requires saying so.
+
+```ts
+const lowerTrend = {
+  op: 'sma',
+  params: { period: 10 },
+  inputs: [{ from: bollinger, output: 'Lower' }],
+};
+```
+
+A fold (a fact-producing terminal — see [the registry](./registry#folds))
+can never be an input. That is rejected at compile time with an error
+naming both sides, because a caller composing from the schema has no other
+way to learn it.
+
+## Identity is content-addressed
+
+Every spec resolves to a canonical, versioned id — simultaneously the
+**cache key**, the **output column name**, and the **provenance citation**:
+
+```text
+p1:sma(close;period=20)
+p1:sma(p1:bollinger(close;period=20,stdDev=2)#Lower;period=10)
+```
+
+Two properties are load-bearing requirements, pinned by tests, because a
+persisted saved view and a freshly composed request must land on the same
+cache entry:
+
+- **Param key order does not matter.** Params are sorted and materialized
+  post-defaults, so two callers' JSON spellings collide deliberately.
+- **An omitted param collides with its explicit default.** `{op: 'sma'}`
+  and `{op: 'sma', params: {period: 20}}` are one node when 20 is the
+  default.
+
+The flip side: params are _in_ the id, so `sma(period=20)` and
+`sma(period=50)` are two nodes with two distinct output columns. A plan
+may legitimately hold both at once. Identity answers "which computation?";
+how long a superseded node stays cached is a separate
+[budget question](./performance#byte-budgets).
+
+A multi-output op's columns share the spec id as a prefix — the declared
+output suffix is appended (`…Upper`, `…Lower`), matching the corpus
+convention of moving a family of columns as a unit.
+
+## Lineage
+
+`explain` folds a human-readable description from the plan and the
+registry — derived, never hand-built, because hand-built lineage is
+exactly what loses the inner step of `ema(sma(x))`:
+
+```ts
+import { explain } from '@pond-ts/process';
+
+explain(registry, spec);
+// 'SMA(20) of close'  — from the op's own label function
+// 'scale(by=2) of SMA(3) of px'  — derived when no label is declared
+```
+
+Every response carries an `explain` map covering the whole resolved
+closure — including nested specs that never appear at the plan's top
+level — so anything drawing the pipeline always has a string per node.
+
+## Units
+
+Pond series do not carry units; consumers do. Units enter as an input to
+resolution — a record naming the raw columns' units at `bind` / host
+construction:
+
+```ts
+const host = createHost({
+  registry,
+  units: { close: 'USD', volume: 'shares' },
+});
+```
+
+From there, units **propagate**: an op's output either declares a unit
+outright (`'%'`) or inherits from its first input, recursively down to a
+raw column. A picked output propagates the unit of the output it picked,
+not output 0.
+
+Two things consume the propagation:
+
+- **Responses report concrete units** on every surfaced column and fact —
+  `null` when the chain bottoms out at a column the caller gave no unit
+  for. Reported, not guessed.
+- **Typed inputs are enforced.** An op may demand a unit
+  (`inputs: [{ role: 'source', unit: 'variance' }]`), and a plan wiring a
+  price into it is rejected at compile time with an error naming both
+  sides. A docstring is not a control surface for an agent; the unit
+  demand is.
