@@ -514,6 +514,9 @@ export function BarChart<
             : {
                 hitTest: (px, py, xScale, yScale): SelectInfo | null => {
                   const baseline = resolveBarBaseline(yScale);
+                  // No `gapPx` — the hit region is the bar's whole slot (its
+                  // interval width, full plot height), not the inset rect the
+                  // gap draws. See barSlotRect.
                   const hit = barAt(
                     bs,
                     px,
@@ -521,7 +524,6 @@ export function BarChart<
                     xScale,
                     yScale,
                     baseline,
-                    gapPx,
                     singleStyle.minWidth,
                   );
                   if (hit === null) return null;
