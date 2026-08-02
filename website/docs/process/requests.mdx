@@ -36,13 +36,19 @@ host.run({
     average: { op: 'sma', params: { period: 20 }, in: ['close'] },
     bands: { op: 'bands', params: { width: 2 }, in: ['average'] },
     width: { op: 'subtract', in: ['bands#Upper', 'bands#Lower'] },
+    latestWidth: { op: 'last', in: ['width'] },
   },
   outputs: {
     band: { on: 'bands' },
-    latest: { on: 'width:last' }, // if declared as a node — see below
+    latest: { on: 'latestWidth' },
   },
 });
 ```
+
+A fold is a node like any other here — the fluent builder derives names
+like `width:last` for the fold nodes it adds, but that is a builder
+convention, not request syntax; in a hand-written slot request the fold
+takes an ordinary slot.
 
 A slot is **topology identity**: it survives a param edit, while the
 content-addressed id changes with the computation. `slot#Output` picks one
