@@ -561,6 +561,84 @@ describe('drawBars — highlight fill alpha (single series)', () => {
   });
 });
 
+/**
+ * #577 — an optional `hover` colour on `BarStyle`, so a bar can carry the same
+ * three-step emphasis a consumer's list does (rest → hover → selected) instead
+ * of one `highlight` for both live states. Omitted, everything renders exactly
+ * as before.
+ */
+describe('drawBars — distinct hover colour (BarStyle.hover)', () => {
+  const threeStep: BarStyle = { ...style, hover: '#0ff' };
+
+  const draw = (
+    s: BarStyle,
+    selection: { id: string; key: number } | null,
+    hovered: { id: string; key: number } | null = null,
+  ) => {
+    const { ctx, calls } = recordingContext();
+    drawBars(
+      ctx,
+      bars([0, 1, 2], [1, 2, 3], [10, 20, 30]),
+      identity,
+      identity,
+      s,
+      0,
+      0,
+      'count',
+      selection,
+      hovered,
+      false,
+    );
+    return calls
+      .filter((c) => c.type === 'set' && c.name === 'fillStyle')
+      .map((c) => c.args[0]);
+  };
+
+  it('fills a hovered bar with `hover` when the theme sets one', () => {
+    expect(draw(threeStep, null, { key: 1, id: 'count' })).toEqual([
+      style.fill,
+      '#0ff',
+      style.fill,
+    ]);
+  });
+
+  it('still fills a selected bar with `highlight`, not `hover`', () => {
+    expect(draw(threeStep, { key: 1, id: 'count' })).toEqual([
+      style.fill,
+      style.highlight,
+      style.fill,
+    ]);
+  });
+
+  it('selection outranks hover on a bar that is both', () => {
+    const both = { key: 1, id: 'count' };
+    expect(draw(threeStep, both, both)).toEqual([
+      style.fill,
+      style.highlight,
+      style.fill,
+    ]);
+  });
+
+  it('renders three distinct colours across rest / hover / selected', () => {
+    // The point of the feature: one draw showing all three steps at once.
+    const fills = draw(
+      threeStep,
+      { key: 0, id: 'count' },
+      { key: 2, id: 'count' },
+    );
+    expect(fills).toEqual([style.highlight, style.fill, '#0ff']);
+    expect(new Set(fills).size).toBe(3);
+  });
+
+  it('falls back to `highlight` for hover when no `hover` is set (unchanged)', () => {
+    expect(draw(style, null, { key: 1, id: 'count' })).toEqual([
+      style.fill,
+      style.highlight,
+      style.fill,
+    ]);
+  });
+});
+
 describe('barIndexAtTime', () => {
   // Three contiguous bars: [0,10], [10,20], [20,30].
   const cs = bars([0, 10, 20], [10, 20, 30], [5, 6, 7]);

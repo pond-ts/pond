@@ -305,3 +305,55 @@ export const MarkSelection: Story = {
     );
   },
 };
+
+/**
+ * **Three-step emphasis (`BarStyle.hover`).** A theme may set an optional
+ * `hover` colour so a bar reads *rest → hover → selected* as three distinct
+ * states, instead of one `highlight` shared by both live states (which then
+ * differ only by the selected bar's outline). This is the bar analogue of
+ * `ScatterStyle`'s `outline` vs `selectedOutline`, and it exists so a chart can
+ * match the interaction vocabulary of the list beside it (estela's splits list
+ * is teal at rest → preview on hover → foam on select).
+ *
+ * Hover a bar to see the middle step; click one for the third. Bar 12:00 is
+ * pinned selected so all three are visible at once. `hover` is optional and
+ * falls back to `highlight`, so the other stories on this page — which don't
+ * set it — render exactly as before.
+ */
+export const HoverVsSelectColours: Story = {
+  render: () => {
+    const v = hourlyVolume();
+    const key = BASE + 12 * HOUR;
+    const value = v.nearest(key)!.get('count') as number;
+    // Same theme, plus the middle step.
+    const threeStep = {
+      ...docsTheme,
+      bar: {
+        ...docsTheme.bar,
+        default: { ...docsTheme.bar.default, hover: '#8354cc' },
+      },
+    };
+    const pinned: SelectInfo = {
+      id: 'count',
+      key,
+      value,
+      color: docsTheme.bar.default.highlight,
+      label: 'count',
+    };
+    return (
+      <ChartContainer
+        range={TIME_RANGE}
+        width={640}
+        theme={threeStep}
+        selected={pinned}
+      >
+        <ChartRow height={240}>
+          <YAxis id="count" label="req" min={0} />
+          <Layers>
+            <BarChart series={v} column="count" id="count" gap={3} />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    );
+  },
+};

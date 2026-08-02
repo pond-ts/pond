@@ -324,6 +324,24 @@ export interface BarStyle {
   readonly gap: number;
   readonly minWidth: number;
   readonly outlineWidth: number;
+  /**
+   * Optional distinct **hover** fill, so a bar can read a three-step emphasis —
+   * `fill` at rest → `hover` under the pointer → `highlight` (+ outline) when
+   * selected. **Omitted ⇒ `highlight`**, which is the shipped behaviour: hover
+   * and select share one colour and differ only by the selected bar's outline.
+   *
+   * The scatter analogue is `outline` vs {@link ScatterStyle.selectedOutline} —
+   * bars were the less expressive layer for the same two-state interaction
+   * ([#577](https://github.com/pond-ts/pond/issues/577)). This is the *hover*
+   * half rather than a rename of `highlight`, so no existing theme changes
+   * meaning; a theme that wants the distinction opts in by adding one colour.
+   *
+   * **Single-series only.** A stacked / per-bin-coloured bar has no separate
+   * highlight colour to replace — it pops its *own* fill to full opacity for
+   * both states (so a red/green volume bar keeps its meaning while live), and
+   * that convention is unchanged here.
+   */
+  readonly hover?: string;
 }
 
 /**

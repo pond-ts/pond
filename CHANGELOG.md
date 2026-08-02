@@ -55,6 +55,24 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts:** **`BarStyle.hover` — a distinct hover colour for bars**
+  ([#577](https://github.com/pond-ts/pond/issues/577)). A theme may now give
+  bars a three-step emphasis — `fill` at rest → `hover` under the pointer →
+  `highlight` (plus the outline) when selected. Previously one `highlight`
+  served both live states, so hover and select differed only by the presence of
+  an outline; `ScatterStyle` has carried distinct rest / selected treatments
+  (`outline` vs `selectedOutline`) all along, making bars the less expressive
+  layer for the same two-state interaction.
+
+  **Optional, with a `highlight` fallback**, so no existing theme changes
+  meaning or rendering — a theme that wants the distinction adds one colour.
+  Selection outranks hover on a bar that is both. Single-series only: a stacked
+  or per-bin-coloured bar has no separate highlight colour to replace (it pops
+  its _own_ fill, so a red/green volume bar keeps its meaning while live), and
+  that convention is unchanged.
+
 ### Fixed
 
 - **process:** **audit hardening — five wrong-answer / silent-acceptance paths

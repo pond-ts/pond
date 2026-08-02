@@ -156,9 +156,12 @@ function barMatches(
  * no-id layer passes `undefined` and never matches — plus the bar's identity,
  * see {@link barMatches}) draws in the style's `highlight` colour **and
  * outlined**, so a click reads back on the canvas; a bar matching `hovered`
- * draws in `highlight` **without** the outline (a lighter "this bar is live" on
- * pointer-over); all others use the flat `fill`. `globalAlpha` carries the fill
- * opacity and is restored so it doesn't leak into later layers.
+ * draws **without** the outline (a lighter "this bar is live" on pointer-over)
+ * in the style's optional `hover` colour, or in `highlight` when the theme
+ * doesn't set one; all others use the flat `fill`. Either live state fills at
+ * **full opacity** — the resting `opacity` applies to resting bars only, and is
+ * restored so it doesn't leak into later layers. A bar that is both selected
+ * and hovered reads as **selected**.
  *
  * **Which identity.** A selection carrying a `mark` matches against the series'
  * stable per-bar name ({@link BarSeries.marks} — the sample's own axis key,
@@ -309,7 +312,15 @@ export function drawBars(
     // (which has no outline) barely changed at all, and a selected one read
     // only by its outline (#576).
     ctx.globalAlpha = selected || isHovered ? 1 : style.opacity;
-    ctx.fillStyle = selected || isHovered ? style.highlight : style.fill;
+    // Three-step emphasis when the theme opts in with `hover`: rest → hover →
+    // selected. Selection outranks hover on a bar that is both (as the outline
+    // already did). With no `hover` colour this is the shipped two-step —
+    // `highlight` for either state (see BarStyle.hover).
+    ctx.fillStyle = selected
+      ? style.highlight
+      : isHovered
+        ? (style.hover ?? style.highlight)
+        : style.fill;
     ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
     drawn += 1;
     if (selected) {

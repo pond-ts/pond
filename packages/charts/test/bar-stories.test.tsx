@@ -28,6 +28,7 @@ describe('BarChart stories render', () => {
       'ControlledSelection',
       'Diverging',
       'HoverSelect',
+      'HoverVsSelectColours',
       'MarkSelection',
     ]);
   });
