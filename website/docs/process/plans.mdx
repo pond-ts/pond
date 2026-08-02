@@ -13,6 +13,12 @@ parameters, and where its inputs come from. Nothing in a plan is
 executable — no callbacks, no URLs, no closures — which is what lets one
 arrive as JSON from a saved view, a UI, or a model.
 
+Application code rarely writes this shape by hand — the
+[fluent builder](./authoring) emits it. It is still worth knowing
+precisely, because it is the wire format, the persistence format, the
+thing a remote composer writes directly, and the input to the identity
+rules that make caching work.
+
 ```json
 [
   {

@@ -14,20 +14,9 @@ the columns it labels — one call, one pass, one cache.
 
 ## Two request forms
 
-**The nested form** is the original: a plan of inline-nested specs, plus
-selectors.
-
-```ts
-host.run({
-  from: 'ACME_5m',
-  process: [{ op: 'sma', params: { period: 20 }, inputs: ['close'] }],
-  select: [{ on: { op: 'sma', params: { period: 20 }, inputs: ['close'] } }],
-});
-```
-
-**The slot form** names every node with a caller-owned **slot**, and wires
-by name — what the [fluent builder](./tutorial#4-author-a-branched-graph)
-emits, and the form to prefer when a UI needs stable handles:
+**The slot form** names every node with a caller-owned **slot**, and
+wires by name. It is what the [fluent builder](./authoring) emits, and
+the form to prefer when a UI needs stable handles:
 
 ```ts
 host.run({
@@ -49,6 +38,18 @@ A fold is a node like any other here — the fluent builder derives names
 like `width:last` for the fold nodes it adds, but that is a builder
 convention, not request syntax; in a hand-written slot request the fold
 takes an ordinary slot.
+
+**The nested form** inlines specs and selects them directly — no naming
+layer, which suits a one-shot composed request or a saved view that
+never edits itself:
+
+```ts
+host.run({
+  from: 'ACME_5m',
+  process: [{ op: 'sma', params: { period: 20 }, inputs: ['close'] }],
+  select: [{ on: { op: 'sma', params: { period: 20 }, inputs: ['close'] } }],
+});
+```
 
 A slot is **topology identity**: it survives a param edit, while the
 content-addressed id changes with the computation. `slot#Output` picks one
