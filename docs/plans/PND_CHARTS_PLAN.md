@@ -478,6 +478,46 @@ per-mark idiom the codebase already uses). **Still open in this wave:**
 `ValueSeries` widening, range-only mode polish, px `offset`, line-only shape,
 and the `cursorFlag` x-snap reconciliation.
 
+### [PND-LISTS] — BarList + BoxList ranked row lists — DONE
+
+Shipped in [#585](https://github.com/pond-ts/pond/pull/585): the
+react-timeseries-charts `HorizontalBarChart` shape as two standalone DOM
+sisters — `<BarList>` (proportional value bars) and `<BoxList>` (five-number
+distribution + current-value tick with printed label), one shared value
+scale, label + data cells, `sortBy`/custom sort (missing last both
+directions), per-row expander, consumer-owned selection, and a thin
+`axis.grid` baseline rule at the scale origin (BoxList default-on, BarList
+opt-in — box lines float at `lower`, so the origin is what relates rows).
+Readers `listRowsFromTimeSeries` / `listRowsFromValueSeries`;
+`theme.box.secondary` added to both built-in themes.
+
+**The load-bearing decision: a table, not a plot.** The owner initially
+steered toward extending the canvas path (`BoxPlot orientation='horizontal'`
+
+- cells-as-axes + expander-as-recipe), then opened it to guidance; the
+  recommendation that stuck is that the pattern's defining features — link
+  labels, aligned data cells, an expander inserting arbitrary-height content,
+  custom sort — are table semantics a band-scaled canvas plot can't carry
+  (canvas ticks can't be links; an expander would warp the band scale). The
+  lists render a real `<table>`; `<BarChart orientation="horizontal">` remains
+  the in-plot histogram, and the docs page states the split.
+
+**Considered and deliberately not built:** canvas
+`BoxPlot orientation='horizontal'` (no in-plot consumer; [PND-BOXPLT]'s
+backlog doesn't ask for it — revisit only if one appears); diverging
+(negative) bar lists (bars are length-encoded from the domain minimum,
+documented as non-negative; a diverging mode is its own axis story);
+controlled expansion state (uncontrolled + `defaultExpanded` +
+`onExpandToggle` until friction says otherwise); a theme token for the bar
+track (fill at fixed 0.15 opacity, works on both grounds). Known sharp edge:
+the box tick's inline label is an absolute overlay and can overpaint the
+after-cells near the domain's right edge.
+
+Review record: adversarial review + response on #585 (both comments). Its
+one process find worth remembering: a corrupted write left two raw NUL bytes
+in a key literal, making the .tsx binary to git — `file`/`git diff --numstat`
+is the fast check when a text diff mysteriously shows "Binary files differ".
+
 ### [PND-LEGEND] — `<Legend>` wave — DONE
 
 Shipped (#512, after the #511 label prerequisite): the sender's #508 design
