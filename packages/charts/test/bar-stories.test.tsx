@@ -42,7 +42,11 @@ describe('BarChart stories render', () => {
 
   /** The two controlled-selection stories must actually *show* a selection —
    *  a pin that silently matched nothing would still "mount without throwing". */
-  for (const name of ['ControlledSelection', 'MarkSelection'] as const) {
+  for (const name of [
+    'ControlledSelection',
+    'MarkSelection',
+    'HoverVsSelectColours',
+  ] as const) {
     it(`${name} paints a selection outline`, () => {
       const stub = stubCanvasContext();
       try {

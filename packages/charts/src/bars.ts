@@ -283,10 +283,10 @@ export function drawBars(
     // Match by the series `id` **and** the bar's identity — its stable `mark`
     // when the selection carries one, else the sample `key` (begin) — so two
     // series sharing a timestamp don't both light up (a no-id, non-selectable
-    // layer passes `seriesId === undefined` and never matches). Both the
-    // committed selection and the transient hover use the `highlight` fill; only
-    // the selection adds the outline, so hover reads as a lighter "this bar is
-    // live" and select as the committed pick.
+    // layer passes `seriesId === undefined` and never matches). The selection
+    // takes `highlight` + the outline; the hover takes `hover` when the theme
+    // sets one and `highlight` otherwise, always without the outline — so hover
+    // reads as a lighter "this bar is live" and select as the committed pick.
     const stable = marks?.[i];
     const selected = barMatches(selection, seriesId, stable, cs.begin[i]!);
     const isHovered = barMatches(hovered, seriesId, stable, cs.begin[i]!);

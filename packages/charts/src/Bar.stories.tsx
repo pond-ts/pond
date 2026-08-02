@@ -337,7 +337,7 @@ export const HoverVsSelectColours: Story = {
       id: 'count',
       key,
       value,
-      color: docsTheme.bar.default.highlight,
+      color: docsTheme.bar.default.fill,
       label: 'count',
     };
     return (
