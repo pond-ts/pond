@@ -36,42 +36,45 @@ import type {
 /**
  * A **numeric** value column of `S` — the constraint for every prop naming a
  * column the layer reads as a number (a line's `column`, a band's
- * `lower`/`upper`, a box's quantiles, an OHLC price). Falls back to `string`
- * for a schema that names no numeric columns (see the module doc).
- */
-export type NumericColumn<S extends SeriesSchema> = [
-  NumericColumnNameForSchema<S>,
-] extends [never]
-  ? string
-  : NumericColumnNameForSchema<S>;
-
-/**
- * **Any** value column of `S` — for props that read a column without
- * requiring it to be numeric (a scatter's `label` text column). Same
- * fallback rule as {@link NumericColumn}.
- */
-export type AnyColumn<S extends SeriesSchema> = [
-  ValueColumnsForSchema<S>[number]['name'],
-] extends [never]
-  ? string
-  : ValueColumnsForSchema<S>[number]['name'];
-
-/**
- * The `ValueSeries` sibling of {@link NumericColumn}. A `ValueSeries` schema
- * is a different type family, so it needs its own derivation; the fallback
- * rule is identical.
+ * `lower`/`upper`, a box's quantiles, an OHLC price).
  *
- * Layers accept **either** series kind on one `column` prop, so their props
- * take the *union* of both derivations — `NumericColumn<S> |
- * ValueNumericColumn<VS>`. With one side loose that union widens to `string`,
- * which is the intended behaviour: a chart typed loosely on either axis
- * cannot be checked, and must not be broken.
+ * The test is **"is the schema loose?"**, not "did it yield no numeric
+ * columns" — those are different questions with different right answers, and
+ * conflating them was a real bug. A schema that names columns but has no
+ * numeric one (all-string) should reject *every* name, because there is
+ * genuinely nothing numeric to plot; only an **unparameterized** schema, whose
+ * column names are unbounded, should fall back to `string`. `string extends
+ * AnyColumn<S>` distinguishes them: it is true only when the name union is
+ * open.
  */
-export type ValueNumericColumn<VS extends ValueSeriesSchema> = [
-  NumericColumnNameForValueSchema<VS>,
-] extends [never]
-  ? string
-  : NumericColumnNameForValueSchema<VS>;
+export type NumericColumn<S extends SeriesSchema> =
+  string extends AnyColumn<S> ? string : NumericColumnNameForSchema<S>;
+
+/**
+ * **Any** value column name of `S`, of any kind — the looseness probe for
+ * {@link NumericColumn}. On an unparameterized schema this is `string` (an
+ * open union), which is exactly what distinguishes "cannot check" from
+ * "checked, and nothing matches". Internal: no prop is typed with it, so it
+ * stays off the public surface until one is.
+ */
+type AnyColumn<S extends SeriesSchema> =
+  ValueColumnsForSchema<S>[number]['name'];
+
+/**
+ * The `ValueSeries` sibling of {@link NumericColumn} — a different schema type
+ * family, so it needs its own derivation; the loose-schema rule is identical.
+ *
+ * **Layers do not union the two.** A prop typed `NumericColumn<S> |
+ * ValueNumericColumn<VS>` is inert: only one of the two generics is ever
+ * inferred at a call site, so the other falls back to `string` and widens the
+ * union away. Each layer's props are instead a union **per series kind**, so
+ * the names check against the schema that was actually passed. Measured in
+ * `spikes/charts-type-seam/REPORT.md`.
+ */
+export type ValueNumericColumn<VS extends ValueSeriesSchema> =
+  string extends VS[number]['name']
+    ? string
+    : NumericColumnNameForValueSchema<VS>;
 
 /**
  * Names of `'number'`-kind value columns on a `ValueSeries` schema. Core

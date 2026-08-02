@@ -12,7 +12,12 @@ import { TimeSeries, ValueSeries } from 'pond-ts';
 import type { SeriesSchema } from 'pond-ts';
 import { BarChart } from '../src/BarChart.js';
 import { BarList } from '../src/BarList.js';
+import { AreaChart } from '../src/AreaChart.js';
+import { BandChart } from '../src/BandChart.js';
+import { BoxList } from '../src/BoxList.js';
 import { BoxPlot } from '../src/BoxPlot.js';
+import { Candlestick } from '../src/Candlestick.js';
+import { ScatterChart } from '../src/ScatterChart.js';
 import { LineChart } from '../src/LineChart.js';
 
 const cpu = new TimeSeries({
@@ -154,3 +159,80 @@ const smile = ValueSeries.fromColumns({
 export const okValueSeries = <LineChart series={smile} column="iv" />;
 // @ts-expect-error — 'vol' is not a column of the value schema.
 export const typoValueSeries = <LineChart series={smile} column="vol" />;
+
+// ── Every other layer takes the same constraint (review of #592) ──────────
+
+export const okArea = <AreaChart series={cpu} column="cpu" />;
+export const typoArea = (
+  // @ts-expect-error — AreaChart's column is schema-checked too.
+  <AreaChart series={cpu} column="nope" />
+);
+export const okBand = <BandChart series={quantiles} lower="p5" upper="p95" />;
+export const typoBand = (
+  // @ts-expect-error — BandChart's edges are schema-checked.
+  <BandChart series={quantiles} lower="p5" upper="p50" />
+);
+export const okScatter = <ScatterChart series={cpu} column="cpu" />;
+export const typoScatter = (
+  // @ts-expect-error — ScatterChart's column is schema-checked.
+  <ScatterChart series={cpu} column="nope" />
+);
+
+const ohlc = new TimeSeries({
+  name: 'ohlc',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'o', kind: 'number' },
+    { name: 'h', kind: 'number' },
+    { name: 'l', kind: 'number' },
+    { name: 'c', kind: 'number' },
+  ] as const,
+  rows: [[0, 1, 2, 0.5, 1.5]] as Array<
+    [number, number, number, number, number]
+  >,
+});
+export const okCandle = (
+  <Candlestick series={ohlc} open="o" high="h" low="l" close="c" />
+);
+export const typoCandle = (
+  // @ts-expect-error — an OHLC price column is schema-checked.
+  <Candlestick series={ohlc} open="o" high="h" low="l" close="close" />
+);
+
+export const okBoxList = (
+  <BoxList series={quantiles} columns={[{ lower: 'p5', upper: 'p95' }]} />
+);
+export const boxListNoDoor = (
+  // @ts-expect-error — neither door.
+  <BoxList columns={[{ lower: 'p5', upper: 'p95' }]} />
+);
+
+/**
+ * The **`Map` source arm** — `S` must still be inferred *through* the map, the
+ * same shape that silently defaulted before the per-kind split (flagged as
+ * untested in #592's review).
+ */
+declare const byHost: ReadonlyMap<string, typeof cpu>;
+export const okMapSource = <BarChart series={byHost} column="cpu" />;
+export const typoMapSource = (
+  // @ts-expect-error — checked against the map's value schema.
+  <BarChart series={byHost} column="cpuu" />
+);
+
+/**
+ * A schema that names columns but has **no numeric one**: there is nothing to
+ * plot, so every name is rejected — distinct from a *loose* schema, which
+ * accepts any name. Conflating the two was a bug caught in review.
+ */
+const allStrings = new TimeSeries({
+  name: 'tags',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'host', kind: 'string' },
+  ] as const,
+  rows: [[0, 'web1']] as Array<[number, string]>,
+});
+export const noNumericColumn = (
+  // @ts-expect-error — no numeric column exists on this schema.
+  <LineChart series={allStrings} column="host" />
+);

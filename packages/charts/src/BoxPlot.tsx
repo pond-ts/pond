@@ -31,14 +31,6 @@ export interface BoxPlotCommon<
   S extends SeriesSchema = SeriesSchema,
   VS extends ValueSeriesSchema = ValueSeriesSchema,
 > {
-  /** Name of the numeric column for the lower whisker end (e.g. `p5` / `min`).
-   *  **Required** — with `upper` it's the whisker reach. */
-  /** Name of the numeric column for the median line (e.g. `p50`). **Optional** —
-   *  omit for no centre line (independent of the box body). */
-  /** Name of the numeric column for the box top — third quartile (e.g. `p75`).
-   *  **Optional** — omit with `q1` for a range-only box (see `q1`). */
-  /** Name of the numeric column for the upper whisker end (e.g. `p95` / `max`).
-   *  **Required** — with `lower` it's the whisker reach. */
   /**
    * The box series' semantic identifier — what the spread _is_ (e.g. `latency`).
    * The theme maps it to a {@link BoxStyle} (`theme.box[as] ?? theme.box.default`
@@ -143,19 +135,54 @@ type BoxPlotSource<
   VS extends ValueSeriesSchema = ValueSeriesSchema,
 > =
   | {
+      /**
+       * The source series. **Live charts:** `series.byValue(…)` mints a
+       * *fresh* projection each call, so an inline `series={s.byValue('d')}`
+       * re-registers this layer every render — on a frequently re-rendering
+       * (e.g. scrub-driven) chart, memoize the projection (`useMemo`) so the
+       * layer isn't rebuilt each frame.
+       */
       series: TimeSeries<S>;
+      /** Lower whisker end (e.g. `p5` / `min`). **Required** — with `upper`
+       *  it is the whisker reach. */
       lower: NumericColumn<S>;
+      /**
+       * Box bottom — first quartile (e.g. `p25`). **Optional:** omit `q1`
+       * **and** `q3` together for a **range-only** box (a whisker-only
+       * `lower→upper` segment, no body — a bid→ask IV mark). Giving just one
+       * of the pair throws.
+       */
       q1?: NumericColumn<S>;
+      /** Median line (e.g. `p50`). **Optional** — omit for no centre line
+       *  (independent of the box body). */
       median?: NumericColumn<S>;
+      /** Box top — third quartile (e.g. `p75`). **Optional** — omit with `q1`
+       *  for a range-only box. */
       q3?: NumericColumn<S>;
+      /** Upper whisker end (e.g. `p95` / `max`). **Required** — with `lower`
+       *  it is the whisker reach. */
       upper: NumericColumn<S>;
     }
   | {
       series: ValueSeries<VS>;
+      /** Lower whisker end (e.g. `p5` / `min`). **Required** — with `upper`
+       *  it is the whisker reach. */
       lower: ValueNumericColumn<VS>;
+      /**
+       * Box bottom — first quartile (e.g. `p25`). **Optional:** omit `q1`
+       * **and** `q3` together for a **range-only** box (a whisker-only
+       * `lower→upper` segment, no body — a bid→ask IV mark). Giving just one
+       * of the pair throws.
+       */
       q1?: ValueNumericColumn<VS>;
+      /** Median line (e.g. `p50`). **Optional** — omit for no centre line
+       *  (independent of the box body). */
       median?: ValueNumericColumn<VS>;
+      /** Box top — third quartile (e.g. `p75`). **Optional** — omit with `q1`
+       *  for a range-only box. */
       q3?: ValueNumericColumn<VS>;
+      /** Upper whisker end (e.g. `p95` / `max`). **Required** — with `lower`
+       *  it is the whisker reach. */
       upper: ValueNumericColumn<VS>;
     };
 

@@ -112,6 +112,13 @@ type AreaChartSource<
   VS extends ValueSeriesSchema = ValueSeriesSchema,
 > =
   | {
+      /**
+       * The source series. **Live charts:** `series.byValue(…)` mints a
+       * *fresh* projection each call, so an inline `series={s.byValue('d')}`
+       * re-registers this layer every render — on a frequently re-rendering
+       * (e.g. scrub-driven) chart, memoize the projection (`useMemo`) so the
+       * layer isn't rebuilt each frame.
+       */
       series: TimeSeries<S>;
       column: NumericColumn<S>;
       readout?: NumericColumn<S>;

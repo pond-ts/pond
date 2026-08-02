@@ -101,7 +101,8 @@ label={…}>` / `<BoxList series>` take a `TimeSeries` / `ValueSeries`
   time** ([PND-CHARTAPI], the 2026-08 API review's #1 item). Every draw
   layer's column props are derived from the series' schema, so
   `<LineChart series={cpu} column="cpuu" />` — and a numeric prop pointed at
-  a string column — fail to **compile** instead of throwing at render; the
+  a string column, where the schema has some other numeric column — fail to
+  **compile** instead of throwing at render; the
   same holds for `readout`, the band edges, the box quantiles, and the OHLC
   prices. `<BarChart>`'s props became a **union of its legal source modes**,
   so mixing sources (`series` + `bins`) or column forms (`column` +
@@ -116,10 +117,12 @@ label={…}>` / `<BoxList series>` take a `TimeSeries` / `ValueSeries`
   point, and each case was already a runtime failure. Two compatibility
   behaviours are preserved on purpose: a **loosely-typed** series
   (`TimeSeries<SeriesSchema>`, e.g. from a helper that doesn't narrow) still
-  accepts any column name, because its schema names no columns — without that
-  fallback the constraint would resolve to `never` and reject everything; and
-  `bins` column names stay `string`, since they name aggregate fields of a
-  bin record rather than schema columns.
+  accepts any column name, because an unparameterized schema leaves the name
+  union open and nothing can be checked against it; and `bins` column names
+  stay `string`, since they name aggregate fields of a bin record rather than
+  schema columns. Note the deliberate distinction: a schema that _does_ name
+  its columns but has **no numeric one** rejects every name — there is nothing
+  numeric to plot — which is not the same as the loose case.
 
   **One new limitation.** Because a layer's props are a union _per series
   kind_, a value typed as _either_ kind (`TimeSeries<A> | ValueSeries<B>` — a
