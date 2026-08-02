@@ -114,6 +114,14 @@ include new features and type-level changes; patch bumps are strictly additive.
   theme: highlighted bars are brighter. A theme that raised its base `opacity`
   to compensate may now want it back down.
 
+  **It also flattens select against hover**, which is worth knowing before you
+  upgrade. The selected bar's outline strokes in `highlight` — previously that
+  read as a brighter ring over an alpha'd fill, and it was the main thing
+  separating a selected bar from a hovered one. Now the fill underneath is the
+  same colour at the same alpha, so only the half of the stroke falling
+  outside the rect distinguishes them. Hover is no longer nearly invisible,
+  but the two live states are closer together. A theme that needs them clearly
+  apart should set the new `BarStyle.hover`.
 
 ## [0.54.0] — 2026-08-02
 

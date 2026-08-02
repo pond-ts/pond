@@ -175,11 +175,12 @@ function barMatches(
  * (an `undefined` entry falls back to the flat `fill`). This is the
  * direction-coloured financial volume row (rising / falling) and the
  * value-band case on a time axis. Highlight follows {@link drawStacks}'s
- * binFills convention rather than the flat path's: the bar **keeps its own
- * colour** under hover / selection — the highlight pops `globalAlpha` to 1
- * (and outlines the selection in the bar's own fill) — so a red / green bar
- * stays red / green while live, instead of swapping to the single
- * `highlight` colour and losing its meaning.
+ * binFills convention: the bar **keeps its own colour** under hover /
+ * selection — the highlight pops `globalAlpha` to 1 (and outlines the
+ * selection in the bar's own fill) — so a red / green bar stays red / green
+ * while live, instead of swapping to the single `highlight` colour and losing
+ * its meaning. (Both paths now pop to 1; what still differs is the *colour* —
+ * the flat path swaps to `highlight`, this one keeps `binFills[i]`.)
  *
  * **M4 column decimation ([PND-MARKDEC]):** once the *visible* bars are denser
  * than ~2 per device pixel, they overplot into a solid silhouette, so
@@ -312,8 +313,12 @@ export function drawBars(
     ctx.fillRect(x0, yTop, x1 - x0, yBottom - yTop);
     drawn += 1;
     if (selected) {
-      // The selected bar gets an outline so it reads at full strength over the
-      // (alpha'd) fills. Already at alpha 1 from the fill above.
+      // The selected bar's outline. Already at alpha 1 from the fill above —
+      // which also means it no longer separates select from hover the way it
+      // used to: the stroke is `highlight` over a now-`highlight`, now-alpha-1
+      // fill, so only the half-stroke falling outside the rect reads. A theme
+      // that needs the two states clearly apart sets `BarStyle.hover` (#577);
+      // the outline is the shape cue, not the whole signal.
       ctx.lineWidth = style.outlineWidth;
       ctx.strokeStyle = style.highlight;
       ctx.strokeRect(x0, yTop, x1 - x0, yBottom - yTop);

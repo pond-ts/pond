@@ -485,6 +485,45 @@ describe('drawBars — highlight fill alpha (single series)', () => {
     expect(alphaAt(calls, fills[1]!.i)).toBe(1);
     expect(alphaAt(calls, fills[0]!.i)).toBe(style.opacity);
     expect(alphaAt(calls, fills[2]!.i)).toBe(style.opacity);
+    // …and the colour half of the claim, which the name makes and the
+    // assertions above did not (L2 review of #580).
+    const colourAt = (index: number) => {
+      let c: unknown;
+      for (let i = 0; i < index; i += 1) {
+        const call = calls[i]!;
+        if (call.type === 'set' && call.name === 'fillStyle') c = call.args[0];
+      }
+      return c;
+    };
+    expect(colourAt(fills[1]!.i)).toBe(style.highlight);
+    expect(colourAt(fills[0]!.i)).toBe(style.fill);
+  });
+
+  it('a gap bar next to a highlighted one cannot mis-alpha either (leak guard)', () => {
+    // Both `continue` paths — a gap bar (rect === null) and the binFills
+    // branch — skip the alpha set entirely, so the guarantee that every fill
+    // is preceded by its own set is what rules a leak out. Bar 1 is a gap,
+    // sitting between a hovered bar 0 and a resting bar 2.
+    const { ctx, calls } = recordingContext();
+    drawBars(
+      ctx,
+      bars([0, 1, 2], [1, 2, 3], [10, NaN, 30]),
+      identity,
+      identity,
+      style,
+      0,
+      0,
+      'count',
+      null,
+      { key: 0, id: 'count' },
+      false,
+    );
+    const fills = calls
+      .map((c, i) => ({ c, i }))
+      .filter(({ c }) => c.name === 'fillRect');
+    expect(fills).toHaveLength(2); // the gap draws nothing
+    expect(alphaAt(calls, fills[0]!.i)).toBe(1); // hovered
+    expect(alphaAt(calls, fills[1]!.i)).toBe(style.opacity); // past the gap
   });
 
   it('pops the selected bar too, and still strokes its outline at alpha 1', () => {
