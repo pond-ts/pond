@@ -151,3 +151,52 @@ describe('<BarChart categories orientation="horizontal">', () => {
     expect(dom.textContent).not.toContain('Visited');
   });
 });
+
+describe('[PND-HCAT] gridlines follow the labels', () => {
+  it('a horizontal categorical y axis draws no horizontal gridlines', () => {
+    // The `<YAxis>` labels slot CENTRES (i + 0.5) while d3's auto ticks fall
+    // on slot boundaries, so drawing them would mismatch the labels and
+    // stripe every bar. Suppressed, exactly as the categorical x axis is.
+    const { row } = mount(
+      <BarChart categories={stages} orientation="horizontal" axis="cat" />,
+    );
+    // No explicit ticks were given, and the layer is categorical…
+    expect(row.tickValues.get('cat')).toBeUndefined();
+    expect(
+      row.layers.some((e) => (e.layer.binCategories?.() ?? null) !== null),
+    ).toBe(true);
+  });
+
+  it('an explicit <YAxis ticks> still drives gridlines (labels align)', () => {
+    const stub = stubCanvasContext();
+    let rf: RowFrame | null = null;
+    function Capture() {
+      const r = useContext(RowContext);
+      useEffect(() => {
+        if (r) rf = r;
+      });
+      return null;
+    }
+    try {
+      render(
+        <ChartContainer width={400}>
+          <ChartRow height={160}>
+            <YAxis id="cat" ticks={[{ at: 1, label: 'one' }]} />
+            <Layers>
+              <BarChart
+                categories={stages}
+                orientation="horizontal"
+                axis="cat"
+              />
+              <Capture />
+            </Layers>
+          </ChartRow>
+          <XAxis />
+        </ChartContainer>,
+      );
+    } finally {
+      stub.restore();
+    }
+    expect(rf!.tickValues.get('cat')).toEqual([1]);
+  });
+});
