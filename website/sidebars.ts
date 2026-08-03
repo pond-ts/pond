@@ -192,6 +192,25 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: '@pond-ts/process',
+      link: { type: 'doc', id: 'process/process-index' },
+      items: [
+        'process/tutorial',
+        'process/authoring',
+        'process/requests',
+        'process/plans',
+        'process/registry',
+        'process/host',
+        'process/performance',
+        {
+          type: 'link',
+          label: 'API reference (process)',
+          href: 'pathname:///generated-api/process/',
+        },
+      ],
+    },
+    {
+      type: 'category',
       label: 'How-to guides',
       link: { type: 'doc', id: 'how-to-guides/how-to-guides-index' },
       items: [
