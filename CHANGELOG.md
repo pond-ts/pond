@@ -57,6 +57,21 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts:** **`<BarChart categories>` now works horizontally** ([PND-HCAT],
+  the 2026-08 API review's #3 item) — the funnel / ranking / comparison shape.
+  `orientation="horizontal"` puts the categories on the **y** axis as unit
+  slots with the value on x, and a `<YAxis>` with no explicit `ticks` **derives
+  one label per category by itself**, so the chart no longer needs a
+  hand-built `i + 0.5` tick list. It previously threw ("horizontal category
+  axes are not yet supported"), which forced consumers to convert their
+  categories into ordinal `bins` records _and_ hand-place the labels — the
+  workaround the gallery funnel documents.
+
+  Explicit `<YAxis ticks>` still wins, and vertical categorical charts are
+  untouched (categories stay on the container's ordinal x band scale). A new
+  internal `RowLayer.binCategories()` channel carries the names to whichever
+  axis they land on.
+
 - **charts:** **the list family's series door** — `<BarList series={splits}
 label={…}>` / `<BoxList series>` take a `TimeSeries` / `ValueSeries`
   directly (one row per event; exactly-one-of with `rows`), closing the

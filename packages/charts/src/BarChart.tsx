@@ -64,9 +64,12 @@ import { useSlotKey } from './use-slot-key.js';
  *   (`Array<{ start, end, …aggregates }>`); the names are **aggregate
  *   fields** of the record, not schema columns, so they stay `string`. Pair
  *   with `ordinal` for a band axis.
- * - **`categories`** — an ordered `{ label, value }[]`, one bar per category
- *   on the ordinal category x-axis. Takes **no** `column`/`columns`, and is
- *   vertical-only today ([PND-HCAT] tracks lifting that).
+ * - **`categories`** — an ordered `{ label, value }[]`, one bar per category.
+ *   Takes **no** `column`/`columns` (each datum carries its own value).
+ *   Vertical puts the categories on the ordinal **x** axis (the container's
+ *   band scale); `orientation="horizontal"` puts them on **y** as unit slots
+ *   and the value on x, and a `<YAxis>` with no explicit `ticks` labels one
+ *   per category automatically ([PND-HCAT]).
  *
  * **Live charts:** `series.byValue(…)` / `.toMap()` mint fresh objects each
  * call, so an inline `series={…}` re-registers this layer every render — on a
@@ -175,7 +178,10 @@ export interface BarChartCommon<
    * - `'vertical'` — bars grow **up** from a value baseline, bins on the **x**
    *   axis (time buckets, value bands). The column / time-histogram look.
    * - `'horizontal'` — bars grow **right**, bins on the **y** axis (a band axis
-   *   like heart-rate zones). Label the bands with `<YAxis ticks={[{ at, label }]}>`.
+   *   like heart-rate zones). Label the bands with `<YAxis ticks={[{ at, label }]}>`
+   *   — or, with `categories`, let the `<YAxis>` derive them ([PND-HCAT]): a
+   *   horizontal categorical chart hands the axis its names and they land one
+   *   per slot, so a funnel / ranking needs no hand-built tick list.
    *
    * A `'horizontal'` chart puts the **value** on the shared x axis, so its
    * container's x-kind is `'value'` — it cannot share a `<ChartContainer>` with
@@ -352,11 +358,6 @@ export function BarChart<
     if (column !== undefined || columns !== undefined) {
       throw new Error(
         '<BarChart categories> takes no `column`/`columns` (each datum carries its own value)',
-      );
-    }
-    if (orientation === 'horizontal') {
-      throw new Error(
-        '<BarChart categories> is vertical only (categories on x); horizontal category axes are not yet supported',
       );
     }
   }
@@ -692,8 +693,13 @@ export function BarChart<
         ...(binBuckets !== null ? { binIntervals: () => binBuckets } : {}),
         // A categorical chart hands the container its ordered category names — the
         // ordinal axis domain the shared band scale + label formatter build on.
+        // Categorical labels go to the axis the categories actually land on:
+        // x for a vertical chart (the container's band scale), y for a
+        // horizontal one, where they label the unit slots ([PND-HCAT]).
         ...(categoryLabels !== null
-          ? { xCategories: () => categoryLabels }
+          ? vertical
+            ? { xCategories: () => categoryLabels }
+            : { binCategories: () => categoryLabels }
           : {}),
         // No x-scrub flag for a stack / horizontal chart — hover + click read it
         // out instead (the flag is single-series-vertical only).

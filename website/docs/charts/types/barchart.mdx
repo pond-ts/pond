@@ -58,6 +58,11 @@ one-column `bins` histogram, or a one-entry `columns` — takes the
 single-series path and with it whole-slot hit-testing, the `theme.bar.hover`
 colour, the cursor readout, stable per-bar identity and per-bar decimation.
 
+Horizontal **categorical** charts (`categories` + `orientation="horizontal"`)
+are the funnel / ranking shape: the categories land on the **y** axis as unit
+slots, the value runs along x, and a `<YAxis>` with no `ticks` labels one slot
+per category automatically — no hand-built `i + 0.5` list ([PND-HCAT]).
+
 Genuinely multi-segment shapes keep the stacked path: a multi-group stack
 (`columns` / a `Map` series), `categories`, and any `horizontal` chart. There
 the segments share a bin's x-range and only y tells them apart, so the hit
