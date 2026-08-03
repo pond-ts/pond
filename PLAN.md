@@ -505,10 +505,10 @@ commitment). Task detail, and the measurements each task is sized against:
 
 Ordering note: `PROCIDENT` blocks any interactive consumer, `PROCCOL` is a
 force multiplier for both `PROCIDENT` and `PROCRANGE`, and `PROCRANGE` is
-blocked by `PROCKERN` in `@pond-ts/financial`. The engine itself landed in
-[#544](https://github.com/pond-ts/pond/pull/544) as a **WIP, unpublished**
-package (`private: true`) so this can be worked in the open; `PROCSUB` owns
-whether it stays one.
+blocked by `PROCKERN` in `@pond-ts/financial`. The engine landed in
+[#544](https://github.com/pond-ts/pond/pull/544); the package **published as
+experimental at v0.55.0** after the 2026-08 audit hardening, which resolved
+[PND-PROCSUB] (outcome in the breakout plan).
 
 - **[PND-PROCIDENT]** — Decide how node identity is assigned, which decides
   cache lifetime. Content-addressed params accumulate by design (right for the
@@ -735,11 +735,6 @@ whether it stays one.
   coalesces concurrent calls for one source identity. Remaining:
   cancellation/freshness policy, source schema projection for remote composers,
   and a measured revision contract.
-- **[PND-PROCSUB]** — Decide the substrate and packaging: the RFC concludes one
-  package with the engine internal, while [#544](https://github.com/pond-ts/pond/pull/544)
-  proposes publishing it. Evidence now favours keeping the graph (1.34–1.40× on
-  MCP flurries at 1M rows; 1/N invalidation at N sources) with the honest
-  caveat that the advantage is zero at a single source.
 - **[PND-LIVESRC]** — Core-side: `LiveAggregation` does not satisfy
   `LiveSource<S>`, because its `on('event')` overload widens the listener's
   event type. Narrow the overload, or give the incremental operators their own
