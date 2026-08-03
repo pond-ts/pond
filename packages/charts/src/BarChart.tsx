@@ -372,7 +372,15 @@ export function BarChart<
 
   // The single series' semantic label (its identity for the readout + selection):
   // the `as` role, else the value column. Used only on the single path.
-  const label = semantic ?? column ?? id ?? 'value';
+  //
+  // [PND-BARSEM] normalizes a ONE-ENTRY `columns` onto that path, and its mark
+  // is the same mark `column` would name — so the lone entry stands in here,
+  // or `columns={['a']}` and `column="a"` would report different `SelectInfo.label`
+  // for the identical bar (found in review of #593).
+  const soleColumn =
+    column ??
+    (columns !== undefined && columns.length === 1 ? columns[0] : undefined);
+  const label = semantic ?? soleColumn ?? id ?? 'value';
 
   // Build the chart-ready data view. Single-series *vertical* stays on the
   // original BarSeries path (its pixels are unchanged); everything else — any
@@ -504,8 +512,27 @@ export function BarChart<
 
   const { bar } = container.theme;
   // Single-series style: the `as` role → theme bar style (the single channel).
-  const singleStyle =
-    (semantic !== undefined ? bar[semantic] : undefined) ?? bar.default;
+  //
+  // A shape [PND-BARSEM] normalized onto this path (a one-column `bins`, a
+  // one-entry `columns`) used to resolve its fill through the *stacked*
+  // channel — `colors[group] ?? theme.bar[group] ?? default` — so resolving
+  // only `as` here would silently drop a caller's `colors` map and the
+  // `theme.bar[<column>]` role, changing the bars' colour with no error
+  // (found in review of #593). The column name is that shape's group name, so
+  // the same three-step lookup is applied, `as` still winning when given.
+  const singleStyle = useMemo(() => {
+    const byRole = semantic !== undefined ? bar[semantic] : undefined;
+    if (byRole !== undefined) return byRole;
+    if (soleColumn !== undefined) {
+      const override = colors?.[soleColumn];
+      const byColumn = bar[soleColumn];
+      if (override !== undefined) {
+        return { ...(byColumn ?? bar.default), fill: override };
+      }
+      if (byColumn !== undefined) return byColumn;
+    }
+    return bar.default;
+  }, [bar, semantic, soleColumn, colors]);
   const gapPx = gap ?? bar.default.gap;
   // The stacked path's bar-thickness floor comes from `bar.default` (not the `as`
   // role — `as` is single-series only), matching how `gapPx` sources its default.

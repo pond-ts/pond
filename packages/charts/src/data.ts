@@ -904,7 +904,13 @@ export function barsFromBins(
   const begin = new Float64Array(n);
   const end = new Float64Array(n);
   const y = new Float64Array(n);
-  const marks = new Array<string>(n);
+  // The bin's own **start value** is its identity — the same axis-key
+  // convention every other reader uses, and stable under `ordinal` (which only
+  // changes the drawn slot, not which bin a row is). A slot *index* would be
+  // positional and would renumber if the bin set changed. Materialized through
+  // the shared lazy getter, so a non-interactive layer never pays for the
+  // strings (see {@link BarSeries.marks}).
+  const keys = new Float64Array(n);
   for (let i = 0; i < n; i += 1) {
     const bin = bins[i]!;
     if (options.ordinal) {
@@ -914,11 +920,11 @@ export function barsFromBins(
       begin[i] = bin.start;
       end[i] = bin.end;
     }
+    keys[i] = bin.start;
     const v = (bin as unknown as Record<string, unknown>)[column];
     y[i] = typeof v === 'number' && Number.isFinite(v) ? v : NaN;
-    marks[i] = String(i);
   }
-  return { begin, end, y, length: n, marks };
+  return withKeyMarks({ begin, end, y, length: n }, keys);
 }
 
 /**

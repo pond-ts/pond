@@ -213,3 +213,69 @@ describe('[PND-BARSEM] genuinely multi-segment shapes stay stacked', () => {
     expect(sampleAt(0)).toHaveLength(0);
   });
 });
+
+describe('[PND-BARSEM] the reroute preserves the channels it inherited', () => {
+  // Both regressions below were found in review of #593: the normalized path
+  // must keep the styling and identity a one-group stack already had.
+
+  it('still honours `colors` — the stacked channel a one-column shape used', () => {
+    const fills = fillsWithHover(
+      <BarChart
+        bins={bins}
+        column="seconds"
+        axis="a"
+        id="h"
+        colors={{ seconds: '#0000ff' }}
+      />,
+      defaultTheme,
+      { id: 'none', key: -1, value: 0, color: '#000', label: 'x' },
+    );
+    expect(fills).toContain('#0000ff');
+  });
+
+  it('still honours a `theme.bar[<column>]` role', () => {
+    const roleTheme: ChartTheme = {
+      ...defaultTheme,
+      bar: {
+        ...defaultTheme.bar,
+        seconds: { ...defaultTheme.bar.default, fill: '#00aa00' },
+      },
+    };
+    const fills = fillsWithHover(
+      <BarChart bins={bins} column="seconds" axis="a" id="h" />,
+      roleTheme,
+      { id: 'none', key: -1, value: 0, color: '#000', label: 'x' },
+    );
+    expect(fills).toContain('#00aa00');
+  });
+
+  it('`columns={[c]}` and `column=c` report the same selection label', () => {
+    const one = mount(
+      <BarChart series={wide} columns={['a']} axis="a" id="w" />,
+      [0, 2],
+    );
+    const direct = mount(
+      <BarChart series={wide} column="a" axis="a" id="w" />,
+      [0, 2],
+    );
+    const hitOne = one.hitAt(0, 1);
+    const hitDirect = direct.hitAt(0, 1);
+    expect(hitOne).not.toBeNull();
+    expect(hitOne!.label).toBe(hitDirect!.label);
+  });
+
+  it('horizontal one-column bins keep the transposed stacked path', () => {
+    // The other half of the dispatch condition, previously untested: the
+    // transposed geometry needs the stacked draw, so orientation gates it.
+    const { sampleAt } = mount(
+      <BarChart
+        bins={bins}
+        column="seconds"
+        axis="a"
+        id="h"
+        orientation="horizontal"
+      />,
+    );
+    expect(sampleAt(15)).toHaveLength(0);
+  });
+});

@@ -115,6 +115,14 @@ label={…}>` / `<BoxList series>` take a `TimeSeries` / `ValueSeries`
   unchanged — their segments share a bin's x-range, so only y distinguishes
   them. New reader `barsFromBins` backs the normalized path.
 
+  **Not a pure widening, in one respect:** dense-bar envelope decimation is
+  now live on a one-column histogram (it was single-series-only). It engages
+  only once bars fall under ~1px, where it is visually lossless, but at that
+  density the per-bar `gap` and highlight give way to envelope rects — pass
+  `decimate={false}` to keep every bar drawn. The `colors` map, the
+  `theme.bar[<column>]` role and `SelectInfo.label` are all preserved across
+  the reroute (each was a silent regression caught in review).
+
   This shrinks `BarStyle.hover`'s scope warning from a list of five
   path-accidents to the two real exclusions (a multi-group stack has no
   hover channel on `StackStyle`; `binColors` keeps each bar's own colour by
