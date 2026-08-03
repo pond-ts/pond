@@ -70,7 +70,9 @@ export default function GallerySiteTrafficDashboard({
     [span],
   );
 
-  const { rows, bound } = useMemo(() => windowStats(range), [range]);
+  const { rows, peak } = useMemo(() => windowStats(range), [range]);
+  const per = ticksPerHalf(chartHeight);
+  const bound = niceBound(peak, per);
 
   const total = siteTotal();
   const picked = selected === null ? null : sapSeries(selected);
@@ -85,7 +87,7 @@ export default function GallerySiteTrafficDashboard({
     [picked],
   );
 
-  const ticks = useMemo(() => symmetricTicks(bound), [bound]);
+  const ticks = useMemo(() => symmetricTicks(bound, per), [bound, per]);
   const scale = Math.max(...rows.map((r) => Math.max(r.peakIn, r.peakOut)));
 
   return (
@@ -446,18 +448,26 @@ function windowStats(range: readonly [number, number]) {
     };
   });
 
-  return { rows, bound: niceBound(bound) };
+  return { rows, peak: bound };
+}
+
+/** How many gridlines each half of the mirror gets — the axis is symmetric, so
+ *  the row's height is split between two stacks of labels and a short chart
+ *  would otherwise pile them on top of each other. */
+function ticksPerHalf(chartHeight: number): number {
+  return Math.max(2, Math.min(6, Math.round(chartHeight / 42)));
 }
 
 /** Round the window's peak up to a whole number of gridline steps, so the
  *  mirrored axis is symmetric and its ticks land on round numbers. */
-function niceBound(peak: number): number {
-  return Math.max(step(peak), Math.ceil(peak / step(peak)) * step(peak));
+function niceBound(peak: number, per: number): number {
+  const s = step(peak, per);
+  return Math.max(s, Math.ceil(peak / s) * s);
 }
 
-/** ~6 gridlines per half, snapped to a 1/2/5 × 10ⁿ step. */
-function step(peak: number): number {
-  const raw = Math.max(peak, 1) / 6;
+/** `per` gridlines per half, snapped to a 1/2/5 × 10ⁿ step. */
+function step(peak: number, per: number): number {
+  const raw = Math.max(peak, 1) / per;
   const mag = 10 ** Math.floor(Math.log10(raw));
   const norm = raw / mag;
   return (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag;
@@ -465,8 +475,8 @@ function step(peak: number): number {
 
 /** Every step from −bound to +bound, labelled as the product labels them:
  *  magnitudes with a `G` suffix, and a bare `0.0` on the shared zero line. */
-function symmetricTicks(bound: number) {
-  const s = step(bound);
+function symmetricTicks(bound: number, per: number) {
+  const s = step(bound, per);
   const out: Array<{ at: number; label: string }> = [];
   for (let v = -bound; v <= bound + 1e-9; v += s) {
     const at = Math.round(v * 1e6) / 1e6;
