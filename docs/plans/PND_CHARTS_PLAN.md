@@ -917,3 +917,82 @@ consumers), `hasAnyDefined()`/`allMissing()`, the protobuf columnar wire
   collapse is the per-point draw constant ([PND-AFFINE]). Recorded here so it
   is never built _as_ a perf fix; adopt only if a consumer asks for the
   ergonomics on their own weight.
+
+## [PND-CHFRIC] — Chart example friction
+
+Found by **building** the Gallery's replica of a production network dashboard
+(`website/docs/charts/gallery/site-traffic-dashboard`), not by reading the API.
+Each item below cost a debugging cycle or forced a workaround that is currently
+shipping inside the example. Ranked roughly by how much they'd repay fixing.
+
+Two siblings found the same way were fixed during the wave, which is the case
+for the rest: **`AreaStyle.flatFill`** (stacked areas were undrawable — every
+band faded to transparent at the baseline and showed the one beneath) and the
+**`grid` / `sessionDividers` / `xKind` repaint dependencies** (toggling
+`<ChartContainer grid>` did nothing until an unrelated dep moved; you had to pan
+a pixel to force it).
+
+### Bugs
+
+1. **`BoxStyle.strokeWidth` is declared but never read.** `BoxLine` hard-codes
+   the current-value tick at `width: 3` and centres it with
+   `left: calc(… - 1.5px)`. The esnet original the component is explicitly
+   modelled on draws 4–5px. Not fixed in-wave on purpose: honouring the field
+   would change **every existing `BoxList`'s** appearance (the declared default
+   is `1.5`, i.e. _thinner_ than the hard-coded value), so it needs its own PR
+   with snapshot review.
+2. **`BoxList`'s value label has no gutter.** It is positioned inside the glyph
+   area at `tick% + 8px`, so a tick near the top of the scale pushes the number
+   off the panel — measured ~39px of overflow and a scrollbar. The example works
+   around it with `padding-right: 72px !important` (the cell's padding is an
+   inline shorthand, so `!important` is the only lever).
+
+### Gaps
+
+3. **No band-radius knob on `BoxList`.** The range band is a pill
+   (`barHeight / 2`); the product's is square. Second `!important` in the
+   example.
+4. **`<Legend>` is always an in-plot overlay**, even as a `ChartContainer`
+   child rather than a `Layers` child — "outside the row" only changes the
+   default corner. It sat on top of a data plateau in the multi-host CPU
+   example until it was moved. There is no way to place a legend _below_ a
+   chart.
+5. **`ChartContainer grid` is a single boolean for both axes.** The esnet
+   original draws horizontal gridlines only; the replica can't match it.
+6. **`BoxList` renders no header row** (`ListTable` is `<tbody>` only), so the
+   product's `INTERFACE / CATEGORY / IN / OUT` labels are simply absent.
+7. **`BoxList` has one ink for every column** — the value label takes
+   `listInk(theme)`, so a two-series list cannot tint its readouts per column.
+8. **`onTrackerChanged` carries only _drawn_ series' values.** A table that
+   reads out per-entity numbers for the hovered instant has to take the time
+   from the callback and index its own data — which works, and is documented on
+   the page, but means the callback can't answer the question by itself.
+
+### Discoverability
+
+9. **Theme roles fall back silently, per primitive.** `bar.muted` and
+   `area.context` were both written, shipped and doing _nothing_ — the role
+   simply didn't exist for that layer and the fallback is silent. Worse,
+   `BarChart`'s `as` is **single-series only**: `bins` always takes the stacked
+   path, which reads `bar.default` regardless. The only reliable check is
+   sampling the rendered canvas. A dev-mode warning on an unresolved role would
+   have saved three separate debugging cycles in this wave alone.
+10. **`BoxList`'s theme channels are unrelated to lists.** Its text ink is
+    settable only via `axis.band.label` (a stacked-date-band token) and its row
+    hover tint via `legend.border`. Both work; neither is findable.
+11. **`panZoom` uncontrolled ignores later `range` props.** Enabling it makes
+    `ChartContainer` own the view, so preset buttons that write `range` work
+    once and then silently die. The fix is to go controlled via
+    `onTimeRangeChange`, which is not obvious from either prop's docs.
+12. **`<YAxis label>` defaults to the axis `id`**, so an unlabelled axis prints
+    a rotated `"bps"`-style strip nobody asked for.
+
+### Not a library issue, but it cost the most time
+
+13. **A worktree's `website/node_modules` symlinks to the main checkout**, so a
+    docs preview resolves `@pond-ts/charts` to whatever branch _main_ happens to
+    be on. Stacked areas rendered unfilled against a stale build — a symptom
+    **indistinguishable from item 9**, which is why it burned a cycle. The
+    workaround is a temporary `configureWebpack` alias pointing at the
+    worktree's own `packages/charts`, reverted before committing. Worth either
+    documenting in the fixture/preview conventions or solving properly.

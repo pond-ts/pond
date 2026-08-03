@@ -902,6 +902,28 @@ in [docs/archive/experiments-2026.md](docs/archive/experiments-2026.md)):
 
 ---
 
+## Chart example friction
+
+Friction found by **building real chart examples** rather than by reading the
+API — the Gallery wave's replica of a production network dashboard
+(`charts/gallery/site-traffic-dashboard`) drove most of it. Each item cost a
+debugging cycle or forced a workaround that shipped in the example. Two bugs
+found the same way were fixed in-wave (`AreaStyle.flatFill` for stacked areas,
+and the `grid` / `sessionDividers` / `xKind` repaint dependencies), which is the
+argument for the rest.
+
+- **[PND-CHFRIC]** — Charts friction from the Gallery examples: `BoxStyle.strokeWidth`
+  is declared but never read (the list's tick is hard-coded 3px); `BoxList` has no
+  value-label gutter, no band-radius knob, no header row and one ink for every
+  column; the list's text and hover colours are reachable only through unrelated
+  theme tokens (`axis.band.label`, `legend.border`); `<Legend>` is always an
+  in-plot overlay; theme roles fall back **silently** per primitive; `panZoom`
+  uncontrolled ignores later `range` props; `<YAxis label>` defaults to the axis
+  id. Itemised, with the workaround each one forced, in
+  [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-chfric--chart-example-friction).
+
+---
+
 ## Cross-cutting work
 
 These happen throughout rather than being scheduled:
