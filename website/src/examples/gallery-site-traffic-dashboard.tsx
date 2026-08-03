@@ -153,12 +153,6 @@ export default function GallerySiteTrafficDashboard({
       </header>
 
       <div className={styles.controls}>
-        <div className={styles.controlGroup}>
-          <span className={styles.controlLabel}>Traffic</span>
-          <span className={styles.inert} aria-disabled="true">
-            All ▾
-          </span>
-        </div>
         <div className={styles.controlSet}>
           <div className={styles.controlGroup}>
             <span className={styles.controlLabel}>Show gridlines</span>

@@ -146,19 +146,19 @@ reproducing a specific product.
 The layout is reproduced completely; the behaviour is not, and the page would
 rather say so than let you find out by clicking.
 
-| Control                             | State                                                                   |
-| ----------------------------------- | ----------------------------------------------------------------------- |
-| Interface rows, `⊗ Clear Selection` | **Live** — they drive the overlay                                       |
-| `SHOW GRIDLINES  Off / On`          | **Live** — `<ChartContainer grid>`                                      |
-| `TIME  1h / 6h`                     | **Live** — re-windows the chart _and_ the table's numbers               |
-| Drag / wheel on the plot            | **Live** — `panZoom="panZoom"`, clamped to the capture                  |
-| `TRAFFIC [All ▾]`                   | **Inert** — layout fidelity only, dimmed rather than clickable-and-dead |
+| Control                             | State                                                     |
+| ----------------------------------- | --------------------------------------------------------- |
+| Interface rows, `⊗ Clear Selection` | **Live** — they drive the overlay                         |
+| `SHOW GRIDLINES  Off / On`          | **Live** — `<ChartContainer grid>`                        |
+| `TIME  1h / 6h`                     | **Live** — re-windows the chart _and_ the table's numbers |
+| Drag / wheel on the plot            | **Live** — `panZoom="panZoom"`, clamped to the capture    |
 
 The product's own strip carries `day`, `week`, `month` and `custom` next to
-`1h` and `6h`, and an `Interfaces / Flow` tab pair above them. A **six-hour**
-fixture can honour none of it, and a control that silently clamps to the data
-it has is a control that lies — so rather than render four dead buttons and a
-dead tab, this replica doesn't render them at all. Dead chrome in a docs
+`1h` and `6h`, a `TRAFFIC [All ▾]` filter, and an `Interfaces / Flow` tab pair
+above them. A **six-hour** fixture of seven interfaces can honour none of it,
+and a control that silently clamps to the data it has is a control that lies —
+so rather than render dead buttons, a dead dropdown and a dead tab, this
+replica doesn't render them at all. Dead chrome in a docs
 example is noise; the reader can't tell "not wired up here" from "doesn't
 work".
 

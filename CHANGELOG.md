@@ -55,6 +55,14 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **charts:** toggling **`<ChartContainer grid>`** now repaints immediately.
+  `Layers`' draw callback read `container.grid` but didn't depend on it, so
+  switching gridlines off changed nothing until an unrelated dependency moved —
+  in practice you had to pan or zoom a little to force the update. The same
+  omission covered `sessionDividers` and `xKind`.
+
 ### Changed
 
 - **charts:** **a bar's hover / click target is now its whole slot**, not the

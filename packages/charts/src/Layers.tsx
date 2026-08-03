@@ -319,6 +319,18 @@ export function Layers({ children }: LayersProps) {
       // a full replot per mousemove.
       container.timeRange,
       container.reportDrawStats,
+      // Read inside `draw`, so they have to invalidate it. Omitting `grid` meant
+      // toggling `<ChartContainer grid>` changed nothing until some *other*
+      // dep moved — pan the plot a pixel and the gridlines you switched off
+      // finally vanished. All primitives, so no per-frame identity churn.
+      container.grid,
+      container.sessionDividers,
+      container.xKind,
+      // `container.theme` is read too. It is deliberately NOT listed: it is the
+      // caller's prop and an inline object literal would rebuild `draw` every
+      // render (a full replot per frame). The values `draw` actually takes from
+      // it — `background`, `gridColor`, `gridDash` — are extracted above and
+      // listed individually, so a theme swap still invalidates.
       row.rowKey,
     ],
   );

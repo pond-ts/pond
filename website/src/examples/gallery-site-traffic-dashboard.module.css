@@ -53,7 +53,7 @@
 .controls {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 1rem;
   flex-wrap: wrap;
   padding: 8px 16px;
@@ -79,18 +79,6 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--rep-mute);
-}
-
-/* An inert control kept for layout fidelity — dimmed and non-interactive so it
-   never claims to do something it doesn't. */
-.inert {
-  font-size: 11px;
-  color: #aab5bf;
-  background: #f7f9fa;
-  border: 1px solid var(--rep-line);
-  border-radius: 2px;
-  padding: 2px 8px;
-  cursor: not-allowed;
 }
 
 .seg {
