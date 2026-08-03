@@ -135,9 +135,12 @@ The disabled time ranges are the point of that table. The fixture is a
 control that silently clamps to the data it has is a control that lies. They
 render greyed out, with a tooltip saying why.
 
-`1h` is not a smaller copy of `6h`, either — it lands in the busy afternoon,
-so the axis re-nices to the window's own peak and the table's per-interface
-means and current values recompute against it.
+`1h` is not a crop of `6h`, either. It lands in the busy afternoon, and
+everything derived re-derives against that window: the axis bound and its
+gridline step come from the window's own peak (which happens to round to the
+same 300G here — the afternoon is where the peaks are), and every number in
+the table — each interface's mean, its current value, and the shared bar
+scale — is recomputed over the visible samples.
 
 ## The table
 
