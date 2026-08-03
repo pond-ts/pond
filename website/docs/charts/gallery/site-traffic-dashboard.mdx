@@ -1,0 +1,179 @@
+---
+title: Site traffic dashboard
+sidebar_label: Site traffic dashboard
+---
+
+# Site traffic dashboard
+
+Every other page in this Gallery shows a chart. This one shows a **product** —
+a working replica of the operations dashboard the CERN border-router capture
+actually comes out of, rebuilt on pond: the header, the control strip, the
+mirrored total-traffic chart, and the interface table that drives it.
+
+It is here to answer the question a chart library gets asked last and judged
+on first: _can it disappear into somebody else's design?_
+
+import ChartExample from '@site/src/components/ChartExample';
+import GallerySiteTrafficDashboard from '@site/src/examples/gallery-site-traffic-dashboard';
+
+## The dashboard
+
+<ChartExample name="gallery-site-traffic-dashboard" height={640} collapsed>
+  <GallerySiteTrafficDashboard width={620} />
+</ChartExample>
+
+Click an interface. Click it again — or `⊗ Clear Selection` — to go back.
+
+## The interaction: a share, not a swap
+
+This is the part worth copying, and it is one design decision.
+
+The obvious way to link a table to a chart is to **swap** the series: no
+selection ⇒ draw the total, a row picked ⇒ draw that row. That's what the
+[network traffic](./network-traffic.mdx) page's linked table does, and for
+"show me this interface" it is exactly right.
+
+It is the wrong answer to the question this dashboard asks. An operator
+picking `111-lag-3-522` doesn't want to know what that interface did in
+isolation; they want to know **how much of the site's traffic it was**. Swap
+the series and the y axis rescales under them, the shape they were just
+looking at vanishes, and the comparison they came for is gone.
+
+So nothing swaps. The pale wash is **always** the site total. The picked
+interface is drawn **over** it, from the same zero line, in the saturated
+shade — two more `<AreaChart>`s appended to the same `<Layers>`:
+
+```tsx
+<Layers>
+  {/* always the whole site — the wash the overlay sits in */}
+  <AreaChart series={total} column="in" as="totalIn" baseline={0} />
+  <AreaChart series={totalDown} column="out" as="totalOut" baseline={0} />
+
+  {/* …and, when a row is picked, its contribution within it */}
+  {picked && (
+    <>
+      <AreaChart series={picked} column="in" as="pickIn" baseline={0} />
+      <AreaChart series={pickedDown} column="out" as="pickOut" baseline={0} />
+    </>
+  )}
+</Layers>
+```
+
+Three things make that read as _contribution_ rather than as two charts on
+top of each other:
+
+- **The same baseline.** Both pairs fill from `baseline={0}`, so the dark
+  region starts where the wash starts and its height is directly comparable.
+- **The same axis.** The domain is pinned symmetric around zero and does not
+  move when the selection changes, so the wash is a fixed reference.
+- **Flat fills.** The `totalIn` / `pickIn` roles set `flatFill`, so neither
+  area grades to transparent at the baseline. A graded wash would fade out
+  exactly where the overlay needs to sit inside it.
+
+The selection itself is one `useState` and a click handler. Nothing in
+`@pond-ts/charts` mediates it — a chart is a view of whatever series you hand
+it, so "the table drives the chart" is React state, as it should be.
+
+## The palette is the product's, not pond's
+
+The colours here are **not** the pond theme, deliberately. A replica that
+renders in someone else's brand is the honest test of the theming layer.
+
+They arrive the way every colour in this library is supposed to: as a
+`ChartTheme`. Not one hex literal reaches the JSX.
+
+```tsx
+const replicaTheme: ChartTheme = {
+  ...defaultTheme,
+  background: '#ffffff',
+  area: {
+    ...defaultTheme.area,
+    totalIn: flat('#c3dbf0'), // the wash
+    totalOut: flat('#fbdcbe'),
+    pickIn: flat('#4a8fcf'), // the overlay
+    pickOut: flat('#e8883c'),
+  },
+  axis: {
+    ...defaultTheme.axis,
+    label: '#8a99a8',
+    grid: '#e8ecf0',
+    gridDash: [],
+  },
+  cursor: '#98a6b4',
+  chip: { background: '#ffffff' },
+};
+```
+
+`as="totalIn"` and `as="pickIn"` are just role names — the theme is free to
+invent them, and the layer resolves `area[as] ?? area.default`. Swapping
+`theme={replicaTheme}` for the site's `useSiteChartTheme()` turns this back
+into a pond chart with no other edit, which is the property that makes the
+one-channel rule worth keeping.
+
+Two consequences worth naming. The panel around the chart is styled with the
+same fixed palette rather than the site's `--pond-*` tokens, so **it stays
+light when the docs site goes dark** — a replica of a light product is a light
+surface. And this is the only page in the Gallery that does any of this:
+everything else uses the pond theme, which is what you want unless you are
+reproducing a specific product.
+
+## What's live and what's chrome
+
+The layout is reproduced completely; the behaviour is not, and the page would
+rather say so than let you find out by clicking.
+
+| Control                                     | State                                                                   |
+| ------------------------------------------- | ----------------------------------------------------------------------- |
+| Interface rows, `⊗ Clear Selection`         | **Live** — they drive the overlay                                       |
+| `SHOW GRIDLINES  Off / On`                  | **Live** — `<ChartContainer grid>`                                      |
+| `TIME  1h / 6h`                             | **Live** — re-windows the chart _and_ the table's numbers               |
+| `TIME  day / week / month / custom`         | **Disabled** — the capture is six hours long                            |
+| `Interfaces / Flow` tabs, `TRAFFIC [All ▾]` | **Inert** — layout fidelity only, dimmed rather than clickable-and-dead |
+
+The disabled time ranges are the point of that table. The fixture is a
+**six-hour** capture, so `day`, `week` and `month` have nothing to show; a
+control that silently clamps to the data it has is a control that lies. They
+render greyed out, with a tooltip saying why.
+
+`1h` is not a smaller copy of `6h`, either — it lands in the busy afternoon,
+so the axis re-nices to the window's own peak and the table's per-interface
+means and current values recompute against it.
+
+## The table
+
+One row per interface, and the bar cell is **plain DOM, not a chart**: a pale
+full-width track, a filled portion at the window mean, a darker tick at the
+current value, and that value spelled out. At one row per interface a
+`<BarChart>` would cost a canvas, a scale and a container each to draw a single
+rectangle. Reach for a chart when you need an axis.
+
+All rows share one scale — the busiest interface's peak in the visible window —
+so a bar is readable _against the others_, which is the only reason to put
+them in a column.
+
+## The data
+
+The `cern773-cr6` border-router capture described in full on the
+[network traffic page](./network-traffic.mdx#the-data): real measured
+telemetry, six hours, both directions per **SAP** (service access point).
+
+Two reductions matter for reading this page. The published fixture keeps the
+**top 7 SAPs of 24** — 99.87% of all bytes; the other 17 are near-idle and
+would be invisible rows — and it is averaged from the source's 30-second grid
+to **1 minute**, which clips instantaneous peaks by roughly 8%. The real
+dashboard shows all 24 interfaces at 30-second resolution. Values are Gbps;
+the axis labels them the way the product does, as magnitudes with a `G`
+suffix and a bare `0.0` on the shared zero line.
+
+## See also
+
+- [Network traffic](./network-traffic.mdx) — the same mirrored chart on the
+  pond theme, with the swap-on-select table
+- [Traffic by interface](./traffic-by-interface.mdx) — the composition
+  question, answered by stacking instead of overlaying
+- [`<AreaChart>`](../types/areachart.mdx) — `baseline`, `flatFill`, and the
+  `as` role
+- [Styling and theming](../../learn-charts/05-styling-and-theming.mdx) — the
+  one-channel rule this page bends without breaking
+- [**Storybook**](pathname:///storybook/?path=/story/charts-areachart--baseline)
+  — the systematic knob walk

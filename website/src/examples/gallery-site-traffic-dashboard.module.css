@@ -1,0 +1,330 @@
+/* Chrome for the **replica** dashboard (Gallery — Site traffic dashboard).
+   Unlike every other example's stylesheet, this one does NOT use `--pond-*`
+   tokens: the whole point of the page is that it reproduces somebody else's
+   product surface, so the panel carries that product's palette and stays put
+   under the site's dark/light toggle. The chart inside it does the same thing
+   through the one channel charts have for it — a `ChartTheme` — rather than
+   hex literals in JSX. Every other Gallery page uses the pond theme. */
+
+.dash {
+  --rep-ink: #2b3a47;
+  --rep-body: #5a6b7b;
+  --rep-mute: #8a99a8;
+  --rep-line: #e3e8ed;
+  --rep-hair: #edf1f4;
+  --rep-link: #2c6ba8;
+  --rep-in: #6ba5dc;
+  --rep-in-track: #dfeaf6;
+  --rep-in-mark: #2f6ea8;
+  --rep-out: #f0a35a;
+  --rep-out-track: #fbeadb;
+  --rep-out-mark: #c96d22;
+  --rep-pick: #2fa8a0;
+
+  background: #ffffff;
+  border: 1px solid var(--rep-line);
+  border-radius: 3px;
+  color: var(--rep-body);
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* --- header ------------------------------------------------------------ */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--rep-line);
+}
+
+.org {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--rep-ink);
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.tab {
+  font: inherit;
+  font-size: 12px;
+  color: var(--rep-mute);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 4px 10px;
+  cursor: default;
+}
+
+.tab[aria-current='page'] {
+  color: var(--rep-ink);
+  border-bottom-color: var(--rep-in);
+}
+
+/* --- controls ---------------------------------------------------------- */
+
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--rep-line);
+}
+
+.controlGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.controlSet {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.controlLabel {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--rep-mute);
+}
+
+/* An inert control kept for layout fidelity — dimmed and non-interactive so it
+   never claims to do something it doesn't. */
+.inert {
+  font-size: 11px;
+  color: #aab5bf;
+  background: #f7f9fa;
+  border: 1px solid var(--rep-line);
+  border-radius: 2px;
+  padding: 2px 8px;
+  cursor: not-allowed;
+}
+
+.seg {
+  display: flex;
+}
+
+.seg button {
+  font: inherit;
+  font-size: 11px;
+  color: var(--rep-body);
+  background: #ffffff;
+  border: 1px solid #d5dde4;
+  border-left-width: 0;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+
+.seg button:first-child {
+  border-left-width: 1px;
+  border-radius: 2px 0 0 2px;
+}
+
+.seg button:last-child {
+  border-radius: 0 2px 2px 0;
+}
+
+.seg button[aria-pressed='true'] {
+  color: #1c5c96;
+  background: #e8f1fa;
+  border-color: #a9c9e6;
+}
+
+.seg button[disabled] {
+  color: #c2cbd3;
+  background: #f7f9fa;
+  cursor: not-allowed;
+}
+
+/* --- chart block ------------------------------------------------------- */
+
+.block {
+  padding: 14px 16px 4px;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--rep-ink);
+}
+
+.caption {
+  margin: 2px 0 0;
+  text-align: center;
+  font-size: 11px;
+  color: var(--rep-mute);
+}
+
+.legend {
+  display: flex;
+  justify-content: flex-end;
+  gap: 14px;
+  margin: 2px 0 6px;
+  font-size: 11px;
+  color: var(--rep-body);
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 1px;
+}
+
+/* --- table ------------------------------------------------------------- */
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 14px 16px 6px;
+  border-top: 1px solid var(--rep-line);
+}
+
+.clear {
+  font: inherit;
+  font-size: 11px;
+  color: var(--rep-link);
+  background: none;
+  border: none;
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+.clear[disabled] {
+  color: #b9c3cb;
+  cursor: default;
+}
+
+.tableWrap {
+  overflow-x: auto;
+  padding: 0 16px 14px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  display: table;
+}
+
+.table th {
+  text-align: left;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--rep-mute);
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--rep-line);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--rep-hair);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.row {
+  cursor: pointer;
+}
+
+.row:hover td {
+  background: #f7fafc;
+}
+
+/* The teal left-edge marker on the picked row — the product's own selection
+   cue, and the only place teal appears. */
+.pick {
+  width: 3px;
+  padding: 0 !important;
+  background: transparent;
+}
+
+.row[aria-selected='true'] .pick {
+  background: var(--rep-pick);
+}
+
+.row[aria-selected='true'] td {
+  background: #f2f8fa;
+}
+
+.name {
+  color: var(--rep-link);
+  font-size: 12px;
+}
+
+.row:hover .name {
+  text-decoration: underline;
+}
+
+.category {
+  font-size: 11px;
+  color: var(--rep-body);
+}
+
+/* --- bullet bars ------------------------------------------------------- */
+
+.bullets {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 220px;
+}
+
+.bulletRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.track {
+  position: relative;
+  flex: 1 1 auto;
+  height: 8px;
+  border-radius: 1px;
+}
+
+.fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 1px;
+}
+
+.mark {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  border-radius: 1px;
+}
+
+.value {
+  flex: 0 0 62px;
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--rep-body);
+}

@@ -132,6 +132,7 @@ const sidebars: SidebarsConfig = {
             'charts/gallery/latency-percentiles',
             'charts/gallery/sla-incidents',
             'charts/gallery/live-tail',
+            'charts/gallery/site-traffic-dashboard',
           ],
         },
         {

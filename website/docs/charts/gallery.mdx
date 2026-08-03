@@ -39,6 +39,7 @@ import GalleryMultiHostCpu from '@site/src/examples/gallery-multi-host-cpu';
 import GalleryLatencyPercentiles from '@site/src/examples/gallery-latency-percentiles';
 import GallerySlaIncidents from '@site/src/examples/gallery-sla-incidents';
 import GalleryLiveTail from '@site/src/examples/gallery-live-tail';
+import GallerySiteTrafficDashboard from '@site/src/examples/gallery-site-traffic-dashboard';
 
 {/* ------------------------------------------------------------------ */}
 {/* Each domain section below is owned by one track (gallery plan §4). */}
@@ -167,6 +168,18 @@ incident you're explaining on Monday.
 >
   {(width, phase) => (
     <GalleryLiveTail width={width} phase={phase} height={196} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Site traffic dashboard"
+  blurb="A faithful replica of the operations dashboard the CERN capture comes out of — in the product's own palette, not pond's."
+  storybookHref="pathname:///storybook/?path=/story/charts-areachart--baseline"
+  pageHref="/docs/charts/gallery/site-traffic-dashboard"
+  height={330}
+>
+  {(width) => (
+    <GallerySiteTrafficDashboard width={width - 32} chartHeight={150} preview />
   )}
 </GalleryCard>
 
