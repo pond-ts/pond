@@ -15,14 +15,14 @@ before writing code against them.
   and `pathname:///generated-api/<pkg>/` (generated typedoc). This file is the
   agent-facing complement, not a replacement.
 
-| Package              | npm name             | Entry points                                     | Docs hub                     |
-| -------------------- | -------------------- | ------------------------------------------------ | ---------------------------- |
-| `packages/core`      | `pond-ts`            | `.` and `./types` (zero-runtime schema contract) | `website/docs/pond-ts/`      |
-| `packages/react`     | `@pond-ts/react`     | `.`                                              | `website/docs/react/`        |
-| `packages/charts`    | `@pond-ts/charts`    | `.`                                              | `website/docs/charts/`       |
-| `packages/financial` | `@pond-ts/financial` | `.` and `./fluent` (prototype augmentation)      | `website/docs/financial/`    |
-| `packages/fit`       | `@pond-ts/fit`       | `.`                                              | `website/docs/fit/`          |
-| `packages/process`   | `@pond-ts/process`   | `.` — **WIP, `private: true`, not published**    | `packages/process/README.md` |
+| Package              | npm name             | Entry points                                           | Docs hub                  |
+| -------------------- | -------------------- | ------------------------------------------------------ | ------------------------- |
+| `packages/core`      | `pond-ts`            | `.` and `./types` (zero-runtime schema contract)       | `website/docs/pond-ts/`   |
+| `packages/react`     | `@pond-ts/react`     | `.`                                                    | `website/docs/react/`     |
+| `packages/charts`    | `@pond-ts/charts`    | `.`                                                    | `website/docs/charts/`    |
+| `packages/financial` | `@pond-ts/financial` | `.` and `./fluent` (prototype augmentation)            | `website/docs/financial/` |
+| `packages/fit`       | `@pond-ts/fit`       | `.`                                                    | `website/docs/fit/`       |
+| `packages/process`   | `@pond-ts/process`   | `.` and `./pool` (Node worker pool) — **experimental** | `website/docs/process/`   |
 
 ---
 
@@ -455,11 +455,12 @@ the same answer, only slower than you expected. Source:
 
 ## @pond-ts/process
 
-**Work in progress — `private: true`, not published, public shape expected to
-change** (RFC [process.md](docs/rfcs/process.md) concludes the declarative plan
-layer is the consumer surface with this engine internal beneath it; tracked as
-[PND-PROCSUB]). Listed here because agents work in this repo, not because it is
-a stable surface. Tickets: [PND_PROCESS_PLAN.md](docs/plans/PND_PROCESS_PLAN.md).
+**Experimental — published pre-1.0, API expected to move with friction
+reports; pin an exact version.** The declarative plan layer is the consumer
+surface (RFC [process.md](docs/rfcs/process.md)); the engine ships exported
+beneath it — the [PND-PROCSUB] packaging decision, resolved at first publish.
+Docs: [website/docs/process/](website/docs/process/). Tickets:
+[PND_PROCESS_PLAN.md](docs/plans/PND_PROCESS_PLAN.md).
 
 Typed dataflow graphs for pipelines whose **shape is data** (runtime-assembled,
 user-edited, one computation fanned out to several consumers). Chaining stays

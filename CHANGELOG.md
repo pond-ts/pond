@@ -57,6 +57,18 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **process:** **`@pond-ts/process` publishes for the first time —
+  experimental, pre-1.0.** Computations as data over pond-ts: a processing
+  graph authored fluently in application code (or composed as JSON by a saved
+  view or a tool-calling model) resolves against a declared op vocabulary and
+  runs over a bound `TimeSeries`, with content-addressed caching, provenance,
+  and per-node timings on every response. Two entry points: the plan layer at
+  `.` and the Node worker pool at `./pool`. The docs section
+  ([pond-ts.org/docs/process](https://pond-ts.org/docs/process/)) is listed on
+  the site with a TypeDoc API reference; the publication follows the 2026-08
+  external audit hardening (all P1 findings fixed and regression-pinned). The
+  API is expected to move as friction reports land — pin an exact version.
+
 - **charts:** **`<BarChart categories>` now works horizontally** ([PND-HCAT],
   the 2026-08 API review's #3 item) — the funnel / ranking / comparison shape.
   `orientation="horizontal"` puts the categories on the **y** axis as unit

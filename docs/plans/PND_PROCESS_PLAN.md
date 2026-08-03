@@ -993,10 +993,10 @@ full six-page section (`index`, `plans`, `registry`, `requests`, `host`,
 model and identity, the registry and its JSON Schema projection, request
 forms and error policies, host/source lifecycle including the audit's
 `budgetBytes` / `maxSources` dials, and the caching/ranged-recompute
-story with its honest numbers. All pages are deliberately `unlisted` and
-absent from the sidebar until the package is published; listing them (and
-adding the sidebar category) is part of the publication checklist, not a
-docs task.
+story with its honest numbers. The pages were `unlisted` while the
+package stayed private; the publication pass (v0.55.0) listed them, added
+the sidebar category and the TypeDoc API reference, and swapped the WIP
+cautions for experimental notes.
 
 The revision is intentionally supplied by the adapter — ETag, cursor, object
 version, or another stable token — because the host cannot cheaply or honestly
@@ -1019,7 +1019,20 @@ both source and node work flat.
 
 ---
 
-### [PND-PROCSUB] — Substrate and packaging decision
+### [PND-PROCSUB] — Substrate and packaging decision — RESOLVED
+
+**Resolved at first publish (v0.55.0, 2026-08): one package,
+`@pond-ts/process`, published experimental, with the graph substrate kept
+and the engine still exported.** The audit hardening wave (#575) was the
+gate that made publishing defensible; the docs section leads with the
+fluent plan layer as the consumer surface, and the engine remains
+available for the consumer the plan layer cannot express. Narrowing the
+export surface to plan-layer-only remains possible pre-1.0 if the engine
+surface draws no consumers — that would be an ordinary deprecation
+decision, not a packaging one.
+
+The pre-decision record, kept because the measurements remain the
+substrate's evidence base:
 
 The RFC's v3 concludes **one package**, with the engine relocated to
 `src/engine/` and dropped from `index.ts`. [#544](https://github.com/pond-ts/pond/pull/544)
