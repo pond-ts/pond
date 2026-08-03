@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
 include new features and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.54.0...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.55.0...HEAD
+[0.55.0]: https://github.com/pond-ts/pond/compare/v0.54.0...v0.55.0
 [0.54.0]: https://github.com/pond-ts/pond/compare/v0.53.1...v0.54.0
 [0.53.1]: https://github.com/pond-ts/pond/compare/v0.53.0...v0.53.1
 [0.53.0]: https://github.com/pond-ts/pond/compare/v0.52.0...v0.53.0
@@ -54,6 +55,8 @@ include new features and type-level changes; patch bumps are strictly additive.
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
 
 ## [Unreleased]
+
+## [0.55.0] — 2026-08-04
 
 ### Added
 
@@ -121,6 +124,22 @@ label={…}>` / `<BoxList series>` take a `TimeSeries` / `ValueSeries`
   histogram remains `<BarChart orientation="horizontal">` — the lists are for
   the table-shaped cases it can't be (link labels, cells, expanders, custom
   sort).
+
+- **charts:** **`BarStyle.hover` — a distinct hover colour for bars**
+  ([#577](https://github.com/pond-ts/pond/issues/577)). A theme may now give
+  bars a three-step emphasis — `fill` at rest → `hover` under the pointer →
+  `highlight` (plus the outline) when selected. Previously one `highlight`
+  served both live states, so hover and select differed only by the presence of
+  an outline; `ScatterStyle` has carried distinct rest / selected treatments
+  (`outline` vs `selectedOutline`) all along, making bars the less expressive
+  layer for the same two-state interaction.
+
+  **Optional, with a `highlight` fallback**, so no existing theme changes
+  meaning or rendering — a theme that wants the distinction adds one colour.
+  Selection outranks hover on a bar that is both. Single-series only: a stacked
+  or per-bin-coloured bar has no separate highlight colour to replace (it pops
+  its _own_ fill, so a red/green volume bar keeps its meaning while live), and
+  that convention is unchanged.
 
 ### Changed
 
@@ -222,24 +241,6 @@ label={…}>` / `<BoxList series>` take a `TimeSeries` / `ValueSeries`
   lacks), a gap (`NaN`) bar owns no slot, and a shared edge goes to the left
   bar — the rule `barIndexAtTime` already documented, so the two now agree by
   construction.
-
-### Added
-
-- **charts:** **`BarStyle.hover` — a distinct hover colour for bars**
-  ([#577](https://github.com/pond-ts/pond/issues/577)). A theme may now give
-  bars a three-step emphasis — `fill` at rest → `hover` under the pointer →
-  `highlight` (plus the outline) when selected. Previously one `highlight`
-  served both live states, so hover and select differed only by the presence of
-  an outline; `ScatterStyle` has carried distinct rest / selected treatments
-  (`outline` vs `selectedOutline`) all along, making bars the less expressive
-  layer for the same two-state interaction.
-
-  **Optional, with a `highlight` fallback**, so no existing theme changes
-  meaning or rendering — a theme that wants the distinction adds one colour.
-  Selection outranks hover on a bar that is both. Single-series only: a stacked
-  or per-bin-coloured bar has no separate highlight colour to replace (it pops
-  its _own_ fill, so a red/green volume bar keeps its meaning while live), and
-  that convention is unchanged.
 
 ### Fixed
 
