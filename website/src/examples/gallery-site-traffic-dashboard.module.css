@@ -207,6 +207,18 @@
   display: table;
 }
 
+/* Docusaurus styles every `table th/td` in MDX content with a 1px border on
+   all four sides in `--ifm-table-border-color` (#606770) — and stripes even
+   rows. Inside this panel that reads as a dark grid the product doesn't have,
+   and it survives because our hairline was *added to* the inherited border
+   rather than replacing it. Zero all four sides and the stripe first, then put
+   back only the light rule the product actually draws. */
+.table th,
+.table td {
+  border: 0;
+  background: transparent;
+}
+
 .table th {
   text-align: left;
   font-size: 10px;

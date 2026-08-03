@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   AreaChart,
   ChartContainer,
@@ -42,10 +42,16 @@ import styles from './gallery-site-traffic-dashboard.module.css';
  * `useSiteChartTheme()` and the chart is a pond chart again with no other edit.
  */
 export default function GallerySiteTrafficDashboard({
-  width = 620,
+  width: fixedWidth,
   chartHeight = 250,
   preview = false,
 }: {
+  /**
+   * Panel width in px. Omit it on the page and the panel measures its own
+   * container instead, so the dashboard fills the column the way the product
+   * fills a browser window. The Gallery card passes an explicit width, because
+   * a card stage hands one down already.
+   */
   width?: number;
   chartHeight?: number;
   /**
@@ -57,6 +63,22 @@ export default function GallerySiteTrafficDashboard({
    */
   preview?: boolean;
 }) {
+  // Measure the container when no width was handed down (the page case).
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const [measured, setMeasured] = useState(0);
+  useLayoutEffect(() => {
+    if (fixedWidth !== undefined) return;
+    const el = boxRef.current;
+    if (!el) return;
+    const read = () =>
+      setMeasured(Math.round(el.getBoundingClientRect().width));
+    read();
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [fixedWidth]);
+  const width = fixedWidth ?? Math.max(measured - 32, 320);
+
   const [selected, setSelected] = useState<string | null>(
     preview ? SAP_TRAFFIC[0]!.name : null,
   );
@@ -115,7 +137,15 @@ export default function GallerySiteTrafficDashboard({
   const scale = Math.max(...rows.map((r) => Math.max(r.peakIn, r.peakOut)));
 
   return (
-    <div className={styles.dash} style={{ width: width + 32 }}>
+    <div
+      ref={boxRef}
+      className={styles.dash}
+      style={
+        fixedWidth === undefined
+          ? { width: '100%' }
+          : { width: fixedWidth + 32 }
+      }
+    >
       <header className={styles.topbar}>
         <div className={styles.org}>
           European Organization for Nuclear Research
