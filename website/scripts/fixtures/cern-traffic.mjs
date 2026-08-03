@@ -45,7 +45,7 @@ function flag(name, fallback) {
 }
 
 const KEEP = flag('saps', 7);
-const FACTOR = flag('factor', 2); // 30 s × 2 = 1 min
+const FACTOR = flag('factor', 1); // 1 = the source's native 30 s grid
 const DP = flag('dp', 2);
 
 const raw = JSON.parse(readFileSync(RAW, 'utf8'));
@@ -183,27 +183,34 @@ w(' * direction** — and would be invisible slivers in a stack, so they are');
 w(' * described on the Gallery page rather than plotted.');
 w(' *');
 w(
-  ' * **What was changed.** Three reductions, all to fit the docs-site fixture',
+  ` * **What was changed.** ${FACTOR === 1 ? 'Two reductions, and one thing deliberately left alone' : 'Three reductions'} — all to fit the docs-site fixture`,
 );
 w(' * budget (`src/examples/lib/README.md`), none to flatter the shape:');
 w(' *');
+if (FACTOR === 1) {
+  w(
+    ` * 1. Kept at the source's **native 30 s grid** — ${n} points per interface,
+     *    no downsampling, so no peak is clipped.`.replace(/\n\s*\*/g, '\n *'),
+  );
+} else {
+  w(
+    ` * 1. Averaged from the source's 30 s grid to **${stepMs / 60_000} min** (${n} points per`,
+  );
+  w(
+    ` *    interface, from ${N}). A rate *is* a mean over its interval, so averaging`,
+  );
+  w(
+    ' *    is the honest reduction — but it clips instantaneous peaks. Measured:',
+  );
+  w(
+    ` *    the site's peak outbound goes ${peakAt(2).toFixed(1)} → ${reducedPeak('out').toFixed(1)} Gbps (−${((1 - reducedPeak('out') / peakAt(2)) * 100).toFixed(1)}%), peak inbound`,
+  );
+  w(
+    ` *    ${peakAt(1).toFixed(1)} → ${reducedPeak('in').toFixed(1)} Gbps (−${((1 - reducedPeak('in') / peakAt(1)) * 100).toFixed(1)}%).`,
+  );
+}
 w(
-  ` * 1. Averaged from the source's 30 s grid to **${stepMs / 60_000} min** (${n} points per`,
-);
-w(
-  ` *    interface, from ${N}). A rate *is* a mean over its interval, so averaging`,
-);
-w(
-  ' *    is the honest reduction — but it clips instantaneous peaks. Measured:',
-);
-w(
-  ` *    the site's peak outbound goes ${peakAt(2).toFixed(1)} → ${reducedPeak('out').toFixed(1)} Gbps (−${((1 - reducedPeak('out') / peakAt(2)) * 100).toFixed(1)}%), peak inbound`,
-);
-w(
-  ` *    ${peakAt(1).toFixed(1)} → ${reducedPeak('in').toFixed(1)} Gbps (−${((1 - reducedPeak('in') / peakAt(1)) * 100).toFixed(1)}%).`,
-);
-w(
-  ` * 2. Converted **bits/s → Gbps**, rounded to ${DP} places (10 Mbps resolution).`,
+  ` * ${FACTOR === 1 ? 2 : 2}. Converted **bits/s → Gbps**, rounded to ${DP} places (10 Mbps resolution).`,
 );
 w(' * 3. Dropped the timestamp column. Every delta in the source is exactly');
 w(
@@ -258,7 +265,7 @@ w('/** First sample, epoch ms — the grid origin. */');
 w(`export const START_MS = ${t0};`);
 w();
 w(
-  '/** Grid step, ms. Exact: the source is a perfect grid, averaged in pairs. */',
+  `/** Grid step, ms. Exact: the source is a perfect grid${FACTOR === 1 ? '' : ', averaged in pairs'}. */`,
 );
 w(`export const STEP_MS = ${stepMs};`);
 w();

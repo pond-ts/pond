@@ -56,11 +56,11 @@ The raw capture is 1 MB — 24 SAPs × 718 points — which has no business in a
 docs bundle. `website/scripts/fixtures/cern-traffic.mjs` derives the committed
 37 KB fixture offline, applying three reductions, none of them flattering:
 
-| Reduction                                           | What it cost                                                                         |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Kept the **top 7 SAPs** by carried volume           | Nothing visible — the 7 are **99.87%** of all bytes                                  |
-| Averaged the **30 s** grid to **1 min**             | Peak outbound 304.2 → **279.6 Gbps** (−8.1%); peak inbound 187.1 → **170.4** (−8.9%) |
-| bits/s → **Gbps** at 2 dp, timestamp column dropped | 10 Mbps of resolution; the grid is exact 30 000 ms, so an origin + step replaces it  |
+| Reduction                                           | What it cost                                                                        |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Kept the **top 7 SAPs** by carried volume           | Nothing visible — the 7 are **99.87%** of all bytes                                 |
+| Kept the capture's native **30 s** grid             | Nothing — 718 points per interface, no averaging, no peak clipped                   |
+| bits/s → **Gbps** at 2 dp, timestamp column dropped | 10 Mbps of resolution; the grid is exact 30 000 ms, so an origin + step replaces it |
 
 The 17 dropped SAPs are near-idle — **11 of the 24 never exceed 1 Mbps in
 either direction** — and would be invisible slivers on any chart drawn to a

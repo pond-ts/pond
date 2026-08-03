@@ -209,11 +209,11 @@ The `cern773-cr6` border-router capture described in full on the
 [network traffic page](./network-traffic.mdx#the-data): real measured
 telemetry, six hours, both directions per **SAP** (service access point).
 
-Two reductions matter for reading this page. The published fixture keeps the
+One reduction matters for reading this page. The published fixture keeps the
 **top 7 SAPs of 24** — 99.87% of all bytes; the other 17 are near-idle and
-would be invisible rows — and it is averaged from the source's 30-second grid
-to **1 minute**, which clips instantaneous peaks by roughly 8%. The real
-dashboard shows all 24 interfaces at 30-second resolution. Values are Gbps;
+would be invisible rows. The sample rate is the capture's own **30 seconds**,
+not downsampled, so no peak is clipped and the chart carries the same bursts
+the product does. The real dashboard shows all 24 interfaces. Values are Gbps;
 the axis labels them the way the product does, as magnitudes with a `G`
 suffix and a bare `0.0` on the shared zero line.
 
