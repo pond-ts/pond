@@ -478,48 +478,60 @@ per-mark idiom the codebase already uses). **Still open in this wave:**
 `ValueSeries` widening, range-only mode polish, px `offset`, line-only shape,
 and the `cursorFlag` x-snap reconciliation.
 
-### [PND-CHARTAPI] / [PND-BARSEM] / [PND-HCAT] / [PND-VSADAPT] — the 2026-08 API review intake
+### [PND-CHARTAPI] / [PND-BARSEM] / [PND-HCAT] / [PND-VSADAPT] — the 2026-08 API review — DONE
 
-Four tasks from the owner's holistic bar/box/chart/list API review
+All four shipped (#590 / #592 / #593 / #594) from the owner's holistic review
 ([docs/notes/charts-api-review-2026-08.md](../notes/charts-api-review-2026-08.md)
-— verdict: excellent data seam, good composition, uneven type/behavior seam).
-Summaries in PLAN.md; the note carries the full argument. Ordering per the
-review: consistency ([PND-VSADAPT] + the docs fixes already landed with the
-intake) → type hardening ([PND-CHARTAPI]) → one-segment normalization
-([PND-BARSEM]) → horizontal categories ([PND-HCAT]). The review also
-_endorses_ three standing decisions (histogram stays a BarChart mode;
-lists stay DOM tables; BoxPlot never computes quantiles) — cite it before
-relitigating any of them. [PND-CHARTAPI] and [PND-VSADAPT] are
-public-surface changes: human merge gate, and [PND-CHARTAPI] additionally
-wants a design spike on union × generics error messages plus a Codex pass.
+— verdict: excellent data seam, good composition, uneven type/behaviour seam).
+Residue tracked as **[PND-APIREV-REST]** in PLAN.md.
 
-**[PND-VSADAPT] direction settled by the owner (2026-08-02):** _"any use of
-an adaptor when starting with a timeseries is a core api failure."_ So: **do
-not** export the ValueSeries adapters (the earlier export-for-symmetry
-recommendation is withdrawn); adapters are internal normalization. The task
-becomes a de-adapterization pass:
+**What shipped, and the reasoning worth keeping:**
 
-- **Docs stop teaching adapters as the data contract.** The cheat-sheet's
-  "Adapter" column and the type pages' "Adapter:" lines go; the contract is
-  "the component takes your series + column names". The already-exported
-  TimeSeries adapters stay exported (removing them is breaking) but are
-  re-documented as **interop escape hatches** — hand-building a chart-ready
-  view from non-pond data — not as steps in the pond pipeline. The stale M1
-  `index.ts` package header is rewritten in the same pass.
-- **The list family gains a direct `series` input** for the rows-are-events
-  case: `<BarList series={splits} columns label>` reading internally what
-  `listRowsFromTimeSeries` reads today (the reader stays exported for the
-  record-shaped door, but the happy path stops requiring it — it is exactly
-  the failure the principle names, shipped in #585/#587 before the principle
-  was stated). Public-surface addition → human gate.
-- **Open design point:** rows-from-facts (`partitionBy → reduce → rows`)
-  cannot be adapter-free without the chart choosing reducers — data policy.
-  A `Map` + facts-mapping input that _delegates_ to core's `reduce` (the
-  chart still computes nothing) would close it; decide when a second
-  consumer hits the friction.
-- **`transposeRow`** remains the one exported series-in adapter; expected to
-  be absorbed by categorical Phase 2's row binding (`at` / cursor-bound row
-  on the component), not deleted before then.
+- **[PND-VSADAPT] — adapters are internal.** The owner's rule: _"any use of an
+  adaptor when starting with a timeseries is a core api failure."_ So the
+  ValueSeries builders stay unexported, the docs stopped teaching adapters as
+  the contract, and the list family gained a direct `series` door. Second
+  correction from review: "non-pond interop" was the wrong framing at both
+  ends — the `from*` builders _take_ pond series and no layer accepts their
+  output. They are **view builders for custom draw code**.
+- **[PND-CHARTAPI] — the type seam.** Two findings neither reasoning nor CI
+  would have produced, both from measurement:
+  1. `NumericColumnNameForSchema<SeriesSchema>` is **`never`**, so a naive
+     constraint rejects everything for a loosely-typed series. Invisible to
+     this repo's suite, whose fixtures are all `as const`.
+  2. With **two** generics only one is ever inferred, so
+     `NumericColumn<S> | ValueNumericColumn<VS>` silently widens to `string` —
+     the constraint was **inert** for the common TimeSeries case until each
+     layer's props became a union _per series kind_.
+
+     A third came from review: the `never` guard answered "no numeric columns"
+     when it had to answer "is the schema loose" — an all-string schema
+     silently accepted anything. The lesson generalises: on type-level work,
+     _compiling_ is not evidence of _checking_; only a negative test is.
+
+     Cost accepted by the owner: a union-typed series value must be narrowed
+     or cast. The alternative (one generic over the series type) is verified in
+     `spikes/charts-type-seam/REPORT.md` if that ever bites.
+
+- **[PND-BARSEM] — capabilities follow the drawn mark.** One-segment vertical
+  bars take the single-series path whatever fed them. Review caught the
+  regression that mattered: the reroute **dropped the `colors` channel** (a
+  one-group stack resolved `colors[group] ?? theme.bar[group]`; the single
+  path read only `as`), changing bar colours with no error. Restored, plus
+  `SelectInfo.label` parity between `column="a"` and `columns={['a']}`.
+  Acceptance test met — `BarStyle.hover`'s scope warning shrank from five
+  path-accidents to two real exclusions.
+- **[PND-HCAT] — horizontal categorical bars.** Categories on y as unit slots,
+  the `<YAxis>` deriving one label per category via a new internal
+  `binCategories()` channel. Self-review before the Layer-2 pass caught a
+  contract violation: labels landed on slot **centres** while gridlines fell on
+  slot **boundaries**. Fixed by applying the rule the codebase already stated
+  for the categorical x axis — no gridlines through bar centres.
+
+**Process note.** #594's Layer-2 agent never posted (it stalled); the PR
+merged on the owner's explicit instruction with CI green and a self-review
+that had found the gridline bug. A post-merge adversarial pass on the
+horizontal-categorical interaction contract is part of [PND-APIREV-REST].
 
 ### [PND-LISTS] — BarList + BoxList ranked row lists — DONE
 

@@ -83,38 +83,30 @@ milestone. Plan:
   [PND-PARITY] / the live layer.
 - **[PND-ANNRFC]** — Write the short `docs/rfcs/annotations.md` design
   record the owner asked for (confirm still wanted).
-- **[PND-CHARTAPI]** — Type-seam hardening from the 2026-08 API review
-  ([charts-api-review-2026-08.md](docs/notes/charts-api-review-2026-08.md)):
-  `BarChartProps` as valid-mode unions, schema-derived numeric column names
-  across the layers (core's `NumericColumnNameForSchema` exists). Same JSX,
-  compile-time rejection of today's runtime throws. Deep type-system work —
-  design-spike the union × generics error-message cost first; Codex pass +
-  human gate (it narrows what compiles).
-- **[PND-BARSEM]** — Normalize one-segment bar semantics: a single-column
-  `bins` / one-group stack / horizontal single bar adopts the single-series
-  capabilities (whole-slot hit, `hover`, readout) where axis semantics
-  permit, so behavior follows the visible mark, not the input prop. The
-  `BarStyle.hover` scope-warning shrinking is the acceptance test.
-- **[PND-HCAT]** — Horizontal categorical bars: lift `<BarChart categories>`
-  vertical-only (category band on y, `CategoryAxis` orientation, transposed
-  hit-test/readout). Driver: the gallery funnel hand-builds ordinal bins +
-  `i + 0.5` ticks today.
-- **[PND-VSADAPT]** — **Adapters are internal** — decided by the owner
-  (2026-08-02): _"any use of an adaptor when starting with a timeseries is a
-  core api failure."_ This flips the earlier export-for-symmetry
-  recommendation: the ValueSeries adapters stay **unexported**; the docs stop
-  presenting adapters as the data contract (the cheat-sheet "Adapter" column,
-  type pages) and re-document the already-exported ones as interop escape
-  hatches for non-pond data; the stale M1 `index.ts` header rides along.
-  Consequences: (a) `BarList` / `BoxList` gain a **direct `series` input**
-  for the rows-are-events case — `listRowsFromTimeSeries` is exactly the
-  failure the principle names (public-surface addition, human gate); (b) the
-  rows-from-facts path stays record-shaped for now (the reducer choice is
-  data policy, unless a facts-mapping input that _delegates_ to core's
-  `reduce` is judged acceptable — open design point); (c) `transposeRow`
-  is the remaining series-adapter, expected to be absorbed by the
-  categorical RFC's Phase 2 row-binding. Details in
-  [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md).
+- **[PND-APIREV-REST]** — What the 2026-08 API review left open after
+  [PND-CHARTAPI] / [PND-BARSEM] / [PND-HCAT] / [PND-VSADAPT] shipped
+  (#590/#592/#593/#594; note:
+  [charts-api-review-2026-08.md](docs/notes/charts-api-review-2026-08.md)):
+  - **The union-typed-series limitation.** A layer's props are a union _per
+    series kind_, so a value typed as `TimeSeries<A> | ValueSeries<B>` (a
+    wrapper forwarding whatever it is given) matches no member and must be
+    narrowed or cast — `DurationAxis.stories.tsx` is the worked example. The
+    owner chose this over the single-generic alternative (`LineChartProps<Sr>`,
+    which distributes over the union but changes every props type's public
+    generic parameters); both are verified in
+    `spikes/charts-type-seam/REPORT.md`. Revisit only if a real consumer hits it.
+  - **A Codex adversarial pass on the type work**, recommended by the Layer-2
+    reviewer at medium confidence and not yet run. The class it flags is real:
+    the type seam twice shipped guarantees that looked right and were inert
+    (the two-generic widening; the loose-vs-no-numeric conflation), so "it
+    compiles" is not evidence "it checks".
+  - **`<BarChart categories>` selection/readout on the horizontal axis** — the
+    capability landed but its interaction contract was not exercised beyond
+    the geometry; and **the gallery funnel** still hand-builds its ordinal
+    bins + `i + 0.5` ticks because it lives on the unmerged
+    `feat/gallery-track-g` branch. Simplify it when those meet.
+  - **`categories` + horizontal + a multi-group stack** is untried; only the
+    one-segment case has a story.
 
 ### Docs site, landing, and API reference
 
