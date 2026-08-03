@@ -50,6 +50,19 @@ View builder (for custom draw code): `barsFromTimeSeries` / `barsFromValueSeries
 | `axis`        | `string`                                       | row default      | Which `<YAxis id>` to scale against.                           |
 | `gap`         | `number`                                       | theme (`1`)      | Px gap between bars.                                           |
 
+## Which path a bar takes
+
+Capabilities follow **the mark drawn**, not the prop that fed it
+([PND-BARSEM]). A **one-segment vertical** bar — `series` + `column`, a
+one-column `bins` histogram, or a one-entry `columns` — takes the
+single-series path and with it whole-slot hit-testing, the `theme.bar.hover`
+colour, the cursor readout, stable per-bar identity and per-bar decimation.
+
+Genuinely multi-segment shapes keep the stacked path: a multi-group stack
+(`columns` / a `Map` series), `categories`, and any `horizontal` chart. There
+the segments share a bin's x-range and only y tells them apart, so the hit
+target is the drawn segment rather than the slot.
+
 ## Variants
 
 - **Data mode** — `series` (single / stacked / Map) vs `bins` (histogram) vs

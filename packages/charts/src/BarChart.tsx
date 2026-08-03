@@ -3,6 +3,7 @@ import { Interval, ValueSeries } from 'pond-ts';
 import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
 import {
   barsFromTimeSeries,
+  barsFromBins,
   barsFromValueSeries,
   categoryStack,
   stacksFromBins,
@@ -389,6 +390,17 @@ export function BarChart<
       if (cols === undefined) {
         throw new Error('<BarChart bins> needs `column` or `columns`');
       }
+      // [PND-BARSEM]: a ONE-column vertical histogram draws the same mark as a
+      // `series`+`column` chart, so it takes the same path — and with it the
+      // whole-slot hit target, the hover colour, the cursor readout and
+      // per-bar decimation. Capabilities follow what is drawn, not which prop
+      // produced it. Horizontal keeps the transposed stacked path.
+      if (cols.length === 1 && orientation !== 'horizontal') {
+        return {
+          kind: 'single',
+          bs: barsFromBins(bins, cols[0]!, { ordinal }),
+        };
+      }
       return { kind: 'stacked', ss: stacksFromBins(bins, cols, { ordinal }) };
     }
     if (isMap) {
@@ -405,6 +417,19 @@ export function BarChart<
     }
     const s = series as TimeSeries<S> | ValueSeries<VS>;
     if (columns !== undefined) {
+      // [PND-BARSEM]: a one-entry `columns` is a single series wearing the
+      // stack's clothes — same mark, so the same capabilities (see the `bins`
+      // branch above).
+      if (columns.length === 1 && orientation !== 'horizontal') {
+        const only = columns[0]!;
+        return {
+          kind: 'single',
+          bs:
+            s instanceof ValueSeries
+              ? barsFromValueSeries(s, only)
+              : barsFromTimeSeries(s, only),
+        };
+      }
       return { kind: 'stacked', ss: stacksFromColumns(s, columns) };
     }
     if (column === undefined) {

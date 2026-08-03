@@ -878,6 +878,50 @@ export interface StacksFromBinsOptions {
 }
 
 /**
+ * Build a {@link BarSeries} from **`byColumn` bin records** — the single-series
+ * sibling of {@link stacksFromBins}, for a histogram drawing **one** aggregate
+ * field.
+ *
+ * Why it exists ([PND-BARSEM]): a one-column histogram *is* a single-series
+ * bar chart — same mark, same geometry — but routing it through the stacked
+ * reader made its capabilities depend on which prop produced it (whole-slot
+ * hit-testing, the hover colour, the cursor readout and per-bar decimation all
+ * live on the single path). Reading it as a `BarSeries` lets the chart decide
+ * by what it *draws* rather than by how it was fed.
+ *
+ * `column` names the aggregate field; slots are the bins' numeric
+ * `[start, end]` edges, or uniform unit slots under `{ ordinal: true }` —
+ * identical to {@link stacksFromBins}. A missing / non-finite aggregate reads
+ * as a gap (`NaN`), and each bar carries its slot index as a stable
+ * {@link BarSeries.marks} identity (bin records have no key of their own).
+ */
+export function barsFromBins(
+  bins: readonly BinRecord[],
+  column: string,
+  options: StacksFromBinsOptions = {},
+): BarSeries {
+  const n = bins.length;
+  const begin = new Float64Array(n);
+  const end = new Float64Array(n);
+  const y = new Float64Array(n);
+  const marks = new Array<string>(n);
+  for (let i = 0; i < n; i += 1) {
+    const bin = bins[i]!;
+    if (options.ordinal) {
+      begin[i] = i;
+      end[i] = i + 1;
+    } else {
+      begin[i] = bin.start;
+      end[i] = bin.end;
+    }
+    const v = (bin as unknown as Record<string, unknown>)[column];
+    y[i] = typeof v === 'number' && Number.isFinite(v) ? v : NaN;
+    marks[i] = String(i);
+  }
+  return { begin, end, y, length: n, marks };
+}
+
+/**
  * Build a {@link StackedBarSeries} from **`byColumn` bin records** — the array of
  * `{ start, end, …aggregates }` a value-band aggregation returns
  * (`series.byColumn('power', { width: 20 }, { seconds: { from: 'dt', using: 'sum' } })`).

@@ -312,18 +312,19 @@ consumers writing custom draw code; no shipped layer needs their output.
 The ValueSeries siblings (`fromValueSeries` etc.) are deliberately
 **unexported** (adapters are internal; see [PND-VSADAPT]).
 
-| Export               | Signature gist                                         | Feeds                             |
-| -------------------- | ------------------------------------------------------ | --------------------------------- |
-| `fromTimeSeries`     | `(series, column) → ChartSeries`                       | Line/Area/Scatter                 |
-| `bandFromTimeSeries` | `(series, lower, upper) → BandSeries`                  | BandChart                         |
-| `boxFromTimeSeries`  | `(series, BoxColumns) → BoxSeries`                     | BoxPlot                           |
-| `barsFromTimeSeries` | `(series, column) → BarSeries`                         | BarChart                          |
-| `ohlcFromTimeSeries` | `(series, OhlcColumns) → OhlcSeries`                   | Candlestick                       |
-| `stacksFromGroups`   | `(Map<string, TimeSeries>, column) → StackedBarSeries` | Stacked bars from grouped series  |
-| `stacksFromColumns`  | `(series, columns[]) → StackedBarSeries`               | Stacked bars from wide columns    |
-| `stacksFromBins`     | `(bins, columns[], opts?) → StackedBarSeries`          | Histograms from `byColumn` output |
-| `categoryStack`      | `(CategoryDatum[]) → StackedBarSeries`                 | Categorical bars                  |
-| `transposeRow`       | `(series, opts?) → CategoryDatum[]`                    | One row read across as categories |
+| Export               | Signature gist                                         | Feeds                                                   |
+| -------------------- | ------------------------------------------------------ | ------------------------------------------------------- |
+| `fromTimeSeries`     | `(series, column) → ChartSeries`                       | Line/Area/Scatter                                       |
+| `bandFromTimeSeries` | `(series, lower, upper) → BandSeries`                  | BandChart                                               |
+| `boxFromTimeSeries`  | `(series, BoxColumns) → BoxSeries`                     | BoxPlot                                                 |
+| `barsFromTimeSeries` | `(series, column) → BarSeries`                         | BarChart                                                |
+| `ohlcFromTimeSeries` | `(series, OhlcColumns) → OhlcSeries`                   | Candlestick                                             |
+| `stacksFromGroups`   | `(Map<string, TimeSeries>, column) → StackedBarSeries` | Stacked bars from grouped series                        |
+| `stacksFromColumns`  | `(series, columns[]) → StackedBarSeries`               | Stacked bars from wide columns                          |
+| `barsFromBins`       | `(bins, column, opts?) → BarSeries`                    | One-column histogram (single-series path, [PND-BARSEM]) |
+| `stacksFromBins`     | `(bins, columns[], opts?) → StackedBarSeries`          | Multi-column histograms from `byColumn` output          |
+| `categoryStack`      | `(CategoryDatum[]) → StackedBarSeries`                 | Categorical bars                                        |
+| `transposeRow`       | `(series, opts?) → CategoryDatum[]`                    | One row read across as categories                       |
 
 Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 `BarSeries`, `OhlcSeries`, `StackedBarSeries`; option types `BoxColumns`,

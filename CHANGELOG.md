@@ -97,6 +97,29 @@ label={…}>` / `<BoxList series>` take a `TimeSeries` / `ValueSeries`
 
 ### Changed
 
+- **charts:** **a bar's capabilities now follow the mark it draws, not the
+  prop that fed it** ([PND-BARSEM], the 2026-08 API review's #2 item). A
+  **one-column vertical** histogram (`bins` + a single `column`) and a
+  one-entry `columns` draw exactly the mark a `series` + `column` chart
+  draws, but they used to route through the stacked path purely because of
+  which prop supplied them — and so silently lost whole-slot hit-testing
+  (#584), the `BarStyle.hover` colour, the cursor readout, stable per-bar
+  identity and per-bar decimation. They now take the single-series path, so
+  visually identical bars behave identically.
+
+  **What this changes in practice:** on a one-column histogram, hover and
+  click now hit the bar's **whole slot** rather than only the drawn
+  rectangle (so the space above a short bar is live, and slots tile the
+  axis); the layer gains a cursor readout; and `theme.bar.hover` applies.
+  A genuine multi-group stack, `categories`, and horizontal charts are
+  unchanged — their segments share a bin's x-range, so only y distinguishes
+  them. New reader `barsFromBins` backs the normalized path.
+
+  This shrinks `BarStyle.hover`'s scope warning from a list of five
+  path-accidents to the two real exclusions (a multi-group stack has no
+  hover channel on `StackStyle`; `binColors` keeps each bar's own colour by
+  design) — which was the acceptance test the task set itself.
+
 - **charts:** **column names and source modes are now checked at compile
   time** ([PND-CHARTAPI], the 2026-08 API review's #1 item). Every draw
   layer's column props are derived from the series' schema, so

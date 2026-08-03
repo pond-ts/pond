@@ -110,6 +110,7 @@ export {
   bandFromTimeSeries,
   boxFromTimeSeries,
   barsFromTimeSeries,
+  barsFromBins,
   ohlcFromTimeSeries,
   // Stacked / histogram readers — assemble a StackedBarSeries from pond's own
   // aggregation output: a Map of grouped series, a wide series, or byColumn bins.
