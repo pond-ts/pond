@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   AreaChart,
   ChartContainer,
@@ -26,11 +26,15 @@ import styles from './gallery-site-traffic-dashboard.module.css';
  *
  * Two things make this page different from the rest of the Gallery.
  *
- * **The overlay.** Selecting a row does not swap the chart's series. The pale
- * wash is *always* the site total; the picked interface is drawn **over** it in
- * the saturated shade, from the same zero line, so the dark region reads as
- * that interface's share *of* the total rather than as a separate chart. Two
- * more `<AreaChart>`s, mounted after the total's — that is the whole trick.
+ * **The overlay.** Selecting a row does not swap the chart's series — the site
+ * total is *always* the drawn shape. What changes is which part of it is
+ * saturated, under one rule: **the saturated colour marks what you are looking
+ * at.** Nothing picked ⇒ the total itself is the subject, drawn saturated. Pick
+ * a row and the total drops back to a pale wash while that interface's
+ * contribution is drawn **over** it in the saturated shade, from the same zero
+ * line — so the dark region reads as its share *of* the total rather than as a
+ * separate chart. Two more `<AreaChart>`s and a swapped `as` role; that is the
+ * whole trick.
  *
  * **The palette.** It is the product's, not pond's, and it arrives through the
  * one channel a chart has for colour: a {@link ChartTheme}. No hex literal
@@ -57,22 +61,42 @@ export default function GallerySiteTrafficDashboard({
     preview ? SAP_TRAFFIC[0]!.name : null,
   );
   const [gridlines, setGridlines] = useState(true);
-  const [span, setSpan] = useState<'1h' | '6h'>('6h');
 
-  // Only the two windows the capture can actually fill. `day`/`week`/`month`
-  // are rendered disabled rather than silently clamped — a control that lies
-  // about its data is worse than a control that isn't there.
-  const range = useMemo<readonly [number, number]>(
-    () =>
-      span === '6h'
-        ? TRAFFIC_RANGE
-        : [TRAFFIC_RANGE[1] - 60 * 60_000, TRAFFIC_RANGE[1]],
-    [span],
+  // The visible window, held here rather than in the container: the `TIME`
+  // buttons jump it to a preset and pan/zoom nudges it from there, and both
+  // have to write the same piece of state or the second one to move wins
+  // forever. `<ChartContainer onTimeRangeChange>` is what makes the gesture
+  // route through us instead of into the container's own uncontrolled view.
+  const [range, setRange] = useState<[number, number]>(() => spanRange('6h'));
+
+  // Which preset the window currently *is* — compared rather than remembered,
+  // so panning off a preset lights neither button instead of lying about it.
+  const activeSpan = SPANS.find((s) => {
+    const [a, b] = spanRange(s);
+    return a === range[0] && b === range[1];
+  });
+
+  // The instant the pointer is over, from `onTrackerChanged`; `null` off-chart.
+  const [hoverTime, setHoverTime] = useState<number | null>(null);
+  const onTracker = useCallback(
+    (info: { time: number } | null) => setHoverTime(info?.time ?? null),
+    [],
   );
 
-  const { rows, peak } = useMemo(() => windowStats(range), [range]);
+  const { rows, peak, i0, i1 } = useMemo(() => windowStats(range), [range]);
   const per = ticksPerHalf(chartHeight);
   const bound = niceBound(peak, per);
+
+  // The sample every row's tick and value read: the hovered one while the
+  // pointer is over the plot, the window's last otherwise. Clamped to the
+  // visible window so a tracker time from a stale frame can't point outside it.
+  const mark =
+    hoverTime === null
+      ? i1
+      : Math.min(
+          i1,
+          Math.max(i0, Math.round((hoverTime - START_MS) / STEP_MS)),
+        );
 
   const total = siteTotal();
   const picked = selected === null ? null : sapSeries(selected);
@@ -96,14 +120,6 @@ export default function GallerySiteTrafficDashboard({
         <div className={styles.org}>
           European Organization for Nuclear Research
         </div>
-        <nav className={styles.tabs} aria-label="View">
-          <button type="button" className={styles.tab} aria-current="page">
-            Interfaces
-          </button>
-          <button type="button" className={styles.tab} disabled>
-            Flow
-          </button>
-        </nav>
       </header>
 
       <div className={styles.controls}>
@@ -140,14 +156,8 @@ export default function GallerySiteTrafficDashboard({
                 <button
                   key={s}
                   type="button"
-                  aria-pressed={s === span}
-                  disabled={s !== '1h' && s !== '6h'}
-                  title={
-                    s === '1h' || s === '6h'
-                      ? undefined
-                      : 'The fixture is a six-hour capture'
-                  }
-                  onClick={() => setSpan(s as '1h' | '6h')}
+                  aria-pressed={s === activeSpan}
+                  onClick={() => setRange(spanRange(s))}
                 >
                   {s}
                 </button>
@@ -184,7 +194,15 @@ export default function GallerySiteTrafficDashboard({
           width={width}
           theme={replicaTheme}
           grid={gridlines}
-          cursor="crosshair"
+          cursor="line"
+          // Drag to pan, wheel to zoom — but only over ground the capture
+          // covers. `bounds` is the fixture's full extent, so the window
+          // clamps at the first and last sample instead of drifting off into
+          // empty time, and the `TIME` presets stay reachable by hand.
+          panZoom="panZoom"
+          bounds={TRAFFIC_RANGE}
+          onTimeRangeChange={setRange}
+          onTrackerChanged={onTracker}
         >
           <ChartRow height={chartHeight}>
             <YAxis
@@ -201,11 +219,15 @@ export default function GallerySiteTrafficDashboard({
               width={44}
             />
             <Layers>
-              {/* Always the whole site — the wash the overlay sits in. */}
+              {/* Always the whole site. Its *role* is what the selection
+                  moves: with nothing picked the total is the subject, so it
+                  takes the saturated pair; pick a row and it steps back to the
+                  wash the overlay sits in. Same series, same layer — one
+                  swapped `as`. */}
               <AreaChart
                 series={total}
                 column="in"
-                as="totalIn"
+                as={picked ? 'washIn' : 'strongIn'}
                 axis="bps"
                 baseline={0}
                 legend="To site"
@@ -213,19 +235,20 @@ export default function GallerySiteTrafficDashboard({
               <AreaChart
                 series={totalDown}
                 column="out"
-                as="totalOut"
+                as={picked ? 'washOut' : 'strongOut'}
                 axis="bps"
                 baseline={0}
                 legend="From site"
               />
               {/* …and, when a row is picked, its contribution *within* it. Same
-                  baseline, drawn after, saturated — so the dark region is the
-                  part of the wash this interface accounts for. */}
+                  baseline, drawn after, and now the only saturated thing on the
+                  chart — so the dark region is the part of the wash this
+                  interface accounts for. */}
               {picked && pickedDown && (
                 <AreaChart
                   series={picked}
                   column="in"
-                  as="pickIn"
+                  as="strongIn"
                   axis="bps"
                   baseline={0}
                   legend={`${selected} to site`}
@@ -235,7 +258,7 @@ export default function GallerySiteTrafficDashboard({
                 <AreaChart
                   series={pickedDown}
                   column="out"
-                  as="pickOut"
+                  as="strongOut"
                   axis="bps"
                   baseline={0}
                   legend={`${selected} from site`}
@@ -292,7 +315,7 @@ export default function GallerySiteTrafficDashboard({
                     <td>
                       <div className={styles.bullets}>
                         <Bullet
-                          now={r.nowIn}
+                          at={r.points[mark]![1]}
                           mean={r.meanIn}
                           scale={scale}
                           track={'var(--rep-in-track)'}
@@ -301,7 +324,7 @@ export default function GallerySiteTrafficDashboard({
                           label={`${r.name} to site`}
                         />
                         <Bullet
-                          now={r.nowOut}
+                          at={r.points[mark]![2]}
                           mean={r.meanOut}
                           scale={scale}
                           track={'var(--rep-out-track)'}
@@ -324,13 +347,18 @@ export default function GallerySiteTrafficDashboard({
 
 /**
  * One direction's bar: a pale full-width track, a filled portion at the
- * window **mean**, a darker tick at the **current** value, and that value
+ * window **mean**, a darker tick at the **tracked** value, and that value
  * spelled out. Plain DOM, not a chart — at one row per interface a
  * `<BarChart>` would cost a canvas and a scale each to draw one rectangle.
  * Reach for a chart when you need an axis.
+ *
+ * `at` is the value at the instant the pointer is over (the window's last when
+ * it is elsewhere). The tick and the printed number are the *same* number by
+ * construction — one prop feeds both — because a marker and a label that
+ * disagree about "the current value" is the failure mode this readout has.
  */
 function Bullet({
-  now,
+  at,
   mean,
   scale,
   track,
@@ -338,7 +366,7 @@ function Bullet({
   mark,
   label,
 }: {
-  now: number;
+  at: number;
   mean: number;
   scale: number;
   track: string;
@@ -353,7 +381,7 @@ function Bullet({
         className={styles.track}
         style={{ background: track }}
         role="img"
-        aria-label={`${label}: now ${rate(now)}, mean ${rate(mean)}`}
+        aria-label={`${label}: ${rate(at)}, mean ${rate(mean)}`}
       >
         <div
           className={styles.fill}
@@ -361,10 +389,10 @@ function Bullet({
         />
         <div
           className={styles.mark}
-          style={{ left: pct(now), background: mark }}
+          style={{ left: pct(at), background: mark }}
         />
       </div>
-      <span className={styles.value}>{rate(now)}</span>
+      <span className={styles.value}>{rate(at)}</span>
     </div>
   );
 }
@@ -381,12 +409,16 @@ const replicaTheme: ChartTheme = {
   background: '#ffffff',
   area: {
     ...defaultTheme.area,
+    // Two pairs, named for the *emphasis* rather than for a series, because
+    // that is what the roles select: whatever is being looked at takes
+    // `strong*`, whatever is context takes `wash*`.
+    //
     // `flatFill` matters here: a graded fill would fade the wash out towards
     // the baseline and the overlay would stop reading as a share of it.
-    totalIn: flat('#c3dbf0'),
-    totalOut: flat('#fbdcbe'),
-    pickIn: flat('#4a8fcf'),
-    pickOut: flat('#e8883c'),
+    washIn: flat('#c3dbf0'),
+    washOut: flat('#fbdcbe'),
+    strongIn: flat('#4a8fcf'),
+    strongOut: flat('#e8883c'),
   },
   axis: {
     ...defaultTheme.axis,
@@ -402,7 +434,18 @@ function flat(color: string) {
   return { color, width: 1, fill: color, fillOpacity: 1, flatFill: true };
 }
 
-const SPANS = ['1h', '6h', 'day', 'week', 'month', 'custom'] as const;
+/** The two windows the capture can actually fill. `day`/`week`/`month` are in
+ *  the product's own strip; a six-hour fixture can't honour them, and a dead
+ *  control is worse than no control, so they aren't rendered at all. */
+const SPANS = ['1h', '6h'] as const;
+
+/** A preset's window. `6h` is the whole capture; `1h` lands on its tail, in the
+ *  busy afternoon — not a crop of the same numbers. */
+function spanRange(s: (typeof SPANS)[number]): [number, number] {
+  return s === '6h'
+    ? [TRAFFIC_RANGE[0], TRAFFIC_RANGE[1]]
+    : [TRAFFIC_RANGE[1] - 60 * 60_000, TRAFFIC_RANGE[1]];
+}
 
 /** Per-interface summary for one visible window, plus the symmetric bound the
  *  y axis needs. The capture is a uniform grid, so "which samples are in
@@ -439,8 +482,9 @@ function windowStats(range: readonly [number, number]) {
     return {
       name: sap.name,
       category: sap.category,
-      nowIn: sap.points[i1]![1],
-      nowOut: sap.points[i1]![2],
+      // Kept on the row so the tracked value is a lookup at render time — the
+      // window aggregates above don't recompute just because the pointer moved.
+      points: sap.points,
       meanIn: sumIn / n,
       meanOut: sumOut / n,
       peakIn,
@@ -448,7 +492,7 @@ function windowStats(range: readonly [number, number]) {
     };
   });
 
-  return { rows, peak: bound };
+  return { rows, peak: bound, i0, i1 };
 }
 
 /** How many gridlines each half of the mirror gets — the axis is symmetric, so

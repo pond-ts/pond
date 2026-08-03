@@ -22,7 +22,9 @@ import GallerySiteTrafficDashboard from '@site/src/examples/gallery-site-traffic
   <GallerySiteTrafficDashboard width={620} />
 </ChartExample>
 
-Click an interface. Click it again — or `⊗ Clear Selection` — to go back.
+Click an interface. Click it again — or `⊗ Clear Selection` — to go back. Drag
+the plot to pan, wheel over it to zoom, and run the pointer across it: every
+number in the table is the value at the instant you are pointing at.
 
 ## The interaction: a share, not a swap
 
@@ -39,36 +41,58 @@ isolation; they want to know **how much of the site's traffic it was**. Swap
 the series and the y axis rescales under them, the shape they were just
 looking at vanishes, and the comparison they came for is gone.
 
-So nothing swaps. The pale wash is **always** the site total. The picked
-interface is drawn **over** it, from the same zero line, in the saturated
-shade — two more `<AreaChart>`s appended to the same `<Layers>`:
+So nothing swaps. The site total is **always** the drawn shape. What the
+selection moves is **which part of it is saturated**, under one rule:
+
+> The saturated colour marks what you are looking at.
+
+Nothing picked, and the total _is_ what you are looking at — so it takes the
+strong blue and orange. Pick a row and the total steps back to a pale wash
+while that interface's contribution is drawn **over** it, from the same zero
+line, in the saturated shade — two more `<AreaChart>`s appended to the same
+`<Layers>`, and one swapped `as` on the pair already there:
 
 ```tsx
 <Layers>
-  {/* always the whole site — the wash the overlay sits in */}
-  <AreaChart series={total} column="in" as="totalIn" baseline={0} />
-  <AreaChart series={totalDown} column="out" as="totalOut" baseline={0} />
+  {/* always the whole site — subject when nothing is picked, wash when
+      something is */}
+  <AreaChart
+    series={total}
+    column="in"
+    as={picked ? 'washIn' : 'strongIn'}
+    baseline={0}
+  />
+  <AreaChart
+    series={totalDown}
+    column="out"
+    as={picked ? 'washOut' : 'strongOut'}
+    baseline={0}
+  />
 
   {/* …and, when a row is picked, its contribution within it */}
   {picked && (
     <>
-      <AreaChart series={picked} column="in" as="pickIn" baseline={0} />
-      <AreaChart series={pickedDown} column="out" as="pickOut" baseline={0} />
+      <AreaChart series={picked} column="in" as="strongIn" baseline={0} />
+      <AreaChart series={pickedDown} column="out" as="strongOut" baseline={0} />
     </>
   )}
 </Layers>
 ```
 
-Three things make that read as _contribution_ rather than as two charts on
-top of each other:
+Note what the roles are named for. `strongIn` is not "the picked interface" and
+`washIn` is not "the total" — they are named for the **emphasis**, because that
+is the thing the selection actually assigns. The same layer takes either one.
+
+Three things make the picked state read as _contribution_ rather than as two
+charts on top of each other:
 
 - **The same baseline.** Both pairs fill from `baseline={0}`, so the dark
   region starts where the wash starts and its height is directly comparable.
 - **The same axis.** The domain is pinned symmetric around zero and does not
   move when the selection changes, so the wash is a fixed reference.
-- **Flat fills.** The `totalIn` / `pickIn` roles set `flatFill`, so neither
-  area grades to transparent at the baseline. A graded wash would fade out
-  exactly where the overlay needs to sit inside it.
+- **Flat fills.** Every role sets `flatFill`, so neither area grades to
+  transparent at the baseline. A graded wash would fade out exactly where the
+  overlay needs to sit inside it.
 
 The selection itself is one `useState` and a click handler. Nothing in
 `@pond-ts/charts` mediates it — a chart is a view of whatever series you hand
@@ -88,10 +112,10 @@ const replicaTheme: ChartTheme = {
   background: '#ffffff',
   area: {
     ...defaultTheme.area,
-    totalIn: flat('#c3dbf0'), // the wash
-    totalOut: flat('#fbdcbe'),
-    pickIn: flat('#4a8fcf'), // the overlay
-    pickOut: flat('#e8883c'),
+    washIn: flat('#c3dbf0'), // context
+    washOut: flat('#fbdcbe'),
+    strongIn: flat('#4a8fcf'), // the subject
+    strongOut: flat('#e8883c'),
   },
   axis: {
     ...defaultTheme.axis,
@@ -104,7 +128,7 @@ const replicaTheme: ChartTheme = {
 };
 ```
 
-`as="totalIn"` and `as="pickIn"` are just role names — the theme is free to
+`as="washIn"` and `as="strongIn"` are just role names — the theme is free to
 invent them, and the layer resolves `area[as] ?? area.default`. Swapping
 `theme={replicaTheme}` for the site's `useSiteChartTheme()` turns this back
 into a pond chart with no other edit, which is the property that makes the
@@ -122,37 +146,62 @@ reproducing a specific product.
 The layout is reproduced completely; the behaviour is not, and the page would
 rather say so than let you find out by clicking.
 
-| Control                                     | State                                                                   |
-| ------------------------------------------- | ----------------------------------------------------------------------- |
-| Interface rows, `⊗ Clear Selection`         | **Live** — they drive the overlay                                       |
-| `SHOW GRIDLINES  Off / On`                  | **Live** — `<ChartContainer grid>`                                      |
-| `TIME  1h / 6h`                             | **Live** — re-windows the chart _and_ the table's numbers               |
-| `TIME  day / week / month / custom`         | **Disabled** — the capture is six hours long                            |
-| `Interfaces / Flow` tabs, `TRAFFIC [All ▾]` | **Inert** — layout fidelity only, dimmed rather than clickable-and-dead |
+| Control                             | State                                                                   |
+| ----------------------------------- | ----------------------------------------------------------------------- |
+| Interface rows, `⊗ Clear Selection` | **Live** — they drive the overlay                                       |
+| `SHOW GRIDLINES  Off / On`          | **Live** — `<ChartContainer grid>`                                      |
+| `TIME  1h / 6h`                     | **Live** — re-windows the chart _and_ the table's numbers               |
+| Drag / wheel on the plot            | **Live** — `panZoom="panZoom"`, clamped to the capture                  |
+| `TRAFFIC [All ▾]`                   | **Inert** — layout fidelity only, dimmed rather than clickable-and-dead |
 
-The disabled time ranges are the point of that table. The fixture is a
-**six-hour** capture, so `day`, `week` and `month` have nothing to show; a
-control that silently clamps to the data it has is a control that lies. They
-render greyed out, with a tooltip saying why.
+The product's own strip carries `day`, `week`, `month` and `custom` next to
+`1h` and `6h`, and an `Interfaces / Flow` tab pair above them. A **six-hour**
+fixture can honour none of it, and a control that silently clamps to the data
+it has is a control that lies — so rather than render four dead buttons and a
+dead tab, this replica doesn't render them at all. Dead chrome in a docs
+example is noise; the reader can't tell "not wired up here" from "doesn't
+work".
 
 `1h` is not a crop of `6h`, either. It lands in the busy afternoon, and
 everything derived re-derives against that window: the axis bound and its
 gridline step come from the window's own peak (which happens to round to the
 same 300G here — the afternoon is where the peaks are), and every number in
-the table — each interface's mean, its current value, and the shared bar
+the table — each interface's mean, its tracked value, and the shared bar
 scale — is recomputed over the visible samples.
+
+The presets and the gesture write the **same** piece of state: `range` is a
+`useState` here, the buttons set it outright, and `onTimeRangeChange` routes
+each pan and zoom back into it. That is also what keeps the buttons honest —
+`aria-pressed` compares the live window against each preset instead of
+remembering which was clicked, so panning away from `6h` lights neither.
+`bounds={TRAFFIC_RANGE}` is the fixture's full extent, so the window stops at
+the first and last sample rather than drifting into empty time.
 
 ## The table
 
 One row per interface, and the bar cell is **plain DOM, not a chart**: a pale
 full-width track, a filled portion at the window mean, a darker tick at the
-current value, and that value spelled out. At one row per interface a
+tracked value, and that value spelled out. At one row per interface a
 `<BarChart>` would cost a canvas, a scale and a container each to draw a single
 rectangle. Reach for a chart when you need an axis.
 
 All rows share one scale — the busiest interface's peak in the visible window —
 so a bar is readable _against the others_, which is the only reason to put
 them in a column.
+
+**The table is a readout of the hovered moment.** `<ChartContainer
+onTrackerChanged>` fires with the pointer's time (and `null` on leave); the
+dashboard keeps that in state, rounds it to a sample index, and every row's
+tick _and_ its printed number read that index. Off-chart it falls back to the
+window's last sample. Both come from one prop on the bullet, deliberately —
+the marker and the label are two renderings of one value, and the moment they
+can disagree about what "current" means the readout is worse than useless.
+
+Note what the callback is used for and what it isn't. `onTrackerChanged` also
+hands you every drawn series' value at that time, but only two series are
+drawn here — the totals. The per-interface numbers come from indexing the
+fixture at the tracked time, which is the general shape: **the tracker
+supplies the _instant_; your own data answers for it.**
 
 ## The data
 

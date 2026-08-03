@@ -48,27 +48,6 @@
   color: var(--rep-ink);
 }
 
-.tabs {
-  display: flex;
-  gap: 4px;
-}
-
-.tab {
-  font: inherit;
-  font-size: 12px;
-  color: var(--rep-mute);
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  padding: 4px 10px;
-  cursor: default;
-}
-
-.tab[aria-current='page'] {
-  color: var(--rep-ink);
-  border-bottom-color: var(--rep-in);
-}
-
 /* --- controls ---------------------------------------------------------- */
 
 .controls {
