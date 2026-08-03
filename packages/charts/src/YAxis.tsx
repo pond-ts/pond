@@ -184,14 +184,27 @@ export function YAxis({
   // a cursor value read identically. `count` calibrates the default formatter's
   // precision to the tick density, exactly as the axis is.
   const fmt = yScale ? resolveAxisFormat(yScale, count, format) : String;
+  // A **horizontal categorical** layer on this axis supplies its category
+  // names ([PND-HCAT]); with no explicit `ticks`, label one per unit slot at
+  // its centre (`i + 0.5`) instead of the scale's numeric ticks — a slot index
+  // is not a number anyone wants to read. Explicit `ticks` still win, and a
+  // non-categorical row is unaffected (no layer answers, so this is `null`).
+  const layerCategories: readonly string[] | null =
+    row.layers
+      .filter((e) => (e.axisId ?? row.defaultAxisId) === id)
+      .map((e) => e.layer.binCategories?.() ?? null)
+      .find((c) => c !== null) ?? null;
+
   // Explicit `{ at, label }` ticks render verbatim (each label at its `at`),
   // overriding the auto-picked d3 ticks; otherwise label the scale's ticks via `fmt`.
   const tickList: readonly { value: number; label: string }[] = ticks
     ? ticks.map((t) => ({ value: t.at, label: t.label }))
-    : (yScale ? yScale.ticks(count) : []).map((t) => ({
-        value: t,
-        label: fmt(t),
-      }));
+    : layerCategories !== null
+      ? layerCategories.map((label, i) => ({ value: i + 0.5, label }))
+      : (yScale ? yScale.ticks(count) : []).map((t) => ({
+          value: t,
+          label: fmt(t),
+        }));
 
   // The row reserves a slot per axis column (the widest in that column across
   // rows). Size the box to the slot and align this axis's own (narrower)
