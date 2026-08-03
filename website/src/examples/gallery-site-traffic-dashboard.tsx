@@ -188,6 +188,10 @@ export default function GallerySiteTrafficDashboard({
             <YAxis
               id="bps"
               side="left"
+              // The product prints no axis title — the `G` suffix on every
+              // tick carries the unit. `<YAxis label>` defaults to the axis
+              // **id**, so suppressing it means passing an empty one.
+              label=""
               min={-bound}
               max={bound}
               ticks={ticks}
