@@ -19,9 +19,17 @@ import GalleryLatencyPercentiles from '@site/src/examples/gallery-latency-percen
   <GalleryLatencyPercentiles width={640} height={220} />
 </ChartExample>
 
-Watch **11:12**. The envelope tears open while the median line barely moves —
-`p99` goes up **×5.7** and `p50` only **×1.23**. Ninety-nine percent of the
-service is fine. One percent is having an outage.
+Find the place where the envelope tears open while the median line barely
+moves: `p99` goes up **×5.7** and `p50` only **×1.23**. Ninety-nine percent of
+the service is fine. One percent is having an outage.
+
+The stall is so much bigger than everything else that it sets the axis, which
+is why the normal envelope looks like a thin ribbon along the floor. **Drag
+across a quiet hour to zoom** — the two tones separate immediately. That
+compression is itself the argument for the log axis in "Options to try".
+
+(Clock times below are **UTC** — the fixture's own frame. The axis renders in
+your local timezone, so the stall will sit at a different hour on your screen.)
 
 ## The data
 

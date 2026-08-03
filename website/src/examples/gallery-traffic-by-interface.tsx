@@ -86,9 +86,11 @@ export default function GalleryTrafficByInterface({
               legend={names[i]}
             />
           ))}
-          {legend ? <Legend placement="top-left" /> : null}
         </Layers>
       </ChartRow>
+      {/* Outside the row: seven entries is a tall box, and in-plot it eats the
+          top-left quarter — where the 08:20 burst is. */}
+      {legend ? <Legend /> : null}
     </ChartContainer>
   );
 }

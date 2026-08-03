@@ -71,9 +71,12 @@ export default function GalleryMultiHostCpu({
               />
             ) : null;
           })}
-          {legend ? <Legend placement="top-left" /> : null}
         </Layers>
       </ChartRow>
+      {/* Outside the row, not inside `<Layers>`: an in-plot legend at
+          `top-left` sits exactly on top of `batch-01`'s 02:00–04:30 plateau
+          and hides the second-most interesting thing on the chart. */}
+      {legend ? <Legend /> : null}
     </ChartContainer>
   );
 }

@@ -18,8 +18,14 @@ import GalleryMultiHostCpu from '@site/src/examples/gallery-multi-host-cpu';
   <GalleryMultiHostCpu width={640} height={220} legend />
 </ChartExample>
 
-Look at **15:20**: `web-02` doesn't drop to zero, it stops. The dashed
-connector spanning the hole is the chart saying "no data", not "no load".
+Find the flat-topped block early in the day — that's `batch-01`'s nightly
+batch. Then find where `web-02` stops: it doesn't drop to zero, it just stops,
+and the dashed connector spanning the hole is the chart saying "no data", not
+"no load".
+
+All clock times below are **UTC**, which is how the fixture is defined; the
+axis renders in _your_ local timezone, so the shapes will sit at a different
+hour than the prose names.
 
 ## The data
 
