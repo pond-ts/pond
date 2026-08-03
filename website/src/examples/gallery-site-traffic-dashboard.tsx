@@ -199,7 +199,11 @@ export default function GallerySiteTrafficDashboard({
           // covers. `bounds` is the fixture's full extent, so the window
           // clamps at the first and last sample instead of drifting off into
           // empty time, and the `TIME` presets stay reachable by hand.
-          panZoom="panZoom"
+          //
+          // Off in the Gallery card: a card that zooms under the wheel traps
+          // the scroll of anyone paging down the Gallery, which is exactly the
+          // gesture that page is read with.
+          panZoom={preview ? 'none' : 'panZoom'}
           bounds={TRAFFIC_RANGE}
           onTimeRangeChange={setRange}
           onTrackerChanged={onTracker}
