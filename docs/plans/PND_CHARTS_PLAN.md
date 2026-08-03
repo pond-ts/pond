@@ -478,6 +478,101 @@ per-mark idiom the codebase already uses). **Still open in this wave:**
 `ValueSeries` widening, range-only mode polish, px `offset`, line-only shape,
 and the `cursorFlag` x-snap reconciliation.
 
+### [PND-CHARTAPI] / [PND-BARSEM] / [PND-HCAT] / [PND-VSADAPT] — the 2026-08 API review — DONE
+
+All four shipped (#590 / #592 / #593 / #594) from the owner's holistic review
+([docs/notes/charts-api-review-2026-08.md](../notes/charts-api-review-2026-08.md)
+— verdict: excellent data seam, good composition, uneven type/behaviour seam).
+Residue tracked as **[PND-APIREV-REST]** in PLAN.md.
+
+**What shipped, and the reasoning worth keeping:**
+
+- **[PND-VSADAPT] — adapters are internal.** The owner's rule: _"any use of an
+  adaptor when starting with a timeseries is a core api failure."_ So the
+  ValueSeries builders stay unexported, the docs stopped teaching adapters as
+  the contract, and the list family gained a direct `series` door. Second
+  correction from review: "non-pond interop" was the wrong framing at both
+  ends — the `from*` builders _take_ pond series and no layer accepts their
+  output. They are **view builders for custom draw code**.
+- **[PND-CHARTAPI] — the type seam.** Two findings neither reasoning nor CI
+  would have produced, both from measurement:
+  1. `NumericColumnNameForSchema<SeriesSchema>` is **`never`**, so a naive
+     constraint rejects everything for a loosely-typed series. Invisible to
+     this repo's suite, whose fixtures are all `as const`.
+  2. With **two** generics only one is ever inferred, so
+     `NumericColumn<S> | ValueNumericColumn<VS>` silently widens to `string` —
+     the constraint was **inert** for the common TimeSeries case until each
+     layer's props became a union _per series kind_.
+
+     A third came from review: the `never` guard answered "no numeric columns"
+     when it had to answer "is the schema loose" — an all-string schema
+     silently accepted anything. The lesson generalises: on type-level work,
+     _compiling_ is not evidence of _checking_; only a negative test is.
+
+     Cost accepted by the owner: a union-typed series value must be narrowed
+     or cast. The alternative (one generic over the series type) is verified in
+     `spikes/charts-type-seam/REPORT.md` if that ever bites.
+
+- **[PND-BARSEM] — capabilities follow the drawn mark.** One-segment vertical
+  bars take the single-series path whatever fed them. Review caught the
+  regression that mattered: the reroute **dropped the `colors` channel** (a
+  one-group stack resolved `colors[group] ?? theme.bar[group]`; the single
+  path read only `as`), changing bar colours with no error. Restored, plus
+  `SelectInfo.label` parity between `column="a"` and `columns={['a']}`.
+  Acceptance test met — `BarStyle.hover`'s scope warning shrank from five
+  path-accidents to two real exclusions.
+- **[PND-HCAT] — horizontal categorical bars.** Categories on y as unit slots,
+  the `<YAxis>` deriving one label per category via a new internal
+  `binCategories()` channel. Self-review before the Layer-2 pass caught a
+  contract violation: labels landed on slot **centres** while gridlines fell on
+  slot **boundaries**. Fixed by applying the rule the codebase already stated
+  for the categorical x axis — no gridlines through bar centres.
+
+**Process note.** #594's Layer-2 agent never posted (it stalled); the PR
+merged on the owner's explicit instruction with CI green and a self-review
+that had found the gridline bug. A post-merge adversarial pass on the
+horizontal-categorical interaction contract is part of [PND-APIREV-REST].
+
+### [PND-LISTS] — BarList + BoxList ranked row lists — DONE
+
+Shipped in [#585](https://github.com/pond-ts/pond/pull/585): the
+react-timeseries-charts `HorizontalBarChart` shape as two standalone DOM
+sisters — `<BarList>` (proportional value bars) and `<BoxList>` (five-number
+distribution + current-value tick with printed label), one shared value
+scale, label + data cells, `sortBy`/custom sort (missing last both
+directions), per-row expander, consumer-owned selection, and a thin
+`axis.grid` baseline rule at the scale origin (BoxList default-on, BarList
+opt-in — box lines float at `lower`, so the origin is what relates rows).
+Readers `listRowsFromTimeSeries` / `listRowsFromValueSeries`;
+`theme.box.secondary` added to both built-in themes.
+
+**The load-bearing decision: a table, not a plot.** The owner initially
+steered toward extending the canvas path (`BoxPlot orientation='horizontal'`
+
+- cells-as-axes + expander-as-recipe), then opened it to guidance; the
+  recommendation that stuck is that the pattern's defining features — link
+  labels, aligned data cells, an expander inserting arbitrary-height content,
+  custom sort — are table semantics a band-scaled canvas plot can't carry
+  (canvas ticks can't be links; an expander would warp the band scale). The
+  lists render a real `<table>`; `<BarChart orientation="horizontal">` remains
+  the in-plot histogram, and the docs page states the split.
+
+**Considered and deliberately not built:** canvas
+`BoxPlot orientation='horizontal'` (no in-plot consumer; [PND-BOXPLT]'s
+backlog doesn't ask for it — revisit only if one appears); diverging
+(negative) bar lists (bars are length-encoded from the domain minimum,
+documented as non-negative; a diverging mode is its own axis story);
+controlled expansion state (uncontrolled + `defaultExpanded` +
+`onExpandToggle` until friction says otherwise); a theme token for the bar
+track (fill at fixed 0.15 opacity, works on both grounds). Known sharp edge:
+the box tick's inline label is an absolute overlay and can overpaint the
+after-cells near the domain's right edge.
+
+Review record: adversarial review + response on #585 (both comments). Its
+one process find worth remembering: a corrupted write left two raw NUL bytes
+in a key literal, making the .tsx binary to git — `file`/`git diff --numstat`
+is the fast check when a text diff mysteriously shows "Binary files differ".
+
 ### [PND-LEGEND] — `<Legend>` wave — DONE
 
 Shipped (#512, after the #511 label prerequisite): the sender's #508 design

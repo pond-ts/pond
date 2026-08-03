@@ -55,6 +55,61 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts:** **`<BarChart categories>` now works horizontally** ([PND-HCAT],
+  the 2026-08 API review's #3 item) — the funnel / ranking / comparison shape.
+  `orientation="horizontal"` puts the categories on the **y** axis as unit
+  slots with the value on x, and a `<YAxis>` with no explicit `ticks` **derives
+  one label per category by itself**, so the chart no longer needs a
+  hand-built `i + 0.5` tick list. It previously threw ("horizontal category
+  axes are not yet supported"), which forced consumers to convert their
+  categories into ordinal `bins` records _and_ hand-place the labels — the
+  workaround the gallery funnel documents.
+
+  Explicit `<YAxis ticks>` still wins, and vertical categorical charts are
+  untouched (categories stay on the container's ordinal x band scale). A new
+  internal `RowLayer.binCategories()` channel carries the names to whichever
+  axis they land on.
+
+- **charts:** **the list family's series door** — `<BarList series={splits}
+label={…}>` / `<BoxList series>` take a `TimeSeries` / `ValueSeries`
+  directly (one row per event; exactly-one-of with `rows`), closing the
+  "required adapter" gap the 2026-08 API review named: starting from a pond
+  series there is no shaping step. The `listRowsFrom*` readers remain for
+  record rows. Docs across the charts hub, cheat sheet, and type pages now
+  present the series as the whole data contract, with the exported `from*`
+  builders re-documented as **interop escape hatches for non-pond data**.
+
+- **charts:** **`<BarList>` + `<BoxList>` — standalone ranked row lists** (the
+  react-timeseries-charts `HorizontalBarChart` shape, rebuilt as what it
+  always was: a table). One DOM row per _entity_ — an interface, a split, a
+  symbol — with a label cell (any node, links included), one glyph line per
+  configured column on **one shared value scale**, optional data cells
+  before/after the glyphs, `sortBy`/`sortDirection` or a full custom
+  comparator (missing values sort last either direction), an optional per-row
+  expander (`renderExpanded`, keyed on row identity so it survives a re-sort),
+  and consumer-owned row selection with an accent edge in the marks register.
+  A vertical **baseline rule** at the scale origin anchors the rows to one
+  reference (on by default for `<BoxList>`, whose lines float at their lower
+  quantile; opt-in for `<BarList>`, whose tracks already show zero), and
+  reference **`markers`** (`{ value, label? }`) draw a labelled dotted rule
+  through every row in the annotation register — an SLA / capacity line —
+  with marker values joining the auto domain fit.
+  `<BarList>` draws proportional value bars; its sister `<BoxList>` draws a
+  five-number distribution per line — range band, `q1`→`q3` body, median line
+  — plus an optional **current-value tick** with a formatted inline label (the
+  esnet traffic-by-interface look), using the same quantile vocabulary as the
+  canvas `<BoxPlot>` (`lower`/`q1`/`median`/`q3`/`upper`, both-or-neither
+  body, quantiles computed upstream — `reduce` facts — never by the chart).
+  Styling stays on the one channel: bars resolve `theme.bar[as]`, boxes
+  `theme.box[as]`; both built-in themes gain a `box.secondary` role for the
+  paired-direction case. Readers `listRowsFromTimeSeries` /
+  `listRowsFromValueSeries` build one row per event / axis key. The in-plot
+  histogram remains `<BarChart orientation="horizontal">` — the lists are for
+  the table-shaped cases it can't be (link labels, cells, expanders, custom
+  sort).
+
 ### Fixed
 
 - **charts:** toggling **`<ChartContainer grid>`** now repaints immediately.
@@ -64,6 +119,72 @@ include new features and type-level changes; patch bumps are strictly additive.
   omission covered `sessionDividers` and `xKind`.
 
 ### Changed
+
+- **charts:** **a bar's capabilities now follow the mark it draws, not the
+  prop that fed it** ([PND-BARSEM], the 2026-08 API review's #2 item). A
+  **one-column vertical** histogram (`bins` + a single `column`) and a
+  one-entry `columns` draw exactly the mark a `series` + `column` chart
+  draws, but they used to route through the stacked path purely because of
+  which prop supplied them — and so silently lost whole-slot hit-testing
+  (#584), the `BarStyle.hover` colour, the cursor readout, stable per-bar
+  identity and per-bar decimation. They now take the single-series path, so
+  visually identical bars behave identically.
+
+  **What this changes in practice:** on a one-column histogram, hover and
+  click now hit the bar's **whole slot** rather than only the drawn
+  rectangle (so the space above a short bar is live, and slots tile the
+  axis); the layer gains a cursor readout; and `theme.bar.hover` applies.
+  A genuine multi-group stack, `categories`, and horizontal charts are
+  unchanged — their segments share a bin's x-range, so only y distinguishes
+  them. New reader `barsFromBins` backs the normalized path.
+
+  **Not a pure widening, in one respect:** dense-bar envelope decimation is
+  now live on a one-column histogram (it was single-series-only). It engages
+  only once bars fall under ~1px, where it is visually lossless, but at that
+  density the per-bar `gap` and highlight give way to envelope rects — pass
+  `decimate={false}` to keep every bar drawn. The `colors` map, the
+  `theme.bar[<column>]` role and `SelectInfo.label` are all preserved across
+  the reroute (each was a silent regression caught in review).
+
+  This shrinks `BarStyle.hover`'s scope warning from a list of five
+  path-accidents to the two real exclusions (a multi-group stack has no
+  hover channel on `StackStyle`; `binColors` keeps each bar's own colour by
+  design) — which was the acceptance test the task set itself.
+
+- **charts:** **column names and source modes are now checked at compile
+  time** ([PND-CHARTAPI], the 2026-08 API review's #1 item). Every draw
+  layer's column props are derived from the series' schema, so
+  `<LineChart series={cpu} column="cpuu" />` — and a numeric prop pointed at
+  a string column, where the schema has some other numeric column — fail to
+  **compile** instead of throwing at render; the
+  same holds for `readout`, the band edges, the box quantiles, and the OHLC
+  prices. `<BarChart>`'s props became a **union of its legal source modes**,
+  so mixing sources (`series` + `bins`) or column forms (`column` +
+  `columns`), or passing `categories` a `column`, are compile errors too.
+  `<BarList>` / `<BoxList>` get the same treatment for `rows` XOR `series`,
+  which additionally closes the row-type hole #590 documented (annotating a
+  callback with a custom row type while passing `series` claimed a shape the
+  series door cannot produce).
+
+  **This narrows what compiles — deliberately.** Code carrying a typo, an
+  illegal mode mix, or a lying row annotation stops building; that is the
+  point, and each case was already a runtime failure. Two compatibility
+  behaviours are preserved on purpose: a **loosely-typed** series
+  (`TimeSeries<SeriesSchema>`, e.g. from a helper that doesn't narrow) still
+  accepts any column name, because an unparameterized schema leaves the name
+  union open and nothing can be checked against it; and `bins` column names
+  stay `string`, since they name aggregate fields of a bin record rather than
+  schema columns. Note the deliberate distinction: a schema that _does_ name
+  its columns but has **no numeric one** rejects every name — there is nothing
+  numeric to plot — which is not the same as the loose case.
+
+  **One new limitation.** Because a layer's props are a union _per series
+  kind_, a value typed as _either_ kind (`TimeSeries<A> | ValueSeries<B>` — a
+  wrapper that forwards whatever it is given) matches no single member and
+  must be narrowed or cast at the boundary. `DurationAxis.stories.tsx` is the
+  worked example. The alternative design (one generic over the series type)
+  handles that case but changes every props type's public generic parameters;
+  the trade is recorded in `spikes/charts-type-seam/REPORT.md`.
 
 - **charts:** **a bar's hover / click target is now its whole slot**, not the
   rectangle it draws. A bar _is_ the full width of its interval; the `gap` that

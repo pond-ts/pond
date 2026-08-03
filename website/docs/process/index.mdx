@@ -1,0 +1,117 @@
+---
+id: process-index
+title: '@pond-ts/process'
+unlisted: true
+pagination_prev: null
+pagination_next: null
+---
+
+# @pond-ts/process
+
+**Computations as data, authored like code.** In application code you
+build a graph fluently, typed end to end by your own op vocabulary:
+
+```ts
+const graph = process(registry, 'ACME_5m');
+
+const close = graph.column('close');
+const average = close.sma({ as: 'average', period: 20 });
+const bands = average.bands({ as: 'bands', width: 2 });
+
+const result = host.run(
+  graph.outputs({
+    average: average.columns(), // packed columns, for a chart
+    bands: bands.columns(),
+    latest: average.last(), // a small fact
+  }),
+);
+```
+
+The request that emits is **plain JSON** — the same
+`{ op, params, inputs }` format a saved view replays and a tool-calling
+model composes directly from the registry's schema. One format, one
+resolver, one content-addressed cache serving the renderer's columns and
+the agent's facts alike. The fluent API is the developer's front door;
+the data underneath is the contract.
+
+:::caution[Work in progress]
+`@pond-ts/process` is not published yet. These pages describe the in-repo
+WIP API, which may change before the first release. Work from a pond
+monorepo checkout rather than installing from npm.
+:::
+
+## When _not_ to use this
+
+Chaining is pond's mental model and stays the right default:
+
+```ts
+const out = series
+  .rolling('5m', { cpu: 'avg' })
+  .aggregate(Sequence.every('1h'), { cpu: 'max' });
+```
+
+If the pipeline is known when you write the code, chain it and skip this
+package. `@pond-ts/process` exists for the case chaining genuinely cannot
+express: when **the pipeline itself is data** —
+
+- constructed at runtime from saved configuration;
+- reshaped by a user in a node editor;
+- composed by a model against a declared vocabulary;
+- one expensive intermediate fanned out to several consumers wanting
+  different slices;
+- persisted, and run again later against refreshed source data.
+
+## The three layers
+
+Every page in this section is about one of three roles, and keeping them
+separate is the design:
+
+1. **The [registry](./registry) declares which operations exist.** It is
+   simultaneously the compile-time vocabulary that types the fluent API,
+   the runtime validator, the metadata behind a picker, and the source of
+   a JSON Schema projection a tool-calling model composes against.
+2. **The [request](./requests) is plain data describing one graph.**
+   Authored [fluently](./authoring) or composed remotely, it lands on the
+   same [data model](./plans), whose identity is content-addressed: the
+   same question, however spelled, lands on the same node — which is what
+   makes the id a cache key, a column name, and a provenance citation at
+   once.
+3. **The [host](./host) outlives requests.** It binds datasets, resolves
+   remote sources, keeps each binding's graph warm, and answers requests
+   with columns, facts, lineage, and per-node timings.
+
+## Where to go
+
+Developer path first, wire format second:
+
+- **[Build a processing graph](./tutorial)** — the end-to-end tutorial:
+  declare a vocabulary, register a remote source, author a branched graph
+  fluently, run it, watch the cache work.
+- **[Authoring graphs](./authoring)** — the fluent API reference: slots,
+  typed params and roles, multi-output picking, facts, and the request it
+  emits.
+- **[Requests and responses](./requests)** — the request forms, selecting
+  columns and facts, error policies, and reading the response's own
+  account of what it did.
+- **[Plans and identity](./plans)** — the data model underneath: specs,
+  inputs, picked outputs, content-addressed ids, lineage, units. What a
+  remote composer writes directly.
+- **[The registry](./registry)** — declaring ops and folds, the param
+  vocabulary, definition-time validation, and the JSON Schema projection
+  for remote composers.
+- **[The host](./host)** — datasets, opaque async sources, revisions, and
+  the lifecycle dials that bound a long-lived process.
+- **[Caching and performance](./performance)** — what the
+  content-addressed cache buys, byte budgets, ranged recompute, and the
+  worker pool.
+
+## Relationship to the engine underneath
+
+The plan layer sits on a small pull-based dataflow engine — typed ports,
+memoized nodes, dirty propagation that stops when values stop changing.
+That engine is exported today, and the
+[package README](https://github.com/pond-ts/pond/tree/main/packages/process)
+documents it, but the RFC's conclusion (tracked as **[PND-PROCSUB]**) is
+that the plan layer is the consumer surface and the engine belongs
+underneath it. Prefer the plan layer unless you are building something the
+plan layer itself cannot express.

@@ -63,14 +63,18 @@ point-keyed (`kind: 'time'`) — a raw reading at an instant, which is what
 an API response usually looks like.
 
 This matters the moment you reach for a bar-shaped layer. A line has no
-width to fill, so a point key is fine. A bar does — chapter 4's
-`aggregate` call turns point-keyed readings into **interval-keyed**
-buckets (each output row spans a time bucket, not just an instant), which
-is exactly the shape `BarChart` needs to size each bar. Interval keys
-aren't a special case bolted on later; they're what "shaping data to
-chart" produces naturally. [Temporal keys](../pond-ts/concepts/temporal-keys)
-covers the full model (a third kind, `timeRange`, covers point-in-time
-snapshots over an arbitrary span).
+width to fill, so a point key is fine. A bar does — and an interval key
+carries its width _in the data_: chapter 4's `aggregate` call turns
+point-keyed readings into **interval-keyed** buckets (each output row
+spans a time bucket), so each bar draws its true bucket span. A
+point-keyed series still works — `BarChart` derives each bar's width from
+**neighbour spacing** (each bar reaches halfway to its neighbours), so a
+uniformly-sampled series renders as contiguous bars without a pre-step.
+Prefer the `aggregate` route when the bars _mean_ buckets: the drawn span
+is then the real interval, not an inferred one. [Temporal
+keys](../pond-ts/concepts/temporal-keys) covers the full model (a third
+kind, `timeRange`, covers point-in-time snapshots over an arbitrary
+span).
 
 ## What a draw layer actually reads
 
@@ -88,9 +92,10 @@ one, which is exactly what the next chapter does.
 
 `TimeSeries.fromJSON` turns an API response (or a `fromColumns` struct-of-
 arrays payload) into a chartable `series`. The temporal key's `kind` is
-`'time'` for raw readings, `'interval'` once you've bucketed — and bars
-need the latter. Every draw layer reads a specific, small set of named
-columns off your series; that's its data contract.
+`'time'` for raw readings, `'interval'` once you've bucketed — bars draw
+true spans from the latter and infer widths from neighbour spacing on the
+former. Every draw layer reads a specific, small set of named columns off
+your series; that's its data contract.
 
 **Next: [Shaping data to chart](./shaping-data-to-chart)** — the
 transforms that turn raw readings into the interval buckets, rolling

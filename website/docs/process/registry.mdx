@@ -1,0 +1,157 @@
+---
+title: The registry
+description: Declaring ops and folds, the param vocabulary, definition-time validation, and the JSON Schema projection.
+unlisted: true
+pagination_prev: null
+pagination_next: null
+---
+
+# The registry
+
+The registry is one declaration with four readers: **param validation**, a
+**JSON Schema projection** for remote composers, a **picker's metadata**
+(family + params + defaults is exactly a grouped menu), and **unit
+propagation**. Whatever consumes plans — resolver, UI, model — reads the
+same source of truth.
+
+```ts
+import { createRegistry, int, num, choice, flag } from '@pond-ts/process';
+
+const registry = createRegistry().define({
+  name: 'sma',
+  family: 'trend',
+  summary: 'Simple moving average over a fixed number of bars.',
+  params: {
+    period: int({ min: 2, max: 5000, suggest: [5, 200], default: 20 }),
+  },
+  inputs: [{ role: 'source' }],
+  outputs: [{ id: '', unit: 'inherit' }],
+  label: (params, inputs) => `SMA(${params['period']}) of ${inputs}`,
+  run: (ctx) => {
+    /* … returns one column per declared output … */
+  },
+});
+```
+
+`createRegistry()` pre-registers the four [standard folds](#folds); pass
+`{ folds: false }` to start empty. Definitions are plain objects — a
+consumer replaces one by calling `define` over its name.
+
+## Params
+
+Four declaration helpers: `int`, `num`, `choice`, `flag`. Numeric params
+carry three distinct ranges, and the distinction is deliberate:
+
+- `min` / `max` — the **legal** range. Outside is an error.
+- `suggest: [lo, hi]` — the **useful** range, purely advisory. A `period`
+  legal to 5000 is interesting below ~200; a slider drawn on the legal
+  range spends 96% of its travel where nobody goes. The schema projection
+  carries `suggest` as prose (`"Typically 5–200…"`) so a composing model
+  reads it too.
+- `default` — applied when omitted, and part of the spec's
+  [identity](./plans#identity-is-content-addressed) once applied.
+
+Validation errors report what was actually received, including its type —
+`sma.period must be an integer, got "20" (string)` — because a caller
+composing JSON is the audience least able to debug anything vaguer.
+
+## Inputs and outputs
+
+Inputs are declared as **roles** (`{ role: 'left' }`, `{ role: 'right' }`),
+which is what an op's `run` reads them by, what fluent authoring names
+them by, and what a UI labels wires with. A role may also demand a unit —
+`{ role: 'source', unit: 'variance' }` — enforced at plan compile time
+([units](./plans#units)).
+
+Outputs declare a **suffix** and a unit. A single-output op declares
+`id: ''` (its column _is_ the spec id); a multi-output op gives every
+output a suffix. An output may also declare `dependsOn: ['width']` — the
+params it actually reads — so a change to an unrelated param leaves that
+output's version untouched and everything downstream of it idle.
+
+## What `define` rejects
+
+Definition-time validation exists because these mistakes do not fail at
+run time — they **collapse**, silently:
+
+- **Duplicate input roles** — inputs resolve by role, so every reader
+  would see the last one.
+- **Duplicate output suffixes** — outlets key by suffix, so the earlier
+  column would be discarded.
+- **A default the param's own declaration refuses** — it would fail every
+  spec that omits the param, instead of the author who wrote it.
+- **`dependsOn` naming an unknown param** — a dependency that never fires
+  and is never noticed.
+- **A malformed `suggest` range**, and the reserved name `as` (fluent
+  plans use it for the node slot).
+
+## Folds
+
+A **fold** is a terminal node producing a small fact instead of a column —
+`kind: 'fold'`, with a `fold(ctx)` body instead of `run`. Four are
+pre-registered because every consumer wants them:
+
+| Fold             | Answers                                                |
+| ---------------- | ------------------------------------------------------ |
+| `last`           | The most recent defined value, with its date           |
+| `extremes`       | Lowest and highest over the series, each with its date |
+| `percentileRank` | Where the latest value sits in its own history (0–1)   |
+| `shape`          | A bounded sample of the whole series (`points`, ≤ 400) |
+
+`shape` is the honest answer to "show me the series" for a caller paying
+by the token — the sample never exceeds the requested `points`, and the
+point count is a param rather than a selector field so it lands in the id
+and two callers asking for 40 points share one cached answer.
+
+A fold body reads its inputs through `ctx.numeric(role)` — a zero-copy
+columnar view — falling back to `ctx.values[role]`, a lazily densified
+boxed array. Timestamps come from `ctx.at(i)`, a function rather than an
+array because a fold reports two or three rows out of 150,000.
+
+Facts carry provenance the fold body cannot override: `id`, `name`, `op`,
+and `unit` always mean what the graph says, whatever keys the body
+returns.
+
+## Describing the vocabulary
+
+`registry.describe()` returns per-op metadata (name, family, summary,
+params, input roles with unit demands, output suffixes with units, and
+`kind: 'op' | 'fold'`); `registry.byFamily()` groups it for a picker. A
+fold's descriptor is how a UI knows the node cannot be wired onward.
+
+## The JSON Schema projection
+
+`registry.toJsonSchema()` emits the tool contract a remote composer
+validates against. The load-bearing part is **recursion**: an input is a
+column name, _or_ another spec via a `$ref`, _or_ a picked output
+`{ from, output }` — so a caller expresses _EMA of SMA of px_ from the
+schema alone, without being taught a nesting concept.
+
+The recursion lives in `$defs` and refs resolve as `#/$defs/<name>`,
+which is the only portable shape — a body-relative pointer dangles the
+moment the projection is embedded in a larger schema. Embedding therefore
+means hoisting `$defs` to your own root:
+
+```ts
+const plan = registry.toJsonSchema({ defs: 'spec', root: false });
+const { $defs, ...body } = plan;
+const toolInput = {
+  type: 'object',
+  $defs, // hoisted to the root
+  properties: { process: body },
+};
+```
+
+Two more choices were forced by real tool APIs rather than the spec:
+unions are `anyOf` (a live API refused `oneOf`), and every `const` carries
+its `type` alongside.
+
+There is also a flat **slots** projection — `toJsonSchema({ shape:
+'slots' })` — for the [slot request form](./requests#two-request-forms),
+where an input is always a string and the recursion (and every
+portability problem with it) disappears.
+
+**Known gap:** the projection does not yet carry unit constraints in
+either direction, so a caller cannot learn from the schema alone that
+`annualise` refuses a raw price. Until it does, pair the schema with a
+`describe()` table in the prompt. (Tracked as [PND-PROCSCHEMA].)
