@@ -110,6 +110,14 @@ label={…}>` / `<BoxList series>` take a `TimeSeries` / `ValueSeries`
   the table-shaped cases it can't be (link labels, cells, expanders, custom
   sort).
 
+### Fixed
+
+- **charts:** toggling **`<ChartContainer grid>`** now repaints immediately.
+  `Layers`' draw callback read `container.grid` but didn't depend on it, so
+  switching gridlines off changed nothing until an unrelated dependency moved —
+  in practice you had to pan or zoom a little to force the update. The same
+  omission covered `sessionDividers` and `xKind`.
+
 ### Changed
 
 - **charts:** **a bar's capabilities now follow the mark it draws, not the
@@ -228,6 +236,19 @@ label={…}>` / `<BoxList series>` take a `TimeSeries` / `ValueSeries`
   or per-bin-coloured bar has no separate highlight colour to replace (it pops
   its _own_ fill, so a red/green volume bar keeps its meaning while live), and
   that convention is unchanged.
+
+- **docs theme:** **a sequential ramp — `seq1…seq8` — for charts with more
+  series than the categorical set has hues.** `--pond-viz-1…5` were, and
+  remain, the categorical set; a chart needing more slots (an eight-source
+  stack, a wall of climate stripes) now steps **tonally** through the brand
+  teal instead of introducing competing hues. Eight steps, evenly spaced
+  (~ΔL\* 9 in CIELAB), defined for light and dark, each mode's ramp containing
+  that mode's `--pond-viz-1` exactly. Exposed as `line` / `area` / `bar` theme
+  roles on `docsTheme` (Storybook) and the docs site's `useSiteChartTheme`,
+  and as an array from the site's `useSequentialRamp()`. Dev-only: the ramp
+  lives in the `docs-theme.fixture.ts` Storybook fixture and the website's
+  CSS, both excluded from the published `@pond-ts/charts` build — the library
+  still ships no palette.
 
 ### Fixed
 

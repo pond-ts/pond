@@ -328,6 +328,9 @@ function buildGradient(
   style: AreaStyle,
 ): CanvasGradient | string {
   if (valueExtent === null) return style.fill; // no finite values (caller no-ops)
+  // Stacked areas opt out of the grade entirely: a band that fades to
+  // transparent at the baseline shows every band beneath it (see AreaStyle).
+  if (style.flatFill === true) return style.fill;
   // The pixel extent is the two value extremes mapped through the (monotonic,
   // always-`scaleLinear`) y scale; min/max them so the result is flip-agnostic,
   // exactly as the former per-point pixel scan produced. [PND-GRADX] moved the

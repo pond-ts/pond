@@ -22,3 +22,8 @@ website/src/api-model
 # The Pond brand spec is a bundled interactive HTML deliverable from the
 # design-system agent, not authored source — left byte-for-byte as delivered.
 brand/Pond Brand Spec.html
+
+# The Gallery page template is mostly instructional MDX comment, and prettier
+# reformats a multi-line `{/* … */}` into escaped markdown (`\*`, collapsed
+# lists) — which shreds it. It's a template, never a built page.
+website/docs/charts/gallery/_template.mdx

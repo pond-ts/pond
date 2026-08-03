@@ -116,7 +116,25 @@ const sidebars: SidebarsConfig = {
       label: '@pond-ts/charts',
       link: { type: 'doc', id: 'charts/charts-index' },
       items: [
-        'charts/gallery',
+        {
+          type: 'category',
+          label: 'Gallery',
+          link: { type: 'doc', id: 'charts/gallery' },
+          // One page per chart, `charts/gallery/<slug>` — the build-it
+          // tutorial each card's "Build it →" link opens. Each track appends
+          // its own slugs here, grouped as they are on the Gallery page;
+          // `_template.mdx` is the shape they all follow.
+          items: [
+            // Track A — ops & infrastructure.
+            'charts/gallery/network-traffic',
+            'charts/gallery/traffic-by-interface',
+            'charts/gallery/multi-host-cpu',
+            'charts/gallery/latency-percentiles',
+            'charts/gallery/sla-incidents',
+            'charts/gallery/live-tail',
+            'charts/gallery/site-traffic-dashboard',
+          ],
+        },
         {
           type: 'category',
           label: 'Learn charts',

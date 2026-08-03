@@ -48,6 +48,26 @@
   --pond-viz-grid: rgba(139, 163, 161, 0.28);
   --pond-viz-divider: rgba(194, 121, 15, 0.5);
 
+  /* ---- sequential ramp (light) ----
+     `--pond-viz-1..5` are the CATEGORICAL set and stay that way; a chart
+     needing more slots than that goes tonal, not chromatic. Eight steps
+     inside the brand teal, ~ΔL* 9 apart, darkest → lightest; step 4 IS
+     `--pond-viz-1`, so the ramp reads as the accent's own family. Consumed
+     as the `seq1…seq8` line/area/bar roles (useSiteChartTheme) and as the
+     array `useSequentialRamp()` returns.
+
+     The ramp is built for FILLS — stacked areas and bars, where each slab's
+     neighbours supply the contrast. A lone *line* at step 1 or 2 is nearly
+     the ground colour; give a single line `--pond-viz-1` (or steps 4–7). */
+  --pond-viz-seq-1: #0c444b;
+  --pond-viz-seq-2: #0d5c60;
+  --pond-viz-seq-3: #0d7474;
+  --pond-viz-seq-4: #0e8f86;
+  --pond-viz-seq-5: #27a79a;
+  --pond-viz-seq-6: #38c2af;
+  --pond-viz-seq-7: #7ed6c8;
+  --pond-viz-seq-8: #bbe8df;
+
   /* ---- site chrome (Infima), light ---- */
   --ifm-color-primary: #0e8f86;
   --ifm-color-primary-dark: #0c8078;
@@ -104,6 +124,19 @@ html[data-theme='dark'] {
   --pond-viz-down: #ff6e68;
   --pond-viz-grid: rgba(107, 129, 128, 0.28);
   --pond-viz-divider: rgba(242, 185, 74, 0.5);
+
+  /* ---- sequential ramp (dark) ----
+     The same eight-step tonal ramp on the dark ground. The accent is
+     deliberately brighter against dark, so `--pond-viz-1` lands at step 7
+     here rather than step 4. */
+  --pond-viz-seq-1: #15474a;
+  --pond-viz-seq-2: #1a5c5d;
+  --pond-viz-seq-3: #1e7270;
+  --pond-viz-seq-4: #228a83;
+  --pond-viz-seq-5: #26a195;
+  --pond-viz-seq-6: #29baa7;
+  --pond-viz-seq-7: #34d3c0;
+  --pond-viz-seq-8: #7ee7d2;
 
   /* ---- site chrome (Infima), dark ---- */
   --ifm-color-primary: #34d3c0;

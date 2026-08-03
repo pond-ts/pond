@@ -5,10 +5,23 @@ sidebar_position: 2
 
 # Gallery
 
-Eight live, **touchable** charts — not thumbnails. Hover any of them to see
-the crosshair track; each is the exact same `@pond-ts/charts` primitives you'd
-compose yourself. Click a card's **Story** link to jump to its full
-Storybook coverage (every prop, every variant).
+Live, **touchable** charts — not thumbnails. Hover any of them to see the
+crosshair track; each is the exact same `@pond-ts/charts` primitives you'd
+compose yourself. **Build it →** opens the chart's own page — where the data
+came from, the minimal version in 10–20 lines, and the knobs worth trying.
+**Story ↗** jumps to its full Storybook coverage (every prop, every variant).
+
+Grouped by **domain**, because "can this library draw my thing?" is usually
+asked from inside a problem. If you're shopping by _shape_ instead, the
+[chart-type reference](./types/index.mdx) is the index by primitive.
+
+- [Ops & infrastructure](#ops--infrastructure)
+- [Finance](#finance)
+- [Weather & climate](#weather--climate)
+- [Energy](#energy)
+- [Fitness & health](#fitness--health)
+- [Science & measurement](#science--measurement)
+- [Product, transport & statistical](#product-transport--statistical)
 
 import GalleryGrid from '@site/src/components/GalleryGrid';
 import GalleryCard from '@site/src/components/GalleryCard';
@@ -20,6 +33,26 @@ import GalleryBand from '@site/src/examples/gallery-band';
 import GalleryHistogram from '@site/src/examples/gallery-histogram';
 import GalleryScatter from '@site/src/examples/gallery-scatter';
 import GalleryBoxplot from '@site/src/examples/gallery-boxplot';
+import GalleryNetworkTraffic from '@site/src/examples/gallery-network-traffic';
+import GalleryTrafficByInterface from '@site/src/examples/gallery-traffic-by-interface';
+import GalleryMultiHostCpu from '@site/src/examples/gallery-multi-host-cpu';
+import GalleryLatencyPercentiles from '@site/src/examples/gallery-latency-percentiles';
+import GallerySlaIncidents from '@site/src/examples/gallery-sla-incidents';
+import GalleryLiveTail from '@site/src/examples/gallery-live-tail';
+import GallerySiteTrafficDashboard from '@site/src/examples/gallery-site-traffic-dashboard';
+
+{/* ------------------------------------------------------------------ */}
+{/* Each domain section below is owned by one track (gallery plan §4). */}
+{/* A track appends its cards INSIDE its own `<GalleryGrid>`, at the */}
+{/* marked point, and adds its imports to the block above. Don't */}
+{/* reorder or re-wrap another track's section — the marker comments */}
+{/* are what keep seven parallel branches merging cleanly. */}
+{/* ------------------------------------------------------------------ */}
+
+## Ops & infrastructure
+
+Where most evaluators start: hosts, latency, error budgets, and the
+incident you're explaining on Monday.
 
 <GalleryGrid>
 
@@ -28,26 +61,9 @@ import GalleryBoxplot from '@site/src/examples/gallery-boxplot';
   blurb="Requests/sec over error rate — two rows, one shared time axis and cursor."
   storybookHref="pathname:///storybook/?path=/story/layout-multi-panel--resizable-fill"
   height={190}
+  autoplay={{ period: 14000, staticPhase: 0.62 }}
 >
-  {(width) => <GalleryDashboard width={width} />}
-</GalleryCard>
-
-<GalleryCard
-  title="Financial terminal"
-  blurb="Daily OHLC candles with the crosshair cursor and the axis-pill OHLC readout."
-  storybookHref="pathname:///storybook/?path=/story/charts-candlestick--show-ohlc"
-  height={246}
->
-  {(width) => <GalleryFinancial width={width} />}
-</GalleryCard>
-
-<GalleryCard
-  title="Activity chart"
-  blurb="A ride's elevation profile, filled — the shape an activity tracker reaches for constantly."
-  storybookHref="pathname:///storybook/?path=/story/charts-areachart--elevation"
-  height={226}
->
-  {(width) => <GalleryActivity width={width} />}
+  {(width, phase) => <GalleryDashboard width={width} phase={phase} />}
 </GalleryCard>
 
 <GalleryCard
@@ -69,12 +85,121 @@ import GalleryBoxplot from '@site/src/examples/gallery-boxplot';
 </GalleryCard>
 
 <GalleryCard
-  title="Distribution"
-  blurb="Response-time histogram on a value axis, inferred from the bins — not a time axis."
-  storybookHref="pathname:///storybook/?path=/story/charts-barchart-histogram--power-distribution"
+  title="Latency percentiles"
+  blurb="Hourly box-and-whisker buckets from five pre-computed quantile columns."
+  storybookHref="pathname:///storybook/?path=/story/charts-boxplot--percentiles"
   height={246}
 >
-  {(width) => <GalleryHistogram width={width} />}
+  {(width) => <GalleryBoxplot width={width} />}
+</GalleryCard>
+
+<GalleryCard
+  title="Network traffic"
+  blurb="Six hours of a real CERN border router — in filling up, out filling down from a shared zero line."
+  storybookHref="pathname:///storybook/?path=/story/charts-areachart--baseline"
+  pageHref="/docs/charts/gallery/network-traffic"
+  height={218}
+  autoplay={{ period: 16000, staticPhase: 0.72 }}
+>
+  {(width, phase) => (
+    <GalleryNetworkTraffic width={width} phase={phase} height={196} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Traffic by interface"
+  blurb="The same six hours, stacked: seven interfaces as tonal slabs adding up to the site total."
+  storybookHref="pathname:///storybook/?path=/story/charts-areachart--stacked"
+  pageHref="/docs/charts/gallery/traffic-by-interface"
+  height={218}
+  autoplay={{ period: 18000, staticPhase: 0.68 }}
+>
+  {(width, phase) => (
+    <GalleryTrafficByInterface width={width} phase={phase} height={196} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Multi-host CPU"
+  blurb="One line per host out of one long-form series — plus the 24-minute hole a node recycle leaves."
+  storybookHref="pathname:///storybook/?path=/story/charts-linechart--gaps"
+  pageHref="/docs/charts/gallery/multi-host-cpu"
+  height={218}
+  autoplay={{ period: 20000, staticPhase: 0.66 }}
+>
+  {(width, phase) => (
+    <GalleryMultiHostCpu width={width} phase={phase} height={196} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Latency envelope"
+  blurb="p50 inside a p90 band inside a p99 band — watch the tail tear open while the median holds."
+  storybookHref="pathname:///storybook/?path=/story/charts-bandchart--rolling-percentiles"
+  pageHref="/docs/charts/gallery/latency-percentiles"
+  height={218}
+  autoplay={{ period: 17000, staticPhase: 0.58 }}
+>
+  {(width, phase) => (
+    <GalleryLatencyPercentiles width={width} phase={phase} height={196} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="SLA & incidents"
+  blurb="A week of error rate over the budget it spent — incident regions, deploy markers, an objective line."
+  storybookHref="pathname:///storybook/?path=/story/annotations-scenarios--editable"
+  pageHref="/docs/charts/gallery/sla-incidents"
+  height={218}
+  autoplay={{ period: 22000, staticPhase: 0.3 }}
+>
+  {(width, phase) => (
+    <GallerySlaIncidents width={width} phase={phase} height={196} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Live tail"
+  blurb="Genuinely streaming: a LiveSeries with a retention window and a value pill at the leading edge."
+  storybookHref="pathname:///storybook/?path=/story/indicators-y-axis--live"
+  pageHref="/docs/charts/gallery/live-tail"
+  height={218}
+  autoplay={{ period: 14000, staticPhase: 0.9 }}
+>
+  {(width, phase) => (
+    <GalleryLiveTail width={width} phase={phase} height={196} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Site traffic dashboard"
+  blurb="A faithful replica of the operations dashboard the CERN capture comes out of — in the product's own palette, not pond's."
+  storybookHref="pathname:///storybook/?path=/story/charts-areachart--baseline"
+  pageHref="/docs/charts/gallery/site-traffic-dashboard"
+  height={356}
+>
+  {(width) => (
+    <GallerySiteTrafficDashboard width={width - 56} chartHeight={150} preview />
+  )}
+</GalleryCard>
+
+{/* TRACK A — append ops & infrastructure cards above this line. */}
+
+</GalleryGrid>
+
+## Finance
+
+{/* TRACK B — replace this line with the section's blurb. */}
+
+<GalleryGrid>
+
+<GalleryCard
+  title="Financial terminal"
+  blurb="Daily OHLC candles with the crosshair cursor and the axis-pill OHLC readout."
+  storybookHref="pathname:///storybook/?path=/story/charts-candlestick--show-ohlc"
+  height={246}
+>
+  {(width) => <GalleryFinancial width={width} />}
 </GalleryCard>
 
 <GalleryCard
@@ -86,14 +211,85 @@ import GalleryBoxplot from '@site/src/examples/gallery-boxplot';
   {(width) => <GalleryScatter width={width} />}
 </GalleryCard>
 
+{/* TRACK B — append finance cards above this line. */}
+
+</GalleryGrid>
+
+## Weather & climate
+
+{/* TRACK C — replace this line with the section's blurb. */}
+
+_Cards land here as Track C ships._
+
+<GalleryGrid>
+
+{/* TRACK C — append weather & climate cards above this line. */}
+
+</GalleryGrid>
+
+## Energy
+
+{/* TRACK D — replace this line with the section's blurb. */}
+
+_Cards land here as Track D ships._
+
+<GalleryGrid>
+
+{/* TRACK D — append energy cards above this line. */}
+
+</GalleryGrid>
+
+## Fitness & health
+
+Activity data is the awkward case every charting library gets asked about:
+irregular sampling, dropouts where the sensor coasted, and a duration axis
+rather than a wall-clock one.
+
+<GalleryGrid>
+
 <GalleryCard
-  title="Latency percentiles"
-  blurb="Hourly box-and-whisker buckets from five pre-computed quantile columns."
-  storybookHref="pathname:///storybook/?path=/story/charts-boxplot--percentiles"
+  title="Activity chart"
+  blurb="A ride's elevation profile, filled — the shape an activity tracker reaches for constantly."
+  storybookHref="pathname:///storybook/?path=/story/charts-areachart--elevation"
+  height={226}
+>
+  {(width) => <GalleryActivity width={width} />}
+</GalleryCard>
+
+<GalleryCard
+  title="Distribution"
+  blurb="Response-time histogram on a value axis, inferred from the bins — not a time axis."
+  storybookHref="pathname:///storybook/?path=/story/charts-barchart-histogram--power-distribution"
   height={246}
 >
-  {(width) => <GalleryBoxplot width={width} />}
+  {(width) => <GalleryHistogram width={width} />}
 </GalleryCard>
+
+{/* TRACK E — append fitness & health cards above this line. */}
+
+</GalleryGrid>
+
+## Science & measurement
+
+{/* TRACK F — replace this line with the section's blurb. */}
+
+_Cards land here as Track F ships._
+
+<GalleryGrid>
+
+{/* TRACK F — append science & measurement cards above this line. */}
+
+</GalleryGrid>
+
+## Product, transport & statistical
+
+{/* TRACK G — replace this line with the section's blurb. */}
+
+_Cards land here as Track G ships._
+
+<GalleryGrid>
+
+{/* TRACK G — append product, transport & statistical cards above this line. */}
 
 </GalleryGrid>
 
@@ -103,7 +299,13 @@ Every card above is one of the [chart-type support matrix](./index.mdx#the-minim
 draw layers, seeded with deterministic sample data (no `Math.random()`, no
 `Date.now()` — what you see is what renders on every visit). None of it is a
 special "demo mode": the same `ChartContainer` / `ChartRow` / `Layers` composition
-you'd write yourself, mounted for real.
+you'd write yourself, mounted for real. Fixture provenance — where each dataset
+came from, its licence, and what was dropped — lives in each fixture's header
+(the conventions are in
+[`src/examples/lib/README.md`](https://github.com/pond-ts/pond/blob/main/website/src/examples/lib/README.md)).
+
+The cards that move share **one** animation loop, animate only while they're on
+screen, and hold a still frame if your system asks for reduced motion.
 
 - [**Storybook**](pathname:///storybook/) — the systematic, per-prop knob walk
   each card's **Story** link jumps into.
