@@ -62,12 +62,16 @@ describe('<BarList series> — the series door', () => {
     expect(keys).toEqual(['1', '2']);
   });
 
-  it('rows and series are exactly-one-of', () => {
+  it('rows and series are exactly-one-of — a COMPILE error either way', () => {
+    // [PND-CHARTAPI]: both illegal shapes are rejected by the type system
+    // now; `@ts-expect-error` fails the build if that ever regresses.
+    // @ts-expect-error — neither door.
     expect(() => render(<BarList columns={[{ column: 'speed' }]} />)).toThrow(
       /exactly one/,
     );
     expect(() =>
       render(
+        // @ts-expect-error — both doors.
         <BarList
           rows={[{ key: 'a', values: { speed: 1 } }]}
           series={splits()}

@@ -97,6 +97,41 @@ label={…}>` / `<BoxList series>` take a `TimeSeries` / `ValueSeries`
 
 ### Changed
 
+- **charts:** **column names and source modes are now checked at compile
+  time** ([PND-CHARTAPI], the 2026-08 API review's #1 item). Every draw
+  layer's column props are derived from the series' schema, so
+  `<LineChart series={cpu} column="cpuu" />` — and a numeric prop pointed at
+  a string column, where the schema has some other numeric column — fail to
+  **compile** instead of throwing at render; the
+  same holds for `readout`, the band edges, the box quantiles, and the OHLC
+  prices. `<BarChart>`'s props became a **union of its legal source modes**,
+  so mixing sources (`series` + `bins`) or column forms (`column` +
+  `columns`), or passing `categories` a `column`, are compile errors too.
+  `<BarList>` / `<BoxList>` get the same treatment for `rows` XOR `series`,
+  which additionally closes the row-type hole #590 documented (annotating a
+  callback with a custom row type while passing `series` claimed a shape the
+  series door cannot produce).
+
+  **This narrows what compiles — deliberately.** Code carrying a typo, an
+  illegal mode mix, or a lying row annotation stops building; that is the
+  point, and each case was already a runtime failure. Two compatibility
+  behaviours are preserved on purpose: a **loosely-typed** series
+  (`TimeSeries<SeriesSchema>`, e.g. from a helper that doesn't narrow) still
+  accepts any column name, because an unparameterized schema leaves the name
+  union open and nothing can be checked against it; and `bins` column names
+  stay `string`, since they name aggregate fields of a bin record rather than
+  schema columns. Note the deliberate distinction: a schema that _does_ name
+  its columns but has **no numeric one** rejects every name — there is nothing
+  numeric to plot — which is not the same as the loose case.
+
+  **One new limitation.** Because a layer's props are a union _per series
+  kind_, a value typed as _either_ kind (`TimeSeries<A> | ValueSeries<B>` — a
+  wrapper that forwards whatever it is given) matches no single member and
+  must be narrowed or cast at the boundary. `DurationAxis.stories.tsx` is the
+  worked example. The alternative design (one generic over the series type)
+  handles that case but changes every props type's public generic parameters;
+  the trade is recorded in `spikes/charts-type-seam/REPORT.md`.
+
 - **charts:** **a bar's hover / click target is now its whole slot**, not the
   rectangle it draws. A bar _is_ the full width of its interval; the `gap` that
   separates adjacent columns is a display affordance. Hit-testing the drawn

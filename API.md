@@ -255,6 +255,16 @@ All take `series` plus an `as?` style identifier (theme lookup) and `axis?`
 scale id — style and scale are separate channels; there are no per-component
 color props (see Theming).
 
+**Column props are schema-derived** ([PND-CHARTAPI]): a name that isn't a
+numeric column of the series fails to compile, and `<BarChart>`'s props are a
+union of its legal source modes, so mixing `series`/`bins`/`categories` or
+`column`/`columns` is a compile error too. Two carve-outs:
+a **loosely-typed** series (`TimeSeries<SeriesSchema>`) still accepts any name
+(`packages/charts/src/column-names.ts` explains the `never` fallback that makes
+this work), and `bins` names stay `string` (they name aggregate fields, not
+schema columns). Because the union splits per series _kind_, a value typed as
+**either** kind must be narrowed or cast at the call site.
+
 | Component      | Data props                                                      | Purpose                                            | Source                                 |
 | -------------- | --------------------------------------------------------------- | -------------------------------------------------- | -------------------------------------- |
 | `LineChart`    | `column`, `gaps?`, `sessionBreaks?`                             | Gap-aware line                                     | `packages/charts/src/LineChart.tsx`    |
