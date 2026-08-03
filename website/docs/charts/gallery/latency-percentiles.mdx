@@ -1,0 +1,104 @@
+---
+title: Latency percentiles
+sidebar_label: Latency percentiles
+---
+
+# Latency percentiles
+
+A mean latency line is the chart that hides the outage. The percentile envelope
+is its replacement: the median as a line, and the **distance** to the tail
+drawn as a band around it. When the distance opens up, something is wrong for
+some of your users — and that is the thing a single line cannot say.
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryLatencyPercentiles from '@site/src/examples/gallery-latency-percentiles';
+
+## The chart
+
+<ChartExample name="gallery-latency-percentiles" height={280} collapsed>
+  <GalleryLatencyPercentiles width={640} height={220} />
+</ChartExample>
+
+Watch **11:12**. The envelope tears open while the median line barely moves —
+`p99` goes up **×5.7** and `p50` only **×1.23**. Ninety-nine percent of the
+service is fine. One percent is having an outage.
+
+## The data
+
+**Modelled, not measured** — latency percentiles at a useful resolution aren't
+something anyone publishes. Modelled on the process: a diurnal load curve with
+noise that scales with the signal, plus one **discrete event** — a downstream
+cache going cold at 11:12 and staying cold for nine minutes.
+
+The series is already **wide**, which is how percentile data usually arrives
+from a metrics store:
+
+```
+time | p50 | p90 | p99
+```
+
+That matters for the chart shape below — a `<BandChart>` takes a `lower` and an
+`upper` **column**, so pre-aggregated percentiles need no further work. If your
+percentiles arrive long (one row per quantile), reshape first; if you have raw
+events rather than percentiles, `rolling` with quantile reducers gets you here.
+
+The generator is seeded and epoch-fixed, so the chart is byte-identical every
+visit.
+
+## Build it
+
+One band and one line is the whole idea:
+
+```tsx
+<Layers>
+  <BandChart series={series} lower="p50" upper="p99" as="outer" axis="ms" />
+  <LineChart series={series} column="p50" axis="ms" />
+</Layers>
+```
+
+That's the envelope. It has one weakness: a single band can't distinguish "the
+90th is drifting up" from "the 99th alone blew out", and those want different
+people woken up.
+
+Nesting a second band fixes it, and costs one line:
+
+```tsx
+<BandChart series={series} lower="p50" upper="p99" as="outer" axis="ms" />
+<BandChart series={series} lower="p50" upper="p90" as="inner" axis="ms" />
+```
+
+Two-tone for free: `outer` and `inner` are tints of the same hue, and the inner
+one paints over the outer, so the darker core is p50–p90 and the lighter halo
+is the tail beyond it. Draw order is the only thing making that work — inner
+after outer.
+
+Last, the number the envelope is being judged against:
+
+```tsx
+<Baseline value={400} axis="ms" label="p99 objective" />
+```
+
+A `<Baseline>` is an **annotation**, drawn in the annotation register — one hue
+no series ever takes — so a placed mark is never mistaken for data.
+
+## Options to try
+
+| Option                                        | What it does                                     | Reach for it when                                                        |
+| --------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------ |
+| A third nested band (`p50`–`p75`)             | Finer tail resolution                            | You genuinely read the mid-quantiles; three is the ceiling               |
+| `lower="p01" upper="p99"` symmetric about p50 | A true envelope rather than an upward-only one   | Latency that can be anomalously **fast** too (cache hits)                |
+| `<Baseline onChange>`                         | Drag the objective                               | The SLO is under discussion — see [SLA & incidents](./sla-incidents.mdx) |
+| Log-scaled `<YAxis>`                          | Compresses the tail so the median stays readable | p99/p50 exceeds ~10× and the median flattens to the floor                |
+| `cursor="crosshair"`                          | Reads one point rather than the whole slice      | Reading a single value off the tail                                      |
+
+## See also
+
+- [`<BandChart>`](../types/bandchart.mdx) — every prop, and the `lower`/`upper`
+  contract
+- [`<LineChart>`](../types/linechart.mdx) — every prop
+- [Region, Baseline, Marker](../annotations/region-baseline-marker.mdx) — the
+  annotation register
+- [Shaping data to chart](../../learn-charts/04-shaping-data-to-chart.mdx) —
+  rolling quantiles, if your percentiles aren't pre-computed
+- [**Storybook**](pathname:///storybook/?path=/story/charts-bandchart--rolling-percentiles)
+  — the systematic knob walk

@@ -1,0 +1,193 @@
+---
+title: Network traffic
+sidebar_label: Network traffic
+---
+
+# Network traffic
+
+How much is coming in, how much is going out, and when did that change? The
+mirrored area chart answers all three at a glance: one direction fills upward
+from a shared zero line, the other fills downward, and the asymmetry between
+them _is_ the reading.
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryNetworkTraffic from '@site/src/examples/gallery-network-traffic';
+import GalleryTrafficDashboard from '@site/src/examples/gallery-traffic-dashboard';
+
+## The chart
+
+<ChartExample name="gallery-network-traffic" height={280} collapsed>
+  <GalleryNetworkTraffic width={640} height={220} />
+</ChartExample>
+
+Hover anywhere: the crosshair reads both halves at once, which is the pair of
+numbers you actually want. Drag across the burst just after 09:00 to zoom into
+it.
+
+## The data
+
+Six hours of real router telemetry from **`cern773-cr6`**, a CERN border
+router, captured 2026-08-02T05:51:00Z → 11:49:30Z (07:51–13:49 local — CERN is
+UTC+2 in August). It was supplied for use in these docs by the pond-ts
+maintainer, out of the production dashboard it drives. It is **not a published
+open-data release**, and no licence is asserted over it beyond its use as a
+documentation fixture here.
+
+The router reports per **SAP** — a service access point, one logical peer or
+customer attachment on a physical port — and it reports in the shape pond
+already reads:
+
+```json
+{
+  "name": "111-lag-3-522",
+  "columns": ["time", "in", "out"],
+  "points": [[1785649860000, 1183000000, 71827000000], ...]
+}
+```
+
+Those are row tuples that `TimeSeries.fromJSON({ schema, rows: points })` takes
+with no mapping step at all. That's the pondjs wire format — a fair amount of
+history showing, since ESnet built pondjs and react-timeseries-charts, of which
+pond-ts is the successor, and the tooling still emits it.
+
+### What the fixture kept, and what it cost
+
+The raw capture is 1 MB — 24 SAPs × 718 points — which has no business in a
+docs bundle. `website/scripts/fixtures/cern-traffic.mjs` derives the committed
+37 KB fixture offline, applying three reductions, none of them flattering:
+
+| Reduction                                           | What it cost                                                                         |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Kept the **top 7 SAPs** by carried volume           | Nothing visible — the 7 are **99.87%** of all bytes                                  |
+| Averaged the **30 s** grid to **1 min**             | Peak outbound 304.2 → **279.6 Gbps** (−8.1%); peak inbound 187.1 → **170.4** (−8.9%) |
+| bits/s → **Gbps** at 2 dp, timestamp column dropped | 10 Mbps of resolution; the grid is exact 30 000 ms, so an origin + step replaces it  |
+
+The 17 dropped SAPs are near-idle — **11 of the 24 never exceed 1 Mbps in
+either direction** — and would be invisible slivers on any chart drawn to a
+190 Gbps axis. They're described here rather than plotted.
+
+### The quirks that matter
+
+- **A quiet morning that steps up hard just after 09:00 UTC**, then
+  minute-scale bursts on top of it. This is why the card sweeps a window rather
+  than showing the whole six hours flat.
+- **Wildly uneven scale between interfaces.** The busiest SAP alone carries
+  **75%** of the bytes — more than the other 23 together.
+- **In and out are strongly asymmetric**, which is what a data-export site
+  looks like from the outside, and the reason the mirrored form is worth the
+  trouble.
+- **No nulls and no gaps.** The capture has none, so nothing was interpolated.
+  (For the chart that _does_ have a hole in it, see
+  [Multi-host CPU](./multi-host-cpu.mdx).)
+
+## Build it
+
+Start with one direction. An `<AreaChart>` with a `baseline` fills between the
+column and that value:
+
+```tsx
+import {
+  AreaChart,
+  ChartContainer,
+  ChartRow,
+  Layers,
+  YAxis,
+} from '@pond-ts/charts';
+import { siteTotal, TRAFFIC_RANGE } from './lib/cern-traffic';
+
+const total = siteTotal();
+
+<ChartContainer range={TRAFFIC_RANGE} width={640} theme={theme}>
+  <ChartRow height={220}>
+    <YAxis id="gbps" side="right" label="Gbps" width={52} />
+    <Layers>
+      <AreaChart series={total} column="in" as="in" axis="gbps" baseline={0} />
+    </Layers>
+  </ChartRow>
+</ChartContainer>;
+```
+
+That's inbound traffic, filling up from zero. It's a perfectly good chart and
+it tells you half of what you need.
+
+The mirror is one line of data work. Negate the `out` column, and the same
+`baseline={0}` that made the first area fill _up_ makes this one fill _down_:
+
+```tsx
+const mirrored = useMemo(() => total.mapColumns({ out: (v) => -v }), [total]);
+
+<AreaChart series={mirrored} column="out" as="out" axis="gbps" baseline={0} />;
+```
+
+Both layers share one axis, so the two halves are on one scale and directly
+comparable — that's the whole point of the form. The `as="in"` / `as="out"`
+roles are the theme's two traffic colours;
+[`<AreaChart>`](../types/areachart.mdx) names this composition in its own docs
+as "the esnet two-colour traffic look".
+
+One thing is now wrong: the downward half's axis ticks read `−180`. Both
+directions are **magnitudes** — only the drawing is signed — so the axis should
+label `|value|`:
+
+```tsx
+// Hoisted, not inline: an inline format *function* is a fresh reference every
+// render, and would re-register the axis on every animated frame.
+const absGbps = (v: number) => Math.abs(v).toFixed(0);
+
+<YAxis id="gbps" side="right" label="Gbps" format={absGbps} width={52} />;
+```
+
+### Linking a table to the chart
+
+The chart above is one panel of a pair. The other is the interface table — and
+selecting a row drives the chart:
+
+<ChartExample name="gallery-traffic-dashboard" height={560} collapsed>
+  <GalleryTrafficDashboard width={640} chartHeight={200} />
+</ChartExample>
+
+Click a row to scope the chart to that interface; click it again, or **Clear
+selection**, to go back to the site total.
+
+The linking is deliberately dull, and that's the lesson. Nothing in
+`@pond-ts/charts` mediates it — a chart is a _view_ of whatever series you hand
+it, so "selection drives the chart" is one piece of React state and a ternary:
+
+```tsx
+const [selected, setSelected] = useState<string | null>(null);
+
+// Both branches have the same `in` / `out` columns, so nothing else in the
+// composition changes.
+const series = selected === null ? siteTotal() : sapSeries(selected);
+```
+
+The table's inline bullet bars are **plain DOM**, not charts. At ~90 px per row
+a `<BarChart>` would cost a canvas, a scale and a container each, to draw one
+rectangle. A div with a width is the honest primitive; reach for a chart when
+you need an axis. The bars do share one scale across all rows — the busiest
+interface's peak — because a row's bar is only meaningful _against the others_,
+which is the entire reason to put them in a column.
+
+## Options to try
+
+| Option                                           | What it does                                                        | Reach for it when                                                                       |
+| ------------------------------------------------ | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `cursor="crosshair"` on `<ChartContainer>`       | Both halves read out at the hovered time                            | Always, on a mirrored chart — the pair of numbers is the point                          |
+| `legend="to site"` on each `<AreaChart>`         | Names the layer for `<Legend>` and the readout                      | The direction isn't obvious from position alone, e.g. in a small multiple               |
+| Drop `baseline` on the `out` layer               | It fills to the axis floor instead of the zero line                 | Never here — but it's the default, and it's why the negate-plus-`baseline` pair matters |
+| `stack` the directions instead of mirroring them | Gives total-crossing-the-router, losing the in/out split            | You care about capacity, not direction                                                  |
+| Swap `siteTotal()` for `stackedTraffic('in')`    | Breaks one direction down by interface — see the sibling page below | "How much?" has become "whose?"                                                         |
+
+## See also
+
+- [Traffic by interface](./traffic-by-interface.mdx) — the same six hours,
+  stacked, asking which interface carried it
+- [`<AreaChart>`](../types/areachart.mdx) — every prop, including `baseline`
+  and the flat-fill roles
+- [`<YAxis>`](../axes/value-axis.mdx) — `format`, `label`, `labelPlacement`
+- [Cursors and readouts](../interaction/cursors-and-readouts.mdx) — what
+  `cursor="crosshair"` gives you
+- [Feeding charts pond data](../../learn-charts/03-feeding-charts-pond-data.mdx)
+  — `fromJSON`, `mapColumns`, and the wire shapes
+- [**Storybook**](pathname:///storybook/?path=/story/charts-areachart--baseline)
+  — the systematic knob walk

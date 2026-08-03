@@ -1,0 +1,122 @@
+---
+title: Multi-host CPU
+sidebar_label: Multi-host CPU
+---
+
+# Multi-host CPU
+
+One line per host, from a single long-form series. The question is comparative —
+is this one box, or is it the fleet? — and the answer depends on being able to
+see a host go missing as well as go busy.
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryMultiHostCpu from '@site/src/examples/gallery-multi-host-cpu';
+
+## The chart
+
+<ChartExample name="gallery-multi-host-cpu" height={280} collapsed>
+  <GalleryMultiHostCpu width={640} height={220} legend />
+</ChartExample>
+
+Look at **15:20**: `web-02` doesn't drop to zero, it stops. The dashed
+connector spanning the hole is the chart saying "no data", not "no load".
+
+## The data
+
+**Modelled, not measured.** Nobody publishes fleet CPU openly at a useful
+resolution, so this is simulated — but modelled on the _process_, not a sine
+with noise on it. Four hosts, 24 hours from midnight UTC on an ordinary
+Wednesday, scraped every 2 minutes (720 points per host).
+
+The structure the chart exists to show:
+
+- a **diurnal** load curve with a genuine trough around 04:00 — a broad daytime
+  plateau, a slow morning ramp and a faster evening decay, not a symmetric wave;
+- a **nightly batch window** on `batch-01`, 02:00–04:30, scheduled into that
+  trough for exactly the reason you'd expect;
+- a **noisy-neighbour burst** on `api-01` at 14:00–14:30;
+- a **node recycle** on `web-02` at 15:20 that leaves **24 minutes of missing
+  scrapes** — genuinely absent rows, not zeros;
+- **noise whose size scales with the signal**, because that's how load noise
+  behaves.
+
+Every generator is seeded and takes its timestamps from a fixed epoch — never
+`Math.random()`, never `Date.now()` — so the chart renders byte-identically on
+the server, on the client, and on every visit.
+
+The series arrives in the shape ops telemetry actually arrives in: **long
+form**, one row per host per scrape, with the host as a column.
+
+```
+time                 | host     | cpu
+2026-05-13T00:00:00Z | web-01   | 0.21
+2026-05-13T00:00:00Z | web-02   | 0.19
+2026-05-13T00:00:00Z | api-01   | 0.24
+...
+```
+
+## Build it
+
+`partitionBy` is the seam between that long shape and the several series a
+multi-line chart draws. No reshape step of your own:
+
+```tsx
+const series = fleetCpu();
+const byHost = useMemo(() => series.partitionBy('host').toMap(), [series]);
+```
+
+Then one layer per partition:
+
+```tsx
+<Layers>
+  {FLEET_HOSTS.map((host, i) => (
+    <LineChart
+      key={host}
+      series={byHost.get(host)}
+      column="cpu"
+      axis="pct"
+      as={HOST_ROLES[i]}
+      legend={host}
+    />
+  ))}
+</Layers>
+```
+
+Four hosts is inside the categorical palette, so each takes its own hue via a
+`line` role — `primary`, `secondary`, `context`, `slow`. Past about four series
+the rule flips to a tonal ramp (see
+[Traffic by interface](./traffic-by-interface.mdx)): four competing colours read
+as four things, eight read as a pie chart.
+
+That gets you the shape but lies about the restart — by default the line is
+drawn straight through the hole, which looks like a box that idled for 24
+minutes. `gaps` is what says otherwise:
+
+```tsx
+<LineChart series={byHost.get(host)} column="cpu" gaps="dashed" … />
+```
+
+The line now breaks and a faint dashed connector spans the absence, so it reads
+as an absence. This works only because the column is declared
+`required: false` — a plain `number` column can't hold "missing", and the gap
+would have to be a zero.
+
+## Options to try
+
+| Option                                 | What it does                                | Reach for it when                                                 |
+| -------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------- |
+| `gaps="dashed"` / `"none"` / `"break"` | How a missing run is drawn                  | Always decide this explicitly on scraped data                     |
+| `<YAxis format=".0%" min={0} max={1}>` | Pins the axis to 0–100% instead of the data | Utilisation, where "how close to full" beats "how much it varied" |
+| `<Legend placement>`                   | Names the lines                             | More than two series — position alone doesn't identify a host     |
+| `cursor="line"` vs `"crosshair"`       | Reads all series at one time vs one point   | Comparing hosts at an instant — `"line"` is the right one here    |
+| One `<ChartRow>` per host              | Small multiples instead of overlay          | The lines overlap so much that the overlay is unreadable          |
+
+## See also
+
+- [`<LineChart>`](../types/linechart.mdx) — every prop
+- [Gaps](../gaps.mdx) — every gap mode, and what "missing" means to a column
+- [Shaping data to chart](../../learn-charts/04-shaping-data-to-chart.mdx) —
+  `partitionBy` and the long/wide question
+- [`<Legend>`](../interaction/legend.mdx) — placement and the headless variant
+- [**Storybook**](pathname:///storybook/?path=/story/charts-linechart--gaps) —
+  the systematic knob walk
