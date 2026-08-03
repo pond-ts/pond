@@ -1,12 +1,16 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   AreaChart,
+  BoxList,
   ChartContainer,
   ChartRow,
   Layers,
   YAxis,
   defaultTheme,
+  type BoxListColumn,
   type ChartTheme,
+  type ListCellSpec,
+  type ListRow,
 } from '@pond-ts/charts';
 import {
   COUNT,
@@ -40,6 +44,10 @@ import styles from './gallery-site-traffic-dashboard.module.css';
  * one channel a chart has for colour: a {@link ChartTheme}. No hex literal
  * reaches the JSX. Swap `theme={replicaTheme}` for the site's
  * `useSiteChartTheme()` and the chart is a pond chart again with no other edit.
+ *
+ * The interface table below the chart is `<BoxList>` — the same theme, one
+ * register down: `as: 'toSite' | 'fromSite'` resolves `theme.box[as]`, and the
+ * picked row's teal edge is `theme.annotation.color`.
  */
 export default function GallerySiteTrafficDashboard({
   width: fixedWidth,
@@ -109,8 +117,8 @@ export default function GallerySiteTrafficDashboard({
   const per = ticksPerHalf(chartHeight);
   const bound = niceBound(peak, per);
 
-  // The sample every row's tick and value read: the hovered one while the
-  // pointer is over the plot, the window's last otherwise. Clamped to the
+  // The sample every row's tick and printed value read: the hovered one while
+  // the pointer is over the plot, the window's last otherwise. Clamped to the
   // visible window so a tracker time from a stale frame can't point outside it.
   const mark =
     hoverTime === null
@@ -134,7 +142,31 @@ export default function GallerySiteTrafficDashboard({
   );
 
   const ticks = useMemo(() => symmetricTicks(bound, per), [bound, per]);
-  const scale = Math.max(...rows.map((r) => Math.max(r.peakIn, r.peakOut)));
+
+  // The list's rows. The five-number summaries come from `windowStats` and
+  // move only when the window does; the two `*_now` entries are re-read on
+  // every pointer move, which is the only part of the row the tracker touches.
+  const listRows = useMemo<IfaceRow[]>(
+    () =>
+      rows.map((r) => ({
+        key: r.name,
+        label: <span className={styles.name}>{r.name}</span>,
+        values: {
+          category: r.category,
+          in_min: r.in.min,
+          in_q1: r.in.q1,
+          in_q3: r.in.q3,
+          in_max: r.in.max,
+          in_now: r.points[mark]![1],
+          out_min: r.out.min,
+          out_q1: r.out.q1,
+          out_q3: r.out.q3,
+          out_max: r.out.max,
+          out_now: r.points[mark]![2],
+        },
+      })),
+    [rows, mark],
+  );
 
   return (
     <div
@@ -311,61 +343,25 @@ export default function GallerySiteTrafficDashboard({
             </button>
           </div>
 
+          {/* The interface table is `<BoxList>`, which is a *table* rather than
+              a plot (label cells, arbitrary data cells, per-row selection) and
+              so renders DOM, not a canvas. Its glyph is this cell: a pale
+              range band, a filled inter-quartile body, a dark current-value
+              tick and that value printed beside it. Everything around it is a
+              prop — `before` for the category tag, `selected` + `onRowClick`
+              for the state the chart overlay reads. No shared scale to wire:
+              one domain is fitted across every box of every row. */}
           <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th
-                    scope="col"
-                    className={styles.pick}
-                    aria-label="Selected"
-                  />
-                  <th scope="col">Interface</th>
-                  <th scope="col">Category</th>
-                  <th scope="col">In / out</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr
-                    key={r.name}
-                    className={styles.row}
-                    aria-selected={r.name === selected}
-                    onClick={() =>
-                      setSelected(r.name === selected ? null : r.name)
-                    }
-                  >
-                    <td className={styles.pick} />
-                    <td className={styles.name}>{r.name}</td>
-                    <td className={styles.category}>
-                      {r.category.toUpperCase()} (SAP)
-                    </td>
-                    <td>
-                      <div className={styles.bullets}>
-                        <Bullet
-                          at={r.points[mark]![1]}
-                          mean={r.meanIn}
-                          scale={scale}
-                          track={'var(--rep-in-track)'}
-                          fill={'var(--rep-in)'}
-                          mark={'var(--rep-in-mark)'}
-                          label={`${r.name} to site`}
-                        />
-                        <Bullet
-                          at={r.points[mark]![2]}
-                          mean={r.meanOut}
-                          scale={scale}
-                          track={'var(--rep-out-track)'}
-                          fill={'var(--rep-out)'}
-                          mark={'var(--rep-out-mark)'}
-                          label={`${r.name} from site`}
-                        />
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <BoxList
+              rows={listRows}
+              columns={LIST_COLUMNS}
+              theme={replicaTheme}
+              before={BEFORE_CELLS}
+              selected={selected}
+              onRowClick={(r) =>
+                setSelected((s) => (r.key === s ? null : r.key))
+              }
+            />
           </div>
         </>
       )}
@@ -373,57 +369,58 @@ export default function GallerySiteTrafficDashboard({
   );
 }
 
+/** One interface's row. `category` is typed through because a `before` cell
+ *  reads it — `<BoxList>` is generic over the row, so the extra field survives
+ *  the trip into the callback. The rest are plain scale values. */
+type IfaceRow = ListRow & { readonly values: { readonly category: string } };
+
 /**
- * One direction's bar: a pale full-width track, a filled portion at the
- * window **mean**, a darker tick at the **tracked** value, and that value
- * spelled out. Plain DOM, not a chart — at one row per interface a
- * `<BarChart>` would cost a canvas and a scale each to draw one rectangle.
- * Reach for a chart when you need an axis.
+ * The two box lines drawn per row, top→bottom — the same in/out pairing the
+ * chart mirrors, and named for the same two roles, so a row's boxes and the
+ * band they contribute to are visibly one series.
  *
- * `at` is the value at the instant the pointer is over (the window's last when
- * it is elsewhere). The tick and the printed number are the *same* number by
- * construction — one prop feeds both — because a marker and a label that
- * disagree about "the current value" is the failure mode this readout has.
+ * Each line carries **both facts the readout needs at once**: the band is where
+ * this interface *ran* over the visible window (min→max, with the middle half
+ * filled), the tick is where it *is* at the instant under the pointer, and
+ * `format` prints that same number beside it. One column spec, no second
+ * encoding to keep in sync.
+ *
+ * The median is deliberately left out. The line already carries two marks the
+ * eye has to tell apart, and a third stripe inside the body competes with the
+ * tick — which is the one the readout is actually about.
  */
-function Bullet({
-  at,
-  mean,
-  scale,
-  track,
-  fill,
-  mark,
-  label,
-}: {
-  at: number;
-  mean: number;
-  scale: number;
-  track: string;
-  fill: string;
-  mark: string;
-  label: string;
-}) {
-  const pct = (v: number) => `${Math.min(100, (v / scale) * 100)}%`;
-  return (
-    <div className={styles.bulletRow}>
-      <div
-        className={styles.track}
-        style={{ background: track }}
-        role="img"
-        aria-label={`${label}: ${rate(at)}, mean ${rate(mean)}`}
-      >
-        <div
-          className={styles.fill}
-          style={{ width: pct(mean), background: fill }}
-        />
-        <div
-          className={styles.mark}
-          style={{ left: pct(at), background: mark }}
-        />
-      </div>
-      <span className={styles.value}>{rate(at)}</span>
-    </div>
-  );
-}
+const LIST_COLUMNS: BoxListColumn[] = [
+  {
+    lower: 'in_min',
+    q1: 'in_q1',
+    q3: 'in_q3',
+    upper: 'in_max',
+    value: 'in_now',
+    format: rate,
+    as: 'toSite',
+  },
+  {
+    lower: 'out_min',
+    q1: 'out_q1',
+    q3: 'out_q3',
+    upper: 'out_max',
+    value: 'out_now',
+    format: rate,
+    as: 'fromSite',
+  },
+];
+
+/** Between the label and the boxes: the product's category tag. */
+const BEFORE_CELLS: ListCellSpec<IfaceRow>[] = [
+  {
+    key: 'category',
+    render: (r) => (
+      <span className={styles.category}>
+        {r.values.category.toUpperCase()} (SAP)
+      </span>
+    ),
+  },
+];
 
 /** The product's own palette, as a theme — one styling channel, different
  *  values. Built at module scope: it reads no CSS custom properties, so it
@@ -448,18 +445,73 @@ const replicaTheme: ChartTheme = {
     strongIn: flat('#4a8fcf'),
     strongOut: flat('#e8883c'),
   },
+  // The `<BoxList>` roles, resolved the same way one register down:
+  // `theme.box[as]`. Three tones per direction, which is exactly what the
+  // glyph has to say — where the interface ranged, where its middle half sat,
+  // and where it is right now. The ticks are a touch more saturated than the
+  // chart's own fills: in the product the bullet's mark is the loudest thing
+  // in the row, and it has to beat a band sitting right underneath it.
+  box: {
+    ...defaultTheme.box,
+    toSite: bullet('#bfd7f2', '#c9ddf2', '#5b9bd5'),
+    fromSite: bullet('#fadbbc', '#f9d8b0', '#ed8c2b'),
+  },
   axis: {
     ...defaultTheme.axis,
     label: '#8a99a8',
     grid: '#e8ecf0',
     gridDash: [],
+    // The list reads its **text** ink from `axis.band.label` (the token the
+    // stacked date band uses for the same job) — and that includes the number
+    // printed beside each tick, which the product sets in a neutral grey
+    // rather than its series colour. One ink for the whole list: there is no
+    // per-column label colour. `fill` is required by the type and unread here
+    // — no band axis on this page.
+    band: { fill: '#ffffff', label: '#757575' },
   },
   cursor: '#98a6b4',
   chip: { background: '#ffffff' },
+  // The annotation register — where a *user's* mark draws, as opposed to data.
+  // Here that is one mark: the picked row's inset left edge, in the product's
+  // teal, which is the only place teal appears on the page.
+  annotation: { color: '#2fa8a0', fillOpacity: 0.1, depth: [1, 0.7, 0.4] },
+  // The list tints a hovered row with `legend.border`. The panel draws no
+  // `<Legend>` (its key is chrome, above the plot), so this trio is only that
+  // hover wash.
+  legend: { background: '#ffffff', border: '#f4f8fb', text: '#5a6b7b' },
 };
 
 function flat(color: string) {
   return { color, width: 1, fill: color, fillOpacity: 1, flatFill: true };
+}
+
+/**
+ * One direction's box style, in the three tones the glyph draws with: the
+ * `band` behind the whole min→max range, the `body` filling the middle half,
+ * and the `tick` marking the current value.
+ *
+ * Two of the three are **composited, not painted**: the list draws the band at
+ * a fixed `0.55` and the body at `fillOpacity × 2`. So `band` here is the
+ * product's track colour divided back out of white — `#bfd7f2` renders as the
+ * `#dce9f8` the product actually shows — while `fillOpacity: 0.5` doubles to a
+ * flat `1`, which is what makes `body` the literal colour on screen. The body
+ * paints *over* the band, so its colour is the whole story; the band's isn't.
+ *
+ * `median*`, `strokeWidth` and `whiskerWidth` are required by the type and
+ * unread here — the median line is left out, and the tick's width is the
+ * component's own 3px.
+ */
+function bullet(band: string, body: string, tick: string) {
+  return {
+    fill: body,
+    fillOpacity: 0.5,
+    stroke: tick,
+    strokeWidth: 1.5,
+    median: tick,
+    medianWidth: 2,
+    whisker: band,
+    whiskerWidth: 1,
+  };
 }
 
 /** The two windows the capture can actually fill. `day`/`week`/`month` are in
@@ -481,7 +533,6 @@ function spanRange(s: (typeof SPANS)[number]): [number, number] {
 function windowStats(range: readonly [number, number]) {
   const i0 = Math.max(0, Math.ceil((range[0] - START_MS) / STEP_MS));
   const i1 = Math.min(COUNT - 1, Math.floor((range[1] - START_MS) / STEP_MS));
-  const n = Math.max(1, i1 - i0 + 1);
 
   let bound = 0;
   for (let i = i0; i <= i1; i += 1) {
@@ -495,32 +546,50 @@ function windowStats(range: readonly [number, number]) {
   }
 
   const rows = SAP_TRAFFIC.map((sap) => {
-    let sumIn = 0;
-    let sumOut = 0;
-    let peakIn = 0;
-    let peakOut = 0;
+    const ins: number[] = [];
+    const outs: number[] = [];
     for (let i = i0; i <= i1; i += 1) {
-      const a = sap.points[i]![1];
-      const b = sap.points[i]![2];
-      sumIn += a;
-      sumOut += b;
-      if (a > peakIn) peakIn = a;
-      if (b > peakOut) peakOut = b;
+      ins.push(sap.points[i]![1]);
+      outs.push(sap.points[i]![2]);
     }
     return {
       name: sap.name,
       category: sap.category,
       // Kept on the row so the tracked value is a lookup at render time — the
-      // window aggregates above don't recompute just because the pointer moved.
+      // summaries below don't recompute just because the pointer moved.
       points: sap.points,
-      meanIn: sumIn / n,
-      meanOut: sumOut / n,
-      peakIn,
-      peakOut,
+      in: summarize(ins),
+      out: summarize(outs),
     };
   });
 
   return { rows, peak: bound, i0, i1 };
+}
+
+/**
+ * One direction's distribution over the visible window, in the vocabulary
+ * `<BoxList>` reads: the range the interface actually ran in, and the middle
+ * half of it. **Pre-computed here on purpose** — the list family draws
+ * quantiles, it never derives them, so the statistic stays the caller's
+ * decision (and this one is a plain sort over a few hundred samples, re-run
+ * only when the window moves).
+ */
+function summarize(values: number[]) {
+  const s = values.slice().sort((a, b) => a - b);
+  return {
+    min: s[0]!,
+    q1: quantile(s, 0.25),
+    q3: quantile(s, 0.75),
+    max: s[s.length - 1]!,
+  };
+}
+
+/** Linear-interpolated quantile of an ascending array — the `numpy`/`pandas`
+ *  default convention, so the numbers match anything else you'd check against. */
+function quantile(sorted: readonly number[], p: number): number {
+  const h = (sorted.length - 1) * p;
+  const lo = Math.floor(h);
+  return sorted[lo]! + (sorted[Math.ceil(h)]! - sorted[lo]!) * (h - lo);
 }
 
 /** How many gridlines each half of the mirror gets — the axis is symmetric, so

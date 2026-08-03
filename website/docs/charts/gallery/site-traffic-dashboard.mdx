@@ -117,6 +117,11 @@ const replicaTheme: ChartTheme = {
     strongIn: flat('#4a8fcf'), // the subject
     strongOut: flat('#e8883c'),
   },
+  box: {
+    ...defaultTheme.box,
+    toSite: bullet('#bfd7f2', '#c9ddf2', '#5b9bd5'), // band, body, tick
+    fromSite: bullet('#fadbbc', '#f9d8b0', '#ed8c2b'),
+  },
   axis: {
     ...defaultTheme.axis,
     label: '#8a99a8',
@@ -125,6 +130,7 @@ const replicaTheme: ChartTheme = {
   },
   cursor: '#98a6b4',
   chip: { background: '#ffffff' },
+  annotation: { color: '#2fa8a0', fillOpacity: 0.1, depth: [1, 0.7, 0.4] },
 };
 ```
 
@@ -133,6 +139,11 @@ invent them, and the layer resolves `area[as] ?? area.default`. Swapping
 `theme={replicaTheme}` for the site's `useSiteChartTheme()` turns this back
 into a pond chart with no other edit, which is the property that makes the
 one-channel rule worth keeping.
+
+The table under the chart takes **the same theme object**, one register down:
+its rows resolve `box[as]`, and the teal edge on the picked row is
+`annotation.color` — the register user-authored marks draw in, which a
+selection is. Two registers, one prop.
 
 Two consequences worth naming. The panel around the chart is styled with the
 same fixed palette rather than the site's `--pond-*` tokens, so **it stays
@@ -166,8 +177,8 @@ work".
 everything derived re-derives against that window: the axis bound and its
 gridline step come from the window's own peak (which happens to round to the
 same 300G here — the afternoon is where the peaks are), and every number in
-the table — each interface's mean, its tracked value, and the shared bar
-scale — is recomputed over the visible samples.
+the table — each interface's min, quartiles and max, its tracked value, and
+the list's shared scale — is recomputed over the visible samples.
 
 The presets and the gesture write the **same** piece of state: `range` is a
 `useState` here, the buttons set it outright, and `onTimeRangeChange` routes
@@ -177,25 +188,119 @@ remembering which was clicked, so panning away from `6h` lights neither.
 `bounds={TRAFFIC_RANGE}` is the fixture's full extent, so the window stops at
 the first and last sample rather than drifting into empty time.
 
-## The table
+## The table is the library too
 
-One row per interface, and the bar cell is **plain DOM, not a chart**: a pale
-full-width track, a filled portion at the window mean, a darker tick at the
-tracked value, and that value spelled out. At one row per interface a
-`<BarChart>` would cost a canvas, a scale and a container each to draw a single
-rectangle. Reach for a chart when you need an axis.
+The interface list is not hand-rolled markup next to a chart. It is
+[`<BoxList>`](../types/lists.mdx) — and this is the row cell that component was
+built for, because the product being replicated here is the one it was drawn
+from.
 
-All rows share one scale — the busiest interface's peak in the visible window —
-so a bar is readable _against the others_, which is the only reason to put
-them in a column.
+Look at what the product's bullet actually encodes and the mapping is
+one-to-one:
 
-**The table is a readout of the hovered moment.** `<ChartContainer
-onTrackerChanged>` fires with the pointer's time (and `null` on leave); the
-dashboard keeps that in state, rounds it to a sample index, and every row's
-tick _and_ its printed number read that index. Off-chart it falls back to the
-window's last sample. Both come from one prop on the bullet, deliberately —
-the marker and the label are two renderings of one value, and the moment they
-can disagree about what "current" means the readout is worse than useless.
+| The product draws     | `<BoxList>`       | Fed here with                              |
+| --------------------- | ----------------- | ------------------------------------------ |
+| the pale extent track | `lower` / `upper` | the interface's min→max over the window    |
+| the filled inner bar  | `q1` / `q3`       | the middle half of the same window         |
+| the dark tick         | `value`           | the value at the instant under the pointer |
+| the number beside it  | `format`          | that same value, printed                   |
+
+Two of those lines per row — one `columns` entry for each direction — and the
+rest of the cell is props:
+
+```tsx
+<BoxList
+  rows={listRows}
+  columns={[
+    {
+      lower: 'in_min',
+      q1: 'in_q1',
+      q3: 'in_q3',
+      upper: 'in_max',
+      value: 'in_now',
+      format: rate,
+      as: 'toSite',
+    },
+    {
+      lower: 'out_min',
+      q1: 'out_q1',
+      q3: 'out_q3',
+      upper: 'out_max',
+      value: 'out_now',
+      format: rate,
+      as: 'fromSite',
+    },
+  ]}
+  theme={replicaTheme}
+  before={[{ key: 'category', render: (r) => <Tag row={r} /> }]}
+  selected={selected}
+  onRowClick={(r) => setSelected((s) => (r.key === s ? null : r.key))}
+/>
+```
+
+`selected` and `onRowClick` are the same `useState` the overlay reads, so
+"clicking a row repaints the chart" is one piece of state with two subscribers,
+not a wire between two components.
+
+Three things are worth pulling out.
+
+**It is a table, not a plot.** `<BoxList>` renders a real `<table>` in DOM —
+no `<ChartContainer>`, no canvas, no time axis. That is the point: what this
+cell needs around its glyph is table semantics (a link label, a category cell,
+a clickable row, columns that align down the list), and one row per interface
+is nowhere near enough data to earn an axis. Its sister
+[`<BarList>`](../types/lists.mdx) is the same table with a plain value bar
+where the box goes; that's the one to reach for when a row has one number
+rather than a distribution.
+
+**It computes no statistics.** `lower`/`q1`/`q3`/`upper` are just names of
+entries in each row's `values`, and the page fills them by sorting the visible
+samples itself. The list draws quantiles; deciding _which_ quantiles — min/max
+here, a p5/p95 somewhere else — stays with the caller, the same contract the
+canvas [`<BoxPlot>`](../types/boxplot.mdx) keeps.
+
+**All rows share one scale.** Every box of every row maps through one domain,
+auto-fitted across the list to the busiest interface's peak in the visible
+window, so a band is readable _against the others_ — the only reason to put
+them in a column. Pass `domain` to pin it instead.
+
+### A readout of the hovered moment
+
+The band is the window; the tick is _now_. `<ChartContainer onTrackerChanged>`
+fires with the pointer's time (and `null` on leave); the dashboard keeps that
+in state, rounds it to a sample index, and rebuilds each row's two `*_now`
+entries from it. Off-chart it falls back to the window's last sample.
+
+The tick and the printed number are the same entry by construction — `value`
+positions the mark and `format` prints it, from one name — because a marker
+and a label that can disagree about what "current" means is the failure mode
+this readout has. The band either side of it does not move as you sweep: what
+changes is where _now_ sits inside where the interface _runs_, which is the
+question an operator is actually asking.
+
+Note what the tracker is used for and what it isn't. `onTrackerChanged` also
+hands you every drawn series' value at that time, but only two series are
+drawn here — the totals. The per-interface numbers come from indexing the
+fixture at the tracked time, which is the general shape: **the tracker
+supplies the _instant_; your own data answers for it.**
+
+### Where the component stops
+
+Two things this replica reaches past the component for, both in the example's
+stylesheet and both worth knowing before you copy it:
+
+- **The value label lives inside the glyph area**, 8px right of its tick. Park
+  the pointer on the busiest interface's own peak and the tick reaches the top
+  of the scale, so the number would run off the panel — there is no gutter
+  prop, so the page pads the glyph cell instead.
+- **Bar ends are rounded** to a pill; the product's are square, and there is
+  no radius knob.
+
+And one the component simply doesn't have: **no header row.** The product
+labels its columns (`INTERFACE`, `CATEGORY`, `IN / OUT`); `<BoxList>` renders
+rows only, so those labels are gone rather than faked. Every other piece of
+the cell — the palette, the selection edge, the hover tint, the row dividers —
+comes from the `ChartTheme`.
 
 Note what the callback is used for and what it isn't. `onTrackerChanged` also
 hands you every drawn series' value at that time, but only two series are
@@ -225,6 +330,8 @@ suffix and a bare `0.0` on the shared zero line.
   question, answered by stacking instead of overlaying
 - [`<AreaChart>`](../types/areachart.mdx) — `baseline`, `flatFill`, and the
   `as` role
+- [Lists](../types/lists.mdx) — `<BoxList>` and `<BarList>`, the table-shaped
+  half of the library
 - [Styling and theming](../../learn-charts/05-styling-and-theming.mdx) — the
   one-channel rule this page bends without breaking
 - [**Storybook**](pathname:///storybook/?path=/story/charts-areachart--baseline)

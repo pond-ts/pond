@@ -11,15 +11,7 @@
   --rep-body: #5a6b7b;
   --rep-mute: #8a99a8;
   --rep-line: #e3e8ed;
-  --rep-hair: #edf1f4;
   --rep-link: #2c6ba8;
-  --rep-in: #6ba5dc;
-  --rep-in-track: #dfeaf6;
-  --rep-in-mark: #2f6ea8;
-  --rep-out: #f0a35a;
-  --rep-out-track: #fbeadb;
-  --rep-out-mark: #c96d22;
-  --rep-pick: #2fa8a0;
 
   background: #ffffff;
   border: 1px solid var(--rep-line);
@@ -158,7 +150,7 @@
   border-radius: 1px;
 }
 
-/* --- table ------------------------------------------------------------- */
+/* --- interface list ----------------------------------------------------- */
 
 .sectionHead {
   display: flex;
@@ -189,65 +181,53 @@
   padding: 0 16px 14px;
 }
 
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  display: table;
-}
+/* The list is `<BoxList>`, so everything below styles *its* DOM rather than
+   ours: rows, cells, dividers, the range bands, the value ticks and their
+   printed labels, the picked row's teal edge and its hover tint all resolve
+   from the `ChartTheme` in the TSX. What's left here is the two things a theme
+   can't reach — the ink of the cells we render into (`.name`, `.category`) —
+   and undoing what Docusaurus does to any `<table>` on the page. */
 
 /* Docusaurus styles every `table th/td` in MDX content with a 1px border on
    all four sides in `--ifm-table-border-color` (#606770) — and stripes even
    rows. Inside this panel that reads as a dark grid the product doesn't have,
-   and it survives because our hairline was *added to* the inherited border
-   rather than replacing it. Zero all four sides and the stripe first, then put
-   back only the light rule the product actually draws. */
-.table th,
-.table td {
+   and it survives because the list's own hairline is *added to* the inherited
+   border rather than replacing it. Zero the cell borders (the list's row
+   divider is an inline `border-top` on the `<tr>`, so it wins the collapse and
+   survives) and drop the stripe. Nothing here sets a `<tr>` background other
+   than transparent: the hover tint is an inline style the list applies, and an
+   inline style outranks a stylesheet. */
+.tableWrap table[data-list='box'] th,
+.tableWrap table[data-list='box'] td {
   border: 0;
+}
+
+.tableWrap table[data-list='box'] tr {
   background: transparent;
 }
 
-.table th {
-  text-align: left;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--rep-mute);
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--rep-line);
-  white-space: nowrap;
-}
-
-.table td {
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--rep-hair);
-  vertical-align: middle;
-  white-space: nowrap;
-}
-
-.row {
-  cursor: pointer;
-}
-
-.row:hover td {
-  background: #f7fafc;
-}
-
-/* The teal left-edge marker on the picked row — the product's own selection
-   cue, and the only place teal appears. */
-.pick {
-  width: 3px;
-  padding: 0 !important;
-  background: transparent;
-}
-
-.row[aria-selected='true'] .pick {
-  background: var(--rep-pick);
-}
-
-.row[aria-selected='true'] td {
+/* The picked row's wash. The teal left edge is the list's own (the annotation
+   register — `theme.annotation.color`); this is the tint behind it, riding the
+   `data-selected` attribute the list stamps on the row. */
+.tableWrap table[data-list='box'] tr[data-selected] {
   background: #f2f8fa;
+}
+
+/* Square band ends. The list rounds the range band to a pill (`barHeight / 2`)
+   as an inline style and exposes no radius knob, so the product's corners need
+   the `!important` — the one place this replica reaches past the theme. */
+.tableWrap table[data-list='box'] [data-list-range] {
+  border-radius: 1px !important;
+}
+
+/* Room for the value label, which the list prints *inside* the glyph area 8px
+   to the right of its tick. Park the pointer on the busiest interface's own
+   peak and that tick reaches the top of the scale, so the number would run off
+   the panel and put a scrollbar under the table. There is no gutter prop, and
+   the cell's padding is an inline shorthand, so this is the second `!important`
+   — both are noted in the guide as the places the component doesn't reach. */
+.tableWrap table[data-list='box'] td[data-list-cell='glyphs'] {
+  padding-right: 72px !important;
 }
 
 .name {
@@ -255,55 +235,11 @@
   font-size: 12px;
 }
 
-.row:hover .name {
+.tableWrap table[data-list='box'] tr:hover .name {
   text-decoration: underline;
 }
 
 .category {
   font-size: 11px;
-  color: var(--rep-body);
-}
-
-/* --- bullet bars ------------------------------------------------------- */
-
-.bullets {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 220px;
-}
-
-.bulletRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.track {
-  position: relative;
-  flex: 1 1 auto;
-  height: 8px;
-  border-radius: 1px;
-}
-
-.fill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  border-radius: 1px;
-}
-
-.mark {
-  position: absolute;
-  top: -1px;
-  bottom: -1px;
-  width: 2px;
-  border-radius: 1px;
-}
-
-.value {
-  flex: 0 0 62px;
-  text-align: right;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
   color: var(--rep-body);
 }
