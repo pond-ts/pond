@@ -920,8 +920,13 @@ argument for the rest.
   readout (so one column drawn twice raises two identical flags), the x-axis
   time pill is gated on `crosshair` so the **default** `line` cursor shows no
   position either, and `<BarChart>` has no `readout` prop — so a chart whose
-  colour carries the value has a pill reading its layout constant. Itemised,
-  with the workaround each one forced, in
+  colour carries the value has a pill reading its layout constant. Two more
+  from the scrubbable wind rose: **`PartitionedTimeSeries` has no `reduce`**
+  (a core gap — "collapse each partition to one scalar" is the histogram case
+  and has no direct form, only `toMap()` plus a `TimeSeries.reduce` per group),
+  and `<CategoryAxis>`'s label thinning is an **estimated** glyph width that
+  lands on the wrong side at Gallery-card width, printing all sixteen sector
+  names into one smear. Itemised, with the workaround each one forced, in
   [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-chfric--chart-example-friction).
 
 ---

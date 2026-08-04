@@ -5,39 +5,45 @@ sidebar_label: Wind direction
 
 # Wind direction
 
-A year of hourly wind reports, binned into the sixteen compass sectors. The x
-axis here isn't a number line and isn't time — it's **sixteen named slots in a
-fixed order**, which is what `<CategoryAxis>` draws. Every distribution-shaped
-question ends up in this shape: browsers, error codes, regions, causes.
+A wind rose is a distribution, and a distribution is usually where the data
+stops being a time series. This one doesn't. The strip is every hourly
+observation of 2024, on a compass axis; the bars are **the shaded window,
+counted** — the same series, sliced and grouped, recomputed every time the
+window moves.
 
 import ChartExample from '@site/src/components/ChartExample';
 import GalleryWindRose from '@site/src/examples/gallery-wind-rose';
 
 ## The chart
 
-<ChartExample name="gallery-wind-rose" height={280} collapsed>
+<ChartExample name="gallery-wind-rose" height={570} collapsed>
   <GalleryWindRose width={640} />
 </ChartExample>
 
-Hover a bar and the axis names the sector under the pointer, in a pill over its
-own label. That's what `cursor="crosshair"` does on an **ordinal** axis: a
-vertical line plus the category's name, and no horizontal arm or value pill,
-because there's no continuous x position to read back. At this width all
-sixteen labels fit; **the axis drops labels when they'd collide**, and the
-Gallery card — a third of this width — prints eight of the sixteen, at which
-point the hover name is the only way to tell SSW from SW.
+**Move the shaded band and watch the bars.** You can drag the band itself
+along the strip, drag either of its edges to make it longer or shorter
+(21–45 days), pull the slider, or press **Play** and let it sweep the year and
+come back. However you move it, the window snaps to whole days and stays inside
+2024, and the histogram underneath is recounted from scratch.
 
-Seattle-Tacoma sits in a north-south trough between two mountain ranges, and
-the distribution says so: the wind comes from the south a third of the time
-(**32.9%** across S, SSW and SSE) and from the north **19.2%**, with the
-east-west sectors thin. The single biggest slot for the year is S at 13.8%,
-with SSW a hair behind at 13.7%.
+What you're looking for is the reversal. Seattle-Tacoma sits in a north-south
+trough between two mountain ranges, and for most of the year the wind runs up
+it from the south — **32.9%** of 2024's hours came from SSE, S or SSW against
+**19.2%** from NNW, N or NNE. Park the window on the **30 days from 16
+October** and that becomes extreme: 55.8% southerly against 6.7% northerly,
+with S alone at 29.4%. Then drag back to the **30 days from 28 June** and it
+inverts — 32.3% northerly against 12.4% southerly, as the summer sea breeze
+sets up from the other end of the trough.
+It is not a one-week wobble: **53 of the 337** day-aligned 30-day windows in
+2024 have northerly ahead of southerly, and they run from mid-April to early
+September.
 
-The Gallery card steps through the twelve months, and the whole distribution
-swings as it goes. **October** is the most southerly month of 2024, at 45.2%;
-**July is the one month that reverses**, 31.1% northerly against 16.5%
-southerly, as the summer sea breeze sets up from the opposite end of the
-trough.
+Hovering the histogram names the sector under the pointer, in a pill over its
+own axis label. That's what `cursor="crosshair"` does on an **ordinal** axis:
+a vertical line plus the category's name, with no horizontal arm and no value
+pill, because there's no continuous x position to read back. The strip has no
+cursor at all — it's in annotation-edit mode so the band can be grabbed, and
+that mode deliberately suppresses the data cursor.
 
 ## The data
 
@@ -48,11 +54,38 @@ for calendar 2024, from
 [NOAA NCEI's Local Climatological Data service](https://www.ncei.noaa.gov/access/services/data/v1).
 A US federal government work, so no copyright attaches.
 
-**8,735 hourly observations**, binned **offline** into 16 sectors × 12 months
-by
-[`website/scripts/fixtures/weather.mjs`](https://github.com/pond-ts/pond/blob/main/website/scripts/fixtures/weather.mjs).
-Shipping every hour to the browser to draw sixteen bars would be silly, and the
-binning isn't the lesson here.
+**8,735 observations**, and this page ships all of them. They're not a clean
+hourly grid: the station reports at :53 past the hour, but **50 clock hours of
+2024 have no report at all** and one report was filed off-cycle inside an hour
+already covered. So the fixture is one small integer per observation — sector
+`0`–`15`, `16` calm, `17` variable — plus a base timestamp and the **28 places
+the 60-minute cadence breaks**, as explicit `[index, minutes]` pairs:
+
+```ts
+// 2024-01-01T00:53Z — the first report, and `SEA_WIND_CODES[0]`'s key.
+export const SEA_WIND_T0_MS = 1704070380000;
+
+// 8,735 of these: 0–15 = compass sector, 16 = calm, 17 = variable.
+export const SEA_WIND_CODES: ReadonlyArray<number> = [16, 5, 16, 3, 2 /* … */];
+
+// 28 of these: [index, minutesSincePrevious] wherever it isn't 60. A skipped
+// hour is 120; the pair 55 then 5 is the one off-cycle report.
+export const SEA_WIND_OFF_GRID: ReadonlyArray<readonly [number, number]> = [
+  [2046, 120],
+  [2090, 180],
+  [8089, 55],
+  [8090, 5],
+  /* … */
+];
+```
+
+That's about 33 KB committed. The 28 pairs are a few hundred bytes where a
+delta for every observation would have been another 35 KB, and they put the
+irregularity _in_ the fixture rather than burying it in 8,735 mostly-identical
+numbers. Rebuilding the timestamps is a five-line loop, and the generator
+asserts that every one comes back exactly — and that re-binning the codes by
+month reproduces the pre-binned matrix the [Gallery card](../gallery.mdx) and
+this page's annual figures come from, cell for cell.
 
 Two categories have no direction to plot, and rather than being folded into a
 sector or quietly dropped they are counted separately:
@@ -63,90 +96,176 @@ sector or quietly dropped they are counted separately:
 | **Variable** |   315 |  3.6% |
 
 A calm hour is reported as direction 000 with zero speed; a variable one is
-METAR's `VRB`, a direction shifting faster than the observation resolves.
-Both stay in the **denominator** — the sixteen bars are a share of _all_
-observed hours, not of directed ones, so they sum to 89.3% rather than 100%.
-That's a deliberate choice and the kind that belongs on the page: excluding
-them would silently inflate every sector by a ninth.
-
-The chart takes plain data, not a series:
-
-```ts
-type CategoryDatum = { label: string; value: number };
-// [{ label: 'N', value: 10.7 }, { label: 'NNE', value: 6.0 }, …]
-```
+METAR's `VRB`, a direction shifting faster than the observation resolves. Both
+stay in the **denominator** — the sixteen bars are a share of _all_ observed
+hours in the window, not of directed ones, so for the whole year they sum to
+89.3% rather than 100%. That's a deliberate choice and the kind that belongs on
+the page: excluding them would silently inflate every sector by a ninth. The
+readout above the histogram prints the calm-plus-variable share for the current
+window so the shortfall is never a mystery.
 
 ## Build it
 
-A categorical bar chart is `<BarChart categories>` plus a `<CategoryAxis>`, and
-the ordinal axis is derived from the data rather than configured:
+### One series, two shapes
+
+The series is ordinary: a time column, a `sector` string column, and a `row`
+number saying which lane a mark draws on. `row` is **optional**, because a calm
+or variable hour was observed — it counts in the denominator — but has no
+direction, so it rides as a gap and draws nothing.
+
+```ts
+TimeSeries.fromColumns({
+  name: 'sea-wind-2024',
+  schema: [
+    { name: 'time', kind: 'time' },
+    { name: 'sector', kind: 'string' },
+    { name: 'row', kind: 'number', required: false },
+  ],
+  columns: { time, sector, row },
+});
+```
+
+### Counting a window
+
+This is the whole demonstration, and it is the only thing that happens when the
+window moves:
+
+```ts
+const inWindow = hourly.within(from, to - 1);
+const hours = inWindow.length;
+const byCategory = inWindow
+  .partitionBy('sector', { groups: WIND_CATEGORIES })
+  .toMap();
+const pct = (label: (typeof WIND_CATEGORIES)[number]) => {
+  const count = byCategory.get(label)?.reduce('sector', 'count') ?? 0;
+  return hours === 0 ? 0 : (100 * (count as number)) / hours;
+};
+const bars = WIND_SECTORS.map((label) => ({ label, value: pct(label) }));
+```
+
+Three things are doing real work there:
+
+- **`within` takes the window**, inclusive of both ends — hence the `- 1` ms,
+  which makes it a half-open `[from, to)` and stops the boundary hour being
+  counted in two adjacent windows.
+- **`{ groups }` fixes the slots.** Declaring the sixteen sectors (plus `Calm`
+  and `Variable`) up front makes `toMap()` iterate in _declared_ order and keep
+  an empty declared group as an **empty `TimeSeries`** rather than dropping it.
+  Without it a sector that no hour in the window blew from would simply vanish
+  and every bar to its right would shift left — on a moving window, the bars
+  would dance. It also throws at construction if a value shows up that isn't
+  declared, which is a spelling-mistake catcher.
+- **`reduce(column, 'count')` collapses a partition to a scalar**, and returns
+  `0` for an empty one, so an unvisited sector draws a zero-height bar in its
+  own slot.
+
+The sharp edge: `PartitionedTimeSeries` has **no `reduce`**. Collapsing every
+partition to one number — which is exactly what a histogram is — means going
+through `toMap()` and reducing each group by hand. `aggregate` buckets by time
+and `collect` glues the partitions back together; neither is this.
+
+At 8,735 rows the whole recount measures **0.55 ms** (Node, against this
+fixture), so recomputing it per frame is not the expensive part of moving the
+window. `within` re-filters the full series on each call; if that ever mattered,
+`bisect` + `slice` gives the identical answer in 0.22 ms by skipping the scan.
+
+### The compass, cut at east
+
+A compass has no ends and an axis has two, so the circle has to be broken
+somewhere — and wherever it breaks, two neighbouring directions land at opposite
+edges of the plot. Cut it between **ENE and E**: those two carry 5.0% of the
+year between them, and the cut leaves the north-south axis — 52% of the year —
+in the middle of the plot where it can be read, with north above south.
+
+```ts
+const windRow = (sector: number) => (sector + 12) % 16;
+```
+
+The lanes then come from `<YAxis ticks>`, which drives the labels **and** the
+gridlines from one array, so every one of the sixteen lanes gets a line and
+every other one gets a name — an empty `label` still draws its gridline:
 
 ```tsx
-<ChartContainer width={640} theme={theme} showAxis={false} cursor="crosshair">
-  <ChartRow height={196}>
-    <YAxis id="pct" side="left" label="% of hours" format=",.0f" width={46} />
+<YAxis
+  id="dir"
+  label="blowing from"
+  min={-0.5}
+  max={15.5}
+  ticks={WIND_ROW_TICKS} // [{ at: 0, label: 'E' }, { at: 1, label: '' }, …]
+/>
+```
+
+`min`/`max` are half a lane outside the data so an E or an ENE mark isn't
+clipped by the plot edge, and the marks themselves use the site theme's `raw`
+scatter role — small, part-transparent, outline-free, because at 8,735 marks
+the density is the message and no single point is.
+
+### The window is an annotation
+
+The band isn't a custom overlay; it's a `<Region>` with an `onChange`, which is
+what makes it draggable in `editAnnotations` mode:
+
+```tsx
+<ChartContainer range={SEA_WIND_BOUNDS} editAnnotations>
+  <ChartRow height={172}>
     <Layers>
-      <BarChart categories={rose} axis="pct" gap={6} />
+      <ScatterChart series={hourly} column="row" axis="dir" as="raw" />
+      <Region from={from} to={to} label={false} onChange={place} />
     </Layers>
   </ChartRow>
-  <CategoryAxis label="All of 2024" />
 </ChartContainer>
 ```
 
-Three details that aren't obvious:
+`onChange` reports a new `{ from, to }` for both gestures — dragging the body
+moves both edges together, dragging an edge moves that one — and `place` is
+where the policy lives: round to whole days, clamp the length to 21–45, clamp
+the position to 2024. Drag an edge clean past the other and the region re-opens
+the other way rather than collapsing, so the clamp catches that too.
 
-- **`categories` replaces `series` and `column`.** Each datum carries its own
-  value, so there's no column to name; passing both is a type error rather than
-  a runtime surprise.
-- **`showAxis={false}` on the container** suppresses the default _time_ axis.
-  The container still owns an x scale, but it's an ordinal one now, and the
-  `<CategoryAxis>` is what renders it. Leave the time axis on and you get two
-  x axes, one of them meaningless.
-- **The layer hands the axis its category names**, in data order. The axis
-  doesn't need a list of sixteen labels configured into it — and because
-  ordering is the data's, "clockwise from north" survives without a sort
-  comparator that knows about compass points.
+Two consequences worth knowing before you copy this. `editAnnotations`
+**suppresses the data cursor** for the whole container — that's the trade for a
+grabbable mark, and it's why the strip has no crosshair. And because the window
+is a controlled prop, the slider and **Play** write the same `[from, to]` state
+the drag does; there is no second source of truth.
 
-`gap={6}` is what separates sixteen bars in 640 px into countable objects. At
-this count you can afford it; a 200-category chart wants `gap={0}` and a
-different reading strategy.
+### A ceiling, not an auto-fit
 
-To make the axis ceiling comparable across months — which is what the Gallery
-card's month-by-month sweep needs — pin it to the tallest sector in _any_
-month rather than letting each frame auto-fit:
+The y axis is pinned:
 
 ```tsx
-<YAxis id="pct" side="left" label="% of hours" width={46} min={0} max={21} />
+<YAxis id="pct" label="% of window" min={0} max={WIND_WINDOW_CEILING_PCT} />
 ```
 
-That peak is June's SSW, at 21.0% of the month's hours. Without the pin, every
-month would fill the plot to the same height and the sweep would say nothing at
-all.
+Let it auto-fit and every window would fill the plot to the same height, which
+would make the sweep say nothing at all — the shape would change but the scale
+would move with it. `WIND_WINDOW_CEILING_PCT` is **30**, computed rather than
+guessed: a sliding scan over every day-aligned window of every allowed length
+finds the tallest single sector any of them reaches, which is **29.6% (S, the
+28 days from 18 October)**, rounded up to the next whole percent.
 
-:::note Why not a polar rose?
-A wind rose is traditionally drawn on a polar plot, and pond doesn't draw one.
-The Cartesian version trades the compass metaphor for something a polar plot is
-genuinely bad at: comparing two adjacent sectors' magnitudes, which is a length
-comparison here and an area-and-angle comparison there. If you need the compass
-metaphor, this isn't the library for that chart.
-:::
+That guarantee is exactly why the window snaps to whole days and why its length
+is clamped to a narrow band. A window free to start mid-day, or to shrink to a
+week, could hold a sector taller than anything that scan saw — a seven-day
+window in late February reaches 42.3% — and the bar would run off the top of the
+plot.
 
 ## Options to try
 
-| Option                          | What it does                                    | Reach for it when                                                                                                |
-| ------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `orientation="horizontal"`      | Categories down the y axis, bars running across | Long labels — `NNE` is fine, `us-east-1a` is not                                                                 |
-| `binColors`                     | One colour per bar, in data order               | Colouring the four quadrants, or highlighting one sector                                                         |
-| `<BarList>`                     | A ranked table with bars, not a chart           | The categories are entities to be ranked, not slots on an axis                                                   |
-| `selected` / `onSelect`         | Click a bar; it stays lit                       | The bar is a filter for something else on the page                                                               |
-| `<CategoryAxis label>`          | A caption under the ordinal axis                | Naming what the whole distribution is _of_ — the card uses it for the month                                      |
-| Recompute `rose` from a `month` | Swaps the whole distribution in place           | Comparing periods — a `CategoryDatum` carries one value per slot, so two periods are two renders, not two layers |
+| Option                               | What it does                                    | Reach for it when                                                                                                                                                                |
+| ------------------------------------ | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cursor="region"` + `onRegionSelect` | Drag anywhere on the plot to select a span      | You want free-form span selection and don't need a mark that persists — it's the [rainfall card's](./rainfall.mdx) gesture, and it needs the cursor `editAnnotations` takes away |
+| `<Region edges={false}>`             | Shades the span with no vertical side lines     | The band is background context rather than the thing being manipulated                                                                                                           |
+| `<Region label="…">`                 | A chip flying off the band's left edge          | The window's own extent is the readout — here it's off, since the dates sit under the strip                                                                                      |
+| `binColors`                          | One colour per bar, in data order               | Colouring the four quadrants, or lighting the window's strongest sector                                                                                                          |
+| `orientation="horizontal"`           | Categories down the y axis, bars running across | Long labels — `NNE` is fine, `us-east-1a` is not (note it makes the container's x a **value** axis, so it can't share one with a time row)                                       |
+| `<BarList>`                          | A ranked table with bars, not a chart           | The categories are entities to be ranked, not slots on an axis                                                                                                                   |
 
 ## See also
 
 - [`<CategoryAxis>`](../axes/category-axis.mdx) — ordinal axes, tick decimation, labels
 - [`<BarChart>`](../types/barchart.mdx) — the `categories` form, gaps, colours
-- [Lists](../types/lists.mdx) — `<BarList>`, for when the categories are entities
-- [Selection and hover](../interaction/selection-and-hover.mdx) — making the bars clickable
+- [Region, baseline, marker](../annotations/region-baseline-marker.mdx) — the annotation register
+- [Editing and creating](../annotations/editing-and-creating.mdx) — `editAnnotations`, `onChange`, handles
+- [Cursors and readouts](../interaction/cursors-and-readouts.mdx) — what each `cursor` mode draws
 - [**Storybook**](pathname:///storybook/?path=/story/axes-categoryaxis--tickers)
   — the systematic knob walk

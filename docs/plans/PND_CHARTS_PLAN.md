@@ -1090,3 +1090,51 @@ reading the overlay SVG and the pill DOM back, not inferred from the source.
     axis can't do. Same root as item 16; worth listing separately because the
     categorical symptom is what a reader hits first, and because `CursorMode`'s
     docs say nothing about what any mode does on a category axis.
+
+Found by **rebuilding the wind-direction card as a scrubbable categorical
+series driving a live histogram** (`website/docs/charts/gallery/wind-rose`,
+pjm's design). Both measured in the browser — the drag by dispatching real
+`pointerdown`/`pointermove`/`pointerup` and reading the window back, the label
+collision by counting the rendered axis labels in the DOM.
+
+19. **`PartitionedTimeSeries` has no `reduce`** — a **core** gap, logged here
+    because this is where the Gallery friction lives. "Collapse every partition
+    to one scalar" is precisely the histogram case, and it has no direct form:
+    `PartitionedTimeSeries` offers `collect` (glue the partitions back into one
+    series), `toMap` (hand them all back) and `aggregate` (bucket each one _by
+    time_), so counting a window per category means
+
+    ```ts
+    const byCategory = series
+      .within(from, to)
+      .partitionBy('sector', { groups })
+      .toMap();
+    const counts = [...byCategory].map(([k, g]) => [
+      k,
+      g.reduce('sector', 'count'),
+    ]);
+    ```
+
+    — `toMap()` plus a `TimeSeries.reduce` per group, by hand. It totals
+    correctly and it is not slow (0.55 ms over 8,735 rows), but the shape a
+    histogram wants is `partitioned.reduce('sector', 'count') ⇒ Map<K, value>`,
+    which is the exact partitioned analogue of the `TimeSeries.reduce` that
+    already exists. Worth noting that `partitionBy(col, { groups })` is the
+    other half of the answer and _does_ exist: declared groups fix the slot
+    order and keep an empty group as an empty `TimeSeries`, which is what stops
+    the bars shuffling as the window moves. The reduction is the missing half.
+
+20. **`<CategoryAxis>`'s label thinning is estimated, not measured, and the
+    estimate lands on the wrong side at Gallery-card width.**
+    `thinCategoryLabels` (`XAxis.tsx`) derives its stride from
+    `fontSize * 0.62` per glyph. At the card's 344px — 298px of plot after the
+    y gutter, 16 sectors, 3-character worst case — that estimate comes out
+    _exactly_ equal to the slot width, so `ceil()` gives stride 1, all sixteen
+    labels render, and the real glyph advances run them together into
+    `SSWSW WSW W WNWNWNNW`. Two things make this worse than a near-miss: the
+    threshold is a knife edge (the same axis with a 46px gutter versus a 38px
+    one flips between 8 labels and 16), and there is no signal — the axis
+    reports nothing, so the only way to find it is to look. The card works
+    around it by **blanking every other `CategoryDatum.label` itself**, which
+    is deterministic but means the caller is now doing the axis's job. A DOM
+    (or canvas) text measure, or simply padding the estimate, would close it.
