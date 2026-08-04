@@ -5,7 +5,7 @@ sidebar_position: 1
 ---
 
 import ChartExample from '@site/src/components/ChartExample';
-import FirstChart from '@site/src/examples/first-chart';
+import ChartsHero from '@site/src/examples/charts-hero';
 
 # @pond-ts/charts
 
@@ -13,15 +13,47 @@ import FirstChart from '@site/src/examples/first-chart';
 [react-timeseries-charts](https://software.es.net/react-timeseries-charts/)-style
 declarative layout.
 
-<ChartExample name="first-chart" height={260}>
-  <FirstChart />
+<ChartExample name="charts-hero" height={300} collapsed>
+  <ChartsHero />
 </ChartExample>
 
-Hover the chart above — the crosshair, the axis readout, all of it is live,
-not a screenshot. That's the entire pitch: a chart consumes a pond
-`TimeSeries` directly, you compose a container, rows, and draw layers as
-React components, and the canvas renderer does the drawing. No chart-library
-data model to adapt to; no imperative escape hatch for interaction.
+Three weeks of stream discharge on a 15-minute interval — 2,016 samples, drawn
+to canvas. Five storms, each rising in hours and receding over days, on a
+baseflow that never quite returns to where it started. Move the pointer for a
+crosshair and a value on the axis; drag to pan, wheel to zoom, both stopped at
+the ends of the record. It's live, not a screenshot.
+
+**One column is doing all of that.** `cfs` is the only data. The pale envelope
+is each day's min–max, the line through it is the day's mean, and the gauge
+itself is the hairline threading between them — a texture at this zoom, a
+trace once you zoom in. The envelope and the trend aren't a second dataset
+prepared somewhere else; they're a single pond `rolling()` call, emitting three
+columns from the one source column and handing them to two more draw layers:
+
+```ts
+const rolled = gauge.rolling(
+  '24h',
+  {
+    mean: { from: 'cfs', using: 'avg' },
+    lo: { from: 'cfs', using: 'min' },
+    hi: { from: 'cfs', using: 'max' },
+  },
+  { alignment: 'centered' },
+);
+```
+
+That's the entire pitch: a chart consumes a pond `TimeSeries` directly, the
+transform pipeline runs right up to the plot, you compose a container, rows,
+and draw layers as React components, and the canvas renderer does the drawing.
+No chart-library data model to adapt to; no imperative escape hatch for
+interaction.
+
+The discharge is **modelled, not measured** — no gauge record is redistributed
+here. It's built from the standard hydrological decomposition (baseflow
+recession, a Nash/SCS unit hydrograph per storm, recharge, a diurnal
+evapotranspiration cycle), which is why it has the sharp-up/slow-down asymmetry
+a real record has; see
+[the fixture](https://github.com/pond-ts/pond/blob/main/website/src/examples/lib/river-gauge.ts).
 
 **Install** — `npm install @pond-ts/charts pond-ts @pond-ts/react react react-dom`.
 Peer-depends on `pond-ts`, `@pond-ts/react`, and `react`; the pond packages
