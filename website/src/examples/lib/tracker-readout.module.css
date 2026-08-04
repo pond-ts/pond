@@ -1,0 +1,35 @@
+/* The off-chart readout strip. `onTrackerChanged` fires with every layer's
+   sample at the cursor, so unlike the in-chart crosshair pill — which lands on
+   the axis of the row the pointer is in, one row at a time — this shows price
+   and volume for the same session **together**. Fixed height and tabular
+   figures so the numbers don't reflow the page as they change. */
+.readout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1.25rem;
+  align-items: baseline;
+  min-height: 1.6rem;
+  margin-bottom: 0.35rem;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.date {
+  font-weight: 600;
+  color: var(--ifm-color-emphasis-900);
+}
+
+.field {
+  display: inline-flex;
+  gap: 0.35rem;
+}
+
+.name {
+  color: var(--ifm-color-emphasis-600);
+}
+
+.idle {
+  color: var(--ifm-color-emphasis-600);
+  font-style: italic;
+}

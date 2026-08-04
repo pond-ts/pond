@@ -15,14 +15,14 @@ before writing code against them.
   and `pathname:///generated-api/<pkg>/` (generated typedoc). This file is the
   agent-facing complement, not a replacement.
 
-| Package              | npm name             | Entry points                                     | Docs hub                     |
-| -------------------- | -------------------- | ------------------------------------------------ | ---------------------------- |
-| `packages/core`      | `pond-ts`            | `.` and `./types` (zero-runtime schema contract) | `website/docs/pond-ts/`      |
-| `packages/react`     | `@pond-ts/react`     | `.`                                              | `website/docs/react/`        |
-| `packages/charts`    | `@pond-ts/charts`    | `.`                                              | `website/docs/charts/`       |
-| `packages/financial` | `@pond-ts/financial` | `.` and `./fluent` (prototype augmentation)      | `website/docs/financial/`    |
-| `packages/fit`       | `@pond-ts/fit`       | `.`                                              | `website/docs/fit/`          |
-| `packages/process`   | `@pond-ts/process`   | `.` — **WIP, `private: true`, not published**    | `packages/process/README.md` |
+| Package              | npm name             | Entry points                                           | Docs hub                  |
+| -------------------- | -------------------- | ------------------------------------------------------ | ------------------------- |
+| `packages/core`      | `pond-ts`            | `.` and `./types` (zero-runtime schema contract)       | `website/docs/pond-ts/`   |
+| `packages/react`     | `@pond-ts/react`     | `.`                                                    | `website/docs/react/`     |
+| `packages/charts`    | `@pond-ts/charts`    | `.`                                                    | `website/docs/charts/`    |
+| `packages/financial` | `@pond-ts/financial` | `.` and `./fluent` (prototype augmentation)            | `website/docs/financial/` |
+| `packages/fit`       | `@pond-ts/fit`       | `.`                                                    | `website/docs/fit/`       |
+| `packages/process`   | `@pond-ts/process`   | `.` and `./pool` (Node worker pool) — **experimental** | `website/docs/process/`   |
 
 ---
 
@@ -255,16 +255,26 @@ All take `series` plus an `as?` style identifier (theme lookup) and `axis?`
 scale id — style and scale are separate channels; there are no per-component
 color props (see Theming).
 
-| Component      | Data props                                                     | Purpose                                            | Source                                 |
-| -------------- | -------------------------------------------------------------- | -------------------------------------------------- | -------------------------------------- |
-| `LineChart`    | `column`, `gaps?`, `sessionBreaks?`                            | Gap-aware line                                     | `packages/charts/src/LineChart.tsx`    |
-| `AreaChart`    | `column`, `baseline?`, `gaps?`                                 | Filled area                                        | `packages/charts/src/AreaChart.tsx`    |
-| `BandChart`    | `lower`, `upper`                                               | Variance-band envelope                             | `packages/charts/src/BandChart.tsx`    |
-| `ScatterChart` | `column`, `id?` (selection), radius/color encodings            | Points; data-driven size/colour                    | `packages/charts/src/ScatterChart.tsx` |
-| `BarChart`     | `column` \| `columns` \| `bins` \| `categories`, `horizontal?` | Bars, stacked bars, histograms, categorical        | `packages/charts/src/BarChart.tsx`     |
-| `BoxPlot`      | `lower`/`q1?`/`median?`/`q3?`/`upper`, `shape?`                | Box-and-whisker from quantile columns              | `packages/charts/src/BoxPlot.tsx`      |
-| `Candlestick`  | OHLC columns, `variant?`, `colorBy?`, `showOHLC?`              | First-class OHLC candles (TimeSeries only)         | `packages/charts/src/Candlestick.tsx`  |
-| `Legend`       | `placement?`, `items?`, `onRowClick?`, `onRowHover?`           | Series key from registered layers' resolved styles | `packages/charts/src/Legend.tsx`       |
+**Column props are schema-derived** ([PND-CHARTAPI]): a name that isn't a
+numeric column of the series fails to compile, and `<BarChart>`'s props are a
+union of its legal source modes, so mixing `series`/`bins`/`categories` or
+`column`/`columns` is a compile error too. Two carve-outs:
+a **loosely-typed** series (`TimeSeries<SeriesSchema>`) still accepts any name
+(`packages/charts/src/column-names.ts` explains the `never` fallback that makes
+this work), and `bins` names stay `string` (they name aggregate fields, not
+schema columns). Because the union splits per series _kind_, a value typed as
+**either** kind must be narrowed or cast at the call site.
+
+| Component      | Data props                                                      | Purpose                                            | Source                                 |
+| -------------- | --------------------------------------------------------------- | -------------------------------------------------- | -------------------------------------- |
+| `LineChart`    | `column`, `gaps?`, `sessionBreaks?`                             | Gap-aware line                                     | `packages/charts/src/LineChart.tsx`    |
+| `AreaChart`    | `column`, `baseline?`, `gaps?`                                  | Filled area                                        | `packages/charts/src/AreaChart.tsx`    |
+| `BandChart`    | `lower`, `upper`                                                | Variance-band envelope                             | `packages/charts/src/BandChart.tsx`    |
+| `ScatterChart` | `column`, `id?` (selection), radius/color encodings             | Points; data-driven size/colour                    | `packages/charts/src/ScatterChart.tsx` |
+| `BarChart`     | `column` \| `columns` \| `bins` \| `categories`, `orientation?` | Bars, stacked bars, histograms, categorical        | `packages/charts/src/BarChart.tsx`     |
+| `BoxPlot`      | `lower`/`q1?`/`median?`/`q3?`/`upper`, `shape?`                 | Box-and-whisker from quantile columns              | `packages/charts/src/BoxPlot.tsx`      |
+| `Candlestick`  | OHLC columns, `variant?`, `colorBy?`, `showOHLC?`               | First-class OHLC candles (TimeSeries only)         | `packages/charts/src/Candlestick.tsx`  |
+| `Legend`       | `placement?`, `items?`, `onRowClick?`, `onRowHover?`            | Series key from registered layers' resolved styles | `packages/charts/src/Legend.tsx`       |
 
 ### Components — annotations & indicators
 
@@ -275,20 +285,46 @@ color props (see Theming).
 | `Marker`         | `at`, `label?`, `indicator?`, `onChange?`             | Vertical x line                                | `packages/charts/src/annotations.tsx` |
 | `YAxisIndicator` | `value?` \| `source?`, `axis?`, `format?`             | Live value pill pinned to a y-axis edge        | `packages/charts/src/indicators.tsx`  |
 
-### Data adapters (all in `packages/charts/src/data.ts`)
+### Components — standalone row lists (DOM tables, no `<ChartContainer>`)
 
-| Export               | Signature gist                                         | Feeds                             |
-| -------------------- | ------------------------------------------------------ | --------------------------------- |
-| `fromTimeSeries`     | `(series, column) → ChartSeries`                       | Line/Area/Scatter                 |
-| `bandFromTimeSeries` | `(series, lower, upper) → BandSeries`                  | BandChart                         |
-| `boxFromTimeSeries`  | `(series, BoxColumns) → BoxSeries`                     | BoxPlot                           |
-| `barsFromTimeSeries` | `(series, column) → BarSeries`                         | BarChart                          |
-| `ohlcFromTimeSeries` | `(series, OhlcColumns) → OhlcSeries`                   | Candlestick                       |
-| `stacksFromGroups`   | `(Map<string, TimeSeries>, column) → StackedBarSeries` | Stacked bars from grouped series  |
-| `stacksFromColumns`  | `(series, columns[]) → StackedBarSeries`               | Stacked bars from wide columns    |
-| `stacksFromBins`     | `(bins, columns[], opts?) → StackedBarSeries`          | Histograms from `byColumn` output |
-| `categoryStack`      | `(CategoryDatum[]) → StackedBarSeries`                 | Categorical bars                  |
-| `transposeRow`       | `(series, opts?) → CategoryDatum[]`                    | One row read across as categories |
+One row per _entity_ (interface, split, symbol) on one shared value scale;
+label + data cells, `sortBy`/`sort`, optional per-row expander. The in-plot
+histogram stays `<BarChart orientation="horizontal">` — these are the table
+shape (react-timeseries-charts' `HorizontalBarChart`).
+
+| Component | Data props                                                                           | Purpose                                                             | Source                            |
+| --------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------- | --------------------------------- |
+| `BarList` | `rows`, `columns` (`values` names), `sortBy?`, `before?`/`after?`, `renderExpanded?` | Ranked bar list — one proportional bar line per column per row      | `packages/charts/src/BarList.tsx` |
+| `BoxList` | `rows`, `columns` (five-number names + `value?` tick), same table props              | Distribution list — range band / q1→q3 body / median / current tick | `packages/charts/src/BoxList.tsx` |
+
+Row/option types + readers (`packages/charts/src/list.ts`): `ListRow`,
+`ListValue`, `ListCellSpec`, `ListMarker` (reference rule through every row,
+label above; joins the auto domain fit), `ListSortDirection`, `BarListColumn`,
+`BoxListColumn`, `ListRowsOptions`; `listRowsFromTimeSeries` /
+`listRowsFromValueSeries` build one `ListRow` per event / axis key (numeric +
+string columns land in `values`).
+
+### View builders (all in `packages/charts/src/data.ts`)
+
+With a pond series, the components are the whole data contract (pass the
+series directly) — these exports expose the chart-ready view shapes for
+consumers writing custom draw code; no shipped layer needs their output.
+The ValueSeries siblings (`fromValueSeries` etc.) are deliberately
+**unexported** (adapters are internal; see [PND-VSADAPT]).
+
+| Export               | Signature gist                                         | Feeds                                                   |
+| -------------------- | ------------------------------------------------------ | ------------------------------------------------------- |
+| `fromTimeSeries`     | `(series, column) → ChartSeries`                       | Line/Area/Scatter                                       |
+| `bandFromTimeSeries` | `(series, lower, upper) → BandSeries`                  | BandChart                                               |
+| `boxFromTimeSeries`  | `(series, BoxColumns) → BoxSeries`                     | BoxPlot                                                 |
+| `barsFromTimeSeries` | `(series, column) → BarSeries`                         | BarChart                                                |
+| `ohlcFromTimeSeries` | `(series, OhlcColumns) → OhlcSeries`                   | Candlestick                                             |
+| `stacksFromGroups`   | `(Map<string, TimeSeries>, column) → StackedBarSeries` | Stacked bars from grouped series                        |
+| `stacksFromColumns`  | `(series, columns[]) → StackedBarSeries`               | Stacked bars from wide columns                          |
+| `barsFromBins`       | `(bins, column, opts?) → BarSeries`                    | One-column histogram (single-series path, [PND-BARSEM]) |
+| `stacksFromBins`     | `(bins, columns[], opts?) → StackedBarSeries`          | Multi-column histograms from `byColumn` output          |
+| `categoryStack`      | `(CategoryDatum[]) → StackedBarSeries`                 | Categorical bars                                        |
+| `transposeRow`       | `(series, opts?) → CategoryDatum[]`                    | One row read across as categories                       |
 
 Series shapes (same file): `ChartSeries`, `BandSeries`, `BoxSeries`,
 `BarSeries`, `OhlcSeries`, `StackedBarSeries`; option types `BoxColumns`,
@@ -419,11 +455,12 @@ the same answer, only slower than you expected. Source:
 
 ## @pond-ts/process
 
-**Work in progress — `private: true`, not published, public shape expected to
-change** (RFC [process.md](docs/rfcs/process.md) concludes the declarative plan
-layer is the consumer surface with this engine internal beneath it; tracked as
-[PND-PROCSUB]). Listed here because agents work in this repo, not because it is
-a stable surface. Tickets: [PND_PROCESS_PLAN.md](docs/plans/PND_PROCESS_PLAN.md).
+**Experimental — published pre-1.0, API expected to move with friction
+reports; pin an exact version.** The declarative plan layer is the consumer
+surface (RFC [process.md](docs/rfcs/process.md)); the engine ships exported
+beneath it — the [PND-PROCSUB] packaging decision, resolved at first publish.
+Docs: [website/docs/process/](website/docs/process/). Tickets:
+[PND_PROCESS_PLAN.md](docs/plans/PND_PROCESS_PLAN.md).
 
 Typed dataflow graphs for pipelines whose **shape is data** (runtime-assembled,
 user-edited, one computation fanned out to several consumers). Chaining stays

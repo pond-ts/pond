@@ -28,7 +28,7 @@ end)` is a bar's span) with `column`, or a wide series with `columns` (stacked
 - **`categories`** — `CategoryDatum[]` (`{ label, value }`) → an ordinal
   [category axis](../axes/category-axis.mdx), vertical only.
 
-Adapters: `barsFromTimeSeries` / `barsFromValueSeries` (single),
+View builder (for custom draw code): `barsFromTimeSeries` / `barsFromValueSeries` (single),
 `stacksFromColumns` / `stacksFromGroups` / `stacksFromBins` (stacked),
 `categoryStack` (categories), `transposeRow` (a wide row → `categories`).
 
@@ -49,6 +49,24 @@ Adapters: `barsFromTimeSeries` / `barsFromValueSeries` (single),
 | `id`          | `string`                                       | —                | Stable identity — **gates selection + hover**.                 |
 | `axis`        | `string`                                       | row default      | Which `<YAxis id>` to scale against.                           |
 | `gap`         | `number`                                       | theme (`1`)      | Px gap between bars.                                           |
+
+## Which path a bar takes
+
+Capabilities follow **the mark drawn**, not the prop that fed it
+([PND-BARSEM]). A **one-segment vertical** bar — `series` + `column`, a
+one-column `bins` histogram, or a one-entry `columns` — takes the
+single-series path and with it whole-slot hit-testing, the `theme.bar.hover`
+colour, the cursor readout, stable per-bar identity and per-bar decimation.
+
+Horizontal **categorical** charts (`categories` + `orientation="horizontal"`)
+are the funnel / ranking shape: the categories land on the **y** axis as unit
+slots, the value runs along x, and a `<YAxis>` with no `ticks` labels one slot
+per category automatically — no hand-built `i + 0.5` list ([PND-HCAT]).
+
+Genuinely multi-segment shapes keep the stacked path: a multi-group stack
+(`columns` / a `Map` series), `categories`, and any `horizontal` chart. There
+the segments share a bin's x-range and only y tells them apart, so the hit
+target is the drawn segment rather than the slot.
 
 ## Variants
 

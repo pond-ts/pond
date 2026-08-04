@@ -13,7 +13,13 @@
     "rootDir": "src",
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    // Declared, not discovered: TypeScript resolves automatic `@types`
+    // from the CWD, so the website's TypeDoc pass (which compiles this
+    // package's source from `website/`) would otherwise miss Node's
+    // types for the pool — the exact break financial hit at v0.54.0.
+    "types": ["node"],
+    "typeRoots": ["../../node_modules/@types"]
   },
   "include": ["src"]
 }

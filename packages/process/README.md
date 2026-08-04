@@ -1,26 +1,27 @@
 # @pond-ts/process
 
-> **Work in progress. Not published, and the public shape is expected to
-> change.** This package is `private: true` — the release workflow skips it. It
-> lives on `main` so the design can be iterated in the open against
-> [RFC #543](../../docs/rfcs/process.md), not because it is ready to consume.
->
-> The RFC concludes that the **declarative plan layer** is the consumer surface
-> and that this engine belongs underneath it as an internal module. That call is
-> tracked as **[PND-PROCSUB]**; the investigation behind it and its measured
-> follow-ups are in
-> [PND_PROCESS_PLAN.md](../../docs/plans/PND_PROCESS_PLAN.md). Interactive
-> consumers remain gated on the identity/lifetime and shared cache-budget work.
->
-> The measurements those tickets are sized against are reproducible from
-> [`scripts/`](scripts/) — run them after `npm run build --workspaces`.
+> **Experimental.** Pre-1.0, and the API is expected to move as friction
+> reports land — pin an exact version. The design iterates in the open
+> against
+> [RFC #543](https://github.com/pond-ts/pond/blob/main/docs/rfcs/process.md);
+> the roadmap and the measurements behind every design call are in
+> [PND_PROCESS_PLAN.md](https://github.com/pond-ts/pond/blob/main/docs/plans/PND_PROCESS_PLAN.md),
+> reproducible from
+> [`scripts/`](https://github.com/pond-ts/pond/tree/main/packages/process/scripts).
 
-**Typed dataflow graphs over [pond-ts](https://www.npmjs.com/package/pond-ts).**
-
-A small pull-based evaluation engine: nodes with typed ports, memoized
+**Computations as data over
+[pond-ts](https://www.npmjs.com/package/pond-ts).** A processing graph
+authored fluently in application code — or composed as JSON by a saved
+view or a tool-calling model — resolves against a declared op vocabulary
+and runs over a bound `TimeSeries`, with content-addressed caching,
+provenance, and per-node timings on every response. Underneath sits a
+small pull-based evaluation engine: nodes with typed ports, memoized
 results, and change propagation that stops as soon as a value stops
-changing. Values are usually `TimeSeries` snapshots, but the engine is
-value-agnostic.
+changing.
+
+**Docs: [pond-ts.org/docs/process](https://pond-ts.org/docs/process/)** —
+tutorial, fluent authoring, the request/response contract, hosts and
+sources, caching and budgets.
 
 ```sh
 npm install @pond-ts/process pond-ts
@@ -41,7 +42,7 @@ const out = series
 ```
 
 That is clearer than any graph, and pond's design notes deliberately
-[resist operator-graph vocabulary](../../docs/rfcs/streaming.md) for the
+[resist operator-graph vocabulary](https://github.com/pond-ts/pond/blob/main/docs/rfcs/streaming.md) for the
 core API — you do not submit a job graph to a runtime.
 
 This package exists for the case chaining genuinely cannot express: when

@@ -1,0 +1,182 @@
+---
+title: Authoring graphs
+description: The fluent API — the developer's way to build a typed graph that emits the plain-data request.
+---
+
+# Authoring graphs
+
+Application code authors a graph **fluently**, bound to a registry. The
+registry's literal types supply the op methods, their params, their
+secondary input roles, and their output names — so most invalid graphs
+fail in the editor, before anything is sent.
+
+```ts
+import { process } from '@pond-ts/process';
+
+const graph = process(registry, 'ACME_5m').as('acme_bands');
+
+const close = graph.column('close');
+const average = close.sma({ as: 'average', period: 20 });
+const bands = average.bands({ as: 'bands', width: 2 });
+const width = bands.output('Upper').subtract({
+  as: 'bandWidth',
+  right: bands.output('Lower'),
+});
+
+const request = graph.outputs({
+  average: average.columns(),
+  bands: bands.columns(),
+  latestWidth: width.last(),
+  widthShape: width.shape({ points: 80 }),
+});
+
+const result = host.run(request);
+```
+
+The builder **emits a request; it is not a second execution path**.
+`request` is the same plain-data envelope a model composes from the
+registry's schema — same format, same resolver, same identities, same
+cache. A graph built in code and one composed by an agent land on the
+same nodes.
+
+## Starting a graph
+
+`process(registry, from)` opens a builder against one data binding:
+`from` is either a dataset id the [host](./host#datasets) holds, or a
+[source reference](./host#opaque-async-sources) like
+`marketBars.ref({ symbol: 'ACME' })`. `.as(name)` names the request so a
+later request can refer back to its result.
+
+`graph.column(name)` is a reference to a raw source column. It reads
+nothing — it is a handle to build on.
+
+## Ops, slots, and params
+
+Every op the registry declares appears as a method on a column
+reference. The one required option is **`as`** — the node's **slot**, a
+caller-owned name for its _position_ in the graph:
+
+```ts
+const average = close.sma({ as: 'average', period: 20 });
+```
+
+The slot is what survives a param edit (change `period` to 50 and the
+node is still `average` to your UI), while the content-addressed id
+tracks the computation itself. Params are typed from the registry
+declaration — `period: '20'` is a compile error — and omitted params
+take their declared defaults.
+
+A single-output node is itself chainable: `average.bands({ … })` feeds
+it onward. A **multi-output** node must first say which output to feed:
+
+```ts
+bands.output('Upper'); // typed: 'Upper' | 'Lower' here
+bands.output('Middle'); // compile error
+```
+
+An op with more than one input names its secondary inputs by their
+declared **roles**, so a two-input graph reads without positional
+arrays:
+
+```ts
+const width = bands.output('Upper').subtract({
+  as: 'bandWidth',
+  right: bands.output('Lower'), // the registry's declared 'right' role
+});
+```
+
+## Facts
+
+The [standard folds](./registry#folds) hang off any column reference:
+`.last()`, `.extremes()`, `.percentileRank()`, `.shape({ points })`.
+Each **adds a terminal node** — a computation with an id that caches —
+not a post-processing callback.
+
+Fold calls are idempotent per param set: `width.last()` in two places is
+one node; `width.shape({ points: 20 })` and `width.shape({ points: 100 })`
+are two. An omitted param and its explicit default are one node — the
+same rule identity applies everywhere.
+
+## Finishing: `outputs`
+
+`graph.outputs({...})` names what the request surfaces and returns the
+envelope. Keys are **caller-owned result names** — they ride back on the
+response's facts and column metadata, so a consumer reads the names it
+chose rather than parsing derived ids:
+
+```ts
+const request = graph.outputs({
+  average: average.columns(), // packed columns, for a chart
+  upper: bands.output('Upper').columns(), // one output of a multi-output node
+  latestWidth: width.last(), // a small fact
+});
+```
+
+Building a node does **not** put it in the response; only `outputs` does.
+Un-surfaced nodes still resolve and appear in the response's
+[badge row](./requests#the-badge-row) as `pulled: false`, so a pipeline
+view can draw the whole graph.
+
+## What is caught when
+
+| Stage                    | Catches                                                                                              |
+| ------------------------ | ---------------------------------------------------------------------------------------------------- |
+| TypeScript, in the edit  | Unknown op, wrong param type, missing secondary role, unknown output name                            |
+| Building, `BuilderError` | A duplicate slot, a duplicate output name, a missing or empty `as`, a non-reference where one is due |
+| Resolving, at run        | Everything again — a saved or model-composed request arrives as JSON with no compiler in front of it |
+
+The builder deliberately re-checks nothing the resolver checks: one
+resolution path, one place a bad plan is diagnosed, and the fluent layer
+stays a pure authoring convenience.
+
+## The emitted request
+
+`JSON.stringify(request)` shows there is no magic — the handles compile
+away to the [slot request form](./requests#two-request-forms):
+
+```json
+{
+  "from": "ACME_5m",
+  "as": "acme_bands",
+  "nodes": {
+    "average": { "op": "sma", "params": { "period": 20 }, "in": ["close"] },
+    "bands": { "op": "bands", "params": { "width": 2 }, "in": ["average"] },
+    "bandWidth": { "op": "subtract", "in": ["bands#Upper", "bands#Lower"] },
+    "bandWidth:last": { "op": "last", "in": ["bandWidth"] },
+    "bandWidth:shape(points=80)": {
+      "op": "shape",
+      "params": { "points": 80 },
+      "in": ["bandWidth"]
+    }
+  },
+  "outputs": {
+    "average": { "on": "average" },
+    "bands": { "on": "bands" },
+    "latestWidth": { "on": "bandWidth:last" },
+    "widthShape": { "on": "bandWidth:shape(points=80)" }
+  }
+}
+```
+
+Persist it, send it over a wire, or hand-edit it — the
+[data model](./plans) underneath is the stable contract.
+
+## The registry-free builder
+
+When application code wants to assemble requests without depending on
+the op corpus — a generic UI shell, a request forwarder — `plan(from)`
+is the same builder minus the registry binding:
+
+```ts
+import { plan } from '@pond-ts/process';
+
+const g = plan('ACME_5m').as('bands_and_stretch');
+const bb = g.add('bb', 'bollinger', { period: 20 }, ['px']);
+g.expose('upper', bb, { output: 'Upper' });
+g.expose('latest', bb.last());
+host.run(g.toJSON());
+```
+
+No op-name checking and no param typing here — the resolver diagnoses a
+bad plan when it runs, which is the same path a JSON-arrived plan takes.
+Prefer the registry-bound form whenever the registry is importable.

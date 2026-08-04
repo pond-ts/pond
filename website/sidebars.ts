@@ -125,7 +125,20 @@ const sidebars: SidebarsConfig = {
           // its own slugs here, grouped as they are on the Gallery page;
           // `_template.mdx` is the shape they all follow.
           items: [
-            // Weather & climate (Track C)
+            // Track A — ops & infrastructure.
+            'charts/gallery/network-traffic',
+            'charts/gallery/traffic-by-interface',
+            'charts/gallery/multi-host-cpu',
+            'charts/gallery/latency-percentiles',
+            'charts/gallery/sla-incidents',
+            'charts/gallery/live-tail',
+            'charts/gallery/site-traffic-dashboard',
+            // Track B — finance.
+            'charts/gallery/candlestick',
+            'charts/gallery/price-volume',
+            'charts/gallery/bollinger-bands',
+            'charts/gallery/drawdown',
+            // Track C — weather & climate.
             'charts/gallery/temperature-range',
             'charts/gallery/rainfall',
             'charts/gallery/climate-stripes',
@@ -202,6 +215,25 @@ const sidebars: SidebarsConfig = {
           type: 'link',
           label: 'API reference (charts)',
           href: '/docs/api/',
+        },
+      ],
+    },
+    {
+      type: 'category',
+      label: '@pond-ts/process',
+      link: { type: 'doc', id: 'process/process-index' },
+      items: [
+        'process/tutorial',
+        'process/authoring',
+        'process/requests',
+        'process/plans',
+        'process/registry',
+        'process/host',
+        'process/performance',
+        {
+          type: 'link',
+          label: 'API reference (process)',
+          href: 'pathname:///generated-api/process/',
         },
       ],
     },

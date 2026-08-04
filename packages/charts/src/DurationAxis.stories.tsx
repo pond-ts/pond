@@ -69,18 +69,36 @@ type Story = StoryObj;
 
 const W = 620;
 
-/** The shared body: one row of heart rate, one x axis. Takes whatever series a
- *  `<LineChart>` takes, so the time and value flavours share it. */
+/**
+ * The shared body: one row of heart rate, one x axis. Takes **either** series
+ * kind, so the time and value flavours share it.
+ *
+ * The cast at the `<LineChart>` below is the documented workaround for a
+ * genuine [PND-CHARTAPI] limitation, and this helper is its representative
+ * case: the layer's props are a union *per series kind* (so a column name is
+ * checked against the schema actually passed), and a value typed as "either
+ * kind" therefore matches no single member. A wrapper that forwards either
+ * kind must narrow — or, as here where the union is the whole point, cast at
+ * the boundary. Nothing is lost at the story call sites, which each pass a
+ * concrete kind.
+ */
 const chart = (
   props: Partial<ComponentProps<typeof ChartContainer>>,
-  series: ComponentProps<typeof LineChart>['series'] = ride(10_000),
+  series: ReturnType<typeof ride> | ReturnType<typeof rideByDistance> = ride(
+    10_000,
+  ),
   axis = <XAxis />,
 ) => (
   <ChartContainer width={W} theme={docsTheme} showAxis={false} {...props}>
     <ChartRow height={180}>
       <YAxis id="hr" label="bpm" />
       <Layers>
-        <LineChart series={series} column="hr" axis="hr" />
+        {/* Union-typed series: narrow or cast — see the doc above. */}
+        <LineChart
+          series={series as ReturnType<typeof ride>}
+          column="hr"
+          axis="hr"
+        />
       </Layers>
     </ChartRow>
     {axis}

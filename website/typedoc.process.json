@@ -1,0 +1,18 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": [
+    "../packages/process/src/index.ts",
+    "../packages/process/src/pool/index.ts"
+  ],
+  "tsconfig": "../packages/process/tsconfig.json",
+  "out": "static/generated-api/process",
+  "name": "@pond-ts/process API Reference",
+  "readme": "none",
+  "cleanOutputDir": true,
+  "excludePrivate": true,
+  "excludeProtected": true,
+  "lightHighlightTheme": "github-light",
+  "darkHighlightTheme": "github-light",
+  "customCss": "typedoc/custom.css",
+  "customJs": "typedoc/custom.js"
+}

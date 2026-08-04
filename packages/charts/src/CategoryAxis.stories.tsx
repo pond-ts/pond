@@ -5,6 +5,7 @@ import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
 import { Layers } from './Layers.js';
 import { BarChart } from './BarChart.js';
+import { XAxis } from './XAxis.js';
 import { YAxis } from './YAxis.js';
 import { transposeRow } from './data.js';
 import { docsTheme } from './docs-theme.fixture.js';
@@ -307,3 +308,41 @@ function ScrubDemo() {
 }
 
 export const TransposeScrub: Story = { render: () => <ScrubDemo /> };
+
+/**
+ * **Horizontal categories — the funnel / ranking shape** ([PND-HCAT]).
+ * `orientation="horizontal"` puts the categories on **y** as unit slots and
+ * the value on x. The `<YAxis>` needs no `ticks`: a horizontal categorical
+ * layer hands it the names and it labels one per slot.
+ *
+ * Before this, `categories` threw on horizontal, so a funnel had to convert
+ * its stages into ordinal `bins` records *and* hand-build `i + 0.5` ticks —
+ * the friction the gallery funnel documented.
+ */
+export const HorizontalFunnel: Story = {
+  render: () => (
+    // `showAxis={false}` because the explicit <XAxis> below carries the label;
+    // leaving the default on would render the shared axis twice.
+    <ChartContainer width={560} theme={docsTheme} showAxis={false}>
+      <ChartRow height={200}>
+        {/* A wider gutter: the derived category labels are words, not numbers. */}
+        <YAxis id="stage" width={96} />
+        <Layers>
+          <BarChart
+            categories={[
+              { label: 'Visited', value: 12400 },
+              { label: 'Signed up', value: 5200 },
+              { label: 'Activated', value: 2100 },
+              { label: 'Subscribed', value: 780 },
+              { label: 'Renewed', value: 410 },
+            ]}
+            orientation="horizontal"
+            axis="stage"
+            gap={6}
+          />
+        </Layers>
+      </ChartRow>
+      <XAxis label="users" />
+    </ChartContainer>
+  ),
+};

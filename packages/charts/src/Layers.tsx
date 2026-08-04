@@ -152,6 +152,16 @@ export function Layers({ children }: LayersProps) {
       // centre reads as noise; the bars are the structure.
       const xTickVals =
         container.xKind === 'category' ? [] : xScale.ticks(xTickCount);
+      // The same rule on the other axis: a **horizontal** categorical chart
+      // ([PND-HCAT]) puts its categories on y, where the `<YAxis>` labels slot
+      // *centres* while d3's auto ticks fall on slot *boundaries* — so drawing
+      // them would both mismatch the labels and stripe each bar. Suppressed,
+      // exactly as the categorical x axis already is.
+      const yIsCategory = layers.some(
+        (e) =>
+          (e.axisId ?? defaultAxisId) === defaultAxisId &&
+          (e.layer.binCategories?.() ?? null) !== null,
+      );
       // The reference grid — behind the data, opt-out via `grid={false}` for
       // a clean backdrop (session dividers below stay independent of it).
       if (container.grid) {
@@ -159,9 +169,10 @@ export function Layers({ children }: LayersProps) {
         // single source, height-derived or an explicit `<YAxis tickCount>`), so
         // a gridline sits under every `<YAxis>` label and no more.
         const yCount = tickCounts.get(defaultAxisId) ?? GRID_TICKS;
-        const yTicks = gridY
-          ? (explicitY ?? gridY.ticks(yCount)).map((t) => gridY(t))
-          : [];
+        const yTicks =
+          gridY && !(yIsCategory && explicitY === undefined)
+            ? (explicitY ?? gridY.ticks(yCount)).map((t) => gridY(t))
+            : [];
         // On a calendar axis the verticals are the FULL grain populations —
         // every day in the month, every month in the year, every aligned
         // clock instant — not just the thinned instants the labels chose:
@@ -319,6 +330,18 @@ export function Layers({ children }: LayersProps) {
       // a full replot per mousemove.
       container.timeRange,
       container.reportDrawStats,
+      // Read inside `draw`, so they have to invalidate it. Omitting `grid` meant
+      // toggling `<ChartContainer grid>` changed nothing until some *other*
+      // dep moved — pan the plot a pixel and the gridlines you switched off
+      // finally vanished. All primitives, so no per-frame identity churn.
+      container.grid,
+      container.sessionDividers,
+      container.xKind,
+      // `container.theme` is read too. It is deliberately NOT listed: it is the
+      // caller's prop and an inline object literal would rebuild `draw` every
+      // render (a full replot per frame). The values `draw` actually takes from
+      // it — `background`, `gridColor`, `gridDash` — are extracted above and
+      // listed individually, so a theme swap still invalidates.
       row.rowKey,
     ],
   );
