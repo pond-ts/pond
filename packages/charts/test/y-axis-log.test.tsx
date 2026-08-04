@@ -6,7 +6,10 @@ import { ChartRow } from '../src/ChartRow.js';
 import { Layers } from '../src/Layers.js';
 import { LineChart } from '../src/LineChart.js';
 import { YAxis } from '../src/YAxis.js';
+import { scaleLinear, scaleLog } from 'd3-scale';
 import { resolveYDomain } from '../src/domain.js';
+import { resolveAxisFormat } from '../src/format.js';
+import { yTickValues } from '../src/yticks.js';
 import { resolveAreaBaseline } from '../src/AreaChart.js';
 import { stubCanvasContext } from './canvas-mock.js';
 
@@ -207,5 +210,67 @@ describe('<YAxis scale="log"> — rendered', () => {
     );
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe('log axis — formatter and tick selection', () => {
+  // Both of these were shipped broken and both were caught by review, not by
+  // the suite. The assertions are written to fail loudly if either regresses.
+
+  it('formats arbitrary values on a log axis, not just significant ticks', () => {
+    // `scaleLog.tickFormat` returns '' for anything it doesn't consider a
+    // tick, which blanks the cursor readout, `YAxisIndicator` and `Baseline`
+    // chips — they all share this formatter and ask it about real values.
+    const log = scaleLog().domain([1.9e10, 2.6e17]);
+    expect(log.tickFormat(6, '.3s')(1.97e17)).toBe(''); // d3's behaviour
+
+    const fmt = resolveAxisFormat(log, 6, '.3s');
+    expect(fmt(1.97e17)).not.toBe('');
+    // d3's linear tickFormat calibrates precision from the domain + count, so
+    // the exact digits are its business; what matters is that a real value
+    // formats to something at all, with the SI prefix the specifier asked for.
+    expect(fmt(1.97e17)).toMatch(/^197(\.0+)?P$/);
+  });
+
+  it('passes a format FUNCTION through untouched on a log axis', () => {
+    const log = scaleLog().domain([1, 1e6]);
+    const fmt = resolveAxisFormat(log, 5, (v) => `${v} bytes`);
+    expect(fmt(1234)).toBe('1234 bytes');
+  });
+
+  it('picks decades, and never d3’s 3-or-64 cliff', () => {
+    // The ESnet domain: seven decades. d3 returns 3 values at count 4 (every
+    // OTHER decade) and 64 at count 8 — from a count that is height-derived,
+    // so a 40px resize flips between them.
+    const log = scaleLog().domain([1.9e10, 2.6e17]);
+    expect(log.ticks(4).length).toBe(3); // d3's behaviour
+    expect(log.ticks(8).length).toBe(64); // d3's behaviour
+
+    for (const count of [4, 6, 8, 12]) {
+      const ticks = yTickValues(log, count);
+      expect(ticks.length).toBeGreaterThanOrEqual(2);
+      expect(ticks.length).toBeLessThanOrEqual(Math.max(2, count));
+      // Every tick is a power of ten.
+      for (const t of ticks) {
+        const exp = Math.log10(t);
+        expect(Math.abs(exp - Math.round(exp))).toBeLessThan(1e-9);
+      }
+    }
+    // A roomy row gets one line per decade; a cramped one thins by whole
+    // decades rather than skipping to every other one at random.
+    expect(yTickValues(log, 8)).toEqual([
+      1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17,
+    ]);
+    expect(yTickValues(log, 4)).toEqual([1e11, 1e13, 1e15, 1e17]);
+  });
+
+  it('defers to the scale below two decades, where d3 is well behaved', () => {
+    const log = scaleLog().domain([200, 900]);
+    expect(yTickValues(log, 5)).toEqual(log.ticks(5));
+  });
+
+  it('leaves a linear scale entirely alone', () => {
+    const lin = scaleLinear().domain([0, 100]);
+    expect(yTickValues(lin, 5)).toEqual(lin.ticks(5));
   });
 });

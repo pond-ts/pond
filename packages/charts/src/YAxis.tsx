@@ -2,6 +2,7 @@ import { useContext, useEffect, useMemo } from 'react';
 import { ContainerContext, RowContext, type AxisSpec } from './context.js';
 import { resolveAxisFormat, type AxisFormat } from './format.js';
 import { useSlotKey } from './use-slot-key.js';
+import { yTickValues } from './yticks.js';
 
 export interface YAxisProps {
   /** Identifier a chart links to via its `axis` prop (and the first declared is
@@ -220,7 +221,7 @@ export function YAxis({
     ? ticks.map((t) => ({ value: t.at, label: t.label }))
     : layerCategories !== null
       ? layerCategories.map((label, i) => ({ value: i + 0.5, label }))
-      : (yScale ? yScale.ticks(count) : []).map((t) => ({
+      : (yScale ? yTickValues(yScale, count) : []).map((t) => ({
           value: t,
           label: fmt(t),
         }));
