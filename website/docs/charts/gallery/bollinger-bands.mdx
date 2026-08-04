@@ -56,11 +56,19 @@ Two properties of that output shape matter more than the arithmetic:
   `undefined` rather than collapsed onto the middle, so an "outside the band"
   test doesn't fire on every bar of a flat stretch.
 
-One honest note on this data: **59 of the 232 non-warm-up closes (25%) sit
-outside the 2σ band.** On a mean-reverting series you'd expect roughly 5–10%.
-This series trends hard through two regimes, and a lagging moving average
-against a trending price is exactly where that assumption breaks. Worth seeing,
-rather than tuning away.
+One honest note on this data: **18 of the 101 non-warm-up closes in this window
+(18%) sit outside the 2σ band** — 40 of 232 (17%) over the full year. On a
+mean-reverting series you'd expect roughly 5–10%. This series trends hard
+through two regimes, and a lagging moving average against a trending price is
+exactly where that assumption breaks. Worth seeing, rather than tuning away.
+
+:::note[Counting breaches: don't let the warm-up in]
+`toFloat64Array()` materializes the `undefined` warm-up rows as `0`, so a naive
+`close > bbUpper` sweep scores all 19 of them as breaches and inflates the
+count by exactly the warm-up length. Read through the nullable accessor
+(`column('bbUpper').read(i)`, which returns `undefined`) and skip the rows the
+study hasn't warmed into. The numbers above are counted that way.
+:::
 
 ## Build it
 
