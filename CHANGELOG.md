@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
 include new features and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.54.0...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.55.0...HEAD
+[0.55.0]: https://github.com/pond-ts/pond/compare/v0.54.0...v0.55.0
 [0.54.0]: https://github.com/pond-ts/pond/compare/v0.53.1...v0.54.0
 [0.53.1]: https://github.com/pond-ts/pond/compare/v0.53.0...v0.53.1
 [0.53.0]: https://github.com/pond-ts/pond/compare/v0.52.0...v0.53.0
@@ -54,6 +55,39 @@ include new features and type-level changes; patch bumps are strictly additive.
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
 
 ## [Unreleased]
+
+### Added
+
+- **charts:** **`AreaStyle.flatFill` — stacked areas that read as slabs.** An
+  area's fill has always graded to transparent at the baseline, which is right
+  for the elevation form and wrong for a stack: every band showed the one
+  beneath it through the fade, so a stacked area was not really drawable. Set
+  `flatFill` and the fill is flat; omitted, the gradient is unchanged, so no
+  existing theme shifts. The docs theme's `seq1…seq8` area roles set it, since
+  stacking is what they exist for.
+
+- **docs theme:** **a sequential ramp — `seq1…seq8` — for charts with more
+  series than the categorical set has hues.** `--pond-viz-1…5` were, and
+  remain, the categorical set; a chart needing more slots (an eight-source
+  stack, a wall of climate stripes) now steps **tonally** through the brand
+  teal instead of introducing competing hues. Eight steps, evenly spaced
+  (~ΔL\* 9 in CIELAB), defined for light and dark, each mode's ramp containing
+  that mode's `--pond-viz-1` exactly. Exposed as `line` / `area` / `bar` theme
+  roles on `docsTheme` (Storybook) and the docs site's `useSiteChartTheme`,
+  and as an array from the site's `useSequentialRamp()`. Dev-only: the ramp
+  lives in the `docs-theme.fixture.ts` Storybook fixture and the website's
+  CSS, both excluded from the published `@pond-ts/charts` build — the library
+  still ships no palette.
+
+### Fixed
+
+- **charts:** toggling **`<ChartContainer grid>`** now repaints immediately.
+  `Layers`' draw callback read `container.grid` but didn't depend on it, so
+  switching gridlines off changed nothing until an unrelated dependency moved —
+  in practice you had to pan or zoom a little to force the update. The same
+  omission covered `sessionDividers` and `xKind`.
+
+## [0.55.0] — 2026-08-04
 
 ### Added
 
@@ -122,13 +156,21 @@ label={…}>` / `<BoxList series>` take a `TimeSeries` / `ValueSeries`
   the table-shaped cases it can't be (link labels, cells, expanders, custom
   sort).
 
-### Fixed
+- **charts:** **`BarStyle.hover` — a distinct hover colour for bars**
+  ([#577](https://github.com/pond-ts/pond/issues/577)). A theme may now give
+  bars a three-step emphasis — `fill` at rest → `hover` under the pointer →
+  `highlight` (plus the outline) when selected. Previously one `highlight`
+  served both live states, so hover and select differed only by the presence of
+  an outline; `ScatterStyle` has carried distinct rest / selected treatments
+  (`outline` vs `selectedOutline`) all along, making bars the less expressive
+  layer for the same two-state interaction.
 
-- **charts:** toggling **`<ChartContainer grid>`** now repaints immediately.
-  `Layers`' draw callback read `container.grid` but didn't depend on it, so
-  switching gridlines off changed nothing until an unrelated dependency moved —
-  in practice you had to pan or zoom a little to force the update. The same
-  omission covered `sessionDividers` and `xKind`.
+  **Optional, with a `highlight` fallback**, so no existing theme changes
+  meaning or rendering — a theme that wants the distinction adds one colour.
+  Selection outranks hover on a bar that is both. Single-series only: a stacked
+  or per-bin-coloured bar has no separate highlight colour to replace (it pops
+  its _own_ fill, so a red/green volume bar keeps its meaning while live), and
+  that convention is unchanged.
 
 ### Changed
 
@@ -230,37 +272,6 @@ label={…}>` / `<BoxList series>` take a `TimeSeries` / `ValueSeries`
   lacks), a gap (`NaN`) bar owns no slot, and a shared edge goes to the left
   bar — the rule `barIndexAtTime` already documented, so the two now agree by
   construction.
-
-### Added
-
-- **charts:** **`BarStyle.hover` — a distinct hover colour for bars**
-  ([#577](https://github.com/pond-ts/pond/issues/577)). A theme may now give
-  bars a three-step emphasis — `fill` at rest → `hover` under the pointer →
-  `highlight` (plus the outline) when selected. Previously one `highlight`
-  served both live states, so hover and select differed only by the presence of
-  an outline; `ScatterStyle` has carried distinct rest / selected treatments
-  (`outline` vs `selectedOutline`) all along, making bars the less expressive
-  layer for the same two-state interaction.
-
-  **Optional, with a `highlight` fallback**, so no existing theme changes
-  meaning or rendering — a theme that wants the distinction adds one colour.
-  Selection outranks hover on a bar that is both. Single-series only: a stacked
-  or per-bin-coloured bar has no separate highlight colour to replace (it pops
-  its _own_ fill, so a red/green volume bar keeps its meaning while live), and
-  that convention is unchanged.
-
-- **docs theme:** **a sequential ramp — `seq1…seq8` — for charts with more
-  series than the categorical set has hues.** `--pond-viz-1…5` were, and
-  remain, the categorical set; a chart needing more slots (an eight-source
-  stack, a wall of climate stripes) now steps **tonally** through the brand
-  teal instead of introducing competing hues. Eight steps, evenly spaced
-  (~ΔL\* 9 in CIELAB), defined for light and dark, each mode's ramp containing
-  that mode's `--pond-viz-1` exactly. Exposed as `line` / `area` / `bar` theme
-  roles on `docsTheme` (Storybook) and the docs site's `useSiteChartTheme`,
-  and as an array from the site's `useSequentialRamp()`. Dev-only: the ramp
-  lives in the `docs-theme.fixture.ts` Storybook fixture and the website's
-  CSS, both excluded from the published `@pond-ts/charts` build — the library
-  still ships no palette.
 
 ### Fixed
 
