@@ -1050,3 +1050,116 @@ Found the same way by the Gallery's **finance** track
     opt-out, two layers reporting the same `(label, value)` at the same time
     could collapse to one chip. This is the cheaper half of item 14 and would
     fix the common case on its own.
+
+Found the same way by the Gallery's **ESnet volume-history** card
+(`website/docs/charts/gallery/volume-history`) — the first chart built on the
+log axis, and the first with a draggable model parameter. Everything below was
+measured in a running browser, not read off a type.
+
+### Bugs
+
+19. **The log axis's dev warning broke the docs build.** `ChartRow.tsx` guarded
+    it with a bare `process.env.NODE_ENV`, which typechecks only when a tool
+    happens to resolve node's ambient types from a parent `node_modules`.
+    `@pond-ts/charts` is a browser package and its tsconfig pulls in no
+    `@types/node`, so `tsc` inside the package passed while TypeDoc running the
+    **same tsconfig** from `website/` failed with `TS2591: Cannot find name
+'process'` — taking out `npm run build:api-model`, and therefore
+    `docusaurus build`, entirely. Fixed here by `packages/charts/src/dev.ts`:
+    one local `declare const process`, plus a `typeof` guard so a bare
+    `<script type="module">` doesn't throw at import. The general point stands
+    — **the failure surfaces in a tool that isn't in `npm run verify`**, so the
+    next `process.env` reference will reintroduce it silently. Worth a lint
+    rule (`no-restricted-globals: process` in the charts package) or adding the
+    docs API-model build to CI.
+
+### Gaps
+
+20. **A draw layer cannot opt out of the y-axis domain fit.** The trend line is
+    a _model_, and a linear least-squares fit over a long window is **negative**
+    early on (here: below zero until Feb 2000). As a layer it joins
+    `resolveYDomain` like any measurement, so on a log axis its non-positive
+    values would pick the floor. There is no `fitDomain={false}` / `domain="ignore"`
+    per-layer escape, so the example computes `[min, max]` by hand for every
+    scale × window combination — about 30 lines whose only job is to keep a
+    modelled layer out of the fit. Any forecast, band-projection or annotation-
+    as-a-series hits this. Sibling of the `readout={false}` in item 14: same
+    shape (a layer that draws but shouldn't participate), different subsystem.
+
+21. **`BarListColumn.as` is per column, not per row.** The canonical `<BarList>`
+    is a **ranked list — one bar per row** — and that is exactly the shape that
+    cannot colour its rows, because the theme role lives on the column spec that
+    every row shares. A four-row per-series summary therefore gets four
+    identical bars. The example splits the encoding (neutral bars for magnitude,
+    a swatch in the label for identity, read from the same `line` role the chart
+    draws with), which is defensible design but was forced, not chosen. A
+    per-row `as` — or a `colorBy` reading a `values` entry — would close it.
+    Also **confirms item 6 for `BarList`**: no header row, so four numeric cells
+    have to smuggle their own labels (`1 m` / `1 y`) into the cell text.
+
+### Discoverability
+
+22. **`cursor="line"` has no readout at all, and nothing says so.**
+    `cursorParts('line')` is `{ line: true, chip: 'none' }` — a bare vertical
+    rule, no dots, no values. The page prose here was written claiming a hover
+    readout and was **wrong**, caught only by dispatching a real `pointermove`
+    and finding zero chips in the DOM. `CursorMode` badly wants a table in its
+    own doc comment: which modes draw a line, which draw dots, which show
+    values, and how many. This is the third page in this plan (see items 14, 15)
+    whose hover prose had to be corrected against the running chart.
+
+23. **Bucket-snapped cursoring and per-series values are mutually exclusive.**
+    `cursorSequence` is honoured **only** for `cursor="region"`, and
+    `cursorParts('region')` is a band with no dots and no chips. So "shade the
+    real calendar month under the pointer" and "read all three series at that
+    month" cannot both be on. Neither prop's doc mentions the other's cost.
+
+24. **A single `editing` mark suppresses the whole row's data cursor.**
+    `Layers.tsx` computes `editingActive = container.editAnnotations ||
+container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
+    So making _one_ `<Marker editing>` draggable silently turns off hover
+    readouts for **every layer in the row** — a large, non-local consequence of a
+    per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
+    mark's own affordances and say nothing about it. This chart ships the trade
+    documented on the page, but it was discovered by the chips disappearing.
+
+25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
+    The prop reads as drag-only ("drag across the plot … on release this fires
+    once with the selected `[lo, hi]` span"). Measured: a `pointerdown` +
+    `pointerup` at the **same** x, no movement, fires it with exactly the bucket
+    under the pointer — `[2016-12-01T00:00Z, 2017-01-01T00:00Z]` from a
+    `Sequence.calendar('month')` grid. `regionSpan(buckets, t, t)` returns the
+    single bucket by construction. **This is a feature nobody knows they have**:
+    "click a bucket to select it" is the obvious thing to want from a bucketed
+    cursor, and it already works. One sentence in the doc, plus a story.
+
+26. **A dragged mark does not snap to `cursorSequence` buckets.**
+    `snapToGuides` follows _other annotations'_ x-positions and discontinuity
+    boundaries only, so a `<Marker editing>` on a container with a month grid
+    still lands mid-month. The caller has to re-snap in `onChange` (this example
+    realizes `Sequence.calendar('month')` over the view and picks the nearest
+    boundary). Reasonable as a default; surprising when the container already
+    holds exactly the grid you want.
+
+27. **`defaultTheme.legend` is a hardcoded light palette, and a bridged theme
+    that forgets it fails silently.** The docs site's `useSiteChartTheme` never
+    mapped the `legend` register, so **every embed drawing a `<Legend>` rendered
+    a white card with slate text** — invisible-adjacent in light mode and a
+    glaring white block in dark. Nothing warns; the card just doesn't follow the
+    toggle. Fixed on the site side here. This is item 9's "roles fall back
+    silently" in its most visible form, and the cheapest general fix is the same
+    one: a dev-mode warning when a resolved theme still holds `defaultTheme`
+    values for a register the consumer has otherwise overridden.
+
+### Not a library issue, but it cost time again
+
+28. **Item 13's stale-`dist` trap has a second form: you rebuilt, then merged.**
+    This worktree had its **own** `node_modules` (a fresh `npm install` inside
+    it), so the symlink resolved correctly and item 13 didn't apply. The trap
+    fired anyway — `packages/charts` was built _before_ merging the log-axis
+    fixes, so the site kept serving the pre-fix `dist` and a five-tick axis came
+    back as **37 labels**, a symptom identical to "my domain logic is wrong".
+    Diagnosed in seconds only because item 13 taught the check:
+    `grep -c yTickValues packages/charts/dist/YAxis.js` → `0`. Worth promoting
+    that grep into the preview conventions as a _routine_ step after any merge,
+    not just after a checkout.

@@ -19,7 +19,7 @@ import GalleryVolumeHistory from '@site/src/examples/gallery-volume-history';
   <GalleryVolumeHistory width={720} height={300} />
 </ChartExample>
 
-Four things to try, in this order:
+Five things to try, in this order:
 
 1. **Switch Scale to Linear.** Two decades of history flatten onto the floor.
    Switch back; that is the entire argument for `<YAxis scale="log">`.
@@ -29,12 +29,23 @@ Four things to try, in this order:
    every 20 months**, held for three decades. Switch to `Linear` and the same
    least-squares idea bends badly, which is the visual proof that the growth is
    multiplicative rather than additive.
-3. **Step the Month back and forward.** The shaded band is the month the summary
+3. **Then drag the trend's marker.** The dashed line is fitted from wherever the
+   marker sits, so the marker is a question: _how fast has it grown **since**…?_
+   Drag it to 2015 and the answer changes to **+17.6% a year, doubling every 51
+   months** — the long boom and the last decade are not the same story, and one
+   fit across all 439 months quietly averages them together.
+4. **Step the Month back and forward.** The shaded band is the month the summary
    below is about, drawn over that month's real calendar span.
-4. **Hover a line.** Each series gets a dot and its value in bytes at that
+5. **Hover a line** (with Trend off — see below), **drag to pan, wheel to
+   zoom.** Hovering gives each series a dot and its value in bytes at that
    month — `63.9 PB`, not `6.3 e16` and not a logarithm.
-5. **Drag to pan, wheel to zoom.** The window is clamped to the record plus the
-   two years of empty margin the trend extrapolates into.
+
+**One deliberate trade, so it isn't a surprise:** while a trend is on, the
+origin marker is in edit mode, and pond suppresses a row's data cursor whenever
+any mark is being edited. So hover-to-read and drag-the-origin are alternatives,
+not both at once. Pan and zoom keep working either way. That is three gestures
+live at a time, which is the most this chart can carry honestly — the
+[gesture budget](#the-gestures) below says what was dropped and why.
 
 Times are **UTC**, which is how the record is published; the axis renders in
 your local zone, so at the tightest zoom a band can sit a few hours off the
@@ -110,15 +121,21 @@ difference is not cosmetic: `"line"` is a bare vertical rule with **no value
 chips at all**. Reading three series at one month is the point of hovering
 here, so `"flag"` — a dot and a value on each line — is the mode that does it.
 
-Two notes on `format` on a log axis specifically:
+Two notes on `format`:
 
-- **Pass a function, not a d3 specifier.** `'.3s'` would print `197.8P`, which
-  is not a byte count anyone writes. It is also actively broken here: d3's log
-  scale returns the **empty string** from `tickFormat` for any value that is not
-  one of its own significant ticks, so a cursor readout on a real sample comes
-  out blank. A function is applied verbatim to every value.
+- **A function reads better than a specifier here.** `'.3s'` prints `197.8P`,
+  which is not a byte count anyone writes; a function gives `197.82 PB`. (A
+  specifier also used to come out **blank** on a log axis for any value that
+  wasn't one of d3's own significant ticks — that is fixed, but it is the
+  reason this example's formatter is a function and worth knowing if you are
+  pinned to an older version.)
 - **Hoist it.** An inline `format={(v) => …}` is a fresh reference every render
   and re-registers the axis each frame.
+
+Note also what the axis is _not_ given: no `ticks`. The log axis picks whole
+decades itself and thins them to the row's height, so 300px of row gets
+`10 GB · 1 TB · 100 TB · 10 PB · 1 EB` and a six-month window gets
+`10 PB · 100 PB · 1 EB`.
 
 ### The month band
 
@@ -140,15 +157,52 @@ const marked = TimeRange.fromCalendar('month', '2026-07', { timeZone: 'UTC' });
 `selectable={false}` makes it inert background context — it is a readout of the
 stepper, not something to click.
 
-### The trend
+### The trend, and the marker it starts from
 
-Ordinary least squares over the **visible** months, on the values for Linear and
-on their logarithms for Exponential:
+Ordinary least squares on the values for Linear, on their logarithms for
+Exponential:
 
 ```tsx
 // exponential: fit ln(y) = a + b·x, then draw exp(a + b·x)
 const y = kind === 'exponential' ? Math.log(value) : value;
 ```
+
+**The fit window is `[marker, last visible month]`**, and the line is drawn from
+the marker onward — so it is fitted on exactly the data it is drawn over, then
+extrapolated past the last sample. The window is a parameter, not a constant,
+which is what makes the marker worth dragging:
+
+```tsx
+<Marker
+  at={volumeMonthStart(origin)}
+  label={`Fit from ${monthLabel(origin)}`}
+  editing
+  indicator
+  onChange={(at) => setTrendFrom(snapToMonth(monthGrid, at))}
+/>
+```
+
+`editing` is what makes a mark draggable, `onChange` reports the new `at`
+(controlled — wire it back), and `indicator` pins the same instant to the x
+axis as a pill.
+
+**Snap the value yourself.** A dragged mark snaps via `snapToGuides`, which
+follows _other marks'_ x-positions and session boundaries — **not** any cursor
+bucketing — so it will happily land on 14 March. The months come from pond's
+calendar, realized over the visible window:
+
+```tsx
+const MONTH_SEQUENCE = Sequence.calendar('month', { timeZone: 'UTC' });
+const monthGrid = MONTH_SEQUENCE.bounded(new TimeRange({ start, end }));
+```
+
+`Sequence.calendar('month')`, not a duration — months are 28–31 days, so there
+is no month duration to step by. `DurationUnit` stops at `d`, and `'m'` there
+means **minutes**.
+
+**Changing the time range re-seats the marker** on the new window's first month.
+Without that, narrowing to `5Y` strands the origin off-screen and you are
+reading a fit whose start you cannot see.
 
 The fit becomes its own one-column `TimeSeries`, drawn as a fourth line with
 `as="trend"` — a role whose entire job is `dash: [5, 4]`, in the same hue as the
@@ -198,31 +252,58 @@ plot.
 arithmetic closes is what pins the whole table to the inbound side of the
 export.
 
+## The gestures
+
+A chart this interactive runs out of gestures before it runs out of ideas. This
+one wanted four — hover-to-read, pan, wheel-zoom, and drag-the-marker — plus a
+bucketed region cursor to click a month with. It ships **three at a time**, and
+the two that were cut were cut for measured reasons rather than taste:
+
+| Gesture                       | Status                        | Why                                                                                                       |
+| ----------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Wheel-zoom                    | **kept**                      | Bounded to the record plus the trend's margin                                                             |
+| Drag to pan                   | **kept**                      | No region-drag to arbitrate against, so no `regionSelectModifier` needed                                  |
+| Hover reads all three series  | **kept — while Trend is off** | Any mark in edit mode forces the row's cursor to `'none'`, and the origin marker is an editing mark       |
+| Drag the trend origin         | **kept — while Trend is on**  | The other half of the same trade                                                                          |
+| Click a month (region cursor) | **dropped**                   | `cursorSequence` applies only to `cursor="region"`, which draws a band and **no value chips** — see below |
+
+The region cursor is the interesting cut, because it _works_: give the container
+`cursor="region"` and `cursorSequence={Sequence.calendar('month')}` and the band
+under the pointer is the real calendar month, and a **plain click** — no drag —
+fires `onRegionSelect` with exactly that month (measured here:
+`[2016-12-01T00:00Z, 2017-01-01T00:00Z]`). It is a lovely way to pick a bucket.
+
+It still lost, twice over. Adopting it costs the per-series byte readout, which
+is the thing that demonstrates a log axis formatting values rather than
+logarithms; and it is suppressed anyway whenever the marker is draggable, which
+is precisely when you would be clicking. Two of the four cannot be on screen
+together by construction, so the chart takes the readout and moves the marker by
+dragging it.
+
 ## Options to try
 
 | Option                                      | What it does                                                             | Reach for it when                                                           |
 | ------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
 | `<YAxis scale="log">`                       | Base-10 axis; ticks land on decades and `format` still formats the value | Data spanning more than about two orders of magnitude                       |
-| `<YAxis ticks={[…]}>`                       | Your tick positions **and** your labels, driving gridlines too           | Any log axis today — see the note below                                     |
 | `<LineChart as="trend">` + `LineStyle.dash` | A dashed line in the modelled register                                   | A fit, a forecast, a smoothed estimate — anything that is not a measurement |
+| `<Marker editing onChange>`                 | A draggable mark whose position is a model parameter                     | The reader should be able to ask the question, not just read your answer    |
+| `Sequence.calendar('month')`                | A real calendar grid to snap to                                          | Any month/week/day snapping — there is no month _duration_                  |
 | A fourth `<LineChart column="normal">`      | Draws the derived remainder as a line as well as a table row             | You want the three components to visibly sum to the total                   |
 | `<ChartContainer grid={false}>`             | Drops the gridlines                                                      | Dense data where the rules compete with the lines                           |
 | `<ChartContainer panZoom="pan">`            | Drag to pan without wheel-zoom                                           | A page where trapping the reader's scroll would be rude                     |
 
-:::note Explicit ticks are not optional yet
+:::note Keep a log axis to lines, for now
 
-This example passes `<YAxis ticks>` rather than letting the scale pick, and that
-is a workaround, not a preference. `scaleLog.ticks(count)` is close to a **step
-function** of the count rather than a target: on this data and domain,
-`ticks(7)` returns 7 values and `ticks(8)` returns **64**. Since the count is
-derived from the row's pixel height, a 300px row and a 400px row can differ by a
-factor of nine in gridline count. Until that is fixed in the axis, compute the
-decades you want and pass them — `ticks` drives both the labels and the row's
-gridlines, so they cannot disagree.
+`<AreaChart>` and stacked `<BarChart>` have unguarded paths to `NaN` when a
+value or a stack base is zero — a stacked bar silently loses its bottom segment,
+and a filled area with a zero in it throws from `createLinearGradient`. Lines
+are safe, which is all this chart needs.
 
-Two more log-axis limits worth knowing now: `<AreaChart>` and stacked
-`<BarChart>` have unguarded paths to `NaN` when a value or a stack base is zero,
-so keep a log axis to **lines** for the moment.
+Relatedly: a **zero** does not break a line the way a gap does. `.defined()`
+tests the value, and `0` is finite, so neighbours are joined straight through
+it. This record has no zeroes — its absences are genuine `null`s — but on a log
+axis a zero has no position, so the two cases are worth keeping apart in your
+own data.
 
 :::
 
@@ -230,9 +311,11 @@ so keep a log axis to **lines** for the moment.
 
 - [`<LineChart>`](../types/linechart.mdx) — every prop
 - [`<YAxis>`](../axes/value-axis.mdx) — `scale`, `ticks`, `format`, `pad`
-- [`<Region>`](../annotations/region-baseline-marker.mdx) — the highlight band
+- [`<Region>` and `<Marker>`](../annotations/region-baseline-marker.mdx) — the
+  highlight band and the draggable fit origin
 - [`<BarList>`](../types/lists.mdx) — the summary table
 - [Gaps](../gaps.mdx) — why the staggered starts are absences, not zeroes
-- [**Storybook — explicit ticks**](pathname:///storybook/?path=/story/axes--explicit-ticks)
-  — the lever this page leans on. There is **no log-axis story yet**; the scale
-  landed without one.
+- [**Storybook — the log scale**](pathname:///storybook/?path=/story/axes-log-scale--log)
+  — the systematic knob walk: linear vs log side by side, decade ticks, an
+  explicit domain, a refused non-positive `min`, and what a zero in the data
+  does

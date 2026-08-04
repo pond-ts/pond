@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { TimeRange, TimeSeries } from 'pond-ts';
+import { Sequence, TimeRange, TimeSeries, type BoundedSequence } from 'pond-ts';
 import {
   BarList,
   ChartContainer,
@@ -7,6 +7,7 @@ import {
   Layers,
   Legend,
   LineChart,
+  Marker,
   Region,
   YAxis,
   type ChartTheme,
@@ -38,7 +39,7 @@ import styles from './gallery-volume-history.module.css';
  * **Scale** toggle is for, and why `<YAxis scale="log">` had to exist before
  * this card could.
  *
- * Four things are worth reading the source for:
+ * Five things are worth reading the source for:
  *
  * **The log axis formats the value, not its logarithm.** `format` is a
  * *function* returning `197.82 PB`, and it is applied to the ticks, to the
@@ -51,13 +52,17 @@ import styles from './gallery-volume-history.module.css';
  * `null`), so those lines simply start partway across the plot. Zero would be
  * a different — and false — claim, and on a log axis it has no position at all.
  *
- * **The trend is a modelled series, and says so.** Least squares over the
- * *visible* months — on the values for Linear, on their logarithms for
- * Exponential — extrapolated past the last sample to the right edge, and drawn
- * with `line.trend`, whose only job is to be dashed. On a log axis an
- * exponential fit is a **straight line**, which is the finding this dataset
- * exists to show: ESnet's traffic has been close to straight, doubling roughly
- * every twenty months, for three decades.
+ * **The trend starts from a marker you can drag**, and is fitted on the data
+ * from there to the end of the visible window, then drawn from there onward —
+ * so the extrapolation past the last sample is over ground the fit actually
+ * saw. That makes the marker a *question*: fitted from 1990 the record grows
+ * +51.9% a year and doubles every 20 months; dragged to 2015 the same data
+ * says +17.6% and 51 months. One fit across all 439 months averages two
+ * different eras together, and dragging is how you find that out.
+ *
+ * **The trend is modelled, and says so** — `line.trend`, whose only job is to
+ * be dashed. On a log axis an exponential fit is a **straight line**, which is
+ * why this dataset is conventionally drawn log.
  *
  * **The summary is `<BarList>`, not markup.** One row per series, the bar
  * encoding its share of the month's total, the swatch tying it to its line.
@@ -88,6 +93,8 @@ export default function GalleryVolumeHistory({
   const [grid, setGrid] = useState(true);
   const [trend, setTrend] = useState<Trend>('off');
   const [month, setMonth] = useState(VOLUME_LAST);
+  /** The month the trend is fitted **from** — the draggable marker. */
+  const [trendFrom, setTrendFrom] = useState(0);
 
   // The visible window. Held here rather than inside the container because two
   // things write it — the TIME presets and the pan/zoom gesture — and whichever
@@ -113,18 +120,29 @@ export default function GalleryVolumeHistory({
   // see, over numbers nobody can check against the chart, is worse than none.
   const marked = Math.min(Math.max(month, first), last);
 
-  const fit = useMemo(
-    () => (trend === 'off' ? null : fitTrend(trend, first, last)),
-    [trend, first, last],
+  // Where the trend is fitted **from** — the draggable marker's month. Clamped
+  // the same way, and two months short of the end because three points is the
+  // fewest a least-squares line can be honest about.
+  const origin = Math.min(
+    Math.max(trendFrom, first),
+    Math.max(first, last - 2),
   );
 
-  // The fitted line as its own series — one row per month from the first
-  // visible one to the right edge, so the extrapolation past the last sample
-  // is drawn rather than implied. Memoized: a fresh series identity
-  // re-registers the layer.
+  // The fit window is `[origin, last]` — fitted on the data from the marker to
+  // the end of the visible range, then drawn from the marker onward. Passing
+  // the window in rather than hardcoding it is what makes "since 2015?" a
+  // question the reader can ask by dragging.
+  const fit = useMemo(
+    () => (trend === 'off' ? null : fitTrend(trend, origin, last)),
+    [trend, origin, last],
+  );
+
+  // The fitted line as its own series — one row per month from the marker to
+  // the right edge, so the extrapolation past the last sample is drawn rather
+  // than implied. Memoized: a fresh series identity re-registers the layer.
   const trendSeries = useMemo(
-    () => (fit === null ? null : trendLine(fit, first, view[1], scale)),
-    [fit, first, view, scale],
+    () => (fit === null ? null : trendLine(fit, origin, view[1], scale)),
+    [fit, origin, view, scale],
   );
 
   // The y domain, computed rather than auto-fitted, because the trend is a
@@ -132,17 +150,8 @@ export default function GalleryVolumeHistory({
   // a long window, and letting that pick the bottom of a log axis would be
   // absurd. Data sets the floor; the trend may only widen the top.
   const domain = useMemo(
-    () => yDomain(first, last, scale, fit, view[1]),
-    [first, last, scale, fit, view],
-  );
-
-  // Decades, chosen here rather than by `scale.ticks(count)`. d3's log ticks
-  // are a step function of the count, not a target: on this data `ticks(7)`
-  // returns 7 values and `ticks(8)` returns 64. Explicit `ticks` drives both
-  // the labels and the row's gridlines, so they cannot disagree.
-  const ticks = useMemo(
-    () => (scale === 'log' ? decadeTicks(domain[0], domain[1], height) : null),
-    [scale, domain, height],
+    () => yDomain(first, last, scale, fit, origin, view[1]),
+    [first, last, scale, fit, origin, view],
   );
 
   // The selected month's calendar extent — a real month, from pond's own
@@ -153,20 +162,58 @@ export default function GalleryVolumeHistory({
     [marked],
   );
 
+  // The month grid the dragged marker snaps to. `Sequence.calendar('month')`
+  // because a month is a **calendar unit, not a duration** — `DurationUnit`
+  // stops at `d`, and `'m'` there means minutes. The marker's own snapping
+  // (`snapToGuides`) follows *other marks* and session boundaries, not cursor
+  // buckets, so a dragged mark would otherwise land mid-month.
+  const monthGrid = useMemo(
+    () =>
+      MONTH_SEQUENCE.bounded(new TimeRange({ start: view[0], end: view[1] })),
+    [view],
+  );
+
+  /** The origin marker is a page thing, not a card thing. */
+  const trendMarker = !preview && fit !== null;
+
   const chart = (
     <ChartContainer
       range={view}
       width={width}
       theme={theme}
       grid={grid}
-      // `flag`, not `line`: `cursor="line"` is a bare vertical rule with **no
-      // readout** (`cursorParts('line')` gives `chip: 'none'`), and reading
-      // three series at one month is the whole point of hovering this chart.
-      // `flag` puts a dot and a value chip on each line at the cursor's month —
-      // which is also where the log axis's `format` has to hold up.
+      // ---------------------------------------------------------------
+      // The gesture budget — three, deliberately, not four.
+      //
+      // KEPT: hover reads all three series; drag pans; wheel zooms. Plus
+      // the marker drag, which only exists while a trend is on and which
+      // the library trades against hover (see `<Marker>` below).
+      //
+      // DROPPED: the **bucketed region cursor**. It would have been the
+      // prettiest way to pick a month — `cursorSequence` +
+      // `Sequence.calendar('month')` shades the real month under the
+      // pointer, and a plain click fires `onRegionSelect` with exactly
+      // that month (measured: `[2016-12-01Z, 2017-01-01Z]`). Two
+      // measured facts ruled it out anyway:
+      //
+      //   1. `cursorSequence` is honoured **only** for `cursor="region"`,
+      //      and `cursorParts('region')` is a band with no dots and no
+      //      chips. Adopting it trades the three-series byte readout —
+      //      the thing that proves the log axis formats values — for a
+      //      shaded rectangle.
+      //   2. It is invisible exactly when it would be used: any mark in
+      //      edit mode forces `cursorParts('none')` for the whole row,
+      //      so while the trend marker is draggable there is no region
+      //      cursor to click.
+      //
+      // Two of the four cannot be on screen together by construction, so
+      // this chart takes the readout and moves the marker by dragging it.
+      // ---------------------------------------------------------------
       cursor="flag"
       // Drag to pan, wheel to zoom, clamped to the record (plus the two years
-      // of empty right margin the extrapolation needs). Off on the card: a
+      // of empty right margin the extrapolation needs). No
+      // `regionSelectModifier` is needed: that only arbitrates pan against a
+      // region-drag, and there is no region cursor here. Off on the card: a
       // card that zooms under the wheel traps the scroll of anyone paging
       // down the Gallery.
       panZoom={preview ? 'none' : 'panZoom'}
@@ -181,7 +228,10 @@ export default function GalleryVolumeHistory({
           scale={scale}
           min={domain[0]}
           max={domain[1]}
-          {...(ticks ? { ticks } : {})}
+          // No explicit `ticks`: the axis picks the decades itself now
+          // (`yTickValues` steps by whole powers of ten and thins to the row's
+          // height). `format` stays a **function** — it is the one thing the
+          // readout, the ticks and the marker's axis pill all share.
           format={formatBytes}
           width={58}
         />
@@ -195,6 +245,22 @@ export default function GalleryVolumeHistory({
               to={markedRange.endMs}
               label={monthLabel(marked)}
               selectable={false}
+            />
+          )}
+          {/* Where the trend starts — **drag it**. Only exists while a trend
+              is on, because it has nothing to mean otherwise, and `editing`
+              is what makes it draggable. Note the cost, which is the library's
+              rule rather than a choice here: a mark in edit mode suppresses
+              the row's data cursor (`editingActive` forces `cursorParts
+              ('none')`), so the hover readout steps aside while the origin is
+              placeable. */}
+          {trendMarker && (
+            <Marker
+              at={volumeMonthStart(origin)}
+              label={`Fit from ${monthLabel(origin)}`}
+              editing
+              indicator
+              onChange={(at) => setTrendFrom(snapToMonth(monthGrid, at))}
             />
           )}
           <LineChart
@@ -274,8 +340,14 @@ export default function GalleryVolumeHistory({
                 type="button"
                 aria-pressed={s === activeSpan}
                 onClick={() => {
+                  const next = spanRange(s);
                   setSpan(s);
-                  setRange(spanRange(s));
+                  setRange(next);
+                  // Re-seat the trend's origin on the new window's first month.
+                  // Changing the range otherwise strands the marker off-screen
+                  // (narrowing) or leaves it stuck mid-plot (widening), and a
+                  // fit whose start you can't see is a fit you can't read.
+                  setTrendFrom(firstMonthIn(next[0]));
                 }}
               >
                 {s}
@@ -356,7 +428,10 @@ export default function GalleryVolumeHistory({
 
       {fit && (
         <p className={styles.credit}>
-          {fitCaption(trend, fit, last - first + 1)}
+          {fitCaption(fit, monthLabel(origin), last - origin + 1)}{' '}
+          <em>
+            Drag the marker to refit from another month — the readout follows.
+          </em>
         </p>
       )}
 
@@ -475,6 +550,30 @@ const VOLUME_EPOCH: readonly [number, number] = [1990, 0];
  *  tightest zoom — the alternative is a band that moves with the reader. */
 const MONTH_TZ = { timeZone: 'UTC' } as const;
 
+/**
+ * The calendar-month grid the marker snaps to.
+ *
+ * `Sequence.calendar('month')`, not a duration: months are 28–31 days, so
+ * there is no month *duration* to step by — `DurationUnit` stops at `d`, and
+ * `'m'` there is **minutes**. Hoisted, because the sequence is realized against
+ * the view on every change and a fresh instance would re-realize it needlessly.
+ */
+const MONTH_SEQUENCE = Sequence.calendar('month', MONTH_TZ);
+
+/** The record's month index nearest `at`, snapped to the realized grid. */
+function snapToMonth(grid: BoundedSequence, at: number): number {
+  let bestIndex = monthIndexAt(at);
+  let bestGap = Infinity;
+  for (let i = 0; i < grid.length; i += 1) {
+    const gap = Math.abs(grid.at(i)!.begin() - at);
+    if (gap < bestGap) {
+      bestGap = gap;
+      bestIndex = monthIndexAt(grid.at(i)!.begin());
+    }
+  }
+  return Math.max(0, Math.min(VOLUME_LAST, bestIndex));
+}
+
 // ---------------------------------------------------------------------------
 // Trend
 // ---------------------------------------------------------------------------
@@ -576,8 +675,8 @@ function trendLine(
 
 /** What the fit actually says, in words — computed from the fit, never
  *  estimated. */
-function fitCaption(trend: Trend, fit: Fit, months: number): string {
-  const over = `over the ${months} visible months`;
+function fitCaption(fit: Fit, from: string, months: number): string {
+  const over = `from ${from} (${months} months)`;
   if (fit.kind === 'exponential') {
     const yearly = Math.exp(fit.slope * 12) - 1;
     const doubling = Math.log(2) / fit.slope;
@@ -608,6 +707,7 @@ function yDomain(
   i1: number,
   scale: 'log' | 'linear',
   fit: Fit | null,
+  fitFrom: number,
   rightEdge: number,
 ): [number, number] {
   let lo = Infinity;
@@ -622,38 +722,13 @@ function yDomain(
   }
   if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [1, 10];
   if (fit !== null) {
-    for (let i = i0; i <= monthIndexAt(rightEdge); i += 1) {
+    for (let i = fitFrom; i <= monthIndexAt(rightEdge); i += 1) {
       const v = fit.predict(i);
       if (Number.isFinite(v) && v > hi) hi = v;
     }
   }
   if (scale === 'linear') return [0, hi * 1.06];
   return [10 ** Math.floor(Math.log10(lo)), 10 ** Math.ceil(Math.log10(hi))];
-}
-
-/**
- * One tick per decade, thinned to fit the row — the axis's own labels *and*
- * the row's gridlines, since `<YAxis ticks>` drives both.
- *
- * Why not leave it to the scale: `scaleLog.ticks(count)` is close to a step
- * function of `count` rather than a target, so the height-derived default
- * lands anywhere between three gridlines and sixty-four on this data
- * depending on the row's pixel height and how many decades are in view.
- */
-function decadeTicks(
-  min: number,
-  max: number,
-  height: number,
-): { at: number; label: string }[] {
-  const lo = Math.round(Math.log10(min));
-  const hi = Math.round(Math.log10(max));
-  const room = Math.max(2, Math.floor(height / 48));
-  const stride = Math.max(1, Math.ceil((hi - lo) / room));
-  const out: { at: number; label: string }[] = [];
-  for (let e = lo; e <= hi; e += stride) {
-    out.push({ at: 10 ** e, label: formatBytes(10 ** e) });
-  }
-  return out;
 }
 
 // ---------------------------------------------------------------------------
