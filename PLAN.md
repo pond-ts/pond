@@ -914,7 +914,14 @@ argument for the rest.
   theme tokens (`axis.band.label`, `legend.border`); `<Legend>` is always an
   in-plot overlay; theme roles fall back **silently** per primitive; `panZoom`
   uncontrolled ignores later `range` props; `<YAxis label>` defaults to the axis
-  id. Itemised, with the workaround each one forced, in
+  id. The cursor is the recurring theme: `CursorMode`'s docs promise a
+  per-series crosshair the implementation doesn't draw, `TrackerSample.label`
+  reports a theme role rather than a column, a layer can't opt out of the
+  readout (so one column drawn twice raises two identical flags), the x-axis
+  time pill is gated on `crosshair` so the **default** `line` cursor shows no
+  position either, and `<BarChart>` has no `readout` prop — so a chart whose
+  colour carries the value has a pill reading its layout constant. Itemised,
+  with the workaround each one forced, in
   [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-chfric--chart-example-friction).
 
 ---

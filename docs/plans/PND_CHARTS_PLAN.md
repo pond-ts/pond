@@ -1050,3 +1050,43 @@ Found the same way by the Gallery's **finance** track
     opt-out, two layers reporting the same `(label, value)` at the same time
     could collapse to one chip. This is the cheaper half of item 14 and would
     fix the common case on its own.
+
+Found the same way by the Gallery's **weather & climate** track
+(`website/docs/charts/gallery/{temperature-range,rainfall,climate-stripes,wind-rose}`).
+All three measured in the browser by dispatching real `pointermove` events and
+reading the overlay SVG and the pill DOM back, not inferred from the source.
+
+16. **The x-axis time pill is hard-gated on `cursor === 'crosshair'`**
+    (`XAxis.tsx`, `showCursorTag`), so the **default** cursor tells you neither
+    the value nor the _time_. `cursor` defaults to `'line'`, documented as "the
+    synced vertical line, with values surfaced _outside_ the chart via
+    `onTrackerChanged`" — which reads as a deliberate division of labour, values
+    off-chart, position on-chart. It isn't: measured, `'line'` renders a bare
+    `<line>` in the overlay and **no pill at all**, while the same chart under
+    `'crosshair'` renders the date pill. So a chart whose values legitimately
+    live off-chart (item 17 is one) has to wire `onTrackerChanged` just to
+    answer "which year am I pointing at" — a question the container has already
+    computed and is one `<div>` from displaying. Showing the x pill under
+    `'line'` looks like a one-line change with no downside.
+17. **`<BarChart>` has no `readout` prop, so the cursor pill can't be pointed at
+    a column other than the drawn one.** `<LineChart>` / `<AreaChart>` both take
+    `readout`; `<BarChart>` doesn't. It bites hardest where **colour is the
+    value**: the climate-stripes card draws a constant `stripe` column purely to
+    give each year a full-height slot, so `cursor="crosshair"` reports `1.0` on
+    all 146 bars, and pins a horizontal arm to the top edge of the plot while
+    it's at it. Distinct from items 14/15 — there the complaint is too many
+    chips, here it's one chip reading the wrong column with no way to redirect
+    it. The example ships the `onTrackerChanged` + look-up-the-year workaround,
+    and the page documents it as the pattern, which is a fair answer but a
+    `readout` prop would be a better one.
+18. **The categorical cursor is only reachable by asking for a "crosshair".** On
+    a `<CategoryAxis>` row, `cursor="crosshair"` degrades _well_ — a vertical
+    line plus the hovered sector's name pinned to the axis, no horizontal arm
+    and no value pill, because an ordinal axis has no continuous position to
+    read back. That naming is genuinely load-bearing: the axis decimates 16
+    sectors down to the 8 labels it has room for. But `cursor="line"` shows
+    neither the name nor a pill, so the mode you must name to get an ordinal
+    readout is the one whose documented behaviour is exactly what an ordinal
+    axis can't do. Same root as item 16; worth listing separately because the
+    categorical symptom is what a reader hits first, and because `CursorMode`'s
+    docs say nothing about what any mode does on a category axis.
