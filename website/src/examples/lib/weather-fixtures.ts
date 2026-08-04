@@ -200,6 +200,17 @@ export const STRIPES_EXTENT: readonly [number, number] = [
 ];
 
 /**
+ * One calendar year's anomaly in °C, or `null` for a year off the record.
+ *
+ * The stripes chart draws a *constant* column — the colour is the value — so
+ * the number behind a stripe can't come from the cursor's own readout. It
+ * comes from here, keyed by the year the tracker reports.
+ */
+export function anomalyAt(year: number): number | null {
+  return GISTEMP_ANOMALY_C[year - GISTEMP_YEAR0] ?? null;
+}
+
+/**
  * Which ramp step an anomaly falls in — `0` (coldest) to `steps - 1`
  * (warmest), spread linearly across {@link STRIPES_EXTENT}.
  *

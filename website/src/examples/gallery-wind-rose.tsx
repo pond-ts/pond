@@ -34,7 +34,17 @@ export default function GalleryWindRose({
   const rose = windRose(month);
 
   return (
-    <ChartContainer width={width} theme={theme} showAxis={false}>
+    // `crosshair` on an ordinal axis degrades to a *vertical line plus the
+    // hovered category's name*, pinned to the `<CategoryAxis>` — there's no
+    // continuous x position to read back, so no horizontal arm and no value
+    // pill. Naming the sector is the point: the axis only has room to print
+    // eight of the sixteen labels.
+    <ChartContainer
+      width={width}
+      theme={theme}
+      showAxis={false}
+      cursor="crosshair"
+    >
       <ChartRow height={196}>
         <YAxis
           id="pct"

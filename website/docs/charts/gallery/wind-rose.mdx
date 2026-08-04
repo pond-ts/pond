@@ -1,12 +1,151 @@
 ---
-title: GalleryWindRose
+title: Wind direction
+sidebar_label: Wind direction
 ---
 
-# GalleryWindRose
+# Wind direction
+
+A year of hourly wind reports, binned into the sixteen compass sectors. The x
+axis here isn't a number line and isn't time — it's **sixteen named slots in a
+fixed order**, which is what `<CategoryAxis>` draws. Every distribution-shaped
+question ends up in this shape: browsers, error codes, regions, causes.
 
 import ChartExample from '@site/src/components/ChartExample';
-import C from '@site/src/examples/gallery-wind-rose';
+import GalleryWindRose from '@site/src/examples/gallery-wind-rose';
 
-<ChartExample name="gallery-wind-rose" height={320} collapsed>
-  <C width={560} />
+## The chart
+
+<ChartExample name="gallery-wind-rose" height={280} collapsed>
+  <GalleryWindRose width={640} />
 </ChartExample>
+
+Hover a bar and the axis names the sector under the pointer. That's what
+`cursor="crosshair"` does on an **ordinal** axis: a vertical line plus the
+category's name, and no horizontal arm or value pill, because there's no
+continuous x position to read back. It earns its place here — the axis only has
+room to print eight of the sixteen labels, so half of them are otherwise
+unnamed.
+
+Seattle-Tacoma sits in a north-south trough between two mountain ranges, and
+the distribution says so: the wind comes from the south a third of the time
+(**32.9%** across S, SSW and SSE) and from the north **19.2%**, with the
+east-west sectors thin. The single biggest slot for the year is S at 13.8%,
+with SSW a hair behind at 13.7%.
+
+The Gallery card steps through the twelve months, and the whole distribution
+swings as it goes. **October** is the most southerly month of 2024, at 45.2%;
+**July is the one month that reverses**, 31.1% northerly against 16.5%
+southerly, as the summer sea breeze sets up from the opposite end of the
+trough.
+
+## The data
+
+**Real, measured, public domain.** Hourly METAR (`FM-15`) observations for WBAN
+station `72793024233` — the same Seattle-Tacoma airport as the
+[temperature](./temperature-range.mdx) and [rainfall](./rainfall.mdx) cards —
+for calendar 2024, from
+[NOAA NCEI's Local Climatological Data service](https://www.ncei.noaa.gov/access/services/data/v1).
+A US federal government work, so no copyright attaches.
+
+**8,735 hourly observations**, binned **offline** into 16 sectors × 12 months
+by
+[`website/scripts/fixtures/weather.mjs`](https://github.com/pond-ts/pond/blob/main/website/scripts/fixtures/weather.mjs).
+Shipping every hour to the browser to draw sixteen bars would be silly, and the
+binning isn't the lesson here.
+
+Two categories have no direction to plot, and rather than being folded into a
+sector or quietly dropped they are counted separately:
+
+| Category     | Hours | Share |
+| ------------ | ----: | ----: |
+| **Calm**     |   621 |  7.1% |
+| **Variable** |   315 |  3.6% |
+
+A calm hour is reported as direction 000 with zero speed; a variable one is
+METAR's `VRB`, a direction shifting faster than the observation resolves.
+Both stay in the **denominator** — the sixteen bars are a share of _all_
+observed hours, not of directed ones, so they sum to 89.3% rather than 100%.
+That's a deliberate choice and the kind that belongs on the page: excluding
+them would silently inflate every sector by a ninth.
+
+The chart takes plain data, not a series:
+
+```ts
+type CategoryDatum = { label: string; value: number };
+// [{ label: 'N', value: 10.7 }, { label: 'NNE', value: 6.0 }, …]
+```
+
+## Build it
+
+A categorical bar chart is `<BarChart categories>` plus a `<CategoryAxis>`, and
+the ordinal axis is derived from the data rather than configured:
+
+```tsx
+<ChartContainer width={640} theme={theme} showAxis={false} cursor="crosshair">
+  <ChartRow height={196}>
+    <YAxis id="pct" side="left" label="% of hours" format=",.0f" width={46} />
+    <Layers>
+      <BarChart categories={rose} axis="pct" gap={6} />
+    </Layers>
+  </ChartRow>
+  <CategoryAxis label="All of 2024" />
+</ChartContainer>
+```
+
+Three details that aren't obvious:
+
+- **`categories` replaces `series` and `column`.** Each datum carries its own
+  value, so there's no column to name; passing both is a type error rather than
+  a runtime surprise.
+- **`showAxis={false}` on the container** suppresses the default _time_ axis.
+  The container still owns an x scale, but it's an ordinal one now, and the
+  `<CategoryAxis>` is what renders it. Leave the time axis on and you get two
+  x axes, one of them meaningless.
+- **The layer hands the axis its category names**, in data order. The axis
+  doesn't need a list of sixteen labels configured into it — and because
+  ordering is the data's, "clockwise from north" survives without a sort
+  comparator that knows about compass points.
+
+`gap={6}` is what separates sixteen bars in 640 px into countable objects. At
+this count you can afford it; a 200-category chart wants `gap={0}` and a
+different reading strategy.
+
+To make the axis ceiling comparable across months — which is what the Gallery
+card's month-by-month sweep needs — pin it to the tallest sector in _any_
+month rather than letting each frame auto-fit:
+
+```tsx
+<YAxis id="pct" side="left" label="% of hours" width={46} min={0} max={21} />
+```
+
+That peak is June's SSW, at 21.0% of the month's hours. Without the pin, every
+month would fill the plot to the same height and the sweep would say nothing at
+all.
+
+:::note Why not a polar rose?
+A wind rose is traditionally drawn on a polar plot, and pond doesn't draw one.
+The Cartesian version trades the compass metaphor for something a polar plot is
+genuinely bad at: comparing two adjacent sectors' magnitudes, which is a length
+comparison here and an area-and-angle comparison there. If you need the compass
+metaphor, this isn't the library for that chart.
+:::
+
+## Options to try
+
+| Option                            | What it does                                    | Reach for it when                                                 |
+| --------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------ |
+| `orientation="horizontal"`        | Categories down the y axis, bars running across | Long labels — `NNE` is fine, `us-east-1a` is not                   |
+| `binColors`                       | One colour per bar, in data order               | Colouring the four quadrants, or highlighting one sector           |
+| `<BarList>`                       | A ranked table with bars, not a chart           | The categories are entities to be ranked, not slots on an axis     |
+| `selected` / `onSelect`           | Click a bar; it stays lit                       | The bar is a filter for something else on the page                 |
+| `<CategoryAxis label>`            | A caption under the ordinal axis                | Naming what the whole distribution is _of_ — the card uses it for the month |
+| Recompute `rose` from a `month`   | Swaps the whole distribution in place           | Comparing periods — a `CategoryDatum` carries one value per slot, so two periods are two renders, not two layers |
+
+## See also
+
+- [`<CategoryAxis>`](../axes/category-axis.mdx) — ordinal axes, tick decimation, labels
+- [`<BarChart>`](../types/barchart.mdx) — the `categories` form, gaps, colours
+- [Lists](../types/lists.mdx) — `<BarList>`, for when the categories are entities
+- [Selection and hover](../interaction/selection-and-hover.mdx) — making the bars clickable
+- [**Storybook**](pathname:///storybook/?path=/story/axes-categoryaxis--tickers)
+  — the systematic knob walk

@@ -1,12 +1,149 @@
 ---
-title: GalleryTemperatureRange
+title: Temperature range
+sidebar_label: Temperature range
 ---
 
-# GalleryTemperatureRange
+# Temperature range
+
+A year of daily highs and lows drawn as a **band** rather than two lines, with
+a fortnight's mean running through it. The question it answers isn't "how warm
+was it" — it's "how far apart were the two ends of the day", which is a shape
+you can't see at all when the extremes are separate lines.
 
 import ChartExample from '@site/src/components/ChartExample';
-import C from '@site/src/examples/gallery-temperature-range';
+import GalleryTemperatureRange from '@site/src/examples/gallery-temperature-range';
 
-<ChartExample name="gallery-temperature-range" height={320} collapsed>
-  <C width={560} />
+## The chart
+
+<ChartExample name="gallery-temperature-range" height={300} collapsed>
+  <GalleryTemperatureRange width={640} />
 </ChartExample>
+
+Hover anywhere: a crosshair, a dot snapped to the nearest day, the date pinned
+to the time axis and the value pinned to the temperature axis. That's
+`cursor="crosshair"` and nothing else — **this chart doesn't pan or zoom**, and
+[Options to try](#options-to-try) says which prop turns that on.
+
+The band's _width_ is the reading. It averages 5.4 °C in January and 12.9 °C in
+July — Seattle's summer is dry and cloudless enough that the ground radiates
+its heat away overnight, which a winter of marine overcast never lets it do.
+The widest single day of 2024 was **9 July, 18.9 °C** between low and high; the
+narrowest was **23 August at 2.2 °C**, a day that never got out from under the
+cloud.
+
+There's a one-day notch in the band in late April. That isn't a rendering
+artefact — see [The data](#the-data).
+
+## The data
+
+**Real, measured, public domain.** Daily maximum and minimum temperature for
+GHCN station `USW00024233` — Seattle-Tacoma International Airport — for
+calendar 2024, from
+[NOAA NCEI's GHCN-Daily `daily-summaries` service](https://www.ncei.noaa.gov/access/services/data/v1).
+A work of the US federal government, so it carries no copyright. The fetch and
+the reshaping live in
+[`website/scripts/fixtures/weather.mjs`](https://github.com/pond-ts/pond/blob/main/website/scripts/fixtures/weather.mjs);
+it runs by hand and its output is committed, so the docs site fetches nothing.
+
+```ts
+[time, low, high, precip]; // °C, °C, mm — one row per calendar day
+```
+
+366 rows (2024 was a leap year), spanning −9.3 °C to 36.7 °C. Three quirks
+matter here:
+
+- **`low` and `high` are optional columns**, and the station's own reporting
+  gaps stayed in rather than being interpolated. TMIN is missing for
+  **2024-04-25**, and that is the notch: the band has no lower edge for one
+  day, so it doesn't draw one. A fixture that quietly filled it in would be
+  teaching you to trust a number nobody measured.
+- **A GHCN "day" is a local observing day**, not a UTC one. The fixture keys
+  each row at midnight UTC of the day's date — the key is the day's _name_
+  rather than an instant. At this zoom the distinction never reaches a pixel;
+  at an hourly zoom it would.
+- **The centreline is derived, not supplied.** GHCN gives the two extremes and
+  nothing between them.
+
+## Build it
+
+The whole chart is one `<BandChart>` naming the two columns that bound it:
+
+```tsx
+<ChartContainer range={SEA_BOUNDS} width={640} theme={theme}>
+  <ChartRow height={220}>
+    <YAxis id="c" side="right" label="temperature (°C)" format=",.0f" width={44} />
+    <Layers>
+      <BandChart series={daily} lower="low" upper="high" axis="c" as="outer" />
+    </Layers>
+  </ChartRow>
+</ChartContainer>
+```
+
+`lower` / `upper` is the whole API — no stacking, no ordering rule, just the
+two columns that bound the fill. `as="outer"` picks the wider of the theme's
+two band roles, so the colour comes from [the theme](../theming.mdx) rather
+than from a literal here.
+
+That gets you the envelope, but a year of daily extremes is noisy enough that
+the _seasons_ are hard to find in it. The centreline is two pond operators:
+
+```ts
+// The midpoint of the day's two extremes — the definition the US climate
+// record has always used where hourly readings don't exist. Missing either
+// extreme leaves it missing, rather than quietly halving one number.
+const mid = highs.map((high, i) =>
+  high === null || lows[i] === null ? undefined : (high + lows[i]!) / 2,
+);
+
+const series = daily.withColumn('mid', mid).smooth('mid', 'movingAverage', {
+  window: '15d',
+  alignment: 'centered',
+  output: 'trend',
+});
+```
+
+`alignment: 'centered'` is what makes it a _trend_ rather than a lagging
+average — aligned to the window's end it would put July's peak in mid-August.
+The default `missing: 'bridge'` is right here too: the one-day hole in `mid` is
+far smaller than the 15-day window, and a trend line that stuttered at it would
+be telling you about the recorder, not the weather. The result runs from
+1.3 °C to 23.0 °C across the year.
+
+Then draw it over the band, in the same row and against the same axis:
+
+```tsx
+<Layers>
+  <BandChart series={series} lower="low" upper="high" axis="c" as="outer" />
+  <LineChart series={series} column="trend" axis="c" />
+</Layers>
+```
+
+Order inside `<Layers>` is z-order: band first, line on top of it.
+
+One thing the Gallery card does that this page doesn't — it pins the axis with
+`min`/`max` to the year's extremes. That's only needed because the card
+animates a window across the year, and an auto-fitted axis would rescale on
+every frame, which reads as the chart juddering rather than as the year
+passing.
+
+## Options to try
+
+| Option                                     | What it does                                              | Reach for it when                                                                  |
+| ------------------------------------------ | --------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `panZoom="panZoom"` + a controlled `range` | Drag to pan, wheel to zoom                                | The reader should go looking — needs `onTimeRangeChange` to hold the range in state |
+| A second `<BandChart as="inner">`          | A tighter band nested inside the wide one                 | You have percentiles as well as extremes — p25/p75 inside p5/p95                    |
+| `<Baseline value={0}>`                     | A reference line in the annotation register, not a data hue | Freezing point, an SLA, a budget — a threshold the data is judged against          |
+| `curve="basis"` on the line                | Rounds the centreline's corners                           | The line is already an average and its corners are sampling artefacts               |
+| `cursor="flag"`                            | A per-layer value chip instead of one axis pill           | You want every layer's number at once — note it draws one chip **per layer**        |
+| `format` on the `<YAxis>`                  | Any [d3-format](https://d3js.org/d3-format) specifier     | Fahrenheit, a decimal place, a degree suffix                                        |
+
+## See also
+
+- [`<BandChart>`](../types/bandchart.mdx) — every prop, and the nesting model
+- [`<LineChart>`](../types/linechart.mdx) — interpolation, gaps, roles
+- [Gaps and missing data](../gaps.mdx) — what a hole in a column does to each layer
+- [Cursors and readouts](../interaction/cursors-and-readouts.mdx) — the cursor modes in full
+- [Pan, zoom and range selection](../interaction/pan-zoom-and-range-selection.mdx) —
+  turning on the interaction this page doesn't use
+- [**Storybook**](pathname:///storybook/?path=/story/charts-bandchart--san-francisco-temperature)
+  — the systematic knob walk

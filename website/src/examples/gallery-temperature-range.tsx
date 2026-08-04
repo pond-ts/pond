@@ -29,9 +29,11 @@ const DAY_MS = 86_400_000;
 export default function GalleryTemperatureRange({
   width,
   phase,
+  cursor = 'crosshair',
 }: {
   width: number;
   phase?: number;
+  cursor?: 'none' | 'line' | 'crosshair';
 }) {
   const theme = useSiteChartTheme();
   const series = seattleTemperature();
@@ -41,7 +43,7 @@ export default function GalleryTemperatureRange({
       : scanWindow(SEA_BOUNDS[0], SEA_BOUNDS[1], 112 * DAY_MS, phase);
 
   return (
-    <ChartContainer range={range} width={width} theme={theme}>
+    <ChartContainer range={range} width={width} theme={theme} cursor={cursor}>
       <ChartRow height={220}>
         <YAxis
           id="c"
