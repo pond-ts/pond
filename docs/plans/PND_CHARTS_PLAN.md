@@ -996,3 +996,29 @@ a pixel to force it).
     workaround is a temporary `configureWebpack` alias pointing at the
     worktree's own `packages/charts`, reverted before committing. Worth either
     documenting in the fixture/preview conventions or solving properly.
+
+14. **A draw layer can't opt out of the cursor readout**, so drawing one column
+    twice reports it twice. `cursorFlag` exists as an internal `RowLayer` hook
+    (`BoxPlot` uses it to consolidate, and it also opts that layer out of the
+    x-snap) but there is no public per-layer prop. Found on the charts landing
+    chart: a raw `<LineChart>` plus a `<ScatterChart>` **on the same column** —
+    a completely standard pairing, and the shape the points-plus-faint-line
+    reading asks for — makes `cursor="flag"` raise **five** flags, of which
+    three carry the identical number (band `lo`, the raw line, and the scatter
+    all read 0.2 kW at the same instant). Measured, not inferred: dispatching a
+    real `pointermove` and reading the chips out of the DOM returned
+    `0.2 / 0.5 / 0.2 / 0.2 / 0.3`.
+
+    Compounded by the fact that near-coincident flags are **not** de-overlapped
+    — `Layers.tsx` says so in a comment ("a de-overlap heuristic is a
+    follow-up"), and the five chips land on the same coordinates, so the reader
+    sees one number with no way to tell which layer it belongs to.
+
+    The fix is probably a `readout={false}` (or `cursor={false}`) prop on the
+    layer, promoting the existing internal opt-out to the public surface. The
+    de-overlap is a separate, second fix.
+
+15. **Nothing dedupes identical cursor samples.** Even without a per-layer
+    opt-out, two layers reporting the same `(label, value)` at the same time
+    could collapse to one chip. This is the cheaper half of item 14 and would
+    fix the common case on its own.

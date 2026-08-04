@@ -113,7 +113,7 @@ export default function ChartsHero() {
           bounds={extent}
           width={width}
           theme={theme}
-          cursor="crosshair"
+          cursor="flag"
           panZoom="panZoom"
           // Gridlines are `--pond-muted` at 0.28; the raw cloud is the brand
           // hue at 0.3. Close enough in weight that the grid reads as another
@@ -139,11 +139,13 @@ export default function ChartsHero() {
               <LineChart series={demand} column="kw" axis="kw" as="muted" />
               <ScatterChart series={demand} column="kw" axis="kw" as="raw" />
               <LineChart series={rolled} column="mean" axis="kw" />
+              {/* No `indicator`: the axis pill rounds to the tick format
+                  (2.0) while the label carries the real figure (1.98), and
+                  side by side they read as two different numbers. */}
               <Baseline
                 value={p90}
                 axis="kw"
                 label={`p90 ${p90.toFixed(2)} kW`}
-                indicator
               />
             </Layers>
           </ChartRow>
