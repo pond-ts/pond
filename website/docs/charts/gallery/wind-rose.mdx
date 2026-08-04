@@ -19,12 +19,13 @@ import GalleryWindRose from '@site/src/examples/gallery-wind-rose';
   <GalleryWindRose width={640} />
 </ChartExample>
 
-Hover a bar and the axis names the sector under the pointer. That's what
-`cursor="crosshair"` does on an **ordinal** axis: a vertical line plus the
-category's name, and no horizontal arm or value pill, because there's no
-continuous x position to read back. It earns its place here — the axis only has
-room to print eight of the sixteen labels, so half of them are otherwise
-unnamed.
+Hover a bar and the axis names the sector under the pointer, in a pill over its
+own label. That's what `cursor="crosshair"` does on an **ordinal** axis: a
+vertical line plus the category's name, and no horizontal arm or value pill,
+because there's no continuous x position to read back. At this width all
+sixteen labels fit; **the axis drops labels when they'd collide**, and the
+Gallery card — a third of this width — prints eight of the sixteen, at which
+point the hover name is the only way to tell SSW from SW.
 
 Seattle-Tacoma sits in a north-south trough between two mountain ranges, and
 the distribution says so: the wind comes from the south a third of the time

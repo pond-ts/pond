@@ -37,8 +37,9 @@ export default function GalleryWindRose({
     // `crosshair` on an ordinal axis degrades to a *vertical line plus the
     // hovered category's name*, pinned to the `<CategoryAxis>` — there's no
     // continuous x position to read back, so no horizontal arm and no value
-    // pill. Naming the sector is the point: the axis only has room to print
-    // eight of the sixteen labels.
+    // pill. Naming the sector is the point once the axis starts dropping
+    // colliding labels: at the Gallery card's width it prints eight of the
+    // sixteen.
     <ChartContainer
       width={width}
       theme={theme}
