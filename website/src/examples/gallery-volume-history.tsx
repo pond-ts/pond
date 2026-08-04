@@ -52,17 +52,24 @@ import styles from './gallery-volume-history.module.css';
  * `null`), so those lines simply start partway across the plot. Zero would be
  * a different — and false — claim, and on a log axis it has no position at all.
  *
- * **The trend starts from a marker you can drag**, and is fitted on the data
- * from there to the end of the visible window, then drawn from there onward —
- * so the extrapolation past the last sample is over ground the fit actually
- * saw. That makes the marker a *question*: fitted from 1990 the record grows
- * +51.9% a year and doubles every 20 months; dragged to 2015 the same data
- * says +17.6% and 51 months. One fit across all 439 months averages two
- * different eras together, and dragging is how you find that out.
+ * **The dashed line is a backtest, not a trend.** The draggable marker is the
+ * **split point**: the model is fitted on the months to its *left* and then
+ * projected forward from it to the right edge, while the real series stays
+ * drawn on top. So the gap between them is forecast error you can see.
  *
- * **The trend is modelled, and says so** — `line.trend`, whose only job is to
- * be dashed. On a log axis an exponential fit is a **straight line**, which is
- * why this dataset is conventionally drawn log.
+ * Two controls move it, and the finding is which one matters. On `All` the
+ * exponential model, fitted 1990→2008, projects **73.7 EB** for July 2026
+ * against an actual **197.82 PB** — **373× over**; dragging the split all the
+ * way to 2024 only brings it to 13.7×, because the fit window still starts in
+ * 1990 and the 1990s dominate it. Narrow the *window* to `5Y` instead and the
+ * same machinery projects **213 PB** against 197.82 PB, within 8%. ESnet's
+ * growth decelerated hard, and a single line through all 439 months hides that
+ * by averaging the two eras together.
+ *
+ * **The projection is modelled, and says so** — `line.trend`, whose only job
+ * is to be dashed. On a log axis an exponential fit is a **straight line**, so
+ * the divergence reads directly as over- or under-shoot: the vertical gap is
+ * the ratio. That is the real reason this dataset wants a log scale.
  *
  * **The summary is `<BarList>`, not markup.** One row per series, the bar
  * encoding its share of the month's total, the swatch tying it to its line.
@@ -93,8 +100,8 @@ export default function GalleryVolumeHistory({
   const [grid, setGrid] = useState(true);
   const [trend, setTrend] = useState<Trend>('off');
   const [month, setMonth] = useState(VOLUME_LAST);
-  /** The month the trend is fitted **from** — the draggable marker. */
-  const [trendFrom, setTrendFrom] = useState(0);
+  /** The split point: fitted left of it, projected right of it. */
+  const [trendFrom, setTrendFrom] = useState(() => splitFor(0, VOLUME_LAST));
 
   // The visible window. Held here rather than inside the container because two
   // things write it — the TIME presets and the pan/zoom gesture — and whichever
@@ -120,35 +127,32 @@ export default function GalleryVolumeHistory({
   // see, over numbers nobody can check against the chart, is worse than none.
   const marked = Math.min(Math.max(month, first), last);
 
-  // Where the trend is fitted **from** — the draggable marker's month. Clamped
-  // the same way, and two months short of the end because three points is the
-  // fewest a least-squares line can be honest about.
-  const origin = Math.min(
-    Math.max(trendFrom, first),
-    Math.max(first, last - 2),
-  );
+  // The **split point** between what the model was fitted on and what it is
+  // predicting. Clamped into the window; everything left of it is evidence,
+  // everything right of it is forecast.
+  const origin = Math.min(Math.max(trendFrom, first), last);
 
-  // The fit window is `[origin, last]` — fitted on the data from the marker to
-  // the end of the visible range, then drawn from the marker onward. Passing
-  // the window in rather than hardcoding it is what makes "since 2015?" a
-  // question the reader can ask by dragging.
+  // Fitted on `[first, origin]` — the data **before** the marker, and only
+  // that. This is a backtest, so the model must never see the months it is
+  // being judged against. `null` when there isn't enough history to fit.
   const fit = useMemo(
-    () => (trend === 'off' ? null : fitTrend(trend, origin, last)),
-    [trend, origin, last],
+    () => (trend === 'off' ? null : fitTrend(trend, first, origin)),
+    [trend, first, origin],
   );
 
-  // The fitted line as its own series — one row per month from the marker to
-  // the right edge, so the extrapolation past the last sample is drawn rather
-  // than implied. Memoized: a fresh series identity re-registers the layer.
+  // …and projected over `[origin, right edge]` — from the split point to the
+  // end of the view, past the last sample. The actual series stays drawn on
+  // top, so the gap between the two *is* the forecast error. Memoized: a fresh
+  // series identity re-registers the layer.
   const trendSeries = useMemo(
     () => (fit === null ? null : trendLine(fit, origin, view[1], scale)),
     [fit, origin, view, scale],
   );
 
-  // The y domain, computed rather than auto-fitted, because the trend is a
-  // layer like any other and joins the fit — a linear fit runs *negative* over
-  // a long window, and letting that pick the bottom of a log axis would be
-  // absurd. Data sets the floor; the trend may only widen the top.
+  // The y domain, computed rather than auto-fitted, because the projection is
+  // a layer like any other and joins the fit — and a backtest can be wrong by
+  // decades. Data sets the floor; the projection may lift the ceiling only so
+  // far before it is left to run off the top (see `yDomain`).
   const domain = useMemo(
     () => yDomain(first, last, scale, fit, origin, view[1]),
     [first, last, scale, fit, origin, view],
@@ -173,8 +177,11 @@ export default function GalleryVolumeHistory({
     [view],
   );
 
-  /** The origin marker is a page thing, not a card thing. */
-  const trendMarker = !preview && fit !== null;
+  // The split marker is a page thing, not a card thing. Note it is gated on
+  // the *trend* being on, not on the fit succeeding: when the marker sits too
+  // far left to fit anything, dragging it right is the only way out, so it had
+  // better still be there to drag.
+  const trendMarker = !preview && trend !== 'off';
 
   const chart = (
     <ChartContainer
@@ -257,7 +264,7 @@ export default function GalleryVolumeHistory({
           {trendMarker && (
             <Marker
               at={volumeMonthStart(origin)}
-              label={`Fit from ${monthLabel(origin)}`}
+              label={`Forecast from ${monthLabel(origin)}`}
               editing
               indicator
               onChange={(at) => setTrendFrom(snapToMonth(monthGrid, at))}
@@ -292,7 +299,14 @@ export default function GalleryVolumeHistory({
               // *modelled* series — this line is not a measurement.
               as="trend"
               axis="bytes"
-              legend={trend === 'linear' ? 'Linear trend' : 'Exponential trend'}
+              // "Projection", not "trend" — the legend is the shortest piece
+              // of copy on the chart and the one most likely to be read alone,
+              // so it is the last place to call a forecast a fit.
+              legend={
+                trend === 'linear'
+                  ? 'Linear projection'
+                  : 'Exponential projection'
+              }
             />
           )}
         </Layers>
@@ -343,11 +357,15 @@ export default function GalleryVolumeHistory({
                   const next = spanRange(s);
                   setSpan(s);
                   setRange(next);
-                  // Re-seat the trend's origin on the new window's first month.
-                  // Changing the range otherwise strands the marker off-screen
-                  // (narrowing) or leaves it stuck mid-plot (widening), and a
-                  // fit whose start you can't see is a fit you can't read.
-                  setTrendFrom(firstMonthIn(next[0]));
+                  // Re-seat the split on the new window's midpoint. Changing
+                  // the range otherwise strands the marker off-screen
+                  // (narrowing) or leaves it stuck mid-plot (widening).
+                  setTrendFrom(
+                    splitFor(
+                      firstMonthIn(next[0]),
+                      Math.min(VOLUME_LAST, monthIndexAt(next[1])),
+                    ),
+                  );
                 }}
               >
                 {s}
@@ -426,14 +444,28 @@ export default function GalleryVolumeHistory({
 
       {chart}
 
-      {fit && (
-        <p className={styles.credit}>
-          {fitCaption(fit, monthLabel(origin), last - origin + 1)}{' '}
-          <em>
-            Drag the marker to refit from another month — the readout follows.
-          </em>
-        </p>
-      )}
+      {/* The backtest's own readout — or, when the marker sits too close to the
+          left edge to leave anything to fit, the reason there is no line.
+          Saying that in the UI matters: a projection that silently vanishes
+          reads as a bug, and the fix (drag right) isn't guessable. */}
+      {trend !== 'off' &&
+        (fit === null ? (
+          <p className={styles.credit}>
+            <strong>No projection.</strong> A fit needs at least three months of
+            data before the marker, and there{' '}
+            {origin - first === 1 ? 'is' : 'are'} {origin - first}. Drag the
+            marker right.
+          </p>
+        ) : (
+          <p className={styles.credit}>
+            {fitCaption(fit, monthLabel(origin), origin - first + 1)}{' '}
+            {backtest(fit, origin, last)}{' '}
+            <em>
+              Drag the marker to move the split — everything left of it is what
+              the model saw.
+            </em>
+          </p>
+        ))}
 
       <div className={styles.tableHead}>
         <h4 className={styles.tableTitle}>{monthLabel(marked)}</h4>
@@ -494,6 +526,22 @@ const SPAN_MONTHS: Record<Span, number> = {
  */
 function headroom(months: number): number {
   return Math.max(2, Math.min(Math.round(months * 0.1), 24));
+}
+
+/**
+ * Where the fit/forecast split sits by default: **the midpoint of the visible
+ * window**.
+ *
+ * The alternative considered was the first month all three series carry data
+ * (2015-01), which is a real date with a real meaning — but it is a *fixed*
+ * date, so on 6M/1Y/5Y it falls outside the window entirely and clamps to the
+ * edge, leaving nothing to fit. The midpoint is the only rule that gives every
+ * preset both a fit window and a test window of comparable size, and it is
+ * neutral: it implies no claim that anything in particular changed on that
+ * date. The reader supplies that claim by dragging.
+ */
+function splitFor(first: number, last: number): number {
+  return Math.floor((first + last) / 2);
 }
 
 /** A preset's window: the last `n` months, plus the right margin. */
@@ -597,10 +645,18 @@ interface Fit {
 }
 
 /**
- * Ordinary least squares over the **visible** months — on the values for
- * `linear`, on their natural logarithms for `exponential`, which is the whole
- * difference between the two and the reason an exponential fit draws as a
- * straight line on a log axis.
+ * Ordinary least squares over `[i0, i1]` — on the values for `linear`, on
+ * their natural logarithms for `exponential`, which is the whole difference
+ * between the two and the reason an exponential fit draws as a straight line
+ * on a log axis.
+ *
+ * The window is **the data before the marker**, and nothing else. That is what
+ * makes the drawn line a genuine out-of-sample projection rather than a line
+ * of best fit through the answer: a model that has seen the months it is being
+ * judged on cannot be wrong about them.
+ *
+ * `null` below three points — two points fit any straight line exactly, which
+ * is not a forecast, it is a ruler.
  *
  * Fitted on `total` only: three fitted lines over three data lines is six
  * lines, and the total is the one the question is about.
@@ -648,9 +704,11 @@ const TREND_SCHEMA = [
   { name: 'fit', kind: 'number', required: false },
 ] as const;
 
-/** The fit as a drawable series: every month from the first visible one to the
- *  right edge of the window, so the extrapolation past the last sample is
- *  drawn rather than implied. */
+/** The projection as a drawable series: every month from the split point to
+ *  the right edge of the window. It starts at the marker, not at the start of
+ *  the fit window — the fitted stretch already has the real line over it, and
+ *  a dashed line that only exists where it is a *forecast* needs no legend to
+ *  explain which half is which. */
 function trendLine(
   fit: Fit,
   from: number,
@@ -673,10 +731,9 @@ function trendLine(
   });
 }
 
-/** What the fit actually says, in words — computed from the fit, never
- *  estimated. */
-function fitCaption(fit: Fit, from: string, months: number): string {
-  const over = `from ${from} (${months} months)`;
+/** What the model learned, in words — computed from the fit, never estimated. */
+function fitCaption(fit: Fit, splitAt: string, months: number): string {
+  const on = `on the ${months} months to ${splitAt}`;
   if (fit.kind === 'exponential') {
     const yearly = Math.exp(fit.slope * 12) - 1;
     const doubling = Math.log(2) / fit.slope;
@@ -684,9 +741,32 @@ function fitCaption(fit: Fit, from: string, months: number): string {
       doubling > 0
         ? `doubling every ${doubling.toFixed(0)} months`
         : `halving every ${(-doubling).toFixed(0)} months`;
-    return `Exponential fit ${over}: ${signedPercent(yearly * 100)} a year, ${pace}. On a log axis that is a straight line.`;
+    return `Fitted ${on}: ${signedPercent(yearly * 100)} a year, ${pace} — a straight line on a log axis.`;
   }
-  return `Linear fit ${over}: ${fit.slope >= 0 ? '+' : '−'}${formatBytes(Math.abs(fit.slope))} a month. On a log axis a straight-line model bends.`;
+  return `Fitted ${on}: ${fit.slope >= 0 ? '+' : '−'}${formatBytes(Math.abs(fit.slope))} a month — a straight-line model, so it bends on a log axis.`;
+}
+
+/**
+ * How the projection did. The whole point of splitting fit from forecast is
+ * that this sentence can exist: what the model, knowing only the data left of
+ * the marker, predicted for the newest month — against what actually happened.
+ *
+ * `''` when the marker sits at or past the last sample, because then the line
+ * is pure extrapolation into empty time and there is nothing to score it on.
+ */
+function backtest(fit: Fit, origin: number, last: number): string {
+  if (origin >= last) {
+    return `Beyond the record it is a forecast with nothing to check it against.`;
+  }
+  const predicted = fit.predict(last);
+  const actual = volumeAt(last).total;
+  if (!Number.isFinite(predicted) || predicted <= 0) {
+    return `Its projection for ${monthLabel(last)} is not a positive number — the wrong model for this data, which is the finding.`;
+  }
+  const ratio = predicted / actual;
+  const [factor, direction] =
+    ratio >= 1 ? [ratio, 'over' as const] : [1 / ratio, 'under' as const];
+  return `It projected ${formatBytes(predicted)} for ${monthLabel(last)}; the actual was ${formatBytesExact(actual)} — ${direction}shooting by ${precise(factor)}×.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -698,10 +778,21 @@ function fitCaption(fit: Fit, from: string, months: number): string {
  * `linear` runs from zero, which is what makes the first two decades of the
  * record collapse onto the floor — the demonstration the toggle exists for.
  *
- * The **data** sets the bottom on both. The trend is a layer, so an auto-fitted
- * domain would let a linear fit's negative early values pick the floor of a
- * log axis; it may only widen the top.
+ * The **data** sets the bottom on both. The projection is a layer, so an
+ * auto-fitted domain would let a linear fit's negative early values pick the
+ * floor of a log axis; it may only widen the top.
+ *
+ * And only so far. A backtest can be wildly wrong — an exponential fitted on
+ * 1990–2008 projects **73.7 EB** for July 2026 against an actual 197.82 PB,
+ * 373× over and two and a half decades above anything real. Letting that set
+ * the top would squash 36 years of measurements into the bottom fifth of the
+ * plot to make room for a line that is *wrong*. So the projection may lift the
+ * ceiling by at most one decade (log) or half again (linear); past that it
+ * leaves the plot, which is the honest rendering of a forecast that missed by
+ * more than the chart is tall.
  */
+const PROJECTION_HEADROOM = { log: 10, linear: 1.5 } as const;
+
 function yDomain(
   i0: number,
   i1: number,
@@ -722,9 +813,10 @@ function yDomain(
   }
   if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [1, 10];
   if (fit !== null) {
+    const ceiling = hi * PROJECTION_HEADROOM[scale];
     for (let i = fitFrom; i <= monthIndexAt(rightEdge); i += 1) {
       const v = fit.predict(i);
-      if (Number.isFinite(v) && v > hi) hi = v;
+      if (Number.isFinite(v) && v > hi) hi = Math.min(v, ceiling);
     }
   }
   if (scale === 'linear') return [0, hi * 1.06];

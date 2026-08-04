@@ -23,28 +23,38 @@ Five things to try, in this order:
 
 1. **Switch Scale to Linear.** Two decades of history flatten onto the floor.
    Switch back; that is the entire argument for `<YAxis scale="log">`.
-2. **Turn Trend on to Exponential** with Time on `All`. The fit is a **straight
-   line**, because a straight line on a log axis _is_ exponential growth — and
-   the caption under the chart prints what it found: **+51.9% a year, doubling
-   every 20 months**, held for three decades. Switch to `Linear` and the same
-   least-squares idea bends badly, which is the visual proof that the growth is
-   multiplicative rather than additive.
-3. **Then drag the trend's marker.** The dashed line is fitted from wherever the
-   marker sits, so the marker is a question: _how fast has it grown **since**…?_
-   Drag it to 2015 and the answer changes to **+17.6% a year, doubling every 51
-   months** — the long boom and the last decade are not the same story, and one
-   fit across all 439 months quietly averages them together.
-4. **Step the Month back and forward.** The shaded band is the month the summary
-   below is about, drawn over that month's real calendar span.
-5. **Hover a line** (with Trend off — see below), **drag to pan, wheel to
-   zoom.** Hovering gives each series a dot and its value in bytes at that
-   month — `63.9 PB`, not `6.3 e16` and not a logarithm.
+2. **Turn Trend on to Exponential** with Time on `All`. The dashed line is
+   **not a trend through the data** — it is a _forecast_. The model is fitted
+   only on the months **left** of the marker and then projected forward from
+   it, while the real series stays drawn over the top. So the two lines share a
+   starting point and then come apart, and the gap between them is forecast
+   error you can read straight off the chart.
+3. **Read the caption, then drag the marker.** Fitted on 1990→2008, the model
+   projects **73.7 EB** for July 2026 against an actual **197.82 PB** —
+   **373× over**, so far over that the dashed line leaves the top of the plot.
+   Drag the split right and the overshoot shrinks, but slowly: even splitting
+   at 2024 it is still **13.7×**, because the fit window still begins in 1990
+   and the 1990s dominate it.
+4. **Now narrow the window instead** — switch Time to `5Y`. Same machinery,
+   same default split, and it projects **213 PB** against 197.82 PB, **within
+   8%**. That is the actual finding: ESnet's growth decelerated so hard that
+   _which years you fit_ matters far more than _where you split them_, and a
+   single line drawn through all 439 months hides it by averaging two eras.
+5. **Step the Month, hover a line** (with Trend off — see below), **drag to
+   pan, wheel to zoom.** Hovering gives each series a dot and its value in
+   bytes at that month — `63.9 PB`, not `6.3 e16` and not a logarithm.
 
-**One deliberate trade, so it isn't a surprise:** while a trend is on, the
-origin marker is in edit mode, and pond suppresses a row's data cursor whenever
-any mark is being edited. So hover-to-read and drag-the-origin are alternatives,
-not both at once. Pan and zoom keep working either way. That is three gestures
-live at a time, which is the most this chart can carry honestly — the
+**Why this chart wants a log scale, precisely:** an exponential fit is a
+straight line on a log axis, so a projection that is _k_ times too high sits a
+constant `log₁₀ k` above the real line — the vertical gap **is** the ratio, at
+every point, regardless of how big the numbers have got. On a linear axis the
+same overshoot is an unreadable vertical explosion.
+
+**One deliberate trade, so it isn't a surprise:** while a trend is on, the split
+marker is in edit mode, and pond suppresses a row's data cursor whenever any
+mark is being edited. So hover-to-read and drag-the-split are alternatives, not
+both at once. Pan and zoom keep working either way. That is three gestures live
+at a time, which is the most this chart can carry honestly — the
 [gesture budget](#the-gestures) below says what was dropped and why.
 
 Times are **UTC**, which is how the record is published; the axis renders in
@@ -157,7 +167,7 @@ const marked = TimeRange.fromCalendar('month', '2026-07', { timeZone: 'UTC' });
 `selectable={false}` makes it inert background context — it is a readout of the
 stepper, not something to click.
 
-### The trend, and the marker it starts from
+### The backtest, and the marker that splits it
 
 Ordinary least squares on the values for Linear, on their logarithms for
 Exponential:
@@ -167,15 +177,28 @@ Exponential:
 const y = kind === 'exponential' ? Math.log(value) : value;
 ```
 
-**The fit window is `[marker, last visible month]`**, and the line is drawn from
-the marker onward — so it is fitted on exactly the data it is drawn over, then
-extrapolated past the last sample. The window is a parameter, not a constant,
-which is what makes the marker worth dragging:
+**The marker is the split point between evidence and forecast.** Two windows,
+and they do not overlap:
+
+```tsx
+const fit = fitTrend(kind, first, origin); //  fitted on [first visible, marker]
+const line = trendLine(fit, origin, rightEdge); // drawn on [marker, right edge]
+```
+
+That non-overlap is the whole design. A model fitted on the months it is then
+drawn over cannot be wrong about them, so the line would hug the data by
+construction and mean nothing. Fitted on the data _before_ the marker, it is
+genuinely out of sample, the real series stays drawn on top of it, and the
+divergence is measurable — which is what the caption under the chart reports.
+
+The line starts **at** the marker rather than at the start of the fit window,
+so everything dashed is a forecast and nothing dashed is a retrodiction. No
+legend needed to say which half is which.
 
 ```tsx
 <Marker
   at={volumeMonthStart(origin)}
-  label={`Fit from ${monthLabel(origin)}`}
+  label={`Forecast from ${monthLabel(origin)}`}
   editing
   indicator
   onChange={(at) => setTrendFrom(snapToMonth(monthGrid, at))}
@@ -200,29 +223,48 @@ const monthGrid = MONTH_SEQUENCE.bounded(new TimeRange({ start, end }));
 is no month duration to step by. `DurationUnit` stops at `d`, and `'m'` there
 means **minutes**.
 
-**Changing the time range re-seats the marker** on the new window's first month.
-Without that, narrowing to `5Y` strands the origin off-screen and you are
-reading a fit whose start you cannot see.
+**Changing the time range re-seats the split** on the new window's **midpoint**,
+so every preset gets a fit window and a test window of comparable size. The
+alternative considered was the first month all three series carry data
+(2015-01), which is a real date with a real meaning — but it is a _fixed_ date,
+so on `6M`/`1Y`/`5Y` it falls outside the window entirely and clamps to the
+edge, leaving nothing to fit. The midpoint is also neutral: it asserts no claim
+that anything changed on that date. The reader supplies that claim by dragging.
 
-The fit becomes its own one-column `TimeSeries`, drawn as a fourth line with
-`as="trend"` — a role whose entire job is `dash: [5, 4]`, in the same hue as the
-series it models. `LineStyle.dash` is the register for a **modelled** line, and
-that distinction is doing real work here: an extrapolation past the last sample
-must not read as a measurement.
+**Fewer than three months before the split and there is no fit at all** — two
+points define a line exactly, which is a ruler, not a forecast. The chart draws
+no projection then and says so where the caption goes (_"A fit needs at least
+three months of data before the marker…"_), because a line that silently
+vanishes reads as a bug and the fix — drag right — is not guessable. The marker
+itself stays put in that state, since dragging it is the only way out.
 
-Two things the fit forces you to decide, and the example decides both in the
-source:
+The projection becomes its own one-column `TimeSeries`, drawn as a fourth line
+with `as="trend"` — a role whose entire job is `dash: [5, 4]`, in the same hue
+as the series it models. `LineStyle.dash` is the register for a **modelled**
+line, and that distinction is load-bearing here: half this chart is a
+measurement and half is a guess, and they are the same colour.
 
-- **A linear fit runs negative** over a long window. Over the whole record it
-  is `−43.1 PB + 356 TB × months`, so it stays below zero until **February
-  2000**. A negative number has **no position on a log axis**, so those months
-  are emitted as `null` (the trend column is `required: false`) and the dashed
-  line simply starts where the model becomes positive — which is worth seeing,
-  because it is the fit telling you it is the wrong model.
-- **The trend is a layer, so it joins the auto-fit.** Letting a linear fit's
-  negative early values pick the bottom of a log axis would be absurd, so this
-  example computes the domain itself: the data sets the floor, the trend may
-  only widen the top.
+Two things the projection forces you to decide, and the example decides both in
+the source:
+
+- **A projection can leave the domain, in both directions.** The trend column
+  is `required: false` so a non-positive projected value becomes a gap rather
+  than a `NaN` coordinate — a declining linear fit crosses zero if you extend
+  it far enough, and zero has no position on a log axis. Being straight about
+  it: with the fit anchored at the window's first month, ESnet's data rises on
+  every reachable window, so this guard is **defensive here, not exercised** —
+  you will not see it fire on this page. It is one line and it is right; it is
+  just not a demonstration.
+- **The projection is a layer, so it joins the domain auto-fit** — and it must
+  not win. A backtest can miss by orders of magnitude: fitted 1990→2008 the
+  exponential projects **73.7 EB**, two and a half decades above anything ever
+  measured. Letting that set the ceiling would squash 36 years of real data
+  into the bottom fifth of the plot to make room for a line that is _wrong_.
+  So the example computes the domain itself: **data sets the floor, and the
+  projection may lift the ceiling by at most one decade** (half again on a
+  linear axis). Past that the dashed line leaves the top of the plot, which is
+  the honest rendering of a forecast that missed by more than the chart is
+  tall. There is no per-layer opt-out of the fit — see the note below.
 
 ### The summary
 
@@ -263,8 +305,8 @@ the two that were cut were cut for measured reasons rather than taste:
 | ----------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------------- |
 | Wheel-zoom                    | **kept**                      | Bounded to the record plus the trend's margin                                                             |
 | Drag to pan                   | **kept**                      | No region-drag to arbitrate against, so no `regionSelectModifier` needed                                  |
-| Hover reads all three series  | **kept — while Trend is off** | Any mark in edit mode forces the row's cursor to `'none'`, and the origin marker is an editing mark       |
-| Drag the trend origin         | **kept — while Trend is on**  | The other half of the same trade                                                                          |
+| Hover reads all three series  | **kept — while Trend is off** | Any mark in edit mode forces the row's cursor to `'none'`, and the split marker is an editing mark        |
+| Drag the fit/forecast split   | **kept — while Trend is on**  | The other half of the same trade                                                                          |
 | Click a month (region cursor) | **dropped**                   | `cursorSequence` applies only to `cursor="region"`, which draws a band and **no value chips** — see below |
 
 The region cursor is the interesting cut, because it _works_: give the container
@@ -312,7 +354,7 @@ own data.
 - [`<LineChart>`](../types/linechart.mdx) — every prop
 - [`<YAxis>`](../axes/value-axis.mdx) — `scale`, `ticks`, `format`, `pad`
 - [`<Region>` and `<Marker>`](../annotations/region-baseline-marker.mdx) — the
-  highlight band and the draggable fit origin
+  highlight band and the draggable fit/forecast split
 - [`<BarList>`](../types/lists.mdx) — the summary table
 - [Gaps](../gaps.mdx) — why the staggered starts are absences, not zeroes
 - [**Storybook — the log scale**](pathname:///storybook/?path=/story/axes-log-scale--log)

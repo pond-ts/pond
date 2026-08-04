@@ -1075,16 +1075,27 @@ measured in a running browser, not read off a type.
 
 ### Gaps
 
-20. **A draw layer cannot opt out of the y-axis domain fit.** The trend line is
-    a _model_, and a linear least-squares fit over a long window is **negative**
-    early on (here: below zero until Feb 2000). As a layer it joins
-    `resolveYDomain` like any measurement, so on a log axis its non-positive
-    values would pick the floor. There is no `fitDomain={false}` / `domain="ignore"`
-    per-layer escape, so the example computes `[min, max]` by hand for every
-    scale × window combination — about 30 lines whose only job is to keep a
-    modelled layer out of the fit. Any forecast, band-projection or annotation-
-    as-a-series hits this. Sibling of the `readout={false}` in item 14: same
-    shape (a layer that draws but shouldn't participate), different subsystem.
+20. **A draw layer cannot opt out of, or be bounded within, the y-axis domain
+    fit.** The projected line is a _model_, and a model can be wrong by orders
+    of magnitude: this chart's exponential, fitted on 1990–2008, projects
+    **73.7 EB** for July 2026 against an actual **197.82 PB** — 373× over, two
+    and a half decades above anything ever measured. As a layer it joins
+    `resolveYDomain` exactly like a measurement, so an auto-fitted axis would
+    squash 36 years of real data into the bottom fifth of the plot to make room
+    for a line that is _wrong_. (The mirror case is a linear fit, whose values
+    go **negative** and would pick the floor of a log axis.)
+
+    There is no `fitDomain={false}` / `domain="ignore"` per-layer escape, so the
+    example computes `[min, max]` by hand for every scale × window × split
+    combination — ~40 lines whose only job is to stop one layer dictating the
+    axis, including a hand-rolled "the projection may lift the ceiling by at
+    most one decade, and past that it runs off the top" rule that is genuinely
+    the right behaviour and that every forecast chart will have to reinvent.
+    Any forecast, backtest, band-projection or annotation-as-a-series hits
+    this. Sibling of the `readout={false}` in item 14: same shape (a layer that
+    draws but shouldn't fully participate), different subsystem. A plain
+    `fitDomain={false}` covers most of it; a `fitDomain="clamp"` — drawn, but
+    clipped to the domain the other layers agreed on — covers all of it.
 
 21. **`BarListColumn.as` is per column, not per row.** The canonical `<BarList>`
     is a **ranked list — one bar per row** — and that is exactly the shape that
