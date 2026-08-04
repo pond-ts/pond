@@ -58,6 +58,26 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ### Added
 
+- **charts:** **`<YAxis scale="log">` — a base-10 logarithmic y axis.** Every y
+  scale was `scaleLinear`, so data spanning orders of magnitude was
+  undrawable: on a linear axis everything below the top decade collapses onto
+  the baseline. Set `scale="log"` and the axis maps by ratio, ticking the
+  decades. `format` still formats the **value**, so a readout says `1.2 PB`
+  rather than its logarithm — the transform is in the scale, not in the data,
+  which is what keeps it transparent to every draw layer, annotation and
+  cursor readout.
+
+  A log domain cannot contain zero, so the axis is deliberate about it rather
+  than emitting `-Infinity`: auto-fit takes the smallest **positive** extent
+  (one zero sample can't collapse the axis, and a `BarChart` — whose extent
+  always widens to include zero — can still share the axis), a non-positive
+  explicit `min`/`max` is refused in favour of the data, `pad` is applied
+  multiplicatively so it adds the same fraction of a decade at both ends, and
+  a dev-mode warning fires when data on a log axis actually reaches zero.
+  `AreaChart` resolves an out-of-domain `baseline` to the axis floor — writing
+  `baseline={0}` is natural and correct on a linear axis, and one non-finite
+  coordinate would otherwise drop the entire filled path.
+
 - **charts:** **`AreaStyle.flatFill` — stacked areas that read as slabs.** An
   area's fill has always graded to transparent at the baseline, which is right
   for the elevation form and wrong for a stack: every band showed the one

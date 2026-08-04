@@ -10,7 +10,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from 'react';
-import { scaleLinear, type ScaleLinear } from 'd3-scale';
+import { scaleLinear, scaleLog } from 'd3-scale';
 import { resolveYDomain } from './domain.js';
 import { resolveAxisFormat } from './format.js';
 import { resolveYTickCount } from './yticks.js';
@@ -25,6 +25,7 @@ import {
   type GutterReq,
   type LayerEntry,
   type RowFrame,
+  type YScale,
 } from './context.js';
 
 /** Sentinel id for the implicit axis a row gets when no `<YAxis>` is declared. */
@@ -60,6 +61,7 @@ function axisSpecEqual(a: AxisSpec, b: AxisSpec): boolean {
     a.id === b.id &&
     a.side === b.side &&
     a.width === b.width &&
+    a.scale === b.scale &&
     // Object.is (not ===) so a degenerate NaN bound compares equal to itself and
     // doesn't re-register every render.
     Object.is(a.min, b.min) &&
@@ -222,6 +224,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
               id: IMPLICIT_AXIS_ID,
               side: 'left',
               width: 0,
+              scale: 'linear',
               min: undefined,
               max: undefined,
               pad: 0,
@@ -290,7 +293,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
   // axis id matches; `resolveYDomain` handles the auto-fit + empty/flat/inverted
   // edges. yExtent() is O(points), so only walk the layers when a bound auto-fits.
   const yScales = useMemo(() => {
-    const map = new Map<string, ScaleLinear<number, number>>();
+    const map = new Map<string, YScale>();
     for (const ax of effectiveAxes) {
       const extents: Array<readonly [number, number] | null> =
         ax.min === undefined || ax.max === undefined
@@ -298,12 +301,36 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
               .filter((entry) => (entry.axisId ?? defaultAxisId) === ax.id)
               .map((entry) => entry.layer.yExtent())
           : [];
-      const [lo, hi] = resolveYDomain(ax.min, ax.max, extents, ax.pad);
+      if (process.env.NODE_ENV !== 'production' && ax.scale === 'log') {
+        // A log axis silently drops non-positive samples (they have no
+        // position), so a series that dips to zero just goes missing there
+        // with nothing on screen to say why. Warn once per offending axis.
+        const nonPositive = extents.some((e) => e !== null && e[0] <= 0);
+        if (nonPositive || (ax.min !== undefined && ax.min <= 0)) {
+          console.warn(
+            `<YAxis id="${ax.id}" scale="log">: the domain or the data linked ` +
+              'to this axis includes values at or below zero, which have no ' +
+              'position on a log scale and will not be drawn. Either filter ' +
+              'them out or use the default linear scale.',
+          );
+        }
+      }
+      const [lo, hi] = resolveYDomain(
+        ax.min,
+        ax.max,
+        extents,
+        ax.pad,
+        ax.scale,
+      );
       // Reserve a header band at the top when any axis draws a `'top'` title,
       // so the title clears the top tick + plot (the whole row shifts down
       // uniformly, keeping stacked axes aligned). No top titles ⇒ range top 0,
       // so nothing changes for existing charts.
-      map.set(ax.id, scaleLinear().domain([lo, hi]).range([height, topHeader]));
+      // `scaleLog` and `scaleLinear` share the call/ticks/tickFormat/invert
+      // surface every consumer uses (see `YScale`), so choosing between them
+      // here is the whole of log support — no draw layer branches on it.
+      const base = ax.scale === 'log' ? scaleLog() : scaleLinear();
+      map.set(ax.id, base.domain([lo, hi]).range([height, topHeader]));
     }
     return map;
   }, [effectiveAxes, layerList, height, defaultAxisId, topHeader]);

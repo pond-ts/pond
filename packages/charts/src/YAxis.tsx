@@ -24,6 +24,22 @@ export interface YAxisProps {
    *   that has headroom (auto-fit / padded) so it doesn't crowd the top tick.
    */
   labelPlacement?: 'rotated' | 'top';
+  /**
+   * Which scale the axis maps its domain through. **Default `'linear'`.**
+   *
+   * `'log'` gives a base-10 logarithmic axis — for data spanning orders of
+   * magnitude, where a linear axis flattens everything below the top decade
+   * onto the baseline. Ticks land on the decades, and `format` still formats
+   * the **value**, so a readout says `1.2 PB`, not its logarithm.
+   *
+   * A log domain cannot contain zero or negative numbers. Auto-fit ignores
+   * non-positive extents when picking the low end and dev-warns if any layer
+   * on the axis actually carries them; an explicit `min`/`max` that is not
+   * positive is refused the same way. Layers that fill to a baseline
+   * (`AreaChart`, `BarChart`) clamp that baseline to the bottom of the
+   * domain — zero has no position on a log axis.
+   */
+  scale?: 'linear' | 'log';
   /** Explicit domain bounds; omit to auto-fit the charts linked to this axis. */
   min?: number;
   max?: number;
@@ -112,6 +128,7 @@ export function YAxis({
   id,
   side = 'left',
   label,
+  scale = 'linear',
   min,
   max,
   format,
@@ -138,6 +155,7 @@ export function YAxis({
       id,
       side,
       width,
+      scale,
       min,
       max,
       pad,
@@ -151,6 +169,7 @@ export function YAxis({
       id,
       side,
       width,
+      scale,
       min,
       max,
       pad,
