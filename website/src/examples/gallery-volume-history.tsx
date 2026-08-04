@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Sequence, TimeRange, TimeSeries } from 'pond-ts';
 import {
   BarList,
@@ -80,12 +80,19 @@ import styles from './gallery-volume-history.module.css';
  * line on the chart.
  */
 export default function GalleryVolumeHistory({
-  width,
+  width: fixedWidth,
   phase,
   height = 300,
   preview = false,
 }: {
-  width: number;
+  /**
+   * Chart width in px. **Omit it on the page** and the panel measures its own
+   * container instead, so the chart fills the content column — and the summary
+   * table, which lives in the same wrapper, is the same width, so the two read
+   * as one unit. The Gallery card passes an explicit width, because a card
+   * stage has already measured one and handed it down.
+   */
+  width?: number;
   /** Autoplay loop phase from the Gallery card — sweeps a fifteen-year window
    *  across the record. Omitted on the page, where the reader steers. */
   phase?: number;
@@ -99,6 +106,13 @@ export default function GalleryVolumeHistory({
 }) {
   const theme = useSiteChartTheme();
   const series = volumeSeries();
+
+  // `width` is an explicit number on `<ChartContainer>`, so responsiveness is
+  // one `ResizeObserver` away — the recipe every Gallery card runs on. The ref
+  // sits on the **panel**, not on the chart, so the chart and the table below
+  // it resolve to the same width.
+  const [boxRef, measured] = useMeasuredWidth<HTMLDivElement>();
+  const width = fixedWidth ?? measured;
 
   const [span, setSpan] = useState<Span>('All');
   const [scale, setScale] = useState<'log' | 'linear'>('log');
@@ -127,7 +141,15 @@ export default function GalleryVolumeHistory({
     return a === range[0] && b === range[1];
   });
 
-  const view = phase === undefined ? range : previewWindow(phase);
+  // `wholeMs` is a WORKAROUND, not a design choice — see its comment. Applied
+  // here, at the single point every downstream consumer reads the window from,
+  // so no fractional instant can reach a calendar operation from any path.
+  const rawView = phase === undefined ? range : previewWindow(phase);
+  const view = useMemo<[number, number]>(
+    () => wholeMs(rawView),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rawView[0], rawView[1]],
+  );
 
   // Which months the window actually contains — index arithmetic on the
   // calendar rather than a scan, since the grid has no holes.
@@ -183,125 +205,132 @@ export default function GalleryVolumeHistory({
     [marked],
   );
 
-  const chart = (
-    <ChartContainer
-      range={view}
-      width={width}
-      theme={theme}
-      grid={grid}
-      // ---------------------------------------------------------------
-      // One selection, set by clicking. `cursor="region"` +
-      // `cursorSequence` shades the **calendar month** under the pointer,
-      // which is a preview of exactly what a click will select, and
-      // `onRegionSelect` reports it. A plain click — press and release
-      // without moving — fires with the single bucket under the pointer
-      // (measured: `[2016-12-01Z, 2017-01-01Z]`), so no drag is needed.
-      //
-      // Deliberately **no hover readout**: the original has none, and one
-      // would be a second thing tracking the pointer alongside the band.
-      //
-      // The cost, and it is a real one: a region-select **preempts pan**
-      // on pointerdown unless `regionSelectModifier="shift"` is set — and
-      // setting it would mean plain clicks fall through to pan and never
-      // select, which is the whole gesture. So drag-to-pan is gone; the
-      // wheel still zooms (unaffected in every case) and the TIME presets
-      // do the coarse navigation. Three gestures, no conflicts.
-      // ---------------------------------------------------------------
-      cursor="region"
-      cursorSequence={MONTH_SEQUENCE}
-      {...(preview
-        ? {}
-        : {
-            onRegionSelect: ([from]: readonly [number, number]) =>
-              setSelected(clampMonth(monthIndexAt(from))),
-          })}
-      panZoom={preview ? 'none' : 'panZoom'}
-      bounds={PAN_BOUNDS}
-      onTimeRangeChange={setRange}
-    >
-      <ChartRow height={height}>
-        <YAxis
-          id="bytes"
-          side="left"
-          label=""
-          scale={scale}
-          min={domain[0]}
-          max={domain[1]}
-          // No explicit `ticks`: the axis picks the decades itself
-          // (`yTickValues` steps by whole powers of ten and thins to the row's
-          // height). `format` stays a **function** — it is the one thing the
-          // ticks and every axis pill share.
-          format={formatBytes}
-          width={58}
-        />
-        <Layers>
-          {/* The selection, as a shaded span. Drawn first so the lines sit
+  // Nothing until the container has been measured — a `<ChartContainer>` at
+  // width 0 would register its layers against a degenerate scale and then have
+  // to rebuild them a frame later. The panel is `width: 100%`, so the reserved
+  // height keeps the page from jumping when it arrives.
+  const chart =
+    width <= 0 ? (
+      <div style={{ height: height + AXIS_STRIP_PX }} aria-hidden="true" />
+    ) : (
+      <ChartContainer
+        range={view}
+        width={width}
+        theme={theme}
+        grid={grid}
+        // ---------------------------------------------------------------
+        // One selection, set by clicking. `cursor="region"` +
+        // `cursorSequence` shades the **calendar month** under the pointer,
+        // which is a preview of exactly what a click will select, and
+        // `onRegionSelect` reports it. A plain click — press and release
+        // without moving — fires with the single bucket under the pointer
+        // (measured: `[2016-12-01Z, 2017-01-01Z]`), so no drag is needed.
+        //
+        // Deliberately **no hover readout**: the original has none, and one
+        // would be a second thing tracking the pointer alongside the band.
+        //
+        // The cost, and it is a real one: a region-select **preempts pan**
+        // on pointerdown unless `regionSelectModifier="shift"` is set — and
+        // setting it would mean plain clicks fall through to pan and never
+        // select, which is the whole gesture. So drag-to-pan is gone; the
+        // wheel still zooms (unaffected in every case) and the TIME presets
+        // do the coarse navigation. Three gestures, no conflicts.
+        // ---------------------------------------------------------------
+        cursor="region"
+        cursorSequence={MONTH_SEQUENCE}
+        {...(preview
+          ? {}
+          : {
+              onRegionSelect: ([from]: readonly [number, number]) =>
+                setSelected(clampMonth(monthIndexAt(from))),
+            })}
+        panZoom={preview ? 'none' : 'panZoom'}
+        bounds={PAN_BOUNDS}
+        onTimeRangeChange={setRange}
+      >
+        <ChartRow height={height}>
+          <YAxis
+            id="bytes"
+            side="left"
+            label=""
+            scale={scale}
+            min={domain[0]}
+            max={domain[1]}
+            // No explicit `ticks`: the axis picks the decades itself
+            // (`yTickValues` steps by whole powers of ten and thins to the row's
+            // height). `format` stays a **function** — it is the one thing the
+            // ticks and every axis pill share.
+            format={formatBytes}
+            width={58}
+          />
+          <Layers>
+            {/* The selection, as a shaded span. Drawn first so the lines sit
               over it. Inert — it is a readout of the selection, and the way
               to change the selection is to click the plot. */}
-          {preview ? null : (
-            <Region
-              from={markedRange.start}
-              to={markedRange.endMs}
-              label={monthLabel(marked)}
-              selectable={false}
-            />
-          )}
-          <LineChart
-            series={series}
-            column="total"
-            as="primary"
-            axis="bytes"
-            legend="Total"
-          />
-          <LineChart
-            series={series}
-            column="lhcone"
-            as="secondary"
-            axis="bytes"
-            legend="LHCONE"
-          />
-          <LineChart
-            series={series}
-            column="oscars"
-            as="context"
-            axis="bytes"
-            legend="OSCARS"
-          />
-          {/* Solid: the window the model was fitted on. */}
-          {fitLine && (
+            {preview ? null : (
+              <Region
+                from={markedRange.start}
+                to={markedRange.endMs}
+                label={monthLabel(marked)}
+                selectable={false}
+              />
+            )}
             <LineChart
-              series={fitLine}
-              column="fit"
-              as="trendFit"
+              series={series}
+              column="total"
+              as="primary"
               axis="bytes"
-              legend={`Fit, ${LOOKBACK_YEARS}y`}
+              legend="Total"
             />
-          )}
-          {/* Dashed: everything after the selection, which the model is
+            <LineChart
+              series={series}
+              column="lhcone"
+              as="secondary"
+              axis="bytes"
+              legend="LHCONE"
+            />
+            <LineChart
+              series={series}
+              column="oscars"
+              as="context"
+              axis="bytes"
+              legend="OSCARS"
+            />
+            {/* Solid: the window the model was fitted on. */}
+            {fitLine && (
+              <LineChart
+                series={fitLine}
+                column="fit"
+                as="trendFit"
+                axis="bytes"
+                legend={`Fit, ${LOOKBACK_YEARS}y`}
+              />
+            )}
+            {/* Dashed: everything after the selection, which the model is
               guessing. `line.trend` differs from `line.trendFit` by exactly
               one property — `dash` — because that is the only difference
               there should be. */}
-          {projection && (
-            <LineChart
-              series={projection}
-              column="fit"
-              as="trend"
-              axis="bytes"
-              legend="Projection"
-            />
-          )}
-        </Layers>
-      </ChartRow>
-      {preview ? null : <Legend placement="top-left" />}
-    </ChartContainer>
-  );
+            {projection && (
+              <LineChart
+                series={projection}
+                column="fit"
+                as="trend"
+                axis="bytes"
+                legend="Projection"
+              />
+            )}
+          </Layers>
+        </ChartRow>
+        {preview ? null : <Legend placement="top-left" />}
+      </ChartContainer>
+    );
 
   if (preview) return chart;
 
   const shown = volumeAt(marked);
 
   return (
-    <div className={styles.panel}>
+    <div ref={boxRef} className={styles.panel} style={{ width: '100%' }}>
       <div className={styles.controls}>
         <div className={styles.controlGroup}>
           <span className={styles.controlLabel}>Month</span>
@@ -467,6 +496,33 @@ export default function GalleryVolumeHistory({
   );
 }
 
+/**
+ * Width from the container rather than a fixed pixel count — `width` is an
+ * explicit number on `<ChartContainer>`, so responsiveness is one
+ * `ResizeObserver` away. Same hook as the charts landing hero; see the
+ * responsive-width recipe.
+ */
+function useMeasuredWidth<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null);
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () =>
+      setWidth(Math.round(el.getBoundingClientRect().width));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, width] as const;
+}
+
+/** `<ChartContainer showAxis>` defaults on, adding a time-axis strip below the
+ *  rows. Budgeted into the pre-measurement placeholder so the page doesn't
+ *  jump by that much when the real chart arrives. */
+const AXIS_STRIP_PX = 22;
+
 // ---------------------------------------------------------------------------
 // Windows
 // ---------------------------------------------------------------------------
@@ -530,6 +586,34 @@ function previewWindow(phase: number): [number, number] {
 
 /** Nominal month, for the card's sweep only — never for a boundary. */
 const MONTH_MS = 30.44 * 24 * 3_600_000;
+
+/**
+ * **WORKAROUND for a `pond-ts` core crash — remove once that is fixed.**
+ * Tracked as [PND-CHFRIC] 30.
+ *
+ * A fractional epoch-millisecond reaching any calendar operation throws
+ * `RangeError: epoch milliseconds must be an integer` out of Temporal, React
+ * unmounts the tree, and **the page dies**. The path needs no unusual code:
+ *
+ *     wheel over the plot
+ *       → pivot = +xScale.invert(px)            // fractional, from a pixel
+ *       → zoomRange(...)                        // float maths, no rounding
+ *       → the container's view range
+ *       → cursorSequence realized over it       // Sequence.calendar('month')
+ *       → toPlainDateStart → Temporal.Instant.fromEpochMilliseconds(1.5e12…)
+ *       → RangeError
+ *
+ * So `<ChartContainer cursorSequence={Sequence.calendar('month')}
+ * panZoom="panZoom">` — two ordinary props — hard-crashes on the first wheel
+ * notch. `scanWindow` (the Gallery card's sweep) produces fractional ms the
+ * same way.
+ *
+ * Rounding outward keeps the window covering at least what it did, so a
+ * bucket at the edge cannot be dropped by the rounding itself.
+ */
+function wholeMs(range: readonly [number, number]): [number, number] {
+  return [Math.floor(range[0]), Math.ceil(range[1])];
+}
 
 /** Index of the month *containing* `ms`. */
 function monthIndexAt(ms: number): number {

@@ -1058,6 +1058,9 @@ measured in a running browser, not read off a type.
 
 ### Bugs
 
+**Read item 30 first** — it is a hard crash in `pond-ts` core, and the most
+serious thing found in this batch.
+
 19. **The log axis's dev warning broke the docs build.** `ChartRow.tsx` guarded
     it with a bare `process.env.NODE_ENV`, which typechecks only when a tool
     happens to resolve node's ambient types from a parent `node_modules`.
@@ -1139,11 +1142,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-        _Still true; no longer felt here._ The draggable marker is gone — selection
-        is a click — so nothing on this page is in edit mode. But it cost a design
-        iteration to discover, and the docs still don't mention it. **The one-line
-        fix is a sentence on `editing`**: "while any mark in a row is editing, that
-        row's data cursor is suppressed."
+            _Still true; no longer felt here._ The draggable marker is gone — selection
+            is a click — so nothing on this page is in edit mode. But it cost a design
+            iteration to discover, and the docs still don't mention it. **The one-line
+            fix is a sentence on `editing`**: "while any mark in a row is editing, that
+            row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
@@ -1205,3 +1208,60 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     `grep -c yTickValues packages/charts/dist/YAxis.js` → `0`. Worth promoting
     that grep into the preview conventions as a _routine_ step after any merge,
     not just after a checkout.
+
+30. **`pond-ts` CORE — a fractional epoch millisecond hard-crashes the page.**
+    **The most serious thing in this batch: not a gap, a crash**, and it lives
+    in `packages/core`, not in charts. Reachable from two ordinary props with
+    no unusual consumer code:
+
+    ```tsx
+    <ChartContainer cursorSequence={Sequence.calendar('month')} panZoom="panZoom">
+    ```
+
+    Scroll the wheel once over that plot and the page dies. The chain, each
+    step verified rather than assumed:
+    1. `Layers.tsx` wheel handler: `const pivot = +c.xScale.invert(localX)` —
+       a d3 time-scale invert of a **pixel**, so fractional.
+    2. `viewport.ts` `zoomRange()`: `pivot ± (…) * factor` with
+       `factor = Math.exp(deltaY * k)` — float maths, **no rounding anywhere**.
+    3. That range becomes the container's view, over which `cursorSequence` is
+       realized (`ChartContainer.js:647` → `Sequence.bounded`).
+    4. `core/calendar.ts` `toPlainDateStart` →
+       `Temporal.Instant.fromEpochMilliseconds(1577836800000.37)` →
+       **`RangeError: epoch milliseconds must be an integer`**.
+    5. React unmounts the tree. The chart is gone; in dev the pane locks up.
+
+    Isolated repro, no browser needed:
+
+    ```js
+    const s = Sequence.calendar('month', { timeZone: 'UTC' });
+    s.bounded(
+      new TimeRange({
+        start: Date.UTC(2020, 0, 1) + 0.5,
+        end: Date.UTC(2021, 0, 1),
+      }),
+    );
+    // → RangeError: epoch milliseconds must be an integer
+    ```
+
+    Captured stack from the running page: `Instant.fromEpochMilliseconds` ←
+    `toPlainDateStart (core/calendar.js:62)` ← `Sequence.bounded
+(core/sequence.js:155)` ← `ChartContainer.js:647`.
+
+    **The fix belongs in core** — floor the instant before it reaches Temporal.
+    Sub-millisecond precision does not exist in this model, so an over-precise
+    input can only mean the containing millisecond; throwing is never the
+    useful answer. Being fixed upstream in `packages/core`; this worktree ships
+    a **clearly-marked workaround** (`wholeMs` in
+    `gallery-volume-history.tsx`) that rounds the range outward before it
+    reaches anything calendar-aware. **Remove the workaround when the core fix
+    lands.**
+
+    Two notes for whoever takes the core fix. `scanWindow`
+    (`src/lib/autoplay.ts`) produces fractional ms the same way, so **every
+    autoplaying Gallery card** is exposed the moment it is given a calendar
+    `cursorSequence`. And more generally: if wheel-zoom emits a fractional
+    range, anything downstream that assumes integer ms shares this exposure —
+    `zoomRange`/`panRange` rounding at the source would close the whole class
+    rather than one call site. Not hunted further; the core fix should cover
+    it.
