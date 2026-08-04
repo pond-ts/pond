@@ -79,10 +79,26 @@ export function toPlainDateStart(
   unit: CalendarUnit,
   weekStartsOn: WeekStartsOn,
 ): Temporal.PlainDate {
-  const zoned =
-    Temporal.Instant.fromEpochMilliseconds(instantMs).toZonedDateTimeISO(
-      timeZone,
-    );
+  // **Floor to the containing millisecond.** `Temporal.Instant` refuses a
+  // fractional epoch ms outright — `fromEpochMilliseconds(1577836800000.37)`
+  // throws `epoch milliseconds must be an integer` — and a fraction is not a
+  // caller error here. A chart's wheel-zoom derives its view range from pixel
+  // positions through `xScale.invert()`, so a perfectly ordinary gesture hands
+  // us `1.7e12 + 0.37`; realizing a calendar sequence over that range then
+  // crashed the page outright.
+  //
+  // Flooring is the only sane reading rather than a papering-over: the epoch
+  // millisecond *is* the atomic unit of this model, so an over-precise input
+  // can only mean the millisecond containing it, and calendar boundaries are
+  // themselves whole milliseconds — so the bucket containing `t` and the one
+  // containing `t + 0.37` are necessarily the same. Integer inputs are
+  // untouched.
+  //
+  // `Math.floor`, not `Math.trunc`: before 1970 they disagree, and `-5.5` lies
+  // inside the millisecond spanning `[-6, -5)`, which is `-6`.
+  const zoned = Temporal.Instant.fromEpochMilliseconds(
+    Math.floor(instantMs),
+  ).toZonedDateTimeISO(timeZone);
   const date = zoned.toPlainDate();
 
   if (unit === 'day') {
