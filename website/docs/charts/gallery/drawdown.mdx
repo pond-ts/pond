@@ -17,7 +17,7 @@ import GalleryDrawdown from '@site/src/examples/gallery-drawdown';
 ## The chart
 
 <ChartExample name="gallery-drawdown" height={300} collapsed>
-  <GalleryDrawdown />
+  <GalleryDrawdown width={640} />
 </ChartExample>
 
 The full year is in view. The curve touches zero exactly **20 times** — those
@@ -91,7 +91,7 @@ Two finishing touches. A percentage axis format, since a drawdown is a
 fraction:
 
 ```tsx
-<YAxis id="dd" side="right" format=".0%" width={62} />
+<YAxis id="dd" label="drawdown" side="right" format=".0%" width={62} />
 ```
 
 And a colour that comes from the **theme**, not a literal:

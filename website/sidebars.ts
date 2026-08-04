@@ -133,6 +133,11 @@ const sidebars: SidebarsConfig = {
             'charts/gallery/sla-incidents',
             'charts/gallery/live-tail',
             'charts/gallery/site-traffic-dashboard',
+            // Track B — finance.
+            'charts/gallery/candlestick',
+            'charts/gallery/price-volume',
+            'charts/gallery/bollinger-bands',
+            'charts/gallery/drawdown',
           ],
         },
         {

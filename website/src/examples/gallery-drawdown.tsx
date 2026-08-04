@@ -65,7 +65,7 @@ export default function GalleryDrawdown({
       cursor="crosshair"
     >
       <ChartRow height={height}>
-        <YAxis id="dd" side="right" format=".0%" width={62} />
+        <YAxis id="dd" label="drawdown" side="right" format=".0%" width={62} />
         <Layers>
           <AreaChart
             series={series}

@@ -40,6 +40,10 @@ import GalleryLatencyPercentiles from '@site/src/examples/gallery-latency-percen
 import GallerySlaIncidents from '@site/src/examples/gallery-sla-incidents';
 import GalleryLiveTail from '@site/src/examples/gallery-live-tail';
 import GallerySiteTrafficDashboard from '@site/src/examples/gallery-site-traffic-dashboard';
+import GalleryCandlestick from '@site/src/examples/gallery-candlestick';
+import GalleryPriceVolume from '@site/src/examples/gallery-price-volume';
+import GalleryBollinger from '@site/src/examples/gallery-bollinger';
+import GalleryDrawdown from '@site/src/examples/gallery-drawdown';
 
 {/* ------------------------------------------------------------------ */}
 {/* Each domain section below is owned by one track (gallery plan §4). */}
@@ -189,7 +193,17 @@ incident you're explaining on Monday.
 
 ## Finance
 
-{/* TRACK B — replace this line with the section's blurb. */}
+Market time is not wall-clock time, so these charts sit on a **trading
+calendar**: the weekends, the ten holidays and the two half-days are collapsed
+out of the axis rather than drawn as dead space. Candles, a volume row, a
+study's appended columns and a derived curve — the same four primitives you'd
+compose yourself.
+
+**The prices are modelled, not measured.** Every feed worth having forbids
+redistribution, so rather than quietly ship someone's bars these run on a
+seeded process model — opening gaps, volatility clustering, regimes, volume
+that answers price. The [session calendar is real](./gallery/candlestick.mdx#the-data);
+the prices are not.
 
 <GalleryGrid>
 
@@ -209,6 +223,63 @@ incident you're explaining on Monday.
   height={246}
 >
   {(width) => <GalleryScatter width={width} />}
+</GalleryCard>
+
+<GalleryCard
+  title="Candles on a trading calendar"
+  blurb="A year of daily OHLC where the axis holds only open market time — every weekend, holiday and half-day collapsed out."
+  storybookHref="pathname:///storybook/?path=/story/charts-candlestick--show-ohlc"
+  pageHref="/docs/charts/gallery/candlestick"
+  height={218}
+  autoplay={{ period: 15000, staticPhase: 0.5 }}
+>
+  {(width, phase) => (
+    <GalleryCandlestick width={width} phase={phase} height={192} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Price and volume"
+  blurb="Two rows, two scales, one x range and one cursor — with the volume bars coloured by each session's own direction."
+  storybookHref="pathname:///storybook/?path=/story/charts-candlestick--scenario-price-volume"
+  pageHref="/docs/charts/gallery/price-volume"
+  height={218}
+  autoplay={{ period: 19000, staticPhase: 0.34 }}
+>
+  {(width, phase) => (
+    <GalleryPriceVolume
+      width={width}
+      phase={phase}
+      priceHeight={130}
+      volumeHeight={62}
+    />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Bollinger bands"
+  blurb="A study appends three columns; a band and a line read them back. Watch the window sweep 10 → 40 sessions."
+  storybookHref="pathname:///storybook/?path=/story/charts-bandchart--rolling-percentiles"
+  pageHref="/docs/charts/gallery/bollinger-bands"
+  height={218}
+  autoplay={{ period: 17000, staticPhase: 0.17 }}
+>
+  {(width, phase) => (
+    <GalleryBollinger width={width} phase={phase} height={192} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Drawdown"
+  blurb="How far under its own running peak the price is — an area hanging below a fixed zero baseline, drawing itself in."
+  storybookHref="pathname:///storybook/?path=/story/charts-areachart--above-below-axis"
+  pageHref="/docs/charts/gallery/drawdown"
+  height={218}
+  autoplay={{ period: 13000, staticPhase: 0.5 }}
+>
+  {(width, phase) => (
+    <GalleryDrawdown width={width} phase={phase} height={192} />
+  )}
 </GalleryCard>
 
 {/* TRACK B — append finance cards above this line. */}

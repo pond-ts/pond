@@ -322,7 +322,10 @@ export function marketBars(): BarSet {
     symbol: 'ACME',
     name: 'Acme Corp.',
     priceFormat: '$,.2f',
-    volumeFormat: '.2s',
+    // `~` trims the trailing zeros an SI specifier otherwise pads to a fixed
+    // precision — `.2s` renders the zero tick as `0.00M` and a round 5 M tick
+    // as `5.00M`, which reads as noise on a short volume axis.
+    volumeFormat: '.2~s',
     calendar,
     bars: buildBars(calendar),
     modelled: true,
