@@ -85,22 +85,15 @@ export default function ChartsHero() {
     [demand],
   );
 
-  // Mean demand over the record — what the meter averages to, and the honest
-  // reference for "is this spike big". Skips the dropout's `undefined`s, which
-  // is why this reads the column rather than a Float64Array (where a missing
-  // sample materializes as 0 and drags the mean down).
-  const mean = useMemo(() => {
-    const col = demand.column('kw');
-    let sum = 0;
-    let n = 0;
-    for (let i = 0; i < col.length; i++) {
-      const v = col.read(i);
-      if (v !== undefined) {
-        sum += v;
-        n += 1;
-      }
-    }
-    return n === 0 ? 0 : sum / n;
+  // The level demand stays under nine minutes in ten. A mean would sit down in
+  // the standby floor and say nothing about the events, which are the whole
+  // shape here — and peak demand is what sizes a supply and what a time-of-use
+  // tariff prices, so p90 is the reference a meter reading is actually judged
+  // against. `reduce` collapses the whole series to one scalar, skipping the
+  // outage's `undefined`s rather than counting them as zero.
+  const p90 = useMemo(() => {
+    const value = demand.reduce('kw', 'p90');
+    return typeof value === 'number' ? value : 0;
   }, [demand]);
 
   // `bounds` is the outer pan/zoom extent — the view can't leave the record,
@@ -147,9 +140,9 @@ export default function ChartsHero() {
               <ScatterChart series={demand} column="kw" axis="kw" as="raw" />
               <LineChart series={rolled} column="mean" axis="kw" />
               <Baseline
-                value={mean}
+                value={p90}
                 axis="kw"
-                label={`mean ${mean.toFixed(2)} kW`}
+                label={`p90 ${p90.toFixed(2)} kW`}
                 indicator
               />
             </Layers>
