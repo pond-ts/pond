@@ -13,6 +13,7 @@ than two charts stacked.
 
 import ChartExample from '@site/src/components/ChartExample';
 import GalleryPriceVolume from '@site/src/examples/gallery-price-volume';
+import GalleryVolumeList from '@site/src/examples/gallery-volume-list';
 
 ## The chart
 
@@ -48,6 +49,26 @@ What the volume column does, and why it isn't noise:
 - **It scales with the session's actual length.** The two 13:00 half-days are
   multiplied by (3.5 / 6.5)<sup>0.9</sup> ≈ 0.58 before anything else, so they
   print 3.27 M and 3.36 M despite both landing in busy weeks.
+
+Which sessions those are is a question the volume _row_ can't answer — a bar at
+a time position tells you when, not which. Ranked, the rows stop being buckets
+on an axis and become **entities**, which is what the list family is for:
+
+<GalleryVolumeList />
+
+That's a [`<BarList>`](../types/lists.mdx), not a hand-built table: one bar
+column on a shared scale, an `after` cell for the session's **intraday**
+(open→close) return — a differently-scaled quantity that has no business
+sharing the volume axis — and a `markers` rule for the year's median, which is
+the list-family counterpart of
+[`<Baseline>`](../annotations/region-baseline-marker.mdx) and draws in the
+annotation register rather than a data hue.
+
+Read the rows and the model shows through. The **top four are all losses**, and
+three of them (Mar 23 / 25 / 26) are consecutive — that's volume answering a
+move _and_ the decay afterwards, not a same-day spike. But it isn't a one-sided
+rule: two of the eight are strong up sessions and one is flat, because what
+volume responds to is the **size** of the move, not its sign.
 
 ## Build it
 
