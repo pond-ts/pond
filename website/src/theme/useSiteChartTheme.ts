@@ -47,7 +47,8 @@ function seqRoles<T>(
  * palette colour without adding a second variable for every opacity we want.
  * Anything that isn't a 6-digit hex passes through untouched.
  */
-function fade(color: string, alpha: number): string {
+function fade(color: string | undefined, alpha: number): string | undefined {
+  if (color === undefined) return undefined;
   if (!/^#[0-9a-f]{6}$/i.test(color)) return color;
   const hex = Math.round(Math.min(Math.max(alpha, 0), 1) * 255)
     .toString(16)
@@ -110,6 +111,17 @@ export function useSiteChartTheme(): ChartTheme {
       default: { color: v('--pond-viz-1'), label: v('--pond-ink') },
       primary: { color: v('--pond-viz-1'), label: v('--pond-ink') },
       secondary: { color: v('--pond-viz-2'), label: v('--pond-ink') },
+      // Raw samples drawn as a **cloud** — thousands of points where the
+      // density is the message and no single one is. Small, part-transparent
+      // and outline-free: an outline at r=1.5 is most of the mark, and at this
+      // count the rings merge into a grey wash that hides the shape they're
+      // meant to reveal. The scatter analogue of `line.muted`.
+      raw: {
+        color: fade(v('--pond-viz-1'), 0.3),
+        radius: 1.5,
+        outlineWidth: 0,
+        label: v('--pond-ink'),
+      },
     },
     box: {
       default: {

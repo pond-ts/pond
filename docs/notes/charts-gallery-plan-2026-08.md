@@ -217,12 +217,38 @@ Each is: **card** (mini + autoplay) → **page** (tutorial + interactive version
 
 **Track C — Weather & climate**
 
-| #   | Chart                 | Shape                       | Features shown                |
-| --- | --------------------- | --------------------------- | ----------------------------- |
-| C1  | Temperature range     | Band (daily min/max) + mean | Real NOAA data, band          |
-| C2  | Rainfall + cumulative | Bars + line, dual y-axis    | Dual axis, mixed layers       |
-| C3  | Climate stripes       | Dense categorical bars      | Large-N bars, sequential ramp |
-| C4  | Wind direction        | Category axis               | `CategoryAxis`, ordinal slots |
+| #   | Chart                 | Shape                        | Features shown                                                     |
+| --- | --------------------- | ---------------------------- | ------------------------------------------------------------------ |
+| C1  | Temperature range     | Band (daily min/max) + mean  | Real NOAA data, band                                               |
+| C2  | Rainfall + cumulative | Bars + line, dual y-axis     | Dual axis, mixed layers                                            |
+| C3  | Climate stripes       | Dense categorical bars       | Large-N bars, sequential ramp                                      |
+| C4  | Wind direction        | Category axis                | `CategoryAxis`, ordinal slots                                      |
+| C5  | **River stage** †     | Line + flood-stage baselines | Real USGS data, 34.7k points, `Region` for provisional-vs-approved |
+
+**C5 detail (added 2026-08-04, pjm supplied the data).**
+`packages/charts/test-data/water/` is a **real USGS gage record** — Wabash
+River at Lafayette, Indiana (`USGS-03335500`), gage height in feet. Profiled:
+**34,746 rows, 15-minute cadence, exactly one year** (2025-08-04 → 2026-08-04),
+**no missing values**, 1.06 → 15.59 ft, mean 3.40. Public domain.
+
+Why it earns a card rather than being another line chart:
+
+- **The thresholds are in the data's own metadata.** `time-series-metadata.csv`
+  carries the site's flood stages — minor 11 ft, moderate 18 ft, major 26 ft,
+  plus operational limits — as structured `thresholds` JSON. The record peaks
+  at **15.59 ft**, so it crosses minor flood stage and not moderate: a
+  `<Baseline indicator>` per stage that is genuinely sourced, not invented.
+- **`approval_status` is a real lineage column** — 13,256 rows `Approved`,
+  21,490 `Provisional`, split at a single boundary as the recent tail hasn't
+  been reviewed yet. That's a `<Region>` over the provisional span, and a
+  data-quality story no synthetic fixture can tell.
+- **34.7k points is 12× the landing chart** — a genuine decimation/canvas
+  exercise, and the page can show raw vs a rolling daily max.
+
+Needs a fixture generator under `website/scripts/fixtures/` emitting a
+compact JSON (the 6.1 MB CSV must not reach the site bundle) — follow
+`cern-traffic.mjs`, and keep the native 15-minute grid unless measurement
+says otherwise.
 
 **Track D — Energy**
 

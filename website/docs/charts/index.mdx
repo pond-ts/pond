@@ -5,23 +5,71 @@ sidebar_position: 1
 ---
 
 import ChartExample from '@site/src/components/ChartExample';
-import FirstChart from '@site/src/examples/first-chart';
+import ChartsHero from '@site/src/examples/charts-hero';
 
 # @pond-ts/charts
 
-**Canvas-rendered, streaming-first time-series charts** for pond-ts, with a
-[react-timeseries-charts](https://software.es.net/react-timeseries-charts/)-style
-declarative layout.
+**Declarative, canvas-rendered time-series charts for React.** Compose a chart
+from components the way you'd compose any other UI. It draws to a canvas rather
+than the DOM, so point count is a rendering cost and not a node count. And it
+reads a pond `TimeSeries` directly, so rolling, aggregation, alignment and gap
+handling all run right up to the plot — no adapter layer, and no second data
+model to keep in step.
 
-<ChartExample name="first-chart" height={260}>
-  <FirstChart />
+<ChartExample name="charts-hero" height={300} collapsed>
+  <ChartsHero />
 </ChartExample>
 
-Hover the chart above — the crosshair, the axis readout, all of it is live,
-not a screenshot. That's the entire pitch: a chart consumes a pond
-`TimeSeries` directly, you compose a container, rows, and draw layers as
-React components, and the canvas renderer does the drawing. No chart-library
-data model to adapt to; no imperative escape hatch for interaction.
+Two days of household electricity demand at one-minute resolution — 2,880
+samples, every one of them a point on the canvas. Quiet overnight, a sharp
+breakfast peak, a long cooking-hours evening. Move the pointer and a staff
+rises to a flag at each layer's value there; drag to pan, wheel to zoom, both
+stopped at the ends of the record. It's live, not a screenshot.
+
+**One column is doing all of that.** `kw` is the only data. Demand at this
+resolution isn't a smooth signal with noise on it — it's a _sum of
+rectangles_, because a kettle is 2.6 kW for three minutes and nothing in
+between. So the raw minutes get **two** layers: a scatter for where the samples
+actually are, and a faint line joining them. The vertical strokes a per-minute
+polyline is mostly made of are the reading here — each one is something
+switching on, and the flats between them are the rectangles it draws. Over the
+top, the pale envelope is each hour's min–max and the line through it is the
+hour's mean. Neither is a second dataset prepared somewhere else; they're a
+single pond `rolling()` call, emitting three columns from the one source column
+and handing them to two more draw layers:
+
+```ts
+const rolled = demand.rolling(
+  '1h',
+  {
+    mean: { from: 'kw', using: 'avg' },
+    lo: { from: 'kw', using: 'min' },
+    hi: { from: 'kw', using: 'max' },
+  },
+  { alignment: 'centered' },
+);
+```
+
+That's the entire pitch: a chart consumes a pond `TimeSeries` directly, the
+transform pipeline runs right up to the plot, you compose a container, rows,
+and draw layers as React components, and the canvas renderer does the drawing.
+No chart-library data model to adapt to; no imperative escape hatch for
+interaction.
+
+The break on the first afternoon is a ninety-minute recorder outage, carried as
+`undefined` rather than zero. The scatter has no points there and every line
+**breaks** — a connecting line is exactly the layer that would otherwise rule a
+confident straight edge across an hour and a half nobody measured, and zero
+would draw a switched-off house that never happened. That distinction is the
+whole of [Missing data & gaps](./gaps).
+
+The demand is **modelled, not measured**. It's shaped after the UCI
+[_Individual household electric power consumption_](https://archive.ics.uci.edu/dataset/235/individual+household+electric+power+consumption)
+set (CC BY 4.0) — one house, one-minute active power in kW, 2,075,259 rows,
+~1.25% of them missing — but none of its rows are redistributed here. The
+numbers are generated from how domestic load forms: a standby floor, a fridge
+duty-cycling against it, and discrete appliance runs on top. See
+[the fixture](https://github.com/pond-ts/pond/blob/main/website/src/examples/lib/household-power.ts).
 
 **Install** — `npm install @pond-ts/charts pond-ts @pond-ts/react react react-dom`.
 Peer-depends on `pond-ts`, `@pond-ts/react`, and `react`; the pond packages
