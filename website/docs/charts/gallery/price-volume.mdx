@@ -21,8 +21,16 @@ import GalleryVolumeList from '@site/src/examples/gallery-volume-list';
   <GalleryPriceVolume width={640} />
 </ChartExample>
 
-Move the cursor: one crosshair, both rows, both readouts. Drag to zoom and both
-rows follow — the x range lives on the container, the y scales don't.
+Move the cursor: **one** crosshair, spanning both rows, its value pill pinned to
+the axis of whichever row the pointer is in. **Drag to pan, wheel to zoom** —
+both rows follow together, because the x range lives on the container and the y
+scales don't.
+
+The strip above the chart is a second, off-chart readout, and it exists because
+the in-chart one can't do this: the crosshair pill reads _one_ row at a time,
+so seeing the close and the volume for the **same session at once** needs
+`onTrackerChanged`. Both readouts are described under
+[Build it](#build-it).
 
 The tall red bars near the left edge are 2026-03-23 through 2026-03-26: the
 −7.5% session and its aftermath, trading 12.9 M shares against a 4.08 M median.
@@ -137,16 +145,53 @@ the container's `range`. `binColors` is indexed against that same cropped
 series — build it from the series the layer draws, not the one you cropped
 from.
 
+### The two readouts
+
+Interaction is three props on the container, and they interlock:
+
+```tsx
+<ChartContainer
+  range={range}
+  onTimeRangeChange={setRange}
+  panZoom="panZoom"
+  cursor="crosshair"
+  onTrackerChanged={setTracker}
+>
+```
+
+`panZoom="panZoom"` is **drag to pan, wheel to zoom**. Because the layers are
+handed a cropped series, the range has to be **controlled** — held in state and
+fed back through `onTimeRangeChange` — so the crop can be recomputed from it;
+an uncontrolled pan moves the view and leaves the crop behind.
+
+`cursor="crosshair"` gives you the in-chart readout: a shared vertical line
+across both rows, and a value pill pinned to the y-axis of the row the pointer
+is in. Note what that _isn't_ — it reads **one row at a time**. Both rows'
+values for the same session is an off-chart job:
+
+```tsx
+const [tracker, setTracker] = useState<TrackerInfo | null>(null);
+
+// TrackerInfo = { time, values: TrackerSample[] } — one sample per layer,
+// each labelled with the series identity (`as` ?? the column name).
+const close = tracker?.values.find((v) => v.label === 'close')?.value;
+const volume = tracker?.values.find((v) => v.label === 'volume')?.value;
+```
+
+That's the strip above the chart. The two readouts are complementary rather
+than alternatives: the pill is where your eye already is, the strip is the one
+place both quantities appear together.
+
 ## Options to try
 
-| Option                                    | What it does                                          | Reach for it when                                                       |
-| ----------------------------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------- |
-| `<Candlestick>` in place of `<AreaChart>` | Full OHLC on the price row                            | The open/close relationship matters, not just the close path            |
-| `<YAxis side="left">`                     | Axis on the other edge                                | Convention in your shop, or you're pairing this with a right-axis chart |
-| `baseline={0}` on the area                | Fills from zero instead of the axis floor             | The row is a _change_ or a spread, where zero is meaningful             |
-| `stack` on the volume layer               | Splits the bar into up-volume and down-volume slabs   | You have the buy/sell split and want it inside one bar                  |
-| `cursor="crosshair"`                      | Full-height crosshair rather than the default tracker | Reading values across both rows at once is the main job                 |
-| `<Legend>`                                | A key naming each layer, with its resolved swatch     | More than two layers, or colours that aren't self-evident               |
+| Option                                    | What it does                                        | Reach for it when                                                       |
+| ----------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------- |
+| `<Candlestick>` in place of `<AreaChart>` | Full OHLC on the price row                          | The open/close relationship matters, not just the close path            |
+| `<YAxis side="left">`                     | Axis on the other edge                              | Convention in your shop, or you're pairing this with a right-axis chart |
+| `baseline={0}` on the area                | Fills from zero instead of the axis floor           | The row is a _change_ or a spread, where zero is meaningful             |
+| `stack` on the volume layer               | Splits the bar into up-volume and down-volume slabs | You have the buy/sell split and want it inside one bar                  |
+| `cursor="region"`                         | Drag selects a span, via `onRegionSelect`           | Drag should mark a range rather than pan (it replaces the crosshair)    |
+| `<Legend>`                                | A key naming each layer, with its resolved swatch   | More than two layers, or colours that aren't self-evident               |
 
 ## See also
 

@@ -403,6 +403,34 @@ export function sessionWindow(
 }
 
 /**
+ * The bars whose sessions fall inside an arbitrary wall-clock `range`, padded
+ * by one session each side.
+ *
+ * This is the helper a **pannable** chart needs. `sessionWindow` and friends
+ * crop by session index, which is right for a fixed view — but the moment the
+ * reader can pan, the crop has to follow the range they panned to. Leave the
+ * crop fixed and two things break at once: panning walks off the end of the
+ * cropped series into empty space, and the auto-fitting `<YAxis>` keeps
+ * fitting the *original* window's extent forever, so the trace drifts out of
+ * the row instead of refitting.
+ *
+ * Always returns at least one row: a range entirely off the data clamps to the
+ * nearest session rather than handing a chart an empty series.
+ */
+export function rangeWindow(
+  set: BarSet,
+  range: readonly [number, number],
+): TimeSeries<BarSchema> {
+  const sessions = set.calendar.sessions();
+  const n = sessions.length;
+  let from = 0;
+  while (from < n - 1 && sessions[from + 1]!.open < range[0]) from += 1;
+  let to = from;
+  while (to < n - 1 && sessions[to]!.open <= range[1]) to += 1;
+  return set.bars.slice(Math.max(0, from - 1), Math.min(n, to + 2));
+}
+
+/**
  * A `count`-session window sweeping out and back across the whole set at
  * `phase` — the Gallery card's scanning motion, in **session space**.
  *

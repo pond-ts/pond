@@ -21,10 +21,11 @@ import GalleryCandlestick from '@site/src/examples/gallery-candlestick';
 </ChartExample>
 
 Hover a candle: `showOHLC` fans the full quote to the readout instead of the
-single close. Drag across a week to zoom in; the axis relabels itself from
-months to days to sessions as you go. The last 60 sessions are in view, which
-here covers Memorial Day, Juneteenth and the observed Independence Day — none
-of which take up any room.
+single close. **Drag to pan, wheel to zoom** — there is no drag-to-zoom
+gesture, and as the span narrows the axis relabels itself from months to days to
+sessions. The last 60 sessions are in view to start, which here covers Memorial
+Day, Juneteenth and the observed Independence Day — none of which take up any
+room.
 
 ## The data
 
@@ -138,9 +139,22 @@ into a third of the row. Crop first:
 const bars = allBars.slice(i, j + 1); // column-native row range, not a filter
 ```
 
-The trade is that panning past the crop shows no data. If you want the whole
-series available to pan across, set `<YAxis min max>` explicitly from the
-window instead.
+The trade is that a **fixed** crop and a pannable chart don't mix: pan, and the
+view leaves the crop behind — empty canvas, and a price axis still fitted to
+the window you started in. Two ways out. Either pin the axis with an explicit
+`<YAxis min max>` and hand the layer the whole series, or — what this chart
+does — **control the range and re-crop from it**:
+
+```tsx
+const [range, setRange] = useState(initialRange);
+const bars = useMemo(() => rangeWindow(allBars, range), [allBars, range]);
+
+<ChartContainer range={range} onTimeRangeChange={setRange} panZoom="panZoom">
+```
+
+`panZoom="panZoom"` is **drag to pan, wheel to zoom**. There is no drag-to-zoom
+gesture: drag-to-select-a-span is `cursor="region"` with `onRegionSelect`, and
+`cursor` takes a single value, so it can't be combined with the crosshair.
 :::
 
 ## Options to try

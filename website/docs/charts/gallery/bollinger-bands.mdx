@@ -21,8 +21,14 @@ import GalleryBollinger from '@site/src/examples/gallery-bollinger';
   <GalleryBollinger width={640} />
 </ChartExample>
 
-Hover to read the band edges and the middle line alongside the candle. The
-band is a **volatility** measure, so it does what volatility does: at a 20-session
+Hover: the strip above the chart reads all four layers at that session — band
+edges, middle line, close — because the in-chart crosshair can't. `cursor="crosshair"`
+draws **one** pill per row, not one per series, so a row carrying a band, a line
+and a candle still gets a single value pinned to the axis. Several layers at one
+instant is `onTrackerChanged`'s job; the mechanics are under
+[Build it](#build-it).
+
+The band is a **volatility** measure, so it does what volatility does: at a 20-session
 window it narrows to 2.7% of price at its quietest (2026-05-08) and flares to
 30.0% at its widest (2026-04-07), an eleven-fold range across one year.
 
@@ -115,6 +121,31 @@ the window: the band starts 19 candles in, exactly as it would on a chart that
 began there. Run the study first and crop after, and the warm-up would be
 somewhere off-screen and the band would start at the left edge — which is a
 different, and less honest, chart.
+
+### Reading four layers at one cursor
+
+`cursor="crosshair"` is a per-**row** reticle: shared vertical line, a dot, and
+one value pill on the row's y-axis. It does not fan a pill out per series, so
+on this chart it reports a single number for four layers. The full set comes off
+the chart:
+
+```tsx
+<ChartContainer cursor="crosshair" onTrackerChanged={setTracker}>
+```
+
+`TrackerInfo.values` then carries one sample per layer. One catch worth knowing
+before you print them:
+
+```tsx
+// What this chart's layers actually report:
+//   'inner lower'  → bbLower    'inner upper' → bbUpper
+//   'secondary'    → bbMiddle   'ACME'        → the candle's close
+```
+
+A sample's `label` is the layer's **`as`** — and `as` is a _theme role_, not a
+data name. Style by role and the readout says `secondary $142.99`, which tells
+the reader nothing. Either map the labels for display (what this page does) or
+set `as` to something that reads as an identity and carry the styling elsewhere.
 
 Studies compose, because each one returns a series:
 

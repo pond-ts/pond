@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   BandChart,
   Candlestick,
@@ -7,10 +7,12 @@ import {
   Layers,
   LineChart,
   YAxis,
+  type TrackerInfo,
 } from '@pond-ts/charts';
 import { bollinger } from '@pond-ts/financial';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
 import { marketBars, sessionWindow } from './lib/financial-fixtures';
+import { TrackerReadout } from './lib/tracker-readout';
 
 /** The studies → chart seam. `bollinger()` is a pure `(series, options) =>
  *  series` that **appends** `bbLower` / `bbMiddle` / `bbUpper` columns; nothing
@@ -48,33 +50,56 @@ export default function GalleryBollinger({
 
   const study = useMemo(() => bollinger(bars, { period }), [bars, period]);
 
+  const [tracker, setTracker] = useState<TrackerInfo | null>(null);
+  const price = new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+  });
+
   return (
-    <ChartContainer
-      range={range}
-      width={width}
-      theme={theme}
-      calendar={set.calendar}
-      cursor="crosshair"
-    >
-      <ChartRow height={height}>
-        <YAxis id="price" side="right" format={set.priceFormat} width={62} />
-        <Layers>
-          <BandChart
-            series={study}
-            lower="bbLower"
-            upper="bbUpper"
-            axis="price"
-            as="inner"
-          />
-          <LineChart
-            series={study}
-            column="bbMiddle"
-            axis="price"
-            as="secondary"
-          />
-          <Candlestick series={bars} as={set.symbol} gap={1} />
-        </Layers>
-      </ChartRow>
-    </ChartContainer>
+    <div style={{ width }}>
+      {phase === undefined ? (
+        <TrackerReadout
+          tracker={tracker}
+          idle={`Hover to read every layer's value at one session (${set.symbol})`}
+          format={(s) => price.format(s.value)}
+          only={['inner lower', 'secondary', 'inner upper', set.symbol]}
+          rename={{
+            'inner lower': 'lower',
+            secondary: 'middle',
+            'inner upper': 'upper',
+            [set.symbol]: 'close',
+          }}
+        />
+      ) : null}
+      <ChartContainer
+        range={range}
+        width={width}
+        theme={theme}
+        calendar={set.calendar}
+        cursor="crosshair"
+        onTrackerChanged={setTracker}
+      >
+        <ChartRow height={height}>
+          <YAxis id="price" side="right" format={set.priceFormat} width={62} />
+          <Layers>
+            <BandChart
+              series={study}
+              lower="bbLower"
+              upper="bbUpper"
+              axis="price"
+              as="inner"
+            />
+            <LineChart
+              series={study}
+              column="bbMiddle"
+              axis="price"
+              as="secondary"
+            />
+            <Candlestick series={bars} as={set.symbol} gap={1} />
+          </Layers>
+        </ChartRow>
+      </ChartContainer>
+    </div>
   );
 }
