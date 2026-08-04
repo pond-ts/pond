@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from 'react';
 import { scaleLinear, scaleLog } from 'd3-scale';
+import { isDev } from './dev.js';
 import { resolveYDomain } from './domain.js';
 import { resolveAxisFormat } from './format.js';
 import { resolveYTickCount } from './yticks.js';
@@ -301,7 +302,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
               .filter((entry) => (entry.axisId ?? defaultAxisId) === ax.id)
               .map((entry) => entry.layer.yExtent())
           : [];
-      if (process.env.NODE_ENV !== 'production' && ax.scale === 'log') {
+      if (isDev && ax.scale === 'log') {
         // A log axis silently drops non-positive samples (they have no
         // position), so a series that dips to zero just goes missing there
         // with nothing on screen to say why. Warn once per offending axis.

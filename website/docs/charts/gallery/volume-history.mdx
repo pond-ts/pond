@@ -1,0 +1,238 @@
+---
+title: Volume history
+sidebar_label: Volume history
+---
+
+# Volume history
+
+Thirty-six years of one network's traffic, on a **logarithmic** axis — because
+the record runs from **19 GB a month to 262 PB a month** and there is no linear
+axis on which both ends are visible. The question is not "how much this month"
+but "is the shape still the shape", and the answer is a straight line.
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryVolumeHistory from '@site/src/examples/gallery-volume-history';
+
+## The chart
+
+<ChartExample name="gallery-volume-history" height={620} collapsed>
+  <GalleryVolumeHistory width={720} height={300} />
+</ChartExample>
+
+Four things to try, in this order:
+
+1. **Switch Scale to Linear.** Two decades of history flatten onto the floor.
+   Switch back; that is the entire argument for `<YAxis scale="log">`.
+2. **Turn Trend on to Exponential** with Time on `All`. The fit is a **straight
+   line**, because a straight line on a log axis _is_ exponential growth — and
+   the caption under the chart prints what it found: **+51.9% a year, doubling
+   every 20 months**, held for three decades. Switch to `Linear` and the same
+   least-squares idea bends badly, which is the visual proof that the growth is
+   multiplicative rather than additive.
+3. **Step the Month back and forward.** The shaded band is the month the summary
+   below is about, drawn over that month's real calendar span.
+4. **Hover a line.** Each series gets a dot and its value in bytes at that
+   month — `63.9 PB`, not `6.3 e16` and not a logarithm.
+5. **Drag to pan, wheel to zoom.** The window is clamped to the record plus the
+   two years of empty margin the trend extrapolates into.
+
+Times are **UTC**, which is how the record is published; the axis renders in
+your local zone, so at the tightest zoom a band can sit a few hours off the
+month it names.
+
+## The data
+
+**This one is real.** Most of the Gallery runs on modelled fixtures that say so;
+this is measured traffic from [ESnet](https://www.es.net/), the US Department of
+Energy's Energy Sciences Network — the science network connecting the national
+laboratories to each other and to CERN. It is the same series ESnet's own
+"Volume History" page draws, supplied by ESnet and committed as a fixture.
+
+**439 months, 1990-01 to 2026-07, on a complete monthly grid** — no holes.
+Three inbound series in bytes:
+
+| Column   | What it is                                    | Starts      | Months |
+| -------- | --------------------------------------------- | ----------- | ------ |
+| `total`  | Every byte carried inbound that month         | **1990-01** | 439    |
+| `oscars` | OSCARS — bandwidth-reserved circuits          | **2009-01** | 211    |
+| `lhcone` | LHCONE — the LHC experiments' overlay network | **2015-01** | 139    |
+
+Three quirks matter, and all three survived into the fixture on purpose.
+
+**The starts are staggered, and the gap is real.** LHCONE traffic did not exist
+before 2015, so the months before it are **absent** — `required: false` plus
+`null`, which is a different claim from zero. It is also the only claim a log
+axis can draw: zero has no position on one. The lines simply begin partway
+across the plot.
+
+**The span is 7.1 decades.** 19 GB in January 1990; 262 PB at the peak in
+November 2025. That is a factor of **10.4 million**, and it is the reason this
+page exists.
+
+**The last year is down.** Total inbound fell **18.3%** year-on-year to July
+2026 and OSCARS fell **59.2%**, while LHCONE was up **6.15%**. A chart that only
+ever showed the long climb would be flattering it; the summary table is where
+that shows.
+
+The fixture is derived by
+[`website/scripts/fixtures/esnet-volume.mjs`](https://github.com/pond-ts/pond/blob/main/website/scripts/fixtures/esnet-volume.mjs)
+from the raw export, which stays in `packages/charts/test-data/` and never
+reaches the browser: the three `_out` columns are dropped (the chart draws
+inbound), values are rounded to six significant figures, and the `YYYY-MM`
+index becomes a start month plus a count.
+
+## Build it
+
+The minimal version is a line chart with one word changed:
+
+```tsx
+<ChartContainer range={range} width={width} theme={theme}>
+  <ChartRow height={300}>
+    <YAxis id="bytes" scale="log" format={formatBytes} />
+    <Layers>
+      <LineChart series={series} column="total" as="primary" />
+      <LineChart series={series} column="lhcone" as="secondary" />
+      <LineChart series={series} column="oscars" as="context" />
+    </Layers>
+  </ChartRow>
+</ChartContainer>
+```
+
+`scale="log"` is the word. Everything else about the chart is unchanged, and —
+this is the part worth knowing — **`format` still formats the value**. The
+transform lives in the scale, not in the data, so a tick says `1 PB` and
+hovering December 2016 puts `63.9 PB` on the total's line, never a logarithm.
+The obvious workaround, plotting a `log10` column on a linear axis, makes every
+readout, `Baseline` and axis indicator lie.
+
+The finished chart uses `cursor="flag"` rather than `"line"`, and the
+difference is not cosmetic: `"line"` is a bare vertical rule with **no value
+chips at all**. Reading three series at one month is the point of hovering
+here, so `"flag"` — a dot and a value on each line — is the mode that does it.
+
+Two notes on `format` on a log axis specifically:
+
+- **Pass a function, not a d3 specifier.** `'.3s'` would print `197.8P`, which
+  is not a byte count anyone writes. It is also actively broken here: d3's log
+  scale returns the **empty string** from `tickFormat` for any value that is not
+  one of its own significant ticks, so a cursor readout on a real sample comes
+  out blank. A function is applied verbatim to every value.
+- **Hoist it.** An inline `format={(v) => …}` is a fresh reference every render
+  and re-registers the axis each frame.
+
+### The month band
+
+Each point is a whole month's total, so the highlight band is the span that
+point stands for — and pond has the calendar to say so, rather than a nominal
+30 days:
+
+```tsx
+const marked = TimeRange.fromCalendar('month', '2026-07', { timeZone: 'UTC' });
+
+<Region
+  from={marked.start}
+  to={marked.endMs}
+  label="Jul 2026"
+  selectable={false}
+/>;
+```
+
+`selectable={false}` makes it inert background context — it is a readout of the
+stepper, not something to click.
+
+### The trend
+
+Ordinary least squares over the **visible** months, on the values for Linear and
+on their logarithms for Exponential:
+
+```tsx
+// exponential: fit ln(y) = a + b·x, then draw exp(a + b·x)
+const y = kind === 'exponential' ? Math.log(value) : value;
+```
+
+The fit becomes its own one-column `TimeSeries`, drawn as a fourth line with
+`as="trend"` — a role whose entire job is `dash: [5, 4]`, in the same hue as the
+series it models. `LineStyle.dash` is the register for a **modelled** line, and
+that distinction is doing real work here: an extrapolation past the last sample
+must not read as a measurement.
+
+Two things the fit forces you to decide, and the example decides both in the
+source:
+
+- **A linear fit runs negative** over a long window. Over the whole record it
+  is `−43.1 PB + 356 TB × months`, so it stays below zero until **February
+  2000**. A negative number has **no position on a log axis**, so those months
+  are emitted as `null` (the trend column is `required: false`) and the dashed
+  line simply starts where the model becomes positive — which is worth seeing,
+  because it is the fit telling you it is the wrong model.
+- **The trend is a layer, so it joins the auto-fit.** Letting a linear fit's
+  negative early values pick the bottom of a log axis would be absurd, so this
+  example computes the domain itself: the data sets the floor, the trend may
+  only widen the top.
+
+### The summary
+
+The table under the chart is `<BarList>` — the list family renders a real
+`<table>`, which is what a per-series summary is. The bar is each row's share of
+the month's total, on one shared `domain` pinned to that total, so `Total` is a
+full track and the other three are directly comparable:
+
+```tsx
+<BarList
+  rows={summaryRows(month, theme)}
+  columns={[{ column: 'bytes', as: 'muted' }]}
+  domain={[0, total]}
+  after={SUMMARY_CELLS}
+  theme={theme}
+/>
+```
+
+`BarListColumn.as` is a property of the **column**, not the row, so a
+one-bar-per-row list has one colour for every row. Rather than fight that, the
+two channels are split: the bar carries magnitude in a neutral tone, and the
+swatch beside each name carries identity — read from the same `line` role the
+chart draws that series with, so the table cannot drift out of step with the
+plot.
+
+**Normal traffic is derived**, not a column: `total − lhcone − oscars`. That the
+arithmetic closes is what pins the whole table to the inbound side of the
+export.
+
+## Options to try
+
+| Option                                      | What it does                                                             | Reach for it when                                                           |
+| ------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
+| `<YAxis scale="log">`                       | Base-10 axis; ticks land on decades and `format` still formats the value | Data spanning more than about two orders of magnitude                       |
+| `<YAxis ticks={[…]}>`                       | Your tick positions **and** your labels, driving gridlines too           | Any log axis today — see the note below                                     |
+| `<LineChart as="trend">` + `LineStyle.dash` | A dashed line in the modelled register                                   | A fit, a forecast, a smoothed estimate — anything that is not a measurement |
+| A fourth `<LineChart column="normal">`      | Draws the derived remainder as a line as well as a table row             | You want the three components to visibly sum to the total                   |
+| `<ChartContainer grid={false}>`             | Drops the gridlines                                                      | Dense data where the rules compete with the lines                           |
+| `<ChartContainer panZoom="pan">`            | Drag to pan without wheel-zoom                                           | A page where trapping the reader's scroll would be rude                     |
+
+:::note Explicit ticks are not optional yet
+
+This example passes `<YAxis ticks>` rather than letting the scale pick, and that
+is a workaround, not a preference. `scaleLog.ticks(count)` is close to a **step
+function** of the count rather than a target: on this data and domain,
+`ticks(7)` returns 7 values and `ticks(8)` returns **64**. Since the count is
+derived from the row's pixel height, a 300px row and a 400px row can differ by a
+factor of nine in gridline count. Until that is fixed in the axis, compute the
+decades you want and pass them — `ticks` drives both the labels and the row's
+gridlines, so they cannot disagree.
+
+Two more log-axis limits worth knowing now: `<AreaChart>` and stacked
+`<BarChart>` have unguarded paths to `NaN` when a value or a stack base is zero,
+so keep a log axis to **lines** for the moment.
+
+:::
+
+## See also
+
+- [`<LineChart>`](../types/linechart.mdx) — every prop
+- [`<YAxis>`](../axes/value-axis.mdx) — `scale`, `ticks`, `format`, `pad`
+- [`<Region>`](../annotations/region-baseline-marker.mdx) — the highlight band
+- [`<BarList>`](../types/lists.mdx) — the summary table
+- [Gaps](../gaps.mdx) — why the staggered starts are absences, not zeroes
+- [**Storybook — explicit ticks**](pathname:///storybook/?path=/story/axes--explicit-ticks)
+  — the lever this page leans on. There is **no log-axis story yet**; the scale
+  landed without one.
