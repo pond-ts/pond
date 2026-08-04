@@ -987,6 +987,34 @@ a pixel to force it).
 12. **`<YAxis label>` defaults to the axis `id`**, so an unlabelled axis prints
     a rotated `"bps"`-style strip nobody asked for.
 
+Found the same way by the Gallery's **finance** track
+(`website/docs/charts/gallery/{candlestick,price-volume,bollinger-bands,drawdown}`):
+
+14. **`CursorMode`'s own docs contradict the implementation, and the docs are
+    the optimistic one.** `context.ts` describes `'crosshair'` as "a dot on
+    **each series**, with **each series' value** pinned to its y-axis edge (an
+    on-axis pill)" — plural. `tracker.ts` describes the same mode, four files
+    away, as "a single reticle (not per-series) … and **one value pill**", and
+    that is what it does. Measured in the browser: a row carrying a
+    `<BandChart>` + `<LineChart>` + `<Candlestick>` draws exactly **one** pill
+    (`$158.40`, the band's upper edge) for four layers. This is not a cosmetic
+    docs bug — page prose was written from the `CursorMode` doc and shipped a
+    hover claim that was simply false, and the only way to catch it was to hover
+    the running chart. Either make the docs match (`crosshair` is a per-**row**
+    reticle; several layers need `cursor="inline"` or an off-chart
+    `onTrackerChanged` readout) or make the behaviour match the docs.
+15. **`TrackerSample.label` is the layer's `as`, and `as` is a theme role.**
+    The field is documented as "the series identity (`as` ?? column)", but `as`
+    is simultaneously documented — and used throughout the docs site — as the
+    **styling** channel ("`as` picks the style from the theme"). A chart styled
+    by role therefore reports `secondary $142.99` and `inner upper $158.40` to
+    any readout built on `onTrackerChanged`: theme role names, not data names,
+    with no way to recover the column. One prop is doing double duty and the
+    readout is where it breaks. Either give layers a separate identity/label
+    prop, or carry the source column on `TrackerSample` alongside `label`. The
+    Bollinger example currently ships a hand-written rename map as the
+    workaround.
+
 ### Not a library issue, but it cost the most time
 
 13. **A worktree's `website/node_modules` symlinks to the main checkout**, so a
