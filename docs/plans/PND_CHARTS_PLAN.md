@@ -1125,14 +1125,25 @@ measured in a running browser, not read off a type.
     real calendar month under the pointer" and "read all three series at that
     month" cannot both be on. Neither prop's doc mentions the other's cost.
 
+    _Still true; no longer felt here._ The final design has no hover readout
+    (the original chart has none), so the region cursor costs nothing and the
+    conflict never arises. The item stands for the next chart that wants both —
+    and the shape of the fix is clear from having hit it: `cursorParts` could
+    let `region` compose with `dots`/`chip` rather than replacing them.
+
 24. **A single `editing` mark suppresses the whole row's data cursor.**
     `Layers.tsx` computes `editingActive = container.editAnnotations ||
 container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     So making _one_ `<Marker editing>` draggable silently turns off hover
     readouts for **every layer in the row** — a large, non-local consequence of a
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
-    mark's own affordances and say nothing about it. This chart ships the trade
-    documented on the page, but it was discovered by the chips disappearing.
+    mark's own affordances and say nothing about it.
+
+        _Still true; no longer felt here._ The draggable marker is gone — selection
+        is a click — so nothing on this page is in edit mode. But it cost a design
+        iteration to discover, and the docs still don't mention it. **The one-line
+        fix is a sentence on `editing`**: "while any mark in a row is editing, that
+        row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
@@ -1142,17 +1153,37 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     `Sequence.calendar('month')` grid. `regionSpan(buckets, t, t)` returns the
     single bucket by construction. **This is a feature nobody knows they have**:
     "click a bucket to select it" is the obvious thing to want from a bucketed
-    cursor, and it already works. One sentence in the doc, plus a story.
+    cursor, and it already works.
 
-26. **A dragged mark does not snap to `cursorSequence` buckets.**
+    **Promoted from curiosity to the load-bearing gesture.** This chart's entire
+    selection model is now click-to-select on a `Sequence.calendar('month')`
+    cursor — hover previews the month, click commits it, and the returned span
+    is already on real month boundaries so there is nothing to round. It is the
+    single nicest interaction on the page and it was found by accident, reading
+    `regionSpan` while investigating something else. **Highest-value doc fix in
+    this batch**: one sentence on `onRegionSelect` and a story, and every
+    consumer gets a bucket picker for free.
+
+26. **Click-to-select and drag-to-pan cannot coexist.** A region-select arms on
+    `pointerdown` and **preempts pan**; `regionSelectModifier="shift"` moves it
+    behind a modifier, but then a _plain click_ falls through to pan and never
+    selects — so a chart whose primary gesture is clicking a bucket must give up
+    pan entirely (wheel-zoom is unaffected). That is a real and defensible
+    trade, and this chart takes it, but it is invisible from the docs: neither
+    `panZoom` nor `regionSelectModifier` says that plain-click selection and
+    plain-drag panning are mutually exclusive. A third modifier value
+    (`regionSelectModifier: 'none' | 'shift'` with click always selecting and
+    drag always panning) would resolve it, since a zero-distance drag is
+    unambiguous.
+
+27. **A dragged mark does not snap to `cursorSequence` buckets.**
     `snapToGuides` follows _other annotations'_ x-positions and discontinuity
     boundaries only, so a `<Marker editing>` on a container with a month grid
-    still lands mid-month. The caller has to re-snap in `onChange` (this example
-    realizes `Sequence.calendar('month')` over the view and picks the nearest
-    boundary). Reasonable as a default; surprising when the container already
-    holds exactly the grid you want.
+    still lands mid-month; the caller has to re-snap in `onChange`. _Not felt in
+    the shipped design_ (no draggable marks), but real, and surprising when the
+    container already holds exactly the grid you want.
 
-27. **`defaultTheme.legend` is a hardcoded light palette, and a bridged theme
+28. **`defaultTheme.legend` is a hardcoded light palette, and a bridged theme
     that forgets it fails silently.** The docs site's `useSiteChartTheme` never
     mapped the `legend` register, so **every embed drawing a `<Legend>` rendered
     a white card with slate text** — invisible-adjacent in light mode and a
@@ -1164,7 +1195,7 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
 
 ### Not a library issue, but it cost time again
 
-28. **Item 13's stale-`dist` trap has a second form: you rebuilt, then merged.**
+29. **Item 13's stale-`dist` trap has a second form: you rebuilt, then merged.**
     This worktree had its **own** `node_modules` (a fresh `npm install` inside
     it), so the symlink resolved correctly and item 13 didn't apply. The trap
     fired anyway — `packages/charts` was built _before_ merging the log-axis

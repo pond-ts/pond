@@ -84,11 +84,15 @@ export function useSiteChartTheme(): ChartTheme {
       // under a moving average). Every viz-N hue competes with the line it's
       // meant to sit behind, and at full opacity dense noise swallows it.
       muted: { color: fade(v('--pond-muted'), 0.55), width: 1 },
-      // A **modelled** line — a fit, a forecast, a smoothed estimate — in the
-      // primary hue but dashed, which is the register `LineStyle.dash` exists
-      // for: same colour as the series it models, so the pairing is obvious;
-      // dashed, so nobody reads an extrapolation as a measurement.
-      trend: { color: v('--pond-viz-1'), width: 1.5, dash: [5, 4] },
+      // A **modelled** line, in two halves that differ by exactly one
+      // property. `trendFit` is the stretch a model was fitted on; `trend` is
+      // what it extrapolates, and `dash` is the whole difference — which is
+      // the register `LineStyle.dash` exists for. Both take the annotation
+      // hue rather than a data hue: a fit is something the *reader* asked for
+      // by choosing a month, so it belongs with the selection band and the
+      // axis pill that define it, not with the three measured series.
+      trendFit: { color: v('--pond-viz-mark'), width: 1.5 },
+      trend: { color: v('--pond-viz-mark'), width: 1.5, dash: [5, 4] },
       ...seqRoles(v, (step) => ({ color: step, width: 1.5 })),
     },
     band: {

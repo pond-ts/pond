@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Sequence, TimeRange, TimeSeries, type BoundedSequence } from 'pond-ts';
+import { Sequence, TimeRange, TimeSeries } from 'pond-ts';
 import {
   BarList,
   ChartContainer,
@@ -7,7 +7,6 @@ import {
   Layers,
   Legend,
   LineChart,
-  Marker,
   Region,
   YAxis,
   type ChartTheme,
@@ -39,40 +38,46 @@ import styles from './gallery-volume-history.module.css';
  * **Scale** toggle is for, and why `<YAxis scale="log">` had to exist before
  * this card could.
  *
- * Five things are worth reading the source for:
+ * **There is exactly one selection: a month.** Everything hangs off it — the
+ * band drawn on the chart, the row of numbers in the table, and the origin the
+ * trend projects from. It is set two ways into the same piece of state: click
+ * the plot, or step it with the arrows. That single-selection model is what
+ * keeps the page honest; there is no second cursor state to fall out of sync.
+ *
+ * Four things are worth reading the source for:
  *
  * **The log axis formats the value, not its logarithm.** `format` is a
- * *function* returning `197.82 PB`, and it is applied to the ticks, to the
- * cursor readout and to nothing else — the transform lives in the scale, so no
- * layer, annotation or readout ever sees a logarithm. The obvious workaround
- * (plotting a `log10` column on a linear axis) makes every one of those lie.
+ * *function* returning `197.82 PB`, and the transform lives in the scale, so
+ * no layer, annotation or axis pill ever sees a logarithm. The obvious
+ * workaround — plotting a `log10` column on a linear axis — makes every one of
+ * those lie.
  *
  * **The staggered starts are gaps, not zeroes.** `lhcone` begins in 2015 and
  * `oscars` in 2009; the months before are **absent** (`required: false` +
  * `null`), so those lines simply start partway across the plot. Zero would be
  * a different — and false — claim, and on a log axis it has no position at all.
  *
- * **The dashed line is a backtest, not a trend.** The draggable marker is the
- * **split point**: the model is fitted on the months to its *left* and then
- * projected forward from it to the right edge, while the real series stays
- * drawn on top. So the gap between them is forecast error you can see.
+ * **The trend is fitted and then projected, and the two halves are drawn
+ * differently.** Solid over the {@link LOOKBACK_MONTHS}-month window it was
+ * fitted on, dashed from the selected month forward — so "what the model saw"
+ * and "what the model guessed" are told apart by line style rather than by a
+ * caption. The break sits exactly on the selection.
  *
- * Two controls move it, and the finding is which one matters. On `All` the
- * exponential model, fitted 1990→2008, projects **73.7 EB** for July 2026
- * against an actual **197.82 PB** — **373× over**; dragging the split all the
- * way to 2024 only brings it to 13.7×, because the fit window still starts in
- * 1990 and the 1990s dominate it. Narrow the *window* to `5Y` instead and the
- * same machinery projects **213 PB** against 197.82 PB, within 8%. ESnet's
- * growth decelerated hard, and a single line through all 439 months hides that
- * by averaging the two eras together.
+ * And the finding that earns the controls: **a five-year lookback predicts
+ * this data well, and only from a recent month.** Select July 2024 and the
+ * exponential projection lands on **199 PB** for July 2026 against an actual
+ * **197.82 PB** — within 0.5%. Walk the selection back and it falls apart:
+ * March 2020 projects **3.19×** over, July 2016 **5.98×**, January 2010
+ * **91.3×**. The model never changes; the growth rate does, and five years of
+ * the late 2000s says nothing about the 2020s.
  *
- * **The projection is modelled, and says so** — `line.trend`, whose only job
- * is to be dashed. On a log axis an exponential fit is a **straight line**, so
- * the divergence reads directly as over- or under-shoot: the vertical gap is
- * the ratio. That is the real reason this dataset wants a log scale.
+ * Which also means the default view is deliberately undramatic — from a recent
+ * month the dashed line just carries on where the data was going. That is the
+ * result, not a missing feature.
  *
  * **The summary is `<BarList>`, not markup.** One row per series, the bar
- * encoding its share of the month's total, the swatch tying it to its line.
+ * encoding its share of the selected month's total, the swatch tying it to its
+ * line on the chart.
  */
 export default function GalleryVolumeHistory({
   width,
@@ -99,20 +104,26 @@ export default function GalleryVolumeHistory({
   const [scale, setScale] = useState<'log' | 'linear'>('log');
   const [grid, setGrid] = useState(true);
   const [trend, setTrend] = useState<Trend>('off');
-  const [month, setMonth] = useState(VOLUME_LAST);
-  /** The split point: fitted left of it, projected right of it. */
-  const [trendFrom, setTrendFrom] = useState(() => splitFor(0, VOLUME_LAST));
 
-  // The visible window. Held here rather than inside the container because two
-  // things write it — the TIME presets and the pan/zoom gesture — and whichever
-  // owned it alone would win forever. `onTimeRangeChange` is what routes the
-  // gesture through us.
-  const [range, setRange] = useState<[number, number]>(() => spanRange('All'));
+  /**
+   * **The** selection — one month, written by the plot click and by the
+   * stepper alike. Defaults to the newest month, so the table opens on the
+   * same row ESnet's own summary opens on.
+   */
+  const [selected, setSelected] = useState(VOLUME_LAST);
+
+  // The visible window. Held here rather than inside the container because
+  // three things write it — the TIME presets, the TREND toggle (which changes
+  // the right edge) and wheel-zoom — and whichever owned it alone would win
+  // forever. `onTimeRangeChange` is what routes the gesture through us.
+  const [range, setRange] = useState<[number, number]>(() =>
+    spanRange('All', 'off'),
+  );
 
   // Which preset the window currently *is*, compared rather than remembered,
-  // so panning off a preset lights neither button instead of lying about it.
+  // so zooming off a preset lights neither button instead of lying about it.
   const activeSpan = SPANS.find((s) => {
-    const [a, b] = spanRange(s);
+    const [a, b] = spanRange(s, trend);
     return a === range[0] && b === range[1];
   });
 
@@ -123,39 +134,45 @@ export default function GalleryVolumeHistory({
   const first = firstMonthIn(view[0]);
   const last = Math.min(VOLUME_LAST, monthIndexAt(view[1]));
 
-  // The selected month is clamped into the window: a highlight band nobody can
-  // see, over numbers nobody can check against the chart, is worse than none.
-  const marked = Math.min(Math.max(month, first), last);
+  // The selection, clamped into the window: a band nobody can see, over
+  // numbers nobody can check against the chart, is worse than none.
+  const marked = Math.min(Math.max(selected, first), last);
 
-  // The **split point** between what the model was fitted on and what it is
-  // predicting. Clamped into the window; everything left of it is evidence,
-  // everything right of it is forecast.
-  const origin = Math.min(Math.max(trendFrom, first), last);
+  // The fit window: a fixed lookback ending at the selection. Not the visible
+  // range — narrowing the view must not silently change the model. `+ 1`
+  // because both ends are inclusive, so a 60-month lookback is 60 samples and
+  // the caption can say "five years" without lying by one.
+  const fitFrom = Math.max(0, marked - LOOKBACK_MONTHS + 1);
 
-  // Fitted on `[first, origin]` — the data **before** the marker, and only
-  // that. This is a backtest, so the model must never see the months it is
-  // being judged against. `null` when there isn't enough history to fit.
   const fit = useMemo(
-    () => (trend === 'off' ? null : fitTrend(trend, first, origin)),
-    [trend, first, origin],
+    () => (trend === 'off' ? null : fitTrend(trend, fitFrom, marked)),
+    [trend, fitFrom, marked],
   );
 
-  // …and projected over `[origin, right edge]` — from the split point to the
-  // end of the view, past the last sample. The actual series stays drawn on
-  // top, so the gap between the two *is* the forecast error. Memoized: a fresh
-  // series identity re-registers the layer.
-  const trendSeries = useMemo(
-    () => (fit === null ? null : trendLine(fit, origin, view[1], scale)),
-    [fit, origin, view, scale],
+  // Two layers, one model. The **fitted** half is drawn solid over the months
+  // the least squares actually saw; the **projected** half is dashed from the
+  // selection to the right edge. Both include the selected month, so they meet
+  // on it rather than leaving a pixel of gap. Memoized: a fresh series
+  // identity re-registers the layer.
+  const fitLine = useMemo(
+    () => (fit === null ? null : modelLine(fit, fitFrom, marked, scale)),
+    [fit, fitFrom, marked, scale],
+  );
+  const projection = useMemo(
+    () =>
+      fit === null
+        ? null
+        : modelLine(fit, marked, rightEdgeMonth(trend), scale),
+    [fit, marked, trend, scale],
   );
 
   // The y domain, computed rather than auto-fitted, because the projection is
-  // a layer like any other and joins the fit — and a backtest can be wrong by
-  // decades. Data sets the floor; the projection may lift the ceiling only so
-  // far before it is left to run off the top (see `yDomain`).
+  // a layer like any other and joins the fit — and a projection can be wrong
+  // by decades. Data sets the floor; the projection may lift the ceiling only
+  // so far before it is left to run off the top (see `yDomain`).
   const domain = useMemo(
-    () => yDomain(first, last, scale, fit, origin, view[1]),
-    [first, last, scale, fit, origin, view],
+    () => yDomain(first, last, scale, fit, fitFrom, rightEdgeMonth(trend)),
+    [first, last, scale, fit, fitFrom, trend],
   );
 
   // The selected month's calendar extent — a real month, from pond's own
@@ -166,23 +183,6 @@ export default function GalleryVolumeHistory({
     [marked],
   );
 
-  // The month grid the dragged marker snaps to. `Sequence.calendar('month')`
-  // because a month is a **calendar unit, not a duration** — `DurationUnit`
-  // stops at `d`, and `'m'` there means minutes. The marker's own snapping
-  // (`snapToGuides`) follows *other marks* and session boundaries, not cursor
-  // buckets, so a dragged mark would otherwise land mid-month.
-  const monthGrid = useMemo(
-    () =>
-      MONTH_SEQUENCE.bounded(new TimeRange({ start: view[0], end: view[1] })),
-    [view],
-  );
-
-  // The split marker is a page thing, not a card thing. Note it is gated on
-  // the *trend* being on, not on the fit succeeding: when the marker sits too
-  // far left to fit anything, dragging it right is the only way out, so it had
-  // better still be there to drag.
-  const trendMarker = !preview && trend !== 'off';
-
   const chart = (
     <ChartContainer
       range={view}
@@ -190,39 +190,31 @@ export default function GalleryVolumeHistory({
       theme={theme}
       grid={grid}
       // ---------------------------------------------------------------
-      // The gesture budget — three, deliberately, not four.
+      // One selection, set by clicking. `cursor="region"` +
+      // `cursorSequence` shades the **calendar month** under the pointer,
+      // which is a preview of exactly what a click will select, and
+      // `onRegionSelect` reports it. A plain click — press and release
+      // without moving — fires with the single bucket under the pointer
+      // (measured: `[2016-12-01Z, 2017-01-01Z]`), so no drag is needed.
       //
-      // KEPT: hover reads all three series; drag pans; wheel zooms. Plus
-      // the marker drag, which only exists while a trend is on and which
-      // the library trades against hover (see `<Marker>` below).
+      // Deliberately **no hover readout**: the original has none, and one
+      // would be a second thing tracking the pointer alongside the band.
       //
-      // DROPPED: the **bucketed region cursor**. It would have been the
-      // prettiest way to pick a month — `cursorSequence` +
-      // `Sequence.calendar('month')` shades the real month under the
-      // pointer, and a plain click fires `onRegionSelect` with exactly
-      // that month (measured: `[2016-12-01Z, 2017-01-01Z]`). Two
-      // measured facts ruled it out anyway:
-      //
-      //   1. `cursorSequence` is honoured **only** for `cursor="region"`,
-      //      and `cursorParts('region')` is a band with no dots and no
-      //      chips. Adopting it trades the three-series byte readout —
-      //      the thing that proves the log axis formats values — for a
-      //      shaded rectangle.
-      //   2. It is invisible exactly when it would be used: any mark in
-      //      edit mode forces `cursorParts('none')` for the whole row,
-      //      so while the trend marker is draggable there is no region
-      //      cursor to click.
-      //
-      // Two of the four cannot be on screen together by construction, so
-      // this chart takes the readout and moves the marker by dragging it.
+      // The cost, and it is a real one: a region-select **preempts pan**
+      // on pointerdown unless `regionSelectModifier="shift"` is set — and
+      // setting it would mean plain clicks fall through to pan and never
+      // select, which is the whole gesture. So drag-to-pan is gone; the
+      // wheel still zooms (unaffected in every case) and the TIME presets
+      // do the coarse navigation. Three gestures, no conflicts.
       // ---------------------------------------------------------------
-      cursor="flag"
-      // Drag to pan, wheel to zoom, clamped to the record (plus the two years
-      // of empty right margin the extrapolation needs). No
-      // `regionSelectModifier` is needed: that only arbitrates pan against a
-      // region-drag, and there is no region cursor here. Off on the card: a
-      // card that zooms under the wheel traps the scroll of anyone paging
-      // down the Gallery.
+      cursor="region"
+      cursorSequence={MONTH_SEQUENCE}
+      {...(preview
+        ? {}
+        : {
+            onRegionSelect: ([from]: readonly [number, number]) =>
+              setSelected(clampMonth(monthIndexAt(from))),
+          })}
       panZoom={preview ? 'none' : 'panZoom'}
       bounds={PAN_BOUNDS}
       onTimeRangeChange={setRange}
@@ -235,39 +227,23 @@ export default function GalleryVolumeHistory({
           scale={scale}
           min={domain[0]}
           max={domain[1]}
-          // No explicit `ticks`: the axis picks the decades itself now
+          // No explicit `ticks`: the axis picks the decades itself
           // (`yTickValues` steps by whole powers of ten and thins to the row's
           // height). `format` stays a **function** — it is the one thing the
-          // readout, the ticks and the marker's axis pill all share.
+          // ticks and every axis pill share.
           format={formatBytes}
           width={58}
         />
         <Layers>
-          {/* The month under inspection, as a shaded span. Drawn first so the
-              lines sit over it. Inert — it is a readout of the stepper below,
-              not something to click. */}
+          {/* The selection, as a shaded span. Drawn first so the lines sit
+              over it. Inert — it is a readout of the selection, and the way
+              to change the selection is to click the plot. */}
           {preview ? null : (
             <Region
               from={markedRange.start}
               to={markedRange.endMs}
               label={monthLabel(marked)}
               selectable={false}
-            />
-          )}
-          {/* Where the trend starts — **drag it**. Only exists while a trend
-              is on, because it has nothing to mean otherwise, and `editing`
-              is what makes it draggable. Note the cost, which is the library's
-              rule rather than a choice here: a mark in edit mode suppresses
-              the row's data cursor (`editingActive` forces `cursorParts
-              ('none')`), so the hover readout steps aside while the origin is
-              placeable. */}
-          {trendMarker && (
-            <Marker
-              at={volumeMonthStart(origin)}
-              label={`Forecast from ${monthLabel(origin)}`}
-              editing
-              indicator
-              onChange={(at) => setTrendFrom(snapToMonth(monthGrid, at))}
             />
           )}
           <LineChart
@@ -291,22 +267,27 @@ export default function GalleryVolumeHistory({
             axis="bytes"
             legend="OSCARS"
           />
-          {trendSeries && (
+          {/* Solid: the window the model was fitted on. */}
+          {fitLine && (
             <LineChart
-              series={trendSeries}
+              series={fitLine}
               column="fit"
-              // `line.trend` is dashed, and dashed is the register for a
-              // *modelled* series — this line is not a measurement.
+              as="trendFit"
+              axis="bytes"
+              legend={`Fit, ${LOOKBACK_YEARS}y`}
+            />
+          )}
+          {/* Dashed: everything after the selection, which the model is
+              guessing. `line.trend` differs from `line.trendFit` by exactly
+              one property — `dash` — because that is the only difference
+              there should be. */}
+          {projection && (
+            <LineChart
+              series={projection}
+              column="fit"
               as="trend"
               axis="bytes"
-              // "Projection", not "trend" — the legend is the shortest piece
-              // of copy on the chart and the one most likely to be read alone,
-              // so it is the last place to call a forecast a fit.
-              legend={
-                trend === 'linear'
-                  ? 'Linear projection'
-                  : 'Exponential projection'
-              }
+              legend="Projection"
             />
           )}
         </Layers>
@@ -317,7 +298,7 @@ export default function GalleryVolumeHistory({
 
   if (preview) return chart;
 
-  const now = volumeAt(marked);
+  const shown = volumeAt(marked);
 
   return (
     <div className={styles.panel}>
@@ -327,7 +308,7 @@ export default function GalleryVolumeHistory({
           <div className={styles.stepper}>
             <button
               type="button"
-              onClick={() => setMonth(marked - 1)}
+              onClick={() => setSelected(marked - 1)}
               disabled={marked <= first}
               aria-label="Previous month"
             >
@@ -336,7 +317,7 @@ export default function GalleryVolumeHistory({
             <span className={styles.month}>{monthLabel(marked)}</span>
             <button
               type="button"
-              onClick={() => setMonth(marked + 1)}
+              onClick={() => setSelected(marked + 1)}
               disabled={marked >= last}
               aria-label="Next month"
             >
@@ -354,18 +335,8 @@ export default function GalleryVolumeHistory({
                 type="button"
                 aria-pressed={s === activeSpan}
                 onClick={() => {
-                  const next = spanRange(s);
                   setSpan(s);
-                  setRange(next);
-                  // Re-seat the split on the new window's midpoint. Changing
-                  // the range otherwise strands the marker off-screen
-                  // (narrowing) or leaves it stuck mid-plot (widening).
-                  setTrendFrom(
-                    splitFor(
-                      firstMonthIn(next[0]),
-                      Math.min(VOLUME_LAST, monthIndexAt(next[1])),
-                    ),
-                  );
+                  setRange(spanRange(s, trend));
                 }}
               >
                 {s}
@@ -418,51 +389,42 @@ export default function GalleryVolumeHistory({
                 key={t}
                 type="button"
                 aria-pressed={t === trend}
-                onClick={() => setTrend(t)}
+                onClick={() => {
+                  setTrend(t);
+                  // The right edge follows the toggle: turning a projection on
+                  // has to make room for it, or it would be drawn into a
+                  // margin that does not exist. Keeps the left edge put.
+                  setRange((r) => [r[0], volumeMonthStart(rightEdgeMonth(t))]);
+                }}
               >
                 {TREND_LABELS[t]}
               </button>
             ))}
           </div>
         </div>
-
-        {/* Two things at once, because the newest month has to be *visible*
-            to be worth selecting: re-seat the window on the current preset
-            (undoing any pan), then move the mark to the last sample. */}
-        <button
-          type="button"
-          className={styles.recent}
-          disabled={marked === VOLUME_LAST && activeSpan !== undefined}
-          onClick={() => {
-            setRange(spanRange(activeSpan ?? span));
-            setMonth(VOLUME_LAST);
-          }}
-        >
-          Show most recent month
-        </button>
       </div>
 
       {chart}
 
-      {/* The backtest's own readout — or, when the marker sits too close to the
-          left edge to leave anything to fit, the reason there is no line.
-          Saying that in the UI matters: a projection that silently vanishes
-          reads as a bug, and the fix (drag right) isn't guessable. */}
+      {/* The model's own readout — or, when the selection is too early to have
+          a lookback behind it, the reason there is no line. Saying that in the
+          UI matters: a projection that silently vanishes reads as a bug. */}
       {trend !== 'off' &&
         (fit === null ? (
           <p className={styles.credit}>
-            <strong>No projection.</strong> A fit needs at least three months of
-            data before the marker, and there{' '}
-            {origin - first === 1 ? 'is' : 'are'} {origin - first}. Drag the
-            marker right.
+            <strong>No projection.</strong> The fit needs at least three months
+            of history behind the selected month, and{' '}
+            {marked - fitFrom === 1
+              ? 'there is 1'
+              : `there are ${marked - fitFrom}`}
+            . Select a later month.
           </p>
         ) : (
           <p className={styles.credit}>
-            {fitCaption(fit, monthLabel(origin), origin - first + 1)}{' '}
-            {backtest(fit, origin, last)}{' '}
+            {fitCaption(fit, monthLabel(marked), marked - fitFrom + 1)}{' '}
+            {backtest(fit, marked)}{' '}
             <em>
-              Drag the marker to move the split — everything left of it is what
-              the model saw.
+              Click the chart or step the month to refit from somewhere else.
             </em>
           </p>
         ))}
@@ -485,7 +447,7 @@ export default function GalleryVolumeHistory({
         <BarList
           rows={summaryRows(marked, theme)}
           columns={SUMMARY_COLUMNS}
-          domain={[0, now.total]}
+          domain={[0, shown.total]}
           after={SUMMARY_CELLS}
           barHeight={10}
           theme={theme}
@@ -496,7 +458,10 @@ export default function GalleryVolumeHistory({
         Data: <a href="https://www.es.net/">ESnet</a>, the US Department of
         Energy&rsquo;s Energy Sciences Network — {VOLUME_MONTHS} months of
         measured traffic volume, 1990-01 to {volumeMonth(VOLUME_LAST)}. Real,
-        unlike most of the Gallery&rsquo;s fixtures.
+        unlike most of the Gallery&rsquo;s fixtures. &ldquo;Now&rdquo; on this
+        page means the <strong>end of the record</strong>, never the wall clock
+        — a chart whose numbers drifted with today&rsquo;s date could not render
+        the same on the server and in your browser.
       </p>
     </div>
   );
@@ -518,46 +483,38 @@ const SPAN_MONTHS: Record<Span, number> = {
   All: VOLUME_MONTHS,
 };
 
-/**
- * Empty months kept to the **right** of the last sample, so a trend has
- * somewhere to be extrapolated into. A tenth of the window, floored at two so
- * the six-month preset shows something and capped at two years so `All`
- * doesn't spend a twentieth of its width on white space.
- */
-function headroom(months: number): number {
-  return Math.max(2, Math.min(Math.round(months * 0.1), 24));
-}
+/** How far past the end of the record a projection is drawn — one year. */
+const PROJECT_MONTHS = 12;
 
 /**
- * Where the fit/forecast split sits by default: **the midpoint of the visible
- * window**.
+ * The window's right edge, in month index.
  *
- * The alternative considered was the first month all three series carry data
- * (2015-01), which is a real date with a real meaning — but it is a *fixed*
- * date, so on 6M/1Y/5Y it falls outside the window entirely and clamps to the
- * edge, leaving nothing to fit. The midpoint is the only rule that gives every
- * preset both a fit window and a test window of comparable size, and it is
- * neutral: it implies no claim that anything in particular changed on that
- * date. The reader supplies that claim by dragging.
+ * **"Now" is the last month of the record, not the wall clock.** Everything on
+ * this site has to render identically on the server, in the browser and on
+ * every future visit; a chart anchored to `Date.now()` would break SSR
+ * hydration parity immediately and silently restate every number on the page
+ * as the months went by.
+ *
+ * With no projection the edge is the end of that month. With one it is a year
+ * further, so the forecast has somewhere to be drawn.
  */
-function splitFor(first: number, last: number): number {
-  return Math.floor((first + last) / 2);
+function rightEdgeMonth(trend: Trend): number {
+  return VOLUME_LAST + (trend === 'off' ? 1 : PROJECT_MONTHS);
 }
 
-/** A preset's window: the last `n` months, plus the right margin. */
-function spanRange(s: Span): [number, number] {
-  const months = SPAN_MONTHS[s];
+/** A preset's window: the last `n` months, out to the trend-dependent edge. */
+function spanRange(s: Span, trend: Trend): [number, number] {
   return [
-    volumeMonthStart(Math.max(0, VOLUME_MONTHS - months)),
-    volumeMonthStart(VOLUME_LAST + headroom(months)),
+    volumeMonthStart(Math.max(0, VOLUME_MONTHS - SPAN_MONTHS[s])),
+    volumeMonthStart(rightEdgeMonth(trend)),
   ];
 }
 
-/** How far the pan/zoom gesture may take the window — the record, plus the
- *  largest right margin any preset asks for. */
+/** How far the zoom gesture may take the window — the record, plus the widest
+ *  right margin any state asks for. */
 const PAN_BOUNDS: readonly [number, number] = [
   VOLUME_RANGE[0],
-  volumeMonthStart(VOLUME_LAST + 24),
+  volumeMonthStart(VOLUME_LAST + PROJECT_MONTHS),
 ];
 
 /** The card's window: fifteen years sweeping across the record, so the
@@ -583,11 +540,13 @@ function monthIndexAt(ms: number): number {
 
 /** Index of the first month whose sample lands at or after `ms`. */
 function firstMonthIn(ms: number): number {
-  const i = monthIndexAt(ms);
-  const clamped = Math.max(0, Math.min(VOLUME_LAST, i));
-  return volumeMonthStart(clamped) < ms
-    ? Math.min(VOLUME_LAST, clamped + 1)
-    : clamped;
+  const i = clampMonth(monthIndexAt(ms));
+  return volumeMonthStart(i) < ms ? Math.min(VOLUME_LAST, i + 1) : i;
+}
+
+/** Into the record. */
+function clampMonth(i: number): number {
+  return Math.max(0, Math.min(VOLUME_LAST, i));
 }
 
 /** `[year, monthIndex]` of the record's first month. */
@@ -599,28 +558,15 @@ const VOLUME_EPOCH: readonly [number, number] = [1990, 0];
 const MONTH_TZ = { timeZone: 'UTC' } as const;
 
 /**
- * The calendar-month grid the marker snaps to.
+ * The bucketing the region cursor shades, and therefore what a click selects.
  *
  * `Sequence.calendar('month')`, not a duration: months are 28–31 days, so
  * there is no month *duration* to step by — `DurationUnit` stops at `d`, and
- * `'m'` there is **minutes**. Hoisted, because the sequence is realized against
- * the view on every change and a fresh instance would re-realize it needlessly.
+ * `'m'` there is **minutes**. Hoisted, because the container re-realizes the
+ * sequence against the view whenever this value changes, and a fresh instance
+ * every render would re-bucket on every pointer move.
  */
 const MONTH_SEQUENCE = Sequence.calendar('month', MONTH_TZ);
-
-/** The record's month index nearest `at`, snapped to the realized grid. */
-function snapToMonth(grid: BoundedSequence, at: number): number {
-  let bestIndex = monthIndexAt(at);
-  let bestGap = Infinity;
-  for (let i = 0; i < grid.length; i += 1) {
-    const gap = Math.abs(grid.at(i)!.begin() - at);
-    if (gap < bestGap) {
-      bestGap = gap;
-      bestIndex = monthIndexAt(grid.at(i)!.begin());
-    }
-  }
-  return Math.max(0, Math.min(VOLUME_LAST, bestIndex));
-}
 
 // ---------------------------------------------------------------------------
 // Trend
@@ -634,6 +580,24 @@ const TREND_LABELS: Record<Trend, string> = {
   linear: 'Linear',
   exponential: 'Exp',
 };
+
+/**
+ * **The lookback: how many months before the selection the model is fitted
+ * on.** Five years.
+ *
+ * This is a property of *this* chart, and it is the one number here that is
+ * not derived from the data. ESnet's own chart uses some fixed lookback and we
+ * do not know what it is — it was inferred from where the dashed line begins
+ * in a screenshot, and inference from a screenshot is not measurement. So:
+ * five years, stated plainly on the page as our choice, in one named constant
+ * that is trivial to change if the real figure ever turns up.
+ *
+ * Five happens to be a good choice on its own merits for this data — it is
+ * short enough to track the current regime (a fit ending July 2024 predicts
+ * July 2026 to within 1%) and long enough not to chase noise.
+ */
+const LOOKBACK_YEARS = 5;
+const LOOKBACK_MONTHS = LOOKBACK_YEARS * 12;
 
 /** A fitted model of the total: `predict(i)` in bytes at month index `i`. */
 interface Fit {
@@ -650,10 +614,10 @@ interface Fit {
  * between the two and the reason an exponential fit draws as a straight line
  * on a log axis.
  *
- * The window is **the data before the marker**, and nothing else. That is what
- * makes the drawn line a genuine out-of-sample projection rather than a line
- * of best fit through the answer: a model that has seen the months it is being
- * judged on cannot be wrong about them.
+ * The window is the fixed lookback ending at the selected month, and nothing
+ * else. Because it stops *at* the selection, everything drawn to the right of
+ * the selection is genuinely out of sample — which is what lets the caption
+ * score the projection against what actually happened.
  *
  * `null` below three points — two points fit any straight line exactly, which
  * is not a forecast, it is a ruler.
@@ -698,24 +662,22 @@ function fitTrend(
 
 const TREND_SCHEMA = [
   { name: 'time', kind: 'time' },
-  // `required: false` because a *linear* fit over a long window is negative
-  // early on, and a negative number has no position on a log axis. Absent is
-  // the truthful way to say "this model doesn't have a value here".
+  // `required: false` because a model can leave the drawable range — a
+  // declining linear fit crosses zero if extended far enough, and zero has no
+  // position on a log axis. Absent is the truthful way to say "this model has
+  // no value here"; a `NaN` coordinate would break the path instead.
   { name: 'fit', kind: 'number', required: false },
 ] as const;
 
-/** The projection as a drawable series: every month from the split point to
- *  the right edge of the window. It starts at the marker, not at the start of
- *  the fit window — the fitted stretch already has the real line over it, and
- *  a dashed line that only exists where it is a *forecast* needs no legend to
- *  explain which half is which. */
-function trendLine(
+/** One half of the model as a drawable series — `[from, to]` inclusive, a row
+ *  per month. Used twice: once for the fitted stretch, once for the
+ *  projection, so both halves come off the same `Fit` and cannot disagree. */
+function modelLine(
   fit: Fit,
   from: number,
-  rightEdge: number,
+  to: number,
   scale: 'log' | 'linear',
 ): TimeSeries<typeof TREND_SCHEMA> {
-  const to = monthIndexAt(rightEdge);
   const rows: [number, number | null][] = [];
   for (let i = from; i <= to; i += 1) {
     const v = fit.predict(i);
@@ -724,16 +686,12 @@ function trendLine(
       Number.isFinite(v) && (scale === 'linear' || v > 0) ? v : null,
     ]);
   }
-  return TimeSeries.fromJSON({
-    name: 'trend',
-    schema: TREND_SCHEMA,
-    rows,
-  });
+  return TimeSeries.fromJSON({ name: 'trend', schema: TREND_SCHEMA, rows });
 }
 
 /** What the model learned, in words — computed from the fit, never estimated. */
-function fitCaption(fit: Fit, splitAt: string, months: number): string {
-  const on = `on the ${months} months to ${splitAt}`;
+function fitCaption(fit: Fit, endsAt: string, months: number): string {
+  const on = `on the ${months} months to ${endsAt}`;
   if (fit.kind === 'exponential') {
     const yearly = Math.exp(fit.slope * 12) - 1;
     const doubling = Math.log(2) / fit.slope;
@@ -747,26 +705,35 @@ function fitCaption(fit: Fit, splitAt: string, months: number): string {
 }
 
 /**
- * How the projection did. The whole point of splitting fit from forecast is
- * that this sentence can exist: what the model, knowing only the data left of
- * the marker, predicted for the newest month — against what actually happened.
+ * How the projection did — the sentence the fit/projection split exists to
+ * make possible. The model saw nothing after the selected month, so its value
+ * at the end of the record is a genuine out-of-sample prediction, and the
+ * record says what actually happened.
  *
- * `''` when the marker sits at or past the last sample, because then the line
- * is pure extrapolation into empty time and there is nothing to score it on.
+ * With the newest month selected there is nothing left to check it against,
+ * so it reports the forecast instead.
  */
-function backtest(fit: Fit, origin: number, last: number): string {
-  if (origin >= last) {
-    return `Beyond the record it is a forecast with nothing to check it against.`;
+function backtest(fit: Fit, selectedMonth: number): string {
+  const horizon = monthLabel(VOLUME_LAST + PROJECT_MONTHS);
+  const ahead = fit.predict(VOLUME_LAST + PROJECT_MONTHS);
+  if (selectedMonth >= VOLUME_LAST) {
+    return Number.isFinite(ahead) && ahead > 0
+      ? `Nothing past the record to check it against, so it is a forecast: ${formatBytes(ahead)} by ${horizon}.`
+      : `Its projection leaves the drawable range — the wrong model for this data, which is the finding.`;
   }
-  const predicted = fit.predict(last);
-  const actual = volumeAt(last).total;
+  const predicted = fit.predict(VOLUME_LAST);
+  const actual = volumeAt(VOLUME_LAST).total;
   if (!Number.isFinite(predicted) || predicted <= 0) {
-    return `Its projection for ${monthLabel(last)} is not a positive number — the wrong model for this data, which is the finding.`;
+    return `Its projection for ${monthLabel(VOLUME_LAST)} is not a positive number — the wrong model for this data, which is the finding.`;
   }
   const ratio = predicted / actual;
   const [factor, direction] =
     ratio >= 1 ? [ratio, 'over' as const] : [1 / ratio, 'under' as const];
-  return `It projected ${formatBytes(predicted)} for ${monthLabel(last)}; the actual was ${formatBytesExact(actual)} — ${direction}shooting by ${precise(factor)}×.`;
+  const miss =
+    factor < 1.1
+      ? `within ${precise((factor - 1) * 100)}%`
+      : `${direction}shooting by ${precise(factor)}×`;
+  return `It projected ${formatBytes(predicted)} for ${monthLabel(VOLUME_LAST)}; the actual was ${formatBytesExact(actual)} — ${miss}.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -778,18 +745,18 @@ function backtest(fit: Fit, origin: number, last: number): string {
  * `linear` runs from zero, which is what makes the first two decades of the
  * record collapse onto the floor — the demonstration the toggle exists for.
  *
- * The **data** sets the bottom on both. The projection is a layer, so an
- * auto-fitted domain would let a linear fit's negative early values pick the
- * floor of a log axis; it may only widen the top.
+ * The **data** sets the bottom on both. The model is a layer, so an
+ * auto-fitted domain would let a linear fit's negative values pick the floor
+ * of a log axis; it may only widen the top.
  *
- * And only so far. A backtest can be wildly wrong — an exponential fitted on
- * 1990–2008 projects **73.7 EB** for July 2026 against an actual 197.82 PB,
- * 373× over and two and a half decades above anything real. Letting that set
- * the top would squash 36 years of measurements into the bottom fifth of the
- * plot to make room for a line that is *wrong*. So the projection may lift the
- * ceiling by at most one decade (log) or half again (linear); past that it
- * leaves the plot, which is the honest rendering of a forecast that missed by
- * more than the chart is tall.
+ * And only so far. A projection from an early selection can be wildly wrong —
+ * fitted to the five years ending January 2010 the exponential projects
+ * **19.3 EB** for July 2026 against an actual 197.82 PB, 97.7× over and two
+ * decades above anything real. Letting that set the top would squash 36 years
+ * of measurements into the bottom of the plot to make room for a line that is
+ * *wrong*. So the model may lift the ceiling by at most one decade (log) or
+ * half again (linear); past that it leaves the plot, which is the honest
+ * rendering of a forecast that missed by more than the chart is tall.
  */
 const PROJECTION_HEADROOM = { log: 10, linear: 1.5 } as const;
 
@@ -814,7 +781,7 @@ function yDomain(
   if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [1, 10];
   if (fit !== null) {
     const ceiling = hi * PROJECTION_HEADROOM[scale];
-    for (let i = fitFrom; i <= monthIndexAt(rightEdge); i += 1) {
+    for (let i = fitFrom; i <= rightEdge; i += 1) {
       const v = fit.predict(i);
       if (Number.isFinite(v) && v > hi) hi = Math.min(v, ceiling);
     }
@@ -962,7 +929,7 @@ function Change({
 // Formatting
 // ---------------------------------------------------------------------------
 
-const UNITS = ['B', 'kB', 'MB', 'GB', 'TB', 'PB', 'EB'];
+const UNITS = ['B', 'kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB'];
 
 /** SI tier and mantissa for a byte count — `1.978e17` → `[197.82, 'PB']`. */
 function scaleBytes(value: number): [number, string] {
@@ -975,18 +942,14 @@ function scaleBytes(value: number): [number, string] {
 }
 
 /**
- * Bytes for the **axis and the cursor readout** — `10 GB`, `1 PB`, `198 PB`.
+ * Bytes for the **axis** — `10 GB`, `1 PB`, `198 PB`.
  *
- * Passed to `<YAxis format>` as a **function**, which matters twice over here.
- * A d3 specifier would print `197.8P`; and on a log axis d3's `tickFormat`
- * returns the empty string for any value that isn't one of its own significant
- * ticks, so a cursor readout on a real sample would come out **blank**. A
- * function is handed to every value verbatim, so neither happens.
- *
- * Single-argument on purpose: the axis calls it as `fmt(value)`, and a second
- * optional parameter is one refactor away from being fed an array index.
- * Hoisted to module scope because an inline `format` function is a fresh
- * reference each render and would re-register the axis every frame.
+ * Passed to `<YAxis format>` as a **function**: a d3 specifier would print
+ * `197.8P`, which is not a byte count anyone writes. Single-argument on
+ * purpose — the axis calls it as `fmt(value)`, and a second optional parameter
+ * is one refactor away from being fed an array index. Hoisted to module scope
+ * because an inline `format` function is a fresh reference each render and
+ * would re-register the axis every frame.
  */
 function formatBytes(value: number): string {
   if (!Number.isFinite(value)) return '—';
@@ -1032,8 +995,9 @@ const MONTH_NAMES = [
 ];
 
 /** `2026-07` → `Jul 2026`. A fixed string rather than the reader's locale, so
- *  the build and the browser agree. */
+ *  the build and the browser agree. Handles indexes past the end of the
+ *  record, which the projection's horizon needs. */
 function monthLabel(i: number): string {
-  const [year, month] = volumeMonth(i).split('-');
-  return `${MONTH_NAMES[Number(month) - 1]} ${year}`;
+  const ordinal = VOLUME_EPOCH[0] * 12 + VOLUME_EPOCH[1] + i;
+  return `${MONTH_NAMES[ordinal % 12]} ${Math.floor(ordinal / 12)}`;
 }
