@@ -1,0 +1,159 @@
+---
+title: Requests and responses
+description: The two request forms, selecting columns and facts, error policies, and reading the response.
+---
+
+# Requests and responses
+
+A request carries a plan **and** what it wants back. A renderer asks for
+columns; an agent asks for facts; a legend chip is a fact riding alongside
+the columns it labels — one call, one pass, one cache.
+
+## Two request forms
+
+**The slot form** names every node with a caller-owned **slot**, and
+wires by name. It is what the [fluent builder](./authoring) emits, and
+the form to prefer when a UI needs stable handles:
+
+```ts
+host.run({
+  from: 'ACME_5m',
+  nodes: {
+    average: { op: 'sma', params: { period: 20 }, in: ['close'] },
+    bands: { op: 'bands', params: { width: 2 }, in: ['average'] },
+    width: { op: 'subtract', in: ['bands#Upper', 'bands#Lower'] },
+    latestWidth: { op: 'last', in: ['width'] },
+  },
+  outputs: {
+    band: { on: 'bands' },
+    latest: { on: 'latestWidth' },
+  },
+});
+```
+
+A fold is a node like any other here — the fluent builder derives names
+like `width:last` for the fold nodes it adds, but that is a builder
+convention, not request syntax; in a hand-written slot request the fold
+takes an ordinary slot.
+
+**The nested form** inlines specs and selects them directly — no naming
+layer, which suits a one-shot composed request or a saved view that
+never edits itself:
+
+```ts
+host.run({
+  from: 'ACME_5m',
+  process: [{ op: 'sma', params: { period: 20 }, inputs: ['close'] }],
+  select: [{ on: { op: 'sma', params: { period: 20 }, inputs: ['close'] } }],
+});
+```
+
+A slot is **topology identity**: it survives a param edit, while the
+content-addressed id changes with the computation. `slot#Output` picks one
+named output of a multi-output node; a slot must not shadow a source
+column name. Both forms expand to identical specs and land on identical
+ids — that equality is the contract, and it is why nothing downstream of
+normalization knows slots exist.
+
+If two slots resolve to one computation (the registry-free builder cannot
+resolve defaults, so `shape()` and `shape({points: 40})` arrive as two
+slots), resolution collapses them to one node and the response labels it
+with the **first** slot that named it — deterministic in declaration
+order.
+
+## Selecting
+
+A selector says **what to surface**, not what to compute:
+
+```ts
+interface Select {
+  on: string | Spec; // an inline spec, or an id from a previous response
+  output?: string; // one output of a multi-output node; default all
+  name?: string; // the caller's own name, echoed back on the result
+}
+```
+
+What comes back is decided by the node it points at: a fold yields a
+fact, anything else yields its columns. An inline spec is a complete
+description of a computation, so selecting one **resolves it** whether or
+not the plan also lists it — a caller composing against the schema alone
+should not need a bookkeeping rule no schema can express.
+
+## The response
+
+```ts
+interface RunResult {
+  series?: TimeSeries; // assembled convenience — in-process renderers
+  columns?: Record<string, Column>; // the wire-shaped answer
+  outputs: Record<string, OutputInfo[]>; // column name + unit + caller name
+  facts: Fact[]; // { id, name?, op, unit, …body }
+  explain: Record<string, string>; // lineage per id, whole closure
+  skipped: Skipped[]; // what failed, and why — see error policies
+  nodes: NodeTiming[]; // the per-node badge row
+}
+```
+
+**`assemble: false`** skips building the `series` and is what a wire
+consumer wants: a `TimeSeries` cannot cross a boundary, but a packed
+column — a `Float64Array` plus a validity bitmap — encodes compactly and
+the receiving side rebuilds with `TimeSeries.fromColumns`, which adopts
+buffers zero-copy. Assembly is measurably the expensive half
+(`appendColumn` boxes every gapped column, and every rolling study is
+gapped), so across a worker or network it is pure waste.
+
+**Facts** spread the fold's body onto canonical provenance. `id`, `op`,
+and `unit` are always the graph's own statement; `name` is present exactly
+when the caller named the selection.
+
+## The badge row
+
+`nodes` reports every node the plan resolved, in dependency order — not
+just the subset a selector reached. It is simultaneously the explaining
+device (without it the caching is true but invisible) and the pipeline's
+shape (a caller cannot derive the edges without reimplementing `specId`):
+
+| Field    | Meaning                                                          |
+| -------- | ---------------------------------------------------------------- |
+| `id`     | The content-addressed id                                         |
+| `slot`   | The caller's name for the position, when the request used slots  |
+| `pulled` | Whether this request actually read the node's value              |
+| `cached` | False when the value was produced this call                      |
+| `ms`     | Milliseconds attributable to this node alone (inputs pre-pulled) |
+| `inputs` | Upstream ids (or raw column names), in declared input order      |
+
+Inputs are pulled before the node itself is timed, so a leaf does not
+absorb its whole subtree's cost. A node left clean by an earlier request
+genuinely reports `cached: true` even when `pulled` is false.
+
+## Error policies
+
+```ts
+host.run({ ...request, onError: 'collect' });
+```
+
+| Policy      | Behavior                                                     |
+| ----------- | ------------------------------------------------------------ |
+| `'throw'`   | Stop at the first failure. The default.                      |
+| `'collect'` | Continue where possible; return reasons in `result.skipped`. |
+| `'skip'`    | Today, identical to `'collect'` — the name states intent.    |
+
+The policy covers the **whole** request: plan resolution, slot expansion,
+selector resolution, and the execution of op code while pulling columns
+or facts. A skipped entry echoes the failing spec back _with its inputs_
+— a plan may hold two specs of the same op, and a retrying caller needs
+to know which one — or the failing selector, plus a reason written for a
+JSON-composing audience.
+
+`'collect'` is the right fit for an agent tool: the diagnostics are data
+the model can repair against and retry. A renderer with stale persisted
+configuration may prefer `'skip'` to keep valid branches on screen.
+
+Two guarantees worth knowing exist because their absence was once a
+silent wrong answer:
+
+- A selector naming an output the node does not declare is a `skipped`
+  entry (or a throw), never an empty result.
+- An op result whose length does not match the bound series is rejected
+  at the producer — warm-up is expressed as gaps, never as a shorter
+  column — so the check does not depend on whether assembly happened to
+  run.

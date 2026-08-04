@@ -290,6 +290,19 @@ verification.
 5. **Every page follows the §2b spine.** Same five sections, same order.
 6. **Every number on a page is computed, not estimated.**
 7. **Dark mode is checked**, not assumed.
+8. **In a worktree, check which `dist` you are actually previewing.**
+   `website/node_modules` is a **symlink into the main checkout**, so
+   `@pond-ts/charts` resolves to `/Users/peter/Code/pond-ts/packages/charts` —
+   whatever branch main happens to be on — not to your worktree's build.
+   Track A lost real time to this: the stacked-area card rendered as
+   unfilled spaghetti because main's `dist` predated `flatFill`, and the
+   symptom is indistinguishable from "the theme role silently fell back"
+   (guardrail 3). Confirm with
+   `grep -c <the-feature> /Users/peter/Code/pond-ts/packages/charts/dist/*.js`
+   before believing a rendering bug. To preview against your own build, add a
+   temporary `configureWebpack` alias plugin in the worktree's
+   `docusaurus.config.ts` pointing `@pond-ts/*` and `pond-ts` at
+   `../packages/*`, and **revert it before committing**.
 
 ## 7. Risks
 

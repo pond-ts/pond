@@ -124,7 +124,16 @@ const sidebars: SidebarsConfig = {
           // tutorial each card's "Build it →" link opens. Each track appends
           // its own slugs here, grouped as they are on the Gallery page;
           // `_template.mdx` is the shape they all follow.
-          items: [],
+          items: [
+            // Track A — ops & infrastructure.
+            'charts/gallery/network-traffic',
+            'charts/gallery/traffic-by-interface',
+            'charts/gallery/multi-host-cpu',
+            'charts/gallery/latency-percentiles',
+            'charts/gallery/sla-incidents',
+            'charts/gallery/live-tail',
+            'charts/gallery/site-traffic-dashboard',
+          ],
         },
         {
           type: 'category',
@@ -196,6 +205,25 @@ const sidebars: SidebarsConfig = {
           type: 'link',
           label: 'API reference (charts)',
           href: '/docs/api/',
+        },
+      ],
+    },
+    {
+      type: 'category',
+      label: '@pond-ts/process',
+      link: { type: 'doc', id: 'process/process-index' },
+      items: [
+        'process/tutorial',
+        'process/authoring',
+        'process/requests',
+        'process/plans',
+        'process/registry',
+        'process/host',
+        'process/performance',
+        {
+          type: 'link',
+          label: 'API reference (process)',
+          href: 'pathname:///generated-api/process/',
         },
       ],
     },

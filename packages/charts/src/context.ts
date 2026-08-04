@@ -568,6 +568,17 @@ export interface RowLayer {
    */
   xCategories?(): readonly string[] | null;
   /**
+   * A **horizontal** categorical source's ordered category names — the same
+   * list {@link xCategories} carries for a vertical one, but for the axis it
+   * lands on when the bars grow right: the **y** axis ([PND-HCAT]).
+   *
+   * The y axis stays a linear scale over the layer's unit slots (`[i, i+1]`),
+   * so this only supplies *labels*: a `<YAxis>` in the row with no explicit
+   * `ticks` derives one tick per category at the slot centre (`i + 0.5`).
+   * That hand-built tick list was the friction the gallery funnel documented.
+   */
+  binCategories?(): readonly string[] | null;
+  /**
    * A bar/histogram layer's bar `[begin, end)` spans, as pond `Interval`s — the
    * **region cursor's snap buckets**. When present (and no `cursorSequence` is
    * set), a region drag snaps bar by bar and a hover highlights the bar under the
@@ -681,6 +692,17 @@ export interface TrackerSource {
   xExtent(): readonly [number, number] | null;
   /** A `'category'` source's ordered category names (see {@link RowLayer.xCategories}). */
   xCategories?(): readonly string[] | null;
+  /**
+   * A **horizontal** categorical source's ordered category names — the same
+   * list {@link xCategories} carries for a vertical one, but for the axis it
+   * lands on when the bars grow right: the **y** axis ([PND-HCAT]).
+   *
+   * The y axis stays a linear scale over the layer's unit slots (`[i, i+1]`),
+   * so this only supplies *labels*: a `<YAxis>` in the row with no explicit
+   * `ticks` derives one tick per category at the slot centre (`i + 0.5`).
+   * That hand-built tick list was the friction the gallery funnel documented.
+   */
+  binCategories?(): readonly string[] | null;
   /** A bar/histogram source's bar `[begin, end)` spans (see {@link RowLayer.binIntervals}). */
   binIntervals?(): readonly Interval[] | null;
 }

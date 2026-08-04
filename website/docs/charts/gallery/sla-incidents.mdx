@@ -1,0 +1,123 @@
+---
+title: SLA & incidents
+sidebar_label: SLA & incidents
+---
+
+# SLA & incidents
+
+The two rows an SLA review argues over: the error rate, and the error budget it
+spent. What makes it a review rather than a chart is everything drawn _on_ it —
+the incident windows, the deploys, and the objective line the whole
+conversation is about.
+
+import ChartExample from '@site/src/components/ChartExample';
+import GallerySlaIncidents from '@site/src/examples/gallery-sla-incidents';
+
+## The chart
+
+<ChartExample name="gallery-sla-incidents" height={300} collapsed>
+  <GallerySlaIncidents width={640} height={240} />
+</ChartExample>
+
+All three annotation kinds are here: two `<Region>`s (the Tuesday bad deploy and
+a Friday-night DNS wobble), three `<Marker>`s (the deploys — the middle one is
+the bad one), and a `<Baseline>` at the 99.9% objective.
+
+## The data
+
+**Modelled, not measured.** A week of error rate and the remaining error budget
+against a **99.9%** availability objective — meaning 0.1% of requests may fail
+over the window.
+
+The week has a plot, because a flat week wouldn't need annotating (times
+**UTC**; the axis renders in your local timezone):
+
+- **Tuesday 09:00**, the middle deploy goes bad; the incident window runs to
+  12:00 and costs **32.9 points** of budget on its own;
+- **Friday 22:00–23:00**, a DNS wobble — visible, annotated, and nowhere near
+  fatal;
+- the budget ends the week at **26%** remaining, which is the number the review
+  is actually about.
+
+The two rows are two columns of one series, `errorRate` and `budgetLeft`, so
+they share a time range by construction and stay aligned when you zoom.
+
+## Build it
+
+Two `<ChartRow>`s in one `<ChartContainer>` is the stacked-panel layout — same
+time axis, independent value axes:
+
+```tsx
+<ChartContainer range={SLA_RANGE} width={640} theme={theme} cursor="line">
+  <ChartRow height={150}>
+    <YAxis id="err" side="right" format=".2%" width={52} />
+    <Layers>
+      <LineChart series={series} column="errorRate" axis="err" />
+    </Layers>
+  </ChartRow>
+  <ChartRow height={90}>
+    <YAxis id="budget" side="right" format=".0%" width={52} min={0} />
+    <Layers>
+      <AreaChart series={series} column="budgetLeft" axis="budget" />
+    </Layers>
+  </ChartRow>
+</ChartContainer>
+```
+
+Then the annotations, which are just more layers:
+
+```tsx
+<Region from={incidentFrom} to={incidentTo} label="bad deploy" />
+<Marker at={deployAt} label="deploy 2" />
+<Baseline value={0.001} axis="err" label="99.9% objective" />
+```
+
+`<Region>` spans time, `<Marker>` pins an instant, `<Baseline>` pins a value.
+All three draw in the annotation register — deliberately one hue that no series
+ever takes, so a placed mark is never mistaken for data.
+
+### Making them editable
+
+Two things turn the marks into draggable ones. `editAnnotations` on the
+container turns the affordances on; each mark's `onChange` reports where it was
+dragged to:
+
+```tsx
+const [incident, setIncident] = useState({ from, to });
+
+<ChartContainer editAnnotations cursor="none" …>
+  <Region from={incident.from} to={incident.to} onChange={setIncident} />
+```
+
+That's the whole contract, and the sharp edge worth stating plainly: **nothing
+moves unless you store it.** The annotation is a controlled component. If you
+pass `onChange` and drop the value on the floor, the mark springs back — which
+is correct, and surprises everyone once.
+
+Note `cursor="none"` alongside `editAnnotations`: a crosshair chasing the
+pointer while you're dragging a region is two things competing for the same
+gesture.
+
+## Options to try
+
+| Option                                   | What it does                                         | Reach for it when                                          |
+| ---------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------- |
+| `editAnnotations` + `onChange`           | Marks become draggable, you own the state            | Incident review — the window is being agreed, not reported |
+| Omit `onChange` on one mark              | That mark stays fixed while others move              | The objective is policy; the incident window is a guess    |
+| `<Region>` vs `<Marker>`                 | A span vs an instant                                 | If it has a duration it's a Region, even a short one       |
+| A second `<Baseline>` at a warning level | Two thresholds, page vs ticket                       | Your alerting has two tiers and the chart should say so    |
+| `<AreaChart>` on the budget row          | Burn reads as a draining quantity, not a wiggly line | Anything cumulative — budget, quota, capacity remaining    |
+
+## See also
+
+- [The annotation model](../annotations/the-annotation-model.mdx) — why
+  annotations are a separate register
+- [Region, Baseline, Marker](../annotations/region-baseline-marker.mdx) — every
+  prop of all three
+- [Editing and creating](../annotations/editing-and-creating.mdx) —
+  `editAnnotations`, `onChange`, and the controlled-component contract
+- [Layout](../layout.mdx) — multiple `<ChartRow>`s on one time axis
+- [Marking up charts](../../learn-charts/07-marking-up-charts.mdx) — the guided
+  version of this page
+- [**Storybook**](pathname:///storybook/?path=/story/annotations-scenarios--editable)
+  — the systematic knob walk

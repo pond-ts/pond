@@ -3,6 +3,7 @@ import { Interval, ValueSeries } from 'pond-ts';
 import type { SeriesSchema, TimeSeries, ValueSeriesSchema } from 'pond-ts';
 import {
   barsFromTimeSeries,
+  barsFromBins,
   barsFromValueSeries,
   categoryStack,
   stacksFromBins,
@@ -26,6 +27,7 @@ import {
   type StackMark,
   type StackStyle,
 } from './bars.js';
+import type { NumericColumn, ValueNumericColumn } from './column-names.js';
 import type { DecimateOption } from './decimate.js';
 import {
   ContainerContext,
@@ -40,57 +42,102 @@ import {
 } from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
-export interface BarChartProps<
+/**
+ * The **mode union** — the legal (source, columns) combinations, each a
+ * separate member so an illegal mix fails to compile instead of throwing at
+ * render ([PND-CHARTAPI]; the 2026-08 API review's #1 item). Column names are
+ * schema-derived where the source is a series (see `column-names.ts`, which
+ * also explains why a loosely-typed series still accepts any string).
+ *
+ * Members, in the order a reader meets them:
+ *
+ * - **`series` + `column`** — one bar per event. A `TimeSeries`
+ *   (interval/timeRange-keyed draws true spans; a point key derives width
+ *   from neighbour spacing), a `ValueSeries` (`series.byValue('dist')`), or a
+ *   **`ReadonlyMap<group, TimeSeries>`** (the
+ *   `partitionBy(…).aggregate(…).toMap()` shape) — for a `Map`, `column` names
+ *   the shared value column and the map's order is the stack order.
+ * - **`series` + `columns`** — a **wide** series stacked bottom → top (e.g.
+ *   `pivotByGroup` output). Invalid with a `Map` source: there the segments
+ *   *are* the groups, so use `column`.
+ * - **`bins` + `column` / `columns`** — `byColumn` bin records
+ *   (`Array<{ start, end, …aggregates }>`); the names are **aggregate
+ *   fields** of the record, not schema columns, so they stay `string`. Pair
+ *   with `ordinal` for a band axis.
+ * - **`categories`** — an ordered `{ label, value }[]`, one bar per category.
+ *   Takes **no** `column`/`columns` (each datum carries its own value).
+ *   Vertical puts the categories on the ordinal **x** axis (the container's
+ *   band scale); `orientation="horizontal"` puts them on **y** as unit slots
+ *   and the value on x, and a `<YAxis>` with no explicit `ticks` labels one
+ *   per category automatically ([PND-HCAT]).
+ *
+ * **Live charts:** `series.byValue(…)` / `.toMap()` mint fresh objects each
+ * call, so an inline `series={…}` re-registers this layer every render — on a
+ * frequently re-rendering chart, memoize the projection (`useMemo`).
+ */
+type BarChartSource<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> =
+  // Each series kind is its own member so the column names check against the
+  // schema actually passed — a single member carrying `NumericColumn<S> |
+  // ValueNumericColumn<VS>` widens to `string`, because only one of the two
+  // generics is ever inferred (see `spikes/charts-type-seam/`).
+  | {
+      series: TimeSeries<S> | ReadonlyMap<string, TimeSeries<S>>;
+      column: NumericColumn<S>;
+      columns?: never;
+      bins?: never;
+      categories?: never;
+    }
+  | {
+      series: ValueSeries<VS>;
+      column: ValueNumericColumn<VS>;
+      columns?: never;
+      bins?: never;
+      categories?: never;
+    }
+  | {
+      series: TimeSeries<S>;
+      columns: readonly NumericColumn<S>[];
+      column?: never;
+      bins?: never;
+      categories?: never;
+    }
+  | {
+      series: ValueSeries<VS>;
+      columns: readonly ValueNumericColumn<VS>[];
+      column?: never;
+      bins?: never;
+      categories?: never;
+    }
+  | {
+      bins: readonly BinRecord[];
+      column: string;
+      columns?: never;
+      series?: never;
+      categories?: never;
+    }
+  | {
+      bins: readonly BinRecord[];
+      columns: readonly string[];
+      column?: never;
+      series?: never;
+      categories?: never;
+    }
+  | {
+      categories: readonly CategoryDatum[];
+      series?: never;
+      bins?: never;
+      column?: never;
+      columns?: never;
+    };
+
+/** The props every {@link BarChartSource} mode shares. */
+export interface BarChartCommon<
   S extends SeriesSchema = SeriesSchema,
   VS extends ValueSeriesSchema = ValueSeriesSchema,
 > {
-  /**
-   * The source series. Provide **exactly one** of `series` or `bins`.
-   *
-   * - A **`TimeSeries`** (interval / timeRange-keyed is the primary form — each
-   *   event's key `[begin, end]` is a bar's x-span; a point-keyed series derives
-   *   its width from neighbour spacing) → single-series bars via `column`, or
-   *   stacked bars from a **wide** series via `columns`.
-   * - A **`ValueSeries`** (`series.byValue('dist')`) bars against its value axis.
-   * - A **`ReadonlyMap<group, TimeSeries>`** — one series per stack group, all on
-   *   the same bin grid, the shape
-   *   `series.partitionBy('host', { groups }).aggregate(seq, m).toMap()` returns.
-   *   Stacked bars, `column` names the shared value column, groups = map order.
-   *
-   * **Live charts:** `series.byValue(…)` / `.toMap()` mint fresh objects each
-   * call, so an inline `series={…}` re-registers this layer every render — on a
-   * frequently re-rendering chart, memoize the projection (`useMemo`).
-   */
-  series?: TimeSeries<S> | ValueSeries<VS> | ReadonlyMap<string, TimeSeries<S>>;
-  /**
-   * `byColumn` **bin records** — `Array<{ start, end, …aggregates }>` from a
-   * value-band aggregation
-   * (`series.byColumn('power', { width: 20 }, { seconds: … })`). The value-axis
-   * alternative to `series`: `column` / `columns` name the aggregate field(s) to
-   * draw. Pair with `ordinal` for a category (band) axis.
-   */
-  bins?: readonly BinRecord[];
-  /**
-   * **Categorical** data — an ordered `{ label, value }[]`, one bar per category
-   * on a first-class **ordinal category x-axis** (the container infers
-   * `xKind:'category'` and builds a band scale over the labels). The transpose
-   * view's "columns on x": each `label` is a category (ticker / account / zone),
-   * `value` its bar height. Provide **exactly one** of `series` / `bins` /
-   * `categories`; `categories` takes no `column`/`columns` and is **vertical only**
-   * (categories on x). Colour per category via `binColors`. (Categorical-axis RFC,
-   * Phase 1.)
-   */
-  categories?: readonly CategoryDatum[];
-  /** Name of the numeric value column for the bar height (single series). Provide
-   *  `column` **or** `columns`, not both. */
-  column?: string;
-  /**
-   * Stacked-segment columns, **bottom → top** — one segment per name. Use with a
-   * **wide** `series` (e.g. `pivotByGroup` output) or with `bins`. Mutually
-   * exclusive with `column`, and invalid with a `Map` series (there the segments
-   * are the map's groups; use `column`).
-   */
-  columns?: readonly string[];
   /**
    * The single series' semantic identifier — what the data _is_. The theme maps
    * it to a {@link BarStyle} (`theme.bar[as] ?? theme.bar.default`). **Single
@@ -131,7 +178,10 @@ export interface BarChartProps<
    * - `'vertical'` — bars grow **up** from a value baseline, bins on the **x**
    *   axis (time buckets, value bands). The column / time-histogram look.
    * - `'horizontal'` — bars grow **right**, bins on the **y** axis (a band axis
-   *   like heart-rate zones). Label the bands with `<YAxis ticks={[{ at, label }]}>`.
+   *   like heart-rate zones). Label the bands with `<YAxis ticks={[{ at, label }]}>`
+   *   — or, with `categories`, let the `<YAxis>` derive them ([PND-HCAT]): a
+   *   horizontal categorical chart hands the axis its names and they land one
+   *   per slot, so a funnel / ranking needs no hand-built tick list.
    *
    * A `'horizontal'` chart puts the **value** on the shared x axis, so its
    * container's x-kind is `'value'` — it cannot share a `<ChartContainer>` with
@@ -199,6 +249,18 @@ export interface BarChartProps<
    */
   index?: number;
 }
+
+/**
+ * `<BarChart>`'s props: the shared knobs ({@link BarChartCommon}) plus
+ * **exactly one** legal source shape ({@link BarChartSource}). Mixing sources
+ * (`series` + `bins`) or column forms (`column` + `columns`) is a **compile**
+ * error, and a column name that isn't in the series' schema fails to compile
+ * too — both were runtime throws before [PND-CHARTAPI].
+ */
+export type BarChartProps<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> = BarChartCommon<S, VS> & BarChartSource<S, VS>;
 
 /** Discriminated build result: a single-series bar view or a stacked one. */
 type BarShape =
@@ -298,11 +360,6 @@ export function BarChart<
         '<BarChart categories> takes no `column`/`columns` (each datum carries its own value)',
       );
     }
-    if (orientation === 'horizontal') {
-      throw new Error(
-        '<BarChart categories> is vertical only (categories on x); horizontal category axes are not yet supported',
-      );
-    }
   }
   const isMap = series instanceof Map;
   if (isMap && columns !== undefined) {
@@ -316,7 +373,15 @@ export function BarChart<
 
   // The single series' semantic label (its identity for the readout + selection):
   // the `as` role, else the value column. Used only on the single path.
-  const label = semantic ?? column ?? id ?? 'value';
+  //
+  // [PND-BARSEM] normalizes a ONE-ENTRY `columns` onto that path, and its mark
+  // is the same mark `column` would name — so the lone entry stands in here,
+  // or `columns={['a']}` and `column="a"` would report different `SelectInfo.label`
+  // for the identical bar (found in review of #593).
+  const soleColumn =
+    column ??
+    (columns !== undefined && columns.length === 1 ? columns[0] : undefined);
+  const label = semantic ?? soleColumn ?? id ?? 'value';
 
   // Build the chart-ready data view. Single-series *vertical* stays on the
   // original BarSeries path (its pixels are unchanged); everything else — any
@@ -334,6 +399,17 @@ export function BarChart<
       if (cols === undefined) {
         throw new Error('<BarChart bins> needs `column` or `columns`');
       }
+      // [PND-BARSEM]: a ONE-column vertical histogram draws the same mark as a
+      // `series`+`column` chart, so it takes the same path — and with it the
+      // whole-slot hit target, the hover colour, the cursor readout and
+      // per-bar decimation. Capabilities follow what is drawn, not which prop
+      // produced it. Horizontal keeps the transposed stacked path.
+      if (cols.length === 1 && orientation !== 'horizontal') {
+        return {
+          kind: 'single',
+          bs: barsFromBins(bins, cols[0]!, { ordinal }),
+        };
+      }
       return { kind: 'stacked', ss: stacksFromBins(bins, cols, { ordinal }) };
     }
     if (isMap) {
@@ -350,6 +426,19 @@ export function BarChart<
     }
     const s = series as TimeSeries<S> | ValueSeries<VS>;
     if (columns !== undefined) {
+      // [PND-BARSEM]: a one-entry `columns` is a single series wearing the
+      // stack's clothes — same mark, so the same capabilities (see the `bins`
+      // branch above).
+      if (columns.length === 1 && orientation !== 'horizontal') {
+        const only = columns[0]!;
+        return {
+          kind: 'single',
+          bs:
+            s instanceof ValueSeries
+              ? barsFromValueSeries(s, only)
+              : barsFromTimeSeries(s, only),
+        };
+      }
       return { kind: 'stacked', ss: stacksFromColumns(s, columns) };
     }
     if (column === undefined) {
@@ -424,8 +513,27 @@ export function BarChart<
 
   const { bar } = container.theme;
   // Single-series style: the `as` role → theme bar style (the single channel).
-  const singleStyle =
-    (semantic !== undefined ? bar[semantic] : undefined) ?? bar.default;
+  //
+  // A shape [PND-BARSEM] normalized onto this path (a one-column `bins`, a
+  // one-entry `columns`) used to resolve its fill through the *stacked*
+  // channel — `colors[group] ?? theme.bar[group] ?? default` — so resolving
+  // only `as` here would silently drop a caller's `colors` map and the
+  // `theme.bar[<column>]` role, changing the bars' colour with no error
+  // (found in review of #593). The column name is that shape's group name, so
+  // the same three-step lookup is applied, `as` still winning when given.
+  const singleStyle = useMemo(() => {
+    const byRole = semantic !== undefined ? bar[semantic] : undefined;
+    if (byRole !== undefined) return byRole;
+    if (soleColumn !== undefined) {
+      const override = colors?.[soleColumn];
+      const byColumn = bar[soleColumn];
+      if (override !== undefined) {
+        return { ...(byColumn ?? bar.default), fill: override };
+      }
+      if (byColumn !== undefined) return byColumn;
+    }
+    return bar.default;
+  }, [bar, semantic, soleColumn, colors]);
   const gapPx = gap ?? bar.default.gap;
   // The stacked path's bar-thickness floor comes from `bar.default` (not the `as`
   // role — `as` is single-series only), matching how `gapPx` sources its default.
@@ -585,8 +693,13 @@ export function BarChart<
         ...(binBuckets !== null ? { binIntervals: () => binBuckets } : {}),
         // A categorical chart hands the container its ordered category names — the
         // ordinal axis domain the shared band scale + label formatter build on.
+        // Categorical labels go to the axis the categories actually land on:
+        // x for a vertical chart (the container's band scale), y for a
+        // horizontal one, where they label the unit slots ([PND-HCAT]).
         ...(categoryLabels !== null
-          ? { xCategories: () => categoryLabels }
+          ? vertical
+            ? { xCategories: () => categoryLabels }
+            : { binCategories: () => categoryLabels }
           : {}),
         // No x-scrub flag for a stack / horizontal chart — hover + click read it
         // out instead (the flag is single-series-vertical only).
