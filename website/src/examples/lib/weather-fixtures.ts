@@ -268,11 +268,13 @@ export function windRose(month?: number): readonly CategoryDatum[] {
   const key = month ?? -1;
   const cached = roseCache.get(key);
   if (cached) return cached;
-  const months = month === undefined ? SEA_WIND_HOURS.map((_, m) => m) : [month];
+  const months =
+    month === undefined ? SEA_WIND_HOURS.map((_, m) => m) : [month];
   const hours = months.reduce((a, m) => a + MONTH_HOURS[m]!, 0);
   const rose = WIND_SECTORS.map((label, s) => ({
     label,
-    value: (100 * months.reduce((a, m) => a + SEA_WIND_HOURS[m]![s]!, 0)) / hours,
+    value:
+      (100 * months.reduce((a, m) => a + SEA_WIND_HOURS[m]![s]!, 0)) / hours,
   }));
   roseCache.set(key, rose);
   return rose;
@@ -283,11 +285,15 @@ export function windOtherPct(month?: number): {
   calm: number;
   variable: number;
 } {
-  const months = month === undefined ? SEA_WIND_HOURS.map((_, m) => m) : [month];
+  const months =
+    month === undefined ? SEA_WIND_HOURS.map((_, m) => m) : [month];
   const hours = months.reduce((a, m) => a + MONTH_HOURS[m]!, 0);
   const pct = (source: readonly number[]) =>
     (100 * months.reduce((a, m) => a + source[m]!, 0)) / hours;
-  return { calm: pct(SEA_WIND_CALM_HOURS), variable: pct(SEA_WIND_VARIABLE_HOURS) };
+  return {
+    calm: pct(SEA_WIND_CALM_HOURS),
+    variable: pct(SEA_WIND_VARIABLE_HOURS),
+  };
 }
 
 /** The tallest sector in any single month, as a percentage — the fixed y-axis

@@ -93,12 +93,33 @@ side, and each layer names the axis it scales against:
 
 ```tsx
 <ChartRow height={220}>
-  <YAxis id="mm" side="left" label="mm/day" format=",.0f" width={46} min={0} max={25} />
+  <YAxis
+    id="mm"
+    side="left"
+    label="mm/day"
+    format=",.0f"
+    width={46}
+    min={0}
+    max={25}
+  />
   <Layers>
     <BarChart series={series} column="precip" axis="mm" gap={1} />
-    <LineChart series={series} column="cumulative" axis="total" as="secondary" />
+    <LineChart
+      series={series}
+      column="cumulative"
+      axis="total"
+      as="secondary"
+    />
   </Layers>
-  <YAxis id="total" side="right" label="mm this year" format=",.0f" width={62} min={0} max={818} />
+  <YAxis
+    id="total"
+    side="right"
+    label="mm this year"
+    format=",.0f"
+    width={62}
+    min={0}
+    max={818}
+  />
 </ChartRow>
 ```
 
@@ -150,7 +171,7 @@ const [range, setRange] = useState(SEA_BOUNDS);
   wheel-zoom still works. Set **`regionSelectModifier="shift"`** to reverse the
   priority: plain drag pans, shift-drag selects.
 - **The range must be controlled.** Uncontrolled, the container holds the view
-  itself and *ignores later `range` props by design*, so they can't fight a
+  itself and _ignores later `range` props by design_, so they can't fight a
   user's pan — which also means `onRegionSelect` would have nothing to write
   to. Hold it in state, feed `onTimeRangeChange` back into it.
 - **`bounds`** is the outer pan/zoom extent. Pinned to 2024, no gesture can
@@ -169,15 +190,15 @@ when the two quantities don't genuinely belong in the same rectangle.
 
 ## Options to try
 
-| Option                            | What it does                                         | Reach for it when                                                        |
-| --------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------ |
-| `regionSelectModifier="shift"`    | Plain drag pans; shift-drag selects a span           | Panning is the commoner gesture for your readers                         |
-| `cursor="crosshair"`              | A crosshair and one axis-pinned value pill instead   | Reading exact values matters more than selecting spans (it replaces it)  |
-| `onTrackerChanged`                | Every layer's value at the cursor, outside the chart | You need both axes' numbers at once — an in-chart pill only reads one    |
-| A second `<ChartRow>`             | Daily and total in stacked rows, one time axis       | The two units don't belong in one rectangle after all                    |
-| `<AreaChart baseline={0}>`        | Fills the running total instead of stroking it       | The total is the subject and the daily bars are context                  |
-| `binColors` on the bars           | One colour per bar, from your own rule               | Flagging days over a threshold, or colouring by season                   |
-| `aggregate` on a calendar month   | Twelve monthly totals instead of 366 daily bars      | The daily texture is noise for the question you're asking                |
+| Option                          | What it does                                         | Reach for it when                                                       |
+| ------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------- |
+| `regionSelectModifier="shift"`  | Plain drag pans; shift-drag selects a span           | Panning is the commoner gesture for your readers                        |
+| `cursor="crosshair"`            | A crosshair and one axis-pinned value pill instead   | Reading exact values matters more than selecting spans (it replaces it) |
+| `onTrackerChanged`              | Every layer's value at the cursor, outside the chart | You need both axes' numbers at once — an in-chart pill only reads one   |
+| A second `<ChartRow>`           | Daily and total in stacked rows, one time axis       | The two units don't belong in one rectangle after all                   |
+| `<AreaChart baseline={0}>`      | Fills the running total instead of stroking it       | The total is the subject and the daily bars are context                 |
+| `binColors` on the bars         | One colour per bar, from your own rule               | Flagging days over a threshold, or colouring by season                  |
+| `aggregate` on a calendar month | Twelve monthly totals instead of 366 daily bars      | The daily texture is noise for the question you're asking               |
 
 That last one is worth spelling out, because the obvious guess is wrong twice.
 There is no `rollup`, and **there is no month duration** — pond's
@@ -188,9 +209,12 @@ buckets are a `Sequence`:
 ```ts
 import { Sequence } from 'pond-ts';
 
-const monthly = series.aggregate(Sequence.calendar('month', { timeZone: 'UTC' }), {
-  precip: 'sum',
-});
+const monthly = series.aggregate(
+  Sequence.calendar('month', { timeZone: 'UTC' }),
+  {
+    precip: 'sum',
+  },
+);
 // 12 buckets: Jan 165.8 mm, Feb 97.8, … Jul 4.1, … Dec 139.5 — 818.0 mm in all
 ```
 

@@ -1,6 +1,15 @@
 import { useMemo, useState } from 'react';
-import { BarChart, ChartContainer, ChartRow, Layers, YAxis } from '@pond-ts/charts';
-import { useSiteChartTheme, useSequentialRamp } from '@site/src/theme/useSiteChartTheme';
+import {
+  BarChart,
+  ChartContainer,
+  ChartRow,
+  Layers,
+  YAxis,
+} from '@pond-ts/charts';
+import {
+  useSiteChartTheme,
+  useSequentialRamp,
+} from '@site/src/theme/useSiteChartTheme';
 import {
   STRIPES_BOUNDS,
   anomalyAt,
@@ -45,8 +54,9 @@ export default function GalleryClimateStripes({
 
   const colors = useMemo(
     () =>
-      Array.from(series.column('anomaly').toFloat64Array(), (anomaly) =>
-        ramp[anomalyStep(anomaly, ramp.length)],
+      Array.from(
+        series.column('anomaly').toFloat64Array(),
+        (anomaly) => ramp[anomalyStep(anomaly, ramp.length)],
       ),
     [series, ramp],
   );
@@ -54,7 +64,8 @@ export default function GalleryClimateStripes({
   const [first, last] = STRIPES_BOUNDS;
   // Out-and-back rather than wrapping: a window that jumped back to the start
   // once a loop would read as a glitch (see `scanWindow`'s own note).
-  const grow = phase === undefined ? 1 : phase < 0.5 ? phase * 2 : (1 - phase) * 2;
+  const grow =
+    phase === undefined ? 1 : phase < 0.5 ? phase * 2 : (1 - phase) * 2;
   const span = 60 * YEAR_MS + grow * (last - first - 60 * YEAR_MS);
 
   const anomaly = year === null ? null : anomalyAt(year);
@@ -93,9 +104,7 @@ export default function GalleryClimateStripes({
         width={width}
         theme={theme}
         onTrackerChanged={(info) =>
-          setYear(
-            info === null ? null : new Date(info.time).getUTCFullYear(),
-          )
+          setYear(info === null ? null : new Date(info.time).getUTCFullYear())
         }
       >
         <ChartRow height={200}>

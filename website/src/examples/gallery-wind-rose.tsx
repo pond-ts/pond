@@ -30,7 +30,8 @@ export default function GalleryWindRose({
   phase?: number;
 }) {
   const theme = useSiteChartTheme();
-  const month = phase === undefined ? undefined : Math.min(11, Math.floor(phase * 12));
+  const month =
+    phase === undefined ? undefined : Math.min(11, Math.floor(phase * 12));
   const rose = windRose(month);
 
   return (
@@ -61,7 +62,9 @@ export default function GalleryWindRose({
         </Layers>
       </ChartRow>
       <CategoryAxis
-        label={month === undefined ? 'All of 2024' : `${MONTH_NAMES[month]} 2024`}
+        label={
+          month === undefined ? 'All of 2024' : `${MONTH_NAMES[month]} 2024`
+        }
       />
     </ChartContainer>
   );

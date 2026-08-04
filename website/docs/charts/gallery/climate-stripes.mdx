@@ -92,7 +92,13 @@ Then the chart, which is mostly an exercise in taking things away:
         chart isn't showing. */}
     <YAxis id="stripe" min={0} max={1} width={0} ticks={[]} />
     <Layers>
-      <BarChart series={series} column="stripe" axis="stripe" binColors={colors} gap={0} />
+      <BarChart
+        series={series}
+        column="stripe"
+        axis="stripe"
+        binColors={colors}
+        gap={0}
+      />
     </Layers>
   </ChartRow>
 </ChartContainer>
@@ -134,14 +140,14 @@ whose drawn value is a layout device — the in-chart pill is the wrong tool and
 
 ## Options to try
 
-| Option                                  | What it does                                       | Reach for it when                                                             |
-| --------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------ |
-| A diverging ramp instead of sequential  | Cold and warm as two hues meeting at zero          | The quantity straddles a meaningful zero — which an anomaly does               |
-| `useSequentialRamp(4)`                  | Fewer, wider steps, spread across the whole ramp   | You want a coarser reading, or the eight steps aren't distinguishable at size  |
-| Draw `anomaly` and drop the `width={0}` | Puts a real value axis back, bar height = anomaly  | You'd rather encode the value as height and keep colour as reinforcement       |
-| `gap={1}`                               | Hairline separations between stripes               | The reader should count years rather than read a gradient                      |
-| `cursor="region"`                        | Shades the whole stripe under the pointer          | The stripe itself should light up, rather than a line running through it       |
-| `<Marker>` at a notable year            | An annotated callout in the annotation register    | One year needs naming — a Pinatubo dip, an El Niño peak                        |
+| Option                                  | What it does                                      | Reach for it when                                                             |
+| --------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------- |
+| A diverging ramp instead of sequential  | Cold and warm as two hues meeting at zero         | The quantity straddles a meaningful zero — which an anomaly does              |
+| `useSequentialRamp(4)`                  | Fewer, wider steps, spread across the whole ramp  | You want a coarser reading, or the eight steps aren't distinguishable at size |
+| Draw `anomaly` and drop the `width={0}` | Puts a real value axis back, bar height = anomaly | You'd rather encode the value as height and keep colour as reinforcement      |
+| `gap={1}`                               | Hairline separations between stripes              | The reader should count years rather than read a gradient                     |
+| `cursor="region"`                       | Shades the whole stripe under the pointer         | The stripe itself should light up, rather than a line running through it      |
+| `<Marker>` at a notable year            | An annotated callout in the annotation register   | One year needs naming — a Pinatubo dip, an El Niño peak                       |
 
 ## See also
 

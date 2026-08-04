@@ -71,7 +71,13 @@ The whole chart is one `<BandChart>` naming the two columns that bound it:
 ```tsx
 <ChartContainer range={SEA_BOUNDS} width={640} theme={theme}>
   <ChartRow height={220}>
-    <YAxis id="c" side="right" label="temperature (°C)" format=",.0f" width={44} />
+    <YAxis
+      id="c"
+      side="right"
+      label="temperature (°C)"
+      format=",.0f"
+      width={44}
+    />
     <Layers>
       <BandChart series={daily} lower="low" upper="high" axis="c" as="outer" />
     </Layers>
@@ -128,14 +134,14 @@ passing.
 
 ## Options to try
 
-| Option                                     | What it does                                              | Reach for it when                                                                  |
-| ------------------------------------------ | --------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `panZoom="panZoom"` + a controlled `range` | Drag to pan, wheel to zoom                                | The reader should go looking — needs `onTimeRangeChange` to hold the range in state |
-| A second `<BandChart as="inner">`          | A tighter band nested inside the wide one                 | You have percentiles as well as extremes — p25/p75 inside p5/p95                    |
-| `<Baseline value={0}>`                     | A reference line in the annotation register, not a data hue | Freezing point, an SLA, a budget — a threshold the data is judged against          |
-| `curve="basis"` on the line                | Rounds the centreline's corners                           | The line is already an average and its corners are sampling artefacts               |
-| `cursor="flag"`                            | A per-layer value chip instead of one axis pill           | You want every layer's number at once — note it draws one chip **per layer**        |
-| `format` on the `<YAxis>`                  | Any [d3-format](https://d3js.org/d3-format) specifier     | Fahrenheit, a decimal place, a degree suffix                                        |
+| Option                                     | What it does                                                | Reach for it when                                                                   |
+| ------------------------------------------ | ----------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `panZoom="panZoom"` + a controlled `range` | Drag to pan, wheel to zoom                                  | The reader should go looking — needs `onTimeRangeChange` to hold the range in state |
+| A second `<BandChart as="inner">`          | A tighter band nested inside the wide one                   | You have percentiles as well as extremes — p25/p75 inside p5/p95                    |
+| `<Baseline value={0}>`                     | A reference line in the annotation register, not a data hue | Freezing point, an SLA, a budget — a threshold the data is judged against           |
+| `curve="basis"` on the line                | Rounds the centreline's corners                             | The line is already an average and its corners are sampling artefacts               |
+| `cursor="flag"`                            | A per-layer value chip instead of one axis pill             | You want every layer's number at once — note it draws one chip **per layer**        |
+| `format` on the `<YAxis>`                  | Any [d3-format](https://d3js.org/d3-format) specifier       | Fahrenheit, a decimal place, a degree suffix                                        |
 
 ## See also
 

@@ -38,11 +38,26 @@ const LCD_URL =
   `&stations=${SEA_WBAN}&startDate=${YEAR}-01-01&endDate=${YEAR}-12-31` +
   `&dataTypes=HourlyWindDirection,HourlyWindSpeed&format=json`;
 
-const GISTEMP_URL = 'https://data.giss.nasa.gov/gistemp/tabledata_v4/GLB.Ts+dSST.csv';
+const GISTEMP_URL =
+  'https://data.giss.nasa.gov/gistemp/tabledata_v4/GLB.Ts+dSST.csv';
 
 const SECTORS = [
-  'N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE',
-  'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW',
+  'N',
+  'NNE',
+  'NE',
+  'ENE',
+  'E',
+  'ESE',
+  'SE',
+  'SSE',
+  'S',
+  'SSW',
+  'SW',
+  'WSW',
+  'W',
+  'WNW',
+  'NW',
+  'NNW',
 ];
 
 // data.giss.nasa.gov 403s a bare `fetch` (no UA); NCEI doesn't care.
@@ -135,7 +150,8 @@ async function main() {
   const totalMm = prcp.reduce((a, v) => a + (v ?? 0), 0);
   const dryDays = prcp.filter((v) => v === 0).length;
   const wettest = prcp.reduce(
-    (best, v, i) => ((v ?? -1) > (best.mm ?? -1) ? { mm: v, day: days[i] } : best),
+    (best, v, i) =>
+      (v ?? -1) > (best.mm ?? -1) ? { mm: v, day: days[i] } : best,
     { mm: null, day: null },
   );
 
@@ -167,7 +183,10 @@ async function main() {
 
   // ---- 3. GISTEMP global annual anomaly ----------------------------------
   const csv = await getText(GISTEMP_URL);
-  const rows = csv.split('\n').slice(1).map((l) => l.split(','));
+  const rows = csv
+    .split('\n')
+    .slice(1)
+    .map((l) => l.split(','));
   const head = rows[0];
   const jd = head.indexOf('J-D');
   const anomalies = [];
@@ -274,13 +293,16 @@ ${wrap(prcp)}
 
 /** The 16 compass sectors, clockwise from north — \`SEA_WIND_HOURS\`' inner axis. */
 export const WIND_SECTORS = [
-  ${SECTORS.map((s) => `'${s}'`).join(', ')},
+${SECTORS.map((s) => `  '${s}',`).join('\n')}
 ] as const;
 
 /**
  * Hourly observations per **[month][sector]** — 12 rows (January first), each
  * 16 counts clockwise from north. Sums to
- * ${counts.flat().reduce((a, b) => a + b, 0).toLocaleString('en-US')} directed
+ * ${counts
+   .flat()
+   .reduce((a, b) => a + b, 0)
+   .toLocaleString('en-US')} directed
  * hours; the calm and variable hours below are the rest of the
  * ${observed.toLocaleString('en-US')} observations, so
  * \`sector + calm + variable\` is the month's denominator.

@@ -157,7 +157,22 @@ export const SEA_PRCP_MM: ReadonlyArray<number | null> = [
 
 /** The 16 compass sectors, clockwise from north — `SEA_WIND_HOURS`' inner axis. */
 export const WIND_SECTORS = [
-  'N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW',
+  'N',
+  'NNE',
+  'NE',
+  'ENE',
+  'E',
+  'ESE',
+  'SE',
+  'SSE',
+  'S',
+  'SSW',
+  'SW',
+  'WSW',
+  'W',
+  'WNW',
+  'NW',
+  'NNW',
 ] as const;
 
 /**
