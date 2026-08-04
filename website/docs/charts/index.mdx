@@ -17,26 +17,30 @@ declarative layout.
   <ChartsHero />
 </ChartExample>
 
-Three weeks of stream discharge on a 15-minute interval — 2,016 samples, drawn
-to canvas. Five storms, each rising in hours and receding over days, on a
-baseflow that never quite returns to where it started. Move the pointer for a
-crosshair and a value on the axis; drag to pan, wheel to zoom, both stopped at
-the ends of the record. It's live, not a screenshot.
+Two days of household electricity demand at one-minute resolution — 2,880
+samples, every one of them a point on the canvas. Quiet overnight, a sharp
+breakfast peak, a long cooking-hours evening. Move the pointer for a crosshair
+and a value on the axis; drag to pan, wheel to zoom, both stopped at the ends
+of the record. It's live, not a screenshot.
 
-**One column is doing all of that.** `cfs` is the only data. The pale envelope
-is each day's min–max, the line through it is the day's mean, and the gauge
-itself is the hairline threading between them — a texture at this zoom, a
-trace once you zoom in. The envelope and the trend aren't a second dataset
-prepared somewhere else; they're a single pond `rolling()` call, emitting three
-columns from the one source column and handing them to two more draw layers:
+**One column is doing all of that.** `kw` is the only data. Demand at this
+resolution isn't a smooth signal with noise on it — it's a _sum of
+rectangles_, because a kettle is 2.6 kW for three minutes and nothing in
+between — so the raw minutes are drawn as a **scatter** rather than a
+polyline, which would spend most of its ink on vertical strokes between
+samples that aren't a transition through anything. The pale envelope is each
+hour's min–max and the line through it is the hour's mean. Neither is a
+second dataset prepared somewhere else; they're a single pond `rolling()`
+call, emitting three columns from the one source column and handing them to
+two more draw layers:
 
 ```ts
-const rolled = gauge.rolling(
-  '24h',
+const rolled = demand.rolling(
+  '1h',
   {
-    mean: { from: 'cfs', using: 'avg' },
-    lo: { from: 'cfs', using: 'min' },
-    hi: { from: 'cfs', using: 'max' },
+    mean: { from: 'kw', using: 'avg' },
+    lo: { from: 'kw', using: 'min' },
+    hi: { from: 'kw', using: 'max' },
   },
   { alignment: 'centered' },
 );
@@ -48,12 +52,19 @@ and draw layers as React components, and the canvas renderer does the drawing.
 No chart-library data model to adapt to; no imperative escape hatch for
 interaction.
 
-The discharge is **modelled, not measured** — no gauge record is redistributed
-here. It's built from the standard hydrological decomposition (baseflow
-recession, a Nash/SCS unit hydrograph per storm, recharge, a diurnal
-evapotranspiration cycle), which is why it has the sharp-up/slow-down asymmetry
-a real record has; see
-[the fixture](https://github.com/pond-ts/pond/blob/main/website/src/examples/lib/river-gauge.ts).
+The break on the first afternoon is a ninety-minute recorder outage, carried as
+`undefined` rather than zero — the scatter simply has no points there and the
+trend line breaks, instead of both diving to the floor and inventing an hour
+and a half of a switched-off house. That distinction is the whole of
+[Missing data & gaps](./gaps).
+
+The demand is **modelled, not measured**. It's shaped after the UCI
+[_Individual household electric power consumption_](https://archive.ics.uci.edu/dataset/235/individual+household+electric+power+consumption)
+set (CC BY 4.0) — one house, one-minute active power in kW, 2,075,259 rows,
+~1.25% of them missing — but none of its rows are redistributed here. The
+numbers are generated from how domestic load forms: a standby floor, a fridge
+duty-cycling against it, and discrete appliance runs on top. See
+[the fixture](https://github.com/pond-ts/pond/blob/main/website/src/examples/lib/household-power.ts).
 
 **Install** — `npm install @pond-ts/charts pond-ts @pond-ts/react react react-dom`.
 Peer-depends on `pond-ts`, `@pond-ts/react`, and `react`; the pond packages

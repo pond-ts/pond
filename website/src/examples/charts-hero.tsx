@@ -6,10 +6,11 @@ import {
   ChartRow,
   Layers,
   LineChart,
+  ScatterChart,
   YAxis,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
-import { riverGauge } from './lib/river-gauge';
+import { householdPower } from './lib/household-power';
 
 /** Width from the container rather than a fixed pixel count — `width` is an
  *  explicit number, so responsiveness is one `ResizeObserver` away. See the
@@ -32,65 +33,82 @@ function useMeasuredWidth<T extends HTMLElement>() {
 
 const ROW_HEIGHT = 260;
 
-/** A full day. Short enough to follow a storm, long enough that the envelope
- *  is the day's actual min–max range and the trend visibly *lags* a rising
- *  limb rather than tracing it — which is the whole reason to draw both. */
-const WINDOW = '24h';
+/** One hour. Long enough to swallow a kettle and read as the household's
+ *  underlying demand, short enough to still separate breakfast from dinner. */
+const WINDOW = '1h';
 
-/** Three weeks of 15-minute stream discharge, drawn three ways from **one**
- *  column.
+/** Two days of one-minute household demand: every raw minute as a point, with
+ *  an hourly envelope and trend rolled through it.
  *
- *  The point of the composition is that `cfs` is the only data. The envelope
- *  and the trend aren't a second dataset prepared elsewhere — they're a single
- *  `rolling()` call, emitting three columns off the same source column via the
- *  `{ from, using }` spec, feeding two more draw layers. That's the pond
- *  pipeline running right up to the plot.
+ *  `kw` is the only data. The envelope and the trend aren't a second dataset
+ *  prepared elsewhere — they're a single `rolling()` call emitting three
+ *  columns off the same source column via the `{ from, using }` spec, feeding
+ *  two more draw layers. That's the pond pipeline running right up to the plot.
  *
- *  Layer order matters: the envelope fills first, the raw gauge trace draws
- *  over it as a grey hairline, and the trend sits on top. Painting the band
- *  last would bury the texture it's summarising.
+ *  **Why scatter and not a line.** Minute-resolution demand is a sum of
+ *  rectangles — a kettle is 2.6 kW for three minutes — so a polyline spends
+ *  most of its ink on vertical strokes between samples that aren't a
+ *  transition through anything. Points say what's actually there: a dense
+ *  floor, and events standing off it.
  *
- *  Discharge is **modelled**, not measured — see `lib/river-gauge.ts`. */
+ *  Layer order matters. The envelope fills first, the raw cloud draws over it,
+ *  and the trend sits on top; painting the band last would bury the texture
+ *  it's summarising.
+ *
+ *  The gap on the first afternoon is a recorder dropout carried as
+ *  `undefined`, not zero — the band and the trend both step around it rather
+ *  than diving to the floor.
+ *
+ *  Demand is **modelled**, not measured — see `lib/household-power.ts`. */
 export default function ChartsHero() {
   const theme = useSiteChartTheme();
   const [boxRef, width] = useMeasuredWidth<HTMLDivElement>();
 
-  const gauge = useMemo(() => riverGauge(), []);
+  const demand = useMemo(() => householdPower(), []);
 
-  // One pass over the gauge column produces all three derived series. `{ from,
+  // One pass over the `kw` column produces all three derived columns. `{ from,
   // using }` is what lets three outputs share one source column — the bare
-  // `{ cfs: 'avg' }` form can only name the column once.
+  // `{ kw: 'avg' }` form can only name the column once.
   const rolled = useMemo(
     () =>
-      gauge.rolling(
+      demand.rolling(
         WINDOW,
         {
-          mean: { from: 'cfs', using: 'avg' },
-          lo: { from: 'cfs', using: 'min' },
-          hi: { from: 'cfs', using: 'max' },
+          mean: { from: 'kw', using: 'avg' },
+          lo: { from: 'kw', using: 'min' },
+          hi: { from: 'kw', using: 'max' },
         },
         { alignment: 'centered' },
       ),
-    [gauge],
+    [demand],
   );
 
-  // Median flow for the baseline — the level the channel sits at between
-  // storms, which is the honest reference for "is this event big".
-  const median = useMemo(() => {
-    const sorted = Array.from(gauge.column('cfs').toFloat64Array()).sort(
-      (a, b) => a - b,
-    );
-    return sorted[sorted.length >> 1]!;
-  }, [gauge]);
+  // Mean demand over the record — what the meter averages to, and the honest
+  // reference for "is this spike big". Skips the dropout's `undefined`s, which
+  // is why this reads the column rather than a Float64Array (where a missing
+  // sample materializes as 0 and drags the mean down).
+  const mean = useMemo(() => {
+    const col = demand.column('kw');
+    let sum = 0;
+    let n = 0;
+    for (let i = 0; i < col.length; i++) {
+      const v = col.read(i);
+      if (v !== undefined) {
+        sum += v;
+        n += 1;
+      }
+    }
+    return n === 0 ? 0 : sum / n;
+  }, [demand]);
 
   // `bounds` is the outer pan/zoom extent — the view can't leave the record,
   // so a drag stops at the first and last sample instead of running into blank
   // canvas.
   const extent = useMemo(() => {
-    const range = gauge.timeRange();
+    const range = demand.timeRange();
     // `undefined` only for an empty series, which this fixture never is.
     return range ? ([range.begin(), range.end()] as [number, number]) : null;
-  }, [gauge]);
+  }, [demand]);
 
   return (
     <div ref={boxRef} style={{ width: '100%' }}>
@@ -102,17 +120,17 @@ export default function ChartsHero() {
           theme={theme}
           cursor="crosshair"
           panZoom="panZoom"
-          // Gridlines are `--pond-muted` at 0.28 and the raw gauge trace is the
-          // same colour at 0.55 — close enough that the grid reads as data.
-          // The envelope already gives the eye a reference, so drop it.
+          // Gridlines are `--pond-muted` at 0.28; the raw cloud is the brand
+          // hue at 0.3. Close enough in weight that the grid reads as another
+          // scatter of points. The envelope already gives the eye a reference.
           grid={false}
         >
           <ChartRow height={ROW_HEIGHT}>
             <YAxis
-              id="cfs"
+              id="kw"
               side="left"
-              label="discharge (cfs)"
-              format=",.0f"
+              label="active power (kW)"
+              format=",.1f"
               width={62}
             />
             <Layers>
@@ -120,15 +138,15 @@ export default function ChartsHero() {
                 series={rolled}
                 lower="lo"
                 upper="hi"
-                axis="cfs"
+                axis="kw"
                 as="outer"
               />
-              <LineChart series={gauge} column="cfs" axis="cfs" as="muted" />
-              <LineChart series={rolled} column="mean" axis="cfs" />
+              <ScatterChart series={demand} column="kw" axis="kw" as="raw" />
+              <LineChart series={rolled} column="mean" axis="kw" />
               <Baseline
-                value={median}
-                axis="cfs"
-                label={`median ${median.toFixed(0)}`}
+                value={mean}
+                axis="kw"
+                label={`mean ${mean.toFixed(2)} kW`}
                 indicator
               />
             </Layers>
