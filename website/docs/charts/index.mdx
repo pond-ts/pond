@@ -26,13 +26,14 @@ of the record. It's live, not a screenshot.
 **One column is doing all of that.** `kw` is the only data. Demand at this
 resolution isn't a smooth signal with noise on it — it's a _sum of
 rectangles_, because a kettle is 2.6 kW for three minutes and nothing in
-between — so the raw minutes are drawn as a **scatter** rather than a
-polyline, which would spend most of its ink on vertical strokes between
-samples that aren't a transition through anything. The pale envelope is each
-hour's min–max and the line through it is the hour's mean. Neither is a
-second dataset prepared somewhere else; they're a single pond `rolling()`
-call, emitting three columns from the one source column and handing them to
-two more draw layers:
+between. So the raw minutes get **two** layers: a scatter for where the samples
+actually are, and a faint line joining them. The vertical strokes a per-minute
+polyline is mostly made of are the reading here — each one is something
+switching on, and the flats between them are the rectangles it draws. Over the
+top, the pale envelope is each hour's min–max and the line through it is the
+hour's mean. Neither is a second dataset prepared somewhere else; they're a
+single pond `rolling()` call, emitting three columns from the one source column
+and handing them to two more draw layers:
 
 ```ts
 const rolled = demand.rolling(
@@ -53,10 +54,11 @@ No chart-library data model to adapt to; no imperative escape hatch for
 interaction.
 
 The break on the first afternoon is a ninety-minute recorder outage, carried as
-`undefined` rather than zero — the scatter simply has no points there and the
-trend line breaks, instead of both diving to the floor and inventing an hour
-and a half of a switched-off house. That distinction is the whole of
-[Missing data & gaps](./gaps).
+`undefined` rather than zero. The scatter has no points there and every line
+**breaks** — a connecting line is exactly the layer that would otherwise rule a
+confident straight edge across an hour and a half nobody measured, and zero
+would draw a switched-off house that never happened. That distinction is the
+whole of [Missing data & gaps](./gaps).
 
 The demand is **modelled, not measured**. It's shaped after the UCI
 [_Individual household electric power consumption_](https://archive.ics.uci.edu/dataset/235/individual+household+electric+power+consumption)

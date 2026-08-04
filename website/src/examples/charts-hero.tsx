@@ -45,19 +45,21 @@ const WINDOW = '1h';
  *  columns off the same source column via the `{ from, using }` spec, feeding
  *  two more draw layers. That's the pond pipeline running right up to the plot.
  *
- *  **Why scatter and not a line.** Minute-resolution demand is a sum of
- *  rectangles — a kettle is 2.6 kW for three minutes — so a polyline spends
- *  most of its ink on vertical strokes between samples that aren't a
- *  transition through anything. Points say what's actually there: a dense
- *  floor, and events standing off it.
+ *  **The raw minutes get two layers, not one.** Points alone say where the
+ *  samples are but not how they connect; a line alone, at a sample per minute,
+ *  is mostly vertical strokes. Drawn together the strokes become the reading:
+ *  those verticals are appliances switching, and the flats between them are
+ *  the rectangles they draw. The line is `muted` — a hairline at 55% — so it
+ *  stays connective tissue under the cloud rather than competing with it.
  *
- *  Layer order matters. The envelope fills first, the raw cloud draws over it,
- *  and the trend sits on top; painting the band last would bury the texture
- *  it's summarising.
+ *  Layer order matters. The envelope fills first, the raw line and its cloud
+ *  draw over it, and the trend sits on top; painting the band last would bury
+ *  the texture it's summarising.
  *
- *  The gap on the first afternoon is a recorder dropout carried as
- *  `undefined`, not zero — the band and the trend both step around it rather
- *  than diving to the floor.
+ *  The gap on the first afternoon is a recorder outage carried as `undefined`,
+ *  not zero. `LineChart` is gap-aware, so the raw line **breaks** there rather
+ *  than ruling a straight edge across ninety minutes it has no samples for —
+ *  which is the one thing a connecting line could otherwise quietly invent.
  *
  *  Demand is **modelled**, not measured — see `lib/household-power.ts`. */
 export default function ChartsHero() {
@@ -141,6 +143,7 @@ export default function ChartsHero() {
                 axis="kw"
                 as="outer"
               />
+              <LineChart series={demand} column="kw" axis="kw" as="muted" />
               <ScatterChart series={demand} column="kw" axis="kw" as="raw" />
               <LineChart series={rolled} column="mean" axis="kw" />
               <Baseline
