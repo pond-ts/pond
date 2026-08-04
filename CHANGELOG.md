@@ -107,6 +107,16 @@ include new features and type-level changes; patch bumps are strictly additive.
   in practice you had to pan or zoom a little to force the update. The same
   omission covered `sessionDividers` and `xKind`.
 
+- **charts:** the log axis's dev-mode warning no longer requires **node's
+  ambient types**. It was guarded by a bare `process.env.NODE_ENV`, which
+  typechecks only when a tool happens to resolve `@types/node` from a parent
+  `node_modules` — so `tsc` inside the package passed while running the _same_
+  tsconfig from a consumer's directory failed with `TS2591: Cannot find name
+'process'`. That took out the docs site's TypeDoc step, and would equally hit
+  any consumer typechecking the package's sources. The guard now lives in
+  `src/dev.ts` behind a local declaration and a `typeof` check, so a browser
+  bundle with no `process` global doesn't throw at import either.
+
 ## [0.55.0] — 2026-08-04
 
 ### Added
