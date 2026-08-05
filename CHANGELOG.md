@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
 include new features and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.55.0...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.56.0...HEAD
+[0.56.0]: https://github.com/pond-ts/pond/compare/v0.55.0...v0.56.0
 [0.55.0]: https://github.com/pond-ts/pond/compare/v0.54.0...v0.55.0
 [0.54.0]: https://github.com/pond-ts/pond/compare/v0.53.1...v0.54.0
 [0.53.1]: https://github.com/pond-ts/pond/compare/v0.53.0...v0.53.1
@@ -56,21 +57,7 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
-### Fixed
-
-- **core:** **a fractional epoch millisecond no longer crashes calendar
-  math.** `Temporal.Instant` refuses a non-integer epoch ms outright
-  (`epoch milliseconds must be an integer`), and `toPlainDateStart` passed
-  whatever it was given straight through — so realizing a `Sequence.calendar`
-  over a fractional range threw, and in a React app the exception unmounted the
-  page. A fraction is not a caller error: a chart's wheel-zoom derives its view
-  range from pixel positions via `xScale.invert()`, so an ordinary scroll
-  produces `1.7e12 + 0.37`. The instant is now floored to the millisecond
-  containing it — the epoch millisecond is this model's atomic unit and
-  calendar boundaries are themselves whole milliseconds, so the bucket
-  containing `t` and the one containing `t + 0.37` are necessarily the same,
-  and integer inputs are untouched. (`Math.floor`, not `Math.trunc`: pre-1970
-  they disagree, and `-5.5` lies inside the millisecond spanning `[-6, -5)`.)
+## [0.56.0] — 2026-08-05
 
 ### Added
 
@@ -146,6 +133,20 @@ include new features and type-level changes; patch bumps are strictly additive.
   still ships no palette.
 
 ### Fixed
+
+- **core:** **a fractional epoch millisecond no longer crashes calendar
+  math.** `Temporal.Instant` refuses a non-integer epoch ms outright
+  (`epoch milliseconds must be an integer`), and `toPlainDateStart` passed
+  whatever it was given straight through — so realizing a `Sequence.calendar`
+  over a fractional range threw, and in a React app the exception unmounted the
+  page. A fraction is not a caller error: a chart's wheel-zoom derives its view
+  range from pixel positions via `xScale.invert()`, so an ordinary scroll
+  produces `1.7e12 + 0.37`. The instant is now floored to the millisecond
+  containing it — the epoch millisecond is this model's atomic unit and
+  calendar boundaries are themselves whole milliseconds, so the bucket
+  containing `t` and the one containing `t + 0.37` are necessarily the same,
+  and integer inputs are untouched. (`Math.floor`, not `Math.trunc`: pre-1970
+  they disagree, and `-5.5` lies inside the millisecond spanning `[-6, -5)`.)
 
 - **charts:** toggling **`<ChartContainer grid>`** now repaints immediately.
   `Layers`' draw callback read `container.grid` but didn't depend on it, so
