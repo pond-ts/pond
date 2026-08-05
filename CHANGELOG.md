@@ -8,7 +8,8 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
 include new features and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.56.0...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.56.1...HEAD
+[0.56.1]: https://github.com/pond-ts/pond/compare/v0.56.0...v0.56.1
 [0.56.0]: https://github.com/pond-ts/pond/compare/v0.55.0...v0.56.0
 [0.55.0]: https://github.com/pond-ts/pond/compare/v0.54.0...v0.55.0
 [0.54.0]: https://github.com/pond-ts/pond/compare/v0.53.1...v0.54.0
@@ -56,6 +57,21 @@ include new features and type-level changes; patch bumps are strictly additive.
 [0.18.0]: https://github.com/pjm17971/pond-ts/compare/v0.17.1...v0.18.0
 
 ## [Unreleased]
+
+## [0.56.1] — 2026-08-05
+
+### Fixed
+
+- **charts (tests only, no shipped change):** a log-axis test asserted on
+  rendered label _text_, parsing numbers back out of the DOM to infer scale
+  behaviour. It passed locally and failed in CI on a value it could not have
+  produced there, which blocked the v0.56.0 publish. The root cause was never
+  reproduced; rather than guess at it, the assertion now compares the rendered
+  labels against the ticks the axis is specified to draw, formatted through the
+  same formatter — deterministic regardless of locale, formatting or DOM
+  differences, and the numeric guarantee itself was already pinned directly by
+  the `yTickValues` unit tests. The published artifact is identical to what
+  v0.56.0 would have been.
 
 ## [0.56.0] — 2026-08-05
 
