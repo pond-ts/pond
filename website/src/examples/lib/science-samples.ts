@@ -2083,7 +2083,9 @@ export const TIDE_PREDICTED: ReadonlyArray<number | null> = [
 ];
 
 /** Predicted high/low extremes: `[utcMs, metres, 'H' | 'L']`. */
-export const TIDE_EXTREMES: ReadonlyArray<readonly [number, number, 'H' | 'L']> = [
+export const TIDE_EXTREMES: ReadonlyArray<
+  readonly [number, number, 'H' | 'L']
+> = [
   [1671864300000, -1.16, 'L'],
   [1671892020000, 3.9, 'H'],
   [1671910620000, 2.54, 'L'],

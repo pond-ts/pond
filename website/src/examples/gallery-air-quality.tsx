@@ -9,11 +9,7 @@ import {
 } from '@pond-ts/charts';
 import { scanWindow } from '@site/src/lib/autoplay';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
-import {
-  AIR_RANGE,
-  AQI_THRESHOLDS,
-  airQuality,
-} from './lib/science-fixtures';
+import { AIR_RANGE, AQI_THRESHOLDS, airQuality } from './lib/science-fixtures';
 
 /** A week of hourly PM2.5 at a Bronx monitor through the June 2023 Canadian
  *  wildfire smoke, with the US AQI category boundaries as `<Baseline>`

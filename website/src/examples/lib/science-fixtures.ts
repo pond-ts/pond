@@ -57,7 +57,9 @@ const spectrumCache = new Map<number, ValueSeries<typeof spectrumSchema>>();
  * direct door — `ValueSeries.fromColumns`, no `time` column laundered in and
  * no `byValue` projection.
  */
-export function waveSpectrum(frame: number): ValueSeries<typeof spectrumSchema> {
+export function waveSpectrum(
+  frame: number,
+): ValueSeries<typeof spectrumSchema> {
   const i = Math.min(Math.max(Math.trunc(frame), 0), WAVE_FRAME_COUNT - 1);
   const hit = spectrumCache.get(i);
   if (hit) return hit;
@@ -217,7 +219,9 @@ let lowsMemo: TimeSeries<typeof extremeSchema> | null = null;
 /** The predicted high (or low) waters as their own tiny series, so a
  *  `<ScatterChart>` can dot them onto the prediction curve. Highs and lows are
  *  separate series because they read as two different things. */
-export function tideExtremes(kind: 'H' | 'L'): TimeSeries<typeof extremeSchema> {
+export function tideExtremes(
+  kind: 'H' | 'L',
+): TimeSeries<typeof extremeSchema> {
   const memo = kind === 'H' ? highsMemo : lowsMemo;
   if (memo) return memo;
   const rows = TIDE_EXTREMES.filter((e) => e[2] === kind).map(
@@ -341,7 +345,10 @@ export const AIR_MISSING = (() => {
 
 /** Hours spent at or above each threshold — the number the page quotes. */
 export function hoursAbove(pm25: number): number {
-  return AIR_PM25.reduce<number>((n, v) => (v !== null && v >= pm25 ? n + 1 : n), 0);
+  return AIR_PM25.reduce<number>(
+    (n, v) => (v !== null && v >= pm25 ? n + 1 : n),
+    0,
+  );
 }
 
 export { HOUR };
