@@ -16,13 +16,17 @@ import GalleryNino34 from '@site/src/examples/gallery-nino34';
 
 ## The chart
 
-<ChartExample name="gallery-nino34" height={420} collapsed>
-  <GalleryNino34 width={640} height={300} showReadout />
+<ChartExample name="gallery-nino34" height={470} collapsed>
+  <GalleryNino34 showReadout />
 </ChartExample>
 
-Move the pointer across the plot: the vertical line marks a day of the year and
-the strip above reports that date, the three named years' anomalies, and where
-2026 ranks among all 45 on it. That is the whole hover story, and the
+**Drag to pan, wheel to zoom** — bounded to the year, so both stop at 1 January
+and 31 December rather than running out into empty canvas. May to July is worth
+a closer look: that is where the current year leaves the pack.
+
+Move the pointer across the plot and the vertical line marks a day of the year,
+while the strip above reports that date, the three named years' anomalies, and
+where 2026 ranks among all 45 on it. That is the whole hover story, and the
 [Build it](#build-it) section explains why it is deliberately not more —
 with 45 overlapping lines there is no honest way for an in-chart pill to say
 which one you are on.
@@ -126,8 +130,9 @@ const DAY_TIMES = Array.from({ length: 365 }, (_, d) =>
 ```
 
 Then `timeFormat="%b"` prints month abbreviations and nothing on the chart
-mentions 2001. The tick ladder thins them to fit — at the 578px plot above
-that is **`Jan` / `Apr` / `Jul` / `Oct`**, four quarterly labels, not twelve.
+mentions 2001. The tick ladder thins them to fit — on the plot above that is
+**`Jan` / `Apr` / `Jul` / `Oct`**, four quarterly labels, not twelve. Zoom in
+and it re-ladders down to individual months and days.
 
 **Local midnights, not UTC.** The tick ladder places month ticks on _local_
 month boundaries, so a UTC-midnight axis sits a few hours off them — and a
@@ -214,8 +219,8 @@ column names resolve to `never` and every call fails to compile.
 
 ### The pack, and the three that aren't
 
-Forty-two lines exist to be a _backdrop_. That is a theme register, not a
-colour:
+Forty-two lines exist to be a _texture_ — something you read the other three
+_through_. That is a theme register, not a colour:
 
 ```tsx
 <Layers>
@@ -225,7 +230,7 @@ colour:
       series={anomalySeries(year)}
       column="anomaly"
       axis="anom"
-      as="muted"
+      as="ensemble"
       legend={false}
     />
   ))}
@@ -235,35 +240,94 @@ colour:
       series={anomalySeries(year)}
       column="anomaly"
       axis="anom"
-      as={role}
+      as={role} // highlight1 = 2026, highlight2 = 1997, highlight3 = 2015
       legend={label}
     />
   ))}
 </Layers>
 ```
 
-`line.muted` is a neutral, part-transparent hairline — the site theme defines it
-as `--pond-muted` at 55% and width 1. Giving the backdrop years data hues
-instead would produce 45 competing series and no chart. The three named years
-take `primary` / `secondary` / `context`, and they are the only layers with a
-`legend` name, so the legend card has exactly three rows.
+`ensemble` and `highlight1…3` are a **pair**, added to the site theme for this
+shape and only meaningful together: dozens of traces of one quantity drawn as a
+single texture, with a handful lifted out by name. A spaghetti plot of model
+runs, a fan of scenarios, every year of a record on a shared seasonal axis.
 
-Layer order is JSX order, so the pack is declared first and the named years draw
-over it.
+The obvious first reach was the existing `line.muted`, and it was **wrong, in a
+way worth measuring**. `muted` is `--pond-muted` at 55% — tuned for _one_
+backdrop trace with a highlight drawn through it. Alpha compounds where strokes
+cross, so forty-two of them at that weight stack into a mass that competes with
+the years in front. Sampling the rendered canvas and converting to L\*, with the
+highlights held constant:
+
+| pack role        | pack ink (mean L\* over background) | highlight ink | separation |
+| ---------------- | ----------------------------------- | ------------- | ---------- |
+| `muted` (55%)    | 16.4                                | 49.4          | **3.0×**   |
+| `ensemble` (16%) | 6.2                                 | 49.5          | **8.0×**   |
+
+The pack still covers ~22% of the plot and its densest crossings reach 36 L\*,
+so it is legible as texture — it just stops arguing. Dark mode lands at 7.3×
+on the same measurement.
+
+The highlights needed the other half of the hierarchy: **weight, not just hue**.
+The categorical palette is mid-saturation by design and three lines at the
+shared 1.5px default read as three more members of the pack. `highlight1` is the
+**subject** slot at 2.75px — the current year, the thing the chart is about —
+and `2`/`3` are the named comparisons at 1.75px. That asymmetry is deliberate;
+three equal highlights would say "these are the same kind of thing", which is
+exactly what this chart is not saying. Measured, the change lifts highlight
+coverage from 1.8% to 2.4% of the plot, about **30% more highlight ink**.
+
+They are also the only layers with a `legend` name, so the legend card has
+exactly three rows. Layer order is JSX order, so the pack is declared first and
+the named years draw over it.
 
 ### What 45 lines costs
 
 Less than it looks. Instrumenting the canvas and forcing repaints by flipping
-the site theme: one full repaint issues **16,248 `lineTo` calls** — every
-sample of every line — in a **median 6 ms** (20 repaints, 1.8–27 ms).
+the site theme: one full repaint at full extent issues **16,248 `lineTo` calls**
+— every sample of every line — in a **median 6 ms** (20 repaints, 1.8–27 ms).
 
-16,248 is the number to notice, because it says **M4 decimation never
-engages here**. `<LineChart decimate>` defaults on, but it only takes over once
-the visible data is denser than about two samples per device pixel, and 365
-points across a 1,156-device-pixel plot is 0.32. The cost of this chart is 45
-_layers_, not the points in them — the opposite of the seismograph card in the
-same track, where one line carries 12,800 samples and decimation does all the
-work.
+16,248 is the number to notice, because it says **M4 decimation never engages
+here**. `<LineChart decimate>` defaults on, but it only takes over once the
+visible data is denser than about two samples per device pixel, and 365 points
+across a ~1,500-device-pixel plot is well under a quarter of that. The cost of
+this chart is 45 _layers_, not the points in them — the opposite of the
+seismograph card in the same track, where one line carries 12,800 samples and
+decimation does all the work.
+
+**Zooming makes it cheaper, not dearer**, which is the opposite of the usual
+worry. Off-screen samples are clipped before they reach the path, so the same
+repaint measured at successive zoom levels issues 16,248 → 13,619 → 9,517
+`lineTo` calls, with the time staying inside the same 3–17 ms band. Zooming in
+lowers the samples-per-pixel density, so decimation stays dormant there too.
+
+### Width, and why it isn't a number
+
+`<ChartContainer>` takes an explicit pixel width, and for this chart a constant
+would be wrong at every viewport but one — 45 lines want every pixel there is,
+and the docs column is a different width with the sidebar open, closed, and on
+a phone. So the chart measures its own box:
+
+```tsx
+const [boxRef, measured] = useMeasuredWidth<HTMLDivElement>();
+const width = fixedWidth ?? measured;
+
+// …
+<div ref={boxRef} style={{ width: fixedWidth ?? '100%' }}>
+  {width <= 0 ? <div style={{ height }} /> : <ChartContainer width={width} …>}
+```
+
+The guard matters more here than on a one-line chart: at width 0 the container
+registers **45 layers** against a degenerate scale and rebuilds every one of
+them a frame later. Rendering nothing until the box is measured skips that
+entirely, and the reserved height stops the page jumping when the chart
+arrives. Measured on this page: 599px of plot with the sidebar open, 764px
+without.
+
+Height is a plain prop and it is deliberately generous. Forty-five overlapping
+lines need vertical room or the pack compresses into a band and the highlights
+have nothing to separate from — the same argument as the faint pack colour, in
+the other axis.
 
 ### The partial year takes care of itself
 
@@ -281,19 +345,27 @@ The four El Niño strength labels — weak, moderate, strong, very strong, at
 hue:
 
 ```tsx
-{
-  THRESHOLDS.map((t) => (
+<Layers>
+  {/* …the 45 line layers… */}
+  {THRESHOLDS.map((t) => (
     <Baseline
       key={t.label}
       value={t.value}
       axis="anom"
       label={t.label}
+      labelSide="right"
       labelPosition="above"
       selectable={false}
     />
-  ));
-}
+  ))}
+</Layers>
 ```
+
+`labelSide="right"` is not a detail. The chips default to the **left**, which on
+this chart is January — where all three named years start, so the labels land
+straight on them. December puts them where the named years are at their peaks
+_above_ the top two thresholds rather than on them, over a pack faint enough to
+annotate across.
 
 They are `<Baseline>` lines and not shaded bands because there is no y-span
 annotation in `@pond-ts/charts` — `<Region>`'s `from`/`to` are **x**
@@ -340,6 +412,8 @@ reason.
 | `curve="monotone"`                           | Smooths the path between days without touching the values        | Daily noise is distracting and you want the seasonal shape                              |
 | `smooth('anomaly', 'movingAverage', …)`      | Smooths the **values** — a 5-day mean is the usual ENSO practice | The daily wobble is genuinely noise, and you'd rather denoise the data than the drawing |
 | `<Legend placement="top-left">`              | Moves the three-row key                                          | The bottom-left corner has data in it for your record                                   |
+| `bounds` wider than the year                 | Lets a drag run past 1 January into blank plot                   | Never, on a day-of-year axis — but a real calendar axis may want the slack              |
+| `minDuration`                                | A zoom-**in** floor, the sibling of `bounds`' zoom-out ceiling   | You'd rather a reader not get down to a two-day window where the lines are noise        |
 | `as="seq2"` on the backdrop                  | The sequential ramp's second step instead of neutral grey        | You want the pack tinted rather than grey — check it still reads as a backdrop          |
 | Drop the `<Marker>`                          | No vertical rule at the end of the record                        | The reader already knows the year is in progress                                        |
 
