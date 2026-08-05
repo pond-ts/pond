@@ -1,0 +1,245 @@
+/* Chrome for the **replica** dashboard (Gallery — Site traffic dashboard).
+   Unlike every other example's stylesheet, this one does NOT use `--pond-*`
+   tokens: the whole point of the page is that it reproduces somebody else's
+   product surface, so the panel carries that product's palette and stays put
+   under the site's dark/light toggle. The chart inside it does the same thing
+   through the one channel charts have for it — a `ChartTheme` — rather than
+   hex literals in JSX. Every other Gallery page uses the pond theme. */
+
+.dash {
+  --rep-ink: #2b3a47;
+  --rep-body: #5a6b7b;
+  --rep-mute: #8a99a8;
+  --rep-line: #e3e8ed;
+  --rep-link: #2c6ba8;
+
+  background: #ffffff;
+  border: 1px solid var(--rep-line);
+  border-radius: 3px;
+  color: var(--rep-body);
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* --- header ------------------------------------------------------------ */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--rep-line);
+}
+
+.org {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--rep-ink);
+}
+
+/* --- controls ---------------------------------------------------------- */
+
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--rep-line);
+}
+
+.controlGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.controlSet {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.controlLabel {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--rep-mute);
+}
+
+.seg {
+  display: flex;
+}
+
+.seg button {
+  font: inherit;
+  font-size: 11px;
+  color: var(--rep-body);
+  background: #ffffff;
+  border: 1px solid #d5dde4;
+  border-left-width: 0;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+
+.seg button:first-child {
+  border-left-width: 1px;
+  border-radius: 2px 0 0 2px;
+}
+
+.seg button:last-child {
+  border-radius: 0 2px 2px 0;
+}
+
+.seg button[aria-pressed='true'] {
+  color: #1c5c96;
+  background: #e8f1fa;
+  border-color: #a9c9e6;
+}
+
+.seg button[disabled] {
+  color: #c2cbd3;
+  background: #f7f9fa;
+  cursor: not-allowed;
+}
+
+/* --- chart block ------------------------------------------------------- */
+
+.block {
+  padding: 14px 16px 4px;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--rep-ink);
+}
+
+.caption {
+  margin: 2px 0 0;
+  text-align: center;
+  font-size: 11px;
+  color: var(--rep-mute);
+}
+
+.legend {
+  display: flex;
+  justify-content: flex-end;
+  gap: 14px;
+  margin: 2px 0 6px;
+  font-size: 11px;
+  color: var(--rep-body);
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 1px;
+}
+
+/* --- interface list ----------------------------------------------------- */
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 14px 16px 6px;
+  border-top: 1px solid var(--rep-line);
+}
+
+.clear {
+  font: inherit;
+  font-size: 11px;
+  color: var(--rep-link);
+  background: none;
+  border: none;
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+.clear[disabled] {
+  color: #b9c3cb;
+  cursor: default;
+}
+
+.tableWrap {
+  overflow-x: auto;
+  padding: 0 16px 14px;
+}
+
+/* The list is `<BoxList>`, so everything below styles *its* DOM rather than
+   ours: rows, cells, dividers, the range bands, the value ticks and their
+   printed labels, the picked row's teal edge and its hover tint all resolve
+   from the `ChartTheme` in the TSX. What's left here is the two things a theme
+   can't reach — the ink of the cells we render into (`.name`, `.category`) —
+   and undoing what Docusaurus does to any `<table>` on the page. */
+
+/* Docusaurus styles every `table th/td` in MDX content with a 1px border on
+   all four sides in `--ifm-table-border-color` (#606770) — and stripes even
+   rows. Inside this panel that reads as a dark grid the product doesn't have,
+   and it survives because the list's own hairline is *added to* the inherited
+   border rather than replacing it. Zero the cell borders (the list's row
+   divider is an inline `border-top` on the `<tr>`, so it wins the collapse and
+   survives) and drop the stripe. Nothing here sets a `<tr>` background other
+   than transparent: the hover tint is an inline style the list applies, and an
+   inline style outranks a stylesheet. */
+.tableWrap table[data-list='box'] th,
+.tableWrap table[data-list='box'] td {
+  border: 0;
+}
+
+.tableWrap table[data-list='box'] tr {
+  background: transparent;
+}
+
+/* The picked row's wash. The teal left edge is the list's own (the annotation
+   register — `theme.annotation.color`); this is the tint behind it, riding the
+   `data-selected` attribute the list stamps on the row. */
+.tableWrap table[data-list='box'] tr[data-selected] {
+  background: #f2f8fa;
+}
+
+/* Square band ends. The list rounds the range band to a pill (`barHeight / 2`)
+   as an inline style and exposes no radius knob, so the product's corners need
+   the `!important` — the one place this replica reaches past the theme. */
+.tableWrap table[data-list='box'] [data-list-range] {
+  border-radius: 1px !important;
+}
+
+/* Room for the value label, which the list prints *inside* the glyph area 8px
+   to the right of its tick. Park the pointer on the busiest interface's own
+   peak and that tick reaches the top of the scale, so the number would run off
+   the panel and put a scrollbar under the table. There is no gutter prop, and
+   the cell's padding is an inline shorthand, so this is the second `!important`
+   — both are noted in the guide as the places the component doesn't reach. */
+.tableWrap table[data-list='box'] td[data-list-cell='glyphs'] {
+  padding-right: 72px !important;
+}
+
+.name {
+  color: var(--rep-link);
+  font-size: 12px;
+}
+
+.tableWrap table[data-list='box'] tr:hover .name {
+  text-decoration: underline;
+}
+
+.category {
+  font-size: 11px;
+  color: var(--rep-body);
+}

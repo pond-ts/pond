@@ -33,6 +33,25 @@ import GalleryBand from '@site/src/examples/gallery-band';
 import GalleryHistogram from '@site/src/examples/gallery-histogram';
 import GalleryScatter from '@site/src/examples/gallery-scatter';
 import GalleryBoxplot from '@site/src/examples/gallery-boxplot';
+import GalleryNetworkTraffic from '@site/src/examples/gallery-network-traffic';
+import GalleryTrafficByInterface from '@site/src/examples/gallery-traffic-by-interface';
+import GalleryMultiHostCpu from '@site/src/examples/gallery-multi-host-cpu';
+import GalleryLatencyPercentiles from '@site/src/examples/gallery-latency-percentiles';
+import GallerySlaIncidents from '@site/src/examples/gallery-sla-incidents';
+import GalleryLiveTail from '@site/src/examples/gallery-live-tail';
+import GallerySiteTrafficDashboard from '@site/src/examples/gallery-site-traffic-dashboard';
+import GalleryVolumeHistory from '@site/src/examples/gallery-volume-history';
+import GalleryCandlestick from '@site/src/examples/gallery-candlestick';
+import GalleryPriceVolume from '@site/src/examples/gallery-price-volume';
+import GalleryBollinger from '@site/src/examples/gallery-bollinger';
+import GalleryDrawdown from '@site/src/examples/gallery-drawdown';
+import GalleryTemperatureRange from '@site/src/examples/gallery-temperature-range';
+import GalleryRainfall from '@site/src/examples/gallery-rainfall';
+import GalleryClimateStripes from '@site/src/examples/gallery-climate-stripes';
+import GalleryWindRose from '@site/src/examples/gallery-wind-rose';
+import GalleryGridMix from '@site/src/examples/gallery-grid-mix';
+import GalleryRenewables from '@site/src/examples/gallery-renewables';
+import GalleryPowerPrices from '@site/src/examples/gallery-power-prices';
 import GallerySpectrum from '@site/src/examples/gallery-spectrum';
 import GallerySeismograph from '@site/src/examples/gallery-seismograph';
 import GalleryTides from '@site/src/examples/gallery-tides';
@@ -90,13 +109,126 @@ incident you're explaining on Monday.
   {(width) => <GalleryBoxplot width={width} />}
 </GalleryCard>
 
+<GalleryCard
+  title="Network traffic"
+  blurb="Six hours of a real CERN border router — in filling up, out filling down from a shared zero line."
+  storybookHref="pathname:///storybook/?path=/story/charts-areachart--baseline"
+  pageHref="/docs/charts/gallery/network-traffic"
+  height={218}
+  autoplay={{ period: 16000, staticPhase: 0.72 }}
+>
+  {(width, phase) => (
+    <GalleryNetworkTraffic width={width} phase={phase} height={196} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Traffic by interface"
+  blurb="The same six hours, stacked: seven interfaces as tonal slabs adding up to the site total."
+  storybookHref="pathname:///storybook/?path=/story/charts-areachart--stacked"
+  pageHref="/docs/charts/gallery/traffic-by-interface"
+  height={218}
+  autoplay={{ period: 18000, staticPhase: 0.68 }}
+>
+  {(width, phase) => (
+    <GalleryTrafficByInterface width={width} phase={phase} height={196} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Multi-host CPU"
+  blurb="One line per host out of one long-form series — plus the 24-minute hole a node recycle leaves."
+  storybookHref="pathname:///storybook/?path=/story/charts-linechart--gaps"
+  pageHref="/docs/charts/gallery/multi-host-cpu"
+  height={218}
+  autoplay={{ period: 20000, staticPhase: 0.66 }}
+>
+  {(width, phase) => (
+    <GalleryMultiHostCpu width={width} phase={phase} height={196} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Latency envelope"
+  blurb="p50 inside a p90 band inside a p99 band — watch the tail tear open while the median holds."
+  storybookHref="pathname:///storybook/?path=/story/charts-bandchart--rolling-percentiles"
+  pageHref="/docs/charts/gallery/latency-percentiles"
+  height={218}
+  autoplay={{ period: 17000, staticPhase: 0.58 }}
+>
+  {(width, phase) => (
+    <GalleryLatencyPercentiles width={width} phase={phase} height={196} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="SLA & incidents"
+  blurb="A week of error rate over the budget it spent — incident regions, deploy markers, an objective line."
+  storybookHref="pathname:///storybook/?path=/story/annotations-scenarios--editable"
+  pageHref="/docs/charts/gallery/sla-incidents"
+  height={218}
+  autoplay={{ period: 22000, staticPhase: 0.3 }}
+>
+  {(width, phase) => (
+    <GallerySlaIncidents width={width} phase={phase} height={196} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Live tail"
+  blurb="Genuinely streaming: a LiveSeries with a retention window and a value pill at the leading edge."
+  storybookHref="pathname:///storybook/?path=/story/indicators-y-axis--live"
+  pageHref="/docs/charts/gallery/live-tail"
+  height={218}
+  autoplay={{ period: 14000, staticPhase: 0.9 }}
+>
+  {(width, phase) => (
+    <GalleryLiveTail width={width} phase={phase} height={196} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Site traffic dashboard"
+  blurb="A faithful replica of the operations dashboard the CERN capture comes out of — in the product's own palette, not pond's."
+  storybookHref="pathname:///storybook/?path=/story/charts-areachart--baseline"
+  pageHref="/docs/charts/gallery/site-traffic-dashboard"
+  height={356}
+>
+  {(width) => (
+    <GallerySiteTrafficDashboard width={width - 56} chartHeight={150} preview />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Volume history"
+  blurb="Thirty-six years of real ESnet traffic on a log axis — 19 GB a month to 262 PB, with a fitted trend."
+  storybookHref="pathname:///storybook/?path=/story/axes-log-scale--log"
+  pageHref="/docs/charts/gallery/volume-history"
+  height={218}
+  autoplay={{ period: 24000, staticPhase: 0.5 }}
+>
+  {(width, phase) => (
+    <GalleryVolumeHistory width={width} phase={phase} height={196} preview />
+  )}
+</GalleryCard>
+
 {/* TRACK A — append ops & infrastructure cards above this line. */}
 
 </GalleryGrid>
 
 ## Finance
 
-{/* TRACK B — replace this line with the section's blurb. */}
+Market time is not wall-clock time, so these charts sit on a **trading
+calendar**: the weekends, the ten holidays and the two half-days are collapsed
+out of the axis rather than drawn as dead space. Candles, a volume row, a
+study's appended columns and a derived curve — the same four primitives you'd
+compose yourself.
+
+**The prices are modelled, not measured.** Every feed worth having forbids
+redistribution, so rather than quietly ship someone's bars these run on a
+seeded process model — opening gaps, volatility clustering, regimes, volume
+that answers price. The [session calendar is real](./gallery/candlestick.mdx#the-data);
+the prices are not.
 
 <GalleryGrid>
 
@@ -118,17 +250,118 @@ incident you're explaining on Monday.
   {(width) => <GalleryScatter width={width} />}
 </GalleryCard>
 
+<GalleryCard
+  title="Candles on a trading calendar"
+  blurb="A year of daily OHLC where the axis holds only open market time — every weekend, holiday and half-day collapsed out."
+  storybookHref="pathname:///storybook/?path=/story/charts-candlestick--show-ohlc"
+  pageHref="/docs/charts/gallery/candlestick"
+  height={218}
+  autoplay={{ period: 15000, staticPhase: 0.5 }}
+>
+  {(width, phase) => (
+    <GalleryCandlestick width={width} phase={phase} height={192} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Price and volume"
+  blurb="Two rows, two scales, one x range and one cursor — with the volume bars coloured by each session's own direction."
+  storybookHref="pathname:///storybook/?path=/story/charts-candlestick--scenario-price-volume"
+  pageHref="/docs/charts/gallery/price-volume"
+  height={218}
+  autoplay={{ period: 19000, staticPhase: 0.34 }}
+>
+  {(width, phase) => (
+    <GalleryPriceVolume
+      width={width}
+      phase={phase}
+      priceHeight={130}
+      volumeHeight={62}
+    />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Bollinger bands"
+  blurb="A study appends three columns; a band and a line read them back. Watch the window sweep 10 → 40 sessions."
+  storybookHref="pathname:///storybook/?path=/story/charts-bandchart--rolling-percentiles"
+  pageHref="/docs/charts/gallery/bollinger-bands"
+  height={218}
+  autoplay={{ period: 17000, staticPhase: 0.17 }}
+>
+  {(width, phase) => (
+    <GalleryBollinger width={width} phase={phase} height={192} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Drawdown"
+  blurb="How far under its own running peak the price is — an area hanging below a fixed zero baseline, drawing itself in."
+  storybookHref="pathname:///storybook/?path=/story/charts-areachart--above-below-axis"
+  pageHref="/docs/charts/gallery/drawdown"
+  height={218}
+  autoplay={{ period: 13000, staticPhase: 0.5 }}
+>
+  {(width, phase) => (
+    <GalleryDrawdown width={width} phase={phase} height={192} />
+  )}
+</GalleryCard>
+
 {/* TRACK B — append finance cards above this line. */}
 
 </GalleryGrid>
 
 ## Weather & climate
 
-{/* TRACK C — replace this line with the section's blurb. */}
-
-_Cards land here as Track C ships._
+The domain with the best public data — every card here draws **measured**
+NOAA or NASA numbers, not a model of them. Three of the four are one airport's
+2024: the same station asked about its temperature, its rain and its wind.
 
 <GalleryGrid>
+
+<GalleryCard
+  title="Temperature range"
+  blurb="A year of daily min/max as a band, with a 15-day mean drawn through it — the band widens into summer."
+  pageHref="/docs/charts/gallery/temperature-range"
+  storybookHref="pathname:///storybook/?path=/story/charts-bandchart--san-francisco-temperature"
+  height={246}
+  autoplay={{ period: 15000, staticPhase: 0.52 }}
+>
+  {(width, phase) => <GalleryTemperatureRange width={width} phase={phase} />}
+</GalleryCard>
+
+<GalleryCard
+  title="Rainfall & running total"
+  blurb="Daily rain as bars, the year's cumulative total as a line — two units, two y-axes, one row."
+  pageHref="/docs/charts/gallery/rainfall"
+  storybookHref="pathname:///storybook/?path=/story/axes--dual-axis"
+  height={246}
+  autoplay={{ period: 17000, staticPhase: 0.72 }}
+>
+  {(width, phase) => <GalleryRainfall width={width} phase={phase} />}
+</GalleryCard>
+
+<GalleryCard
+  title="Climate stripes"
+  blurb="146 years of global temperature anomaly, one bar per year — every bar the same height, the colour carrying the value."
+  pageHref="/docs/charts/gallery/climate-stripes"
+  storybookHref="pathname:///storybook/?path=/story/charts-barchart--bin-colors"
+  height={226}
+  autoplay={{ period: 16000, staticPhase: 0.5 }}
+>
+  {(width, phase) => <GalleryClimateStripes width={width} phase={phase} />}
+</GalleryCard>
+
+<GalleryCard
+  title="Wind direction"
+  blurb="8,735 hourly reports as a categorical strip, and the histogram underneath is the shaded window — counted live as it sweeps the year."
+  pageHref="/docs/charts/gallery/wind-rose"
+  storybookHref="pathname:///storybook/?path=/story/axes-categoryaxis--tickers"
+  height={246}
+  autoplay={{ period: 18000, staticPhase: 0.27 }}
+>
+  {(width, phase) => <GalleryWindRose width={width} phase={phase} />}
+</GalleryCard>
 
 {/* TRACK C — append weather & climate cards above this line. */}
 
@@ -136,11 +369,50 @@ _Cards land here as Track C ships._
 
 ## Energy
 
-{/* TRACK D — replace this line with the section's blurb. */}
-
-_Cards land here as Track D ships._
+Grid data is where composition, crossover and signed values all turn up at
+once. All three cards are the same real weekend — Easter 2025 in Germany, the
+quietest demand day of the year meeting a big solar peak.
 
 <GalleryGrid>
+
+<GalleryCard
+  title="Grid mix"
+  blurb="Eight generation sources stacked as cumulative areas — thermal in slate, renewable in teal, four tonal steps each."
+  storybookHref="pathname:///storybook/?path=/story/charts-areachart--elevation"
+  pageHref="/docs/charts/gallery/grid-mix"
+  height={212}
+  autoplay={{ period: 16000, staticPhase: 0.24 }}
+>
+  {(width, phase) => (
+    <GalleryGridMix width={width} phase={phase} height={190} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Renewables vs demand"
+  blurb="Two translucent areas that cross: for 1 h 45 m, wind and solar out-produced the whole country's load."
+  storybookHref="pathname:///storybook/?path=/story/charts-areachart--traffic-areas"
+  pageHref="/docs/charts/gallery/renewables-vs-demand"
+  height={212}
+  autoplay={{ period: 16000, staticPhase: 0.26 }}
+>
+  {(width, phase) => (
+    <GalleryRenewables width={width} phase={phase} height={190} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Negative prices"
+  blurb="Day-ahead power prices above and below zero — eight hours where sellers paid to deliver."
+  storybookHref="pathname:///storybook/?path=/story/charts-barchart--diverging"
+  pageHref="/docs/charts/gallery/negative-prices"
+  height={212}
+  autoplay={{ period: 16000, staticPhase: 0.14 }}
+>
+  {(width, phase) => (
+    <GalleryPowerPrices width={width} phase={phase} height={190} />
+  )}
+</GalleryCard>
 
 {/* TRACK D — append energy cards above this line. */}
 

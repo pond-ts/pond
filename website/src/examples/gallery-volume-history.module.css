@@ -1,0 +1,214 @@
+/* Chrome for the ESnet volume-history panel (Gallery — Volume history).
+
+   Everything here is site chrome — the controls above the chart and the cells
+   we render into the summary list. The *chart* and the *list glyphs* take no
+   styling from this file: they resolve from the `ChartTheme` the example
+   passes (`useSiteChartTheme()`), which is the one channel charts have for
+   colour. All tokens below are the site's own `--pond-*` custom properties, so
+   the panel flips with the dark/light toggle exactly as the chart does. */
+
+.panel {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--pond-body);
+}
+
+/* --- controls ----------------------------------------------------------- */
+
+.controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.controlGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.controlLabel {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pond-muted);
+}
+
+.seg {
+  display: flex;
+}
+
+.seg button,
+.stepper button {
+  font: inherit;
+  font-size: 12px;
+  color: var(--pond-body);
+  background: var(--pond-surface);
+  border: 1px solid var(--pond-hairline);
+  border-left-width: 0;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.seg button:first-child,
+.stepper button:first-child {
+  border-left-width: 1px;
+  border-radius: 3px 0 0 3px;
+}
+
+.seg button:last-child,
+.stepper button:last-child {
+  border-radius: 0 3px 3px 0;
+}
+
+.seg button[aria-pressed='true'] {
+  color: var(--pond-surface);
+  background: var(--pond-accent);
+  border-color: var(--pond-accent);
+}
+
+.seg button[disabled],
+.stepper button[disabled] {
+  color: var(--pond-muted);
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* The month stepper: ‹ / the month itself / › as one control, then a separate
+   jump-to-newest button. The month reads as a value rather than a button, so
+   it is a `<span>` styled into the same track. */
+
+.stepper {
+  display: flex;
+  align-items: stretch;
+}
+
+.month {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 82px;
+  padding: 3px 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--pond-ink);
+  background: var(--pond-surface-2);
+  border: 1px solid var(--pond-hairline);
+  border-left-width: 0;
+}
+
+.recent {
+  font: inherit;
+  font-size: 12px;
+  color: var(--pond-accent);
+  background: none;
+  border: none;
+  padding: 3px 0;
+  cursor: pointer;
+}
+
+.recent[disabled] {
+  color: var(--pond-muted);
+  cursor: default;
+}
+
+/* --- summary list -------------------------------------------------------- */
+
+.tableHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 16px 0 2px;
+}
+
+.tableTitle {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--pond-ink);
+}
+
+.tableNote {
+  font-size: 12px;
+  color: var(--pond-muted);
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+/* Docusaurus styles every `table th/td` in MDX content with a 1px border on
+   all four sides in `--ifm-table-border-color`, and stripes even rows. The
+   list's own hairline is *added to* that inherited border rather than
+   replacing it, so without this the summary reads as a heavy dark grid. Zero
+   the cell borders — the list's row divider is an inline `border-top` on the
+   `<tr>`, so it survives the collapse — and drop the stripe. */
+.tableWrap table[data-list='bar'] th,
+.tableWrap table[data-list='bar'] td {
+  border: 0;
+}
+
+.tableWrap table[data-list='bar'] tr {
+  background: transparent;
+}
+
+/* The row label: a swatch tying the row to its line on the chart, then the
+   name. The swatch colour is an inline style read from the same `ChartTheme`
+   the chart draws with — never a literal. */
+.rowLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  color: var(--pond-ink);
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+
+.derived {
+  font-size: 11px;
+  color: var(--pond-muted);
+}
+
+.value {
+  font-variant-numeric: tabular-nums;
+  color: var(--pond-ink);
+}
+
+.share {
+  font-variant-numeric: tabular-nums;
+  color: var(--pond-body);
+}
+
+.change {
+  font-variant-numeric: tabular-nums;
+  color: var(--pond-body);
+}
+
+.absent {
+  color: var(--pond-muted);
+}
+
+.colHead {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--pond-muted);
+}
+
+/* --- footnote ------------------------------------------------------------ */
+
+.credit {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--pond-muted);
+}

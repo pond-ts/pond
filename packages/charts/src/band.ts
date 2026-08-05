@@ -5,6 +5,7 @@ import type { BandStyle } from './theme.js';
 import type { LayerDrawStats } from './context.js';
 import { cullBandSeries } from './culling.js';
 import { decimateBand, type DecimateOption } from './decimate.js';
+import { gapUnscalable } from './gaps.js';
 
 /**
  * The `[min, max]` vertical extent of the **drawn** band — the lowest `lower`
@@ -71,6 +72,18 @@ export function drawBand(
     const before = band;
     band = decimateBand(band, xScale, ctx, k);
     decimated = band !== before;
+  }
+  // An edge with no position on the y scale becomes an ordinary NaN gap, so the
+  // envelope breaks there rather than emitting dropped path ops that stitch the
+  // neighbouring samples together. A `lower` of `0` is the common shape — a band
+  // measured from nothing — and on a log axis zero has no position, so without
+  // this the fill silently spanned the samples it could not draw. Gapping either
+  // edge gaps the sample, which is already the band's contract: a sample counts
+  // only where **both** edges do. A no-op on an affine (linear) y scale.
+  const gapLower = gapUnscalable(band.lower, band.length, yScale);
+  const gapUpper = gapUnscalable(band.upper, band.length, yScale);
+  if (gapLower !== band.lower || gapUpper !== band.upper) {
+    band = { ...band, lower: gapLower, upper: gapUpper };
   }
   const gen = d3area<number>()
     .defined(

@@ -1,3 +1,4 @@
+import { scaleLinear } from 'd3-scale';
 /**
  * Axis value formatting — the single formatter shared by an axis's tick labels
  * and the cursor readout, so a value reads the same in both places (the readout
@@ -54,6 +55,9 @@ export type CursorFormat =
  *  optional specifier. A d3 `ScaleLinear` / `ScaleTime` satisfies it. */
 interface Tickable {
   tickFormat(count: number, specifier?: string): (value: number) => string;
+  /** Present on d3's `scaleLog` and on no other continuous scale. */
+  base?: () => number;
+  domain?: () => number[];
 }
 
 /**
@@ -65,6 +69,23 @@ interface Tickable {
  * - a **specifier string** → `scale.tickFormat(count, specifier)` — d3 applies
  *   the specifier, so the readout matches ticks formatted the same way;
  * - **`undefined`** → `scale.tickFormat(count)` — the scale's default.
+ *
+ * **A log scale is formatted through a linear one over the same domain.**
+ * `scaleLog.tickFormat` is not a value formatter — it is a *tick* formatter,
+ * and it deliberately returns `''` for anything it doesn't consider a
+ * significant tick:
+ *
+ * ```
+ * scaleLog().domain([1.9e10, 2.6e17]).tickFormat(6, '.3s')(1.97e17) === ''
+ * ```
+ *
+ * That is correct for axis labels (it is how a log axis thins them) and
+ * catastrophic for the cursor readout, `YAxisIndicator` and `Baseline` chips,
+ * which share this formatter and ask it about arbitrary values — they would
+ * render blank for almost every real number. A linear scale's `tickFormat`
+ * applies the specifier to whatever it is handed, which is what every consumer
+ * of this function actually wants; the axis's own tick *thinning* is handled by
+ * `yTickValues`, not here.
  */
 export function resolveAxisFormat(
   scale: Tickable,
@@ -72,9 +93,13 @@ export function resolveAxisFormat(
   format: AxisFormat | undefined,
 ): (value: number) => string {
   if (typeof format === 'function') return format;
+  const source =
+    typeof scale.base === 'function' && typeof scale.domain === 'function'
+      ? scaleLinear().domain(scale.domain())
+      : scale;
   return format !== undefined
-    ? scale.tickFormat(count, format)
-    : scale.tickFormat(count);
+    ? source.tickFormat(count, format)
+    : source.tickFormat(count);
 }
 
 /** The slice of a d3 **time** scale {@link resolveTimeFormat} needs. A d3

@@ -58,7 +58,14 @@
 
      The ramp is built for FILLS — stacked areas and bars, where each slab's
      neighbours supply the contrast. A lone *line* at step 1 or 2 is nearly
-     the ground colour; give a single line `--pond-viz-1` (or steps 4–7). */
+     the ground colour; give a single line `--pond-viz-1` (or steps 4–7).
+
+     It encodes an ORDER, so reach for it only when the eight slots really are
+     rungs of one quantity (climate stripes: a temperature anomaly). A nominal
+     set that happens to need eight slots — eight generation sources — wants
+     the `tonalA1…4` / `tonalB1…4` roles instead: two tonal families of four,
+     derived in useSiteChartTheme by mixing `--pond-viz-5` / `--pond-viz-1`
+     toward `--pond-surface`, so there is nothing to declare here. */
   --pond-viz-seq-1: #0c444b;
   --pond-viz-seq-2: #0d5c60;
   --pond-viz-seq-3: #0d7474;

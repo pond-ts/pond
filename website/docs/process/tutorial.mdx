@@ -1,9 +1,6 @@
 ---
 title: Build a processing graph
 description: Define a processing vocabulary, load a remote time series, and author a typed graph that returns columns and facts.
-unlisted: true
-pagination_prev: null
-pagination_next: null
 ---
 
 # Build a processing graph
@@ -66,10 +63,10 @@ There are three layers in that example:
 Keeping those roles separate is the important part. The fluent API is a typed
 way to emit a request; it is not a second execution engine.
 
-:::caution[Work in progress]
-`@pond-ts/process` is not published yet. This tutorial describes its in-repo
-WIP API, which may change before the first release. Work from a pond monorepo
-checkout rather than installing it from npm.
+:::info[Experimental]
+`@pond-ts/process` is newly published and **experimental**: pre-1.0, and
+the API is expected to move as friction reports land. Pin an exact
+version — `npm install @pond-ts/process pond-ts`.
 :::
 
 ## 1. Start with a source schema

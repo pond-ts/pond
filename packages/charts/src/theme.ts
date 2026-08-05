@@ -348,25 +348,22 @@ export interface BarStyle {
    * half rather than a rename of `highlight`, so no existing theme changes
    * meaning; a theme that wants the distinction opts in by adding one colour.
    *
-   * **Where it applies — narrower than it looks.** Only the `drawBars`
-   * single-series path reads this, which `<BarChart>` uses for a **`series=`
-   * chart that is `vertical` and has no `binColors`**. Everything else routes
-   * through `drawStacks`, whose {@link StackStyle} has no hover channel, so
-   * `hover` is **silently ignored** by:
+   * **Where it applies.** Read by the `drawBars` single-series path, which
+   * since [PND-BARSEM] covers every **one-segment vertical** bar however it
+   * was fed — a `series` + `column` chart, a one-column `bins` histogram, or
+   * a one-entry `columns`. Still not read by:
    *
-   * - `bins=` (a histogram) and `categories=` — *even with a single column*;
-   * - `orientation="horizontal"` — even a single `series=` + `column`, which
-   *   `<BarChart>` routes through the stacked path as a one-group stack;
-   * - a genuine multi-group stack (`columns=` / a `Map` series);
-   * - `binColors` (per-bar colours), which pops each bar's *own* fill for both
-   *   states so a red/green volume bar keeps its meaning while live.
+   * - a genuine **multi-group stack** (`columns` / a `Map` series), whose
+   *   {@link StackStyle} has no hover channel — segments in one bin would
+   *   need their own hovered identity;
+   * - **`categories`** and **horizontal** charts, which keep the transposed
+   *   stacked draw path ([PND-HCAT] tracks the categorical half);
+   * - **`binColors`** (per-bar colours), which pops each bar's *own* fill for
+   *   both states so a red/green volume bar keeps its meaning while live —
+   *   the one *design* exclusion rather than a path consequence.
    *
-   * Only the last of those is a *design* exclusion — the rest are a
-   * consequence of `<BarChart>`'s shape dispatch, and extending the three-step
-   * emphasis to `drawStacks` would mean giving `StackStyle` its own hover
-   * channel (not done here; see [#577](https://github.com/pond-ts/pond/issues/577)).
    * The **decimated** dense-bar pass also draws the flat fill only, as it
-   * already did for `highlight` — per-bar highlight is suppressed there.
+   * already did for `highlight`.
    */
   readonly hover?: string;
 }
@@ -445,6 +442,18 @@ export const defaultTheme: ChartTheme = {
       median: '#1e3a8a',
       medianWidth: 2,
       whisker: '#aabee9',
+      whiskerWidth: 1,
+    },
+    // The warm accent box — the second series of a paired distribution (an
+    // in/out traffic list), mirroring `bar.secondary` / `line.secondary`.
+    secondary: {
+      fill: '#e8836b',
+      fillOpacity: 0.3,
+      stroke: '#d65f43',
+      strokeWidth: 1.5,
+      median: '#b4442a',
+      medianWidth: 2,
+      whisker: '#f0c2b2',
       whiskerWidth: 1,
     },
   },
@@ -597,6 +606,18 @@ export const estelaTheme: ChartTheme = {
       median: '#F1FBF9', // --es-foam
       medianWidth: 2,
       whisker: '#a4e4d9', // --es-reef
+      whiskerWidth: 1.5,
+    },
+    // The warm filament accent — the paired second distribution, mirroring
+    // `bar.secondary` / `line.hr` on the dark ground.
+    secondary: {
+      fill: '#E0B36A', // --es-filament
+      fillOpacity: 0.28,
+      stroke: '#E0B36A',
+      strokeWidth: 1.5,
+      median: '#F1FBF9', // --es-foam
+      medianWidth: 2,
+      whisker: '#EDD5A8',
       whiskerWidth: 1.5,
     },
   },

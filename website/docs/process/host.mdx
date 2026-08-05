@@ -1,0 +1,118 @@
+---
+title: The host
+description: Datasets, opaque async sources, revisions, and the lifecycle dials that bound a long-lived process.
+---
+
+# The host
+
+A `Host` owns `Map<datasetId, BoundGraph>` and **outlives requests**. That
+is the whole architectural claim: a graph built per request starts cold,
+and a cold graph is a fold with extra steps. Every caching figure behind
+this design assumes a warm binding.
+
+Where the host runs is a separate question — a long-lived worker proves
+client-side execution with an unblocked main thread; a server process
+proves one cache shared across sessions. Both satisfy the invariant.
+
+```ts
+import { createHost } from '@pond-ts/process';
+
+const host = createHost({
+  registry,
+  units: { close: 'USD' },
+  sources, // optional — a SourceRegistry for runAsync
+  budgetBytes: 64 * 1024 * 1024, // optional — per-graph cache cap
+  maxSources: 32, // optional — LRU cap on registry-loaded sources
+});
+```
+
+## Datasets
+
+`host.add(id, series)` registers a dataset; the graph is built lazily on
+first use, so seeding many datasets is cheap. **Re-adding an existing id
+updates the graph in place** — compiled nodes stay, dirty propagation
+handles the rest — because dropping the graph on every data refresh would
+throw away exactly the cache the host exists to keep.
+
+Two instruments get two graphs and share no nodes, even though their
+specs produce identical ids: the id names the computation, not the data.
+
+`host.remove(id)` is the explicit end of a binding's lifecycle — source,
+graph, and every cached node value go together. A load in flight for the
+same source id discards its result rather than resurrecting the removed
+dataset.
+
+`host.datasets` reports what a caller can pick from: id, row count,
+columns, and how many nodes are compiled against each binding.
+
+## Opaque async sources
+
+A plan should never contain a URL, a token, or a callback — those are
+execution details, and often secrets. `defineSource` splits the two
+halves:
+
+```ts
+const marketBars = defineSource({
+  name: 'market.bars',
+  async load({ symbol, interval }, { previous }) {
+    // fetch, honouring If-None-Match via previous?.revision …
+    return { value: series, revision: etag };
+  },
+});
+
+marketBars.ref({ symbol: 'ACME', interval: '5m' });
+// { source: 'market.bars', params: { … } }  — safe request data
+```
+
+The **reference** crosses wires; the **loader** stays host-side, on a
+`SourceRegistry` the host is constructed with. `host.runAsync(request)`
+then:
+
+1. canonicalizes `{ source, params }` into a source identity (param key
+   order and value types are normalized, so `1` and `"1"` cannot
+   collide);
+2. asks the loader for a value and a **revision**;
+3. creates or refreshes that identity's long-lived graph — an **equal
+   revision leaves the graph untouched**, so every node stays warm;
+4. resolves the request like any other.
+
+Identity answers _which graph?_; revision answers _is its value still
+current?_ The revision is supplied by the loader — an ETag, cursor, or
+object version — because the host cannot cheaply or honestly derive
+freshness from a `TimeSeries`. Concurrent requests for one identity share
+a single in-flight load, so a stale response cannot win a race and one
+refresh cannot invalidate the graph twice.
+
+## Bounding a long-lived host
+
+Two dials, for the two ways a host's footprint grows:
+
+- **`budgetBytes`** caps retained node values **per bound graph** — the
+  answer to "questions asked" growth, where every distinct spec ever
+  compiled would otherwise be retained forever. Details in
+  [caching and performance](./performance#byte-budgets).
+- **`maxSources`** caps registry-loaded sources, LRU — the answer to
+  **request-driven** growth: `runAsync` binds a graph per distinct
+  caller-supplied `SourceRef`, so without a cap an untrusted caller grows
+  the host without bound. Eviction removes the whole dataset (graph and
+  cache with it); an evicted source is reloaded on demand, not failed.
+  Author-added datasets are never evicted by this dial.
+
+Both are opt-in today. A host whose plans and refs arrive from callers it
+does not control should set both; the retained total is then at most
+`budgetBytes × (author datasets + maxSources)`.
+
+## Crossing a wire
+
+The renderer path hands back a live `TimeSeries` on purpose. For the
+other caller, `toWire(result)` drops the in-process values and keeps the
+JSON-safe remainder — a no-op on exactly the facts-only responses that
+cross wires. Pair it with `assemble: false` so packed columns transfer
+instead of 10⁶ boxed rows re-serializing per response
+([requests](./requests#the-response)).
+
+For whole-request parallelism across worker threads, `@pond-ts/process/pool`
+ships `HostPool` — each worker holds a long-lived `Host`, plans travel as
+JSON, and result columns travel as transferable buffers. When it pays and
+when it very much does not is measured in
+[caching and performance](./performance#the-worker-pool).

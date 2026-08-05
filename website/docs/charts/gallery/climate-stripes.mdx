@@ -1,0 +1,159 @@
+---
+title: Climate stripes
+sidebar_label: Climate stripes
+---
+
+# Climate stripes
+
+146 bars, all exactly the same height, where **the colour is the value**. It's
+the inverse of every other chart in this gallery: position carries nothing but
+time, and the entire quantitative channel is hue. The form is Ed Hawkins'
+"warming stripes" (University of Reading, 2018); the technique underneath it is
+`binColors`, and it works for anything you'd otherwise draw as a heat strip.
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryClimateStripes from '@site/src/examples/gallery-climate-stripes';
+
+## The chart
+
+<ChartExample name="gallery-climate-stripes" height={300} collapsed>
+  <GalleryClimateStripes width={640} showReadout />
+</ChartExample>
+
+Point at a stripe and the strip above the chart names its year and its anomaly.
+That readout **is this chart's legend** — with the value encoded as colour and
+no y-axis to read, it's the only way to get a number back out. The in-chart
+cursor can't do it; [Build it](#build-it) explains why, and it's the most
+transferable thing on this page.
+
+What the shape says is one-way traffic across the ramp. The darkest of the
+eight steps has not appeared since **1933**; the darkest two, not since
+**1976**. Going the other way, the lightest step first appears in **2023** and
+every year from **2015** onward sits in the top two. 1909 is the coldest year
+in the record at −0.49 °C and **2024 the warmest at +1.28 °C**.
+
+## The data
+
+**Real, measured, public domain.** NASA's
+[GISS Surface Temperature Analysis (GISTEMP v4)](https://data.giss.nasa.gov/gistemp/),
+land-ocean temperature index, **annual** means — the `J-D` column of
+`GLB.Ts+dSST.csv`. A NASA work, so public domain; NASA asks for attribution and
+this page gives it. Retrieved by
+[`website/scripts/fixtures/weather.mjs`](https://github.com/pond-ts/pond/blob/main/website/scripts/fixtures/weather.mjs),
+which runs by hand and commits its output.
+
+```ts
+[time, anomaly, stripe]; // year start, °C vs the 1951–1980 mean, constant 1
+```
+
+- **146 complete years, 1880–2025.** Only complete years are kept, so the
+  current partial year is absent — an annual mean over eight months isn't the
+  same quantity as an annual mean, and plotting it as one puts a lie at the
+  end of the record.
+- **The values are anomalies, not temperatures**: °C relative to the 1951–1980
+  average. That's why the scale straddles zero, and why "−0.49" is a perfectly
+  ordinary global mean rather than an ice age.
+- **GISTEMP revises history.** As station records are homogenised, older values
+  move slightly. That's why the fixture header records a retrieval date; a
+  regenerated fixture will not be bit-identical to this one.
+- **`stripe` is a constant `1`** — a column that exists only so every year gets
+  a full-height slot. It carries no information at all, which turns out to have
+  consequences for the cursor.
+
+## Build it
+
+Start with the encoding, because it's the part that isn't a chart prop.
+`binColors` takes **one colour per bar, in series order**, so the job is to map
+each year's anomaly onto a step of the ramp:
+
+```ts
+const ramp = useSequentialRamp(); // 8 theme colours, dark → light
+
+const colors = Array.from(series.column('anomaly').toFloat64Array(), (a) => {
+  const t = (a - MIN) / (MAX - MIN); // MIN = -0.49, MAX = 1.28
+  return ramp[Math.min(7, Math.max(0, Math.floor(t * 8)))]!;
+});
+```
+
+Eight steps across a 1.77 °C spread — each step is 0.22 °C wide. The colours
+come from `useSequentialRamp()`, the site's own eight-step ramp, so they follow
+the light/dark toggle; swapping in Hawkins' blue-to-red diverging scale is the
+same one line, and for a quantity that straddles zero a diverging scale is
+arguably the better choice. The rule this site follows is one hue family rather
+than competing hues, so it steps through the sequential ramp instead.
+
+Then the chart, which is mostly an exercise in taking things away:
+
+```tsx
+<ChartContainer range={[FIRST, LAST]} width={640} theme={theme}>
+  <ChartRow height={200}>
+    {/* Pin the axis and erase it: a constant column has no extent to
+        auto-fit to, and "0.0 … 1.0" would be a scale for a quantity this
+        chart isn't showing. */}
+    <YAxis id="stripe" min={0} max={1} width={0} ticks={[]} />
+    <Layers>
+      <BarChart
+        series={series}
+        column="stripe"
+        axis="stripe"
+        binColors={colors}
+        gap={0}
+      />
+    </Layers>
+  </ChartRow>
+</ChartContainer>
+```
+
+`gap={0}` is what makes it a continuous strip rather than a bar chart — the
+bars take their width from the spacing of their neighbours, so they tile edge
+to edge with no seams.
+
+### Why the readout is off-chart
+
+The obvious move is `cursor="crosshair"`, and it's wrong here. The crosshair's
+value pill reads **the column the layer draws** — which is `stripe`, the
+constant. Every bar in the chart would report `1.0`. So the cursor stays at its
+`'line'` default (a bare vertical line) and the number comes out of the
+container's tracker instead:
+
+```tsx
+const [year, setYear] = useState<number | null>(null);
+
+<ChartContainer
+  range={[FIRST, LAST]}
+  width={640}
+  theme={theme}
+  onTrackerChanged={(info) =>
+    setYear(info === null ? null : new Date(info.time).getUTCFullYear())
+  }
+>
+```
+
+`onTrackerChanged` hands you `{ time, values }` — and `time` is enough, because
+the anomaly can be looked up from the same fixture the colours came from. The
+strip above the chart is that lookup, rendered outside the plot.
+
+This generalises past climate stripes. **Any time the visual channel isn't the
+column you want to read** — a colour encoding, a categorical mark, a chart
+whose drawn value is a layout device — the in-chart pill is the wrong tool and
+`onTrackerChanged` is the door out.
+
+## Options to try
+
+| Option                                  | What it does                                      | Reach for it when                                                             |
+| --------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------- |
+| A diverging ramp instead of sequential  | Cold and warm as two hues meeting at zero         | The quantity straddles a meaningful zero — which an anomaly does              |
+| `useSequentialRamp(4)`                  | Fewer, wider steps, spread across the whole ramp  | You want a coarser reading, or the eight steps aren't distinguishable at size |
+| Draw `anomaly` and drop the `width={0}` | Puts a real value axis back, bar height = anomaly | You'd rather encode the value as height and keep colour as reinforcement      |
+| `gap={1}`                               | Hairline separations between stripes              | The reader should count years rather than read a gradient                     |
+| `cursor="region"`                       | Shades the whole stripe under the pointer         | The stripe itself should light up, rather than a line running through it      |
+| `<Marker>` at a notable year            | An annotated callout in the annotation register   | One year needs naming — a Pinatubo dip, an El Niño peak                       |
+
+## See also
+
+- [`<BarChart>`](../types/barchart.mdx) — `binColors`, gaps, and the dense-bar path
+- [Theming](../theming.mdx) — roles, ramps, and why there are no literals above
+- [Cursors and readouts](../interaction/cursors-and-readouts.mdx) — the cursor modes, and `onTrackerChanged`
+- [Value axes](../axes/value-axis.mdx) — pinning and suppressing an axis
+- [**Storybook**](pathname:///storybook/?path=/story/charts-barchart--bin-colors)
+  — the systematic knob walk

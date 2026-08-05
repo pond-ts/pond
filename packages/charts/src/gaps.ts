@@ -1,4 +1,5 @@
 import type { Scale } from './line.js';
+import { affineOf } from './affine.js';
 
 /**
  * How a gap-aware draw layer ({@link LineChart} / {@link AreaChart}) renders a
@@ -75,6 +76,56 @@ export interface GapEdge {
   readonly toX: number;
   /** Pixel y of the next-good sample (`toIndex`). */
   readonly toY: number;
+}
+
+/**
+ * Return `values` with every entry that has **no position on `scale`** replaced
+ * by `NaN` — i.e. converted into the gap signal the rest of this module, the
+ * `.defined` predicates, and the affine draw loops already speak. Returns the
+ * input array itself (no copy) when nothing needs gapping, which is the
+ * overwhelmingly common case.
+ *
+ * **Why the raw value is not the right test.** Every gap check in this package
+ * asks `Number.isFinite(value)`, and `0` is finite — so on a **log** axis a zero
+ * sample sailed through as real data, d3 emitted `lineTo(x, NaN)` for it, and
+ * the canvas spec says a path op with a non-finite coordinate is *dropped*. Not
+ * drawn as a break: dropped. The pen stays where it was, the next point draws
+ * from there, and the two neighbours of the missing sample join with a straight
+ * line — a bridge over absent data, which is the one thing
+ * `docs/rfcs/charts.md` trap #2 exists to prevent, arrived at silently by a
+ * chart that had asked for the honest `'empty'` mode.
+ *
+ * Testing the **scaled** coordinate instead is both the honest answer and the
+ * general one: it needs no knowledge of which scale kind is in play, and any
+ * future scale with a restricted domain (`sqrt`, `pow` with a fractional
+ * exponent) inherits it. Normalizing to `NaN` here rather than special-casing
+ * three `.defined` predicates means the gap *modes* keep working too — a
+ * `'dashed'` connector spans it, `'none'` interpolates across it, `'fade'`
+ * drops to the floor at it — instead of the value being invisible to
+ * {@link collectGapEdges} and {@link bridgeGaps}, which read the values directly.
+ *
+ * **Costs nothing on a linear axis.** An affine scale ({@link affineOf}) maps
+ * every finite value to a finite pixel by construction, so there is nothing to
+ * find and the walk is skipped outright. That is also exactly the condition
+ * under which the callers take their affine fast path, so the O(N) probe only
+ * ever runs where the draw was already on the d3-scale path.
+ */
+export function gapUnscalable(
+  values: Float64Array,
+  length: number,
+  scale: Scale,
+): Float64Array {
+  if (affineOf(scale) !== null) return values;
+  let out: Float64Array | null = null;
+  for (let i = 0; i < length; i += 1) {
+    const v = values[i]!;
+    if (!Number.isFinite(v) || Number.isFinite(scale(v))) continue;
+    // Copy lazily — a log axis whose data never touches zero (the normal case)
+    // pays a scan and no allocation.
+    if (out === null) out = values.slice();
+    out[i] = NaN;
+  }
+  return out ?? values;
 }
 
 /**
