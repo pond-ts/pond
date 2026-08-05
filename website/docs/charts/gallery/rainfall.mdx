@@ -1,0 +1,242 @@
+---
+title: Rainfall and running total
+sidebar_label: Rainfall + total
+---
+
+# Rainfall and running total
+
+Two quantities in different units on one row: what fell **today**, as bars
+against a millimetres-per-day axis, and what has fallen **so far this year**,
+as a line against its own axis on the other side. The dual-axis case, and the
+one chart where a rainy season is obvious at a glance.
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryRainfall from '@site/src/examples/gallery-rainfall';
+
+## The chart
+
+<ChartExample name="gallery-rainfall" height={300} collapsed>
+  <GalleryRainfall />
+</ChartExample>
+
+This one is the full width of the page and it moves: **drag across the plot to
+zoom into that span**, **wheel to zoom in and out**, **Reset to 2024** to get
+back. The view is clamped to 2024 by `bounds`, so no gesture can strand you off
+the end of the data. [Build it](#the-gestures) has the four props, including
+the gesture conflict you have to resolve on purpose.
+
+The shading that follows the pointer is `cursor="region"`, and it's exactly
+**one day** wide, because the bar layer hands the cursor its own bins. At the
+full-year zoom a day is under two pixels and you'll barely see it; drag into
+the wet fortnight at the end of February and it becomes an obvious block, one
+storm per bar. The snapping is the point either way — the span you select is
+whole days, never a fraction of a bar.
+
+Look at the line, not the bars. It climbs steeply from January, then goes
+**almost flat from June to September** — 76.4 mm across those three months, 9%
+of a year that totalled 818.0 mm. Nearly half the year's rain (47%) had already
+fallen by 1 June. That's the Mediterranean-summer half of the Pacific
+Northwest's reputation, and it's the shape a bar chart alone hides: 203 of
+2024's 366 days recorded **no rain at all**, so the bars sit at zero for most
+of the summer, and a flat run of zeros looks the same whether it lasted a week
+or a season.
+
+The line also has a two-day plateau in late April that isn't a dry spell — see
+below.
+
+## The data
+
+**Real, measured, public domain.** Daily precipitation (NOAA's `PRCP`, which
+counts melted snow as well as rain) for GHCN station `USW00024233`,
+Seattle-Tacoma International Airport, calendar 2024, from
+[NOAA NCEI's GHCN-Daily `daily-summaries` service](https://www.ncei.noaa.gov/access/services/data/v1)
+— a US federal government work, so no copyright attaches. Same fixture, same
+station and same year as the [temperature band](./temperature-range.mdx).
+
+```ts
+[time, low, high, precip]; // °C, °C, mm — one row per calendar day
+```
+
+- **`precip` is an optional column**, and the station's own gaps are still in
+  it: no reading was filed for **2024-04-24 or 2024-04-25**, which is the
+  plateau. For a rain gauge that distinction is the whole ballgame — a missing
+  reading stored as `0` is an outright claim that it was dry.
+- **A zero is a real measurement.** 203 days of 2024 recorded exactly `0` mm.
+  Those are data, not gaps, and they are why the bar layer looks sparse.
+- **The wettest single day was 2024-02-28, at 24.1 mm.** The daily axis is
+  pinned to 25 mm — the wettest day rounded up to the next 5 — so the tallest
+  bar keeps a little headroom instead of sitting flush against the top edge and
+  reading as clipped.
+
+## Build it
+
+The running total is one `scan`, which threads an accumulator down the series:
+
+```ts
+const series = daily.scan(
+  'precip',
+  (total: number, mm: number) => [total + mm, total + mm] as const,
+  0,
+  { output: 'cumulative' },
+);
+```
+
+The callback returns `[nextState, emittedValue]` — here they're the same
+number, which is what makes it a running sum. What earns `scan` its place over
+a hand-rolled loop is the missing cells: it **holds the accumulator across
+them** rather than resetting or dropping the row, so the two days the gauge
+didn't report come out as a two-day plateau. That is what "we don't know"
+should look like on a cumulative curve — not a step, and not a hole.
+
+Then the chart. Two `<YAxis>` elements in **one** `<ChartRow>`, one on each
+side, and each layer names the axis it scales against:
+
+```tsx
+<ChartRow height={220}>
+  <YAxis
+    id="mm"
+    side="left"
+    label="mm/day"
+    format=",.0f"
+    width={46}
+    min={0}
+    max={25}
+  />
+  <Layers>
+    <BarChart series={series} column="precip" axis="mm" gap={1} />
+    <LineChart
+      series={series}
+      column="cumulative"
+      axis="total"
+      as="secondary"
+    />
+  </Layers>
+  <YAxis
+    id="total"
+    side="right"
+    label="mm this year"
+    format=",.0f"
+    width={62}
+    min={0}
+    max={818}
+  />
+</ChartRow>
+```
+
+Three things are doing work there:
+
+- **`axis="mm"` / `axis="total"`** is the entire dual-axis mechanism. An axis
+  is a named scale; a layer opts into one. Nothing about the row is "primary"
+  or "secondary", so there's no implicit pairing to get wrong.
+- **`as="secondary"`** gives the line the palette's blue instead of the default
+  teal. Two quantities on two axes need two hues or the reader has to guess
+  which line belongs to which side — and taking that hue from a **theme role**
+  rather than a literal is what keeps it working when the site flips to dark.
+- **Both axes are pinned** with `min`/`max`. The cumulative line's height means
+  "how much of the year's rain has fallen", which only reads if the top of the
+  axis stays the year's total. An auto-fitted axis would re-scale as the window
+  moved, and the same pixel height would mean something different every frame.
+
+`gap={1}` is one pixel of space between bars. At 366 daily bars in a page-width
+plot that's most of what stops the wet season reading as a solid block.
+
+### The gestures
+
+Four props, and one of them exists to settle an argument between the other
+two:
+
+```tsx
+const [range, setRange] = useState(SEA_BOUNDS);
+
+<ChartContainer
+  range={range}
+  bounds={SEA_BOUNDS}
+  cursor="region"
+  panZoom="panZoom"
+  onTimeRangeChange={setRange}
+  onRegionSelect={setRange}
+>
+```
+
+- **`cursor="region"`** shades the bucket under the pointer, and turns a drag
+  into a span selection delivered to `onRegionSelect`. Wiring that callback
+  straight to `setRange` is the whole of drag-to-zoom.
+- **The buckets come free.** `cursorSequence` is the explicit way to define
+  them, but with none given the container falls back to the **first bar
+  layer's own bins** — so the highlight and the selection are already
+  day-aligned here. On a row with no bar layer you'd need the sequence.
+- **`panZoom="panZoom"`** is drag-to-pan plus wheel-zoom. But an unmodified
+  region-drag **preempts pan**: drag always selects. That's deliberate here —
+  on a year of daily bars, zooming to a span is worth more than panning, and
+  wheel-zoom still works. Set **`regionSelectModifier="shift"`** to reverse the
+  priority: plain drag pans, shift-drag selects.
+- **The range must be controlled.** Uncontrolled, the container holds the view
+  itself and _ignores later `range` props by design_, so they can't fight a
+  user's pan — which also means `onRegionSelect` would have nothing to write
+  to. Hold it in state, feed `onTimeRangeChange` back into it.
+- **`bounds`** is the outer pan/zoom extent. Pinned to 2024, no gesture can
+  strand the reader in blank canvas past the end of the record.
+
+The **Reset to 2024** button is a plain `setRange(SEA_BOUNDS)` — worth having,
+because zoom-in gestures are much easier to discover than the way back out.
+
+:::caution Two axes, two scales, no relationship
+Nothing enforces that the two scales are commensurate, because nothing can —
+that's a judgement about your data. A dual-axis chart can be made to show any
+correlation you like by choosing the two ranges, and the reader can't see the
+choice you made. Pin both axes deliberately, and prefer a second `<ChartRow>`
+when the two quantities don't genuinely belong in the same rectangle.
+:::
+
+## Options to try
+
+| Option                          | What it does                                         | Reach for it when                                                       |
+| ------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------- |
+| `regionSelectModifier="shift"`  | Plain drag pans; shift-drag selects a span           | Panning is the commoner gesture for your readers                        |
+| `cursor="crosshair"`            | A crosshair and one axis-pinned value pill instead   | Reading exact values matters more than selecting spans (it replaces it) |
+| `onTrackerChanged`              | Every layer's value at the cursor, outside the chart | You need both axes' numbers at once — an in-chart pill only reads one   |
+| A second `<ChartRow>`           | Daily and total in stacked rows, one time axis       | The two units don't belong in one rectangle after all                   |
+| `<AreaChart baseline={0}>`      | Fills the running total instead of stroking it       | The total is the subject and the daily bars are context                 |
+| `binColors` on the bars         | One colour per bar, from your own rule               | Flagging days over a threshold, or colouring by season                  |
+| `aggregate` on a calendar month | Twelve monthly totals instead of 366 daily bars      | The daily texture is noise for the question you're asking               |
+
+That last one is worth spelling out, because the obvious guess is wrong twice.
+There is no `rollup`, and **there is no month duration** — pond's
+`DurationUnit` is `'ms' | 's' | 'm' | 'h' | 'd'` (`'m'` is minutes), and no
+fixed span can express a month, because months are 28–31 days long. Calendar
+buckets are a `Sequence`:
+
+```ts
+import { Sequence } from 'pond-ts';
+
+const monthly = series.aggregate(
+  Sequence.calendar('month', { timeZone: 'UTC' }),
+  {
+    precip: 'sum',
+  },
+);
+// 12 buckets: Jan 165.8 mm, Feb 97.8, … Jul 4.1, … Dec 139.5 — 818.0 mm in all
+```
+
+`Sequence.calendar` takes `'day' | 'week' | 'month'` (plus `weekStartsOn` for
+weeks) and steps by **real local calendar boundaries in a named IANA zone**.
+
+:::caution The zone is part of the answer
+`'UTC'` is correct _here_ and it is not the airport's zone. A GHCN day is a
+local observing day, and this fixture keys each one at midnight **UTC** of that
+local date — so UTC month boundaries land exactly on the station's month
+boundaries in the key space. Aggregating the same series in
+`'America/Los_Angeles'` still returns twelve buckets, but every one of them is
+shifted by a day: January comes out **168.1 mm** instead of 165.8. Roll up in
+the zone your keys are in, not the zone you assume the weather was in.
+:::
+
+## See also
+
+- [`<BarChart>`](../types/barchart.mdx) — gaps, `binColors`, stacking, orientation
+- [`<LineChart>`](../types/linechart.mdx) — interpolation, roles, gap handling
+- [Multi-row layout](../layout.mdx) — rows, axes, and what the container owns
+- [Value axes](../axes/value-axis.mdx) — pinning, formatting, and axis identity
+- [Cursors and readouts](../interaction/cursors-and-readouts.mdx) — including `onTrackerChanged`
+- [**Storybook**](pathname:///storybook/?path=/story/axes--dual-axis) — the
+  systematic knob walk

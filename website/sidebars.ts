@@ -138,6 +138,11 @@ const sidebars: SidebarsConfig = {
             'charts/gallery/price-volume',
             'charts/gallery/bollinger-bands',
             'charts/gallery/drawdown',
+            // Track C — weather & climate.
+            'charts/gallery/temperature-range',
+            'charts/gallery/rainfall',
+            'charts/gallery/climate-stripes',
+            'charts/gallery/wind-rose',
           ],
         },
         {
