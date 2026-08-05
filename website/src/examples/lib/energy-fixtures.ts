@@ -29,14 +29,15 @@ import {
 
 /**
  * The eight generation bands **bottom-of-stack first**, which is also the
- * order the sequential ramp steps through (`seq1` darkest at the bottom →
- * `seq8` lightest on top, so solar — the thing that makes this weekend
- * interesting — ends up the brightest slab).
+ * order `gallery-grid-mix` paints and colours them in.
  *
  * Dispatchable conventional generation at the bottom, weather-driven
  * renewables on top: the convention energy-charts itself draws, and the one
  * that makes a mix chart legible, because the volatile bands are the ones
- * whose thickness you want to read against a flat top edge.
+ * whose thickness you want to read against a flat top edge. It is also a real
+ * split — four thermal sources then four renewable ones — which is why the
+ * chart gives each half its own tonal family rather than running one ramp
+ * across all eight.
  */
 export const GRID_BANDS = [
   { column: 'other', label: 'Other' },
