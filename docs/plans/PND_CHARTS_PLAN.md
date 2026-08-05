@@ -1456,3 +1456,67 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
         `zoomRange`/`panRange` rounding at the source would close the whole class
         rather than one call site. Not hunted further; the core fix should cover
         it.
+
+### Found building Gallery Track D — energy (grid mix, renewables, negative prices)
+
+Appended rather than numbered into the lists above, whose numbering is already
+tangled from concurrent edits. Each item cost a debugging cycle or forced prose
+that apologises for the library.
+
+- **A `<YAxis>` can't have terse ticks and a precise cursor pill.** `format` is
+  deliberately one channel for both ("so a tick and a cursor value read
+  identically", `YAxis.tsx`), and `<ChartContainer cursorFormat>` shapes the
+  **x** readout only. A price axis wants `0 / 50 / 100` ticks and a `−52.42`
+  pill; it gets `−52`. All three Track D pages ended up explaining the rounding
+  in prose. A `readoutFormat` on `<YAxis>` falling back to `format` would close
+  it without touching the existing default.
+
+- **The crosshair reticle ignores `readout`.** `AreaChart`/`LineChart`'s
+  `readout` column names the raw value behind a derived plot, and
+  `TrackerSample` documents that "a readout renderer prefers `readout ??
+value`" — but the in-chart reticle (`Layers.tsx`, `pick.value`) takes the
+  plotted number only. On the eight-band stack that means hovering the wind
+  edge prints `16` (the cumulative "everything but solar"), where the obvious
+  reading is wind's own 4.19 GW. Making the reticle prefer `readout ?? value`
+  would make a stacked area's cursor say what a reader expects, with no new
+  prop.
+
+- **`<AreaChart>` has no `id`, so nothing about an area is clickable.** Bars,
+  scatter points, candles and box rows all opt into hit-testing via `id`; areas
+  register no `hitTest` at all. A stacked area is precisely where "click the
+  band" is the expected affordance, and the grid-mix page has to state the
+  absence instead of demonstrating it.
+
+- **No diverging bar role in the theme.** Colouring bars by sign means reaching
+  across primitive families into `theme.candle.default.falling.body` for the
+  negative hue. The negative-prices page documents this as deliberate (the
+  palette's "conventional exception" pair), but a signed **bar** chart is common
+  enough to deserve `bar.positive` / `bar.negative` — or the pair under one
+  `diverging` key — so the workaround stops being the documented answer.
+
+- **Docs-side: `TrackerReadout` hard-codes an `America/New_York` date.**
+  `website/src/examples/lib/tracker-readout.tsx` was written for the finance
+  cards and formats `tracker.time` in a fixed New York timezone. Track D wanted
+  an off-chart two-value readout for renewables-vs-demand (the crosshair shows
+  one series at a time) and skipped it rather than stamp a German grid chart
+  with New York dates. A `time` formatter prop, defaulting to today's
+  behaviour, unblocks reuse.
+
+- **A Gallery card's `staticPhase` is an unverifiable magic number, and all
+  three Track D cards had it wrong.** `staticPhase` is both the first-paint and
+  the `prefers-reduced-motion` frame, and `autoplay.ts` tells you to "pick the
+  most interesting frame" — but the number maps to a window through
+  `scanWindow`'s ping-pong triangle, which nobody can evaluate by eye. The
+  salvaged values (0.52 / 0.5 / 0.55) parked all three windows on Easter
+  Monday; the negative-prices card's static frame contained **none** of the
+  eight negative hours its own blurb advertises. Fixed here by computing the
+  windows offline (0.24 / 0.26 / 0.14, verified against the rendered axis
+  ticks). A three-line script under `website/scripts/` that prints the window a
+  `staticPhase` selects would turn this from a guess into a check.
+
+- **Verification note: `requestAnimationFrame` is fully stopped in a hidden
+  preview pane** — measured **0 callbacks in 2.5 s** with `document.hidden ===
+true`. So autoplay cannot be observed there at all, and worse, whatever phase
+  the last live tick left behind sticks: the card you inspect is a frozen
+  mid-sweep frame, not `staticPhase`. Reload the page to read the static frame,
+  and don't file "the cards don't animate" from that pane.

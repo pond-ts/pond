@@ -144,6 +144,10 @@ const sidebars: SidebarsConfig = {
             'charts/gallery/rainfall',
             'charts/gallery/climate-stripes',
             'charts/gallery/wind-rose',
+            // Track D — Energy
+            'charts/gallery/grid-mix',
+            'charts/gallery/renewables-vs-demand',
+            'charts/gallery/negative-prices',
           ],
         },
         {
