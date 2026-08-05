@@ -26,15 +26,24 @@ const HOUR = 3_600_000;
  * as literals, so they flip with the site's dark mode: the brand bar fill for
  * a positive hour, and the falling-candle hue for a negative one — the
  * "conventional exception" the palette reserves for a signed quantity.
+ *
+ * Two opt-in interactions, both of which have to work **below** the zero line
+ * as well as above it: `cursor="crosshair"` prints the hour's price against the
+ * axis (at the axis's own tick format — one formatter serves both, by design),
+ * and an `id` turns on hit-testing, so a bar lights on hover and outlines on
+ * click. A negative bar's rect runs *downward* from zero, and both channels
+ * measure the rect rather than assuming it grows upward.
  */
 export default function GalleryPowerPrices({
   width,
   phase,
   height = 220,
+  cursor = 'crosshair',
 }: {
   width: number;
   phase?: number;
   height?: number;
+  cursor?: 'none' | 'line' | 'crosshair';
 }) {
   const theme = useSiteChartTheme();
   const prices = useMemo(() => dayAheadPrice(), []);
@@ -53,7 +62,7 @@ export default function GalleryPowerPrices({
       : scanWindow(begin, end, 26 * HOUR, phase);
 
   return (
-    <ChartContainer range={range} width={width} theme={theme}>
+    <ChartContainer range={range} width={width} theme={theme} cursor={cursor}>
       <ChartRow height={height}>
         <YAxis id="eur" label="EUR / MWh" format=",.0f" width={58} />
         <Layers>
@@ -61,6 +70,7 @@ export default function GalleryPowerPrices({
             series={prices}
             column="price"
             axis="eur"
+            id="hour"
             binColors={binColors}
             gap={2}
           />

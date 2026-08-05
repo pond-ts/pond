@@ -70,17 +70,24 @@ const PAINT_ORDER = [
  * With a `phase` (the Gallery card's autoplay clock) a 14-hour window sweeps
  * the three days, so the solar bulge grows and collapses as it crosses. Every
  * other embed passes no phase and gets the whole weekend.
+ *
+ * `cursor="crosshair"` snaps its reticle to the **nearest band edge** under the
+ * pointer and prints that edge's value — which on a stack is a *cumulative*
+ * total, not one band's output. On the top edge that is total generation, which
+ * is the number worth reading here.
  */
 export default function GalleryGridMix({
   width,
   phase,
   height = 220,
   legend = false,
+  cursor = 'crosshair',
 }: {
   width: number;
   phase?: number;
   height?: number;
   legend?: boolean;
+  cursor?: 'none' | 'line' | 'crosshair';
 }) {
   const theme = useSiteChartTheme();
   const series = stacked();
@@ -91,7 +98,7 @@ export default function GalleryGridMix({
       : scanWindow(begin, end, 14 * HOUR, phase);
 
   return (
-    <ChartContainer range={range} width={width} theme={theme}>
+    <ChartContainer range={range} width={width} theme={theme} cursor={cursor}>
       <ChartRow height={height}>
         <YAxis id="gw" label="GW" format=",.0f" min={0} width={56} />
         <Layers>

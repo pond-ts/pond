@@ -7,11 +7,20 @@
  * load, and the day-ahead price went negative for eight hours of the weekend,
  * bottoming at −52.42 EUR/MWh.
  *
- * **Source and licence.** energy-charts.info (Fraunhofer ISE), CC BY 4.0 —
+ * **Source and licence.** energy-charts.info (Fraunhofer ISE) —
  * https://api.energy-charts.info. Generation and load from its
  * `/public_power` endpoint (upstream: ENTSO-E / SMARD); the day-ahead price
- * from `/price` (upstream: Bundesnetzagentur | SMARD.de, also CC BY 4.0).
- * Retrieved 2026-08-02, for 2025-04-19 – 2025-04-21.
+ * from `/price`. Retrieved 2026-08-02 for 2025-04-19 – 2025-04-21, and
+ * re-fetched 2026-08-05 to confirm every value below still matches the
+ * endpoints byte for byte.
+ *
+ * The `/price` response self-reports its licence in a `license_info` field:
+ * "CC BY 4.0 (creativecommons.org/licenses/by/4.0) from Bundesnetzagentur |
+ * SMARD.de". `/public_power` carries **no** such field — Energy-Charts
+ * publishes under CC BY 4.0 site-wide, but that endpoint does not restate it
+ * per response, so the attribution here (Fraunhofer ISE / energy-charts.info,
+ * upstream ENTSO-E) is what CC BY asks for rather than something the payload
+ * proves.
  *
  * **What was kept.** Generation at the API's native **15-minute** cadence
  * (288 rows, 900 s apart, starting 2025-04-18T22:00:00.000Z),

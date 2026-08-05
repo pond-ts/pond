@@ -7,12 +7,15 @@
  *
  *     node website/scripts/fixtures/energy.mjs > website/src/examples/lib/energy-samples.ts
  *
- * Two public endpoints of **energy-charts.info** (Fraunhofer ISE), both CC BY 4.0:
+ * Two public endpoints of **energy-charts.info** (Fraunhofer ISE):
  *
  *   - `/public_power`  — 15-minute generation by production type, plus load,
  *                        for the DE bidding zone. Source: ENTSO-E / SMARD.
+ *                        Returns **no** `license_info` field; Energy-Charts
+ *                        publishes under CC BY 4.0 site-wide.
  *   - `/price`         — hourly DE-LU day-ahead auction price (EUR/MWh).
- *                        Source: Bundesnetzagentur | SMARD.de.
+ *                        Self-reports `license_info` (CC BY 4.0,
+ *                        Bundesnetzagentur | SMARD.de), echoed into the header.
  *
  * The window is Easter weekend 2025 (Sat 19 – Mon 21 April, all three days
  * public-holiday-quiet in Germany): Easter Sunday was the lowest-average-demand
@@ -138,11 +141,17 @@ const header = `/**
  * load, and the day-ahead price went negative for eight hours of the weekend,
  * bottoming at −52.42 EUR/MWh.
  *
- * **Source and licence.** energy-charts.info (Fraunhofer ISE), CC BY 4.0 —
+ * **Source and licence.** energy-charts.info (Fraunhofer ISE) —
  * https://api.energy-charts.info. Generation and load from its
  * \`/public_power\` endpoint (upstream: ENTSO-E / SMARD); the day-ahead price
- * from \`/price\` (upstream: Bundesnetzagentur | SMARD.de, also CC BY 4.0).
- * Retrieved ${new Date().toISOString().slice(0, 10)}, for ${START} – ${END}.
+ * from \`/price\`. Retrieved ${new Date().toISOString().slice(0, 10)}, for ${START} – ${END}.
+ *
+ * The \`/price\` response self-reports its licence in a \`license_info\` field:
+ * "${price.license_info ?? '(absent)'}". \`/public_power\` carries **no** such
+ * field — Energy-Charts publishes under CC BY 4.0 site-wide, but that endpoint
+ * does not restate it per response, so the attribution here (Fraunhofer ISE /
+ * energy-charts.info, upstream ENTSO-E) is what CC BY asks for rather than
+ * something the payload proves.
  *
  * **What was kept.** Generation at the API's native **15-minute** cadence
  * (${n} rows, ${stepS} s apart, starting ${new Date(power.unix_seconds[0] * 1000).toISOString()}),

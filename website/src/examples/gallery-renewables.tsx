@@ -24,17 +24,24 @@ const HOUR = 3_600_000;
  * solar. Both fills are graded and translucent, so the overlap reads as a
  * blend rather than one area erasing the other — the opposite of the stacked
  * card next door, where the bands must be opaque.
+ *
+ * `cursor="crosshair"` draws **one** reticle per row, snapped to whichever of
+ * the two curves is nearer the pointer's y — so it reads one of the pair at a
+ * time, not both. Reading both at once needs an off-chart readout fed by
+ * `onTrackerChanged`.
  */
 export default function GalleryRenewables({
   width,
   phase,
   height = 220,
   legend = false,
+  cursor = 'crosshair',
 }: {
   width: number;
   phase?: number;
   height?: number;
   legend?: boolean;
+  cursor?: 'none' | 'line' | 'crosshair';
 }) {
   const theme = useSiteChartTheme();
   // One derived column: the two weather-driven sources added together.
@@ -51,7 +58,7 @@ export default function GalleryRenewables({
       : scanWindow(begin, end, 20 * HOUR, phase);
 
   return (
-    <ChartContainer range={range} width={width} theme={theme}>
+    <ChartContainer range={range} width={width} theme={theme} cursor={cursor}>
       <ChartRow height={height}>
         <YAxis id="gw" label="GW" format=",.0f" min={0} width={56} />
         <Layers>

@@ -21,7 +21,12 @@ import GalleryPowerPrices from '@site/src/examples/gallery-power-prices';
 
 Eight of the 72 hours hang below the line. The deepest is **−52.42 EUR/MWh** at
 13:00 on Easter Sunday — and seven hours later, the same day cleared at
-**+144.95**.
+**+144.95**. Both halves are live: hover a bar and the crosshair prints its
+price against the axis (`−52`, `145` — the pill shares the axis's `,.0f` tick
+format, so it rounds), and because the layer carries an `id`, a bar lights on
+hover and outlines on click, below the zero line as readily as above it. The
+time pill reads the auction hour's **midpoint** — `Apr 20, 13:30` for the
+13:00–14:00 hour — because the bar is keyed by a span, not an instant.
 
 ## The data
 
@@ -38,11 +43,14 @@ hour, over the same Easter weekend 2025 as the other two Energy cards. From
 Negative prices are a real market outcome, not bad data. When must-run
 generation exceeds demand, sellers pay to deliver rather than shut down plant
 they can't cheaply restart. This weekend is a textbook case: the eight negative
-hours are **Saturday 13:00–15:00** and **Sunday 11:00–15:00**, and the Sunday
-run sits exactly on top of the
-[1 h 45 m when wind and solar out-produced total load](./renewables-vs-demand.mdx).
-The weekend's mean was **+72.06** EUR/MWh, so the negative hours are the
-exception the chart exists to show.
+hours begin **Saturday 13:00, 14:00 and 15:00** and **Sunday 11:00 through
+15:00**, and the Sunday run brackets the
+[1 h 45 m when wind and solar out-produced total load](./renewables-vs-demand.mdx)
+— it opens at 11:00, an hour and a quarter before the crossing begins at 12:15,
+and its last hour still starts at 15:00, an hour and a quarter after the
+crossing ends at 13:45. The auction prices the whole surplus, not only the
+quarter-hours that cleared 100%. The weekend's mean was **+72.06** EUR/MWh, so the
+negative hours are the exception the chart exists to show.
 
 The key is a **`timeRange`**, not a time. A day-ahead price _is_ a span — it
 clears for the hour — and a span-keyed series is also what gives `<BarChart>` a
@@ -72,7 +80,8 @@ const prices = new TimeSeries({
 ```
 
 **2. Draw it. There is no baseline prop to set.** `<BarChart>` always pulls
-`0` into the auto-fitted domain and rests its bars on it, so a series that
+`0` into the auto-fitted domain (`barExtent`) and resolves each bar's baseline
+as zero clamped into that domain (`resolveBarBaseline`), so a series that
 straddles zero gets the zero line on screen and negative bars drawn _downward_
 for free:
 
@@ -111,13 +120,15 @@ literal to inline.
 
 ## Options to try
 
-| Option                | What it does                                 | Reach for it when                                                     |
-| --------------------- | -------------------------------------------- | --------------------------------------------------------------------- |
-| `binColors`           | Per-bar fill, aligned to the bars in order   | The sign, a threshold breach, or a zone matters more than the series  |
-| `gap`                 | Pixels between adjacent bars                 | Dense hourly data; drop it to `0` and the bars read as a column block |
-| `<YAxis min>` / `max` | Pins the domain instead of auto-fitting      | Comparing two periods that must share a scale                         |
-| `id` + `onSelect`     | Makes bars clickable, reporting `(id, key)`  | Drilling from an hour into what set it                                |
-| `decimate`            | Envelope-draws bars denser than ~1 per pixel | A year of hourly prices; note `binColors` turns it off                |
+| Option                | What it does                                        | Reach for it when                                                     |
+| --------------------- | --------------------------------------------------- | --------------------------------------------------------------------- |
+| `binColors`           | Per-bar fill, aligned to the bars in order          | The sign, a threshold breach, or a zone matters more than the series  |
+| `gap`                 | Pixels between adjacent bars                        | Dense hourly data; drop it to `0` and the bars read as a column block |
+| `<YAxis min>` / `max` | Pins the domain instead of auto-fitting             | Comparing two periods that must share a scale                         |
+| `cursor="crosshair"`  | Reticle + value pill on the bar under the pointer   | Reading a single hour off the chart without a click                   |
+| `id`                  | Turns on hit-testing — hover lights, click outlines | Any bar chart you want to feel touchable                              |
+| `id` + `onSelect`     | Reports the click as `{ id, key, value, label }`    | Drilling from an hour into what set it                                |
+| `decimate`            | Envelope-draws bars once slots fall under ~1 px     | A year of hourly prices; note `binColors` turns it off                |
 
 An explicit `<YAxis min>` **above** zero is the one thing to avoid here: the
 bars then rest on the axis floor rather than the zero line, and a negative
