@@ -979,6 +979,40 @@ consumers), `hasAnyDefined()`/`allMissing()`, the protobuf columnar wire
   is never built _as_ a perf fix; adopt only if a consumer asks for the
   ergonomics on their own weight.
 
+## [PND-LOGTICK-N18] — an unexplained sixth axis label on Node 18
+
+**Open.** A log-axis test that asserted the exact set of digit-bearing leaf
+`<div>`s in a rendered chart passed on Node 22 (5 labels: `1 / 10 / 100 /
+1,000 / 10,000`, evenly log-spaced) and failed on CI's `verify (18.x)` with
+**six**. It blocked the v0.56.0 publish twice.
+
+What is known, measured rather than assumed:
+
+- The chart is `<YAxis scale="log">` over data `[1, 100, 10000]`, domain
+  `[1, 10000]` — five whole decades, and `yTickValues` returns exactly those
+  five on every environment tried.
+- The stray sixth element's text parses to a value whose base-10 logarithm sits
+  `0.2944662261615929` from a whole number — **exactly** `log10(1.97)`. So the
+  label reads `1.97`, `19.7`, `197`, `1970` or `19700`.
+- It was never reproduced locally. `NODE_ENV=production` was the obvious
+  suspect and is a dead end (it fails on `React.act is not a function`, a
+  testing-library artifact of a production React build). No Node 18 was
+  available on the machine to reproduce with.
+- `1.97e17` does appear in a _sibling_ test in the same file, but that test is
+  pure — it calls `resolveAxisFormat` and never renders — so it cannot be
+  leaking DOM. The coincidence is unexplained, not a cause.
+
+The assertion has been relaxed to an order-preserving **subsequence** check, so
+a claim about tick _selection_ (already pinned deterministically by the
+`yTickValues` unit tests) no longer gates a release on a whole-render-tree
+scrape. That is a workaround, not a diagnosis.
+
+**Worth doing:** run the charts suite under Node 18 and dump every
+digit-bearing leaf div with its inline style, as was done on Node 22. If the
+sixth element is a real axis label, the tick selector has an environment
+dependence and this is a bug. If it is some other node that happens to contain
+a digit, the original assertion was simply the wrong shape and this can close.
+
 ## [PND-CHFRIC] — Chart example friction
 
 Found by **building** the Gallery's replica of a production network dashboard
@@ -1291,11 +1325,11 @@ container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
     per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
     mark's own affordances and say nothing about it.
 
-                    _Still true; no longer felt here._ The draggable marker is gone — selection
-                    is a click — so nothing on this page is in edit mode. But it cost a design
-                    iteration to discover, and the docs still don't mention it. **The one-line
-                    fix is a sentence on `editing`**: "while any mark in a row is editing, that
-                    row's data cursor is suppressed."
+                        _Still true; no longer felt here._ The draggable marker is gone — selection
+                        is a click — so nothing on this page is in edit mode. But it cost a design
+                        iteration to discover, and the docs still don't mention it. **The one-line
+                        fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                        row's data cursor is suppressed."
 
 25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
     The prop reads as drag-only ("drag across the plot … on release this fires
