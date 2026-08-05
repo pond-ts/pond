@@ -1,0 +1,342 @@
+---
+title: Day-of-year overlay
+sidebar_label: Day-of-year overlay
+---
+
+# Day-of-year overlay
+
+Forty-five years of one number — sea-surface temperature in the patch of
+equatorial Pacific that defines El Niño — every year drawn on the same Jan–Dec
+axis so you can see where the current one sits against all the others. The x
+axis is a **day of the year**, not a date, and the current year's line stops
+partway across because that is where the record stops.
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryNino34 from '@site/src/examples/gallery-nino34';
+
+## The chart
+
+<ChartExample name="gallery-nino34" height={420} collapsed>
+  <GalleryNino34 width={640} height={300} showReadout />
+</ChartExample>
+
+Move the pointer across the plot: the vertical line marks a day of the year and
+the strip above reports that date, the three named years' anomalies, and where
+2026 ranks among all 45 on it. That is the whole hover story, and the
+[Build it](#build-it) section explains why it is deliberately not more —
+with 45 overlapping lines there is no honest way for an in-chart pill to say
+which one you are on.
+
+What the shape says: 2026 opened **cooler than its own climatology** (January
+averaged **−0.42 °C**), crossed zero in March, and has climbed every month
+since — **+0.5** on 14 April, **+1.0** on 30 April, **+1.5** on 5 June, **+2.0**
+on 10 July. At the end of the record, 3 August, it stands at **+2.56 °C**: the
+**warmest 3 August of the 45**, ahead of 1997 (+1.62) and 2015 (+1.45) on the
+same date, against a pack whose coldest year on that day is −1.67.
+
+Those two named years are the comparison because they are the two biggest El
+Niños in the record — 1997 peaked at **+2.62 °C** on 24 November and 2015 at
+**+3.03 °C** on 19 November, which is the highest daily value anywhere in the
+45 years. Both peaked in late autumn. 2026 is at +2.56 in **early August**.
+
+**Chart style after [Zeke Hausfather](https://www.theclimatebrink.com/)'s
+day-of-year overlays at The Climate Brink** — the idea of stacking every year on
+one seasonal axis and letting the current one run out into open space is his.
+This is a reconstruction from the same public data, not a reproduction of his
+chart: the climatology below is our own implementation and the numbers are ours.
+
+## The data
+
+**Real, measured, public domain.** NOAA's
+[OISST v2.1](https://www.ncei.noaa.gov/products/optimum-interpolation-sst) —
+the daily, 0.25°, satellite-plus-buoy optimum-interpolation sea-surface
+temperature analysis — averaged over the **Niño 3.4** box, 5°S–5°N and
+170°W–120°W. A US government work, so public domain. Retrieved
+2026-08-05 by
+[`website/scripts/fixtures/nino34.mjs`](https://github.com/pond-ts/pond/blob/main/website/scripts/fixtures/nino34.mjs),
+which runs by hand and commits its output.
+
+```ts
+[day, sst]; // one day, box-mean SST in °C — 16,275 of them, 1982-01-01 → 2026-08-03
+```
+
+- **8,241 cells per day, all of them.** The box is 41 latitudes × 201
+  longitudes at 0.25°, and each value is the mean of every cell — not a sample
+  of them. (Striding the grid is the obvious economy and costs about 0.014 °C
+  at every-4th-cell; it turned out to save nothing here, because the server's
+  cost is reading the year file rather than returning the cells.)
+- **Longitude is degrees east**, so 170°W–120°W is `190`–`240`. Read as a
+  negative pair it returns a different ocean, silently.
+- **29 February is dropped.** That is what makes an x slot a _calendar date_:
+  with the leap day gone, slot 59 is 1 March in every year, and the years stack
+  with no drift. Aligning on the raw ordinal day instead slides every leap
+  year's second half one day left of every common year's. The cost is one day
+  in four years — 11 values out of 16,275.
+- **The last year is short.** The record ends **3 August 2026**, so 2026 has
+  **215** days against everyone else's 365, and its line ends in open plot.
+- **Values are raw SST, not anomalies.** The fixture stores what the instrument
+  measured; the climatology and the anomaly are computed in the page. That is
+  the point of the card, and it is cheap — see [Build it](#build-it).
+
+### Which NOAA server, and why it matters
+
+NOAA serves this analysis through more than one door and they are **not equally
+complete**. The obvious one, [NOAA CoastWatch's
+ERDDAP](https://coastwatch.pfeg.noaa.gov/erddap/griddap/ncdcOisst21Agg.html), is
+a clean CSV API that subsets the box in one request — and is **missing 1,196
+days**, roughly every other day from October 1992 to July 1998. 1994 has 138 of
+its 365; **1997 has 176**. Six years of this overlay, including one of the two
+years it names, would have been combs.
+
+So the fixture comes from [NOAA
+PSL](https://psl.noaa.gov/data/gridded/data.noaa.oisst.v2.highres.html)'s
+OPeNDAP server, whose per-year files are complete, and ERDDAP is kept as the
+**cross-check**: the generator pulls five dates spread across the record from
+both servers and asserts they agree. They match to every digit either one
+prints — `2015-12-01` is **29.4282 °C** from both. The generator also asserts
+that every day carries all 8,241 cells and that no day is missing, so a future
+re-pull that quietly loses data fails loudly instead.
+
+### What's committed
+
+**63 KB**, as one delta-coded integer array. The absolute values sit between
+23.44 and 30.62 °C — four digits each in hundredths — while a day moves at most
+0.55 °C, so the day-to-day differences are one or two digits. Storing
+differences and undoing them with a running sum is **48% off** the committed
+file for a decode of one line.
+
+## Build it
+
+Three things have to happen before there is a chart: get every year onto one
+axis, work out what "normal" is for each day of the year, and subtract.
+
+### One axis for 45 years
+
+The clean trick is to stop thinking of this as a special axis. Map every year's
+days onto **one common non-leap reference year** and each year becomes an
+ordinary series on an ordinary time axis — month ticks, cursor, everything, for
+free:
+
+```ts
+const REFERENCE_YEAR = 2001; // non-leap: the fixture has no 29 February
+
+const DAY_TIMES = Array.from({ length: 365 }, (_, d) =>
+  new Date(REFERENCE_YEAR, 0, 1 + d).getTime(),
+);
+```
+
+Then `timeFormat="%b"` prints month abbreviations and nothing on the chart
+mentions 2001. The tick ladder thins them to fit — at the 578px plot above
+that is **`Jan` / `Apr` / `Jul` / `Oct`**, four quarterly labels, not twelve.
+
+**Local midnights, not UTC.** The tick ladder places month ticks on _local_
+month boundaries, so a UTC-midnight axis sits a few hours off them — and a
+reader far enough east of UTC loses the `Jan` tick entirely, because local
+1 January falls before the range starts. The observations are still UTC days;
+this is the carrier, not the data.
+
+### The climatology, in two `collapse`s
+
+Every year is measured against **its own** 30-year day-of-year climatology,
+centred on it — `[y − 14, y + 15]`, which is the convention NOAA's
+[ONI](https://www.cpc.ncep.noaa.gov/products/analysis_monitoring/ensostuff/ONI_v5.php)
+uses — and clamped at the ends of the record, because neither 1981 nor 2027
+exists to average. So 1997 is measured against 1983–2012, and 2015 and 2026 both
+against 1996–2025.
+
+This is what removes the long-term warming trend, and it is the reason
+comparing 1982 with 2026 means anything at all. **On raw SST the last decade
+simply sits above the first** and the chart becomes a picture of global warming
+rather than of El Niño.
+
+The shape that makes it a two-liner is **one wide series**: 365 rows, one column
+per year.
+
+```ts
+const wide = TimeSeries.fromColumns({
+  name: 'nino34-sst',
+  schema: [
+    { name: 'time', kind: 'time' },
+    ...YEARS.map((year) => ({ name: `y${year}`, kind: 'number' as const })),
+  ],
+  columns: {
+    time: DAY_TIMES,
+    // one 365-long array per year; `null` past the end of the record
+    ...columnsByYear,
+  },
+});
+```
+
+A day-of-year climatology is then a **row-wise mean across a window of
+columns** — which is exactly what `collapse` does:
+
+```ts
+const own = `y${year}`;
+const base = climatologyWindow(year).map((y) => `y${y}`); // 30 column names
+
+const anomaly = wide
+  // the 30 base-period columns → `clim`, the mean SST on that day of the year.
+  // `append: true` keeps everything else, which is how `own` survives to the
+  // next step.
+  .collapse(base, 'clim', (v) => mean(base.map((c) => v[c])), { append: true })
+  // `own` and `clim` → their difference. `collapse` drops the two it consumed.
+  .collapse([own, 'clim'], 'anomaly', (v) => v[own] - v.clim);
+```
+
+Two passes, 45 times over. The whole module — decode 16,275 values, build 45
+climatologies, 45 anomaly series and every summary number on this page — is a
+**median 33 ms** (seven cold runs under Node 22), once, at import. There is no
+reason to bake that into the fixture, and good reason not to: a stored anomaly
+is a stored _choice of base period_, and this way the choice is visible and one
+edit away.
+
+Two notes for anyone doing this with their own runtime-named columns. `select`
+is **variadic** — handed an array it matches nothing and hands back a series of
+just the key column, with no error — and it is not needed here anyway, because
+`collapse` reads only the columns it was given and keeps the rest by reference.
+And declare the wide schema's value columns as `{ name: string; kind: 'number' }`
+rather than reaching for `TimeSeries<SeriesSchema>`: on the latter the data
+column names resolve to `never` and every call fails to compile.
+
+### The pack, and the three that aren't
+
+Forty-two lines exist to be a _backdrop_. That is a theme register, not a
+colour:
+
+```tsx
+{
+  BACKDROP.map((year) => (
+    <LineChart
+      key={year}
+      series={anomalySeries(year)}
+      column="anomaly"
+      axis="anom"
+      as="muted"
+      legend={false}
+    />
+  ));
+}
+{
+  NAMED.map(({ year, role, label }) => (
+    <LineChart
+      key={year}
+      series={anomalySeries(year)}
+      column="anomaly"
+      axis="anom"
+      as={role}
+      legend={label}
+    />
+  ));
+}
+```
+
+`line.muted` is a neutral, part-transparent hairline — the site theme defines it
+as `--pond-muted` at 55% and width 1. Giving the backdrop years data hues
+instead would produce 45 competing series and no chart. The three named years
+take `primary` / `secondary` / `context`, and they are the only layers with a
+`legend` name, so the legend card has exactly three rows.
+
+Layer order is JSX order, so the pack is declared first and the named years draw
+over it.
+
+### What 45 lines costs
+
+Less than it looks. Instrumenting the canvas and forcing repaints by flipping
+the site theme: one full repaint issues **16,248 `lineTo` calls** — every
+sample of every line — in a **median 6 ms** (20 repaints, 1.8–27 ms).
+
+16,248 is the number to notice, because it says **M4 decimation never
+engages here**. `<LineChart decimate>` defaults on, but it only takes over once
+the visible data is denser than about two samples per device pixel, and 365
+points across a 1,156-device-pixel plot is 0.32. The cost of this chart is 45
+_layers_, not the points in them — the opposite of the seismograph card in the
+same track, where one line carries 12,800 samples and decimation does all the
+work.
+
+### The partial year takes care of itself
+
+2026's column is `null` after 3 August. The anomaly reducer returns `NaN`
+there, which is how pond spells "no value", and `<LineChart>`'s default
+`gaps="empty"` breaks the line rather than bridging it. Nothing needs trimming
+and nothing needs a special case — the line ends where the data does. A
+`<Marker>` at that day says so out loud, rather than leaving a reader to wonder
+whether the line was cut off by the plot.
+
+### The threshold lines
+
+The four El Niño strength labels — weak, moderate, strong, very strong, at
++0.5 / +1.0 / +1.5 / +2.0 — go in the **annotation register**, not into a data
+hue:
+
+```tsx
+{
+  THRESHOLDS.map((t) => (
+    <Baseline
+      key={t.label}
+      value={t.value}
+      axis="anom"
+      label={t.label}
+      labelPosition="above"
+      selectable={false}
+    />
+  ));
+}
+```
+
+They are `<Baseline>` lines and not shaded bands because there is no y-span
+annotation in `@pond-ts/charts` — `<Region>`'s `from`/`to` are **x**
+positions, so it shades a span of the axis, not a range of values. Four
+reference lines say the same thing; a shaded band would say it better.
+
+They are also **reference marks, not a classification**, and the difference
+matters. ONI is a _three-month running mean of monthly_ anomalies; this is a
+daily series, which crosses a line and comes back. **12 of the 45 years touch
++2.0 on at least one day**, which is nothing like 12 very strong El Niños. Read
+the bands as "where this year is sitting", not as a verdict. The La Niña
+thresholds are the same numbers negated and are not drawn — 36 of the 45 years
+reach −0.5 at some point, and eight more lines would bury the pack.
+
+### What hover can honestly do
+
+`cursor="line"` — the default — draws the shared vertical rule and no values.
+That is the right mode here, and not a compromise: `crosshair` pins **one**
+value pill per row, and with 45 lines under the pointer that pill would be
+reading one of them essentially at random. There is no in-chart readout that can
+identify which grey line you are near, so the chart doesn't pretend to have one.
+
+What it does instead is take the readout off the chart, keyed on the cursor's
+time:
+
+```tsx
+<ChartContainer cursor="line" onTrackerChanged={setTracker}>
+```
+
+`onTrackerChanged` hands over `{ time, values }`; the strip above the chart uses
+`time` alone, converts it to a day-of-year slot, and looks the numbers up in the
+same fixture the chart drew. It reports the **date**, the **three named years**,
+and **2026's rank among all 45 on that date** — all of which are true of a day
+rather than of a line, which is the only thing a pointer position can honestly
+identify here. It is the same door the
+[climate stripes](./climate-stripes.mdx) card goes through, for the same
+reason.
+
+## Options to try
+
+| Option                                       | What it does                                                     | Reach for it when                                                                       |
+| -------------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| A fixed base period instead of a centred one | Every year measured against the same 30 years                    | You want the warming trend **left in** — it's a legitimate different question           |
+| `curve="monotone"`                           | Smooths the path between days without touching the values        | Daily noise is distracting and you want the seasonal shape                              |
+| `smooth('anomaly', 'movingAverage', …)`      | Smooths the **values** — a 5-day mean is the usual ENSO practice | The daily wobble is genuinely noise, and you'd rather denoise the data than the drawing |
+| `<Legend placement="top-left">`              | Moves the three-row key                                          | The bottom-left corner has data in it for your record                                   |
+| `as="seq2"` on the backdrop                  | The sequential ramp's second step instead of neutral grey        | You want the pack tinted rather than grey — check it still reads as a backdrop          |
+| Drop the `<Marker>`                          | No vertical rule at the end of the record                        | The reader already knows the year is in progress                                        |
+
+## See also
+
+- [`<LineChart>`](../types/linechart.mdx) — `gaps`, `decimate`, `curve` and the rest
+- [`<Region>`, `<Baseline>`, `<Marker>`](../annotations/region-baseline-marker.mdx) — the annotation register these thresholds live in
+- [Theming](../theming.mdx) — roles, including `line.muted`, and why there are no literals above
+- [Cursors and readouts](../interaction/cursors-and-readouts.mdx) — the cursor modes and `onTrackerChanged`
+- [Climate stripes](./climate-stripes.mdx) — the other card whose readout has to live off-chart
+- [**Storybook**](pathname:///storybook/?path=/story/charts-linechart--line-styles)
+  — the systematic knob walk
