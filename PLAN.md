@@ -917,6 +917,21 @@ argument for the rest.
   id. Itemised, with the workaround each one forced, in
   [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-chfric--chart-example-friction).
 
+- **[PND-HEATMAP]** — A **heat map draw layer** for `@pond-ts/charts`. Raised by
+  pjm off the Gallery's climate-stripes card: the bar-based version says the
+  right thing but wants to be a grid of cells, with a **day / month / year
+  granularity toggle** re-binning the same series. The shape is a
+  two-dimensional bin — time along x, a second dimension down y (calendar
+  position, category, or value bucket), colour encoding the aggregate — and it
+  is the one common time-series display pond has no primitive for. It composes
+  with work already shipped: `Sequence.calendar` supplies the honest
+  day/week/month binning, `partitionBy` + `aggregate` produce the cells, and the
+  sequential ramp is the colour channel. The design questions are whether the y
+  dimension is a category axis or a derived calendar coordinate, how a cell
+  reports to the cursor, and whether the granularity toggle is a prop or a
+  re-binned series the caller passes. Write-up in
+  [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md).
+
 ---
 
 ## Cross-cutting work

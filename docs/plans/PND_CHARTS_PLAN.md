@@ -636,6 +636,67 @@ replacing the three hardcoded `5`s (`YAxis` `TICK_COUNT`, `ChartRow`
 `AXIS_TICK_COUNT`, `Layers` `GRID_TICKS`) that previously agreed only by
 convention, so label / gridline / readout can no longer drift.
 
+### [PND-LOGAX] — `<YAxis scale="log">` — DONE
+
+Shipped. The scale kind is per-axis and **transparent to every draw layer**:
+`ChartRow` builds a `scaleLog` instead of a `scaleLinear`, and the shared
+`YScale` supertype (`ScaleContinuousNumeric`) is the whole of the plumbing — no
+layer branches on it. `format` formats the **value**, not its logarithm, via
+`resolveAxisFormat` routing a log scale's formatting through a linear scale over
+the same domain (`scaleLog.tickFormat` is a *tick* formatter and returns `''`
+for anything it doesn't consider significant, which would blank the cursor
+readout and every chip); tick *thinning* is `yTickValues`, which picks whole
+decades rather than d3's near-step-function `ticks(count)` (3 ticks at count 4,
+**64** at count 8, from a height-derived count).
+
+**Decisions worth recovering.** The Layer-2 review found nine issues, all real;
+three of the fixes involved a judgement call:
+
+1. **A non-finite _scaled_ coordinate is now a genuine gap**, normalized to
+   `NaN` in one place (`gapUnscalable` in `gaps.ts`) rather than by overriding
+   the three `.defined` predicates. Chosen because the gap _modes_ then keep
+   working — `collectGapEdges` and `bridgeGaps` read the values directly, so a
+   `.defined` override would have left `'dashed'` / `'none'` / `'fade'` blind to
+   the gap — and because it needs no knowledge of scale kinds, so a future
+   restricted-domain scale inherits it. Costs nothing on a linear axis: an
+   affine scale maps finite→finite by construction, so the walk is skipped, and
+   that is exactly the condition under which the callers take their affine fast
+   path anyway.
+2. **The dev warning names only unambiguous mistakes.** It cannot distinguish a
+   line touching zero from a `BarChart` on strictly positive data — `barExtent`
+   widens its low end to exactly `0` so bars can meet their baseline, so both
+   report `[0, hi]`. The first version keyed off that and warned on **every**
+   bar chart on a log axis, with text that was false there. **Deferred
+   alternative:** add a `yDataExtent?()` to the internal `RowLayer` reporting the
+   unwidened extent, which would let the warning name the zero case precisely.
+   Rejected as disproportionate — five files and a new internal channel for a
+   dev-only `console.warn` — and cheaper now that a zero renders as a visible
+   gap (decision 1), so the picture itself is the diagnostic. Revisit if the
+   ambiguity actually bites someone.
+3. **A stacked bar's base is the axis floor**, via the same `resolveBarBaseline`
+   rule a plain bar uses, rather than a literal `0`. Identical geometry on a
+   linear axis (zero clamped into a domain that contains zero *is* zero); on a
+   log axis it is the difference between drawing the bottom segment and silently
+   dropping it — `fillRect` with a `NaN` argument is a canvas no-op, and the
+   same rect feeds `stackAt`, so the segment was unhittable too.
+
+Also landed from the same review: the log domain now follows the **linear
+policy exactly** (explicit bounds verbatim, the _auto_ side moves on inversion,
+`.nice()` on a fully auto-fit domain) — the log path had inverted the
+never-discard-the-caller's-bound rule; `needsExtents` treats a *refused* log
+bound as absent, so `min={0} max={1e6}` gathers extents instead of silently
+falling back to the placeholder domain (a gap between what `resolveLogDomain`'s
+unit tests passed it and what `ChartRow` actually did); and `buildGradient`
+drops an extreme with no position rather than letting `NaN` reach
+`createLinearGradient`, which throws `IndexSizeError` on a real canvas.
+
+**Test-double lesson.** That last one was invisible because `test/canvas-mock.ts`
+stubbed `createLinearGradient` unconditionally — the double was *more permissive
+than the platform*, so a defect that crashes every browser rendered as a green
+suite. The mock now enforces the platform's own argument validation for the
+gradient entry points. A double may be less capable than the real thing; it must
+not be more forgiving, or the tests stop being evidence.
+
 ### [PND-CURSOR] — Cursor/readout polish backlog
 
 Deferred-until-a-design-call items, none blocking: scatter `inline`

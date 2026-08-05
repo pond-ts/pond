@@ -561,6 +561,29 @@ export function stackBinExtent(ss: StackedBarSeries): [number, number] | null {
 }
 
 /**
+ * The value a stack's **first** segment rests on, in data units — the same
+ * `0`-clamped-into-the-domain rule {@link resolveBarBaseline} applies to a plain
+ * bar, read off whichever scale carries the stacked value (`yScale` when the
+ * bars grow up, `xScale` when they grow right).
+ *
+ * Both stack walks used to start at a literal `0`, which is right only while the
+ * domain contains zero — and a **log** domain never can. `yScale(0)` on a log
+ * scale is `NaN`, `fillRect` with a `NaN` argument is a silent canvas no-op, and
+ * the same rect feeds {@link stackAt} — so the bottom segment of every stack
+ * both vanished *and* became unhittable, with nothing to see but a stack that
+ * starts one segment up. The linear case is unaffected: the value extents pull
+ * `0` into the domain, so this returns exactly `0` and the geometry is
+ * unchanged.
+ */
+export function stackBase(
+  orientation: Orientation,
+  xScale: Scale,
+  yScale: Scale,
+): number {
+  return resolveBarBaseline(orientation === 'vertical' ? yScale : xScale);
+}
+
+/**
  * The pixel rect `[x0, x1, yTop, yBottom]` (ascending on both axes) of bin `b`'s
  * segment `g`, stacked so it sits atop `cumBefore` (the summed value of the
  * segments below it, in value units). `null` for a gap (see below). Transposes on
@@ -650,10 +673,11 @@ export function drawStacks(
   hover: StackMark | null,
 ): void {
   const G = ss.groups.length;
+  const base = stackBase(orientation, xScale, yScale);
   ctx.save();
   ctx.globalAlpha = style.opacity;
   for (let b = 0; b < ss.length; b += 1) {
-    let cum = 0;
+    let cum = base;
     for (let g = 0; g < G; g += 1) {
       const rect = segmentRect(
         ss,
@@ -723,8 +747,9 @@ export function stackAt(
   | [bin: number, group: number, begin: number, name: string, value: number]
   | null {
   const G = ss.groups.length;
+  const base = stackBase(orientation, xScale, yScale);
   for (let b = 0; b < ss.length; b += 1) {
-    let cum = 0;
+    let cum = base;
     for (let g = 0; g < G; g += 1) {
       const rect = segmentRect(
         ss,

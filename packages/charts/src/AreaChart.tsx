@@ -140,6 +140,27 @@ export type AreaChartProps<
  *  d3 `ScaleLinear` (it carries `.domain()`); the {@link RowLayer} type narrows
  *  it to the call signature, so this reads the bound through a localized,
  *  documented shape rather than widening `drawArea`'s contract to d3-scale. */
+/**
+ * The area's baseline in **data** units: the caller's `baseline` when it has a
+ * finite position on this axis, else the axis floor.
+ *
+ * The fallback is not defensive padding — it's the log case. `baseline={0}` is
+ * the natural thing to write and is correct on a linear axis; on a log axis
+ * zero has no position at all — `scaleLog()(0)` is **`NaN`** (the `-Infinity`
+ * the log *transform* produces is then interpolated into the range, and
+ * `∞ − ∞` is what comes out) — and a single non-finite coordinate turns the
+ * whole filled path into nothing drawn at all. Resolving to the floor keeps the
+ * layer's meaning ("fill from the bottom") on both scale kinds.
+ */
+export function resolveAreaBaseline(
+  baseline: number | undefined,
+  yScale: (value: number) => number,
+): number {
+  const floor = domainFloor(yScale);
+  if (baseline === undefined) return floor;
+  return Number.isFinite(yScale(baseline)) ? baseline : floor;
+}
+
 function domainFloor(yScale: (value: number) => number): number {
   const d = (yScale as unknown as { domain?: () => number[] }).domain?.();
   return d && d.length > 0 ? d[0]! : 0;
@@ -293,7 +314,12 @@ export function AreaChart<
             // Omitted baseline rests on the axis floor (resolved late from the
             // scale, so it tracks the auto-fit domain); a fixed baseline is used
             // verbatim.
-            baseline ?? domainFloor(yScale),
+            // A log axis has no position for zero — or anything at or below
+            // it — so an explicit out-of-domain `baseline` would scale to
+            // `NaN` and poison every coordinate in the fill path. Fall back
+            // to the axis floor, which is exactly what an omitted baseline
+            // already resolves to.
+            resolveAreaBaseline(baseline, yScale),
             curveFactory,
             gaps,
             gapConnectorOpacity,

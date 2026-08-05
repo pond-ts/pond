@@ -25,6 +25,7 @@ import {
   panRangeTrading,
   zoomRangeTrading,
 } from './viewport.js';
+import { yTickValues } from './yticks.js';
 import { flagChipStyle, flagChipX, axisPillX, axisPillStyle } from './chip.js';
 import {
   ContainerContext,
@@ -171,7 +172,7 @@ export function Layers({ children }: LayersProps) {
         const yCount = tickCounts.get(defaultAxisId) ?? GRID_TICKS;
         const yTicks =
           gridY && !(yIsCategory && explicitY === undefined)
-            ? (explicitY ?? gridY.ticks(yCount)).map((t) => gridY(t))
+            ? (explicitY ?? yTickValues(gridY, yCount)).map((t) => gridY(t))
             : [];
         // On a calendar axis the verticals are the FULL grain populations —
         // every day in the month, every month in the year, every aligned
