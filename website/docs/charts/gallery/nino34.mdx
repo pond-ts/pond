@@ -259,14 +259,21 @@ cross, so forty-two of them at that weight stack into a mass that competes with
 the years in front. Sampling the rendered canvas and converting to L\*, with the
 highlights held constant:
 
-| pack role        | pack ink (mean L\* over background) | highlight ink | separation |
-| ---------------- | ----------------------------------- | ------------- | ---------- |
-| `muted` (55%)    | 16.4                                | 49.4          | **3.0×**   |
-| `ensemble` (16%) | 6.2                                 | 49.5          | **8.0×**   |
+| pack role         | pack ink (mean L\* over background) | highlight ink | separation |
+| ----------------- | ----------------------------------- | ------------- | ---------- |
+| `muted` (55%)     | 16.4                                | 49.4          | **3.0×**   |
+| _first try_ (16%) | 6.2                                 | 49.5          | **8.0×**   |
+| `ensemble` (30%)  | 8.9                                 | 33.1          | **3.7×**   |
 
-The pack still covers ~22% of the plot and its densest crossings reach 36 L\*,
-so it is legible as texture — it just stops arguing. Dark mode lands at 7.3×
-on the same measurement.
+The window is narrower than it looks, and we overshot it once. At 16% the
+separation measured beautifully and the chart was worse: the pack stopped
+reading as forty-odd separate traces and became a wash, which loses the one
+thing an ensemble is _for_. The number to optimise is not the ratio — it is
+whether you can still follow a single grey line with your eye while the named
+years stay obviously in front. 30% is where that holds, and it lands at 3.7×.
+
+The pack covers ~22% of the plot at that weight, so it is legible as texture
+without arguing with the years in front.
 
 The highlights needed the other half of the hierarchy: **weight, not just hue**.
 The categorical palette is mid-saturation by design and three lines at the

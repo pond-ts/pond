@@ -229,9 +229,18 @@ export function useSiteChartTheme(): ChartTheme {
       // drawn through it, and alpha compounds where strokes cross, so at that
       // weight forty-odd of them stack into a mass that competes with the
       // thing they are behind. 0.16 is set by the *ensemble's* apparent
-      // weight, not by one stroke's — measured on the Niño 3.4 card, where it
-      // puts the pack's mean ink at roughly a fifth of a highlight's.
-      ensemble: { color: fade(v('--pond-muted'), 0.16), width: 1 },
+      // weight, not by one stroke's.
+      //
+      // 0.30 was arrived at by looking, then measured. On the Niño 3.4 card
+      // (1198x840 canvas, 45 lines) the pack's mean ink is 8.9 L* against a
+      // highlight's 33.1 — a **3.7x** separation, at 22% plot coverage. The
+      // first attempt at 0.16 measured 8.0x and was too far: the pack stopped
+      // reading as forty-odd separate traces and became a wash, which loses
+      // the one thing an ensemble is for. `muted`'s 0.55 sits at 3.0x, which
+      // is too heavy the other way. The usable window is narrower than it
+      // looks, and it is set by the ensemble's apparent weight rather than by
+      // any single stroke's.
+      ensemble: { color: fade(v('--pond-muted'), 0.3), width: 1 },
       ...highlightRoles(v),
       // A **modelled** line, in two halves that differ by exactly one
       // property. `trendFit` is the stretch a model was fitted on; `trend` is
