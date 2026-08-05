@@ -163,6 +163,34 @@ function tonalRoles<T>(
 }
 
 /**
+ * `highlight1…3` — the named series lifted **out of** an {@link
+ * useSiteChartTheme `ensemble`} backdrop, in the first three categorical hues.
+ *
+ * Two things separate a highlight from the pack, and both are needed: a data
+ * hue against the pack's neutral, and **weight**. The categorical hues are
+ * mid-saturation by design, and one at the shared 1.5px default does not carry
+ * over a busy texture — measured on the Niño 3.4 card, where three of them at
+ * the default read as three more members of the pack.
+ *
+ * `highlight1` is the **subject** — the one series the chart is about — and is
+ * heaviest on purpose; 2 and 3 are the named comparisons it is read against.
+ * That asymmetry is the point: a flat set of three equal highlights says
+ * "these three are the same kind of thing", which is exactly what a
+ * this-year-against-history chart is not saying.
+ */
+function highlightRoles(
+  v: VarReader,
+): Record<string, { color?: string; width: number }> {
+  const out: Record<string, { color?: string; width: number }> = {};
+  const widths = [2.75, 1.75, 1.75];
+  widths.forEach((width, i) => {
+    const color = v(`--pond-viz-${i + 1}`);
+    if (color) out[`highlight${i + 1}`] = { color, width };
+  });
+  return out;
+}
+
+/**
  * The theme every live chart embed on the docs site renders with —
  * `docsTheme`, but built live from the site's own `--pond-*` CSS custom
  * properties (defined in `src/css/custom.css`, mirroring
@@ -190,6 +218,21 @@ export function useSiteChartTheme(): ChartTheme {
       // under a moving average). Every viz-N hue competes with the line it's
       // meant to sit behind, and at full opacity dense noise swallows it.
       muted: { color: fade(v('--pond-muted'), 0.55), width: 1 },
+      // `ensemble` + `highlight1…3` are a **pair**, and only make sense
+      // together: dozens of traces of the same quantity drawn as one texture,
+      // with a handful lifted out of it by name. A spaghetti plot of model
+      // runs, a fan of scenarios, every year of a record on a shared seasonal
+      // axis. Don't reach for one without the other.
+      //
+      // The line analogue of `scatter.raw`, and deliberately **much** fainter
+      // than `muted`: `muted` is tuned for ONE backdrop trace with a highlight
+      // drawn through it, and alpha compounds where strokes cross, so at that
+      // weight forty-odd of them stack into a mass that competes with the
+      // thing they are behind. 0.16 is set by the *ensemble's* apparent
+      // weight, not by one stroke's — measured on the Niño 3.4 card, where it
+      // puts the pack's mean ink at roughly a fifth of a highlight's.
+      ensemble: { color: fade(v('--pond-muted'), 0.16), width: 1 },
+      ...highlightRoles(v),
       // A **modelled** line, in two halves that differ by exactly one
       // property. `trendFit` is the stretch a model was fitted on; `trend` is
       // what it extrapolates, and `dash` is the whole difference — which is

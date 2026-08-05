@@ -44,7 +44,9 @@ import { promisify } from 'node:util';
 
 const run = promisify(execFile);
 
-const CACHE = process.env.SCIENCE_FIXTURE_CACHE ?? path.join(tmpdir(), 'pond-science-fixtures');
+const CACHE =
+  process.env.SCIENCE_FIXTURE_CACHE ??
+  path.join(tmpdir(), 'pond-science-fixtures');
 
 const HEADERS = { 'user-agent': 'pond-ts-docs-fixture-generator/1.0' };
 
@@ -57,7 +59,10 @@ function log(msg) {
 
 async function get(url) {
   log(`  GET ${url.slice(0, 96)}…`);
-  const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(300_000) });
+  const res = await fetch(url, {
+    headers: HEADERS,
+    signal: AbortSignal.timeout(300_000),
+  });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText} — ${url}`);
   return res;
 }
@@ -88,7 +93,9 @@ async function cached(url, name) {
  *  §"Numeric arrays: keep them dense" — prettier would explode it one value
  *  per line and roughly triple the file). */
 function denseArray(values, indent = '  ') {
-  const cells = values.map((v) => (v === null || v === undefined ? 'null' : String(v)));
+  const cells = values.map((v) =>
+    v === null || v === undefined ? 'null' : String(v),
+  );
   const lines = [];
   let line = indent;
   for (const cell of cells) {
@@ -139,7 +146,9 @@ async function waveSpectra() {
     if (t < SWDEN_FROM || t > SWDEN_TO) continue;
     // NDBC fills a failed bin with 999.00; carry it through as a gap rather
     // than dropping the frame — a spectrum with a hole is a real spectrum.
-    const density = p.slice(5).map((x) => (Number(x) >= 99 ? null : round(Number(x), 2)));
+    const density = p
+      .slice(5)
+      .map((x) => (Number(x) >= 99 ? null : round(Number(x), 2)));
     frames.push({ t, density });
   }
   frames.sort((a, b) => a.t - b.t);
@@ -184,7 +193,12 @@ async function seismicTrace() {
     // you zoom into it.
     samples.push(round(Number(p[1]) * 1e6, 2));
   }
-  return { hz, startMs: Math.round(Date.parse(`${startIso}Z`)), samples, header: header.trim() };
+  return {
+    hz,
+    startMs: Math.round(Date.parse(`${startIso}Z`)),
+    samples,
+    header: header.trim(),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -210,7 +224,8 @@ async function tides() {
     getJson(coopsUrl('predictions', '&interval=hilo')),
   ]);
   const parse = (t) => Date.parse(`${t.replace(' ', 'T')}:00Z`);
-  const num = (v) => (v === '' || v === null || v === undefined ? null : round(Number(v), 2));
+  const num = (v) =>
+    v === '' || v === null || v === undefined ? null : round(Number(v), 2);
 
   const predByT = new Map(pred.predictions.map((p) => [parse(p.t), num(p.v)]));
   const rows = obs.data.map((o) => ({

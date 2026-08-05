@@ -349,11 +349,12 @@ export const NINO34_NAMED: ReadonlyArray<{
   role: string;
   label: string;
 }> = [
-  { year: 1997, role: 'secondary', label: '1997' },
-  { year: 2015, role: 'context', label: '2015' },
+  { year: 1997, role: 'highlight2', label: '1997' },
+  { year: 2015, role: 'highlight3', label: '2015' },
   {
+    // `highlight1` is the subject slot — heaviest stroke, first hue.
     year: NINO34_CURRENT_YEAR,
-    role: 'primary',
+    role: 'highlight1',
     label: `${NINO34_CURRENT_YEAR}`,
   },
 ];
