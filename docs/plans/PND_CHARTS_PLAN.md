@@ -1520,3 +1520,105 @@ true`. So autoplay cannot be observed there at all, and worse, whatever phase
   the last live tick left behind sticks: the card you inspect is a frozen
   mid-sweep frame, not `staticPhase`. Reload the page to read the static frame,
   and don't file "the cards don't animate" from that pane.
+
+### Found building Gallery Track F — the Niño 3.4 day-of-year overlay
+
+`website/docs/charts/gallery/nino34` — 45 years of daily SST stacked on one
+Jan–Dec axis, with the anomaly computed in the page rather than baked into the
+fixture. Appended rather than numbered into the lists above, whose numbering is
+already tangled. Most of this batch is **core**, not charts: the chart itself
+was the easy half.
+
+- **`TimeSeries.select` is variadic, and an array argument silently returns an
+  empty series.** `select(...keys)` filters with `keys.includes(column.name)`,
+  so `select(['a', 'b'])` matches nothing and hands back **the key column
+  alone** — no throw, no warning. Handed a computed column list (the natural
+  case: one column per year / host / sensor), that is exactly the mistake you
+  make, and TypeScript does not catch it on a widened schema. The symptom
+  surfaces three calls later; see the next item. `select('nope')` on a real
+  series is the same silent shrug. Either accept an array as well as a rest
+  list, or reject an unknown name.
+
+- **A `collapse` key that names no column is an unguarded crash.**
+  `collapseOp` does `keyedCols[j].read(i)` with no check that the lookup
+  resolved, so a missing name is
+  `TypeError: Cannot read properties of undefined (reading 'read')` — no column
+  name, no operator name, a stack inside `dist`. It is what the `select` bug
+  above turns into, and a one-line `ValidationError` naming the column would
+  have pointed straight at it.
+
+- **A series whose columns are named at runtime has no supported type.** This
+  chart's wide series is 365 rows × one column per year, and the years are a
+  runtime list, so there are no literals for the column-name types to infer
+  from. `TimeSeries<SeriesSchema>` — the obvious reach, and the shape API.md
+  calls "loosely typed" — makes `keyof EventDataForSchema<S>` resolve to
+  **`never`**, so `collapse(keys, …)`, `select(name)` and `column(name)` all
+  fail to compile. (`TimeSeries<any>` is worse: also `never`.) The carve-out
+  API.md documents is about **charts'** column props, not core's own methods.
+  What does work, and is not written down anywhere:
+
+  ```ts
+  type WideSchema = readonly [
+    { readonly name: 'time'; readonly kind: 'time' },
+    ...{ readonly name: string; readonly kind: 'number' }[],
+  ];
+  ```
+
+  One column per entity is an ordinary shape. Worth either a documented
+  `RuntimeSchema` alias or a note on `SeriesSchema` saying what it isn't.
+
+- **`collapse`'s result type only survives if it is never annotated.** The
+  inferred `CollapseSchema` remembers that `anomaly` is a numeric column named
+  `anomaly`, which is what makes `column('anomaly').toFloat64Array()` compile.
+  Annotate the function that builds it with the _input_ schema type and that is
+  gone — `column()` degrades to the union of every column kind and
+  `.toFloat64Array()` stops existing. The example exports
+  `ReturnType<typeof buildAnomaly>` as the workaround, which works but means the
+  public type of a fixture module is a `ReturnType` of a private function.
+
+- **There is still no y-span annotation, and this is the second card in one
+  track to want one.** Threshold _bands_ — El Niño weak/moderate/strong/very
+  strong at +0.5/+1.0/+1.5/+2.0 here, the AQI categories on the air-quality
+  card, flood stages on the tide card — are a recurring shape, and the only way
+  to draw one today is N `<Baseline>`s, because `<Region>`'s `from`/`to` are
+  **x** positions. Four lines say the thing; a shaded band says it better, and
+  says "between these two values" rather than "at this value" which is what a
+  category actually is. `<Region orientation="y" axis>` or a sibling
+  `<ValueRegion>` closes it.
+
+- **`cursorFormat` is silently inert under the default cursor.** Set
+  `cursorFormat="%-d %B"` expecting it to shape the readout; it does nothing,
+  because `cursor="line"` renders no pill for it to shape (items 16 and 22).
+  Nothing in `cursorFormat`'s doc — which is long and careful about precedence
+  — says its effect is conditional on the cursor mode. Removed from the example
+  rather than shipped as decoration. Same root as 16/22, listed because the
+  _prop_ is where a reader meets it.
+
+- **Not a library issue: a Gallery card's `pageHref` can dangle, and only
+  `docusaurus build` notices.** Four Track F cards on this branch linked to
+  pages that had not been written yet. `docusaurus start` renders them happily,
+  `tsc` says nothing, and `onBrokenLinks: 'throw'` only fires in a production
+  build — so the branch had been red since the WIP commit that added them. The
+  prop is documented optional for exactly this reason; the convention should be
+  **add `pageHref` in the same commit as the page**, not with the card.
+
+- **Verification note: a synthetic `pointermove` needs a tick before the DOM
+  says anything.** The dispatch recipe works (`elementFromPoint` is not
+  required — dispatching on the canvas with `bubbles: true` reaches React's
+  delegated listener), but reading the readout back **in the same synchronous
+  block returns the pre-event text**, because the state commit has not
+  happened. `await` ~100 ms first. Reading it synchronously is a very
+  convincing way to conclude that hover is broken when it isn't.
+
+- **Verification note: `elementFromPoint` returns `null` and `innerWidth` is 0
+  while the preview pane is hidden**, which is a different failure from the
+  `requestAnimationFrame` one already noted. Dispatch straight at the element
+  and compute `clientX` from its `getBoundingClientRect()` — the rect is still
+  correct (it just has a negative `left`), and the handlers only ever use it
+  relative to themselves.
+
+- **Verification note: `%b` on a year-long axis is four labels, not twelve.**
+  The tick ladder thins month labels to fit; at a 578px plot it prints
+  `Jan / Apr / Jul / Oct`. Page prose claiming "`Jan … Dec`" was written and had
+  to be corrected against the rendered DOM. Counting the axis labels is a
+  one-line check and worth doing on any axis whose labels the prose describes.

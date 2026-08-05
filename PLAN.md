@@ -926,8 +926,16 @@ argument for the rest.
   and has no direct form, only `toMap()` plus a `TimeSeries.reduce` per group),
   and `<CategoryAxis>`'s label thinning is an **estimated** glyph width that
   lands on the wrong side at Gallery-card width, printing all sixteen sector
-  names into one smear. Itemised, with the workaround each one forced, in
-  [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-chfric--chart-example-friction).
+  names into one smear. The Niño 3.4 overlay adds a **core** cluster around a
+  series whose columns are named at runtime (one per year): `select` is
+  variadic and silently returns an empty series when handed an array, a
+  `collapse` key that names no column is an unguarded `TypeError` rather than a
+  named error, `TimeSeries<SeriesSchema>` resolves its data-column names to
+  `never` so no method compiles against it, and `collapse`'s result type
+  survives only while it is inferred. Plus the second card in one track to want
+  a **y-span annotation** — threshold bands have to be drawn as N `<Baseline>`s
+  because `<Region>` is x-only. Itemised, with the workaround each one forced,
+  in [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-chfric--chart-example-friction).
 
 - **[PND-HEATMAP]** — A **heat map draw layer** for `@pond-ts/charts`. Raised by
   pjm off the Gallery's climate-stripes card: the bar-based version says the
