@@ -83,16 +83,46 @@ include new features and type-level changes; patch bumps are strictly additive.
   which is what keeps it transparent to every draw layer, annotation and
   cursor readout.
 
-  A log domain cannot contain zero, so the axis is deliberate about it rather
-  than emitting `-Infinity`: auto-fit takes the smallest **positive** extent
-  (one zero sample can't collapse the axis, and a `BarChart` — whose extent
-  always widens to include zero — can still share the axis), a non-positive
-  explicit `min`/`max` is refused in favour of the data, `pad` is applied
-  multiplicatively so it adds the same fraction of a decade at both ends, and
-  a dev-mode warning fires when data on a log axis actually reaches zero.
-  `AreaChart` resolves an out-of-domain `baseline` to the axis floor — writing
-  `baseline={0}` is natural and correct on a linear axis, and one non-finite
-  coordinate would otherwise drop the entire filled path.
+  A log domain cannot contain zero, and d3 maps a non-positive value to
+  **`NaN`** — a coordinate the canvas silently _drops_, which is why every
+  consequence below is about something failing invisibly rather than throwing.
+  So the axis is deliberate about it:
+  - **Domain policy matches the linear axis exactly.** Auto-fit takes the
+    smallest **positive** extent (one zero sample can't collapse the axis, and
+    a `BarChart` — whose extent always widens to include zero — can still share
+    it); a positive explicit `min`/`max` is honoured verbatim and never
+    discarded, with the _auto-fit_ side moving if the domain would otherwise
+    invert; a fully auto-fit domain is `.nice()`d out to whole powers of ten, so
+    the extremes get headroom instead of sitting clipped on the plot edge. A
+    non-positive bound has no position and is refused in favour of the data.
+    `pad` is applied multiplicatively, adding the same fraction of a decade at
+    both ends.
+  - **A value with no position on the axis renders as a gap.** Previously the
+    gap test was `Number.isFinite(value)`, and `0` is finite — so the coordinate
+    became `NaN`, the canvas dropped the path op without breaking the path, and
+    the two neighbours were joined by a straight line _over_ the missing data.
+    Lines, area fills and outlines, and band envelopes now all break there.
+  - **Layers that reach for a baseline rest on the axis floor.** `AreaChart`
+    resolves an out-of-domain `baseline` there (writing `baseline={0}` is
+    natural and correct on a linear axis), and a **stacked** bar layer starts
+    its first segment there — starting at zero made the bottom segment of every
+    stack both invisible and unhittable. Unchanged on a linear axis, where zero
+    clamped into the domain _is_ zero.
+  - **The dev-mode warning names only unambiguous mistakes**: a refused
+    `min`/`max`, negative data, or an axis with no positive data at all. It
+    deliberately says nothing about an extent of exactly `[0, hi]`, which a
+    line touching zero and a bar layer on strictly positive data both report
+    identically — warning there fired on _every_ bar chart on a log axis. It
+    warns once per distinct complaint rather than on every repaint.
+
+- **charts:** **pan and zoom now yield whole-millisecond view ranges.** A
+  wheel-zoom derives its range from pixel positions through `xScale.invert()`,
+  so the result was fractional by construction — an ordinary scroll produced
+  `1.7e12 + 0.37`. The epoch millisecond is this model's atomic unit and
+  consumers are entitled to assume it; one did, and a calendar `cursorSequence`
+  threw on a plain scroll. `zoomRange` / `panRange` round both ends, and never
+  collapse a positive span to zero width in doing so. (Core's fractional-instant
+  fix covers the same crash from the other side; this closes the class.)
 
 - **charts:** **`AreaStyle.flatFill` — stacked areas that read as slabs.** An
   area's fill has always graded to transparent at the baseline, which is right

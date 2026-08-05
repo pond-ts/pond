@@ -9,6 +9,7 @@ import {
   drawGapBridges,
   drawGapFades,
   drawGapSteps,
+  gapUnscalable,
   withAlpha,
   DEFAULT_GAP_MODE,
   DEFAULT_GAP_CONNECTOR_OPACITY,
@@ -232,6 +233,14 @@ export function drawArea(
   } else {
     cs = cullChartSeries(source, xScale);
   }
+  // Values with no position on the y scale (zero / negative on a log axis)
+  // become ordinary NaN gaps, so the fill and outline break at them rather than
+  // bridging over a dropped `lineTo(x, NaN)`. Deliberately **after** the
+  // gradient above: that reads the pre-cull buffer, whose finite extent is
+  // memoized per `Float64Array` ([PND-GRADX]), and a fresh array here would miss
+  // that cache on every frame. A no-op on an affine (linear) y scale.
+  const scaledY = gapUnscalable(cs.y, cs.length, yScale);
+  if (scaledY !== cs.y) cs = { ...cs, y: scaledY };
   // `none` interpolates interior gaps so the fill + outline bridge them; every
   // other mode keeps NaN so d3 breaks both (the inferred line bridge, if any, is
   // a separate overlay pass below).
@@ -331,19 +340,34 @@ function buildGradient(
   // Stacked areas opt out of the grade entirely: a band that fades to
   // transparent at the baseline shows every band beneath it (see AreaStyle).
   if (style.flatFill === true) return style.fill;
-  // The pixel extent is the two value extremes mapped through the (monotonic,
-  // always-`scaleLinear`) y scale; min/max them so the result is flip-agnostic,
-  // exactly as the former per-point pixel scan produced. [PND-GRADX] moved the
-  // O(N) walk into the memoized {@link columnFiniteExtent}.
-  const pa = yScale(valueExtent[0]);
-  const pb = yScale(valueExtent[1]);
-  const topPx = Math.min(pa, pb); // smallest pixel y (highest on screen)
-  const bottomPx = Math.max(pa, pb); // largest pixel y (lowest on screen)
-  // The drawn region runs from the topmost of {values, baseline} to the
-  // bottommost — the fill reaches the baseline, so include it.
-  const regionTop = Math.min(topPx, baselinePx);
-  const regionBottom = Math.max(bottomPx, baselinePx);
-  if (regionBottom - regionTop < 1e-6) return style.fill; // degenerate height
+  // The pixel extent is the two value extremes mapped through the (monotonic)
+  // y scale; min/max them so the result is flip-agnostic, exactly as the former
+  // per-point pixel scan produced. [PND-GRADX] moved the O(N) walk into the
+  // memoized {@link columnFiniteExtent}.
+  //
+  // **An extreme with no position on the scale is dropped**, not min/maxed in.
+  // `valueExtent` is the data's own `[min, max]`, and on a **log** axis a
+  // non-positive extreme — a series that touches zero, which is the ordinary
+  // shape of traffic or storage data — maps to `NaN`. `Math.min(NaN, pb)` is
+  // `NaN`, `NaN` propagates to the height, and `NaN < 1e-6` is **false**, so the
+  // degenerate guard below waved it through to `createLinearGradient(0, NaN, 0,
+  // NaN)` — which throws `IndexSizeError` on a real canvas and takes the whole
+  // chart down. The region is seeded from the baseline pixel (always in-domain,
+  // via `resolveAreaBaseline`) and widened only by extremes that have a
+  // position, so the grade still spans the part of the series that draws.
+  let regionTop = baselinePx;
+  let regionBottom = baselinePx;
+  const widen = (px: number): void => {
+    if (!Number.isFinite(px)) return;
+    if (px < regionTop) regionTop = px;
+    if (px > regionBottom) regionBottom = px;
+  };
+  widen(yScale(valueExtent[0]));
+  widen(yScale(valueExtent[1]));
+  // `!(… >= 1e-6)` rather than `< 1e-6`, so a non-finite height — a baseline
+  // that somehow has no position either, leaving nothing finite to anchor on —
+  // falls back to the flat fill instead of reaching the gradient calls.
+  if (!(regionBottom - regionTop >= 1e-6)) return style.fill; // degenerate
 
   const opaque = style.fill;
   const transparent = withAlpha(style.fill, 0);

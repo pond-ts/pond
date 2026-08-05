@@ -146,8 +146,10 @@ export type AreaChartProps<
  *
  * The fallback is not defensive padding — it's the log case. `baseline={0}` is
  * the natural thing to write and is correct on a linear axis; on a log axis
- * zero is at -Infinity, and a single non-finite coordinate turns the whole
- * filled path into nothing drawn at all. Resolving to the floor keeps the
+ * zero has no position at all — `scaleLog()(0)` is **`NaN`** (the `-Infinity`
+ * the log *transform* produces is then interpolated into the range, and
+ * `∞ − ∞` is what comes out) — and a single non-finite coordinate turns the
+ * whole filled path into nothing drawn at all. Resolving to the floor keeps the
  * layer's meaning ("fill from the bottom") on both scale kinds.
  */
 export function resolveAreaBaseline(
@@ -314,9 +316,9 @@ export function AreaChart<
             // verbatim.
             // A log axis has no position for zero — or anything at or below
             // it — so an explicit out-of-domain `baseline` would scale to
-            // -Infinity and poison every coordinate in the fill path. Fall
-            // back to the axis floor, which is exactly what an omitted
-            // baseline already resolves to.
+            // `NaN` and poison every coordinate in the fill path. Fall back
+            // to the axis floor, which is exactly what an omitted baseline
+            // already resolves to.
             resolveAreaBaseline(baseline, yScale),
             curveFactory,
             gaps,

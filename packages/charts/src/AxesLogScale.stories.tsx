@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { TimeSeries } from 'pond-ts';
 import { AreaChart } from './AreaChart.js';
+import { BandChart } from './BandChart.js';
 import { BarChart } from './BarChart.js';
 import { ChartContainer } from './ChartContainer.js';
 import { ChartRow } from './ChartRow.js';
@@ -19,9 +20,18 @@ import { docsTheme } from './docs-theme.fixture.js';
  * prop, and it's the one thing a reader should see first.
  *
  * A log domain cannot contain zero, so the rest of the fan-out is mostly the
- * ways that constraint surfaces: a non-positive explicit bound, a zero sample
- * in the data, an area's baseline, and a bar layer (whose extent always widens
- * to include zero) sharing the axis.
+ * ways that constraint surfaces — one story per way, because each one was a
+ * separate silent failure before it had a story:
+ *
+ * - **Bounds** — a refused `min`, a refused `max`, an explicit bound the domain
+ *   must not discard, and the `.nice()` rounding of a fully auto-fit domain.
+ * - **Unplottable samples** — a zero in a line, in an area, and in a band's
+ *   lower edge; a negative sample. Each renders as a *gap*, which is the whole
+ *   point: a `lineTo` with a `NaN` coordinate is dropped by the canvas rather
+ *   than breaking the path, so these used to be drawn straight over.
+ * - **Layers that reach for a baseline** — an area's `baseline={0}`, a bar
+ *   layer (whose extent always widens to include zero), and a *stacked* bar
+ *   layer, whose bottom segment is the one that disappeared.
  */
 const N = 72;
 const BASE = Date.UTC(2020, 0, 1);
@@ -53,6 +63,51 @@ function withZeroes(): TimeSeries<typeof SCHEMA> {
     return [t, i === 20 || i === 21 ? 0 : v] as [number, number];
   });
   return new TimeSeries({ name: 'with-zeroes', schema: SCHEMA, rows });
+}
+
+/** The same shape, dipping **below** zero — the case the dev warning can name
+ *  without ambiguity (a bar layer's extent only ever reaches exactly zero). */
+function withNegatives(): TimeSeries<typeof SCHEMA> {
+  const base = growth();
+  const rows = base.toJSON().rows.map((r, i) => {
+    const [t, v] = r as [number, number];
+    return [t, i === 30 || i === 31 ? -v / 4 : v] as [number, number];
+  });
+  return new TimeSeries({ name: 'with-negatives', schema: SCHEMA, rows });
+}
+
+const BAND_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'lo', kind: 'number' },
+  { name: 'hi', kind: 'number' },
+] as const;
+
+/** A variance envelope measured up from zero — `lower` is `0` for two samples,
+ *  which is the common way a band ends up unplottable on a log axis. */
+function envelope(): TimeSeries<typeof BAND_SCHEMA> {
+  const rows: Array<[number, number, number]> = [];
+  for (let i = 0; i < N; i += 1) {
+    const v = 1_000 * 10 ** ((6 * i) / (N - 1));
+    rows.push([BASE + i * STEP, i === 20 || i === 21 ? 0 : v / 3, v * 3]);
+  }
+  return new TimeSeries({ name: 'envelope', schema: BAND_SCHEMA, rows });
+}
+
+/** Two stacked groups, both strictly positive — the shape whose **bottom**
+ *  segment used to disappear on a log axis. */
+const STACK_SCHEMA = [
+  { name: 'time', kind: 'time' },
+  { name: 'a', kind: 'number' },
+  { name: 'b', kind: 'number' },
+] as const;
+
+function stackedGrowth(): TimeSeries<typeof STACK_SCHEMA> {
+  const rows: Array<[number, number, number]> = [];
+  for (let i = 0; i < 24; i += 1) {
+    const v = 1_000 * 10 ** ((5 * i) / 23);
+    rows.push([BASE + i * STEP, v * 0.4, v * 0.6]);
+  }
+  return new TimeSeries({ name: 'stacked', schema: STACK_SCHEMA, rows });
 }
 
 const meta = {
@@ -123,13 +178,49 @@ export const ExplicitDomain: Story = {
     ),
 };
 
-/** **A non-positive `min` is refused.** `min={0}` on a log axis is a request
- *  for -Infinity; the axis falls back to the data's own floor rather than
- *  handing that to the scale. Identical to {@link Log}. */
+/** **A non-positive `min` is refused.** `min={0}` on a log axis asks for a
+ *  value the scale maps to `NaN`; the axis falls back to the data's own floor
+ *  rather than handing that to the scale, and dev-warns that it did. Identical
+ *  to {@link Log}. */
 export const NonPositiveMinRefused: Story = {
   render: () =>
     chart(
       <YAxis id="v" scale="log" min={0} format=".2s" width={64} />,
+      <LineChart series={growth()} column="v" axis="v" />,
+    ),
+};
+
+/** **A non-positive `max` is refused too** — and now says so. It used to be
+ *  dropped in silence, since the warning only ever looked at `min`. */
+export const NonPositiveMaxRefused: Story = {
+  render: () =>
+    chart(
+      <YAxis id="v" scale="log" max={0} format=".2s" width={64} />,
+      <LineChart series={growth()} column="v" axis="v" />,
+    ),
+};
+
+/** **A positive explicit bound is never discarded.** With only `max` given, the
+ *  *auto-fit* floor moves to keep the domain ascending — the caller's number
+ *  stays exactly where they put it, which is what a linear axis already did.
+ *  Here `max` sits below the whole series, so the axis shows the one decade
+ *  under it and the data runs off the top. */
+export const ExplicitMaxBelowData: Story = {
+  render: () =>
+    chart(
+      <YAxis id="v" scale="log" max={5_000} format=".0s" width={64} />,
+      <LineChart series={growth()} column="v" axis="v" />,
+    ),
+};
+
+/** **An auto-fit domain is rounded out to whole decades** (`.nice()`), so the
+ *  extremes have headroom instead of sitting clipped against the plot edge and
+ *  the decade ticks reach the bounds. Contrast {@link ExplicitDomain}, where
+ *  the caller's numbers are used exactly as given. */
+export const NiceAutoDomain: Story = {
+  render: () =>
+    chart(
+      <YAxis id="v" scale="log" format=".0s" width={64} />,
       <LineChart series={growth()} column="v" axis="v" />,
     ),
 };
@@ -147,8 +238,10 @@ export const Padded: Story = {
 };
 
 /** **Zero in the data.** Those samples have no position on a log axis, so the
- *  line gaps there — and a dev-mode console warning fires, because silently
- *  vanishing samples are otherwise impossible to diagnose from the picture. */
+ *  line **gaps** there. That is the fix this story is really for: the gap used
+ *  to be a straight line joining the two neighbours, because a `lineTo` with a
+ *  `NaN` coordinate is *dropped* by the canvas rather than breaking the path —
+ *  so the chart quietly drew over its own missing data. */
 export const ZeroInData: Story = {
   render: () =>
     chart(
@@ -157,10 +250,31 @@ export const ZeroInData: Story = {
     ),
 };
 
+/** **The same zeroes, as an area.** The fill and its outline break at the gap
+ *  together — a hole in the shade, never a slab down to the baseline. */
+export const ZeroInDataArea: Story = {
+  render: () =>
+    chart(
+      <YAxis id="v" scale="log" format=".2s" width={64} />,
+      <AreaChart series={withZeroes()} column="v" axis="v" />,
+    ),
+};
+
+/** **Negative data on a log axis.** Nothing to draw for those samples, and the
+ *  one case the dev warning can name without ambiguity — a bar layer's extent
+ *  reaches *exactly* zero, never below it. */
+export const NegativeInData: Story = {
+  render: () =>
+    chart(
+      <YAxis id="v" scale="log" format=".2s" width={64} />,
+      <LineChart series={withNegatives()} column="v" axis="v" />,
+    ),
+};
+
 /** **An area on a log axis.** `AreaChart` fills to the axis floor: an omitted
  *  baseline already resolves there, and an explicit `baseline={0}` — natural,
  *  and correct on a linear axis — is clamped to it rather than scaling to
- *  -Infinity and dropping the whole filled path. */
+ *  `NaN` and dropping the whole filled path. */
 export const AreaBaseline: Story = {
   render: () =>
     chart(
@@ -169,15 +283,47 @@ export const AreaBaseline: Story = {
     ),
 };
 
+/** **A band whose lower edge is zero.** Measuring an envelope up from nothing
+ *  is the ordinary shape, and zero has no position here — so those samples are
+ *  a break in the envelope rather than a fill stitched across them. */
+export const BandFromZero: Story = {
+  render: () =>
+    chart(
+      <YAxis id="v" scale="log" format=".2s" width={64} />,
+      <BandChart
+        series={envelope()}
+        lower="lo"
+        upper="hi"
+        axis="v"
+        as="secondary"
+      />,
+    ),
+};
+
 /** **A bar layer sharing a log axis.** `barExtent` always widens to include
  *  zero so a bar can reach its baseline; auto-fit takes the smallest
  *  *positive* extent instead, so that zero can't collapse the domain, and the
- *  bars rest on the axis floor. */
+ *  bars rest on the axis floor. **No warning here** — the data is strictly
+ *  positive, and a warning that fires on every bar chart is one nobody reads.
+ */
 export const WithBars: Story = {
   render: () =>
     chart(
       <YAxis id="v" scale="log" format=".2s" width={64} />,
       <BarChart series={growth()} column="v" axis="v" />,
+    ),
+};
+
+/** **A stacked bar layer on a log axis.** Each stack starts at the axis floor
+ *  rather than at zero. Starting at zero is what a linear axis does — and it is
+ *  the same code, since zero clamped into a linear domain *is* zero — but on a
+ *  log axis zero has no position, so the whole bottom segment used to be
+ *  dropped by the canvas and become unhittable along with it. */
+export const StackedOnLog: Story = {
+  render: () =>
+    chart(
+      <YAxis id="v" scale="log" format=".2s" width={64} />,
+      <BarChart series={stackedGrowth()} columns={['a', 'b']} axis="v" />,
     ),
 };
 

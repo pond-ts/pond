@@ -33,12 +33,24 @@ export interface YAxisProps {
    * onto the baseline. Ticks land on the decades, and `format` still formats
    * the **value**, so a readout says `1.2 PB`, not its logarithm.
    *
-   * A log domain cannot contain zero or negative numbers. Auto-fit ignores
-   * non-positive extents when picking the low end and dev-warns if any layer
-   * on the axis actually carries them; an explicit `min`/`max` that is not
-   * positive is refused the same way. Layers that fill to a baseline
-   * (`AreaChart`, `BarChart`) clamp that baseline to the bottom of the
-   * domain — zero has no position on a log axis.
+   * A log domain cannot contain zero or negative numbers — d3 maps them to
+   * `NaN`, which has no position on the plot. So:
+   *
+   * - **Auto-fit ignores non-positive extents** when picking the low end (a
+   *   `BarChart`, whose extent always reaches zero so its bars can meet their
+   *   baseline, can therefore share the axis), and rounds the domain out to
+   *   whole powers of ten.
+   * - **An explicit `min`/`max` that is not positive is refused**, and that
+   *   side auto-fits instead. A positive bound is always honoured exactly; when
+   *   only one side is given and the domain would invert, the *auto* side moves
+   *   — the same policy a linear axis follows.
+   * - **Layers that fill to a baseline** (`AreaChart`, `BarChart`, a stacked
+   *   histogram) rest it on the bottom of the domain rather than on zero.
+   * - **A value with no position gaps the line**, rather than its neighbours
+   *   being joined straight across it.
+   *
+   * A dev-mode warning fires for the cases that are unambiguously a mistake: a
+   * refused bound, negative data, or an axis with no positive data at all.
    */
   scale?: 'linear' | 'log';
   /** Explicit domain bounds; omit to auto-fit the charts linked to this axis. */
