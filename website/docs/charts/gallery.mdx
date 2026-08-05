@@ -40,6 +40,7 @@ import GalleryLatencyPercentiles from '@site/src/examples/gallery-latency-percen
 import GallerySlaIncidents from '@site/src/examples/gallery-sla-incidents';
 import GalleryLiveTail from '@site/src/examples/gallery-live-tail';
 import GallerySiteTrafficDashboard from '@site/src/examples/gallery-site-traffic-dashboard';
+import GalleryVolumeHistory from '@site/src/examples/gallery-volume-history';
 import GalleryCandlestick from '@site/src/examples/gallery-candlestick';
 import GalleryPriceVolume from '@site/src/examples/gallery-price-volume';
 import GalleryBollinger from '@site/src/examples/gallery-bollinger';
@@ -188,6 +189,19 @@ incident you're explaining on Monday.
 >
   {(width) => (
     <GallerySiteTrafficDashboard width={width - 56} chartHeight={150} preview />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Volume history"
+  blurb="Thirty-six years of real ESnet traffic on a log axis — 19 GB a month to 262 PB, with a fitted trend."
+  storybookHref="pathname:///storybook/?path=/story/axes-log-scale--log"
+  pageHref="/docs/charts/gallery/volume-history"
+  height={218}
+  autoplay={{ period: 24000, staticPhase: 0.5 }}
+>
+  {(width, phase) => (
+    <GalleryVolumeHistory width={width} phase={phase} height={196} preview />
   )}
 </GalleryCard>
 

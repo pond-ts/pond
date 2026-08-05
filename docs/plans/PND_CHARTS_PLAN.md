@@ -643,9 +643,9 @@ Shipped. The scale kind is per-axis and **transparent to every draw layer**:
 `YScale` supertype (`ScaleContinuousNumeric`) is the whole of the plumbing — no
 layer branches on it. `format` formats the **value**, not its logarithm, via
 `resolveAxisFormat` routing a log scale's formatting through a linear scale over
-the same domain (`scaleLog.tickFormat` is a *tick* formatter and returns `''`
+the same domain (`scaleLog.tickFormat` is a _tick_ formatter and returns `''`
 for anything it doesn't consider significant, which would blank the cursor
-readout and every chip); tick *thinning* is `yTickValues`, which picks whole
+readout and every chip); tick _thinning_ is `yTickValues`, which picks whole
 decades rather than d3's near-step-function `ticks(count)` (3 ticks at count 4,
 **64** at count 8, from a height-derived count).
 
@@ -675,7 +675,7 @@ three of the fixes involved a judgement call:
    ambiguity actually bites someone.
 3. **A stacked bar's base is the axis floor**, via the same `resolveBarBaseline`
    rule a plain bar uses, rather than a literal `0`. Identical geometry on a
-   linear axis (zero clamped into a domain that contains zero *is* zero); on a
+   linear axis (zero clamped into a domain that contains zero _is_ zero); on a
    log axis it is the difference between drawing the bottom segment and silently
    dropping it — `fillRect` with a `NaN` argument is a canvas no-op, and the
    same rect feeds `stackAt`, so the segment was unhittable too.
@@ -683,7 +683,7 @@ three of the fixes involved a judgement call:
 Also landed from the same review: the log domain now follows the **linear
 policy exactly** (explicit bounds verbatim, the _auto_ side moves on inversion,
 `.nice()` on a fully auto-fit domain) — the log path had inverted the
-never-discard-the-caller's-bound rule; `needsExtents` treats a *refused* log
+never-discard-the-caller's-bound rule; `needsExtents` treats a _refused_ log
 bound as absent, so `min={0} max={1e6}` gathers extents instead of silently
 falling back to the placeholder domain (a gap between what `resolveLogDomain`'s
 unit tests passed it and what `ChartRow` actually did); and `buildGradient`
@@ -691,8 +691,8 @@ drops an extreme with no position rather than letting `NaN` reach
 `createLinearGradient`, which throws `IndexSizeError` on a real canvas.
 
 **Test-double lesson.** That last one was invisible because `test/canvas-mock.ts`
-stubbed `createLinearGradient` unconditionally — the double was *more permissive
-than the platform*, so a defect that crashes every browser rendered as a green
+stubbed `createLinearGradient` unconditionally — the double was _more permissive
+than the platform_, so a defect that crashes every browser rendered as a green
 suite. The mock now enforces the platform's own argument validation for the
 gradient entry points. A double may be less capable than the real thing; it must
 not be more forgiving, or the tests stop being evidence.
@@ -1199,3 +1199,226 @@ collision by counting the rendered axis labels in the DOM.
     around it by **blanking every other `CategoryDatum.label` itself**, which
     is deterministic but means the caller is now doing the axis's job. A DOM
     (or canvas) text measure, or simply padding the estimate, would close it.
+
+Found the same way by the Gallery's **ESnet volume-history** card
+(`website/docs/charts/gallery/volume-history`) — the first chart built on the
+log axis, and the first with a draggable model parameter. Everything below was
+measured in a running browser, not read off a type.
+
+### Bugs
+
+**Read item 30 first** — it is a hard crash in `pond-ts` core, and the most
+serious thing found in this batch.
+
+19. **The log axis's dev warning broke the docs build.** `ChartRow.tsx` guarded
+    it with a bare `process.env.NODE_ENV`, which typechecks only when a tool
+    happens to resolve node's ambient types from a parent `node_modules`.
+    `@pond-ts/charts` is a browser package and its tsconfig pulls in no
+    `@types/node`, so `tsc` inside the package passed while TypeDoc running the
+    **same tsconfig** from `website/` failed with `TS2591: Cannot find name
+'process'` — taking out `npm run build:api-model`, and therefore
+    `docusaurus build`, entirely. Fixed here by `packages/charts/src/dev.ts`:
+    one local `declare const process`, plus a `typeof` guard so a bare
+    `<script type="module">` doesn't throw at import. The general point stands
+    — **the failure surfaces in a tool that isn't in `npm run verify`**, so the
+    next `process.env` reference will reintroduce it silently. Worth a lint
+    rule (`no-restricted-globals: process` in the charts package) or adding the
+    docs API-model build to CI.
+
+### Gaps
+
+20. **A draw layer cannot opt out of, or be bounded within, the y-axis domain
+    fit.** The projected line is a _model_, and a model can be wrong by orders
+    of magnitude: this chart's exponential, fitted on 1990–2008, projects
+    **73.7 EB** for July 2026 against an actual **197.82 PB** — 373× over, two
+    and a half decades above anything ever measured. As a layer it joins
+    `resolveYDomain` exactly like a measurement, so an auto-fitted axis would
+    squash 36 years of real data into the bottom fifth of the plot to make room
+    for a line that is _wrong_. (The mirror case is a linear fit, whose values
+    go **negative** and would pick the floor of a log axis.)
+
+    There is no `fitDomain={false}` / `domain="ignore"` per-layer escape, so the
+    example computes `[min, max]` by hand for every scale × window × split
+    combination — ~40 lines whose only job is to stop one layer dictating the
+    axis, including a hand-rolled "the projection may lift the ceiling by at
+    most one decade, and past that it runs off the top" rule that is genuinely
+    the right behaviour and that every forecast chart will have to reinvent.
+    Any forecast, backtest, band-projection or annotation-as-a-series hits
+    this. Sibling of the `readout={false}` in item 14: same shape (a layer that
+    draws but shouldn't fully participate), different subsystem. A plain
+    `fitDomain={false}` covers most of it; a `fitDomain="clamp"` — drawn, but
+    clipped to the domain the other layers agreed on — covers all of it.
+
+21. **`BarListColumn.as` is per column, not per row.** The canonical `<BarList>`
+    is a **ranked list — one bar per row** — and that is exactly the shape that
+    cannot colour its rows, because the theme role lives on the column spec that
+    every row shares. A four-row per-series summary therefore gets four
+    identical bars. The example splits the encoding (neutral bars for magnitude,
+    a swatch in the label for identity, read from the same `line` role the chart
+    draws with), which is defensible design but was forced, not chosen. A
+    per-row `as` — or a `colorBy` reading a `values` entry — would close it.
+    Also **confirms item 6 for `BarList`**: no header row, so four numeric cells
+    have to smuggle their own labels (`1 m` / `1 y`) into the cell text.
+
+### Discoverability
+
+22. **`cursor="line"` has no readout at all, and nothing says so.**
+    `cursorParts('line')` is `{ line: true, chip: 'none' }` — a bare vertical
+    rule, no dots, no values. The page prose here was written claiming a hover
+    readout and was **wrong**, caught only by dispatching a real `pointermove`
+    and finding zero chips in the DOM. `CursorMode` badly wants a table in its
+    own doc comment: which modes draw a line, which draw dots, which show
+    values, and how many. This is the third page in this plan (see items 14, 15)
+    whose hover prose had to be corrected against the running chart.
+
+23. **Bucket-snapped cursoring and per-series values are mutually exclusive.**
+    `cursorSequence` is honoured **only** for `cursor="region"`, and
+    `cursorParts('region')` is a band with no dots and no chips. So "shade the
+    real calendar month under the pointer" and "read all three series at that
+    month" cannot both be on. Neither prop's doc mentions the other's cost.
+
+    _Still true; no longer felt here._ The final design has no hover readout
+    (the original chart has none), so the region cursor costs nothing and the
+    conflict never arises. The item stands for the next chart that wants both —
+    and the shape of the fix is clear from having hit it: `cursorParts` could
+    let `region` compose with `dots`/`chip` rather than replacing them.
+
+24. **A single `editing` mark suppresses the whole row's data cursor.**
+    `Layers.tsx` computes `editingActive = container.editAnnotations ||
+container.annotations.some((a) => a.editing)` and forces `cursorParts('none')`.
+    So making _one_ `<Marker editing>` draggable silently turns off hover
+    readouts for **every layer in the row** — a large, non-local consequence of a
+    per-mark prop. `MarkerProps.editing` / `RegionProps.editing` describe the
+    mark's own affordances and say nothing about it.
+
+                    _Still true; no longer felt here._ The draggable marker is gone — selection
+                    is a click — so nothing on this page is in edit mode. But it cost a design
+                    iteration to discover, and the docs still don't mention it. **The one-line
+                    fix is a sentence on `editing`**: "while any mark in a row is editing, that
+                    row's data cursor is suppressed."
+
+25. **`onRegionSelect` fires on a plain click, and the docs imply it doesn't.**
+    The prop reads as drag-only ("drag across the plot … on release this fires
+    once with the selected `[lo, hi]` span"). Measured: a `pointerdown` +
+    `pointerup` at the **same** x, no movement, fires it with exactly the bucket
+    under the pointer — `[2016-12-01T00:00Z, 2017-01-01T00:00Z]` from a
+    `Sequence.calendar('month')` grid. `regionSpan(buckets, t, t)` returns the
+    single bucket by construction. **This is a feature nobody knows they have**:
+    "click a bucket to select it" is the obvious thing to want from a bucketed
+    cursor, and it already works.
+
+    **Promoted from curiosity to the load-bearing gesture.** This chart's entire
+    selection model is now click-to-select on a `Sequence.calendar('month')`
+    cursor — hover previews the month, click commits it, and the returned span
+    is already on real month boundaries so there is nothing to round. It is the
+    single nicest interaction on the page and it was found by accident, reading
+    `regionSpan` while investigating something else. **Highest-value doc fix in
+    this batch**: one sentence on `onRegionSelect` and a story, and every
+    consumer gets a bucket picker for free.
+
+26. **Click-to-select and drag-to-pan cannot coexist.** A region-select arms on
+    `pointerdown` and **preempts pan**; `regionSelectModifier="shift"` moves it
+    behind a modifier, but then a _plain click_ falls through to pan and never
+    selects — so a chart whose primary gesture is clicking a bucket must give up
+    pan entirely (wheel-zoom is unaffected). That is a real and defensible
+    trade, and this chart takes it, but it is invisible from the docs: neither
+    `panZoom` nor `regionSelectModifier` says that plain-click selection and
+    plain-drag panning are mutually exclusive. A third modifier value
+    (`regionSelectModifier: 'none' | 'shift'` with click always selecting and
+    drag always panning) would resolve it, since a zero-distance drag is
+    unambiguous.
+
+27. **A dragged mark does not snap to `cursorSequence` buckets.**
+    `snapToGuides` follows _other annotations'_ x-positions and discontinuity
+    boundaries only, so a `<Marker editing>` on a container with a month grid
+    still lands mid-month; the caller has to re-snap in `onChange`. _Not felt in
+    the shipped design_ (no draggable marks), but real, and surprising when the
+    container already holds exactly the grid you want.
+
+28. **`defaultTheme.legend` is a hardcoded light palette, and a bridged theme
+    that forgets it fails silently.** The docs site's `useSiteChartTheme` never
+    mapped the `legend` register, so **every embed drawing a `<Legend>` rendered
+    a white card with slate text** — invisible-adjacent in light mode and a
+    glaring white block in dark. Nothing warns; the card just doesn't follow the
+    toggle. Fixed on the site side here. This is item 9's "roles fall back
+    silently" in its most visible form, and the cheapest general fix is the same
+    one: a dev-mode warning when a resolved theme still holds `defaultTheme`
+    values for a register the consumer has otherwise overridden.
+
+### Not a library issue, but it cost time again
+
+29. **Item 13's stale-`dist` trap has a second form: you rebuilt, then merged.**
+    This worktree had its **own** `node_modules` (a fresh `npm install` inside
+    it), so the symlink resolved correctly and item 13 didn't apply. The trap
+    fired anyway — `packages/charts` was built _before_ merging the log-axis
+    fixes, so the site kept serving the pre-fix `dist` and a five-tick axis came
+    back as **37 labels**, a symptom identical to "my domain logic is wrong".
+    Diagnosed in seconds only because item 13 taught the check:
+    `grep -c yTickValues packages/charts/dist/YAxis.js` → `0`. Worth promoting
+    that grep into the preview conventions as a _routine_ step after any merge,
+    not just after a checkout.
+
+30. **FIXED (v0.56.0).** **`pond-ts` CORE — a fractional epoch millisecond hard-crashed the page.**
+    Closed on two fronts: `toPlainDateStart` floors the instant to the
+    millisecond containing it (`packages/core`), and `zoomRange`/`panRange`
+    now round the view range at source (`packages/charts/src/viewport.ts`),
+    which closes the whole class rather than one call site. The
+    volume-history example's `wholeMs` workaround has been removed. Kept here
+    because the discovery path is the durable part: two ordinary props, no
+    unusual consumer code.
+    **The most serious thing in this batch: not a gap, a crash**, and it lives
+    in `packages/core`, not in charts. Reachable from two ordinary props with
+    no unusual consumer code:
+
+        ```tsx
+        <ChartContainer cursorSequence={Sequence.calendar('month')} panZoom="panZoom">
+        ```
+
+        Scroll the wheel once over that plot and the page dies. The chain, each
+        step verified rather than assumed:
+        1. `Layers.tsx` wheel handler: `const pivot = +c.xScale.invert(localX)` —
+           a d3 time-scale invert of a **pixel**, so fractional.
+        2. `viewport.ts` `zoomRange()`: `pivot ± (…) * factor` with
+           `factor = Math.exp(deltaY * k)` — float maths, **no rounding anywhere**.
+        3. That range becomes the container's view, over which `cursorSequence` is
+           realized (`ChartContainer.js:647` → `Sequence.bounded`).
+        4. `core/calendar.ts` `toPlainDateStart` →
+           `Temporal.Instant.fromEpochMilliseconds(1577836800000.37)` →
+           **`RangeError: epoch milliseconds must be an integer`**.
+        5. React unmounts the tree. The chart is gone; in dev the pane locks up.
+
+        Isolated repro, no browser needed:
+
+        ```js
+        const s = Sequence.calendar('month', { timeZone: 'UTC' });
+        s.bounded(
+          new TimeRange({
+            start: Date.UTC(2020, 0, 1) + 0.5,
+            end: Date.UTC(2021, 0, 1),
+          }),
+        );
+        // → RangeError: epoch milliseconds must be an integer
+        ```
+
+        Captured stack from the running page: `Instant.fromEpochMilliseconds` ←
+        `toPlainDateStart (core/calendar.js:62)` ← `Sequence.bounded
+
+    (core/sequence.js:155)`←`ChartContainer.js:647`.
+
+        **The fix belongs in core** — floor the instant before it reaches Temporal.
+        Sub-millisecond precision does not exist in this model, so an over-precise
+        input can only mean the containing millisecond; throwing is never the
+        useful answer. Being fixed upstream in `packages/core`; this worktree ships
+        a **clearly-marked workaround** (`wholeMs` in
+        `gallery-volume-history.tsx`) that rounds the range outward before it
+        reaches anything calendar-aware. **Remove the workaround when the core fix
+        lands.**
+
+        Two notes for whoever takes the core fix. `scanWindow`
+        (`src/lib/autoplay.ts`) produces fractional ms the same way, so **every
+        autoplaying Gallery card** is exposed the moment it is given a calendar
+        `cursorSequence`. And more generally: if wheel-zoom emits a fractional
+        range, anything downstream that assumes integer ms shares this exposure —
+        `zoomRange`/`panRange` rounding at the source would close the whole class
+        rather than one call site. Not hunted further; the core fix should cover
+        it.

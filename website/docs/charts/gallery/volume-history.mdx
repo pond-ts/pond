@@ -1,0 +1,365 @@
+---
+title: Volume history
+sidebar_label: Volume history
+---
+
+# Volume history
+
+Thirty-six years of one network's traffic, on a **logarithmic** axis — because
+the record runs from **19 GB a month to 262 PB a month** and there is no linear
+axis on which both ends are visible. The question is not "how much this month"
+but "is the shape still the shape", and the answer is a straight line.
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryVolumeHistory from '@site/src/examples/gallery-volume-history';
+
+## The chart
+
+<ChartExample name="gallery-volume-history" height={620} collapsed>
+  <GalleryVolumeHistory height={300} />
+</ChartExample>
+
+**There is one selection: a month.** Hovering shades the calendar month under
+the pointer; clicking selects it. The shaded band on the chart, the row of
+numbers in the table, and the month the trend is fitted to are all the same
+piece of state — set it by clicking the plot or by stepping the arrows, and all
+three follow together.
+
+Five things to try, in this order:
+
+1. **Switch Scale to Linear.** Two decades of history flatten onto the floor.
+   Switch back; that is the entire argument for `<YAxis scale="log">`.
+2. **Turn Trend on to Exponential.** Two line styles, one model: **solid** over
+   the five years it was fitted on, **dashed** from the selected month forward.
+   Solid means "the model saw this"; dashed means "the model is guessing".
+3. **Read the caption.** With the newest month selected there is nothing left
+   to check the forecast against, so it just states it: fitted on the 60 months
+   to July 2026, growth of **+18.5% a year**, reaching **268 PB by July 2027**.
+4. **Now click back to July 2024.** The model is refitted on the five years
+   ending there, and everything after it becomes a genuine out-of-sample
+   prediction. It projected **199 PB** for July 2026; the actual was
+   **197.82 PB** — **within 0.5%**. The dashed line lies almost exactly on top
+   of the real one, and that is the finding: a five-year lookback predicts this
+   network two years out.
+5. **Keep going back.** March 2020 projects **631 PB** against 197.82 PB —
+   **3.19× over**. July 2016 is **5.98×** over. January 2010 is **91.3×** over.
+   The model never changes; the growth rate does. Five years of the late 2000s
+   has nothing useful to say about the 2020s.
+
+**A caveat on the drama, since there isn't much:** from any recent month the
+projection tracks reality so closely that the dashed line is visually dull —
+it just carries on where the data was going. That _is_ the result. The chart
+earns its controls by letting you walk the selection back until the model
+breaks, not by opening on a spectacular miss.
+
+**Why this chart wants a log scale, precisely:** an exponential fit is a
+straight line on a log axis, so a projection that is _k_ times too high sits a
+constant `log₁₀ k` above the real line — the vertical gap **is** the ratio, at
+every point, regardless of how big the numbers have got. On a linear axis the
+same overshoot is an unreadable vertical explosion.
+
+Times are **UTC**, which is how the record is published; the axis renders in
+your local zone, so at the tightest zoom a band can sit a few hours off the
+month it names. And **"now" here means the end of the record** — July 2026 —
+never today's date. A docs chart anchored to the wall clock could not render
+the same on the server and in your browser, and would quietly restate every
+number on this page as the months went by.
+
+## The data
+
+**This one is real.** Most of the Gallery runs on modelled fixtures that say so;
+this is measured traffic from [ESnet](https://www.es.net/), the US Department of
+Energy's Energy Sciences Network — the science network connecting the national
+laboratories to each other and to CERN. It is the same series ESnet's own
+"Volume History" page draws, supplied by ESnet and committed as a fixture.
+
+**439 months, 1990-01 to 2026-07, on a complete monthly grid** — no holes.
+Three inbound series in bytes:
+
+| Column   | What it is                                    | Starts      | Months |
+| -------- | --------------------------------------------- | ----------- | ------ |
+| `total`  | Every byte carried inbound that month         | **1990-01** | 439    |
+| `oscars` | OSCARS — bandwidth-reserved circuits          | **2009-01** | 211    |
+| `lhcone` | LHCONE — the LHC experiments' overlay network | **2015-01** | 139    |
+
+Three quirks matter, and all three survived into the fixture on purpose.
+
+**The starts are staggered, and the gap is real.** LHCONE traffic did not exist
+before 2015, so the months before it are **absent** — `required: false` plus
+`null`, which is a different claim from zero. It is also the only claim a log
+axis can draw: zero has no position on one. The lines simply begin partway
+across the plot.
+
+**The span is 7.1 decades.** 19 GB in January 1990; 262 PB at the peak in
+November 2025. That is a factor of **10.4 million**, and it is the reason this
+page exists.
+
+**The last year is down.** Total inbound fell **18.3%** year-on-year to July
+2026 and OSCARS fell **59.2%**, while LHCONE was up **6.15%**. A chart that only
+ever showed the long climb would be flattering it; the summary table is where
+that shows.
+
+The fixture is derived by
+[`website/scripts/fixtures/esnet-volume.mjs`](https://github.com/pond-ts/pond/blob/main/website/scripts/fixtures/esnet-volume.mjs)
+from the raw export, which stays in `packages/charts/test-data/` and never
+reaches the browser: the three `_out` columns are dropped (the chart draws
+inbound), values are rounded to six significant figures, and the `YYYY-MM`
+index becomes a start month plus a count.
+
+## Build it
+
+The minimal version is a line chart with one word changed:
+
+```tsx
+<ChartContainer range={range} width={width} theme={theme}>
+  <ChartRow height={300}>
+    <YAxis id="bytes" scale="log" format={formatBytes} />
+    <Layers>
+      <LineChart series={series} column="total" as="primary" />
+      <LineChart series={series} column="lhcone" as="secondary" />
+      <LineChart series={series} column="oscars" as="context" />
+    </Layers>
+  </ChartRow>
+</ChartContainer>
+```
+
+`scale="log"` is the word. Everything else about the chart is unchanged, and —
+this is the part worth knowing — **`format` still formats the value**. The
+transform lives in the scale, not in the data, so a tick says `1 PB` and the
+axis pill on a mark says `197.82 PB`, never a logarithm. The obvious workaround,
+plotting a `log10` column on a linear axis, makes every readout, `Baseline` and
+axis indicator lie.
+
+Two notes on `format`:
+
+- **A function reads better than a specifier here.** `'.3s'` prints `197.8P`,
+  which is not a byte count anyone writes; a function gives `197.82 PB`. (A
+  specifier also used to come out **blank** on a log axis for any value that
+  wasn't one of d3's own significant ticks — that is fixed, but it is the
+  reason this example's formatter is a function and worth knowing if you are
+  pinned to an older version.)
+- **Hoist it.** An inline `format={(v) => …}` is a fresh reference every render
+  and re-registers the axis each frame.
+
+Note also what the axis is _not_ given: no `ticks`. The log axis picks whole
+decades itself and thins them to the row's height, so 300px of row gets
+`10 GB · 1 TB · 100 TB · 10 PB · 1 EB` and a six-month window gets
+`10 PB · 100 PB · 1 EB`.
+
+### Selecting a month
+
+The selection is one number — a month index — and two inputs write it. The
+chart's half is a **bucketed region cursor**:
+
+```tsx
+<ChartContainer
+  cursor="region"
+  cursorSequence={Sequence.calendar('month')}
+  onRegionSelect={([from]) => setSelected(monthIndexAt(from))}
+>
+```
+
+`cursorSequence` buckets the cursor, so the band under the pointer is a whole
+calendar month rather than wherever the pixel landed — a preview of exactly
+what a click will select. And a **plain click selects it**: press and release
+without moving fires `onRegionSelect` with the single bucket under the pointer
+(measured: `[2016-12-01T00:00Z, 2017-01-01T00:00Z]`). The prop's own docs
+describe a drag, so this is worth knowing — no drag is required, and the
+returned span is already snapped to real month boundaries, so there is nothing
+to round.
+
+`Sequence.calendar('month')`, not a duration — months are 28–31 days, so there
+is no month duration to step by. `DurationUnit` stops at `d`, and `'m'` there
+means **minutes**.
+
+The selected month is then drawn back onto the chart as a `<Region>`, over its
+own calendar extent:
+
+```tsx
+const marked = TimeRange.fromCalendar('month', '2026-07', { timeZone: 'UTC' });
+
+<Region
+  from={marked.start}
+  to={marked.endMs}
+  label="Jul 2026"
+  selectable={false}
+/>;
+```
+
+`selectable={false}` makes it inert: it is a _readout_ of the selection, and the
+way to change the selection is to click the plot. Two bands end up on screen —
+the hover preview in the cursor's neutral ink, the selection in the annotation
+hue — which is what tells "what you would pick" apart from "what you picked".
+
+### The trend the selection drives
+
+Ordinary least squares on the values for Linear, on their logarithms for
+Exponential:
+
+```tsx
+// exponential: fit ln(y) = a + b·x, then draw exp(a + b·x)
+const y = kind === 'exponential' ? Math.log(value) : value;
+```
+
+The fit window is **a fixed five-year lookback ending at the selected month** —
+not the visible range, so zooming the view never silently changes the model:
+
+```tsx
+const fitFrom = Math.max(0, selected - LOOKBACK_MONTHS + 1);
+const fit = fitTrend(kind, fitFrom, selected); //  fitted on [selected − 5y, selected]
+```
+
+:::caution The five years is ours, not ESnet's
+
+`LOOKBACK_YEARS = 5` is the one number on this page not derived from the data.
+ESnet's own chart uses some fixed lookback and **we do not know what it is** —
+it was inferred from roughly where a dashed line begins in a screenshot, and
+inference from a screenshot is not measurement. So five years is stated here as
+_our_ choice, in one named constant, trivially changed if the real figure ever
+turns up. It happens to be a good choice for this data on its own merits: short
+enough to track the current regime, long enough not to chase noise.
+
+:::
+
+Then the model is drawn **twice, in two styles**, off the same `Fit`:
+
+```tsx
+<LineChart series={modelLine(fit, fitFrom, selected)} as="trendFit" /> // solid
+<LineChart series={modelLine(fit, selected, rightEdge)} as="trend" /> //  dashed
+```
+
+`line.trendFit` and `line.trend` differ by exactly one theme property — `dash`
+— because that is the only difference there should be. `LineStyle.dash` is the
+register for a modelled line, and here it does the load-bearing work of
+separating evidence from extrapolation with no legend entry needed to explain
+it. Both halves include the selected month, so they meet on the band rather
+than leaving a pixel of gap.
+
+**The right edge follows the trend toggle.** With no projection the window ends
+at the end of the record; with one it runs a year further, so the forecast has
+somewhere to be drawn:
+
+```tsx
+const rightEdge = VOLUME_LAST + (trend === 'off' ? 1 : 12);
+```
+
+**Fewer than three months of history behind the selection and there is no fit
+at all** — two points define a line exactly, which is a ruler, not a forecast.
+The chart draws nothing then and says so where the caption goes (_"The fit
+needs at least three months of history behind the selected month, and there is
+1."_), because a line that silently vanishes reads as a bug.
+
+Two things the projection forces you to decide, and the example decides both in
+the source:
+
+- **A projection can leave the domain.** The trend column is `required: false`
+  so a non-positive projected value becomes a gap rather than a `NaN`
+  coordinate — a declining linear fit crosses zero if extended far enough, and
+  zero has no position on a log axis. Being straight about it: on this data the
+  guard is **defensive, not exercised** — you will not see it fire on this page.
+- **The projection is a layer, so it joins the domain auto-fit** — and it must
+  not win. Fitted to the five years ending January 2010, the exponential
+  projects **19.3 EB**, two decades above anything ever measured. Letting that
+  set the ceiling would squash 36 years of real data into the bottom of the plot
+  to make room for a line that is _wrong_. So the example computes the domain
+  itself: **data sets the floor, and the projection may lift the ceiling by at
+  most one decade** (half again on a linear axis). Past that the dashed line
+  leaves the top of the plot, which is the honest rendering of a forecast that
+  missed by more than the chart is tall. There is no per-layer opt-out of the
+  fit.
+
+### The summary
+
+The table under the chart is `<BarList>` — the list family renders a real
+`<table>`, which is what a per-series summary is. It is a readout of **the
+selected month**, not of the newest one: click a different month and every row
+changes. The bar is each row's share of that month's total, on one shared
+`domain` pinned to it, so `Total` is a full track and the other three are
+directly comparable:
+
+```tsx
+<BarList
+  rows={summaryRows(selected, theme)}
+  columns={[{ column: 'bytes', as: 'muted' }]}
+  domain={[0, total]}
+  after={SUMMARY_CELLS}
+  theme={theme}
+/>
+```
+
+`BarListColumn.as` is a property of the **column**, not the row, so a
+one-bar-per-row list has one colour for every row. Rather than fight that, the
+two channels are split: the bar carries magnitude in a neutral tone, and the
+swatch beside each name carries identity — read from the same `line` role the
+chart draws that series with, so the table cannot drift out of step with the
+plot.
+
+**Normal traffic is derived**, not a column: `total − lhcone − oscars`. That the
+arithmetic closes is what pins the whole table to the inbound side of the
+export.
+
+## The gestures
+
+An earlier draft of this chart had a hover readout on every series and a
+draggable marker for the trend's origin, and the two could not coexist: a
+bucketed cursor has no value chips, and a mark in edit mode forces the whole
+row's cursor to `'none'`. Collapsing to **one selection set by clicking**
+dissolved that entirely — there is no hover readout to protect and no editing
+mark to suppress it. What ships:
+
+| Gesture       | Status      | Note                                                           |
+| ------------- | ----------- | -------------------------------------------------------------- |
+| Hover a month | **kept**    | Shades the calendar bucket — a preview of what a click selects |
+| Click a month | **kept**    | Sets the one selection; no drag needed                         |
+| Wheel-zoom    | **kept**    | Bounded to the record plus the projection's margin             |
+| Drag to pan   | **dropped** | A region-select preempts pan on pointerdown — see below        |
+
+Pan is the one real casualty, and the reason is exact: a region-select is armed
+on `pointerdown` and **preempts pan** unless you set
+`regionSelectModifier="shift"` — but setting it would mean a plain click falls
+through to pan and never selects, which is the whole gesture. Click-to-select
+and drag-to-pan cannot both be plain-drag. The `TIME` presets do the coarse
+navigation and the wheel still zooms (unaffected in every case), so the loss is
+small and the alternative — shift-clicking to pick a month — would be worse.
+
+## Options to try
+
+| Option                                            | What it does                                                             | Reach for it when                                                          |
+| ------------------------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| `<YAxis scale="log">`                             | Base-10 axis; ticks land on decades and `format` still formats the value | Data spanning more than about two orders of magnitude                      |
+| `cursor="region"` + `cursorSequence`              | A bucketed cursor whose click reports the bucket                         | Selection should land on real calendar units, not on pixels                |
+| `as="trendFit"` / `as="trend"` (`LineStyle.dash`) | One model, two line styles, split at a meaningful instant                | Any chart showing both what a model was fitted on and what it extrapolates |
+| `Sequence.calendar('month')`                      | A real calendar grid                                                     | Any month/week/day bucketing — there is no month _duration_                |
+| A fourth `<LineChart column="normal">`            | Draws the derived remainder as a line as well as a table row             | You want the three components to visibly sum to the total                  |
+| `<ChartContainer grid={false}>`                   | Drops the gridlines                                                      | Dense data where the rules compete with the lines                          |
+
+:::note Keep a log axis to lines, for now
+
+`<AreaChart>` and stacked `<BarChart>` have unguarded paths to `NaN` when a
+value or a stack base is zero — a stacked bar silently loses its bottom segment,
+and a filled area with a zero in it throws from `createLinearGradient`. Lines
+are safe, which is all this chart needs.
+
+Relatedly: a **zero** does not break a line the way a gap does. `.defined()`
+tests the value, and `0` is finite, so neighbours are joined straight through
+it. This record has no zeroes — its absences are genuine `null`s — but on a log
+axis a zero has no position, so the two cases are worth keeping apart in your
+own data.
+
+:::
+
+## See also
+
+- [`<LineChart>`](../types/linechart.mdx) — every prop
+- [`<YAxis>`](../axes/value-axis.mdx) — `scale`, `ticks`, `format`, `pad`
+- [`<Region>`](../annotations/region-baseline-marker.mdx) — the month band
+- [Cursors and readouts](../interaction/cursors-and-readouts.mdx) — every
+  cursor mode, and which ones carry a readout
+- [Pan, zoom and range selection](../interaction/pan-zoom-and-range-selection.mdx)
+  — `onRegionSelect`, and why it preempts pan
+- [`<BarList>`](../types/lists.mdx) — the summary table
+- [Gaps](../gaps.mdx) — why the staggered starts are absences, not zeroes
+- [**Storybook — the log scale**](pathname:///storybook/?path=/story/axes-log-scale--log)
+  — the systematic knob walk: linear vs log side by side, decade ticks, an
+  explicit domain, a refused non-positive `min`, and what a zero in the data
+  does

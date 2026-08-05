@@ -84,6 +84,15 @@ export function useSiteChartTheme(): ChartTheme {
       // under a moving average). Every viz-N hue competes with the line it's
       // meant to sit behind, and at full opacity dense noise swallows it.
       muted: { color: fade(v('--pond-muted'), 0.55), width: 1 },
+      // A **modelled** line, in two halves that differ by exactly one
+      // property. `trendFit` is the stretch a model was fitted on; `trend` is
+      // what it extrapolates, and `dash` is the whole difference — which is
+      // the register `LineStyle.dash` exists for. Both take the annotation
+      // hue rather than a data hue: a fit is something the *reader* asked for
+      // by choosing a month, so it belongs with the selection band and the
+      // axis pill that define it, not with the three measured series.
+      trendFit: { color: v('--pond-viz-mark'), width: 1.5 },
+      trend: { color: v('--pond-viz-mark'), width: 1.5, dash: [5, 4] },
       ...seqRoles(v, (step) => ({ color: step, width: 1.5 })),
     },
     band: {
@@ -140,6 +149,16 @@ export function useSiteChartTheme(): ChartTheme {
     bar: {
       default: { fill: v('--pond-viz-1'), highlight: v('--pond-viz-2') },
       secondary: { fill: v('--pond-viz-2'), highlight: v('--pond-viz-1') },
+      // Neutral grey, not a data hue — the bar analogue of `line.muted` and
+      // `scatter.raw`. For a `<BarList>` whose bars carry *magnitude* while
+      // identity is carried elsewhere (a swatch, a label): `BarListColumn.as`
+      // is per column, so a one-bar-per-row list has one colour for every row
+      // and it had better not look like a series colour.
+      muted: {
+        ...defaultTheme.bar.default,
+        fill: fade(v('--pond-muted'), 0.5) ?? defaultTheme.bar.default.fill,
+        highlight: v('--pond-viz-1') ?? defaultTheme.bar.default.highlight,
+      },
       // A stack reads only `.fill` per group (`colors[g] ?? theme.bar[g] ??
       // bar.default`); a single-series `as="seq3"` bar reads the whole style.
       ...seqRoles(v, (step) => ({
@@ -156,6 +175,15 @@ export function useSiteChartTheme(): ChartTheme {
     },
     cursor: v('--pond-body'),
     chip: { background: v('--pond-surface-2') },
+    // Without this the legend card keeps `defaultTheme.legend` — a hardcoded
+    // **white** panel with slate text — which is invisible-adjacent on a light
+    // page and a glaring white block on a dark one. It is the one register the
+    // bridge had never mapped, so every embed drawing a `<Legend>` showed it.
+    legend: {
+      background: v('--pond-surface-2'),
+      border: v('--pond-hairline'),
+      text: v('--pond-body'),
+    },
     annotation: { color: v('--pond-viz-mark') },
   }));
 }
