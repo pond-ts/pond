@@ -8,7 +8,9 @@ The `@pond-ts` packages — `pond-ts`, `@pond-ts/react`, `@pond-ts/charts`,
 under a single `v*` tag, so this file covers them all. Pre-1.0: minor bumps may
 include new features and type-level changes; patch bumps are strictly additive.
 
-[Unreleased]: https://github.com/pond-ts/pond/compare/v0.54.0...HEAD
+[Unreleased]: https://github.com/pond-ts/pond/compare/v0.56.0...HEAD
+[0.56.0]: https://github.com/pond-ts/pond/compare/v0.55.0...v0.56.0
+[0.55.0]: https://github.com/pond-ts/pond/compare/v0.54.0...v0.55.0
 [0.54.0]: https://github.com/pond-ts/pond/compare/v0.53.1...v0.54.0
 [0.53.1]: https://github.com/pond-ts/pond/compare/v0.53.0...v0.53.1
 [0.53.0]: https://github.com/pond-ts/pond/compare/v0.52.0...v0.53.0
@@ -55,7 +57,265 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+## [0.56.0] — 2026-08-05
+
+### Added
+
+- **charts:** **`<YAxis scale="log">` — a base-10 logarithmic y axis.** Every y
+  scale was `scaleLinear`, so data spanning orders of magnitude was
+  undrawable: on a linear axis everything below the top decade collapses onto
+  the baseline. Set `scale="log"` and the axis maps by ratio, ticking the
+  decades. `format` still formats the **value**, so a readout says `1.2 PB`
+  rather than its logarithm — the transform is in the scale, not in the data,
+  which is what keeps it transparent to every draw layer, annotation and
+  cursor readout.
+
+  A log domain cannot contain zero, and d3 maps a non-positive value to
+  **`NaN`** — a coordinate the canvas silently _drops_, which is why every
+  consequence below is about something failing invisibly rather than throwing.
+  So the axis is deliberate about it:
+  - **Domain policy matches the linear axis exactly.** Auto-fit takes the
+    smallest **positive** extent (one zero sample can't collapse the axis, and
+    a `BarChart` — whose extent always widens to include zero — can still share
+    it); a positive explicit `min`/`max` is honoured verbatim and never
+    discarded, with the _auto-fit_ side moving if the domain would otherwise
+    invert; a fully auto-fit domain is `.nice()`d out to whole powers of ten, so
+    the extremes get headroom instead of sitting clipped on the plot edge. A
+    non-positive bound has no position and is refused in favour of the data.
+    `pad` is applied multiplicatively, adding the same fraction of a decade at
+    both ends.
+  - **A value with no position on the axis renders as a gap.** Previously the
+    gap test was `Number.isFinite(value)`, and `0` is finite — so the coordinate
+    became `NaN`, the canvas dropped the path op without breaking the path, and
+    the two neighbours were joined by a straight line _over_ the missing data.
+    Lines, area fills and outlines, and band envelopes now all break there.
+  - **Layers that reach for a baseline rest on the axis floor.** `AreaChart`
+    resolves an out-of-domain `baseline` there (writing `baseline={0}` is
+    natural and correct on a linear axis), and a **stacked** bar layer starts
+    its first segment there — starting at zero made the bottom segment of every
+    stack both invisible and unhittable. Unchanged on a linear axis, where zero
+    clamped into the domain _is_ zero.
+  - **The dev-mode warning names only unambiguous mistakes**: a refused
+    `min`/`max`, negative data, or an axis with no positive data at all. It
+    deliberately says nothing about an extent of exactly `[0, hi]`, which a
+    line touching zero and a bar layer on strictly positive data both report
+    identically — warning there fired on _every_ bar chart on a log axis. It
+    warns once per distinct complaint rather than on every repaint.
+
+- **charts:** **pan and zoom now yield whole-millisecond view ranges.** A
+  wheel-zoom derives its range from pixel positions through `xScale.invert()`,
+  so the result was fractional by construction — an ordinary scroll produced
+  `1.7e12 + 0.37`. The epoch millisecond is this model's atomic unit and
+  consumers are entitled to assume it; one did, and a calendar `cursorSequence`
+  threw on a plain scroll. `zoomRange` / `panRange` round both ends, and never
+  collapse a positive span to zero width in doing so. (Core's fractional-instant
+  fix covers the same crash from the other side; this closes the class.)
+
+- **charts:** **`AreaStyle.flatFill` — stacked areas that read as slabs.** An
+  area's fill has always graded to transparent at the baseline, which is right
+  for the elevation form and wrong for a stack: every band showed the one
+  beneath it through the fade, so a stacked area was not really drawable. Set
+  `flatFill` and the fill is flat; omitted, the gradient is unchanged, so no
+  existing theme shifts. The docs theme's `seq1…seq8` area roles set it, since
+  stacking is what they exist for.
+
+- **docs theme:** **a sequential ramp — `seq1…seq8` — for charts with more
+  series than the categorical set has hues.** `--pond-viz-1…5` were, and
+  remain, the categorical set; a chart needing more slots (an eight-source
+  stack, a wall of climate stripes) now steps **tonally** through the brand
+  teal instead of introducing competing hues. Eight steps, evenly spaced
+  (~ΔL\* 9 in CIELAB), defined for light and dark, each mode's ramp containing
+  that mode's `--pond-viz-1` exactly. Exposed as `line` / `area` / `bar` theme
+  roles on `docsTheme` (Storybook) and the docs site's `useSiteChartTheme`,
+  and as an array from the site's `useSequentialRamp()`. Dev-only: the ramp
+  lives in the `docs-theme.fixture.ts` Storybook fixture and the website's
+  CSS, both excluded from the published `@pond-ts/charts` build — the library
+  still ships no palette.
+
+### Fixed
+
+- **core:** **a fractional epoch millisecond no longer crashes calendar
+  math.** `Temporal.Instant` refuses a non-integer epoch ms outright
+  (`epoch milliseconds must be an integer`), and `toPlainDateStart` passed
+  whatever it was given straight through — so realizing a `Sequence.calendar`
+  over a fractional range threw, and in a React app the exception unmounted the
+  page. A fraction is not a caller error: a chart's wheel-zoom derives its view
+  range from pixel positions via `xScale.invert()`, so an ordinary scroll
+  produces `1.7e12 + 0.37`. The instant is now floored to the millisecond
+  containing it — the epoch millisecond is this model's atomic unit and
+  calendar boundaries are themselves whole milliseconds, so the bucket
+  containing `t` and the one containing `t + 0.37` are necessarily the same,
+  and integer inputs are untouched. (`Math.floor`, not `Math.trunc`: pre-1970
+  they disagree, and `-5.5` lies inside the millisecond spanning `[-6, -5)`.)
+
+- **charts:** toggling **`<ChartContainer grid>`** now repaints immediately.
+  `Layers`' draw callback read `container.grid` but didn't depend on it, so
+  switching gridlines off changed nothing until an unrelated dependency moved —
+  in practice you had to pan or zoom a little to force the update. The same
+  omission covered `sessionDividers` and `xKind`.
+
+- **charts:** the log axis's dev-mode warning no longer requires **node's
+  ambient types**. It was guarded by a bare `process.env.NODE_ENV`, which
+  typechecks only when a tool happens to resolve `@types/node` from a parent
+  `node_modules` — so `tsc` inside the package passed while running the _same_
+  tsconfig from a consumer's directory failed with `TS2591: Cannot find name
+'process'`. That took out the docs site's TypeDoc step, and would equally hit
+  any consumer typechecking the package's sources. The guard now lives in
+  `src/dev.ts` behind a local declaration and a `typeof` check, so a browser
+  bundle with no `process` global doesn't throw at import either.
+
+## [0.55.0] — 2026-08-04
+
+### Added
+
+- **process:** **`@pond-ts/process` publishes for the first time —
+  experimental, pre-1.0.** Computations as data over pond-ts: a processing
+  graph authored fluently in application code (or composed as JSON by a saved
+  view or a tool-calling model) resolves against a declared op vocabulary and
+  runs over a bound `TimeSeries`, with content-addressed caching, provenance,
+  and per-node timings on every response. Two entry points: the plan layer at
+  `.` and the Node worker pool at `./pool`. The docs section
+  ([pond-ts.org/docs/process](https://pond-ts.org/docs/process/)) is listed on
+  the site with a TypeDoc API reference; the publication follows the 2026-08
+  external audit hardening (all P1 findings fixed and regression-pinned). The
+  API is expected to move as friction reports land — pin an exact version.
+
+- **charts:** **`<BarChart categories>` now works horizontally** ([PND-HCAT],
+  the 2026-08 API review's #3 item) — the funnel / ranking / comparison shape.
+  `orientation="horizontal"` puts the categories on the **y** axis as unit
+  slots with the value on x, and a `<YAxis>` with no explicit `ticks` **derives
+  one label per category by itself**, so the chart no longer needs a
+  hand-built `i + 0.5` tick list. It previously threw ("horizontal category
+  axes are not yet supported"), which forced consumers to convert their
+  categories into ordinal `bins` records _and_ hand-place the labels — the
+  workaround the gallery funnel documents.
+
+  Explicit `<YAxis ticks>` still wins, and vertical categorical charts are
+  untouched (categories stay on the container's ordinal x band scale). A new
+  internal `RowLayer.binCategories()` channel carries the names to whichever
+  axis they land on.
+
+- **charts:** **the list family's series door** — `<BarList series={splits}
+label={…}>` / `<BoxList series>` take a `TimeSeries` / `ValueSeries`
+  directly (one row per event; exactly-one-of with `rows`), closing the
+  "required adapter" gap the 2026-08 API review named: starting from a pond
+  series there is no shaping step. The `listRowsFrom*` readers remain for
+  record rows. Docs across the charts hub, cheat sheet, and type pages now
+  present the series as the whole data contract, with the exported `from*`
+  builders re-documented as **interop escape hatches for non-pond data**.
+
+- **charts:** **`<BarList>` + `<BoxList>` — standalone ranked row lists** (the
+  react-timeseries-charts `HorizontalBarChart` shape, rebuilt as what it
+  always was: a table). One DOM row per _entity_ — an interface, a split, a
+  symbol — with a label cell (any node, links included), one glyph line per
+  configured column on **one shared value scale**, optional data cells
+  before/after the glyphs, `sortBy`/`sortDirection` or a full custom
+  comparator (missing values sort last either direction), an optional per-row
+  expander (`renderExpanded`, keyed on row identity so it survives a re-sort),
+  and consumer-owned row selection with an accent edge in the marks register.
+  A vertical **baseline rule** at the scale origin anchors the rows to one
+  reference (on by default for `<BoxList>`, whose lines float at their lower
+  quantile; opt-in for `<BarList>`, whose tracks already show zero), and
+  reference **`markers`** (`{ value, label? }`) draw a labelled dotted rule
+  through every row in the annotation register — an SLA / capacity line —
+  with marker values joining the auto domain fit.
+  `<BarList>` draws proportional value bars; its sister `<BoxList>` draws a
+  five-number distribution per line — range band, `q1`→`q3` body, median line
+  — plus an optional **current-value tick** with a formatted inline label (the
+  esnet traffic-by-interface look), using the same quantile vocabulary as the
+  canvas `<BoxPlot>` (`lower`/`q1`/`median`/`q3`/`upper`, both-or-neither
+  body, quantiles computed upstream — `reduce` facts — never by the chart).
+  Styling stays on the one channel: bars resolve `theme.bar[as]`, boxes
+  `theme.box[as]`; both built-in themes gain a `box.secondary` role for the
+  paired-direction case. Readers `listRowsFromTimeSeries` /
+  `listRowsFromValueSeries` build one row per event / axis key. The in-plot
+  histogram remains `<BarChart orientation="horizontal">` — the lists are for
+  the table-shaped cases it can't be (link labels, cells, expanders, custom
+  sort).
+
+- **charts:** **`BarStyle.hover` — a distinct hover colour for bars**
+  ([#577](https://github.com/pond-ts/pond/issues/577)). A theme may now give
+  bars a three-step emphasis — `fill` at rest → `hover` under the pointer →
+  `highlight` (plus the outline) when selected. Previously one `highlight`
+  served both live states, so hover and select differed only by the presence of
+  an outline; `ScatterStyle` has carried distinct rest / selected treatments
+  (`outline` vs `selectedOutline`) all along, making bars the less expressive
+  layer for the same two-state interaction.
+
+  **Optional, with a `highlight` fallback**, so no existing theme changes
+  meaning or rendering — a theme that wants the distinction adds one colour.
+  Selection outranks hover on a bar that is both. Single-series only: a stacked
+  or per-bin-coloured bar has no separate highlight colour to replace (it pops
+  its _own_ fill, so a red/green volume bar keeps its meaning while live), and
+  that convention is unchanged.
+
 ### Changed
+
+- **charts:** **a bar's capabilities now follow the mark it draws, not the
+  prop that fed it** ([PND-BARSEM], the 2026-08 API review's #2 item). A
+  **one-column vertical** histogram (`bins` + a single `column`) and a
+  one-entry `columns` draw exactly the mark a `series` + `column` chart
+  draws, but they used to route through the stacked path purely because of
+  which prop supplied them — and so silently lost whole-slot hit-testing
+  (#584), the `BarStyle.hover` colour, the cursor readout, stable per-bar
+  identity and per-bar decimation. They now take the single-series path, so
+  visually identical bars behave identically.
+
+  **What this changes in practice:** on a one-column histogram, hover and
+  click now hit the bar's **whole slot** rather than only the drawn
+  rectangle (so the space above a short bar is live, and slots tile the
+  axis); the layer gains a cursor readout; and `theme.bar.hover` applies.
+  A genuine multi-group stack, `categories`, and horizontal charts are
+  unchanged — their segments share a bin's x-range, so only y distinguishes
+  them. New reader `barsFromBins` backs the normalized path.
+
+  **Not a pure widening, in one respect:** dense-bar envelope decimation is
+  now live on a one-column histogram (it was single-series-only). It engages
+  only once bars fall under ~1px, where it is visually lossless, but at that
+  density the per-bar `gap` and highlight give way to envelope rects — pass
+  `decimate={false}` to keep every bar drawn. The `colors` map, the
+  `theme.bar[<column>]` role and `SelectInfo.label` are all preserved across
+  the reroute (each was a silent regression caught in review).
+
+  This shrinks `BarStyle.hover`'s scope warning from a list of five
+  path-accidents to the two real exclusions (a multi-group stack has no
+  hover channel on `StackStyle`; `binColors` keeps each bar's own colour by
+  design) — which was the acceptance test the task set itself.
+
+- **charts:** **column names and source modes are now checked at compile
+  time** ([PND-CHARTAPI], the 2026-08 API review's #1 item). Every draw
+  layer's column props are derived from the series' schema, so
+  `<LineChart series={cpu} column="cpuu" />` — and a numeric prop pointed at
+  a string column, where the schema has some other numeric column — fail to
+  **compile** instead of throwing at render; the
+  same holds for `readout`, the band edges, the box quantiles, and the OHLC
+  prices. `<BarChart>`'s props became a **union of its legal source modes**,
+  so mixing sources (`series` + `bins`) or column forms (`column` +
+  `columns`), or passing `categories` a `column`, are compile errors too.
+  `<BarList>` / `<BoxList>` get the same treatment for `rows` XOR `series`,
+  which additionally closes the row-type hole #590 documented (annotating a
+  callback with a custom row type while passing `series` claimed a shape the
+  series door cannot produce).
+
+  **This narrows what compiles — deliberately.** Code carrying a typo, an
+  illegal mode mix, or a lying row annotation stops building; that is the
+  point, and each case was already a runtime failure. Two compatibility
+  behaviours are preserved on purpose: a **loosely-typed** series
+  (`TimeSeries<SeriesSchema>`, e.g. from a helper that doesn't narrow) still
+  accepts any column name, because an unparameterized schema leaves the name
+  union open and nothing can be checked against it; and `bins` column names
+  stay `string`, since they name aggregate fields of a bin record rather than
+  schema columns. Note the deliberate distinction: a schema that _does_ name
+  its columns but has **no numeric one** rejects every name — there is nothing
+  numeric to plot — which is not the same as the loose case.
+
+  **One new limitation.** Because a layer's props are a union _per series
+  kind_, a value typed as _either_ kind (`TimeSeries<A> | ValueSeries<B>` — a
+  wrapper that forwards whatever it is given) matches no single member and
+  must be narrowed or cast at the boundary. `DurationAxis.stories.tsx` is the
+  worked example. The alternative design (one generic over the series type)
+  handles that case but changes every props type's public generic parameters;
+  the trade is recorded in `spikes/charts-type-seam/REPORT.md`.
 
 - **charts:** **a bar's hover / click target is now its whole slot**, not the
   rectangle it draws. A bar _is_ the full width of its interval; the `gap` that
@@ -89,37 +349,6 @@ include new features and type-level changes; patch bumps are strictly additive.
   lacks), a gap (`NaN`) bar owns no slot, and a shared edge goes to the left
   bar — the rule `barIndexAtTime` already documented, so the two now agree by
   construction.
-
-### Added
-
-- **charts:** **`BarStyle.hover` — a distinct hover colour for bars**
-  ([#577](https://github.com/pond-ts/pond/issues/577)). A theme may now give
-  bars a three-step emphasis — `fill` at rest → `hover` under the pointer →
-  `highlight` (plus the outline) when selected. Previously one `highlight`
-  served both live states, so hover and select differed only by the presence of
-  an outline; `ScatterStyle` has carried distinct rest / selected treatments
-  (`outline` vs `selectedOutline`) all along, making bars the less expressive
-  layer for the same two-state interaction.
-
-  **Optional, with a `highlight` fallback**, so no existing theme changes
-  meaning or rendering — a theme that wants the distinction adds one colour.
-  Selection outranks hover on a bar that is both. Single-series only: a stacked
-  or per-bin-coloured bar has no separate highlight colour to replace (it pops
-  its _own_ fill, so a red/green volume bar keeps its meaning while live), and
-  that convention is unchanged.
-
-- **docs theme:** **a sequential ramp — `seq1…seq8` — for charts with more
-  series than the categorical set has hues.** `--pond-viz-1…5` were, and
-  remain, the categorical set; a chart needing more slots (an eight-source
-  stack, a wall of climate stripes) now steps **tonally** through the brand
-  teal instead of introducing competing hues. Eight steps, evenly spaced
-  (~ΔL\* 9 in CIELAB), defined for light and dark, each mode's ramp containing
-  that mode's `--pond-viz-1` exactly. Exposed as `line` / `area` / `bar` theme
-  roles on `docsTheme` (Storybook) and the docs site's `useSiteChartTheme`,
-  and as an array from the site's `useSequentialRamp()`. Dev-only: the ramp
-  lives in the `docs-theme.fixture.ts` Storybook fixture and the website's
-  CSS, both excluded from the published `@pond-ts/charts` build — the library
-  still ships no palette.
 
 ### Fixed
 

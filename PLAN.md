@@ -83,6 +83,30 @@ milestone. Plan:
   [PND-PARITY] / the live layer.
 - **[PND-ANNRFC]** — Write the short `docs/rfcs/annotations.md` design
   record the owner asked for (confirm still wanted).
+- **[PND-APIREV-REST]** — What the 2026-08 API review left open after
+  [PND-CHARTAPI] / [PND-BARSEM] / [PND-HCAT] / [PND-VSADAPT] shipped
+  (#590/#592/#593/#594; note:
+  [charts-api-review-2026-08.md](docs/notes/charts-api-review-2026-08.md)):
+  - **The union-typed-series limitation.** A layer's props are a union _per
+    series kind_, so a value typed as `TimeSeries<A> | ValueSeries<B>` (a
+    wrapper forwarding whatever it is given) matches no member and must be
+    narrowed or cast — `DurationAxis.stories.tsx` is the worked example. The
+    owner chose this over the single-generic alternative (`LineChartProps<Sr>`,
+    which distributes over the union but changes every props type's public
+    generic parameters); both are verified in
+    `spikes/charts-type-seam/REPORT.md`. Revisit only if a real consumer hits it.
+  - **A Codex adversarial pass on the type work**, recommended by the Layer-2
+    reviewer at medium confidence and not yet run. The class it flags is real:
+    the type seam twice shipped guarantees that looked right and were inert
+    (the two-generic widening; the loose-vs-no-numeric conflation), so "it
+    compiles" is not evidence "it checks".
+  - **`<BarChart categories>` selection/readout on the horizontal axis** — the
+    capability landed but its interaction contract was not exercised beyond
+    the geometry; and **the gallery funnel** still hand-builds its ordinal
+    bins + `i + 0.5` ticks because it lives on the unmerged
+    `feat/gallery-track-g` branch. Simplify it when those meet.
+  - **`categories` + horizontal + a multi-group stack** is untried; only the
+    one-segment case has a story.
 
 ### Docs site, landing, and API reference
 
@@ -481,10 +505,10 @@ commitment). Task detail, and the measurements each task is sized against:
 
 Ordering note: `PROCIDENT` blocks any interactive consumer, `PROCCOL` is a
 force multiplier for both `PROCIDENT` and `PROCRANGE`, and `PROCRANGE` is
-blocked by `PROCKERN` in `@pond-ts/financial`. The engine itself landed in
-[#544](https://github.com/pond-ts/pond/pull/544) as a **WIP, unpublished**
-package (`private: true`) so this can be worked in the open; `PROCSUB` owns
-whether it stays one.
+blocked by `PROCKERN` in `@pond-ts/financial`. The engine landed in
+[#544](https://github.com/pond-ts/pond/pull/544); the package **published as
+experimental at v0.55.0** after the 2026-08 audit hardening, which resolved
+[PND-PROCSUB] (outcome in the breakout plan).
 
 - **[PND-PROCIDENT]** — Decide how node identity is assigned, which decides
   cache lifetime. Content-addressed params accumulate by design (right for the
@@ -711,11 +735,6 @@ whether it stays one.
   coalesces concurrent calls for one source identity. Remaining:
   cancellation/freshness policy, source schema projection for remote composers,
   and a measured revision contract.
-- **[PND-PROCSUB]** — Decide the substrate and packaging: the RFC concludes one
-  package with the engine internal, while [#544](https://github.com/pond-ts/pond/pull/544)
-  proposes publishing it. Evidence now favours keeping the graph (1.34–1.40× on
-  MCP flurries at 1M rows; 1/N invalidation at N sources) with the honest
-  caveat that the advantage is zero at a single source.
 - **[PND-LIVESRC]** — Core-side: `LiveAggregation` does not satisfy
   `LiveSource<S>`, because its `on('event')` overload widens the listener's
   event type. Narrow the overload, or give the incremental operators their own
@@ -875,6 +894,55 @@ in [docs/archive/experiments-2026.md](docs/archive/experiments-2026.md)):
 | Webapp telemetry   | Codex  | In production; watch for friction reports                                         |
 | Charts experiment  | Claude | First `@pond-ts/charts` package consumer; annotation dogfood, ongoing             |
 | Robustness audits  | fresh  | Re-run as the available model improves; residue → [PND-LIVFIX], [PND-AUDIT]       |
+
+---
+
+## Chart example friction
+
+Friction found by **building real chart examples** rather than by reading the
+API — the Gallery wave's replica of a production network dashboard
+(`charts/gallery/site-traffic-dashboard`) drove most of it. Each item cost a
+debugging cycle or forced a workaround that shipped in the example. Two bugs
+found the same way were fixed in-wave (`AreaStyle.flatFill` for stacked areas,
+and the `grid` / `sessionDividers` / `xKind` repaint dependencies), which is the
+argument for the rest.
+
+- **[PND-CHFRIC]** — Charts friction from the Gallery examples: `BoxStyle.strokeWidth`
+  is declared but never read (the list's tick is hard-coded 3px); `BoxList` has no
+  value-label gutter, no band-radius knob, no header row and one ink for every
+  column; the list's text and hover colours are reachable only through unrelated
+  theme tokens (`axis.band.label`, `legend.border`); `<Legend>` is always an
+  in-plot overlay; theme roles fall back **silently** per primitive; `panZoom`
+  uncontrolled ignores later `range` props; `<YAxis label>` defaults to the axis
+  id. The cursor is the recurring theme: `CursorMode`'s docs promise a
+  per-series crosshair the implementation doesn't draw, `TrackerSample.label`
+  reports a theme role rather than a column, a layer can't opt out of the
+  readout (so one column drawn twice raises two identical flags), the x-axis
+  time pill is gated on `crosshair` so the **default** `line` cursor shows no
+  position either, and `<BarChart>` has no `readout` prop — so a chart whose
+  colour carries the value has a pill reading its layout constant. Two more
+  from the scrubbable wind rose: **`PartitionedTimeSeries` has no `reduce`**
+  (a core gap — "collapse each partition to one scalar" is the histogram case
+  and has no direct form, only `toMap()` plus a `TimeSeries.reduce` per group),
+  and `<CategoryAxis>`'s label thinning is an **estimated** glyph width that
+  lands on the wrong side at Gallery-card width, printing all sixteen sector
+  names into one smear. Itemised, with the workaround each one forced, in
+  [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md#pnd-chfric--chart-example-friction).
+
+- **[PND-HEATMAP]** — A **heat map draw layer** for `@pond-ts/charts`. Raised by
+  pjm off the Gallery's climate-stripes card: the bar-based version says the
+  right thing but wants to be a grid of cells, with a **day / month / year
+  granularity toggle** re-binning the same series. The shape is a
+  two-dimensional bin — time along x, a second dimension down y (calendar
+  position, category, or value bucket), colour encoding the aggregate — and it
+  is the one common time-series display pond has no primitive for. It composes
+  with work already shipped: `Sequence.calendar` supplies the honest
+  day/week/month binning, `partitionBy` + `aggregate` produce the cells, and the
+  sequential ramp is the colour channel. The design questions are whether the y
+  dimension is a category axis or a derived calendar coordinate, how a cell
+  reports to the cursor, and whether the granularity toggle is a prop or a
+  re-binned series the caller passes. Write-up in
+  [PND_CHARTS_PLAN.md](docs/plans/PND_CHARTS_PLAN.md).
 
 ---
 

@@ -2,6 +2,7 @@ import { useContext, useEffect, useMemo } from 'react';
 import { ContainerContext, RowContext, type AxisSpec } from './context.js';
 import { resolveAxisFormat, type AxisFormat } from './format.js';
 import { useSlotKey } from './use-slot-key.js';
+import { yTickValues } from './yticks.js';
 
 export interface YAxisProps {
   /** Identifier a chart links to via its `axis` prop (and the first declared is
@@ -24,6 +25,34 @@ export interface YAxisProps {
    *   that has headroom (auto-fit / padded) so it doesn't crowd the top tick.
    */
   labelPlacement?: 'rotated' | 'top';
+  /**
+   * Which scale the axis maps its domain through. **Default `'linear'`.**
+   *
+   * `'log'` gives a base-10 logarithmic axis — for data spanning orders of
+   * magnitude, where a linear axis flattens everything below the top decade
+   * onto the baseline. Ticks land on the decades, and `format` still formats
+   * the **value**, so a readout says `1.2 PB`, not its logarithm.
+   *
+   * A log domain cannot contain zero or negative numbers — d3 maps them to
+   * `NaN`, which has no position on the plot. So:
+   *
+   * - **Auto-fit ignores non-positive extents** when picking the low end (a
+   *   `BarChart`, whose extent always reaches zero so its bars can meet their
+   *   baseline, can therefore share the axis), and rounds the domain out to
+   *   whole powers of ten.
+   * - **An explicit `min`/`max` that is not positive is refused**, and that
+   *   side auto-fits instead. A positive bound is always honoured exactly; when
+   *   only one side is given and the domain would invert, the *auto* side moves
+   *   — the same policy a linear axis follows.
+   * - **Layers that fill to a baseline** (`AreaChart`, `BarChart`, a stacked
+   *   histogram) rest it on the bottom of the domain rather than on zero.
+   * - **A value with no position gaps the line**, rather than its neighbours
+   *   being joined straight across it.
+   *
+   * A dev-mode warning fires for the cases that are unambiguously a mistake: a
+   * refused bound, negative data, or an axis with no positive data at all.
+   */
+  scale?: 'linear' | 'log';
   /** Explicit domain bounds; omit to auto-fit the charts linked to this axis. */
   min?: number;
   max?: number;
@@ -112,6 +141,7 @@ export function YAxis({
   id,
   side = 'left',
   label,
+  scale = 'linear',
   min,
   max,
   format,
@@ -138,6 +168,7 @@ export function YAxis({
       id,
       side,
       width,
+      scale,
       min,
       max,
       pad,
@@ -151,6 +182,7 @@ export function YAxis({
       id,
       side,
       width,
+      scale,
       min,
       max,
       pad,
@@ -184,14 +216,27 @@ export function YAxis({
   // a cursor value read identically. `count` calibrates the default formatter's
   // precision to the tick density, exactly as the axis is.
   const fmt = yScale ? resolveAxisFormat(yScale, count, format) : String;
+  // A **horizontal categorical** layer on this axis supplies its category
+  // names ([PND-HCAT]); with no explicit `ticks`, label one per unit slot at
+  // its centre (`i + 0.5`) instead of the scale's numeric ticks — a slot index
+  // is not a number anyone wants to read. Explicit `ticks` still win, and a
+  // non-categorical row is unaffected (no layer answers, so this is `null`).
+  const layerCategories: readonly string[] | null =
+    row.layers
+      .filter((e) => (e.axisId ?? row.defaultAxisId) === id)
+      .map((e) => e.layer.binCategories?.() ?? null)
+      .find((c) => c !== null) ?? null;
+
   // Explicit `{ at, label }` ticks render verbatim (each label at its `at`),
   // overriding the auto-picked d3 ticks; otherwise label the scale's ticks via `fmt`.
   const tickList: readonly { value: number; label: string }[] = ticks
     ? ticks.map((t) => ({ value: t.at, label: t.label }))
-    : (yScale ? yScale.ticks(count) : []).map((t) => ({
-        value: t,
-        label: fmt(t),
-      }));
+    : layerCategories !== null
+      ? layerCategories.map((label, i) => ({ value: i + 0.5, label }))
+      : (yScale ? yTickValues(yScale, count) : []).map((t) => ({
+          value: t,
+          label: fmt(t),
+        }));
 
   // The row reserves a slot per axis column (the widest in that column across
   // rows). Size the box to the slot and align this axis's own (narrower)

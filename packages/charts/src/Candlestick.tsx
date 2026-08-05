@@ -1,6 +1,7 @@
 import { useContext, useEffect, useMemo } from 'react';
 import type { SeriesSchema, TimeSeries } from 'pond-ts';
 import { ohlcFromTimeSeries } from './data.js';
+import type { NumericColumn } from './column-names.js';
 import type { DecimateOption } from './decimate.js';
 import {
   drawCandles,
@@ -35,13 +36,13 @@ export interface CandlestickProps<S extends SeriesSchema> {
    */
   series: TimeSeries<S>;
   /** Opening-price column. **Omitted ⇒ `'open'`.** */
-  open?: string;
+  open?: NumericColumn<S>;
   /** Session-high column. **Omitted ⇒ `'high'`.** */
-  high?: string;
+  high?: NumericColumn<S>;
   /** Session-low column. **Omitted ⇒ `'low'`.** */
-  low?: string;
+  low?: NumericColumn<S>;
   /** Closing-price column. **Omitted ⇒ `'close'`.** */
-  close?: string;
+  close?: NumericColumn<S>;
   /**
    * The series' semantic identifier — what the data _is_ (e.g. a ticker). The
    * theme maps it to a {@link CandleStyle} (`theme.candle[as] ??

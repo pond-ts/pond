@@ -6,29 +6,25 @@ import {
   YAxis,
 } from '@pond-ts/charts';
 import { useSiteChartTheme } from '@site/src/theme/useSiteChartTheme';
-import {
-  demoCalendar,
-  demoDailyBars,
-  demoRange,
-} from './lib/financial-fixtures';
+import { marketBars, sessionWindow } from './lib/financial-fixtures';
 
 export default function FinancialCalendarChart() {
   const theme = useSiteChartTheme();
-  const cal = demoCalendar();
-  const series = demoDailyBars(cal);
+  const set = marketBars();
+  const { range, bars } = sessionWindow(set, 30);
 
   return (
     <ChartContainer
-      range={demoRange(cal)}
+      range={range}
       width={560}
       theme={theme}
-      calendar={cal}
+      calendar={set.calendar}
       cursor="crosshair"
     >
       <ChartRow height={220}>
         <YAxis id="price" side="right" format="$,.0f" width={50} />
         <Layers>
-          <Candlestick series={series} as="demo" showOHLC />
+          <Candlestick series={bars} as={set.symbol} showOHLC />
         </Layers>
       </ChartRow>
     </ChartContainer>

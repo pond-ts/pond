@@ -1,0 +1,205 @@
+---
+title: Price and volume
+sidebar_label: Price + volume
+---
+
+# Price and volume
+
+The two-row layout every trading screen opens with: price against a dollar
+axis, share volume on its own axis underneath. Two quantities four orders of
+magnitude apart, sharing one x range, one pan/zoom and one cursor — which is
+the whole reason it's **one** `<ChartContainer>` with two `<ChartRow>`s rather
+than two charts stacked.
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryPriceVolume from '@site/src/examples/gallery-price-volume';
+import GalleryVolumeList from '@site/src/examples/gallery-volume-list';
+
+## The chart
+
+<ChartExample name="gallery-price-volume" height={330} collapsed>
+  <GalleryPriceVolume width={640} />
+</ChartExample>
+
+Move the cursor: **one** crosshair, spanning both rows, its value pill pinned to
+the axis of whichever row the pointer is in. **Drag to pan, wheel to zoom** —
+both rows follow together, because the x range lives on the container and the y
+scales don't.
+
+The strip above the chart is a second, off-chart readout, and it exists because
+the in-chart one can't do this: the crosshair pill reads _one_ row at a time,
+so seeing the close and the volume for the **same session at once** needs
+`onTrackerChanged`. Both readouts are described under
+[Build it](#build-it).
+
+The tall red bars near the left edge are 2026-03-23 through 2026-03-26: the
+−7.5% session and its aftermath, trading 12.9 M shares against a 4.08 M median.
+Volume answering price is what a volume row is _for_, and it's the first thing
+you lose if you plot the two in separate charts.
+
+## The data
+
+**The prices are modelled, not measured** — see the
+[fixture header](https://github.com/pond-ts/pond/blob/main/website/src/examples/lib/financial-fixtures.ts)
+for the process and the
+[candlestick page](./candlestick.mdx#the-data) for why. The same 251-session
+year as the other three finance cards, asked a different question.
+
+```ts
+[time, open, high, low, close, volume];
+```
+
+What the volume column does, and why it isn't noise:
+
+- **It rises with the size of the day's move** and stays elevated for several
+  sessions after — a decaying memory, not just a same-day spike. Median 4.08 M,
+  peak 13.34 M on 2026-03-26.
+- **It scales with the session's actual length.** The two 13:00 half-days are
+  multiplied by (3.5 / 6.5)<sup>0.9</sup> ≈ 0.58 before anything else, so they
+  print 3.27 M and 3.36 M despite both landing in busy weeks.
+
+Which sessions those are is a question the volume _row_ can't answer — a bar at
+a time position tells you when, not which. Ranked, the rows stop being buckets
+on an axis and become **entities**, which is what the list family is for:
+
+<GalleryVolumeList />
+
+That's a [`<BarList>`](../types/lists.mdx), not a hand-built table: one bar
+column on a shared scale, an `after` cell for the session's **intraday**
+(open→close) return — a differently-scaled quantity that has no business
+sharing the volume axis — and a `markers` rule for the year's median, which is
+the list-family counterpart of
+[`<Baseline>`](../annotations/region-baseline-marker.mdx) and draws in the
+annotation register rather than a data hue.
+
+Read the rows and the model shows through. The **top four are all losses**, and
+three of them (Mar 23 / 25 / 26) are consecutive — that's volume answering a
+move _and_ the decay afterwards, not a same-day spike. But it isn't a one-sided
+rule: two of the eight are strong up sessions and one is flat, because what
+volume responds to is the **size** of the move, not its sign.
+
+## Build it
+
+Two `<ChartRow>`s inside one `<ChartContainer>`. Each row carries its own
+`<YAxis id>`, and each layer names the axis it scales against:
+
+```tsx
+<ChartContainer range={range} width={680} theme={theme}>
+  <ChartRow height={170}>
+    <YAxis id="price" side="right" format="$,.2f" width={62} />
+    <Layers>
+      <AreaChart series={bars} column="close" axis="price" />
+    </Layers>
+  </ChartRow>
+  <ChartRow height={74}>
+    <YAxis id="volume" side="right" format=".2~s" width={62} />
+    <Layers>
+      <BarChart series={bars} column="volume" axis="volume" />
+    </Layers>
+  </ChartRow>
+</ChartContainer>
+```
+
+Two axes, two scales, one x range — that's the whole multi-row model. The
+`format` strings are [d3-format](https://d3js.org/d3-format) specifiers:
+`$,.2f` for dollars, `.2~s` for SI-prefixed share counts (`4.1M`). The `~`
+matters more than it looks: without it the specifier pads to a fixed precision
+and the zero tick prints as `0.00M`.
+
+That gets you the layout with a single-colour volume row. Colouring each bar by
+its own session's direction is `binColors` — one entry per bar, in series
+order:
+
+```tsx
+const open = bars.column('open').toFloat64Array();
+const close = bars.column('close').toFloat64Array();
+const { rising, falling } = theme.candle.default;
+const volumeColors = Array.from(close, (c, i) =>
+  c >= open[i] ? rising.body : falling.body,
+);
+
+<BarChart
+  series={bars}
+  column="volume"
+  axis="volume"
+  binColors={volumeColors}
+/>;
+```
+
+Note where the colours come from: **the theme**, not literals. `rising.body` /
+`falling.body` are the same pair the candles use, so a volume row and a
+candle row agree by construction and both follow the site's dark/light toggle.
+Deriving `binColors` from the data is the pattern — direction here, but power
+zones or value bands read identically.
+
+Two details worth knowing. `binColors` **disables the dense-bar envelope
+decimation** (an envelope rect can't carry many bars' colours), so every
+visible bar draws — fine at 250 bars, worth knowing at 250 000. And a
+per-bar-coloured bar keeps its own colour under hover: the highlight pops
+opacity rather than swapping the fill.
+
+Both rows here are drawn from a series **cropped to the window**, for the
+reason the [candlestick page](./candlestick.mdx#build-it) spells out: each
+`<YAxis>` auto-fits every point of the series it's handed, not the ones inside
+the container's `range`. `binColors` is indexed against that same cropped
+series — build it from the series the layer draws, not the one you cropped
+from.
+
+### The two readouts
+
+Interaction is three props on the container, and they interlock:
+
+```tsx
+<ChartContainer
+  range={range}
+  onTimeRangeChange={setRange}
+  panZoom="panZoom"
+  cursor="crosshair"
+  onTrackerChanged={setTracker}
+>
+```
+
+`panZoom="panZoom"` is **drag to pan, wheel to zoom**. Because the layers are
+handed a cropped series, the range has to be **controlled** — held in state and
+fed back through `onTimeRangeChange` — so the crop can be recomputed from it;
+an uncontrolled pan moves the view and leaves the crop behind.
+
+`cursor="crosshair"` gives you the in-chart readout: a shared vertical line
+across both rows, and a value pill pinned to the y-axis of the row the pointer
+is in. Note what that _isn't_ — it reads **one row at a time**. Both rows'
+values for the same session is an off-chart job:
+
+```tsx
+const [tracker, setTracker] = useState<TrackerInfo | null>(null);
+
+// TrackerInfo = { time, values: TrackerSample[] } — one sample per layer,
+// each labelled with the series identity (`as` ?? the column name).
+const close = tracker?.values.find((v) => v.label === 'close')?.value;
+const volume = tracker?.values.find((v) => v.label === 'volume')?.value;
+```
+
+That's the strip above the chart. The two readouts are complementary rather
+than alternatives: the pill is where your eye already is, the strip is the one
+place both quantities appear together.
+
+## Options to try
+
+| Option                                    | What it does                                        | Reach for it when                                                       |
+| ----------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------- |
+| `<Candlestick>` in place of `<AreaChart>` | Full OHLC on the price row                          | The open/close relationship matters, not just the close path            |
+| `<YAxis side="left">`                     | Axis on the other edge                              | Convention in your shop, or you're pairing this with a right-axis chart |
+| `baseline={0}` on the area                | Fills from zero instead of the axis floor           | The row is a _change_ or a spread, where zero is meaningful             |
+| `stack` on the volume layer               | Splits the bar into up-volume and down-volume slabs | You have the buy/sell split and want it inside one bar                  |
+| `cursor="region"`                         | Drag selects a span, via `onRegionSelect`           | Drag should mark a range rather than pan (it replaces the crosshair)    |
+| `<Legend>`                                | A key naming each layer, with its resolved swatch   | More than two layers, or colours that aren't self-evident               |
+
+## See also
+
+- [Multi-row layout](../layout.mdx) — rows, axes, and what the container owns
+- [`<BarChart>`](../types/barchart.mdx) — `binColors`, stacks, orientation
+- [`<AreaChart>`](../types/areachart.mdx) — baselines, gaps, curves
+- [Candles on a trading calendar](./candlestick.mdx) — the same bars, OHLC
+- [**Storybook**](pathname:///storybook/?path=/story/charts-candlestick--scenario-price-volume)
+  — the price/volume scenario; the
+  [multi-panel layout stories](pathname:///storybook/?path=/story/layout-multi-panel--resizable-fill)
+  walk the row knobs

@@ -1,0 +1,21 @@
+/* `<BarList>` renders a real `<table>` — and Docusaurus styles every `th`/`td`
+   in MDX content with a 1px border on all four sides in
+   `--ifm-table-border-color`, plus a stripe on even rows. Inside a list that
+   reads as a dark grid the component doesn't have, and it survives because the
+   list's own hairline is *added to* the inherited border rather than replacing
+   it. Zero the cell borders and drop the stripe; the list's row divider is an
+   inline `border-top` on the `<tr>`, so it wins the collapse and survives.
+   (Same fix, same reason, as `gallery-site-traffic-dashboard.module.css`.) */
+.wrap table[data-list='bar'] th,
+.wrap table[data-list='bar'] td {
+  border: 0;
+}
+
+.wrap table[data-list='bar'] tr {
+  background: transparent;
+}
+
+.wrap {
+  overflow-x: auto;
+  margin-bottom: 1.2rem;
+}

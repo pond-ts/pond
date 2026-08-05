@@ -6,6 +6,7 @@ import {
   fromTimeSeries,
   fromValueSeries,
 } from './data.js';
+import type { NumericColumn, ValueNumericColumn } from './column-names.js';
 import { areaExtent, drawArea } from './area.js';
 import type { DecimateOption } from './decimate.js';
 import { resolveCurve, type Curve } from './curve.js';
@@ -22,31 +23,10 @@ import {
 } from './swatch.js';
 import { useSlotKey } from './use-slot-key.js';
 
-export interface AreaChartProps<
+export interface AreaChartCommon<
   S extends SeriesSchema = SeriesSchema,
   VS extends ValueSeriesSchema = ValueSeriesSchema,
 > {
-  /**
-   * The source series. A `TimeSeries` fills against the time axis; a
-   * `ValueSeries` (`series.byValue('dist')`) against its value axis — the
-   * container infers which from the data, no axis-type prop (mirrors
-   * `<LineChart>`). Either way `column` names the numeric value to fill from.
-   *
-   * **Live charts:** `series.byValue(…)` mints a *fresh* projection each call, so
-   * an inline `series={s.byValue('dist')}` re-registers this layer every render —
-   * on a frequently re-rendering chart, memoize the projection (`useMemo`).
-   */
-  series: TimeSeries<S> | ValueSeries<VS>;
-  /** Name of the numeric value column to fill from. */
-  column: string;
-  /**
-   * Optional column to **read out** at the cursor instead of the plotted
-   * `column` — the area still fills `column`, but each tracker sample also
-   * carries this column's value as {@link TrackerSample.readout}, so an
-   * off-chart readout can show a **source** value while the area draws a derived
-   * one. Mirrors `<LineChart readout>`. **Omitted ⇒ no readout channel.**
-   */
-  readout?: string;
   /**
    * The series' semantic identifier — what the data _is_ / how it should read
    * (e.g. `elevation`, or a signed-traffic role like `in` / `out`). The theme
@@ -119,11 +99,68 @@ export interface AreaChartProps<
   index?: number;
 }
 
+/**
+ * AreaChart's source + column props, a **union over the series kind** so the
+ * column names are checked against the schema that was actually passed
+ * ([PND-CHARTAPI]). A single member carrying `NumericColumn<S> |
+ * ValueNumericColumn<VS>` would silently widen to `string`: only one of the
+ * two generics is ever inferred, and the other falls back (measured in
+ * `spikes/charts-type-seam/`). Loosely-typed series still accept any name.
+ */
+type AreaChartSource<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> =
+  | {
+      /**
+       * The source series. **Live charts:** `series.byValue(…)` mints a
+       * *fresh* projection each call, so an inline `series={s.byValue('d')}`
+       * re-registers this layer every render — on a frequently re-rendering
+       * (e.g. scrub-driven) chart, memoize the projection (`useMemo`) so the
+       * layer isn't rebuilt each frame.
+       */
+      series: TimeSeries<S>;
+      column: NumericColumn<S>;
+      readout?: NumericColumn<S>;
+    }
+  | {
+      series: ValueSeries<VS>;
+      column: ValueNumericColumn<VS>;
+      readout?: ValueNumericColumn<VS>;
+    };
+
+/** `<AreaChart>`'s props: the shared knobs plus one series-kind source shape. */
+export type AreaChartProps<
+  S extends SeriesSchema = SeriesSchema,
+  VS extends ValueSeriesSchema = ValueSeriesSchema,
+> = AreaChartCommon<S, VS> & AreaChartSource<S, VS>;
+
 /** Read a d3 linear scale's domain lower bound (the axis floor) from the plain
  *  `(value) => pixel` function the row hands to `draw`. The runtime object is a
  *  d3 `ScaleLinear` (it carries `.domain()`); the {@link RowLayer} type narrows
  *  it to the call signature, so this reads the bound through a localized,
  *  documented shape rather than widening `drawArea`'s contract to d3-scale. */
+/**
+ * The area's baseline in **data** units: the caller's `baseline` when it has a
+ * finite position on this axis, else the axis floor.
+ *
+ * The fallback is not defensive padding — it's the log case. `baseline={0}` is
+ * the natural thing to write and is correct on a linear axis; on a log axis
+ * zero has no position at all — `scaleLog()(0)` is **`NaN`** (the `-Infinity`
+ * the log *transform* produces is then interpolated into the range, and
+ * `∞ − ∞` is what comes out) — and a single non-finite coordinate turns the
+ * whole filled path into nothing drawn at all. Resolving to the floor keeps the
+ * layer's meaning ("fill from the bottom") on both scale kinds.
+ */
+export function resolveAreaBaseline(
+  baseline: number | undefined,
+  yScale: (value: number) => number,
+): number {
+  const floor = domainFloor(yScale);
+  if (baseline === undefined) return floor;
+  return Number.isFinite(yScale(baseline)) ? baseline : floor;
+}
+
 function domainFloor(yScale: (value: number) => number): number {
   const d = (yScale as unknown as { domain?: () => number[] }).domain?.();
   return d && d.length > 0 ? d[0]! : 0;
@@ -277,7 +314,12 @@ export function AreaChart<
             // Omitted baseline rests on the axis floor (resolved late from the
             // scale, so it tracks the auto-fit domain); a fixed baseline is used
             // verbatim.
-            baseline ?? domainFloor(yScale),
+            // A log axis has no position for zero — or anything at or below
+            // it — so an explicit out-of-domain `baseline` would scale to
+            // `NaN` and poison every coordinate in the fill path. Fall back
+            // to the axis floor, which is exactly what an omitted baseline
+            // already resolves to.
+            resolveAreaBaseline(baseline, yScale),
             curveFactory,
             gaps,
             gapConnectorOpacity,

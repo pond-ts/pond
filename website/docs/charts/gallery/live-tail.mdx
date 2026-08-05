@@ -1,0 +1,138 @@
+---
+title: Live tail
+sidebar_label: Live tail
+---
+
+# Live tail
+
+A chart of something happening now. Not a chart you re-render on a timer — a
+`LiveSeries` you push into, with a bounded retention window and a value pill
+pinned to the leading edge.
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryLiveTail from '@site/src/examples/gallery-live-tail';
+
+## The chart
+
+<ChartExample name="gallery-live-tail" height={280} collapsed>
+  <GalleryLiveTail width={640} height={220} />
+</ChartExample>
+
+This one is genuinely streaming — the window is moving because events really
+are arriving, not because a range is being swept across a table.
+
+## The data
+
+**Modelled**, and generated in the browser as you watch: a seeded request-rate
+source ticking once a second, with load-shaped noise. There's no fixture to
+describe, which is the point — the interesting content of this page is the
+plumbing, not the numbers.
+
+In a real deployment the source is your websocket, SSE stream, or poll loop.
+Everything below is unchanged by which.
+
+## Build it
+
+A `LiveSeries` is a mutable, append-only buffer with a schema. Give it a
+`retention` and it evicts as it grows:
+
+```tsx
+import { LiveSeries } from 'pond-ts';
+
+const live = useRef(
+  new LiveSeries({
+    name: 'live-rps',
+    schema: tailSchema,
+    retention: { maxEvents: 180 },
+  }),
+).current;
+
+// whenever an event arrives, from wherever it arrives:
+live.push([Date.now(), rps]);
+```
+
+Retention is not an optimisation, it's the difference between a tail that runs
+all day and a memory leak that runs all day. Old events evict; the chart's
+range follows the survivors.
+
+Rendering it takes one hook:
+
+```tsx
+import { useSnapshot } from '@pond-ts/react';
+
+const snapshot = useSnapshot(live, { throttle: 250 });
+```
+
+`useSnapshot` decouples **arrival rate** from **render rate**. Pushes coalesce
+into one re-render per throttle window, so a source that bursts at 500 Hz still
+renders at four frames a second. Without the throttle, arrival rate _is_ render
+rate, and a chatty source will pin a core.
+
+The snapshot is an ordinary immutable `TimeSeries`, so the chart is an ordinary
+chart — `snapshot.timeRange()` for the moving window and nothing else new:
+
+```tsx
+<ChartContainer range={snapshot.timeRange()} width={640} theme={theme}>
+  <ChartRow height={220}>
+    <YAxis id="rps" side="right" label="req/s" format=",.0f" width={54} />
+    <Layers>
+      <LineChart series={snapshot} column="rps" axis="rps" />
+    </Layers>
+  </ChartRow>
+</ChartContainer>
+```
+
+Guard the first frames — a snapshot is `null` before the first push, and a
+one-event series has no range to draw:
+
+```tsx
+if (snapshot === null || snapshot.length < 2) return <div style={{ height }} />;
+```
+
+### The value pill
+
+The current number deserves to be readable without hovering, and it deserves to
+update faster than the line does. `createLiveValue` is a side channel for
+exactly that:
+
+```tsx
+const pill = useRef(createLiveValue(0)).current;
+
+// in the same push handler:
+pill.set(rps);
+
+<YAxisIndicator source={pill} axis="rps" format=",.0f" line pointer />;
+```
+
+The indicator repaints from `source` **without the chart re-rendering**, which
+is what lets the readout stay at arrival rate while the line stays at render
+rate. Two clocks, deliberately.
+
+### Motion budget
+
+A live chart nobody is looking at should not be doing work. When the Gallery
+card supplies a `phase`, this example drives its pushes off that clock — and
+the card's autoplay clock stops while the card is off screen, so an off-screen
+live tail stops streaming into a buffer nobody can see. Standalone, it uses its
+own interval. The same idea applies to a real source: pause the subscription on
+`IntersectionObserver` or `visibilitychange`.
+
+## Options to try
+
+| Option                                       | What it does                          | Reach for it when                                                    |
+| -------------------------------------------- | ------------------------------------- | -------------------------------------------------------------------- |
+| `retention: { maxEvents }` vs `{ duration }` | Bound by count vs by wall-clock age   | `duration` when the source is irregular and "last 5 min" is the spec |
+| `useSnapshot(live, { throttle })`            | Coalesces pushes into renders         | Always — pick a number, don't leave it at arrival rate               |
+| `<YAxisIndicator line pointer>`              | Adds a rule and a pointer to the pill | The pill alone doesn't say _where_ on the axis it sits               |
+| A fixed `range` instead of `timeRange()`     | The window stops following the data   | You want the reader to keep a fixed span in view while it fills      |
+| `<Legend>` + multiple `LiveSeries`           | Several live lines                    | Comparing streams — each gets its own series and layer               |
+
+## See also
+
+- [Live charts](../../learn-charts/08-live-charts.mdx) — the guided version,
+  from `LiveSeries` to a full pipeline
+- [Axis indicators and live values](../annotations/axis-indicators-and-live-values.mdx)
+  — `createLiveValue`, `<YAxisIndicator>`, and the two-clock model
+- [`<LineChart>`](../types/linechart.mdx) — every prop
+- [**Storybook**](pathname:///storybook/?path=/story/indicators-y-axis--live) —
+  the systematic knob walk

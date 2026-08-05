@@ -6,12 +6,14 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactElement,
   type ReactNode,
 } from 'react';
-import { scaleLinear, type ScaleLinear } from 'd3-scale';
-import { resolveYDomain } from './domain.js';
+import { scaleLinear, scaleLog } from 'd3-scale';
+import { isDev } from './dev.js';
+import { logAxisWarning, needsExtents, resolveYDomain } from './domain.js';
 import { resolveAxisFormat } from './format.js';
 import { resolveYTickCount } from './yticks.js';
 import { placeAxisSlots, type SlotAxis } from './slots.js';
@@ -25,6 +27,7 @@ import {
   type GutterReq,
   type LayerEntry,
   type RowFrame,
+  type YScale,
 } from './context.js';
 
 /** Sentinel id for the implicit axis a row gets when no `<YAxis>` is declared. */
@@ -60,6 +63,7 @@ function axisSpecEqual(a: AxisSpec, b: AxisSpec): boolean {
     a.id === b.id &&
     a.side === b.side &&
     a.width === b.width &&
+    a.scale === b.scale &&
     // Object.is (not ===) so a degenerate NaN bound compares equal to itself and
     // doesn't re-register every render.
     Object.is(a.min, b.min) &&
@@ -222,6 +226,7 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
               id: IMPLICIT_AXIS_ID,
               side: 'left',
               width: 0,
+              scale: 'linear',
               min: undefined,
               max: undefined,
               pad: 0,
@@ -290,23 +295,77 @@ export function ChartRow({ height, cursor, children }: ChartRowProps) {
   // axis id matches; `resolveYDomain` handles the auto-fit + empty/flat/inverted
   // edges. yExtent() is O(points), so only walk the layers when a bound auto-fits.
   const yScales = useMemo(() => {
-    const map = new Map<string, ScaleLinear<number, number>>();
+    const map = new Map<string, YScale>();
     for (const ax of effectiveAxes) {
-      const extents: Array<readonly [number, number] | null> =
-        ax.min === undefined || ax.max === undefined
-          ? layerList
-              .filter((entry) => (entry.axisId ?? defaultAxisId) === ax.id)
-              .map((entry) => entry.layer.yExtent())
-          : [];
-      const [lo, hi] = resolveYDomain(ax.min, ax.max, extents, ax.pad);
+      const extents: Array<readonly [number, number] | null> = needsExtents(ax)
+        ? layerList
+            .filter((entry) => (entry.axisId ?? defaultAxisId) === ax.id)
+            .map((entry) => entry.layer.yExtent())
+        : [];
+      const [lo, hi] = resolveYDomain(
+        ax.min,
+        ax.max,
+        extents,
+        ax.pad,
+        ax.scale,
+      );
       // Reserve a header band at the top when any axis draws a `'top'` title,
       // so the title clears the top tick + plot (the whole row shifts down
       // uniformly, keeping stacked axes aligned). No top titles ⇒ range top 0,
       // so nothing changes for existing charts.
-      map.set(ax.id, scaleLinear().domain([lo, hi]).range([height, topHeader]));
+      // `scaleLog` and `scaleLinear` share the call/ticks/tickFormat/invert
+      // surface every consumer uses (see `YScale`), so choosing between them
+      // here is the whole of log support — no draw layer branches on it.
+      const base = ax.scale === 'log' ? scaleLog() : scaleLinear();
+      map.set(ax.id, base.domain([lo, hi]).range([height, topHeader]));
     }
     return map;
   }, [effectiveAxes, layerList, height, defaultAxisId, topHeader]);
+
+  // Dev-mode diagnostics for a `scale="log"` axis (see `logAxisWarning`). Three
+  // things about *where* this sits are load-bearing, each of them a bug the
+  // first version shipped:
+  //
+  //  - **An effect, not the scale memo.** Warning from inside `useMemo` is a
+  //    side effect in a function React may call speculatively — and does call
+  //    twice under StrictMode.
+  //  - **Deduplicated by message, in a ref.** The comment on the original said
+  //    "warn once per offending axis" and nothing implemented it, so a live
+  //    chart re-warned on every appended sample. Keying on the message (not a
+  //    bare "already warned" flag) still reports a *different* complaint if the
+  //    data changes shape.
+  //  - **`height` is not a dependency.** It is one for the scales, which is why
+  //    the warning must not ride along: a drag-resize would otherwise emit a
+  //    line per animation frame.
+  //
+  // Gated on `isDev` **and** on some axis actually being logarithmic, so a
+  // production build and every linear chart skip the extent walk entirely.
+  const warnedRef = useRef(new Map<string, string>());
+  useEffect(() => {
+    if (!isDev || !effectiveAxes.some((ax) => ax.scale === 'log')) return;
+    const warned = warnedRef.current;
+    for (const ax of effectiveAxes) {
+      // A linear axis in the same row has nothing to say and must not pay the
+      // O(points) walk below just because a sibling is logarithmic.
+      if (ax.scale !== 'log') continue;
+      // Always walk the extents here, even for a fully-explicit domain the
+      // scale memo skips them for: data that cannot be drawn is worth saying so
+      // about whether or not it happened to constrain the bounds — and the
+      // both-explicit axis was exactly the case the first version stayed silent
+      // about.
+      const message = logAxisWarning(
+        ax,
+        layerList
+          .filter((entry) => (entry.axisId ?? defaultAxisId) === ax.id)
+          .map((entry) => entry.layer.yExtent()),
+      );
+      if (message === null) warned.delete(ax.id);
+      else if (warned.get(ax.id) !== message) {
+        warned.set(ax.id, message);
+        console.warn(message);
+      }
+    }
+  }, [effectiveAxes, layerList, defaultAxisId]);
 
   // Resolved auto-tick count per axis — explicit `<YAxis tickCount>` else
   // height-derived (see resolveYTickCount). The single source the `<YAxis>`

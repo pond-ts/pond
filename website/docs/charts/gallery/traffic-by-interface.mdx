@@ -1,0 +1,121 @@
+---
+title: Traffic by interface
+sidebar_label: Traffic by interface
+---
+
+# Traffic by interface
+
+The same six hours as the [mirrored traffic chart](./network-traffic.mdx),
+asked a different question: of everything crossing this router, **which
+interface is carrying it?** A stacked area answers composition — the total is
+still the top edge, but now every slab under it has a name.
+
+import ChartExample from '@site/src/components/ChartExample';
+import GalleryTrafficByInterface from '@site/src/examples/gallery-traffic-by-interface';
+
+## The chart
+
+<ChartExample name="gallery-traffic-by-interface" height={290} collapsed>
+  <GalleryTrafficByInterface width={640} height={220} legend />
+</ChartExample>
+
+Hover to read the running totals; the gap between two adjacent numbers is one
+interface's contribution at that moment.
+
+## The data
+
+The CERN border-router capture described in full on the
+[network traffic page](./network-traffic.mdx#the-data) — `cern773-cr6`, real
+measured telemetry, top 7 SAPs (**99.87%** of all bytes) at a 1-minute cadence
+in Gbps.
+
+This chart shows **inbound** by default, because that's where the composition
+question has an interesting answer: four interfaces carry 10% or more of it.
+Outbound is **82.5% a single SAP** (`111-lag-3-522`), so its stack is one slab
+and six slivers — a true picture, and a poor demonstration of stacking. Pass
+`direction="out"` to see it anyway; being able to see that one interface _is_
+the site's egress is a real operational finding.
+
+The two directions don't even share an ordering. `111-lag-3-522` leads outbound
+with 82.5% of the mean but carries only **18.0%** of the inbound, where
+`7061-lag-3-3525` leads.
+
+## Build it
+
+Stacking is a **data** operation, not a chart prop. An area chart fills from a
+baseline to a column, so a stack is drawn from **cumulative** columns: `stack0`
+is the busiest interface alone, `stack1` is that plus the second, and the last
+column is the site total.
+
+```tsx
+import { stackedTraffic, stackColumn, stackOrder } from './lib/cern-traffic';
+
+const stacked = stackedTraffic('in'); // columns stack0 … stack6, each a running total
+const names = stackOrder('in'); // interface ids, biggest first
+```
+
+Then draw them **back to front** — largest running total first, because it's
+the tallest and therefore sets the axis, with each smaller one painted over it.
+The strip left visible between two adjacent edges is one interface:
+
+```tsx
+const order = names.map((_, i) => i).reverse();
+
+<Layers>
+  {order.map((i) => (
+    <AreaChart
+      key={names[i]}
+      series={stacked}
+      column={stackColumn(i)}
+      as={roles[i]}
+      axis="gbps"
+      baseline={0}
+      legend={names[i]}
+    />
+  ))}
+</Layers>;
+```
+
+That only works because the fills are **opaque**. A graded or translucent fill
+would let the slabs behind show through their neighbours and the whole
+composition would turn to mud — so the `seq*` area roles set `flatFill`, which
+exists for exactly this shape.
+
+Seven series is well past the point where distinct hues help, so the colours
+step **tonally** through one brand hue rather than introducing seven competing
+ones:
+
+```tsx
+import { rampRoles } from './lib/ramp-roles';
+
+// → seq1, seq2, seq3, seq5, seq6, seq7, seq8 — spread across the ramp, not
+// crowded into its dark end.
+const roles = rampRoles(names.length);
+```
+
+`rampRoles` spreads `n` names evenly across the eight-step ramp rather than
+taking the first `n`. Taking the first seven would crowd every slab into the
+dark seven-eighths and drop the lightest step entirely, leaving the top two
+bands sitting almost on top of each other.
+
+## Options to try
+
+| Option                                | What it does                                            | Reach for it when                                                         |
+| ------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `direction="out"`                     | Stacks egress instead of ingress                        | You want to see what one-interface dominance looks like                   |
+| `legend` + `<Legend placement>`       | Names each slab; layers supply their own `legend` label | More than three slabs — tonal steps aren't self-identifying               |
+| `rampRoles(n)` vs `useSequentialRamp` | Role **names** vs colour **strings**                    | Roles for `as`-styled layers; strings for `<BarChart colors>` and friends |
+| Drop to the top 3–4 and an "other"    | Fewer, fatter slabs                                     | The ramp runs out — eight steps is the ramp, by construction              |
+| `cursor="crosshair"`                  | Reads every running total at once                       | You're reading values, not shape                                          |
+
+## See also
+
+- [Network traffic](./network-traffic.mdx) — the same data, in/out rather than
+  by-interface, plus the linked interface table
+- [`<AreaChart>`](../types/areachart.mdx) — `baseline`, `flatFill`, and the
+  `seq*` roles
+- [Styling and theming](../../learn-charts/05-styling-and-theming.mdx) — roles,
+  the sequential ramp, and why no example holds a hex literal
+- [`<Legend>`](../interaction/legend.mdx) — placement and the headless variant
+- [**Storybook**](pathname:///storybook/?path=/story/charts-areachart--stacked)
+  — the systematic knob walk

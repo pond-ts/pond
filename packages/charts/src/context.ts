@@ -1,5 +1,5 @@
 import { createContext } from 'react';
-import type { ScaleLinear, ScaleTime } from 'd3-scale';
+import type { ScaleContinuousNumeric, ScaleLinear, ScaleTime } from 'd3-scale';
 import type { ChartTheme } from './theme.js';
 import type { AxisFormat } from './format.js';
 // Type-only (erased at runtime): swatch.ts imports RowContext from here, so a
@@ -568,6 +568,17 @@ export interface RowLayer {
    */
   xCategories?(): readonly string[] | null;
   /**
+   * A **horizontal** categorical source's ordered category names — the same
+   * list {@link xCategories} carries for a vertical one, but for the axis it
+   * lands on when the bars grow right: the **y** axis ([PND-HCAT]).
+   *
+   * The y axis stays a linear scale over the layer's unit slots (`[i, i+1]`),
+   * so this only supplies *labels*: a `<YAxis>` in the row with no explicit
+   * `ticks` derives one tick per category at the slot centre (`i + 0.5`).
+   * That hand-built tick list was the friction the gallery funnel documented.
+   */
+  binCategories?(): readonly string[] | null;
+  /**
    * A bar/histogram layer's bar `[begin, end)` spans, as pond `Interval`s — the
    * **region cursor's snap buckets**. When present (and no `cursorSequence` is
    * set), a region drag snaps bar by bar and a hover highlights the bar under the
@@ -681,6 +692,17 @@ export interface TrackerSource {
   xExtent(): readonly [number, number] | null;
   /** A `'category'` source's ordered category names (see {@link RowLayer.xCategories}). */
   xCategories?(): readonly string[] | null;
+  /**
+   * A **horizontal** categorical source's ordered category names — the same
+   * list {@link xCategories} carries for a vertical one, but for the axis it
+   * lands on when the bars grow right: the **y** axis ([PND-HCAT]).
+   *
+   * The y axis stays a linear scale over the layer's unit slots (`[i, i+1]`),
+   * so this only supplies *labels*: a `<YAxis>` in the row with no explicit
+   * `ticks` derives one tick per category at the slot centre (`i + 0.5`).
+   * That hand-built tick list was the friction the gallery funnel documented.
+   */
+  binCategories?(): readonly string[] | null;
   /** A bar/histogram source's bar `[begin, end)` spans (see {@link RowLayer.binIntervals}). */
   binIntervals?(): readonly Interval[] | null;
 }
@@ -790,11 +812,29 @@ export interface LayerEntry {
 }
 
 /** A y-axis declared in a {@link ChartRow} via `<YAxis>`. */
+/** Which scale a y axis maps its domain through. */
+export type YScaleKind = 'linear' | 'log';
+
+/**
+ * A row's resolved y scale — d3's `scaleLinear()`, or `scaleLog()` when the
+ * axis asks for `scale="log"`.
+ *
+ * Deliberately the **continuous-numeric** supertype rather than `ScaleLinear`:
+ * every consumer (the axis labels, the row's gridlines, the cursor readout, and
+ * every draw layer) only ever calls it, or reads `domain` / `range` / `ticks` /
+ * `tickFormat` / `invert` — the surface both scales share. Keeping the shared
+ * type here is what lets a log axis be transparent to the draw layers instead
+ * of every layer growing a branch.
+ */
+export type YScale = ScaleContinuousNumeric<number, number>;
+
 export interface AxisSpec {
   readonly id: string;
   readonly side: 'left' | 'right';
   /** Gutter width in CSS pixels. */
   readonly width: number;
+  /** Which scale the axis maps its domain through ({@link YAxisProps.scale}). */
+  readonly scale: YScaleKind;
   /** Explicit domain bounds, or `undefined` to auto-fit linked layers. */
   readonly min: number | undefined;
   readonly max: number | undefined;
@@ -829,7 +869,7 @@ export interface AxisSpec {
  */
 export interface RowFrame {
   readonly height: number;
-  readonly yScales: ReadonlyMap<string, ScaleLinear<number, number>>;
+  readonly yScales: ReadonlyMap<string, YScale>;
   /** Value formatter per axis id (resolved from the axis's {@link AxisSpec.format}
    *  against its scale) — used by both the tick labels and the cursor readout, so
    *  a value reads identically in both. */
