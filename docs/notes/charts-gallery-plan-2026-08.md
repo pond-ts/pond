@@ -450,6 +450,32 @@ verification.
    competing colours. A grid-mix with 8 sources reads as one family getting
    lighter, not a pie chart. The existing `--pond-viz-1..5` stay the categorical
    set for small-N; anything above ~4 series goes tonal.
+
+   **Refinement (2026-08-05, after D1 shipped).** The tonal rule holds
+   unchanged — what needed sharpening is _how many_ families the tonal steps
+   are grouped into. The decision above predicted "reads as one family getting
+   lighter" as a feature; on the built chart it reads as **ordered magnitude**,
+   because that is what a single sequential ramp _means_. Eight generation
+   sources are nominal, not ranked, so a lone ramp mis-encodes them however
+   tasteful the hues.
+
+   The fix stays inside this decision's own wording — "one **or two** brand
+   hues". D1 now splits its eight bands 4+4 along the real grouping (thermal on
+   the desaturated `--pond-viz-5`, renewable on the brand `--pond-viz-1`), four
+   tonal steps in each, as the `tonalA1…4` / `tonalB1…4` area roles. Steps are
+   **derived** (mix the base hue toward `--pond-surface`, opaque — `flatFill`
+   slabs overlap, so alpha would compound), not sixteen new custom properties.
+   Measured, it also beats the single ramp it replaced: closest of all 28 pairs
+   ΔE₇₆ 10.1 light / 11.9 dark, against 9.2 / 9.0 before, and the one
+   cross-family edge is ~41 — about 4× the within-family step, which is what
+   makes it read as two groups rather than one ladder.
+
+   So the rule to carry forward: **a single ramp is for genuinely ordered
+   quantities; a nominal set gets its tonal steps grouped into families that
+   mean something.** Climate stripes is the worked example of the former —
+   annual temperature anomaly _is_ a magnitude, so its ramp is correct and was
+   deliberately left untouched.
+
 3. **Group by domain**, with in-page nav. Shape-based search is what the
    per-component reference pages already do.
 4. **Pages live at `charts/gallery/<slug>`** — a sibling group under the charts

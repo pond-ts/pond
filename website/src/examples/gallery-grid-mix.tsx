@@ -47,25 +47,34 @@ function stacked() {
  * lower part of the one before it and the slab left visible for band `k` is
  * exactly `[cumulative(k-1), cumulative(k)]`.
  *
- * This only reads as slabs because the `seq1…seq8` area roles set
+ * This only reads as slabs because the `tonalA*` / `tonalB*` area roles set
  * `flatFill` — an area's default gradient fades to transparent at the
  * baseline, which would let all eight bands show through each other.
+ *
+ * The roles carry the **fuel class**: `tonalB*` (the brand teal) is the
+ * renewable half, `tonalA*` (the desaturated slate) the thermal half, so the
+ * renewable share of the stack is one contiguous block of colour and the line
+ * between Gas and Biomass is the one edge that changes hue. Within a family
+ * the step number rises with the band, which is a tonal ordering *inside* a
+ * category and not across the whole stack — eight sources are eight
+ * categories, not eight rungs of one quantity.
  */
 const PAINT_ORDER = [
-  { column: 's8', as: 'seq8', label: 'Solar' },
-  { column: 's7', as: 'seq7', label: 'Wind' },
-  { column: 's6', as: 'seq6', label: 'Hydro' },
-  { column: 's5', as: 'seq5', label: 'Biomass' },
-  { column: 's4', as: 'seq4', label: 'Gas' },
-  { column: 's3', as: 'seq3', label: 'Hard coal' },
-  { column: 's2', as: 'seq2', label: 'Lignite' },
-  { column: 'other', as: 'seq1', label: 'Other' },
+  { column: 's8', as: 'tonalB4', label: 'Solar' },
+  { column: 's7', as: 'tonalB3', label: 'Wind' },
+  { column: 's6', as: 'tonalB2', label: 'Hydro' },
+  { column: 's5', as: 'tonalB1', label: 'Biomass' },
+  { column: 's4', as: 'tonalA4', label: 'Gas' },
+  { column: 's3', as: 'tonalA3', label: 'Hard coal' },
+  { column: 's2', as: 'tonalA2', label: 'Lignite' },
+  { column: 'other', as: 'tonalA1', label: 'Other' },
 ] as const;
 
 /**
  * Germany's generation mix over Easter weekend 2025, eight bands stacked —
- * the chart the sequential ramp exists for (gallery plan §8.2: more than four
- * series goes tonal, not chromatic).
+ * the chart the two tonal families exist for (gallery plan §8.2: more than
+ * four series goes tonal, not chromatic — grouped into families where the
+ * categories themselves group).
  *
  * With a `phase` (the Gallery card's autoplay clock) a 14-hour window sweeps
  * the three days, so the solar bulge grows and collapses as it crosses. Every
