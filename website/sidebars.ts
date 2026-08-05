@@ -148,6 +148,8 @@ const sidebars: SidebarsConfig = {
             'charts/gallery/grid-mix',
             'charts/gallery/renewables-vs-demand',
             'charts/gallery/negative-prices',
+            // Track F — science & measurement.
+            'charts/gallery/nino34',
           ],
         },
         {

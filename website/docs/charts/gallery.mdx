@@ -52,6 +52,11 @@ import GalleryWindRose from '@site/src/examples/gallery-wind-rose';
 import GalleryGridMix from '@site/src/examples/gallery-grid-mix';
 import GalleryRenewables from '@site/src/examples/gallery-renewables';
 import GalleryPowerPrices from '@site/src/examples/gallery-power-prices';
+import GallerySpectrum from '@site/src/examples/gallery-spectrum';
+import GallerySeismograph from '@site/src/examples/gallery-seismograph';
+import GalleryTides from '@site/src/examples/gallery-tides';
+import GalleryAirQuality from '@site/src/examples/gallery-air-quality';
+import GalleryNino34 from '@site/src/examples/gallery-nino34';
 
 {/* ------------------------------------------------------------------ */}
 {/* Each domain section below is owned by one track (gallery plan §4). */}
@@ -446,11 +451,70 @@ rather than a wall-clock one.
 
 ## Science & measurement
 
-{/* TRACK F — replace this line with the section's blurb. */}
-
-_Cards land here as Track F ships._
+Instruments, and what they record: a buoy, a seismometer, a tide gauge, an air
+monitor and a satellite record of one patch of the Pacific. All five datasets
+here are **real, measured, public-domain** observations — nothing modelled —
+and between them they cover the axis that isn't time, the trace that's denser
+than the screen, the reading that only means something next to a threshold,
+and the year that isn't finished yet.
 
 <GalleryGrid>
+
+<GalleryCard
+  title="Wave spectrum"
+  blurb="Energy density against frequency — a ValueSeries with no time column at all, and a second axis relabelling it as period."
+  storybookHref="pathname:///storybook/?path=/story/axes-dualx--sigma-with-delta-strip"
+  height={252}
+  autoplay={{ period: 16000, staticPhase: 0.62 }}
+>
+  {(width, phase) => (
+    <GallerySpectrum width={width} phase={phase} height={170} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Seismograph"
+  blurb="12,800 samples at 40 Hz in one line — denser than the plot has pixels, so M4 decimation strokes a few hundred instead."
+  storybookHref="pathname:///storybook/?path=/story/performance-decimation--default"
+  height={212}
+  autoplay={{ period: 20000, staticPhase: 0.55 }}
+>
+  {(width, phase) => (
+    <GallerySeismograph width={width} phase={phase} height={186} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Tides"
+  blurb="A week of water level against its harmonic prediction — the gap between them is the storm surge."
+  storybookHref="pathname:///storybook/?path=/story/charts-scatterchart--over-line"
+  height={212}
+  autoplay={{ period: 18000, staticPhase: 0.42 }}
+>
+  {(width, phase) => <GalleryTides width={width} phase={phase} height={186} />}
+</GalleryCard>
+
+<GalleryCard
+  title="Air quality"
+  blurb="Hourly PM2.5 through wildfire smoke, against the AQI category boundaries — several baselines, one annotation register."
+  storybookHref="pathname:///storybook/?path=/story/annotations-baseline--multiple"
+  height={212}
+  autoplay={{ period: 18000, staticPhase: 0.55 }}
+>
+  {(width, phase) => (
+    <GalleryAirQuality width={width} phase={phase} height={186} />
+  )}
+</GalleryCard>
+
+<GalleryCard
+  title="Day-of-year overlay"
+  blurb="45 years of El Niño's sea-surface temperature stacked on one Jan–Dec axis — the pack muted, three years named, this one still running."
+  storybookHref="pathname:///storybook/?path=/story/charts-linechart--line-styles"
+  pageHref="/docs/charts/gallery/nino34"
+  height={230}
+>
+  {(width) => <GalleryNino34 width={width} height={196} compact />}
+</GalleryCard>
 
 {/* TRACK F — append science & measurement cards above this line. */}
 
