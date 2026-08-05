@@ -70,8 +70,8 @@ which runs by hand and commits its output.
 - **29 February is dropped.** That is what makes an x slot a _calendar date_:
   with the leap day gone, slot 59 is 1 March in every year, and the years stack
   with no drift. Aligning on the raw ordinal day instead slides every leap
-  year's second half one day left of every common year's. The cost is one day
-  in four years — 11 values out of 16,275.
+  year's second half one day left of every common year's. The cost is the 11
+  leap days in the record, dropped before the 16,275 that are kept.
 - **The last year is short.** The record ends **3 August 2026**, so 2026 has
   **215** days against everyone else's 365, and its line ends in open plot.
 - **Values are raw SST, not anomalies.** The fixture stores what the instrument
@@ -174,13 +174,27 @@ columns** — which is exactly what `collapse` does:
 const own = `y${year}`;
 const base = climatologyWindow(year).map((y) => `y${y}`); // 30 column names
 
+/** Mean of the base-period columns present in this row. */
+const dayMean = (row: Record<string, unknown>) => {
+  let sum = 0;
+  let n = 0;
+  for (const column of base) {
+    const value = row[column];
+    if (typeof value === 'number') {
+      sum += value;
+      n++;
+    }
+  }
+  return sum / n;
+};
+
 const anomaly = wide
   // the 30 base-period columns → `clim`, the mean SST on that day of the year.
   // `append: true` keeps everything else, which is how `own` survives to the
   // next step.
-  .collapse(base, 'clim', (v) => mean(base.map((c) => v[c])), { append: true })
+  .collapse(base, 'clim', dayMean, { append: true })
   // `own` and `clim` → their difference. `collapse` drops the two it consumed.
-  .collapse([own, 'clim'], 'anomaly', (v) => v[own] - v.clim);
+  .collapse([own, 'clim'], 'anomaly', (row) => row[own] - row.clim);
 ```
 
 Two passes, 45 times over. The whole module — decode 16,275 values, build 45
@@ -204,8 +218,8 @@ Forty-two lines exist to be a _backdrop_. That is a theme register, not a
 colour:
 
 ```tsx
-{
-  BACKDROP.map((year) => (
+<Layers>
+  {BACKDROP.map((year) => (
     <LineChart
       key={year}
       series={anomalySeries(year)}
@@ -214,10 +228,8 @@ colour:
       as="muted"
       legend={false}
     />
-  ));
-}
-{
-  NAMED.map(({ year, role, label }) => (
+  ))}
+  {NAMED.map(({ year, role, label }) => (
     <LineChart
       key={year}
       series={anomalySeries(year)}
@@ -226,8 +238,8 @@ colour:
       as={role}
       legend={label}
     />
-  ));
-}
+  ))}
+</Layers>
 ```
 
 `line.muted` is a neutral, part-transparent hairline — the site theme defines it
