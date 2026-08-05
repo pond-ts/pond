@@ -64,8 +64,10 @@ export default function GalleryNino34({
   const theme = useSiteChartTheme();
   const [tracker, setTracker] = useState<TrackerInfo | null>(null);
 
-  // At card size only the two thresholds the named years actually cross stay
-  // labelled — the same trade the air-quality card makes.
+  // At card size only two of the four stay labelled. Four labelled reference
+  // lines are right on a full-size chart and a thicket at 196px, so the card
+  // keeps the two that bracket where the named years get to — the same trade
+  // the air-quality card makes.
   const thresholds = compact
     ? NINO34_THRESHOLDS.filter((t) => t.value === 1 || t.value === 2)
     : NINO34_THRESHOLDS;
@@ -79,9 +81,10 @@ export default function GalleryNino34({
         range={NINO34_YEAR_RANGE}
         width={width}
         theme={theme}
-        // The reference year is a carrier, not information: `%b` prints `Jan` …
-        // `Dec` and nothing on the chart says which year the axis belongs to.
-        // (No `cursorFormat` — `cursor="line"` draws no pill for it to shape.)
+        // The reference year is a carrier, not information: `%b` prints month
+        // abbreviations — thinned by the tick ladder to `Jan / Apr / Jul / Oct`
+        // at this width — and nothing on the chart names the year the axis
+        // belongs to. (No `cursorFormat`: `cursor="line"` draws no pill.)
         timeFormat="%b"
         // `line` and not `crosshair`: a crosshair pins one value pill per row,
         // and with 45 lines under the pointer a single pill cannot say which
@@ -123,8 +126,10 @@ export default function GalleryNino34({
               />
             ))}
             {/* El Niño strength thresholds — reference marks in the annotation
-                register, so they read as annotation rather than as five more
-                series. `selectable={false}` keeps them inert background. */}
+                register, so they read as annotation rather than as four more
+                series. `selectable={false}` keeps them inert background.
+                They are lines and not bands because `<Region>` spans x, not y:
+                there is no y-span annotation to reach for. */}
             {thresholds.map((t) => (
               <Baseline
                 key={t.label}
