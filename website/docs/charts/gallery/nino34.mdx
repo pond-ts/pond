@@ -198,8 +198,8 @@ const anomaly = wide
 ```
 
 Two passes, 45 times over. The whole module — decode 16,275 values, build 45
-climatologies, 45 anomaly series and every summary number on this page — is a
-**median 33 ms** (seven cold runs under Node 22), once, at import. There is no
+climatologies and 45 anomaly series, then sweep them all for the y domain — is a
+**median 32 ms** (seven cold runs under Node 22), once, at import. There is no
 reason to bake that into the fixture, and good reason not to: a stored anomaly
 is a stored _choice of base period_, and this way the choice is visible and one
 edit away.

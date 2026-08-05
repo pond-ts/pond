@@ -1,8 +1,6 @@
 import { TimeSeries } from 'pond-ts';
 import {
-  NINO34_BOX,
   NINO34_FIRST_YEAR,
-  NINO34_LAST_DAY,
   NINO34_SST_DELTA_CENTI,
   NINO34_YEAR_DAYS,
   NINO34_YEAR_LENGTHS,
@@ -47,10 +45,7 @@ export const NINO34_CURRENT_YEAR = NINO34_YEARS[NINO34_YEARS.length - 1]!;
 /** Complete years only. The current year's 215 days would otherwise contribute
  *  to the first half of every climatology and not the second, which is a
  *  seam in a quantity whose whole job is to be seamless across the year. */
-export const NINO34_COMPLETE_YEARS: readonly number[] = NINO34_YEARS.slice(
-  0,
-  -1,
-);
+const NINO34_COMPLETE_YEARS: readonly number[] = NINO34_YEARS.slice(0, -1);
 
 /** Days of the current year the record actually carries. */
 export const NINO34_CURRENT_DAYS =
@@ -206,7 +201,7 @@ const wide: TimeSeries<NinoSchema> = (() => {
 // ---------------------------------------------------------------------------
 
 /** Years in a climatology base period. */
-export const NINO34_BASE_LENGTH = 30;
+const NINO34_BASE_LENGTH = 30;
 
 /**
  * The 30 complete years a given year is measured against: **centred** on it —
@@ -224,7 +219,7 @@ export const NINO34_BASE_LENGTH = 30;
  * exactly one question — how did this year compare with the climate of its own
  * time?
  */
-export function climatologyWindow(year: number): readonly number[] {
+function climatologyWindow(year: number): readonly number[] {
   const first = NINO34_COMPLETE_YEARS[0]!;
   const last = NINO34_COMPLETE_YEARS[NINO34_COMPLETE_YEARS.length - 1]!;
   let start = year - 14;
@@ -314,39 +309,6 @@ function anomalies(year: number): Float64Array {
   return anomalySeries(year).column('anomaly').toFloat64Array();
 }
 
-/** The strongest anomaly a year reached, and the day it reached it. */
-export function peakAnomaly(year: number): { value: number; day: number } {
-  const values = anomalies(year);
-  let day = 0;
-  let value = Number.NEGATIVE_INFINITY;
-  for (let d = 0; d < values.length; d++) {
-    if (values[d]! > value) {
-      value = values[d]!;
-      day = d;
-    }
-  }
-  return { value, day };
-}
-
-/** The current year's most recent anomaly, and the day it belongs to. */
-export const NINO34_LATEST = (() => {
-  const day = NINO34_CURRENT_DAYS - 1;
-  return { day, value: anomalies(NINO34_CURRENT_YEAR)[day]! };
-})();
-
-/**
- * Where the current year's latest value ranks among every year's value on the
- * **same day of the year** — 1 is the warmest. The honest way to say "how
- * unusual is this", and it needs the whole pack, not just the named years.
- */
-export const NINO34_LATEST_RANK = (() => {
-  const day = NINO34_LATEST.day;
-  const warmer = NINO34_YEARS.filter(
-    (year) => anomalies(year)[day]! > NINO34_LATEST.value,
-  ).length;
-  return { rank: warmer + 1, of: NINO34_YEARS.length };
-})();
-
 /** Min and max anomaly across the whole record, rounded outward to a whole
  *  half-degree — the y domain, computed rather than guessed at. */
 export const NINO34_ANOMALY_DOMAIN: readonly [number, number] = (() => {
@@ -400,5 +362,3 @@ export const NINO34_NAMED: ReadonlyArray<{
 export const NINO34_BACKDROP: readonly number[] = NINO34_YEARS.filter(
   (year) => !NINO34_NAMED.some((n) => n.year === year),
 );
-
-export { NINO34_BOX, NINO34_LAST_DAY, NINO34_YEAR_DAYS };
