@@ -21,12 +21,17 @@ describe('CategoryAxis stories render', () => {
 
   it('exposes the expected stories', () => {
     expect(entries.map(([n]) => n).sort()).toEqual([
+      'BandAlignCenter',
+      'BandAlignEnd',
+      'CapDoesNotBind',
       'CrowdedLabels',
       'HighCardinality',
       'HorizontalFunnel',
+      'MaxBandWidth',
       'Select',
       'Signed',
       'SingleHue',
+      'StablePitch',
       'Tickers',
       'Transpose',
       'TransposeScrub',

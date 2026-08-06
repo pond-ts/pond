@@ -85,6 +85,49 @@ export interface ChartContainerProps {
    */
   range?: readonly [number, number] | TimeRange;
   /**
+   * **Cap the slot pitch** on a **category** x axis, in CSS pixels
+   * ([PND-BANDPACK]). A band scale otherwise spreads its categories across the
+   * full plot width, so three categories in a 900px panel become three 300px
+   * bars and thirty become thirty 30px ones — the same chart in the same panel
+   * reading as two different charts depending on how many categories the data
+   * happened to return.
+   *
+   * That is fine for a static chart with a known domain and wrong for a **live**
+   * one: when the category count moves over a session, bar width becomes a
+   * meaningless variable that moves on its own, and a reader can't compare the
+   * chart to what it looked like a minute ago or to the same chart on another
+   * screen. Capping the pitch keeps bar width constant and comparable, and the
+   * empty space left over is itself information — it shows the set is small.
+   *
+   * Omitted ⇒ slots fill the plot (unchanged). When `n × maxBandWidth` exceeds
+   * the plot, the cap can't bind and the slots fill as before, so this degrades
+   * correctly as categories accumulate. Use {@link bandAlign} to say where the
+   * capped block sits.
+   *
+   * **This caps the slot, not the bar.** `<BarChart gap>` still insets the bar
+   * within its slot, and the two compose — one knob for pitch, one for ink,
+   * neither doing the other's job. (Inverting `gap` against a measured plot
+   * width was the workaround this replaces for the width half; the packing half
+   * had no workaround at all.)
+   *
+   * **Vertical / x-axis categories only.** A `orientation="horizontal"`
+   * categorical chart puts its categories on the **y** axis as unit slots,
+   * which is a different mechanism and is not capped by this.
+   */
+  maxBandWidth?: number;
+  /**
+   * Where the capped category block sits in the plot when {@link maxBandWidth}
+   * binds. **Default `'start'`** — pack from the left, leaving the far side
+   * empty. `'center'` and `'end'` place it otherwise.
+   *
+   * A no-op without `maxBandWidth`, or when the cap doesn't bind: the block
+   * fills the plot and there is no slack to place. (There is deliberately no
+   * `'fill'` member — "fill" is what *omitting* `maxBandWidth` means, and a
+   * `fill` value alongside a pitch cap would be a contradiction rather than a
+   * choice.)
+   */
+  bandAlign?: 'start' | 'center' | 'end';
+  /**
    * A **trading-calendar** discontinuity provider — closed-market time
    * (weekends, holidays, overnight, lunch breaks) collapsed. Supply it to turn
    * the shared x axis into a **trading-time** axis: gaps disappear and time
@@ -492,6 +535,8 @@ export interface ChartContainerProps {
  */
 export function ChartContainer({
   range,
+  maxBandWidth,
+  bandAlign = 'start',
   width,
   rowGap = 0,
   showAxis = true,
@@ -963,7 +1008,23 @@ export function ChartContainer({
       // reads by **name** — `cursorFormat` has nothing to format, so the
       // readout channel stays unset.
       const cats = categories ?? [];
-      const s = scaleBand(cats).domain([0, cats.length]).range([0, plotWidth]);
+      // [PND-BANDPACK] Cap the slot pitch, then place the resulting block. With
+      // no cap (or one too loose to bind) `packed === plotWidth` and `offset`
+      // is 0, so the range is `[0, plotWidth]` exactly as before — the whole
+      // feature collapses to the shipped behaviour when unused.
+      const n = cats.length;
+      const pitch = n > 0 ? plotWidth / n : plotWidth;
+      const capped =
+        maxBandWidth !== undefined && maxBandWidth > 0
+          ? Math.min(pitch, maxBandWidth)
+          : pitch;
+      const packed = n > 0 ? capped * n : plotWidth;
+      const slack = Math.max(0, plotWidth - packed);
+      const offset =
+        bandAlign === 'center' ? slack / 2 : bandAlign === 'end' ? slack : 0;
+      const s = scaleBand(cats)
+        .domain([0, n])
+        .range([offset, offset + packed]);
       return {
         xScale: s,
         formatTime: (v: number) => s.label(v),
@@ -1112,6 +1173,8 @@ export function ChartContainer({
   }, [
     resolvedKind,
     categories,
+    maxBandWidth,
+    bandAlign,
     d0,
     d1,
     plotWidth,
