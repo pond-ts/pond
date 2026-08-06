@@ -59,6 +59,111 @@ include new features and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts: threshold-banded bars** — `<BarChart thresholds={[1, 2]}>` colours
+  one bar **along its length** against a ladder (neutral → warning → alarm), so
+  a long bar shows how far through the ladder it travelled rather than only
+  which band it ended in. Band fills come from the new
+  **`BarStyle.bands`** on the resolved theme role, overridable per chart with
+  **`<BarChart bandColors>`** — breakpoints are data, colour stays in the theme,
+  the same split `colors` already applies to a stack's group fills.
+
+  The shape was previously expressible as N `<BarChart>` layers drawn
+  outermost-first, each clipped to a band, compositing the gradient by
+  overpainting. That produces the same pixels and loses what matters: N layers
+  means N hit targets, N `SelectInfo.mark` identities and N legend rows for
+  something the reader sees as one bar. Banding is **draw-only** — the hit rect
+  is untouched, so a banded bar stays one bar. It also measures **23–56%
+  cheaper** than the layered workaround across 8–2000 bars
+  (`scripts/perf-bandbar.mjs`), and costs nothing when unused.
+
+  Applies to any single-value bar — `series`, `bins`, `categories`, both
+  orientations. Negatives band symmetrically on the magnitude, so a ± diverging
+  scale needs no negative breakpoints. Ignored (with a dev warning) on a
+  multi-group stack, and yields to `binColors` when both are set. Suppresses
+  envelope decimation for the same reason `binColors` does.
+
+- **charts: `<YAxis hide>`** — keep the scale, draw no gutter, reserve no
+  width. A `<YAxis>` does two jobs — it _holds the scale_ (`min`/`max`/`scale`/
+  `pad`) and it _renders a gutter_ — and there was no way to ask for the first
+  without the second. A caller could express "auto domain, no gutter" (omit the
+  axis) or "explicit domain, with a gutter", but not the pairing a fixed-domain
+  chart needs. Omitting the axis is not equivalent: the row supplies an implicit
+  auto-domain axis, which is exactly what must not be given up. `width={0}`
+  isn't either — the labels still draw, over the plot.
+
+  Gridlines are unaffected: they belong to the plot, not the gutter, and
+  `<ChartRow grid>` already governs them.
+
+- **charts: `<ChartContainer maxBandWidth>` + `bandAlign`** — cap the **slot
+  pitch** on a category x axis and place the resulting block
+  (`'start'` (default) / `'center'` / `'end'`). A band scale otherwise spreads
+  its categories across the full plot width, so three categories in a 900px
+  panel become three 300px bars and thirty become thirty 30px ones — the same
+  chart in the same panel reading as two different charts depending on how many
+  categories the data returned. Fine for a fixed domain; wrong for a **live**
+  one, where bar width becomes a variable that moves on its own and a reader
+  can't compare the chart to itself a minute ago.
+
+  `maxBandWidth` caps the **slot**; `<BarChart gap>` still insets the bar
+  within it — one knob for pitch, one for ink. Omitting `maxBandWidth` is the
+  previous fill behaviour exactly, and a cap too loose to bind degrades back to
+  it rather than clipping. There is deliberately no `bandAlign: 'fill'`: "fill"
+  is what omitting the cap means, and a `fill` alongside a pitch cap would be a
+  contradiction rather than a choice.
+
+  **Vertical / x-axis categories only** — a `orientation="horizontal"`
+  categorical chart puts its categories on the y axis as unit slots, a
+  different mechanism this does not cap.
+
+- **charts: themed emphasis on the category path** — `BarStyle.hover` /
+  `.highlight` now apply to `categories` and horizontal bars, which routed
+  through the transposed stacked draw path and read neither. New
+  `BarStyle.selectedOutline` (the selected bar's stroke, where the default is
+  its own fill) and `BarStyle.emphasisOpacity` (the alpha a live bar pops to,
+  previously hard-coded `1`) make the emphasis tunable rather than fixed.
+
+  The _behaviour_ was defensible; the problem was that the theme accepted
+  values it would not use. `bar.hover` / `.highlight` were typed, settable and
+  documented as the emphasis channel, and silently did nothing on the most
+  common categorical chart, so a theme author set them, saw no change, and
+  could not tell whether they were wrong about the colour or the mechanism.
+  The one genuine exclusion stays and is now the only one: a `binColors` bar
+  keeps its own colour under hover/selection, because swapping a
+  zone-coloured or direction-coloured bar to a single highlight hue erases
+  what the colour encodes.
+
+### Fixed
+
+- **charts: a negative segment in a multi-group stack is no longer silently
+  dropped** ([PND-SIGNSTACK]). Positives stack **up** from the baseline and
+  negatives stack **down** from it — two running totals per bin — so the
+  **signed stacked histogram** (net flow by category, inflow/outflow, buy/sell
+  pressure by venue) renders correctly. `stackValueExtent` grew the matching
+  negative half; both had to move together, since an extent stopping at `0`
+  would clip the segments the draw path now emits.
+
+  **This is a visible behaviour change** for any existing chart feeding
+  negative values into a multi-group stack — but such a chart was previously
+  rendering _wrongly_: the dropped segments did not clamp, warn or throw, every
+  remaining segment stacked up as though they had never been in the data, and a
+  mixed-sign series came out as a confident, wrong, all-positive chart. An
+  all-positive stack is bit-identical to before. Splitting into two layers was
+  not a workaround either — the negative layer was still `G > 1`, so it was
+  dropped too.
+
+### Changed
+
+- **charts (docs): `<BarChart bins>` now states that it selects a _value_
+  axis** ([PND-TICKUNIT]), so a time-bucketed histogram fed through `bins` gets
+  the decimal 1-2-5 tick ladder rather than the duration ladder a clock
+  subdivides by — labelling e.g. 11:40 and 13:20 at a ~100-minute step. The
+  natural reading ("I have pre-binned buckets, so I'll pass `bins`") is exactly
+  what forecloses the time axis, and nothing at the call site said so. The prop
+  docs now point a time-keyed caller at `<BarChart series columns>`, where the
+  clock ticks are native. No behaviour change.
+
 ## [0.56.2] — 2026-08-05
 
 ### Fixed
