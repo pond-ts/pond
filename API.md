@@ -239,15 +239,15 @@ Types: `UseSnapshotOptions`, `SnapshotSource` (structural — covers
 
 ### Components — layout & axes
 
-| Component                   | Key props                                                                                                                               | Purpose                                          | Source                                                 |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------ |
-| `ChartContainer`            | `width`, `range?`, `theme?`, `cursor?`, `panZoom?`, `bounds?`, `showAxis?`, `calendar?`, `origin?`, `onTrackerChanged?`, `onDrawStats?` | Root: shared x-scale, interactions, annotations  | `packages/charts/src/ChartContainer.tsx`               |
-| `ChartRow`                  | `height`, `cursor?`                                                                                                                     | One stacked plot band; owns its y-axes           | `packages/charts/src/ChartRow.tsx`                     |
-| `Layers`                    | children                                                                                                                                | Mandatory z-stack inside a row (back-to-front)   | `packages/charts/src/Layers.tsx`                       |
-| `YAxis`                     | `id` (req), `side?`, `scale?` (`'linear'` \| `'log'`), `min?`/`max?`, `format?`, `width?`                                               | Y-axis gutter; layers bind via their `axis` prop | `packages/charts/src/YAxis.tsx`                        |
-| `XAxis`                     | `side?`, `label?`, `format?`, `ticks?`, `transform?`, `dateStyle?`                                                                      | Placeable x-axis strip; kind inferred from data  | `packages/charts/src/XAxis.tsx`                        |
-| `TimeAxis` / `CategoryAxis` | (XAxis props)                                                                                                                           | Thin `XAxis` presets                             | `packages/charts/src/TimeAxis.tsx`, `CategoryAxis.tsx` |
-| `Canvas`                    | `width`, `height`, `draw`                                                                                                               | Low-level DPR-aware canvas primitive             | `packages/charts/src/Canvas.tsx`                       |
+| Component                   | Key props                                                                                                                                                             | Purpose                                          | Source                                                 |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------ |
+| `ChartContainer`            | `width`, `range?`, `theme?`, `cursor?`, `panZoom?`, `bounds?`, `showAxis?`, `calendar?`, `origin?`, `maxBandWidth?`/`bandAlign?`, `onTrackerChanged?`, `onDrawStats?` | Root: shared x-scale, interactions, annotations  | `packages/charts/src/ChartContainer.tsx`               |
+| `ChartRow`                  | `height`, `cursor?`                                                                                                                                                   | One stacked plot band; owns its y-axes           | `packages/charts/src/ChartRow.tsx`                     |
+| `Layers`                    | children                                                                                                                                                              | Mandatory z-stack inside a row (back-to-front)   | `packages/charts/src/Layers.tsx`                       |
+| `YAxis`                     | `id` (req), `side?`, `scale?` (`'linear'` \| `'log'`), `min?`/`max?`, `format?`, `width?`, `hide?`                                                                    | Y-axis gutter; layers bind via their `axis` prop | `packages/charts/src/YAxis.tsx`                        |
+| `XAxis`                     | `side?`, `label?`, `format?`, `ticks?`, `transform?`, `dateStyle?`                                                                                                    | Placeable x-axis strip; kind inferred from data  | `packages/charts/src/XAxis.tsx`                        |
+| `TimeAxis` / `CategoryAxis` | (XAxis props)                                                                                                                                                         | Thin `XAxis` presets                             | `packages/charts/src/TimeAxis.tsx`, `CategoryAxis.tsx` |
+| `Canvas`                    | `width`, `height`, `draw`                                                                                                                                             | Low-level DPR-aware canvas primitive             | `packages/charts/src/Canvas.tsx`                       |
 
 ### Components — draw layers
 
@@ -265,16 +265,16 @@ this work), and `bins` names stay `string` (they name aggregate fields, not
 schema columns). Because the union splits per series _kind_, a value typed as
 **either** kind must be narrowed or cast at the call site.
 
-| Component      | Data props                                                      | Purpose                                            | Source                                 |
-| -------------- | --------------------------------------------------------------- | -------------------------------------------------- | -------------------------------------- |
-| `LineChart`    | `column`, `gaps?`, `sessionBreaks?`                             | Gap-aware line                                     | `packages/charts/src/LineChart.tsx`    |
-| `AreaChart`    | `column`, `baseline?`, `gaps?`                                  | Filled area                                        | `packages/charts/src/AreaChart.tsx`    |
-| `BandChart`    | `lower`, `upper`                                                | Variance-band envelope                             | `packages/charts/src/BandChart.tsx`    |
-| `ScatterChart` | `column`, `id?` (selection), radius/color encodings             | Points; data-driven size/colour                    | `packages/charts/src/ScatterChart.tsx` |
-| `BarChart`     | `column` \| `columns` \| `bins` \| `categories`, `orientation?` | Bars, stacked bars, histograms, categorical        | `packages/charts/src/BarChart.tsx`     |
-| `BoxPlot`      | `lower`/`q1?`/`median?`/`q3?`/`upper`, `shape?`                 | Box-and-whisker from quantile columns              | `packages/charts/src/BoxPlot.tsx`      |
-| `Candlestick`  | OHLC columns, `variant?`, `colorBy?`, `showOHLC?`               | First-class OHLC candles (TimeSeries only)         | `packages/charts/src/Candlestick.tsx`  |
-| `Legend`       | `placement?`, `items?`, `onRowClick?`, `onRowHover?`            | Series key from registered layers' resolved styles | `packages/charts/src/Legend.tsx`       |
+| Component      | Data props                                                                                   | Purpose                                            | Source                                 |
+| -------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------- | -------------------------------------- |
+| `LineChart`    | `column`, `gaps?`, `sessionBreaks?`                                                          | Gap-aware line                                     | `packages/charts/src/LineChart.tsx`    |
+| `AreaChart`    | `column`, `baseline?`, `gaps?`                                                               | Filled area                                        | `packages/charts/src/AreaChart.tsx`    |
+| `BandChart`    | `lower`, `upper`                                                                             | Variance-band envelope                             | `packages/charts/src/BandChart.tsx`    |
+| `ScatterChart` | `column`, `id?` (selection), radius/color encodings                                          | Points; data-driven size/colour                    | `packages/charts/src/ScatterChart.tsx` |
+| `BarChart`     | `column` \| `columns` \| `bins` \| `categories`, `orientation?`, `thresholds?`/`bandColors?` | Bars, stacked bars, histograms, categorical        | `packages/charts/src/BarChart.tsx`     |
+| `BoxPlot`      | `lower`/`q1?`/`median?`/`q3?`/`upper`, `shape?`                                              | Box-and-whisker from quantile columns              | `packages/charts/src/BoxPlot.tsx`      |
+| `Candlestick`  | OHLC columns, `variant?`, `colorBy?`, `showOHLC?`                                            | First-class OHLC candles (TimeSeries only)         | `packages/charts/src/Candlestick.tsx`  |
+| `Legend`       | `placement?`, `items?`, `onRowClick?`, `onRowHover?`                                         | Series key from registered layers' resolved styles | `packages/charts/src/Legend.tsx`       |
 
 ### Components — annotations & indicators
 
