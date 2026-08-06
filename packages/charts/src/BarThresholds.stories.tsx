@@ -206,7 +206,9 @@ export const Signed: Story = {
  */
 export const Horizontal: Story = {
   render: () => (
-    <ChartContainer width={640} theme={docsTheme}>
+    // `showAxis={false}` because the explicit <XAxis> below is the value axis;
+    // leaving the container's implicit one on renders the ticks twice.
+    <ChartContainer width={640} theme={docsTheme} showAxis={false}>
       <ChartRow height={260}>
         <YAxis id="v" label="" />
         <Layers>
@@ -252,6 +254,7 @@ export const TimeSeriesBars: Story = {
         range={[BASE, BASE + 24 * HOUR]}
         width={640}
         theme={docsTheme}
+        showAxis={false}
       >
         <ChartRow height={220}>
           <YAxis id="v" label="" min={0} max={3.6} />

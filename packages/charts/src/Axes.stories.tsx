@@ -464,13 +464,15 @@ export const HiddenVsShown: Story = {
   render: () => (
     <ChartContainer range={RANGE} width={W}>
       <ChartRow height={140}>
-        <YAxis id="a" min={0} max={0.6} />
+        {/* `label=""` suppresses the title; without it the axis paints its
+            binding id ("a") down the gutter — [PND-AXISTITLE]. */}
+        <YAxis id="a" min={0} max={0.6} label="" />
         <Layers>
           <LineChart series={demo()} column="pct" axis="a" />
         </Layers>
       </ChartRow>
       <ChartRow height={140}>
-        <YAxis id="b" min={0} max={0.6} hide />
+        <YAxis id="b" min={0} max={0.6} label="" hide />
         <Layers>
           <LineChart series={demo()} column="pct" axis="b" />
         </Layers>
