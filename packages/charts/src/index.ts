@@ -37,6 +37,12 @@ export type { XAxisProps } from './XAxis.js';
 export type { AxisTransform } from './derivedTicks.js';
 export { TimeAxis } from './TimeAxis.js';
 export { CategoryAxis } from './CategoryAxis.js';
+// Heat map — a row of cells tiling x, colour encoding the value
+// ([PND-HEATMAP], prototype: one row; the second dimension is not built).
+export { HeatMap } from './HeatMap.js';
+export type { HeatMapProps } from './HeatMap.js';
+export { bandedColor, heatValueExtent } from './heat.js';
+export type { HeatStyle } from './heat.js';
 export type { AxisFormat, CursorFormat } from './format.js';
 export { LineChart } from './LineChart.js';
 export type { LineChartProps } from './LineChart.js';

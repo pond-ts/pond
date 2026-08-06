@@ -145,6 +145,77 @@ rather than naming one in advance. Deliberately a separate change: it widens
 core (`TimeSeries`), where `readout` is charts-local. Promote to a PLAN.md task
 when estela pulls on it.
 
+### [PND-HEATMAP] — Heat-map draw layer — PROTOTYPE ON A BRANCH
+
+The write-up PLAN.md points at. **Not merged**: `feat/heatmap-prototype` carries
+a working one-row layer (`src/heat.ts`, `src/HeatMap.tsx`, 22 tests, four
+stories under `Charts/HeatMap`). It answers some of the open questions and
+sharpens the rest; it does not settle the two-dimensional grid.
+
+**Finding 1 — a one-row heat map _is_ a bar series, geometrically.** The
+prototype adds **no reader**. It uses `barsFromTimeSeries` unchanged and reads
+`BarSeries.y` as "the value colour encodes". The same key-shape rules apply
+(interval keys use their own span; point keys tile by neighbour spacing), which
+is why a year-keyed record becomes contiguous cells with no pre-binning. What
+differs is only the draw (every cell fills the row band instead of rising to its
+value) and the readout. That is worth knowing before anyone designs a
+`HeatSeries`: for one row there is nothing to add.
+
+**Finding 2 — the readout is the actual motivation, more than the look.** The
+climate-stripes card can already _draw_ stripes; what it cannot do is answer
+"what number is this colour". Its bars are a constant `stripe: 1` column, so
+they carry no value, and the card looks the anomaly up out-of-band keyed by the
+year the tracker reports (`anomalyAt`, whose own doc comment says exactly this).
+A cell carries its value, so `hitTest` and `sampleAt` both return it and the
+readout pill takes the cell's own colour — verified in the browser:
+`2011-03-23 · high 54.1°F`. Two workarounds delete: the constant column and the
+caller-computed `binColors`.
+
+**Finding 3 — the colour domain wants to be a first-class prop, not an
+auto-fit.** Defaulting to the column's finite extent is right for a single
+chart, but it silently re-means every cell when the data changes underneath —
+a windowed or streaming record re-scales its own colours as it moves. `domain`
+pins it. This matters more for heat maps than for a y axis, because a colour
+scale has no tick labels to reveal that it moved.
+
+**Decision — banded, not interpolated.** Values map to `colors.length` equal
+bands. It matches what the card does today (`anomalyStep` buckets into the
+ramp's length and can go), it is the conventional reading for stripes and
+calendar heat maps, and a banded scale is honest about resolution in a way a
+smooth gradient is not. Continuous interpolation is an obvious later option and
+nothing here forecloses it.
+
+**Decision — selection keeps the cell's own colour.** Bars swap to `highlight`
+when live; a cell must not, because its colour _is_ the datum and swapping it
+erases the reading. A live cell pops to full opacity and a selected one gains an
+outline, both in the style's `highlight`.
+
+**Deferred — no `theme.heat` slot.** The layer borrows `opacity` / `highlight` /
+`outlineWidth` / `minWidth` from `theme.bar[as] ?? theme.bar.default`.
+`ChartTheme`'s slots are **required**, so adding one is a breaking change for
+every custom theme, and the M5 "theme tokens optional-with-default" gate
+([PND-PARITY]) has to land first. Borrowing keeps the prototype non-breaking and
+defers the decision rather than pre-empting it.
+
+**Still open — the second dimension, which is the actual [PND-HEATMAP].**
+`yExtent` is the degenerate `[0, 1]`, one band filling the plot. `heat.ts` takes
+its row band as an explicit `[y0, y1]` so rows can be added without changing the
+geometry's call shape, but nothing else is built. The `TwoRowsComposed` story
+shows the workaround — one `<ChartRow>` per measurement — and why it is not the
+design: each row auto-fits its own colour domain, so the rows are **not**
+comparable by colour unless every one is pinned by hand. That is an argument for
+the grid owning a single scale across its rows.
+
+Also unanswered: whether the y dimension is a category axis (reusing the shipped
+band scale) or a derived calendar coordinate; and whether the day/month/year
+granularity toggle is a prop (the layer owns `Sequence.calendar` binning) or a
+re-binned series the caller passes (every other pond layer takes data
+already-shaped, which argues for the caller).
+
+**Next**, in order: convert the climate-stripes card to the layer, which is the
+real test of finding 2 and will surface the granularity question honestly; then
+decide the y dimension against a second real case rather than in the abstract.
+
 ### [PND-BARMARK] — Stable per-bar identity for single-series bars — DONE
 
 **Shipped ([Unreleased]).** The categorical stack's `(id, mark)` selection
