@@ -52,6 +52,47 @@ and type-level changes; patch bumps are strictly additive.
 
 ## [Unreleased]
 
+### Added
+
+- **charts: `<Zone>` — a shaded y-span annotation.** The fourth annotation
+  mark, and the value-axis counterpart of `<Region>`: a band between two y
+  values, spanning the full plot width. The mark for a **classification of the
+  value axis** — US EPA AQI categories, heart-rate / power zones, SLO bands,
+  control-chart spec limits — where a reading only means something read against
+  a scale.
+
+  ```tsx
+  {
+    AQI_CATEGORIES.map((c) => (
+      <Zone key={c.role} from={c.from} to={c.to} axis="aqi" role={c.role} />
+    ));
+  }
+  ```
+
+  Colour comes from `theme.annotation.roles[role]`, so a zone _set_ styles as
+  one palette in the theme rather than N colours at the call site. Bounds are
+  order-free, clamped to the plot (a band past the axis domain is cut, one
+  fully outside culls), and accept `±Infinity` for genuinely open-ended bands
+  (`to={Infinity}` — AQI's "Hazardous", a `ZoneTime.openEnded` zone), so a
+  whole category table can be rendered and the axis decides what shows.
+
+  Three defaults deliberately **invert** the rest of the annotation family,
+  because a zone spans the full width and a set tiles the row:
+  `selectable={false}` (else every mousemove lights a band and its hit area
+  eats the plot's clicks), `edges={false}` (contiguous sets share every
+  interior boundary — edges-on draws each twice), and no auto-label (the bounds
+  are already legible on the y axis; the useful label is a name). `<Zone>` has
+  no `onChange` — drag-to-edit zones await a consumer.
+
+  Guide: [From a CSV to a banded chart](https://pond-ts.github.io/pond/docs/how-to-guides/air-quality-bands).
+
+- **charts: `annotation.dash` — an optional dash pattern for the annotation
+  register**, per-register or per-role (`{ color, fillOpacity?, dash? }`), same
+  shape as `LineStyle.dash`. Applies to marker / baseline lines and region /
+  zone boundaries; fills are never dashed. A dashed reference line reads as
+  _placed_ rather than _measured_ — the job the annotation register exists to
+  do, and one colour alone can't always carry.
+
 ### Changed
 
 - **fit (breaking):** **Power bins and zones now use pond's canonical bin

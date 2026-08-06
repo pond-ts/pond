@@ -73,9 +73,15 @@ export { scaleBand } from './bandScale.js';
 export type { ScaleBand } from './bandScale.js';
 
 // Annotations — user-authored marks in the turquoise register (distinct from the
-// data): a shaded span, a horizontal value line, a vertical x line.
-export { Region, Baseline, Marker } from './annotations.js';
-export type { RegionProps, BaselineProps, MarkerProps } from './annotations.js';
+// data): a shaded x span, a horizontal value line, a vertical x line, and a
+// shaded y span (`<Zone>` — value-axis classifications: AQI categories, HR zones).
+export { Region, Baseline, Marker, Zone } from './annotations.js';
+export type {
+  RegionProps,
+  BaselineProps,
+  MarkerProps,
+  ZoneProps,
+} from './annotations.js';
 // The vocabulary a consumer's create toolbar needs: the armed-tool kind and the
 // shape `onCreate` reports (`<ChartContainer creating={kind} onCreate={…}>`).
 export type { AnnotationKind, CreateSpec } from './context.js';

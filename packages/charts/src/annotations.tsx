@@ -22,7 +22,8 @@ import { useSlotKey } from './use-slot-key.js';
 /**
  * User-authored **annotations** — marks you place *on* a chart, in a register
  * deliberately distinct from the data: `<Region>` (a shaded x-span), `<Baseline>`
- * (a horizontal value line), and `<Marker>` (a vertical x line). All three render
+ * (a horizontal value line), `<Marker>` (a vertical x line), and `<Zone>` (a
+ * shaded y-span — `<Region>`'s counterpart on the value axis). All four render
  * in the theme's turquoise {@link ChartTheme.annotation} register so a placed mark
  * never reads as data ("the data stays foam; the marks you place are turquoise").
  *
@@ -131,7 +132,7 @@ const overlayStyle: CSSProperties = {
  * Read the container + row frames an annotation needs (throw if misplaced), and
  * resolve the mark's annotation style for its optional `role`. A `role` recolors
  * *this* mark from the theme's `annotation.roles[role]` map (`color`, and
- * optionally `fillOpacity`) while keeping the shared depth ramp — so a smile can
+ * optionally `fillOpacity` / `dash`) while keeping the shared depth ramp — so a smile can
  * place a green ATM baseline, a neutral vertical, and a distinct marker at once
  * without splitting the whole register. An unknown / unset role falls back to
  * the base `annotation` register (`roles[role] ?? annotation`).
@@ -147,16 +148,23 @@ function useAnnotationFrame(name: string, role?: string) {
   }
   const base = container.theme.annotation ?? DEFAULT_ANNOTATION;
   const roleStyle = role !== undefined ? base.roles?.[role] : undefined;
-  // The role overrides only colour (+ optional fill); depth stays the shared
-  // ramp, so selection / hover / edit levels read identically per role.
+  // The role overrides only colour (+ optional fill / dash); depth stays the
+  // shared ramp, so selection / hover / edit levels read identically per role.
   const ann = roleStyle
     ? {
         ...base,
         color: roleStyle.color,
         fillOpacity: roleStyle.fillOpacity ?? base.fillOpacity,
+        dash: roleStyle.dash ?? base.dash,
       }
     : base;
   return { container, row, ann };
+}
+
+/** The register's dash as an SVG `stroke-dasharray`, or `undefined` for solid
+ *  (an empty pattern means solid, matching `LineStyle.dash`). */
+function dashArray(dash: readonly number[] | undefined): string | undefined {
+  return dash === undefined || dash.length === 0 ? undefined : dash.join(' ');
 }
 
 /** Register this annotation with the container (so it can draw the mark's guide on
@@ -750,6 +758,7 @@ export function Marker({
           stroke={ann.color}
           strokeWidth={1}
           opacity={opacity}
+          strokeDasharray={dashArray(ann.dash)}
           shapeRendering="crispEdges"
         />
         {showHandle && (
@@ -932,6 +941,7 @@ export function Baseline({
           stroke={ann.color}
           strokeWidth={1}
           opacity={opacity}
+          strokeDasharray={dashArray(ann.dash)}
           shapeRendering="crispEdges"
         />
         {showHandle && (
@@ -997,6 +1007,218 @@ export function Baseline({
             </div>
           );
         })()}
+    </>
+  );
+}
+
+export interface ZoneProps {
+  /** Lower bound in the linked y-axis's units. */
+  from: number;
+  /** Upper bound in the linked y-axis's units. `from`/`to` may arrive either way
+   *  round (they're ordered here), and either may be **infinite** for an
+   *  open-ended band (`to={Infinity}` — the AQI "Hazardous" tail, a
+   *  `ZoneTime.openEnded` zone): the rect clamps to the plot. */
+  to: number;
+  /** Which `<YAxis>` (by id) to measure against; omit for the row's default axis. */
+  axis?: string;
+  /** Chip label, anchored at the band's vertical centre. **Omit for no label** —
+   *  unlike `<Region>` a zone does *not* auto-label its bounds, because they're
+   *  already legible on the y axis it spans (a region's x span isn't). The label
+   *  worth showing is a **name** — `"Good"`, `"Z4 threshold"` — which only the
+   *  caller has. */
+  label?: string;
+  /** Which side of the chart the label chip sits. **Default `left`.** */
+  labelSide?: 'left' | 'right';
+  /** Stable consumer id — a click reports it via `onSelectAnnotation`. Only
+   *  meaningful with `selectable`. */
+  id?: string;
+  /** Controlled selection — brightens to the front (level 1). Ignored unless
+   *  `selectable`. */
+  selected?: boolean;
+  /**
+   * Whether the band responds to hover + selection. **Default `false`** — the
+   * opposite of the rest of the family, and deliberately so: a zone spans the
+   * **full plot width**, and a zone *set* tiles the whole y range, so the pointer
+   * is always inside one. Interactive by default, they'd light up on every
+   * mousemove and their hit rects would swallow the plot's own clicks. A zone is
+   * background context first (level 3, pointer-transparent); opt in per band when
+   * a band is genuinely a thing to point at.
+   */
+  selectable?: boolean;
+  /** Theme **role** — colours this band from `theme.annotation.roles[role]` (its
+   *  `color`, optionally `fillOpacity`), keeping the shared depth ramp. This is
+   *  how a zone set gets its **semantic palette** (`good` green, `moderate`
+   *  yellow, …): the scale lives in the theme, not at the call site. Omitted /
+   *  unknown ⇒ the base annotation colour. */
+  role?: string;
+  /** Controlled hover (OR'd with pointer hover) — lets a legend row light the
+   *  band remotely. Ignored unless `selectable`. */
+  hovered?: boolean;
+  /** Draw the horizontal **boundary lines** at `from`/`to`. **Default `false`** —
+   *  again the opposite of `<Region>`, because zone sets are usually
+   *  **contiguous**: every interior boundary is shared by two bands, so edges-on
+   *  draws each one twice at double opacity. `true` outlines an isolated band (a
+   *  target range). */
+  edges?: boolean;
+}
+
+/**
+ * A shaded band between two **y values**, spanning the full plot width — the
+ * y-axis counterpart of `<Region>`. The mark for a **classification of the value
+ * axis**: US EPA AQI categories, heart-rate / power zones, a control chart's
+ * spec limits, an SLO band.
+ *
+ * Being a `<Layers>` child it lives in its row and is scaled by that row's y
+ * axis — pass `axis` to pick one on a dual-axis row. Like every annotation it
+ * paints in the SVG overlay **above** the data canvas, so keep the fill light
+ * (the register's `fillOpacity`, ~0.1–0.2) and the trace reads cleanly through
+ * it. A zone set is a wash of colour behind the story, not a layer competing
+ * with it.
+ *
+ * Zones are **background context by default** (`selectable={false}`,
+ * `edges={false}`, no label) because that is what a tiled zone set is; see
+ * {@link ZoneProps.selectable} for why the family's usual defaults invert here.
+ * Colour comes from the theme's {@link ZoneProps.role | role} map, so a palette
+ * is a theme, not six call-site colours.
+ *
+ * Unlike the other marks a zone has **no `onChange`** — dragging zone edges
+ * (a zone editor) is a real feature but has no consumer yet; the band is
+ * declarative until one arrives.
+ */
+export function Zone({
+  from,
+  to,
+  axis,
+  label,
+  labelSide = 'left',
+  id,
+  selected = false,
+  selectable = false,
+  hovered,
+  role,
+  edges = false,
+}: ZoneProps) {
+  const { container, row, ann } = useAnnotationFrame('Zone', role);
+  const selfKey = useSlotKey();
+  const { hovering, reportHover } = useAnnotationHover(container, id, hovered);
+  // A horizontal band casts no vertical guide (like a baseline) — register with
+  // no xs, so it's tracked for ordering but offers no snap target.
+  const xs = useMemo<number[]>(() => [], []);
+  useRegisterAnnotation(
+    container,
+    selfKey,
+    id,
+    row.rowKey,
+    'zone',
+    xs,
+    selected,
+    selectable,
+    false, // zones aren't editable — no single-annotation edit state
+    label ?? '',
+    false, // and cast no axis-edge indicator
+  );
+  // No select while a create tool is armed — the chart is in draw mode then.
+  const select =
+    id !== undefined && container.creating === null
+      ? () => container.onSelectAnnotation?.(id)
+      : undefined;
+  const axisId = axis ?? row.defaultAxisId;
+  const yScale = row.yScales.get(axisId);
+  // The axis may not have resolved yet (a layer mounts before its <YAxis>); skip
+  // until its scale exists rather than guessing a domain.
+  if (yScale === undefined) return null;
+  const h = row.height;
+  const w = container.plotWidth;
+  // A NaN bound has no position to draw at — cull rather than let it fall
+  // through the finite check below and silently become the domain's low end.
+  if (Number.isNaN(from) || Number.isNaN(to)) return null;
+  // Open-ended bounds resolve against the axis **domain** before scaling, not
+  // after: d3's interpolator is `a·(1−t) + b·t`, so an infinite `t` yields
+  // `0 · Infinity` = NaN rather than an off-plot pixel. Substituting the domain
+  // end is also exactly the intent — an open band reaches the plot edge.
+  const [d0, d1] = yScale.domain();
+  const dLo = Math.min(d0 ?? 0, d1 ?? 0);
+  const dHi = Math.max(d0 ?? 0, d1 ?? 0);
+  const bound = (v: number) => (Number.isFinite(v) ? v : v > 0 ? dHi : dLo);
+  // Order + clamp to the plot: a band may run past the axis domain (the AQI
+  // 151–200 band on an axis topping out at 120). Clamping keeps the rect inside
+  // its row; a band entirely outside culls.
+  const lo = Math.min(from, to);
+  const hi = Math.max(from, to);
+  const loY = yScale(bound(lo));
+  const hiY = yScale(bound(hi));
+  const top = Math.max(Math.min(loY, hiY), 0);
+  const bottom = Math.min(Math.max(loY, hiY), h);
+  if (bottom <= top) return null;
+  const bandH = bottom - top;
+  // Edit is never on (no onChange) — the levels reduce to selected / hover /
+  // resting, and to a flat level 3 when the band is inert background.
+  const edgeOpacity = rampAt(
+    ann.depth,
+    lineLevel(selectable, false, hovering, selected),
+  );
+  const fillOpacity =
+    ann.fillOpacity *
+    rampAt(FILL_MULT, bodyLevel(selectable, false, hovering, selected));
+  /** A boundary line — drawn only where the band has a *real*, in-plot edge. An
+   *  open-ended bound has no boundary at all, and a bound the clamp cut off would
+   *  otherwise draw its line on the plot border, reading as chrome. */
+  const boundary = (v: number, aty: number) =>
+    edges && Number.isFinite(v) && aty >= 0 && aty <= h ? (
+      <line
+        x1={0}
+        y1={aty}
+        x2={w}
+        y2={aty}
+        stroke={ann.color}
+        strokeWidth={1}
+        opacity={edgeOpacity}
+        strokeDasharray={dashArray(ann.dash)}
+        shapeRendering="crispEdges"
+      />
+    ) : null;
+  return (
+    <>
+      <svg width={w} height={h} style={overlayStyle}>
+        <rect
+          x={0}
+          y={top}
+          width={w}
+          height={bandH}
+          fill={ann.color}
+          opacity={fillOpacity}
+        />
+        {boundary(lo, loY)}
+        {boundary(hi, hiY)}
+        {/* Hover + click-select only, and only when opted in — `editable={false}`
+            means the drag path is unreachable, hence the no-op `onDrag`. */}
+        {selectable && (
+          <DragArea
+            x={0}
+            y={top}
+            w={w}
+            h={bandH}
+            cursor="inherit"
+            editable={false}
+            onHover={reportHover}
+            onSelect={select}
+            onDrag={() => {}}
+          />
+        )}
+      </svg>
+      {label !== undefined && label !== '' && (
+        <Chip
+          theme={container.theme}
+          color={ann.color}
+          style={{
+            top: `${top + bandH / 2}px`,
+            [labelSide === 'right' ? 'right' : 'left']: '2px',
+            transform: 'translateY(-50%)',
+          }}
+        >
+          {label}
+        </Chip>
+      )}
     </>
   );
 }
@@ -1134,6 +1356,7 @@ export function Region({
       stroke={ann.color}
       strokeWidth={1}
       opacity={edgeOpacity}
+      strokeDasharray={dashArray(ann.dash)}
       shapeRendering="crispEdges"
     />
   );

@@ -401,6 +401,79 @@ existing themes are untouched. **Scope note:** cross-row annotation _guides_
 role recolours the mark, not its faint cross-row reference line; revisit only
 if a consumer needs role-tinted guides.
 
+### [PND-ZONE] — `<Zone>`: the y-span annotation — DONE
+
+Shipped. The fourth annotation mark and the value-axis counterpart of
+`<Region>`: a shaded band between two **y** values across the full plot width,
+for a **classification of the value axis** (US EPA AQI categories, HR/power
+zones, SLO bands, control-chart spec limits). Driven by a real consumer ask —
+reproducing a sensor dashboard's AQI chart from a CSV export, where the
+coloured category bands were the load-bearing element and pond had no way to
+draw them. Guide: `website/docs/how-to-guides/air-quality-bands.mdx`;
+reference: `website/docs/charts/annotations/zone.mdx`; stories:
+`Annotations/Zone` (15, one per knob).
+
+**Naming.** `<Zone>` chosen by the owner over `ValueBand` / `Band` / `Level`.
+`Band` collides with `BandChart`/`BandSeries` (a data variance envelope, not a
+placed mark); `ValueBand` misreads against pond's existing "value axis" =
+_x_-carrying-values sense; `Zone` reads correctly for every real use case and
+feeds directly from `@pond-ts/fit`'s `PowerZone`/`ZoneTime` `start`/`end`
+edges.
+
+**Three defaults deliberately invert the family's**, and this is the whole
+design content of the primitive — a y-band spans the full plot **width**, and
+a zone _set_ tiles the entire row, so the family's assumptions don't transfer:
+
+- `selectable={false}` (family: `true`) — the pointer is always inside some
+  zone, so interactive-by-default bands would light on every mousemove and
+  their hit rects would swallow the plot's own clicks (`DragArea` always
+  `stopPropagation`s its click).
+- `edges={false}` (family: `Region` is `true`) — contiguous sets share every
+  interior boundary, so edges-on draws each one **twice** at double opacity.
+- **No auto-label** (family: auto-labels its bounds) — a zone's bounds are
+  already written down the y axis it spans, unlike a region's x span. The
+  useful label is a _name_, which only the caller has, so `label?: string`
+  (omit ⇒ no chip) rather than the family's `string | false`.
+
+**Bounds.** Order-free; clamped to the plot (past-domain cut, fully-outside
+culled) so a whole category table renders and the axis decides what shows;
+`±Infinity` accepted for open-ended bands. Infinite bounds resolve against
+`yScale.domain()` **before** scaling — d3's interpolator is `a·(1−t) + b·t`, so
+an infinite `t` yields `0 · Infinity` = **NaN**, not an off-plot pixel. A
+boundary line is drawn only where the band has a real, in-plot edge (an
+open-ended or clamped bound draws none, or it reads as plot chrome).
+
+**Registry.** `AnnotationSpec.kind` widened via a new `AnnotationSpecKind =
+AnnotationKind | 'zone'`, leaving `AnnotationKind` (the _create-tool_
+vocabulary, `ContainerFrame.creating`) untouched — widening that instead would
+let `creating="zone"` type-check and then silently never fire `onCreate`, since
+there is no `CreateSpec` variant and no draw gesture. Zones register with empty
+`xs` (like baselines): no cross-row guide, no drag-snap target.
+
+**Deliberately not built:** `onChange` / drag-to-edit (a zone editor is
+coherent — drag your HR boundaries — but has no consumer yet; the band stays
+declarative until one arrives).
+
+**Known limitation — the fill paints _above_ the data canvas**, like every
+annotation, so it works by staying light (`fillOpacity` ~0.1–0.2) rather than
+by being behind the traces. Putting it genuinely behind was investigated and
+**rejected as out of scope**: the plot div is a flex sibling of the axis
+columns and is _not_ a stacking context, so both candidate fixes regress paint
+order elsewhere — `isolation: isolate` (or `z-index: 0`) on the plot div would
+scope `chip.ts`'s `zIndex: 3` axis pills, which exist precisely to escape the
+plot div and sit over the sibling axis column; and giving `<Canvas>` a
+`z-index` would lift the canvas over a right-hand `<YAxis>`. A real fix is a
+package-wide stacking-order pass (every overlay gets an explicit layer), which
+wants its own PR and its own visual-regression sweep. Second signal needed.
+
+**Also landed here:** `theme.annotation.dash` (register-wide) and
+`roles[role].dash` — px on/off, same shape as `LineStyle.dash`, applied to
+marker/baseline lines and region/zone boundaries; fills never dash. Motivated
+by the same guide (the source chart's dashed grey average line): a dashed
+reference line reads as _placed_ rather than _measured_, which is the register's
+job and one colour alone can't always carry when the register hue sits near a
+series hue.
+
 ### [PND-YTICKS] — `YAxis` tick density — DONE
 
 Shipped (#508 item 4). `<YAxis tickCount>` pins an explicit auto-tick target;
@@ -577,6 +650,16 @@ consumers), `hasAnyDefined()`/`allMissing()`, the protobuf columnar wire
 - Band gap treatment (a filled envelope's break wants its own design; bands
   always break honestly for now).
 - M4.3 brush — skipped, no drivers.
+- **Annotation overlay stacking order** — every mark (now including `<Zone>`'s
+  fill) paints _above_ the data canvas. A background band wants to be behind
+  it; both local fixes regress paint order against the sibling axis columns
+  (see [PND-ZONE]'s limitation note), so this is a package-wide "every overlay
+  gets an explicit layer" pass with its own visual-regression sweep. Needs a
+  second signal — a consumer whose bands are too heavy to stay light.
+- **Zone editing** (`<Zone onChange>` — drag a band's edges) — the zone-editor
+  case (drag your HR/power boundaries). Coherent and mostly a transpose of
+  `<Region>`'s edge-resize + `orderRegion` pivot onto the y scale; no consumer
+  yet.
 - **Multi-series layer API** (one layer, K columns) — **ergonomics only, not
   perf**: the 2026-07 suite profile measured React reconcile over 1000 layer
   elements at ~1% of frame time
